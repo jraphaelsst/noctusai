@@ -1,7 +1,7 @@
 /**
  * "Mover usuário" (owner D3, 2026-10-14) — move a member from the org on screen to another org
  * the viewer manages. The actor picks, EVERY time: the target org (only orgs they manage), the
- * role there (never above their own role in the target — staff count as owner) and the mode:
+ * role there (never above their own role in the target; `owner` only for staff — P1) and the mode:
  * "Transferir" ends the current membership, "Adicionar" keeps both. No mode is preselected on
  * purpose: the choice is the actor's each time. `POST /api/team/move`; the SQL op decides.
  */
@@ -22,6 +22,8 @@ export interface MoveMemberDialogProps {
   /** Orgs the viewer manages, the source excluded. */
   targets: TeamScopeOrg[];
   roles: TeamRole[];
+  /** Platform staff (NoctusAI owner/admin): the only ones who may grant `owner` (owner P1). */
+  staff: boolean;
   onClose: () => void;
 }
 
@@ -38,12 +40,16 @@ const MODES: { value: MoveMode; label: string; help: string }[] = [
   },
 ];
 
-/** Roles the actor may grant in `target`: never `owner` unless they are owner there (D3). */
-export function grantableMoveRoles(roles: TeamRole[], target: TeamScopeOrg | undefined): TeamRole[] {
-  return roles.filter((r) => r.slug !== 'owner' || target?.actorRole === 'owner');
+/**
+ * Roles the actor may grant in the target: `owner` ONLY for platform staff (owner decision P1,
+ * 2026-10-14 — an org owner no longer may; the server refuses `owner_grant_forbidden`). Every
+ * other role stays within the D3 cap (owner/admin of the target may grant up to admin).
+ */
+export function grantableMoveRoles(roles: TeamRole[], staff: boolean): TeamRole[] {
+  return roles.filter((r) => r.slug !== 'owner' || staff);
 }
 
-export function MoveMemberDialog({ member, sourceOrg, targets, roles, onClose }: MoveMemberDialogProps) {
+export function MoveMemberDialog({ member, sourceOrg, targets, roles, staff, onClose }: MoveMemberDialogProps) {
   const [targetId, setTargetId] = useState('');
   const [role, setRole] = useState(member.org_role === 'owner' ? '' : member.org_role);
   const [mode, setMode] = useState<MoveMode | null>(null);
@@ -51,7 +57,7 @@ export function MoveMemberDialog({ member, sourceOrg, targets, roles, onClose }:
   const move = useMoveMember();
 
   const target = targets.find((t) => t.id === targetId);
-  const allowed = grantableMoveRoles(roles, target);
+  const allowed = grantableMoveRoles(roles, staff);
   const roleOk = allowed.some((r) => r.slug === role);
   const canSubmit = !!target && roleOk && mode !== null && !move.isPending;
 

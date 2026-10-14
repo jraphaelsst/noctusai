@@ -14,6 +14,9 @@ export const TEAM_ERROR_MESSAGES: Record<string, string> = {
   same_org: 'A organização de destino precisa ser diferente da organização atual.',
   forbidden: 'Você precisa ser proprietário ou administrador nas duas organizações para fazer isso.',
   role_above_actor: 'Você não pode conceder um papel acima do seu na organização de destino.',
+  // owner decisions P1/P3/P5 (2026-10-14)
+  owner_grant_forbidden: 'Somente a equipe NoctusAI pode conceder o papel de proprietário.',
+  cannot_block_staff: 'A equipe NoctusAI não pode ser bloqueada de nenhum produto.',
   membership_suspended:
     'A participação desta pessoa na organização de destino está suspensa. Reative-a antes de movê-la.',
   not_a_member: 'Esta pessoa não é mais membro ativo desta organização. Atualize a lista.',

@@ -2930,6 +2930,104 @@ _ACCESS_RULES_PROBES: tuple[GuardProbe, ...] = (
     _D4_SOLE_MEMBER_KEEPS_PROFILE_PROBE,
 )
 
+# ---- Multi-org S5b (core 084, owner decisions P1/P3/P5 2026-10-14) -------------------------------
+#: Core 084: owner grants are staff-only (P1), staff are never blocked (P3), blocks are owner-only (P5).
+_OWNER_GRANT_MIGRATIONS = _ACCESS_RULES_MIGRATIONS + ("084_owner_grant_and_block_rules.sql",)
+
+
+def _team_rpc_refusal_probe(
+    *, probe_id: str, guard_name: str, code: str, rationale: str, setup: str, call: str,
+) -> GuardProbe:
+    """``call`` (a team RPC) must raise ``team_membership:<code>`` after ``setup``."""
+    return _org_picker_probe(
+        probe_id=probe_id, guard_name=guard_name, kind="write_refusal", rationale=rationale,
+        migrations=_OWNER_GRANT_MIGRATIONS,
+        steps=_ORG_MEMBER_FIXTURE + setup + f"""
+  BEGIN
+    {call}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {guard_name} succeeded — the {code} refusal did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'team_membership:{code}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;""",
+    )
+
+
+_P1_SET_ROLE_OWNER_GRANT_PROBE = _team_rpc_refusal_probe(
+    probe_id="team_member_set_role.refuses_owner_grant_by_non_staff",
+    guard_name="team_member_set_role",
+    code="owner_grant_forbidden",
+    rationale=(
+        "P1: granting `owner` in an org is for NoctusAI staff only. An org OWNER (not staff) promoting "
+        "a member to owner is refused in SQL, decided from the actor -- no caller can skip it."
+    ),
+    setup="""
+  UPDATE public.org_memberships SET org_role = 'owner' WHERE user_id = v_plain AND org_id = v_mtarget;
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_staff, v_mtarget, 'member', 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = 'member', status = 'active', ended_at = NULL;
+""",
+    call="PERFORM public.team_member_set_role(v_mtarget, v_staff, 'owner', v_plain);",
+)
+
+_P1_MOVE_OWNER_GRANT_PROBE = _team_rpc_refusal_probe(
+    probe_id="team_member_move.refuses_owner_grant_by_non_staff",
+    guard_name="team_member_move",
+    code="owner_grant_forbidden",
+    rationale=(
+        "P1: the move target role follows the same rule -- an org owner of BOTH orgs (not staff) "
+        "may move a user but never make them `owner` in the target."
+    ),
+    setup="""
+  UPDATE public.org_memberships SET org_role = 'owner'
+   WHERE user_id = v_plain AND org_id IN (v_plain_home, v_mtarget);
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_staff, v_plain_home, 'member', 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = 'member', status = 'active', ended_at = NULL;
+  DELETE FROM public.org_memberships WHERE user_id = v_staff AND org_id = v_mtarget;
+""",
+    call="PERFORM public.team_member_move(v_plain, v_staff, v_plain_home, v_mtarget, 'owner', 'add');",
+)
+
+_P5_ADMIN_CANNOT_BLOCK_PROBE = _team_rpc_refusal_probe(
+    probe_id="org_member_product_access_set.refuses_org_admin",
+    guard_name="org_member_product_access_set",
+    code="forbidden",
+    rationale=(
+        "P5: blocking/unblocking a member's product access is for the org's OWNER and NoctusAI staff "
+        "only; an org ADMIN is refused in SQL."
+    ),
+    setup="""
+  UPDATE public.org_memberships SET org_role = 'admin' WHERE user_id = v_plain AND org_id = v_mtarget;
+""",
+    call="PERFORM public.org_member_product_access_set(v_plain, v_mtarget, v_plain, v_slug, true);",
+)
+
+_P3_STAFF_NEVER_BLOCKED_PROBE = _team_rpc_refusal_probe(
+    probe_id="org_member_product_access_set.refuses_blocking_staff",
+    guard_name="org_member_product_access_set",
+    code="cannot_block_staff",
+    rationale="P3: NoctusAI staff can never be blocked from a product, not even by staff.",
+    setup="""
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_staff, v_mtarget, 'member', 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET status = 'active', ended_at = NULL;
+""",
+    call="PERFORM public.org_member_product_access_set(v_staff, v_mtarget, v_staff, v_slug, true);",
+)
+
+_OWNER_GRANT_RULES_PROBES: tuple[GuardProbe, ...] = (
+    _P1_SET_ROLE_OWNER_GRANT_PROBE,
+    _P1_MOVE_OWNER_GRANT_PROBE,
+    _P5_ADMIN_CANNOT_BLOCK_PROBE,
+    _P3_STAFF_NEVER_BLOCKED_PROBE,
+)
+
 _ORG_MEMBER_ROLE_PROBE = _org_picker_probe(
     probe_id="platform_org_selection_set.member_role_is_the_target_membership_role",
     guard_name="platform_org_selection_set",
@@ -3373,6 +3471,7 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     *_ORG_MEMBER_PROBES,
     *_TEAM_OPS_PROBES,
     *_ACCESS_RULES_PROBES,
+    *_OWNER_GRANT_RULES_PROBES,
     _ACTING_AUDIT_ACTING_WRITE_PROBE,
     _ACTING_AUDIT_PLAIN_WRITE_PROBE,
 )

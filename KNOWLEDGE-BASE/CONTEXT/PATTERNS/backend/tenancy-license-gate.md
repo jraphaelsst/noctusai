@@ -285,7 +285,7 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
       staff anywhere, an org owner/admin only between orgs they own/admin BOTH of
       (`org_manager_role`); `transfer` ends the source (last-owner rule) and moves the profile when it
       pointed at the source, `add` keeps it; role never above the actor's role in the target (staff
-      = owner). `PATCH /api/admin/users/{id}` reassignment is a `transfer` through it (metadata
+      = owner), and `owner` itself only by staff (P1 below). `PATCH /api/admin/users/{id}` reassignment is a `transfer` through it (metadata
       synced first, restored if the move is refused).
     - **D4 detached profile.** Removing a user whose ONLY active membership is this org moves the
       profile to a personal org of their own (`Pessoal — <nome>`, `indv_<slug>`, `is_personal`,
@@ -296,8 +296,8 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
       (`invited_by`/`invitation_id`) + invitation accepted, one transaction.
     - **D5 product blocks.** `public.org_member_product_access` (a LIVE row = blocked; append-only
       history closed by `unblocked_at/_by`; RLS self-read; written only by
-      `org_member_product_access_set`, owner/admin or staff, block needs a license and ends a live
-      selection of that org). Blocked ⇒ not eligible (D1), `platform_org_selection:product_blocked`,
+      `org_member_product_access_set` — the org's OWNER or staff only since P5 below — block needs
+      a license and ends a live selection of that org). Blocked ⇒ not eligible (D1), `platform_org_selection:product_blocked`,
       SSO never admits through it, the resolver/`current_org_id_for` never resolve to it (home
       included, picker-ready or not), `/api/auth/me` `has_access=false`. Routes:
       `GET|PUT /api/team/{user_id}/product-access[/{slug}]`.
@@ -308,6 +308,21 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
       `team_member_move.refuses_an_actor_who_does_not_manage_both_orgs`,
       `team_member_remove.sole_member_keeps_the_profile_in_a_personal_org`; real Postgres:
       `mcp/noctusai/tests/test_core_member_access_rules_on_replay.py`.
+  - **Grant + block authority (S5b, owner decisions P1–P5 2026-10-14, core
+    `owner_grant_and_block_rules`).** Decided in SQL from the ACTOR (and answered early in Python
+    with the same `{detail, code}`): **P1** granting `owner` — `PATCH /api/team/{id}/role` and the
+    `POST /api/team/move` target role — only by platform staff (`platform_staff_role` owner|admin);
+    anyone else `403 owner_grant_forbidden` (re-stating an existing owner is not a grant; invites
+    still never grant `owner`). **P2** a D5 block hangs off the membership row, so it survives
+    removal + re-invite — kept, pinned by a replay scenario. **P3** staff are never blocked:
+    `409 cannot_block_staff` (unblocking an old row stays allowed). **P4** a `manager` still manages
+    only their own current org's team. **P5** block/unblock only by the org's OWNER or staff
+    (`org_manager_role = 'owner'`); an org admin is `403 forbidden` but still READS the list —
+    `GET .../product-access` carries `can_edit` and `target_is_staff` so the UI shows it read-only
+    / without a switch. Probes: `team_member_set_role.refuses_owner_grant_by_non_staff`,
+    `team_member_move.refuses_owner_grant_by_non_staff`,
+    `org_member_product_access_set.refuses_org_admin` / `.refuses_blocking_staff`; real Postgres:
+    `mcp/noctusai/tests/test_core_owner_grant_and_block_rules_on_replay.py`.
   - **Front end (S5, 2026-10-14).** No member-specific flow: `useOrgSelection` keys everything off
     `org_selection.available`, so a member with ≥2 eligible orgs gets the staff entry handshake
     as-is (no marker ⇒ `DELETE /api/me/org-choice` ⇒ required picker ⇒ choice ⇒ marker + reload;
@@ -319,8 +334,13 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     `actions`, which opens the same picker. Single-org members: `available=false`, no popup, no
     switcher. Core `/team` (`hooks/useTeam.ts`): org selector over `manageable_orgs` (staff:
     `/api/organizations`, acting as owner), every team call `?org_id=`, "Mover" (target + role
-    capped by the actor's role there + mode chosen each time, none preselected), "Acessos" (switch
-    per licensed product), removal copy for D4. Refusals reach the client as `{detail, code}`
+    capped by the actor's role there, `owner` offered to staff only + mode chosen each time, none
+    preselected), the row role selector (`owner` for staff only), "Acessos" (switch per licensed
+    product; read-only unless `can_edit`, none for staff targets), removal toast saying where the
+    profile went (`DELETE /api/team/{id}` → `{removed, profile_moved_to, personal_org_id}`). The
+    seed shell (subtitle, role label, nav role) and `useIsOrgAdmin` follow the EFFECTIVE org of the
+    visit — `resolveEffectiveSSOContext(metadata, /api/me/access)`; the SSO token's org/role only
+    while access has not answered (S5b). Refusals reach the client as `{detail, code}`
     (`team_memberships._call`) and `lib/team-errors.ts` maps each contract code to pt-BR.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the

@@ -13,7 +13,8 @@ What this proves on a real Postgres (the router tests mock the RPCs):
   above the actor's role there; staff move anyone;
 * D4: removing a sole-org member keeps the profile, owner of a personal org (validated: owned by
   the user, ``is_personal``, empty); a first-time invitee gets profile + linked membership;
-* D5: block / unblock is append-only history, needs a manager, ends a live selection of the org.
+* D5: block / unblock is append-only history, needs a manager (the org OWNER or staff since core 084,
+  P5), ends a live selection of the org.
 
 Each scenario fires the deferred invariant IMMEDIATE (``SET CONSTRAINTS ALL IMMEDIATE``) -- the
 judgement COMMIT makes -- and is rolled back.
@@ -195,8 +196,11 @@ _SCENARIOS = {
     RAISE EXCEPTION 'NOC_PROBE:violation: add ended the source or moved the profile';
   END IF;
 """ + _refused("PERFORM public.team_member_move(u_admin_ab, u_mem, v_a, v_b, 'member', 'add');", "already_member") + _OK,
+    # Core 084 (P1) refuses a non-staff owner grant BEFORE 083's role cap: on the current chain the
+    # code is owner_grant_forbidden (role_above_actor alone when 084 is absent).
     "d3_role_never_above_the_actor_in_the_target": _refused(
-        "PERFORM public.team_member_move(u_admin_ab, u_mem, v_a, v_b, 'owner', 'add');", "role_above_actor") + """
+        "PERFORM public.team_member_move(u_admin_ab, u_mem, v_a, v_b, 'owner', 'add');",
+        "owner_grant_forbidden") + """
   -- staff act as owner anywhere: an owner role is allowed for them
   PERFORM public.team_member_move(u_noc_admin, u_mem, v_a, v_c, 'owner', 'add');
 """ + _OK,
@@ -261,24 +265,25 @@ _SCENARIOS = {
   END IF;
 """ + _OK,
     # ---- D5 ---------------------------------------------------------------------------------------
+    # Blocks are by the org OWNER or staff (core 084, P5): owner_a / noc_admin act here.
     "d5_block_unblock_history_and_authority": _PRODUCT + _refused(
         "PERFORM public.org_member_product_access_set(u_mem, v_a, u_admin_a, v_slug, true);", "forbidden")
-        + _refused("PERFORM public.org_member_product_access_set(u_admin_ab, v_b, u_mem, v_slug, true);", "not_a_member")
-        + _refused("PERFORM public.org_member_product_access_set(u_admin_a, v_a, u_mem, 'no-such-product', true);",
+        + _refused("PERFORM public.org_member_product_access_set(u_noc_admin, v_b, u_mem, v_slug, true);", "not_a_member")
+        + _refused("PERFORM public.org_member_product_access_set(u_owner_a, v_a, u_mem, 'no-such-product', true);",
                    "product_not_found") + """
   INSERT INTO auth.sessions (id, user_id) VALUES ('00000000-0000-0000-0000-00000000d5d5', u_mem)
   ON CONFLICT (id) DO NOTHING;
   INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
   VALUES (u_mem, v_pid, v_a, v_a, '00000000-0000-0000-0000-00000000d5d5');
-  v_res := public.org_member_product_access_set(u_admin_a, v_a, u_mem, v_slug, true);
+  v_res := public.org_member_product_access_set(u_owner_a, v_a, u_mem, v_slug, true);
   IF NOT (v_res ->> 'changed')::boolean THEN RAISE EXCEPTION 'NOC_PROBE:violation: block not applied'; END IF;
-  v_res := public.org_member_product_access_set(u_admin_a, v_a, u_mem, v_slug, true);
+  v_res := public.org_member_product_access_set(u_owner_a, v_a, u_mem, v_slug, true);
   IF (v_res ->> 'changed')::boolean THEN RAISE EXCEPTION 'NOC_PROBE:violation: block not idempotent'; END IF;
   IF EXISTS (SELECT 1 FROM public.platform_org_selections WHERE user_id = u_mem AND ended_at IS NULL) THEN
     RAISE EXCEPTION 'NOC_PROBE:violation: live selection of the blocked org survived';
   END IF;
   PERFORM public.org_member_product_access_set(u_noc_admin, v_a, u_mem, v_slug, false);
-  PERFORM public.org_member_product_access_set(u_admin_a, v_a, u_mem, v_slug, true);
+  PERFORM public.org_member_product_access_set(u_owner_a, v_a, u_mem, v_slug, true);
   SELECT count(*) INTO v_n FROM public.org_member_product_access WHERE user_id = u_mem AND org_id = v_a;
   IF v_n <> 2 OR (SELECT count(*) FROM public.org_member_product_access
                    WHERE user_id = u_mem AND unblocked_at IS NULL) <> 1
@@ -288,7 +293,7 @@ _SCENARIOS = {
   END IF;
 """ + _OK,
     "d5_block_needs_a_license": _refused(
-        "PERFORM public.org_member_product_access_set(u_admin_ab, v_b, u_admin_ab, "
+        "PERFORM public.org_member_product_access_set(u_noc_admin, v_b, u_admin_ab, "
         "(SELECT p.slug FROM public.products p WHERE p.db_schema IS NOT NULL ORDER BY p.slug LIMIT 1), true);",
         "not_licensed") + _OK,
     "new_functions_are_service_role_only": """

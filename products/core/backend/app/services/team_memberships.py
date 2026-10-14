@@ -56,6 +56,9 @@ ERROR_MAP: dict[str, tuple[int, str]] = {
     "personal_org_invalid": (409, "A organização pessoal do membro não pôde ser usada; tente novamente"),
     "product_not_found": (404, "Produto não encontrado"),
     "not_licensed": (409, "A organização não tem licença ativa deste produto"),
+    # core 084 (owner decisions P1/P3, 2026-10-14)
+    "owner_grant_forbidden": (403, "Somente a equipe NoctusAI pode conceder o papel de proprietário"),
+    "cannot_block_staff": (409, "A equipe NoctusAI não pode ser bloqueada"),
     # Raised only by core 082's (superseded) remove; kept so a deploy whose DB still runs 082 maps it.
     "profile_in_use": (409, "Este usuário possui registros vinculados e não pôde ser removido; tente novamente"),
 }
@@ -186,6 +189,13 @@ def _code_from(exc: Exception) -> Optional[str]:
         if tail.startswith(code):
             return code
     return None
+
+
+def refusal(code: str) -> HTTPException:
+    """The HTTP refusal for ``code`` in the same ``{detail, code}`` shape the RPC refusals use --
+    for the Python half of a rule the SQL also enforces (it answers early; SQL decides)."""
+    status, detail = ERROR_MAP[code]
+    return HTTPException(status_code=status, detail={"detail": detail, "code": code})
 
 
 def _call(db, fn: str, params: dict) -> dict:

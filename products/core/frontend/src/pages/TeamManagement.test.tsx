@@ -28,6 +28,7 @@ vi.mock('../lib/auth-context', () => {
 });
 
 import { TeamManagement } from './TeamManagement';
+import { teamErrorMessage } from '../lib/team-errors';
 
 const ROLES = [
   { id: 'r1', name: 'Proprietário', slug: 'owner', permissions: [], is_system: true },
@@ -48,6 +49,10 @@ const memberAccess = (manageable: unknown[]) => ({
     selection_id: null, eligible_orgs: [], platform_role: null, manage_any_org: false, manageable_orgs: manageable,
   },
 });
+const STAFF_ACCESS = {
+  ...memberAccess([]),
+  org_selection: { ...memberAccess([]).org_selection, manage_any_org: true, platform_role: 'admin' },
+};
 const OWNER_A_ADMIN_B = memberAccess([
   { id: 'A', nome: 'Alfa', org_role: 'owner' },
   { id: 'B', nome: 'Beta', org_role: 'admin' },
@@ -166,13 +171,33 @@ describe('Equipe — mover usuário (D3)', () => {
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('continua em Alfa')));
   });
 
-  it('owner in the target may grant owner (staff count as owner too)', async () => {
-    routeGet(memberAccess([{ id: 'A', nome: 'Alfa', org_role: 'admin' }, { id: 'B', nome: 'Beta', org_role: 'owner' }]));
+  it('an org owner of the target is NOT offered owner (P1: staff only)', async () => {
+    routeGet(memberAccess([{ id: 'A', nome: 'Alfa', org_role: 'owner' }, { id: 'B', nome: 'Beta', org_role: 'owner' }]));
     renderPage();
     fireEvent.click(within(await screen.findByTestId('member-row-u2')).getByRole('button', { name: 'Mover' }));
     const dialog = await screen.findByRole('dialog', { name: 'Mover usuário' });
     fireEvent.change(within(dialog).getByTestId('move-target'), { target: { value: 'B' } });
+    expect(within(within(dialog).getByTestId('move-role')).queryByRole('option', { name: 'Proprietário' })).toBeNull();
+  });
+
+  it('platform staff are offered owner in the move and in the row role selector (P1)', async () => {
+    routeGet(STAFF_ACCESS);
+    renderPage();
+    const row = await screen.findByTestId('member-row-u2');
+    expect(within(within(row).getByRole('combobox', { name: 'Papel de Bia' })).getByRole('option', { name: 'Proprietário' }))
+      .toBeInTheDocument();
+    fireEvent.click(await within(row).findByRole('button', { name: 'Mover' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Mover usuário' });
+    fireEvent.change(within(dialog).getByTestId('move-target'), { target: { value: 'B' } });
     expect(within(within(dialog).getByTestId('move-role')).getByRole('option', { name: 'Proprietário' })).toBeInTheDocument();
+  });
+
+  it('an org owner\'s row role selector does not offer owner (P1)', async () => {
+    routeGet(OWNER_A_ADMIN_B);
+    renderPage();
+    const row = await screen.findByTestId('member-row-u2');
+    expect(within(within(row).getByRole('combobox', { name: 'Papel de Bia' })).queryByRole('option', { name: 'Proprietário' }))
+      .toBeNull();
   });
 
   it.each([
@@ -209,9 +234,33 @@ describe('Equipe — mover usuário (D3)', () => {
 
 describe('Equipe — acesso a produtos (D5)', () => {
   const ACCESS_URL = '/api/team/u2/product-access?org_id=A';
-  const products = (blocked: boolean) => ({ data: { user_id: 'u2', org_id: 'A', products: [
-    { product_id: 'p1', slug: 'social-wiring', nome: 'Social Wiring', blocked, blocked_at: null, blocked_by: null },
-  ] } });
+  const products = (blocked: boolean, extra: Record<string, unknown> = { can_edit: true, target_is_staff: false }) => (
+    { data: { user_id: 'u2', org_id: 'A', ...extra, products: [
+      { product_id: 'p1', slug: 'social-wiring', nome: 'Social Wiring', blocked, blocked_at: null, blocked_by: null },
+    ] } });
+
+  it('an org admin sees the list read-only (P5: only the owner or staff change it)', async () => {
+    routeGet(OWNER_A_ADMIN_B, { [ACCESS_URL]: products(false, { can_edit: false, target_is_staff: false }) });
+    renderPage();
+    fireEvent.click(within(await screen.findByTestId('member-row-u2')).getByRole('button', { name: 'Acessos' }));
+    expect(await screen.findByRole('switch', { name: 'Acesso a Social Wiring' })).toBeDisabled();
+    expect(screen.getByTestId('product-access-readonly')).toHaveTextContent('Somente o proprietário');
+  });
+
+  it('NoctusAI staff are never blockable: no usable switch (P3)', async () => {
+    routeGet(OWNER_A_ADMIN_B, { [ACCESS_URL]: products(false, { can_edit: true, target_is_staff: true }) });
+    renderPage();
+    fireEvent.click(within(await screen.findByTestId('member-row-u2')).getByRole('button', { name: 'Acessos' }));
+    expect(await screen.findByRole('switch', { name: 'Acesso a Social Wiring' })).toBeDisabled();
+    expect(screen.getByTestId('product-access-staff')).toHaveTextContent('equipe NoctusAI');
+  });
+
+  it.each([
+    ['owner_grant_forbidden', 'Somente a equipe NoctusAI pode conceder o papel de proprietário.'],
+    ['cannot_block_staff', 'A equipe NoctusAI não pode ser bloqueada de nenhum produto.'],
+  ])('%s has its pt-BR message', (code, text) => {
+    expect(teamErrorMessage(apiErr(403, code), 'x')).toBe(text);
+  });
 
   it('lists the licensed products with a switch; turning it off blocks', async () => {
     routeGet(OWNER_A_ADMIN_B, { [ACCESS_URL]: products(false) });

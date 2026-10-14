@@ -4,6 +4,10 @@
  * product (picker, SSO, dashboard). Default (no block) = allowed. The server is the authority
  * (`PUT .../product-access/{slug}` is idempotent); the switch shows the server's answer, never an
  * optimistic guess.
+ *
+ * Owner decisions 2026-10-14: only the org's OWNER and NoctusAI staff change it (P5) — an org admin
+ * sees the same list read-only (`can_edit`); NoctusAI staff are never blockable (P3,
+ * `target_is_staff`), so no switch is offered for them.
  */
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -27,6 +31,7 @@ export function ProductAccessDialog({ member, org, onClose }: ProductAccessDialo
   const [busySlug, setBusySlug] = useState<string | null>(null);
 
   const showSkeleton = q.isPending && !q.data;
+  const editable = !!q.data && q.data.can_edit && !q.data.target_is_staff;
   const isRefreshing = q.isFetching && !!q.data;
 
   async function toggle(slug: string, nome: string, allowed: boolean) {
@@ -53,12 +58,12 @@ export function ProductAccessDialog({ member, org, onClose }: ProductAccessDialo
         <Button type="button" variant="outline" onClick={() => void q.refetch()}>Tentar novamente</Button>
       </div>
     );
-  } else if (!q.data || q.data.length === 0) {
+  } else if (!q.data || q.data.products.length === 0) {
     body = <EmptyState message="Esta organização não tem produtos licenciados." />;
   } else {
     body = (
       <ul className="divide-y divide-border rounded-md border border-border" data-testid="product-access-list">
-        {q.data.map((p) => {
+        {q.data.products.map((p) => {
           const allowed = !p.blocked;
           return (
             <li key={p.slug} className="flex items-center justify-between gap-3 px-3 py-3">
@@ -70,7 +75,7 @@ export function ProductAccessDialog({ member, org, onClose }: ProductAccessDialo
               </span>
               <Switch
                 checked={allowed}
-                disabled={busySlug !== null}
+                disabled={busySlug !== null || !editable}
                 aria-label={`Acesso a ${p.nome}`}
                 onCheckedChange={(next) => void toggle(p.slug, p.nome, next)}
               />
@@ -93,6 +98,16 @@ export function ProductAccessDialog({ member, org, onClose }: ProductAccessDialo
           <strong className="text-foreground">{member.nome}</strong> pode usar. Bloquear um produto
           impede a pessoa de entrar nele por esta organização; as outras organizações dela não mudam.
         </p>
+        {q.data?.target_is_staff && (
+          <p className="text-sm text-muted-foreground" data-testid="product-access-staff">
+            Esta pessoa é da equipe NoctusAI e não pode ser bloqueada.
+          </p>
+        )}
+        {q.data && !q.data.target_is_staff && !q.data.can_edit && (
+          <p className="text-sm text-muted-foreground" data-testid="product-access-readonly">
+            Somente o proprietário da organização pode bloquear ou liberar produtos.
+          </p>
+        )}
         {body}
       </DialogBody>
       <DialogFooter>

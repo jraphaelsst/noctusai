@@ -257,7 +257,7 @@ class TestD5ProductAccess:
 
     def test_block_calls_the_rpc_with_the_actor(self, client):
         mock_sb = client.mock_supabase
-        self._org(mock_sb)
+        self._org(mock_sb, caller_role="owner")
         mock_sb.set_rpc_data("org_member_product_access_set", {"blocked": True, "changed": True})
         resp = client.put("/api/team/u-m/product-access/agents", json={"blocked": True})
         assert resp.status_code == 200, resp.text
@@ -267,9 +267,9 @@ class TestD5ProductAccess:
 
     def test_sql_refusals_map_strictly(self, client):
         mock_sb = client.mock_supabase
-        self._org(mock_sb)
+        self._org(mock_sb, caller_role="owner")
         for code, status in (("forbidden", 403), ("not_licensed", 409), ("product_not_found", 404),
-                             ("not_a_member", 404)):
+                             ("not_a_member", 404), ("cannot_block_staff", 409)):
             _refuse(mock_sb, code)
             resp = client.put("/api/team/u-m/product-access/x", json={"blocked": True})
             assert resp.status_code == status
@@ -294,6 +294,99 @@ class TestD5ProductAccess:
         assert resp.status_code == 200, resp.text
         access = {p["slug"]: p["has_access"] for p in resp.json()["products"]}
         assert access == {"social-wiring": False, "agents": True}
+
+
+class TestOwnerDecisionsP1P3P5:
+    """Owner decisions 2026-10-14: P1 owner grants are staff-only; P3 staff are never blocked; P5
+    blocks are by the org OWNER or staff only (an org admin reads, never changes). SQL (core 084)
+    decides too; these pin the early Python answers + the typed codes."""
+
+    BODY = TestD3Move.BODY
+
+    def _p5(self, mock_sb, caller_role):
+        TestD5ProductAccess()._org(mock_sb, caller_role=caller_role)
+
+    def test_an_org_admin_reads_product_access_but_may_not_change_it(self, client):
+        mock_sb = client.mock_supabase
+        self._p5(mock_sb, "admin")
+        data = client.get("/api/team/u-m/product-access").json()["data"]
+        assert (data["can_edit"], data["target_is_staff"]) == (False, False)
+        resp = client.put("/api/team/u-m/product-access/agents", json={"blocked": True})
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "forbidden"
+        resp = client.put("/api/team/u-m/product-access/social-wiring", json={"blocked": False})
+        assert resp.status_code == 403
+        assert mock_sb.rpc_calls == []
+
+    def test_the_org_owner_may_change_it(self, client):
+        mock_sb = client.mock_supabase
+        self._p5(mock_sb, "owner")
+        assert client.get("/api/team/u-m/product-access").json()["data"]["can_edit"] is True
+
+    def test_staff_are_never_blocked_and_the_ui_is_told(self, client):
+        mock_sb = client.mock_supabase
+        self._p5(mock_sb, "owner")
+        mock_sb.set_table_data("noctus_users", [
+            {"id": USER, "org_id": "org-1", "org_role": "owner", "role": "user"},
+            {"id": ADMIN, "org_id": PLATFORM, "org_role": "admin", "role": "admin"},
+        ])
+        mock_sb.set_table_data("organizations", [
+            {"id": "org-1", "nome": "A", "is_platform": False},
+            {"id": PLATFORM, "nome": "NoctusAI", "is_platform": True},
+        ])
+        mock_sb.set_table_data("org_memberships", [
+            {"user_id": USER, "org_id": "org-1", "org_role": "owner", "status": "active"},
+            {"user_id": ADMIN, "org_id": "org-1", "org_role": "member", "status": "active"},
+        ])
+        assert client.get(f"/api/team/{ADMIN}/product-access").json()["data"]["target_is_staff"] is True
+        resp = client.put(f"/api/team/{ADMIN}/product-access/agents", json={"blocked": True})
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "cannot_block_staff"
+        assert mock_sb.rpc_calls == []
+
+    def test_an_org_owner_may_not_grant_owner_by_role_change(self, client):
+        mock_sb = client.mock_supabase
+        TestOrgScopeForOrgAdmins()._member_of(mock_sb, "owner")
+        mock_sb.set_table_data("roles", [{"id": "r", "slug": "owner"}])
+        resp = client.patch("/api/team/u-x/role?org_id=org-2", json={"role": "owner"})
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "owner_grant_forbidden"
+        assert mock_sb.rpc_calls == []
+
+    def test_staff_may_grant_owner_by_role_change(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        _staff(mock_sb, target_role="member")
+        mock_sb.set_table_data("roles", [{"id": "r", "slug": "owner"}])
+        mock_sb.set_rpc_data("team_member_set_role", {"org_id": "org-7", "org_role": "owner"})
+        resp = admin_client.patch("/api/team/u-target/role?org_id=org-7", json={"role": "owner"})
+        assert resp.status_code == 200, resp.text
+        assert mock_sb.rpc_calls == [("team_member_set_role", {
+            "p_org_id": "org-7", "p_user_id": "u-target", "p_role": "owner", "p_actor_id": ADMIN})]
+
+    def test_an_org_owner_may_not_move_someone_in_as_owner(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("roles", [{"id": "r", "slug": "owner"}])
+        resp = client.post("/api/team/move", json={**self.BODY, "role": "owner"})
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "owner_grant_forbidden"
+        assert mock_sb.rpc_calls == []
+
+    def test_staff_may_move_someone_in_as_owner(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        _staff(mock_sb)
+        mock_sb.set_table_data("roles", [{"id": "r", "slug": "owner"}])
+        mock_sb.set_rpc_data("team_member_move", {"org_role": "owner"})
+        resp = admin_client.post("/api/team/move", json={**self.BODY, "role": "owner"})
+        assert resp.status_code == 200, resp.text
+        assert mock_sb.rpc_calls[0][1]["p_role"] == "owner"
+
+    def test_the_sql_owner_grant_refusal_maps_to_403(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("roles", [{"id": "r", "slug": "member"}])
+        _refuse(mock_sb, "owner_grant_forbidden")
+        resp = client.post("/api/team/move", json=self.BODY)
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "owner_grant_forbidden"
 
 
 class TestD5SsoNeverAdmitsThroughABlockedOrg:

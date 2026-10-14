@@ -112,8 +112,9 @@ async def _team_scope(user, db, org_id: Optional[str], permission: Optional[str]
 
 
 #: Who may grant which org role (mirror of the seed team router's ``_GRANT_REQUIRES``).
-#: ``owner`` is NEVER grantable here -- not by invite, not by a role change, not by anyone
-#: (ownership moves only through its dedicated flow). ``admin`` needs an inviter who is
+#: ``owner`` is never grantable through this helper (invites never grant it); the role change and
+#: the move grant it to platform staff ONLY (owner decision P1, 2026-10-14 -- checked in those
+#: routes and in SQL, ``owner_grant_forbidden``). ``admin`` needs an inviter who is
 #: already owner/admin, or the platform superadmin (``noctus_users.role = 'admin'``) inside
 #: their own org -- without it any ``team:manage`` holder (e.g. a manager) could mint an
 #: admin and take the org over.
@@ -378,15 +379,21 @@ async def alterar_role_membro(
 ):
     """Change a member's role within the organization.
 
-    Cannot promote to owner. An owner's role only by platform staff (D2); the LAST owner is
-    never demoted except by the NoctusAI owner (SQL).
+    Granting ``owner`` only by platform staff (owner decision P1, 2026-10-14: 403
+    ``owner_grant_forbidden`` for anyone else -- also decided in SQL from the actor). An owner's
+    role only by platform staff (D2); the LAST owner is never demoted except by the NoctusAI owner
+    (SQL).
     """
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
     profile, org_id, staff = await _team_scope(user, db, org_id, "team:manage")
 
-    _require_can_grant(profile, body.role)
+    if body.role == "owner":
+        if staff is None:
+            raise team_memberships.refusal("owner_grant_forbidden")
+    else:
+        _require_can_grant(profile, body.role)
 
     # Cannot change your own role
     if user_id == user.id:
@@ -401,13 +408,6 @@ async def alterar_role_membro(
     )
     if not role_check.data:
         raise HTTPException(status_code=400, detail="Papel inválido")
-
-    # Cannot promote to owner
-    if body.role == "owner":
-        raise HTTPException(
-            status_code=403,
-            detail="Não é possível promover a proprietário por esta rota",
-        )
 
     # The target is an ACTIVE MEMBERSHIP of this org (their profile may point at another org).
     target_membership = team_memberships.get_membership(db, org_id, user_id)
@@ -596,14 +596,17 @@ async def mover_membro(
     ``mode=transfer`` ends the source membership (the last-owner rule applies; only the NoctusAI
     owner may override it), ``mode=add`` keeps it. Platform staff may move anyone between any
     orgs; an org owner/admin only between orgs where they are owner/admin in BOTH. ``role`` (in
-    the target) is never above the actor's own role there. All of it is decided in ONE SQL
-    transaction (``team_member_move``) -- this route authenticates, validates the role exists
-    and maps the refusals."""
+    the target) is never above the actor's own role there, and ``owner`` only by platform staff
+    (owner decision P1, 2026-10-14: 403 ``owner_grant_forbidden``). All of it is decided in ONE
+    SQL transaction (``team_member_move``) -- this route authenticates, validates the role exists,
+    refuses a non-staff owner grant early and maps the refusals."""
     user, _token = await get_current_user(authorization)
     db = get_admin_client()
 
     if not db.table("roles").select("id").eq("slug", body.role).execute().data:
         raise HTTPException(status_code=400, detail="Papel inválido")
+    if body.role == "owner" and platform_staff_role(db, user.id) is None:
+        raise team_memberships.refusal("owner_grant_forbidden")
 
     user_id, source, target = str(body.user_id), str(body.source_org_id), str(body.target_org_id)
     outcome = team_memberships.move_member(
@@ -646,19 +649,24 @@ async def listar_acesso_produtos(
     authorization: Optional[str] = Header(None),
     org_id: Optional[str] = Query(None),
 ):
-    """The member's access to every product the org is licensed for (D5). Readable by whoever
-    may change it: platform staff, or an ACTIVE owner/admin of the org."""
+    """The member's access to every product the org is licensed for (D5). Readable by platform
+    staff and the org's ACTIVE owner/admin; CHANGEABLE only by staff and the org's owner (owner
+    decision P5, 2026-10-14) -- ``can_edit`` says which. ``target_is_staff``: NoctusAI staff can
+    never be blocked (P3), so the UI offers no switch for them."""
     user, _token = await get_current_user(authorization)
     db = get_admin_client()
     profile = await _get_user_profile(db, user.id)
     org_id = str(org_id or profile["org_id"])
-    if team_memberships.manager_role(db, user.id, org_id) is None:
+    manager = team_memberships.manager_role(db, user.id, org_id)
+    if manager is None:
         raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
     membership = team_memberships.get_membership(db, org_id, user_id)
     if not membership or membership.get("status") != "active":
         raise HTTPException(status_code=404, detail="Membro não encontrado")
     return {"data": {
         "user_id": user_id, "org_id": org_id,
+        "can_edit": manager == "owner",
+        "target_is_staff": platform_staff_role(db, user_id) is not None,
         "products": team_memberships.member_product_access(db, org_id, user_id),
     }}
 
@@ -674,11 +682,17 @@ async def alterar_acesso_produto(
     """Block (``blocked=true``) or unblock a member's access to a product inside the org (D5).
     Blocked => that org is not an eligible choice for them in the product, SSO does not admit
     through it, the resolver/RLS never resolve to it and the dashboard does not offer it there.
-    Authority (platform staff or the org's owner/admin) is decided in SQL."""
+    Authority: platform staff or the org's OWNER only (owner decision P5, 2026-10-14 -- an org
+    admin is 403 ``forbidden``); NoctusAI staff are never blocked (P3, 409
+    ``cannot_block_staff``). Both are decided in SQL; this route answers them early."""
     user, _token = await get_current_user(authorization)
     db = get_admin_client()
     profile = await _get_user_profile(db, user.id)
     org_id = str(org_id or profile["org_id"])
+    if team_memberships.manager_role(db, user.id, org_id) != "owner":
+        raise team_memberships.refusal("forbidden")
+    if body.blocked and platform_staff_role(db, user_id) is not None:
+        raise team_memberships.refusal("cannot_block_staff")
     outcome = team_memberships.set_product_access(
         db, actor_id=user.id, org_id=org_id, user_id=user_id, product_slug=product_slug,
         blocked=body.blocked,

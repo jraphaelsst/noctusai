@@ -57,6 +57,8 @@ export function TeamManagement() {
   const invitations = invitesQ.data ?? [];
   const roles = rolesQ.data ?? [];
   const assignableRoles = roles.filter((r) => r.slug !== 'owner');
+  // Row role selector: `owner` is offered to platform staff only (owner decision P1, 2026-10-14).
+  const rowRoles = staff ? roles : assignableRoles;
   const showMembersSkeleton = (membersQ.isPending && !membersQ.data) || orgId === null;
   const membersRefreshing = membersQ.isFetching && !!membersQ.data;
 
@@ -220,7 +222,7 @@ export function TeamManagement() {
                             value={member.org_role || 'member'}
                             onChange={(e) => void handleRoleChange(member.id, e.target.value)}
                           >
-                            {assignableRoles.map((role) => (
+                            {rowRoles.map((role) => (
                               <option key={role.slug} value={role.slug}>{role.name}</option>
                             ))}
                           </Select>
@@ -396,6 +398,7 @@ export function TeamManagement() {
           sourceOrg={currentOrg}
           targets={moveTargets}
           roles={roles}
+          staff={staff}
           onClose={() => setMoving(null)}
         />
       )}

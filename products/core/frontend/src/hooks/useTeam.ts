@@ -52,6 +52,15 @@ export interface MemberProductAccess {
   blocked_by: string | null;
 }
 
+/** `GET /api/team/{user_id}/product-access` → `data` (D5 + owner decisions P3/P5). */
+export interface MemberProductAccessData {
+  products: MemberProductAccess[];
+  /** The viewer may block/unblock here: the org's OWNER or platform staff (P5). Admins read only. */
+  can_edit: boolean;
+  /** The member is NoctusAI staff: never blockable (P3). */
+  target_is_staff: boolean;
+}
+
 export type MoveMode = 'transfer' | 'add';
 
 export interface MoveMemberInput {
@@ -206,11 +215,19 @@ export function useMoveMember() {
 
 /** `GET /api/team/{user_id}/product-access?org_id=` (D5). */
 export function useMemberProductAccess(orgId: string | null, userId: string | null) {
-  return useQuery<MemberProductAccess[]>({
+  return useQuery<MemberProductAccessData>({
     queryKey: teamKeys.productAccess(orgId ?? '', userId ?? ''),
-    queryFn: async () => (await api.get<{ data: { products: MemberProductAccess[] } }>(
-      `/api/team/${userId}/product-access${qs(orgId!)}`,
-    )).data?.products ?? [],
+    queryFn: async () => {
+      const d = (await api.get<{ data: Partial<MemberProductAccessData> }>(
+        `/api/team/${userId}/product-access${qs(orgId!)}`,
+      )).data;
+      // A backend without P5 sends no `can_edit`: read-only is the safe reading (the server decides).
+      return {
+        products: d?.products ?? [],
+        can_edit: d?.can_edit === true,
+        target_is_staff: d?.target_is_staff === true,
+      };
+    },
     enabled: !!orgId && !!userId,
     retry: false,
   });
