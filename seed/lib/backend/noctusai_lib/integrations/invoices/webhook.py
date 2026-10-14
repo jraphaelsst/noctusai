@@ -16,11 +16,16 @@ import json
 from typing import Callable, Mapping, Optional
 
 from .errors import InvoiceProviderError, InvoiceWebhookAuthError
+from .refs import _REF
 from .scrub import scrub
 from .types import InvoiceEvent, InvoiceKind, InvoiceStatus
 
 #: Header the Focus gatilho is registered with (`authorization_header`).
 WEBHOOK_TOKEN_HEADER = "X-Invoice-Webhook-Token"
+
+
+def _REF_OK(value: str) -> bool:
+    return bool(_REF.match(value))
 
 
 def _header(headers: Mapping[str, str], name: str) -> str:
@@ -58,6 +63,8 @@ def parse_webhook_event(
     except (ValueError, UnicodeDecodeError):
         data = None  # a JSON error message quotes body text: never chain it
     if not isinstance(data, dict) or not data.get("ref"):
+        raise InvoiceProviderError(provider, "webhook invalido", code="webhook_invalido")
+    if not _REF_OK(str(data["ref"])):
         raise InvoiceProviderError(provider, "webhook invalido", code="webhook_invalido")
     kind: Optional[InvoiceKind] = None
     if "chave_nfe" in data or "cnpj_emitente" in data:

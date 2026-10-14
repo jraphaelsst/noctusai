@@ -30,7 +30,7 @@ def test_satisfies_protocol():
 def test_round_trip_company_cert_issue_authorized_cancel(pfx_bundle):
     fake = FakeInvoiceProvider()
     company = _ready(fake, pfx=pfx_bundle[0])
-    assert company.company_token and company.nfse_mode is NfseMode.NACIONAL
+    assert company.nfse_mode is NfseMode.NACIONAL
     info = fake.upload_certificate(company.ref, pfx=pfx_bundle[0], password=PFX_PASSWORD)
     assert info.subject_cnpj == CNPJ
 

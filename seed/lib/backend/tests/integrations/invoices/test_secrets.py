@@ -22,7 +22,19 @@ from noctusai_lib.integrations.rate_limit import VirtualClock
 
 
 def _secrets(pfx: bytes) -> list[str]:
-    return [ACCOUNT_TOKEN, COMPANY_TOKEN, PFX_PASSWORD, base64.b64encode(pfx).decode(), pfx.hex()]
+    b64 = base64.b64encode(pfx).decode()
+    basic = [base64.b64encode(f"{t}:".encode()).decode() for t in (ACCOUNT_TOKEN, COMPANY_TOKEN)]
+    # any 32+ char window of the pfx base64 counts as a leak (a truncated echo is still one)
+    slices = [b64[i : i + 32] for i in range(0, len(b64) - 32, 16)]
+    return [ACCOUNT_TOKEN, COMPANY_TOKEN, PFX_PASSWORD, b64, pfx.hex(), *basic, *slices]
+
+
+def _exc_walk(exc):
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__ or exc.__context__
 
 
 def _exception_text(exc: BaseException) -> str:
@@ -47,6 +59,12 @@ def _echoing_transport(kind: str):
             return httpx.Response(500, text=echo)
         if kind == "400":
             return httpx.Response(400, json={"codigo": "requisicao_invalida", "mensagem": echo})
+        if kind == "decoding":
+            return httpx.Response(200, headers={"Content-Encoding": "gzip"}, content=b"not-gzip" + echo.encode())
+        if kind == "echo400":
+            return httpx.Response(
+                400, json={"codigo": "requisicao_invalida", "mensagem": echo, "erros": [{"mensagem": echo}]}
+            )
         if kind == "garbage":
             return httpx.Response(200, text=echo)
         return httpx.Response(200, json=COMPANY_BODY_NACIONAL)
@@ -54,7 +72,7 @@ def _echoing_transport(kind: str):
     return httpx.MockTransport(handler)
 
 
-@pytest.mark.parametrize("kind", ["timeout", "network", "500", "400", "garbage"])
+@pytest.mark.parametrize("kind", ["timeout", "network", "500", "400", "garbage", "decoding", "echo400"])
 def test_no_secret_in_logs_or_exceptions_on_any_failure(kind, pfx_bundle, caplog):
     pfx, _ = pfx_bundle
     focus = FocusNFeInvoiceProvider(
@@ -77,6 +95,8 @@ def test_no_secret_in_logs_or_exceptions_on_any_failure(kind, pfx_bundle, caplog
             text = _exception_text(exc)
             for secret in _secrets(pfx):
                 assert secret not in text
+            # no raw httpx exception (it carries .request.headers) anywhere in the chain
+            assert not any(isinstance(e, httpx.HTTPError) for e in _exc_walk(exc))
     assert raised >= 2
     logged = " ".join(r.getMessage() + repr(r.args) + str(r.exc_text) for r in caplog.records)
     for secret in _secrets(pfx):

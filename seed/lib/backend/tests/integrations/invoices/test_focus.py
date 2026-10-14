@@ -115,7 +115,8 @@ def test_company_flags_mutual_exclusion():
 
 def test_ensure_company_creates_with_nacional_flags(make_focus, stub):
     stub.routes[("POST", "/v2/empresas")] = (201, COMPANY_BODY_NACIONAL)
-    company = make_focus().ensure_company(
+    sunk = []
+    company = make_focus(token_sink=lambda ref, cnpj, tok: sunk.append((ref, cnpj, tok))).ensure_company(
         CompanyRequest(
             cnpj=CNPJ, legal_name="Loja", tax_regime="simples", enable_nfe=True,
             inscricao_municipal="123456", address=Address(street="Rua A", city="SP", state="SP", zip_code="01234567"),
@@ -126,7 +127,8 @@ def test_ensure_company_creates_with_nacional_flags(make_focus, stub):
     assert sent["habilita_nfsen_producao"] is False and sent["habilita_nfe"] is True
     assert sent["regime_tributario"] == 1 and sent["nome"] == "Loja" and sent["logradouro"] == "Rua A"
     assert stub.requests[0].headers["Authorization"] == basic(ACCOUNT_TOKEN)
-    assert (company.ref, company.nfse_mode, company.company_token) == ("123", NfseMode.NACIONAL, COMPANY_TOKEN)
+    assert (company.ref, company.nfse_mode) == ("123", NfseMode.NACIONAL)
+    assert sunk == [("123", CNPJ, COMPANY_TOKEN)]  # configured env's token, via the sink only
     assert "tok-prod-SECRET" not in repr(company) and COMPANY_TOKEN not in repr(company)
 
 
@@ -144,8 +146,11 @@ def test_ensure_company_updates_existing_with_put(make_focus, stub):
 def test_ensure_company_token_uses_configured_environment(make_focus, stub):
     body = {**COMPANY_BODY_NACIONAL, "habilita_nfsen_producao": True, "habilita_nfsen_homologacao": False}
     stub.routes[("POST", "/v2/empresas")] = (201, body)
-    company = make_focus(environment=InvoiceEnvironment.PRODUCAO).ensure_company(CompanyRequest(cnpj=CNPJ, legal_name="L"))
-    assert company.company_token == "tok-prod-SECRET"
+    sunk = []
+    make_focus(environment=InvoiceEnvironment.PRODUCAO, token_sink=lambda r, c, t: sunk.append(t)).ensure_company(
+        CompanyRequest(cnpj=CNPJ, legal_name="L")
+    )
+    assert sunk == ["tok-prod-SECRET"]
 
 
 def test_conflicting_flags_are_an_error(make_focus, stub):
@@ -402,3 +407,74 @@ def test_fetch_document_s3_gets_no_credentials(make_focus):
     focus = FocusNFeInvoiceProvider(account_token=ACCOUNT_TOKEN, transport=httpx.MockTransport(handler))
     assert focus.fetch_document("https://focusnfe.s3.sa-east-1.amazonaws.com/arquivos/x/danfse.pdf") == b"pdf"
     assert seen["auth"] is None
+
+
+# ── security review fixes ────────────────────────────────────────────
+
+def test_provider_free_text_echoing_credentials_is_scrubbed(make_focus, stub):
+    echo = basic(ACCOUNT_TOKEN) + " " + ACCOUNT_TOKEN
+    stub.routes[("GET", "/v2/empresas")] = (400, {"codigo": "requisicao_invalida", "mensagem": echo})
+    with pytest.raises(InvoiceProviderError) as exc:
+        make_focus().verify_credentials()
+    joined = " ".join(exc.value.reasons)
+    assert ACCOUNT_TOKEN not in joined and base64.b64encode(f"{ACCOUNT_TOKEN}:".encode()).decode() not in joined
+
+
+def test_company_token_echo_in_cancel_refusal_is_scrubbed(make_focus, stub):
+    b64 = base64.b64encode(f"{COMPANY_TOKEN}:".encode()).decode()
+    stub.routes[("GET", "/v2/nfse/r")] = (200, {**NFSE_AUTHORIZED, "ref": "r"})
+    stub.routes[("DELETE", "/v2/nfse/r")] = (200, {"status": "erro_cancelamento", "erros": [{"mensagem": f"Basic {b64}"}]})
+    with pytest.raises(InvoiceProviderError) as exc:
+        make_focus().cancel(InvoiceKind.NFSE, "r", reason="Cancelamento a pedido do cliente")
+    assert b64 not in " ".join(exc.value.reasons)
+
+
+def test_upload_failure_drops_provider_free_text(make_focus, stub, pfx_bundle):
+    pfx, _ = pfx_bundle
+    stub.routes[("PUT", "/v2/empresas/123")] = (400, {"codigo": "requisicao_invalida", "mensagem": base64.b64encode(pfx).decode()[:200]})
+    with pytest.raises(InvoiceProviderError) as exc:
+        make_focus().upload_certificate("123", pfx=pfx, password=PFX_PASSWORD)
+    assert exc.value.reasons == [] and exc.value.code == "erro_provedor"
+
+
+def test_upload_enforces_cnpj_size_and_password_in_the_organ(make_focus, stub, pfx_bundle):
+    from noctusai_lib.integrations.invoices import InvoiceCertificateError
+    from noctusai_lib.integrations.invoices.errors import InvoiceCertificateCnpjMismatch
+
+    pfx, _ = pfx_bundle
+    focus = make_focus()
+    with pytest.raises(InvoiceCertificateCnpjMismatch) as exc:
+        focus.upload_certificate("123", pfx=pfx, password=PFX_PASSWORD, expected_cnpj="99999999000199")
+    assert exc.value.code == "certificado_cnpj_divergente"
+    with pytest.raises(InvoiceCertificateError):
+        focus.upload_certificate("123", pfx=b"x" * (64 * 1024 + 1), password="p")
+    with pytest.raises(InvoiceCertificateError):
+        focus.upload_certificate("123", pfx=pfx, password="p" * 129)
+    assert stub.requests == []
+
+
+@pytest.mark.parametrize("bad", ["../etc", "a/b", "a b", "", "x" * 65, "r?x=1", "r\n"])
+def test_refs_are_validated_before_paths(make_focus, stub, bad):
+    focus = make_focus()
+    for call in (
+        lambda: focus.get(InvoiceKind.NFE, bad),
+        lambda: focus.cancel(InvoiceKind.NFSE, bad, reason="Cancelamento a pedido do cliente"),
+        lambda: focus.set_nfse_mode(bad, NfseMode.NACIONAL),
+    ):
+        with pytest.raises(InvoiceProviderError) as exc:
+            call()
+        assert exc.value.code == "ref_invalido"
+    assert stub.requests == []
+
+
+def test_fetch_document_stream_cap_and_presigned_url_not_in_error(make_focus, stub):
+    from noctusai_lib.integrations.invoices import focus as focus_mod
+
+    big = b"x" * (focus_mod._MAX_DOCUMENT_BYTES + 1)
+    stub.routes[("GET", "/arquivos/big.pdf")] = (200, big)
+    with pytest.raises(InvoiceProviderError) as exc:
+        make_focus().fetch_document("/arquivos/big.pdf")
+    assert exc.value.code == "documento_grande"
+    with pytest.raises(InvoiceNotFound) as nf:
+        make_focus().fetch_document("https://focusnfe.s3.sa-east-1.amazonaws.com/a/gone.pdf?X-Amz-Signature=SIG")
+    assert "SIG" not in nf.value.ref and "SIG" not in str(nf.value)

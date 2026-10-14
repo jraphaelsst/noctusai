@@ -7,10 +7,11 @@ scriptable rejection, idempotent issue on `ref`, cancel rules.
 """
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 from .certificate import inspect_pkcs12
 from .errors import InvoiceNotFound, InvoiceProviderError
+from .refs import validate_ref
 from .types import (
     CertificateInfo,
     CompanyRequest,
@@ -41,7 +42,9 @@ class FakeInvoiceProvider:
         *,
         auto_authorize: bool = True,
         require_certificate: bool = True,
+        token_sink: Optional[Callable[[str, str, str], None]] = None,
     ) -> None:
+        self._token_sink = token_sink
         self._auto_authorize = auto_authorize
         self._require_certificate = require_certificate
         self._companies: dict[str, ProviderCompany] = {}
@@ -86,7 +89,6 @@ class FakeInvoiceProvider:
             nfse_mode=mode,
             nfe_enabled=nfe,
             nfse_enabled=True,
-            company_token=f"fake-token-{ref}",
         )
 
     def ensure_company(self, request: CompanyRequest) -> ProviderCompany:
@@ -96,6 +98,8 @@ class FakeInvoiceProvider:
         if old is not None and old.cnpj != request.cnpj:
             self._certs.pop(ref, None)  # a CNPJ change invalidates the certificate
         self._companies[ref] = company
+        if self._token_sink is not None:
+            self._token_sink(ref, request.cnpj, f"fake-token-{ref}")
         return company
 
     def _company(self, ref: str) -> ProviderCompany:
@@ -107,10 +111,16 @@ class FakeInvoiceProvider:
             ) from None
 
     def upload_certificate(
-        self, company_ref: str, *, pfx: bytes, password: str
+        self,
+        company_ref: str,
+        *,
+        pfx: bytes,
+        password: str,
+        expected_cnpj: Optional[str] = None,
     ) -> CertificateInfo:
+        validate_ref(company_ref, "fake")
         self._company(company_ref)
-        info = self._scripted_cert or inspect_pkcs12(pfx, password)
+        info = self._scripted_cert or inspect_pkcs12(pfx, password, expected_cnpj=expected_cnpj)
         self._certs[company_ref] = info
         return info
 
@@ -143,6 +153,7 @@ class FakeInvoiceProvider:
         )
 
     def issue(self, request: InvoiceRequest) -> InvoiceResult:
+        validate_ref(request.ref, "fake")
         key = (request.kind.value, request.ref)
         if key in self._docs:  # idempotent on ref
             return self._docs[key]

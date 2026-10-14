@@ -46,6 +46,7 @@ from noctusai_lib.integrations.rate_limit import Clock, paced_call, parse_retry_
 
 from .certificate import inspect_pkcs12
 from .errors import InvoiceNotFound, InvoiceProviderError
+from .refs import validate_ref
 from .scrub import scrub
 from .types import (
     CertificateInfo,
@@ -147,6 +148,7 @@ class FocusNFeInvoiceProvider:
         environment: InvoiceEnvironment = InvoiceEnvironment.HOMOLOGACAO,
         company_tokens: Optional[Callable[[str], Optional[str]]] = None,
         default_company_token: Optional[str] = None,
+        token_sink: Optional[Callable[[str, str, str], None]] = None,
         nfe_item_tax_defaults: Optional[dict[str, Any]] = None,
         timeout_seconds: float = 30.0,
         transport: Optional[httpx.BaseTransport] = None,
@@ -158,6 +160,14 @@ class FocusNFeInvoiceProvider:
         self._environment = environment
         self._company_tokens = company_tokens
         self._default_company_token = default_company_token
+        #: `(company_ref, cnpj, token)` receiver for per-company tokens returned by
+        #: Focus (`CompanyTokenStore.sink_for(org_id)`); None => tokens are dropped.
+        self._token_sink = token_sink
+        #: Every credential this instance has sent (token + its Basic b64 form):
+        #: scrubbed out of anything derived from a provider response.
+        self._known_secrets: set[str] = set()
+        self._remember(account_token)
+        self._remember(default_company_token)
         self._nfe_tax = dict(DEFAULT_NFE_ITEM_TAX, **(nfe_item_tax_defaults or {}))
         self._base_url = BASE_URLS[environment]
         self._clock = clock
@@ -171,6 +181,21 @@ class FocusNFeInvoiceProvider:
 
     def close(self) -> None:
         self._client.close()
+
+    def _remember(self, token: Optional[str]) -> None:
+        if token:
+            self._known_secrets.add(token)
+            self._known_secrets.add(base64.b64encode(f"{token}:".encode()).decode())
+
+    def _secret_list(self) -> tuple[str, ...]:
+        return tuple(sorted(self._known_secrets, key=len, reverse=True))
+
+    def _clean(self, text: str) -> str:
+        """Provider free text with every known credential removed, THEN capped."""
+        for secret in self._secret_list():
+            if secret in text:
+                text = text.replace(secret, "[redacted]")
+        return text[:300]
 
     def __repr__(self) -> str:  # never include tokens
         return f"FocusNFeInvoiceProvider(environment={self._environment.value!r})"
@@ -186,6 +211,8 @@ class FocusNFeInvoiceProvider:
         json: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
     ) -> tuple[int, dict[str, Any]]:
+        self._remember(token)
+
         def _once() -> tuple[int, dict[str, Any]]:
             # Raise OUTSIDE the `except` so no httpx exception (whose text can echo
             # headers/body) is left on the new error's __context__ chain.
@@ -197,7 +224,9 @@ class FocusNFeInvoiceProvider:
                 )
             except httpx.TimeoutException:
                 failure = "timeout"
-            except httpx.TransportError:
+            except (httpx.HTTPError, httpx.InvalidURL):
+                # DecodingError / TooManyRedirects / InvalidURL ... carry the request
+                # (and its Authorization header): map to one generic error.
                 failure = "transporte"
             if failure == "timeout":
                 raise InvoiceProviderError(
@@ -241,19 +270,18 @@ class FocusNFeInvoiceProvider:
 
     # ── error mapping (generic by construction) ──────────────────────
 
-    @staticmethod
-    def _reasons(body: dict[str, Any]) -> list[str]:
+    def _reasons(self, body: dict[str, Any]) -> list[str]:
         reasons: list[str] = []
         for err in body.get("erros") or []:
             if isinstance(err, dict) and err.get("mensagem"):
                 text = str(err["mensagem"])
                 if err.get("correcao"):
                     text = f"{text} ({err['correcao']})"
-                reasons.append(text[:300])
+                reasons.append(self._clean(text))
         if not reasons:
             for key in ("mensagem_sefaz", "mensagem"):
                 if body.get(key):
-                    reasons.append(str(body[key])[:300])
+                    reasons.append(self._clean(str(body[key])))
                     break
         return reasons
 
@@ -280,6 +308,8 @@ class FocusNFeInvoiceProvider:
 
     def _company_token(self, company_ref: Optional[str]) -> str:
         token: Optional[str] = None
+        if company_ref:
+            validate_ref(company_ref)
         if company_ref and self._company_tokens is not None:
             token = self._company_tokens(company_ref)
         token = token or self._default_company_token
@@ -315,23 +345,32 @@ class FocusNFeInvoiceProvider:
         mode = NfseMode.NACIONAL if nacional else NfseMode.MUNICIPAL if municipal else (
             fallback_mode or NfseMode.MUNICIPAL
         )
-        token = body.get("token_producao" if prod else "token_homologacao")
         return ProviderCompany(
             ref=str(body["id"]),
             cnpj=str(body.get("cnpj") or ""),
             nfse_mode=mode,
             nfe_enabled=bool(body.get("habilita_nfe")),
             nfse_enabled=municipal or nacional,
-            company_token=str(token) if token else None,
         )
 
+    def _deliver_token(self, body: dict[str, Any], company: ProviderCompany) -> None:
+        """Hand the CONFIGURED environment's token straight to the sink."""
+        prod = self._environment is InvoiceEnvironment.PRODUCAO
+        token = body.get("token_producao" if prod else "token_homologacao")
+        if token and self._token_sink is not None:
+            self._remember(str(token))
+            self._token_sink(company.ref, company.cnpj, str(token))
+
     def _get_company_body(self, company_ref: str) -> dict[str, Any]:
+        validate_ref(company_ref)
         status, body = self._send("GET", f"/v2/empresas/{company_ref}", token=self._account_token)
         if status >= 400:
             raise self._raise(status, body, ref=company_ref)
         return body
 
     def ensure_company(self, request: CompanyRequest) -> ProviderCompany:
+        if request.company_ref:
+            validate_ref(request.company_ref)
         a = request.address
         payload = _compact(
             {
@@ -364,12 +403,21 @@ class FocusNFeInvoiceProvider:
             raise self._raise(status, body, ref=request.company_ref or "")
         if body.get("id") is None and request.company_ref:
             body = {**self._get_company_body(request.company_ref), **body}
-        return self._company_from_body(body, request.nfse_mode)
+        company = self._company_from_body(body, request.nfse_mode)
+        self._deliver_token(body, company)
+        return company
 
     def upload_certificate(
-        self, company_ref: str, *, pfx: bytes, password: str
+        self,
+        company_ref: str,
+        *,
+        pfx: bytes,
+        password: str,
+        expected_cnpj: Optional[str] = None,
     ) -> CertificateInfo:
-        info = inspect_pkcs12(pfx, password)  # fails generically BEFORE any send
+        validate_ref(company_ref)
+        # Size/password limits, key presence and CNPJ match: all BEFORE any send.
+        info = inspect_pkcs12(pfx, password, expected_cnpj=expected_cnpj)
         payload: Optional[dict[str, Any]] = {
             "arquivo_certificado_base64": base64.b64encode(pfx).decode("ascii"),
             "senha_certificado": password,
@@ -383,10 +431,13 @@ class FocusNFeInvoiceProvider:
         finally:
             payload = None  # drop the only copy of the secret payload
         if status >= 400:
-            raise self._raise(status, body, ref=company_ref)
+            # Provider free text is DROPPED on this path: the request carried the
+            # certificate and password, and a 4xx may echo them.
+            raise self._raise(status, {}, ref=company_ref)
         return info
 
     def set_nfse_mode(self, company_ref: str, mode: NfseMode) -> ProviderCompany:
+        validate_ref(company_ref)
         flags = company_flags(mode, self._environment, enable_nfe=False)
         flags.pop("habilita_nfe")  # leave the NF-e switch untouched
         status, body = self._send(
@@ -429,11 +480,12 @@ class FocusNFeInvoiceProvider:
             pdf_url=self._absolute(pdf),
             xml_url=self._absolute(body.get("caminho_xml_nota_fiscal")),
             rejection_reasons=self._reasons(body) if status is InvoiceStatus.REJECTED else [],
-            raw=scrub(body, extra_secrets=(self._account_token, self._default_company_token or "")),
+            raw=scrub(body, extra_secrets=self._secret_list()),
         )
 
     @staticmethod
     def _paths(kind: InvoiceKind, ref: str) -> list[str]:
+        validate_ref(ref)
         if kind is InvoiceKind.NFE:
             return [f"/v2/nfe/{ref}"]
         # A store can cut over municipal -> nacional AFTER issuing, so a lookup
@@ -499,6 +551,8 @@ class FocusNFeInvoiceProvider:
     # ── issue ────────────────────────────────────────────────────────
 
     def issue(self, request: InvoiceRequest) -> InvoiceResult:
+        validate_ref(request.ref)
+        validate_ref(request.company_ref)
         token = self._company_token(request.company_ref)
         company = self._get_company_body(request.company_ref)
         mode = self._company_from_body(company, None).nfse_mode
@@ -524,7 +578,7 @@ class FocusNFeInvoiceProvider:
                 kind=request.kind,
                 status=InvoiceStatus.REJECTED,
                 rejection_reasons=self._reasons(body) or ["rejeitada pelo provedor"],
-                raw=scrub(body),
+                raw=scrub(body, extra_secrets=self._secret_list()),
             )
         raise self._raise(status, body, ref=request.ref)
 
@@ -679,22 +733,36 @@ class FocusNFeInvoiceProvider:
             raise InvoiceProviderError(PROVIDER, "url de documento nao permitida", code="url_nao_permitida")
         # Credentials only ever go to Focus's own hosts, never S3 / the national portal.
         auth = httpx.BasicAuth(self._account_token, "") if host in _FOCUS_HOSTS else None
-        response: Optional[httpx.Response] = None
+        failed = False
+        too_big = False
+        status = 0
+        chunks: list[bytes] = []
         try:
-            response = self._client.get(absolute, auth=auth, follow_redirects=False)
-        except httpx.HTTPError:
-            response = None
-        if response is None:
+            with self._client.stream("GET", absolute, auth=auth, follow_redirects=False) as resp:
+                status = resp.status_code
+                if status < 400:
+                    size = 0
+                    for chunk in resp.iter_bytes():
+                        size += len(chunk)
+                        if size > _MAX_DOCUMENT_BYTES:
+                            too_big = True  # abort the stream: never buffer past the cap
+                            break
+                        chunks.append(chunk)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            failed = True
+        if failed:
             raise InvoiceProviderError(
                 PROVIDER, "falha ao baixar documento", code="transporte", retryable=True
             )
-        if response.status_code == 404:
-            raise InvoiceNotFound(PROVIDER, absolute)
-        if response.status_code >= 400:
-            raise self._raise(response.status_code, {}, ref=absolute)
-        if len(response.content) > _MAX_DOCUMENT_BYTES:
+        # The URL can be presigned: never keep query/host in an error.
+        safe_ref = parsed.path
+        if status == 404:
+            raise InvoiceNotFound(PROVIDER, safe_ref)
+        if status >= 400:
+            raise self._raise(status, {}, ref=safe_ref)
+        if too_big:
             raise InvoiceProviderError(PROVIDER, "documento excede o limite", code="documento_grande")
-        return response.content
+        return b"".join(chunks)
 
     def parse_webhook(
         self, headers: Mapping[str, str], body: bytes, *, token: Optional[str]

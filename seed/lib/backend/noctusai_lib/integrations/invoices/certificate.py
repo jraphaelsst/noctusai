@@ -1,7 +1,9 @@
 """Local A1 (PKCS#12) inspection - run BEFORE a certificate is forwarded.
 
 Reads the expiry and the e-CNPJ's CNPJ so a store cannot upload a certificate
-that belongs to another company. The `.pfx` bytes and password live only for
+that belongs to another company. This is MISTAKE-PROOFING, not authentication:
+there is NO ICP-Brasil chain validation here (a forged certificate with the right
+OID passes); SEFAZ / the prefeitura reject a bad signature at issue time. The `.pfx` bytes and password live only for
 this call; nothing is logged, stored or placed in an exception (one generic
 `InvoiceCertificateError` covers a corrupt file AND a wrong password).
 
@@ -19,7 +21,7 @@ from typing import Optional
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import pkcs12
 
-from .errors import InvoiceCertificateError
+from .errors import InvoiceCertificateCnpjMismatch, InvoiceCertificateError
 from .types import CertificateInfo
 
 #: ICP-Brasil: CNPJ of the legal entity (e-CNPJ).
@@ -41,17 +43,20 @@ def _der_string_value(der: bytes) -> str:
     return der[offset : offset + length].decode("utf-8", errors="ignore")
 
 
-def _cnpj_from_san(cert: x509.Certificate) -> Optional[str]:
+def _cnpj_from_san(cert: x509.Certificate) -> tuple[bool, Optional[str]]:
+    """(oid_present, cnpj). When the ICP-Brasil OID is present it is the ONLY source."""
     try:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
     except x509.ExtensionNotFound:
-        return None
+        return False, None
+    present = False
     for name in san.value:
         if isinstance(name, x509.OtherName) and name.type_id == OID_ICP_BRASIL_CNPJ:
+            present = True
             found = _DIGITS14.search(_der_string_value(name.value))
             if found:
-                return found.group(1)
-    return None
+                return True, found.group(1)
+    return present, None
 
 
 def _cnpj_from_subject_cn(cert: x509.Certificate) -> Optional[str]:
@@ -69,22 +74,37 @@ def _not_after(cert: x509.Certificate) -> datetime.datetime:
     return cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)  # pragma: no cover
 
 
-def inspect_pkcs12(pfx: bytes, password: str) -> CertificateInfo:
+MAX_PFX_BYTES = 64 * 1024
+MAX_PASSWORD_CHARS = 128
+
+
+def inspect_pkcs12(
+    pfx: bytes, password: str, *, expected_cnpj: Optional[str] = None
+) -> CertificateInfo:
     """Open `pfx` locally and return expiry + CNPJ.
 
-    Raises `InvoiceCertificateError` (generic) for a corrupt file, a wrong
-    password or a bundle with no certificate.
+    Enforces <= 64 KB and a <= 128-char password, and requires a private key.
+    With `expected_cnpj`, a certificate whose CNPJ differs (or has none) raises
+    `InvoiceCertificateCnpjMismatch` before anything can be forwarded.
+
+    Raises `InvoiceCertificateError` (generic) for an oversized/corrupt file, a
+    wrong password, a bundle with no certificate or no private key.
     """
     cert = None
-    try:
-        _key, cert, _chain = pkcs12.load_key_and_certificates(
-            pfx, password.encode("utf-8") if password else None
-        )
-    except Exception:  # noqa: BLE001 - deliberately swallowed: see module doc
-        cert = None  # raised below, outside the except: no __context__ chain
-    if cert is None:
+    key = None
+    if len(pfx or b"") <= MAX_PFX_BYTES and len(password or "") <= MAX_PASSWORD_CHARS:
+        try:
+            key, cert, _chain = pkcs12.load_key_and_certificates(
+                pfx, password.encode("utf-8") if password else None
+            )
+        except Exception:  # noqa: BLE001 - deliberately swallowed: see module doc
+            cert = None  # raised below, outside the except: no __context__ chain
+    if cert is None or key is None:
         raise InvoiceCertificateError()
-    return CertificateInfo(
-        valid_until=_not_after(cert),
-        subject_cnpj=_cnpj_from_san(cert) or _cnpj_from_subject_cn(cert),
-    )
+    oid_present, san_cnpj = _cnpj_from_san(cert)
+    cnpj = san_cnpj if oid_present else _cnpj_from_subject_cn(cert)
+    if expected_cnpj is not None:
+        digits = re.sub(r"\D", "", expected_cnpj)
+        if cnpj is None or cnpj != digits:
+            raise InvoiceCertificateCnpjMismatch()
+    return CertificateInfo(valid_until=_not_after(cert), subject_cnpj=cnpj)

@@ -26,7 +26,12 @@ class InvoiceProvider(Protocol):
     def ensure_company(self, request: CompanyRequest) -> ProviderCompany: ...
 
     def upload_certificate(
-        self, company_ref: str, *, pfx: bytes, password: str
+        self,
+        company_ref: str,
+        *,
+        pfx: bytes,
+        password: str,
+        expected_cnpj: Optional[str] = None,
     ) -> CertificateInfo:
         """Forward the A1 certificate. `pfx` and `password` live only for the call."""
         ...

@@ -48,28 +48,15 @@ def _platform_credential(key: str) -> Optional[str]:
 
 def resolve_invoice_environment(
     *,
-    environment_credential: Optional[str] = None,
-    allow_production_env: Optional[bool] = None,
-    token_environment: Optional[str] = None,
     fetch_credential: Callable[[str], Optional[str]] = _platform_credential,
 ) -> InvoiceEnvironment:
-    """Apply the production guard. Explicit args win over the platform lookup
-    (tests / hosts that already resolved them)."""
-    cred = (
-        environment_credential
-        if environment_credential is not None
-        else fetch_credential(CRED_ENVIRONMENT)
-    )
-    allowed = (
-        allow_production_env
-        if allow_production_env is not None
-        else os.environ.get(ENV_ALLOW_PRODUCTION) == "1"
-    )
-    tier = (
-        token_environment
-        if token_environment is not None
-        else fetch_credential(CRED_TOKEN_ENVIRONMENT)
-    )
+    """Apply the production guard. The ONLY inputs are the platform credentials
+    (via `fetch_credential`, a seam tests replace with a dict lookup) and the real
+    process env `FOCUSNFE_ALLOW_PRODUCTION` - there is deliberately no argument
+    that can assert "production is allowed" on the caller's word."""
+    cred = fetch_credential(CRED_ENVIRONMENT)
+    allowed = os.environ.get(ENV_ALLOW_PRODUCTION) == "1"
+    tier = fetch_credential(CRED_TOKEN_ENVIRONMENT)
     wanted = (cred or "").strip().lower() or InvoiceEnvironment.HOMOLOGACAO.value
     environment = _ENV_BY_VALUE.get(wanted)
     if environment is None:
@@ -108,11 +95,9 @@ def make_invoice_provider(
     use_fake: bool = False,
     allow_fake: bool = False,
     account_token: Optional[str] = None,
-    environment_credential: Optional[str] = None,
-    allow_production_env: Optional[bool] = None,
-    token_environment: Optional[str] = None,
     company_tokens: Optional[Callable[[str], Optional[str]]] = None,
     default_company_token: Optional[str] = None,
+    token_sink: Optional[Callable[[str, str, str], None]] = None,
     transport: Optional[httpx.BaseTransport] = None,
     fetch_credential: Callable[[str], Optional[str]] = _platform_credential,
     unconfigured: Callable[[], Any] = _refuse,
@@ -126,31 +111,27 @@ def make_invoice_provider(
     branch instead.
     """
     if use_fake:
-        return FakeInvoiceProvider(**fake_kwargs)
+        return FakeInvoiceProvider(token_sink=token_sink, **fake_kwargs)
     if provider != "focusnfe":
         raise ValueError(f"make_invoice_provider: unknown provider {provider!r}")
 
     token = account_token if account_token is not None else fetch_credential(CRED_TOKEN)
 
     def _build_real() -> FocusNFeInvoiceProvider:
-        env = resolve_invoice_environment(
-            environment_credential=environment_credential,
-            allow_production_env=allow_production_env,
-            token_environment=token_environment,
-            fetch_credential=fetch_credential,
-        )
+        env = resolve_invoice_environment(fetch_credential=fetch_credential)
         return FocusNFeInvoiceProvider(
             account_token=token or "",
             environment=env,
             company_tokens=company_tokens,
             default_company_token=default_company_token,
+            token_sink=token_sink,
             transport=transport,
         )
 
     return resolve_fake_or_refuse(
         configured=bool(token),
         build_real=_build_real,
-        build_fake=lambda: FakeInvoiceProvider(**fake_kwargs),
+        build_fake=lambda: FakeInvoiceProvider(token_sink=token_sink, **fake_kwargs),
         allow_fake=allow_fake,
         unconfigured=unconfigured,
     )

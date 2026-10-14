@@ -77,9 +77,10 @@ class ProviderCompany:
     nfse_mode: NfseMode
     nfe_enabled: bool
     nfse_enabled: bool
-    #: Token for the CONFIGURED environment only. Never returned by any API,
-    #: never logged (repr=False); persist via `CompanyTokenStore`.
-    company_token: Optional[str] = field(default=None, repr=False)
+    # NO token field, deliberately: a dataclass field is reachable by asdict /
+    # pydantic / FastAPI serialization whatever its repr. The provider hands the
+    # per-company token straight to the injected `token_sink`
+    # (`CompanyTokenStore.sink_for(org_id)`), so it never rides a returned object.
 
 
 @dataclass(frozen=True)

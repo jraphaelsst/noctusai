@@ -31,3 +31,36 @@ def test_wrong_password_and_garbage_are_the_same_generic_error(pfx_bundle):
         assert pw not in str(exc.value)
         assert exc.value.__cause__ is None
     assert errors[0] == errors[1]
+
+
+def test_san_oid_wins_over_cn_when_present():
+    pfx, _ = build_pfx(cnpj=CNPJ, cn_suffix="98765432000110")
+    assert inspect_pkcs12(pfx, PFX_PASSWORD).subject_cnpj == CNPJ
+
+
+def test_expected_cnpj_mismatch_and_missing_raise(pfx_bundle):
+    from noctusai_lib.integrations.invoices.errors import InvoiceCertificateCnpjMismatch
+
+    pfx, _ = pfx_bundle
+    assert inspect_pkcs12(pfx, PFX_PASSWORD, expected_cnpj="12.345.678/0001-90").subject_cnpj == CNPJ
+    with pytest.raises(InvoiceCertificateCnpjMismatch):
+        inspect_pkcs12(pfx, PFX_PASSWORD, expected_cnpj="99999999000199")
+    nopfx, _ = build_pfx(cnpj=None)
+    with pytest.raises(InvoiceCertificateCnpjMismatch):
+        inspect_pkcs12(nopfx, PFX_PASSWORD, expected_cnpj=CNPJ)
+
+
+def test_size_password_limits_and_private_key_required(pfx_bundle):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography import x509
+
+    pfx, _ = pfx_bundle
+    with pytest.raises(InvoiceCertificateError):
+        inspect_pkcs12(b"x" * (64 * 1024 + 1), PFX_PASSWORD)
+    with pytest.raises(InvoiceCertificateError):
+        inspect_pkcs12(pfx, "p" * 129)
+    _k, cert, _ = pkcs12.load_key_and_certificates(pfx, PFX_PASSWORD.encode())
+    cert_only = pkcs12.serialize_key_and_certificates(b"t", None, cert, None, serialization.BestAvailableEncryption(b"pw"))
+    with pytest.raises(InvoiceCertificateError):
+        inspect_pkcs12(cert_only, "pw")

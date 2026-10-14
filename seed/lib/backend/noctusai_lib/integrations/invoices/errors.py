@@ -49,6 +49,15 @@ class InvoiceCertificateError(InvoiceProviderError):
         super().__init__(provider, "certificado invalido", code="certificado_invalido")
 
 
+class InvoiceCertificateCnpjMismatch(InvoiceProviderError):
+    """The certificate's CNPJ is not the company's (checked locally, before any send)."""
+
+    def __init__(self, provider: str = "local") -> None:
+        super().__init__(
+            provider, "cnpj do certificado diverge da empresa", code="certificado_cnpj_divergente"
+        )
+
+
 class InvoiceWebhookAuthError(InvoiceProviderError):
     """Webhook token missing/wrong, or no token configured (fail-closed)."""
 
