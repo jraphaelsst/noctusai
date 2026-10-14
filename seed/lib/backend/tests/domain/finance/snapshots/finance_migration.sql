@@ -300,7 +300,7 @@ CREATE POLICY "service_role_bypass" ON commerce.fin_gateway_sync FOR ALL TO serv
 CREATE OR REPLACE FUNCTION commerce.fin_settle_entry_locked(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = commerce, public
+SET search_path = pg_catalog, commerce, pg_temp
 AS $fn$
 DECLARE
     v_entry   commerce.fin_entries%ROWTYPE;
@@ -309,6 +309,12 @@ DECLARE
     v_amount  BIGINT := (p_row->>'amount_cents')::BIGINT;
     v_kind    TEXT := p_row->>'kind';
 BEGIN
+    IF v_amount IS NULL OR v_amount <= 0 THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'valor_invalido');
+    END IF;
+    IF v_kind IS NULL OR v_kind NOT IN ('payment', 'refund') THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'tipo_invalido');
+    END IF;
     SELECT * INTO v_entry FROM commerce.fin_entries WHERE id = p_entry_id AND org_id = p_org_id FOR UPDATE;
     IF NOT FOUND THEN
         RETURN jsonb_build_object('status', 'not_found');
@@ -340,7 +346,7 @@ GRANT EXECUTE ON FUNCTION commerce.fin_settle_entry_locked(UUID, UUID, JSONB) TO
 CREATE OR REPLACE FUNCTION commerce.fin_reverse_settlement_locked(p_org_id UUID, p_settlement_id UUID, p_reason TEXT, p_user UUID, p_on DATE) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = commerce, public
+SET search_path = pg_catalog, commerce, pg_temp
 AS $fn$
 DECLARE
     v_st      commerce.fin_settlements%ROWTYPE;
@@ -353,6 +359,9 @@ BEGIN
         RETURN jsonb_build_object('status', 'not_found');
     END IF;
     SELECT * INTO v_entry FROM commerce.fin_entries WHERE id = v_st.entry_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'settlement % has no entry in org %', p_settlement_id, p_org_id USING ERRCODE = 'P0002';
+    END IF;
     SELECT * INTO v_st FROM commerce.fin_settlements WHERE id = p_settlement_id;
     IF v_st.reversed_at IS NOT NULL THEN
         RETURN jsonb_build_object('status', 'already_reversed');

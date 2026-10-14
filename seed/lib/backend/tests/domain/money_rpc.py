@@ -87,6 +87,8 @@ class RpcMockClient(MockSupabaseClient):
         if not paid:
             return {"status": "refused", "code": "cobranca_nao_encontrada"}
         charge = paid[-1]
+        if int(charge["installment_count"]) > 1:
+            return {"status": "refused", "code": "estorno_parcelado_indisponivel"}
         if any(r["status"] == "requested" for r in refunds):
             return {"status": "refused", "code": "estorno_em_andamento"}
         remaining = int(charge["amount_cents"]) - sum(int(r["amount_cents"]) for r in refunds if r["status"] != "failed")
@@ -117,6 +119,11 @@ class RpcMockClient(MockSupabaseClient):
 
     def _settle(self, p: dict) -> dict:
         org, eid, row = str(p["p_org_id"]), str(p["p_entry_id"]), dict(p["p_row"])
+        amount_raw = row.get("amount_cents")
+        if amount_raw is None or int(amount_raw) <= 0:
+            return {"status": "refused", "code": "valor_invalido"}
+        if row.get("kind") not in ("payment", "refund"):
+            return {"status": "refused", "code": "tipo_invalido"}
         entry = self._one(self._fin("entries"), org_id=org, id=eid)
         if entry is None:
             return {"status": "not_found"}

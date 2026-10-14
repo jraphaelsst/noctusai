@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from html import escape
 from typing import Any, Callable, Optional
 
 from noctusai_lib.integrations.email.types import EmailSender, OutgoingEmail
@@ -27,8 +28,10 @@ from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 from . import access_links as links
 from ._common import first, now, now_iso, tbl
 from .config import CommerceConfig
+from .expiry import cancel_expired_charge
 from .fiscal_retention import purge_expired_fiscal_retention
 from .fulfillment import FulfillmentRegistry
+from .gateway import CheckoutGateway
 from .money import MoneyDeps, parse_ts
 from .order_charges import ensure_attempt_row, set_attempt_status
 from .order_state import OrderEvent
@@ -44,8 +47,9 @@ _REMINDERS = "commerce_order_reminders"
 _CUSTOMERS = "commerce_customers"
 _HOSTS = "commerce_storefront_hosts"
 
-#: The recovery link lives a week: it must outlive the reminder gap.
-RECOVERY_LINK_TTL_MINUTES = 7 * 24 * 60
+#: The recovery link opens ONE order (its page + regenerate payment) and lives 48 h: long enough for the
+#: reminder's purpose (`after_expiry` is sent 24 h after expiry), short enough to be worthless as a mailbox leak.
+RECOVERY_LINK_TTL_MINUTES = 48 * 60
 BEFORE_EXPIRY_WINDOW = timedelta(hours=24)
 AFTER_EXPIRY_DELAY = timedelta(hours=24)
 #: An `after_expiry` mail older than this is not worth sending any more.
@@ -65,8 +69,11 @@ def _scan(label: str, build: Callable[[Any], Any], db: Any) -> list[dict]:
 # ─── expiry ────────────────────────────────────────────────────────────────
 
 
-def commerce_expire_orders(db: Any, *, fulfillment: FulfillmentRegistry, at: Optional[datetime] = None) -> int:
-    """Expire every `pending_payment` order past `expires_at`. Returns how many moved."""
+def commerce_expire_orders(
+    db: Any, *, fulfillment: FulfillmentRegistry, gateway: Optional[CheckoutGateway] = None, at: Optional[datetime] = None
+) -> int:
+    """Expire every `pending_payment` order past `expires_at` and void its gateway charge (best effort; a failure is
+    recorded on the order -- see `expiry`). Returns how many moved."""
     moment = at or now()
     due = _scan(
         "commerce_expire_orders",
@@ -84,6 +91,7 @@ def commerce_expire_orders(db: Any, *, fulfillment: FulfillmentRegistry, at: Opt
         for row in ensure_attempt_row(db, org_id, order):
             if row["gateway_charge_id"] == order.get("gateway_charge_id") and row["status"] == ChargeAttemptStatus.PENDING.value:
                 set_attempt_status(db, org_id, row["id"], ChargeAttemptStatus.EXPIRED)
+                cancel_expired_charge(db, org_id, gateway, expired, {**row, "status": ChargeAttemptStatus.EXPIRED.value}, source=OrderEventSource.SYSTEM)
         try:
             fulfillment.dispatch_expired(expired, list_items(db, org_id, order["id"]))
         except Exception:  # noqa: BLE001 - the order IS expired; a hook failure is reported, not fatal
@@ -116,19 +124,23 @@ def _recently_mailed(db: Any, since: datetime) -> set[str]:
             continue
         cust = first(tbl(db, _CUSTOMERS).select("email").eq("org_id", str(rem["org_id"])).eq("id", str(order["customer_id"])).limit(1).execute())
         if cust and cust.get("email"):
-            emails.add(cust["email"])
+            emails.add(cust["email"].strip().lower())
     return emails
 
 
 def _reminder_mail(kind: ReminderKind, store: str, url: str) -> tuple[str, str, str]:
+    store = " ".join(store.split())  # one line: it goes into a header
     if kind is ReminderKind.BEFORE_EXPIRY:
         subject = f"Seu pedido em {store} expira em breve"
         intro = "O prazo de pagamento do seu pedido termina nas próximas 24 horas. Finalize o pagamento pelo link abaixo."
     else:
         subject = f"Seu pedido em {store} expirou — gere um novo pagamento"
         intro = "O prazo de pagamento do seu pedido terminou. Se ainda quiser a compra, gere um novo pagamento pelo link abaixo."
-    text = f"{intro}\n\n{url}\n\nO link vale por 7 dias. Se você não fez essa compra, ignore esta mensagem.\n\n— {store}"
-    html = f'<p>{intro}</p><p><a href="{url}">{url}</a></p><p>O link vale por 7 dias. Se você não fez essa compra, ignore esta mensagem.</p><p>— {store}</p>'
+    text = f"{intro}\n\n{url}\n\nO link vale por 48 horas e abre só este pedido. Se você não fez essa compra, ignore esta mensagem.\n\n— {store}"
+    html = (
+        f'<p>{escape(intro)}</p><p><a href="{escape(url)}">{escape(url)}</a></p>'
+        f"<p>O link vale por 48 horas e abre só este pedido. Se você não fez essa compra, ignore esta mensagem.</p><p>— {escape(store)}</p>"
+    )
     return subject, text, html
 
 
@@ -168,7 +180,7 @@ async def commerce_expiry_reminders(
         customer = first(tbl(db, _CUSTOMERS).select("*").eq("org_id", str(org_id)).eq("id", str(order["customer_id"])).limit(1).execute())
         if not customer or customer.get("anonymized_at") or not customer.get("email"):
             continue
-        if customer["email"] in mailed:
+        if customer["email"].strip().lower() in mailed:
             continue  # at most one e-mail per recipient per hour; the next tick picks this one up
         base = _store_base_url(db, org_id, bases)
         if base is None:
@@ -184,9 +196,9 @@ async def commerce_expiry_reminders(
                 continue
             raise
         token = links.sign_token(
-            link_secret, purpose=links.PURPOSE_MY_ORDERS, org_id=org_id, subject=customer["id"], ttl_minutes=RECOVERY_LINK_TTL_MINUTES, at=moment
+            link_secret, purpose=links.PURPOSE_ORDER, org_id=org_id, subject=order["id"], ttl_minutes=RECOVERY_LINK_TTL_MINUTES, at=moment
         )
-        url = base + cfg.my_orders_path_template.format(token=token)
+        url = base + cfg.order_path_template.format(token=token)
         store = (get_profile(db, org_id) or {}).get("trade_name") or "Loja"
         subject, text, html = _reminder_mail(kind, store, url)
         try:
@@ -195,7 +207,7 @@ async def commerce_expiry_reminders(
             logger.error("commerce reminders: send failed for order=%s kind=%s", order["id"], kind.value, exc_info=True)
             tbl(db, _REMINDERS).delete().eq("order_id", str(order["id"])).eq("kind", kind.value).execute()
             continue
-        mailed.add(customer["email"])
+        mailed.add(customer["email"].strip().lower())
         sent += 1
     return sent
 
@@ -241,7 +253,8 @@ def register_commerce_jobs(
     never captured, so a test's overridden client / a rotated secret is seen. Returns the job names."""
 
     async def expire() -> None:
-        commerce_expire_orders(get_db(), fulfillment=get_deps().fulfillment)
+        deps = get_deps()
+        commerce_expire_orders(get_db(), fulfillment=deps.fulfillment, gateway=deps.gateway)
 
     async def reminders() -> None:
         deps = get_deps()

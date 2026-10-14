@@ -36,7 +36,7 @@ CREATE OR REPLACE FUNCTION public.current_org_id() RETURNS uuid LANGUAGE sql STA
 _BASE = f"""
 DO $$
 DECLARE o uuid := gen_random_uuid(); c uuid := gen_random_uuid(); ord uuid := gen_random_uuid();
-        ch uuid := gen_random_uuid(); r jsonb; r2 jsonb; rid uuid;
+        ch uuid := gen_random_uuid(); r jsonb; r2 jsonb; rid uuid; n int;
         tok text := 'tok_' || gen_random_uuid()::text; gid text := 'pay_' || gen_random_uuid()::text;
 BEGIN
   INSERT INTO {SCHEMA}.commerce_customers(id,org_id,email) VALUES (c,o,'a@b.c');
@@ -77,6 +77,15 @@ SCENARIOS: dict[str, str] = {
   UPDATE {SCHEMA}.commerce_orders SET status = 'expired' WHERE id = ord;
   r := {SCHEMA}.commerce_create_refund(o, ord, 1000, 'x', NULL, NULL);
   IF r->>'code' <> 'pedido_nao_reembolsavel' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+    "an installment order cannot be refunded through the RPC either": f"""
+  UPDATE {SCHEMA}.commerce_order_charges SET installment_count = 6 WHERE id = ch;
+  r := {SCHEMA}.commerce_create_refund(o, ord, 1000, 'x', NULL, NULL);
+  IF r->>'code' <> 'estorno_parcelado_indisponivel' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+    "the refund RPC pins search_path to pg_catalog first": f"""
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+    WHERE ns.nspname = '{SCHEMA}' AND p.proname = 'commerce_create_refund' AND p.prosecdef
+      AND p.proconfig::text LIKE '%search_path=pg_catalog, {SCHEMA}, pg_temp%';
+  IF n <> 1 THEN RAISE EXCEPTION 'search_path not pinned'; END IF;""",
     "another org cannot refund this order": f"""
   r := {SCHEMA}.commerce_create_refund(gen_random_uuid(), ord, 1000, 'x', NULL, NULL);
   IF r->>'code' <> 'pedido_nao_encontrado' THEN RAISE EXCEPTION 'bad %', r; END IF;""",

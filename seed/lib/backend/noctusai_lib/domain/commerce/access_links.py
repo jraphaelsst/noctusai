@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+from html import escape as html_escape
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 PURPOSE_MY_ORDERS = "my_orders"
 PURPOSE_PRIVACY_VERIFY = "privacy_verify"
+#: One order's page + its regenerate-payment action, nothing else (the payment-recovery e-mails).
+PURPOSE_ORDER = "order"
 
 
 def _b64(raw: bytes) -> str:
@@ -97,15 +100,17 @@ async def send_link_email(
         f"{intro}\n\n{url}\n\n"
         f"Este link vale por {ttl_minutes} minutos. Se você não pediu isso, ignore esta mensagem.\n\n— {store_name}"
     )
+    e = html_escape
     html = (
-        f"<p>{intro}</p><p><a href=\"{url}\">{url}</a></p>"
-        f"<p>Este link vale por {ttl_minutes} minutos. Se você não pediu isso, ignore esta mensagem.</p><p>— {store_name}</p>"
+        f"<p>{e(intro)}</p><p><a href=\"{e(url)}\">{e(url)}</a></p>"
+        f"<p>Este link vale por {ttl_minutes} minutos. Se você não pediu isso, ignore esta mensagem.</p><p>— {e(store_name)}</p>"
     )
     await sender.send(OutgoingEmail(to=[to], subject=subject, html=html, text=text))
 
 
 __all__ = [
     "PURPOSE_MY_ORDERS",
+    "PURPOSE_ORDER",
     "PURPOSE_PRIVACY_VERIFY",
     "send_link_email",
     "sign_token",

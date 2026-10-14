@@ -140,7 +140,7 @@ class TestMoneyDdl:
             assert "org_id" in block
 
     def test_the_rpc_is_secdef_with_revoked_execute_and_a_pinned_search_path(self):
-        assert "SECURITY DEFINER" in self.SQL and "SET search_path = commerce, public" in self.SQL
+        assert "SECURITY DEFINER" in self.SQL and "SET search_path = pg_catalog, commerce, pg_temp" in self.SQL
         assert "REVOKE ALL ON FUNCTION commerce.commerce_create_refund(UUID, UUID, BIGINT, TEXT, UUID, TEXT) FROM PUBLIC, anon, authenticated;" in self.SQL
         assert "GRANT EXECUTE ON FUNCTION commerce.commerce_create_refund(UUID, UUID, BIGINT, TEXT, UUID, TEXT) TO service_role;" in self.SQL
         assert "FOR UPDATE" in self.SQL

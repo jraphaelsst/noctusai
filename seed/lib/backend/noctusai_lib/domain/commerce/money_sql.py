@@ -190,7 +190,7 @@ CREATE OR REPLACE FUNCTION {s}.{CREATE_REFUND_RPC}(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-{set_search_path(s)}
+SET search_path = pg_catalog, {s}, pg_temp
 AS $fn$
 DECLARE
     v_order      {s}.commerce_orders%ROWTYPE;
@@ -221,6 +221,12 @@ BEGIN
         WHERE order_id = p_order_id AND status = 'paid' ORDER BY attempt DESC LIMIT 1;
     IF NOT FOUND THEN
         RETURN jsonb_build_object('status', 'refused', 'code', 'cobranca_nao_encontrada');
+    END IF;
+
+    -- A card order paid in installments is several gateway payments; a single-parcela refund would leave it
+    -- half-refunded. Refused here as well as in Python: the RPC must not be a way around the service.
+    IF v_charge.installment_count > 1 THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'estorno_parcelado_indisponivel');
     END IF;
 
     IF EXISTS (SELECT 1 FROM {s}.commerce_refunds WHERE order_id = p_order_id AND status = 'requested') THEN

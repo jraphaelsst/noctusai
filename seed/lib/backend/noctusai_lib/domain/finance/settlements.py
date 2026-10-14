@@ -243,6 +243,10 @@ def settle_entry(s: Scope, entry_id: Any, data: Mapping[str, Any], *, user_id: O
             raise conflict(LANCAMENTO_CANCELADO, "O lançamento está cancelado.")
         if code == ESTORNO_EXCEDE_PAGO:
             raise invalid("amount_cents", "O estorno excede o valor já pago.", code=ESTORNO_EXCEDE_PAGO)
+        if code == "valor_invalido":
+            raise invalid("amount_cents", "O valor deve ser maior que zero.")
+        if code == "tipo_invalido":
+            raise invalid("kind", "Tipo de baixa inválido.")
         raise invalid("amount_cents", "O valor excede o saldo em aberto do lançamento.", code=BAIXA_EXCEDE_SALDO)
     saved = result["settlement"]
     try:

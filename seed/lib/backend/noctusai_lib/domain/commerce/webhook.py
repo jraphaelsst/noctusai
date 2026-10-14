@@ -46,6 +46,7 @@ from ._common import now_iso, tbl
 from .alerts import notify_staff
 from .customers import enrich_from_payment
 from .fiscal_retention import snapshot_fiscal_identity
+from .expiry import cancel_expired_charge
 from .money import MoneyDeps, fire_paid
 from .order_charges import (
     cancel_gateway_charge,
@@ -169,6 +170,15 @@ async def _on_paid(db: Any, org_id: Any, order: dict, event: GatewayEvent, *, de
         return IGNORED
 
     gw = _read(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
+    if kind == "installment" and (gw is None or gw.external_reference != str(order["id"])):
+        # A charge id we never stored is only a later parcela if the GATEWAY says it belongs to this order:
+        # the delivery body (static-token auth) can name any order next to any charge id.
+        logger.error("commerce webhook: charge %s claims to be a parcela of order=%s but the gateway disagrees", event.charge_id_at_gateway, order["id"])
+        await notify_staff(
+            db, org_id, deps.email, subject=f"Pagamento não identificado no pedido {short}",
+            lines=[f"Um pagamento chegou para o pedido {short} numa cobrança que o gateway não associa a ele. Confira no painel do gateway."],
+        )
+        return IGNORED
     if gw is None or gw.status not in _PAID_READS:
         logger.warning("commerce webhook: charge_paid for order=%s but the gateway read is %s; ignored", order["id"], getattr(gw, "status", None))
         return IGNORED
@@ -188,7 +198,7 @@ async def _on_paid(db: Any, org_id: Any, order: dict, event: GatewayEvent, *, de
             return IGNORED
         if status not in _UNPAID:
             return await _extra_payment(db, org_id, order, row, deps=deps)
-        order = _adopt_superseded(db, org_id, order, row, deps=deps)
+        order = await _adopt_superseded(db, org_id, order, row, deps=deps)
         row = current_attempt(ensure_attempt_row(db, org_id, order), order)
         status = order["status"]
     newly_paid = status in _UNPAID
@@ -230,7 +240,7 @@ async def _on_paid(db: Any, org_id: Any, order: dict, event: GatewayEvent, *, de
     return PROCESSED
 
 
-def _adopt_superseded(db: Any, org_id: Any, order: dict, row: dict, *, deps: MoneyDeps) -> dict:
+async def _adopt_superseded(db: Any, org_id: Any, order: dict, row: dict, *, deps: MoneyDeps) -> dict:
     """An unpaid order got paid through an OLD attempt: that attempt becomes the current one and the
     newer live charge (if any) is cancelled so the buyer cannot pay twice."""
     rows = ensure_attempt_row(db, org_id, order)
@@ -239,8 +249,16 @@ def _adopt_superseded(db: Any, org_id: Any, order: dict, row: dict, *, deps: Mon
         try:
             cancel_gateway_charge(deps.gateway, org_id, newer["gateway_charge_id"])
             set_attempt_status(db, org_id, newer["id"], ChargeAttemptStatus.CANCELLED)
-        except Exception:  # noqa: BLE001 - the payment is real; a cancel failure is reported, not fatal
+        except Exception:  # noqa: BLE001 - the payment is real; a cancel failure is reported (log + staff alert), not fatal
             logger.error("commerce webhook: could not cancel the newer charge of order=%s", order["id"], exc_info=True)
+            short = str(order["id"])[:8]
+            await notify_staff(
+                db, org_id, deps.email, subject=f"Cobrança duplicada ativa no pedido {short}",
+                lines=[
+                    f"O pedido {short} foi pago por uma tentativa anterior, mas a cobrança mais nova não pôde ser cancelada no gateway.",
+                    "Cancele-a manualmente no painel do gateway para evitar um segundo pagamento.",
+                ],
+            )
     tbl(db, "commerce_orders").update(
         {"gateway_charge_id": row["gateway_charge_id"], "checkout_url": row.get("checkout_url"), "pix_qr": row.get("pix_qr"),
          "payment_method": row["payment_method"], "updated_at": now_iso()}
@@ -319,6 +337,7 @@ def _expire(db: Any, org_id: Any, order: dict, row: Optional[dict], *, deps: Mon
     order = apply_transition(db, org_id, order, OrderEvent.EXPIRED, source=OrderEventSource.WEBHOOK, reason=reason)
     if row is not None and row["status"] == ChargeAttemptStatus.PENDING.value:
         set_attempt_status(db, org_id, row["id"], ChargeAttemptStatus.EXPIRED)
+        cancel_expired_charge(db, org_id, deps.gateway, order, {**row, "status": ChargeAttemptStatus.EXPIRED.value}, source=OrderEventSource.WEBHOOK)
     deps.fulfillment.dispatch_expired(order, list_items(db, org_id, order["id"]))
     return order
 

@@ -60,6 +60,17 @@ SCENARIOS = {
   UPDATE {SCHEMA}.fin_entries SET status = 'cancelled' WHERE id = e;
   r := {SCHEMA}.fin_settle_entry_locked(o, e, {_row('payment', 100)});
   IF r->>'code' <> 'lancamento_cancelado' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+    "a NULL amount is refused explicitly": f"""
+  r := {SCHEMA}.fin_settle_entry_locked(o, e, jsonb_build_object('kind', 'payment'));
+  IF r->>'code' <> 'valor_invalido' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+    "an unknown kind is refused explicitly": f"""
+  r := {SCHEMA}.fin_settle_entry_locked(o, e, {_row('gift', 100)});
+  IF r->>'code' <> 'tipo_invalido' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+    "the functions pin search_path to pg_catalog first": f"""
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+    WHERE ns.nspname = '{SCHEMA}' AND p.proname IN ('fin_settle_entry_locked', 'fin_reverse_settlement_locked')
+      AND p.prosecdef AND p.proconfig::text LIKE '%search_path=pg_catalog, {SCHEMA}, pg_temp%';
+  IF n <> 2 THEN RAISE EXCEPTION 'search_path not pinned on % of 2', n; END IF;""",
     "another org's entry is not found": f"""
   r := {SCHEMA}.fin_settle_entry_locked(gen_random_uuid(), e, {_row('payment', 100)});
   IF r->>'status' <> 'not_found' THEN RAISE EXCEPTION 'bad %', r; END IF;""",

@@ -130,10 +130,15 @@ def regenerate_payment(
     claimed = _claim(db, org_id, order, attempts)
     attempt_no = int(claimed["charge_attempts"])
 
-    # 1) the previous charge must be provably dead BEFORE a second one exists.
-    if current is not None and current["status"] == ChargeAttemptStatus.PENDING.value:
-        cancel_gateway_charge(gateway, org_id, current["gateway_charge_id"])
-        set_attempt_status(db, org_id, current["id"], ChargeAttemptStatus.CANCELLED)
+    # 1) EVERY earlier attempt that is not paid / cancelled must be provably dead BEFORE a second charge exists:
+    #    the gateway keeps an overdue boleto / Pix payable, so an `expired` row is still a live charge.
+    for earlier in rows:
+        if earlier["status"] in (ChargeAttemptStatus.PAID.value, ChargeAttemptStatus.CANCELLED.value):
+            continue
+        if earlier["status"] == ChargeAttemptStatus.FAILED.value:
+            continue  # a charge that never existed at the gateway
+        cancel_gateway_charge(gateway, org_id, earlier["gateway_charge_id"])  # 409 cobranca_anterior_ativa when it cannot
+        set_attempt_status(db, org_id, earlier["id"], ChargeAttemptStatus.CANCELLED)
 
     # 2) the new charge.
     wallet, percent, fee_cents = split_for(db, org_id, gateway, charged)

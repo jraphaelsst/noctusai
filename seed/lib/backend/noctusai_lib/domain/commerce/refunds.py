@@ -188,6 +188,7 @@ def _refusal(code: str, details: Mapping[str, Any]) -> CommerceError:
         "pedido_nao_reembolsavel": (409, "Este pedido não pode ser reembolsado agora."),
         "cobranca_nao_encontrada": (409, "Não há cobrança paga para reembolsar neste pedido."),
         "estorno_em_andamento": (409, "Já existe um reembolso em andamento para este pedido."),
+        "estorno_parcelado_indisponivel": (409, "Reembolso de compra parcelada ainda não está disponível; faça o estorno no painel do gateway."),
         "valor_excede_saldo": (422, "O valor excede o saldo reembolsável do pedido."),
     }
     status, message = table.get(code, (409, "Não foi possível criar o reembolso."))

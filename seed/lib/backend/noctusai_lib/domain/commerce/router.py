@@ -500,8 +500,20 @@ def storefront_router(
         )
         return success_response(result)
 
-    async def order_by_token(request: Request, token: str, org_id: str = Depends(org_dep), db=Depends(get_db)) -> dict:
-        return success_response(store_svc.order_view_by_token(db, org_id, token))
+    def secret_dep() -> Optional[str]:
+        """The link secret, or None when the host has none configured (only a SIGNED order link needs it)."""
+        try:
+            return get_link_secret()
+        except Exception:  # noqa: BLE001 - a bare order token must keep working without the secret; a signed one then 503s
+            logger.debug("commerce: link secret unavailable for an order route", exc_info=True)
+            return None
+
+    async def order_by_token(
+        request: Request, token: str, org_id: str = Depends(org_dep), db=Depends(get_db), secret: Optional[str] = Depends(secret_dep)
+    ) -> dict:
+        view = store_svc.order_view_by_token(db, org_id, store_svc.resolve_order_token(db, org_id, token, secret))
+        view["token"] = token  # echo what the buyer holds: a signed link must not hand out the order's permanent token
+        return success_response(view)
 
     async def order_payment(
         request: Request,
@@ -510,8 +522,10 @@ def storefront_router(
         org_id: str = Depends(org_dep),
         db=Depends(get_db),
         gateway=Depends(get_gateway),
+        secret: Optional[str] = Depends(secret_dep),
     ) -> dict:
         base = _base_url(request)
+        token = store_svc.resolve_order_token(db, org_id, token, secret)
         result = regenerate_svc.regenerate_payment(
             db, org_id, cfg, gateway, token,
             payment_method=body.payment_method.value, installments=body.installments,

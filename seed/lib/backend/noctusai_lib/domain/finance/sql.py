@@ -402,7 +402,7 @@ def _rpcs(cfg: FinanceConfig, s: str) -> str:
 CREATE OR REPLACE FUNCTION {s}.{settle}(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = {s}, public
+SET search_path = pg_catalog, {s}, pg_temp
 AS $fn$
 DECLARE
     v_entry   {s}.{t['entries']}%ROWTYPE;
@@ -411,6 +411,12 @@ DECLARE
     v_amount  BIGINT := (p_row->>'amount_cents')::BIGINT;
     v_kind    TEXT := p_row->>'kind';
 BEGIN
+    IF v_amount IS NULL OR v_amount <= 0 THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'valor_invalido');
+    END IF;
+    IF v_kind IS NULL OR v_kind NOT IN ('payment', 'refund') THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'tipo_invalido');
+    END IF;
     SELECT * INTO v_entry FROM {s}.{t['entries']} WHERE id = p_entry_id AND org_id = p_org_id FOR UPDATE;
     IF NOT FOUND THEN
         RETURN jsonb_build_object('status', 'not_found');
@@ -442,7 +448,7 @@ GRANT EXECUTE ON FUNCTION {s}.{settle}(UUID, UUID, JSONB) TO service_role;
 CREATE OR REPLACE FUNCTION {s}.{reverse}(p_org_id UUID, p_settlement_id UUID, p_reason TEXT, p_user UUID, p_on DATE) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = {s}, public
+SET search_path = pg_catalog, {s}, pg_temp
 AS $fn$
 DECLARE
     v_st      {s}.{t['settlements']}%ROWTYPE;
@@ -455,6 +461,9 @@ BEGIN
         RETURN jsonb_build_object('status', 'not_found');
     END IF;
     SELECT * INTO v_entry FROM {s}.{t['entries']} WHERE id = v_st.entry_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'settlement % has no entry in org %', p_settlement_id, p_org_id USING ERRCODE = 'P0002';
+    END IF;
     SELECT * INTO v_st FROM {s}.{t['settlements']} WHERE id = p_settlement_id;
     IF v_st.reversed_at IS NOT NULL THEN
         RETURN jsonb_build_object('status', 'already_reversed');

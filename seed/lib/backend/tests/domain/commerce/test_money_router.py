@@ -171,3 +171,49 @@ class TestPaymentRoute:
         r = h.client.post(f"/api/commerce/orders/{order['id']}/cancel", headers=h.staff())
         assert r.status_code == 200 and r.json()["data"]["status"] == "cancelled"
         assert h.gateway.charges.charges[order["gateway_charge_id"]].status == "cancelled"
+
+
+class TestSignedOrderLink:
+    """S4: the reminder link is order-scoped and expiring; it opens that order's page + regenerate, nothing else."""
+
+    def _link(self, order, ttl=60, org=ORG_A):
+        from noctusai_lib.domain.commerce import access_links
+
+        from .conftest import SECRET
+
+        return access_links.sign_token(SECRET, purpose=access_links.PURPOSE_ORDER, org_id=org, subject=order["id"], ttl_minutes=ttl)
+
+    def test_the_signed_link_opens_the_order_without_leaking_its_permanent_token(self, shop):
+        h, offer = shop
+        order = _place(h, offer)
+        link = self._link(order)
+        r = h.client.get(f"/api/storefront/orders/{link}", headers=h.shop())
+        assert r.status_code == 200 and r.json()["data"]["token"] == link != order["token"]
+
+    def test_the_signed_link_can_regenerate_the_payment(self, shop):
+        h, offer = shop
+        order = _place(h, offer)
+        h.db.table("commerce_orders").update({"last_charge_attempt_at": (now() - timedelta(minutes=5)).isoformat()}).eq("id", order["id"]).execute()
+        r = h.client.post(f"/api/storefront/orders/{self._link(order)}/payment", json={"payment_method": "boleto"}, headers=h.shop())
+        assert r.status_code == 200
+
+    def test_expired_forged_and_wrong_purpose_links_are_400(self, shop):
+        from noctusai_lib.domain.commerce import access_links
+
+        from .conftest import SECRET
+
+        h, offer = shop
+        order = _place(h, offer)
+        for bad in (
+            self._link(order, ttl=-5),
+            self._link(order) + "x",
+            access_links.sign_token(SECRET, purpose=access_links.PURPOSE_MY_ORDERS, org_id=ORG_A, subject=order["customer_id"], ttl_minutes=5),
+        ):
+            r = h.client.get(f"/api/storefront/orders/{bad}", headers=h.shop())
+            assert r.status_code == 400 and r.json()["error"]["code"] == "link_invalido"
+
+    def test_a_link_minted_for_another_store_is_useless_here(self, shop):
+        h, offer = shop
+        order = _place(h, offer)
+        r = h.client.get(f"/api/storefront/orders/{self._link(order, org=ORG_B)}", headers=h.shop())
+        assert r.status_code == 400

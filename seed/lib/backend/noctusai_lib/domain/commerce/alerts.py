@@ -9,6 +9,7 @@ PII: the body carries the order's short id and amounts, never the buyer's name /
 from __future__ import annotations
 
 import logging
+from html import escape
 from typing import Any, Optional
 
 from noctusai_lib.integrations.email.types import EmailSender, OutgoingEmail
@@ -37,7 +38,7 @@ async def notify_staff(
         logger.warning("commerce alert NOT sent (no e-mail sender configured; org=%s): %s", org_id, subject)
         return False
     text = "\n".join([*lines, "", f"-- {store}"])
-    html = "".join(f"<p>{line}</p>" for line in lines) + f"<p>-- {store}</p>"
+    html = "".join(f"<p>{escape(line)}</p>" for line in lines) + f"<p>-- {escape(store)}</p>"
     try:
         await email.send(OutgoingEmail(to=[to], subject=subject, html=html, text=text))
     except Exception:  # noqa: BLE001 - an alert must never undo the state it reports

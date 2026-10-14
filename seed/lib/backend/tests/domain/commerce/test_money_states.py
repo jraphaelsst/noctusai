@@ -139,7 +139,7 @@ class TestWebhookMatrix:
     def test_overdue_expires_and_fires_on_expired(self, w):
         assert w.send("charge_failed", detail="overdue") == PROCESSED
         assert w.fresh()["status"] == "expired" and ("expired", "expired") in w.hooks.calls
-        assert list_charges(w.db, ORG_A, w.order["id"])[0]["status"] == "expired"
+        assert list_charges(w.db, ORG_A, w.order["id"])[0]["status"] == "cancelled"  # expired AND voided at the gateway
 
     def test_partial_refund_from_the_gateway_creates_a_gateway_row(self, w):
         pay(w.gw, w.order)
@@ -572,7 +572,7 @@ class TestJobs:
         assert send() == 1 and send() == 0
         mail = w.mail.sent[0]
         assert w.order["token"] not in mail.text  # never the bare order token
-        assert "https://loja-a.test/minhas-compras?token=" in mail.text
+        assert "https://loja-a.test/pedido/" in mail.text and "48 horas" in mail.text  # ORDER-scoped, not the all-orders link
         rows = w.db.table("commerce_order_reminders").select("*").execute().data
         assert [r["kind"] for r in rows] == ["before_expiry"]
         # the order expires; a day later the second kind goes out (the hourly spacing has passed)
@@ -612,3 +612,137 @@ class TestJobs:
         assert names == tuple(n for n, _ in calls)
         assert dict(calls)["commerce_dispute_poll"] == {"hours": 6}
         assert dict(calls)["commerce_fiscal_purge"] == {"cron": "30 3 * * *"}
+
+
+class TestExpiredNeverLeavesALiveCharge:
+    """Security blocker: expired -> regenerate must not leave two payable charges (the gateway keeps an overdue one payable)."""
+
+    def _legacy_expired(self, w):
+        """An order expired the old way: row + order `expired`, but the gateway charge was never cancelled."""
+        w.db.table("commerce_orders").update({"status": "expired"}).eq("id", w.order["id"]).execute()
+        w.db.table("commerce_order_charges").update({"status": "expired"}).eq("order_id", w.order["id"]).execute()
+        age(w)
+
+    def test_regenerate_cancels_an_expired_attempt_at_the_gateway(self, w):
+        self._legacy_expired(w)
+        old = w.order["gateway_charge_id"]
+        assert w.gw.charges.charges[old].status == "pending"  # still payable at the gateway
+        regen_call(w)
+        w.gw.sync_charges()
+        assert w.gw.charges.charges[old].status == "cancelled"
+        assert [r["status"] for r in list_charges(w.db, ORG_A, w.order["id"])] == ["cancelled", "pending"]
+        live = [c for c in w.gw.charges.charges.values() if c.status not in ("cancelled",)]
+        assert len(live) == 1
+
+    def test_every_non_paid_attempt_is_cancelled_not_only_the_current_one(self, w):
+        age(w)
+        regen_call(w, method="boleto")  # attempt 2 (attempt 1 cancelled)
+        first_id = w.order["gateway_charge_id"]
+        # simulate an older attempt that was left expired-but-live at the gateway
+        w.gw.charges.set_status(first_id, "overdue")
+        w.db.table("commerce_order_charges").update({"status": "expired", "closed_at": None}).eq("gateway_charge_id", first_id).execute()
+        w.db.table("commerce_orders").update({"status": "expired"}).eq("id", w.order["id"]).execute()
+        age(w)
+        regen_call(w, method="pix")
+        assert w.gw.charges.charges[first_id].status == "cancelled"
+        assert {r["status"] for r in list_charges(w.db, ORG_A, w.order["id"])} == {"cancelled", "pending"}
+
+    def test_a_failed_cancel_of_an_expired_attempt_is_409_and_creates_no_charge(self, w):
+        self._legacy_expired(w)
+
+        def refuse(cid):
+            raise PaymentGatewayError("asaas", "cannot", status=400, code="x")
+
+        w.gw.charges.cancel_charge = refuse
+        with pytest.raises(CommerceError) as exc:
+            regen_call(w)
+        assert exc.value.code == "cobranca_anterior_ativa" and exc.value.status_code == 409
+        assert len(w.gw.checkout.sessions) == 1 and w.fresh()["status"] == "expired"
+
+    def test_the_expire_job_cancels_the_charge_at_the_gateway(self, w):
+        w.db.table("commerce_orders").update({"expires_at": (now() - timedelta(minutes=1)).isoformat()}).eq("id", w.order["id"]).execute()
+        jobs_svc.commerce_expire_orders(w.db, fulfillment=w.reg, gateway=w.gw)
+        assert w.gw.charges.charges[w.order["gateway_charge_id"]].status == "cancelled"
+        assert list_charges(w.db, ORG_A, w.order["id"])[0]["status"] == "cancelled"
+
+    def test_a_failed_cancel_in_the_expire_job_is_recorded_on_the_order(self, w):
+        w.db.table("commerce_orders").update({"expires_at": (now() - timedelta(minutes=1)).isoformat()}).eq("id", w.order["id"]).execute()
+
+        def refuse(cid):
+            raise PaymentGatewayError("asaas", "cannot", status=500, code="x")
+
+        w.gw.charges.cancel_charge = refuse
+        assert jobs_svc.commerce_expire_orders(w.db, fulfillment=w.reg, gateway=w.gw) == 1
+        assert w.fresh()["status"] == "expired"  # the order still expires
+        assert any("não pôde ser cancelada" in e["reason"] for e in orders.list_events(w.db, ORG_A, w.order["id"]))
+
+    def test_the_overdue_webhook_cancels_too(self, w):
+        w.send("charge_failed", detail="overdue")
+        assert w.gw.charges.charges[w.order["gateway_charge_id"]].status == "cancelled"
+
+
+class TestForgedInstallmentBody:
+    """S1: an unknown charge id is a later parcela ONLY if the gateway's own read ties it to this order."""
+
+    def _installment_world(self, db):
+        gw = FakeCheckoutGateway()
+        world = World.__new__(World)
+        world.db, world.gw, world.hooks = db, gw, Hooks()
+        world.fin, world.mail = FakeFinanceBooking(), FakeEmailSender()
+        world.paid_hook, world.revoked_hook = [], []
+        world.reg, world.inbox, world.n = make_fulfillment_registry(), FakeEventInbox(), 0
+        world.order = dict(place_order(db, gw, payment_method="credit_card", installments=3, price_cents=60000))
+        return world
+
+    def test_a_genuine_later_parcela_is_applied(self, db):
+        w = self._installment_world(db)
+        pay(w.gw, w.order, confirmed_only=True)
+        w.send("charge_paid", detail="confirmed")
+        parcela = w.gw.charges.add_charge("pay_parcela_2", amount=Money(20000), status="received", method="credit_card",
+                                          installment_count=3, external_reference=w.order["id"])
+        assert w.send("charge_paid", detail="received", charge_id="pay_parcela_2") == PROCESSED
+        assert any(k[2] == "pay_parcela_2" for k in w.fin.settlements)
+
+    def test_a_forged_body_naming_order_a_with_order_bs_charge_does_nothing(self, db):
+        w = self._installment_world(db)
+        w.gw.charges.add_charge("pay_of_order_b", amount=Money(20000), status="received", method="credit_card",
+                                installment_count=3, external_reference="99999999-9999-4999-8999-999999999999")
+        assert w.send("charge_paid", detail="received", charge_id="pay_of_order_b") == IGNORED
+        assert w.fresh()["status"] == "pending_payment" and w.fin.settlements == {}
+        assert w.mail.sent and "não identificado" in w.mail.sent[-1].subject
+
+
+class TestAdoptFailureAlerts:
+    def test_failed_cancel_of_the_newer_charge_alerts_staff(self, w):
+        old = w.order["gateway_charge_id"]
+        w.db.table("commerce_orders").update({"status": "expired"}).eq("id", w.order["id"]).execute()
+        age(w)
+        regen_call(w)
+        w.gw.sync_charges()
+
+        def refuse(cid):
+            raise PaymentGatewayError("asaas", "cannot", status=500, code="x")
+
+        w.gw.charges.cancel_charge = refuse
+        pay(w.gw, {"gateway_charge_id": old})
+        w.send("charge_paid", detail="received", charge_id=old)
+        assert w.fresh()["status"] == "paid"
+        assert any("Cobrança duplicada" in m.subject for m in w.mail.sent)
+
+
+class TestEmailHygiene:
+    def test_alert_and_reminder_html_escape_store_and_lines(self, w):
+        w.db.table("commerce_store_profiles").update({"trade_name": "<script>x</script>"}).eq("org_id", ORG_A).execute()
+        run(__import__("noctusai_lib.domain.commerce.alerts", fromlist=["notify_staff"]).notify_staff(
+            w.db, ORG_A, w.mail, subject="s", lines=["<b>oi</b> & tchau"]))
+        html = w.mail.sent[-1].html
+        assert "<script>" not in html and "&lt;script&gt;" in html and "&lt;b&gt;oi&lt;/b&gt; &amp; tchau" in html
+
+    def test_the_hourly_recipient_limit_is_case_insensitive(self, w):
+        w.db.table("commerce_storefront_hosts").insert({"hostname": "loja-a.test", "org_id": ORG_A, "is_primary": True, "created_at": now().isoformat()}).execute()
+        w.db.table("commerce_orders").update({"expires_at": (now() + timedelta(hours=10)).isoformat()}).eq("id", w.order["id"]).execute()
+        other_id = "77777777-7777-4777-8777-777777777777"
+        w.db.table("commerce_orders").insert({**w.order, "id": other_id, "token": "other-token", "expires_at": (now() + timedelta(hours=11)).isoformat()}).execute()
+        w.db.table("commerce_order_reminders").insert({"order_id": other_id, "kind": "after_expiry", "org_id": ORG_A, "sent_at": now().isoformat()}).execute()
+        w.db.table("commerce_customers").update({"email": "Ana@Example.com".lower()}).eq("org_id", ORG_A).execute()
+        assert run(jobs_svc.commerce_expiry_reminders(w.db, cfg=CFG, email=w.mail, link_secret="s")) == 0

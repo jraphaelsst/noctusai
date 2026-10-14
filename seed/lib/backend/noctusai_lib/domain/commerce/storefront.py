@@ -18,7 +18,7 @@ from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, p
 from noctusai_lib.integrations.storage.protocol import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError
 
-from ._common import like_term, page_rows, tbl
+from ._common import get_row, like_term, page_rows, tbl
 from . import access_links as links
 from .catalog import active_offers
 from .config import CommerceConfig
@@ -232,6 +232,24 @@ def public_order_view(db: Any, org_id: Any, order: dict) -> dict:
     }
 
 
+def resolve_order_token(db: Any, org_id: Any, token: str, secret: Optional[str]) -> str:
+    """The order's own (bare) token for whatever the buyer's link carries.
+
+    The payment-recovery e-mails link a SIGNED, expiring, order-scoped token (`access_links.PURPOSE_ORDER`); it is
+    exchanged here for the order's bare token, so it opens that one order (its page + regenerate) and nothing else.
+    A bare token (`secrets.token_urlsafe`, never contains a dot) passes through unchanged. A signed token with no
+    configured secret is a 503, never a silent pass."""
+    if "." not in token:
+        return token
+    if not secret:
+        raise CommerceError("link_indisponivel", "Links por e-mail não estão configurados.", 503)
+    claim = links.verify_token(secret, token, purpose=links.PURPOSE_ORDER, org_id=org_id)
+    order = get_row(db, _ORDERS, org_id, claim["s"])
+    if order is None:
+        raise not_found("Pedido")
+    return order["token"]
+
+
 def order_view_by_token(db: Any, org_id: Any, token: str) -> dict:
     order = get_order_by_token(db, org_id, token)
     if order is None:
@@ -327,6 +345,7 @@ __all__ = [
     "my_orders_view",
     "order_view_by_token",
     "product_view",
+    "resolve_order_token",
     "public_order_view",
     "request_access_link",
     "request_privacy",
