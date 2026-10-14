@@ -700,6 +700,9 @@ def _check_body_column_count(body: str) -> int:
     `col IN ('a','b')` or `col >= 0` shape resolves to exactly 1 and is
     correctly excluded — that class already has a working mock model)."""
     no_strings = _EXTRACT_FIELD.sub("extract(", re.sub(r"'[^']*'", "", body))
+    # A `::type` cast names a TYPE, not a column (`date_trunc('month', period_month)::date`,
+    # contracts organ, 2026-10-14) — drop it, including qualified/parameterized types.
+    no_strings = re.sub(r"::\s*[A-Za-z_][A-Za-z0-9_.]*(?:\s*\([^)]*\))?(?:\s*\[\])?", "", no_strings)
     # A function CALL's name is not a column reference (`current_org_id()`,
     # `now()`, `length(x)`) — strip the identifier immediately preceding an
     # opening paren, keeping the paren so its ARGUMENTS still get scanned.

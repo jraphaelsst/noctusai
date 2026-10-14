@@ -157,6 +157,10 @@ class TestCheckBodyColumnCount:
     def test_a_real_column_named_like_a_field_still_counts(self):
         assert _check_body_column_count("month <= 12 AND year > 2000") == 2
 
+    def test_a_type_cast_is_not_a_column(self):
+        assert _check_body_column_count("period_month = date_trunc('month', period_month)::date") == 1
+        assert _check_body_column_count("amount::numeric(18,3) > other_col") == 2
+
     def test_substring_from_keeps_its_column(self):
         assert _check_body_column_count("substring(code FROM 1 FOR 2) = prefix") >= 2
 
