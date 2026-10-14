@@ -126,6 +126,7 @@ class FakeCheckoutGateway:
                         method=method_of.get(request.billing_method, "undefined"),
                         installment_count=request.installment_count,
                         external_reference=request.external_reference,
+                        installment_id=((session.raw or {}).get("payment") or {}).get("installment"),
                     )
 
     def charge_operations(self, org_id: Any) -> ChargeOperations:

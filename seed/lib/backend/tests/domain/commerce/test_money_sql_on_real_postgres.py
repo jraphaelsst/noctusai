@@ -77,10 +77,11 @@ SCENARIOS: dict[str, str] = {
   UPDATE {SCHEMA}.commerce_orders SET status = 'expired' WHERE id = ord;
   r := {SCHEMA}.commerce_create_refund(o, ord, 1000, 'x', NULL, NULL);
   IF r->>'code' <> 'pedido_nao_reembolsavel' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
-    "an installment order cannot be refunded through the RPC either": f"""
-  UPDATE {SCHEMA}.commerce_order_charges SET installment_count = 6 WHERE id = ch;
+    "an installment order is refundable through the RPC and reports its parcelamento id": f"""
+  UPDATE {SCHEMA}.commerce_order_charges SET installment_count = 6, gateway_installment_id = 'ins_1' WHERE id = ch;
   r := {SCHEMA}.commerce_create_refund(o, ord, 1000, 'x', NULL, NULL);
-  IF r->>'code' <> 'estorno_parcelado_indisponivel' THEN RAISE EXCEPTION 'bad %', r; END IF;""",
+  IF r->>'status' <> 'created' OR r->'charge'->>'gateway_installment_id' <> 'ins_1'
+     OR (r->'charge'->>'installment_count')::int <> 6 THEN RAISE EXCEPTION 'bad %', r; END IF;""",
     "the refund RPC pins search_path to pg_catalog first": f"""
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
     WHERE ns.nspname = '{SCHEMA}' AND p.proname = 'commerce_create_refund' AND p.prosecdef

@@ -286,6 +286,86 @@ def test_asaas_refund_full_remaining_sends_the_computed_value() -> None:
     assert result.amount == Money(10000) and result.status == "pending"  # accepted, no refund row listed yet
 
 
+def _parcelas_routes(refunds_by_payment: dict[str, list[dict]], bodies: list[dict] | None = None, status: str = "RECEIVED"):
+    def listing(request: httpx.Request) -> httpx.Response:
+        data = [
+            _payment(id=pid, value=20.0, installment="ins_1", status=status, refunds=refs or None)
+            for pid, refs in refunds_by_payment.items()
+        ]
+        return httpx.Response(200, content=json_lib.dumps({"hasMore": False, "data": data}).encode())
+
+    def refund(request: httpx.Request) -> httpx.Response:
+        if bodies is not None:
+            bodies.append(json_lib.loads(request.content or b"{}"))
+        for refs in refunds_by_payment.values():  # the gateway spreads the value over the parcelas
+            refs.append({"status": "DONE", "value": 20.0, "dateCreated": "2026-10-14 09:00:00"})
+        return httpx.Response(200, content=json_lib.dumps({"id": "ins_1"}).encode())
+
+    return {"GET /v3/installments/ins_1/payments": listing, "POST /v3/installments/ins_1/refund": refund}
+
+
+def test_asaas_get_installment_folds_the_parcelas_and_groups_refunds_by_operation() -> None:
+    done = {"status": "DONE", "dateCreated": "2026-10-14 09:00:00"}
+    ops = _asaas(_parcelas_routes({"pay_1": [{**done, "value": 20.0}], "pay_2": [{**done, "value": 10.0}], "pay_3": []}))
+    whole = ops.get_installment("ins_1")
+    assert whole.amount == Money(6000) and whole.refunded == Money(3000) and whole.installment_count == 3
+    assert whole.status == "partially_refunded" and whole.id_at_gateway == "ins_1"
+    assert len(whole.refunds) == 1 and whole.refunds[0].amount == Money(3000) and whole.refunds[0].id_at_gateway is None
+
+
+def test_asaas_refund_installment_partial_posts_value_and_reads_the_refund_back() -> None:
+    bodies: list[dict] = []
+    refs = {"pay_1": [], "pay_2": [], "pay_3": []}
+    ops = _asaas(_parcelas_routes(refs, bodies))
+    result = ops.refund_installment("ins_1", amount=Money(4000), description="d")
+    assert bodies == [{"value": 40.0}]  # no description field exists on this endpoint
+    assert result.status == "done" and result.charge_id_at_gateway == "ins_1"
+
+
+def test_asaas_refund_installment_full_sends_no_value() -> None:
+    bodies: list[dict] = []
+    ops = _asaas(_parcelas_routes({"pay_1": [], "pay_2": []}, bodies))
+    ops.refund_installment("ins_1", amount=None, description="d")
+    assert bodies == [{}]
+
+
+def test_asaas_refund_installment_exceeding_balance_raises_before_calling_out() -> None:
+    seen: list[str] = []
+    ops = _asaas(_parcelas_routes({"pay_1": [], "pay_2": []}), seen)
+    with pytest.raises(PaymentGatewayError) as exc:
+        ops.refund_installment("ins_1", amount=Money(4001), description="d")
+    assert exc.value.code == "refund_exceeds_balance" and "POST /v3/installments/ins_1/refund" not in seen
+
+
+def test_asaas_refund_installment_unpaid_parcelamento_is_refused() -> None:
+    ops = _asaas(_parcelas_routes({"pay_1": [], "pay_2": []}, status="PENDING"))
+    with pytest.raises(PaymentGatewayError) as exc:
+        ops.refund_installment("ins_1", amount=None, description="d")
+    assert exc.value.code == "charge_not_refundable"
+
+
+def test_fake_installment_refund_spreads_over_the_parcelas_and_reads_as_one_operation() -> None:
+    ops = FakeChargeOperations()
+    for n in (1, 2, 3):
+        ops.add_charge(f"pay_{n}", amount=Money(2000), status="received", method="credit_card", installment_count=3, installment_id="ins_1")
+    first = ops.refund_installment("ins_1", amount=Money(2500), description="a")
+    assert ops.charges["pay_1"].status == "refunded" and ops.charges["pay_2"].status == "partially_refunded"
+    whole = ops.get_installment("ins_1")
+    assert whole.refunded == Money(2500) and [r.amount for r in whole.refunds] == [Money(2500)] and first.amount == Money(2500)
+    ops.refund_installment("ins_1", amount=None, description="b")
+    whole = ops.get_installment("ins_1")
+    assert whole.status == "refunded" and [r.amount for r in whole.refunds] == [Money(2500), Money(3500)]
+    with pytest.raises(PaymentGatewayError) as exc:
+        ops.refund_installment("ins_1", amount=Money(1), description="c")
+    assert exc.value.code in ("refund_exceeds_balance", "charge_not_refundable")
+
+
+def test_fake_get_installment_unknown_is_404() -> None:
+    with pytest.raises(PaymentGatewayError) as exc:
+        FakeChargeOperations().get_installment("nope")
+    assert exc.value.status == 404
+
+
 def test_asaas_cancel_unpaid_deletes_and_reads_cancelled() -> None:
     seen: list[str] = []
     ops = _asaas(
@@ -591,3 +671,13 @@ def test_stripe_balance_transactions_split_the_fee_and_map_kinds(stripe_double: 
     assert page.next_cursor == "txn_3"
     call = [kw for name, kw in stripe_double.calls if name == "BalanceTransaction.list"][0]
     assert call["created"]["gte"] == int(dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc).timestamp())
+
+
+def test_stripe_has_no_parcelamento_so_installment_ops_are_refused(stripe_double: Any) -> None:
+    ops = _stripe_ops()  # a Stripe card installment is one PaymentIntent: refund_charge is the right call
+    with pytest.raises(PaymentGatewayError) as got:
+        ops.get_installment("x")
+    assert got.value.code == "installments_unsupported"
+    with pytest.raises(PaymentGatewayError) as got:
+        ops.refund_installment("x", amount=None, description="d")
+    assert got.value.code == "installments_unsupported"

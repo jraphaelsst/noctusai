@@ -29,7 +29,7 @@ from . import finance_bridge
 from .alerts import notify_staff
 from .errors import GatewayNotConfigured
 from .money import MoneyDeps, fire_revoked
-from .order_charges import ensure_attempt_row, paid_attempt, current_attempt
+from .order_charges import ensure_attempt_row, paid_attempt, current_attempt, read_order_charge
 from .order_state import OrderEvent
 from .orders import apply_transition, list_items
 from .refunds import apply_refund_state, list_refunds, reconcile_refunds, refunded_cents
@@ -60,9 +60,11 @@ async def sync_order_with_gateway(
     row = paid_attempt(rows) or current_attempt(rows, order)
     if row is None:
         return order
-    if gateway_charge is None or gateway_charge.id_at_gateway != row["gateway_charge_id"]:
+    # An installment order is judged on the WHOLE parcelamento, never on the one parcela an event named.
+    whole = int(row["installment_count"]) > 1
+    if gateway_charge is None or whole or gateway_charge.id_at_gateway != row["gateway_charge_id"]:
         try:
-            gateway_charge = deps.gateway.charge_operations(org_id).get_charge(row["gateway_charge_id"])
+            gateway_charge = read_order_charge(db, org_id, row, deps.gateway.charge_operations(org_id))
         except (PaymentGatewayError, GatewayNotConfigured) as exc:
             logger.error("commerce sync: could not read charge for order=%s: %s", order["id"], exc)
             raise

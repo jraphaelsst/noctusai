@@ -72,6 +72,7 @@ _HANDLED = (
     "charge_paid", "charge_failed", "charge_refunded", "charge_partially_refunded", "charge_dispute", "charge_cancelled",
 )
 _CLOSED = (OrderStatus.CANCELLED.value, OrderStatus.REFUNDED.value, OrderStatus.CHARGEBACK.value)
+_REFUND_KINDS = ("charge_refunded", "charge_partially_refunded")
 _UNPAID = (OrderStatus.CREATED.value, OrderStatus.PENDING_PAYMENT.value, OrderStatus.EXPIRED.value, OrderStatus.FAILED.value)
 _MONEY_STATES = (
     OrderStatus.PAID.value, OrderStatus.PARTIALLY_REFUNDED.value, OrderStatus.DISPUTED.value,
@@ -351,6 +352,13 @@ async def _on_money_change(db: Any, org_id: Any, order: dict, event: GatewayEven
         return IGNORED
     kind, row = _attribute(db, org_id, order, event, deps)
     short = str(order["id"])[:8]
+    if kind == "installment" and event.kind in _REFUND_KINDS and event.detail != "chargeback_opened":
+        # A refund lands on every parcela: a later parcela's refund event is the same parcelamento refund, so it
+        # converges the order -- once the gateway confirms the parcela belongs to THIS order (body is unauthenticated data).
+        gw = _read(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
+        if gw is not None and gw.external_reference == str(order["id"]):
+            await sync_order_with_gateway(db, org_id, deps, order, source=OrderEventSource.WEBHOOK, gateway_charge=gw)
+            return PROCESSED
     if kind in ("superseded", "installment", "unknown"):
         logger.error("commerce webhook: %s on a %s charge of order=%s needs manual handling", event.kind, kind, order["id"])
         await notify_staff(

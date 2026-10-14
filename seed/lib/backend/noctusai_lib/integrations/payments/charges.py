@@ -95,6 +95,20 @@ class ChargeOperations(Protocol):
         """Cancel an UNPAID charge. Paid => ``code="charge_already_paid"``."""
         ...
 
+    def get_installment(self, installment_id_at_gateway: str) -> GatewayCharge:
+        """The WHOLE parcelamento as one charge: ``amount`` = sum of the parcelas, ``refunded`` = refunds across
+        all of them, ``refunds`` = one entry per refund OPERATION (a parcelamento refund is spread over the
+        parcelas by the gateway). Gateways without parcelamento => ``code="installments_unsupported"``."""
+        ...
+
+    def refund_installment(
+        self, installment_id_at_gateway: str, *, amount: Optional[Money], description: str
+    ) -> GatewayRefund:
+        """Refund ``amount`` (``None`` = the full remaining) of a whole parcelamento -- the gateway spreads it.
+
+        Above the refundable balance => ``code="refund_exceeds_balance"`` BEFORE any refund call is made."""
+        ...
+
     def list_balance_transactions(
         self, *, since: _dt.date, cursor: Optional[str] = None
     ) -> BalanceTransactionPage:
@@ -138,6 +152,79 @@ def _check_refund(
     return amount
 
 
+def _installments_unsupported(gateway: str) -> PaymentGatewayError:
+    return PaymentGatewayError(
+        gateway, "this gateway has no parcelamento: refund the charge itself", code="installments_unsupported"
+    )
+
+
+def _aggregate_installment(
+    gateway: str, installment_id: str, parcelas: list[GatewayCharge]
+) -> GatewayCharge:
+    """Fold the parcelas of one parcelamento into a single `GatewayCharge` (shared by Fake and Asaas).
+
+    Refunds are grouped by their timestamp: one refund OPERATION touches several parcelas with the same
+    instant, and reads back as one `GatewayRefund` of the summed value (`pending` if any piece is)."""
+    if not parcelas:
+        raise PaymentGatewayError(
+            gateway, f"installment {installment_id} has no payments", status=404, code="resource_missing"
+        )
+    currency = parcelas[0].amount.currency
+    amount = Money(sum(p.amount.amount_cents for p in parcelas), currency)
+    refunded = Money(sum(p.refunded.amount_cents for p in parcelas), currency)
+    groups: dict[Optional[_dt.datetime], list[GatewayRefund]] = {}
+    for parcela in parcelas:
+        for refund in parcela.refunds:
+            groups.setdefault(refund.created_at, []).append(refund)
+    refunds = [
+        GatewayRefund(
+            id_at_gateway=None,
+            charge_id_at_gateway=installment_id,
+            amount=Money(sum(r.amount.amount_cents for r in items), currency),
+            status="pending" if any(r.status == "pending" for r in items) else "done",
+            created_at=created_at,
+            raw={"parcelas": [r.raw for r in items]},
+        )
+        for created_at, items in sorted(groups.items(), key=lambda kv: (kv[0] is not None, kv[0] or _dt.datetime.min.replace(tzinfo=_dt.timezone.utc)))
+    ]
+    statuses = {p.status for p in parcelas}
+    if "chargeback" in statuses:
+        status: ChargeStatus = "chargeback"
+    elif "disputed" in statuses:
+        status = "disputed"
+    elif refunded.amount_cents > 0 and refunded.amount_cents >= amount.amount_cents:
+        status = "refunded"
+    elif refunded.amount_cents > 0:
+        status = "partially_refunded"
+    elif statuses <= {"received"}:
+        status = "received"
+    elif statuses <= {"received", "confirmed"}:
+        status = "confirmed"
+    elif statuses == {"cancelled"}:
+        status = "cancelled"
+    else:  # a parcela still unpaid: the parcelamento is not (fully) paid, so it is not refundable
+        status = next(p.status for p in parcelas if p.status not in ("received", "confirmed"))
+    fees = [p.fee for p in parcelas]
+    nets = [p.net for p in parcelas]
+    first = parcelas[0]
+    return GatewayCharge(
+        id_at_gateway=installment_id,
+        status=status,
+        method=first.method,
+        amount=amount,
+        refunded=refunded,
+        net=Money(sum(n.amount_cents for n in nets if n), currency) if all(nets) else None,
+        fee=Money(sum(f.amount_cents for f in fees if f), currency) if all(fees) else None,
+        refunds=refunds,
+        installment_count=len(parcelas),
+        due_date=min((p.due_date for p in parcelas if p.due_date), default=None),
+        paid_at=first.paid_at,
+        credit_date=first.credit_date,
+        external_reference=first.external_reference,
+        raw={"installment": installment_id, "payments": [p.id_at_gateway for p in parcelas]},
+    )
+
+
 def _unknown_status(gateway: str, what: str, value: Any) -> PaymentGatewayError:
     return PaymentGatewayError(
         gateway, f"unknown {what} {value!r}", code="unknown_charge_status"
@@ -167,6 +254,7 @@ class FakeChargeOperations:
         self.calls: list[tuple[str, object]] = []
         self._seq = 0
         self._disputed_from: dict[str, ChargeStatus] = {}
+        self._last_refund_at: Optional[_dt.datetime] = None
 
     def _next_id(self, prefix: str) -> str:
         self._seq += 1
@@ -185,8 +273,13 @@ class FakeChargeOperations:
         external_reference: Optional[str] = None,
         fee: Optional[Money] = None,
         due_date: Optional[_dt.date] = None,
+        installment_id: Optional[str] = None,
     ) -> GatewayCharge:
+        """`installment_id` groups charges into one parcelamento (``raw["installment"]``, like Asaas); an
+        `installment_count > 1` charge without one gets a fresh id and stands for the whole parcelamento."""
         charge_id = charge_id or self._next_id("pay")
+        if installment_id is None and installment_count > 1:
+            installment_id = self._next_id("ins")
         charge = GatewayCharge(
             id_at_gateway=charge_id,
             status=status,
@@ -198,6 +291,7 @@ class FakeChargeOperations:
             installment_count=installment_count,
             due_date=due_date,
             external_reference=external_reference,
+            raw={"installment": installment_id} if installment_id else {},
         )
         self.charges[charge_id] = charge
         return charge
@@ -287,6 +381,53 @@ class FakeChargeOperations:
                 code="charge_already_paid",
             )
         return self._replace(charge_id_at_gateway, status="cancelled")
+
+    def _parcelas(self, installment_id: str) -> list[GatewayCharge]:
+        return [c for c in self.charges.values() if c.raw.get("installment") == installment_id]
+
+    def get_installment(self, installment_id_at_gateway: str) -> GatewayCharge:
+        self.calls.append(("get_installment", installment_id_at_gateway))
+        return _aggregate_installment("fake", installment_id_at_gateway, self._parcelas(installment_id_at_gateway))
+
+    def refund_installment(
+        self, installment_id_at_gateway: str, *, amount: Optional[Money], description: str
+    ) -> GatewayRefund:
+        self.calls.append(("refund_installment", (installment_id_at_gateway, amount, description)))
+        whole = _aggregate_installment("fake", installment_id_at_gateway, self._parcelas(installment_id_at_gateway))
+        value = _check_refund("fake", whole, amount)
+        now = _dt.datetime.now(_dt.timezone.utc)
+        if self._last_refund_at is not None and now <= self._last_refund_at:
+            now = self._last_refund_at + _dt.timedelta(microseconds=1)  # one instant per refund operation
+        self._last_refund_at = now
+        left = value.amount_cents
+        for parcela in self._parcelas(installment_id_at_gateway):  # the gateway spreads it; here, in order
+            take = min(left, parcela.amount.amount_cents - parcela.refunded.amount_cents)
+            if take <= 0:
+                continue
+            piece = GatewayRefund(
+                id_at_gateway=None,
+                charge_id_at_gateway=parcela.id_at_gateway,
+                amount=Money(take, value.currency),
+                status="done",
+                created_at=now,
+                raw={"description": description},
+            )
+            refunded = parcela.refunded + piece.amount
+            self._replace(
+                parcela.id_at_gateway,
+                refunded=refunded,
+                refunds=[*parcela.refunds, piece],
+                status="refunded" if refunded.amount_cents >= parcela.amount.amount_cents else "partially_refunded",
+            )
+            left -= take
+        return GatewayRefund(
+            id_at_gateway=None,
+            charge_id_at_gateway=installment_id_at_gateway,
+            amount=value,
+            status="done",
+            created_at=now,
+            raw={"description": description},
+        )
 
     def list_balance_transactions(
         self, *, since: _dt.date, cursor: Optional[str] = None
@@ -433,7 +574,7 @@ class AsaasChargeOperations:
         inst = self._gateway._request("GET", f"/installments/{installment_id}")
         return int(inst.get("installmentCount") or 1)
 
-    def _to_charge(self, raw: dict[str, Any]) -> GatewayCharge:
+    def _to_charge(self, raw: dict[str, Any], *, installment_count: Optional[int] = None) -> GatewayCharge:
         charge_id = raw["id"]
         method_raw = raw.get("billingType")
         if method_raw not in _ASAAS_METHOD_MAP:
@@ -453,7 +594,7 @@ class AsaasChargeOperations:
             fee=(amount - net) if net is not None else None,
             refunded=refunded,
             refunds=refunds,
-            installment_count=self._installment_count(raw),
+            installment_count=installment_count or self._installment_count(raw),
             due_date=_asaas_date(raw.get("dueDate")),
             paid_at=_asaas_dt(raw.get("paymentDate") or raw.get("confirmedDate")),
             credit_date=_asaas_date(raw.get("creditDate")),
@@ -504,6 +645,46 @@ class AsaasChargeOperations:
         # DELETE returns only {"deleted": true, "id": ...}; reflect it locally
         # (same approach as `cancel_subscription`) instead of re-reading.
         return self._to_charge({**charge.raw, "deleted": True})
+
+    def _installment_parcelas(self, installment_id: str) -> list[GatewayCharge]:
+        raws: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = self._gateway._request(
+                "GET", f"/installments/{installment_id}/payments", params={"offset": offset, "limit": 100}
+            )
+            raws.extend(page.get("data") or [])
+            if not page.get("hasMore"):
+                break
+            offset += 100
+        return [self._to_charge(raw, installment_count=len(raws)) for raw in raws]
+
+    def get_installment(self, installment_id_at_gateway: str) -> GatewayCharge:
+        return _aggregate_installment(
+            "asaas", installment_id_at_gateway, self._installment_parcelas(installment_id_at_gateway)
+        )
+
+    def refund_installment(
+        self, installment_id_at_gateway: str, *, amount: Optional[Money], description: str
+    ) -> GatewayRefund:
+        # POST /v3/installments/{id}/refund takes only `value` (no description); value omitted = full refund.
+        whole = self.get_installment(installment_id_at_gateway)
+        value = _check_refund("asaas", whole, amount)  # raises before any refund call
+        before = len(whole.refunds)
+        body = {} if amount is None and whole.refunded.amount_cents == 0 else {"value": float(value.to_decimal())}
+        self._gateway._request("POST", f"/installments/{installment_id_at_gateway}/refund", json=body)
+        # The response is the parcelamento, not the refund: read the refunds back (the parcelas carry them).
+        after = self.get_installment(installment_id_at_gateway)
+        if len(after.refunds) > before:
+            return after.refunds[-1]
+        return GatewayRefund(
+            id_at_gateway=None,
+            charge_id_at_gateway=installment_id_at_gateway,
+            amount=value,
+            status="pending",
+            created_at=None,
+            raw={"description": description},
+        )
 
     @staticmethod
     def _statement_kind(asaas_type: str) -> BalanceTransactionKind:
@@ -844,6 +1025,14 @@ class StripeChargeOperations:
             created_at=_stripe_dt(stripe_field(created, "created")),
             raw=stripe_to_dict(created),
         )
+
+    def get_installment(self, installment_id_at_gateway: str) -> GatewayCharge:
+        raise _installments_unsupported("stripe")
+
+    def refund_installment(
+        self, installment_id_at_gateway: str, *, amount: Optional[Money], description: str
+    ) -> GatewayRefund:
+        raise _installments_unsupported("stripe")
 
     def cancel_charge(self, charge_id_at_gateway: str) -> GatewayCharge:
         session, pi, charge = self._resolve(charge_id_at_gateway)

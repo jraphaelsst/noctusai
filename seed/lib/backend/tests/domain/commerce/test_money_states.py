@@ -25,6 +25,7 @@ from noctusai_lib.domain.finance.booking import FakeFinanceBooking
 from noctusai_lib.domain.payments import FakeEventInbox
 from noctusai_lib.integrations.email import FakeEmailSender
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
+from noctusai_lib.primitives.exceptions import NotFoundError
 from noctusai_lib.integrations.payments.types import GatewayRefund, Money
 from noctusai_lib.integrations.payments.webhook_events import make_fake_gateway_event
 from noctusai_lib.domain.commerce._common import now
@@ -364,19 +365,118 @@ class TestRefundService:
             refund(paid, amount_cents=100)
         assert exc.value.code == "estorno_em_andamento"
 
-    def test_installment_orders_refuse_a_single_parcela_refund(self, db):
-        gw = FakeCheckoutGateway()
-        world = World.__new__(World)
-        world.db, world.gw, world.hooks = db, gw, Hooks()
-        world.fin, world.mail = FakeFinanceBooking(), FakeEmailSender()
-        world.paid_hook, world.revoked_hook = [], []
-        world.reg, world.inbox, world.n = make_fulfillment_registry(), FakeEventInbox(), 0
-        world.order = place_order(db, gw, payment_method="credit_card", installments=6, price_cents=60000)
-        pay(gw, world.order)
-        world.send("charge_paid", detail="confirmed")
+
+def installment_world(db, *, installments=3, price_cents=60000, parcelas=True):
+    """A paid 3x card order whose parcelamento the fake gateway holds as three parcelas of equal value."""
+    gw = FakeCheckoutGateway()
+    world = World.__new__(World)
+    world.db, world.gw, world.hooks = db, gw, Hooks()
+    world.fin, world.mail = FakeFinanceBooking(), FakeEmailSender()
+    world.paid_hook, world.revoked_hook = [], []
+    world.reg, world.inbox, world.n = make_fulfillment_registry(), FakeEventInbox(), 0
+    world.order = dict(place_order(db, gw, payment_method="credit_card", installments=installments, price_cents=price_cents))
+    first = gw.charges.charges[world.order["gateway_charge_id"]]
+    inst = first.raw["installment"]
+    if parcelas:  # split the single fake charge into real parcelas (each its own payment id)
+        each = first.amount.amount_cents // installments
+        gw.charges.charges[first.id_at_gateway] = replace(first, amount=Money(each))
+        for n in range(2, installments + 1):
+            gw.charges.add_charge(f"pay_parcela_{n}", amount=Money(each), status="pending", method="credit_card",
+                                  installment_count=installments, external_reference=world.order["id"], installment_id=inst)
+        for pid in [first.id_at_gateway, *(f"pay_parcela_{n}" for n in range(2, installments + 1))]:
+            gw.charges.mark_paid(pid, confirmed_only=True)
+    else:
+        gw.charges.mark_paid(first.id_at_gateway, confirmed_only=True)
+    world.send("charge_paid", detail="confirmed")
+    return world
+
+
+class TestInstallmentRefunds:
+    """D32: full AND partial refunds, with history, work for a card order paid in installments."""
+
+    def test_the_gateway_installment_id_is_kept_at_checkout(self, db):
+        w = installment_world(db)
+        (row,) = list_charges(db, ORG_A, w.order["id"])
+        assert row["gateway_installment_id"] == w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"]
+
+    def test_partial_then_full_refund_spread_over_the_parcelas(self, db):
+        w = installment_world(db)
+        r = refund(w, amount_cents=25000)  # more than one parcela (20000)
+        assert r["status"] == "done" and r["amount_cents"] == 25000 and w.fresh()["status"] == "partially_refunded"
+        r2 = refund(w)  # the rest
+        assert r2["amount_cents"] == 35000 and w.fresh()["status"] == "refunded"
+        assert w.revoked_hook == ["refunded"]
+        assert [c[0] for c in w.gw.charges.calls if c[0] in ("refund_charge", "refund_installment")] == ["refund_installment"] * 2
+        rows = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert [x["status"] for x in rows] == ["done", "done"] and sum(x["amount_cents"] for x in rows) == 60000
+        # finance reversal is booked once per refund, same as a single-charge order
+        assert sorted(v["external_ref"] for k, v in w.fin.settlements.items() if k[1] == "refund") == sorted(x["id"] for x in rows)
+
+    def test_a_single_parcela_gateway_also_works(self, db):
+        w = installment_world(db, parcelas=False)
+        assert refund(w)["amount_cents"] == 60000 and w.fresh()["status"] == "refunded"
+
+    def test_above_the_refundable_balance_is_422_and_nothing_goes_out(self, db):
+        w = installment_world(db)
+        refund(w, amount_cents=50000)
         with pytest.raises(CommerceError) as exc:
-            refund(world)
-        assert exc.value.code == "estorno_parcelado_indisponivel"
+            refund(w, amount_cents=10001)
+        assert exc.value.code == "valor_excede_saldo" and exc.value.status_code == 422
+        assert [c for c in w.gw.charges.calls if c[0] == "refund_installment"].__len__() == 1
+
+    def test_idempotency_key_replays(self, db):
+        w = installment_world(db)
+        a = refund(w, amount_cents=10000, idempotency_key="k1")
+        b = refund(w, amount_cents=10000, idempotency_key="k1")
+        assert a["id"] == b["id"] and len(refunds.list_refunds(db, ORG_A, w.order["id"])) == 1
+        assert [c for c in w.gw.charges.calls if c[0] == "refund_installment"].__len__() == 1
+
+    def test_gateway_refusal_marks_failed_and_does_not_block_the_next(self, db):
+        w = installment_world(db)
+
+        def boom(*a, **k):
+            raise PaymentGatewayError("asaas", "nope", status=400, code="boom")
+
+        w.gw.charges.refund_installment = boom
+        with pytest.raises(CommerceError) as exc:
+            refund(w, amount_cents=10000)
+        assert exc.value.code == "estorno_falhou" and exc.value.status_code == 502
+        assert [x["status"] for x in refunds.list_refunds(db, ORG_A, w.order["id"])] == ["failed"]
+        del w.gw.charges.refund_installment
+        assert refund(w, amount_cents=10000)["status"] == "done"
+
+    def test_the_installment_id_is_resolved_from_the_gateway_when_not_stored(self, db):
+        w = installment_world(db)
+        db.table("commerce_order_charges").update({"gateway_installment_id": None}).eq("org_id", ORG_A).execute()
+        assert refund(w, amount_cents=10000)["status"] == "done"
+        (row,) = list_charges(db, ORG_A, w.order["id"])
+        assert row["gateway_installment_id"] == w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"]
+
+    def test_a_panel_refund_on_a_later_parcela_event_converges_the_order(self, db):
+        """Webhook on parcela 2 (a refund made in the gateway panel) reads the whole parcelamento and books it."""
+        w = installment_world(db)
+        w.gw.charges.refund_installment(w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"], amount=Money(30000), description="painel")
+        assert w.send("charge_partially_refunded", charge_id="pay_parcela_2") == PROCESSED
+        assert w.fresh()["status"] == "partially_refunded"
+        (r,) = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert r["amount_cents"] == 30000 and r["reason"] == "gateway" and r["status"] == "done"
+        w.gw.charges.refund_installment(w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"], amount=None, description="painel")
+        assert w.send("charge_refunded", charge_id="pay_parcela_3") == PROCESSED
+        assert w.fresh()["status"] == "refunded"
+        assert sum(x["amount_cents"] for x in refunds.list_refunds(db, ORG_A, w.order["id"])) == 60000
+
+    def test_a_refund_event_naming_a_foreign_parcela_is_not_applied(self, db):
+        w = installment_world(db)
+        w.gw.charges.add_charge("pay_of_order_b", amount=Money(20000), status="received", method="credit_card",
+                                installment_count=3, external_reference="99999999-9999-4999-8999-999999999999")
+        assert w.send("charge_refunded", charge_id="pay_of_order_b") == IGNORED
+        assert w.fresh()["status"] == "paid" and refunds.list_refunds(db, ORG_A, w.order["id"]) == []
+
+    def test_org_isolation(self, db):
+        w = installment_world(db)
+        with pytest.raises(NotFoundError):
+            run(refunds.create_refund(db, ORG_B, w.deps, w.order["id"], amount_cents=1000, reason="x", requested_by=USER_ID))
+        assert refunds.list_refunds(db, ORG_A, w.order["id"]) == []
 
 
 class TestReconciliation:

@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping, Optional
 
+from noctusai_lib.integrations.payments.charges import ChargeOperations
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
+from noctusai_lib.integrations.payments.types import GatewayCharge
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
@@ -61,6 +63,7 @@ def insert_attempt(
     checkout_url: Optional[str] = None,
     pix_qr: Optional[Mapping[str, Any]] = None,
     due_at: Optional[str] = None,
+    gateway_installment_id: Optional[str] = None,
 ) -> dict:
     row = {
         "id": new_id(),
@@ -71,6 +74,7 @@ def insert_attempt(
         "gateway_charge_id": gateway_charge_id,
         "payment_method": payment_method,
         "installment_count": installment_count,
+        "gateway_installment_id": gateway_installment_id,
         "amount_cents": amount_cents,
         "status": status.value,
         "checkout_url": checkout_url,
@@ -106,6 +110,37 @@ def ensure_attempt_row(db: Any, org_id: Any, order: Mapping[str, Any]) -> list[d
     if int(order.get("charge_attempts") or 0) < 1:
         tbl(db, _ORDERS).update({"charge_attempts": 1}).eq("org_id", str(org_id)).eq("id", str(order["id"])).execute()
     return [row]
+
+
+def session_installment_id(session: Any, installment_count: int) -> Optional[str]:
+    """The parcelamento id the gateway returned with the first parcela (Asaas `payment.installment`), if any."""
+    if installment_count <= 1:
+        return None
+    found = ((getattr(session, "raw", None) or {}).get("payment") or {}).get("installment")
+    return str(found) if found else None
+
+
+def installment_id_of(db: Any, org_id: Any, charge: Mapping[str, Any], ops: ChargeOperations) -> str:
+    """The gateway parcelamento id of an installment charge row: stored, else read off the gateway and persisted."""
+    stored = charge.get("gateway_installment_id")
+    if stored:
+        return str(stored)
+    found = ops.get_charge(charge["gateway_charge_id"]).raw.get("installment")
+    if not found:
+        logger.error("commerce: charge %s has installment_count>1 but the gateway names no parcelamento", charge["gateway_charge_id"])
+        raise CommerceError("estorno_falhou", "Não foi possível localizar o parcelamento no gateway.", 502)
+    tbl(db, _CHARGES).update({"gateway_installment_id": str(found)}).eq("org_id", str(org_id)).eq("id", str(charge["id"])).execute()
+    if isinstance(charge, dict):
+        charge["gateway_installment_id"] = str(found)
+    return str(found)
+
+
+def read_order_charge(db: Any, org_id: Any, charge: Mapping[str, Any], ops: ChargeOperations) -> GatewayCharge:
+    """What the gateway shows for this attempt: the charge, or -- for a card order paid in installments -- the
+    WHOLE parcelamento (a refund is spread over its parcelas, so no single parcela tells the truth)."""
+    if int(charge["installment_count"]) > 1:
+        return ops.get_installment(installment_id_of(db, org_id, charge, ops))
+    return ops.get_charge(charge["gateway_charge_id"])
 
 
 def current_attempt(rows: list[dict], order: Mapping[str, Any]) -> Optional[dict]:
@@ -153,6 +188,9 @@ __all__ = [
     "current_attempt",
     "ensure_attempt_row",
     "insert_attempt",
+    "installment_id_of",
+    "read_order_charge",
+    "session_installment_id",
     "list_charges",
     "paid_attempt",
     "set_attempt_status",

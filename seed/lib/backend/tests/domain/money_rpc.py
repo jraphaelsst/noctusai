@@ -87,8 +87,6 @@ class RpcMockClient(MockSupabaseClient):
         if not paid:
             return {"status": "refused", "code": "cobranca_nao_encontrada"}
         charge = paid[-1]
-        if int(charge["installment_count"]) > 1:
-            return {"status": "refused", "code": "estorno_parcelado_indisponivel"}
         if any(r["status"] == "requested" for r in refunds):
             return {"status": "refused", "code": "estorno_em_andamento"}
         remaining = int(charge["amount_cents"]) - sum(int(r["amount_cents"]) for r in refunds if r["status"] != "failed")
@@ -106,6 +104,7 @@ class RpcMockClient(MockSupabaseClient):
             "charge": {
                 "id": charge["id"], "gateway": charge["gateway"], "gateway_charge_id": charge["gateway_charge_id"],
                 "amount_cents": charge["amount_cents"], "installment_count": charge["installment_count"],
+                "gateway_installment_id": charge.get("gateway_installment_id"),
             },
         }
 

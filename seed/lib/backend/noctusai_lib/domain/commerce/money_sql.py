@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS {s}.commerce_order_charges (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at          TIMESTAMPTZ
 );
+-- The gateway PARCELAMENTO id of a card order paid in installments (the refund target). NULL = not known yet:
+-- resolved lazily from the gateway on first refund and persisted.
+ALTER TABLE {s}.commerce_order_charges ADD COLUMN IF NOT EXISTS gateway_installment_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_commerce_order_charges_attempt ON {s}.commerce_order_charges (order_id, attempt);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_commerce_order_charges_gateway ON {s}.commerce_order_charges (org_id, gateway, gateway_charge_id);
 CREATE INDEX IF NOT EXISTS idx_commerce_order_charges_org ON {s}.commerce_order_charges (org_id, order_id);
@@ -223,12 +226,6 @@ BEGIN
         RETURN jsonb_build_object('status', 'refused', 'code', 'cobranca_nao_encontrada');
     END IF;
 
-    -- A card order paid in installments is several gateway payments; a single-parcela refund would leave it
-    -- half-refunded. Refused here as well as in Python: the RPC must not be a way around the service.
-    IF v_charge.installment_count > 1 THEN
-        RETURN jsonb_build_object('status', 'refused', 'code', 'estorno_parcelado_indisponivel');
-    END IF;
-
     IF EXISTS (SELECT 1 FROM {s}.commerce_refunds WHERE order_id = p_order_id AND status = 'requested') THEN
         RETURN jsonb_build_object('status', 'refused', 'code', 'estorno_em_andamento');
     END IF;
@@ -253,7 +250,8 @@ BEGIN
             'gateway', v_charge.gateway,
             'gateway_charge_id', v_charge.gateway_charge_id,
             'amount_cents', v_charge.amount_cents,
-            'installment_count', v_charge.installment_count
+            'installment_count', v_charge.installment_count,
+            'gateway_installment_id', v_charge.gateway_installment_id
         ),
         'refundable_cents', v_remaining
     );

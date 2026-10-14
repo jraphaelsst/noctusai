@@ -36,7 +36,7 @@ from ._common import digits, first, new_id, now, tbl, valid_email
 from .config import CommerceConfig
 from .customers import record_consents, upsert_buyer
 from .installments import installment_options, option_for
-from .order_charges import insert_attempt
+from .order_charges import insert_attempt, session_installment_id
 from .errors import ACEITE_OBRIGATORIO, CommerceError, GatewayNotConfigured, invalid
 from .gateway import GATEWAY_NAME, CheckoutGateway
 from .order_state import OrderEvent
@@ -427,6 +427,7 @@ def create_checkout(
             db, org_id, order_id, attempt=1, gateway=GATEWAY_NAME, gateway_charge_id=session.id_at_gateway,
             payment_method=method, installment_count=installments, amount_cents=charged_cents,
             checkout_url=session.checkout_url, pix_qr=pix, due_at=order_row["expires_at"],
+            gateway_installment_id=session_installment_id(session, installments),
         )
         order = apply_transition(
             db, org_id, order, OrderEvent.CHARGE_CREATED, source=OrderEventSource.CHECKOUT,

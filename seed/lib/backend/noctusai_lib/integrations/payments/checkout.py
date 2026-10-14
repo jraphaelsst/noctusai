@@ -632,7 +632,12 @@ class FakeHostedCheckout:
             external_reference=request.external_reference,
             subscription_id_at_gateway=None if request.is_one_off else self._next_id("sub"),
             pix_qr=pix_qr,
-            raw={"installment_count": request.installment_count, "customer_key": customer_key},
+            raw={
+                "installment_count": request.installment_count,
+                "customer_key": customer_key,
+                # Asaas returns the FIRST parcela with the parcelamento id in `installment`.
+                **({"payment": {"id": session_id, "installment": f"ins_{session_id}"}} if request.installment_count > 1 else {}),
+            },
         )
         self.sessions[session_id] = session
         return session

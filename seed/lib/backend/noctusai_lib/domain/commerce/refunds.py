@@ -16,10 +16,10 @@ the window); a gateway refund with no row (made in the panel) becomes a `done` r
 `requested_by=NULL, reason='gateway'`. A `requested` row the gateway never confirms is closed as
 `failed` so it cannot block refunds forever.
 
-Refunding a card order paid in installments (several gateway payments, one per parcela) needs the
-parcelamento-level refund, which `ChargeOperations` does not expose; it is refused with 409
-`estorno_parcelado_indisponivel` (see the marker at `create_refund`) rather than refunding one parcela and leaving the
-order half-refunded.
+A card order paid in installments is several gateway payments, one per parcela: it is refunded -- fully or
+partially, history rows as for any order -- through the parcelamento-level `refund_installment` (the gateway spreads
+the value over the parcelas), and read back through `get_installment` (the whole parcelamento as one charge), so
+`reconcile_refunds` sees every refund regardless of which parcela carries it.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from ._common import first, new_id, now, now_iso, tbl
 from .errors import CommerceError, GatewayNotConfigured
 from .money import MoneyDeps, fire_revoked, parse_ts, rpc_json
 from .money_sql import CREATE_REFUND_RPC
-from .order_charges import ensure_attempt_row, paid_attempt
+from .order_charges import ensure_attempt_row, installment_id_of, paid_attempt, read_order_charge
 from .order_state import OrderEvent
 from .orders import StaleOrder, apply_transition, get_order, list_items
 from .types import OrderEventSource, OrderStatus, RefundStatus
@@ -188,14 +188,12 @@ def _refusal(code: str, details: Mapping[str, Any]) -> CommerceError:
         "pedido_nao_reembolsavel": (409, "Este pedido não pode ser reembolsado agora."),
         "cobranca_nao_encontrada": (409, "Não há cobrança paga para reembolsar neste pedido."),
         "estorno_em_andamento": (409, "Já existe um reembolso em andamento para este pedido."),
-        "estorno_parcelado_indisponivel": (409, "Reembolso de compra parcelada ainda não está disponível; faça o estorno no painel do gateway."),
         "valor_excede_saldo": (422, "O valor excede o saldo reembolsável do pedido."),
     }
     status, message = table.get(code, (409, "Não foi possível criar o reembolso."))
     return CommerceError(code, message, status, details=dict(details))
 
 
-# NOC-REMEDIATE[commerce-installment-refund]: refund of an installment card order is refused (409 estorno_parcelado_indisponivel) -- ChargeOperations has no parcelamento-level refund; destination: payments organ `refund_installment` (P9 back office) — 2026-10-14
 async def create_refund(
     db: Any,
     org_id: Any,
@@ -211,12 +209,6 @@ async def create_refund(
     order = get_order(db, org_id, order_id)
     rows = ensure_attempt_row(db, org_id, order)
     paid_row = paid_attempt(rows)
-    if paid_row is not None and int(paid_row["installment_count"]) > 1:
-        raise CommerceError(
-            "estorno_parcelado_indisponivel",
-            "Reembolso de compra parcelada ainda não está disponível; faça o estorno no painel do gateway.",
-            409,
-        )
     try:
         ops = deps.gateway.charge_operations(org_id)
     except GatewayNotConfigured as exc:
@@ -225,7 +217,7 @@ async def create_refund(
 
     if paid_row is not None and order["status"] in _REFUNDABLE:
         try:
-            gw = ops.get_charge(paid_row["gateway_charge_id"])
+            gw = read_order_charge(db, org_id, paid_row, ops)
         except PaymentGatewayError as exc:
             logger.error("commerce refund: could not read the charge (order=%s code=%s status=%s)", order_id, exc.code, exc.status)
             raise CommerceError("estorno_falhou", "Não foi possível consultar o gateway agora. Tente novamente.", 502) from exc
@@ -263,10 +255,15 @@ async def create_refund(
     refund, charge = result["refund"], result["charge"]
 
     currency = order["currency"]
+    value, why = Money(int(refund["amount_cents"]), currency), reason or "Reembolso"
     try:
-        gateway_refund = ops.refund_charge(
-            charge["gateway_charge_id"], amount=Money(int(refund["amount_cents"]), currency), description=reason or "Reembolso",
-        )
+        if int(charge["installment_count"]) > 1:
+            gateway_refund = ops.refund_installment(installment_id_of(db, org_id, charge, ops), amount=value, description=why)
+        else:
+            gateway_refund = ops.refund_charge(charge["gateway_charge_id"], amount=value, description=why)
+    except CommerceError:
+        _update(db, org_id, refund["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
+        raise
     except PaymentGatewayError as exc:
         _update(db, org_id, refund["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
         logger.error("commerce refund: gateway refused order=%s refund=%s code=%s status=%s", order_id, refund["id"], exc.code, exc.status)

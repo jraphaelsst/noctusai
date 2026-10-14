@@ -30,7 +30,7 @@ from .customers import get_customer
 from .errors import CommerceError, GatewayNotConfigured, not_found
 from .gateway import GATEWAY_NAME, CheckoutGateway
 from .money import parse_ts
-from .order_charges import cancel_gateway_charge, current_attempt, ensure_attempt_row, insert_attempt, set_attempt_status
+from .order_charges import cancel_gateway_charge, current_attempt, ensure_attempt_row, insert_attempt, session_installment_id, set_attempt_status
 from .order_state import OrderEvent
 from .orders import StaleOrder, append_event, apply_transition, get_order_by_token
 from .types import ChargeAttemptStatus, OrderEventSource, OrderStatus, PaymentMethod
@@ -159,6 +159,7 @@ def regenerate_payment(
         db, org_id, order["id"], attempt=attempt_no, gateway=GATEWAY_NAME, gateway_charge_id=session.id_at_gateway,
         payment_method=method, installment_count=count, amount_cents=charged,
         checkout_url=session.checkout_url, pix_qr=pix, due_at=expires_at,
+        gateway_installment_id=session_installment_id(session, count),
     )
     extra = {
         "gateway_charge_id": session.id_at_gateway, "checkout_url": session.checkout_url, "pix_qr": pix,
