@@ -15,10 +15,10 @@ Emits both organ tables as one re-runnable migration body composed from
 
 Prerequisite (not created here): `public.current_org_id_for(text)` (core 070; the default `org_id_expr`).
 
-NOC-REMEDIATE[parties-finance-link]: no FK to `fin_entries` yet. `fin_entries.party_id` (nullable,
-`counterparty_*` stays as a snapshot -- roadmap E4) lands once the finance DRE branch is merged,
-as a generator flag on `finance_migration`; add `("fin_entries", "party_id")` to
-`PartiesConfig.reference_tables` in the same change so a linked party is never hard-deleted. — 2026-10-14
+No FK outward: `fin_entries.party_id` (nullable, `counterparty_*` stays a snapshot -- roadmap E4) and
+`pur_orders.party_id` are added by THEIR generators (`FinanceConfig.with_parties`, `PurchasingConfig.with_parties`) as composite
+FKs onto this table's `UNIQUE (id, org_id)`; a host lists them in `PartiesConfig.reference_tables` so a linked party is never
+hard-deleted.
 """
 from __future__ import annotations
 

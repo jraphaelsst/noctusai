@@ -35,6 +35,10 @@ class FinanceConfig:
             `org_id` to. Unset => `public.current_org_id_for('<schema>')` (the
             home org for everyone, the SELECTED org while platform staff act
             through the org picker) -- same default as `CommerceConfig`.
+        with_parties: the `parties` organ is mounted in the same schema. Adds the nullable
+            `fin_entries.party_id` (composite FK `(party_id, org_id)` -> `<parties_prefix>parties`);
+            `counterparty_*` stays a SNAPSHOT of the party at booking time (roadmap E4).
+        parties_prefix: table prefix of the `parties` organ (`pty_`).
     """
 
     schema: str
@@ -42,6 +46,8 @@ class FinanceConfig:
     bucket: str = "finance-attachments"
     signed_url_ttl_seconds: int = MAX_SIGNED_URL_TTL_SECONDS
     org_id_expr: Optional[str] = None
+    with_parties: bool = False
+    parties_prefix: str = "pty_"
 
     def __post_init__(self) -> None:
         if not _IDENT.match(self.schema or ""):
@@ -52,6 +58,8 @@ class FinanceConfig:
             object.__setattr__(self, "org_id_expr", f"public.current_org_id_for('{self.schema}')")
         elif not self.org_id_expr.strip():
             raise ValueError("FinanceConfig.org_id_expr must be a non-empty SQL expression (or unset)")
+        if not _IDENT.match(self.parties_prefix or ""):
+            raise ValueError(f"FinanceConfig.parties_prefix must be a bare lowercase identifier, got {self.parties_prefix!r}")
         if not _BUCKET.match(self.bucket or ""):
             raise ValueError(f"FinanceConfig.bucket must be a bucket id, got {self.bucket!r}")
         if not 1 <= self.signed_url_ttl_seconds <= MAX_SIGNED_URL_TTL_SECONDS:
@@ -60,6 +68,10 @@ class FinanceConfig:
     def table(self, name: str) -> str:
         """The physical table name of the organ table `name` (`entries` -> `fin_entries`)."""
         return f"{self.table_prefix}{name}"
+
+    @property
+    def parties_table(self) -> str:
+        return f"{self.parties_prefix}parties"
 
 
 @dataclass(frozen=True)

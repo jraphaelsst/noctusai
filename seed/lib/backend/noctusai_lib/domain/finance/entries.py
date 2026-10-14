@@ -103,6 +103,12 @@ def check_refs(s: Scope, data: Mapping[str, Any], direction: str) -> None:
             raise invalid("cost_center_id", "O centro de custo está inativo.", code="centro_custo_inativo")
     if data.get("expected_account_id"):
         s.require_owned("accounts", data["expected_account_id"], what="Conta", field="expected_account_id")
+    if data.get("party_id"):
+        if not s.cfg.with_parties:
+            raise invalid("party_id", "Este módulo não está ligado ao cadastro de parceiros.", code="parceiros_indisponivel")
+        found = s.db.table(s.cfg.parties_table).select("id").eq("org_id", s.org_id).eq("id", str(data["party_id"])).limit(1).execute()
+        if not found.data:
+            raise invalid("party_id", "Parceiro não encontrado.", code="referencia_invalida")
 
 
 def find_by_source(s: Scope, source: str, source_ref: str) -> Optional[dict]:
@@ -127,6 +133,7 @@ def _base_row(s: Scope, data: Mapping[str, Any], direction: str) -> dict:
         "category_id": str(data["category_id"]) if data.get("category_id") else None,
         "cost_center_id": str(data["cost_center_id"]) if data.get("cost_center_id") else None,
         "expected_account_id": str(data["expected_account_id"]) if data.get("expected_account_id") else None,
+        **({"party_id": str(data["party_id"])} if data.get("party_id") else {}),
         "competence_month": iso(month_start(data.get("competence_month") or due)),
         "due_date": iso(due),
         "settled_cents": 0,
@@ -266,7 +273,7 @@ def list_entries(
 
 _EDITABLE = (
     "description", "counterparty_name", "counterparty_doc", "category_id", "cost_center_id",
-    "expected_account_id", "competence_month", "due_date", "amount_cents", "notes",
+    "expected_account_id", "competence_month", "due_date", "amount_cents", "notes", "party_id",
 )
 
 
@@ -283,12 +290,12 @@ def update_entry(s: Scope, entry_id: Any, data: Mapping[str, Any]) -> dict:
             raise invalid(key, "Este campo não pode ficar vazio.")
     if not patch:
         return current
-    check_refs(s, {k: v for k, v in patch.items() if k in ("category_id", "cost_center_id", "expected_account_id")}, current["direction"])
+    check_refs(s, {k: v for k, v in patch.items() if k in ("category_id", "cost_center_id", "expected_account_id", "party_id")}, current["direction"])
     if "description" in patch:
         patch["description"] = str(patch["description"]).strip()
     if "counterparty_doc" in patch:
         patch["counterparty_doc"] = normalize_doc(patch["counterparty_doc"])
-    for key in ("category_id", "cost_center_id", "expected_account_id"):
+    for key in ("category_id", "cost_center_id", "expected_account_id", "party_id"):
         if key in patch:
             patch[key] = str(patch[key]) if patch[key] else None
     if "due_date" in patch:

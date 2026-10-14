@@ -17,9 +17,10 @@ Mount it from a product:
 Link, don't absorb (E4): `commerce_customers` stays authoritative for LGPD / consents and later
 gains a nullable `party_id`; `fin_entries.party_id` likewise, `counterparty_*` staying a snapshot.
 
-NOC-REMEDIATE[parties-finance-link]: there is NO foreign key to `fin_entries` yet -- it lands
-(as a generator flag on `finance_migration` + `PartiesConfig.reference_tables`) after the finance
-DRE branch merges. — 2026-10-14
+The finance link lives on the FINANCE side: `FinanceConfig(with_parties=True)` adds the nullable `fin_entries.party_id`
+(composite FK); purchasing links `pur_orders.party_id` the same way. A host that mounts them lists them in
+`PartiesConfig.reference_tables=(("fin_entries", "party_id"), ("pur_orders", "party_id"))` so a linked party is archived,
+never hard-deleted. This organ's own migration carries no foreign key outward.
 """
 from . import csv_io, parties
 from .config import PartiesConfig, PartiesContext

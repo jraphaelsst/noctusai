@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_entries (
     due_date             DATE NOT NULL,
     amount_cents         BIGINT NOT NULL CHECK (amount_cents > 0),
     settled_cents        BIGINT NOT NULL DEFAULT 0 CHECK (settled_cents >= 0 AND settled_cents <= amount_cents),
-    source               TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external')),
+    source               TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing')),
     source_ref           TEXT,
     recurrence_id        UUID REFERENCES commerce.fin_recurrences(id) ON DELETE SET NULL,
     installment_group_id UUID,
@@ -139,6 +139,9 @@ CREATE INDEX IF NOT EXISTS idx_fin_entries_org_due ON commerce.fin_entries (org_
 CREATE INDEX IF NOT EXISTS idx_fin_entries_org_status ON commerce.fin_entries (org_id, status, due_date);
 CREATE INDEX IF NOT EXISTS idx_fin_entries_org_competence ON commerce.fin_entries (org_id, competence_month);
 CREATE INDEX IF NOT EXISTS idx_fin_entries_category ON commerce.fin_entries (category_id);
+-- Entry source vocabulary: re-stated so tables created before a source existed accept it.
+ALTER TABLE commerce.fin_entries DROP CONSTRAINT IF EXISTS fin_entries_source_check;
+ALTER TABLE commerce.fin_entries ADD CONSTRAINT fin_entries_source_check CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing'));
 ALTER TABLE commerce.fin_entries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_entries_select_own_org" ON commerce.fin_entries;
 CREATE POLICY "fin_entries_select_own_org" ON commerce.fin_entries FOR SELECT TO authenticated

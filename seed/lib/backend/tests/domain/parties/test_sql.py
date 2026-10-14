@@ -91,8 +91,8 @@ def test_uniqueness_and_tenant_fk_are_emitted(fragment):
     assert re.search(fragment, SQL), fragment
 
 
-def test_no_foreign_key_to_finance_yet():
-    # NOC-REMEDIATE[parties-finance-link]: the fin_entries link lands after the finance DRE branch merges.
+def test_no_foreign_key_outward():
+    # The finance / purchasing links are composite FKs emitted by THEIR generators onto UNIQUE (id, org_id).
     assert "fin_" not in SQL
 
 

@@ -274,3 +274,8 @@ export * from './finance';
 // Inventory organ (warehouses, kardex, balances, moving-average valuation, low stock). Backend:
 // noctusai_lib.domain.inventory. Product-agnostic; the host passes its authenticated api client.
 export * from './inventory';
+
+// Purchasing organ (purchase orders -> approval -> partial receipts -> stock in + payables). Backend:
+// noctusai_lib.domain.purchasing. Product-agnostic; the host passes its authenticated api client (+ the parties / items /
+// inventory hooks for the pickers). Names are Purchase* / Purchasing* to avoid barrel collisions.
+export * from './purchasing';

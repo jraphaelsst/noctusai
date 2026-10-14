@@ -90,6 +90,7 @@ class EntryBody(StrictHttpModel):
     category_id: Optional[UUID] = None
     cost_center_id: Optional[UUID] = None
     expected_account_id: Optional[UUID] = None
+    party_id: Optional[UUID] = None
     competence_month: Optional[date] = None
     due_date: date
     amount_cents: int = Field(gt=0, le=MAX_CENTS)
@@ -106,6 +107,7 @@ class EntryPatch(StrictHttpModel):
     category_id: Optional[UUID] = None
     cost_center_id: Optional[UUID] = None
     expected_account_id: Optional[UUID] = None
+    party_id: Optional[UUID] = None
     competence_month: Optional[date] = None
     due_date: Optional[date] = None
     amount_cents: Optional[int] = Field(default=None, gt=0, le=MAX_CENTS)

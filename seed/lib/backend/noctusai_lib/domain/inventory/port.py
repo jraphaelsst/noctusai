@@ -52,6 +52,23 @@ class StockPort(Protocol):
         """Free the order's reservation. Nothing reserved is a no-op."""
         ...
 
+    def receive_stock(
+        self,
+        org_id: str,
+        *,
+        item_id: str,
+        warehouse_id: str,
+        qty: Any,
+        unit_cost_cents: int,
+        source: str,
+        source_ref: str,
+        user_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> dict:
+        """Stock IN at `unit_cost_cents` (purchase receipt). Idempotent on `(source, source_ref, item, warehouse)`:
+        a retried delivery answers `status="replayed"` and moves nothing."""
+        ...
+
 
 class NoopStockPort:
     """For products without stock tracking: nothing is held, nothing fails."""
@@ -63,6 +80,9 @@ class NoopStockPort:
         return {"status": "ok", "moves": []}
 
     def release(self, org_id: str, order_ref: str, lines: Optional[Sequence[Line]] = None) -> dict:
+        return {"status": "ok", "moves": []}
+
+    def receive_stock(self, org_id: str, **_: Any) -> dict:
         return {"status": "ok", "moves": []}
 
 
@@ -85,6 +105,25 @@ class SupabaseStockPort:
     def release(self, org_id: str, order_ref: str, lines: Optional[Sequence[Line]] = None) -> dict:
         return stock_svc.release(self._scope(org_id), order_ref, lines)
 
+    def receive_stock(
+        self,
+        org_id: str,
+        *,
+        item_id: str,
+        warehouse_id: str,
+        qty: Any,
+        unit_cost_cents: int,
+        source: str,
+        source_ref: str,
+        user_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> dict:
+        data = {
+            "item_id": item_id, "warehouse_id": warehouse_id, "qty": qty, "unit_cost_cents": unit_cost_cents,
+            "source": source, "source_ref": source_ref, "note": note,
+        }
+        return stock_svc.receive(self._scope(org_id), data, user_id=user_id)
+
 
 @dataclass
 class _Bal:
@@ -102,6 +141,7 @@ class FakeStockPort:
     #: (org, order_ref) -> {(item, wh): {"qty", "state"}} with state in reserved / committed / released.
     orders: dict[tuple[str, str], dict[tuple[str, str], dict]] = field(default_factory=dict)
     moves: list[dict] = field(default_factory=list)
+    _received: dict[tuple[str, str, str, str, str], dict] = field(default_factory=dict)
 
     # -- test helpers -----------------------------------------------------------------------
     def receive(self, org_id: str, item_id: str, qty: Any, unit_cost_cents: int = 0, warehouse_id: Optional[str] = None) -> None:
@@ -121,6 +161,31 @@ class FakeStockPort:
         return b.on_hand - b.reserved
 
     # -- the port ---------------------------------------------------------------------------
+    def receive_stock(
+        self,
+        org_id: str,
+        *,
+        item_id: str,
+        warehouse_id: str,
+        qty: Any,
+        unit_cost_cents: int,
+        source: str,
+        source_ref: str,
+        user_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> dict:
+        q = dec(qty)
+        if q <= 0:
+            raise invalid("qty", "A quantidade deve ser maior que zero.", code=QUANTIDADE_INVALIDA)
+        key = (str(org_id), source, source_ref, str(item_id), str(warehouse_id))
+        if key in self._received:
+            return {"status": "replayed", "moves": [self._received[key]]}
+        self.receive(org_id, item_id, q, unit_cost_cents, warehouse_id)
+        move = {**self.moves[-1], "unit_cost_cents": unit_cost_cents, "source": source, "source_ref": source_ref}
+        self.moves[-1] = move
+        self._received[key] = move
+        return {"status": "ok", "moves": [move]}
+
     def _wh(self, line: Line) -> str:
         wh = line.get("warehouse_id") or self.default_warehouse
         if not wh:

@@ -93,6 +93,28 @@ def _section(title: str, schema: str, table: str, body: str, org: str, *, extra:
     return f"-- {title}\n{body.strip()}\n{extra}{org_rls(schema, table, org)}"
 
 
+def _entries_additive(cfg: FinanceConfig, s: str, entries: str) -> str:
+    """Additive, re-runnable changes to `entries` for tables created by an older generator.
+
+    - `source` CHECK is re-stated with the full `EntrySource` list (`purchasing` joined it);
+    - `party_id` (only when `cfg.with_parties`): nullable link to the parties organ, composite FK so a link can never
+      cross tenants; `counterparty_*` stays a snapshot (the parties-finance link).
+    """
+    out = f"""-- Entry source vocabulary: re-stated so tables created before a source existed accept it.
+ALTER TABLE {s}.{entries} DROP CONSTRAINT IF EXISTS {entries}_source_check;
+ALTER TABLE {s}.{entries} ADD CONSTRAINT {entries}_source_check CHECK (source IN ({_in(EntrySource)}));
+"""
+    if cfg.with_parties:
+        out += f"""-- Party link (parties organ): nullable, same-org by composite FK.
+ALTER TABLE {s}.{entries} ADD COLUMN IF NOT EXISTS party_id UUID;
+ALTER TABLE {s}.{entries} DROP CONSTRAINT IF EXISTS {entries}_party_fk;
+ALTER TABLE {s}.{entries} ADD CONSTRAINT {entries}_party_fk
+    FOREIGN KEY (party_id, org_id) REFERENCES {s}.{cfg.parties_table}(id, org_id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS idx_{entries}_party ON {s}.{entries} (org_id, party_id) WHERE party_id IS NOT NULL;
+"""
+    return out
+
+
 def _tables(cfg: FinanceConfig, s: str) -> list[str]:
     o = cfg.org_id_expr
     p = cfg.table_prefix
@@ -237,6 +259,7 @@ CREATE INDEX IF NOT EXISTS idx_{t['entries']}_org_status ON {s}.{t['entries']} (
 CREATE INDEX IF NOT EXISTS idx_{t['entries']}_org_competence ON {s}.{t['entries']} (org_id, competence_month);
 CREATE INDEX IF NOT EXISTS idx_{t['entries']}_category ON {s}.{t['entries']} (category_id);
 """,
+        extra=_entries_additive(cfg, s, t['entries']),
     )
     add(
         "Statement imports (slice D service). sha256 unique per account: re-importing a file is a 409.",

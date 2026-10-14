@@ -7,8 +7,8 @@ Contract §3.5. Protocol + Fake + Real + factory (CLAUDE.md §1 seed IO rule):
 - `FakeFinanceBooking` -- in-memory, records calls, same idempotency keys (tests of consumers);
 - `make_finance_booking(kind=..., ...)` -- the factory.
 
-Both calls are IDEMPOTENT, so a retried webhook / re-run job never double-books:
-`book_receivable` on `(source, source_ref)`, `book_settlement` on `(kind, external_ref)`.
+All calls are IDEMPOTENT, so a retried webhook / re-run job never double-books:
+`book_receivable` / `book_payable` on `(source, source_ref)`, `book_settlement` on `(kind, external_ref)`.
 """
 from __future__ import annotations
 
@@ -53,6 +53,28 @@ class FinanceBooking(Protocol):
         """Create (or find) the receivable for `(source, source_ref)`; returns its entry id."""
         ...
 
+    def book_payable(
+        self,
+        org_id: str,
+        *,
+        source: str,
+        source_ref: str,
+        description: str,
+        counterparty_name: Optional[str],
+        counterparty_doc: Optional[str],
+        amount_cents: int,
+        competence_month: date,
+        due_date: date,
+        category_hint: Optional[str] = None,
+        party_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[str]:
+        """Create (or find) the payable (AP) for `(source, source_ref)`; returns its entry id.
+
+        `party_id` links the parties organ when the host mounts it (`FinanceConfig.with_parties`);
+        `counterparty_*` stays a snapshot either way."""
+        ...
+
     def book_settlement(
         self,
         org_id: str,
@@ -82,6 +104,9 @@ class NoopFinanceBooking:
     def book_receivable(self, org_id: str, **_: Any) -> Optional[str]:
         return None
 
+    def book_payable(self, org_id: str, **_: Any) -> Optional[str]:
+        return None
+
     def book_settlement(self, org_id: str, **_: Any) -> Optional[str]:
         return None
 
@@ -97,6 +122,13 @@ class FakeFinanceBooking:
         key = (str(org_id), source, source_ref)
         if key not in self.entries:
             self.entries[key] = {"id": new_id(), "org_id": str(org_id), "source": source, "source_ref": source_ref, **fields}
+        return self.entries[key]["id"]
+
+    def book_payable(self, org_id: str, *, source: str, source_ref: str, **fields: Any) -> Optional[str]:
+        key = (str(org_id), source, source_ref)
+        if key not in self.entries:
+            self.entries[key] = {"id": new_id(), "org_id": str(org_id), "source": source, "source_ref": source_ref,
+                                 "direction": "payable", **fields}
         return self.entries[key]["id"]
 
     def book_settlement(self, org_id: str, *, source: str, source_ref: str, kind: str, external_ref: str, **fields: Any) -> Optional[str]:
@@ -160,6 +192,52 @@ class SupabaseFinanceBooking:
             if exc.code != DOCUMENTO_INVALIDO:
                 raise
             # A bridge must not lose a receivable over a malformed buyer document.
+            logger.warning("finance booking: invalid counterparty_doc for %s/%s; booked without it", source, source_ref)
+            return self._create(s, {**data, "counterparty_doc": None})
+
+    def book_payable(
+        self,
+        org_id: str,
+        *,
+        source: str,
+        source_ref: str,
+        description: str,
+        counterparty_name: Optional[str],
+        counterparty_doc: Optional[str],
+        amount_cents: int,
+        competence_month: date,
+        due_date: date,
+        category_hint: Optional[str] = None,
+        party_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[str]:
+        s = self._scope(org_id)
+        if source not in values(EntrySource):
+            raise invalid("source", "Origem inválida.")
+        if not source_ref:
+            raise invalid("source_ref", "A referência de origem é obrigatória para lançamentos automáticos.")
+        existing = find_by_source(s, source, source_ref)
+        if existing is not None:
+            return str(existing["id"])
+        data = {
+            "direction": "payable",
+            "source": source,
+            "source_ref": source_ref,
+            "description": description,
+            "counterparty_name": counterparty_name,
+            "counterparty_doc": counterparty_doc,
+            "amount_cents": amount_cents,
+            "competence_month": month_start(competence_month),
+            "due_date": due_date,
+            "category_id": find_category_by_hint(s, category_hint, CategoryDirection.EXPENSE),
+            "party_id": party_id if self._cfg.with_parties else None,
+            "notes": notes,
+        }
+        try:
+            return self._create(s, data)
+        except FinanceError as exc:
+            if exc.code != DOCUMENTO_INVALIDO:
+                raise
             logger.warning("finance booking: invalid counterparty_doc for %s/%s; booked without it", source, source_ref)
             return self._create(s, {**data, "counterparty_doc": None})
 

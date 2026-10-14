@@ -131,3 +131,24 @@ def test_supabase_port_calls_the_rpcs_scoped_to_the_org(db):  # noqa: F811
     assert exc.value.code == "reserva_consumida"
     with pytest.raises(InventoryError):
         port.reserve(ORG_A, "O1", [])
+
+
+def test_receive_stock_is_idempotent_on_source_ref_in_the_fake_and_calls_the_receive_rpc_in_the_real_port(db):  # noqa: F811
+    fake = FakeStockPort()
+    kw = dict(item_id=ITEM, warehouse_id=WH1, qty="2.500", unit_cost_cents=1234, source="purchasing", source_ref="rl-1")
+    first = fake.receive_stock(ORG_A, **kw)
+    again = fake.receive_stock(ORG_A, **kw)
+    assert first["status"] == "ok" and again["status"] == "replayed"
+    assert fake.balance(ORG_A, ITEM, WH1).on_hand == Decimal("2.5") and fake.balance(ORG_A, ITEM, WH1).avg_cost_cents == 1234
+    assert fake.moves[-1]["source_ref"] == "rl-1" and fake.moves[-1]["unit_cost_cents"] == 1234
+    with pytest.raises(InventoryError):
+        fake.receive_stock(ORG_A, **{**kw, "qty": 0, "source_ref": "rl-2"})
+    assert NoopStockPort().receive_stock(ORG_A, **kw)["status"] == "ok"
+
+    db.set_rpc_data("inv_receive", {"status": "ok", "moves": [{"id": "m1"}]})
+    real = make_stock_port("supabase", db=db, cfg=CFG)
+    assert real.receive_stock(ORG_A, **kw, user_id="u1", note="NF 1")["status"] == "ok"
+    name, params = db.rpc_calls[-1]
+    assert name == "inv_receive" and params["p_org_id"] == ORG_A
+    assert params["p_row"]["source"] == "purchasing" and params["p_row"]["source_ref"] == "rl-1"
+    assert params["p_row"]["qty"] == "2.500" and params["p_row"]["unit_cost_cents"] == 1234 and params["p_row"]["created_by"] == "u1"

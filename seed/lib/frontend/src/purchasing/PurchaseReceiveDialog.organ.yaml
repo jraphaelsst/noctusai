@@ -1,0 +1,34 @@
+name: PurchaseReceiveDialog
+kind: component
+path: seed/lib/frontend/src/purchasing/PurchaseReceiveDialog.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Partial receipts: a quantity per open line (default = the open balance), validated client-side against the open balance and re-checked by the server under a row lock. One idempotency key per open dialog, so a retried submit is a replay. A committed receipt whose stock / payables leg failed shows the warning with a repost button instead of reporting success."
+  - "Part of the purchasing organ (project-history/roadmaps/erp-seed-2026-10.md E2 / W3); backend noctusai_lib.domain.purchasing. Order lifecycle draft -> approved -> sent -> partially_received -> received (+ cancelled, only before any receipt). Quantities are numeric(18,3) sent as decimal STRINGS; money is integer cents, formatted only via formatCents; pt-BR copy (purchasing/messages.ts)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client and, for the pickers, the parties / items / inventory hooks (optional props rendered as sub-components, so a host without those organs gets free-text supplier, manual lines, no warehouse)."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "controls.tsx re-exports inventory/controls (ListSkeleton / RetryError / RefreshingBar now serve commerce + inventory + parties + purchasing): lift into design-system and repoint only the controls files."
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): built once in the seed."
+  - "Computing the landed cost client-side was rejected: the receive RPC prorates freight / other / discount under the order lock so the receipts of an order add up to exactly the order adjustment."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

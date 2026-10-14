@@ -61,6 +61,7 @@ class EntrySource(_StrEnum):
     COMMERCE_ORDER = "commerce_order"
     IMPORT = "import"
     EXTERNAL = "external"
+    PURCHASING = "purchasing"
 
 
 class SettlementKind(_StrEnum):
