@@ -64,11 +64,12 @@ class TestVariablesSeed:
         assert len({v.slug for v in VARIABLES}) == 40
         assert {v.grupo for v in VARIABLES} == {"publico", "especialista", "produto", "global"}
         assert len(CLASSIFIABLE) == 36
-        assert sum(v.corestudio_id is not None for v in VARIABLES) == 33
+        assert sum(v.referencia_id is not None for v in VARIABLES) == 33
 
     def test_migration_carries_the_generated_seed_verbatim(self):
         sql = _MIG.read_text()
-        assert seed_sql() in sql
+        # 217 is applied + immutable and predates migration 256's column rename.
+        assert seed_sql().replace("referencia_id", "corestudio_id") in sql
         assert sql.count("\n    ('") == 40
 
     def test_prompt_lists_all_36_and_no_global(self):
@@ -80,7 +81,7 @@ class TestVariablesSeed:
         for i, v in enumerate(VARIABLES, 1):
             pc.mock_supabase.from_("cs_research_variables").insert({
                 "slug": v.slug, "label": v.label, "grupo": v.grupo,
-                "description": v.description, "corestudio_id": v.corestudio_id,
+                "description": v.description, "referencia_id": v.referencia_id,
                 "sort_order": i, "classifiable": v.classifiable,
             }).execute()
         r = pc.get(f"{BASE}/variables")

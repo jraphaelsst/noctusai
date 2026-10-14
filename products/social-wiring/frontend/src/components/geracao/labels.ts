@@ -33,7 +33,7 @@ export const ESTRUTURAS_ROTEIRO: { valor: RoteiroEstrutura; rotulo: string; expl
   {
     valor: "cta_final",
     rotulo: "CTA no final",
-    explicacao: "Capa primeiro e um único CTA no fim: salvar + compartilhar/comentar/enviar.",
+    explicacao: "Capa primeiro e um único CTA no fim: salvar + enviar a alguém (ou marcar).",
   },
 ];
 

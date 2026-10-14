@@ -587,6 +587,14 @@ Authored 2026-10-13 (owner decision: WhatsApp leaves "Conexões" and becomes the
 
 Authored 2026-10-13 (owner decision "no leftovers from Core"). Drops `cs_roteiros_estrutura_check`, rewrites existing rows, sets the default `'cta_inicio'`, re-adds the same-named CHECK (`cta_inicio|cta_final`). Idempotent. Requires 250. Apply BEFORE deploying the image that reads/writes the new values (create/reprocessar insert `cta_inicio`/`cta_final`); until then an old-values DB rejects them. Then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`. (Renumbered from 252 at integrate: 252 was taken by `status_pagina_lais`.)
 
-## 254 — extracao_leitura_resultados (model-routing learning loop) — NOT APPLIED
+## 254 — extracao_leitura_resultados (model-routing learning loop) — APPLIED (applied in prod by noc-0 release 8cdea6928, 2026-10-14)
 
 Authored 2026-10-13 (owner direction: route each document/field to the measured best model, conciliate only doubtful reads, learn from outcomes). New table, one row per critical field of a routed identity read: model, trust-gate verdict + reasons, fallback ran, agreement, outcome, cost, and the later human resolution. Fingerprints only (24-bit), never values. RLS mirrors 138 as converted by 211 (own-org SELECT via current_org_id_for('social_wiring'), service_role ALL). Additive + idempotent; the writer (`card_hub.leitura_resultados`) logs and continues while the table is absent, so apply order vs image is free — apply BEFORE relying on the recalibration export.
+
+## 255 — status_pagina: CoreStudio pages to producao — NOT APPLIED
+
+Authored 2026-10-14 (owner decision: Esteira + the media-creation pages leave 'desenvolvimento'). Moves 11 rows still in 'desenvolvimento' to 'producao' (dashboard, chat, cerebro, esteira, headlines-gerar/-sugeridas/-favoritas, perfil, pesquisa, pesquisa-extrair, roteiros). Keeps biblioteca + minha-biblioteca (Biblioteca ingestion is an open owner topic) and treinamentos (no lesson has a video yet). Idempotent; requires 241. Apply order vs image is free (data-only, the nav reads it at request time).
+
+## 256 — cs_research_variables.corestudio_id → referencia_id — NOT APPLIED
+
+Authored 2026-10-14 (owner decision "no leftovers from Core"). Pure rename, guarded on the old name (idempotent). No runtime code selects the column, so apply order vs image is free. 217 stays immutable; `test_pesquisa` compares 217 against the seed rendered with the pre-rename name.

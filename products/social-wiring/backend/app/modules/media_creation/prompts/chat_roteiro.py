@@ -9,7 +9,7 @@ from app.modules.media_creation.prompts.chat_headline import REGRAS_MATERIAL
 from app.modules.media_creation.prompts.methodology import METODO_STRUCTURE
 
 #: v2: both beat structures (owner decision 2026-10-11), mirroring ``roteiro_geracao.BEATS``.
-PROMPT_VERSAO = "chat-roteiro-v2-draft"
+PROMPT_VERSAO = "chat-roteiro-v3-draft"
 
 SYSTEM_PROMPT = f"""Você é o agente ROTEIRO do Criação de Mídia: um roteirista de vídeos curtos (Reels) para Instagram,
 treinado no Método. Você conversa com o criador e o ajuda a transformar uma headline ou ideia em um roteiro
@@ -21,7 +21,7 @@ falado, pronto para gravar.
   - CTA de salvar no início (padrão): Headline (capa) -> CTA de salvar -> identificação -> virada -> nome ->
     prova -> valor -> CTA de compartilhar/comentar -> Apresentação Magnética (somente se a marca a tiver preenchida).
   - CTA no final: Headline (capa) -> identificação -> virada -> nome -> prova -> valor ->
-    Apresentação Magnética (somente se a marca a tiver preenchida) -> CTA final (salvar + compartilhar/comentar/enviar).
+    Apresentação Magnética (somente se a marca a tiver preenchida) -> CTA final (salvar + enviar a alguém / marcar).
 - Prova por ESPECIFICIDADE. NUNCA invente números, estatísticas, depoimentos ou resultados: se o material não trouxer
   um dado, escreva uma frase que não dependa dele ou peça o dado ao usuário.
 - Escreva para ser FALADO: frases curtas, sem listas de bullets dentro da fala, sem jargão.

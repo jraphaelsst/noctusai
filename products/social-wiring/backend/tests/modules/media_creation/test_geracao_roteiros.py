@@ -580,7 +580,7 @@ class TestEstrutura:
             "Headline (capa)", "Identificação", "Virada", "Nome", "Prova", "Valor", "Apresentação Magnética", "CTA final",
         ] == beat_titulos("cta_final")
         cta = system_prompt("cta_final").split("**CTA final**", 1)[1].split("\n", 1)[0]
-        assert "SALVAR" in cta and "compartilhar/comentar/enviar" in cta and "<CTAs>" in cta
+        assert "SALVAR" in cta and "ENVIAR" in cta and "<CTAs>" in cta
 
     def test_regras_dos_beats_sao_as_mesmas_nas_duas(self):
         cs, mt = system_prompt("cta_inicio"), system_prompt("cta_final")
@@ -592,7 +592,7 @@ class TestEstrutura:
     def test_padrao_e_cta_inicio_e_versoes_distintas(self):
         assert ESTRUTURAS == ("cta_inicio", "cta_final")
         assert system_prompt() == ROTEIRO_GERACAO_SYSTEM_PROMPT == system_prompt("cta_inicio")
-        assert PROMPT_VERSOES == {"cta_inicio": "roteiro-v1-draft", "cta_final": "roteiro-cta-final-v1-draft"}
+        assert PROMPT_VERSOES == {"cta_inicio": "roteiro-v1-draft", "cta_final": "roteiro-cta-final-v2-draft"}
         assert PROMPT_VERSAO == "roteiro-v1-draft"
         with pytest.raises(KeyError):
             system_prompt("outra")
@@ -624,7 +624,7 @@ class TestEstrutura:
         llm = Llm("## Capa\nOutro")
         asyncio.run(executar_geracao(_job(rc, d["id"], "roteiro.gerar"), db=rc.mock_supabase, llm=llm, cfg=_cfg()))
         assert llm.calls[0][0] == system_prompt("cta_final")
-        assert _row(rc, d["id"])["prompt_versao"] == "roteiro-cta-final-v1-draft"
+        assert _row(rc, d["id"])["prompt_versao"] == "roteiro-cta-final-v2-draft"
 
     def test_linha_anterior_a_coluna_gera_como_cta_inicio(self, rc):
         rid = _criar(rc, gerar_perguntas=False).json()["data"]["id"]

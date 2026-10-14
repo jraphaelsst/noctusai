@@ -6,7 +6,7 @@ section 1). This one is designed from the Método and the behaviour observed on 
 
 Two beat orders, chosen per roteiro (``estrutura``, owner decision 2026-10-11): ``cta_inicio``
 (``roteiro-v1-draft``, CTA de salvar right after the capa) and ``cta_final``
-(``roteiro-cta-final-v1-draft``, capa first and ONE merged CTA last). Every beat's rule is shared.
+(``roteiro-cta-final-v2-draft``, capa first and ONE closing CTA last: salvar + enviar/marcar). Every beat's rule is shared.
 
 Untrusted text (brain, viral transcript/caption, the creator's free text) is placed in
 ``<dados_nao_confiaveis>`` blocks and declared material, never instructions (contract 9.1); model
@@ -57,7 +57,7 @@ ESTRUTURA_PADRAO: Estrutura = "cta_inicio"
 #: One prompt version per structure; the version actually used is stored on the row.
 PROMPT_VERSOES: dict[str, str] = {
     "cta_inicio": "roteiro-v1-draft",
-    "cta_final": "roteiro-cta-final-v1-draft",
+    "cta_final": "roteiro-cta-final-v2-draft",
 }
 #: The default structure's version (kept for callers that predate the choice).
 PROMPT_VERSAO = PROMPT_VERSOES[ESTRUTURA_PADRAO]
@@ -82,8 +82,11 @@ _BEAT_APRESENTACAO = (
     "**Apresentação Magnética** — use EXATAMENTE a apresentação do criador (<Apresentacao_Magnetica>) "
     "quando informada; quando não houver, OMITA este beat. Nunca invente uma apresentação."
 )
+#: Owner decision 2026-10-14: the closing CTA follows the Método rule "CTA = salvar + marcar/enviar"
+#: (``methodology.py``, sends/saves are the reach signal) instead of a generic share/comment ask.
 _BEAT_CTA_FINAL = (
-    "**CTA final** — UM único fechamento pedindo para SALVAR o vídeo e para compartilhar/comentar/enviar; "
+    "**CTA final** — UM único fechamento curto (uma ou duas frases) pedindo para SALVAR o vídeo e para "
+    "ENVIAR a alguém que precisa ver (ou marcar essa pessoa) — salvamentos e envios são o sinal de alcance; "
     "use os CTAs do criador (<CTAs>) quando informados; senão, uma frase curta e natural."
 )
 
