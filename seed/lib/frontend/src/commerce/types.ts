@@ -141,6 +141,12 @@ export interface StoreProfile {
   contact_phone: string;
   /** Platform-admin only; basis points. Ignored by the server for other callers. */
   platform_fee_bps?: number;
+  /** Card installments (D33/D41): the most parcelas offered (1..12; default 12). */
+  installments_max?: number;
+  /** Parcelas up to this count carry no buyer interest (1..installments_max; default 3). */
+  installments_interest_free?: number;
+  /** Monthly buyer interest in basis points (0..2000); `null` = follow the platform default (199 = 1,99 % a.m.). */
+  installment_interest_monthly_bps?: number | null;
   updated_at?: string;
   updated_by?: string | null;
 }
@@ -334,6 +340,72 @@ export interface Order {
   /** Present on GET by id. */
   items?: OrderItem[];
   events?: OrderEvent[];
+  /** Money view (GET by id, CONTRACT P4 §2.5). */
+  charges?: OrderCharge[];
+  refunds?: OrderRefund[];
+  reminders?: OrderReminder[];
+}
+
+/** One charge attempt of an order (`commerce_order_charges`); `amount_cents` is what was charged (interest included). */
+export interface OrderCharge {
+  id: string;
+  order_id: string;
+  attempt: number;
+  gateway: string;
+  payment_method: PaymentMethod;
+  installment_count: number;
+  amount_cents: number;
+  status: ChargeAttemptStatus;
+  created_at: string;
+  closed_at: string | null;
+}
+
+/** A refund (`commerce_refunds`). `requested` = asked of the gateway, not confirmed yet ("em andamento"). */
+export interface OrderRefund {
+  id: string;
+  order_id: string;
+  charge_id: string;
+  amount_cents: number;
+  reason: string;
+  status: RefundStatus;
+  gateway_refund_id: string | null;
+  requested_by: string | null;
+  created_at: string;
+  done_at: string | null;
+}
+
+/** A payment-recovery reminder already sent for the order (one per kind). */
+export interface OrderReminder {
+  order_id: string;
+  kind: ReminderKind;
+  sent_at: string;
+}
+
+/** `POST /orders/{id}/refunds` body; `amount_cents` omitted = everything still refundable. */
+export interface RefundInput {
+  amount_cents?: number;
+  reason: string;
+}
+
+/** One card option of a quote (D33): `installment_cents` is the regular parcela, `total_cents` what the buyer pays in all. */
+export interface InstallmentOption {
+  count: number;
+  installment_cents: number;
+  total_cents: number;
+  interest_free: boolean;
+}
+
+/** `POST /storefront/orders/{token}/payment` — regenerate / switch the payment of an order. */
+export interface RegeneratePaymentInput {
+  payment_method: PaymentMethod;
+  installments?: number;
+}
+
+export interface RegeneratePaymentResult {
+  status: OrderStatus;
+  checkout_url?: string | null;
+  pix_qr?: PixQr | null;
+  expires_at?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +484,8 @@ export interface Quote {
   currency: string;
   coupon_error?: string | null;
   requires_immediate_delivery_waiver: boolean;
+  /** Card parcelamento options for this total (D33); absent on a pre-P4 server. */
+  installment_options?: InstallmentOption[];
 }
 
 export interface CheckoutBuyer {
@@ -432,6 +506,8 @@ export interface CheckoutRequest extends QuoteRequest {
   buyer: CheckoutBuyer;
   address?: Address;
   payment_method: PaymentMethod;
+  /** Card parcelas (1 for pix/boleto); must be one of the quote's `installment_options`. */
+  installments?: number;
   consents: CheckoutConsents;
 }
 
@@ -466,6 +542,9 @@ export interface PublicOrder {
   expires_at: string | null;
   paid_at: string | null;
   created_at?: string;
+  /** Parcelas of the CURRENT charge attempt, and what that attempt charges (interest included). */
+  installment_count?: number;
+  charged_cents?: number;
 }
 
 export interface AccessLinkRequest {

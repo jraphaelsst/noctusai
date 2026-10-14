@@ -152,10 +152,46 @@ describe('OrderStatusPage', () => {
     expect(await screen.findByText(/Não foi possível copiar/)).toBeInTheDocument();
   });
 
-  it('expired shows the regenerate placeholder (disabled without a handler)', async () => {
-    mount({ ...base, status: 'expired' });
+  it('expired offers "gerar novo pagamento" that regenerates by token and refreshes the order', async () => {
+    const user = userEvent.setup();
+    const api = makeApi();
+    api.get.mockResolvedValue({ data: { ...base, status: 'expired' } });
+    api.post.mockResolvedValue({ data: { status: 'pending_payment', checkout_url: 'https://pay.test/n' } });
+    const Wrapper = wrapperFor();
+    render(<Wrapper><OrderStatusPage hooks={createCommerceHooks(api)} token="t" /></Wrapper>);
     expect(await screen.findByText(/prazo de pagamento deste pedido expirou/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Gerar novo pagamento' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('Forma de pagamento do novo pagamento'), 'boleto');
+    await user.click(screen.getByRole('button', { name: 'Gerar novo pagamento' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/storefront/orders/t/payment', { payment_method: 'boleto' }));
+    await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(1)); // the public order was refetched
+  });
+
+  it('a regenerate refusal (429) is shown, not swallowed', async () => {
+    const user = userEvent.setup();
+    const api = makeApi();
+    api.get.mockResolvedValue({ data: { ...base, status: 'expired' } });
+    api.post.mockRejectedValue(new ApiError(429, 'Aguarde um minuto antes de gerar um novo pagamento.'));
+    const Wrapper = wrapperFor();
+    render(<Wrapper><OrderStatusPage hooks={createCommerceHooks(api)} token="t" /></Wrapper>);
+    await user.click(await screen.findByRole('button', { name: 'Gerar novo pagamento' }));
+    expect(await screen.findByText(/Aguarde um minuto/)).toBeInTheDocument();
+  });
+
+  it('a host-supplied onNewPayment replaces the built-in regenerate', async () => {
+    const user = userEvent.setup();
+    const onNewPayment = vi.fn();
+    const api = makeApi();
+    api.get.mockResolvedValue({ data: { ...base, status: 'expired' } });
+    const Wrapper = wrapperFor();
+    render(<Wrapper><OrderStatusPage hooks={createCommerceHooks(api)} token="t" onNewPayment={onNewPayment} /></Wrapper>);
+    await user.click(await screen.findByRole('button', { name: 'Gerar novo pagamento' }));
+    expect(onNewPayment).toHaveBeenCalledTimes(1);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('a parcelled card order shows what was charged', async () => {
+    mount({ ...base, status: 'paid', payment_method: 'credit_card', installment_count: 6, charged_cents: 10800 });
+    expect(await screen.findByTestId('charged-total')).toHaveTextContent('R$ 108,00 em 6x');
   });
 
   it('paid confirms', async () => {

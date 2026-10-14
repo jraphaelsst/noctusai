@@ -27,8 +27,8 @@ async function parseBody(res: Response): Promise<unknown> {
 /** Plain-fetch transport for a base URL (public storefront; no auth header). */
 export function createFetchTransport(apiBase: string): OrganApi {
   const base = apiBase.replace(/\/+$/, '');
-  async function call<T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> {
-    const init: RequestInit = { method, headers: { Accept: 'application/json' } };
+  async function call<T>(method: string, path: string, body?: unknown, form?: FormData, extra?: Record<string, string>): Promise<T> {
+    const init: RequestInit = { method, headers: { Accept: 'application/json', ...(extra ?? {}) } };
     if (form) {
       init.body = form;
     } else if (body !== undefined) {
@@ -63,7 +63,8 @@ export function createFetchTransport(apiBase: string): OrganApi {
         : '';
       return call<T>('GET', path + (qs === '?' ? '' : qs));
     },
-    post: <T = any>(path: string, body?: unknown) => call<T>('POST', path, body ?? {}),
+    post: <T = any>(path: string, body?: unknown, options?: { headers?: Record<string, string> }) =>
+      call<T>('POST', path, body ?? {}, undefined, options?.headers),
     put: <T = any>(path: string, body?: unknown) => call<T>('PUT', path, body ?? {}),
     patch: <T = any>(path: string, body?: unknown) => call<T>('PATCH', path, body ?? {}),
     delete: <T = any>(path: string, body?: unknown) => call<T>('DELETE', path, body),

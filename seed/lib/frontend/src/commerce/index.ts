@@ -50,3 +50,24 @@ export { OrderStatusPage } from './OrderStatusPage';
 export type { OrderStatusPageProps } from './OrderStatusPage';
 export { MyOrdersRequest } from './MyOrdersRequest';
 export type { MyOrdersRequestProps } from './MyOrdersRequest';
+
+// P4 money + fiscal (projects/commerce-seed-p4/CONTRACT.md §5)
+export * from './fiscalTypes';
+export { RefundDialog, RefundHistory } from './RefundDialog';
+export type { RefundDialogProps } from './RefundDialog';
+export { OrderMoneyPanel } from './OrderMoneyPanel';
+export type { OrderMoneyPanelProps } from './OrderMoneyPanel';
+export {
+  InstallmentsSettings,
+  profileWithInstallments,
+  percentToBps,
+  bpsToPercent,
+  DEFAULT_INSTALLMENTS_MAX,
+  DEFAULT_INSTALLMENTS_INTEREST_FREE,
+} from './InstallmentsSettings';
+export type { InstallmentsSettingsProps } from './InstallmentsSettings';
+export { FiscalSettingsForm } from './FiscalSettingsForm';
+export type { FiscalSettingsFormProps } from './FiscalSettingsForm';
+export { InstallmentPicker } from './InstallmentPicker';
+export type { InstallmentPickerProps } from './InstallmentPicker';
+export { paidCents, refundableCents, heldRefundCents, doneRefundCents, hasRefundInProgress, newIdempotencyKey } from './moneyMath';

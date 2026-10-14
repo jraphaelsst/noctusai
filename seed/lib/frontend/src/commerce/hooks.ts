@@ -27,6 +27,7 @@ import {
 } from '@tanstack/react-query';
 import { type ApiClient } from '../api';
 import { apiErrorCode, apiErrorStatus, createFetchTransport, errorMessage, keep, signals } from '../organ-kit/query';
+import type { FiscalUpdate, FiscalView, Invoice, InvoiceKind } from './fiscalTypes';
 import type {
   AccessLinkRequest,
   Category,
@@ -51,6 +52,10 @@ import type {
   PublicOrder,
   Quote,
   QuoteRequest,
+  RefundInput,
+  RegeneratePaymentInput,
+  RegeneratePaymentResult,
+  OrderRefund,
   Storefront,
   StorefrontProduct,
   CatalogItem,
@@ -92,6 +97,8 @@ export const commerceKeys = {
   customer: (id: string) => ['commerce', 'staff', 'customers', 'detail', id] as const,
   orders: ['commerce', 'staff', 'orders'] as const,
   order: (id: string) => ['commerce', 'staff', 'orders', 'detail', id] as const,
+  fiscal: ['commerce', 'staff', 'fiscal'] as const,
+  invoices: (orderId: string) => ['commerce', 'staff', 'invoices', orderId] as const,
   storefront: ['commerce', 'storefront', 'profile'] as const,
   catalog: ['commerce', 'storefront', 'catalog'] as const,
   storefrontProduct: (slug: string) => ['commerce', 'storefront', 'product', slug] as const,
@@ -349,6 +356,82 @@ export function createCommerceHooks(apiOrBase: string | CommerceApi) {
     });
   }
 
+  /**
+   * Refund (full when `amount_cents` is omitted, partial otherwise). `idempotencyKey` rides as the
+   * `Idempotency-Key` header: re-sending the SAME key after an inconclusive attempt returns the same
+   * refund instead of creating a second one. A result with `status: 'requested'` is "em andamento".
+   */
+  function useCreateRefund() {
+    const inv = useInvalidate();
+    return useMutation({
+      mutationFn: ({ orderId, idempotencyKey, ...body }: RefundInput & { orderId: string; idempotencyKey: string }) =>
+        unwrap<OrderRefund>(
+          api.post(`/api/commerce/orders/${orderId}/refunds`, body, { headers: { 'Idempotency-Key': idempotencyKey } }),
+        ),
+      onSuccess: (_r, v) => inv(commerceKeys.order(v.orderId), commerceKeys.orders),
+    });
+  }
+
+  // ---- staff: fiscal (CONTRACT P4 §2.5) ----------------------------------
+  function useFiscal() {
+    const q = useQuery<FiscalView>({
+      queryKey: commerceKeys.fiscal,
+      queryFn: () => unwrap(api.get('/api/commerce/fiscal')),
+    });
+    return signals(q);
+  }
+  function useFiscalMutations() {
+    const inv = useInvalidate();
+    const done = () => inv(commerceKeys.fiscal);
+    return {
+      save: useMutation({
+        mutationFn: (b: FiscalUpdate) => unwrap<FiscalView>(api.put('/api/commerce/fiscal', b)),
+        onSuccess: done,
+      }),
+      /** The A1 (.pfx) and its password are forwarded to the invoice provider and never stored by us. */
+      uploadCertificate: useMutation({
+        mutationFn: ({ file, password }: { file: File; password: string }) => {
+          const form = new FormData();
+          form.append('file', file);
+          form.append('password', password);
+          return unwrap<unknown>(api.upload('/api/commerce/fiscal/certificate', form));
+        },
+        onSuccess: done,
+      }),
+      cutover: useMutation({
+        mutationFn: (confirm: string) => unwrap<FiscalView>(api.post('/api/commerce/fiscal/nfse-cutover', { confirm })),
+        onSuccess: done,
+      }),
+      rollback: useMutation({
+        mutationFn: (confirm: string) => unwrap<FiscalView>(api.post('/api/commerce/fiscal/nfse-cutover/rollback', { confirm })),
+        onSuccess: done,
+      }),
+    };
+  }
+  function useOrderInvoices(orderId: string | null | undefined) {
+    const q = useQuery<Invoice[]>({
+      queryKey: commerceKeys.invoices(orderId ?? ''),
+      queryFn: async () => (await api.get<{ data: Invoice[] }>(`/api/commerce/orders/${orderId}/invoices`)).data,
+      enabled: !!orderId,
+    });
+    return signals(q);
+  }
+  function useInvoiceMutations(orderId: string) {
+    const inv = useInvalidate();
+    const done = () => inv(commerceKeys.invoices(orderId));
+    return {
+      issue: useMutation({
+        mutationFn: (kind: InvoiceKind) => unwrap<Invoice>(api.post(`/api/commerce/orders/${orderId}/invoices`, { kind })),
+        onSuccess: done,
+      }),
+      cancel: useMutation({
+        mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+          unwrap<Invoice>(api.post(`/api/commerce/invoices/${id}/cancel`, { reason })),
+        onSuccess: done,
+      }),
+    };
+  }
+
   // ---- storefront (public) ----------------------------------------------
   function useStorefront() {
     const q = useQuery<Storefront>({
@@ -400,6 +483,18 @@ export function createCommerceHooks(apiOrBase: string | CommerceApi) {
     });
     return signals(q);
   }
+  /**
+   * "Gerar novo pagamento": regenerate (expired/failed) or switch the method (pending) of an order, by its
+   * token. Refreshes the public order afterwards. Rate-limited server-side (429 `muitas_tentativas`).
+   */
+  function useRegeneratePayment(token: string | null | undefined) {
+    const inv = useInvalidate();
+    return useMutation({
+      mutationFn: (b: RegeneratePaymentInput) =>
+        unwrap<RegeneratePaymentResult>(api.post(`/api/storefront/orders/${token}/payment`, b)),
+      onSuccess: () => inv(commerceKeys.publicOrder(token ?? '')),
+    });
+  }
   function useAccessLink() {
     return useMutation({
       mutationFn: (b: AccessLinkRequest) => api.post('/api/storefront/orders/access-link', b),
@@ -432,12 +527,18 @@ export function createCommerceHooks(apiOrBase: string | CommerceApi) {
     useOrders,
     useOrder,
     useCancelOrder,
+    useCreateRefund,
+    useFiscal,
+    useFiscalMutations,
+    useOrderInvoices,
+    useInvoiceMutations,
     useStorefront,
     useCatalog,
     useStorefrontProduct,
     useQuote,
     useCheckout,
     usePublicOrder,
+    useRegeneratePayment,
     useAccessLink,
     usePrivacyRequest,
   };

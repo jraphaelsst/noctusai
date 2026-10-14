@@ -1,0 +1,32 @@
+name: InstallmentPicker
+kind: component
+path: seed/lib/frontend/src/commerce/InstallmentPicker.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Buyer card parcelamento choice from Quote.installment_options (count, parcela, total with interest after the interest-free limit); renders nothing when the quote offers one option."
+  - "The server re-validates the chosen count at checkout (422 parcelamento_invalido)."
+  - "Part of the commerce organ money/fiscal additions (projects/commerce-seed-p4/CONTRACT.md §5); integer cents end to end, pt-BR default copy with an en map (commerce/messages.ts)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): built once in the seed, consumed by products/commerce."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

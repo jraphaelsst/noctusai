@@ -170,7 +170,8 @@ export const MFA_BASE_PATH = '/api/auth/mfa';
 
 export interface ApiClient {
   get<T = any>(path: string, params?: Record<string, any>): Promise<T>;
-  post<T = any>(path: string, body?: unknown): Promise<T>;
+  /** `options.headers` = extra request headers (e.g. an `Idempotency-Key`); never overrides auth/org headers. */
+  post<T = any>(path: string, body?: unknown, options?: { headers?: Record<string, string> }): Promise<T>;
   patch<T = any>(path: string, body?: unknown): Promise<T>;
   put<T = any>(path: string, body?: unknown): Promise<T>;
   /**
@@ -549,8 +550,8 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       return handleResponse<T>(response);
     },
 
-    async post<T = any>(path: string, body?: unknown): Promise<T> {
-      const headers = await buildHeaders();
+    async post<T = any>(path: string, body?: unknown, options?: { headers?: Record<string, string> }): Promise<T> {
+      const headers = { ...(options?.headers ?? {}), ...(await buildHeaders()) };
       const base = getBaseUrl();
       const response = await fetcher(`${base}${path}`, {
         method: 'POST',

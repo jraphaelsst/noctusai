@@ -19,6 +19,7 @@ import { isValidCpfOrCnpj, isValidEmail } from './validation';
 import { apiErrorCode, errorMessage, type CommerceHooks } from './hooks';
 import { useQuoteFor } from './useQuoteFor';
 import { useOptionalStorefront } from './storefrontContext';
+import { InstallmentPicker } from './InstallmentPicker';
 import {
   COMMERCE_ERROR_CODES,
   PAYMENT_METHODS,
@@ -58,6 +59,7 @@ export function CheckoutForm({ hooks, request, quote: quoteProp, legal: legalPro
   const [doc, setDoc] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [method, setMethod] = React.useState<PaymentMethod>('pix');
+  const [installments, setInstallments] = React.useState(1);
   const [address, setAddress] = React.useState<Address>({});
   const [terms, setTerms] = React.useState(false);
   const [privacy, setPrivacy] = React.useState(false);
@@ -78,6 +80,10 @@ export function CheckoutForm({ hooks, request, quote: quoteProp, legal: legalPro
     return <FormError message={t('checkout.no_legal')} />;
   }
 
+  // Card parcelamento (D33): offered only for the card and only when the quote carries a choice.
+  const cardOptions = method === 'credit_card' ? (quote.installment_options ?? []) : [];
+  const chosenCount = cardOptions.some((o) => o.count === installments) ? installments : 1;
+  const chargedTotal = cardOptions.find((o) => o.count === chosenCount)?.total_cents ?? quote.total_cents;
   const needsWaiver = quote.requires_immediate_delivery_waiver;
   const needsAddress = quote.lines.some((l) => l.fulfillment_type === 'shipping' || l.fulfillment_type === 'local_delivery');
   const aceiteServerError = apiErrorCode(checkout.error) === COMMERCE_ERROR_CODES.aceiteObrigatorio;
@@ -105,6 +111,7 @@ export function CheckoutForm({ hooks, request, quote: quoteProp, legal: legalPro
       buyer: { name: name.trim(), email: email.trim().toLowerCase(), doc: onlyDigits(doc), phone: onlyDigits(phone) },
       ...(needsAddress ? { address } : {}),
       payment_method: method,
+      ...(method === 'credit_card' ? { installments: chosenCount } : {}),
       consents: {
         terms_version: legal!.terms_version,
         privacy_version: legal!.privacy_version,
@@ -171,6 +178,7 @@ export function CheckoutForm({ hooks, request, quote: quoteProp, legal: legalPro
             {t(`payment.${m}`)}
           </label>
         ))}
+        <InstallmentPicker options={cardOptions} value={chosenCount} onChange={setInstallments} currency={quote.currency} locale={locale} disabled={checkout.isPending} />
       </fieldset>
 
       <fieldset className="space-y-2" data-testid="consents">
@@ -205,7 +213,7 @@ export function CheckoutForm({ hooks, request, quote: quoteProp, legal: legalPro
       {checkout.isError && !aceiteServerError ? <FormError message={errorMessage(checkout.error)} /> : null}
 
       <Button type="submit" disabled={checkout.isPending}>
-        {checkout.isPending ? t('checkout.processing') : t('checkout.pay', { total: formatCents(quote.total_cents, quote.currency, loc) })}
+        {checkout.isPending ? t('checkout.processing') : t('checkout.pay', { total: formatCents(chargedTotal, quote.currency, loc) })}
       </Button>
     </form>
   );

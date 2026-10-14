@@ -72,6 +72,10 @@ export type { InputProps } from "./ui/Input";
 
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 
+// Radix-Tabs primitives (already the spine of SocialDashboardShell) — exported so a product page with
+// several sections (Itens / Estoque) composes the canonical tabs instead of hand-rolling a tablist.
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+
 // Skeleton / TableSkeleton — canonical loading-placeholder primitives (seed-skeleton-organs
 // slice). Formalizes the animate-pulse bg-muted block hand-rolled across ChartCard,
 // PageSkeleton, KanbanBoard, IntegrationCard, ClientCredentialPanel, ChatWindow (N>=5).
