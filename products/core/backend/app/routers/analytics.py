@@ -155,12 +155,12 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
     orgs = _all(db, "organizations", "*")
     orgs.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
 
-    # Get user counts per org
-    users = _all(db, "noctus_users", "id, org_id")
+    # Members per org = ACTIVE memberships (noctus_users.org_id is only a user's last-active org)
+    memberships = _all(db, "org_memberships", "id, org_id, status")
     user_counts: dict = {}
-    for u in users:
+    for u in memberships:
         oid = u.get("org_id")
-        if oid:
+        if oid and u.get("status") == "active":
             user_counts[oid] = user_counts.get(oid, 0) + 1
 
     # Get subscriptions with plan info

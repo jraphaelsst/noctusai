@@ -42,15 +42,19 @@ class TestInvalidateSSOCacheForOrg:
         sso_module._session_cache.set("b@example.com", {"t": 2}, org_id="org-1", product_slug="p1")
         sso_module._session_cache.set("c@example.com", {"t": 3}, org_id="org-1", product_slug="p1")  # different org
 
-        db = MagicMock()
-        table = MagicMock()
-        table.select.return_value = table
-        table.eq.return_value = table
-        table.execute.return_value = MagicMock(data=[
-            {"email": "a@example.com"},
-            {"email": "b@example.com"},
+        # members of the org = its ACTIVE memberships; emails live on the profiles
+        from noctusai_lib.testing import MockSupabaseClient
+        db = MockSupabaseClient()
+        db.set_table_data("org_memberships", [
+            {"user_id": "u-a", "org_id": "org-1", "status": "active"},
+            {"user_id": "u-b", "org_id": "org-1", "status": "active"},
+            {"user_id": "u-c", "org_id": "org-2", "status": "active"},
         ])
-        db.table.return_value = table
+        db.set_table_data("noctus_users", [
+            {"id": "u-a", "email": "a@example.com", "org_id": "org-9"},  # last-active org elsewhere
+            {"id": "u-b", "email": "b@example.com", "org_id": "org-1"},
+            {"id": "u-c", "email": "c@example.com", "org_id": "org-2"},
+        ])
 
         invalidated = sso_module.invalidate_sso_cache_for_org(db, "org-1")
         assert invalidated == 2

@@ -32,6 +32,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_user_ungated
 from app.rate_limit import limiter
 from app.services.permissions import check_permission
+from app.services import team_memberships
 from app.schemas.team import AcceptInviteRequest, InviteCreate, TeamMemberRoleUpdate
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 from noctusai_lib.domain.invitations import (
@@ -127,15 +128,9 @@ async def listar_membros(authorization: Optional[str] = Header(None)):
     profile = await _get_user_profile(db, user.id)
     org_id = profile["org_id"]
 
-    members = (
-        db.table("noctus_users")
-        .select("id, nome, email, org_role, created_at")
-        .eq("org_id", org_id)
-        .order("created_at")
-        .execute()
-    )
-
-    return {"data": members.data or []}
+    # Members of THIS org = its ACTIVE memberships. noctus_users.org_id is only each user's
+    # last-active org, so filtering on it would hide every member whose last-active org is elsewhere.
+    return {"data": team_memberships.list_team(db, org_id)}
 
 
 @router.post("/invite")
@@ -156,19 +151,26 @@ async def convidar_membro(
     org_id = profile["org_id"]
     _require_can_grant(profile, body.role)
 
-    # Ensure the email is not already in this org
+    # Ensure the email is not already a member of this org (the profile is only the identity
+    # lookup -- membership of THIS org is the org_memberships row).
     existing = (
         db.table("noctus_users")
         .select("id")
-        .eq("org_id", org_id)
         .eq("email", body.email)
         .execute()
     )
-    if existing.data:
-        raise HTTPException(
-            status_code=409,
-            detail="Este e-mail já pertence a um membro da organização",
-        )
+    for row in existing.data or []:
+        membership = team_memberships.get_membership(db, org_id, row["id"])
+        if membership and membership.get("status") == "active":
+            raise HTTPException(
+                status_code=409,
+                detail="Este e-mail já pertence a um membro da organização",
+            )
+        if membership and membership.get("status") == "suspended":
+            raise HTTPException(
+                status_code=409,
+                detail="A participação deste e-mail nesta organização está suspensa",
+            )
 
     # Validate that the target role exists
     role_check = (
@@ -256,36 +258,35 @@ async def remover_membro(
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="Você não pode remover a si mesmo")
 
-    # Fetch the target member — include email for SSO cache invalidation.
-    target = (
-        db.table("noctus_users")
-        .select("id, org_id, org_role, email")
-        .eq("id", user_id)
-        .eq("org_id", org_id)
-        .single()
-        .execute()
-    )
-    if not target.data:
+    # The target is an ACTIVE MEMBERSHIP of this org (their profile may point at another org).
+    target_membership = team_memberships.get_membership(db, org_id, user_id)
+    if not target_membership or target_membership.get("status") != "active":
         raise HTTPException(status_code=404, detail="Membro não encontrado")
+    target_role = target_membership.get("org_role")
 
     # Cannot remove the owner; removing an admin needs owner/admin (or superadmin)
-    if target.data.get("org_role") == "owner":
+    if target_role == "owner":
         raise HTTPException(
             status_code=403,
             detail="Não é possível remover o proprietário da organização",
         )
-    _require_can_touch_target(profile, target.data.get("org_role"))
+    _require_can_touch_target(profile, target_role)
 
-    # Remove the member: delete their noctus_users profile.
-    # (org_id is NOT NULL, so we cannot just clear it.)
-    db.table("noctus_users").delete().eq("id", user_id).eq("org_id", org_id).execute()
+    # Email for SSO cache invalidation (read BEFORE the remove: the profile may be deleted by it).
+    target_profile = team_memberships.profiles_by_id(db, [user_id], "id, email").get(user_id) or {}
 
-    logger.info(f"Member {user_id} removed from org={org_id}")
+    # End the membership. ONE transaction (core team_membership_ops): when this org is the
+    # user's profile org the profile moves to their most recently updated other ACTIVE
+    # membership, or is deleted when there is none -- the deferred profile-org invariant
+    # refuses anything else at COMMIT.
+    outcome = team_memberships.remove_member(db, org_id, user_id)
+
+    logger.info(f"Member {user_id} removed from org={org_id} ({outcome})")
 
     # Flush SSO cache for the removed user — compliance-audit Phase 6 (finding 9).
     try:
         from app.routers.sso import invalidate_sso_cache_for_user
-        target_email = target.data.get("email")
+        target_email = target_profile.get("email")
         if target_email:
             invalidate_sso_cache_for_user(target_email)
     except Exception as exc:
@@ -297,6 +298,11 @@ async def remover_membro(
         await audit_service.log(
             user_id=user.id, org_id=org_id,
             action="remove", resource_type="team_member", resource_id=user_id,
+            details={
+                "membership_ended": True,
+                "profile_moved_to": outcome.get("profile_moved_to"),
+                "profile_deleted": bool(outcome.get("profile_deleted")),
+            },
         )
     except Exception as exc:
         logger.warning("team: remove-member audit log failed for user_id=%s (%s); removal succeeded", user_id, exc)
@@ -352,48 +358,49 @@ async def alterar_role_membro(
             detail="Não é possível promover a proprietário por esta rota",
         )
 
-    # Fetch the target member — include email for SSO cache invalidation.
-    target = (
-        db.table("noctus_users")
-        .select("id, org_id, org_role, email")
-        .eq("id", user_id)
-        .eq("org_id", org_id)
-        .single()
-        .execute()
-    )
-    if not target.data:
+    # The target is an ACTIVE MEMBERSHIP of this org (their profile may point at another org).
+    target_membership = team_memberships.get_membership(db, org_id, user_id)
+    if not target_membership or target_membership.get("status") != "active":
         raise HTTPException(status_code=404, detail="Membro não encontrado")
+    target_role = target_membership.get("org_role")
 
     # Cannot change the owner's role; changing an admin's needs owner/admin (or superadmin)
-    if target.data.get("org_role") == "owner":
+    if target_role == "owner":
         raise HTTPException(
             status_code=403,
             detail="Não é possível alterar o papel do proprietário",
         )
-    _require_can_touch_target(profile, target.data.get("org_role"))
+    _require_can_touch_target(profile, target_role)
 
-    result = (
-        db.table("noctus_users")
-        .update({"org_role": body.role})
-        .eq("id", user_id)
-        .eq("org_id", org_id)
-        .execute()
-    )
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Erro ao atualizar papel")
+    # Membership role + the profile mirror (only when this org IS the profile org): one transaction.
+    outcome = team_memberships.set_member_role(db, org_id, user_id, body.role)
 
     logger.info(f"Member {user_id} role changed to {body.role} in org={org_id}")
 
     # Flush SSO cache for the mutated user — compliance-audit Phase 6 (finding 9).
     try:
         from app.routers.sso import invalidate_sso_cache_for_user
-        target_email = target.data.get("email")
+        target_email = team_memberships.profiles_by_id(db, [user_id], "id, email").get(user_id, {}).get("email")
         if target_email:
             invalidate_sso_cache_for_user(target_email)
     except Exception as exc:
         logger.warning("SSO cache invalidation after role change failed: %s", exc)
 
-    return {"data": result.data[0]}
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="role_change", resource_type="team_member", resource_id=user_id,
+            details={"from_role": target_role, "to_role": body.role},
+        )
+    except Exception as exc:
+        logger.warning("team: role-change audit log failed for user_id=%s (%s); change succeeded", user_id, exc)
+
+    return {"data": {
+        "id": user_id,
+        "org_id": outcome.get("org_id", org_id),
+        "org_role": outcome.get("org_role", body.role),
+    }}
 
 
 @router.get("/invitations")
@@ -487,27 +494,23 @@ async def aceitar_convite(
     )
     existing_data = existing_resp.data if existing_resp is not None else None
 
-    if existing_data and existing_data.get("org_id"):
-        # User already belongs to an org — check if it's the same one
-        if existing_data["org_id"] == invite_data["org_id"]:
-            raise HTTPException(
-                status_code=409,
-                detail="Você já pertence a esta organização",
-            )
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail="Você já pertence a outra organização. Entre em contato com o suporte.",
-            )
+    # Multi-org: belonging to another org is no reason to refuse. What decides is the user's
+    # membership in the INVITING org: active -> already a member (409, replay stays refused);
+    # suspended -> an org decision an invitation must not lift (403); removed/none -> join.
+    membership = team_memberships.get_membership(db, invite_data["org_id"], user_id)
+    if membership and membership.get("status") == "active":
+        raise HTTPException(status_code=409, detail="Você já pertence a esta organização")
+    if membership and membership.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="Sua participação nesta organização está suspensa")
 
     if existing_data:
-        # Update existing profile to join the org
-        db.table("noctus_users").update({
-            "org_id": invite_data["org_id"],
-            "org_role": invite_data["role"],
-        }).eq("id", user_id).execute()
+        # An EXISTING user: activate (or re-activate a removed) membership in the inviting org and
+        # mark the invitation accepted -- one transaction. The profile does NOT move: their
+        # last-active org stays, and the new org is reached through the platform org picker.
+        team_memberships.accept_invitation_as_member(db, invite_data["id"], user_id)
     else:
-        # Create a new noctus_users profile
+        # First-time invitee: create the profile in the inviting org (the core 079 trigger
+        # mirrors the ACTIVE membership).
         db.table("noctus_users").insert({
             "id": user_id,
             "email": user_email or invite_data["email"],
@@ -516,8 +519,21 @@ async def aceitar_convite(
             "org_role": invite_data["role"],
             "role": "user",
         }).execute()
+        mark_accepted(db, "invitations", invite_data["id"])
 
-    mark_accepted(db, "invitations", invite_data["id"])
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user_id, org_id=invite_data["org_id"],
+            action="membership_added", resource_type="team_member", resource_id=user_id,
+            details={
+                "invitation_id": invite_data["id"], "org_role": invite_data["role"],
+                "existing_user": bool(existing_data),
+                "reactivated": bool(membership and membership.get("status") == "removed"),
+            },
+        )
+    except Exception as exc:
+        logger.warning("team: accept-invite audit log failed for user_id=%s (%s); acceptance succeeded", user_id, exc)
 
     return {
         "message": "Convite aceito com sucesso",

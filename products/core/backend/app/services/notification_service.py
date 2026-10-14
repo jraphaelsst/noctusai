@@ -20,6 +20,7 @@ Creates and dispatches in-app notifications for users.
 import logging
 from typing import Optional
 from app.database import get_admin_client
+from app.services import team_memberships
 
 logger = logging.getLogger(__name__)
 
@@ -92,20 +93,20 @@ async def notify_team(
     """
     db = get_admin_client()
 
-    # Get all org members
-    query = db.table("noctus_users").select("id").eq("org_id", org_id)
-    if exclude_user_id:
-        query = query.neq("id", exclude_user_id)
-    members = query.execute()
+    # All org members = ACTIVE memberships (noctus_users.org_id is only a user's last-active org)
+    member_ids = [
+        uid for uid in team_memberships.active_member_user_ids(db, org_id)
+        if not exclude_user_id or uid != str(exclude_user_id)
+    ]
 
-    if not members.data:
+    if not member_ids:
         logger.info(f"No team members found for org={org_id}")
         return []
 
     # Bulk INSERT all notifications in a single query (avoids N+1)
     rows = [
         {
-            "user_id": member["id"],
+            "user_id": member_id,
             "org_id": org_id,
             "type": type,
             "title": title,
@@ -113,7 +114,7 @@ async def notify_team(
             "metadata": metadata or {},
             "read": False,
         }
-        for member in members.data
+        for member_id in member_ids
     ]
 
     result = db.table("notifications").insert(rows).execute()

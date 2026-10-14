@@ -19,9 +19,8 @@ import pytest
 class TestListMembers:
     def test_list_members_success(self, client):
         mock_sb = client.mock_supabase
-        # noctus_users is queried twice:
-        #   1. _get_user_profile (.single) → profile dict
-        #   2. list members (.execute) → list of members
+        # The team is the ACTIVE org_memberships of the caller's org; the profile row supplies
+        # identity (and is the caller's acting org via _get_user_profile).
         profile = {
             "id": "test-user-123",
             "org_id": "org-1",
@@ -30,9 +29,9 @@ class TestListMembers:
             "nome": "Test User",
             "email": "test@example.com",
         }
-        mock_sb.set_table_responses("noctus_users", [
-            profile,
-            [profile],
+        mock_sb.set_table_data("noctus_users", [profile])
+        mock_sb.set_table_data("org_memberships", [
+            {"user_id": "test-user-123", "org_id": "org-1", "org_role": "admin", "status": "active"},
         ])
 
         resp = client.get("/api/team")
@@ -129,9 +128,13 @@ class TestRemoveMember:
                 "email": "other@example.com",
             },
         ])
+        mock_sb.set_table_data("org_memberships", [
+            {"user_id": "other-user-789", "org_id": "org-1", "org_role": "member", "status": "active"},
+        ])
 
         resp = admin_client.delete("/api/team/other-user-789")
         assert resp.status_code == 200
+        assert mock_sb.rpc_calls == [("team_member_remove", {"p_org_id": "org-1", "p_user_id": "other-user-789"})]
 
     def test_remove_self_rejected(self, admin_client):
         mock_sb = admin_client.mock_supabase
@@ -165,14 +168,12 @@ class TestRemoveMember:
 class TestChangeMemberRole:
     def test_change_role_success(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        # noctus_users is queried multiple times:
-        #   1. _get_user_profile (.single) → admin profile
-        #   2. target member lookup (.single) → target member data
-        #   3. update result (.execute) → updated member
-        mock_sb.set_table_responses("noctus_users", [
+        mock_sb.set_table_data("noctus_users", [
             {"id": "admin-user-456", "org_id": "org-1", "org_role": "admin", "role": "admin"},
-            {"id": "other-user", "org_id": "org-1", "org_role": "member"},
-            [{"id": "other-user", "org_id": "org-1", "org_role": "admin"}],
+            {"id": "other-user", "org_id": "org-1", "org_role": "member", "email": "o@example.com"},
+        ])
+        mock_sb.set_table_data("org_memberships", [
+            {"user_id": "other-user", "org_id": "org-1", "org_role": "member", "status": "active"},
         ])
         mock_sb.set_table_data("roles", [{"id": "r1", "slug": "admin"}])
 

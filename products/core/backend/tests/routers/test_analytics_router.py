@@ -88,8 +88,9 @@ class TestAnalyticsTenants:
         mock_sb.set_table_data("organizations", [
             {"id": "org-1", "nome": "Corp A", "slug": "corp-a", "created_at": "2025-01-01"},
         ])
-        mock_sb.set_table_data("noctus_users", [
-            {"id": "u1", "org_id": "org-1"},
+        mock_sb.set_table_data("org_memberships", [
+            {"id": "m1", "org_id": "org-1", "status": "active"},
+            {"id": "m2", "org_id": "org-1", "status": "removed"},
         ])
         mock_sb.set_table_data("subscriptions", [])
 

@@ -30,6 +30,15 @@ def _mock_db(users_data=None, insert_data=None):
     users_builder.execute.return_value = users_resp
     tables["noctus_users"] = users_builder
 
+    # org_memberships: notify_team reads the ACTIVE memberships of the org (one page, short)
+    members_builder = MagicMock()
+    for _m in ("select", "eq", "order", "range"):
+        getattr(members_builder, _m).return_value = members_builder
+    members_resp = MagicMock()
+    members_resp.data = [{"user_id": u["id"]} for u in (users_data or [])]
+    members_builder.execute.return_value = members_resp
+    tables["org_memberships"] = members_builder
+
     # notifications
     notif_builder = MagicMock()
     notif_builder.insert.return_value = notif_builder
@@ -187,7 +196,7 @@ async def test_notify_team_sends_to_all_members():
 @pytest.mark.asyncio
 async def test_notify_team_excludes_user():
     """notify_team() excludes the specified user (e.g. the actor)."""
-    members = [{"id": "user-2"}, {"id": "user-3"}]
+    members = [{"id": "user-1"}, {"id": "user-2"}, {"id": "user-3"}]
     created = [{"id": "n1"}, {"id": "n2"}]
     db, tables = _mock_db(users_data=members, insert_data=created)
 
@@ -202,9 +211,10 @@ async def test_notify_team_excludes_user():
             exclude_user_id="user-1",
         )
 
-    # Verify .neq was called to exclude the user
-    users_builder = tables["noctus_users"]
-    users_builder.neq.assert_called_once_with("id", "user-1")
+    # The actor is filtered out of the recipients (memberships are read, the profile is not)
+    tables["noctus_users"].select.assert_not_called()
+    rows = tables["notifications"].insert.call_args[0][0]
+    assert {r["user_id"] for r in rows} == {"user-2", "user-3"}
     assert len(result) == 2
 
 

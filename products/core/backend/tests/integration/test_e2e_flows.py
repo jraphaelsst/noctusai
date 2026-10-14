@@ -322,14 +322,14 @@ class TestRoleChange:
         """PATCH /api/team/{user_id}/role -> role updated."""
         ms = admin_client.mock_supabase
 
-        ms.set_table_responses("noctus_users", [
-            # _require_team_manage -> _get_user_profile
+        ms.set_table_data("noctus_users", [
             {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
-            # target member lookup
-            {"id": "target-user", "org_id": "test-org-123", "org_role": "member"},
-            # update result
-            {"id": "target-user", "org_id": "test-org-123", "org_role": "admin"},
+            {"id": "target-user", "org_id": "test-org-123", "org_role": "member", "email": "t@example.com"},
         ])
+        ms.set_table_data("org_memberships", [
+            {"user_id": "target-user", "org_id": "test-org-123", "org_role": "member", "status": "active"},
+        ])
+        ms.set_rpc_data("team_member_set_role", {"org_id": "test-org-123", "org_role": "admin"})
         ms.set_table_responses("roles", [
             [{"id": "role-admin", "slug": "admin"}],
         ])
@@ -351,13 +351,12 @@ class TestRemoveMember:
         """DELETE /api/team/{user_id} -> member removed."""
         ms = admin_client.mock_supabase
 
-        ms.set_table_responses("noctus_users", [
-            # _require_team_manage -> _get_user_profile
+        ms.set_table_data("noctus_users", [
             {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
-            # target member lookup
-            {"id": "other-user", "org_id": "test-org-123", "org_role": "member"},
-            # delete execute
-            {"id": "other-user"},
+            {"id": "other-user", "org_id": "test-org-123", "org_role": "member", "email": "o@example.com"},
+        ])
+        ms.set_table_data("org_memberships", [
+            {"user_id": "other-user", "org_id": "test-org-123", "org_role": "member", "status": "active"},
         ])
         ms.set_table_data("audit_logs", [])
         ms.set_table_data("webhook_endpoints", [])
@@ -370,11 +369,12 @@ class TestRemoveMember:
         """DELETE /api/team/{user_id} -> 403 if target is owner."""
         ms = admin_client.mock_supabase
 
-        ms.set_table_responses("noctus_users", [
-            # _require_team_manage
+        ms.set_table_data("noctus_users", [
             {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
-            # target member lookup -> owner
             {"id": "owner-user", "org_id": "test-org-123", "org_role": "owner"},
+        ])
+        ms.set_table_data("org_memberships", [
+            {"user_id": "owner-user", "org_id": "test-org-123", "org_role": "owner", "status": "active"},
         ])
 
         resp = admin_client.delete("/api/team/owner-user")

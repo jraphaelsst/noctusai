@@ -92,6 +92,23 @@ class MockSupabaseClient(_SharedMockSupabaseClient):
         `_builder_for` so the seed-lib MockRequestBuilder is used (with
         insert→inserted-row return + auto-id fix from 2026-04-29)."""
         self._tables[name] = self._builder_for(name, data=data)
+        if name == "org_memberships":
+            self._memberships_explicit = True
+        elif name == "noctus_users" and not getattr(self, "_memberships_explicit", False):
+            self._mirror_profiles_to_memberships(data)
+
+    def _mirror_profiles_to_memberships(self, data):
+        """Emulate core 079's ``org_memberships_sync_from_home`` trigger: every profile that carries
+        an org has a matching ACTIVE membership (same org, same role, default 'member'). A test that
+        seeds ``org_memberships`` itself switches this off -- the explicit rows win."""
+        rows = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+        members = [
+            {"id": f"m-{r['id']}", "user_id": r["id"], "org_id": r["org_id"],
+             "org_role": r.get("org_role") or "member", "status": "active",
+             "created_at": r.get("created_at"), "updated_at": r.get("updated_at")}
+            for r in rows if isinstance(r, dict) and r.get("id") and r.get("org_id")
+        ]
+        self._tables["org_memberships"] = self._builder_for("org_memberships", data=members)
 
     def set_table_responses(self, name, responses):
         """Set a queue of mock responses for a specific table.

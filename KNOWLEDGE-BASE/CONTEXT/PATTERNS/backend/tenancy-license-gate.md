@@ -242,6 +242,32 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     is why the Python home path and every non-picker reader may trust `noctus_users.org_id`
     without re-reading memberships: revocation-safety is one DB rule, not a query in each reader.
     S4's remove-member must therefore move or delete the profile in the same transaction.
+  - **Team = memberships (S4, core `team_membership_ops`).** "Members of org X" is the ACTIVE
+    `org_memberships` of X, never `noctus_users.org_id` (a user's LAST-ACTIVE org): the team list
+    (role shown = the membership role), seat counts (`check_user_limit`), `notify_team`, SSO cache
+    org-invalidation and the tenant-health user count all read memberships
+    (`app/services/team_memberships.py`). The three writes are SECURITY DEFINER functions
+    (service_role only) called over RPC because PostgREST sequences are not transactional:
+    `team_member_remove` (end the membership; if it was the profile org, move the profile to the
+    most recently updated other ACTIVE membership with that membership's role, else delete it; end
+    the user's live selections for the org), `team_member_set_role` (membership role + the profile
+    mirror ONLY for the profile org), `team_invitation_accept` (an EXISTING user: activate or
+    re-activate a `removed` membership with the invited role, link `invited_by`/`invitation_id`,
+    mark the invitation accepted — the profile does NOT move; `active` → 409, `suspended` → 403,
+    an invitation never lifts a suspension). A first-time invitee still gets a profile in the
+    inviting org (the 079 trigger mirrors the membership). Refusals are `team_membership:<code>`
+    mapped to strict statuses in `ERROR_MAP`; the last ACTIVE owner can be neither removed nor
+    demoted (SQL, serialised on the org row) and the router additionally keeps an `owner` target
+    untouchable (403). Deleting a sole-membership profile that still owns invitations/api_keys/audit
+    rows is a typed `409 profile_in_use` (FKs without cascade; the whole transaction rolls back).
+    **SSO admission** (`/api/sso/token`, `/launch`): admitted when ANY ACTIVE non-customer
+    membership is in an org licensed for the product (profile org first, then most recently
+    updated); the token carries the admitting org and the role in it; the org the product then
+    ACTS in is the resolver's job. Probes: `team_member_remove.refuses_last_owner`,
+    `team_member_set_role.refuses_demoting_last_owner`,
+    `team_member_remove.moves_profile_in_the_same_transaction`,
+    `team_invitation_accept.refuses_an_active_member`; behaviour on real Postgres:
+    `mcp/noctusai/tests/test_core_team_membership_ops_on_replay.py`.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

@@ -11,6 +11,18 @@ def _caller(mock_sb, org_role, role="user"):
     return {"id": CALLER, "org_id": "org-1", "org_role": org_role, "role": role, "nome": "C"}
 
 
+def _members(mock_sb, caller_org_role, caller_role, target_org_role, target_id="other-user"):
+    """Caller profile + a target who is an ACTIVE MEMBERSHIP of org-1 (the team router acts on
+    org_memberships; the profile is only identity / the caller's acting org)."""
+    mock_sb.set_table_data("noctus_users", [
+        _caller(mock_sb, caller_org_role, caller_role),
+        {"id": target_id, "org_id": "org-1", "org_role": target_org_role, "email": "o@example.com"},
+    ])
+    mock_sb.set_table_data("org_memberships", [
+        {"user_id": target_id, "org_id": "org-1", "org_role": target_org_role, "status": "active"},
+    ])
+
+
 def _invite_setup(mock_sb, org_role, role="user", target_slug="member"):
     mock_sb.set_table_responses("noctus_users", [
         _caller(mock_sb, org_role, role),
@@ -71,11 +83,7 @@ class TestRoleChangeGrantRules:
 
     def test_manager_can_still_set_a_non_admin_role(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_responses("noctus_users", [
-            _caller(mock_sb, "manager"),
-            {"id": "other-user", "org_id": "org-1", "org_role": "member"},
-            [{"id": "other-user", "org_id": "org-1", "org_role": "viewer"}],
-        ])
+        _members(mock_sb, "manager", "user", "member")
         mock_sb.set_table_data("roles", [{"id": "r1", "slug": "viewer"}])
         resp = admin_client.patch("/api/team/other-user/role", json={"role": "viewer"})
         assert resp.status_code == 200
@@ -95,11 +103,7 @@ class TestTargetRules:
     """Role change / removal of an owner (strict 403) or an admin (needs owner/admin/superadmin)."""
 
     def _remove_setup(self, mock_sb, caller_org_role, caller_role, target_org_role):
-        mock_sb.set_table_responses("noctus_users", [
-            _caller(mock_sb, caller_org_role, caller_role),
-            {"id": "other-user", "org_id": "org-1", "org_role": target_org_role, "email": "o@example.com"},
-            [],
-        ])
+        _members(mock_sb, caller_org_role, caller_role, target_org_role)
 
     @pytest.mark.parametrize("caller", [("owner", "user"), ("admin", "user"), ("manager", "admin")])
     def test_owner_target_cannot_be_removed(self, admin_client, caller):
@@ -120,11 +124,7 @@ class TestTargetRules:
         assert admin_client.delete("/api/team/other-user").status_code == 200
 
     def _role_setup(self, mock_sb, caller_org_role, caller_role, target_org_role):
-        mock_sb.set_table_responses("noctus_users", [
-            _caller(mock_sb, caller_org_role, caller_role),
-            {"id": "other-user", "org_id": "org-1", "org_role": target_org_role, "email": "o@example.com"},
-            [{"id": "other-user", "org_id": "org-1", "org_role": "viewer"}],
-        ])
+        _members(mock_sb, caller_org_role, caller_role, target_org_role)
         mock_sb.set_table_data("roles", [{"id": "r1", "slug": "viewer"}])
 
     def test_owner_target_role_cannot_change(self, admin_client):

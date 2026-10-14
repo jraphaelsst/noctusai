@@ -33,6 +33,7 @@ from app.sso_regime import (
     build_sso_launch_url, new_bind_nonce, origin_same_site, resolve_launch_base, site_of,
     sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
 )
+from app.services import team_memberships
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,37 @@ from noctusai_lib.primitives.roles import customer_may_access_product
 # SEC-2 (2026-09-28): an end customer (org_role in CUSTOMER_ORG_ROLES) only
 # ever SSOs into a product whose catalog row declares `aceita_clientes`.
 _CUSTOMER_REFUSED = "Área restrita à equipe."
+
+
+def _admitting_membership(db, profile: dict, user_id: str, product: dict, *, denied_detail: str) -> tuple[str, str]:
+    """Decide ADMISSION into ``product`` and return the ``(org_id, org_role)`` the token carries.
+
+    Multi-org (S4): a user is admitted when ANY of their ACTIVE, non-customer memberships is in an
+    org licensed for the product -- not only the profile (last-active) org. The profile org is
+    tried first, then the most recently updated memberships. Which org the product then ACTS in
+    is the resolver's job (S2); SSO only decides admission, and the token names the org that
+    admitted so a product trusting the token does not see an unlicensed org.
+
+    Denials are unchanged: every membership a customer role -> the customer refusal; otherwise
+    ``denied_detail`` (no license / inactive). No membership at all is a denial, never a fall-back
+    to the profile column (the profile's org is an ACTIVE membership by DB invariant).
+    """
+    memberships = team_memberships.list_user_active_memberships(db, user_id)
+    home = profile.get("org_id")
+    memberships.sort(key=lambda m: 0 if m.get("org_id") == home else 1)  # stable: keeps recency order
+    eligible = [m for m in memberships if customer_may_access_product(m.get("org_role") or "member", product)]
+    if not eligible:
+        # Includes "no membership": a customer-only (or member-less) caller never reaches a product here.
+        raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED if memberships else denied_detail)
+    if product.get("ativo") is not True:
+        # An inactive (asleep) product is not launchable -- fail closed.
+        raise HTTPException(status_code=403, detail=denied_detail)
+
+    from app.dependencies import check_org_license
+    for m in eligible:
+        if check_org_license(db, m["org_id"], product["id"]):
+            return m["org_id"], m.get("org_role") or "member"
+    raise HTTPException(status_code=403, detail=denied_detail)
 
 # Launch host must be same-site with core or the SameSite=Strict bind cookie
 # never reaches redeem (roadmap P2.2). Typed 409, never a silent launch.
@@ -100,18 +132,16 @@ def invalidate_sso_cache_for_org(db, org_id: str) -> int:
     if not org_id:
         return 0
     try:
-        result = (
-            db.table("noctus_users")
-            .select("email")
-            .eq("org_id", org_id)
-            .execute()
-        )
+        # Members of the org = its ACTIVE memberships (noctus_users.org_id is only a user's
+        # last-active org); the email lives on the profile.
+        member_ids = team_memberships.active_member_user_ids(db, org_id)
+        rows = list(team_memberships.profiles_by_id(db, member_ids, "id, email").values())
     except Exception as exc:  # noqa: BLE001
         logger.warning("SSO cache org-invalidate failed (org=%s): %s", org_id, exc)
         return 0
 
     count = 0
-    for row in result.data or []:
+    for row in rows:
         email = row.get("email")
         if email and _session_cache.invalidate(email):
             count += 1
@@ -149,23 +179,17 @@ async def generate_sso_token(request: Request, response: Response, body: SSOToke
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
-    org_id = profile.data["org_id"]
     role = profile.data.get("role", "user")
-    org_role = profile.data.get("org_role", "member")
 
-    # Check if org has access to product (including expiry check)
+    # Admission: ANY active non-customer membership in an org licensed for the product
+    # (token carries the admitting org + the role IN that org).
     product = db.table("products").select("id, slug, aceita_clientes, url_base, ativo, deploy_scope").eq("slug", body.product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
-    if not customer_may_access_product(org_role, product.data):
-        raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
-    if product.data.get("ativo") is not True:
-        # An inactive (asleep) product is not launchable -- fail closed.
-        raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
-
-    from app.dependencies import check_org_license
-    if not check_org_license(db, org_id, product.data["id"]):
-        raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
+    org_id, org_role = _admitting_membership(
+        db, profile.data, user.id, product.data,
+        denied_detail="Organização não tem acesso a este produto",
+    )
 
     # Resolve the launch URL BEFORE minting: an unresolvable product is a typed
     # 409, never a token minted and then a 500.
@@ -239,27 +263,20 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
     db = get_admin_client()
 
     # Get user profile
-    profile = db.table("noctus_users").select("org_id, role, org_role").eq("id", user.id).single().execute()
+    profile = db.table("noctus_users").select("org_id, role").eq("id", user.id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
-    org_id = profile.data["org_id"]
     role = profile.data.get("role", "user")
-    org_role = profile.data.get("org_role", "member")
 
     # Get product
     product = db.table("products").select("*").eq("slug", product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
-    if not customer_may_access_product(org_role, product.data):
-        raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
-    if product.data.get("ativo") is not True:
-        raise HTTPException(status_code=403, detail="Sem acesso a este produto")
-
-    # Check license (including expiry)
-    from app.dependencies import check_org_license
-    if not check_org_license(db, org_id, product.data["id"]):
-        raise HTTPException(status_code=403, detail="Sem acesso a este produto")
+    # Admission: ANY active non-customer membership in an org licensed for the product.
+    org_id, org_role = _admitting_membership(
+        db, profile.data, user.id, product.data, denied_detail="Sem acesso a este produto",
+    )
 
     try:
         launch_base = resolve_launch_base(product_slug, product.data)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from app.database import get_admin_client
+from app.services import team_memberships
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,10 @@ async def check_user_limit(org_id: str) -> dict:
 
     max_users = plan.get("max_users", -1)
 
-    # Count current org members
+    # Seats in use = ACTIVE memberships of the org (noctus_users.org_id is only a user's
+    # last-active org, so counting it would miss members whose last-active org is elsewhere).
     db = get_admin_client()
-    members = db.table("noctus_users").select("id", count="exact").eq("org_id", org_id).execute()
-    current_count = members.count if members.count is not None else len(members.data or [])
+    current_count = team_memberships.count_active_members(db, org_id)
 
     # Unlimited
     if max_users == -1:

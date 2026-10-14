@@ -2799,6 +2799,187 @@ _ORG_MEMBER_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---- Multi-org S4 (core 082): remove / change-role / accept as MEMBERSHIP operations ---------------
+# Each function is one transaction that must keep the 081 invariant (a profile's org is an ACTIVE
+# membership) true at COMMIT. The refusals are write_refusals; the profile move is a state assertion
+# that fires the DEFERRED invariant trigger IMMEDIATE so the probe judges the same thing COMMIT would.
+_TEAM_OPS_MIGRATIONS = ("079_org_memberships.sql", "081_org_member_selection.sql", "082_team_membership_ops.sql")
+
+_TEAM_LAST_OWNER_FIXTURE = """
+DECLARE
+  v_user uuid;
+  v_org  uuid;
+BEGIN
+  IF to_regprocedure('public.team_member_remove(uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.team_member_remove missing — core 082 not applied';
+  END IF;
+  SELECT m.user_id, m.org_id INTO v_user, v_org
+    FROM public.org_memberships m
+   WHERE m.status = 'active' AND m.org_role = 'owner'
+     AND NOT EXISTS (SELECT 1 FROM public.org_memberships o
+                      WHERE o.org_id = m.org_id AND o.status = 'active' AND o.org_role = 'owner'
+                        AND o.user_id <> m.user_id)
+   LIMIT 1;
+  IF v_user IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no organization with exactly one active owner';
+  END IF;
+  BEGIN
+    {call}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what} succeeded — the last-owner refusal did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'team_membership:last_owner%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""
+
+_TEAM_REMOVE_LAST_OWNER_PROBE = GuardProbe(
+    id="team_member_remove.refuses_last_owner",
+    product="core",
+    schema="public",
+    guard_name="team_member_remove",
+    kind="write_refusal",
+    migrations=_TEAM_OPS_MIGRATIONS,
+    rationale=(
+        "Ending the only ACTIVE owner of an org would leave it unadministrable; the refusal lives in "
+        "the function (serialised on the organizations row) so no caller can skip it."
+    ),
+    sql=_do_block(_TEAM_LAST_OWNER_FIXTURE.format(
+        call="PERFORM public.team_member_remove(v_org, v_user);", what="removing the last owner")),
+)
+
+_TEAM_SET_ROLE_LAST_OWNER_PROBE = GuardProbe(
+    id="team_member_set_role.refuses_demoting_last_owner",
+    product="core",
+    schema="public",
+    guard_name="team_member_set_role",
+    kind="write_refusal",
+    migrations=_TEAM_OPS_MIGRATIONS,
+    rationale="Demoting the only ACTIVE owner is the same hole as removing them.",
+    sql=_do_block(_TEAM_LAST_OWNER_FIXTURE.format(
+        call="PERFORM public.team_member_set_role(v_org, v_user, 'member');", what="demoting the last owner")),
+)
+
+_TEAM_REMOVE_MOVES_PROFILE_PROBE = GuardProbe(
+    id="team_member_remove.moves_profile_in_the_same_transaction",
+    product="core",
+    schema="public",
+    guard_name="team_member_remove",
+    kind="state_assertion",
+    migrations=_TEAM_OPS_MIGRATIONS,
+    rationale=(
+        "Removing a member from their PROFILE org must move the profile to their most recently "
+        "updated other ACTIVE membership in the SAME transaction (org_id + that membership's role): "
+        "the deferred org_memberships_profile_org_active trigger refuses COMMIT otherwise. The probe "
+        "fires that trigger IMMEDIATE, so it judges what COMMIT would."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_user  uuid;
+  v_home  uuid;
+  v_other uuid;
+  v_after uuid;
+  v_arole text;
+BEGIN
+  IF to_regprocedure('public.team_member_remove(uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.team_member_remove missing — core 082 not applied';
+  END IF;
+  SELECT n.id, n.org_id INTO v_user, v_home
+    FROM public.noctus_users n
+    JOIN public.org_memberships m ON m.user_id = n.id AND m.org_id = n.org_id AND m.status = 'active'
+   LIMIT 1;
+  IF v_user IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no profile with an active home membership to borrow';
+  END IF;
+  SELECT o.id INTO v_other FROM public.organizations o WHERE o.id <> v_home LIMIT 1;
+  IF v_other IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no second organization';
+  END IF;
+  -- a plain member at home (the last-owner refusal is not what this probe judges), a viewer elsewhere
+  UPDATE public.org_memberships SET org_role = 'member' WHERE user_id = v_user AND org_id = v_home;
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_user, v_other, 'viewer', 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = 'viewer', status = 'active', ended_at = NULL;
+  BEGIN
+    PERFORM public.team_member_remove(v_home, v_user);
+    SET CONSTRAINTS public.org_memberships_profile_org_active IMMEDIATE;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: removing the member raised: %', SQLERRM;
+  END;
+  SELECT n.org_id, n.org_role INTO v_after, v_arole FROM public.noctus_users n WHERE n.id = v_user;
+  IF v_after IS NOT DISTINCT FROM v_other AND v_arole = 'viewer'
+     AND EXISTS (SELECT 1 FROM public.org_memberships m
+                  WHERE m.user_id = v_user AND m.org_id = v_home AND m.status = 'removed' AND m.ended_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: the profile moved to the other membership with its role and the home membership ended';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: profile org=% role=% (expected % / viewer) after removal from the profile org', v_after, v_arole, v_other;
+END;
+"""),
+)
+
+_TEAM_ACCEPT_ACTIVE_MEMBER_PROBE = GuardProbe(
+    id="team_invitation_accept.refuses_an_active_member",
+    product="core",
+    schema="public",
+    guard_name="team_invitation_accept",
+    kind="write_refusal",
+    migrations=_TEAM_OPS_MIGRATIONS,
+    rationale=(
+        "Accepting an invitation must not re-link or re-role a membership that is already ACTIVE "
+        "(replays stay refused); the activation is conditional on removed/invited rows only."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_user  uuid;
+  v_home  uuid;
+  v_email text;
+  v_inv   uuid;
+BEGIN
+  IF to_regprocedure('public.team_invitation_accept(uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.team_invitation_accept missing — core 082 not applied';
+  END IF;
+  SELECT n.id, n.org_id, au.email INTO v_user, v_home, v_email
+    FROM public.noctus_users n
+    JOIN auth.users au ON au.id = n.id
+    JOIN public.org_memberships m ON m.user_id = n.id AND m.org_id = n.org_id AND m.status = 'active'
+   WHERE au.email IS NOT NULL
+   LIMIT 1;
+  IF v_user IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no profile with an auth email and an active home membership';
+  END IF;
+  INSERT INTO public.invitations (org_id, email, role, invited_by, token)
+  VALUES (v_home, v_email, 'member', v_user, 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_inv;
+  BEGIN
+    PERFORM public.team_invitation_accept(v_inv, v_user);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: accepting an invitation into an org the user is already an active member of succeeded — the refusal did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'team_membership:already_member%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+_TEAM_OPS_PROBES: tuple[GuardProbe, ...] = (
+    _TEAM_REMOVE_LAST_OWNER_PROBE,
+    _TEAM_SET_ROLE_LAST_OWNER_PROBE,
+    _TEAM_REMOVE_MOVES_PROFILE_PROBE,
+    _TEAM_ACCEPT_ACTIVE_MEMBER_PROBE,
+)
+
+
+
 def _picker_constraint_probe(*, probe_id: str, guard_name: str, rationale: str, declare: str, steps: str, what: str) -> GuardProbe:
     return GuardProbe(
         id=probe_id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
@@ -2976,6 +3157,7 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_NO_SELECTION_AAL1_REQUIRED_PROBE,
     _ORG_PICKER_PRODUCT_REVOKE_PROBE,
     *_ORG_MEMBER_PROBES,
+    *_TEAM_OPS_PROBES,
     _ACTING_AUDIT_ACTING_WRITE_PROBE,
     _ACTING_AUDIT_PLAIN_WRITE_PROBE,
 )
