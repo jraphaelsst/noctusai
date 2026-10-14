@@ -212,6 +212,8 @@ The 9 products (+ n8n/waha/legacy infra rows) already on the three surfaces at g
 
 ## Composes with
 
+- `KB § GUIDES/production-deploy.md § 5a` — the full first-go-live runbook that this consent opens (surfaces → image → edge → first container → live flip in core admin).
+
 - [`gate-methodology-sync`](../common/gate-methodology-sync.md) — the gate/mechanism pairing this pattern instantiates (refuse-not-null on `prod_consent action=request`).
 - [`prod-deploy-safety-gates`](prod-deploy-safety-gates.md) — the sibling pre-deploy gate cluster (cache reachability / drift-shield / slip-shield); this gate answers a *different* question ("should this product be public at all") than theirs ("is this deploy safe to ship").
 - [`git-branch-model`](../architect/git-branch-model.md) — bless/promote are **branch-granular**, not per-product; this consent gate is the missing **per-product** promotion decision bless/promote never made.
