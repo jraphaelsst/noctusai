@@ -138,3 +138,10 @@ def test_round_trip_export_then_import_reproduces_the_catalog(s, s_b):
     a, b = rows(s)["R-1"], rows(s_b)["R-1"]
     skip = {"id", "org_id", "category_id", "created_at", "updated_at"}
     assert {k: v for k, v in a.items() if k not in skip} == {k: v for k, v in b.items() if k not in skip}
+
+
+def test_oversized_csv_field_is_a_422_not_a_500(s):
+    """`csv.Error` ("field larger than field limit") is a malformed FILE, not a server error."""
+    with pytest.raises(ItemsError) as e:
+        csv_io.import_items_csv(s, b"sku,name\nA1," + b"x" * 200_000 + b"\n")
+    assert e.value.status_code == 422

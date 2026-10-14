@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS {s}.{t['contracts']} (
     CHECK (end_date IS NULL OR start_date IS NULL OR end_date >= start_date){party_fk}
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['contracts']}_number ON {s}.{t['contracts']} (org_id, lower(number)) WHERE number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['contracts']}_signature ON {s}.{t['contracts']} (signature_provider, signature_external_id) WHERE signature_external_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['contracts']}_quote ON {s}.{t['contracts']} (org_id, source_quote_id) WHERE source_quote_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_{t['contracts']}_org_status ON {s}.{t['contracts']} (org_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_{t['contracts']}_org_party ON {s}.{t['contracts']} (org_id, party_id) WHERE party_id IS NOT NULL;
@@ -182,7 +183,7 @@ CREATE TABLE IF NOT EXISTS {s}.{t['contract_attachments']} (
 );
 CREATE INDEX IF NOT EXISTS idx_{t['contract_attachments']}_contract ON {s}.{t['contract_attachments']} (org_id, contract_id, created_at);
 """
-    return [f"{ddl}\n{org_rls(s, t[name], o, grants=True)}" for name, ddl in (
+    return [f"{ddl}\n{org_rls(s, t[name], o, grants=True, authenticated_select=name != 'contracts')}" for name, ddl in (
         ("contracts", contracts), ("contract_lines", lines), ("contract_versions", versions),
         ("contract_billings", billings), ("contract_usage", usage), ("contract_attachments", attachments),
     )]

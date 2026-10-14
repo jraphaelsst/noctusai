@@ -62,7 +62,7 @@ def test_receive_posts_stock_at_the_landed_cost_and_the_ap_entry_with_the_party_
     name, params = [c for c in h.db.rpc_calls if c[0] == "inv_receive"][-1]
     row = params["p_row"]
     assert row["item_id"] == ITEM and row["warehouse_id"] == WH1 and row["qty"] == "10.000" and row["unit_cost_cents"] == 10_000
-    assert row["source"] == "purchasing" and row["source_ref"] == RL1 and params["p_org_id"] == ORG_A
+    assert row["source"] == "purchasing" and row["source_ref"] == RL1 and params["p_org"] == ORG_A
 
     [entry] = fin_rows(h)
     assert entry["direction"] == "payable" and entry["source"] == "purchasing" and entry["source_ref"] == R1

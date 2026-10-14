@@ -59,7 +59,8 @@ def test_every_table_is_org_scoped_with_rls(table):
     assert f"ALTER TABLE erp.{name} ENABLE ROW LEVEL SECURITY" in SQL
     assert f'"{name}_select_own_org"' in SQL
     assert re.search(rf'CREATE POLICY "service_role_bypass"\s+ON erp\.{name}\b', SQL)
-    assert f"GRANT SELECT ON erp.{name} TO authenticated;" in SQL
+    if table != "parties":  # the doc-bearing table has no authenticated read path (see the dedicated test below)
+        assert f"GRANT SELECT ON erp.{name} TO authenticated;" in SQL
     # No authenticated WRITE policy anywhere: the backend writes through the service role.
     assert not re.search(rf"ON erp\.{name}\s+FOR (INSERT|UPDATE|DELETE)", SQL)
     assert f'DROP POLICY IF EXISTS "{name}_select_own_org"' in SQL
@@ -113,3 +114,12 @@ def test_config_validation():
         PartiesConfig(schema="ok", reference_tables=(("fin entries", "party_id"),))
     with pytest.raises(ValueError):
         parties_migration(CFG, " ")
+
+
+def test_party_documents_have_no_authenticated_read_path():
+    """`doc` is a CPF/CNPJ: the API masks it per role, so a direct `authenticated` SELECT would bypass the masking."""
+    assert "GRANT SELECT ON erp.pty_parties TO authenticated" not in SQL
+    assert "pty_parties_select_own_org" in SQL and 'CREATE POLICY "pty_parties_select_own_org"' not in SQL
+    assert "REVOKE ALL ON erp.pty_parties FROM PUBLIC, anon, authenticated;" in SQL
+    assert "GRANT ALL ON erp.pty_parties TO service_role;" in SQL
+    assert 'CREATE POLICY "service_role_bypass" ON erp.pty_parties' in SQL

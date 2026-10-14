@@ -115,22 +115,45 @@ def test_job_registration_uses_the_scheduler_seam_per_run(db, real):
     assert n >= 1 and len(fin_rows(db)) == n  # the job ran against the live db/billing and is idempotent
 
 
-def test_webhook_handler_finds_the_contract_across_orgs_and_activates(db, real):
+def _locate(body, headers):
+    """What a host's route does: read the envelope id out of the UNVERIFIED body (it only picks whose key verifies)."""
+    try:
+        return "d4sign", json.loads(body)["external_id"]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def test_webhook_handler_finds_the_contract_across_orgs_verifies_with_its_org_adapter_and_confirms_the_status(db, real):
     s = Scope(db, CFG, ORG_A)
     adapter = make_signature_adapter()
     c = mk(s)
     sig.render_document(s, c["id"])
     sent = asyncio.run(sig.send_for_signature(s, adapter, c["id"], [{"name": "Ana", "email": "a@x.com", "cpf": VALID_CPF}]))
     ext = sent["signature_external_id"]
+    asked: list[str] = []
+
+    def for_org(org_id):
+        asked.append(org_id)
+        return adapter
 
     def hook(status, signed=True):
         raw = json.dumps({"external_id": ext, "status": status}).encode()
         return raw, {"x-fake-signature": hashlib.sha256(raw).hexdigest() if signed else "bad"}
 
+    def run(*a, **kw):
+        return asyncio.run(handle_signature_webhook(db, CFG, for_org, *a, locate=_locate, **kw))
+
     with pytest.raises(WebhookInvalido):
-        handle_signature_webhook(db, CFG, adapter, *hook("concluido", signed=False), billing=real)
+        run(*hook("concluido", signed=False), billing=real)
     unknown = json.dumps({"external_id": "ghost", "status": "concluido"}).encode()
-    assert handle_signature_webhook(db, CFG, adapter, unknown, {"x-fake-signature": hashlib.sha256(unknown).hexdigest()}) is None
-    out = handle_signature_webhook(db, CFG, adapter, *hook("concluido"), billing=real)  # no org in the call: found by (provider, external_id)
+    asked.clear()
+    assert run(unknown, {"x-fake-signature": hashlib.sha256(unknown).hexdigest()}) is None
+    assert asked == []  # nobody's key is consulted for an envelope no contract owns
+    # a correctly-signed "concluido" the provider does NOT confirm must not activate anything
+    unconfirmed = run(*hook("concluido"), billing=real)
+    assert unconfirmed["signature_status"] == "pendente" and unconfirmed["status"] == "draft" and fin_rows(db) == []
+    assert asked[-1] == ORG_A  # verified with the contract's OWN org adapter
+    adapter.marcar_assinado(ext, "a@x.com")
+    out = run(*hook("concluido"), billing=real)  # no org in the call: found by (provider, external_id)
     assert out["signature_status"] == "concluido" and out["status"] == "active" and out["org_id"] == ORG_A
     assert len(fin_rows(db)) >= 1

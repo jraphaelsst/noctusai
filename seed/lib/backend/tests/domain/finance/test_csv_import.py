@@ -67,3 +67,11 @@ def test_bad_date_names_the_line():
 def test_column_map_shape_is_strict(kw):
     with pytest.raises(ValidationError):
         CsvColumnMap(**{"date": "d", "description": "h", **kw})
+
+
+def test_oversized_csv_field_is_a_422_not_a_500():
+    from noctusai_lib.domain.finance.errors import FinanceError
+
+    with pytest.raises(FinanceError) as e:
+        parse_csv(b"Data;Hist\xc3\xb3rico;Valor\n03/10/2026;" + b"x" * 200_000 + b";1,00\n", cmap(), account_id=ACC)
+    assert e.value.status_code == 422

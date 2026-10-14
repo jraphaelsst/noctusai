@@ -115,3 +115,9 @@ def test_config_validation():
                 dict(schema="ok", extra_item_types=("Goods",)), dict(schema="ok", extra_item_types=("service",))):
         with pytest.raises(ValueError):
             ItemsConfig(**bad)
+
+
+def test_items_carry_unique_org_id_id_for_composite_fks_from_other_organs():
+    """contracts' `FOREIGN KEY (org_id, item_id) REFERENCES itm_items(org_id, id)` is rejected by Postgres without it."""
+    assert "ADD CONSTRAINT itm_items_org_id_id_key UNIQUE (org_id, id)" in SQL
+    assert "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'itm_items_org_id_id_key'" in SQL

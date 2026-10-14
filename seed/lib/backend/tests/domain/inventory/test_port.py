@@ -123,9 +123,9 @@ def test_supabase_port_calls_the_rpcs_scoped_to_the_org(db):  # noqa: F811
     db.set_rpc_data("inv_release", {"status": "refused", "code": "reserva_consumida", "item_id": ITEM})
     assert port.reserve(ORG_A, "O1", [{"item_id": ITEM, "qty": Decimal("1.5")}])["status"] == "ok"
     name, params = db.rpc_calls[-1]
-    assert (name, params["p_org_id"], params["p_order_ref"], params["p_source"]) == ("inv_reserve", ORG_A, "O1", "order")
+    assert (name, params["p_org"], params["p_order_ref"], params["p_source"]) == ("inv_reserve", ORG_A, "O1", "order")
     assert params["p_lines"] == [{"item_id": ITEM, "qty": "1.5"}]
-    assert port.commit(ORG_B, "O1")["status"] == "replayed" and db.rpc_calls[-1][1]["p_org_id"] == ORG_B
+    assert port.commit(ORG_B, "O1")["status"] == "replayed" and db.rpc_calls[-1][1]["p_org"] == ORG_B
     with pytest.raises(InventoryError) as exc:
         port.release(ORG_A, "O1")
     assert exc.value.code == "reserva_consumida"
@@ -149,6 +149,6 @@ def test_receive_stock_is_idempotent_on_source_ref_in_the_fake_and_calls_the_rec
     real = make_stock_port("supabase", db=db, cfg=CFG)
     assert real.receive_stock(ORG_A, **kw, user_id="u1", note="NF 1")["status"] == "ok"
     name, params = db.rpc_calls[-1]
-    assert name == "inv_receive" and params["p_org_id"] == ORG_A
+    assert name == "inv_receive" and params["p_org"] == ORG_A
     assert params["p_row"]["source"] == "purchasing" and params["p_row"]["source_ref"] == "rl-1"
     assert params["p_row"]["qty"] == "2.500" and params["p_row"]["unit_cost_cents"] == 1234 and params["p_row"]["created_by"] == "u1"

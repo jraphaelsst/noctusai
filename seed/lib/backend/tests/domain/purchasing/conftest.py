@@ -30,7 +30,7 @@ from noctusai_lib.primitives.exceptions import (
     validation_exception_handler,
 )
 from noctusai_lib.testing import _schema_cache
-from noctusai_lib.testing.migration_parser import parse_sql
+from noctusai_lib.testing.migration_parser import parse_function_sql, parse_sql
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
 ORG_A = "5b0e8f7a-1c2d-4e3f-9a8b-7c6d5e4f3a2b"
@@ -64,6 +64,7 @@ ROLES = {
 def purchasing_schema_cache():
     base = {t: set(c) for t, c in _schema_cache.get_schema_map().items()}
     generated: dict[str, set] = {}
+    functions: dict = {}
     for label, sql in (
         ("parties", parties_migration(PartiesConfig(schema=SCHEMA), SCHEMA)),
         ("inventory", inventory_migration(INV_CFG, SCHEMA)),
@@ -71,9 +72,12 @@ def purchasing_schema_cache():
         ("purchasing", purchasing_migration(CFG, SCHEMA)),
     ):
         generated.update(parse_sql(sql, source_label=label))
+        parse_function_sql(sql, into=functions)
     _schema_cache.set_cache_for_tests({**base, **generated})
+    prev_fns = _schema_cache.set_functions_for_tests(functions)
     yield
     _schema_cache.set_cache_for_tests(base)
+    _schema_cache.set_functions_for_tests(prev_fns, merge=False)
 
 
 def make_db() -> MockSupabaseClient:

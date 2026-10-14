@@ -38,7 +38,9 @@ def test_every_table_is_org_scoped_with_rls_and_no_write_policy(table):
     name = f"ctr_{table}"
     assert re.search(r"\borg_id\s+UUID NOT NULL", _block(name))
     assert f"ALTER TABLE erp.{name} ENABLE ROW LEVEL SECURITY" in SQL
-    assert f'"{name}_select_own_org"' in SQL and f"GRANT SELECT ON erp.{name} TO authenticated;" in SQL
+    assert f'"{name}_select_own_org"' in SQL
+    if table != "contracts":  # the doc-bearing table has no authenticated read path (see the dedicated test below)
+        assert f"GRANT SELECT ON erp.{name} TO authenticated;" in SQL
     assert re.search(rf'CREATE POLICY "service_role_bypass"\s+ON erp\.{name}\b', SQL)
     assert not re.search(rf"ON erp\.{name}\s+FOR (INSERT|UPDATE|DELETE)", SQL)
 
@@ -97,3 +99,18 @@ def test_config_validation(bad):
 def test_empty_schema_is_refused():
     with pytest.raises(ValueError):
         contracts_migration(CFG, " ")
+
+
+def test_contracts_table_has_no_authenticated_read_path_but_the_children_keep_theirs():
+    """`ctr_contracts.party_doc` is a CPF/CNPJ the API masks per role; a direct `authenticated` SELECT would bypass it."""
+    assert "GRANT SELECT ON erp.ctr_contracts TO authenticated" not in SQL
+    assert 'CREATE POLICY "ctr_contracts_select_own_org"' not in SQL
+    assert "REVOKE ALL ON erp.ctr_contracts FROM PUBLIC, anon, authenticated;" in SQL
+    assert 'CREATE POLICY "ctr_contract_lines_select_own_org"' in SQL
+
+
+def test_signature_envelope_is_unique_across_orgs():
+    """The webhook finds the contract by `(provider, external_id)` with no org in the call: the pair must be unambiguous."""
+    assert re.search(
+        r"CREATE UNIQUE INDEX IF NOT EXISTS uq_ctr_contracts_signature ON erp\.ctr_contracts "
+        r"\(signature_provider, signature_external_id\) WHERE signature_external_id IS NOT NULL;", SQL)

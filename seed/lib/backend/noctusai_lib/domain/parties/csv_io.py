@@ -123,14 +123,17 @@ def _read(data: bytes) -> list[tuple[int, dict[str, str]]]:
     head = text.splitlines()[0]
     delimiter = ";" if head.count(";") > head.count(",") else ","
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-    header = [(_ALIASES.get(h.strip().lower(), h.strip().lower())) for h in next(reader)]
-    if "kind" not in header or "legal_name" not in header:
-        raise invalid("file", "O cabeçalho precisa das colunas kind (tipo) e legal_name (nome).", code=IMPORTACAO_INVALIDA)
-    rows: list[tuple[int, dict[str, str]]] = []
-    for line, cells in enumerate(reader, start=2):
-        if not any(c.strip() for c in cells):
-            continue
-        rows.append((line, dict(zip(header, cells))))
+    try:  # `csv.Error` (field larger than the csv limit, NUL byte, ...) is a malformed FILE: 422, never a 500
+        header = [(_ALIASES.get(h.strip().lower(), h.strip().lower())) for h in next(reader)]
+        if "kind" not in header or "legal_name" not in header:
+            raise invalid("file", "O cabeçalho precisa das colunas kind (tipo) e legal_name (nome).", code=IMPORTACAO_INVALIDA)
+        rows: list[tuple[int, dict[str, str]]] = []
+        for line, cells in enumerate(reader, start=2):
+            if not any(c.strip() for c in cells):
+                continue
+            rows.append((line, dict(zip(header, cells))))
+    except csv.Error:
+        raise invalid("file", "O CSV está malformado.", code=IMPORTACAO_INVALIDA) from None
     if len(rows) > MAX_IMPORT_ROWS:
         raise PartiesError(
             IMPORTACAO_GRANDE_DEMAIS, f"O arquivo tem {len(rows)} linhas; o limite é {MAX_IMPORT_ROWS}.", 422,

@@ -234,3 +234,12 @@ def test_import_keeps_formula_text_and_export_neutralises_it(h):
     _upload(h, b'kind,legal_name\nPF,"=1+1"\n')
     assert call(h, "GET", P, h.admin).json()["data"][0]["legal_name"] == "=1+1"
     assert "'=1+1" in call(h, "GET", f"{P}/export.csv", h.admin).content.decode("utf-8-sig")
+
+
+def test_oversized_csv_field_is_a_422_not_a_500(h):
+    big = b"kind,legal_name\nPF," + b"x" * 200_000 + b"\n"
+    r = call(h, "POST", f"{P}/import", h.admin, files={"file": ("p.csv", big, "text/csv")})
+    assert r.status_code == 422
+    # and a malformed HEADER row (the first `next(reader)`) too
+    r = call(h, "POST", f"{P}/import", h.admin, files={"file": ("p.csv", b"kind," + b"y" * 200_000 + b"\nPF,Ana\n", "text/csv")})
+    assert r.status_code == 422

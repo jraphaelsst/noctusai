@@ -70,7 +70,7 @@ from unittest.mock import Base as _MockBase  # noqa: F401
 
 from postgrest.exceptions import APIError as _PostgrestAPIError
 
-from noctusai_lib.testing._schema_cache import get_check_map, get_default_map, get_schema_map
+from noctusai_lib.testing._schema_cache import get_check_map, get_default_map, get_function_map, get_schema_map
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
     MockRowCheckViolation,
@@ -1959,12 +1959,54 @@ class MockSupabaseClient:
         builder = self.table(table_name)
         builder.set_responses(responses)
 
+    def _check_rpc_signature(self, name: str, params: dict) -> None:
+        from postgrest.exceptions import APIError
+
+        bare = name.split(".")[-1].lower()
+        if "." in name:
+            keys = [name.lower()]
+        elif self._schema:
+            keys = [f"{self._schema.lower()}.{bare}", f"public.{bare}"]
+        else:
+            keys = [k for k in get_function_map() if k.split(".", 1)[1] == bare]
+        funcs = get_function_map()
+        overloads = [sig for k in keys for sig in funcs.get(k, [])]
+        if not overloads:
+            if name in self._rpcs:
+                return  # declared by the test via set_rpc_data; no migration signature to judge
+            raise APIError({
+                "code": "PGRST202",
+                "message": f"Could not find the function {name} in the schema cache",
+                "details": f"Searched for the function {name} in schema {self._schema or 'public'}; no migration declares it.",
+                "hint": None,
+            })
+        given = set(params)
+        if any(given <= sig["params"] and sig["required"] <= given for sig in overloads):
+            return
+        shown = "; ".join(f"({', '.join(sorted(sig['params']))})" for sig in overloads)
+        raise APIError({
+            "code": "PGRST202",
+            "message": f"Could not find the function {name}({', '.join(sorted(given))}) in the schema cache",
+            "details": f"Declared signatures: {shown}. PostgREST matches by argument NAME.",
+            "hint": None,
+        })
+
     def set_rpc_data(self, name, data):
         """Set mock data for an RPC call."""
         self._rpcs[name] = data
 
     def rpc(self, name, params=None):
-        """Simulate an RPC call."""
+        """Simulate an RPC call.
+
+        With schema validation on, the call is resolved the way PostgREST resolves it: by the
+        NAMES of the argument keys against the functions the migrations declare. An unknown
+        function, an unknown argument, or a missing required one raises PGRST202 — positional
+        order, which a direct SQL call tolerates, does not exist over HTTP. A function a test
+        seeds via `set_rpc_data` is declared by the test and is judged on its arguments only
+        when its signature is known.
+        """
         self.rpc_calls.append((name, dict(params or {})))
+        if self._validate_schema:
+            self._check_rpc_signature(name, dict(params or {}))
         data = self._rpcs.get(name, [])
         return MockSelectBuilder(data)

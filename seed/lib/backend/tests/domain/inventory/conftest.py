@@ -25,7 +25,7 @@ from noctusai_lib.primitives.exceptions import (
     validation_exception_handler,
 )
 from noctusai_lib.testing import _schema_cache
-from noctusai_lib.testing.migration_parser import parse_sql
+from noctusai_lib.testing.migration_parser import parse_function_sql, parse_sql
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
 ORG_A = "5b0e8f7a-1c2d-4e3f-9a8b-7c6d5e4f3a2b"
@@ -45,8 +45,11 @@ def inventory_schema_cache():
     base = {t: set(c) for t, c in _schema_cache.get_schema_map().items()}
     generated = parse_sql(inventory_migration(CFG, SCHEMA), source_label="inventory_migration")
     _schema_cache.set_cache_for_tests({**base, **generated})
+    # RPCs resolve by argument NAME against the generated function signatures (PGRST202 otherwise).
+    prev_fns = _schema_cache.set_functions_for_tests(parse_function_sql(inventory_migration(CFG, SCHEMA)))
     yield
     _schema_cache.set_cache_for_tests(base)
+    _schema_cache.set_functions_for_tests(prev_fns, merge=False)
 
 
 def make_db() -> MockSupabaseClient:

@@ -8,7 +8,7 @@ Two org-scoped tables (`item_categories`, `items`) as one re-runnable migration 
   through the service-role client, so no authenticated write policy exists.
 - Forward-only and idempotent: `IF NOT EXISTS`, `DROP POLICY IF EXISTS` before each `CREATE POLICY`
   (the chain replay applies a new file twice).
-- A reference never crosses tenants BY CONSTRUCTION: `UNIQUE (org_id, id)` + composite
+- A reference never crosses tenants BY CONSTRUCTION: `UNIQUE (org_id, id)` (items too, via a re-runnable guarded DO) + composite
   `FOREIGN KEY (org_id, category_id)` -- the database refuses an item pointing at another org's category,
   independent of the service-layer check.
 - The fiscal formats are CHECKed (NCM 8 digits, CEST 7, CFOP 4 with a valid first digit, origem 0..8,
@@ -103,6 +103,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['items']}_sku ON {s}.{t['items']} (org_i
 CREATE INDEX IF NOT EXISTS idx_{t['items']}_org_name ON {s}.{t['items']} (org_id, lower(name));
 CREATE INDEX IF NOT EXISTS idx_{t['items']}_category ON {s}.{t['items']} (category_id);
 CREATE INDEX IF NOT EXISTS idx_{t['items']}_gtin ON {s}.{t['items']} (org_id, gtin) WHERE gtin IS NOT NULL;
+-- Other organs (contracts lines, ...) reference an item through the composite FK (org_id, item_id) -> (org_id, id), which
+-- Postgres only accepts against a UNIQUE (org_id, id). Added by a guarded DO so a table created by an earlier render
+-- of this generator (without it) gains it on re-apply -- `ADD CONSTRAINT IF NOT EXISTS` does not exist.
+DO $items_uq$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{t['items']}_org_id_id_key' AND conrelid = '{s}.{t['items']}'::regclass) THEN
+        ALTER TABLE {s}.{t['items']} ADD CONSTRAINT {t['items']}_org_id_id_key UNIQUE (org_id, id);
+    END IF;
+END
+$items_uq$;
 """,
     )
     return out

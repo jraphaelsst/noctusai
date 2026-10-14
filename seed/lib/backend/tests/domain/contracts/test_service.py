@@ -215,6 +215,31 @@ def test_readjust_preview_then_apply(s, billing):
     assert contracts.present_contract(got, is_admin=True)["readjustment_due_on"] == "2027-12-01"
 
 
+def test_second_readjustment_before_due_is_refused_unless_forced(s, billing):
+    c = mk(s, readjustment_index="IPCA")
+    contracts.activate_contract(s, c["id"], billing=billing, on=ON)
+    contracts.readjust_contract(s, c["id"], {"percent_bp": 450, "apply": True})  # last_readjusted_on = today
+    with pytest.raises(ContractsError) as e:
+        contracts.readjust_contract(s, c["id"], {"percent_bp": 450, "apply": True})
+    assert e.value.code == "reajuste_antecipado"
+    assert contracts.get_contract(s, c["id"])["amount_cents"] == 156750  # applied once
+    assert contracts.readjust_contract(s, c["id"], {"percent_bp": 100, "apply": True, "force": True})["applied"]
+    # a preview is never refused
+    assert contracts.readjust_contract(s, c["id"], {"percent_bp": 450})["applied"] is False
+
+
+def test_readjustment_idempotency_key_applies_once_and_replays_the_first_result(s, billing):
+    c = mk(s, readjustment_index="IPCA")
+    contracts.activate_contract(s, c["id"], billing=billing, on=ON)
+    req = {"percent_bp": 450, "apply": True, "idempotency_key": "k-1"}
+    first = contracts.readjust_contract(s, c["id"], req)
+    again = contracts.readjust_contract(s, c["id"], req)  # a retry, not a second readjustment (nor a 409)
+    assert first["applied"] and again["applied"] and again.get("replayed") is True
+    assert again["amount_cents_before"] == first["amount_cents_before"] and again["amount_cents_after"] == first["amount_cents_after"]
+    assert contracts.get_contract(s, c["id"])["amount_cents"] == first["amount_cents_after"]
+    assert sum(1 for v in contracts.list_versions(s, c["id"]) if v["kind"] == "readjustment") == 1
+
+
 def test_readjust_refusals(s, billing):
     f = mk(s, billing_model="one_time", readjustment_index="IPCA")
     with pytest.raises(ContractsError) as e:
@@ -318,6 +343,22 @@ def test_preview_lists_the_next_unbilled_periods(s, billing):
     items = billing_run.billing_preview(s, c["id"], 3)["items"]
     assert [i["due_date"] for i in items] == ["2026-12-10", "2027-01-10", "2027-02-10"]
     assert items[0]["amount_cents"] == 150000
+
+
+def test_dormant_contract_renews_a_bounded_number_of_times_per_tick(db, billing):
+    from .conftest import CFG
+    from noctusai_lib.domain.contracts._common import Scope
+
+    sa = Scope(db, CFG, ORG_A)
+    c = mk(sa, auto_renew=True, renewal_months=1, start_date="2026-01-01", end_date="2026-01-31", first_due_date="2026-01-10")
+    contracts.activate_contract(sa, c["id"], billing=billing, on=date(2026, 1, 1))
+    far = date(2036, 1, 1)  # 119 monthly renewals behind
+    billing_run.contracts_generate_billing(db, CFG, billing, org_id=ORG_A, on=far)
+    renewals = [v for v in contracts.list_versions(sa, c["id"]) if v["kind"] == "renewal"]
+    assert len(renewals) == billing_run.MAX_RENEWALS_PER_TICK
+    assert contracts.get_contract(sa, c["id"])["end_date"] < "2036-01-01"  # not caught up yet: the next tick continues
+    billing_run.contracts_generate_billing(db, CFG, billing, org_id=ORG_A, on=far)
+    assert contracts.get_contract(sa, c["id"])["end_date"] >= "2036-01-01"
 
 
 def test_job_renews_expires_and_bills_across_orgs(db, billing):

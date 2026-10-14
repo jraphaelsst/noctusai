@@ -69,7 +69,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_{parties}_doc ON {s}.{parties} (org_id, doc
 CREATE INDEX IF NOT EXISTS idx_{parties}_org_name ON {s}.{parties} (org_id, lower(legal_name));
 CREATE INDEX IF NOT EXISTS idx_{parties}_org_email ON {s}.{parties} (org_id, lower(email)) WHERE email IS NOT NULL;
 """,
-                org_rls(s, parties, o, grants=True),
+                org_rls(s, parties, o, grants=True, authenticated_select=False),  # carries `doc` (CPF/CNPJ): service-role reads only
             ]
         ),
         "\n".join(

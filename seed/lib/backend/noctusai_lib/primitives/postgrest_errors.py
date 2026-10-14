@@ -21,6 +21,7 @@ is safe inside webhook / job-worker paths (unlike
 from __future__ import annotations
 
 UNIQUE_VIOLATION_SQLSTATE = "23505"
+FOREIGN_KEY_VIOLATION_SQLSTATE = "23503"
 
 
 def is_unique_violation(exc: BaseException) -> bool:
@@ -31,4 +32,12 @@ def is_unique_violation(exc: BaseException) -> bool:
     return UNIQUE_VIOLATION_SQLSTATE in text or "duplicate key" in text.lower()
 
 
-__all__ = ["UNIQUE_VIOLATION_SQLSTATE", "is_unique_violation"]
+def is_foreign_key_violation(exc: BaseException) -> bool:
+    """True iff `exc` is a Postgres foreign_key_violation (23503) from PostgREST (a delete of a still-referenced row)."""
+    if getattr(exc, "code", None) == FOREIGN_KEY_VIOLATION_SQLSTATE:
+        return True
+    text = str(exc)
+    return FOREIGN_KEY_VIOLATION_SQLSTATE in text or "foreign key constraint" in text.lower()
+
+
+__all__ = ["FOREIGN_KEY_VIOLATION_SQLSTATE", "UNIQUE_VIOLATION_SQLSTATE", "is_foreign_key_violation", "is_unique_violation"]

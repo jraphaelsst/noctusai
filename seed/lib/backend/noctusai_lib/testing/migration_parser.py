@@ -851,7 +851,86 @@ def parse_default_files(paths: Iterable[Path]) -> dict[str, set[str]]:
     return merged
 
 
+# ---------------------------------------------------------------------------
+# Function signatures (RPC named-argument validation)
+# ---------------------------------------------------------------------------
+
+_CREATE_FUNCTION_HEAD_RE = re.compile(
+    rf"\bCREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"
+    rf"(?:(?P<schema>{_IDENT})\.)?(?P<name>{_IDENT})\s*\(",
+    re.IGNORECASE,
+)
+_PARAM_MODE_RE = re.compile(r"^(?:IN\s+|INOUT\s+|VARIADIC\s+)", re.IGNORECASE)
+_PARAM_DEFAULT_RE = re.compile(r"\bDEFAULT\b|(?<![<>!:])=", re.IGNORECASE)
+
+
+def _balanced_paren_body(stmt: str, open_idx: int) -> str | None:
+    depth = 0
+    for i in range(open_idx, len(stmt)):
+        if stmt[i] == "(":
+            depth += 1
+        elif stmt[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return stmt[open_idx + 1 : i]
+    return None
+
+
+def parse_function_sql(
+    sql: str,
+    *,
+    into: dict[str, list[dict[str, set[str]]]] | None = None,
+) -> dict[str, list[dict[str, set[str]]]]:
+    """`{qualified_function: [{"params": {names}, "required": {names}}, ...]}`.
+
+    One list entry per overload (a `CREATE OR REPLACE` with the same parameter
+    NAME set replaces the earlier entry). OUT parameters are not callable
+    arguments and are skipped. This is what PostgREST resolves an `rpc()` call
+    against: it matches on the NAMES of the JSON body keys, never on position.
+    """
+    sql_clean = _strip_block_comments(_strip_line_comments(sql))
+    funcs: dict[str, list[dict[str, set[str]]]] = {} if into is None else into
+    for stmt in _walk_statements(sql_clean):
+        m = _CREATE_FUNCTION_HEAD_RE.match(stmt.lstrip())
+        if not m:
+            continue
+        stmt = stmt.lstrip()
+        body = _balanced_paren_body(stmt, m.end() - 1)
+        if body is None:
+            continue
+        params: set[str] = set()
+        required: set[str] = set()
+        for part in _split_top_level_commas(body):
+            part = part.strip()
+            if not part or re.match(r"^OUT\s", part, re.IGNORECASE):
+                continue
+            part = _PARAM_MODE_RE.sub("", part)
+            head = _COLUMN_HEAD_RE.match(part)
+            if not head:
+                continue
+            params.add(head.group("name"))
+            if not _PARAM_DEFAULT_RE.search(part):
+                required.add(head.group("name"))
+        sigs = funcs.setdefault(_qualify(m.group("schema"), m.group("name")), [])
+        sigs[:] = [sig for sig in sigs if sig["params"] != params]
+        sigs.append({"params": params, "required": required})
+    return funcs
+
+
+def parse_function_files(paths: Iterable[Path]) -> dict[str, list[dict[str, set[str]]]]:
+    """`parse_function_sql` over migration files in order."""
+    merged: dict[str, list[dict[str, set[str]]]] = {}
+    for path in paths:
+        try:
+            sql = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("mock-functions: could not read %s: %s — skipping", path, exc)
+            continue
+        parse_function_sql(sql, into=merged)
+    return merged
+
+
 __all__ = [
-    "parse_sql", "parse_files", "parse_check_sql", "parse_check_files",
+    "parse_function_sql", "parse_function_files", "parse_sql", "parse_files", "parse_check_sql", "parse_check_files",
     "parse_default_sql", "parse_default_files",
 ]

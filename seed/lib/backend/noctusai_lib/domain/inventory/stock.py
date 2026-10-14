@@ -50,7 +50,7 @@ def receive(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None)
     """Stock in (purchase receipt, return, opening balance) at `unit_cost_cents`; recomputes the moving average."""
     row = _row(s, data, qty=_positive(data.get("qty")), created_by=user_id)
     row.setdefault("source", SOURCE_MANUAL)
-    return _rpc(s, "receive", {"p_org_id": s.org_id, "p_row": row})
+    return _rpc(s, "receive", {"p_org": s.org_id, "p_row": row})
 
 
 def issue(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
@@ -58,7 +58,7 @@ def issue(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None) -
     row = _row(s, data, qty=_positive(data.get("qty")), created_by=user_id)
     row.pop("unit_cost_cents", None)
     row.setdefault("source", SOURCE_MANUAL)
-    return _rpc(s, "issue", {"p_org_id": s.org_id, "p_row": row})
+    return _rpc(s, "issue", {"p_org": s.org_id, "p_row": row})
 
 
 def adjust(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
@@ -68,7 +68,7 @@ def adjust(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None) 
         raise invalid("counted_qty", "A quantidade contada não pode ser negativa.", code=QUANTIDADE_INVALIDA)
     row = _row(s, data, counted_qty=qty_str(counted), created_by=user_id)
     row.setdefault("source", SOURCE_MANUAL)
-    return _rpc(s, "adjust", {"p_org_id": s.org_id, "p_row": row})
+    return _rpc(s, "adjust", {"p_org": s.org_id, "p_row": row})
 
 
 def transfer(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
@@ -77,7 +77,7 @@ def transfer(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str] = None
         raise invalid("to_warehouse_id", "Origem e destino são o mesmo depósito.", code=TRANSFERENCIA_MESMO_DEPOSITO)
     row = _row(s, data, qty=_positive(data.get("qty")), created_by=user_id)
     row.setdefault("source", SOURCE_MANUAL)
-    return _rpc(s, "transfer", {"p_org_id": s.org_id, "p_row": row})
+    return _rpc(s, "transfer", {"p_org": s.org_id, "p_row": row})
 
 
 def _lines(lines: Sequence[Mapping[str, Any]], *, need_qty: bool) -> list[dict]:
@@ -96,17 +96,17 @@ def reserve(s: Scope, order_ref: str, lines: Sequence[Mapping[str, Any]], *, use
     """Reserve every line or none (one transaction); idempotent on `(source, order_ref, item, warehouse)`."""
     if not lines:
         raise invalid("lines", "Informe ao menos uma linha.", code=QUANTIDADE_INVALIDA)
-    return _rpc(s, "reserve", {"p_org_id": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines, need_qty=True), "p_user": user_id, "p_source": source})
+    return _rpc(s, "reserve", {"p_org": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines, need_qty=True), "p_user": user_id, "p_source": source})
 
 
 def commit(s: Scope, order_ref: str, lines: Optional[Sequence[Mapping[str, Any]]] = None, *, user_id: Optional[str] = None, source: str = SOURCE_ORDER) -> dict:
     """Convert the order's reservation into a stock-out at the average cost; `lines=None` = the whole order."""
-    return _rpc(s, "commit", {"p_org_id": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines or [], need_qty=False), "p_user": user_id, "p_source": source})
+    return _rpc(s, "commit", {"p_org": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines or [], need_qty=False), "p_user": user_id, "p_source": source})
 
 
 def release(s: Scope, order_ref: str, lines: Optional[Sequence[Mapping[str, Any]]] = None, *, user_id: Optional[str] = None, source: str = SOURCE_ORDER) -> dict:
     """Free the order's reservation (expired / revoked). Nothing reserved is a no-op, not an error."""
-    return _rpc(s, "release", {"p_org_id": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines or [], need_qty=False), "p_user": user_id, "p_source": source})
+    return _rpc(s, "release", {"p_org": s.org_id, "p_order_ref": order_ref, "p_lines": _lines(lines or [], need_qty=False), "p_user": user_id, "p_source": source})
 
 
 __all__ = ["SOURCE_MANUAL", "SOURCE_ORDER", "adjust", "commit", "issue", "receive", "release", "reserve", "transfer"]

@@ -25,7 +25,7 @@ from . import schedule as sched
 from ._common import Scope, add_months, first, iso, like_term, new_id, now_iso, to_date, today
 from .errors import (
     AVISO_PREVIO, CONTRATO_FINALIZADO, CONTRATO_NAO_RASCUNHO, CONTRATO_VIGENTE, ITEM_INVALIDO, MODELO_COBRANCA_INVALIDO,
-    NUMERO_DUPLICADO, PARTE_INVALIDA, PERIODO_JA_FATURADO, REAJUSTE_NAO_APLICAVEL, TRANSICAO_INVALIDA, USO_NAO_APLICAVEL,
+    NUMERO_DUPLICADO, PARTE_INVALIDA, PERIODO_JA_FATURADO, REAJUSTE_ANTECIPADO, REAJUSTE_NAO_APLICAVEL, TRANSICAO_INVALIDA, USO_NAO_APLICAVEL,
     conflict, invalid,
 )
 from .types import (
@@ -90,11 +90,20 @@ def contract_lines(s: Scope, contract_id: Any) -> list[dict]:
 
 
 def present_contract(row: Mapping[str, Any], *, is_admin: bool, lines: Optional[list[dict]] = None, on: Optional[date] = None) -> dict:
-    """Wire shape: `party_doc` masked for non-admins (LGPD) + computed `terminable_from`, `readjustment_due_on`, `lapsed`."""
+    """Wire shape: `party_doc` (and its echo inside `document_body`) masked for non-admins (LGPD) + computed `terminable_from`, `readjustment_due_on`, `lapsed`."""
     out = dict(row)
     on = on or today()
     if not is_admin:
-        out["party_doc"] = mask_doc(out.get("party_doc"))
+        raw = out.get("party_doc")
+        out["party_doc"] = mask_doc(raw)
+        if raw and out.get("document_body"):
+            # The rendered document embeds the party's CPF/CNPJ verbatim (it is what gets signed): mask it too, both as
+            # stored and in its digits-only form, or the masking above is a cosmetic one for anyone who can read the text.
+            masked = out["party_doc"]
+            body = str(out["document_body"])
+            for needle in sorted({str(raw), "".join(ch for ch in str(raw) if ch.isalnum())} - {""}, key=len, reverse=True):
+                body = body.replace(needle, masked)
+            out["document_body"] = body
     if lines is not None:
         out["lines"] = lines
     out["terminable_from"] = iso(on + timedelta(days=int(out.get("notice_days") or 0)))
@@ -491,6 +500,17 @@ def _bp_apply(cents: int, bp: int) -> int:
     return (cents * (10000 + bp) + 5000) // 10000
 
 
+def _readjustment_replay(s: Scope, contract_id: Any, key: str) -> Optional[dict]:
+    """The result of the readjustment already applied under `key` (stored on its version row), or None."""
+    for v in s.rows("contract_versions", eq={"contract_id": str(contract_id), "kind": VersionKind.READJUSTMENT.value}):
+        ch = v.get("changes") or {}
+        if ch.get("idempotency_key") == key:
+            amount = ch.get("amount_cents") or {}
+            return {"amount_cents_before": amount.get("from"), "amount_cents_after": amount.get("to"),
+                    "percent_bp": (ch.get("percent_bp") or {}).get("to")}
+    return None
+
+
 def readjust_contract(s: Scope, contract_id: Any, body: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
     """Preview (`apply=false`) or apply a readjustment to the recurring fee (and the retainer's excess rate).
 
@@ -519,11 +539,23 @@ def readjust_contract(s: Scope, contract_id: Any, body: Mapping[str, Any], *, us
               "excess_rate_cents_before": rate_before, "excess_rate_cents_after": rate_after}
     if not body.get("apply"):
         return result
+    key = body.get("idempotency_key")
+    if key:
+        replay = _readjustment_replay(s, contract_id, str(key))
+        if replay is not None:
+            return {**result, **replay, "applied": True, "replayed": True, "contract": current}
+    last = to_date(current.get("last_readjusted_on"))
+    due = add_months(last, int(current.get("readjustment_every_months") or 12)) if last else None
+    if due is not None and today() < due and not body.get("force"):
+        raise conflict(REAJUSTE_ANTECIPADO, f"O contrato foi reajustado em {iso(last)}; o próximo reajuste é devido em {iso(due)}. "
+                                           "Confirme (force) para reajustar antes do prazo.")
     patch = {"amount_cents": after, "last_readjusted_on": iso(effective), "readjustment_index": index, "updated_at": now_iso()}
     if rate_before:
         patch["excess_rate_cents"] = rate_after
     s.tbl("contracts").update(patch).eq("org_id", s.org_id).eq("id", str(contract_id)).execute()
     changes = {"amount_cents": {"from": before, "to": after}, "percent_bp": {"from": None, "to": bp}}
+    if key:
+        changes["idempotency_key"] = str(key)
     pct = f"{bp / 100:.2f}".replace(".", ",")
     out = _bump(s, {**current, **patch}, VersionKind.READJUSTMENT, summary=f"Reajuste {index} de {pct}%",
                 changes=changes, effective_on=effective, user_id=user_id)

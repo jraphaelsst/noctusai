@@ -226,12 +226,52 @@ def test_archive_restore_are_idempotent(s):
     assert parties.set_active(s, p["id"], True)["is_active"] is True
 
 
-def test_delete_unreferenced_removes_party_and_roles(s):
+def test_delete_unreferenced_removes_the_party(s):
+    # The roles go via the table's `ON DELETE CASCADE` (proved on a real Postgres in test_sql_on_real_postgres.py);
+    # the mock does not model FKs, so only the party row is asserted here.
     p = mk_party(s, roles=["customer"])
     parties.delete_party(s, p["id"])
     with pytest.raises(NotFoundError):
         parties.get_party(s, p["id"])
-    assert s.rows("party_roles") == []
+
+
+class _FkRefusingDelete:
+    """A DI test double for ONE table builder: every read passes through, the delete answers like Postgres does for an FK
+    the host never listed in `reference_tables` (23503)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def delete(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def execute(self):
+        from postgrest.exceptions import APIError
+
+        raise APIError({"code": "23503", "message": 'update or delete on table "pty_parties" violates foreign key constraint', "details": None, "hint": None})
+
+
+def test_a_foreign_key_the_host_did_not_list_still_refuses_the_delete_as_409(s):
+    p = mk_party(s)
+    real_table = s.db.table
+
+    class Db:
+        def __getattr__(self, name):
+            return getattr(s.db, name)
+
+        def table(self, name):
+            return _FkRefusingDelete(real_table(name)) if name == "pty_parties" else real_table(name)
+
+    refusing = Scope(Db(), s.cfg, ORG_A)
+    with pytest.raises(PartiesError) as e:
+        parties.delete_party(refusing, p["id"])
+    assert (e.value.code, e.value.status_code) == ("parceiro_em_uso", 409) and e.value.details["hint"] == "archive"
 
 
 def test_delete_referenced_party_is_refused_with_archive_hint(s):

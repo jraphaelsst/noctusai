@@ -13,6 +13,7 @@ NUMERO_DUPLICADO = "numero_duplicado"
 COTACAO_DUPLICADA = "cotacao_duplicada"
 MODELO_COBRANCA_INVALIDO = "modelo_cobranca_invalido"
 REAJUSTE_NAO_APLICAVEL = "reajuste_nao_aplicavel"
+REAJUSTE_ANTECIPADO = "reajuste_antecipado"
 AVISO_PREVIO = "aviso_previo_nao_cumprido"
 PERIODO_JA_FATURADO = "periodo_ja_faturado"
 USO_NAO_APLICAVEL = "uso_nao_aplicavel"
@@ -51,6 +52,7 @@ __all__ = [
     "NUMERO_DUPLICADO",
     "PARTE_INVALIDA",
     "PERIODO_JA_FATURADO",
+    "REAJUSTE_ANTECIPADO",
     "REAJUSTE_NAO_APLICAVEL",
     "SIGNATARIO_INVALIDO",
     "TRANSICAO_INVALIDA",

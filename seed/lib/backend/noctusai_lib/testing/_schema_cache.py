@@ -16,7 +16,12 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-from noctusai_lib.testing.migration_parser import parse_check_files, parse_default_files, parse_files
+from noctusai_lib.testing.migration_parser import (
+    parse_check_files,
+    parse_default_files,
+    parse_files,
+    parse_function_files,
+)
 from noctusai_lib.testing.sql_check import CompiledCheck, compile_checks
 
 logger = logging.getLogger(__name__)
@@ -32,6 +37,9 @@ _CHECK_CACHE: dict[str, list[CompiledCheck]] | None = None
 #: these gets a value the mock doesn't know, so a CHECK reading it is not
 #: judged; any OTHER omitted column is NULL, exactly as in Postgres.
 _DEFAULTS_CACHE: dict[str, set[str]] | None = None
+#: `{qualified_function: [{params, required}, ...]}` — what an `rpc()` call is
+#: resolved against (PostgREST matches by argument NAME; PGRST202 otherwise).
+_FUNCTION_CACHE: dict[str, list[dict[str, set[str]]]] | None = None
 
 
 def _discover_migration_files(repo_root: Path) -> list[Path]:
@@ -212,10 +220,35 @@ def get_check_map() -> dict[str, list[CompiledCheck]]:
     return _CHECK_CACHE
 
 
+def get_function_map() -> dict[str, list[dict[str, set[str]]]]:
+    """Return the cached migration-declared function signatures. Builds on first call."""
+    global _FUNCTION_CACHE
+    if _FUNCTION_CACHE is None:
+        try:
+            _FUNCTION_CACHE = parse_function_files(_discover_migration_files(_find_repo_root()))
+        except Exception as exc:  # pragma: no cover — defensive, mirrors get_schema_map
+            logger.warning("mock-functions: cache build failed (%s) — rpc names not judged", exc)
+            _FUNCTION_CACHE = {}
+    return _FUNCTION_CACHE
+
+
+def set_functions_for_tests(
+    mapping: dict[str, list[dict[str, set[str]]]], *, merge: bool = True
+) -> dict[str, list[dict[str, set[str]]]]:
+    """Inject function signatures (the `parse_function_sql` shape) — the function twin of
+    `set_cache_for_tests`. `merge=True` layers them over the repo's migration-declared ones. Returns the PREVIOUS map
+    so a fixture restores it with `set_functions_for_tests(previous, merge=False)`."""
+    global _FUNCTION_CACHE
+    previous = dict(get_function_map())
+    _FUNCTION_CACHE = {**(previous if merge else {}), **mapping}
+    return previous
+
+
 def reset_cache() -> None:
     """Force the next get_schema_map() / get_check_map() call to rebuild.
     Used by tests that assert parsing behavior."""
-    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE
+    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE, _FUNCTION_CACHE
+    _FUNCTION_CACHE = None
     _CACHE = None
     _CHECK_CACHE = None
     _DEFAULTS_CACHE = None
@@ -241,6 +274,6 @@ def set_cache_for_tests(mapping: dict[str, set[str]] | dict[str, Iterable[str]])
 
 
 __all__ = [
-    "get_check_map", "get_default_map", "get_schema_map",
-    "reset_cache", "set_cache_for_tests", "set_checks_for_tests",
+    "get_check_map", "get_default_map", "get_function_map", "get_schema_map",
+    "reset_cache", "set_cache_for_tests", "set_checks_for_tests", "set_functions_for_tests",
 ]

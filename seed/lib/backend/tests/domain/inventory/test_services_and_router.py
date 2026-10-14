@@ -98,7 +98,7 @@ def test_rpc_success_is_wrapped_and_carries_the_actor_and_decimal_as_string(h):
     r = h.client.post("/api/inventory/receive", json={"item_id": ITEM, "warehouse_id": WH1, "qty": "2.500", "unit_cost_cents": 1000}, headers=h.admin)
     assert r.status_code == 201 and r.json()["data"]["moves"][0]["kind"] == "in"
     name, params = h.db.rpc_calls[-1]
-    assert name == "inv_receive" and params["p_org_id"] == ORG_A
+    assert name == "inv_receive" and params["p_org"] == ORG_A
     assert params["p_row"]["qty"] == "2.500" and params["p_row"]["created_by"]  # string: JSON floats would round
 
 

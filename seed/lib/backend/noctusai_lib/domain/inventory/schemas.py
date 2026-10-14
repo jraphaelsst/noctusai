@@ -44,10 +44,10 @@ class WarehousePatch(StrictHttpModel):
 
 
 class _MoveBase(StrictHttpModel):
+    # No `source` / `source_ref`: an HTTP caller is always a manual move. System sources (order, purchase, ...)
+    # and their idempotency refs belong to StockPort, never to a request body (a forged ref replays/blocks).
     item_id: UUID
     warehouse_id: UUID
-    source: str = Field(default="manual", min_length=1, max_length=40)
-    source_ref: Optional[str] = Field(default=None, min_length=1, max_length=120)
     note: Optional[str] = Field(default=None, max_length=500)
     occurred_at: Optional[datetime] = None
 
@@ -71,8 +71,6 @@ class TransferBody(StrictHttpModel):
     from_warehouse_id: UUID
     to_warehouse_id: UUID
     qty: Decimal = Field(gt=0, le=MAX_QTY, decimal_places=3)
-    source: str = Field(default="manual", min_length=1, max_length=40)
-    source_ref: Optional[str] = Field(default=None, min_length=1, max_length=120)
     note: Optional[str] = Field(default=None, max_length=500)
     occurred_at: Optional[datetime] = None
 

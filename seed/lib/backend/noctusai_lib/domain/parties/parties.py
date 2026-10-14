@@ -20,7 +20,7 @@ from noctusai_lib.domain._organ_common import mask_doc
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
 from noctusai_lib.primitives.phone import normalize_phone
-from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, is_unique_violation
 
 from ._common import Scope, first, like_term, new_id, now_iso
 from .errors import (
@@ -333,13 +333,23 @@ def is_referenced(s: Scope, party_id: Any) -> bool:
 
 
 def delete_party(s: Scope, party_id: Any) -> None:
-    """Hard delete, ONLY while nothing references the party; otherwise 409 (archive instead)."""
+    """Hard delete, ONLY while nothing references the party; otherwise 409 (archive instead).
+
+    `cfg.reference_tables` is the fast, friendly pre-check; the database is the authority: any organ's composite FK onto
+    this party that the host did not list still refuses the delete (23503), and that is the same 409. The roles go with
+    the party in the same statement (their FK is `ON DELETE CASCADE`) -- no separate delete that could orphan a party
+    whose own delete is then refused.
+    """
     s.get("parties", party_id, what="Cadastro")
+    in_use = conflict(PARCEIRO_EM_USO, "O cadastro é usado em outros registros; arquive-o em vez de excluir.", hint="archive")
     if is_referenced(s, party_id):
-        raise conflict(PARCEIRO_EM_USO, "O cadastro é usado em outros registros; arquive-o em vez de excluir.", hint="archive")
-    pid = str(party_id)
-    s.tbl(_ROLES).delete().eq("org_id", s.org_id).eq("party_id", pid).execute()
-    s.tbl("parties").delete().eq("org_id", s.org_id).eq("id", pid).execute()
+        raise in_use
+    try:
+        s.tbl("parties").delete().eq("org_id", s.org_id).eq("id", str(party_id)).execute()
+    except Exception as exc:
+        if is_foreign_key_violation(exc):
+            raise in_use from None
+        raise
 
 
 __all__ = [

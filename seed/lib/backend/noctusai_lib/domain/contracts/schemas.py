@@ -103,6 +103,10 @@ class ReadjustBody(StrictHttpModel):
     index: Optional[ReadjustmentIndex] = None
     apply: bool = False
     effective_on: Optional[date] = None
+    #: Apply again before the next readjustment is due (`last_readjusted_on` + `readjustment_every_months`): refused unless true.
+    force: bool = False
+    #: A client retry carries the same key: the readjustment is applied ONCE and the retry answers with the first result.
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=120)
 
 
 class SuspendBody(StrictHttpModel):

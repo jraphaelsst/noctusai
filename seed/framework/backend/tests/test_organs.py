@@ -370,3 +370,61 @@ def test_mount_quotes_rejects_a_cfg_for_another_schema():
 
     with pytest.raises(ValueError):
         _quotes_organ(cfg=QuotesConfig(schema="other"))
+
+# -- organ dependency order (`OrganSpec.requires` + `assert_organ_migration_order`) ---------------------------
+
+
+def test_every_requires_names_a_registered_organ_and_nothing_requires_itself_or_cycles():
+    for name, spec in ORGAN_REGISTRY.items():
+        for dep in (*spec.requires, *spec.optional_requires):
+            assert dep in ORGAN_REGISTRY and dep != name, (name, dep)
+
+    def depth(n: str, seen: tuple[str, ...] = ()) -> int:
+        assert n not in seen, f"requires cycle: {seen + (n,)}"
+        spec = ORGAN_REGISTRY[n]
+        return 1 + max((depth(d, seen + (n,)) for d in (*spec.requires, *spec.optional_requires)), default=0)
+
+    for n in ORGAN_REGISTRY:
+        depth(n)
+
+
+def test_requires_declares_the_documented_graph():
+    spec = ORGAN_REGISTRY
+    assert spec["inventory"].requires == ("items",)
+    assert set(spec["purchasing"].requires) == {"parties", "items", "inventory", "finance"}
+    assert set(spec["contracts"].requires) == {"parties", "items", "finance"}
+    assert spec["finance"].requires == () and spec["finance"].optional_requires == ("parties",)
+
+
+def _render(tmp_path, numbering: dict[str, int], schema: str = "erp"):
+    mig = tmp_path / "backend" / "migrations"
+    mig.mkdir(parents=True, exist_ok=True)
+    for organ, n in numbering.items():
+        (mig / f"{n:03d}_{organ}.sql").write_text(organ_migration_sql(organ, schema), encoding="utf-8")
+    return tmp_path
+
+
+def test_assert_organ_migration_order_accepts_dependencies_first(tmp_path):
+    from noctusai_seed.organs import assert_organ_migration_order
+
+    organs = {"parties": 10, "items": 11, "finance": 12, "inventory": 13, "contracts": 14, "purchasing": 15}
+    assert assert_organ_migration_order(_render(tmp_path, organs), list(organs)) == organs
+
+
+def test_assert_organ_migration_order_refuses_a_dependent_numbered_before_its_dependency(tmp_path):
+    from noctusai_seed.organs import assert_organ_migration_order
+
+    organs = {"contracts": 10, "parties": 11, "items": 12, "finance": 13}
+    with pytest.raises(AssertionError, match="contracts.*AFTER"):
+        assert_organ_migration_order(_render(tmp_path, organs), list(organs))
+
+
+def test_assert_organ_migration_order_refuses_a_missing_requirement_but_allows_a_missing_optional_one(tmp_path):
+    from noctusai_seed.organs import assert_organ_migration_order
+
+    with pytest.raises(AssertionError, match="inventory requires items"):
+        assert_organ_migration_order(_render(tmp_path / "a", {"inventory": 10}), ["inventory"])
+    # finance without parties is legal (the party link is optional); with parties mounted it must come after it
+    assert assert_organ_migration_order(_render(tmp_path / "b", {"finance": 10}), ["finance"]) == {"finance": 10}
+    with pytest.raises(AssertionError, match="finance.*AFTER parties"):
+        assert_organ_migration_order(_render(tmp_path / "c", {"finance": 10, "parties": 11}), ["finance", "parties"])

@@ -16,6 +16,7 @@ import pytest
 
 from noctusai_lib.domain.contracts import ContractsConfig, contracts_migration
 from noctusai_lib.domain.finance import FinanceConfig, finance_migration
+from noctusai_lib.domain.items import ItemsConfig, items_migration
 from noctusai_lib.domain.parties import PartiesConfig, parties_migration
 
 ROOT = Path(__file__).resolve().parents[6]
@@ -35,7 +36,6 @@ PRELUDE = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};
 CREATE OR REPLACE FUNCTION public.current_org_id_for(text) RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
 CREATE OR REPLACE FUNCTION public.current_org_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
-CREATE TABLE IF NOT EXISTS {SCHEMA}.itm_items (id UUID PRIMARY KEY, org_id UUID NOT NULL, name TEXT, UNIQUE (org_id, id));
 """
 
 _BASE = f"""
@@ -44,7 +44,7 @@ DECLARE o uuid := gen_random_uuid(); o2 uuid := gen_random_uuid(); p uuid := gen
         c uuid := gen_random_uuid();
 BEGIN
   INSERT INTO {SCHEMA}.pty_parties(id,org_id,kind,legal_name) VALUES (p,o,'PF','Ana');
-  INSERT INTO {SCHEMA}.itm_items(id,org_id,name) VALUES (it,o,'Serviço');
+  INSERT INTO {SCHEMA}.itm_items(id,org_id,sku,name) VALUES (it,o,'SRV-1','Serviço');
   INSERT INTO {SCHEMA}.ctr_contracts(id,org_id,title,party_id,billing_model,amount_cents,first_due_date)
     VALUES (c,o,'Contrato',p,'recurring',1000,'2026-11-10');
   {{body}}
@@ -57,6 +57,11 @@ RULES: dict[str, tuple[str, str]] = {
     "billing model is one of four": ("check_violation", f"{_CT}) VALUES (o,'x','weekly',1)"),
     "amount cannot be negative": ("check_violation", f"{_CT}) VALUES (o,'x','one_time',-1)"),
     "title not blank": ("check_violation", f"{_CT}) VALUES (o,'   ','one_time',1)"),
+    "an envelope id is unique per provider across orgs": (
+        "unique_violation",
+        f"INSERT INTO {SCHEMA}.ctr_contracts(org_id,title,billing_model,amount_cents,signature_provider,signature_external_id) VALUES (o,'a','one_time',1,'d4sign','E-1'); "
+        f"INSERT INTO {SCHEMA}.ctr_contracts(org_id,title,billing_model,amount_cents,signature_provider,signature_external_id) VALUES (o2,'b','one_time',1,'d4sign','E-1')",
+    ),
     "end before start": ("check_violation", f"{_CT},start_date,end_date) VALUES (o,'x','one_time',1,'2026-02-01','2026-01-01')"),
     "due day within 1..31": ("check_violation", f"{_CT},due_day) VALUES (o,'x','one_time',1,32)"),
     "number unique per org (case-insensitive)": ("unique_violation",
@@ -108,6 +113,9 @@ def _rule_sql(clause: str, stmt: str) -> str:
 def replay() -> dict:
     steps = [
         {"product": SCHEMA, "file": "prelude", "sql": PRELUDE, "mode": "file", "twice": False},
+        # The REAL items generator: a hand-written itm_items with UNIQUE (org_id, id) hid that the generated one had none,
+        # which made contracts' composite item FK fail on a real apply.
+        {"product": SCHEMA, "file": "items", "sql": items_migration(ItemsConfig(schema=SCHEMA)), "mode": "file", "twice": True},
         {"product": SCHEMA, "file": "parties", "sql": parties_migration(PartiesConfig(schema=SCHEMA), SCHEMA), "mode": "file", "twice": False},
         {"product": SCHEMA, "file": "finance", "sql": finance_migration(FinanceConfig(schema=SCHEMA), SCHEMA), "mode": "file", "twice": False},
         {"product": SCHEMA, "file": "contracts_migration", "sql": contracts_migration(CFG, SCHEMA), "mode": "file", "twice": True},

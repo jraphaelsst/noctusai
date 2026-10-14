@@ -225,6 +225,13 @@ SCENARIOS: dict[str, str] = {
   {need("r->>'status' = 'replayed'", 'replay')}
   {bal()}
   {need("b.reserved = 2", 'held once')}""",
+    "replaying a reserve with a DIFFERENT quantity is refused, never silently kept": f"""
+  r := @S@.inv_receive(o, {rec('5', 100)});
+  r := @S@.inv_reserve(o, 'ORD-9', {lines(('i', '2', ''))}, NULL, 'order');
+  r := @S@.inv_reserve(o, 'ORD-9', {lines(('i', '4', ''))}, NULL, 'order');
+  {need("r->>'status' = 'refused' AND r->>'code' = 'quantidade_divergente'", 'divergent replay')}
+  {bal()}
+  {need("b.reserved = 2", 'reservation untouched')}""",
     "reserve without a default warehouse and without one on the line is refused": f"""
   UPDATE @S@.inv_warehouses SET is_default = false WHERE id = w1;
   r := @S@.inv_receive(o, {rec('5', 100)});
@@ -356,8 +363,69 @@ NO_ITEMS_ONLY: dict[str, str] = {
 }
 
 
+def _stock_py_calls() -> dict[str, list[str]]:
+    """The exact `{rpc: [argument names]}` `stock.py` sends PostgREST -- recorded from the real callers, not retyped."""
+    from decimal import Decimal
+
+    from noctusai_lib.domain.inventory import stock
+    from noctusai_lib.domain.inventory._common import Scope
+    from noctusai_lib.testing.mocks import MockSupabaseClient
+
+    cfg = InventoryConfig(schema="invnamed")
+    db = MockSupabaseClient(validate_schema=False, schema="invnamed")
+    for name in ("receive", "issue", "adjust", "transfer", "reserve", "commit", "release"):
+        db.set_rpc_data(cfg.rpc(name), {"status": "ok"})
+    sc = Scope(db, cfg, "5b0e8f7a-1c2d-4e3f-9a8b-7c6d5e4f3a2b")
+    ids = {"item_id": "11111111-1111-4111-8111-111111111111", "warehouse_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+    stock.receive(sc, {**ids, "qty": Decimal("1"), "unit_cost_cents": 1})
+    stock.issue(sc, {**ids, "qty": Decimal("1")})
+    stock.adjust(sc, {**ids, "counted_qty": Decimal("1")})
+    stock.transfer(sc, {"item_id": ids["item_id"], "from_warehouse_id": ids["warehouse_id"], "to_warehouse_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "qty": Decimal("1")})
+    lines_ = [{"item_id": ids["item_id"], "qty": Decimal("1")}]
+    stock.reserve(sc, "N1", lines_)
+    stock.commit(sc, "N1")
+    stock.release(sc, "N1")
+    return {name.removeprefix(cfg.rpc("")): sorted(params) for name, params in db.rpc_calls}
+
+
+def _named_call(rpc: str, keys: list[str]) -> str:
+    """`@S@.inv_<rpc>(p_org => o, ...)` -- PostgreSQL's named notation, which is what PostgREST emits."""
+    exprs = {
+        "p_org": "o", "p_order_ref": "'N1'", "p_user": "NULL::uuid", "p_source": "'order'",
+        "p_lines": lines(("i", "1", "w1")),
+        "p_row": {
+            "receive": rec("10", 100), "issue": row("1"),
+            "adjust": "jsonb_build_object('item_id', i, 'warehouse_id', w1, 'counted_qty', '5')",
+            "transfer": "jsonb_build_object('item_id', i, 'from_warehouse_id', w1, 'to_warehouse_id', w2, 'qty', '1')",
+        }.get(rpc, "NULL"),
+    }
+    return f"@S@.inv_{rpc}(" + ", ".join(f"{k} => {exprs[k]}" for k in keys) + ")"
+
+
+def _named_args_scenario() -> str:
+    """Every RPC called with NAMED arguments exactly as stock.py sends them (PostgREST resolves by name, never position).
+
+    Regression for PGRST202 on every inventory write: stock.py sent `p_org_id` while the functions declare `p_org`;
+    the positional SQL calls above and the mock both let that through."""
+    calls = _stock_py_calls()
+    body = []
+    for rpc, keys in calls.items():
+        # release after commit is a legitimate refusal (reserva_consumida): it still PROVES the name resolved.
+        ok = "'ok', 'replayed', 'refused'" if rpc == "release" else "'ok', 'replayed'"
+        body.append(f"  r := {_named_call(rpc, keys)};\n  {need(f'r->>' + chr(39) + 'status' + chr(39) + f' IN ({ok})', 'named call ' + rpc)}")
+    wrong = _named_call("receive", ["p_org", "p_row"]).replace("p_org =>", "p_org_id =>")
+    body.append(f"""  BEGIN
+    r := {wrong};
+    RAISE EXCEPTION 'NOT REFUSED: a misnamed argument resolved';
+  EXCEPTION WHEN undefined_function THEN NULL; END;""")
+    return "\n".join(body)
+
+
+NAMED_ARGS = {"the RPCs resolve with the named arguments stock.py sends (PostgREST named notation)": _named_args_scenario}
+
+
 def _scenarios(with_items: bool) -> dict[str, str]:
-    return {**SCENARIOS, **(ITEMS_ONLY if with_items else NO_ITEMS_ONLY)}
+    return {**SCENARIOS, **{k: v() for k, v in NAMED_ARGS.items()}, **(ITEMS_ONLY if with_items else NO_ITEMS_ONLY)}
 
 
 def _run(schema: str, with_items: bool) -> dict:
@@ -397,7 +465,7 @@ def test_migration_applies_twice(replay):
 
 
 def _names() -> list[str]:
-    return sorted({*SCENARIOS, *ITEMS_ONLY, *NO_ITEMS_ONLY})
+    return sorted({*SCENARIOS, *NAMED_ARGS, *ITEMS_ONLY, *NO_ITEMS_ONLY})
 
 
 @pytest.mark.parametrize("name", _names())

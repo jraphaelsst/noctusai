@@ -14,9 +14,9 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
-from noctusai_lib.integrations.signature import DocumentoParaAssinar, Signatario
+from noctusai_lib.integrations.signature import DocumentoParaAssinar, Signatario, WebhookInvalido
 from noctusai_lib.integrations.signature.types import EventoAssinatura
 from noctusai_lib.primitives.identificador import cpf_dv_valido
 
@@ -119,19 +119,44 @@ async def cancel_signature(s: Scope, adapter: Any, contract_id: Any, reason: str
     return apply_signature_event(s, c, event)
 
 
-def handle_signature_webhook(db: Any, cfg: Any, adapter: Any, body: bytes, headers: Mapping[str, str], *, billing: Any = None) -> Optional[dict]:
-    """The host's webhook route body: verify (raises `WebhookInvalido` -> the host answers 401), find the contract
-    by `(provider, external_id)` ACROSS orgs (the webhook carries no org), apply. Returns the contract, or None if unknown."""
-    event = adapter.validar_webhook(body, headers)
-    resp = (db.table(cfg.table("contracts")).select("*").eq("signature_provider", event.provedor)
-            .eq("signature_external_id", event.external_id).limit(1).execute())
+#: `(body, headers) -> (provider, external_id)` read from the UNVERIFIED webhook body. It only LOCATES the
+#: contract (and so whose credentials verify the call); it is never trusted for a status.
+WebhookLocator = Callable[[bytes, Mapping[str, str]], Optional[tuple[str, str]]]
+
+
+async def handle_signature_webhook(db: Any, cfg: Any, adapter_for_org: Callable[[str], Any], body: bytes, headers: Mapping[str, str], *,
+                                   locate: WebhookLocator, billing: Any = None) -> Optional[dict]:
+    """The host's webhook route body.
+
+    1. `locate` the envelope `(provider, external_id)` from the still-unverified body and find the contract
+       (the webhook carries no org; `uq_..._signature` makes the pair unambiguous across orgs). Unknown => None,
+       and the host answers the same 200 it gives a valid one (no enumeration oracle).
+    2. Verify the signature with THAT contract's org adapter/key (`adapter_for_org(org_id)`), never with a
+       process-wide key: another tenant's key must not be able to speak for this contract.
+    3. NEVER trust the body for the status: confirm it with the adapter's own status read (`consultar`) -- the
+       same rule the invoice webhook applies with `provider.get` -- and apply THAT event. A forged or replayed
+       "concluido" cannot activate a contract the provider does not report as signed.
+
+    A bad signature raises `WebhookInvalido` (the host answers 401).
+    """
+    located = locate(body, headers)
+    if located is None:
+        return None
+    provider, external_id = located
+    resp = (db.table(cfg.table("contracts")).select("*").eq("signature_provider", provider)
+            .eq("signature_external_id", external_id).limit(1).execute())
     rows = resp.data or []
     if not rows:
-        logger.warning("contracts: signature webhook for unknown envelope %s", event.external_id)
+        logger.warning("contracts: signature webhook for unknown envelope %s", external_id)
         return None
     contract = dict(rows[0])
-    return apply_signature_event(Scope(db, cfg, str(contract["org_id"])), contract, event, billing=billing)
+    adapter = require_adapter(adapter_for_org(str(contract["org_id"])))
+    event = adapter.validar_webhook(body, headers)
+    if event.external_id != external_id or event.provedor != provider:
+        raise WebhookInvalido("webhook body does not match the envelope it was routed by")
+    confirmed = await adapter.consultar(external_id)
+    return apply_signature_event(Scope(db, cfg, str(contract["org_id"])), contract, confirmed, billing=billing)
 
 
-__all__ = ["apply_signature_event", "cancel_signature", "handle_signature_webhook", "render_document", "require_adapter",
+__all__ = ["WebhookLocator", "apply_signature_event", "cancel_signature", "handle_signature_webhook", "render_document", "require_adapter",
            "send_for_signature", "sync_signature"]

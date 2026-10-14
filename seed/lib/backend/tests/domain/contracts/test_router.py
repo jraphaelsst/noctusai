@@ -102,6 +102,17 @@ def test_party_doc_is_masked_for_staff_not_admin(h):
     assert seen["party_doc"] == "***.982.247-**" and seen["party_name"] == "Ana Souza"
 
 
+def test_rendered_document_does_not_leak_the_party_doc_to_staff(h):
+    p = mk_party(Scope(h.db, CFG, ORG_A))
+    c = create(h, party_id=p["id"])
+    done = call(h, "POST", f"{P}/{c['id']}/document", h.admin, json={})
+    assert VALID_CPF in done.json()["data"]["document_body"]  # the admin (and the signed file) carry the real number
+    staff = call(h, "GET", f"{P}/{c['id']}", h.staff()).json()["data"]
+    digits = "".join(ch for ch in VALID_CPF if ch.isdigit())
+    assert staff["document_body"] and VALID_CPF not in staff["document_body"] and digits not in staff["document_body"]
+    assert "***.982.247-**" in staff["document_body"]
+
+
 def test_other_orgs_see_nothing(h):
     c = create(h)
     assert call(h, "GET", f"{P}/{c['id']}", h.staff("org-b")).status_code == 404

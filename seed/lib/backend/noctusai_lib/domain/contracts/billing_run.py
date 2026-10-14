@@ -161,6 +161,10 @@ def _active_contracts(db: Any, cfg: ContractsConfig, org_id: Optional[str]) -> l
     return list(iter_paged_rows(page, label="contracts active"))
 
 
+#: Renewals one contract may take in a single run (5 years of monthly renewals; the rest waits for the next tick).
+MAX_RENEWALS_PER_TICK = 60
+
+
 def contracts_generate_billing(db: Any, cfg: ContractsConfig, billing: Any, *, org_id: Optional[str] = None,
                                on: Optional[date] = None) -> dict:
     """The `contracts_generate_billing` job body (ALL orgs, or `org_id`'s): renew / expire, then bill. Idempotent."""
@@ -174,9 +178,13 @@ def contracts_generate_billing(db: Any, cfg: ContractsConfig, billing: Any, *, o
         try:
             end = to_date(c.get("end_date"))
             if end is not None and end < on and c.get("auto_renew"):
-                while end is not None and end < on:  # a long-dormant contract catches up in one run
+                renewals = 0
+                # A long-dormant contract catches up, but bounded per tick: a corrupt `end_date` (year 1900) or a
+                # 1-month renewal must not turn one row into an unbounded write loop; the next tick continues.
+                while end is not None and end < on and renewals < MAX_RENEWALS_PER_TICK:
                     c = renew_contract(s, c)
                     end = to_date(c["end_date"])
+                    renewals += 1
                 summary["renewed"] += 1
             summary["created"] += bill_contract(s, c, billing, on=on)["created"]
             if end is not None and end < on and not c.get("auto_renew"):
