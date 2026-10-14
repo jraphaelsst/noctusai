@@ -33,6 +33,7 @@ const Chat = lazyWithReload(() => import("@/pages/Chat"));
 const Dashboard = lazyWithReload(() => import("@/pages/Dashboard"));
 const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
 const Custos = lazyWithReload(() => import("@/pages/Custos"));
+const Financeiro = lazyWithReload(() => import("@/pages/Financeiro"));
 const Permutas = lazyWithReload(() => import("@/pages/Permutas"));
 const Settings = lazyWithReload(() => import("@/pages/Settings"));
 const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
@@ -223,6 +224,7 @@ export default createProductApp({
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
     { path: "/custos", component: Custos },
+    { path: "/financeiro/*", component: Financeiro },
   ],
   // /chat is public — the backend chat router is unauthenticated by
   // current product direction, so the frontend route matches that

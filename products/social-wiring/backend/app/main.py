@@ -51,7 +51,8 @@ from noctusai_lib.config.credentials import register_credential_override
 from noctusai_seed import create_product_app
 from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
 
-from app.dependencies import LazyApiTokenAuditWriter
+from app.dependencies import LazyApiTokenAuditWriter, get_admin_client, get_core_client, get_current_user_org
+from noctusai_seed.organs import mount_finance
 
 from app.config import settings
 from app.lifespan import on_shutdown, on_startup
@@ -663,6 +664,15 @@ def _local_api_key(key: str, org_id):
 
 register_credential_override(_local_api_key)
 
+# Seed finance organ (`/api/finance/*`, `social_wiring.fin_*`). Unrelated to the `agentes_financeiros` module
+# (a registry of financing banks, `/api/agentes-financeiros`).
+finance_organ = mount_finance(
+    schema="social_wiring",
+    auth_dependency=get_current_user_org,
+    get_admin_client=get_admin_client,
+    get_core_client=get_core_client,
+)
+
 app = create_product_app(
     name="Social Wiring",
     schema="social_wiring",
@@ -682,6 +692,7 @@ app = create_product_app(
     # Module-contributed base (_STANDARD_ROUTERS) + product-global "status_paginas".
     standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback", "status_paginas"],
     routers=_routers,
+    organs=[finance_organ],
     # Conversation buffer + worker — boots the seed-backed
     # ConversationBufferService and the polling worker that drains the
     # debounce queue. See app/lifespan.py for the contract.

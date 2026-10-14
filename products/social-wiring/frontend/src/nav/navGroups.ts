@@ -275,6 +275,7 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Favorecidos", href: "/favorecidos", icon: Landmark, route: "favorecidos" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
+      { name: "Financeiro", href: "/financeiro", icon: Landmark, route: "financeiro" },
     ],
   },
 ];
