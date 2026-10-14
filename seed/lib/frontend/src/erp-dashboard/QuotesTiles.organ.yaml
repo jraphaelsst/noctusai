@@ -1,0 +1,32 @@
+name: ErpQuotesTiles
+kind: component
+path: seed/lib/frontend/src/erp-dashboard/QuotesTiles.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Open = sent + viewed; expiring = valid_until within 7 days among the first 100 of each status."
+  - "Part of the ERP dashboard (project-history/roadmaps/erp-seed-2026-10.md W5, templates/product-erp overlay). Pure composition over the organ hooks; money is integer cents formatted only via formatCents; pt-BR copy (erp-dashboard/messages.ts)."
+  - "Loading contract: tiles read signals() (showSkeleton = isPending && !data, isRefreshing = isFetching && !!data); a failing read shows an error with retry on that tile only (lying-loading-state.md)."
+  - "Organ-optional: a group renders only when the host passes that organ's hooks, so a product that mounted fewer organs shows fewer groups."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A dashboard backend endpoint aggregating the organs was rejected: the organs are separately mounted and optional, composition on the client keeps each tile independent."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

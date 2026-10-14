@@ -1,0 +1,51 @@
+/** ERP dashboard message table. pt-BR is canonical; `{var}` placeholders are interpolated by `createErpDashboardTranslator`. */
+export const ERP_DASHBOARD_MESSAGES = {
+  'common.error_loading': 'Não foi possível carregar',
+  'common.refreshing': 'Atualizando…',
+  'common.retry': 'Tentar novamente',
+  'common.empty': 'Nada por aqui.',
+
+  'dashboard.title': 'Visão geral do negócio',
+  'dashboard.subtitle': 'Financeiro, estoque, compras, contratos e orçamentos num só lugar.',
+  'dashboard.nothing_mounted': 'Nenhum módulo conectado a este painel.',
+
+  'finance.title': 'Financeiro',
+  'finance.month_result': 'Resultado do mês',
+  'finance.month_result_hint': 'DRE do mês corrente',
+  'finance.cash': 'Posição de caixa',
+  'finance.cash_hint': 'Saldo realizado até hoje',
+  'finance.open_receivable': 'A receber',
+  'finance.open_payable': 'A pagar',
+  'finance.window_hint': 'Próximos 6 meses',
+  'finance.overdue_receivable': 'Recebíveis vencidos',
+  'finance.overdue_receivable_hint': '{n} cliente(s) em atraso',
+  'finance.overdue_payable': 'Pagáveis vencidos',
+  'finance.overdue_payable_hint': '{n} lançamento(s)',
+  'finance.overdue_payable_partial': '{n} de {total} lançamentos',
+
+  'inventory.title': 'Estoque',
+  'inventory.low_stock': 'Itens abaixo do mínimo',
+  'inventory.low_stock_hint': 'Disponível no limite ou abaixo do mínimo',
+  'inventory.valuation': 'Valor em estoque',
+  'inventory.valuation_hint': 'Custo médio · {count} item(ns)',
+
+  'purchasing.title': 'Compras',
+  'purchasing.awaiting_approval': 'Pedidos aguardando aprovação',
+  'purchasing.awaiting_approval_hint': 'Rascunhos de pedido de compra',
+  'purchasing.awaiting_receipt': 'Pedidos aguardando recebimento',
+  'purchasing.awaiting_receipt_hint': 'Aprovados, enviados ou parcialmente recebidos',
+
+  'contracts.title': 'Contratos',
+  'contracts.active': 'Contratos ativos',
+  'contracts.active_hint': '{amount} por ciclo',
+  'contracts.expiring': 'Vencendo em 30 dias',
+  'contracts.expiring_hint': 'Contratos ativos com término próximo',
+  'contracts.next_billings': 'Próximas cobranças',
+  'contracts.next_billings_hint': '{n} contrato(s) com cobrança nos próximos 30 dias',
+
+  'quotes.title': 'Orçamentos',
+  'quotes.open': 'Orçamentos em aberto',
+  'quotes.open_hint': '{amount} enviados e aguardando resposta',
+  'quotes.expiring': 'Vencendo em 7 dias',
+  'quotes.expiring_hint': 'Validade próxima, sem resposta',
+} as const;

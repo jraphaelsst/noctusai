@@ -289,3 +289,7 @@ export * from './purchasing';
 // noctusai_lib.domain.quotes. Product-agnostic; the host passes its authenticated api client (staff) / base URL (public page).
 // Barrel names are `Quote*`-prefixed: commerce already exports `Quote` / `QuoteLine` (the cart quote).
 export * from './quotes';
+
+// ERP dashboard (composition over the finance / inventory / purchasing / contracts / quotes hooks; organ-optional tiles,
+// no backend of its own). Roadmap project-history/roadmaps/erp-seed-2026-10.md (W5). Names are Erp*-prefixed.
+export * from './erp-dashboard';
