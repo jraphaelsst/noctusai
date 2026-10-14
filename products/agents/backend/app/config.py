@@ -147,6 +147,21 @@ class SeedSettings(ProductSettings):
     # changes without a code change.
     julia_cli_path: str = "/app/bin/julia-cli-exec"
 
+    # ── Provider-neutral runtime (`runtime='llm'`, Lais A1) ─────────────
+    # Concurrent in-process LLM turns (no subprocess, so no uid slots —
+    # `app.runtime.llm_runtime.LlmTurnLimiter`); a full limiter is a 429
+    # `capacidade`.
+    llm_turn_capacity: int = 8
+    # Memory per turn: the last N stored messages of the conversation.
+    llm_history_messages: int = 20
+    # Cap on tool-call rounds per turn (also bounded by the version's
+    # `max_turns`).
+    llm_max_tool_iterations: int = 6
+    # Per-ORG daily spend cap in USD over the stored turn costs
+    # (`agents.messages.custo_usd`); 0 disables it. The seed's monthly BRL
+    # budget (`org_settings.monthly_llm_budget_brl`) applies on top, always.
+    llm_daily_budget_usd: float = 0.0
+
     # ── Per-conversation isolation (contract §E.11) ─────────────────────
     # Fixed slot count: uid/gid `2000+K` for K in `range(julia_cli_slots)`,
     # each with its own tmpfs mount `/run/julia-K`. `app.runtime.slots.

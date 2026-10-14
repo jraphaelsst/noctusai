@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MODELS",
+    "MODELS_BY_PROVIDER",
+    "PROVIDERS",
     "EFFORTS",
     "VERSION_STATUSES",
     "CLIENT_ENTRY_TIPOS",
@@ -91,7 +93,22 @@ _SCHEMA = "agents"
 #: migration 015 to add `claude-haiku-4-5` (cheapest/fastest option); the
 #: DRAFT_DEFAULTS model below stays `claude-opus-5` — this only adds an
 #: option, it does not change anyone's current default.
-MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+ANTHROPIC_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+#: Migration 024 — the OpenAI chat models the seed catalog lists
+#: (`noctusai_lib.integrations.llm.models`; there is no `gpt-5`/`gpt-5-mini`
+#: in it, so these are the names the seed actually prices).
+OPENAI_MODELS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+#: Migration 024 `provider` CHECK + the provider-keyed `model` CHECK.
+PROVIDERS = ("anthropic", "openai")
+MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    "anthropic": ANTHROPIC_MODELS,
+    "openai": OPENAI_MODELS,
+}
+#: The ANTHROPIC allowlist under its historical name (012/015) — every
+#: pre-024 consumer (the package importer, persona-shaped callers) keeps its
+#: meaning. The provider-keyed allowlist the version CHECK enforces is
+#: `MODELS_BY_PROVIDER`.
+MODELS = ANTHROPIC_MODELS
 #: 012 `effort` CHECK.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 VERSION_STATUSES = ("rascunho", "ativa", "substituida")
@@ -101,6 +118,7 @@ CLIENT_ENTRY_TIPOS = (
 CLIENT_ENTRY_STATUSES = ("ativo", "arquivado")
 #: `create_agent_draft` with no source (012).
 DRAFT_DEFAULTS = {
+    "provider": "anthropic",
     "model": "claude-opus-5",
     "effort": "high",
     "max_turns": 40,
@@ -110,7 +128,7 @@ DRAFT_DEFAULTS = {
 
 _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
 _DRAFT_FIELDS = (
-    "notas", "model", "effort", "max_turns", "idioma", "tool_policy",
+    "notas", "provider", "model", "effort", "max_turns", "idioma", "tool_policy",
     # 017 (Agent Packages §C4): the package identity the importer stamps.
     "versao_semver", "package_sha",
 )
@@ -120,7 +138,7 @@ _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The version-row settings that feed the compile — changing one invalidates
 #: a draft's ``compiled_hash`` (012 ``guard_agent_version_immutable``).
-_COMPILED_SETTINGS = ("model", "effort", "max_turns", "idioma", "tool_policy")
+_COMPILED_SETTINGS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
 #: 012 ``agent_audit_log.acao`` CHECK.
 AUDIT_ACOES = ("limiar_alterado", "publicado", "publicado_override", "rascunho_descartado")
 _SKILL_FIELDS = ("nome", "descricao", "corpo", "ordem", "ativo")
@@ -183,6 +201,8 @@ class VersionRecord:
     #: 017 (§C4): package identity recorded by the importer (NULL otherwise).
     versao_semver: str | None = None
     package_sha: str | None = None
+    #: 024: the LLM provider the version runs on (`anthropic` unless chosen).
+    provider: str = "anthropic"
 
 
 @dataclass(frozen=True)
@@ -393,12 +413,24 @@ def _validate_bundle(secoes: list["SectionInput"], skills: list[SkillBundleInput
             _check_cap(f.conteudo, "skill_file.conteudo", "skill file conteudo")
 
 
-def _validate_draft_fields(fields: dict[str, Any]) -> None:
+def _validate_draft_fields(
+    fields: dict[str, Any], *, current_provider: str = "anthropic", current_model: str | None = None,
+) -> None:
+    """``current_*`` are the draft's stored provider/model — consulted only
+    when a request changes ONE of the pair, so the provider-keyed allowlist
+    (024's CHECK) is enforced on the effective (provider, model) pair rather
+    than on whichever half the request happened to carry."""
     unknown = set(fields) - set(_DRAFT_FIELDS)
     if unknown:
         raise ValueError(f"unknown draft fields: {sorted(unknown)}")
-    if "model" in fields and fields["model"] not in MODELS:
-        raise ValueError(f"model must be one of {MODELS}; got {fields['model']!r}")
+    if "provider" in fields and fields["provider"] not in PROVIDERS:
+        raise ValueError(f"provider must be one of {PROVIDERS}; got {fields['provider']!r}")
+    if "model" in fields or "provider" in fields:
+        provider = fields.get("provider", current_provider)
+        model = fields.get("model", current_model)
+        allowed = MODELS_BY_PROVIDER[provider]
+        if model not in allowed:
+            raise ValueError(f"model must be one of {allowed} for provider {provider!r}; got {model!r}")
     if "effort" in fields and fields["effort"] not in EFFORTS:
         raise ValueError(f"effort must be one of {EFFORTS}; got {fields['effort']!r}")
     if "max_turns" in fields and not (1 <= int(fields["max_turns"]) <= 200):
@@ -772,7 +804,8 @@ class FakeStudioDefinitionStore:
             if src is None or src.org_id != org_id or src.agent_id != agent_id:
                 raise NotFound(f"version {source_version_id} not found")
             settings = {
-                "model": src.model, "effort": src.effort, "max_turns": src.max_turns,
+                "provider": src.provider, "model": src.model, "effort": src.effort,
+                "max_turns": src.max_turns,
                 "idioma": src.idioma, "tool_policy": dict(src.tool_policy),
             }
             based_on = src.id
@@ -802,8 +835,8 @@ class FakeStudioDefinitionStore:
         return v
 
     def update_draft(self, org_id: UUID, version_id: UUID, fields: dict[str, Any]) -> VersionRecord:
-        _validate_draft_fields(fields)
         v = self._require_draft(org_id, version_id)
+        _validate_draft_fields(fields, current_provider=v.provider, current_model=v.model)
         changed = any(k in fields and fields[k] != getattr(v, k) for k in _COMPILED_SETTINGS)
         v = replace(v, **fields, updated_at=self._now())
         if changed:
@@ -1271,7 +1304,8 @@ class SupabaseStudioDefinitionStore:
         return VersionRecord(
             id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])),
             agent_id=UUID(str(row["agent_id"])), versao=int(row["versao"]), status=row["status"],
-            notas=row.get("notas"), model=row["model"], effort=row["effort"],
+            notas=row.get("notas"), provider=row.get("provider") or "anthropic",
+            model=row["model"], effort=row["effort"],
             max_turns=int(row["max_turns"]), idioma=row["idioma"],
             tool_policy=dict(row.get("tool_policy") or {}),
             based_on_version_id=_uuid_or_none(row.get("based_on_version_id")),
@@ -1445,9 +1479,16 @@ class SupabaseStudioDefinitionStore:
         return self.get_version(org_id, UUID(str(new_id)))
 
     def update_draft(self, org_id: UUID, version_id: UUID, fields: dict[str, Any]) -> VersionRecord:
-        _validate_draft_fields(fields)
         if not fields:
+            _validate_draft_fields(fields)
             return self.get_version(org_id, version_id)
+        if ("model" in fields) != ("provider" in fields):
+            current = self.get_version(org_id, version_id)
+            _validate_draft_fields(
+                fields, current_provider=current.provider, current_model=current.model
+            )
+        else:
+            _validate_draft_fields(fields)
         resp = self._exec(
             self._t("agent_versions").update(dict(fields))
             .eq("org_id", str(org_id)).eq("id", str(version_id)).eq("status", "rascunho")

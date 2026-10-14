@@ -40,6 +40,9 @@ _TABLE = "agent_personas"
 #: `claude-haiku-4-5` (cheapest/fastest option) alongside opus-5/sonnet-5 —
 #: the DB CHECK is the enforcement, this tuple is the single source the
 #: store and the HTTP schema both validate against.
+#: Lais A1: deliberately NOT provider-keyed — a persona is Julia-academia's,
+#: which only ever runs on the Claude SDK. The provider-keyed allowlist
+#: (migration 024) is `app.stores.studio_definitions.MODELS_BY_PROVIDER`.
 MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 #: Contract §E.1 `effort` CHECK.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")

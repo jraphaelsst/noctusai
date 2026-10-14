@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+from fastapi import Depends
 from noctusai_seed import (
     create_database_module,
     create_dependencies,
@@ -309,7 +310,7 @@ def get_runtime_settings_service_dep():
 def get_agent_runtime_dep():
     from app.runtime import get_agent_runtime
 
-    return get_agent_runtime(settings)
+    return get_agent_runtime(settings, None, None)
 
 
 def get_approval_broker_dep():
@@ -340,6 +341,16 @@ def get_message_store_dep():
     from app.stores.messages import get_message_store
 
     return get_message_store(settings)
+
+
+def get_llm_runtime_dep(msg_store=Depends(get_message_store_dep)):
+    """The provider-neutral runtime (``agents.runtime='llm'``, Lais A1) —
+    memory over the SAME message store the route persists to, so a test that
+    overrides ``get_message_store_dep`` (or this dep, with a ``FakeProvider``-
+    driven ``LlmToolRuntime``) reaches it. Cheap: no network at construction."""
+    from app.runtime import get_llm_runtime
+
+    return get_llm_runtime(settings, messages=msg_store)
 
 
 def get_persona_store_dep():
@@ -409,6 +420,7 @@ __all__ = [
     "get_admin_client",
     "get_agent_runtime_dep",
     "get_agent_store_dep",
+    "get_llm_runtime_dep",
     "get_approval_broker_dep",
     "get_approval_store_dep",
     "get_auth_context",

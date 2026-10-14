@@ -24,6 +24,7 @@ from app.runtime.types import AgentRuntime, AgentSpec, ApprovalBroker
 
 __all__ = [
     "get_agent_runtime",
+    "get_llm_runtime",
     "get_approval_broker",
     "build_julia_spec",
     "make_academia_launch_provider",
@@ -87,8 +88,17 @@ def get_approval_broker(settings: Any) -> ApprovalBroker:
     return _broker_singleton
 
 
-def get_agent_runtime(settings: Any) -> AgentRuntime:
-    """``ClaudeAgentSdkRuntime`` when the Anthropic key resolves,
+def get_agent_runtime(
+    settings: Any, agent: Any | None = None, org_id: UUID | None = None
+) -> AgentRuntime:
+    """Dispatch on ``agent.runtime`` (Lais A1): ``'llm'`` →
+    :func:`get_llm_runtime` (provider-neutral; per-ORG keys, so an OpenAI-only
+    org needs no Anthropic key and the platform guard below never runs for it);
+    anything else — ``'claude_sdk'`` (Julia-academia, byte-for-byte unchanged),
+    ``'external'`` — or ``agent=None`` (the agent-agnostic call) → the
+    behaviour below. ``org_id`` binds an ``llm`` runtime to ONE org.
+
+    Legacy path: ``ClaudeAgentSdkRuntime`` when the Anthropic key resolves,
     ``FakeAgentRuntime`` in tests/dev. In a deploy context an unresolvable
     Anthropic key raises here — there is no silent Fake in prod (contract
     §E.9). The Julia-only config (approval signing key /
@@ -101,10 +111,13 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
     resolved at USE time, DB-first with env fallback
     (``app/credentials/resolver.py``) — a value changed on the Credenciais
     page reaches the next turn without a redeploy."""
+    if agent is not None and getattr(agent, "runtime", None) == "llm":
+        return get_llm_runtime(settings, org_id=org_id)
+
     from app.credentials.resolver import get_credential_resolver, require_resolved_runtime_config
 
     credentials = get_credential_resolver(settings)
-    require_resolved_runtime_config(credentials)
+    require_resolved_runtime_config(credentials, provider="anthropic")
 
     anthropic_key = credentials.anthropic_api_key() or ""
     if not anthropic_key:
@@ -151,6 +164,50 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         cli_path=getattr(settings, "julia_cli_path", "") or DEFAULT_CLI_PATH,
         # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
         studio_tools_factory=make_studio_tools_factory(settings),
+    )
+
+
+_llm_limiter_singleton: Any = None
+
+
+def get_llm_runtime(
+    settings: Any,
+    *,
+    org_id: UUID | None = None,
+    messages: Any | None = None,
+    key_resolver: Callable[[str, UUID], str | None] | None = None,
+    provider_impl: Any | None = None,
+    tools_factory: Callable[[Any, Any], Any] | None = None,
+) -> AgentRuntime:
+    """The provider-neutral runtime (Lais A1) — what an ``agents.runtime='llm'``
+    agent runs on, and what A2's channel turns call.
+
+    Production wiring: keys from THIS org only
+    (``app.credentials.org_keys.make_org_llm_key_resolver`` — B1), the seed's
+    monthly budget + the per-org daily cap (``settings.llm_daily_budget_usd``),
+    the process-wide concurrency limiter, memory from ``agents.messages``. Every
+    argument is a DI seam for tests (``provider_impl`` takes the seed's
+    ``FakeProvider``). Nothing here reads a platform or env LLM key."""
+    global _llm_limiter_singleton
+    from app.credentials.org_keys import make_org_llm_key_resolver
+    from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_guard
+    from app.stores.messages import get_message_store
+
+    if _llm_limiter_singleton is None:
+        _llm_limiter_singleton = LlmTurnLimiter(int(getattr(settings, "llm_turn_capacity", 8) or 8))
+    store = messages if messages is not None else get_message_store(settings)
+    return LlmToolRuntime(
+        messages=store,
+        key_resolver=key_resolver if key_resolver is not None else make_org_llm_key_resolver(),
+        limiter=_llm_limiter_singleton,
+        budget_guard=make_budget_guard(
+            messages=store, daily_cap_usd=float(getattr(settings, "llm_daily_budget_usd", 0.0) or 0.0)
+        ),
+        tools_factory=tools_factory,
+        provider_impl=provider_impl,
+        history_messages=int(getattr(settings, "llm_history_messages", 20) or 20),
+        max_iterations=int(getattr(settings, "llm_max_tool_iterations", 6) or 6),
+        bound_org_id=org_id,
     )
 
 

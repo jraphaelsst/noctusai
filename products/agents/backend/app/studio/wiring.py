@@ -31,6 +31,7 @@ from app.config import settings
 from app.dependencies import (
     get_agent_runtime_dep,
     get_approval_broker_dep,
+    get_llm_runtime_dep,
     require_admin,
     require_publish_write,
 )
@@ -98,6 +99,7 @@ def studio_eval_scheduler(
     definitions=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     runtime=Depends(get_agent_runtime_dep),
+    llm_runtime=Depends(get_llm_runtime_dep),
     broker=Depends(get_approval_broker_dep),
     judge=Depends(get_eval_judge_dep),
 ):
@@ -114,6 +116,7 @@ def studio_eval_scheduler(
         definitions=definitions,
         catalog=catalog,
         runtime=runtime,
+        llm_runtime=llm_runtime,
         broker=broker,
         judge=judge,
         instance_id=INSTANCE_ID,

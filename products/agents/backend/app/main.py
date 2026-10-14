@@ -50,6 +50,7 @@ from app.routers.admin_credentials_router import router as admin_credentials_rou
 from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agents_router import router as agents_router
+from app.routers.api_keys_router import router as api_keys_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.editorial_router import router as editorial_router
@@ -199,6 +200,8 @@ app = create_product_app(
         conversations_router,
         approvals_router,
         admin_credentials_router,
+        # Lais A1: per-org LLM provider keys (openai/anthropic), admin-only, with POST .../test.
+        api_keys_router,
         agent_settings_router,
         # Agent Studio (contract §D, §J2.3 — BE-RT registers every studio router).
         studio_agents_router,

@@ -451,3 +451,62 @@ class TestSupabaseStore:
         names = [c[0] for c in calls]
         assert ("eq", ("org_id", str(ORG)), {}) in calls
         assert "range" in names
+
+
+class TestProviderAwareModelAllowlist:
+    """Migration 024 — `agent_versions.provider` + the provider-keyed model CHECK."""
+
+    def test_default_draft_is_anthropic_and_unchanged(self, store, agent):
+        d = store.create_draft(ORG, agent.id, None, USER)
+        assert (d.provider, d.model) == ("anthropic", "claude-opus-5")
+
+    def test_openai_pair_is_accepted_and_clears_the_judged_hash(self, store, agent):
+        d = store.create_draft(ORG, agent.id, None, USER)
+        _stamp(store, d.id)
+        updated = store.update_draft(ORG, d.id, {"provider": "openai", "model": "gpt-5.6-terra"})
+        assert (updated.provider, updated.model) == ("openai", "gpt-5.6-terra")
+        assert updated.compiled_hash is None  # `provider` is a compiled setting
+
+    @pytest.mark.parametrize("fields", [
+        {"model": "gpt-5.6-terra"},                                   # openai name on anthropic
+        {"provider": "openai"},                                       # provider alone: opus is not openai
+        {"provider": "openai", "model": "claude-opus-5"},             # mismatched pair
+        {"provider": "anthropic", "model": "gpt-5.6-sol"},
+        {"provider": "gemini", "model": "gemini-1.5-pro"},            # unknown provider
+    ])
+    def test_a_mismatched_pair_is_refused(self, store, agent, fields):
+        d = store.create_draft(ORG, agent.id, None, USER)
+        with pytest.raises(ValueError):
+            store.update_draft(ORG, d.id, fields)
+
+    def test_model_alone_is_checked_against_the_drafts_current_provider(self, store, agent):
+        d = store.create_draft(ORG, agent.id, None, USER)
+        store.update_draft(ORG, d.id, {"provider": "openai", "model": "gpt-5.6-luna"})
+        assert store.update_draft(ORG, d.id, {"model": "gpt-5.6-sol"}).model == "gpt-5.6-sol"
+        with pytest.raises(ValueError):
+            store.update_draft(ORG, d.id, {"model": "claude-haiku-4-5"})
+
+    def test_a_clone_keeps_the_provider(self, store, agent):
+        v1 = store.create_draft(ORG, agent.id, None, USER)
+        store.update_draft(ORG, v1.id, {"provider": "openai", "model": "gpt-5.6-terra"})
+        _fill(store, v1.id)
+        _publish(store, v1.id, reason="motivo suficientemente longo")
+        v2 = store.create_draft(ORG, agent.id, v1.id, USER)
+        assert (v2.provider, v2.model) == ("openai", "gpt-5.6-terra")
+
+    def test_models_alias_stays_the_anthropic_allowlist(self):
+        from app.stores.studio_definitions import MODELS_BY_PROVIDER
+
+        assert MODELS_BY_PROVIDER["anthropic"] == MODELS
+        assert set(MODELS_BY_PROVIDER["openai"]) == {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+
+    def test_every_openai_model_is_priced_in_the_seed_catalog(self):
+        """The names are not invented: each is a chat model the seed lists AND
+        prices (an unpriced model would silently record cost 0)."""
+        from noctusai_lib.integrations.llm import is_priced, models_for
+
+        from app.stores.studio_definitions import MODELS_BY_PROVIDER
+
+        chat = {m.id: m for m in models_for("openai") if m.kind == "chat"}
+        for name in MODELS_BY_PROVIDER["openai"]:
+            assert name in chat and is_priced(chat[name])

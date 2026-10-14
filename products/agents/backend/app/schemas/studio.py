@@ -75,6 +75,8 @@ class VersionSummaryOut(BaseModel):
     status: str
     notas: str | None
     model: str
+    #: Migration 024: the LLM provider the version runs on.
+    provider: str = "anthropic"
     created_at: datetime
     published_at: datetime | None
     compiled_hash: str | None
@@ -152,6 +154,7 @@ class ToolPolicyIn(StrictHttpModel):
 
 class DraftUpdateRequest(StrictHttpModel):
     notas: str | None = None
+    provider: str | None = None
     model: str | None = None
     effort: str | None = None
     max_turns: int | None = None

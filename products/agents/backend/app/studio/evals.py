@@ -480,7 +480,9 @@ class EvalRunner:
         slot_wait_seconds: float = DEFAULT_SLOT_WAIT_SECONDS,
         slot_poll_seconds: float = DEFAULT_SLOT_POLL_SECONDS,
         turn_timeout_seconds: float = 600.0,
+        llm_runtime: Any = None,
     ) -> None:
+        self._llm_runtime = llm_runtime
         self._evals = evals
         self._runs = runs
         self._definitions = definitions
@@ -665,10 +667,19 @@ class EvalRunner:
         )
         return (_CaseOutcome(passed=passed, score=score) if written else None), custo.custo_usd
 
-    async def _reserve_slot(self) -> Any:
+    def _runtime_for(self, spec: AgentSpec) -> Any:
+        """An ``llm`` agent's cases run on the provider-neutral runtime (Lais
+        A1); every other spec keeps the Claude one, unchanged."""
+        if spec.runtime == "llm":
+            if self._llm_runtime is None:
+                raise _CaseError("Este agente roda no executor neutro, que não está disponível.")
+            return self._llm_runtime
+        return self._runtime
+
+    async def _reserve_slot(self, runtime: Any) -> Any:
         deadline = time.monotonic() + self._slot_wait
         while True:
-            slot = self._runtime.try_reserve()
+            slot = runtime.try_reserve()
             if slot is not None:
                 return slot
             if time.monotonic() >= deadline:
@@ -687,12 +698,13 @@ class EvalRunner:
             sdk_session_id=None,
             ephemeral=True,
         )
-        slot = await self._reserve_slot()
+        runtime = self._runtime_for(spec)
+        slot = await self._reserve_slot(runtime)
         textos: list[str] = []
         custo = TurnCost()
         try:
             async with asyncio.timeout(self._turn_timeout):
-                async for event in self._runtime.run_turn(spec, ctx, prompt, self._broker, slot=slot):
+                async for event in runtime.run_turn(spec, ctx, prompt, self._broker, slot=slot):
                     if event.get("event") == "message.new":
                         texto = (event.get("payload") or {}).get("texto") or ""
                         if texto.strip():

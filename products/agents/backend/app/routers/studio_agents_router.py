@@ -93,7 +93,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/studio", tags=["studio"])
 
 #: Version settings compared by the diff endpoint, in output order.
-_CONFIG_FIELDS = ("model", "effort", "max_turns", "idioma", "tool_policy")
+_CONFIG_FIELDS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
 
 #: The body-cap pattern ``app.main`` registers for the skill-files batch
 #: route (UI-KB-BACKEND), same shape as ``studio_import_router.
@@ -333,6 +333,7 @@ def _summary(store, org_id: UUID, agent: StudioAgentRecord) -> AgentSummaryOut:
 def _version_summary(v: VersionRecord, eval_score: float | None) -> dict[str, Any]:
     return dict(
         id=v.id, versao=v.versao, status=v.status, notas=v.notas, model=v.model,
+        provider=v.provider,
         created_at=v.created_at, published_at=v.published_at, compiled_hash=v.compiled_hash,
         eval_score=eval_score, versao_semver=v.versao_semver, package_sha=v.package_sha,
     )

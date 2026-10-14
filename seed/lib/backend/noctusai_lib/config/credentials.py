@@ -208,6 +208,37 @@ def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
     return os.environ.get(key.upper()) or None
 
 
+def resolve_org_credential(key: str, org_id: Optional[str]) -> Optional[str]:
+    """Resolve ``key`` from THIS org's ``org_settings`` row ONLY.
+
+    The strict, fail-closed sibling of :func:`resolve_credential` for
+    callers that must never spend someone else's key (B1 of the Lais
+    contract: a lead turn of org A must not run on the platform's or
+    another tenant's credential). It skips tier 0 (the product override),
+    tier 2 (``platform_settings``) and tier 3 (env) by construction — a
+    miss is ``None``, never a fallback. No ``org_id`` ⇒ ``None``.
+    """
+    if not org_id:
+        return None
+    db = _get_public_client()
+    if db is None:
+        return None
+    try:
+        result = (
+            db.table("org_settings")
+            .select("value")
+            .eq("org_id", org_id)
+            .eq("key", key)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("org_settings lookup failed for %s (org=%s): %s", key, org_id, exc)
+        return None
+    if result.data and result.data[0].get("value"):
+        return result.data[0]["value"]
+    return None
+
+
 def _reset_for_testing() -> None:
     """Test-only hook to clear module-level state between test cases."""
     global _config, _public_client, _override

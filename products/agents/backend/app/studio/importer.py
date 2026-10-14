@@ -41,7 +41,7 @@ from pydantic import Field, StrictBool, field_validator, model_validator
 
 from app.schemas.studio import CAMINHO_PATTERN, SLUG_PATTERN, EntryTipo
 from app.stores.agents import DEFAULT_AGENT_KEYS
-from app.stores.studio_definitions import EFFORTS, MODELS, SectionInput
+from app.stores.studio_definitions import ANTHROPIC_MODELS, EFFORTS, SectionInput
 from app.studio.bundles import compile_version
 from app.stores.studio_knowledge import DOCUMENT_TYPES, CollectionInput, source_sha_of
 from app.stores.studio_evals import EvalCaseInput
@@ -60,7 +60,9 @@ BUNDLE_FORMAT = "noctus.agent-bundle/v1"
 MAX_BUNDLE_BYTES = 25 * 1024 * 1024
 
 AgentKind = Literal["runtime", "dev-advisor"]
-ModelName = Literal[MODELS]  # type: ignore[valid-type]
+# A package bundle is anthropic-only: it carries no `provider`, so an openai model name
+# would land on a version whose provider CHECK (024) rejects it.
+ModelName = Literal[ANTHROPIC_MODELS]  # type: ignore[valid-type]
 EffortName = Literal[EFFORTS]  # type: ignore[valid-type]
 DocumentTipo = Literal[DOCUMENT_TYPES]  # type: ignore[valid-type]
 

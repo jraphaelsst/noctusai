@@ -118,6 +118,12 @@ class MessageStore(Protocol):
         for this org/conversation."""
         ...
 
+    def sum_cost_usd_since(self, org_id: UUID, since: datetime) -> float:
+        """Lais A1 (daily org cap): the total ``custo_usd`` stamped on this
+        org's messages created at or after ``since``. Messages with no cost
+        (user/system rows, turns that reported none) count 0."""
+        ...
+
 
 class FakeMessageStore:
     """In-memory :class:`MessageStore`."""
@@ -210,6 +216,16 @@ class FakeMessageStore:
                 row["updated_at"] = utcnow()
                 return self._to_record(row)
         raise NotFound(f"message {message_id} not found for conversation {conversation_id}")
+
+    def sum_cost_usd_since(self, org_id: UUID, since: datetime) -> float:
+        total = 0.0
+        for (row_org, _conv), rows in self._rows.items():
+            if row_org != org_id:
+                continue
+            total += sum(
+                float(r.get("custo_usd") or 0.0) for r in rows if r["created_at"] >= since
+            )
+        return total
 
     @staticmethod
     def _to_record(row: dict[str, Any]) -> MessageRecord:
@@ -332,6 +348,24 @@ class SupabaseMessageStore:
                 f"message {message_id} not found for conversation {conversation_id}"
             )
         return self._record(rows[0])
+
+    def sum_cost_usd_since(self, org_id: UUID, since: datetime) -> float:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        def _page(start: int, end: int):
+            return (
+                self._table()
+                .select("id, custo_usd")
+                .eq("org_id", str(org_id))
+                .gte("created_at", since.isoformat())
+                .gt("custo_usd", 0)
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        return sum(float(row["custo_usd"] or 0.0) for row in iter_paged_rows(_page))
 
     @staticmethod
     def _record(row: dict[str, Any]) -> MessageRecord:

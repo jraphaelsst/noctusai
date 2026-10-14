@@ -35,7 +35,11 @@ class TurnContext:
 
     org_id: UUID
     conversation_id: UUID
-    requested_by: UUID  # the conversation owner (E.2)
+    #: NON-NULL by contract (Lais §10.2): the conversation owner for a user
+    #: turn; for a turn with no human behind it (a channel conversation) the
+    #: agent's per-agent SERVICE PRINCIPAL id (`service_principal_id`), so
+    #: approvals/audit rows that FK a user-ish actor never see a null.
+    requested_by: UUID
     instance_id: str  # this process; stored on approvals + turn lock
     sdk_session_id: str | None  # conversations.sdk_session_id, for resume
     #: Agent Studio §E6: an eval case's turn runs under a context that is
@@ -66,6 +70,15 @@ class AgentSpec:
     tools: tuple[str, ...]  # the tool names this spec may call
     max_turns: int  # default 40
     prompt_mode: Literal["preset_append", "custom"] = "preset_append"
+    #: Lais A1 (contract §2): which provider runs the turn. `anthropic` keeps
+    #: every pre-existing spec (Julia-academia, studio claude_sdk agents)
+    #: byte-identical; `openai` is only ever produced for a version that
+    #: carries it (migration 024) and runs on `LlmToolRuntime`.
+    provider: Literal["anthropic", "openai"] = "anthropic"
+    #: Which runtime serves the spec (mirrors ``agents.runtime``: ``llm`` →
+    #: ``LlmToolRuntime``, everything else → the Claude SDK runtime). Lets a
+    #: caller holding only a spec (the route, the eval runner) pick the runtime.
+    runtime: Literal["claude_sdk", "llm"] = "claude_sdk"
     toolset: Literal["academia", "studio"] = "academia"
     agent_id: UUID | None = None
     version_id: UUID | None = None

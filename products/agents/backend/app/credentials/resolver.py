@@ -199,7 +199,14 @@ def get_credential_resolver(settings: Any) -> CredentialResolver:
     return CredentialResolver(get_config_store_handle(settings).store, settings)
 
 
-def _missing_runtime_keys(resolver: CredentialResolver) -> list[str]:
+def _missing_runtime_keys(resolver: CredentialResolver, provider: str = "anthropic") -> list[str]:
+    """The PLATFORM-held key the runtime serving ``provider`` needs. Only the
+    Claude Agent SDK runtime holds one (Julia's dedicated Anthropic key); an
+    ``openai`` (``runtime='llm'``) turn uses a per-ORG key resolved at turn
+    time and fails closed there (424), so the platform needs nothing — an
+    OpenAI-only org must not need an Anthropic key (contract §10.2 B1)."""
+    if provider != "anthropic":
+        return []
     return [] if resolver.anthropic_api_key() else ["ANTHROPIC_API_KEY"]
 
 
@@ -215,12 +222,14 @@ def _missing_academia_keys(resolver: CredentialResolver) -> list[str]:
     ]
 
 
-def require_resolved_runtime_config(resolver: CredentialResolver) -> None:
-    """Deploy-context guard for EVERY turn (Julia and studio alike): the
-    Anthropic key is the only value both toolsets need."""
+def require_resolved_runtime_config(resolver: CredentialResolver, provider: str = "anthropic") -> None:
+    """Deploy-context guard for a Claude-SDK turn (Julia and studio alike): the
+    Anthropic key is the only value both toolsets need. PER-PROVIDER (Lais B1):
+    for any other provider no platform key is required (see
+    ``_missing_runtime_keys``)."""
     if not is_deploy_context():
         return
-    missing = _missing_runtime_keys(resolver)
+    missing = _missing_runtime_keys(resolver, provider)
     if missing:
         raise MissingProdConfigError(missing)
 

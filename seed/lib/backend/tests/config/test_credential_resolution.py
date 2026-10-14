@@ -115,3 +115,60 @@ class TestProductOverrideTier:
         cred._reset_for_testing()
 
         assert cred.resolve_credential("openai_api_key", "org-1") == "sk-from-env"
+
+
+class TestResolveOrgCredential:
+    """`resolve_org_credential` — org_settings only, never override/platform/env."""
+
+    class _Table:
+        def __init__(self, rows):
+            self._rows, self._f = rows, {}
+
+        def select(self, *_):
+            return self
+
+        def eq(self, col, val):
+            self._f[col] = val
+            return self
+
+        def execute(self):
+            class R:  # noqa: D401
+                data = None
+
+            r = R()
+            r.data = [
+                {"value": row["value"]}
+                for row in self._rows
+                if all(row.get(c) == v for c, v in self._f.items())
+            ]
+            return r
+
+    class _Db:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def table(self, name):
+            assert name == "org_settings"
+            return TestResolveOrgCredential._Table(self._rows)
+
+    def _install(self, rows):
+        cred._config = {"url": "x", "anon_key": "", "service_role_key": ""}
+        cred._public_client = self._Db(rows)
+
+    def test_reads_only_the_callers_org_row(self):
+        self._install([
+            {"org_id": "org-a", "key": "openai_api_key", "value": "sk-a"},
+            {"org_id": "org-b", "key": "openai_api_key", "value": "sk-b"},
+        ])
+        assert cred.resolve_org_credential("openai_api_key", "org-b") == "sk-b"
+        assert cred.resolve_org_credential("openai_api_key", "org-c") is None
+
+    def test_never_falls_back_to_env_override_or_platform(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+        cred.register_credential_override(lambda key, org_id: "sk-override")
+        self._install([])
+        assert cred.resolve_org_credential("openai_api_key", "org-a") is None
+
+    def test_no_org_is_a_miss(self):
+        self._install([{"org_id": "org-a", "key": "k", "value": "v"}])
+        assert cred.resolve_org_credential("k", None) is None

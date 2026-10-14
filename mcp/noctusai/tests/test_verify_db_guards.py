@@ -594,6 +594,8 @@ class TestAgentsStudioProbes:
         "eval_runs_limite_usd_check",
         "agent_personas_model_check",
         "agent_versions_model_check",
+        "agent_versions_provider_check",
+        "agents_runtime_check",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -601,6 +603,7 @@ class TestAgentsStudioProbes:
         ("013_agent_studio_knowledge_evals.sql", "014_agent_studio_cost.sql"),
         ("006_agents.sql", "015_haiku_model.sql"),
         ("012_agent_studio_definitions.sql", "015_haiku_model.sql"),
+        ("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
     }
 
     @staticmethod

@@ -4,6 +4,18 @@
 > **Products touched:** `agents` (primary) · `social-wiring` (Phase F)
 > **Deploy posture:** 🔴 dev-visible throughout; ONE prod-promotion decision at the end (§7).
 
+> **Note 2026-10-14 (Lais A1 — read before resuming this project).** This project is stale since
+> 2026-09-19. **Phase B (the agent-keyed seam: `types.py`, `build_agent_spec`, the registry) is
+> SUPERSEDED by Lais slice A1** (`products/social-wiring/projects/lais/specs/julia-agent-contract.md`
+> §2 + §10.2): `AgentSpec` gained `provider` + `runtime`, `get_agent_runtime(settings, agent, org_id)`
+> now dispatches on `agents.runtime` (`claude_sdk` → Claude SDK, `llm` → the provider-neutral
+> `LlmToolRuntime`, per-ORG keys), `TurnContext.requested_by` is non-null (a per-agent service
+> principal for non-user turns). Re-plan Phase B against that code, not the original text.
+> **`/api/channels/turns` (Lais A2) becomes Phase F's transport primitive.** For leads we
+> deliberately chose a **synchronous hop** — one inbound batch → one turn, 60 s budget — not Phase
+> F's cache variant; Phase F's One Chat inversion may reuse the endpoint but must decide its own
+> sync/async posture.
+
 ---
 
 ## 0 · Why this exists

@@ -36,6 +36,7 @@ from app.dependencies import (
     get_build_julia_spec_dep,
     get_conversation_store_dep,
     get_core_client,
+    get_llm_runtime_dep,
     get_message_store_dep,
     get_persona_store_dep,
     get_realtime_bus_dep,
@@ -58,6 +59,7 @@ from app.schemas.agents import (
 from app.stores.conversations import ConversationRecord
 from app.stores.errors import NotFound
 from app.stores.messages import MessageRecord
+from app.runtime.errors import LlmRuntimeError
 from app.runtime.types import AgentSpec, TurnContext
 from app.routers.studio_agents_router import (
     get_knowledge_catalog_dep,
@@ -123,6 +125,17 @@ def _message_out(record: MessageRecord) -> MessageOut:
 
 def _http(status_code: int, code: str, detail: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
+
+
+def _llm_http(exc: LlmRuntimeError) -> HTTPException:
+    """The provider-neutral runtime's typed refusal (424 ``llm_not_configured``,
+    429 ``capacidade`` + ``Retry-After``, 502 ``llm_upstream``) in agents' error
+    shape. Lead-safe: ``detail`` is the typed message, never provider text."""
+    return HTTPException(
+        status_code=exc.http_status,
+        detail={"detail": exc.detail, "code": exc.code},
+        headers=exc.headers or None,
+    )
 
 
 def _julia_agent(agent_store: Any, org_id: UUID) -> Any | None:
@@ -385,6 +398,7 @@ async def post_message(
     bus=Depends(get_realtime_bus_dep),
     studio_store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
+    llm_runtime: Any = Depends(get_llm_runtime_dep),
 ) -> MessagePostResponse:
     try:
         conversation = conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
@@ -412,6 +426,16 @@ async def post_message(
             f"O agente {agent.nome} está atendendo o número máximo de conversas "
             "agora. Tente novamente em instantes."
         )
+
+    # Lais A1: an `llm` agent runs on the provider-neutral runtime. Refuse
+    # BEFORE anything is persisted — no key for this org (424) / budget
+    # exhausted (429) leave zero trace, like every other pre-turn 409.
+    if studio_spec is not None and studio_spec.runtime == "llm":
+        runtime = llm_runtime
+        try:
+            await runtime.preflight(studio_spec.provider, ctx.org_id)
+        except LlmRuntimeError as exc:
+            raise _llm_http(exc) from exc
 
     # Contract §E.11 "Route order", step 1: reserve a slot BEFORE the turn
     # lock and BEFORE persisting anything. A 429 here leaves zero trace —

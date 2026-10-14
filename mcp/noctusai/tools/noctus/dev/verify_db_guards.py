@@ -3942,6 +3942,56 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "launch."
         ),
     ),
+    _agents_studio_probe(
+        probe_id="agent_versions.provider_allowlist",
+        guard_name="agent_versions_provider_check",
+        migrations=("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET provider = 'noc-probe-vendor' WHERE id = v_version;"
+        ),
+        guard_fragment="agent_versions_provider_check",
+        what="an agent_versions row whose provider is outside the allowlist",
+        rationale=(
+            "Lais A1 (migration 024): `provider` selects which key an `llm` turn "
+            "resolves and which vendor it is billed to; this CHECK is the only "
+            "thing stopping a version from naming a provider the runtime has no "
+            "dispatch (or per-org key) for."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_versions.model_provider_pairing",
+        guard_name="agent_versions_model_check",
+        migrations=("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET provider = 'openai' WHERE id = v_version;"
+        ),
+        guard_fragment="agent_versions_model_check",
+        what="an openai version that still names an anthropic model",
+        rationale=(
+            "Lais A1 (migration 024): the model allowlist is PROVIDER-KEYED — a "
+            "claude model under provider 'openai' (or the reverse) would be sent "
+            "to the wrong vendor with the org's other vendor's key; the CHECK is "
+            "what refuses the mismatched pair at the row."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agents.runtime_allowlist",
+        guard_name="agents_runtime_check",
+        migrations=("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
+        attack_sql=(
+            f"    UPDATE {_AGENTS_SCHEMA}.agents SET runtime = 'noc-probe-runtime' WHERE id = v_agent;"
+        ),
+        guard_fragment="agents_runtime_check",
+        what="an agents row whose runtime is outside claude_sdk/external/llm",
+        rationale=(
+            "Lais A1 (migration 024): `agents.runtime` selects which runtime runs "
+            "the agent (`claude_sdk`, `external`, and now `llm`); this CHECK is "
+            "the only thing stopping a typo from producing an agent no runtime "
+            "dispatches."
+        ),
+    ),
 )
 
 

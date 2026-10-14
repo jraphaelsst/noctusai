@@ -85,6 +85,13 @@ def build_studio_spec(
     version = definitions.get_version(org_id, conversation.version_id)
     if version.agent_id != agent.id:
         raise StudioSpecError("version_mismatch", "A versão não pertence a este agente.")
+    if version.provider != "anthropic" and agent.runtime != "llm":
+        # Only the provider-neutral runtime can serve a non-Anthropic version;
+        # the Claude Agent SDK runtime would silently run it on Anthropic.
+        raise StudioSpecError(
+            "provider_runtime_mismatch",
+            f"A versão usa o provedor {version.provider}, mas este agente não roda no executor neutro.",
+        )
 
     client = None
     client_id = getattr(conversation, "client_id", None)
@@ -123,6 +130,8 @@ def build_studio_spec(
     knowledge = _policy_flag(policy, "knowledge")
     return AgentSpec(
         key=agent.key,
+        provider=version.provider,
+        runtime="llm" if agent.runtime == "llm" else "claude_sdk",
         model=version.model,
         effort=version.effort,
         prompt_append=compiled.texto,
