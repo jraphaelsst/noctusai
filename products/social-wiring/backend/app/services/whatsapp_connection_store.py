@@ -90,6 +90,12 @@ class WhatsAppConnectionRecord:
     # Migration 017 — optional cliente ownership.
     # None = unassigned; UUID = the client this connection belongs to.
     marca_id: Optional[UUID] = None
+    # Migration 258 — Julia (Lais lead agent). Defensive reads: an un-migrated
+    # row is "Julia off", never a crash and never "on".
+    agente_leads_ativo: bool = False
+    agente_leads_key: Optional[str] = None
+    agente_leads_ativado_em: Optional[str] = None
+    agente_handoff_notificar_user_id: Optional[UUID] = None
 
 
 class WhatsAppConnectionStore:
@@ -140,6 +146,15 @@ class WhatsAppConnectionStore:
             bound_chats=list(row.get("bound_chats") or []),
             # Migration 017 — optional cliente FK; absent on un-migrated rows.
             marca_id=UUID(str(row["marca_id"])) if row.get("marca_id") else None,
+            # Migration 258 — Julia.
+            agente_leads_ativo=bool(row.get("agente_leads_ativo", False)),
+            agente_leads_key=row.get("agente_leads_key"),
+            agente_leads_ativado_em=row.get("agente_leads_ativado_em"),
+            agente_handoff_notificar_user_id=(
+                UUID(str(row["agente_handoff_notificar_user_id"]))
+                if row.get("agente_handoff_notificar_user_id")
+                else None
+            ),
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -244,6 +259,25 @@ class WhatsAppConnectionStore:
             return None
         return self._record(rows[0])
 
+    def get_by_id(
+        self, connection_id: UUID, *, decrypt: bool = False
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """One line by id WITHOUT an org scope (service-role path).
+
+        ONLY for callers that hold no org context but a connection id they
+        minted themselves — the Julia worker resolves org + connection from its
+        own buffer key (contract 10.2 B2). Never expose this to a request that
+        carries a user-supplied id: those go through the ORG-scoped
+        :meth:`get_connection`.
+        """
+        resp = self._table().select("*").eq("id", str(connection_id)).execute()
+        rows = list(resp.data or [])
+        if not rows:
+            return None
+        row = rows[0]
+        api_key = self._decrypt(row["encrypted_api_key"]) if decrypt else None
+        return self._record(row, api_key=api_key)
+
     def update_connection(
         self,
         *,
@@ -290,6 +324,33 @@ class WhatsAppConnectionStore:
         resp = (
             self._table()
             .update(patch)
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        return self._record(rows[0]) if rows else None
+
+    def update_agente(
+        self,
+        *,
+        connection_id: UUID,
+        org_id: UUID,
+        patch: dict[str, Any],
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """Write the Julia columns (migration 258). ORG-scoped; the service owns
+        which keys it may pass, the DB CHECK (H3) is the last line of defence."""
+        allowed = {
+            "agente_leads_ativo", "agente_leads_key", "agente_leads_ativado_em",
+            "agente_handoff_notificar_user_id",
+        }
+        unknown = set(patch) - allowed
+        if unknown:
+            raise ValueError(f"not a Julia column: {sorted(unknown)}")
+        body = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
+        resp = (
+            self._table()
+            .update(body)
             .eq("id", str(connection_id))
             .eq("org_id", str(org_id))
             .execute()

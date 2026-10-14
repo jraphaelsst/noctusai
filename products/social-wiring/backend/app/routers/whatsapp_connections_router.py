@@ -119,6 +119,7 @@ from app.services.whatsapp_realtime import (
 )
 
 from app.services import chat_cliente_link
+from app.services import lais_agente_service as lais
 
 logger = logging.getLogger(__name__)
 
@@ -461,7 +462,18 @@ async def update_connection(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     # 404 early if the line isn't the caller's.
-    _require_record(store, connection_id=connection_id, org_id=org_id)
+    current = _require_record(store, connection_id=connection_id, org_id=org_id)
+
+    # 🔴 H3 (contract 10.1): with Julia on, an EMPTY authorized list would mean
+    # "everyone is authorized" — every lead would reach the operator bot. The list
+    # PUT is one of the three places the invariant is enforced (switch · this ·
+    # the DB CHECK, migration 258).
+    if (
+        current.agente_leads_ativo
+        and "authorized_numbers" in body.model_fields_set
+        and body.authorized_numbers is not None
+    ):
+        lais.exigir_autorizados(body.authorized_numbers)
 
     # Use model_fields_set to distinguish "field absent from request" (keep
     # current value) from "field supplied as []" (clear → means allow-all /

@@ -205,6 +205,14 @@ class SocialWiringSettings(ProductSettings):
     # which uses 8s — keep aligned so the seed-buffer test suite stays
     # representative.
     message_debounce_seconds: int = 8
+    # Julia (Lais lead agent, contract 10.1 M4): limits applied by SW BEFORE a
+    # turn is sent to agents. A flood on one chat, or on one number, must not
+    # become LLM spend. Over a limit the turn is dropped (logged), never queued.
+    lais_agente_max_turns_per_chat_hour: int = 10
+    lais_agente_max_turns_per_connection_minute: int = 30
+    # One debounced batch is capped at this many characters in total (oldest
+    # messages dropped first) -- agents also caps each message at 8000.
+    lais_agente_batch_max_chars: int = 16000
     # How long a conversation's memory list lives in Redis after the last
     # touch. 1h is the seed default and matches the operator's expected
     # session duration (one property → 5-10 min conversation; idle past

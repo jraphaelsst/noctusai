@@ -360,6 +360,19 @@ class WhatsAppIntakeService:
         normalized = self._strip_jid_suffix(raw)
         return raw in self._bound_chat_ids or normalized in self._bound_chat_ids
 
+    def is_chat_explicitly_bound(self, chat_id: str) -> bool:
+        """True ONLY when ``bound_chats`` is non-empty AND lists this chat.
+
+        Unlike :meth:`is_chat_bound` (empty list = listen to everything) this has no
+        allow-all reading: a GROUP reaches the operator path only through an explicit
+        binding (contract 10.1 H2)."""
+        if not self._bound_chat_ids:
+            return False
+        raw = (chat_id or "").strip()
+        if not raw:
+            return False
+        return raw in self._bound_chat_ids or self._strip_jid_suffix(raw) in self._bound_chat_ids
+
     # ─── LID ↔ phone cache (Redis-backed, populated by outbound sends) ─
     @staticmethod
     def _lid_phone_key(lid: str) -> str:

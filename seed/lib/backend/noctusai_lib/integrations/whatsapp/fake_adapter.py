@@ -247,13 +247,13 @@ class FakeWahaClient:
     # Chat history — mirrors WahaClient.list_chats / fetch_chat_messages
     # ------------------------------------------------------------------
 
-    async def list_chats(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return ``fake_chat_list[:limit]``.
+    async def list_chats(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """Return ``fake_chat_list[offset:offset + limit]``.
 
         Seed via ``client.fake_chat_list = [{...}, ...]`` before the call
         to simulate a WAHA store that already has history.
         """
-        return self.fake_chat_list[:limit]
+        return self.fake_chat_list[offset : offset + limit]
 
     async def get_chats_overview(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return ``fake_chats_overview[:limit]``.

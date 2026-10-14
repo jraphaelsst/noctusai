@@ -46,7 +46,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
@@ -61,6 +61,7 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.tasks import schedule_coro
 
 from app.config import settings
+from app.services.lais_agente_service import LEAD_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,8 @@ def configure_conversation_module(
     org_id: UUID,
     redis_client: Any = None,
     main_loop: Optional[asyncio.AbstractEventLoop] = None,
+    agents_client_factory: Optional[Callable[[UUID], Any]] = None,
+    waha_factory: Optional[Callable[..., Any]] = None,
 ) -> ConversationModule:
     """Build + cache the ``ConversationModule``.
 
@@ -183,6 +186,12 @@ def configure_conversation_module(
             Fake for test/dev paths.
         main_loop: Optional event loop override (tests). Defaults to the
             running loop at startup time.
+        agents_client_factory: ``org_id -> AgentsClient | None`` for the Julia lead
+            path (contract 10.2 B2). Default = the org's ``api_key:agents`` token
+            (``lais_agente_service.resolve_agents_client``). The DI seam tests use
+            to script agents' replies.
+        waha_factory: ``(base_url=, api_key=, session=) -> WAHA client`` for the lead
+            path's sends. Default = the seed ``get_whatsapp_client``.
     """
     global _module
     with _module_lock:
@@ -206,6 +215,8 @@ def configure_conversation_module(
                 main_loop=loop,
                 admin_supabase=admin_supabase,
                 org_id=org_id,
+                agents_client_factory=agents_client_factory,
+                waha_factory=waha_factory,
             ),
             idle_processor=None,
             poll_seconds=2.0,
@@ -277,6 +288,8 @@ def _build_processor(
     main_loop: asyncio.AbstractEventLoop,
     admin_supabase: Any,
     org_id: UUID,
+    agents_client_factory: Optional[Callable[[UUID], Any]] = None,
+    waha_factory: Optional[Callable[..., Any]] = None,
 ):
     """Return the ``ConversationProcessor`` closure the worker invokes.
 
@@ -287,6 +300,24 @@ def _build_processor(
     """
 
     def _process(conversation_id: str, memory: list[dict[str, Any]]) -> None:
+        # Julia (Lais lead agent, contract 10.2 B2): `lead:<connection_id>:<chat_id>`
+        # keys resolve their OWN org + connection from the key and carry every
+        # provider_message_id -- they never enter the operator path below (no
+        # intake, no ChatbotService, no operator tools).
+        if conversation_id.startswith(LEAD_PREFIX):
+            future = asyncio.run_coroutine_threadsafe(
+                _dispatch_lead(
+                    conversation_id, memory, buffer=buffer, admin_supabase=admin_supabase,
+                    agents_client_factory=agents_client_factory, waha_factory=waha_factory,
+                ),
+                main_loop,
+            )
+            try:
+                future.result(timeout=PROCESSOR_TIMEOUT_S)
+            except Exception:
+                logger.exception("conv=%s: lead dispatch failed", conversation_id)
+            return
+
         unanswered = _join_unanswered_inbound(memory)
         if not unanswered.strip():
             logger.debug("conv=%s: no unanswered inbound, skipping dispatch.", conversation_id)
@@ -306,6 +337,26 @@ def _build_processor(
             logger.exception("conv=%s: dispatch failed", conversation_id)
 
     return _process
+
+
+async def _dispatch_lead(
+    conversation_id: str,
+    memory: list[dict[str, Any]],
+    *,
+    buffer: ConversationBufferService,
+    admin_supabase: Any,
+    agents_client_factory: Optional[Callable[[UUID], Any]],
+    waha_factory: Optional[Callable[..., Any]],
+) -> None:
+    """Run one Julia batch on the main loop (late import: the lead service pulls in
+    the stores + agents client, none of which the operator path needs)."""
+    from app.services.lais_lead_turn_service import LeadDeps, process_lead_batch
+
+    deps = LeadDeps(
+        buffer=buffer, admin=admin_supabase, cfg=settings,
+        agents_client_factory=agents_client_factory, waha_factory=waha_factory,
+    )
+    await process_lead_batch(conversation_id, memory, deps=deps)
 
 
 async def _dispatch_conversation(

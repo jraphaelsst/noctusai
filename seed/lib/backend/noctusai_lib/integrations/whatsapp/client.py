@@ -587,8 +587,12 @@ class WahaClient:
         response.raise_for_status()
         return _safe_json(response)
 
-    async def list_chats(self, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_chats(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         """GET /api/{session}/chats — list conversations from the NOWEB store.
+
+        ``offset`` pages through the store (WAHA ``limit``/``offset`` query params);
+        a caller that needs EVERY chat loops until a page comes back shorter than
+        ``limit`` (the Lais snapshot, contract 11.1, does exactly that).
 
         Returns a list of chat objects as WAHA emits them:
         ``{"id": {"_serialized": "..."}, "name": ..., "lastMessage": {...}}``.
@@ -602,7 +606,7 @@ class WahaClient:
             "get",
             f"/api/{self.session}/chats",
             timeout=_WAHA_READ_TIMEOUT,
-            params={"limit": limit},
+            params={"limit": limit, "offset": offset},
             headers=self._headers(),
         )
         response.raise_for_status()

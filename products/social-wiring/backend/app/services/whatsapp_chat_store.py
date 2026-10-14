@@ -323,6 +323,61 @@ class WhatsAppChatStore:
             "chat_id", chat_id
         ).execute()
 
+    # ── Julia (Lais lead agent) state — migration 258 ──────────────────────
+    # Kept OUT of ChatSummary / the list SELECTs on purpose: those carry the
+    # inbox wire contract and run against fixtures that predate the columns.
+
+    def get_agente_state(self, *, connection_id: UUID, chat_id: str) -> dict[str, Any] | None:
+        """``{"agente_pausado", "agente_conversation_id", "created_at"}`` of the
+        chat row, or ``None`` when SW has no row for it."""
+        response = (
+            self._admin.schema(_SCHEMA)
+            .table(_CHATS)
+            .select("chat_id, created_at, agente_pausado, agente_conversation_id")
+            .eq("connection_id", str(connection_id))
+            .eq("org_id", str(self._org_id))
+            .eq("chat_id", chat_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "agente_pausado": bool(row.get("agente_pausado")),
+            "agente_conversation_id": row.get("agente_conversation_id"),
+            "created_at": row.get("created_at"),
+        }
+
+    def set_agente_pausado(self, *, connection_id: UUID, chat_id: str, pausado: bool) -> bool:
+        """Flip the per-chat pause. ``False`` when the chat row does not exist."""
+        response = (
+            self._admin.schema(_SCHEMA)
+            .table(_CHATS)
+            .update({"agente_pausado": pausado, "updated_at": _utc_now_iso()})
+            .eq("connection_id", str(connection_id))
+            .eq("org_id", str(self._org_id))
+            .eq("chat_id", chat_id)
+            .execute()
+        )
+        return bool(response.data)
+
+    def set_agente_conversation(
+        self, *, connection_id: UUID, chat_id: str, conversation_id: str
+    ) -> None:
+        self._admin.schema(_SCHEMA).table(_CHATS).update(
+            {"agente_conversation_id": conversation_id, "updated_at": _utc_now_iso()}
+        ).eq("connection_id", str(connection_id)).eq("org_id", str(self._org_id)).eq(
+            "chat_id", chat_id
+        ).execute()
+
+    def delete_chat(self, *, connection_id: UUID, chat_id: str) -> None:
+        """Drop the inbox row (deletion on request, contract 10.1 M5)."""
+        self._admin.schema(_SCHEMA).table(_CHATS).delete().eq(
+            "connection_id", str(connection_id)
+        ).eq("org_id", str(self._org_id)).eq("chat_id", chat_id).execute()
+
     # ── internals ─────────────────────────────────────────────────────────
 
     def _recount_unread(

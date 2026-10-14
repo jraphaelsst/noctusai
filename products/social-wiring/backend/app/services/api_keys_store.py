@@ -414,6 +414,23 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         input_type="password",
         placeholder="Senha GOV.BR",
     ),
+    #: The org's channel token for the `agents` product (Lais / Julia, contract
+    #: section 4): minted in agents (scope `agents:channel-turn`), pasted ONCE on
+    #: Lais > Agente, stored here Fernet-encrypted as `api_key:agents`. It is read
+    #: through the LOCAL tier only (`lais_agente_service.agents_token_for_org`) --
+    #: a platform/env fallback would let one org's token answer for another's.
+    ApiKeySpec(
+        name="agents",
+        label="Token do agente (agents) — Julia",
+        description=(
+            "Token de canal do produto agents que o social-wiring usa para "
+            "pedir as respostas da Julia aos leads. Cole em Lais › Agente."
+        ),
+        is_secret=True,
+        testable=False,
+        input_type="password",
+        placeholder="pk_...",
+    ),
     ApiKeySpec(
         name="infosimples_email_envio",
         label="E-mail de Envio (TJSP)",
