@@ -322,7 +322,10 @@ class TestFromMe:
         _julia_scene(rt)
         rt.w.seed_chat(agente_pausado=True)
         self._human(rt)
-        assert [p for e, p in rt.bus() if e == "chat.upsert" and "agente_pausado" in p] == []
+        # Every chat.upsert now carries `agente_pausado` (the Conversas DTO), so the
+        # "second event" is counted, not detected by key: the ingest publishes ONE
+        # upsert; the takeover would have added a second.
+        assert len([1 for e, _p in rt.bus() if e == "chat.upsert"]) == 1
 
 
 # ── H2 ──────────────────────────────────────────────────────────────────────

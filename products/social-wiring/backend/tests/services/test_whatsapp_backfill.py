@@ -102,6 +102,7 @@ def sqlite_db(tmp_path: Path) -> SQLiteClient:
         last_read_message_id TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
         pinned INTEGER NOT NULL DEFAULT 0,
+        agente_pausado INTEGER NOT NULL DEFAULT 0,
         synced_through TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),

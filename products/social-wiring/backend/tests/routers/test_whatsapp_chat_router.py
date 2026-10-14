@@ -118,6 +118,7 @@ CREATE TABLE whatsapp_chats (
     last_read_message_id TEXT,
     archived INTEGER NOT NULL DEFAULT 0,
     pinned INTEGER NOT NULL DEFAULT 0,
+    agente_pausado INTEGER NOT NULL DEFAULT 0,
     synced_through TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -424,6 +425,7 @@ def _seed_chats(db_path: Path, *, org_id: str, connection_id: str, rows: list[di
             row.setdefault("last_read_message_id", None)
             row.setdefault("archived", 0)
             row.setdefault("pinned", 0)
+            row.setdefault("agente_pausado", 0)
             cols = ", ".join(f'"{k}"' for k in row)
             placeholders = ", ".join("?" for _ in row)
             conn.execute(
@@ -500,14 +502,28 @@ class TestListChats:
         for field in (
             "chat_id", "title", "last_message_at", "last_message_preview",
             "last_direction", "unread_count", "last_read_at", "archived", "pinned",
+            "agente_pausado",
         ):
             assert field in item, f"Missing ChatDTO field: {field}"
         assert item["title"] == "Ana"
         assert item["unread_count"] == 2
+        assert item["agente_pausado"] is False
         # The old WAHA-merge era ChatSummary fields must NOT be present.
         assert "contact" not in item
         assert "last_message" not in item
         assert "unread" not in item
+
+    def test_chat_dto_carries_agente_pausado_true(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        conn_id = _create_connection(c)["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T10:00:00.000Z",
+             "agente_pausado": 1},
+            {"chat_id": "5522@c.us", "last_message_at": "2026-06-22T09:00:00.000Z"},
+        ])
+        items = c.get(f"/api/whatsapp/connections/{conn_id}/chats").json()["items"]
+        by_id = {i["chat_id"]: i["agente_pausado"] for i in items}
+        assert by_id == {"5511@c.us": True, "5522@c.us": False}
 
     def test_archived_default_false_excludes_archived_chats(self, chat_client):
         c, conn_store, fakes, db_path = chat_client

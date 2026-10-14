@@ -182,7 +182,7 @@ class TestGetAgente:
         (c,) = data["conexoes"]
         assert c["connection_id"] == CONNECTION_ID and c["label"] == "Linha da Julia"
         assert (c["agente_leads_ativo"], c["agente_leads_key"], c["authorized_numbers_count"]) == (True, "lead-imob", 2)
-        assert set(data) == {"conexoes", "token_configurado", "status_agente", "erro"}
+        assert set(data) == {"conexoes", "token_configurado", "status_agente", "erro", "agents_url"}
 
     def test_status_agente_is_the_3_2_shape(self, admin):
         admin.w.seed_connection()

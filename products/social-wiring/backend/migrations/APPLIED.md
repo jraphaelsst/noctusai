@@ -602,3 +602,7 @@ Authored 2026-10-14 (owner decision "no leftovers from Core"). Pure rename, guar
 ## 258 — lais_agente_roteamento (Julia routing fields + snapshot table) — NOT APPLIED
 
 Authored 2026-10-14 (Lais slice W1, contract `projects/lais/specs/julia-agent-contract.md` §5 / §10.1 H3 / §11.1 / §11.4). Adds `whatsapp_connections.agente_leads_ativo|agente_leads_key|agente_leads_ativado_em|agente_handoff_notificar_user_id`, `whatsapp_chats.agente_pausado|agente_conversation_id`, the snapshot table `lais_agente_chats_preexistentes` (PK `(connection_id, chat_id)`, RLS own-org select + service_role) and two CHECKs on `whatsapp_connections` (`agente_leads_ativo` ⇒ non-empty `authorized_numbers`; ⇒ `ativado_em` + `key`). Additive + idempotent (replayed twice on PGlite by pre-commit). Apply BEFORE deploying the image that reads these columns: the stores read them defensively (an un-migrated row is "Julia off"), but the new `/api/lais/agente` routes write them. 255 (the privacy notice) is independent. Julia stays OFF until the owner switches a connection on — and the switch needs the agents side (A2) live.
+
+## 259 — status_pagina: Lais › Agente (`lais_agente`) — NOT APPLIED
+
+Authored 2026-10-14 (Lais slice W2). One `status_pagina` row (`lais_agente`) copying the status of `whatsapp_chat` at apply time (same rule as 252), so the new `/lais/agente` nav item shows. Idempotent (`ON CONFLICT DO NOTHING`), no CHECK/UNIQUE/trigger. Apply with (or before) the image that ships the page; until then the nav item is simply hidden (the route itself still works by URL).

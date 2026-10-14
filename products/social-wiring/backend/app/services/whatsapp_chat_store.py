@@ -81,6 +81,8 @@ class ChatSummary:
     last_read_at: str | None
     archived: bool
     pinned: bool
+    # Julia (lais contract 11.4): True while a human has taken the chat over.
+    agente_pausado: bool = False
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> ChatSummary:
@@ -97,6 +99,7 @@ class ChatSummary:
             last_read_at=row.get("last_read_at"),
             archived=bool(row.get("archived")),
             pinned=bool(row.get("pinned")),
+            agente_pausado=bool(row.get("agente_pausado")),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -110,6 +113,7 @@ class ChatSummary:
             "last_read_at": self.last_read_at,
             "archived": self.archived,
             "pinned": self.pinned,
+            "agente_pausado": self.agente_pausado,
         }
 
 
@@ -160,7 +164,7 @@ class WhatsAppChatStore:
             .table(_CHATS)
             .select(
                 "chat_id, title, last_message_at, last_message_preview, "
-                "last_direction, unread_count, last_read_at, archived, pinned"
+                "last_direction, unread_count, last_read_at, archived, pinned, agente_pausado"
             )
             .eq("connection_id", str(connection_id))
             .eq("org_id", str(self._org_id))
@@ -183,7 +187,7 @@ class WhatsAppChatStore:
             .table(_CHATS)
             .select(
                 "chat_id, title, last_message_at, last_message_preview, "
-                "last_direction, unread_count, last_read_at, archived, pinned"
+                "last_direction, unread_count, last_read_at, archived, pinned, agente_pausado"
             )
             .eq("connection_id", str(connection_id))
             .eq("org_id", str(self._org_id))

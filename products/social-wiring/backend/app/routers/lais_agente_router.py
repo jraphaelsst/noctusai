@@ -250,6 +250,9 @@ async def get_agente(
     return {"data": {
         "conexoes": conexoes, "token_configurado": token_configurado,
         "status_agente": status_agente, "erro": erro,
+        # Where "Editar Julia no Agents" points (resolved server-side from the
+        # product-URL registry, never hard-coded in the FE). Null = unresolvable.
+        "agents_url": lais.agents_base_url(),
     }}
 
 
