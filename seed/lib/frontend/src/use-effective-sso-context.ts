@@ -4,16 +4,18 @@
  * answered, the SSO token's only while it has not. Lives beside `useOrgSelection` (not the
  * dependency-free root barrel) because it needs `@noctusai/seed/infra` + React Query.
  *
- * Shares the ONE `/api/me/access` query (`useMeAccess`) -- no extra request.
+ * Shares the ONE `/api/me/access` query (`useMeAccessIfProvided` = `useMeAccess` under the app's
+ * provider) -- no extra request.
  */
 import { useAuthStore } from '@noctusai/seed/infra';
 
-import { useMeAccess } from './org-selection';
+import { useMeAccessIfProvided } from './org-selection';
 import { resolveEffectiveSSOContext } from './sso';
 import type { EffectiveSSOContext } from './sso';
 
 export function useEffectiveSSOContext(): EffectiveSSOContext {
   const { user } = useAuthStore();
-  const { data } = useMeAccess();
+  // Works without a QueryClientProvider too (isolated component tests): token org until access answers.
+  const { data } = useMeAccessIfProvided();
   return resolveEffectiveSSOContext(user?.user_metadata, data);
 }

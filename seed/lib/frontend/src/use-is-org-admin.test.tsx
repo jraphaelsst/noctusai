@@ -111,3 +111,16 @@ describe('useIsOrgAdmin / useEffectiveSSOContext — follow the effective role',
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('without a QueryClientProvider (isolated component tests)', () => {
+  beforeEach(() => { apiGet.mockReset(); });
+  afterEach(() => cleanup());
+
+  it('never throws, never fetches, and reads the token org/role like the pending state', () => {
+    metadata = { org_id: 'org-a', org_name: 'Org A', org_role: 'owner' };
+    const { result } = renderHook(() => ({ admin: useIsOrgAdmin(), ctx: useEffectiveSSOContext() }));
+    expect(result.current.admin).toBe(true);
+    expect(result.current.ctx).toMatchObject({ orgSource: 'token', orgId: 'org-a' });
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+});

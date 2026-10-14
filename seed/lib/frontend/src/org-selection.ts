@@ -20,7 +20,7 @@
  * applies, the marker is set and nothing else happens.
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, supabase } from '@noctusai/seed/infra';
 
 import { isMemberOrgPicker, orgSelectionOf } from './access';
@@ -74,6 +74,45 @@ export function useMeAccess() {
     retry: false,
     placeholderData: (prev) => prev,
   });
+}
+
+/** Never fetches: stands in for the app's client where no `QueryClientProvider` exists. */
+let inertClient: QueryClient | null = null;
+const NO_CLIENT_MESSAGE = 'No QueryClient set';
+
+/** The provider's client, or null when there is none. `useQueryClient` is always called (stable
+ * hook order); ONLY its documented no-provider error means "none" -- anything else is rethrown. */
+function useProvidedQueryClient(): QueryClient | null {
+  try {
+    return useQueryClient();
+  } catch (err) {
+    if (err instanceof Error && err.message.includes(NO_CLIENT_MESSAGE)) return null;
+    throw err;
+  }
+}
+
+/**
+ * `useMeAccess()` for hooks that must also work OUTSIDE a `QueryClientProvider` -- the shell's
+ * effective org (`useEffectiveSSOContext`) and so `useIsOrgAdmin`, which product components call
+ * and product tests render in isolation. With the app's provider it IS `useMeAccess` (same key,
+ * same cache entry). Without one it never fetches and stays `data: undefined`, which every
+ * consumer already reads as "access has not answered" -> the SSO token's org/role, the same
+ * rule as the pending state. No conditional hook: the client is chosen, the hook always runs.
+ */
+export function useMeAccessIfProvided() {
+  const client = useProvidedQueryClient();
+  if (client == null && inertClient == null) inertClient = new QueryClient();
+  return useQuery<MeAccess>(
+    {
+      queryKey: ME_ACCESS_QUERY_KEY,
+      queryFn: () => api.get<MeAccess>('/api/me/access'),
+      staleTime: 60_000,
+      retry: false,
+      placeholderData: (prev) => prev,
+      enabled: client != null,
+    },
+    client ?? (inertClient as QueryClient),
+  );
 }
 
 export interface UseOrgSelectionResult {
