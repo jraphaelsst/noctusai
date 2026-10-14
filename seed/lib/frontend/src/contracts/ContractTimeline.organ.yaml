@@ -1,0 +1,37 @@
+name: ContractTimeline
+kind: component
+path: seed/lib/frontend/src/contracts/ContractTimeline.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Append-only version history (initial, aditivo, reajuste, renovação, suspensão, retomada, encerramento) with the changes diff formatted (money, percent, dates)."
+  - "Part of the contracts organ (backend: noctusai_lib/domain/contracts; roadmap project-history/roadmaps/erp-seed-2026-10.md E2/W4). Wire types mirror types.py/schemas.py; money is integer cents, percentages are basis points; renaming a member is a wire-contract change."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching. The by-id read has NO placeholderData (it carries the party)."
+  - "LGPD: the server masks party_doc for non-admin readers; the organ renders it as given, locks a masked document and never sends it back. canWrite is UX only - writes are admin-only on the server."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client. pt-BR copy in contracts/messages.ts; shared controls/money/query plumbing from organ-kit."
+
+errors_encountered:
+  - "A key-change list query that FAILS drops its placeholderData (TanStack): the table shows the retryable error, never an empty-list claim."
+  - "Nested <li> inside the timeline entries made getByRole('listitem') count change lines as versions; tests address the labelled <ol> children."
+
+drifts_surfaced:
+  - "Generic type names are Contract*-prefixed so the barrel export * does not collide with commerce/finance/parties types."
+
+alternatives_considered:
+  - "Billing via finance recurrences templates rejected: a contract needs per-period amounts that change by aditivo/reajuste and retainer excess in arrears, so billing_run books each period through the ContractsBilling seam with an idempotent source_ref."
+  - "Index fetch (IPCA/IGP-M) deferred: the index is a stored choice and the percentage is typed (NOC-REMEDIATE[contracts-index-fetch])."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
