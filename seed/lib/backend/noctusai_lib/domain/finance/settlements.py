@@ -19,12 +19,12 @@ partial failure converges on retry: ledger inserts are unique per
 `(settlement_id, origin)` / `reverses_id`, and the entry total is always RE-DERIVED
 from the settlement rows, never incremented.
 
-NOC-REMEDIATE[finance-settle-overpay-race]: what retries cannot fix is two
-CONCURRENT manual settlements on one entry — both read the same remaining balance in
-`settle_entry` and both pass the "≤ remaining" check, so the entry ends over-settled.
-Gateway bookings are safe (unique `(org, kind, external_ref)`). Destination: commerce
-P4 slice B, which lands the `SELECT … FOR UPDATE` RPC pattern for refunds
-(CONTRACT §2.4) — settle + reverse move onto the same RPC shape there.
+CONCURRENCY (closes `NOC-REMEDIATE[finance-settle-overpay-race]`): two CONCURRENT manual settlements on one
+entry used to both read the same remaining balance and both pass the "<= remaining" check. The balance check +
+the settlement INSERT (and the reversal stamp + opposite ledger rows) now run in ONE row-locked RPC
+(`<prefix>settle_entry_locked` / `<prefix>reverse_settlement_locked`, `SELECT ... FOR UPDATE` on the entry; the
+balance is re-derived from the settlement rows inside the lock). The Python cheap pre-checks below stay for
+early, well-worded errors; the RPC is the authority.
 """
 from __future__ import annotations
 
@@ -44,7 +44,9 @@ from .errors import (
     LANCAMENTO_CANCELADO,
     conflict,
     invalid,
+    not_found,
 )
+from .sql import REVERSE_RPC, SETTLE_RPC, rpc_name
 from .types import (
     EntryDirection,
     EntryStatus,
@@ -57,12 +59,18 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+def _rpc_json(response: Any) -> dict:
+    """The jsonb object an RPC returned (PostgREST returns it bare; some clients wrap it in a list)."""
+    data = getattr(response, "data", response)
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected RPC payload: {type(data).__name__}")
+    return data
+
+
 def _plain(value: Any) -> Any:
     return getattr(value, "value", value)
-
-
-def _flip(direction: str) -> str:
-    return LedgerDirection.OUT.value if direction == LedgerDirection.IN.value else LedgerDirection.IN.value
 
 
 def main_ledger_direction(entry_direction: str, kind: str) -> str:
@@ -221,12 +229,22 @@ def settle_entry(s: Scope, entry_id: Any, data: Mapping[str, Any], *, user_id: O
         "created_at": now_iso(),
     }
     try:
-        saved = first(s.tbl("settlements").insert(row).execute()) or row
+        result = _rpc_json(s.db.rpc(rpc_name(s.cfg, SETTLE_RPC), {"p_org_id": s.org_id, "p_entry_id": str(entry["id"]), "p_row": row}).execute())
     except Exception as exc:
         if external_ref and is_unique_violation(exc):
             # Lost the race to a concurrent identical delivery: that one wins; replay through it.
             return settle_entry(s, entry_id, data, user_id=user_id)
         raise
+    if result.get("status") == "not_found":
+        raise not_found("Lançamento")
+    if result.get("status") == "refused":
+        code = result.get("code")
+        if code == LANCAMENTO_CANCELADO:
+            raise conflict(LANCAMENTO_CANCELADO, "O lançamento está cancelado.")
+        if code == ESTORNO_EXCEDE_PAGO:
+            raise invalid("amount_cents", "O estorno excede o valor já pago.", code=ESTORNO_EXCEDE_PAGO)
+        raise invalid("amount_cents", "O valor excede o saldo em aberto do lançamento.", code=BAIXA_EXCEDE_SALDO)
+    saved = result["settlement"]
     try:
         book_settlement_ledger(s, saved, entry)
         updated = recompute_entry(s, entry["id"])
@@ -240,51 +258,33 @@ def settle_entry(s: Scope, entry_id: Any, data: Mapping[str, Any], *, user_id: O
 
 
 def reverse_settlement(s: Scope, settlement_id: Any, reason: str, *, user_id: Optional[str] = None) -> dict:
-    """Reverse a settlement: opposite ledger rows, `reversed_*` stamped, entry total re-derived."""
+    """Reverse a settlement: opposite ledger rows, `reversed_*` stamped (one row-locked RPC), entry total re-derived."""
     st = s.get("settlements", settlement_id, what="Baixa")
     reason = (reason or "").strip()
     if not reason:
         raise invalid("reason", "Informe o motivo do estorno.")
     if st.get("reversed_at"):
         raise conflict(BAIXA_JA_ESTORNADA, "Esta baixa já foi estornada.")
-    entry = get_entry(s, st["entry_id"])
-    settled = int(entry.get("settled_cents") or 0)
-    amount = int(st["amount_cents"])
-    after = settled - amount if st["kind"] == SettlementKind.PAYMENT.value else settled + amount
-    if after < 0:
-        raise conflict("baixa_com_estorno", "Estorne primeiro os reembolsos lançados sobre este pagamento.")
-    if after > int(entry["amount_cents"]):
-        raise conflict("baixa_com_estorno", "O estorno deixaria o lançamento pago acima do seu valor.")
-
-    originals = [r for r in list_settlement_ledger(s, settlement_id) if not r.get("reverses_id")]
-    reversed_ids = {str(r["reverses_id"]) for r in list_settlement_ledger(s, settlement_id) if r.get("reverses_id")}
-    on = today().isoformat()
-    opposite = [
-        _ledger_row(
-            s,
-            account_id=str(r["account_id"]),
-            on=on,
-            direction=_flip(r["direction"]),
-            amount=int(r["amount_cents"]),
-            origin=r["origin"],
-            description=f"Estorno: {r.get('description') or ''}".strip(),
-            settlement_id=str(settlement_id),
-            reverses_id=str(r["id"]),
-        )
-        for r in originals
-        if str(r["id"]) not in reversed_ids
-    ]
     try:
-        if opposite:
-            s.tbl("ledger").insert(opposite).execute()
-        patch = {"reversed_at": now_iso(), "reversed_by": user_id, "reversal_reason": reason}
-        s.tbl("settlements").update(patch).eq("org_id", s.org_id).eq("id", str(settlement_id)).is_("reversed_at", "null").execute()
+        result = _rpc_json(
+            s.db.rpc(
+                rpc_name(s.cfg, REVERSE_RPC),
+                {"p_org_id": s.org_id, "p_settlement_id": str(settlement_id), "p_reason": reason, "p_user": user_id, "p_on": today().isoformat()},
+            ).execute()
+        )
     except Exception as exc:
         if is_unique_violation(exc):
             raise conflict(BAIXA_JA_ESTORNADA, "Esta baixa já foi estornada.") from exc
         raise
-    updated = recompute_entry(s, entry["id"])
-    return {"settlement": {**st, **patch}, "entry": updated}
+    status = result.get("status")
+    if status == "not_found":
+        raise not_found("Baixa")
+    if status == "already_reversed":
+        raise conflict(BAIXA_JA_ESTORNADA, "Esta baixa já foi estornada.")
+    if status == "refused":
+        raise conflict("baixa_com_estorno", "Estorne primeiro os reembolsos lançados sobre este pagamento (ou o estorno deixaria o lançamento acima do seu valor).")
+    updated = recompute_entry(s, st["entry_id"])
+    return {"settlement": result["settlement"], "entry": updated}
 
 
 # ─── transfers ───────────────────────────────────────────────────────────────

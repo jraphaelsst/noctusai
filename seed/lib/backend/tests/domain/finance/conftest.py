@@ -35,6 +35,8 @@ from noctusai_lib.testing import _schema_cache
 from noctusai_lib.testing.migration_parser import parse_sql
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
+from ..money_rpc import RpcMockClient
+
 ORG_A = "5b0e8f7a-1c2d-4e3f-9a8b-7c6d5e4f3a2b"
 ORG_B = "9c8d7e6f-5a4b-4c3d-8e2f-1a0b9c8d7e6f"
 USER_ID = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
@@ -62,7 +64,7 @@ def finance_schema_cache():
 
 
 def make_db() -> MockSupabaseClient:
-    return MockSupabaseClient(validate_schema=True, schema=SCHEMA)
+    return RpcMockClient(validate_schema=True, schema=SCHEMA)
 
 
 @pytest.fixture

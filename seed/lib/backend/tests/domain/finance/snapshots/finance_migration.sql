@@ -296,6 +296,88 @@ CREATE POLICY "fin_gateway_sync_select_own_org" ON commerce.fin_gateway_sync FOR
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_gateway_sync;
 CREATE POLICY "service_role_bypass" ON commerce.fin_gateway_sync FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- Settle under a row lock: the balance is checked and the settlement inserted in ONE transaction.
+CREATE OR REPLACE FUNCTION commerce.fin_settle_entry_locked(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = commerce, public
+AS $fn$
+DECLARE
+    v_entry   commerce.fin_entries%ROWTYPE;
+    v_row     commerce.fin_settlements%ROWTYPE;
+    v_settled BIGINT;
+    v_amount  BIGINT := (p_row->>'amount_cents')::BIGINT;
+    v_kind    TEXT := p_row->>'kind';
+BEGIN
+    SELECT * INTO v_entry FROM commerce.fin_entries WHERE id = p_entry_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'not_found');
+    END IF;
+    IF v_entry.status = 'cancelled' THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'lancamento_cancelado');
+    END IF;
+    SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount_cents ELSE -amount_cents END), 0) INTO v_settled
+        FROM commerce.fin_settlements WHERE entry_id = p_entry_id AND reversed_at IS NULL;
+    IF v_kind = 'payment' AND v_amount > v_entry.amount_cents - v_settled THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'baixa_excede_saldo');
+    END IF;
+    IF v_kind = 'refund' AND v_amount > v_settled THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'estorno_excede_pago');
+    END IF;
+    INSERT INTO commerce.fin_settlements
+        SELECT * FROM jsonb_populate_record(
+            NULL::commerce.fin_settlements,
+            jsonb_set(jsonb_set(p_row, '{org_id}', to_jsonb(p_org_id::text)), '{entry_id}', to_jsonb(p_entry_id::text))
+        )
+        RETURNING * INTO v_row;
+    RETURN jsonb_build_object('status', 'ok', 'settlement', to_jsonb(v_row));
+END;
+$fn$;
+REVOKE ALL ON FUNCTION commerce.fin_settle_entry_locked(UUID, UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION commerce.fin_settle_entry_locked(UUID, UUID, JSONB) TO service_role;
+
+-- Reverse under the same lock: stamp the settlement and book the opposite ledger rows atomically.
+CREATE OR REPLACE FUNCTION commerce.fin_reverse_settlement_locked(p_org_id UUID, p_settlement_id UUID, p_reason TEXT, p_user UUID, p_on DATE) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = commerce, public
+AS $fn$
+DECLARE
+    v_st      commerce.fin_settlements%ROWTYPE;
+    v_entry   commerce.fin_entries%ROWTYPE;
+    v_settled BIGINT;
+    v_after   BIGINT;
+BEGIN
+    SELECT * INTO v_st FROM commerce.fin_settlements WHERE id = p_settlement_id AND org_id = p_org_id;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'not_found');
+    END IF;
+    SELECT * INTO v_entry FROM commerce.fin_entries WHERE id = v_st.entry_id AND org_id = p_org_id FOR UPDATE;
+    SELECT * INTO v_st FROM commerce.fin_settlements WHERE id = p_settlement_id;
+    IF v_st.reversed_at IS NOT NULL THEN
+        RETURN jsonb_build_object('status', 'already_reversed');
+    END IF;
+    SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount_cents ELSE -amount_cents END), 0) INTO v_settled
+        FROM commerce.fin_settlements WHERE entry_id = v_entry.id AND reversed_at IS NULL;
+    v_after := CASE WHEN v_st.kind = 'payment' THEN v_settled - v_st.amount_cents ELSE v_settled + v_st.amount_cents END;
+    IF v_after < 0 OR v_after > v_entry.amount_cents THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'baixa_com_estorno');
+    END IF;
+    UPDATE commerce.fin_settlements
+        SET reversed_at = now(), reversed_by = p_user, reversal_reason = p_reason
+        WHERE id = p_settlement_id RETURNING * INTO v_st;
+    INSERT INTO commerce.fin_ledger (org_id, account_id, occurred_on, direction, amount_cents, origin, description, settlement_id, reverses_id)
+        SELECT l.org_id, l.account_id, p_on, CASE l.direction WHEN 'in' THEN 'out' ELSE 'in' END, l.amount_cents, l.origin,
+               'Estorno: ' || COALESCE(l.description, ''), l.settlement_id, l.id
+        FROM commerce.fin_ledger l
+        WHERE l.settlement_id = p_settlement_id AND l.reverses_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM commerce.fin_ledger r WHERE r.reverses_id = l.id);
+    RETURN jsonb_build_object('status', 'ok', 'settlement', to_jsonb(v_st));
+END;
+$fn$;
+REVOKE ALL ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) TO service_role;
+
 -- Private finance attachments bucket; object RLS keys on the org_id first path segment.
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('finance-attachments', 'finance-attachments', false)

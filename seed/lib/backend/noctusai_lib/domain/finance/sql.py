@@ -67,6 +67,15 @@ APPEND_ONLY_TABLES: tuple[str, ...] = ("settlements", "ledger")
 _NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 
+SETTLE_RPC = "settle_entry_locked"
+REVERSE_RPC = "reverse_settlement_locked"
+
+
+def rpc_name(cfg: FinanceConfig, base: str) -> str:
+    """The prefixed name of a finance RPC (`fin_` + `settle_entry_locked`), so two hosts' prefixes coexist."""
+    return f"{cfg.table_prefix}{base}"
+
+
 def _in(enum_cls) -> str:
     return ", ".join(f"'{v}'" for v in values(enum_cls))
 
@@ -378,6 +387,100 @@ CREATE INDEX IF NOT EXISTS idx_{t['gateway_sync']}_org ON {s}.{t['gateway_sync']
     return out
 
 
+def _rpcs(cfg: FinanceConfig, s: str) -> str:
+    """Row-locked settle / reverse (closes `NOC-REMEDIATE[finance-settle-overpay-race]`).
+
+    PostgREST has no multi-statement transaction, so "read the balance, check it, insert" from Python lets two
+    concurrent settlements both pass the check. These functions take `SELECT ... FOR UPDATE` on the ENTRY row and
+    re-derive the balance from the settlement ROWS (never the cached `settled_cents`) inside that lock, so the
+    second caller waits and then sees the first one's row. They return jsonb (`status` + payload) instead of
+    raising for a business refusal; the Python side keeps writing the ledger rows and re-deriving the entry total
+    (both idempotent), exactly as before."""
+    t = {name: f"{cfg.table_prefix}{name}" for name in FINANCE_TABLES}
+    settle, reverse = rpc_name(cfg, SETTLE_RPC), rpc_name(cfg, REVERSE_RPC)
+    return f"""-- Settle under a row lock: the balance is checked and the settlement inserted in ONE transaction.
+CREATE OR REPLACE FUNCTION {s}.{settle}(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = {s}, public
+AS $fn$
+DECLARE
+    v_entry   {s}.{t['entries']}%ROWTYPE;
+    v_row     {s}.{t['settlements']}%ROWTYPE;
+    v_settled BIGINT;
+    v_amount  BIGINT := (p_row->>'amount_cents')::BIGINT;
+    v_kind    TEXT := p_row->>'kind';
+BEGIN
+    SELECT * INTO v_entry FROM {s}.{t['entries']} WHERE id = p_entry_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'not_found');
+    END IF;
+    IF v_entry.status = 'cancelled' THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'lancamento_cancelado');
+    END IF;
+    SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount_cents ELSE -amount_cents END), 0) INTO v_settled
+        FROM {s}.{t['settlements']} WHERE entry_id = p_entry_id AND reversed_at IS NULL;
+    IF v_kind = 'payment' AND v_amount > v_entry.amount_cents - v_settled THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'baixa_excede_saldo');
+    END IF;
+    IF v_kind = 'refund' AND v_amount > v_settled THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'estorno_excede_pago');
+    END IF;
+    INSERT INTO {s}.{t['settlements']}
+        SELECT * FROM jsonb_populate_record(
+            NULL::{s}.{t['settlements']},
+            jsonb_set(jsonb_set(p_row, '{{org_id}}', to_jsonb(p_org_id::text)), '{{entry_id}}', to_jsonb(p_entry_id::text))
+        )
+        RETURNING * INTO v_row;
+    RETURN jsonb_build_object('status', 'ok', 'settlement', to_jsonb(v_row));
+END;
+$fn$;
+REVOKE ALL ON FUNCTION {s}.{settle}(UUID, UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION {s}.{settle}(UUID, UUID, JSONB) TO service_role;
+
+-- Reverse under the same lock: stamp the settlement and book the opposite ledger rows atomically.
+CREATE OR REPLACE FUNCTION {s}.{reverse}(p_org_id UUID, p_settlement_id UUID, p_reason TEXT, p_user UUID, p_on DATE) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = {s}, public
+AS $fn$
+DECLARE
+    v_st      {s}.{t['settlements']}%ROWTYPE;
+    v_entry   {s}.{t['entries']}%ROWTYPE;
+    v_settled BIGINT;
+    v_after   BIGINT;
+BEGIN
+    SELECT * INTO v_st FROM {s}.{t['settlements']} WHERE id = p_settlement_id AND org_id = p_org_id;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'not_found');
+    END IF;
+    SELECT * INTO v_entry FROM {s}.{t['entries']} WHERE id = v_st.entry_id AND org_id = p_org_id FOR UPDATE;
+    SELECT * INTO v_st FROM {s}.{t['settlements']} WHERE id = p_settlement_id;
+    IF v_st.reversed_at IS NOT NULL THEN
+        RETURN jsonb_build_object('status', 'already_reversed');
+    END IF;
+    SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount_cents ELSE -amount_cents END), 0) INTO v_settled
+        FROM {s}.{t['settlements']} WHERE entry_id = v_entry.id AND reversed_at IS NULL;
+    v_after := CASE WHEN v_st.kind = 'payment' THEN v_settled - v_st.amount_cents ELSE v_settled + v_st.amount_cents END;
+    IF v_after < 0 OR v_after > v_entry.amount_cents THEN
+        RETURN jsonb_build_object('status', 'refused', 'code', 'baixa_com_estorno');
+    END IF;
+    UPDATE {s}.{t['settlements']}
+        SET reversed_at = now(), reversed_by = p_user, reversal_reason = p_reason
+        WHERE id = p_settlement_id RETURNING * INTO v_st;
+    INSERT INTO {s}.{t['ledger']} (org_id, account_id, occurred_on, direction, amount_cents, origin, description, settlement_id, reverses_id)
+        SELECT l.org_id, l.account_id, p_on, CASE l.direction WHEN 'in' THEN 'out' ELSE 'in' END, l.amount_cents, l.origin,
+               'Estorno: ' || COALESCE(l.description, ''), l.settlement_id, l.id
+        FROM {s}.{t['ledger']} l
+        WHERE l.settlement_id = p_settlement_id AND l.reverses_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM {s}.{t['ledger']} r WHERE r.reverses_id = l.id);
+    RETURN jsonb_build_object('status', 'ok', 'settlement', to_jsonb(v_st));
+END;
+$fn$;
+REVOKE ALL ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) TO service_role;"""
+
+
 def finance_migration(cfg: FinanceConfig, schema: str) -> str:
     """The whole finance DDL for `schema`, as one re-runnable migration body.
 
@@ -390,6 +493,7 @@ def finance_migration(cfg: FinanceConfig, schema: str) -> str:
         "-- Finance organ -- generated by noctusai_lib.domain.finance.sql (do not hand-edit)",
         f"{set_search_path(schema)};",
         *_tables(cfg, schema),
+        _rpcs(cfg, schema),
         private_org_bucket_sql(
             cfg.bucket,
             comment="Private finance attachments bucket; object RLS keys on the org_id first path segment.",
@@ -398,4 +502,4 @@ def finance_migration(cfg: FinanceConfig, schema: str) -> str:
     return "\n\n".join(sections) + "\n"
 
 
-__all__ = ["APPEND_ONLY_TABLES", "FINANCE_TABLES", "finance_migration"]
+__all__ = ["APPEND_ONLY_TABLES", "FINANCE_TABLES", "REVERSE_RPC", "SETTLE_RPC", "finance_migration", "rpc_name"]
