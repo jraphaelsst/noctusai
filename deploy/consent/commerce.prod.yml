@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-10-14
+consent_ref: 'project-history/roadmaps/commerce-seed-2026-10.md#prod-exposure'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize commerce to be published to production."
+  prompt_source: typed
+  tier: performative
+  evidence_rank: canonical-exact/typed
+  candidates_considered: 3
+  session_id: 3f2820a3-c6ed-4bef-9eb8-6ffcbe0088ad
+  transcript_sha256: d13089ca9207b2d0e8b76515d32a191baf0d9ba6a486c506e77bc8a97c008ffa
+  recorded_at: 2026-10-14T03:25:04+00:00
