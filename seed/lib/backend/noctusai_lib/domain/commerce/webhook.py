@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from noctusai_lib.domain.payments.event_inbox import EventInbox
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
@@ -45,6 +45,7 @@ from . import finance_bridge
 from ._common import now_iso, tbl
 from .alerts import notify_staff
 from .customers import enrich_from_payment
+from .errors import CommerceError
 from .fiscal_retention import snapshot_fiscal_identity
 from .expiry import cancel_expired_charge
 from .money import MoneyDeps, fire_paid
@@ -53,6 +54,7 @@ from .order_charges import (
     charge_by_gateway_id,
     current_attempt,
     ensure_attempt_row,
+    installment_id_of,
     set_attempt_status,
 )
 from .order_state import OrderEvent
@@ -156,6 +158,32 @@ def _read(deps: MoneyDeps, org_id: Any, charge_id: str) -> GatewayCharge:
     return deps.gateway.charge_operations(org_id).get_charge(charge_id)
 
 
+def _read_or_missing(deps: MoneyDeps, org_id: Any, charge_id: str) -> Optional[GatewayCharge]:
+    """`_read` for an id the body merely CLAIMS: a 404 is `None` (ignored + alerted), not an exception that
+    makes the gateway retry and pause the webhook queue. Other gateway errors still raise (retry is right)."""
+    try:
+        return _read(deps, org_id, charge_id)
+    except PaymentGatewayError as exc:
+        if exc.status == 404:
+            logger.error("commerce webhook: charge %s does not exist at the gateway", charge_id)
+            return None
+        raise
+
+
+def _is_parcela_of(db: Any, org_id: Any, deps: MoneyDeps, gw: Optional[GatewayCharge], order: Mapping[str, Any], row: Optional[dict]) -> bool:
+    """A later parcela belongs to this order only if the gateway says so: same `externalReference` AND the same
+    parcelamento as the one we stored (the delivery body is unauthenticated data)."""
+    if gw is None or gw.external_reference != str(order["id"]):
+        return False
+    if row is None:
+        return False
+    try:
+        stored = installment_id_of(db, org_id, row, deps.gateway.charge_operations(org_id))
+    except CommerceError:
+        return False
+    return gw.raw.get("installment") == stored
+
+
 # ─── paid ──────────────────────────────────────────────────────────────────
 
 
@@ -170,8 +198,9 @@ async def _on_paid(db: Any, org_id: Any, order: dict, event: GatewayEvent, *, de
         )
         return IGNORED
 
-    gw = _read(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
-    if kind == "installment" and (gw is None or gw.external_reference != str(order["id"])):
+    reader = _read_or_missing if kind == "installment" else _read
+    gw = reader(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
+    if kind == "installment" and not _is_parcela_of(db, org_id, deps, gw, order, row):
         # A charge id we never stored is only a later parcela if the GATEWAY says it belongs to this order:
         # the delivery body (static-token auth) can name any order next to any charge id.
         logger.error("commerce webhook: charge %s claims to be a parcela of order=%s but the gateway disagrees", event.charge_id_at_gateway, order["id"])
@@ -355,8 +384,8 @@ async def _on_money_change(db: Any, org_id: Any, order: dict, event: GatewayEven
     if kind == "installment" and event.kind in _REFUND_KINDS and event.detail != "chargeback_opened":
         # A refund lands on every parcela: a later parcela's refund event is the same parcelamento refund, so it
         # converges the order -- once the gateway confirms the parcela belongs to THIS order (body is unauthenticated data).
-        gw = _read(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
-        if gw is not None and gw.external_reference == str(order["id"]):
+        gw = _read_or_missing(deps, org_id, event.charge_id_at_gateway) if event.charge_id_at_gateway else None
+        if _is_parcela_of(db, org_id, deps, gw, order, row):
             await sync_order_with_gateway(db, org_id, deps, order, source=OrderEventSource.WEBHOOK, gateway_charge=gw)
             return PROCESSED
     if kind in ("superseded", "installment", "unknown"):

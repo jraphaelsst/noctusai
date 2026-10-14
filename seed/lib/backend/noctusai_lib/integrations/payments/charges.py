@@ -670,14 +670,12 @@ class AsaasChargeOperations:
         # POST /v3/installments/{id}/refund takes only `value` (no description); value omitted = full refund.
         whole = self.get_installment(installment_id_at_gateway)
         value = _check_refund("asaas", whole, amount)  # raises before any refund call
+        before_refunded = whole.refunded.amount_cents
         before = len(whole.refunds)
         body = {} if amount is None and whole.refunded.amount_cents == 0 else {"value": float(value.to_decimal())}
+        # From here on the POST may have succeeded at the gateway (a timeout is inconclusive per the Asaas docs).
         self._gateway._request("POST", f"/installments/{installment_id_at_gateway}/refund", json=body)
-        # The response is the parcelamento, not the refund: read the refunds back (the parcelas carry them).
-        after = self.get_installment(installment_id_at_gateway)
-        if len(after.refunds) > before:
-            return after.refunds[-1]
-        return GatewayRefund(
+        pending = GatewayRefund(
             id_at_gateway=None,
             charge_id_at_gateway=installment_id_at_gateway,
             amount=value,
@@ -685,6 +683,21 @@ class AsaasChargeOperations:
             created_at=None,
             raw={"description": description},
         )
+        # The response is the parcelamento, not the refund: read the refunds back (the parcelas carry them).
+        # A failed read-back does NOT mean the refund failed: report `pending`, reconcile settles it from the totals.
+        try:
+            after = self.get_installment(installment_id_at_gateway)
+        except PaymentGatewayError:
+            logger.warning("asaas: installment %s refund POSTed but the read-back failed; reporting pending", installment_id_at_gateway)
+            return pending
+        # Decided from TOTALS: a refund groups by date-granular `dateCreated`, so the group count is unreliable.
+        if after.refunded.amount_cents - before_refunded >= value.amount_cents:
+            created = after.refunds[-1].created_at if len(after.refunds) > before else None
+            return GatewayRefund(
+                id_at_gateway=None, charge_id_at_gateway=installment_id_at_gateway, amount=value,
+                status="done", created_at=created, raw={"description": description},
+            )
+        return pending
 
     @staticmethod
     def _statement_kind(asaas_type: str) -> BalanceTransactionKind:

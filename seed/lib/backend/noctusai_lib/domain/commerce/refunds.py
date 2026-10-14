@@ -78,8 +78,72 @@ def _near(row: Mapping[str, Any], created_at: Optional[datetime]) -> bool:
     return abs(local - created_at) <= MATCH_WINDOW
 
 
+def _close_unconfirmed(db: Any, org_id: Any, order: Mapping[str, Any], rows: list[dict], matched: set[str], moment: datetime) -> None:
+    """A `requested` row the gateway does not show: gateway-origin ones vanished; ours may be a crash leftover."""
+    for r in rows:
+        if r["status"] != RefundStatus.REQUESTED.value or str(r["id"]) in matched:
+            continue
+        age = moment - (parse_ts(r.get("created_at")) or moment)
+        if r.get("requested_by") is None or age > STALE_REQUESTED_AFTER:
+            logger.warning("commerce refunds: closing unconfirmed requested refund=%s (order=%s) as failed", r["id"], order["id"])
+            _update(db, org_id, r["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
+
+
+def _is_installment(charge_row: Mapping[str, Any]) -> bool:
+    return int(charge_row.get("installment_count") or 1) > 1 or bool(charge_row.get("gateway_installment_id"))
+
+
+def _reconcile_totals(db: Any, org_id: Any, order: Mapping[str, Any], charge_row: Mapping[str, Any], gateway_charge: GatewayCharge) -> list[dict]:
+    """Installment orders: Asaas reports refund DATES per parcela, so individual refunds cannot be told apart
+    (two same-second partials merge; one refund can straddle two stamps). Only the TOTAL is reliable:
+    delta = gateway refunded - sum(done local). `requested` rows settle oldest-first while the delta covers
+    them; a leftover positive delta is ONE `gateway` row (a panel refund); a delta <= 0 inserts nothing."""
+    rows = list_refunds(db, org_id, order["id"])
+    matched: set[str] = set()
+    became_done: list[dict] = []
+    moment = now()
+    delta = gateway_charge.refunded.amount_cents - refunded_cents(rows)
+    for r in rows:  # list_refunds is oldest-first
+        if delta <= 0:
+            break
+        if r["status"] != RefundStatus.REQUESTED.value or int(r["amount_cents"]) > delta:
+            continue
+        updated = _update(db, org_id, r["id"], {"status": RefundStatus.DONE.value, "done_at": now_iso()}, only_status=RefundStatus.REQUESTED.value)
+        matched.add(str(r["id"]))
+        delta -= int(r["amount_cents"])
+        if updated:
+            became_done.append(updated)
+    if delta > 0:
+        row = {
+            "id": new_id(),
+            "org_id": str(org_id),
+            "order_id": str(order["id"]),
+            "charge_id": str(charge_row["id"]),
+            "amount_cents": delta,
+            "reason": "gateway",
+            "status": RefundStatus.DONE.value,
+            "gateway_refund_id": None,
+            "idempotency_key": None,
+            "requested_by": None,
+            "created_at": moment.isoformat(),
+            "done_at": moment.isoformat(),
+        }
+        try:
+            became_done.append(first(tbl(db, _REFUNDS).insert(row).execute()) or row)
+        except Exception as exc:  # noqa: BLE001 - narrowed below
+            if not is_unique_violation(exc):
+                raise
+            logger.warning("commerce refunds: gateway refund total for order=%s collides with an existing row; left for the next sync", order["id"])
+    _close_unconfirmed(db, org_id, order, rows, matched, moment)
+    return became_done
+
+
 def reconcile_refunds(db: Any, org_id: Any, order: Mapping[str, Any], charge_row: Mapping[str, Any], gateway_charge: GatewayCharge) -> list[dict]:
-    """Make `commerce_refunds` agree with `GatewayCharge.refunds`; returns the rows that BECAME `done` here."""
+    """Make `commerce_refunds` agree with `GatewayCharge.refunds`; returns the rows that BECAME `done` here.
+
+    An installment order reconciles by TOTALS (`_reconcile_totals`); every other order by per-refund matching."""
+    if _is_installment(charge_row):
+        return _reconcile_totals(db, org_id, order, charge_row, gateway_charge)
     rows = list_refunds(db, org_id, order["id"])
     matched: set[str] = set()
     became_done: list[dict] = []
@@ -137,14 +201,7 @@ def reconcile_refunds(db: Any, org_id: Any, order: Mapping[str, Any], charge_row
             updated = _update(db, org_id, local["id"], patch)
             if updated and "status" in patch:
                 became_done.append(updated)
-    # A `requested` row the gateway does not show: gateway-origin ones vanished; ours may be a crash leftover.
-    for r in rows:
-        if r["status"] != RefundStatus.REQUESTED.value or str(r["id"]) in matched:
-            continue
-        age = moment - (parse_ts(r.get("created_at")) or moment)
-        if r.get("requested_by") is None or age > STALE_REQUESTED_AFTER:
-            logger.warning("commerce refunds: closing unconfirmed requested refund=%s (order=%s) as failed", r["id"], order["id"])
-            _update(db, org_id, r["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
+    _close_unconfirmed(db, org_id, order, rows, matched, moment)
     return became_done
 
 
@@ -180,6 +237,17 @@ def apply_refund_state(
             deps.fulfillment.dispatch_revoked(order, list_items(db, org_id, order["id"]))
     finance_bridge.book_refunds(db, org_id, deps, order, charge_row, refunds)
     return order
+
+
+#: Raised by the adapters BEFORE any refund call is made: the gateway was never asked.
+_PRE_CALL_REFUSALS = frozenset({"refund_exceeds_balance", "charge_not_refundable", "refund_currency_mismatch", "installments_unsupported"})
+
+
+def _definitive_refusal(exc: PaymentGatewayError) -> bool:
+    """True only when the refund certainly did NOT happen: refused before the call, or a non-retryable 4xx."""
+    if exc.retryable:
+        return False
+    return exc.code in _PRE_CALL_REFUSALS or (exc.status is not None and 400 <= exc.status < 500)
 
 
 def _refusal(code: str, details: Mapping[str, Any]) -> CommerceError:
@@ -265,6 +333,12 @@ async def create_refund(
         _update(db, org_id, refund["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
         raise
     except PaymentGatewayError as exc:
+        if not _definitive_refusal(exc):
+            # Timeout / 5xx / anything that may have happened AFTER the POST left: the money may have moved.
+            # Keep the row `requested` -- it blocks a second refund (`estorno_em_andamento`) and reconcile
+            # settles it from the gateway, or fails it after STALE_REQUESTED_AFTER.
+            logger.error("commerce refund: outcome UNKNOWN for order=%s refund=%s code=%s status=%s; left requested for reconcile", order_id, refund["id"], exc.code, exc.status)
+            return refund
         _update(db, org_id, refund["id"], {"status": RefundStatus.FAILED.value}, only_status=RefundStatus.REQUESTED.value)
         logger.error("commerce refund: gateway refused order=%s refund=%s code=%s status=%s", order_id, refund["id"], exc.code, exc.status)
         if exc.code == "refund_exceeds_balance":

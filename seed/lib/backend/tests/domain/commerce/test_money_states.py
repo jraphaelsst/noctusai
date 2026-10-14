@@ -799,7 +799,8 @@ class TestForgedInstallmentBody:
         pay(w.gw, w.order, confirmed_only=True)
         w.send("charge_paid", detail="confirmed")
         parcela = w.gw.charges.add_charge("pay_parcela_2", amount=Money(20000), status="received", method="credit_card",
-                                          installment_count=3, external_reference=w.order["id"])
+                                          installment_count=3, external_reference=w.order["id"],
+                                          installment_id=w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"])
         assert w.send("charge_paid", detail="received", charge_id="pay_parcela_2") == PROCESSED
         assert any(k[2] == "pay_parcela_2" for k in w.fin.settlements)
 
@@ -810,6 +811,123 @@ class TestForgedInstallmentBody:
         assert w.send("charge_paid", detail="received", charge_id="pay_of_order_b") == IGNORED
         assert w.fresh()["status"] == "pending_payment" and w.fin.settlements == {}
         assert w.mail.sent and "não identificado" in w.mail.sent[-1].subject
+
+
+    def test_a_later_parcela_the_gateway_does_not_know_is_ignored_and_alerted(self, db):
+        w = installment_world(db)
+        assert w.send("charge_refunded", charge_id="pay_does_not_exist") == IGNORED  # 404 on the read: no raise, no retry loop
+        assert w.fresh()["status"] == "paid" and refunds.list_refunds(db, ORG_A, w.order["id"]) == []
+        assert w.mail.sent and "secundária" in w.mail.sent[-1].subject
+
+    def test_a_parcela_of_another_parcelamento_with_this_orders_reference_is_ignored(self, db):
+        w = installment_world(db)
+        w.gw.charges.add_charge("pay_foreign", amount=Money(20000), status="received", method="credit_card", installment_count=3,
+                                external_reference=w.order["id"], installment_id="ins_someone_else")
+        assert w.send("charge_refunded", charge_id="pay_foreign") == IGNORED
+        assert w.fresh()["status"] == "paid" and refunds.list_refunds(db, ORG_A, w.order["id"]) == []
+
+
+def _restamp(w, stamp_for):
+    """Rewrite every gateway refund's `created_at` (Asaas only reports dates): stamp_for(parcela_id, index) -> datetime."""
+    for pid, charge in list(w.gw.charges.charges.items()):
+        w.gw.charges.charges[pid] = replace(charge, refunds=[replace(r, created_at=stamp_for(pid, i)) for i, r in enumerate(charge.refunds)])
+
+
+def _timeout_after_sending(w, *, really_refunds):
+    ops, real = w.gw.charges, w.gw.charges.refund_installment
+
+    def flaky(*a, **k):
+        if really_refunds:
+            real(*a, **k)
+        raise PaymentGatewayError("asaas", "timeout calling /installments/x/refund", retryable=True)
+
+    ops.refund_installment = flaky
+
+
+class TestInstallmentRefundTotals:
+    """B1/B2: installment refunds reconcile by TOTALS; an inconclusive POST is never marked failed."""
+
+    def test_two_same_second_partial_refunds_do_not_double_count(self, db):
+        w = installment_world(db)
+        refund(w, amount_cents=10000)
+        refund(w, amount_cents=10000)
+        stamp = now()
+        _restamp(w, lambda pid, i: stamp)  # the gateway cannot tell the two operations apart
+        assert w.send("charge_partially_refunded", charge_id=w.order["gateway_charge_id"]) == PROCESSED
+        rows = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert [r["amount_cents"] for r in rows] == [10000, 10000] and all(r["reason"] != "gateway" for r in rows)
+        assert w.fresh()["status"] == "partially_refunded" and w.revoked_hook == []
+
+    def test_one_refund_stamped_with_different_seconds_across_parcelas_is_one_refund(self, db):
+        w = installment_world(db)
+        r = refund(w, amount_cents=30000)  # spread over two parcelas
+        base = now()
+        _restamp(w, lambda pid, i: base + timedelta(seconds=1 if pid != w.order["gateway_charge_id"] else 0))
+        assert w.send("charge_partially_refunded", charge_id="pay_parcela_2") == PROCESSED
+        rows = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert [(x["id"], x["amount_cents"]) for x in rows] == [(r["id"], 30000)]
+        assert w.fresh()["status"] == "partially_refunded" and w.revoked_hook == []
+
+    def test_a_panel_refund_becomes_one_gateway_row_for_the_leftover_only(self, db):
+        w = installment_world(db)
+        refund(w, amount_cents=10000)
+        w.gw.charges.refund_installment(w.gw.charges.charges[w.order["gateway_charge_id"]].raw["installment"], amount=Money(5000), description="painel")
+        w.send("charge_partially_refunded", charge_id=w.order["gateway_charge_id"])
+        w.send("charge_partially_refunded", charge_id="pay_parcela_2")  # idempotent
+        rows = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert sorted((x["reason"] == "gateway", x["amount_cents"]) for x in rows) == [(False, 10000), (True, 5000)]
+
+    def test_a_timeout_after_the_refund_went_out_keeps_it_requested_then_reconcile_settles_it(self, db):
+        w = installment_world(db)
+        _timeout_after_sending(w, really_refunds=True)
+        r = refund(w, amount_cents=10000)
+        assert r["status"] == "requested" and w.fresh()["status"] == "paid"
+        w.send("charge_partially_refunded", charge_id=w.order["gateway_charge_id"])
+        (row,) = refunds.list_refunds(db, ORG_A, w.order["id"])
+        assert row["id"] == r["id"] and row["status"] == "done" and w.fresh()["status"] == "partially_refunded"
+
+    def test_a_timeout_that_never_refunded_goes_stale_as_failed(self, db):
+        w = installment_world(db)
+        _timeout_after_sending(w, really_refunds=False)
+        r = refund(w, amount_cents=10000)
+        assert r["status"] == "requested"
+        with pytest.raises(CommerceError) as exc:  # no second refund while the first is unresolved
+            refund(w, amount_cents=10000)
+        assert exc.value.code == "estorno_em_andamento"
+        w.send("charge_partially_refunded", charge_id=w.order["gateway_charge_id"])  # too early to give up
+        assert [x["status"] for x in refunds.list_refunds(db, ORG_A, w.order["id"])] == ["requested"]
+        old = (now() - timedelta(hours=1)).isoformat()
+        db.table("commerce_refunds").update({"created_at": old}).eq("id", r["id"]).execute()
+        w.send("charge_partially_refunded", charge_id=w.order["gateway_charge_id"])
+        assert [x["status"] for x in refunds.list_refunds(db, ORG_A, w.order["id"])] == ["failed"]
+
+    def test_a_non_installment_timeout_also_stays_requested(self, db):
+        w = World.__new__(World)
+        gw = FakeCheckoutGateway()
+        w.db, w.gw, w.hooks = db, gw, Hooks()
+        w.fin, w.mail = FakeFinanceBooking(), FakeEmailSender()
+        w.paid_hook, w.revoked_hook = [], []
+        w.reg, w.inbox, w.n = make_fulfillment_registry(), FakeEventInbox(), 0
+        w.order = dict(place_order(db, gw))
+        pay(gw, w.order)
+        w.send("charge_paid", detail="received")
+
+        def boom(*a, **k):
+            raise PaymentGatewayError("asaas", "timeout", retryable=True)
+
+        gw.charges.refund_charge = boom
+        assert refund(w, amount_cents=1000)["status"] == "requested"
+
+    def test_a_4xx_refusal_is_a_definitive_failure(self, db):
+        w = installment_world(db)
+
+        def refuse(*a, **k):
+            raise PaymentGatewayError("asaas", "invalid", status=400, code="invalid_action")
+
+        w.gw.charges.refund_installment = refuse
+        with pytest.raises(CommerceError):
+            refund(w, amount_cents=10000)
+        assert [x["status"] for x in refunds.list_refunds(db, ORG_A, w.order["id"])] == ["failed"]
 
 
 class TestAdoptFailureAlerts:

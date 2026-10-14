@@ -322,6 +322,38 @@ def test_asaas_refund_installment_partial_posts_value_and_reads_the_refund_back(
     assert result.status == "done" and result.charge_id_at_gateway == "ins_1"
 
 
+def test_asaas_refund_installment_read_back_failure_after_the_post_is_pending_not_an_error() -> None:
+    reads = []
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        reads.append(1)
+        if len(reads) > 1:  # the read-back after the POST times out
+            raise httpx.ReadTimeout("slow", request=request)
+        data = [_payment(id=pid, value=20.0, installment="ins_1", status="RECEIVED") for pid in ("pay_1", "pay_2")]
+        return httpx.Response(200, content=json_lib.dumps({"hasMore": False, "data": data}).encode())
+
+    routes = {"GET /v3/installments/ins_1/payments": listing, "POST /v3/installments/ins_1/refund": _ok({"id": "ins_1"})}
+    result = _asaas(routes).refund_installment("ins_1", amount=Money(1000), description="d")
+    assert result.status == "pending" and result.amount == Money(1000)
+
+
+def test_asaas_refund_installment_success_is_decided_from_the_totals_not_the_group_count() -> None:
+    # A second same-date refund merges into the existing group: the group count does not move, the total does.
+    refs = {"pay_1": [{"status": "DONE", "value": 10.0, "dateCreated": "2026-10-14 09:00:00"}], "pay_2": []}
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        data = [_payment(id=pid, value=20.0, installment="ins_1", status="RECEIVED", refunds=r or None) for pid, r in refs.items()]
+        return httpx.Response(200, content=json_lib.dumps({"hasMore": False, "data": data}).encode())
+
+    def post(request: httpx.Request) -> httpx.Response:
+        refs["pay_1"].append({"status": "DONE", "value": 10.0, "dateCreated": "2026-10-14 09:00:00"})
+        return httpx.Response(200, content=b"{}")
+
+    routes = {"GET /v3/installments/ins_1/payments": listing, "POST /v3/installments/ins_1/refund": post}
+    result = _asaas(routes).refund_installment("ins_1", amount=Money(1000), description="d")
+    assert result.status == "done" and result.amount == Money(1000)
+
+
 def test_asaas_refund_installment_full_sends_no_value() -> None:
     bodies: list[dict] = []
     ops = _asaas(_parcelas_routes({"pay_1": [], "pay_2": []}, bodies))
