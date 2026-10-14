@@ -7,6 +7,8 @@
     "258_lais_agente_roteamento.sql": "45429bde84d054d23d97dcaf2062cf3fe96ffb0369e74a68741795a42bee7c6c",
     "259_status_pagina_lais_agente.sql": "124f07e44ab4924ce893aec554a1cd908eb63b4a93164f37872202b0fadcb50d",
     "260_finance.sql": "f6adb3bf27aa281dbef4d941ca786bd261c76499c87fec1189c1cd75e03e54b2",
-    "261_status_pagina_financeiro.sql": "c92a1e036b68480453ba43b9ee4539759641a1130a35f6548f5dac9257b437cd"
+    "261_status_pagina_financeiro.sql": "c92a1e036b68480453ba43b9ee4539759641a1130a35f6548f5dac9257b437cd",
+    "262_imovel_preco_historico.sql": "64bb31f2370247737e266a1a34db4b23fe93aa87ffea3f90be35bbbc9eb51cc2",
+    "263_atendimento_motivo_perda_categoria.sql": "1968afeea0681caba179229bf80296ec11422976de667b03f47b81253d0cc1d5"
   }
 }
