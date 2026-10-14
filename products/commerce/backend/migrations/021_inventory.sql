@@ -159,6 +159,9 @@ BEGIN
             WHERE org_id = p_org AND source = p_source AND source_ref = p_ref AND kind = p_kind
               AND item_id = p_item AND warehouse_id = p_wh;
         IF FOUND THEN
+            IF v_prev.qty <> p_qty THEN
+                RAISE EXCEPTION USING ERRCODE = 'IN001', MESSAGE = 'quantidade_divergente', DETAIL = p_item::text;
+            END IF;
             RETURN jsonb_build_object('replayed', true, 'move', to_jsonb(v_prev));
         END IF;
     END IF;

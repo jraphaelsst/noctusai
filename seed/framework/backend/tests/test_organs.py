@@ -79,7 +79,7 @@ def test_pin_helper_passes_then_detects_drift(tmp_path):
     with pytest.raises(AssertionError, match="drifted"):
         assert_organ_migration_current(tmp_path, "finance", schema="erp")
     f.unlink()
-    with pytest.raises(AssertionError, match="exactly one"):
+    with pytest.raises(AssertionError, match="no rendered finance migration found"):
         assert_organ_migration_current(tmp_path, "finance", schema="erp")
     assert spec.migration_header in organ_migration_sql("finance", "erp")
 

@@ -29,11 +29,9 @@ CREATE INDEX IF NOT EXISTS idx_pty_parties_org_email ON commerce.pty_parties (or
 
 ALTER TABLE commerce.pty_parties ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "pty_parties_select_own_org" ON commerce.pty_parties;
-CREATE POLICY "pty_parties_select_own_org" ON commerce.pty_parties FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.pty_parties;
 CREATE POLICY "service_role_bypass" ON commerce.pty_parties FOR ALL TO service_role USING (true) WITH CHECK (true);
-GRANT SELECT ON commerce.pty_parties TO authenticated;
+REVOKE ALL ON commerce.pty_parties FROM PUBLIC, anon, authenticated;
 GRANT ALL ON commerce.pty_parties TO service_role;
 
 -- Party roles: a party can be customer + supplier + ... at once. Unique (party, role).
