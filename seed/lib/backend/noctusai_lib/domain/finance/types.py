@@ -59,6 +59,7 @@ class EntrySource(_StrEnum):
     RECURRENCE = "recurrence"
     INSTALLMENT = "installment"
     COMMERCE_ORDER = "commerce_order"
+    CONTRACTS = "contracts"
     IMPORT = "import"
     EXTERNAL = "external"
     PURCHASING = "purchasing"

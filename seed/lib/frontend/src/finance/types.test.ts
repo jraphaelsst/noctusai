@@ -34,7 +34,7 @@ describe('finance enums (CONTRACT §3.1)', () => {
       EntryStatus: ['open', 'partial', 'paid', 'cancelled'],
       CategoryDirection: ['income', 'expense', 'transfer'],
       Frequency: ['daily', 'weekly', 'biweekly', 'monthly', 'bimonthly', 'quarterly', 'semiannual', 'annual'],
-      EntrySource: ['manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing'],
+      EntrySource: ['manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing'],
       SettlementKind: ['payment', 'refund'],
       LedgerOrigin: ['settlement', 'fee', 'transfer', 'adjustment', 'opening'],
       StatementFormat: ['ofx', 'csv'],

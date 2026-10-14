@@ -38,7 +38,7 @@ export const FREQUENCIES = [
 ] as const;
 export type Frequency = (typeof FREQUENCIES)[number];
 
-export const ENTRY_SOURCES = ['manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing'] as const;
+export const ENTRY_SOURCES = ['manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing'] as const;
 export type EntrySource = (typeof ENTRY_SOURCES)[number];
 
 export const SETTLEMENT_KINDS = ['payment', 'refund'] as const;
