@@ -113,6 +113,7 @@ from noctusai_lib.integrations.documents.address import (
     sanear_numero,
     separar_complemento_do_bairro,
 )
+from noctusai_lib.integrations.documents import autoridade
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
@@ -454,7 +455,12 @@ ORIGEM_CONJUGE_DOMICILIO = "conjuge_domicilio"
 #: live prod test 2026-10-01 (deal 875) — the buyer's own older utility bill
 #: (holder verified as the buyer) silently replaced the bank-form address the
 #: signed contract actually used, because the form's holder read as `None`.
-ORIGENS_ENDERECO_DECLARADO = frozenset({"ficha_cadastral"})
+#: Derived from the seed's per-field source precedence (`autoridade.
+#: PRECEDENCIA["endereco"]`'s top tier) so this rule and the generic
+#: source-takeover rule (`_fonte_mais_autoritativa`) can never disagree.
+ORIGENS_ENDERECO_DECLARADO = frozenset(
+    t.lower() for t in autoridade.PRECEDENCIA["endereco"][0]
+)
 
 #: `extracao_aviso` for a comprovante whose printed holder matches nobody on
 #: the card, applied anyway because the address group was EMPTY (owner rule
@@ -1159,6 +1165,32 @@ def _valores_outras_pessoas(
     ]
 
 
+#: `Decisao.regra` of the source-precedence takeover (owner rule 2026-10-14,
+#: prod deal 876) — the audit row names it.
+REGRA_FONTE_AUTORITATIVA = "fonte_autoritativa"
+
+
+def _fonte_mais_autoritativa(
+    campo: CampoExtraido, row: dict, origem_proposto: Optional[str], rotulo: Any
+) -> bool:
+    """🔴 SOURCE PRECEDENCE (owner rule 2026-10-14, prod deal 876) — is this
+    reading from a document that STRICTLY outranks the source behind the
+    stored MACHINE value (seed `autoridade.PRECEDENCIA`)?
+
+    `False` — the precedence rule stays out — when the stored value is
+    human (typed `manual`, or confirmed), when this reading is an inference
+    (`rotulo` "inferido: ..."), or when either side is unranked for the field
+    (a bureau feed, a matrícula: no rule ≠ "outranks"). A LOWER-authority
+    document arriving after a higher one is never a takeover — it only
+    corroborates, as before."""
+    if _valor_humano(row, campo) or not _vazio(row.get(campo.confirmado_em)):
+        return False
+    if rotulo and str(rotulo).startswith("inferido"):
+        return False
+    campo_seed = fontes.RENOMEADOS_CAMPO.get(campo.item_key, campo.item_key)
+    return autoridade.mais_autoritativo(campo_seed, origem_proposto, row.get(campo.origem))
+
+
 def _valor_humano(row: Optional[dict], campo: CampoExtraido) -> bool:
     """A person typed (`origem='manual'`) or vouched for (`confirmado_por`
     set) this field's current value — the automatic resolver never
@@ -1676,6 +1708,27 @@ def aplicar_campos_ao_cliente(
                             "ignorada (sem novo conflito)", campo.item_key, cliente_id,
                         )
                         continue
+                    if _fonte_mais_autoritativa(campo, atual, origem, _rotulo):
+                        # 🔴 SOURCE PRECEDENCE (owner rule 2026-10-14): the
+                        # AUTHORITATIVE document for this field disagrees
+                        # with a machine value a lower-authority one wrote.
+                        # Never auto-resolved either way (not even by the
+                        # measured-precision resolver, which could keep the
+                        # lower source): a pending conflict proposing the
+                        # authoritative reading, for a human.
+                        novo = _registrar_conflito(
+                            client, org_id, cliente_id, campo,
+                            valor_anterior=presente,
+                            origem_anterior=atual.get(campo.origem),
+                            valor_proposto=valor,
+                            origem_proposto=origem,
+                            confianca_proposta=confianca,
+                            fonte_tabela=fonte_tabela,
+                            fonte_id=fonte_id,
+                        )
+                        if novo is not None:
+                            conflitos.append(novo)
+                        continue
                     # Owner directive, 2026-09-29 — resolve without a human
                     # FIRST, using the measured evidence table (validators ->
                     # corroboration -> source-precision tier); only what
@@ -1752,6 +1805,42 @@ def aplicar_campos_ao_cliente(
                 canonico_presente = _canonico_do_presente(tipo_id, presente, uf=uf_rg)
                 if canonico_presente is not None:
                     updates[campo.item_key] = canonico_presente
+                if _fonte_mais_autoritativa(campo, atual, origem, _rotulo):
+                    # 🔴 SOURCE PRECEDENCE (owner rule 2026-10-14, prod deal
+                    # 876): the authoritative document read the SAME fact a
+                    # lower-authority one supplied first — it takes over the
+                    # provenance (value unchanged, still machine-pending),
+                    # audited as an automatic decision, no conflict.
+                    origem_anterior = atual.get(campo.origem)
+                    updates[campo.origem] = origem
+                    updates[campo.documento_id] = (
+                        str(documento_id) if documento_id else None
+                    )
+                    updates[campo.em] = now
+                    campo_conflitos.registrar_decisao_automatica(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key,
+                        valor_anterior=presente,
+                        origem_anterior=origem_anterior,
+                        valor_proposto=valor,
+                        origem_proposto=origem,
+                        confianca_proposta=confianca,
+                        fonte_tabela=fonte_tabela,
+                        fonte_id=fonte_id,
+                        decisao=divergencia_resolucao.Decisao(
+                            vencedor="proposto",
+                            regra=REGRA_FONTE_AUTORITATIVA,
+                            motivo=(
+                                f"Mesmo valor; {origem} é fonte mais autoritativa "
+                                f"que {origem_anterior} para {campo.item_key} — "
+                                "a proveniência passa para o documento autoritativo."
+                            ),
+                            requer_humano=False,
+                        ),
+                        evidencia_ids=[
+                            i for i in (documento_id, atual.get(campo.documento_id)) if i
+                        ],
+                    )
                 if confirmado_por and _vazio(atual.get(campo.confirmado_em)):
                     # Same fact, still machine-pending, a human now vouches
                     # for it — promote to confirmed. See the docstring's D1

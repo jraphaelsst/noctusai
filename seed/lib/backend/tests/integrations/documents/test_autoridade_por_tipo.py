@@ -311,3 +311,51 @@ class TestNormalizacao:
     def test_uniao_estavel_is_not_an_estado_civil(self) -> None:
         assert find_estado_civil("ESTADO CIVIL: UNIAO ESTAVEL")[0] is None
         assert find_estado_civil("ESTADO CIVIL: SEPARADA JUDICIALMENTE")[0] == "separado_judicialmente"
+
+
+class TestPrecedencia:
+    """SOURCE precedence per field (owner rule 2026-10-14, prod deal 876)."""
+
+    def test_certidao_casamento_outranks_ficha_for_the_couple_facts(self):
+        for campo in ("estado_civil", "regime_bens", "data_casamento"):
+            assert autoridade.mais_autoritativo(campo, "certidao_casamento", "ficha_cadastral")
+            assert not autoridade.mais_autoritativo(campo, "ficha_cadastral", "certidao_casamento")
+
+    def test_pacto_ties_with_the_certidao_for_regime(self):
+        assert not autoridade.mais_autoritativo("regime_bens", "pacto_antenupcial", "certidao_casamento")
+        assert autoridade.mais_autoritativo("regime_bens", "pacto_antenupcial", "ficha_cadastral")
+
+    def test_nacionalidade_ladder(self):
+        ordem = ["crnm", "certidao_casamento", "cin", "ficha_cadastral"]
+        for alto, baixo in zip(ordem, ordem[1:]):
+            assert autoridade.mais_autoritativo("nacionalidade", alto, baixo)
+        assert autoridade.posto("nacionalidade", "rnm") == autoridade.posto("nacionalidade", "rne") == 0
+
+    def test_identity_documents_outrank_certidao_and_ficha_for_nome(self):
+        assert autoridade.mais_autoritativo("nome", "cnh", "certidao_casamento")
+        assert autoridade.mais_autoritativo("nome", "certidao_nascimento", "ficha_cadastral")
+        assert not autoridade.mais_autoritativo("nome", "rg", "cin")  # same tier
+
+    def test_rg_ladder_and_endereco_ficha_first(self):
+        assert autoridade.mais_autoritativo("rg", "rg", "cnh")
+        assert autoridade.mais_autoritativo("rg_orgao", "cnh", "ficha_cadastral")
+        assert autoridade.mais_autoritativo("endereco", "ficha_cadastral", "comprovante_endereco")
+
+    def test_an_unranked_side_never_outranks_nor_is_outranked(self):
+        assert autoridade.posto("cpf", "serasa_crednet") is None
+        assert not autoridade.mais_autoritativo("cpf", "cin", "serasa_crednet")
+        assert not autoridade.mais_autoritativo("cpf", "serasa_crednet", "ficha_cadastral")
+        assert not autoridade.mais_autoritativo("cpf", "cin", None)
+        assert not autoridade.mais_autoritativo("genero", "cin", "ficha_cadastral")
+
+    def test_every_ranked_identity_type_may_emit_the_field(self):
+        # A precedence tier never names a type `AUTORIDADE` forbids from
+        # emitting that field — the two tables cannot contradict each other.
+        for campo, tiers in autoridade.PRECEDENCIA.items():
+            for tier in tiers:
+                for tipo in tier:
+                    autorizados = autoridade.AUTORIDADE.get(tipo)
+                    if autorizados is None:
+                        continue
+                    base = "rg" if campo == "rg_orgao" else campo
+                    assert base in autorizados, (campo, tipo)

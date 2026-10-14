@@ -19,6 +19,10 @@ NOC-REMEDIATE[autoridade-capacidades-sync]: narrow `CAPACIDADES` rg/cnh/
 cin/certidão entries + `fontes.FONTES_REGISTRO` campos to this table, owner:
 card_hub proveniencia.
 
+`PRECEDENCIA` (owner rule 2026-10-14) is the companion table: among the
+types that may emit a field, their ORDER of authority — which document the
+stored value should be sourced from (`posto` / `mais_autoritativo`).
+
 A type ABSENT from the table (cpf card, comprovante, ficha, an undeclared
 `tipo_documento`) keeps the historical type-agnostic read: `None` from
 `campos_autorizados` means "no authority rule", never "nothing allowed".
@@ -86,6 +90,80 @@ _SINONIMOS = {
 GENERO_SO_DERIVADO: frozenset[str] = frozenset({"CERTIDAO_CASAMENTO"})
 
 
+#: 🔴 SOURCE PRECEDENCE (owner rule 2026-10-14, prod deal 876) — per FIELD,
+#: the document types in order of authority, as TIERS (types within one tier
+#: tie). `AUTORIDADE` says which fields a type may EMIT at all; this says,
+#: among the types that do, WHICH ONE the stored value should be sourced
+#: from. The owner's definition of done is "the correct value, extracted from
+#: the correct document": a ficha cadastral read before the certidão de
+#: casamento must hand `estado_civil` over to the certidão when the certidão
+#: reads the same fact — and conflict (never overwrite) when it reads a
+#: different one.
+#:
+#: Field vocabulary: `IdentityFields`' names (`nome`, `rg`, `rg_orgao`, ...),
+#: plus the group `endereco` and the ficha-only `profissao`/`email`. A type
+#: absent from a field's tiers is UNRANKED for it (a bureau feed, a
+#: matrícula, an undeclared type): `posto()` returns `None` and no precedence
+#: decision is ever made against or for it.
+PRECEDENCIA: dict[str, tuple[frozenset[str], ...]] = {
+    "estado_civil": (
+        frozenset({"CERTIDAO_CASAMENTO"}),
+        frozenset({"CERTIDAO_NASCIMENTO"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "regime_bens": (
+        frozenset({"CERTIDAO_CASAMENTO", "PACTO_ANTENUPCIAL"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "data_casamento": (
+        frozenset({"CERTIDAO_CASAMENTO"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    # A CNH "estrangeiro" is never read as a nationality (the seed's CNH
+    # rung); a CNH that does print one ranks with the CIN. The owner's
+    # ladder also names the certidão de nascimento and the RG, but neither
+    # may EMIT `nacionalidade` (`AUTORIDADE` above: the RG prints none — its
+    # issuer-derived value is a suggestion never written to the record — and
+    # the birth certificate's is not read), so they hold no tier here: a
+    # tier never names a type that cannot supply the field
+    # (`test_autoridade_por_tipo.TestPrecedencia`). Add them back the day
+    # `AUTORIDADE` lets them read it.
+    "nacionalidade": (
+        frozenset({"RNE"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
+        frozenset({"CIN", "CNH"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "nome": (
+        frozenset({"RG", "CIN", "CNH", "RNE"}),
+        frozenset({"CERTIDAO_CASAMENTO", "CERTIDAO_NASCIMENTO"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "cpf": (
+        frozenset({"CIN", "CNH", "CPF", "RG"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "rg": (
+        frozenset({"RG"}),
+        frozenset({"CNH"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    "rg_orgao": (
+        frozenset({"RG"}),
+        frozenset({"CNH"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
+    # Owner decision 2026-10-13 ("ficha prevalece"): the party's own
+    # declaration outranks a utility bill, which only CONFIRMS it.
+    "endereco": (
+        frozenset({"FICHA_CADASTRAL"}),
+        frozenset({"COMPROVANTE_ENDERECO"}),
+    ),
+    "profissao": (frozenset({"FICHA_CADASTRAL"}),),
+    "email": (frozenset({"FICHA_CADASTRAL"}),),
+}
+
+
 def tipo_normalizado(tipo_documento: Optional[str]) -> Optional[str]:
     """`"certidao_casamento"` -> `"CERTIDAO_CASAMENTO"`, synonyms folded."""
     if not tipo_documento:
@@ -106,10 +184,36 @@ def autorizado(tipo_documento: Optional[str], campo: str) -> bool:
     return campos is None or campo in campos
 
 
+def posto(campo: str, tipo_documento: Optional[str]) -> Optional[int]:
+    """`tipo_documento`'s authority tier for `campo` (0 = most authoritative),
+    or `None` when the type is unranked for that field (see `PRECEDENCIA`)."""
+    t = tipo_normalizado(tipo_documento)
+    if not t:
+        return None
+    for i, tier in enumerate(PRECEDENCIA.get(campo, ())):
+        if t in tier:
+            return i
+    return None
+
+
+def mais_autoritativo(
+    campo: str, tipo_proposto: Optional[str], tipo_atual: Optional[str]
+) -> bool:
+    """Does a `tipo_proposto` reading of `campo` STRICTLY outrank the
+    `tipo_atual` source behind the stored value? `False` whenever either side
+    is unranked (no rule ≠ "outranks") or both share a tier."""
+    novo = posto(campo, tipo_proposto)
+    atual = posto(campo, tipo_atual)
+    return novo is not None and atual is not None and novo < atual
+
+
 __all__ = [
     "AUTORIDADE",
     "GENERO_SO_DERIVADO",
+    "PRECEDENCIA",
     "autorizado",
     "campos_autorizados",
+    "mais_autoritativo",
+    "posto",
     "tipo_normalizado",
 ]
