@@ -1,10 +1,11 @@
 """Purchasing HTTP surface -- `make_purchasing_router(cfg, auth_dependency, admin_dependency, ...)` at `/api/purchasing`.
 
 Org STAFF may read (`auth_dependency`); writes (save / send / cancel / receive / repost / settings) additionally require
-`admin_dependency` (the host's org-admin dep -- the organ never re-implements the admin check). APPROVAL is the one write
-that is NOT admin-gated at the door: it needs only an authenticated caller, then `orders.check_can_approve` decides on
-`ctx.is_admin` / `ctx.can_approve` (the `purchasing.approve` permission holder who is not an org admin must be able to
-approve).
+`admin_dependency` (the host's org-admin dep -- the organ never re-implements the admin check). APPROVAL is NOT
+admin-gated at the door: it needs only an authenticated caller, then `orders.check_can_approve` decides on `ctx.is_admin`
+and membership in THIS org's approver list (`pur_approvers`, read here -- never host-supplied, never a global permission).
+Changing the approval threshold (`PUT /settings`) needs an approver of the org; the approver list itself is managed by org
+admins (`/approvers`). The limit + cooldown are enforced by the `pur_transition` RPC under the order lock.
 
 Cross-organ legs arrive as per-request factories (`stock_factory(db) -> StockPort`, `booking_factory(db) ->
 FinanceBooking`); the defaults are the Noop ports, i.e. a host that does not mount inventory / finance simply posts nothing.
@@ -22,13 +23,14 @@ from noctusai_lib.domain.finance.booking import FinanceBooking, NoopFinanceBooki
 from noctusai_lib.domain.inventory.port import NoopStockPort, StockPort
 from noctusai_lib.primitives.responses import paginated_response, success_response
 
+from . import approvers as approvers_svc
 from . import orders as orders_svc
 from . import receipts as receipts_svc
 from . import settings as settings_svc
 from ._common import Scope
 from .config import PurchasingConfig, PurchasingContext
-from .errors import invalid
-from .schemas import CancelBody, OrderBody, ReceiptBody, SettingsBody
+from .errors import SEM_PERMISSAO_LIMITE, forbidden, invalid
+from .schemas import ApproverBody, CancelBody, OrderBody, ReceiptBody, SettingsBody
 from .types import OrderStatus, values
 
 
@@ -53,7 +55,7 @@ def make_purchasing_router(
     Args:
         auth_dependency: the product's license-gated `get_current_user_org` (401 / 403 live there).
         admin_dependency: the org-admin gate; raises 403 for staff.
-        resolve_context: `(auth_value, db) -> PurchasingContext(db, org_id, user_id, is_admin, can_approve)`.
+        resolve_context: `(auth_value, db) -> PurchasingContext(db, org_id, user_id, is_admin)`.
         get_db: FastAPI dependency returning the schema-scoped client.
         stock_factory / booking_factory: build the inventory / finance seam for a request's `db`.
     """
@@ -67,14 +69,37 @@ def make_purchasing_router(
 
     admin = Depends(admin_dependency)
 
+    def approver_dep(ctx: PurchasingContext = Depends(ctx_dep)) -> bool:
+        """Is the caller in THIS org's approver list (the selected org from `ctx`, nothing else)?"""
+        return approvers_svc.is_approver(scope(ctx), ctx.user_id)
+
     # ── settings ──
     @router.get("/settings", name="purchasing_get_settings")
-    async def get_settings_route(ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
-        return success_response({**settings_svc.get_settings(scope(ctx)), "approve_permission": cfg.approve_permission})
+    async def get_settings_route(ctx: PurchasingContext = Depends(ctx_dep), is_approver: bool = Depends(approver_dep)) -> dict:
+        return success_response({**settings_svc.get_settings(scope(ctx)), "is_approver": is_approver})
 
     @router.put("/settings", name="purchasing_set_settings")
-    async def set_settings_route(body: SettingsBody, _a=admin, ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
+    async def set_settings_route(
+        body: SettingsBody, ctx: PurchasingContext = Depends(ctx_dep), is_approver: bool = Depends(approver_dep)
+    ) -> dict:
+        # Auth-only at the door; the ROUTE decides: moving the limit is an approver's act (an org admin who is not one
+        # adds themselves first -- that grant is audit-logged). The change + its audit row + the cooldown are one RPC.
+        if not is_approver:
+            raise forbidden(SEM_PERMISSAO_LIMITE, "Alterar o limite de aprovação exige ser aprovador desta organização.")
         return success_response(settings_svc.set_threshold(scope(ctx), body.approval_threshold_cents, user_id=str(ctx.user_id)))
+
+    # ── approvers (org admin) ──
+    @router.get("/approvers", name="purchasing_list_approvers")
+    async def list_approvers_route(_a=admin, ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
+        return success_response(approvers_svc.list_approvers(scope(ctx)))
+
+    @router.post("/approvers", status_code=201, name="purchasing_add_approver")
+    async def add_approver_route(body: ApproverBody, _a=admin, ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
+        return success_response(approvers_svc.set_approver(scope(ctx), body.user_id, granted=True, actor_id=ctx.user_id))
+
+    @router.delete("/approvers/{user_id}", name="purchasing_remove_approver")
+    async def remove_approver_route(user_id: UUID, _a=admin, ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
+        return success_response(approvers_svc.set_approver(scope(ctx), user_id, granted=False, actor_id=ctx.user_id))
 
     # ── orders ──
     @router.get("/orders", name="purchasing_list_orders")
@@ -106,9 +131,11 @@ def make_purchasing_router(
         return success_response(orders_svc.save_order(scope(ctx), order_id, _dump(body), user_id=str(ctx.user_id)))
 
     @router.post("/orders/{order_id}/approve", name="purchasing_approve_order")
-    async def approve_order_route(order_id: UUID, ctx: PurchasingContext = Depends(ctx_dep)) -> dict:
+    async def approve_order_route(
+        order_id: UUID, ctx: PurchasingContext = Depends(ctx_dep), is_approver: bool = Depends(approver_dep)
+    ) -> dict:
         return success_response(
-            orders_svc.approve_order(scope(ctx), order_id, user_id=str(ctx.user_id), is_admin=ctx.is_admin, can_approve=ctx.can_approve)
+            orders_svc.approve_order(scope(ctx), order_id, user_id=str(ctx.user_id), is_admin=ctx.is_admin, can_approve=is_approver)
         )
 
     @router.post("/orders/{order_id}/send", name="purchasing_send_order")

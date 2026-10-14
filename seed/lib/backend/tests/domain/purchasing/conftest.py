@@ -47,13 +47,16 @@ CFG = PurchasingConfig(schema=SCHEMA)
 FIN_CFG = FinanceConfig(schema=SCHEMA, with_parties=True)
 INV_CFG = InventoryConfig(schema=SCHEMA, with_items=False)
 
-#: Roles by bearer token: who is an org admin / holds `purchasing.approve` / belongs to org B.
+#: Roles by bearer token: who is an org admin / is in the org-A approver list / belongs to org B.
 ROLES = {
-    "user": dict(admin=False, approve=False, org=ORG_A),
-    "admin": dict(admin=True, approve=False, org=ORG_A),
-    "approver": dict(admin=False, approve=True, org=ORG_A),
-    "admin-approver": dict(admin=True, approve=True, org=ORG_A),
-    "org-b-admin": dict(admin=True, approve=False, org=ORG_B),
+    "user": dict(admin=False, approve=False, org=ORG_A, uid="00000000-0000-4000-8000-000000000001"),
+    "admin": dict(admin=True, approve=False, org=ORG_A, uid="00000000-0000-4000-8000-000000000002"),
+    "approver": dict(admin=False, approve=True, org=ORG_A, uid="00000000-0000-4000-8000-000000000003"),
+    "admin-approver": dict(admin=True, approve=True, org=ORG_A, uid="00000000-0000-4000-8000-000000000004"),
+    "org-b-admin": dict(admin=True, approve=False, org=ORG_B, uid="00000000-0000-4000-8000-000000000005"),
+    # staff of org A whose ONLY approver grant is in org B (the old global-permission hole): must not approve in A
+    "cross-org-approver": dict(admin=False, approve=False, org=ORG_A, uid="00000000-0000-4000-8000-000000000006", grant_org=ORG_B),
+    "cross-org-admin-approver": dict(admin=True, approve=False, org=ORG_A, uid="00000000-0000-4000-8000-000000000007", grant_org=ORG_B),
 }
 
 
@@ -98,7 +101,7 @@ def _auth(authorization: Optional[str] = Header(None)) -> dict:
     role = authorization.split(" ", 1)[1]
     if role not in ROLES:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {**ROLES[role], "user_id": USER_ID}
+    return {**ROLES[role], "user_id": ROLES[role]["uid"]}
 
 
 def _admin(auth: dict = Depends(_auth)) -> dict:
@@ -108,7 +111,7 @@ def _admin(auth: dict = Depends(_auth)) -> dict:
 
 
 def resolve(auth: dict, db: Any) -> PurchasingContext:
-    return PurchasingContext(db=db, org_id=auth["org"], user_id=auth["user_id"], is_admin=auth["admin"], can_approve=auth["approve"])
+    return PurchasingContext(db=db, org_id=auth["org"], user_id=auth["user_id"], is_admin=auth["admin"])
 
 
 @dataclass
@@ -127,6 +130,10 @@ class Harness:
 
 def build_harness(cfg: PurchasingConfig = CFG, **router_kw: Any) -> Harness:
     db = make_db()
+    for spec in ROLES.values():  # approver grants live in the organ's own org-scoped table
+        grant_org = spec.get("grant_org") or (spec["org"] if spec["approve"] else None)
+        if grant_org:
+            db.table("pur_approvers").insert({"org_id": grant_org, "user_id": spec["uid"]}).execute()
     router = make_purchasing_router(cfg, _auth, _admin, resolve_context=resolve, get_db=lambda: db, **router_kw)
     app = FastAPI()
     app.add_exception_handler(AppException, app_exception_handler)

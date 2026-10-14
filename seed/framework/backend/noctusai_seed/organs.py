@@ -540,39 +540,28 @@ def mount_purchasing(
     get_core_client: Callable[[], Any],
     cfg: Any = None,
     prefix: str = "/api/purchasing",
-    permissions: Any = None,
 ) -> MountedOrgan:
     """Build the purchasing router. Org admin gates the writes; APPROVAL is decided from the trusted role in the
-    SELECTED org plus `has_permission(user, cfg.approve_permission)` through the seed permissions repo (`public`
-    client = `get_core_client()`; pass `permissions=` to inject another repo, e.g. the Fake). The cross-organ legs
+    SELECTED org plus membership in that org's own approver list (`pur_approvers`, read by the organ -- no global
+    permission, so a grant in one org can never approve in another; org admins manage the list). The cross-organ legs
     follow `cfg.with_*`: stock through `SupabaseStockPort` (inventory), payables through `SupabaseFinanceBooking`
     (finance, linked to the party when `cfg.with_parties`); a host that mounts neither keeps the Noop ports."""
     from noctusai_lib.domain.finance import FinanceConfig, make_finance_booking
     from noctusai_lib.domain.inventory import InventoryConfig, make_stock_port
-    from noctusai_lib.domain.permissions import make_permission_grant_repository
     from noctusai_lib.domain.purchasing import PurchasingConfig, PurchasingContext, make_purchasing_router
 
     cfg = cfg or PurchasingConfig(schema=schema)
     if cfg.schema != schema:
         raise ValueError(f"cfg.schema {cfg.schema!r} != schema {schema!r}")
     organ_auth = make_organ_auth(auth_dependency, get_core_client, context="Compras")
-    repo = permissions
-
-    async def auth_dependency_with_permission(a: Any = Depends(organ_auth.auth)) -> Any:
-        nonlocal repo
-        if repo is None:
-            repo = make_permission_grant_repository(supabase_client=get_core_client())
-        user = a[0]
-        a.can_approve = bool(await repo.has_permission(user_id=getattr(user, "id", None), permission=cfg.approve_permission))
-        return a
 
     def resolve_context(auth: Any, db: Any) -> Any:
-        return PurchasingContext(db=db, can_approve=bool(getattr(auth, "can_approve", False)), **_context_kwargs(auth))
+        return PurchasingContext(db=db, **_context_kwargs(auth))
 
     inv_cfg = InventoryConfig(schema=schema, with_items=cfg.with_items, items_prefix=cfg.items_prefix, table_prefix=cfg.inventory_prefix)
     fin_cfg = FinanceConfig(schema=schema, with_parties=cfg.with_parties, parties_prefix=cfg.parties_prefix)
     router = make_purchasing_router(
-        cfg, auth_dependency_with_permission, organ_auth.admin,
+        cfg, organ_auth.auth, organ_auth.admin,
         resolve_context=resolve_context, get_db=get_admin_client, prefix=prefix,
         stock_factory=(lambda db: make_stock_port("supabase", db=db, cfg=inv_cfg)) if cfg.with_inventory else (lambda db: make_stock_port()),
         booking_factory=lambda db: make_finance_booking("supabase", db=db, cfg=fin_cfg),

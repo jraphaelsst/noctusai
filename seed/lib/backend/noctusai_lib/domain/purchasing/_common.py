@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from noctusai_lib.domain._organ_common import OrganScope, first, new_id, now_iso
 
 from .config import PurchasingConfig
-from .errors import invalid
+from .errors import from_refusal, invalid
 
 
 def dec(value: Any) -> Decimal:
@@ -34,4 +34,17 @@ class Scope(OrganScope):
         return invalid(field, message, code=code)
 
 
-__all__ = ["Scope", "dec", "first", "new_id", "now_iso", "qty_str"]
+def rpc(s: Scope, name: str, params: dict) -> dict:
+    """Call a purchasing RPC and unwrap its jsonb verdict; a refusal raises, an unknown shape is loud."""
+    resp = s.db.rpc(s.cfg.rpc(name), params).execute()
+    payload = getattr(resp, "data", None)
+    if isinstance(payload, list):
+        payload = payload[0] if payload else None
+    if not isinstance(payload, dict) or "status" not in payload:
+        raise RuntimeError(f"purchasing RPC {name} answered an unexpected payload: {payload!r}")
+    if payload["status"] == "refused":
+        raise from_refusal(payload)
+    return payload
+
+
+__all__ = ["Scope", "dec", "first", "new_id", "now_iso", "qty_str", "rpc"]

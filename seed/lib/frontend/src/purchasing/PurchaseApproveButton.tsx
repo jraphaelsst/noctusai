@@ -1,8 +1,9 @@
 /**
  * `<PurchaseApproveButton/>` — the order lifecycle action for the CURRENT status: draft -> Aprovar, approved -> Marcar como
- * enviado, and Cancelar while nothing was received. Who may approve is decided by the SERVER (admin or the
- * `purchasing.approve` permission; above the org threshold only the permission): the host passes `canApprove` only to hide
- * a button the user can never use, and a refusal is rendered with its stable code's pt-BR copy.
+ * enviado, and Cancelar while nothing was received. Who may approve is decided by the SERVER (an org admin or a member of
+ * THIS org's approver list; above the org threshold only an approver; right after a threshold change the cooldown also
+ * applies): the host passes `canApprove` only to hide a button the user can never use, and a refusal is rendered with its
+ * stable code's pt-BR copy.
  */
 import * as React from 'react';
 import { FormError } from '../organ-kit';
@@ -19,7 +20,7 @@ export interface PurchaseApproveButtonProps extends PurchasingOrganProps {
   canApprove?: boolean;
   /** Show send / cancel too (admins). Default true. */
   canManage?: boolean;
-  /** The org's `approval_threshold_cents`, to warn up front that this order needs the permission. */
+  /** The org's `approval_threshold_cents`, to warn up front that this order needs an approver. */
   thresholdCents?: number | null;
   onDone?: (order: PurchaseOrder) => void;
 }

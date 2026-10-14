@@ -44,7 +44,7 @@ BASE = """
 DO $$
 DECLARE o uuid := gen_random_uuid(); other uuid := gen_random_uuid(); p uuid := gen_random_uuid(); pf uuid := gen_random_uuid();
         w uuid := gen_random_uuid(); i1 uuid := gen_random_uuid(); i2 uuid := gen_random_uuid(); ifx uuid := gen_random_uuid();
-        r jsonb; r2 jsonb; oid uuid; oid2 uuid; l1 uuid; l2 uuid; rid uuid; rid2 uuid; n numeric; k bigint; k2 bigint; t text;
+        r jsonb; r2 jsonb; u uuid; oid uuid; oid2 uuid; l1 uuid; l2 uuid; rid uuid; rid2 uuid; n numeric; k bigint; k2 bigint; t text;
 BEGIN
   INSERT INTO @S@.pty_parties(id, org_id, kind, legal_name) VALUES (p, o, 'PJ', 'Fornecedor Ltda'), (pf, other, 'PJ', 'Forasteiro');
   INSERT INTO @S@.inv_warehouses(id, org_id, name, code, is_default) VALUES (w, o, 'Matriz', 'MTZ', true);
@@ -316,14 +316,89 @@ SCENARIOS: dict[str, str] = {
     INSERT INTO @S@.pur_settings(org_id, approval_threshold_cents) VALUES (o, -1);
     RAISE EXCEPTION 'NOT ENFORCED: threshold >= 0';
   EXCEPTION WHEN check_violation THEN NULL; END;""",
+    "approval limit is judged inside the RPC under the order lock against the CURRENT total (a stale read cannot slip a raised total through)": f"""
+  {save()}
+  oid := (r->>'order_id')::uuid;
+  r := @S@.pur_set_threshold(o, gen_random_uuid(), 20000);
+  {need("r->>'status' = 'ok'", 'threshold set')}
+  UPDATE @S@.pur_settings SET threshold_changed_at = now() - interval '11 minutes' WHERE org_id = o;
+  -- the concurrent PUT that raised the total committed AFTER the Python pre-check read 11333 (< 20000)
+  UPDATE @S@.pur_orders SET total_cents = 50000, goods_cents = 50000 WHERE id = oid;
+  r := @S@.pur_transition(o, oid, 'approve', gen_random_uuid(), NULL, false);
+  {need("r->>'code' = 'aprovacao_acima_do_limite'", 'non-approver over the limit is refused by the RPC')}
+  SELECT status INTO t FROM @S@.pur_orders WHERE id = oid;
+  {need("t = 'draft'", 'a refusal leaves the order untouched')}
+  r := @S@.pur_transition(o, oid, 'approve', gen_random_uuid(), NULL);
+  {need("r->>'code' = 'aprovacao_acima_do_limite'", 'the default is fail-closed (cannot exceed)')}
+  r := @S@.pur_transition(o, oid, 'approve', gen_random_uuid(), NULL, true);
+  {need("r->>'status' = 'ok'", 'an approver may exceed the limit once the cooldown is over')}""",
+    "a threshold change is audit-logged, no-ops replay, and starts a cooldown on the LOWEST limit in force": f"""
+  {save()}
+  oid := (r->>'order_id')::uuid;
+  u := gen_random_uuid();
+  r := @S@.pur_set_threshold(o, u, 10000);
+  {need("r->>'status' = 'ok'", 'first set')}
+  r := @S@.pur_set_threshold(o, u, 10000);
+  {need("r->>'status' = 'replayed'", 'same value is a no-op')}
+  SELECT count(*) INTO n FROM @S@.pur_settings_log WHERE org_id = o AND kind = 'threshold' AND actor_id = u AND old_cents IS NULL AND new_cents = 10000;
+  {need("n = 1", 'one audit row, with who / old / new')}
+  -- raise within the window: the order (11333) is above the LOWEST limit in force (10000) -> blocked for everyone
+  r := @S@.pur_set_threshold(o, u, 50000);
+  r := @S@.pur_set_threshold(o, u, 90000);
+  SELECT previous_threshold_cents INTO k FROM @S@.pur_settings WHERE org_id = o;
+  {need("k = 10000", 'previous keeps the lowest threshold of the window')}
+  r := @S@.pur_transition(o, oid, 'approve', gen_random_uuid(), NULL, true);
+  {need("r->>'code' = 'limite_em_carencia'", 'raise + approve in the same breath is refused even for an approver')}
+  SELECT count(*) INTO n FROM @S@.pur_settings_log WHERE org_id = o AND kind = 'threshold';
+  {need("n = 3", 'every real change logged')}
+  UPDATE @S@.pur_settings SET threshold_changed_at = now() - interval '11 minutes';
+  r := @S@.pur_set_threshold(o, u, NULL);
+  r := @S@.pur_transition(o, oid, 'approve', gen_random_uuid(), NULL, false);
+  {need("r->>'status' = 'ok'", 'cleared limit; 11333 is under the lowest limit in the window (90000) so the cooldown does not block it')}
+  r := @S@.pur_set_threshold(o, u, -5);
+  {need("r->>'code' = 'valor_invalido'", 'negative threshold')}""",
+    "the audit log is append-only; approver grants are org-scoped, idempotent and audited": f"""
+  u := gen_random_uuid();
+  r := @S@.pur_set_threshold(o, u, 100);
+  BEGIN UPDATE @S@.pur_settings_log SET new_cents = 1; RAISE EXCEPTION 'NOT ENFORCED: log update';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  BEGIN DELETE FROM @S@.pur_settings_log; RAISE EXCEPTION 'NOT ENFORCED: log delete';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  BEGIN TRUNCATE @S@.pur_settings_log; RAISE EXCEPTION 'NOT ENFORCED: log truncate';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  r := @S@.pur_set_approver(o, gen_random_uuid(), u, true);
+  {need("r->>'status' = 'ok'", 'grant')}
+  r := @S@.pur_set_approver(o, gen_random_uuid(), u, true);
+  {need("r->>'status' = 'replayed'", 'grant replay')}
+  SELECT count(*) INTO n FROM @S@.pur_approvers WHERE user_id = u;
+  {need("n = 1", 'one grant')}
+  SELECT count(*) INTO n FROM @S@.pur_approvers WHERE org_id = other AND user_id = u;
+  {need("n = 0", 'a grant in org A is nothing in org B')}
+  r := @S@.pur_set_approver(other, gen_random_uuid(), u, true);
+  SELECT count(*) INTO n FROM @S@.pur_approvers WHERE user_id = u;
+  {need("n = 2", 'the same user can hold separate grants per org')}
+  r := @S@.pur_set_approver(o, gen_random_uuid(), u, false);
+  {need("r->>'status' = 'ok'", 'revoke')}
+  r := @S@.pur_set_approver(o, gen_random_uuid(), u, false);
+  {need("r->>'status' = 'replayed'", 'revoke replay')}
+  SELECT count(*) INTO n FROM @S@.pur_approvers WHERE org_id = o AND user_id = u;
+  {need("n = 0", 'revoked in A')}
+  SELECT count(*) INTO n FROM @S@.pur_approvers WHERE org_id = other AND user_id = u;
+  {need("n = 1", 'the revoke did not touch org B')}
+  SELECT count(*) INTO n FROM @S@.pur_settings_log WHERE org_id = o AND kind IN ('approver_added', 'approver_removed') AND subject_user_id = u;
+  {need("n = 2", 'grant + revoke audited (replays are not)')}
+  r := @S@.pur_set_approver(o, NULL, NULL, true);
+  {need("r->>'code' = 'usuario_invalido'", 'null user')}""",
     "every secdef function pins search_path to pg_catalog first, locks the order row, and is not callable by clients": """
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
     WHERE ns.nspname = '@S@' AND p.proname LIKE 'pur\\_%' AND p.prosecdef
       AND p.proconfig::text LIKE '%search_path=pg_catalog, @S@, pg_temp%';
-  IF n <> 3 THEN RAISE EXCEPTION 'search_path not pinned on % of 3 secdef functions', n; END IF;
+  IF n <> 5 THEN RAISE EXCEPTION 'search_path not pinned on % of 5 secdef functions', n; END IF;
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace WHERE ns.nspname = '@S@' AND p.proname = 'pur_transition';
+  IF n <> 1 THEN RAISE EXCEPTION 'pur_transition has % overloads (a legacy unguarded one must not survive)', n; END IF;
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
-    WHERE ns.nspname = '@S@' AND p.proname IN ('pur_save_order', 'pur_transition', 'pur_receive') AND p.prosrc ILIKE '%FOR UPDATE%';
-  IF n <> 3 THEN RAISE EXCEPTION 'only % of 3 functions take FOR UPDATE', n; END IF;
+    WHERE ns.nspname = '@S@' AND p.proname IN ('pur_save_order', 'pur_transition', 'pur_receive', 'pur_set_threshold') AND p.prosrc ILIKE '%FOR UPDATE%';
+  IF n <> 4 THEN RAISE EXCEPTION 'only % of 4 functions take FOR UPDATE', n; END IF;
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
     WHERE ns.nspname = '@S@' AND p.proname LIKE 'pur\\_%' AND p.prosecdef
       AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));

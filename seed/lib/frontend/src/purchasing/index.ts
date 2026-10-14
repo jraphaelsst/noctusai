@@ -4,6 +4,7 @@
  */
 export { PURCHASE_ORDER_STATUSES } from './types';
 export type {
+  PurchaseApprover,
   PurchaseOrder,
   PurchaseOrderInput,
   PurchaseOrderLine,
@@ -34,5 +35,7 @@ export { PurchaseApproveButton } from './PurchaseApproveButton';
 export type { PurchaseApproveButtonProps } from './PurchaseApproveButton';
 export { PurchaseReceiveDialog } from './PurchaseReceiveDialog';
 export type { PurchaseReceiveDialogProps } from './PurchaseReceiveDialog';
+export { PurchaseApproversManager } from './PurchaseApproversManager';
+export type { PurchaseApproversManagerProps, PurchaseApproverMember } from './PurchaseApproversManager';
 export { PurchaseReceiptsList } from './PurchaseReceiptsList';
 export type { PurchaseReceiptsListProps } from './PurchaseReceiptsList';

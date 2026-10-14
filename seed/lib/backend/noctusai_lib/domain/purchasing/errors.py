@@ -31,6 +31,9 @@ QUANTIDADE_INVALIDA = "quantidade_invalida"
 CHAVE_REUTILIZADA = "chave_reutilizada"
 SEM_PERMISSAO_APROVAR = "sem_permissao_aprovar"
 APROVACAO_ACIMA_DO_LIMITE = "aprovacao_acima_do_limite"
+LIMITE_EM_CARENCIA = "limite_em_carencia"
+SEM_PERMISSAO_LIMITE = "sem_permissao_limite"
+USUARIO_INVALIDO = "usuario_invalido"
 
 #: Codes the RPCs may answer with; anything else is a bug and surfaces loudly.
 RPC_REFUSAL_CODES = frozenset(
@@ -38,7 +41,8 @@ RPC_REFUSAL_CODES = frozenset(
         PEDIDO_INEXISTENTE, PEDIDO_NAO_EDITAVEL, TRANSICAO_INVALIDA, PEDIDO_COM_RECEBIMENTO, PEDIDO_NAO_RECEBIVEL,
         PEDIDO_JA_RECEBIDO, PEDIDO_CANCELADO, PEDIDO_NAO_APROVADO, RECEBIMENTO_EXCEDE_PEDIDO, LINHA_INVALIDA, SEM_LINHAS,
         PEDIDO_SEM_VALOR, VALOR_INVALIDO, DESCONTO_EXCEDE, PARCELAS_INVALIDAS, PRAZO_INVALIDO, FORNECEDOR_INVALIDO,
-        DEPOSITO_INVALIDO, ITEM_INVALIDO, ITEM_OBRIGATORIO, QUANTIDADE_INVALIDA, CHAVE_REUTILIZADA,
+        DEPOSITO_INVALIDO, ITEM_INVALIDO, ITEM_OBRIGATORIO, QUANTIDADE_INVALIDA, CHAVE_REUTILIZADA, APROVACAO_ACIMA_DO_LIMITE,
+        LIMITE_EM_CARENCIA, USUARIO_INVALIDO,
     }
 )
 
@@ -65,12 +69,16 @@ _MESSAGES = {
     ITEM_OBRIGATORIO: "Toda linha precisa de um item do cadastro (o recebimento dá entrada no estoque).",
     QUANTIDADE_INVALIDA: "Quantidade inválida.",
     CHAVE_REUTILIZADA: "Esta chave de idempotência já foi usada em outro pedido.",
+    APROVACAO_ACIMA_DO_LIMITE: "Pedidos acima do limite de aprovação só podem ser aprovados por um aprovador.",
+    LIMITE_EM_CARENCIA: "O limite de aprovação foi alterado há pouco; pedidos acima do menor limite vigente aguardam o fim da carência.",
+    USUARIO_INVALIDO: "Usuário inválido.",
 }
 
 _CONFLICT = {
     PEDIDO_NAO_EDITAVEL, TRANSICAO_INVALIDA, PEDIDO_COM_RECEBIMENTO, PEDIDO_NAO_RECEBIVEL, PEDIDO_JA_RECEBIDO,
-    PEDIDO_CANCELADO, PEDIDO_NAO_APROVADO, RECEBIMENTO_EXCEDE_PEDIDO, CHAVE_REUTILIZADA,
+    PEDIDO_CANCELADO, PEDIDO_NAO_APROVADO, RECEBIMENTO_EXCEDE_PEDIDO, CHAVE_REUTILIZADA, LIMITE_EM_CARENCIA,
 }
+_FORBIDDEN = {APROVACAO_ACIMA_DO_LIMITE}
 
 
 class PurchasingError(OrganError):
@@ -91,13 +99,15 @@ def from_refusal(payload: dict) -> AppException:
         raise RuntimeError(f"purchasing RPC answered an unknown refusal code {code!r}: {payload!r}")
     if code == PEDIDO_INEXISTENTE:
         return not_found("Pedido de compra")
-    status = 409 if code in _CONFLICT else 422
+    status = 403 if code in _FORBIDDEN else 409 if code in _CONFLICT else 422
     details = {k: payload[k] for k in ("order_line_id", "item_id") if payload.get(k)}
     return PurchasingError(code, _MESSAGES.get(code, code), status, details=details)
 
 
 __all__ = [
     "APROVACAO_ACIMA_DO_LIMITE",
+    "LIMITE_EM_CARENCIA",
+    "SEM_PERMISSAO_LIMITE",
     "PurchasingError",
     "RPC_REFUSAL_CODES",
     "SEM_PERMISSAO_APROVAR",

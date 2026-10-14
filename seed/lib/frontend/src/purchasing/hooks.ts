@@ -15,6 +15,7 @@ import { ApiError, type ApiClient } from '../api';
 import { errorMessage, keep, signals } from '../organ-kit/query';
 import { defaultPurchasingT, type PurchasingTranslate } from './i18n';
 import type {
+  PurchaseApprover,
   PurchaseOrder,
   PurchaseOrderInput,
   PurchaseOrderListParams,
@@ -38,6 +39,7 @@ export const purchasingKeys = {
   order: (id: string) => ['purchasing', 'order', id] as const,
   receipts: ['purchasing', 'receipts'] as const,
   settings: ['purchasing', 'settings'] as const,
+  approvers: ['purchasing', 'approvers'] as const,
 };
 
 /** pt-BR copy for the stable backend error codes; falls back to the server message. */
@@ -159,10 +161,42 @@ export function createPurchasingHooks(api: PurchasingApi, options: PurchasingHoo
       onSuccess: (data) => {
         qc.setQueryData(purchasingKeys.settings, data);
       },
+      // moving the limit is an APPROVER's act (the API answers 403 `sem_permissao_limite` otherwise) and starts a cooldown.
     });
   }
 
+  /** The org's approver list (org admins only -- the API refuses everyone else). */
+  function usePurchaseApprovers(enabled = true) {
+    const q = useQuery<PurchaseApprover[]>({
+      queryKey: purchasingKeys.approvers,
+      queryFn: () => unwrap(api.get(`${BASE}/approvers`)),
+      enabled,
+    });
+    return signals(q);
+  }
+
+  function usePurchaseApproverMutations() {
+    const qc = useQueryClient();
+    const done = (list: PurchaseApprover[]) => {
+      qc.setQueryData(purchasingKeys.approvers, list);
+      // `is_approver` on the settings read may have changed (the caller added / removed themselves).
+      return qc.invalidateQueries({ queryKey: purchasingKeys.settings });
+    };
+    return {
+      add: useMutation({
+        mutationFn: (user_id: string) => unwrap<PurchaseApprover[]>(api.post(`${BASE}/approvers`, { user_id })),
+        onSuccess: done,
+      }),
+      remove: useMutation({
+        mutationFn: (user_id: string) => unwrap<PurchaseApprover[]>(api.delete(`${BASE}/approvers/${user_id}`)),
+        onSuccess: done,
+      }),
+    };
+  }
+
   return {
+    usePurchaseApprovers,
+    usePurchaseApproverMutations,
     usePurchaseOrders,
     usePurchaseOrder,
     usePurchaseOrderMutations,

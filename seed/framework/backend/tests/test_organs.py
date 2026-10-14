@@ -191,8 +191,7 @@ def test_mount_rejects_a_cfg_for_another_schema():
 ORDER_ID = "44444444-4444-4444-8444-444444444444"
 
 
-def _purchasing_client(*, role: str, grants=(), threshold=None, total=100_000):
-    from noctusai_lib.domain.permissions import FakePermissionGrantRepository
+def _purchasing_client(*, role: str, grants=(), other_org_grants=(), threshold=None, total=100_000):
     from noctusai_lib.testing import MockSupabaseClient
     from noctusai_seed.organs import mount_purchasing
 
@@ -202,11 +201,12 @@ def _purchasing_client(*, role: str, grants=(), threshold=None, total=100_000):
     db.table("pur_orders").insert({"id": ORDER_ID, "org_id": "org-1", "number": 1, "status": "draft", "supplier_name": "F", "total_cents": total, "goods_cents": total}).execute()
     if threshold is not None:
         db.table("pur_settings").insert({"org_id": "org-1", "approval_threshold_cents": threshold}).execute()
+    if grants:
+        db.table("pur_approvers").insert({"org_id": "org-1", "user_id": "u1"}).execute()
+    if other_org_grants:  # approver of ANOTHER org only: must not approve here
+        db.table("pur_approvers").insert({"org_id": "org-2", "user_id": "u1"}).execute()
     db.set_rpc_data("pur_transition", {"status": "ok", "order_id": ORDER_ID})
-    organ = mount_purchasing(
-        schema="erp", auth_dependency=_auth, get_admin_client=lambda: db, get_core_client=lambda: core,
-        permissions=FakePermissionGrantRepository([("u1", "purchasing.approve")] if grants else []),
-    )
+    organ = mount_purchasing(schema="erp", auth_dependency=_auth, get_admin_client=lambda: db, get_core_client=lambda: core)
     return TestClient(_app_of(organ))
 
 
@@ -223,7 +223,7 @@ def test_mount_purchasing_strict_401_on_every_route_and_admin_gates_the_writes()
     assert client.get("/api/purchasing/orders", headers=H).status_code == 200
 
 
-def test_purchasing_approval_comes_from_the_selected_org_role_and_the_permission_grant():
+def test_purchasing_approval_comes_from_the_selected_org_role_and_the_org_scoped_approver_list():
     assert _purchasing_client(role="member").post(APPROVE, headers=H).status_code == 403            # staff, no grant
     assert _purchasing_client(role="member", grants=(1,)).post(APPROVE, headers=H).status_code == 200  # grant holder, not admin
     assert _purchasing_client(role="owner").post(APPROVE, headers=H).status_code == 200            # admin, no threshold
@@ -231,6 +231,9 @@ def test_purchasing_approval_comes_from_the_selected_org_role_and_the_permission
     assert _purchasing_client(role="owner", threshold=50_000).post(APPROVE, headers=H).status_code == 403
     assert _purchasing_client(role="owner", grants=(1,), threshold=50_000).post(APPROVE, headers=H).status_code == 200
     assert _purchasing_client(role="owner", threshold=500_000).post(APPROVE, headers=H).status_code == 200
+    # an approver grant in ANOTHER org never approves here (org-scoped list, no global permission)
+    assert _purchasing_client(role="member", other_org_grants=(1,)).post(APPROVE, headers=H).status_code == 403
+    assert _purchasing_client(role="owner", other_org_grants=(1,), threshold=50_000).post(APPROVE, headers=H).status_code == 403
 
 
 # -- contracts -------------------------------------------------------------------------------------------

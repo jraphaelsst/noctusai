@@ -133,7 +133,19 @@ export interface PurchaseReceiveResult extends PurchaseReceipt {
 export interface PurchasingSettings {
   approval_threshold_cents: number | null;
   persisted: boolean;
-  approve_permission?: string;
+  /** When the threshold last changed; for ~10 min after it, orders above the lowest limit in force cannot be approved. */
+  threshold_changed_at?: string | null;
+  cooldown_until?: string | null;
+  /** The caller is in THIS org's approver list (the only people who may change the threshold / exceed it). */
+  is_approver?: boolean;
+}
+
+/** One entry of the org's approver list (`pur_approvers`; org-scoped, never a global permission). */
+export interface PurchaseApprover {
+  org_id: string;
+  user_id: string;
+  granted_by: string | null;
+  granted_at: string;
 }
 
 export interface PurchaseOrderListParams {

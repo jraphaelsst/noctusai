@@ -62,13 +62,20 @@ def test_received_quantity_is_bounded_and_money_is_cents():
 
 
 def test_every_secdef_function_pins_search_path_locks_the_order_and_revokes_clients():
-    funcs = re.findall(r"CREATE OR REPLACE FUNCTION erp\.(pur_\w+)\(", SQL)
-    assert sorted(funcs) == ["pur_receive", "pur_save_order", "pur_transition"]
+    funcs = [f for f in re.findall(r"CREATE OR REPLACE FUNCTION erp\.(pur_\w+)\(", SQL) if not f.endswith("_append_only")]  # the audit trigger fn is not SECURITY DEFINER
+    assert sorted(funcs) == ["pur_receive", "pur_save_order", "pur_set_approver", "pur_set_threshold", "pur_transition"]
     for f in funcs:
         assert re.search(rf"FUNCTION erp\.{f}\([^)]*\) FROM PUBLIC, anon, authenticated;", SQL), f
         assert re.search(rf"GRANT EXECUTE ON FUNCTION erp\.{f}\([^)]*\) TO service_role;", SQL), f
-    assert SQL.count("SET search_path = pg_catalog, erp, pg_temp") == 3
+    assert SQL.count("SET search_path = pg_catalog, erp, pg_temp") == 5
     assert SQL.count("FROM erp.pur_orders WHERE id = ") >= 2 and "FOR UPDATE" in SQL
+
+
+def test_the_legacy_unguarded_transition_overload_is_dropped_and_the_audit_log_is_append_only():
+    assert "DROP FUNCTION IF EXISTS erp.pur_transition(UUID, UUID, TEXT, UUID, TEXT);" in SQL
+    assert SQL.index("DROP FUNCTION IF EXISTS erp.pur_transition") < SQL.index("CREATE OR REPLACE FUNCTION erp.pur_transition(")
+    assert "BEFORE UPDATE OR DELETE ON erp.pur_settings_log" in SQL and "BEFORE TRUNCATE ON erp.pur_settings_log" in SQL
+    assert "PRIMARY KEY (org_id, user_id)" in SQL
 
 
 def test_receipts_are_idempotent_by_key_and_unique_per_order():
@@ -84,8 +91,7 @@ def test_generator_is_deterministic_and_validates_its_schema():
         purchasing_migration(CFG, "  ")
 
 
-@pytest.mark.parametrize("kw", [{"schema": "Bad-Name"}, {"schema": "erp", "table_prefix": "x-"}, {"schema": "erp", "org_id_expr": " "},
-                                {"schema": "erp", "approve_permission": " "}])
+@pytest.mark.parametrize("kw", [{"schema": "Bad-Name"}, {"schema": "erp", "table_prefix": "x-"}, {"schema": "erp", "org_id_expr": " "}])
 def test_config_rejects_bad_identifiers(kw):
     with pytest.raises(ValueError):
         PurchasingConfig(**kw)

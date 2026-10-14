@@ -61,3 +61,7 @@ class ReceiptBody(StrictHttpModel):
 
 class SettingsBody(StrictHttpModel):
     approval_threshold_cents: Optional[int] = Field(default=None, ge=0, le=MAX_CENTS)
+
+
+class ApproverBody(StrictHttpModel):
+    user_id: UUID

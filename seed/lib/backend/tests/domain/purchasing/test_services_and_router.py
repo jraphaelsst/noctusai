@@ -7,7 +7,7 @@ from noctusai_lib.domain.purchasing import PurchasingConfig, orders, settings
 from noctusai_lib.domain.purchasing._common import Scope
 
 from .conftest import (
-    CFG, ITEM, ORDER, ORG_A, ORG_B, PARTY, WH1, build_harness, seed_order, seed_line,
+    CFG, ROLES, ITEM, ORDER, ORG_A, ORG_B, PARTY, WH1, build_harness, seed_order, seed_line,
 )
 
 LINE = {"item_id": ITEM, "description": "Tinta", "qty": "10.000", "unit_cost_cents": 1000}
@@ -21,8 +21,11 @@ READS = [
     ("GET", "/api/purchasing/receipts", None),
     ("GET", f"/api/purchasing/receipts/{ID}", None),
 ]
+SETTINGS_PUT = ("PUT", "/api/purchasing/settings", {"approval_threshold_cents": 100})
 ADMIN_WRITES = [
-    ("PUT", "/api/purchasing/settings", {"approval_threshold_cents": 100}),
+    ("GET", "/api/purchasing/approvers", None),
+    ("POST", "/api/purchasing/approvers", {"user_id": ID}),
+    ("DELETE", f"/api/purchasing/approvers/{ID}", None),
     ("POST", "/api/purchasing/orders", BODY),
     ("PUT", f"/api/purchasing/orders/{ORDER}", BODY),
     ("POST", f"/api/purchasing/orders/{ORDER}/send", None),
@@ -46,10 +49,10 @@ def seed_party(db, *, org=ORG_A, active=True, pid=PARTY):
 
 def test_every_route_is_covered(h):
     routes = {(m, r.path) for r in h.app.routes if hasattr(r, "methods") for m in r.methods if r.path.startswith("/api/purchasing")}
-    assert len(routes) == len(READS) + len(ADMIN_WRITES) + 1
+    assert len(routes) == len(READS) + len(ADMIN_WRITES) + 2  # + approve + the approver-gated PUT /settings
 
 
-@pytest.mark.parametrize("method,path,body", [*READS, *ADMIN_WRITES, APPROVE])
+@pytest.mark.parametrize("method,path,body", [*READS, *ADMIN_WRITES, APPROVE, SETTINGS_PUT])
 def test_unauthenticated_is_strictly_401(h, method, path, body):
     assert _send(h, method, path, body, {}).status_code == 401
 
@@ -191,18 +194,52 @@ def test_the_order_detail_carries_lines_in_order_and_filters_validate(h):
 # ── settings + the approval rule ──────────────────────────────────────────────
 
 
-def test_settings_default_then_upsert_then_clear(h):
+def put_threshold(db, cents, *, org=ORG_A, changed_at=None, previous=None):
+    """The state `pur_set_threshold` leaves behind (the RPC itself is proven on a real Postgres)."""
+    db.table("pur_settings").insert({
+        "org_id": org, "approval_threshold_cents": cents, "previous_threshold_cents": previous, "threshold_changed_at": changed_at,
+    }).execute()
+
+
+def test_settings_default_then_read(h):
     s = Scope(h.db, CFG, ORG_A)
-    assert settings.get_settings(s) == {"approval_threshold_cents": None, "persisted": False}
-    r = h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": 500_00}, headers=h.admin)
-    assert r.status_code == 200 and r.json()["data"] == {"approval_threshold_cents": 50000, "persisted": True}
-    again = h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": 900_00}, headers=h.admin)
-    assert again.json()["data"]["approval_threshold_cents"] == 90000 and len(s.rows("settings", order_col="org_id")) == 1
+    assert settings.get_settings(s) == {"approval_threshold_cents": None, "persisted": False, "threshold_changed_at": None, "cooldown_until": None}
+    put_threshold(h.db, 90_000, changed_at="2026-10-14T12:00:00+00:00")
     got = h.client.get("/api/purchasing/settings", headers=h.as_("user")).json()["data"]
-    assert got["approval_threshold_cents"] == 90000 and got["approve_permission"] == "purchasing.approve"
-    cleared = h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": None}, headers=h.admin)
-    assert cleared.json()["data"]["approval_threshold_cents"] is None
-    assert h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": -1}, headers=h.admin).status_code == 422
+    assert got["approval_threshold_cents"] == 90000 and got["is_approver"] is False and "approve_permission" not in got
+    assert got["cooldown_until"] == "2026-10-14T12:10:00+00:00"
+    assert h.client.get("/api/purchasing/settings", headers=h.as_("approver")).json()["data"]["is_approver"] is True
+
+
+def test_changing_the_threshold_goes_through_the_audited_rpc_and_needs_an_approver(h):
+    h.db.set_rpc_data("pur_set_threshold", {"status": "ok"})
+    r = h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": 500_00}, headers=h.as_("approver"))
+    assert r.status_code == 200
+    name, params = h.db.rpc_calls[-1]
+    assert name == "pur_set_threshold" and params == {"p_org": ORG_A, "p_user": ROLES["approver"]["uid"], "p_cents": 50000}
+    assert h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": None}, headers=h.as_("admin-approver")).status_code == 200
+    assert h.db.rpc_calls[-1][1]["p_cents"] is None
+    assert h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": -1}, headers=h.as_("approver")).status_code == 422
+
+
+@pytest.mark.parametrize("role", ["user", "admin", "org-b-admin", "cross-org-approver", "cross-org-admin-approver"])
+def test_only_an_approver_of_THIS_org_may_change_the_threshold(h, role):
+    """An org admin who is not an approver, or an approver of another org only, is refused -- before any RPC."""
+    r = h.client.put("/api/purchasing/settings", json={"approval_threshold_cents": 10**9}, headers=h.as_(role))
+    assert r.status_code == 403 and r.json()["error"]["code"] == "sem_permissao_limite" and h.db.rpc_calls == []
+
+
+def test_approver_management_is_admin_only_audited_and_org_scoped(h):
+    h.db.set_rpc_data("pur_set_approver", {"status": "ok"})
+    r = h.client.post("/api/purchasing/approvers", json={"user_id": ID}, headers=h.admin)
+    assert r.status_code == 201
+    assert h.db.rpc_calls[-1] == ("pur_set_approver", {"p_org": ORG_A, "p_actor": ROLES["admin"]["uid"], "p_user": ID, "p_grant": True})
+    assert h.client.delete(f"/api/purchasing/approvers/{ID}", headers=h.admin).status_code == 200
+    assert h.db.rpc_calls[-1][1]["p_grant"] is False and h.db.rpc_calls[-1][1]["p_org"] == ORG_A
+    listed = h.client.get("/api/purchasing/approvers", headers=h.admin).json()["data"]
+    assert {a["user_id"] for a in listed} == {ROLES["approver"]["uid"], ROLES["admin-approver"]["uid"]}  # org A only; B's grants invisible
+    assert h.client.post("/api/purchasing/approvers", json={"user_id": ID, "org_id": ORG_B}, headers=h.admin).status_code == 422
+    assert h.client.post("/api/purchasing/approvers", json={"user_id": "nope"}, headers=h.admin).status_code == 422
 
 
 def _approve(h, role):
@@ -235,19 +272,48 @@ def test_no_threshold_means_an_approver_or_admin_approves_any_value(h, role):
 )
 def test_above_the_threshold_only_a_permission_holder_approves(h, role, total, expected):
     seed_order(h.db, status="draft", total=total)
-    settings.set_threshold(Scope(h.db, CFG, ORG_A), 50_000)
+    put_threshold(h.db, 50_000)
     r = _approve(h, role)
     assert r.status_code == expected
     if expected == 403:
         assert r.json()["error"]["code"] in {"aprovacao_acima_do_limite", "sem_permissao_aprovar"}
 
 
+@pytest.mark.parametrize("role", ["cross-org-approver", "cross-org-admin-approver"])
+def test_a_grant_in_another_org_never_approves_here(h, role):
+    """B3: the approver list is per org -- being an approver in org B grants nothing in org A (the global-permission hole)."""
+    seed_order(h.db, status="draft", total=100)
+    put_threshold(h.db, 50)
+    r = _approve(h, role)
+    if role == "cross-org-approver":
+        assert r.status_code == 403 and r.json()["error"]["code"] == "sem_permissao_aprovar" and h.db.rpc_calls == []
+    else:  # an org-A admin may approve below the limit by role, but ABOVE it needs an org-A approver
+        assert r.status_code == 403 and r.json()["error"]["code"] == "aprovacao_acima_do_limite" and h.db.rpc_calls == []
+
+
+def test_the_rpc_is_told_whether_the_actor_may_exceed_the_limit(h):
+    seed_order(h.db, status="draft", total=100)
+    _approve(h, "approver")
+    assert h.db.rpc_calls[-1][1]["p_actor_can_exceed"] is True
+    _approve(h, "admin")
+    assert h.db.rpc_calls[-1][1]["p_actor_can_exceed"] is False
+
+
+@pytest.mark.parametrize("code,status", [("aprovacao_acima_do_limite", 403), ("limite_em_carencia", 409)])
+def test_the_rpcs_limit_and_cooldown_refusals_reach_the_caller(h, code, status):
+    seed_order(h.db, status="draft", total=100)
+    h.db.set_rpc_data("pur_transition", {"status": "refused", "code": code})
+    r = h.client.post(f"/api/purchasing/orders/{ORDER}/approve", headers=h.as_("approver"))
+    assert r.status_code == status and r.json()["error"]["code"] == code
+
+
 def test_a_host_can_let_org_admins_approve_above_the_threshold(purchasing_schema_cache):
     h = build_harness(PurchasingConfig(schema=CFG.schema, admin_approves_above_threshold=True))
     seed_order(h.db, status="draft", total=50_001)
-    settings.set_threshold(Scope(h.db, CFG, ORG_A), 50_000)
+    put_threshold(h.db, 50_000)
     h.db.set_rpc_data("pur_transition", {"status": "ok", "order_id": ORDER})
     assert h.client.post(f"/api/purchasing/orders/{ORDER}/approve", headers=h.as_("admin")).status_code == 200
+    assert h.db.rpc_calls[-1][1]["p_actor_can_exceed"] is True
     assert h.client.post(f"/api/purchasing/orders/{ORDER}/approve", headers=h.as_("user")).status_code == 403
 
 

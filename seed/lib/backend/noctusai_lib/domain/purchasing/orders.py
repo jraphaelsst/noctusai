@@ -3,9 +3,12 @@
 The RPCs are the authority (row lock on the order + every write in one transaction); Python resolves the supplier
 snapshot, shapes the payload, decides WHO may approve, and maps refusals onto HTTP errors.
 
-Approval rule (roadmap W3): approving needs `is_admin` or the `purchasing.approve` permission. An order whose total is
-ABOVE the org's `approval_threshold_cents` needs the permission itself (an org admin without the grant is refused,
-unless the host opted in with `PurchasingConfig.admin_approves_above_threshold`). No threshold set => no limit.
+Approval rule (roadmap W3): approving needs `is_admin` or membership in THIS org's approver list (`pur_approvers`,
+org-scoped -- never a global permission). An order whose total is ABOVE the org's `approval_threshold_cents` needs an
+approver (an org admin who is not one is refused, unless the host opted in with
+`PurchasingConfig.admin_approves_above_threshold`). No threshold set => no limit. `check_can_approve` is the friendly
+pre-check; the AUTHORITY is `pur_transition`, which re-judges the limit (and the post-change cooldown) under the order's
+row lock, so a concurrent edit that raises the total cannot slip past a stale Python read.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import re
 from typing import Any, Mapping, Optional
 
 from . import settings as settings_svc
-from ._common import Scope, first, qty_str
+from ._common import Scope, first, qty_str, rpc as _rpc
 from .errors import (
     APROVACAO_ACIMA_DO_LIMITE,
     FORNECEDOR_INVALIDO,
@@ -26,19 +29,6 @@ from .errors import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _rpc(s: Scope, name: str, params: dict) -> dict:
-    """Call a purchasing RPC and unwrap its jsonb verdict; a refusal raises, an unknown shape is loud."""
-    resp = s.db.rpc(s.cfg.rpc(name), params).execute()
-    payload = getattr(resp, "data", None)
-    if isinstance(payload, list):
-        payload = payload[0] if payload else None
-    if not isinstance(payload, dict) or "status" not in payload:
-        raise RuntimeError(f"purchasing RPC {name} answered an unexpected payload: {payload!r}")
-    if payload["status"] == "refused":
-        raise from_refusal(payload)
-    return payload
 
 
 # ─── supplier ────────────────────────────────────────────────────────────────
@@ -150,17 +140,23 @@ def check_can_approve(
 ) -> None:
     """Raise 403 unless this caller may approve `order` (see the module docstring)."""
     if not (is_admin or can_approve):
-        raise forbidden(SEM_PERMISSAO_APROVAR, f"Aprovar pedidos exige a permissão {s.cfg.approve_permission} ou ser administrador.")
+        raise forbidden(SEM_PERMISSAO_APROVAR, "Aprovar pedidos exige ser aprovador desta organização ou administrador.")
     above = threshold is not None and int(order["total_cents"]) > threshold
     if above and not can_approve and not (is_admin and s.cfg.admin_approves_above_threshold):
         raise forbidden(
             APROVACAO_ACIMA_DO_LIMITE,
-            f"Pedidos acima do limite de aprovação exigem a permissão {s.cfg.approve_permission}.",
+            "Pedidos acima do limite de aprovação exigem um aprovador desta organização.",
         )
 
 
-def _transition(s: Scope, order_id: Any, action: str, *, user_id: Optional[str], reason: Optional[str] = None) -> dict:
-    _rpc(s, "transition", {"p_org": s.org_id, "p_order_id": str(order_id), "p_action": action, "p_user": user_id, "p_reason": reason})
+def _transition(
+    s: Scope, order_id: Any, action: str, *, user_id: Optional[str], reason: Optional[str] = None, actor_can_exceed: bool = False
+) -> dict:
+    _rpc(
+        s, "transition",
+        {"p_org": s.org_id, "p_order_id": str(order_id), "p_action": action, "p_user": user_id, "p_reason": reason,
+         "p_actor_can_exceed": actor_can_exceed},
+    )
     return get_order(s, order_id)
 
 
@@ -169,7 +165,9 @@ def approve_order(s: Scope, order_id: Any, *, user_id: Optional[str], is_admin: 
     if order is None:
         raise not_found("Pedido de compra")
     check_can_approve(s, order, is_admin=is_admin, can_approve=can_approve, threshold=settings_svc.threshold_cents(s))
-    return _transition(s, order_id, "approve", user_id=user_id)
+    # `can_exceed` is what the RPC enforces under the lock: an approver, or an admin when the host opted in.
+    can_exceed = can_approve or (is_admin and s.cfg.admin_approves_above_threshold)
+    return _transition(s, order_id, "approve", user_id=user_id, actor_can_exceed=can_exceed)
 
 
 def send_order(s: Scope, order_id: Any, *, user_id: Optional[str] = None) -> dict:

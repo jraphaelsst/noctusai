@@ -8,6 +8,7 @@ import { createItemsHooks } from '../items/hooks';
 import { createPartiesHooks } from '../parties/hooks';
 import { createPurchasingHooks } from './hooks';
 import { PurchaseApproveButton } from './PurchaseApproveButton';
+import { PurchaseApproversManager } from './PurchaseApproversManager';
 import { PurchaseOrderEditor } from './PurchaseOrderEditor';
 import { PurchaseOrdersTable } from './PurchaseOrdersTable';
 import { PurchaseReceiptsList } from './PurchaseReceiptsList';
@@ -343,5 +344,57 @@ describe('PurchaseOrderEditor', () => {
     await user.type(screen.getByLabelText('Custo unit. (R$)'), '1');
     await user.click(screen.getByRole('button', { name: 'Salvar rascunho' }));
     expect(await screen.findByText('Só é possível editar um pedido em rascunho.')).toBeInTheDocument();
+  });
+});
+
+describe('PurchaseApproversManager', () => {
+  const U1 = '11111111-1111-4111-8111-111111111111';
+  const U2 = '22222222-2222-4222-8222-222222222222';
+  const row = (user_id: string) => ({ org_id: 'o', user_id, granted_by: null, granted_at: '2026-10-14T10:00:00Z' });
+
+  it('lists the org approvers (named from members), adds by picking and removes', async () => {
+    const user = userEvent.setup();
+    const api = mount((h) => <PurchaseApproversManager hooks={h} currentUserId={U1} members={[{ id: U1, label: 'Ana' }, { id: U2, label: 'Beto' }]} />, { '/approvers': { data: [row(U1)] } });
+    const r = await screen.findByTestId('approver-row');
+    expect(r).toHaveTextContent('Ana');
+    expect(r).toHaveTextContent('você');
+    api.post.mockResolvedValue({ data: [row(U1), row(U2)] });
+    await user.selectOptions(screen.getByLabelText('Usuário'), U2);
+    await user.click(screen.getByRole('button', { name: 'Adicionar aprovador' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/purchasing/approvers', { user_id: U2 }));
+    expect(await screen.findAllByTestId('approver-row')).toHaveLength(2);
+    api.delete.mockResolvedValue({ data: [row(U2)] });
+    await user.click(within(screen.getAllByTestId('approver-row')[0]).getByRole('button', { name: 'Remover' }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/purchasing/approvers/${U1}`));
+    await waitFor(() => expect(screen.getAllByTestId('approver-row')).toHaveLength(1));
+  });
+
+  it('without members the admin types the id; a malformed id never reaches the API; a refusal renders its pt-BR copy', async () => {
+    const user = userEvent.setup();
+    const api = mount((h) => <PurchaseApproversManager hooks={h} />, { '/approvers': { data: [] } });
+    expect(await screen.findByText('Nenhum aprovador cadastrado.')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('ID do usuário'), 'nope');
+    await user.click(screen.getByRole('button', { name: 'Adicionar aprovador' }));
+    expect(screen.getByText('Informe o ID (UUID) do usuário.')).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
+    api.post.mockRejectedValue(new ApiError(422, 'x', { error: { code: 'usuario_invalido', message: 'x' } }));
+    await user.clear(screen.getByLabelText('ID do usuário'));
+    await user.type(screen.getByLabelText('ID do usuário'), U1);
+    await user.click(screen.getByRole('button', { name: 'Adicionar aprovador' }));
+    expect(await screen.findByText('Usuário inválido.')).toBeInTheDocument();
+  });
+
+  it('read failure offers a retry; canManage=false never calls the API', async () => {
+    const api = makeApi();
+    api.get.mockRejectedValueOnce(new Error('rede caiu')).mockResolvedValue({ data: [row(U1)] });
+    const Wrapper = wrapperFor();
+    const user = userEvent.setup();
+    render(<Wrapper><PurchaseApproversManager hooks={createPurchasingHooks(api)} /></Wrapper>);
+    expect(await screen.findByText(/rede caiu/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+    expect(await screen.findByTestId('approver-row')).toBeInTheDocument();
+    cleanup();
+    const api2 = mount((h) => <PurchaseApproversManager hooks={h} canManage={false} />);
+    expect(api2.get).not.toHaveBeenCalled();
   });
 });

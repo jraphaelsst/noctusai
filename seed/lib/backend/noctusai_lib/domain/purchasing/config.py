@@ -11,8 +11,6 @@ from typing import Any, Optional
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
-#: The named permission that may approve a purchase order (grant via `noctusai_lib.domain.permissions`).
-APPROVE_PERMISSION = "purchasing.approve"
 #: Default AP category (KB PATTERNS/finance/dre-structure.md section 2a).
 DEFAULT_CATEGORY_HINT = "Mercadorias / insumos para revenda"
 
@@ -29,9 +27,8 @@ class PurchasingConfig:
         with_items: emit `item_id -> <items_prefix>items(id)` and have the RPC verify the item belongs to the org.
         with_inventory: emit `warehouse_id -> <inventory_prefix>warehouses(id)`; the warehouse (and an item on every
             line) become REQUIRED because a receipt posts stock. False => no stock leg.
-        approve_permission: the permission name an approver must hold.
-        admin_approves_above_threshold: when True an org admin may approve ABOVE the threshold without holding
-            `approve_permission` (default False: above the threshold only a permission holder approves).
+        admin_approves_above_threshold: when True an org admin may approve ABOVE the threshold without being in the
+            org's approver list (`pur_approvers`; default False: above the threshold only an approver approves).
         default_category_hint: the finance category (by name) AP entries land on.
         org_id_expr: SQL expression the authenticated own-org policies compare `org_id` to.
             Unset => `public.current_org_id_for('<schema>')`.
@@ -45,7 +42,6 @@ class PurchasingConfig:
     items_prefix: str = "itm_"
     with_inventory: bool = True
     inventory_prefix: str = "inv_"
-    approve_permission: str = APPROVE_PERMISSION
     admin_approves_above_threshold: bool = False
     default_category_hint: str = DEFAULT_CATEGORY_HINT
     org_id_expr: Optional[str] = None
@@ -54,8 +50,6 @@ class PurchasingConfig:
         for label in ("schema", "table_prefix", "parties_prefix", "items_prefix", "inventory_prefix"):
             if not _IDENT.match(getattr(self, label) or ""):
                 raise ValueError(f"PurchasingConfig.{label} must be a bare lowercase identifier, got {getattr(self, label)!r}")
-        if not (self.approve_permission or "").strip():
-            raise ValueError("PurchasingConfig.approve_permission must be non-empty")
         if self.org_id_expr is None:
             object.__setattr__(self, "org_id_expr", f"public.current_org_id_for('{self.schema}')")
         elif not self.org_id_expr.strip():
@@ -85,15 +79,15 @@ class PurchasingConfig:
 class PurchasingContext:
     """What every handler needs, resolved by the host's `resolve_context`.
 
-    `is_admin` and `can_approve` are decided SERVER-SIDE (the trusted org-role resolver and the permission repo
-    `has_permission(user, cfg.approve_permission)`); never from `user_metadata`.
+    `is_admin` is decided SERVER-SIDE (the trusted role in the SELECTED org); never from `user_metadata`. Whether the
+    caller is an APPROVER is NOT host-supplied: the router reads `pur_approvers` for `(org_id, user_id)` itself, so
+    approval authority can only come from this organ's own org-scoped list.
     """
 
     db: Any
     org_id: str
     user_id: str
     is_admin: bool = False
-    can_approve: bool = False
 
 
-__all__ = ["APPROVE_PERMISSION", "DEFAULT_CATEGORY_HINT", "PurchasingConfig", "PurchasingContext"]
+__all__ = ["DEFAULT_CATEGORY_HINT", "PurchasingConfig", "PurchasingContext"]

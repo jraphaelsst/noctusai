@@ -116,6 +116,32 @@ describe('writes', () => {
     expect(onReceived).toHaveBeenCalledTimes(2);
   });
 
+  it('approvers: list and add/remove seed the cache, and refresh the settings read (is_approver may have changed)', async () => {
+    const api = makeApi();
+    const client = makeClient();
+    const row = (user_id: string) => ({ org_id: 'o', user_id, granted_by: null, granted_at: '' });
+    api.get.mockResolvedValue({ data: [row('u1')] });
+    api.post.mockResolvedValue({ data: [row('u1'), row('u2')] });
+    api.delete.mockResolvedValue({ data: [row('u2')] });
+    const hooks = createPurchasingHooks(api);
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => ({ q: hooks.usePurchaseApprovers(), m: hooks.usePurchaseApproverMutations() }), { wrapper: wrapperFor(client) });
+    await waitFor(() => expect(result.current.q.data).toHaveLength(1));
+    await act(async () => void (await result.current.m.add.mutateAsync('u2')));
+    expect(api.post).toHaveBeenCalledWith('/api/purchasing/approvers', { user_id: 'u2' });
+    await waitFor(() => expect(result.current.q.data).toHaveLength(2));
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['purchasing', 'settings'] });
+    await act(async () => void (await result.current.m.remove.mutateAsync('u1')));
+    expect(api.delete).toHaveBeenCalledWith('/api/purchasing/approvers/u1');
+    await waitFor(() => expect(result.current.q.data).toEqual([row('u2')]));
+  });
+
+  it('a disabled approvers hook never calls the API', () => {
+    const api = makeApi();
+    renderHook(() => createPurchasingHooks(api).usePurchaseApprovers(false), { wrapper: wrapperFor() });
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
   it('settings: read, then write the threshold (null clears) and seed the cache', async () => {
     const api = makeApi();
     const client = makeClient();
@@ -134,6 +160,8 @@ describe('error mapping', () => {
   it('maps stable codes to pt-BR and falls back to the server message', () => {
     const coded = new ApiError(403, 'x', { error: { code: 'aprovacao_acima_do_limite', message: 'x' } });
     expect(purchasingErrorMessage(coded)).toContain('limite de aprovação');
+    expect(purchasingErrorMessage(new ApiError(409, 'x', { error: { code: 'limite_em_carencia', message: 'x' } }))).toContain('carência');
+    expect(purchasingErrorMessage(new ApiError(403, 'x', { error: { code: 'sem_permissao_limite', message: 'x' } }))).toContain('aprovador');
     expect(purchasingErrorMessage(new ApiError(500, 'boom', {}))).toContain('boom');
     expect(purchasingErrorMessage(new Error('rede'))).toBe('rede');
   });

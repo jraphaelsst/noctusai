@@ -33,9 +33,14 @@ from .config import PurchasingConfig
 from .types import OrderStatus, values
 
 #: Every organ table (unprefixed), in dependency order. The generator and isolation tests iterate this.
-PURCHASING_TABLES: tuple[str, ...] = ("settings", "counters", "orders", "order_lines", "receipts", "receipt_lines")
+PURCHASING_TABLES: tuple[str, ...] = ("settings", "approvers", "settings_log", "counters", "orders", "order_lines", "receipts", "receipt_lines")
 
-RPC_NAMES: tuple[str, ...] = ("save_order", "transition", "receive")
+RPC_NAMES: tuple[str, ...] = ("save_order", "transition", "receive", "set_threshold", "set_approver")
+
+#: After a threshold change, approvals of orders above the LOWEST threshold in force in the window are refused.
+APPROVAL_COOLDOWN_MINUTES = 10
+
+_BIGINT_MAX = "9223372036854775807"
 
 #: SQLSTATE carrying a business refusal out of a nested block.
 REFUSAL_SQLSTATE = "PU001"
@@ -71,15 +76,67 @@ def _tables(cfg: PurchasingConfig, s: str) -> list[str]:
     item_ref = f" REFERENCES {s}.{cfg.items_table}(id) ON DELETE RESTRICT" if cfg.with_items else ""
     sections = [
         (
-            "Org settings: the approval threshold. NULL = no threshold (an approver may approve any value).",
+            "Org settings: the approval threshold. NULL = no threshold (an approver may approve any value). "
+            "`previous_threshold_cents` / `threshold_changed_at` drive the post-change approval cooldown "
+            "(written ONLY by the set_threshold RPC).",
             "settings",
             f"""
 CREATE TABLE IF NOT EXISTS {s}.{t['settings']} (
     org_id                  UUID PRIMARY KEY,
     approval_threshold_cents BIGINT CHECK (approval_threshold_cents IS NULL OR approval_threshold_cents >= 0),
+    previous_threshold_cents BIGINT CHECK (previous_threshold_cents IS NULL OR previous_threshold_cents >= 0),
+    threshold_changed_at    TIMESTAMPTZ,
     updated_by              UUID,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {s}.{t['settings']} ADD COLUMN IF NOT EXISTS previous_threshold_cents BIGINT;
+ALTER TABLE {s}.{t['settings']} ADD COLUMN IF NOT EXISTS threshold_changed_at TIMESTAMPTZ;
+""",
+        ),
+        (
+            "Approvers of THIS org (org-scoped: a grant here never reaches another org). Managed by org admins through "
+            "the set_approver RPC; `can_approve` is membership in this table for the selected org.",
+            "approvers",
+            f"""
+CREATE TABLE IF NOT EXISTS {s}.{t['approvers']} (
+    org_id      UUID NOT NULL,
+    user_id     UUID NOT NULL,
+    granted_by  UUID,
+    granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, user_id)
+);
+""",
+        ),
+        (
+            "Append-only audit of approval-governing changes (threshold changes, approver grants / revocations). "
+            "UPDATE / DELETE / TRUNCATE are refused by trigger.",
+            "settings_log",
+            f"""
+CREATE TABLE IF NOT EXISTS {s}.{t['settings_log']} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN ('threshold', 'approver_added', 'approver_removed')),
+    actor_id        UUID,
+    subject_user_id UUID,
+    old_cents       BIGINT,
+    new_cents       BIGINT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_{t['settings_log']}_org ON {s}.{t['settings_log']} (org_id, created_at);
+CREATE OR REPLACE FUNCTION {s}.{t['settings_log']}_append_only() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+    RAISE EXCEPTION '{t['settings_log']} is append-only' USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;
+DROP TRIGGER IF EXISTS {t['settings_log']}_no_update ON {s}.{t['settings_log']};
+CREATE TRIGGER {t['settings_log']}_no_update BEFORE UPDATE OR DELETE ON {s}.{t['settings_log']}
+    FOR EACH ROW EXECUTE FUNCTION {s}.{t['settings_log']}_append_only();
+DROP TRIGGER IF EXISTS {t['settings_log']}_no_truncate ON {s}.{t['settings_log']};
+CREATE TRIGGER {t['settings_log']}_no_truncate BEFORE TRUNCATE ON {s}.{t['settings_log']}
+    FOR EACH STATEMENT EXECUTE FUNCTION {s}.{t['settings_log']}_append_only();
 """,
         ),
         (
@@ -242,6 +299,7 @@ GRANT EXECUTE ON FUNCTION {s}.{name}({sig}) TO service_role;"""
 def _rpcs(cfg: PurchasingConfig, s: str) -> str:
     t = {name: cfg.table(name) for name in PURCHASING_TABLES}
     orders, lines, receipts, rlines, counters = (f"{s}.{t[k]}" for k in ("orders", "order_lines", "receipts", "receipt_lines", "counters"))
+    settings_t, approvers_t, log_t = (f"{s}.{t[k]}" for k in ("settings", "approvers", "settings_log"))
     n = {name: cfg.rpc(name) for name in RPC_NAMES}
 
     party_check = (
@@ -365,10 +423,13 @@ END;""",
     )
 
     transition = _secdef(
-        s, n["transition"], "p_org UUID, p_order_id UUID, p_action TEXT, p_user UUID, p_reason TEXT", "UUID, UUID, TEXT, UUID, TEXT",
+        s, n["transition"],
+        "p_org UUID, p_order_id UUID, p_action TEXT, p_user UUID, p_reason TEXT, p_actor_can_exceed BOOLEAN DEFAULT false",
+        "UUID, UUID, TEXT, UUID, TEXT, BOOLEAN",
         f"""
 DECLARE
     v_code TEXT; v_detail TEXT; v_order {orders}%ROWTYPE; v_target TEXT; v_from TEXT[];
+    v_thr BIGINT; v_prev BIGINT; v_chg TIMESTAMPTZ; v_low BIGINT;
 """,
         f"""
 BEGIN
@@ -392,6 +453,22 @@ BEGIN
         {_refuse('transicao_invalida')}
     END IF;
     IF p_action = 'approve' THEN
+        -- The limit is judged HERE, under the order's row lock, against the order's CURRENT total (a concurrent PUT that
+        -- raised it has either committed before this lock was taken or waits for it); the threshold row is share-locked
+        -- so a concurrent threshold change cannot slip between the read and the write.
+        SELECT approval_threshold_cents, previous_threshold_cents, threshold_changed_at INTO v_thr, v_prev, v_chg
+            FROM {settings_t} WHERE org_id = p_org FOR SHARE;
+        IF FOUND THEN
+            IF v_thr IS NOT NULL AND v_order.total_cents > v_thr AND NOT COALESCE(p_actor_can_exceed, false) THEN
+                {_refuse('aprovacao_acima_do_limite')}
+            END IF;
+            IF v_chg IS NOT NULL AND v_chg > now() - interval '{APPROVAL_COOLDOWN_MINUTES} minutes' THEN
+                v_low := LEAST(COALESCE(v_thr, {_BIGINT_MAX}), COALESCE(v_prev, {_BIGINT_MAX}));
+                IF v_order.total_cents > v_low THEN
+                    {_refuse('limite_em_carencia')}
+                END IF;
+            END IF;
+        END IF;
         UPDATE {orders} SET status = 'approved', approved_by = p_user, approved_at = now(), updated_at = now() WHERE id = v_order.id;
     ELSIF p_action = 'send' THEN
         UPDATE {orders} SET status = 'sent', sent_at = now(), updated_at = now() WHERE id = v_order.id;
@@ -491,8 +568,72 @@ BEGIN
 {_handler()}
 END;""",
     )
+    max_ = _BIGINT_MAX
+    set_threshold = _secdef(
+        s, n["set_threshold"], "p_org UUID, p_user UUID, p_cents BIGINT", "UUID, UUID, BIGINT",
+        f"""
+DECLARE
+    v_code TEXT; v_detail TEXT; v_row {settings_t}%ROWTYPE; v_prev BIGINT;
+""",
+        f"""
+BEGIN
+    IF p_cents IS NOT NULL AND p_cents < 0 THEN
+        {_refuse('valor_invalido')}
+    END IF;
+    INSERT INTO {settings_t} (org_id) VALUES (p_org) ON CONFLICT (org_id) DO NOTHING;
+    SELECT * INTO v_row FROM {settings_t} WHERE org_id = p_org FOR UPDATE;
+    IF v_row.approval_threshold_cents IS NOT DISTINCT FROM p_cents THEN
+        RETURN jsonb_build_object('status', 'replayed');
+    END IF;
+    IF v_row.threshold_changed_at IS NOT NULL AND v_row.threshold_changed_at > now() - interval '{APPROVAL_COOLDOWN_MINUTES} minutes' THEN
+        v_prev := NULLIF(LEAST(COALESCE(v_row.previous_threshold_cents, {max_}), COALESCE(v_row.approval_threshold_cents, {max_})), {max_});
+    ELSE
+        v_prev := v_row.approval_threshold_cents;
+    END IF;
+    UPDATE {settings_t} SET approval_threshold_cents = p_cents, previous_threshold_cents = v_prev,
+        threshold_changed_at = now(), updated_by = p_user, updated_at = now() WHERE org_id = p_org;
+    INSERT INTO {log_t} (org_id, kind, actor_id, old_cents, new_cents)
+        VALUES (p_org, 'threshold', p_user, v_row.approval_threshold_cents, p_cents);
+    RETURN jsonb_build_object('status', 'ok');
+{_handler()}
+END;""",
+    )
+
+    set_approver = _secdef(
+        s, n["set_approver"], "p_org UUID, p_actor UUID, p_user UUID, p_grant BOOLEAN", "UUID, UUID, UUID, BOOLEAN",
+        """
+DECLARE
+    v_code TEXT; v_detail TEXT; v_n INTEGER;
+""",
+        f"""
+BEGIN
+    IF p_user IS NULL THEN
+        {_refuse('usuario_invalido')}
+    END IF;
+    IF COALESCE(p_grant, false) THEN
+        INSERT INTO {approvers_t} (org_id, user_id, granted_by) VALUES (p_org, p_user, p_actor) ON CONFLICT (org_id, user_id) DO NOTHING;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        IF v_n = 0 THEN
+            RETURN jsonb_build_object('status', 'replayed');
+        END IF;
+        INSERT INTO {log_t} (org_id, kind, actor_id, subject_user_id) VALUES (p_org, 'approver_added', p_actor, p_user);
+    ELSE
+        DELETE FROM {approvers_t} WHERE org_id = p_org AND user_id = p_user;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        IF v_n = 0 THEN
+            RETURN jsonb_build_object('status', 'replayed');
+        END IF;
+        INSERT INTO {log_t} (org_id, kind, actor_id, subject_user_id) VALUES (p_org, 'approver_removed', p_actor, p_user);
+    END IF;
+    RETURN jsonb_build_object('status', 'ok');
+{_handler()}
+END;""",
+    )
+    # The pre-cooldown 5-argument `transition` would stay callable beside the new one (CREATE OR REPLACE with another
+    # signature adds an OVERLOAD) and approve with no limit check: drop it so only the guarded function exists.
+    drop_legacy = f"DROP FUNCTION IF EXISTS {s}.{n['transition']}(UUID, UUID, TEXT, UUID, TEXT);"
     return "\n\n".join(
-        ["-- Row-locked purchasing writes: lock the ORDER, then write everything in ONE transaction.", save_order, transition, receive]
+        ["-- Row-locked purchasing writes: lock the ORDER, then write everything in ONE transaction.", drop_legacy, save_order, transition, receive, set_threshold, set_approver]
     )
 
 
@@ -511,4 +652,4 @@ def purchasing_migration(cfg: PurchasingConfig, schema: str) -> str:
     return "\n\n".join(sections) + "\n"
 
 
-__all__ = ["PURCHASING_TABLES", "REFUSAL_SQLSTATE", "RPC_NAMES", "purchasing_migration"]
+__all__ = ["APPROVAL_COOLDOWN_MINUTES", "PURCHASING_TABLES", "REFUSAL_SQLSTATE", "RPC_NAMES", "purchasing_migration"]
