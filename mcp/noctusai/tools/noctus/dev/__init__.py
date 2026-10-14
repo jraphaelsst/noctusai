@@ -117,6 +117,7 @@ def register_all(server) -> None:
     from . import scaffold_mcp_tool
     from . import scaffold_memory
     from . import scaffold_migration
+    from . import render_organ_migration
     from . import scaffold_seed_adapter
     from . import scan_remediation_markers
     from . import scan_live_state_claims
@@ -266,6 +267,7 @@ def register_all(server) -> None:
     scaffold_mcp_tool.register(server)
     scaffold_memory.register(server)
     scaffold_migration.register(server)
+    render_organ_migration.register(server)
     scaffold_seed_adapter.register(server)
     scan_remediation_markers.register(server)
     scan_live_state_claims.register(server)

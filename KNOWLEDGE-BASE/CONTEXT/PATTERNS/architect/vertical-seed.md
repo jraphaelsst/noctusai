@@ -78,6 +78,22 @@ products/<market>/clients/<client-slug>/
 
 Procedure for building a market product from a vertical seed: `../../GUIDES/new-product.md § Market products from a vertical seed`.
 
+## Mounting an organ: one call
+
+An organ is bound to a product by `noctusai_seed.organs`, not by a per-product 3-file binding (the commerce host's ~180 LOC is the pre-seam shape):
+
+```python
+from noctusai_seed.organs import mount_finance
+finance = mount_finance(schema="erp", auth_dependency=get_current_user_org,
+                        get_admin_client=get_admin_client, get_core_client=lambda: _db.get_core_client())
+app = create_product_app(..., organs=[finance])   # routers + upload-size overrides wired by construction
+```
+
+- `mount_finance` builds the finance + reconciliation routers with house auth (org staff reads, `is_org_admin` writes/exports, strict 401), a default storage backend, and the attachment/statement `max_body_path_overrides`; `create_product_app(organs=[...])` mounts them and merges the overrides (product entries win). `get_storage` / `get_charge_operations` are optional injections (no gateway => 503, the declared not-configured state).
+- `ORGAN_REGISTRY` (`name -> OrganSpec`: migration generator, generated header, overrides, FE route) is where ERP organs register; `mount_organs([...])` flattens mounted organs.
+- Migration: `noctus.dev.render_organ_migration product=<p> organ=finance [confirm=True]` writes `NNN_<organ>.sql` (collision-safe number, header-found so idempotent, asleep products refused). Pin it in the product's tests with `noctusai_lib.testing.organs.assert_organ_migration_current(product_dir, "finance", schema=...)`.
+- FE: the seed shell has no manifest-driven route mechanism; the host adds one lazy route (`/financeiro/*`, gated by `status_pagina`) once the FE organ exports from `@noctusai/lib` (`NOC-REMEDIATE[finance-fe-route]` in `organs.py`).
+
 ## Composes with
 
 `../../03-SEED-ARCHITECTURE.md` · `seed-canonical-defaults.md` · `products-consume-canonical-organs.md` · `../backend/seed-fake-real-adapter.md` · `../backend/tenancy-license-gate.md` · `approved-cutover.md` · `project-execution.md`.

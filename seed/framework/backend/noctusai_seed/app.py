@@ -27,7 +27,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from fastapi import FastAPI
 
@@ -86,6 +86,7 @@ def create_product_app(
     product_slug: Optional[str] = None,
     license_checker: Optional[LicenseChecker] = None,
     org_selection_store: Optional[OrgSelectionStore] = None,
+    organs: Sequence[Any] = (),
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -204,6 +205,10 @@ def create_product_app(
             via ``MissingProdConfigError`` listing every missing key; no-op in
             dev. Opt-in (default None) — the deploy-config-contract seam every
             product inherits. See ``KB § PATTERNS/deploy-config-contract.md``.
+        organs: ``noctusai_seed.organs.MountedOrgan`` instances (e.g. ``mount_finance(...)``).
+            Their routers are mounted after ``routers`` and their upload-size overrides
+            are merged into ``max_body_path_overrides`` (the product's own entries win).
+            Default ``()`` — unchanged behaviour. See ``noctusai_seed/organs.py``.
         max_body_path_overrides: Per-route request-body-size cap, layered on
             top of the app-wide ``settings.max_body_bytes`` (default 1 MB —
             right for webhooks, wrong for uploads). ``{"<path-prefix-or-*-pattern>":
@@ -503,6 +508,20 @@ def create_product_app(
     app.state.license_checker = _license_checker
     app.state.org_selection_store = _selection_store
 
+    # 7a. Organs seam: merge each mounted organ's upload-size overrides under the product's own.
+    _organ_routers: list = []
+    if organs:
+        from noctusai_seed.organs import mount_organs
+
+        _organ_routers, _organ_overrides = mount_organs(organs)
+        if _organ_overrides:
+            _base = (
+                max_body_path_overrides
+                if max_body_path_overrides is not None
+                else getattr(settings, "max_body_path_overrides", None)
+            )
+            max_body_path_overrides = {**_organ_overrides, **(_base or {})}
+
     # 8. Apply shared configuration (Sentry, CORS, exceptions, middleware, rate limiting)
     _effective_max_body_path_overrides = configure_app(
         app, settings, limiter=limiter,
@@ -551,6 +570,9 @@ def create_product_app(
     if routers:
         for router in routers:
             app.include_router(router)
+
+    for router in _organ_routers:
+        app.include_router(router)
 
     # 10a. Boot-time refusal: every route mounted above (9 + 10) whose
     #      endpoint declares an UploadFile parameter MUST have a matching
