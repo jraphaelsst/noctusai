@@ -256,3 +256,15 @@ The DRE stays **accrual by `competence_month`** (Lei 6.404 art. 187 §1; NBC TG 
 
 ### 10.4 Guidance (D47) — part of the API, not only UI copy
 `GET /api/finance/reports/dre` returns, besides lines/subtotals: `help` (per line: plain-language pt-BR "o que é", example, source citation) · `warnings[]` (`{code, severity, message, action}` — e.g. `categoria_sem_linha_dre`, `das_aguardando_classificacao`, `escolha_provisoria`, `limite_microentidade_excedido`, `receita_sem_categoria`) · `accountant_alerts[]` (when a professional is needed, and why). `GET /api/finance/accountant-checklist` returns every provisional choice + open question with sources (from `fin_dre_settings` + `ACCOUNTANT-QUESTIONS.md` content) and links the DRE CSV + entries CSV + ledger OFX exports.
+
+### 10.5 Accountant review (2026-10-14 — D52–D56; overrides 10.2/10.3 where they differ)
+Canonical sources: `KB § PATTERNS/finance/dre-structure.md`.
+1. `fin_dre_settings.tax_regime` (`mei` · `simples` · `presumido` · `unknown`, default `unknown`, prefilled from the commerce store profile when present). It drives every default below; `unknown` raises `regime_nao_informado` (replaces `das_aguardando_classificacao`).
+2. DAS: Simples → `deductions` + `das_split_irpj_csll bool default false` (true ⇒ the IRPJ/CSLL share, by the Anexo "percentual de repartição" the store enters, goes to `income_taxes`); MEI → `administrative_expenses`; Presumido → revenue taxes `deductions`, IRPJ/CSLL `income_taxes`.
+3. `installment_interest_line` default `gross_revenue` (detail row "Juros de parcelamento"); the separate `<order>:interest` receivable stays. **Fix `domain/commerce/finance_bridge.book_receivable`** — today it books one receivable "interest included"; book principal + `:interest` separately.
+4. Fees: `gateway_fee_line` (`selling_expenses`), `anticipation_fee_line` (`financial_expenses`), `chargeback_fee_line` (`selling_expenses`), `chargeback_line` (`deductions`) — all provisional.
+5. **Simples tax-base report** (`GET /api/finance/reports/simples-base`), separate from the DRE: receita bruta = sales + installment interest, commission NOT netted, minus cancellations/refunds; juros de mora excluded; cash basis (receipt) until 2026-12-31, **invoice/competence basis from 2027-01-01** (Res. CGSN 190/2026 art. 2 §8, arts. 77–78 revoked). Helps the owner check the PGDAS-D number; never files anything.
+6. **Managerial view**: contribution margin (variable = deductions + cost_of_sales + variable selling; fixed = administrative + the rest) from the same rows; totals reconcile to `net_result`. Categories carry `behavior` (`variable` · `fixed`, default by line).
+7. MEI stores: statement titled "DRE gerencial (MEI não é obrigado a ter DRE)". Transfers never enter the DRE. Profit distribution / owner withdrawals are equity movements, not DRE lines (open — confirm with the contador).
+8. No stock control ⇒ `cost_of_sales` = purchases in the month; warning `cmv_por_compras`.
+9. Default categories → lines: the D56 table (`KB § PATTERNS/finance/dre-structure.md §2a`).
