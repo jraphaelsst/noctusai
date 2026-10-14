@@ -1191,6 +1191,21 @@ def _fonte_mais_autoritativa(
     return autoridade.mais_autoritativo(campo_seed, origem_proposto, row.get(campo.origem))
 
 
+def _completa_o_presente(item_key: str, presente: Any, proposto: Any) -> bool:
+    """Is `proposto` the SAME issuing body as `presente`, plus the UF that
+    `presente` lacks? (`SSP` → `SSP/SP`.) Only the issuer has this shape: a
+    ficha routinely writes the acronym alone, the RG prints it with its UF.
+    Anything else that differs is a real disagreement, never a completion."""
+    if item_key != "rg_orgao_expedidor" or _vazio(presente) or _vazio(proposto):
+        return False
+    if idf.uf_do_orgao(str(presente)) is not None:
+        return False
+    uf = idf.uf_do_orgao(str(proposto))
+    if uf is None:
+        return False
+    return idf.iguais("orgao_expedidor", f"{presente}/{uf}", proposto)
+
+
 def _valor_humano(row: Optional[dict], campo: CampoExtraido) -> bool:
     """A person typed (`origem='manual'`) or vouched for (`confirmado_por`
     set) this field's current value — the automatic resolver never
@@ -1706,6 +1721,49 @@ def aplicar_campos_ao_cliente(
                         logger.info(
                             "%s do cliente %s: leitura já rejeitada por um humano — "
                             "ignorada (sem novo conflito)", campo.item_key, cliente_id,
+                        )
+                        continue
+                    if _fonte_mais_autoritativa(
+                        campo, atual, origem, _rotulo
+                    ) and _completa_o_presente(campo.item_key, presente, valor):
+                        # 🔴 Not a disagreement: the authoritative document
+                        # states the SAME issuer the lower source wrote, with
+                        # the UF that source left off ("SSP" from the ficha,
+                        # "SSP/SP" printed on the RG — deal 876). The fuller
+                        # printed value takes over, audited, no conflict.
+                        origem_anterior = atual.get(campo.origem)
+                        updates[campo.item_key] = valor
+                        updates[campo.origem] = origem
+                        updates[campo.documento_id] = (
+                            str(documento_id) if documento_id else None
+                        )
+                        updates[campo.em] = now
+                        updates[campo.confirmado_por] = None
+                        updates[campo.confirmado_em] = None
+                        aplicados[campo.item_key] = True
+                        campo_conflitos.registrar_decisao_automatica(
+                            client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                            campo.item_key,
+                            valor_anterior=presente,
+                            origem_anterior=origem_anterior,
+                            valor_proposto=valor,
+                            origem_proposto=origem,
+                            confianca_proposta=confianca,
+                            fonte_tabela=fonte_tabela,
+                            fonte_id=fonte_id,
+                            decisao=divergencia_resolucao.Decisao(
+                                vencedor="proposto",
+                                regra=REGRA_FONTE_AUTORITATIVA,
+                                motivo=(
+                                    f"{origem} imprime o mesmo órgão com a UF que "
+                                    f"{origem_anterior} omitiu — o valor completo do "
+                                    "documento autoritativo prevalece."
+                                ),
+                                requer_humano=False,
+                            ),
+                            evidencia_ids=[
+                                i for i in (documento_id, atual.get(campo.documento_id)) if i
+                            ],
                         )
                         continue
                     if _fonte_mais_autoritativa(campo, atual, origem, _rotulo):

@@ -713,7 +713,34 @@ def _orgao_extenso(norm: str) -> Optional[str]:
         m = _UF_ROTULO_RE.search(janela)
         if m:
             return f"{acronimo}/{m.group(1)}"
+        uf = _uf_do_cabecalho(norm[max(0, idx - _ORGAO_EXTENSO_CABECALHO_WINDOW) : idx])
+        if uf is not None:
+            return f"{acronimo}/{uf}"
     return None
+
+
+#: How far BEFORE a spelled-out issuer the state header may sit. The old SP
+#: RG (and most state RGs) prints its header as a stack — "ESTADO DE SÃO
+#: PAULO / SECRETARIA DA SEGURANÇA PÚBLICA / INSTITUTO DE IDENTIFICAÇÃO ..."
+#: — so the UF is printed as the state's NAME on the line ABOVE the issuer,
+#: never as a sigla after it (live: deal 876, 2026-10-14, the signed contract
+#: says SSP-SP and the RG carries exactly this header).
+_ORGAO_EXTENSO_CABECALHO_WINDOW = 40
+_CABECALHO_ESTADO_RE = re.compile(r"ESTADO D[OAE] ([A-Z ]+?)[\s:;,.\-/]*$")
+
+
+def _uf_do_cabecalho(antes: str) -> Optional[str]:
+    """The UF of an "ESTADO DE <NOME>" header that IMMEDIATELY precedes the
+    spelled-out issuer (only separators between), or None. Anchored to the
+    end of `antes` so a state named anywhere else — an address, a tribunal
+    ("TRIBUNAL DE JUSTICA DO ESTADO DE SAO PAULO" further up) — never
+    lends its UF to an issuer it is not the header of."""
+    from noctusai_lib.integrations.documents.address import normalizar_uf
+
+    m = _CABECALHO_ESTADO_RE.search(antes)
+    if m is None:
+        return None
+    return normalizar_uf(m.group(1).strip())
 
 
 def _orgao_valido(norm: str, m: "re.Match[str]") -> Optional[str]:

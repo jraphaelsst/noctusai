@@ -475,12 +475,36 @@ class TestOrgaoSpelledOutByFullName:
             "INSTITUTO DE IDENTIFICACAO RICARDO GUMBLETON DAUNT\n"
             "REGISTRO GERAL 52.179.965-X\n"
         )
-        # The SP old-model RG's own header carries BOTH long forms — the
-        # SSP one comes first in the document, and `_orgao_extenso` returns
-        # on its FIRST match (longest-phrase-first, not document-order), so
-        # whichever of the two actually has a UF within its own window wins.
-        # Neither has one here (no UF is adjacent to either phrase), so both
-        # fail their own UF search — nothing is resolved, honestly.
+        # The SP old-model RG's header names the state ON THE LINE ABOVE the
+        # issuer ("ESTADO DE SAO PAULO / SECRETARIA DA SEGURANCA PUBLICA"):
+        # that header is the printed UF of the SSP line it heads. The IIRGD
+        # line is headed by the SSP line, not by a state, so it resolves
+        # nothing on its own — SSP/SP is what the RG states (deal 876's
+        # signed contract: "SSP-SP").
+        assert find_rg_orgao(texto) == ("SSP/SP", "alta")
+
+    def test_the_deal_876_rg_transcription_resolves_to_ssp_sp(self):
+        texto = (
+            "REPÚBLICA FEDERATIVA DO BRASIL: \n"
+            "ESTADO DE SÃO PAULO: \n"
+            "SECRETARIA DA SEGURANÇA PÚBLICA: \n"
+            "INSTITUTO DE IDENTIFICAÇÃO RICARDO GUMBLETON DAUNT: \n"
+            "CARTEIRA DE IDENTIDADE: \n"
+            "REGISTRO GERAL: 52.179.965-X 2 via\n"
+            "NATURALIDADE: OSASCO - SP\n"
+        )
+        assert find_rg_orgao(texto, "52.179.965-X") == ("SSP/SP", "alta")
+
+    def test_a_state_named_elsewhere_does_not_head_the_issuer(self):
+        texto = (
+            "TRIBUNAL DE JUSTICA DO ESTADO DE SAO PAULO\n"
+            "COMARCA DE COTIA\n"
+            "SECRETARIA DA SEGURANCA PUBLICA\n"
+        )
+        assert find_rg_orgao(texto) == (None, "nenhuma")
+
+    def test_an_unknown_state_name_in_the_header_resolves_nothing(self):
+        texto = "ESTADO DE NARNIA\nSECRETARIA DA SEGURANCA PUBLICA\n"
         assert find_rg_orgao(texto) == (None, "nenhuma")
 
     def test_the_old_rg_institute_long_form_with_an_adjacent_uf(self):

@@ -127,3 +127,27 @@ class TestEnderecoConsistente:
         assert svc.ORIGENS_ENDERECO_DECLARADO == frozenset({"ficha_cadastral"})
         assert svc.ORIGENS_ENDERECO_COMPROVANTE
         assert svc.ORIGENS_ENDERECO_DECLARADO.isdisjoint(svc.ORIGENS_ENDERECO_COMPROVANTE)
+
+
+class TestOrgaoSemUf:
+    """Deal 876: the ficha wrote Cilene's issuer as `SSP`; her RG prints the
+    SP header, read as `SSP/SP`. Same body, the RG adds the UF — the
+    authoritative, fuller value takes over without a conflict."""
+
+    def test_rg_completes_the_fichas_issuer_with_its_uf(self, client, scoped):
+        cid = _novo_cliente(scoped)
+        _aplicar(scoped, cid, "ficha_cadastral", uuid4(), rg="19.131.047-5", rg_orgao_expedidor="SSP")
+        rg_doc = uuid4()
+        _, abertos = _aplicar(scoped, cid, "rg", rg_doc, rg="19.131.047-5", rg_orgao_expedidor="SSP/SP")
+        row = _cliente(scoped, cid)
+        assert abertos == [] and _pendentes(scoped) == []
+        assert row["rg_orgao_expedidor"] == "SSP/SP"
+        assert row["rg_orgao_expedidor_origem"] == "rg"
+        assert row["rg_orgao_expedidor_documento_id"] == str(rg_doc)
+
+    def test_a_different_issuer_is_still_a_conflict(self, client, scoped):
+        cid = _novo_cliente(scoped)
+        _aplicar(scoped, cid, "ficha_cadastral", uuid4(), rg="19.131.047-5", rg_orgao_expedidor="SSP")
+        _aplicar(scoped, cid, "rg", uuid4(), rg="19.131.047-5", rg_orgao_expedidor="IFP/RJ")
+        assert _cliente(scoped, cid)["rg_orgao_expedidor"] == "SSP"
+        assert [c["campo"] for c in _pendentes(scoped)] == ["rg_orgao_expedidor"]
