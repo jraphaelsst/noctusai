@@ -30,6 +30,7 @@ import {
   useWhatsAppRealtime,
 } from "@/hooks/useWhatsAppChats";
 import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system";
+import { JuliaThreadHeader } from "@/components/lais/JuliaThreadHeader";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ function useWhatsAppThreadsAdapter(connectionId: string | null) {
       lastMessageAt: chat.last_message_at,
       lastDirection: chat.last_direction,
       unreadCount: chat.unread_count,
+      // Opaque to the organ; read back by `JuliaThreadHeader` (header slot).
+      meta: { agente_pausado: chat.agente_pausado === true },
     })),
     // `isPending` alone, NOT `isPending || isFetching` — deliberately the
     // opposite of the usual isLoading advice here. ChatWindow's
@@ -145,6 +148,7 @@ function buildWhatsAppAdapter(autoReplyEnabled: boolean): ChatWindowAdapter {
     useLoadMore: useWhatsAppLoadMoreAdapter,
     useReadState: useWhatsAppReadStateAdapter,
     useAutoReply: (connectionId) => useWhatsAppAutoReplyAdapter(connectionId, autoReplyEnabled),
+    ThreadHeaderExtra: JuliaThreadHeader,
   };
 }
 

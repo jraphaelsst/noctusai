@@ -11,7 +11,7 @@
  * `LAIS_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { Bot, MessagesSquare, Settings2 } from "lucide-react";
+import { Bot, MessagesSquare, Settings2, Sparkles } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -24,7 +24,7 @@ export const LAIS_ICON: LucideIcon = Bot;
 
 interface LaisPage extends NavItemWithRoute {
   icon: LucideIcon;
-  /** status_pagina key gating the nav item (migration 252). */
+  /** status_pagina key gating the nav item (migrations 252 / 259). */
   route: string;
 }
 
@@ -41,6 +41,12 @@ export const LAIS_PAGES = {
     href: "/lais/configuracoes",
     icon: Settings2,
     route: "lais_configuracoes",
+  },
+  agente: {
+    name: "Agente",
+    href: "/lais/agente",
+    icon: Sparkles,
+    route: "lais_agente",
   },
 } as const satisfies Record<string, LaisPage>;
 

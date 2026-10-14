@@ -29,7 +29,7 @@ describe.each([
     expect(allItems(groups).some((i) => i.href === "/whatsapp-chat")).toBe(false);
   });
 
-  it("has the Lais group directly after Principal, with Conversas + Configurações", () => {
+  it("has the Lais group directly after Principal, with Conversas + Configurações + Agente", () => {
     const keys = groups.map((g) => g.key);
     expect(keys.indexOf(LAIS_NAV_KEY)).toBe(keys.indexOf("principal") + 1);
     const lais = byKey(groups, LAIS_NAV_KEY)!;
@@ -37,14 +37,15 @@ describe.each([
     expect(lais.items.map((i) => [i.name, i.href])).toEqual([
       ["Conversas", "/lais/conversas"],
       ["Configurações", "/lais/configuracoes"],
+      ["Agente", "/lais/agente"],
     ]);
   });
 });
 
 describe("route keys", () => {
-  it("Lais items are gated by lais_conversas / lais_configuracoes (migration 252)", () => {
+  it("Lais items are gated by lais_conversas / lais_configuracoes / lais_agente (migrations 252, 259)", () => {
     const lais = byKey(NAV_GROUPS as AnyGroup[], LAIS_NAV_KEY)!;
-    expect(lais.items.map((i) => i.route)).toEqual(["lais_conversas", "lais_configuracoes"]);
+    expect(lais.items.map((i) => i.route)).toEqual(["lais_conversas", "lais_configuracoes", "lais_agente"]);
   });
 
   it("the fallback is NAV_GROUPS minus every route key (derived, cannot drift)", () => {

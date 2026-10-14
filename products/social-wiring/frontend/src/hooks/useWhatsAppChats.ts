@@ -58,6 +58,8 @@ export interface ChatSummary {
   last_read_at: string | null;
   archived: boolean;
   pinned: boolean;
+  /** Julia (lais contract 11.4): true while a human has taken the chat over. */
+  agente_pausado?: boolean;
 }
 
 /** Full message in the thread. */
@@ -232,6 +234,65 @@ export function useSetAutoReply(connId: string | null) {
       api.put<AutoReplyResult>(`${CONN_BASE}/${connId}/auto-reply`, { enabled }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: CONN_KEY });
+    },
+  });
+}
+
+// ─── Julia (lais contract 11.4 + LGPD deletion) ──────────────────────────────
+
+export interface ChatAgentePausadoResult {
+  chat_id: string;
+  agente_pausado: boolean;
+}
+
+/** Pause / resume Julia on ONE chat (admin only — the server enforces it). */
+export function useSetChatAgentePausado(connId: string | null) {
+  const qc = useQueryClient();
+
+  return useMutation<ChatAgentePausadoResult, unknown, { chatId: string; pausado: boolean }>({
+    mutationFn: ({ chatId, pausado }) =>
+      api.patch<ChatAgentePausadoResult>(
+        `${CONN_BASE}/${connId}/chats/${encodeURIComponent(chatId)}/agente`,
+        { pausado },
+      ),
+    onSuccess: (res) => {
+      // The realtime `chat.upsert` carries the same flag; patching here too just
+      // makes the chip flip without waiting for the stream round-trip.
+      qc.setQueryData<Page<ChatSummary>>(chatsKey(connId), (prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((c) =>
+                c.chat_id === res.chat_id ? { ...c, agente_pausado: res.agente_pausado } : c,
+              ),
+            }
+          : prev,
+      );
+    },
+  });
+}
+
+export interface ApagarDadosResult {
+  sw_mensagens: number;
+  sw_contatos: number;
+  agents_ok: boolean;
+  agents_apagou: boolean;
+}
+
+/** LGPD deletion on a lead's request (admin only). */
+export function useApagarDadosChat(connId: string | null) {
+  const qc = useQueryClient();
+
+  return useMutation<ApagarDadosResult, unknown, { chatId: string }>({
+    mutationFn: async ({ chatId }) => {
+      const res = await api.post<{ data: ApagarDadosResult }>(
+        `/api/lais/agente/conexoes/${connId}/chats/${encodeURIComponent(chatId)}/apagar-dados`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: chatsKey(connId) });
     },
   });
 }
