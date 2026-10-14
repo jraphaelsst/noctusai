@@ -54,16 +54,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_itm_items_sku ON commerce.itm_items (org_id
 CREATE INDEX IF NOT EXISTS idx_itm_items_org_name ON commerce.itm_items (org_id, lower(name));
 CREATE INDEX IF NOT EXISTS idx_itm_items_category ON commerce.itm_items (category_id);
 CREATE INDEX IF NOT EXISTS idx_itm_items_gtin ON commerce.itm_items (org_id, gtin) WHERE gtin IS NOT NULL;
--- Other organs (contracts lines, ...) reference an item through the composite FK (org_id, item_id) -> (org_id, id), which
--- Postgres only accepts against a UNIQUE (org_id, id). Added by a guarded DO so a table created by an earlier render
--- of this generator (without it) gains it on re-apply -- `ADD CONSTRAINT IF NOT EXISTS` does not exist.
-DO $items_uq$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'itm_items_org_id_id_key' AND conrelid = 'commerce.itm_items'::regclass) THEN
-        ALTER TABLE commerce.itm_items ADD CONSTRAINT itm_items_org_id_id_key UNIQUE (org_id, id);
-    END IF;
-END
-$items_uq$;
 ALTER TABLE commerce.itm_items ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "itm_items_select_own_org" ON commerce.itm_items;
 CREATE POLICY "itm_items_select_own_org" ON commerce.itm_items FOR SELECT TO authenticated
