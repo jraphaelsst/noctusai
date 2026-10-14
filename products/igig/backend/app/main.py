@@ -71,6 +71,9 @@ from app.routers.api_keys_router import router as api_keys_router
 # docstring for the "why not just call resolve_credential from inside
 # it" answer (it would recurse).
 from noctusai_lib.config.credentials import register_credential_override
+from noctusai_seed.organs import mount_finance
+from app.dependencies import get_admin_client, get_current_user_org, _db
+from app.storage import get_storage
 from noctusai_lib.security.api_keys import make_local_credential_override
 from app.services.api_keys_store import API_KEY_SPECS, build_igig_api_key_store
 
@@ -124,6 +127,21 @@ _MAX_BODY_PATH_OVERRIDES = {
     "/api/contratos/*/marcar-assinado": 30 * 1024 * 1024,  # 30 MB
 }
 
+# Seed finance organ, mounted IN PARALLEL to the live agency finance (`/api/financeiro`, migration 011,
+# NUMERIC money, untouched). The organ owns `/api/finance/*` and its own `fin_*` tables (no collision with
+# `igig.fatura*`). The FE page is labelled "Financeiro (novo)" and gated 'desenvolvimento'.
+# NOC-REMEDIATE[igig-finance-cutover]: importer plan (roadmap erp-seed-2026-10 E10) -- map igig.fatura/fatura_item
+# + custos into fin_entries (NUMERIC reais -> integer cents, cliente -> fin party), verify totals against the
+# live Financeiro page, then flip 'financeiro-novo' to 'producao', retire /api/financeiro + pages/Financeiro.tsx
+# and rename the nav entry -- 2026-10-14.
+finance_organ = mount_finance(
+    schema="igig",
+    auth_dependency=get_current_user_org,
+    get_admin_client=get_admin_client,
+    get_core_client=lambda: _db.get_core_client(),
+    get_storage=get_storage,
+)
+
 app = create_product_app(
     name="IgIg",
     schema="igig",
@@ -164,6 +182,7 @@ app = create_product_app(
         # Chaves de API (Integrações) — GET/PUT/DELETE /api/settings/api-keys*.
         api_keys_router,
     ],
+    organs=[finance_organ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,

@@ -38,6 +38,7 @@ Módulos (na ordem do menu):
 6. **Calendário** — pautas (conteúdos planejados) com copy, direção de vídeo e peças.
 7. **Distribuição** — agendar/publicar nas redes, métricas, BI de eficiência.
 8. **Financeiro** — fechamento do mês (faturas dos contratos ativos + excedentes), envio da fatura por e-mail, DRE por cliente, inadimplência (atualizada todo dia às 06:00), relatórios.
+   - **Financeiro (novo)** (`/financeiro-novo`, ainda em desenvolvimento, só dono/admin/dev veem): o módulo financeiro padrão da plataforma (contas a receber/pagar, fluxo de caixa, DRE, conciliação, cadastros, contador), rodando em paralelo. Ele ainda NÃO tem os dados do Financeiro atual (faturas dos contratos) — use o Financeiro atual para o fechamento do mês até a migração.
 9. **Integrações** — e-mail (SMTP/Gmail), fontes de lead (WAHA, Meta Lead Ads), canais de publicação.
 10. **Automações** — regras "ao entrar na etapa" e "SLA estourado" nos dois quadros.
 11. **Custos** — funções e profissionais com custo/hora (alimenta orçamento, BI e DRE).

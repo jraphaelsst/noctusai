@@ -27,6 +27,8 @@ const Calendario = lazy(() => import("@/pages/Calendario"));
 const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 const Integracoes = lazy(() => import("@/pages/Integracoes"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
+// Seed finance organ, in parallel to the live Financeiro (NOC-REMEDIATE[igig-finance-cutover], backend main.py).
+const FinanceiroNovo = lazy(() => import("@/pages/FinanceiroNovo"));
 const Comercial = lazy(() => import("@/pages/Comercial"));
 const Orcamentos = lazy(() => import("@/pages/Orcamentos"));
 const ProdutosServicos = lazy(() => import("@/pages/ProdutosServicos"));
@@ -79,6 +81,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Wallet,
     items: [
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
+      { name: "Financeiro (novo)", href: "/financeiro-novo", icon: Wallet, route: "financeiro-novo" },
       { name: "Custos", href: "/custos", icon: Boxes, route: "custos" },
     ],
   },
@@ -130,6 +133,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Wallet,
     items: [
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
+      { name: "Financeiro (novo)", href: "/financeiro-novo", icon: Wallet },
       { name: "Custos", href: "/custos", icon: Boxes },
     ],
   },
@@ -178,6 +182,7 @@ export default createProductApp({
     { path: "/calendario", component: Calendario },
     { path: "/distribuicao", component: Distribuicao },
     { path: "/financeiro", component: Financeiro },
+    { path: "/financeiro-novo/*", component: FinanceiroNovo },
     { path: "/integracoes", component: Integracoes },
     { path: "/automacoes", component: Automacoes },
     { path: "/custos", component: Custos },
