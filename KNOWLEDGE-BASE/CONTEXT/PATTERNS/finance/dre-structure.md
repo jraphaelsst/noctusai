@@ -102,6 +102,7 @@ SC COSIT 94/2025: https://www.normaslegais.com.br/legislacao/solucao-de-consulta
 3. Chargebacks/fraud — deduction vs outras despesas.
 4. Buyer-paid installment interest — receita bruta vs receita financeira (accounting line only; tax answer is settled).
 5. DAS whole vs split.
+6. Chargeback on a split charge (platform fee, commerce D27) — does Asaas pull the split back from the recipient, or does the store's account bear all of it? Not in the Asaas docs (re-checked 2026-10-14); asked to Asaas. **Refunds are settled:** a partial refund returns the split share proportionally via `splitRefunds` (owner decision 2026-10-14, `charges._asaas_split_refunds`); a full refund reverses the split on Asaas' side.
 
 The question list for the contador lives in `projects/commerce-seed-p4/ACCOUNTANT-QUESTIONS.md`.
 

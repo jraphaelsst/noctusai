@@ -286,6 +286,53 @@ def test_asaas_refund_full_remaining_sends_the_computed_value() -> None:
     assert result.amount == Money(10000) and result.status == "pending"  # accepted, no refund row listed yet
 
 
+def _split(**over: Any) -> dict:
+    base = {"id": "split_1", "walletId": "w_platform", "percentualValue": 10.0, "totalValue": 9.65, "status": "DONE"}
+    base.update(over)
+    return base
+
+
+def _refund_bodies(payment: dict) -> tuple[AsaasChargeOperations, list[dict]]:
+    bodies: list[dict] = []
+
+    def refund(request: httpx.Request) -> httpx.Response:
+        bodies.append(json_lib.loads(request.content))
+        return httpx.Response(200, content=json_lib.dumps(payment).encode())
+
+    return _asaas({"GET /v3/payments/pay_1": _ok(payment), "POST /v3/payments/pay_1/refund": refund}), bodies
+
+
+def test_asaas_partial_refund_takes_the_split_share_back_proportionally() -> None:
+    ops, bodies = _refund_bodies(_payment(split=[_split()]))
+    ops.refund_charge("pay_1", amount=Money(5000), description="d")
+    # half of R$100 refunded -> half of the R$9,65 split (floored to the cent) comes back from the platform
+    assert bodies == [{"value": 50.0, "description": "d", "splitRefunds": [{"id": "split_1", "value": 4.82}]}]
+
+
+def test_asaas_split_shares_are_cumulative_so_a_stepwise_full_refund_returns_the_whole_split() -> None:
+    # 50 already refunded took 4,82 back; the remaining 50 takes 9,65 - 4,82 = 4,83, never a drifting 4,82
+    ops, bodies = _refund_bodies(
+        _payment(split=[_split()], refunds=[{"status": "DONE", "value": 50.0, "dateCreated": "2026-10-14 09:00:00"}])
+    )
+    ops.refund_charge("pay_1", amount=None, description="d")
+    assert bodies[0]["value"] == 50.0 and bodies[0]["splitRefunds"] == [{"id": "split_1", "value": 4.83}]
+
+
+def test_asaas_refund_skips_splits_that_moved_no_money_and_sends_none_without_a_live_split() -> None:
+    ops, bodies = _refund_bodies(_payment(split=[_split(status="CANCELLED"), _split(id="split_2", status="REFUSED")]))
+    ops.refund_charge("pay_1", amount=Money(5000), description="d")
+    assert "splitRefunds" not in bodies[0]
+
+
+def test_asaas_refund_with_unknown_split_status_raises_before_calling_out() -> None:
+    seen: list[str] = []
+    ops = _asaas({"GET /v3/payments/pay_1": _ok(_payment(split=[_split(status="NEW_THING")]))}, seen)
+    with pytest.raises(PaymentGatewayError) as exc:
+        ops.refund_charge("pay_1", amount=Money(5000), description="d")
+    assert exc.value.code == "unknown_charge_status"
+    assert seen == ["GET /v3/payments/pay_1"]
+
+
 def _parcelas_routes(refunds_by_payment: dict[str, list[dict]], bodies: list[dict] | None = None, status: str = "RECEIVED"):
     def listing(request: httpx.Request) -> httpx.Response:
         data = [

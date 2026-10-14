@@ -489,8 +489,39 @@ _ASAAS_REFUND_STATUS_MAP: dict[str, Optional[Literal["pending", "done"]]] = {
 }
 
 
+#: `payment.split[].status` (docs.asaas.com/reference/recuperar-uma-unica-cobranca). A split whose transfer
+#: moved (or will move) money to the recipient gives its share back on a refund; the others moved nothing.
+_ASAAS_SPLIT_LIVE = frozenset({"PENDING", "PROCESSING", "PROCESSING_REFUND", "AWAITING_CREDIT", "DONE"})
+_ASAAS_SPLIT_DEAD = frozenset({"CANCELLED", "REFUSED", "REFUNDED", "BLOCKED_BY_VALUE_DIVERGENCE"})
+
+
 def _asaas_money(value: Any) -> Money:
     return Money.from_decimal_reais(Decimal(str(value)))
+
+
+def _asaas_split_refunds(charge: GatewayCharge, value: Money) -> list[dict[str, Any]]:
+    """`splitRefunds` for refunding ``value`` of ``charge``: every live split gives back its share in
+    proportion to the refund (owner decision 2026-10-14). Without it Asaas debits a partial refund from the
+    main account alone, so the store would absorb the whole refund while the platform kept its full fee.
+
+    The share is CUMULATIVE -- ``floor(total * refunded_after / amount) - floor(total * refunded_before /
+    amount)`` -- so rounding never drifts: refunding the whole charge over several partial refunds returns
+    exactly the split's ``totalValue``."""
+    amount = charge.amount.amount_cents
+    before = charge.refunded.amount_cents
+    after = before + value.amount_cents
+    out: list[dict[str, Any]] = []
+    for split in charge.raw.get("split") or []:
+        status = split.get("status")
+        if status in _ASAAS_SPLIT_DEAD:
+            continue
+        if status not in _ASAAS_SPLIT_LIVE:
+            raise _unknown_status("asaas", "split status", status)
+        total = _asaas_money(split["totalValue"]).amount_cents
+        share = total * after // amount - total * before // amount
+        if share > 0:
+            out.append({"id": split["id"], "value": float(Money(share, value.currency).to_decimal())})
+    return out
 
 
 def _asaas_dt(value: Any) -> Optional[_dt.datetime]:
@@ -613,11 +644,11 @@ class AsaasChargeOperations:
         charge = self.get_charge(charge_id_at_gateway)
         value = _check_refund("asaas", charge, amount)  # raises before any refund call
         before = len(charge.refunds)
-        raw = self._gateway._request(
-            "POST",
-            f"/payments/{charge_id_at_gateway}/refund",
-            json={"value": float(value.to_decimal()), "description": description},
-        )
+        body: dict[str, Any] = {"value": float(value.to_decimal()), "description": description}
+        split_refunds = _asaas_split_refunds(charge, value)
+        if split_refunds:
+            body["splitRefunds"] = split_refunds
+        raw = self._gateway._request("POST", f"/payments/{charge_id_at_gateway}/refund", json=body)
         refunds = self._to_refunds(charge_id_at_gateway, raw)
         if len(refunds) > before:
             return refunds[-1]
@@ -668,6 +699,10 @@ class AsaasChargeOperations:
         self, installment_id_at_gateway: str, *, amount: Optional[Money], description: str
     ) -> GatewayRefund:
         # POST /v3/installments/{id}/refund takes only `value` (no description); value omitted = full refund.
+        # NOC-REMEDIATE[commerce-installment-split-refund]: the endpoint takes no `splitRefunds`, so a PARTIAL
+        # parcelamento refund does not return the platform split share proportionally (a single charge does, see
+        # `_asaas_split_refunds`). Remedy: refund the parcelas one by one via /payments/{id}/refund with
+        # splitRefunds -- lands with the installment-level charge model (commerce-installment-dispute, P9).
         whole = self.get_installment(installment_id_at_gateway)
         value = _check_refund("asaas", whole, amount)  # raises before any refund call
         before_refunded = whole.refunded.amount_cents
