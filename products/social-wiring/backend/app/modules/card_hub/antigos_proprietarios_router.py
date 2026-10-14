@@ -16,9 +16,9 @@ from __future__ import annotations
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin_for
 from noctusai_lib.integrations.storage import StorageBackend
 from pydantic import BaseModel, Field
 
@@ -94,8 +94,8 @@ class SincronizarBody(StrictHttpModel):
     atendimento_id: Optional[UUID] = None
 
 
-def _exigir_admin(user) -> None:
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+def _exigir_admin(auth, request) -> None:
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Dispensar os antigos proprietários de um negócio é restrito a administradores.",
@@ -166,11 +166,12 @@ async def dispensar_antigos_route(
     body: DispensaBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """Admin-only (trusted `noctus_users` row, never `user_metadata`) — same
     gate as `PUT …/contratos/{id}/processo-legado`."""
     user, org_id = auth_parts(auth)
-    _exigir_admin(user)
+    _exigir_admin(auth, request)
     return svc.dispensar(
         client, org_id, cliente_id, motivo=body.motivo,
         usuario_id=getattr(user, "id", None), atendimento_id=body.atendimento_id,
@@ -183,9 +184,10 @@ async def reativar_antigos_route(
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     user, org_id = auth_parts(auth)
-    _exigir_admin(user)
+    _exigir_admin(auth, request)
     return svc.reativar(
         client, org_id, cliente_id, usuario_id=getattr(user, "id", None), atendimento_id=atendimento_id
     )

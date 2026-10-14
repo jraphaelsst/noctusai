@@ -247,6 +247,9 @@ class ProductDependencies:
         trusted = self._resolve_platform_role(user)
         if trusted:
             return trusted
+        # org-role-home-ok: B3 decision 2026-10-14 -- this is the caller's HOME-org identity role (no request / selected-org
+        # context exists here, and the cascade above is platform-wide by design). Do NOT use it to authorize an
+        # action in the request's selected org -- use `session.scopes.require_org_admin_for` / `is_org_admin_for`.
         org_role = resolve_org_role(self._db.get_core_client(), getattr(user, "id", None))
         return org_role or "user"
 

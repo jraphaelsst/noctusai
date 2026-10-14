@@ -66,8 +66,11 @@ class _FakeCoreClient:
         return self._sb.from_(name)
 
 
-def _noctus_users_row(user_id: UUID, *, role: str, org_role: str) -> dict:
-    return {"id": str(user_id), "role": role, "org_role": org_role}
+def _noctus_users_row(user_id: UUID, *, role: str, org_role: str, org_id: UUID | None = None) -> dict:
+    row = {"id": str(user_id), "role": role, "org_role": org_role}
+    if org_id is not None:
+        row["org_id"] = str(org_id)  # the TRUSTED home membership (B3: org-admin is decided IN ctx.org_id)
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +184,10 @@ class TestRoleMatrix:
         self.member_id = uuid4()
 
         self.core_rows = [
-            _noctus_users_row(self.platform_admin_id, role="admin", org_role="member"),
-            _noctus_users_row(self.curator_id, role="user", org_role="member"),
-            _noctus_users_row(self.agency_admin_id, role="user", org_role="admin"),
-            _noctus_users_row(self.member_id, role="user", org_role="member"),
+            _noctus_users_row(self.platform_admin_id, role="admin", org_role="member", org_id=self.org_a),
+            _noctus_users_row(self.curator_id, role="user", org_role="member", org_id=self.org_a),
+            _noctus_users_row(self.agency_admin_id, role="user", org_role="admin", org_id=self.org_a),
+            _noctus_users_row(self.member_id, role="user", org_role="member", org_id=self.org_a),
         ]
         self.permission_repo = FakePermissionGrantRepository()
         self.permission_repo.grant(self.curator_id, _PERMISSION)
@@ -284,7 +287,7 @@ class TestCrossOrgDenied:
     def test_org_a_admin_allowed_for_own_org(self):
         org_a = uuid4()
         admin_id = uuid4()
-        core_rows = [_noctus_users_row(admin_id, role="user", org_role="owner")]
+        core_rows = [_noctus_users_row(admin_id, role="user", org_role="owner", org_id=org_a)]
 
         app, session_store, _resolver = _build_app(
             core_rows=core_rows,
@@ -297,6 +300,24 @@ class TestCrossOrgDenied:
         resp = client.get("/org-admin", cookies=cookie)
 
         assert resp.status_code == 200
+
+    def test_home_owner_who_is_member_of_selected_org_denied(self):
+        """B3: owner of HOME org A, session selected org B -> role is decided IN B (fail closed)."""
+        org_home = uuid4()
+        org_b = uuid4()
+        admin_id = uuid4()
+        core_rows = [_noctus_users_row(admin_id, role="user", org_role="owner", org_id=org_home)]
+
+        for target in (None, org_b):
+            app, session_store, _resolver = _build_app(
+                core_rows=core_rows,
+                permission_repo=FakePermissionGrantRepository(),
+                target_org_id=target,
+            )
+            cookie = _cookie_for(session_store, user_id=admin_id, org_id=org_b)
+            resp = TestClient(app).get("/org-admin", cookies=cookie)
+            assert resp.status_code == 403
+            assert resp.json()["detail"]["code"] == "org_admin_required"
 
 
 # ---------------------------------------------------------------------------

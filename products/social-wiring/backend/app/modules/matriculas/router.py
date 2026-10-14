@@ -83,11 +83,12 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
 )
 from fastapi import Path as PathParam
 from fastapi.responses import Response
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin_for
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.primitives.content_disposition import attachment_disposition
@@ -1010,11 +1011,12 @@ async def confirmar_ultima_transferencia_route(
 @router.post("/manutencao/normalizar")
 async def normalizar_corpus_route(
     extracao_id: Optional[UUID] = Query(
-        None, description="Only this extraction. Omitted: every concluded one of the org."
+        None, description="Only this extraction. Omitted: every concluded one of the org.",
     ),
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
     notificador=Depends(get_notification_service),
+    request: Request = None,
 ):
     """Repair the stored corpus without re-transcribing (no LLM cost):
     strip legacy `**`/`<u>` markers (moving every offset with them), heal
@@ -1024,7 +1026,7 @@ async def normalizar_corpus_route(
     🔴 Owner/admin only (trusted `noctus_users` row): it rewrites stored
     transcriptions — the one rewrite migration 154's trigger allows."""
     user, _token, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="A normalização das transcrições é restrita a administradores.",

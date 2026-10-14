@@ -162,6 +162,45 @@ def is_org_admin(
     ) in admin_roles
 
 
+def _auth_parts(auth: Any) -> tuple[Any, Any, Optional[str]]:
+    """``(user_id, org_id, token)`` from either auth shape: the legacy ``(user, token, org_id)``
+    tuple (``make_get_current_user_org``) or an :class:`AuthContext`."""
+    if hasattr(auth, "user_id"):  # AuthContext is a NamedTuple: test the attribute, not `tuple`
+        return auth.user_id, getattr(auth, "org_id", None), getattr(auth, "raw_token", None)
+    user, token, org_id = auth[0], auth[1], auth[2]
+    return getattr(user, "id", None), org_id, token
+
+
+def resolve_org_role_for(core_client: Any, auth: Any, request: Optional[Request] = None) -> str | None:
+    """B3 ctx-shaped wrapper: the caller's role IN the request's SELECTED org (``auth`` = the legacy
+    ``(user, token, org_id)`` tuple or an ``AuthContext``). Fails closed (``None``) when the auth carries no
+    ``org_id`` or the effective org differs -- call sites never hand-assemble user_id/org_id/token/header."""
+    user_id, org_id, token = _auth_parts(auth)
+    if org_id is None:
+        return None
+    return resolve_org_role(
+        core_client, user_id, org_id=org_id, token=token,
+        acting_header=acting_header_of(request) if request is not None else None,
+    )
+
+
+def is_org_admin_for(
+    core_client: Any, auth: Any, request: Optional[Request] = None,
+    *, admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+) -> bool:
+    """B3: admin-equivalent role in the SELECTED org of ``auth`` (see :func:`resolve_org_role_for`)."""
+    return resolve_org_role_for(core_client, auth, request) in admin_roles
+
+
+def require_org_admin_for(
+    core_client: Any, auth: Any, request: Optional[Request], context: str,
+    *, admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+) -> None:
+    """B3: imperative 403 unless admin in the SELECTED org of ``auth``."""
+    if not is_org_admin_for(core_client, auth, request, admin_roles=admin_roles):
+        raise HTTPException(status_code=403, detail=f"{context} restrito a administradores.")
+
+
 def require_org_admin_role(
     core_client: Any,
     user_id: Any,
@@ -409,10 +448,13 @@ __all__ = [
     "CallerRestriction",
     "assure_legacy_admin",
     "is_org_admin",
+    "is_org_admin_for",
     "make_require_org_admin",
+    "require_org_admin_for",
     "require_org_admin_role",
     "require_org_admin_role_assured",
     "require_scopes",
     "resolve_org_membership",
     "resolve_org_role",
+    "resolve_org_role_for",
 ]

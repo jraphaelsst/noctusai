@@ -179,7 +179,7 @@ def _no_untrusted_org_fallback(_user) -> None:
     return None
 
 
-def _trusted_team_role(core, user) -> Optional[str]:
+def _trusted_team_role(core, user, org_id=None, token=None) -> Optional[str]:
     """The caller's role for team management, from `public.noctus_users` only.
 
     `org_role` (owner/admin/manager/...) via `resolve_org_role`; a NoctusAI
@@ -189,7 +189,9 @@ def _trusted_team_role(core, user) -> Optional[str]:
     user_id = getattr(user, "id", None)
     if resolve_platform_admin_role(core, user_id) == "admin":
         return _PLATFORM_ADMIN
-    return resolve_org_role(core, user_id)
+    # B3: when the caller's resolved org is known, the role is the one IN that org (fail closed on a
+    # mismatch) -- not the home-org role.
+    return resolve_org_role(core, user_id, org_id=org_id, token=token)
 
 
 def _require_team_role(role: Optional[str], allowed, detail: str) -> None:
@@ -264,7 +266,7 @@ def _create_team_router(
         """(user, trusted org_id, trusted team role) — 401 unauthenticated,
         403 when the caller has no org membership row."""
         user, _token, org_id = await _get_current_user_org(authorization)
-        role = _trusted_team_role(deps.get_core_client(), user)
+        role = _trusted_team_role(deps.get_core_client(), user, org_id=org_id, token=_token)
         return user, org_id, role
 
     @router.get("")

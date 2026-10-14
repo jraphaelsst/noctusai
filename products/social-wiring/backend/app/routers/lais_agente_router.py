@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import require_org_admin_role
+from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import (
@@ -120,9 +120,11 @@ def get_aviso(auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
 
 
 @router.put("/api/lais/agente/aviso")
-def put_aviso(payload: AvisoUpdate, auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
+def put_aviso(
+    payload: AvisoUpdate, auth: tuple = Depends(get_current_user_org), request: Request = None,
+) -> dict[str, Any]:
     user, _token, _raw = auth
-    require_org_admin_role(get_core_client(), getattr(user, "id", None), "Aviso de privacidade")
+    require_org_admin_for(get_core_client(), auth, request, "Aviso de privacidade")
     if not svc.contem_link(payload.mensagem_inicial):
         raise AppException(
             "link_obrigatorio",
@@ -179,9 +181,10 @@ class ChatAgentePatch(StrictHttpModel):
     pausado: bool
 
 
-def _require_admin(auth: tuple, context: str) -> tuple[Any, UUID]:
+def _require_admin(auth: tuple, request: Optional[Request], context: str) -> tuple[Any, UUID]:
     user, _token, raw_org = auth
-    require_org_admin_role(get_core_client(), getattr(user, "id", None), context)
+    # B3: admin IN the selected org (auth tuple org_id), never the home-org role.
+    require_org_admin_for(get_core_client(), auth, request, context)
     return user, coerce_org_uuid(raw_org)
 
 
@@ -264,11 +267,12 @@ async def put_conexao(
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg=Depends(get_settings),
     waha_factory=Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> dict[str, Any]:
     """The Julia switch. Turning it ON checks every precondition, then takes the 11.1
     snapshot of the WAHA session's chats; if the snapshot cannot be proven complete
     the switch stays OFF (502 ``snapshot_falhou``)."""
-    _user, org_id = _require_admin(auth, "A Julia")
+    _user, org_id = _require_admin(auth, request, "A Julia")
     record = _record_or_404(store, connection_id, org_id, decrypt=True)
     core = get_core_client()
 
@@ -336,11 +340,12 @@ async def put_token(
     auth: tuple = Depends(get_current_user_org),
     cfg=Depends(get_settings),
     build_client=Depends(get_agents_token_client_builder),
+    request: Request = None,
 ) -> Response:
     """Paste the org's agents channel token. It is VALIDATED against agents' status
     route first (``token_invalido`` if refused) and stored Fernet-encrypted; it is
     never returned or logged."""
-    _user, org_id = _require_admin(auth, "O token do agente")
+    _user, org_id = _require_admin(auth, request, "O token do agente")
     token = payload.token.strip()
     try:
         await build_client(token).agent_status(lais.DEFAULT_AGENT_KEY)
@@ -371,9 +376,10 @@ async def patch_chat_agente(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg=Depends(get_settings),
+    request: Request = None,
 ) -> dict[str, Any]:
     """Pause / resume Julia on ONE chat (a human is handling it)."""
-    _user, org_id = _require_admin(auth, "A Julia")
+    _user, org_id = _require_admin(auth, request, "A Julia")
     _record_or_404(store, connection_id, org_id)
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
     if not chat_store.set_agente_pausado(connection_id=connection_id, chat_id=chat_id, pausado=payload.pausado):
@@ -395,10 +401,11 @@ async def post_apagar_dados(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     client_factory=Depends(get_agents_client_factory),
+    request: Request = None,
 ) -> dict[str, Any]:
     """Deletion on request for a chat (M5), for a human who received the request
     through a handoff. Same hook the lead worker runs on "apagar meus dados"."""
-    _user, org_id = _require_admin(auth, "A exclusão de dados")
+    _user, org_id = _require_admin(auth, request, "A exclusão de dados")
     record = _record_or_404(store, connection_id, org_id)
     module = get_conversation_module()
     res = await lais.apagar_dados_do_chat(

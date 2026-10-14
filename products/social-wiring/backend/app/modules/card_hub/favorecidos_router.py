@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
@@ -82,9 +82,10 @@ async def get_favorecido_route(
     favorecido_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     user, org_id = auth_parts(auth)
-    completo = svc.tem_papel_de_escrita(get_core_client(), getattr(user, "id", None))
+    completo = svc.tem_papel_de_escrita(get_core_client(), auth, request)
     return svc.obter(client, org_id, favorecido_id, completo=completo)
 
 
@@ -93,10 +94,11 @@ async def create_favorecido_registro_route(
     body: FavorecidoRegistroCreateBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    svc.exigir_escrita(get_core_client(), usuario_id)
+    svc.exigir_escrita(get_core_client(), auth, request)
     return svc.criar(client, org_id, valores=body.model_dump(), usuario_id=usuario_id)
 
 
@@ -106,10 +108,11 @@ async def patch_favorecido_registro_route(
     body: FavorecidoRegistroPatchBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    svc.exigir_escrita(get_core_client(), usuario_id)
+    svc.exigir_escrita(get_core_client(), auth, request)
     valores = {k: getattr(body, k) for k in body.model_fields_set}
     return svc.atualizar(
         client, org_id, favorecido_id, valores=valores, usuario_id=usuario_id
@@ -121,10 +124,11 @@ async def delete_favorecido_registro_route(
     favorecido_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ):
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    svc.exigir_escrita(get_core_client(), usuario_id)
+    svc.exigir_escrita(get_core_client(), auth, request)
     svc.desativar(client, org_id, favorecido_id, usuario_id=usuario_id)
 
 

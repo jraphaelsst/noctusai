@@ -57,11 +57,14 @@ from noctusai_lib.api.auth.session.scopes import (
     ADMIN_ORG_ROLES,
     CallerRestriction,
     is_org_admin,
+    is_org_admin_for,
     make_require_org_admin,
+    require_org_admin_for,
     require_org_admin_role,
     require_scopes,
     resolve_org_membership,
     resolve_org_role,
+    resolve_org_role_for,
 )
 from noctusai_lib.api.auth.session.redis_store import (
     RedisSessionStore,
@@ -144,6 +147,7 @@ __all__ = [
     "build_api_token_row",
     "hash_token",
     "is_org_admin",
+    "is_org_admin_for",
     "make_api_token_audit_writer",
     "make_default_refresh_fn",
     "make_default_revoke_fn",
@@ -155,7 +159,9 @@ __all__ = [
     "make_token_exchanger",
     "make_token_exchanger_from_settings",
     "mint_token_secret",
+    "require_org_admin_for",
     "require_org_admin_role",
     "require_scopes",
     "resolve_org_role",
+    "resolve_org_role_for",
 ]

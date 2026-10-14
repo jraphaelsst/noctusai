@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
-from noctusai_lib.api.auth.session.scopes import resolve_org_role
+from noctusai_lib.api.auth.session.scopes import resolve_org_role_for
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.integrations.llm.budget import compute_status
 from noctusai_lib.primitives.roles import PRODUCT_ADMIN_ROLES
@@ -71,7 +71,8 @@ async def require_spend_reader(
     if resolve_platform_admin_role(db, ctx.user_id) == "admin":
         papel = "admin"
     else:
-        papel = resolve_org_role(db, ctx.user_id)
+        # B3: the role IN the request's selected org (ctx.org_id), not the home-org role.
+        papel = resolve_org_role_for(db, ctx, request)
         mesma_org = bool(ctx.org_id) and _normalizar_org(str(ctx.org_id)) == alvo
         if not mesma_org or papel not in PRODUCT_ADMIN_ROLES:
             raise HTTPException(status_code=403, detail=_ACESSO_NEGADO)

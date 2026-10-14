@@ -31,11 +31,12 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
 
-from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
+from noctusai_lib.api.auth.session import is_org_admin_for, require_org_admin_for
 from noctusai_lib.primitives.exceptions import ConflictError, ValidationError_
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
@@ -174,6 +175,7 @@ async def vincular_duplicata_route(
     client=Depends(get_imovel_hub_client),
     legal=Depends(get_vinculo_legal),
     notificador=Depends(get_imovel_notification_service),
+    request: Request = None,
 ) -> dict:
     """"É o mesmo imóvel": LINK the manual imóvel to the Vista listing (nothing
     is moved or merged) → `{duplicata, vinculo, legal}`.
@@ -183,7 +185,7 @@ async def vincular_duplicata_route(
     data reconciliation (`status: "ok" | "erro"`); a failure there never undoes
     the link."""
     user, org_id = _auth_parts(auth)
-    require_org_admin_role(get_core_client(), getattr(user, "id", None), "Vincular imóveis")
+    require_org_admin_for(get_core_client(), auth, request, "Vincular imóveis")
     resultado = vinculo_svc.vincular(
         client, org_id, duplicata_id, getattr(user, "id", None), legal=legal
     )
@@ -202,12 +204,13 @@ async def desvincular_imovel_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
     legal=Depends(get_vinculo_legal),
+    request: Request = None,
 ) -> dict:
     """Undo a link exactly (either side's código) → `{vinculo, duplicata,
     legal}`; the pair returns to `pendente`. Admin/owner only; `404
     imovel_nao_vinculado` when the código takes part in no link."""
     user, org_id = _auth_parts(auth)
-    require_org_admin_role(get_core_client(), getattr(user, "id", None), "Desvincular imóveis")
+    require_org_admin_for(get_core_client(), auth, request, "Desvincular imóveis")
     return vinculo_svc.desvincular(
         client, org_id, codigo, getattr(user, "id", None), legal=legal
     )
@@ -651,6 +654,7 @@ async def decidir_conflito_route(
     body: DecidirConflitoImovelBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
+    request: Request = None,
 ) -> dict:
     """Accept (the extracted value lands, confirmed by you) or reject
     (nothing changes). First decision wins (400 on a decided conflict).
@@ -660,7 +664,7 @@ async def decidir_conflito_route(
     replacing a value a human typed is exactly the confirmation that must
     not be any org member's to give."""
     user, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Decidir um conflito de dados é restrito a administradores.",

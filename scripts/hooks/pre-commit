@@ -1044,6 +1044,17 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6g2b. Org-role-without-org_id gate (blocking, only when backend Python changed) ─
+# Keeper `check_org_role_without_org_id` (B3, 2026-10-14): a home-org role read
+# authorizes a request scoped to the SELECTED org. Use `require_org_admin_for` & co.
+if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-org-role-without-org-id --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ORG-ROLE-WITHOUT-ORG-ID check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Decide the role in the request's selected org: noctusai_lib.api.auth.session.require_org_admin_for / is_org_admin_for." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6g3. Migration-SQL security gates (blocking, only when a migration .sql ─
 # is staged) ─ keepers `check_secdef_migration_revokes_execute` +
 # `check_migration_untyped_empty_array` + `KB § PATTERNS/backend/

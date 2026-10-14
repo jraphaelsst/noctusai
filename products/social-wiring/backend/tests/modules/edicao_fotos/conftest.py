@@ -472,7 +472,7 @@ def edicao(client):
 
     overrides = {
         get_current_user_org: _current_user_org,
-        get_role_resolver: lambda: (lambda uid: next(u.roles for u in USERS.values() if u.id == uid)),
+        get_role_resolver: lambda: (lambda uid, **_: next(u.roles for u in USERS.values() if u.id == uid)),
         # Read through the harness so `enable_economico()` can swap ports.
         get_edicao_ports: lambda: harness.ports,
         get_grant_repository: lambda: grants,

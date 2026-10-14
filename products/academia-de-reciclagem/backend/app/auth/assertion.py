@@ -209,7 +209,10 @@ def verify_assertion(
         approved_by = UUID(str(claims["approved_by"]))
     except (ValueError, TypeError) as exc:
         raise AssertionInvalidError("approved_by is not a UUID") from exc
-    role = resolve_org_role(get_core_client(), approved_by)
+    # B3: `approved_by` is ANOTHER user (no request/selection applies to them); the role must be theirs IN
+    # the asserted org (Step 4 pinned it to the resolved token's org) -- a home-org owner who is merely a
+    # member of this org must not be an approver here. Fails closed (None) on a membership mismatch.
+    role = resolve_org_role(get_core_client(), approved_by, org_id=ctx_org_id)
     if role not in WRITE:
         raise ApproverNotAllowedError()
 

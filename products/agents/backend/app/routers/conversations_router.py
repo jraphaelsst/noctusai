@@ -22,7 +22,7 @@ user message, THEN start the task under a turn deadline.
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -68,7 +68,7 @@ from app.routers.studio_agents_router import (
     resolve_agent,
 )
 from app.studio.spec import StudioSpecError, build_studio_spec
-from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
+from noctusai_lib.api.auth.session import AuthContext, resolve_org_role_for
 from noctusai_lib.realtime import create_sse_router
 
 logger = logging.getLogger(__name__)
@@ -239,7 +239,7 @@ def _caller_key(request: Request) -> str:
 
 
 async def _get_readable_conversation(
-    ctx: AuthContext, conversation_id: UUID, conv_store: Any
+    ctx: AuthContext, conversation_id: UUID, conv_store: Any, request: Optional[Request] = None
 ) -> ConversationRecord:
     """Owner OR admin (contract §E.2 "404 unless the caller owns the
     conversation; admins may read")."""
@@ -248,7 +248,7 @@ async def _get_readable_conversation(
     except NotFound:
         # Not the owner (or absent) — fall through to the admin read below.
         logger.debug("agents.conversation.not_owned conversation_id=%s", conversation_id)
-    role = resolve_org_role(get_core_client(), ctx.user_id)
+    role = resolve_org_role_for(get_core_client(), ctx, request)
     if role in ADMIN_ROLES:
         try:
             return conv_store.get(ctx.org_id, conversation_id)
@@ -340,8 +340,9 @@ async def get_conversation(
     store=Depends(get_conversation_store_dep),
     agent_store=Depends(get_agent_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
+    request: Request = None,
 ) -> ConversationOut:
-    record = await _get_readable_conversation(ctx, conversation_id, store)
+    record = await _get_readable_conversation(ctx, conversation_id, store, request)
     return _conversation_out(
         record, _agent_key_for(ctx.org_id, record.agent_id, agent_store, studio_store)
     )
@@ -377,8 +378,9 @@ async def list_messages(
     ctx: AuthContext = Depends(require_member),
     conv_store=Depends(get_conversation_store_dep),
     msg_store=Depends(get_message_store_dep),
+    request: Request = None,
 ) -> MessageListOut:
-    await _get_readable_conversation(ctx, conversation_id, conv_store)
+    await _get_readable_conversation(ctx, conversation_id, conv_store, request)
     records = msg_store.list(ctx.org_id, conversation_id, before=before, limite=limite)
     items = [_message_out(r) for r in records]
     return MessageListOut(items=items, total=len(items))
@@ -910,7 +912,7 @@ async def _resolve_stream_auth(
     ownership/admin access (same shape as social-wiring's
     ``_resolve_stream_auth``; see that module for the pattern's origin)."""
     conversation_id = UUID(request.path_params["conversation_id"])
-    await _get_readable_conversation(ctx, conversation_id, conv_store)
+    await _get_readable_conversation(ctx, conversation_id, conv_store, request)
     return conversation_id
 
 

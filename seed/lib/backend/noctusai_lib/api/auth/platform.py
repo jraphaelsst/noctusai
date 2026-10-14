@@ -33,7 +33,7 @@ from typing import Any, Awaitable, Callable, Optional
 from fastapi import Depends, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
-from noctusai_lib.api.auth.session.scopes import resolve_org_role
+from noctusai_lib.api.auth.session.scopes import resolve_org_role_for
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.domain.permissions.repo import PermissionGrantRepository
 from noctusai_lib.primitives.roles import MANAGE_TEAM_ROLES
@@ -201,7 +201,8 @@ def require_org_admin(
                         "code": "cross_org_denied",
                     },
                 )
-            role = resolve_org_role(get_core_client(), ctx.user_id)
+            # B3: the role IN ctx.org_id (the selected org), not the home-org role.
+            role = resolve_org_role_for(get_core_client(), ctx, request)
             if role not in MANAGE_TEAM_ROLES:
                 raise HTTPException(
                     status_code=403,
@@ -220,7 +221,8 @@ def require_org_admin(
         request: Request = None,
         response: Response = None,
     ) -> AuthContext:
-        role = resolve_org_role(get_core_client(), ctx.user_id)
+        # B3: the role IN ctx.org_id (the selected org), not the home-org role.
+        role = resolve_org_role_for(get_core_client(), ctx, request)
         if role not in MANAGE_TEAM_ROLES:
             raise HTTPException(
                 status_code=403,

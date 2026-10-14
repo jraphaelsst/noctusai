@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException, status
-from noctusai_lib.api.auth.session import resolve_org_role
+from noctusai_lib.api.auth.session import resolve_org_role_for
 from noctusai_lib.config.credentials import resolve_org_credential
 from noctusai_seed.api_keys_router import create_api_keys_router
 
@@ -29,11 +29,11 @@ from app.credentials.org_keys import LLM_API_KEY_SPECS, build_llm_key_store
 from app.dependencies import ADMIN_ROLES, get_core_client, get_current_user_org
 
 
-def _require_admin_gate(user: Any, context: str) -> None:
-    # The trusted `noctus_users.org_role` — never `user_metadata`. (Not
-    # `get_user_role`: its cascade answers `platform_admin` for owners/admins,
+def _require_admin_gate(auth: Any, request: Any, context: str) -> None:
+    # The trusted `noctus_users.org_role` IN the request's selected org (B3) -- never `user_metadata`, never
+    # the home-org role. (Not `get_user_role`: its cascade answers `platform_admin` for owners/admins,
     # which is not a member of `ADMIN_ROLES`.)
-    if resolve_org_role(get_core_client(), getattr(user, "id", None)) not in ADMIN_ROLES:
+    if resolve_org_role_for(get_core_client(), auth, request) not in ADMIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -50,6 +50,6 @@ router = create_api_keys_router(
     store_factory=build_llm_key_store,
     get_current_user_org=get_current_user_org,
     testers=make_llm_key_testers(),
-    require_admin=_require_admin_gate,
+    require_admin_in_org=_require_admin_gate,
     resolver=resolve_org_credential,
 )

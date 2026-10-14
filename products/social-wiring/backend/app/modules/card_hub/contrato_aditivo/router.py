@@ -20,9 +20,9 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin_for
 from noctusai_lib.primitives.roles import LEGAL_REVIEW_ROLES
 
 from app.dependencies import get_core_client, get_current_user_org
@@ -218,14 +218,15 @@ async def post_aditivo_revisao_juridica_route(
     versao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """"Aprovar revisão jurídica" of an aditivo version — LEGAL_REVIEW_ROLES ONLY (owner/admin/jurídico),
     on the TRUSTED `noctus_users.org_role` row (`is_org_admin`), the same
     bar as the contract's review. Returns the aditivo."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    if not is_org_admin(
-        get_core_client(), usuario_id, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
+    if not is_org_admin_for(
+        get_core_client(), auth, request, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
     ):
         raise HTTPException(
             status_code=403,

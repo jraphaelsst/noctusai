@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.dependencies import (
     ADMIN_ROLES,
@@ -28,7 +28,7 @@ from app.runtime.errors import Orphaned
 from app.schemas.agents import ApprovalDecisionRequest, ApprovalListOut, ApprovalOut
 from app.stores.approvals import ApprovalRecord
 from app.stores.errors import AlreadyDecided, NotFound
-from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
+from noctusai_lib.api.auth.session import AuthContext, resolve_org_role_for
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 
@@ -84,13 +84,14 @@ async def list_approvals(
     estado: str = Query(default="pendente"),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_approval_store_dep),
+    request: Request = None,
 ) -> ApprovalListOut:
     if estado != "pendente":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"detail": "estado deve ser 'pendente'.", "code": "invalid_field"},
         )
-    role = resolve_org_role(get_core_client(), ctx.user_id)
+    role = resolve_org_role_for(get_core_client(), ctx, request)
     owner_user_id = None if role in ADMIN_ROLES else ctx.user_id
     records = store.list_pending(ctx.org_id, owner_user_id=owner_user_id)
     items = [_approval_out(r) for r in records]
@@ -104,13 +105,14 @@ async def decide_approval(
     ctx: AuthContext = Depends(require_member),
     broker=Depends(get_approval_broker_dep),
     store=Depends(get_approval_store_dep),
+    request: Request = None,
 ) -> ApprovalOut:
     try:
         approval = store.get(ctx.org_id, approval_id)
     except NotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
 
-    role = resolve_org_role(get_core_client(), ctx.user_id)
+    role = resolve_org_role_for(get_core_client(), ctx, request)
     is_admin = role in ADMIN_ROLES
     if approval.requested_by != ctx.user_id and not is_admin:
         raise HTTPException(

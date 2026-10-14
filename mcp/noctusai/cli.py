@@ -243,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-hand-copied-org-admin", action="store_true", help="Keeper: awake product frontends must not hand-copy the org-admin UX gate (`isProductAdmin || org.role owner/admin`) — use useIsOrgAdmin()/isOrgAdmin(ctx) from @noctusai/lib. Severity high; blocking.")
     parser.add_argument("--check-private-unique-violation-predicate", action="store_true", help="Keeper: no private PostgREST unique-violation predicate outside noctusai_lib.primitives.postgrest_errors. Severity high; blocking.")
     parser.add_argument("--check-private-accent-fold", action="store_true", help="Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.")
+    parser.add_argument("--check-org-role-without-org-id", action="store_true", help="Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
     parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
@@ -1835,6 +1836,17 @@ def main():
         print(f"  {RED}✗ {len(issues)} private accent fold(s) — import fold_accents / fold_accents_ascii from noctusai_lib.primitives.accents:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_org_role_without_org_id:
+        from tools.noctus.dev.compliance import check_org_role_without_org_id
+        issues = check_org_role_without_org_id()
+        if not issues:
+            print(f"  {GREEN}✓ org-role-without-org-id: clean (every org-role decision names the selected org).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} org-role call(s) deciding in the HOME org (B3):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
 
     elif args.check_no_metadata_authz:

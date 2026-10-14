@@ -48,6 +48,10 @@ product-specific is a parameter:
   ``user.user_metadata`` directly rather than the trusted
   ``public.noctus_users.org_role`` — see `social-wiring`'s own
   ``_require_admin`` docstring for why it stayed product-local N=2).
+- ``require_admin_in_org``: optional ``(auth, request, context) -> None`` gate that
+  SUPERSEDES ``require_admin`` when given (B3). It receives the whole auth tuple + the
+  ``Request`` so the role can be decided IN the request's selected org
+  (``noctusai_lib.api.auth.session.require_org_admin_for``) instead of the home-org role.
 
 Per ``KB § PATTERNS/backend/di-test-seam.md`` (Class-B): every product
 concern is a constructor kwarg, never a module-level monkeypatch target.
@@ -58,7 +62,7 @@ import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Iterable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.config.credentials import resolve_credential
@@ -144,6 +148,7 @@ def create_api_keys_router(
     testers: Optional[dict[str, ApiKeyTester]] = None,
     org_testers: Optional[dict[str, ApiKeyOrgTester]] = None,
     require_admin: Callable[[Any, str], None] = _open_admin_gate,
+    require_admin_in_org: Optional[Callable[[Any, Any, str], None]] = None,
     resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
     prefix: str = "/api/settings",
 ) -> APIRouter:
@@ -212,6 +217,12 @@ def create_api_keys_router(
             updated_at=resolution.updated_at,
         )
 
+    def _gate(auth: tuple, request: Any, user: Any) -> None:
+        if require_admin_in_org is not None:
+            require_admin_in_org(auth, request, "Chaves de API")
+        else:
+            require_admin(user, "Chaves de API")
+
     @router.get("/api-keys", response_model=ApiKeysStatusOut)
     def list_api_keys(
         auth: tuple = Depends(get_current_user_org),
@@ -227,9 +238,10 @@ def create_api_keys_router(
         payload: ApiKeyUpdateIn,
         auth: tuple = Depends(get_current_user_org),
         store: Any = Depends(_store_dep),
+        request: Request = None,
     ) -> ApiKeyStatusOut:
         user, _token, raw_org = auth
-        require_admin(user, "Chaves de API")
+        _gate(auth, request, user)
         spec = _spec_or_404(key, specs_by_name)
 
         value = payload.value.strip()
@@ -258,9 +270,10 @@ def create_api_keys_router(
         key: str,
         auth: tuple = Depends(get_current_user_org),
         store: Any = Depends(_store_dep),
+        request: Request = None,
     ) -> ApiKeyStatusOut:
         user, _token, raw_org = auth
-        require_admin(user, "Chaves de API")
+        _gate(auth, request, user)
         spec = _spec_or_404(key, specs_by_name)
 
         removed = delete_api_key(store, str(raw_org), spec.name)

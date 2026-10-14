@@ -124,6 +124,28 @@ class TestListApiKeys:
         ]
         assert item["default"] == "openai"
 
+    def test_org_scoped_admin_gate_gets_auth_and_request_and_supersedes(self):
+        """B3: `require_admin_in_org(auth, request, context)` decides IN the selected org and
+        supersedes the legacy user-only `require_admin`."""
+        seen = {}
+
+        def _in_org(auth, request, context):
+            seen.update(org=auth[2], request=request is not None, context=context)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=context)
+
+        store = _fresh_store()
+        router = create_api_keys_router(
+            MagicMock(), MagicMock(), specs=SPECS, store_factory=lambda: store,
+            get_current_user_org=_org_dep(), resolver=lambda key, org_id: None,
+            require_admin=lambda user, context: None, require_admin_in_org=_in_org,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        c = TestClient(app)
+        assert c.put("/api/settings/api-keys/openai_api_key", json={"value": "sk-x"}).status_code == 403
+        assert c.delete("/api/settings/api-keys/openai_api_key").status_code == 403
+        assert seen == {"org": "org-1", "request": True, "context": "Chaves de API"}
+
     def test_auth_boundary_strict_401(self):
         app, _store = _app(raise_401=True)
         resp = TestClient(app).get("/api/settings/api-keys")

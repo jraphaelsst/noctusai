@@ -20,12 +20,12 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin_for
 from noctusai_lib.primitives.roles import LEGAL_REVIEW_ROLES
 
 from app.dependencies import get_core_client, get_current_user_org
@@ -178,6 +178,7 @@ async def post_revisao_juridica_route(
     versao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """"Aprovar revisão jurídica" (owner decision 2026-09-30, migration 177):
     the ONE contract-level review that replaces the per-field extraction
@@ -195,8 +196,8 @@ async def post_revisao_juridica_route(
     `REVISAO_JURIDICA_VERSAO_DESATUALIZADA` (nothing written)."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    if not is_org_admin(
-        get_core_client(), usuario_id, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
+    if not is_org_admin_for(
+        get_core_client(), auth, request, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
     ):
         raise HTTPException(
             status_code=403,

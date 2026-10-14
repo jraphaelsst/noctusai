@@ -22,6 +22,7 @@ from tools.noctus.dev.compliance import (
     check_migration_applied_ledger_drift,
     check_migration_number_collision,
     check_no_metadata_authz,
+    check_org_role_without_org_id,
     check_postgrest_schema_qualified_table,
     check_postgrest_unbounded_query,
     check_primary_checkout_commit,
@@ -3315,6 +3316,51 @@ class TestCheckNoMetadataAuthz:
             "Backend authorization/scoping reads user_metadata org/role (user-writable): "
             f"{[i['file'] for i in issues]}"
         )
+
+
+class TestCheckOrgRoleWithoutOrgId:
+    """B3: home-org role helpers must name the selected org (`org_id=`)."""
+
+    def _mk(self, body: str, *, where: str = "seed/framework/backend/x.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="org_role_home_test_"))
+        target = tmp / where
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp
+
+    def test_bare_calls_flag(self):
+        for call in (
+            "resolve_org_role(core, uid)",
+            "is_org_admin(core, uid)",
+            "require_org_admin_role(core, uid, 'x')",
+            "mod.require_org_admin_role_assured(core, uid, 'x', request=r, aal=None)",
+        ):
+            issues = check_org_role_without_org_id(self._mk(f"def f(core, uid):\n    return {call}\n"))
+            assert len(issues) == 1, (call, issues)
+            assert issues[0]["severity"] == "high"
+
+    def test_org_id_keyword_passes(self):
+        repo = self._mk("def f(core, uid, org):\n    return is_org_admin(core, uid, org_id=org)\n")
+        assert check_org_role_without_org_id(repo) == []
+
+    def test_for_wrappers_not_flagged(self):
+        repo = self._mk("def f(core, auth, req):\n    return is_org_admin_for(core, auth, req)\n")
+        assert check_org_role_without_org_id(repo) == []
+
+    def test_rationale_comment_escapes_and_bare_does_not(self):
+        ok = self._mk("def f(core, uid):\n    # org-role-home-ok: identity cascade\n    return resolve_org_role(core, uid)\n")
+        assert check_org_role_without_org_id(ok) == []
+        bad = self._mk("def f(core, uid):\n    # org-role-home-ok:\n    return resolve_org_role(core, uid)\n")
+        assert len(check_org_role_without_org_id(bad)) == 1
+
+    def test_tests_are_excluded(self):
+        repo = self._mk("def f(core, uid):\n    return resolve_org_role(core, uid)\n", where="seed/framework/backend/tests/test_x.py")
+        assert check_org_role_without_org_id(repo) == []
+
+    def test_real_repo_is_clean(self):
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_org_role_without_org_id(_ROOT)
+        assert issues == [], [i["issue"] for i in issues]
 
 
 class TestCheckPostgrestUnboundedQuery:

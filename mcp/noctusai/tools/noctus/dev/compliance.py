@@ -11055,6 +11055,97 @@ def check_no_metadata_authz(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_org_role_without_org_id` — B3 (review 2026-10-14). A request authorized for the
+# SELECTED org (org picker / auth tuple `org_id`) whose admin role is read from the HOME org
+# makes a home-org owner who is a plain member of org B an admin in B (writes, unmasked LGPD
+# reads). `resolve_org_role` / `is_org_admin` / `require_org_admin_role[_assured]` only decide
+# in the selected org when given `org_id=` (+ token / acting_header); the ctx-shaped
+# `*_for(core, auth, request)` wrappers in `noctusai_lib.api.auth.session` do that by
+# construction. Flags a NEW call to the four home-role helpers WITHOUT an `org_id=` keyword in
+# `seed/framework/backend` and every ACTIVE product's `backend/` (tests excluded). Deliberate
+# home-org reads (identity cascade, another user's role) carry a same-line / preceding-3-line
+# `org-role-home-ok: <why>` comment. KB § PATTERNS/backend/tenancy-license-gate.md.
+# ---------------------------------------------------------------------------
+
+_ORG_ROLE_HOME_SEVERITY = "high"
+_ORG_ROLE_HOME_FUNCS: frozenset[str] = frozenset({
+    "resolve_org_role", "is_org_admin", "require_org_admin_role", "require_org_admin_role_assured",
+})
+_ORG_ROLE_HOME_RATIONALE_RE = re.compile(r"org-role-home-ok\s*:\s*\S", re.IGNORECASE)
+_ORG_ROLE_HOME_EXCLUDED_PARTS: set[str] = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    ".backup", "archive", "tests", "test",
+}
+
+
+def check_org_role_without_org_id(repo_root: Path | None = None) -> list[dict]:
+    """Flag calls of the home-role helpers that do not pass ``org_id=``.
+
+    Use ``require_org_admin_for`` / ``is_org_admin_for`` / ``resolve_org_role_for``
+    (``noctusai_lib.api.auth.session``) with the request's auth + ``Request``, or pass
+    ``org_id=`` (+ ``token=`` / ``acting_header=``). Deliberate home-org read: add
+    ``org-role-home-ok: <why>``.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+    scan_roots: list[Path] = []
+    seed_fw = root / "seed" / "framework" / "backend"
+    if seed_fw.is_dir():
+        scan_roots.append(seed_fw)
+    products = root / "products"
+    if products.is_dir():
+        for product_dir in _active_product_dirs(products):
+            backend = product_dir / "backend"
+            if backend.is_dir():
+                scan_roots.append(backend)
+    for scan_root in scan_roots:
+        for path in sorted(scan_root.rglob("*.py")):
+            if any(p in _ORG_ROLE_HOME_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if not any(f in content for f in _ORG_ROLE_HOME_FUNCS):
+                continue
+            try:
+                relative = str(path.relative_to(root))
+                tree = ast.parse(content)
+            except (ValueError, SyntaxError) as exc:
+                logger.debug("compliance: cannot scan %s (%s)", path, exc)
+                continue
+            lines = content.splitlines()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                if name not in _ORG_ROLE_HOME_FUNCS:
+                    continue
+                if any(k.arg == "org_id" or k.arg is None for k in node.keywords):
+                    continue  # org_id= given, or **kwargs (cannot prove absence)
+                start = max(0, node.lineno - 1 - 3)
+                if any(_ORG_ROLE_HOME_RATIONALE_RE.search(ln) for ln in lines[start:node.lineno]):
+                    continue
+                issues.append({
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{node.lineno}` calls `{name}(...)` without `org_id=` -- the role is the "
+                        f"caller's HOME-org role, so a home-org owner who is a plain member of the request's "
+                        f"SELECTED org is an admin there (B3). Use `require_org_admin_for` / `is_org_admin_for` / "
+                        f"`resolve_org_role_for(core, auth, request)` (noctusai_lib.api.auth.session), or pass "
+                        f"`org_id=` (+ `token=`, `acting_header=`). Deliberate home-org read: add "
+                        f"`org-role-home-ok: <why>`."
+                    ),
+                    "severity": _ORG_ROLE_HOME_SEVERITY,
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_product_guide_cochange` — a product's help-chat knowledge guide is the
 # assistant's ENTIRE knowledge; a behaviour change that does not touch it
 # makes the assistant confidently describe behaviour that no longer exists.
@@ -16685,6 +16776,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-10-06 security sweep — runs the SAME detectors in CI (the
     # regression-baseline gate) that pre-commit runs locally.
     all_issues.extend(check_no_metadata_authz())
+    all_issues.extend(check_org_role_without_org_id())
     all_issues.extend(check_secdef_migration_revokes_execute())
     all_issues.extend(check_migration_untyped_empty_array())
     # social-wiring-absorption W5.9-rest — numeric-axis twin of the

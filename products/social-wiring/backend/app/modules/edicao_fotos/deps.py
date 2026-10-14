@@ -25,9 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
+from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.domain.permissions import PermissionGrantRepository
 from noctusai_lib.domain.photo_editing import Actor, Batch, PhotoEditingPorts
@@ -56,15 +57,22 @@ class RoleInfo:
     is_platform_admin: bool
 
 
-RoleResolver = Callable[[str], RoleInfo]
+#: `(user_id, *, org_id, token, acting_header) -> RoleInfo`. B3: `org_role` is the role IN `org_id` (the
+#: request's selected org), not the home-org role; `is_platform_admin` stays the platform (home) gate.
+RoleResolver = Callable[..., RoleInfo]
 
 
-def _trusted_roles(user_id: str) -> RoleInfo:
+def _trusted_roles(
+    user_id: str, *, org_id: str | None = None, token: str | None = None,
+    acting_header: str | None = None,
+) -> RoleInfo:
     from app.dependencies import get_core_client
 
     core = get_core_client()
     return RoleInfo(
-        org_role=resolve_org_role(core, user_id),
+        org_role=resolve_org_role(
+            core, user_id, org_id=org_id, token=token, acting_header=acting_header
+        ),
         is_platform_admin=resolve_platform_admin_role(core, user_id) == "admin",
     )
 
@@ -77,16 +85,21 @@ def get_role_resolver() -> RoleResolver:
 def get_actor(
     auth: tuple = Depends(get_current_user_org),
     resolve_roles: RoleResolver = Depends(get_role_resolver),
+    request: Request = None,
 ) -> Actor:
-    user, _token, raw_org = auth
+    user, token, raw_org = auth
     user_id = str(getattr(user, "id", "") or "")
     if not user_id:
         # A product-token caller has no user; this surface is user-only.
         raise api_error(403, "usuario_obrigatorio", "Esta área exige um usuário autenticado.")
-    roles = resolve_roles(user_id)
+    org_id = str(coerce_org_uuid(raw_org))
+    roles = resolve_roles(
+        user_id, org_id=org_id, token=token,
+        acting_header=acting_header_of(request) if request is not None else None,
+    )
     return Actor(
         user_id=user_id,
-        org_id=str(coerce_org_uuid(raw_org)),
+        org_id=org_id,
         org_role=roles.org_role,
         is_platform_admin=roles.is_platform_admin,
     )

@@ -42,11 +42,11 @@ from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
+from noctusai_lib.api.auth.session import is_org_admin_for, require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException, ConflictError, NotFoundError
 
 from app.dependencies import (
@@ -683,13 +683,14 @@ def get_backfill_runner():
 async def list_excluidos_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
+    request: Request = None,
 ) -> ClientesExcluidosOut:
     """Deleted clientes whose source leads are tombstoned (admin/owner only,
     the same trusted gate as DELETE). Grouped by the deleted cliente id,
     newest first."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Clientes excluídos")
+    require_org_admin_for(get_core_client(), auth, request, "Clientes excluídos")
     items = svc.list_clientes_excluidos(client, org_id)
     return ClientesExcluidosOut(items=items, total=len(items))
 
@@ -699,13 +700,14 @@ async def restaurar_excluido_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
+    request: Request = None,
 ) -> RestaurarClienteOut:
     """Lift the tombstones of a deleted cliente and rebuild the person NOW from
     its leads. CPF, documents, notes etc. removed by the hard delete are NOT
     recovered. Admin/owner only; 404 when nothing is tombstoned for this id."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Restaurar cliente")
+    require_org_admin_for(get_core_client(), auth, request, "Restaurar cliente")
     try:
         return RestaurarClienteOut(**svc.restaurar_cliente_excluido(client, org_id, cliente_id))
     except svc.ClienteExcluidoNotFound as exc:
@@ -1011,7 +1013,7 @@ async def get_cliente_route(
     }
 
 
-def _is_org_admin(user: Any) -> bool:
+def _is_org_admin(auth: Any, request: Optional[Request] = None) -> bool:
     """Trusted-DB (`public.noctus_users.org_role`) bool predicate — NEVER
     JWT `user_metadata`, which a user can rewrite themselves via
     `auth.updateUser({data})` to self-promote and bypass the
@@ -1028,7 +1030,8 @@ def _is_org_admin(user: Any) -> bool:
     formalized this same dispatch (was also
     `noctusai_seed.auth_router._require_org_admin`'s own trusted-DB read,
     now itself delegating to the same shared function)."""
-    return is_org_admin(get_core_client(), getattr(user, "id", None))
+    # B3: admin IN the request's selected org (auth tuple org_id).
+    return is_org_admin_for(get_core_client(), auth, request)
 
 
 @router.patch("/{cliente_id}")
@@ -1037,6 +1040,7 @@ async def update_cliente_route(
     body: ClientePatchBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
+    request: Request = None,
 ) -> dict:
     """nome, ativo/arquivado (manual restore, D4).
 
@@ -1080,7 +1084,7 @@ async def update_cliente_route(
         return svc.update_cliente(
             client, org_id, cliente_id,
             acting_user_id=getattr(_user, "id", None),
-            is_admin=_is_org_admin(_user),
+            is_admin=_is_org_admin(auth, request),
             **updates,
         )
     except svc.ClienteNotFound as exc:
@@ -1093,11 +1097,12 @@ async def excluir_cliente_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
     storage=Depends(get_storage_backend),
+    request: Request = None,
 ) -> ClienteDeleteOut:
     """Hard delete (owner directive, 2026-09-24) — irreversible, unlike the
     PATCH `ativo=false` archive path this product already has. ADMIN/OWNER
     ONLY, enforced HERE via the TRUSTED `noctus_users.org_role` row
-    (`require_org_admin_role` — the same N=3 predicate
+    (`require_org_admin_for` — the same N=3 predicate
     `update_cliente_route`'s own `_is_org_admin` and `settings_router
     ._require_admin` delegate to), never the spoofable JWT
     `user_metadata`. The frontend hides the icon for a non-admin too, but
@@ -1105,7 +1110,7 @@ async def excluir_cliente_route(
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Excluir cliente")
+    require_org_admin_for(get_core_client(), auth, request, "Excluir cliente")
 
     try:
         resultado = svc.excluir_cliente(

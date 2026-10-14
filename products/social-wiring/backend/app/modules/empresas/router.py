@@ -18,10 +18,10 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin_for
 
 from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub.auth import auth_parts as _auth_parts
@@ -70,6 +70,7 @@ async def update_empresa_route(
     body: EmpresaPatchBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_empresas_client),
+    request: Request = None,
 ) -> dict:
     """`is_admin` gates the group-level cadastral fields exactly like
     `clientes_router.update_cliente_route` gates `clientes`' own
@@ -80,7 +81,7 @@ async def update_empresa_route(
     return dados_service.atualizar_manual(
         client, org_id, empresa_id,
         acting_user_id=getattr(user, "id", None),
-        is_admin=is_org_admin(get_core_client(), getattr(user, "id", None)),
+        is_admin=is_org_admin_for(get_core_client(), auth, request),
         **updates,
     )
 

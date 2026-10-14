@@ -34,13 +34,14 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
 )
 
 from starlette.concurrency import run_in_threadpool
 
-from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
+from noctusai_lib.api.auth.session import is_org_admin_for, require_org_admin_for
 from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 
 from app.dependencies import get_core_client, get_current_user_org
@@ -864,6 +865,7 @@ async def listar_conflitos_route(
 async def backfill_resolver_conflitos_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """Re-run the automatic divergence resolver over EVERY `pendente`
     conflict in the org — owner directive, 2026-09-29 follow-up: "a real
@@ -879,7 +881,7 @@ async def backfill_resolver_conflitos_route(
     an automatic decision writes `clientes.<campo>` exactly like a manual
     accept does, just decided by policy instead of by a human's click."""
     user, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Resolver conflitos automaticamente é restrito a administradores.",
@@ -909,6 +911,7 @@ async def decidir_conflito_route(
     body: DecidirConflitoBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """Accept or reject a pending conflict. Accepting overwrites
     `clientes.<campo>` with the proposed value (the prior value stays on
@@ -923,7 +926,7 @@ async def decidir_conflito_route(
     any authenticated org member decide would make that confirmation
     meaningless."""
     user, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Decidir um conflito de dados é restrito a administradores.",
@@ -1117,6 +1120,7 @@ async def delete_empresa_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     storage=Depends(get_empresas_storage_backend),
+    request: Request = None,
 ) -> dict:
     """Unlinks `empresa_id` from `cliente_id`; the `empresas` row (and its
     CASCADE-linked `empresa_documentos`) is hard-deleted, and its certidões
@@ -1136,9 +1140,7 @@ async def delete_empresa_route(
     already-existing 30-day `certidoes.service.purge_excluidas` scheduled
     job is the only thing that ever hard-deletes them."""
     user, org_id = _auth_parts(auth)
-    require_org_admin_role(
-        get_core_client(), getattr(user, "id", None), "Excluir empresa"
-    )
+    require_org_admin_for(get_core_client(), auth, request, "Excluir empresa")
 
     resultado = empresas_svc.remover(
         client, org_id, cliente_id, empresa_id,
@@ -1286,12 +1288,13 @@ async def resolver_negociacao_conflito_route(
     body: ResolverConflitoNegociacaoBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """Accept or reject a pending conflict — owner/admin only, same
     restriction `decidir_conflito_route` takes for migration 138: deciding a
     conflict IS the "admin confirmation" the D1/D2 contract names."""
     user, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Decidir um conflito de dados é restrito a administradores.",
@@ -1646,6 +1649,7 @@ async def put_contrato_processo_legado_route(
     body: ProcessoLegadoBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
+    request: Request = None,
 ) -> dict:
     """Migration 151. Owner directive, 2026-09-22: an EXPLICIT, admin-only,
     logged switch per contract — never an automatic date heuristic. When
@@ -1662,7 +1666,7 @@ async def put_contrato_processo_legado_route(
     `== 401`/`== 403` per `KB § PATTERNS/compliance/auth-boundary-false-green.md`.
     """
     user, org_id = _auth_parts(auth)
-    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+    if not is_org_admin_for(get_core_client(), auth, request):
         raise HTTPException(
             status_code=403,
             detail="Marcar um contrato como processo anterior à plataforma "

@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.api.auth.session import resolve_org_role
+from noctusai_lib.api.auth.session import resolve_org_role_for
 from noctusai_lib.integrations.documents import cnpj, cpf
 from noctusai_lib.primitives.exceptions import (
     ConflictError,
@@ -73,13 +73,15 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
 # ─── role gate ────────────────────────────────────────────────────────────
 
 
-def tem_papel_de_escrita(core_client: Any, usuario_id: Any) -> bool:
-    role = resolve_org_role(core_client, usuario_id)
+def tem_papel_de_escrita(core_client: Any, auth: Any, request: Any = None) -> bool:
+    """B3: the role is the caller's IN the request's selected org (`auth` = the `(user, token, org_id)`
+    tuple), never the home-org role."""
+    role = resolve_org_role_for(core_client, auth, request)
     return role is not None and role not in READ_ONLY_ROLES
 
 
-def exigir_escrita(core_client: Any, usuario_id: Any) -> None:
-    if not tem_papel_de_escrita(core_client, usuario_id):
+def exigir_escrita(core_client: Any, auth: Any, request: Any = None) -> None:
+    if not tem_papel_de_escrita(core_client, auth, request):
         raise ForbiddenError("Seu perfil não pode alterar o cadastro de favorecidos.")
 
 

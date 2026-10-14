@@ -17,7 +17,7 @@ from fastapi import Depends, Header, HTTPException, Request, Response
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
-from noctusai_lib.api.auth.session.scopes import resolve_org_role
+from noctusai_lib.api.auth.session.scopes import resolve_org_role_for
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.primitives.roles import MANAGE_TEAM_ROLES
 
@@ -114,7 +114,8 @@ async def require_org_admin_dep(
     Only the admin tier (`ADMIN_TIER_ROLES`: owner/admin) is assurance-gated;
     a `manager` passes at aal1 (owner decision `plat-mfa-who`, 2026-10-05).
     """
-    role = resolve_org_role(db, ctx.user_id) if ctx.org_id else None
+    # B3: the role IN the request's selected org (ctx.org_id), not the home-org role.
+    role = resolve_org_role_for(db, ctx, request) if ctx.org_id else None
     if not ctx.org_id or role not in MANAGE_TEAM_ROLES:
         raise HTTPException(
             status_code=403,

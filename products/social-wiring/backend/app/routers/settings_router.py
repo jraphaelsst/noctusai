@@ -29,11 +29,11 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import require_org_admin_role
+from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
@@ -629,7 +629,7 @@ async def send_waha_test(
 
 
 # ─── Meta App config tab (Wave 2 — app-wide, DB-backed + env-fallback) ─
-def _require_admin(user: Any, context: str) -> None:
+def _require_admin(auth: Any, request: Optional[Request], context: str) -> None:
     """403 unless ``user`` has owner/admin role on their org — the
     TRUSTED ``public.noctus_users`` row, never ``user_metadata``.
 
@@ -646,7 +646,8 @@ def _require_admin(user: Any, context: str) -> None:
     module-local + underscore-prefixed still, so callers below don't
     change shape.
     """
-    require_org_admin_role(get_core_client(), getattr(user, "id", None), context)
+    # B3: decided IN the request's selected org (auth tuple org_id), not the caller's home org.
+    require_org_admin_for(get_core_client(), auth, request, context)
 
 
 def get_app_config_store_dep():
@@ -703,6 +704,7 @@ def update_meta_app_config(
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
     store=Depends(get_app_config_store_dep),
+    request: Request = None,
 ) -> MetaAppConfigStatus:
     """Admin-gated write for the Meta App ID / App Secret pair.
 
@@ -713,7 +715,7 @@ def update_meta_app_config(
     supplies a non-blank value (never echoed back in the response).
     """
     user, _token, _raw_org = auth
-    _require_admin(user, "Meta App config")
+    _require_admin(auth, request, "Meta App config")
 
     if payload.app_id is None and not payload.app_secret:
         raise HTTPException(
@@ -764,6 +766,7 @@ def update_instagram_app_config(
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
     store=Depends(get_app_config_store_dep),
+    request: Request = None,
 ) -> InstagramAppConfigStatus:
     """Admin-gated write for the Instagram App ID / App Secret pair.
 
@@ -775,7 +778,7 @@ def update_instagram_app_config(
     response).
     """
     user, _token, _raw_org = auth
-    _require_admin(user, "Instagram App config")
+    _require_admin(auth, request, "Instagram App config")
 
     if payload.app_id is None and not payload.app_secret:
         raise HTTPException(
@@ -870,13 +873,14 @@ def update_clientes_inactivity_config(
     payload: ClientesInactivityConfigUpdate,
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
+    request: Request = None,
 ) -> ClientesInactivityConfigStatus:
     """Admin-gated write for the org's inactivity threshold.
     `threshold_days=0` explicitly disables the sweep for this org — a
     valid, intentional value, not an error (see `ClientesInactivityConfigUpdate`'s
     docstring)."""
     user, _token, raw_org = auth
-    _require_admin(user, "Clientes inactivity threshold")
+    _require_admin(auth, request, "Clientes inactivity threshold")
     org_id = coerce_org_uuid(raw_org)
     client = get_scoped_admin_client("social_wiring")
     clientes_inactivity_service.set_threshold_days(client, org_id, payload.threshold_days)
@@ -920,6 +924,7 @@ def get_documento_retencao(
 def update_documento_retencao(
     payload: DocumentoRetencaoUpdate,
     auth: tuple = Depends(get_current_user_org),
+    request: Request = None,
 ) -> DocumentoRetencaoLista:
     """Admin-gated override for one document type.
 
@@ -928,7 +933,7 @@ def update_documento_retencao(
     reconciling by hand — which is where an optimistic-update bug lives.
     """
     user, _token, raw_org = auth
-    _require_admin(user, "Retenção de documentos")
+    _require_admin(auth, request, "Retenção de documentos")
     org_id = coerce_org_uuid(raw_org)
     client = get_scoped_admin_client("social_wiring")
     documento_retencao.definir(
@@ -955,10 +960,11 @@ def reset_documento_retencao(
     superficie: str = Query(...),
     tipo_documento: str = Query(...),
     auth: tuple = Depends(get_current_user_org),
+    request: Request = None,
 ) -> DocumentoRetencaoLista:
     """Admin-gated restore of the platform default for one type."""
     user, _token, raw_org = auth
-    _require_admin(user, "Retenção de documentos")
+    _require_admin(auth, request, "Retenção de documentos")
     org_id = coerce_org_uuid(raw_org)
     client = get_scoped_admin_client("social_wiring")
     documento_retencao.restaurar(client, org_id, superficie, tipo_documento)
@@ -1071,6 +1077,7 @@ def update_api_key(
     payload: ApiKeyUpdate,
     auth: tuple = Depends(get_current_user_org),
     store=Depends(get_api_key_store_dep),
+    request: Request = None,
 ) -> ApiKeyStatus:
     """Admin-gated write. Encrypts + upserts into
     ``social_wiring.credentials`` under provider ``api_key:<key>``.
@@ -1079,7 +1086,7 @@ def update_api_key(
     A blank value is a 422 from the schema rather than a silent delete.
     """
     user, _token, raw_org = auth
-    _require_admin(user, "Chaves de API")
+    _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
     org_id = coerce_org_uuid(raw_org)
 
@@ -1116,6 +1123,7 @@ def remove_api_key(
     key: str,
     auth: tuple = Depends(get_current_user_org),
     store=Depends(get_api_key_store_dep),
+    request: Request = None,
 ) -> ApiKeyStatus:
     """Admin-gated removal of this org's LOCAL override.
 
@@ -1125,7 +1133,7 @@ def remove_api_key(
     `source` in the body are what the UI says out loud.
     """
     user, _token, raw_org = auth
-    _require_admin(user, "Chaves de API")
+    _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
     org_id = coerce_org_uuid(raw_org)
 
