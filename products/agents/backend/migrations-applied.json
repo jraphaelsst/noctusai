@@ -3,6 +3,8 @@
   "applied": {
     "024_llm_provider_runtime.sql": "4d86ef8ae6cd8eee4142c7ae3cd95868184c41e6091b68cfb8548d8a35c7968e",
     "025_channel_conversations.sql": "c1f3b9c7ec4e343310925ccd609829db122e5da74d0d71572a4a7a3785f0ba79",
-    "026_status_pagina_chaves_ia.sql": "fa0257546feb02916002f5b74cb788b3b6cd1d488e9adc2d7261b764a68f752b"
+    "026_status_pagina_chaves_ia.sql": "fa0257546feb02916002f5b74cb788b3b6cd1d488e9adc2d7261b764a68f752b",
+    "027_finance.sql": "107c7953e2824035ee3556a822a818d806247225e5b6dabd324443ce8de0e1ae",
+    "028_status_pagina_financeiro.sql": "46fc16bc36d35e6cc9c39c9b207004ec7fca0998ef8ed6d483cfc265f399dfd8"
   }
 }
