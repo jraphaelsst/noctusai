@@ -21,9 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-# NOC-REMEDIATE[organ-common-lift]: `_apply_limit` is the commerce router's private rate-limit wrapper; it moves to the
-# shared organ module with the other lifted helpers -- repoint this import then. — 2026-10-14
-from noctusai_lib.domain.commerce.router import RateLimit, _apply_limit
+from noctusai_lib.domain._organ_common import RateLimit, apply_rate_limit
 from noctusai_lib.integrations.docx_render import DocxRenderAdapter, get_docx_render_adapter
 from noctusai_lib.integrations.email.types import EmailSender
 from noctusai_lib.integrations.signature import SignatureAdapter
@@ -298,7 +296,7 @@ def make_quotes_public_router(
     router = APIRouter(prefix=prefix, tags=tags or ["quotes-public"])
 
     def limited(limit: str, fn: Callable) -> Callable:
-        return _apply_limit(rate_limit, limit, fn)
+        return apply_rate_limit(rate_limit, limit, fn)
 
     def open_scope(token: str, db: Any, secret: str) -> tuple[Scope, str]:
         org_id, quote_id = links.open_token(secret, token)

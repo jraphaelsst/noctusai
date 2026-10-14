@@ -294,3 +294,76 @@ def test_mount_contracts_refuses_a_cfg_for_another_schema():
 
     with pytest.raises(ValueError):
         mount_contracts(schema="erp", cfg=ContractsConfig(schema="other"), auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
+
+
+# -- quotes ----------------------------------------------------------------------------------------------------
+
+QUOTE_ID = "55555555-5555-4555-8555-555555555555"
+SECRET = "quotes-test-secret-0123456789"
+
+
+def _quotes_organ(**over):
+    from noctusai_lib.testing import MockSupabaseClient
+    from noctusai_seed.organs import mount_quotes
+
+    core = MockSupabaseClient()
+    core.set_table_data("noctus_users", [{"id": "u1", "org_id": "org-1", "org_role": over.pop("role", "member"), "role": "user"}])
+    db = over.pop("db", None) or MockSupabaseClient()
+    return mount_quotes(schema="erp", auth_dependency=_auth, get_admin_client=lambda: db, get_core_client=lambda: core, **over)
+
+
+def test_quotes_is_registered_and_its_header_prefixes_the_migration():
+    assert organ_migration_sql("quotes", "erp").startswith(ORGAN_REGISTRY["quotes"].migration_header)
+    assert "erp.quo_quotes" in organ_migration_sql("quotes", "erp")
+
+
+def test_mount_quotes_staff_routes_are_strict_401_and_admin_gates_the_writes():
+    client = TestClient(_app_of(_quotes_organ()))
+    for method, path in (("GET", "/api/quotes"), ("POST", "/api/quotes"), ("GET", f"/api/quotes/{QUOTE_ID}"),
+                         ("POST", f"/api/quotes/{QUOTE_ID}/send"), ("POST", f"/api/quotes/{QUOTE_ID}/accept"), ("GET", f"/api/quotes/{QUOTE_ID}/pdf")):
+        assert client.request(method, path, json={} if method == "POST" else None).status_code == 401, path
+    assert client.post("/api/quotes", json={}, headers=H).status_code == 403          # member: not admin
+    assert client.get("/api/quotes", headers=H).status_code == 200                      # member may read
+
+
+def test_mount_quotes_public_routes_exist_only_with_a_link_secret_and_need_no_auth():
+    without = _app_of(_quotes_organ())
+    assert not any(r.path.startswith("/api/public/quotes") for r in without.routes)
+    limited: list[str] = []
+
+    def rate_limit(limit):
+        def deco(fn):
+            limited.append(limit)
+            return fn
+        return deco
+
+    organ = _quotes_organ(get_link_secret=lambda: SECRET, rate_limit=rate_limit)
+    app = _app_of(organ)
+    assert {r.path for r in app.routes if r.path.startswith("/api/public/quotes")} == {
+        "/api/public/quotes/{token}", "/api/public/quotes/{token}/pdf", "/api/public/quotes/{token}/accept", "/api/public/quotes/{token}/reject"}
+    assert len(limited) == 4                                                              # every public route is throttled
+    client = TestClient(app)
+    r = client.get("/api/public/quotes/not-a-token")                                       # no Authorization header: the TOKEN is the gate
+    assert (r.status_code, r.json()["error"]["code"]) == (404, "link_invalido")
+    assert client.post("/api/public/quotes/not-a-token/accept", json={"name": "Ana Souza", "agree": True}).status_code == 404
+
+
+def test_mount_quotes_optional_seams_mount_their_routes_only_when_supplied():
+    plain = {r.path for r in _app_of(_quotes_organ()).routes}
+    assert f"/api/quotes/{{quote_id}}/pdf" in plain
+    assert not any(p.endswith("/docx") or p.endswith("/signature") for p in plain)
+    full = {r.path for r in _app_of(_quotes_organ(get_signature=lambda: object(), docx_template=lambda ctx: b"x")).routes}
+    assert "/api/quotes/{quote_id}/docx" in full and "/api/quotes/{quote_id}/signature" in full
+
+
+def test_mount_quotes_send_without_a_link_secret_is_a_typed_503_for_an_admin():
+    client = TestClient(_app_of(_quotes_organ(role="owner")))
+    r = client.post(f"/api/quotes/{QUOTE_ID}/send", json={"channel": "link"}, headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (503, "link_indisponivel")
+
+
+def test_mount_quotes_rejects_a_cfg_for_another_schema():
+    from noctusai_lib.domain.quotes import QuotesConfig
+
+    with pytest.raises(ValueError):
+        _quotes_organ(cfg=QuotesConfig(schema="other"))

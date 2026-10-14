@@ -30,13 +30,14 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional, get_type_hints
+from typing import Any, Callable, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.domain._organ_common import RateLimit, apply_rate_limit
 from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.domain.payments.event_inbox import EventInbox
 from noctusai_lib.integrations.email.types import EmailSender
@@ -59,8 +60,6 @@ from .fiscal_types import MAX_CERTIFICATE_BYTES, InvoiceKind
 from .orders import get_order
 
 logger = logging.getLogger(__name__)
-
-RateLimit = Callable[[str], Callable[[Callable], Callable]]
 
 #: Pattern + ceiling for the host's `max_body_path_overrides` (64 KB file + multipart framing + password).
 CERTIFICATE_UPLOAD_PATH_PATTERN = "/api/commerce/fiscal/certificate"
@@ -86,16 +85,6 @@ class IssueBody(StrictHttpModel):
 
 class CancelBody(StrictHttpModel):
     reason: str = Field(max_length=255)
-
-
-def _apply_limit(rate_limit: Optional[RateLimit], limit: str, fn: Callable) -> Callable:
-    """Wrap `fn` with the host's limiter, resolving the string annotations against THIS module first
-    (a real slowapi wrapper lives in another module and would 500 every wrapped route otherwise --
-    the same trap `router._apply_limit` documents)."""
-    if rate_limit is None:
-        return fn
-    fn.__annotations__ = get_type_hints(fn, include_extras=True)
-    return rate_limit(limit)(fn)
 
 
 @dataclass(frozen=True)
@@ -317,7 +306,7 @@ def commerce_invoice_webhook_router(
             raise fiscal_svc.map_provider_error(exc) from None
         return {"received": True, "outcome": outcome}
 
-    handler = _apply_limit(rate_limit, cfg.webhook_rate_limit, receive)
+    handler = apply_rate_limit(rate_limit, cfg.webhook_rate_limit, receive)
     router.add_api_route("/{provider_name}/{org_id}", handler, methods=["POST"], name="commerce_invoice_webhook")
     return router
 
