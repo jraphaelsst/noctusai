@@ -491,7 +491,7 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection, cfg=N
         )
 
 
-async def _lid_alias_phone(*, intake, connection, lid: str, waha_factory=None) -> str | None:
+async def _lid_alias_phone(*, intake, connection, lid: str, cfg=None, waha_factory=None) -> str | None:
     """Phone digits behind an ``@lid`` — the intake's LID cache first, then WAHA
     (``get_lid_phone`` never raises). Used only to check a chat against the 11.1
     snapshot by its OTHER identifier form."""
@@ -505,7 +505,7 @@ async def _lid_alias_phone(*, intake, connection, lid: str, waha_factory=None) -
         if digits.isdigit():
             return digits
     try:
-        store = _build_token_webhook_store()
+        store = _build_token_webhook_store(cfg)
         record = store.get_connection(connection_id=connection.id, org_id=connection.org_id, decrypt=True) if store else None
         if record is None or not record.api_key:
             return None
@@ -540,7 +540,7 @@ async def _handle_lead_message(
             client=get_scoped_admin_client("social_wiring"), connection=connection,
             chat_id=chat_id, chat_state=state,
             resolver_alias=lambda lid: _lid_alias_phone(
-                intake=intake, connection=connection, lid=lid, waha_factory=waha_factory
+                intake=intake, connection=connection, lid=lid, cfg=cfg, waha_factory=waha_factory
             ),
         )
     except Exception:
@@ -574,12 +574,18 @@ async def _handle_lead_message(
     return True
 
 
-async def _apply_human_takeover(*, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg) -> None:
+async def _apply_human_takeover(
+    *, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg, intake=None
+) -> None:
     """L3 (contract 10.1): a ``fromMe`` message that is NOT Julia's own echo means a
     human is typing — set ``agente_pausado`` and tell Conversas. Julia's own sends are
     recognised by the provider id we registered, or by the in-flight send flag (WAHA's
     echo can beat our own bookkeeping)."""
     if connection is None or not connection.agente_leads_ativo or is_group:
+        return
+    if intake is not None and intake.is_authorized(chat_id):
+        # An operator's own chat (One Chat): the bot's replies echo back as `fromMe`
+        # there, and Julia never owns that chat -- nothing to take over.
         return
     try:
         redis = make_redis_client(cfg.redis_url, decode_responses=True)
@@ -844,7 +850,7 @@ async def _process_waha_body(
             # human typing — L3 still applies.
             await _apply_human_takeover(
                 connection=connection, chat_id=chat_id, is_group=is_group,
-                provider_message_id=provider_message_id, cfg=cfg,
+                provider_message_id=provider_message_id, cfg=cfg, intake=intake,
             )
         return Response(status_code=status.HTTP_200_OK)
     except Exception:
@@ -913,7 +919,7 @@ async def _process_waha_body(
     if from_me:
         await _apply_human_takeover(
             connection=connection, chat_id=chat_id, is_group=is_group,
-            provider_message_id=provider_message_id, cfg=cfg,
+            provider_message_id=provider_message_id, cfg=cfg, intake=intake,
         )
         return Response(status_code=status.HTTP_200_OK)
 
@@ -1031,7 +1037,9 @@ async def _process_waha_body(
     # Once-per-conversation guard via Redis so we don't spam a denial loop
     # against a stranger blasting messages; first contact gets the reply,
     # subsequent inbounds in a 24h window are quietly logged.
-    if not intake.is_authorized(sender):
+    # H2: a group message was already gated above on its PARTICIPANT; judge the real
+    # sender here too, never the group id.
+    if not intake.is_authorized(auth_sender):
         already_notified = False
         try:
             denied_key = f"whatsapp:denied:{sender}"

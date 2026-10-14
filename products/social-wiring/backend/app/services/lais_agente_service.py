@@ -156,11 +156,11 @@ def agents_base_url() -> Optional[str]:
         return None
 
 
-def resolve_agents_client(org_id: UUID | str, *, cfg: Any = None) -> Optional[AgentsClient]:
+def resolve_agents_client(org_id: UUID | str, *, cfg: Any = None, store: Any = None) -> Optional[AgentsClient]:
     """The org's `AgentsClient`: real when token + URL exist; the Fake in a dev
     process (no deploy markers); `None` in prod when not configured."""
     return make_agents_client(
-        token=agents_token_for_org(org_id, cfg=cfg),
+        token=agents_token_for_org(org_id, cfg=cfg, store=store),
         base_url=agents_base_url(),
         allow_fake=not is_deploy_context(),
     )

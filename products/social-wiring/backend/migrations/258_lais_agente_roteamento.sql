@@ -37,31 +37,8 @@ COMMENT ON COLUMN social_wiring.whatsapp_connections.agente_leads_ativado_em IS
     'than this is never eligible for Julia (contract 11.1 b).';
 COMMENT ON COLUMN social_wiring.whatsapp_connections.agente_handoff_notificar_user_id IS
     'Who is notified on handoff. NULL = the connection owner (user_id). When set, '
-    'must hold core org role owner/admin -- checked by the API and re-checked at '
+    'must hold core org role owner/admin: checked by the API and re-checked at '
     'send time (contract 11.4).';
-
--- H3 / 11.1: the invariants the routing code relies on, enforced by the DB.
--- authorized_numbers is jsonb NOT NULL DEFAULT '[]' (migration 016).
-ALTER TABLE social_wiring.whatsapp_connections
-    DROP CONSTRAINT IF EXISTS whatsapp_connections_agente_exige_autorizados;
-ALTER TABLE social_wiring.whatsapp_connections
-    ADD CONSTRAINT whatsapp_connections_agente_exige_autorizados
-    CHECK (
-        NOT agente_leads_ativo
-        OR (
-            jsonb_typeof(authorized_numbers) = 'array'
-            AND jsonb_array_length(authorized_numbers) > 0
-        )
-    );
-
-ALTER TABLE social_wiring.whatsapp_connections
-    DROP CONSTRAINT IF EXISTS whatsapp_connections_agente_exige_ativado_em;
-ALTER TABLE social_wiring.whatsapp_connections
-    ADD CONSTRAINT whatsapp_connections_agente_exige_ativado_em
-    CHECK (
-        NOT agente_leads_ativo
-        OR (agente_leads_ativado_em IS NOT NULL AND agente_leads_key IS NOT NULL)
-    );
 
 -- -- 2. chat: per-chat pause + the agents-side conversation id -----------------
 ALTER TABLE social_wiring.whatsapp_chats
@@ -71,7 +48,7 @@ ALTER TABLE social_wiring.whatsapp_chats
 
 COMMENT ON COLUMN social_wiring.whatsapp_chats.agente_pausado IS
     'A human is handling this chat: Julia stays silent (handoff, manual toggle, '
-    'or the owner typing from the phone -- contract 5 / 10.1 L3).';
+    'or the owner typing from the phone; contract 5 / 10.1 L3).';
 COMMENT ON COLUMN social_wiring.whatsapp_chats.agente_conversation_id IS
     'agents.conversations id once Julia owns the chat. Also the marker that the '
     'privacy disclosure bubble was already sent (contract 11.3).';
@@ -107,3 +84,28 @@ DROP POLICY IF EXISTS "lais_agente_preexistentes_service_role"
 CREATE POLICY "lais_agente_preexistentes_service_role"
     ON social_wiring.lais_agente_chats_preexistentes
     FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- -- 4. the invariants the routing code relies on, enforced by the DB -----------
+-- H3: `agente_leads_ativo => authorized_numbers non-empty`, on every write.
+-- authorized_numbers is jsonb NOT NULL DEFAULT '[]' (migration 016).
+ALTER TABLE social_wiring.whatsapp_connections
+    DROP CONSTRAINT IF EXISTS whatsapp_connections_agente_exige_autorizados;
+ALTER TABLE social_wiring.whatsapp_connections
+    ADD CONSTRAINT whatsapp_connections_agente_exige_autorizados
+    CHECK (
+        NOT agente_leads_ativo
+        OR (
+            jsonb_typeof(authorized_numbers) = 'array'
+            AND jsonb_array_length(authorized_numbers) > 0
+        )
+    );
+
+ALTER TABLE social_wiring.whatsapp_connections
+    DROP CONSTRAINT IF EXISTS whatsapp_connections_agente_exige_ativado_em;
+ALTER TABLE social_wiring.whatsapp_connections
+    ADD CONSTRAINT whatsapp_connections_agente_exige_ativado_em
+    CHECK (
+        NOT agente_leads_ativo
+        OR (agente_leads_ativado_em IS NOT NULL AND agente_leads_key IS NOT NULL)
+    );
+

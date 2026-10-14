@@ -93,6 +93,7 @@ class LeadDeps:
     redis: Any = None
     bus: Any = None
     sleep: Callable[[float], Any] = asyncio.sleep
+    turn_timeout_s: float = TURN_TIMEOUT_S
 
     def __post_init__(self) -> None:
         from app.dependencies import get_admin_client, get_core_client, get_scoped_admin_client
@@ -333,9 +334,9 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         return
 
     try:
-        result = await asyncio.wait_for(client.run_turn(req), timeout=TURN_TIMEOUT_S)
+        result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
     except asyncio.TimeoutError:
-        logger.error("lais: agents turn timed out (>%ss) conn=%s chat=%s", TURN_TIMEOUT_S, connection.id, chat_id)
+        logger.error("lais: agents turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
         _clear_attempts(deps, key)
         close_run(deps.buffer, key, run)
         return

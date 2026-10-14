@@ -598,3 +598,7 @@ Authored 2026-10-14 (owner decision: Esteira + the media-creation pages leave 'd
 ## 256 — cs_research_variables.corestudio_id → referencia_id — NOT APPLIED
 
 Authored 2026-10-14 (owner decision "no leftovers from Core"). Pure rename, guarded on the old name (idempotent). No runtime code selects the column, so apply order vs image is free. 217 stays immutable; `test_pesquisa` compares 217 against the seed rendered with the pre-rename name.
+
+## 258 — lais_agente_roteamento (Julia routing fields + snapshot table) — NOT APPLIED
+
+Authored 2026-10-14 (Lais slice W1, contract `projects/lais/specs/julia-agent-contract.md` §5 / §10.1 H3 / §11.1 / §11.4). Adds `whatsapp_connections.agente_leads_ativo|agente_leads_key|agente_leads_ativado_em|agente_handoff_notificar_user_id`, `whatsapp_chats.agente_pausado|agente_conversation_id`, the snapshot table `lais_agente_chats_preexistentes` (PK `(connection_id, chat_id)`, RLS own-org select + service_role) and two CHECKs on `whatsapp_connections` (`agente_leads_ativo` ⇒ non-empty `authorized_numbers`; ⇒ `ativado_em` + `key`). Additive + idempotent (replayed twice on PGlite by pre-commit). Apply BEFORE deploying the image that reads these columns: the stores read them defensively (an un-migrated row is "Julia off"), but the new `/api/lais/agente` routes write them. 255 (the privacy notice) is independent. Julia stays OFF until the owner switches a connection on — and the switch needs the agents side (A2) live.

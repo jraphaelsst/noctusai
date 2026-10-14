@@ -1282,6 +1282,74 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 )
 
 
+_LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
+    id="whatsapp_connections.agente_leads_ativo.exige_autorizados",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="whatsapp_connections_agente_exige_autorizados",
+    kind="write_refusal",
+    migrations=("258_lais_agente_roteamento.sql",),
+    rationale=(
+        "Julia (the lead agent) on a line whose `authorized_numbers` is EMPTY would hand every "
+        "lead to the operator bot and its tools: an empty list means 'everyone is authorized' "
+        "to the One Chat gate. The invariant `agente_leads_ativo => authorized_numbers "
+        "non-empty` is enforced on every write by this CHECK (it spans both columns, so "
+        "emptying the list while Julia is on is refused too). CHECK fires before the unique "
+        "indexes, so a throwaway row borrowing an existing (org_id, user_id) is safe."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="whatsapp_connections",
+        columns_sql=(
+            "org_id, user_id, label, base_url, encrypted_api_key, webhook_token, "
+            "authorized_numbers, agente_leads_ativo, agente_leads_ativado_em, agente_leads_key"
+        ),
+        values_sql=(
+            "org_id, user_id, 'noc-probe', 'https://noc-probe.invalid', 'x', 'noc-probe-token', "
+            "'[]'::jsonb, true, now(), 'lead-imob'"
+        ),
+        fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from"
+        ),
+        guard_fragment='constraint "whatsapp_connections_agente_exige_autorizados"',
+    ),
+)
+
+
+_LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE = GuardProbe(
+    id="whatsapp_connections.agente_leads_ativo.exige_ativado_em",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="whatsapp_connections_agente_exige_ativado_em",
+    kind="write_refusal",
+    migrations=("258_lais_agente_roteamento.sql",),
+    rationale=(
+        "A chat reaches Julia only if it did not exist before `agente_leads_ativado_em` "
+        "(contract 11.1): a connection with Julia on and no such timestamp (or no agent key) "
+        "would make the eligibility rule undecidable. The routing code fails closed on it; "
+        "this CHECK makes the state unrepresentable."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="whatsapp_connections",
+        columns_sql=(
+            "org_id, user_id, label, base_url, encrypted_api_key, webhook_token, "
+            "authorized_numbers, agente_leads_ativo, agente_leads_ativado_em, agente_leads_key"
+        ),
+        values_sql=(
+            "org_id, user_id, 'noc-probe', 'https://noc-probe.invalid', 'x', 'noc-probe-token', "
+            "'[\"+5511999990000\"]'::jsonb, true, NULL, 'lead-imob'"
+        ),
+        fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from"
+        ),
+        guard_fragment='constraint "whatsapp_connections_agente_exige_ativado_em"',
+    ),
+)
+
+
 _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE = GuardProbe(
     id="org_memberships.ended_at.iff_removed",
     product="core",
@@ -7880,6 +7948,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
+    _LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE,
+    _LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,

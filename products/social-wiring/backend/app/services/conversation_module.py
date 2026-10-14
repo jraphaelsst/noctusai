@@ -172,6 +172,7 @@ def configure_conversation_module(
     main_loop: Optional[asyncio.AbstractEventLoop] = None,
     agents_client_factory: Optional[Callable[[UUID], Any]] = None,
     waha_factory: Optional[Callable[..., Any]] = None,
+    cfg: Any = None,
 ) -> ConversationModule:
     """Build + cache the ``ConversationModule``.
 
@@ -192,6 +193,7 @@ def configure_conversation_module(
             to script agents' replies.
         waha_factory: ``(base_url=, api_key=, session=) -> WAHA client`` for the lead
             path's sends. Default = the seed ``get_whatsapp_client``.
+        cfg: settings object the lead path reads (default: the module singleton).
     """
     global _module
     with _module_lock:
@@ -217,6 +219,7 @@ def configure_conversation_module(
                 org_id=org_id,
                 agents_client_factory=agents_client_factory,
                 waha_factory=waha_factory,
+                cfg=cfg,
             ),
             idle_processor=None,
             poll_seconds=2.0,
@@ -290,6 +293,7 @@ def _build_processor(
     org_id: UUID,
     agents_client_factory: Optional[Callable[[UUID], Any]] = None,
     waha_factory: Optional[Callable[..., Any]] = None,
+    cfg: Any = None,
 ):
     """Return the ``ConversationProcessor`` closure the worker invokes.
 
@@ -308,7 +312,7 @@ def _build_processor(
             future = asyncio.run_coroutine_threadsafe(
                 _dispatch_lead(
                     conversation_id, memory, buffer=buffer, admin_supabase=admin_supabase,
-                    agents_client_factory=agents_client_factory, waha_factory=waha_factory,
+                    agents_client_factory=agents_client_factory, waha_factory=waha_factory, cfg=cfg,
                 ),
                 main_loop,
             )
@@ -347,13 +351,14 @@ async def _dispatch_lead(
     admin_supabase: Any,
     agents_client_factory: Optional[Callable[[UUID], Any]],
     waha_factory: Optional[Callable[..., Any]],
+    cfg: Any = None,
 ) -> None:
     """Run one Julia batch on the main loop (late import: the lead service pulls in
     the stores + agents client, none of which the operator path needs)."""
     from app.services.lais_lead_turn_service import LeadDeps, process_lead_batch
 
     deps = LeadDeps(
-        buffer=buffer, admin=admin_supabase, cfg=settings,
+        buffer=buffer, admin=admin_supabase, cfg=cfg if cfg is not None else settings,
         agents_client_factory=agents_client_factory, waha_factory=waha_factory,
     )
     await process_lead_batch(conversation_id, memory, deps=deps)
