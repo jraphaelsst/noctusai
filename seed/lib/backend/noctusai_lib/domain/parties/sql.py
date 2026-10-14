@@ -1,0 +1,121 @@
+"""`parties_migration(cfg, schema)` -- the parties DDL for a product's schema.
+
+Emits both organ tables as one re-runnable migration body composed from
+`noctusai_lib.domain.sql_templates` (same conventions as `finance_migration`):
+
+- `org_id UUID NOT NULL` on every table; RLS enabled; an `authenticated` SELECT policy on
+  `org_id = (SELECT <cfg.org_id_expr>)` plus the literal-named `service_role_bypass`. The backend
+  writes through the service-role client, so no authenticated write policy exists.
+- Forward-only and idempotent: `IF NOT EXISTS`, `DROP POLICY IF EXISTS` before each
+  `CREATE POLICY`, re-runnable grants (the chain replay applies a new file twice).
+- Tenant uniqueness is always `(org_id, ...)`; `doc` (CPF/CNPJ, stored without punctuation) is
+  unique per org when present.
+- The roles table carries `org_id` AND a composite FK `(party_id, org_id)` to the party, so a role
+  row can never name a party of another org even through the service role.
+
+Prerequisite (not created here): `public.current_org_id_for(text)` (core 070; the default `org_id_expr`).
+
+NOC-REMEDIATE[parties-finance-link]: no FK to `fin_entries` yet. `fin_entries.party_id` (nullable,
+`counterparty_*` stays as a snapshot -- roadmap E4) lands once the finance DRE branch is merged,
+as a generator flag on `finance_migration`; add `("fin_entries", "party_id")` to
+`PartiesConfig.reference_tables` in the same change so a linked party is never hard-deleted. — 2026-10-14
+"""
+from __future__ import annotations
+
+from noctusai_lib.domain.sql_templates import rls_subquery_policy, service_role_bypass, set_search_path
+
+from .config import PartiesConfig
+from .types import PartyKind, PartyRole, values
+
+#: Every organ table (unprefixed), in dependency order. The generator and org-isolation tests
+#: iterate this -- a table added here without RLS fails the build.
+PARTIES_TABLES: tuple[str, ...] = ("parties", "party_roles")
+
+
+def _in(enum_cls) -> str:
+    return ", ".join(f"'{v}'" for v in values(enum_cls))
+
+
+def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
+    select_name = f"{table}_select_own_org"
+    return "\n".join(
+        [
+            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
+            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
+            rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
+            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
+            service_role_bypass(table, schema=schema),
+            f"GRANT SELECT ON {schema}.{table} TO authenticated;",
+            f"GRANT ALL ON {schema}.{table} TO service_role;",
+        ]
+    )
+
+
+def _tables(cfg: PartiesConfig, s: str) -> list[str]:
+    o = cfg.org_id_expr
+    parties, roles = cfg.table("parties"), cfg.table("party_roles")
+    return [
+        "\n".join(
+            [
+                "-- Parties: one row per person/company the org deals with (PF = CPF, PJ = CNPJ). "
+                "`doc` is stored without punctuation and is unique per org when present.",
+                f"""CREATE TABLE IF NOT EXISTS {s}.{parties} (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id               UUID NOT NULL,
+    kind                 TEXT NOT NULL CHECK (kind IN ({_in(PartyKind)})),
+    doc                  TEXT,
+    legal_name           TEXT NOT NULL CHECK (length(btrim(legal_name)) > 0),
+    trade_name           TEXT,
+    email                TEXT,
+    phones               JSONB NOT NULL DEFAULT '[]'::jsonb,
+    address              JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    state_registration   TEXT,
+    municipal_registration TEXT,
+    notes                TEXT,
+    is_active            BOOLEAN NOT NULL DEFAULT true,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id, org_id),
+    CHECK (doc IS NULL OR (kind = 'PF' AND length(doc) = 11) OR (kind = 'PJ' AND length(doc) = 14)),
+    CHECK (jsonb_typeof(phones) = 'array' AND jsonb_typeof(address) = 'object')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_{parties}_doc ON {s}.{parties} (org_id, doc) WHERE doc IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_{parties}_org_name ON {s}.{parties} (org_id, lower(legal_name));
+CREATE INDEX IF NOT EXISTS idx_{parties}_org_email ON {s}.{parties} (org_id, lower(email)) WHERE email IS NOT NULL;
+""",
+                _org_rls(s, parties, o),
+            ]
+        ),
+        "\n".join(
+            [
+                "-- Party roles: a party can be customer + supplier + ... at once. Unique (party, role).",
+                f"""CREATE TABLE IF NOT EXISTS {s}.{roles} (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL,
+    party_id    UUID NOT NULL,
+    role        TEXT NOT NULL CHECK (role IN ({_in(PartyRole)})),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (party_id, role),
+    FOREIGN KEY (party_id, org_id) REFERENCES {s}.{parties}(id, org_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_{roles}_org_role ON {s}.{roles} (org_id, role);
+""",
+                _org_rls(s, roles, o),
+            ]
+        ),
+    ]
+
+
+def parties_migration(cfg: PartiesConfig, schema: str) -> str:
+    """The whole parties DDL for `schema`, as one re-runnable migration body."""
+    if not schema or not schema.strip():
+        raise ValueError("parties_migration requires a non-empty schema")
+    sections = [
+        "-- Parties organ -- generated by noctusai_lib.domain.parties.sql (do not hand-edit)",
+        f"{set_search_path(schema)};",
+        *_tables(cfg, schema),
+    ]
+    return "\n\n".join(sections) + "\n"
+
+
+__all__ = ["PARTIES_TABLES", "parties_migration"]

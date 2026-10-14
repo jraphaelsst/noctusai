@@ -1,0 +1,37 @@
+name: RoleChips
+kind: component
+path: seed/lib/frontend/src/parties/RoleChips.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "RoleChips (read-only chips) + RolePicker (toggle chips, role=checkbox). A party can hold any combination of customer/supplier/employee/carrier."
+  - "Part of the parties organ (backend: noctusai_lib/domain/parties; roadmap project-history/roadmaps/erp-seed-2026-10.md E2/E4/E8). Wire types mirror types.py/schemas.py; renaming a member is a wire-contract change."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "LGPD: the server masks `doc` for non-admin readers (***.456.789-**); the organ renders it as given, locks a masked document and never sends it back. `canWrite` is UX only — writes are admin-only on the server."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client (createApiClient()). pt-BR copy in parties/messages.ts."
+
+errors_encountered:
+  - "Naming both a fieldset legend and its inner aria-label group 'Papéis' made getByRole('group') ambiguous in tests: one accessible name per group."
+  - "A key-change query that FAILS drops its placeholderData (TanStack): the table shows the retryable error, never an empty-list claim."
+
+drifts_surfaced:
+  - "Generic Paginated/ImportResult/ActiveFilter type names collide with commerce's under the barrel `export *`; parties types are prefixed (PartiesPaginated, ...)."
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by ERP-shaped products."
+  - "Importing commerce/controls (ListSkeleton/RetryError/RefreshingBar) instead of copying: chosen, single seam in parties/controls.ts, NOC-REMEDIATE[organ-controls-lift] to lift into design-system at N=3."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

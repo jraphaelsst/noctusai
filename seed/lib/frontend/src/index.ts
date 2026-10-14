@@ -260,3 +260,8 @@ export * from './commerce';
 // roadmap project-history/roadmaps/erp-seed-2026-10.md (E2/E5/E8). Product-agnostic;
 // the host passes its authenticated api client to `createItemsHooks`.
 export * from './items';
+
+// Parties organ (PF/PJ, CPF/CNPJ, customer/supplier/employee/carrier roles) — `createPartiesHooks`,
+// `<PartiesTable/>`, `<PartyEditor/>`, role chips, CSV export/import. Backend:
+// noctusai_lib.domain.parties. Product-agnostic; the host supplies the authenticated api client.
+export * from './parties';
