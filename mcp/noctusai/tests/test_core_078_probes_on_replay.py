@@ -29,6 +29,9 @@ from tools.noctus.dev import verify_db_guards as vdg
 _MIGRATIONS = Path(REPO_ROOT) / "products/core/backend/migrations"
 _M078 = str(migration_path(_MIGRATIONS, "org_picker_postgrest_entry").relative_to(REPO_ROOT))
 _MEMBER_SEL = str(migration_path(_MIGRATIONS, "org_member_selection").relative_to(REPO_ROOT))
+#: Core 083 (owner D1/D5) re-declares the helper + RPC again (a superset): every "without X"
+#: run below must drop it too, or its copy masks what is being dropped.
+_ACCESS = str(migration_path(_MIGRATIONS, "member_access_rules").relative_to(REPO_ROOT))
 _SENT = re.compile(r"NOC_PROBE:(\w+):")
 _FIXTURE = "core-078-picker-fixture"
 
@@ -79,10 +82,21 @@ _ENTRY_PROBES = {
 
 
 _MEMBER_PROBES = {p.id for p in vdg._ORG_MEMBER_PROBES}
+#: The core 083 helper probes (D1 eligible-org counting, D5 blocks) -- they need 083.
+_ACCESS_HELPER_PROBES = {p.id for p in vdg._ACCESS_RULES_PROBES if p.id.startswith("current_org_id_for.")}
 #: Without the member migration these still pass: the forged row is ignored by the 078 helper and
 #: the profile's home answers -- the fallback is the SAME with or without it. Every other member
 #: probe needs the member RPC/helper and must fail without it.
-_PASSES_WITHOUT_MEMBER_MIGRATION = {"current_org_id_for.removed_member_selection_falls_back_to_home"}
+_PASSES_WITHOUT_MEMBER_MIGRATION = {
+    "current_org_id_for.removed_member_selection_falls_back_to_home",
+    # the 078 helper ignores the (customer) member row and serves home -- the same answer D1 gives;
+    # it is NOT vacuous: it fails on 081 alone (see test_without_083_...).
+    "current_org_id_for.customer_role_membership_is_never_served",
+}
+#: Member probes whose expectation core 083 changed (they declare 083 and may fail on 081 alone).
+_ACCESS_SENSITIVE_MEMBER_PROBES = {
+    p.id for p in vdg._ORG_MEMBER_PROBES if "083_member_access_rules.sql" in p.migrations
+}
 _PASS = ("clean", "refused")
 
 
@@ -134,14 +148,21 @@ def test_every_helper_probe_is_clean_with_078(pglite):
 
 def test_without_078_the_entry_probes_fail(pglite):
     # 081 re-declares the helper (a superset of 078), so dropping 078 alone changes nothing: drop both.
-    out = _outcomes({_M078: "SELECT 1;\n", _MEMBER_SEL: "SELECT 1;\n"})
+    out = _outcomes({_M078: "SELECT 1;\n", _MEMBER_SEL: "SELECT 1;\n", _ACCESS: "SELECT 1;\n"})
     failing = {k for k, v in out.items() if v not in _PASS}
     assert _ENTRY_PROBES <= failing
-    assert failing <= _ENTRY_PROBES | _MEMBER_PROBES
+    assert failing <= _ENTRY_PROBES | _MEMBER_PROBES | _ACCESS_HELPER_PROBES
     assert all(out[k] == "violation" for k in _ENTRY_PROBES), out
 
 
-def test_without_the_member_migration_exactly_the_member_probes_fail(pglite):
-    out = _outcomes({_MEMBER_SEL: "SELECT 1;\n"})
+def test_without_the_member_migrations_exactly_the_member_probes_fail(pglite):
+    out = _outcomes({_MEMBER_SEL: "SELECT 1;\n", _ACCESS: "SELECT 1;\n"})
     failing = {k for k, v in out.items() if v not in _PASS}
-    assert failing == _MEMBER_PROBES - _PASSES_WITHOUT_MEMBER_MIGRATION, out
+    assert failing == (_MEMBER_PROBES | _ACCESS_HELPER_PROBES) - _PASSES_WITHOUT_MEMBER_MIGRATION, out
+
+
+def test_without_083_exactly_the_d1_d5_expectations_fail(pglite):
+    """081's helper (Q2: land in the licensed last-active org) against the D1/D5 expectations."""
+    out = _outcomes({_ACCESS: "SELECT 1;\n"})
+    failing = {k for k, v in out.items() if v not in _PASS}
+    assert failing == _ACCESS_HELPER_PROBES | _ACCESS_SENSITIVE_MEMBER_PROBES, out

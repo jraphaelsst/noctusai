@@ -68,11 +68,15 @@ class TestTeamListReadsMemberships:
 class TestRemoveMemberIsAMembershipOperation:
     def test_removes_through_the_transactional_rpc_and_audits_where_the_profile_went(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        _team(mock_sb, target_profile_org="org-1")  # org-1 IS the target's profile org
-        mock_sb.set_rpc_data("team_member_remove", {"profile_moved_to": "org-2", "profile_deleted": False})
+        _team(mock_sb, target_profile_org="org-1", extra_memberships=[  # org-1 IS the profile org
+            {"user_id": "u-target", "org_id": "org-2", "org_role": "member", "status": "active"}])
+        mock_sb.set_rpc_data("team_member_remove", {"profile_moved_to": "org-2", "personal_org_id": None})
         resp = admin_client.delete("/api/team/u-target")
         assert resp.status_code == 200, resp.text
-        assert mock_sb.rpc_calls == [("team_member_remove", {"p_org_id": "org-1", "p_user_id": "u-target"})]
+        # another membership exists -> no personal org; the actor rides along (D2 override is SQL's)
+        assert mock_sb.rpc_calls == [("team_member_remove", {
+            "p_org_id": "org-1", "p_user_id": "u-target", "p_actor_id": ADMIN, "p_personal_org_id": None})]
+        assert mock_sb.table("organizations").inserted_payloads == []
         # never the old PostgREST-sequence shape: the router does not write the profile itself
         assert mock_sb.table("noctus_users").updated_payloads == []
 
@@ -141,8 +145,8 @@ class TestRoleChangeIsAMembershipOperation:
         resp = admin_client.patch("/api/team/u-target/role", json={"role": "manager"})
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["org_role"] == "manager"
-        assert mock_sb.rpc_calls == [
-            ("team_member_set_role", {"p_org_id": "org-1", "p_user_id": "u-target", "p_role": "manager"})]
+        assert mock_sb.rpc_calls == [("team_member_set_role", {
+            "p_org_id": "org-1", "p_user_id": "u-target", "p_role": "manager", "p_actor_id": ADMIN})]
         assert mock_sb.table("noctus_users").updated_payloads == []
 
     def test_target_not_a_member_here_is_404(self, admin_client):
@@ -208,8 +212,8 @@ class TestAcceptInviteForAnExistingUser:
         resp = client.post("/api/team/accept-invite", json={"token": "tok"})
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"] == {"org_id": "org-2", "role": "manager"}
-        assert mock_sb.rpc_calls == [
-            ("team_invitation_accept", {"p_invitation_id": "inv-1", "p_user_id": "test-user-123"})]
+        assert mock_sb.rpc_calls == [("team_invitation_accept", {
+            "p_invitation_id": "inv-1", "p_user_id": "test-user-123", "p_nome": "test@example.com"})]
         # last-active org stays: the profile is neither updated nor re-inserted
         assert mock_sb.table("noctus_users").updated_payloads == []
         assert mock_sb.table("noctus_users").inserted_payloads == []
@@ -245,15 +249,19 @@ class TestAcceptInviteForAnExistingUser:
         _refuse(mock_sb, "already_member")
         assert client.post("/api/team/accept-invite", json={"token": "tok"}).status_code == 409
 
-    def test_first_time_invitee_keeps_the_profile_path(self, client):
+    def test_first_time_invitee_gets_profile_and_linked_membership_in_one_rpc(self, client):
+        # D4: the profile insert + the invited_by/invitation_id link + accepted are ONE transaction
         mock_sb = client.mock_supabase
         mock_sb.strict_single = True
         _invite(mock_sb)
         mock_sb.set_table_data("noctus_users", [])
+        mock_sb.set_rpc_data("team_invitation_accept", {"org_id": "org-2", "new_user": True})
         resp = client.post("/api/team/accept-invite", json={"token": "tok", "nome": "Nova"})
         assert resp.status_code == 200, resp.text
-        assert mock_sb.rpc_calls == []  # the 079 trigger mirrors the membership
-        assert mock_sb.table("noctus_users").inserted_payloads[0]["org_id"] == "org-2"
+        assert mock_sb.rpc_calls == [("team_invitation_accept", {
+            "p_invitation_id": "inv-1", "p_user_id": "test-user-123", "p_nome": "Nova"})]
+        # never the old two-step PostgREST sequence (profile insert, then mark accepted)
+        assert mock_sb.table("noctus_users").inserted_payloads == []
 
 
 @pytest.mark.asyncio

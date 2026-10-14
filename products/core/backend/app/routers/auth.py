@@ -7,8 +7,6 @@ GET   /api/auth/me       — Get current user profile + org
 POST  /api/auth/logout   — Invalidate session
 """
 import logging
-import re
-import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -17,7 +15,7 @@ from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
-from app.services import login_mfa
+from app.services import login_mfa, org_provisioning
 from app.schemas.products import PRODUCT_PUBLIC_KEYS as _PUBLIC_PRODUCT_KEYS
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
@@ -28,23 +26,9 @@ from noctusai_lib.primitives.roles import customer_may_access_product
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
-_SLUG_PREFIX = {"individual": "indv", "company": "comp"}
-
-
-def _slugify(text: str) -> str:
-    """Generate a URL-safe slug from text (max 44 chars, leaving room for prefix_)."""
-    slug = text.lower().strip()
-    slug = re.sub(r'[^\w\s-]', '', slug)
-    slug = re.sub(r'[\s_]+', '-', slug)
-    slug = re.sub(r'-+', '-', slug)
-    return slug[:44]
-
-
-def _make_org_slug(base_name: str, org_type: str) -> str:
-    """Build a prefixed slug: 'indv_<base>' or 'comp_<base>'."""
-    prefix = _SLUG_PREFIX.get(org_type, "indv")
-    base = _slugify(base_name)
-    return f"{prefix}_{base}"
+# The slug rule + org insert live in ONE place (signup, OAuth signup, a removed member's
+# personal org): app.services.org_provisioning. Re-exported for the signup tests.
+_make_org_slug = org_provisioning.make_org_slug
 
 
 @router.post("/signup")
@@ -107,26 +91,10 @@ async def signup(request: Request, body: SignupRequest):
 
     # 2. Create organization with org_type, number_of_users, and prefixed slug.
     #    Slug format: 'indv_<base>' for individuals, 'comp_<base>' for companies.
-    org_type = body.org_type
-    number_of_users = body.number_of_users
-    slug = _make_org_slug(body.empresa.strip(), org_type)
-    existing_slug = db.table("organizations").select("id").eq("slug", slug).execute()
-    if existing_slug.data:
-        slug = f"{slug}-{uuid.uuid4().hex[:6]}"
-
-    org_data = {
-        "nome": body.empresa.strip(),
-        "slug": slug,
-        "plano": "free",
-        "owner_id": user.id,
-        "category": "normal",
-        "org_type": org_type,
-        "number_of_users": number_of_users,
-    }
-    org_result = db.table("organizations").insert(org_data).execute()
-    if not org_result.data:
-        raise HTTPException(status_code=500, detail="Erro ao criar organização")
-    org = org_result.data[0]
+    org = org_provisioning.create_owned_org(
+        db, owner_id=user.id, nome=body.empresa.strip(), slug_base=body.empresa.strip(),
+        org_type=body.org_type, category="normal", number_of_users=body.number_of_users,
+    )
 
     # 3. Create user profile linked to org
     profile_data = {
@@ -246,6 +214,9 @@ async def get_me(authorization: Optional[str] = Header(None)):
     # Get licensed products for this org (checks expiry)
     from app.dependencies import get_licensed_product_ids
     licensed_product_ids = get_licensed_product_ids(db, org_id)
+    # D5 (owner, 2026-10-14): a product the user is BLOCKED from in this org is not offered here.
+    from app.services.team_memberships import blocked_product_ids
+    blocked_ids = blocked_product_ids(db, user.id, org_id) if org_id else set()
 
     # Get all products (for the marketplace view).
     #
@@ -293,6 +264,7 @@ async def get_me(authorization: Optional[str] = Header(None)):
             # whose catalog row declares `aceita_clientes` — the switcher
             # must not offer what /api/sso/token will refuse.
             "has_access": product["id"] in licensed_product_ids
+            and str(product["id"]) not in blocked_ids
             and customer_may_access_product(profile.get("org_role"), product),
         })
 

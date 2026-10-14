@@ -202,14 +202,17 @@ class TestResolverIneligiblePaths:
         # A member's pin is a narrowing check too (their last-active org can move under a
         # stale tab): it can refuse a request, never widen one. A MATCHING pin passes.
         plain = {"id": STAFF, "org_id": HOME, "org_role": "owner", "role": "user"}
+        # the DB invariant (core 081): a profile's org is an ACTIVE membership
+        member_store = self._store()
+        member_store.members = {STAFF: {HOME: "owner"}}
         with pytest.raises(HTTPException) as exc2:
             resolve_effective_org(
                 self._core(plain), STAFF, product_slug="igig", token=_tok(STAFF, session_id=SID, aal="aal2"),
-                acting_header=TARGET, selection_store=self._store())
+                acting_header=TARGET, selection_store=member_store)
         assert exc2.value.detail["code"] == "org_selection_changed"
         eff = resolve_effective_org(
             self._core(plain), STAFF, product_slug="igig", token=_tok(STAFF, session_id=SID, aal="aal2"),
-            acting_header=HOME.upper(), selection_store=self._store())
+            acting_header=HOME.upper(), selection_store=member_store)
         assert eff.org_id == HOME
 
 

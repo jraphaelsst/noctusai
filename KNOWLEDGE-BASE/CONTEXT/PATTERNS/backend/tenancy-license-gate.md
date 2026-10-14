@@ -219,11 +219,14 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     + viewer in B ⇒ viewer in B — the privilege-leak guard; probe
     `platform_org_selection_set.member_role_is_the_target_membership_role`). The resolver reads it
     from `org_memberships` on EVERY request (`OrgSelectionStore.memberships`, never cached).
-  - **Q1** no aal2 for members (staff keep it). **Q2** a multi-org member lands silently in their
-    last-active org when it is licensed for the product; only when it is NOT (or they are no
-    longer an active member of it) and another eligible membership exists does a gated path answer
-    `409 org_selection_required` (`/api/me/access`: `org_selection.required`, `available`). A
-    single-org member never sees a choice; `available` = ≥2 eligible orgs. **Q3**
+  - **Q1** no aal2 for members (staff keep it). **D1 (owner, 2026-10-14 — replaces Q2):** an
+    ELIGIBLE org = an ACTIVE, non-customer membership whose org is licensed for the product and in
+    which the user is not blocked from it (D5). With ≥2 eligible orgs and no valid live selection
+    EVERY gated path answers `409 org_selection_required` (a choice on every entry, like staff;
+    SQL: `current_org_id_for` NULL); exactly ONE eligible org is served silently (even when it is
+    not the profile org — the profile does not move); none → the home org (the license gate judges
+    it). `/api/me/access`: `org_selection.required`, `available` (= ≥2 eligible), `eligible_orgs`.
+    A customer-role PROFILE keeps the old path (home; no picker). **Q3**
     `noctus_users.org_id/org_role` = the LAST-ACTIVE org and follow the pick (with the membership
     role, in the RPC's transaction, before the selection row is written); the 079 mirror trigger
     then upserts the identical membership, so a pick never ends or downgrades one. The 070 trigger
@@ -258,8 +261,8 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     inviting org (the 079 trigger mirrors the membership). Refusals are `team_membership:<code>`
     mapped to strict statuses in `ERROR_MAP`; the last ACTIVE owner can be neither removed nor
     demoted (SQL, serialised on the org row) and the router additionally keeps an `owner` target
-    untouchable (403). Deleting a sole-membership profile that still owns invitations/api_keys/audit
-    rows is a typed `409 profile_in_use` (FKs without cascade; the whole transaction rolls back).
+    untouchable (403) for everyone but platform staff (S4b, D2). A sole-membership profile is never
+    deleted any more (S4b, D4 — below).
     **SSO admission** (`/api/sso/token`, `/launch`): admitted when ANY ACTIVE non-customer
     membership is in an org licensed for the product (profile org first, then most recently
     updated); the token carries the admitting org and the role in it; the org the product then
@@ -268,6 +271,41 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     `team_member_remove.moves_profile_in_the_same_transaction`,
     `team_invitation_accept.refuses_an_active_member`; behaviour on real Postgres:
     `mcp/noctusai/tests/test_core_team_membership_ops_on_replay.py`.
+  - **Access rules (S4b, owner decisions D2–D5 2026-10-14, core `member_access_rules`).** API
+    contract: roadmap § S4b API contract.
+    - **D2 platform powers.** Platform staff (`platform_staff_role`, Python + SQL twins: the
+      resolver's staff rule; `owner` = THE NoctusAI owner, `admin` = a NoctusAI admin) manage ANY
+      org's team: every team route takes `?org_id=` (another org needs staff or an ACTIVE
+      owner/admin membership there). Only the NoctusAI owner overrides the last-owner rule — decided
+      in SQL from the ACTOR passed to `team_member_remove/_set_role/_move` (4-arg/6-arg forms; the
+      082 signatures are wrappers with no actor = no override), never from a caller flag.
+    - **D3 moves.** `team_member_move(actor, user, source, target, role, mode)`, `POST /api/team/move`:
+      staff anywhere, an org owner/admin only between orgs they own/admin BOTH of
+      (`org_manager_role`); `transfer` ends the source (last-owner rule) and moves the profile when it
+      pointed at the source, `add` keeps it; role never above the actor's role in the target (staff
+      = owner). `PATCH /api/admin/users/{id}` reassignment is a `transfer` through it (metadata
+      synced first, restored if the move is refused).
+    - **D4 detached profile.** Removing a user whose ONLY active membership is this org moves the
+      profile to a personal org of their own (`Pessoal — <nome>`, `indv_<slug>`, `is_personal`,
+      owner) in the removal transaction; the org is made through the ONE org path
+      (`app/services/org_provisioning.py`, shared with signup and OAuth signup) and validated in SQL
+      (owned by the user, `is_personal`, no members) — never a profile delete. First-time invitees go
+      through `team_invitation_accept(inv, user, nome)` too: profile + membership linked
+      (`invited_by`/`invitation_id`) + invitation accepted, one transaction.
+    - **D5 product blocks.** `public.org_member_product_access` (a LIVE row = blocked; append-only
+      history closed by `unblocked_at/_by`; RLS self-read; written only by
+      `org_member_product_access_set`, owner/admin or staff, block needs a license and ends a live
+      selection of that org). Blocked ⇒ not eligible (D1), `platform_org_selection:product_blocked`,
+      SSO never admits through it, the resolver/`current_org_id_for` never resolve to it (home
+      included, picker-ready or not), `/api/auth/me` `has_access=false`. Routes:
+      `GET|PUT /api/team/{user_id}/product-access[/{slug}]`.
+    - Probes: `current_org_id_for.member_with_two_eligible_orgs_and_no_selection_is_null`,
+      `.member_with_one_eligible_org_lands_there`, `.blocked_org_is_never_resolved`,
+      `platform_org_selection_set.refuses_blocked_member`, `org_member_product_access.one_live_block`
+      / `.append_only` / `.unblocked_by_needs_at`,
+      `team_member_move.refuses_an_actor_who_does_not_manage_both_orgs`,
+      `team_member_remove.sole_member_keeps_the_profile_in_a_personal_org`; real Postgres:
+      `mcp/noctusai/tests/test_core_member_access_rules_on_replay.py`.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

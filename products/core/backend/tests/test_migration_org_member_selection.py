@@ -22,6 +22,9 @@ SQL = THIS.read_text(encoding="utf-8")
 FLAT = " ".join(SQL.split())
 #: The helper declaration this migration supersedes.
 SQL_PREV = migration_path(MIGRATIONS, "org_picker_postgrest_entry").read_text(encoding="utf-8")
+#: The migration that supersedes THIS one's helper + RPC (multi-org S4b, owner D1/D5 2026-10-14).
+#: 081's copies are now HISTORICAL (ratified in mcp/noctusai/tests/org_identity_parity_baseline.json).
+LATEST = migration_path(MIGRATIONS, "member_access_rules")
 
 
 def _canon() -> str:
@@ -38,17 +41,19 @@ def _fn(sql: str, name: str) -> str:
     return " ".join(m.group(0).split())
 
 
-def test_helper_is_the_canonical_rendering():
-    assert _canon() in FLAT
+def test_the_canonical_helper_now_lives_in_the_superseding_migration():
+    # 081's copy is historical (Q2 semantics); the canonical rendering moved to member_access_rules.
+    assert _canon() not in FLAT
+    assert _canon() in " ".join(LATEST.read_text(encoding="utf-8").split())
 
 
-def test_is_the_last_core_declaration_of_both_functions():
+def test_both_functions_are_last_declared_by_the_superseding_migration():
     for pattern in (r"FUNCTION\s+public\.current_org_id_for\s*\(", r"FUNCTION\s+public\.platform_org_selection_set\s*\("):
         declaring = [
             p.name for p in sorted(MIGRATIONS.glob("[0-9]*.sql"))
             if re.search(pattern, p.read_text(encoding="utf-8"))
         ]
-        assert declaring[-1] == THIS.name, pattern
+        assert THIS.name in declaring and declaring[-1] == LATEST.name, pattern
 
 
 def test_expand_only_function_replacement_no_table_or_column_change():
@@ -98,7 +103,9 @@ class TestSelectionRpc:
 
 
 class TestHelper:
-    BODY = _canon()
+    """081's OWN (historical) helper -- what a chain that stops at 081 leaves behind."""
+
+    BODY = _fn(SQL, "current_org_id_for")
 
     def test_member_selection_requires_an_active_membership_checked_on_every_call(self):
         assert "JOIN public.org_memberships m ON m.user_id = v_uid AND m.org_id = s.target_org_id AND m.status = 'active'" in self.BODY
@@ -122,7 +129,7 @@ class TestHelper:
 
     def test_only_the_member_branch_and_the_home_check_are_new_relative_to_078(self):
         prev = _fn(SQL_PREV, "current_org_id_for")
-        new = _canon()
+        new = self.BODY
         for staff_line in (
             "IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN RETURN v_target; END IF; RETURN NULL; END IF;",
             "AND (NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')",

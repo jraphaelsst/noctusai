@@ -132,9 +132,14 @@ class TestRemoveMember:
             {"user_id": "other-user-789", "org_id": "org-1", "org_role": "member", "status": "active"},
         ])
 
+        mock_sb.set_rpc_data("team_member_remove", {"personal_org_id": "mock-organizations-1"})
+
         resp = admin_client.delete("/api/team/other-user-789")
         assert resp.status_code == 200
-        assert mock_sb.rpc_calls == [("team_member_remove", {"p_org_id": "org-1", "p_user_id": "other-user-789"})]
+        # org-1 is the target's ONLY membership: a personal org is created (D4) and handed over
+        assert mock_sb.rpc_calls == [("team_member_remove", {
+            "p_org_id": "org-1", "p_user_id": "other-user-789", "p_actor_id": "admin-user-456",
+            "p_personal_org_id": "mock-organizations-1"})]
 
     def test_remove_self_rejected(self, admin_client):
         mock_sb = admin_client.mock_supabase

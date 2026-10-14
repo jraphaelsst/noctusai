@@ -398,15 +398,13 @@ class TestReassignUserOrg:
             "user-1", {"user_metadata": {"org_id": ORG_B}}
         )
 
-    def test_a_failed_sync_reverts_and_502s_instead_of_reporting_success(self, admin_client):
+    def test_a_failed_sync_502s_before_anything_moves(self, admin_client):
         """Unlike signup's best-effort sync, a failure HERE is the split-brain
-        being prevented — so the profile write is undone and the caller is
-        told, rather than getting a success toast over a half-applied move."""
+        being prevented — the metadata sync runs FIRST, so a failure is a 502
+        with nothing changed (no membership move, no profile write)."""
         mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
-            [{"id": "user-1", "org_id": ORG_B}],
-            [{"id": "user-1", "org_id": ORG_A}],  # the revert
         ])
         mock_sb.set_table_responses("organizations", [
             {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},
@@ -417,9 +415,52 @@ class TestReassignUserOrg:
         resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
 
         assert resp.status_code == 502
-        # The last write must put the org back where it was.
-        payloads = mock_sb.table("noctus_users").updated_payloads
-        assert payloads[-1] == {"org_id": ORG_A}
+        assert mock_sb.rpc_calls == []
+        assert mock_sb.table("noctus_users").updated_payloads == []
+
+    def test_reassign_is_a_transfer_through_the_membership_move_op(self, admin_client):
+        """D3 (owner, 2026-10-14): the old membership ENDS (it used to stay ACTIVE) -- the
+        reassignment is the same SQL op every move uses, with the admin as the actor."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+            [{"id": "user-1", "org_id": ORG_B, "org_role": "member"}],
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+        mock_sb.set_rpc_data("team_member_move", {"mode": "transfer", "source_ended": True})
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+
+        assert resp.status_code == 200, resp.text
+        assert mock_sb.rpc_calls == [("team_member_move", {
+            "p_actor_id": "admin-user-456", "p_user_id": "user-1", "p_source_org_id": ORG_A,
+            "p_target_org_id": ORG_B, "p_role": "member", "p_mode": "transfer"})]
+        # the profile is moved by the op, never by a PostgREST write here
+        assert mock_sb.table("noctus_users").updated_payloads == []
+
+    def test_a_refused_move_restores_the_metadata_and_keeps_the_refusal_status(self, admin_client):
+        from postgrest.exceptions import APIError
+
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "owner"},
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": None},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+        err = APIError({"message": "team_membership:last_owner", "code": "P0001", "details": None, "hint": None})
+        mock_sb.rpc = lambda name, params=None: type("R", (), {"execute": staticmethod(
+            lambda: (_ for _ in ()).throw(err))})()
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+
+        assert resp.status_code == 409
+        calls = mock_sb.auth.admin.update_user_by_id.call_args_list
+        assert [c.args[1]["user_metadata"]["org_id"] for c in calls] == [ORG_B, ORG_A]
 
 
 # ---------------------------------------------------------------------------

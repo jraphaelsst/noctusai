@@ -336,16 +336,18 @@ def _org_picker_fn_sql(roles: str) -> str:
     mirror of ``resolve_effective_org``'s 409 ``org_selection_required``); an aal1 token
     on a product that requires 2FA keeps the home org (the resolver's MFA path).
 
-    MEMBERS (multi-org S3, owner decisions 2026-10-13): a NON-staff user with a live
-    selection for the product -- same login binding, auth session alive, target licensed --
-    resolves to the target ONLY while ``public.org_memberships`` holds an ACTIVE row for
-    (user, target): the membership is re-checked on every call (no org/role in the JWT), so
-    ending it stops the selection resolving on the next query. No aal2 for members (Q1). The
-    pin header only NARROWS (a mismatch DENIES, never widens). A customer-role membership
-    resolves NULL like a customer home. EVERYONE else resolves the home rule (customers
-    excluded → NULL), and the home org must itself be an ACTIVE membership -- a user removed
-    from the org their profile still names (the profile follows the last selection, Q3) never
-    falls back to the org they were removed from."""
+    MEMBERS (multi-org S3 + S4b, owner decisions 2026-10-13 Q1 and 2026-10-14 D1/D5) on a
+    picker-ready product: an ELIGIBLE org is an ACTIVE non-customer ``org_memberships`` row
+    whose org is licensed for the product and that is not blocked for this user x product
+    (``org_member_product_access``, D5). A live selection -- same login binding, auth session
+    alive -- resolves ONLY while its target is eligible (re-checked on every call; nothing in
+    the JWT). Without a valid selection: >=2 eligible orgs -> NULL (the choice is required on
+    every entry, D1), exactly one -> that org silently, none -> the home rule. No aal2 for
+    members (Q1). The pin header only NARROWS (a mismatch DENIES, never widens). EVERYONE else
+    resolves the home rule (customers excluded → NULL); the home org must itself be an ACTIVE
+    membership -- a user removed from the org their profile still names never falls back to
+    the org they were removed from -- and is never served to a user blocked from the product
+    owning ``p_schema`` there (D5)."""
     return (
         "CREATE OR REPLACE FUNCTION public.current_org_id_for(p_schema text)\n"
         "  RETURNS uuid\n"
@@ -360,7 +362,8 @@ def _org_picker_fn_sql(roles: str) -> str:
         "  v_org_role text;\n"
         "  v_role     text;\n"
         "  v_target   uuid;\n"
-        "  v_mrole    text;\n"
+        "  v_pid      uuid;\n"
+        "  v_n        integer;\n"
         "  v_hdr      text;\n"
         "BEGIN\n"
         "  SELECT u.org_id, u.org_role, u.role INTO v_home, v_org_role, v_role\n"
@@ -408,31 +411,58 @@ def _org_picker_fn_sql(roles: str) -> str:
         "                  AND (NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')) THEN\n"
         "      RETURN NULL;\n"
         "    END IF;\n"
-        # Multi-org S3 (owner decisions 2026-10-13): a member's selection is honoured only
-        # while the membership is ACTIVE (re-checked here, every call), the login is the one
-        # that chose, the auth session lives and the target is licensed. No aal2 (Q1).
-        "  ELSIF p_schema IS NOT NULL THEN\n"
-        "    SELECT s.target_org_id, m.org_role INTO v_target, v_mrole\n"
-        "      FROM public.products p\n"
-        "      JOIN public.platform_org_selections s\n"
-        "        ON s.product_id = p.id AND s.user_id = v_uid AND s.ended_at IS NULL\n"
-        "      JOIN public.org_memberships m\n"
-        "        ON m.user_id = v_uid AND m.org_id = s.target_org_id AND m.status = 'active'\n"
-        "     WHERE p.db_schema = p_schema AND p.org_picker_ready\n"
-        "       AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid\n"
-        "       AND EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)\n"
-        "       AND EXISTS (\n"
-        "         SELECT 1 FROM public.licenses l\n"
-        "          WHERE l.org_id = s.target_org_id AND l.product_id = p.id\n"
-        "            AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()));\n"
+        # Multi-org members (owner decisions 2026-10-13 Q1 + 2026-10-14 D1/D5). ELIGIBLE org =
+        # an ACTIVE non-customer membership, licensed for the product, not blocked for this
+        # user x product (org_member_product_access). A live selection resolves only while its
+        # target is eligible (re-checked here, every call), the login is the one that chose and
+        # the auth session lives. No valid selection: >=2 eligible orgs -> NULL (a choice is
+        # required on every entry), exactly 1 -> that org silently, 0 -> the home rule. No aal2.
+        f"  ELSIF p_schema IS NOT NULL AND COALESCE(v_org_role, '') <> ALL ({roles}) THEN\n"
+        "    SELECT p.id INTO v_pid FROM public.products p\n"
+        "     WHERE p.db_schema = p_schema AND p.org_picker_ready;\n"
         "    IF FOUND THEN\n"
-        f"      IF COALESCE(v_mrole, '') = ANY ({roles}) THEN\n"
+        "      SELECT s.target_org_id INTO v_target\n"
+        "        FROM public.platform_org_selections s\n"
+        "        JOIN public.org_memberships m\n"
+        "          ON m.user_id = v_uid AND m.org_id = s.target_org_id AND m.status = 'active'\n"
+        "       WHERE s.product_id = v_pid AND s.user_id = v_uid AND s.ended_at IS NULL\n"
+        "         AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid\n"
+        f"         AND COALESCE(m.org_role, '') <> ALL ({roles})\n"
+        "         AND EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)\n"
+        "         AND EXISTS (\n"
+        "           SELECT 1 FROM public.licenses l\n"
+        "            WHERE l.org_id = s.target_org_id AND l.product_id = v_pid\n"
+        "              AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()))\n"
+        "         AND NOT EXISTS (\n"
+        "           SELECT 1 FROM public.org_member_product_access a\n"
+        "            WHERE a.user_id = v_uid AND a.org_id = s.target_org_id\n"
+        "              AND a.product_id = v_pid AND a.unblocked_at IS NULL);\n"
+        "      IF NOT FOUND THEN\n"
+        "        SELECT count(*), (array_agg(m.org_id))[1] INTO v_n, v_target\n"
+        "          FROM public.org_memberships m\n"
+        "         WHERE m.user_id = v_uid AND m.status = 'active'\n"
+        f"           AND COALESCE(m.org_role, '') <> ALL ({roles})\n"
+        "           AND EXISTS (\n"
+        "             SELECT 1 FROM public.licenses l\n"
+        "              WHERE l.org_id = m.org_id AND l.product_id = v_pid\n"
+        "                AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()))\n"
+        "           AND NOT EXISTS (\n"
+        "             SELECT 1 FROM public.org_member_product_access a\n"
+        "              WHERE a.user_id = v_uid AND a.org_id = m.org_id\n"
+        "                AND a.product_id = v_pid AND a.unblocked_at IS NULL);\n"
+        "        IF v_n >= 2 THEN\n"
+        "          RETURN NULL;\n"
+        "        END IF;\n"
+        "        IF v_n = 0 THEN\n"
+        "          v_target := NULL;\n"
+        "        END IF;\n"
+        "      END IF;\n"
+        "      IF v_target IS NOT NULL THEN\n"
+        "        IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN\n"
+        "          RETURN v_target;\n"
+        "        END IF;\n"
         "        RETURN NULL;\n"
         "      END IF;\n"
-        "      IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN\n"
-        "        RETURN v_target;\n"
-        "      END IF;\n"
-        "      RETURN NULL;\n"
         "    END IF;\n"
         "  END IF;\n"
         f"  IF COALESCE(v_org_role, '') = ANY ({roles}) THEN\n"
@@ -440,6 +470,15 @@ def _org_picker_fn_sql(roles: str) -> str:
         "  END IF;\n"
         "  IF NOT EXISTS (SELECT 1 FROM public.org_memberships m\n"
         "                  WHERE m.user_id = v_uid AND m.org_id = v_home AND m.status = 'active') THEN\n"
+        "    RETURN NULL;\n"
+        "  END IF;\n"
+        # D5: a member blocked from this product in their home org never resolves it (any
+        # product owning p_schema, picker-ready or not).
+        "  IF p_schema IS NOT NULL AND EXISTS (\n"
+        "       SELECT 1 FROM public.org_member_product_access a\n"
+        "         JOIN public.products p ON p.id = a.product_id\n"
+        "        WHERE a.user_id = v_uid AND a.org_id = v_home\n"
+        "          AND p.db_schema = p_schema AND a.unblocked_at IS NULL) THEN\n"
         "    RETURN NULL;\n"
         "  END IF;\n"
         "  RETURN v_home;\n"

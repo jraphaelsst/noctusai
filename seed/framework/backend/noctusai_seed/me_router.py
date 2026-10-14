@@ -11,10 +11,17 @@ Auto-mounted on EVERY product by ``create_product_app`` (registry key ``"me"``):
   STAFF (``noctus_users.role='admin'`` AND home org ``is_platform``) -- any org licensed for
   the product, ``aal2`` required when the product asks for it (``403 mfa_required``), the home
   org ("Entrar como NoctusAI (minha org)") always LAST (owner decision 2026-10-12) -- OR any
-  user with an ACTIVE membership (``public.org_memberships``): only the orgs they are an
-  active member of AND that are licensed for the product, never ``aal2`` (Q1), their last-active
-  org first. A PUT for an org that is neither is ``403 not_a_member``; a product that is not
+  user with an ACTIVE membership (``public.org_memberships``): only their ELIGIBLE orgs --
+  active, non-customer, licensed for the product, not blocked from it (owner D5, 2026-10-14) --
+  never ``aal2`` (Q1), their last-active org first. A PUT for an org that is neither is
+  ``403 not_a_member``; a blocked one ``403 product_blocked``; a product that is not
   ``org_picker_ready`` answers ``409 product_not_ready``.
+
+``/api/me/access`` (contract: roadmap multi-org-membership-2026-10 § S4b API contract) also
+carries, for the S5 picker/switcher: ``org_selection.eligible_orgs`` (this product's eligible
+orgs, D1 -- a choice is required iff >=2 and no valid selection), ``org_selection.platform_role``
+(``owner``|``admin``|``null``) and ``org_selection.manageable_orgs`` (orgs whose team the caller
+may manage: ACTIVE owner/admin memberships; platform staff manage ANY org, D2).
 
 Identity resolves through the ONE effective-org resolver
 (:mod:`noctusai_lib.api.auth.effective_org`); the selection itself is written only by
@@ -34,6 +41,7 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.effective_org import (
     EffectiveOrg,
     is_platform_staff,
+    platform_staff_role,
     resolve_effective_org_for_request,
 )
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
@@ -51,6 +59,9 @@ logger = logging.getLogger(__name__)
 NOT_A_MEMBER = "not_a_member"
 MFA_REQUIRED = "mfa_required"
 PRODUCT_NOT_READY = "product_not_ready"
+PRODUCT_BLOCKED = "product_blocked"
+#: Org roles that may manage an org's team / moves / product blocks (D3, D5).
+MANAGER_ORG_ROLES = ("owner", "admin")
 
 
 def _err(status: int, detail: str, code: str) -> HTTPException:
@@ -70,6 +81,28 @@ def _org_dto(core_client: Any, org_id: Optional[str]) -> Optional[dict]:
     return {"id": str(org_id), "nome": nome}
 
 
+def _org_names(core_client: Any, org_ids: list[str]) -> dict[str, Optional[str]]:
+    """``{org_id: nome}`` for a handful of org ids (one query)."""
+    ids = sorted({str(o) for o in org_ids if o})
+    if not ids:
+        return {}
+    rows = core_client.table("organizations").select("id, nome").in_("id", ids).execute().data or []
+    return {str(r["id"]): r.get("nome") for r in rows}
+
+
+def _manageable_orgs(core_client: Any, user_id: Any) -> list[dict]:
+    """The caller's ACTIVE owner/admin memberships, ``[{id, nome, org_role}]`` by name."""
+    rows = (
+        core_client.table("org_memberships").select("org_id, org_role")
+        .eq("user_id", str(user_id)).eq("status", "active")
+        .in_("org_role", list(MANAGER_ORG_ROLES)).execute().data or []
+    )
+    names = _org_names(core_client, [r["org_id"] for r in rows])
+    out = [{"id": str(r["org_id"]), "nome": names.get(str(r["org_id"])), "org_role": r.get("org_role")}
+           for r in rows]
+    return sorted(out, key=lambda o: (o.get("nome") or "").lower())
+
+
 class OrgChoiceBody(StrictHttpModel):
     org_id: UUID
 
@@ -79,12 +112,20 @@ def _selection_block(core: Any, eff: Optional[EffectiveOrg]) -> dict:
     effective = _org_dto(core, eff.org_id) if eff is not None else None
     is_staff = bool(eff is not None and eff.is_staff)
     can_select = bool(eff is not None and eff.member_can_select)
+    eligible = list(eff.eligible) if eff is not None else []
+    names = _org_names(core, [org for org, _role in eligible])
+    home_id = str(eff.home_org_id) if eff is not None and eff.home_org_id else None
+    eligible_orgs = sorted(
+        ({"id": org, "nome": names.get(org), "org_role": role, "is_home": org == home_id}
+         for org, role in eligible),
+        key=lambda o: (not o["is_home"], (o.get("nome") or "").lower()),
+    )
     return {
         "available": is_staff or can_select,
-        # Staff: every entry is a choice. A member: only when the last-active org cannot be
-        # served (not licensed for this product / no longer an active membership) -- Q2.
+        # Staff: every entry is a choice. A member (D1): >=2 eligible orgs and no valid selection.
         "required": (is_staff and eff.selection_id is None)
         or bool(eff is not None and eff.member_choice_required),
+        "eligible_orgs": eligible_orgs,
         "mfa_required": bool(eff is not None and eff.mfa_required),
         "acting": bool(eff is not None and eff.acting),
         "org": effective,
@@ -122,6 +163,15 @@ def create_me_router(deps) -> APIRouter:
                 if exc.status_code != 403:
                     raise
         block = _selection_block(core, eff)
+        try:
+            platform_role = platform_staff_role(core, user_id)
+            manageable = _manageable_orgs(core, user_id)
+        except Exception:
+            logger.error("me_access_manageable_lookup_error user_id=%s", user_id, exc_info=True)
+            raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+        block["platform_role"] = platform_role
+        block["manage_any_org"] = platform_role is not None
+        block["manageable_orgs"] = manageable
         return {
             "has_access": has_access,
             "product_slug": slug,
@@ -174,17 +224,18 @@ def create_me_router(deps) -> APIRouter:
         try:
             eff = resolve_effective_org_for_request(core, user.id)  # home (no token)
             licensed = store.licensed_orgs(slug)
+            blocked = set() if is_staff else store.blocked_orgs(user.id, slug)
             roles = {} if is_staff else {
                 m.org_id: m.org_role for m in store.memberships(user.id)
-                if not is_customer_role(m.org_role)
+                if not is_customer_role(m.org_role) and str(m.org_id) not in blocked
             }
         except Exception:
             logger.error("org_choices_error user_id=%s", user.id, exc_info=True)
             raise HTTPException(status_code=503, detail="Falha ao listar organizações")
         home_id = str(eff.org_id) if eff is not None and eff.org_id else None
         if not is_staff:
-            # A member sees only the orgs they are an ACTIVE member of AND that are licensed
-            # for this product; their last-active org (profile home) leads.
+            # A member sees only their ELIGIBLE orgs: ACTIVE, non-customer, licensed for this
+            # product and not blocked from it (D5); their last-active org (profile home) leads.
             mine = sorted(
                 ({**o, "is_home": str(o["id"]) == home_id, "org_role": roles[str(o["id"])]}
                  for o in licensed if str(o["id"]) in roles),
@@ -213,6 +264,8 @@ def create_me_router(deps) -> APIRouter:
         except OrgSelectionError as exc:
             if exc.code == "not_a_member":
                 raise _err(403, "Você não é membro desta organização.", NOT_A_MEMBER)
+            if exc.code == "product_blocked":
+                raise _err(403, "Seu acesso a este produto nesta organização está bloqueado.", PRODUCT_BLOCKED)
             if exc.code == "product_not_ready":
                 raise _err(409, "Este produto ainda não permite escolher a organização.", PRODUCT_NOT_READY)
             raise org_sem_licenca()

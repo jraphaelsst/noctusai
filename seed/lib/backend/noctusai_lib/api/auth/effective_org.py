@@ -15,16 +15,17 @@ with a LIVE selection for this product -- bound to THIS login (the token's ``ses
 made at ``aal2``, target still licensed -- resolve to the selected org with the ``owner``
 role. Anyone else resolves home...
 
-**...except a MEMBER's selection (multi-org S2, 2026-10-13).** A non-staff user with a live
-selection for this product -- same login binding, target licensed, and an ACTIVE
-``public.org_memberships`` row for (user, target), re-read on EVERY request (revocation by
-recheck; nothing in the JWT) -- resolves to the selected org with the role **of that
-membership**, never the home profile role (owner in A + member in B is a member in B). No
-``aal2`` for members (Q1). A member with no valid selection lands silently in their home
-org when it is licensed for the product; only when it is NOT licensed and they hold another
-eligible membership are they refused ``409 org_selection_required`` (Q2) -- a single-org
-member never sees a choice. A home org the user is no longer an ACTIVE member of is never
-served on this path.
+**...except a MEMBER on a picker-ready product (multi-org S2 2026-10-13; owner decisions
+D1/D5 2026-10-14).** An ELIGIBLE org is an ACTIVE, non-customer ``public.org_memberships`` row
+whose org is licensed for the product and in which the user is NOT blocked from the product
+(``org_member_product_access``, D5) -- all re-read on EVERY request (revocation by recheck;
+nothing in the JWT). A live selection of an eligible org (same login binding) resolves to it
+with the role **of that membership**, never the home profile role (owner in A + member in B is
+a member in B). Without one: >=2 eligible orgs -> ``409 org_selection_required`` on every
+gated path (the choice is made on every entry, D1); exactly one -> that org, silently, with
+its membership role; none -> the home org (the license gate then judges it). No ``aal2`` for
+members (Q1). A home org the user is no longer an ACTIVE member of -- or is blocked from the
+product in (D5, on ANY product with a gate, picker-ready or not) -- is never served.
 
 **Every entry is a choice** (owner decision 2026-10-12). Staff on a picker-ready product
 with NO valid live selection do NOT silently resolve home on a GATED path: the resolver
@@ -87,9 +88,12 @@ class EffectiveOrg:
     mfa_required: bool = False
     #: A non-staff MEMBER on a picker-ready product holding >=2 eligible orgs (the switcher).
     member_can_select: bool = False
-    #: A member whose last-active org is not licensed for the product but who holds another
-    #: eligible membership: a choice is required (only set on the ungated bootstrap path).
+    #: A member with >=2 eligible orgs and no valid live selection: a choice is required
+    #: (only observable on the ungated bootstrap path -- gated paths raise 409).
     member_choice_required: bool = False
+    #: A member's ELIGIBLE orgs for this product as ``((org_id, org_role), ...)`` (D1): active,
+    #: non-customer, licensed, not blocked. Empty when not evaluated (staff, not-ready product).
+    eligible: tuple[tuple[str, str], ...] = ()
 
     @property
     def acting(self) -> bool:
@@ -153,24 +157,34 @@ def _home_is_platform(core_client: Any, org_id: Any) -> bool:
     return bool(rows and rows[0].get("is_platform"))
 
 
-def is_platform_staff(core_client: Any, user_id: Any) -> bool:
-    """Trusted check: ``noctus_users.role='admin'`` AND home ``org_role`` owner/admin AND the
-    home org ``is_platform``. Explicit grant only -- NEVER derived from
-    ``org_role``. Raises on a DB error (callers fail closed)."""
+def platform_staff_role(core_client: Any, user_id: Any) -> Optional[str]:
+    """``"owner"`` | ``"admin"`` for PLATFORM STAFF, else ``None``. Staff = ``noctus_users.role
+    ='admin'`` AND home ``org_role`` owner/admin AND the home org ``is_platform`` -- an explicit
+    grant, NEVER derived from ``org_role`` alone. The returned role is the platform-org role:
+    ``owner`` is THE NoctusAI owner (owner decision D2, 2026-10-14: the only one who may override
+    the last-owner rule), ``admin`` a NoctusAI admin. SQL twin: ``public.platform_staff_role``
+    (core ``member_access_rules``). Raises on a DB error (callers fail closed)."""
     if user_id is None:
-        return False
+        return None
     rows = (
         _tbl(core_client, "noctus_users").select("org_id, org_role, role")
         .eq("id", str(user_id)).limit(1).execute().data or []
     )
     if not rows:
-        return False
+        return None
     row = rows[0]
-    return (
+    if (
         row.get("role") == STAFF_ROLE
         and row.get("org_role") in STAFF_ORG_ROLES
         and _home_is_platform(core_client, row.get("org_id"))
-    )
+    ):
+        return str(row.get("org_role"))
+    return None
+
+
+def is_platform_staff(core_client: Any, user_id: Any) -> bool:
+    """Trusted check: :func:`platform_staff_role` is not ``None``. Raises on a DB error."""
+    return platform_staff_role(core_client, user_id) is not None
 
 
 def acting_audit_actor(user_id: Any, eff: Optional["EffectiveOrg"]) -> Optional[AuditActor]:
@@ -221,13 +235,12 @@ def resolve_effective_org(
     home = EffectiveOrg(org_id=row.get("org_id"), org_role=row.get("org_role"), home_org_id=row.get("org_id"))
     from noctusai_lib.domain.licensing import CORE_SLUG
 
-    if (
-        not token
-        or selection_store is None
-        or not product_slug
-        or product_slug == CORE_SLUG
-        or not selection_store.product_ready(product_slug)
-    ):
+    if selection_store is None or not product_slug or product_slug == CORE_SLUG:
+        return home
+    if not token or not selection_store.product_ready(product_slug):
+        # D5: a member blocked from this product in their home org is never served it.
+        if home.org_id and str(home.org_id) in selection_store.blocked_orgs(user_id, product_slug):
+            return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
         return home
     if (
         row.get("role") != STAFF_ROLE
@@ -279,16 +292,19 @@ def _resolve_member(
     license_checker: Any,
     require_selection: bool,
 ) -> EffectiveOrg:
-    """The effective org of a NON-staff user on a picker-ready product (multi-org S2).
+    """The effective org of a NON-staff user on a picker-ready product (S2 + owner D1/D5).
 
-    Trust: the selection row (``selection_store.live``) says WHAT was chosen; whether the
-    user may still act there is re-read from ``org_memberships`` (``selection_store.memberships``)
-    on this very request, so ending a membership ends the selection at once. The role is the
-    membership's role in the effective org -- never the home profile role. No aal2 (Q1).
+    Trust: the selection row (``selection_store.live``) says WHAT was chosen; whether the user
+    may still act there is re-read from ``org_memberships`` (``selection_store.memberships``) and
+    the D5 blocks (``selection_store.blocked_orgs``) on this very request, so ending a membership
+    or blocking the product ends the selection at once. The role is the membership's role in the
+    effective org -- never the home profile role. No aal2 (Q1).
 
-    Membership rows are only loaded when they matter: a live selection exists, the home org is
-    not licensed (Q2) or the caller is the ungated bootstrap (``require_selection=False``). A
-    plain single-org request therefore costs one selection lookup and nothing more."""
+    ELIGIBLE = ACTIVE, non-customer, licensed for the product, not blocked. A valid selection
+    wins; else >=2 eligible -> a choice (409 on gated paths, D1: every entry); exactly 1 -> that
+    org silently; 0 -> the home org when it is still an ACTIVE, unblocked membership (the license
+    gate judges it -- an end customer's home lands here), else no org. SQL twin:
+    ``current_org_id_for`` (parity: ``verify_db_guards`` member probes)."""
     pin = _clean_header(acting_header)
 
     def _pinned(eff: EffectiveOrg) -> EffectiveOrg:
@@ -297,56 +313,56 @@ def _resolve_member(
         return eff
 
     if is_customer_role(home.org_role):
-        return _pinned(home)  # an end customer never picks an org; the license gate judges home
+        # An end customer never picks an org; the license gate judges home (SQL: the member
+        # branch is skipped for a customer profile and the home rule answers NULL).
+        if home.org_id and str(home.org_id) in selection_store.blocked_orgs(user_id, product_slug):
+            return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
+        return _pinned(home)
     session_id, _aal = read_session_claims(token, user_id=user_id)
     sel = selection_store.live(user_id, product_slug) if session_id else None
 
     def licensed(org_id: Any) -> bool:
         return license_checker is None or bool(license_checker.has_license(org_id, product_slug))
 
-    home_licensed = bool(home.org_id) and licensed(home.org_id)
-    eff: Optional[EffectiveOrg] = None
-    selectable = False
+    active = {str(m.org_id): m for m in selection_store.memberships(user_id)}
+    blocked = selection_store.blocked_orgs(user_id, product_slug)
+    eligible = {
+        org: m for org, m in active.items()
+        if not is_customer_role(m.org_role) and org not in blocked and licensed(org)
+    }
+    eligible_view = tuple(sorted((org, m.org_role) for org, m in eligible.items()))
     choice_required = False
-    if sel is None and home_licensed and require_selection:
-        eff = home  # the common case: last-active org, silently, no extra query
+    if sel is not None and sel.auth_session_id == session_id and str(sel.target_org_id) in eligible:
+        m = eligible[str(sel.target_org_id)]
+        eff = EffectiveOrg(
+            org_id=str(sel.target_org_id), org_role=m.org_role,
+            home_org_id=home.org_id, selection_id=sel.id,
+        )
+    elif len(eligible) >= 2:
+        choice_required = True
+        if require_selection:
+            raise org_selection_required()
+        home_eligible = eligible.get(str(home.org_id)) if home.org_id else None
+        eff = EffectiveOrg(
+            org_id=home.org_id if home_eligible else None,
+            org_role=home_eligible.org_role if home_eligible else None,
+            home_org_id=home.org_id,
+        )
+    elif len(eligible) == 1:
+        (org, m), = eligible.items()
+        eff = EffectiveOrg(org_id=org, org_role=m.org_role, home_org_id=home.org_id)
     else:
-        active = {str(m.org_id): m for m in selection_store.memberships(user_id)}
-        eligible = {
-            org: m for org, m in active.items()
-            if not is_customer_role(m.org_role) and licensed(org)
-        }
-        selectable = len(eligible) >= 2
         home_member = active.get(str(home.org_id)) if home.org_id else None
-        if sel is not None and sel.auth_session_id == session_id and str(sel.target_org_id) in eligible:
-            m = eligible[str(sel.target_org_id)]
-            eff = EffectiveOrg(
-                org_id=str(sel.target_org_id), org_role=m.org_role,
-                home_org_id=home.org_id, selection_id=sel.id,
-            )
-        elif home_member is not None and home_licensed:
+        if home_member is None or str(home.org_id) in blocked:
+            eff = EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
+        else:
             eff = EffectiveOrg(
                 org_id=home.org_id, org_role=home_member.org_role, home_org_id=home.org_id,
             )
-        else:
-            # The last-active org cannot be served: not an ACTIVE membership any more, or not
-            # licensed for this product. Another eligible membership means a choice (Q2).
-            others = [o for o in eligible if o != str(home.org_id)]
-            if others:
-                choice_required = True
-                if require_selection:
-                    raise org_selection_required()
-                eff = EffectiveOrg(org_id=home.org_id if home_member else None,
-                                   org_role=home_member.org_role if home_member else None,
-                                   home_org_id=home.org_id)
-            elif home_member is None:
-                eff = EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
-            else:
-                eff = EffectiveOrg(
-                    org_id=home.org_id, org_role=home_member.org_role, home_org_id=home.org_id,
-                )
-    if selectable or choice_required:
-        eff = replace(eff, member_can_select=selectable or choice_required, member_choice_required=choice_required)
+    eff = replace(
+        eff, member_can_select=len(eligible) >= 2, member_choice_required=choice_required,
+        eligible=eligible_view,
+    )
     return _pinned(eff)
 
 
@@ -394,6 +410,7 @@ __all__ = [
     "STAFF_ROLE",
     "EffectiveOrg",
     "is_platform_staff",
+    "platform_staff_role",
     "org_selection_changed",
     "org_selection_required",
     "resolve_effective_org",

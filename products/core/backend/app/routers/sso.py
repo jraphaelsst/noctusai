@@ -75,7 +75,8 @@ def _admitting_membership(db, profile: dict, user_id: str, product: dict, *, den
     admitted so a product trusting the token does not see an unlicensed org.
 
     Denials are unchanged: every membership a customer role -> the customer refusal; otherwise
-    ``denied_detail`` (no license / inactive). No membership at all is a denial, never a fall-back
+    ``denied_detail`` (no license / inactive / blocked from the product in every licensed org --
+    D5). No membership at all is a denial, never a fall-back
     to the profile column (the profile's org is an ACTIVE membership by DB invariant).
     """
     memberships = team_memberships.list_user_active_memberships(db, user_id)
@@ -88,6 +89,11 @@ def _admitting_membership(db, profile: dict, user_id: str, product: dict, *, den
     if product.get("ativo") is not True:
         # An inactive (asleep) product is not launchable -- fail closed.
         raise HTTPException(status_code=403, detail=denied_detail)
+
+    # D5 (owner, 2026-10-14): never admit through an org where the user is BLOCKED from this
+    # product (org_member_product_access); another eligible membership may still admit.
+    blocked = team_memberships.blocked_org_ids(db, user_id, product["id"])
+    eligible = [m for m in eligible if str(m.get("org_id")) not in blocked]
 
     from app.dependencies import check_org_license
     for m in eligible:

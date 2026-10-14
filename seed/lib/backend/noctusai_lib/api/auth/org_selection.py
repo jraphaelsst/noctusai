@@ -17,7 +17,12 @@ only asks. A member's pick also moves their last-active org (``noctus_users.org_
 
 Errors carry the RPC's code: :class:`OrgSelectionError` ``.code`` is one of
 ``not_a_member`` (neither staff nor an active member of the target) |
-``target_not_licensed`` | ``product_not_ready``.
+``target_not_licensed`` | ``product_not_ready`` | ``product_blocked`` (a member blocked from the
+product in the target org -- owner decision D5, 2026-10-14, core ``member_access_rules``).
+
+:meth:`OrgSelectionStore.blocked_orgs` lists the orgs where a user is BLOCKED from a product
+(``public.org_member_product_access``, a live row = blocked; no row = access). Read fresh on every
+call, like ``memberships`` -- revocation by recheck.
 
 KB § PATTERNS/backend/tenancy-license-gate.md § Platform org picker
 """
@@ -36,7 +41,7 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 logger = logging.getLogger(__name__)
 
 ENDED_BY_VALUES = ("replaced", "exit", "logout", "new_session", "revoked")
-ERROR_CODES = ("not_a_member", "target_not_licensed", "product_not_ready")
+ERROR_CODES = ("not_a_member", "target_not_licensed", "product_not_ready", "product_blocked")
 _RPC_PREFIX = "platform_org_selection:"
 _IN_BATCH = 100
 #: Seconds the ``org_picker_ready`` flag of a product is reused in-process.
@@ -81,6 +86,8 @@ class OrgSelectionStore(Protocol):
     def licensed_orgs(self, product_slug: str) -> list[dict]: ...
 
     def memberships(self, user_id: Any) -> list[OrgMembership]: ...
+
+    def blocked_orgs(self, user_id: Any, product_slug: str) -> set[str]: ...
 
 
 def _batched(values: list, size: int = _IN_BATCH):
@@ -210,6 +217,23 @@ class RealOrgSelectionStore:
             for r in iter_paged_rows(page, label="org_memberships")
         ]
 
+    def blocked_orgs(self, user_id: Any, product_slug: str) -> set[str]:
+        """Org ids where ``user_id`` is BLOCKED from ``product_slug`` (live D5 rows), read fresh.
+        An unknown product blocks nothing (it has no rows)."""
+        pid = self._product_id(product_slug)
+        if not pid:
+            return set()
+        core = self._core()
+
+        def page(start: int, end: int):
+            return (
+                core.table("org_member_product_access").select("id, org_id")
+                .eq("user_id", str(user_id)).eq("product_id", pid).is_("unblocked_at", "null")
+                .order("id").range(start, end).execute().data
+            )
+
+        return {str(r["org_id"]) for r in iter_paged_rows(page, label="org_member_product_access")}
+
     def licensed_orgs(self, product_slug: str) -> list[dict]:
         from noctusai_lib.domain.licensing import license_rows_valid
 
@@ -260,6 +284,8 @@ class FakeOrgSelectionStore:
     members: dict[str, dict[str, str]] = field(default_factory=dict)
     #: ``{user_id: (org_id, org_role)}`` -- the ``noctus_users`` mirror a member's pick moves.
     last_active: dict[str, tuple[str, str]] = field(default_factory=dict)
+    #: ``{(user_id, org_id, slug)}`` -- live D5 blocks (``org_member_product_access``).
+    blocked: set[tuple[str, str, str]] = field(default_factory=set)
 
     def product_ready(self, product_slug: str) -> bool:
         return product_slug in self.ready
@@ -280,6 +306,11 @@ class FakeOrgSelectionStore:
             raise RuntimeError("fake selection store outage")
         return [OrgMembership(o, role) for o, role in self.members.get(str(user_id), {}).items()]
 
+    def blocked_orgs(self, user_id: Any, product_slug: str) -> set[str]:
+        if self.unavailable:
+            raise RuntimeError("fake selection store outage")
+        return {org for (u, org, slug) in self.blocked if u == str(user_id) and slug == product_slug}
+
     def set(self, user_id: Any, product_slug: str, target_org_id: Any, auth_session_id: Any) -> str:
         uid = str(user_id)
         target = str(target_org_id)
@@ -291,6 +322,8 @@ class FakeOrgSelectionStore:
             raise OrgSelectionError("product_not_ready")
         if (target, product_slug) not in self.licensed:
             raise OrgSelectionError("target_not_licensed")
+        if not is_staff and (uid, target, product_slug) in self.blocked:
+            raise OrgSelectionError("product_blocked")
         home = self.home_orgs.get(uid)
         if not is_staff:
             # Q3: the profile follows the pick (membership role); a real change ends the

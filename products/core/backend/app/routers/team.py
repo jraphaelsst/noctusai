@@ -8,6 +8,14 @@ PATCH  /api/team/{user_id}/role        — Change member role
 GET    /api/team/invitations           — List pending invitations for org
 DELETE /api/team/invitations/{id}      — Cancel invitation
 POST   /api/team/accept-invite         — Accept invitation by token
+POST   /api/team/move                  — Move a user between orgs (transfer | add) -- D3
+GET    /api/team/{user_id}/product-access          — The member's per-product access -- D5
+PUT    /api/team/{user_id}/product-access/{slug}   — Block / unblock a product -- D5
+
+Every team route except accept-invite and move takes an optional ``?org_id=``: the org the call
+acts on (default: the caller's profile org, unchanged behaviour). Another org needs the caller to
+be platform staff (D2: NoctusAI owner/admins manage ANY org's team) or an ACTIVE owner/admin
+member of it. Contract: roadmap multi-org-membership-2026-10 § S4b API contract.
 
 -- Supabase SQL to create the invitations table:
 --
@@ -26,19 +34,26 @@ POST   /api/team/accept-invite         — Accept invitation by token
 """
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_user_ungated
 from app.rate_limit import limiter
 from app.services.permissions import check_permission
 from app.services import team_memberships
-from app.schemas.team import AcceptInviteRequest, InviteCreate, TeamMemberRoleUpdate
+from app.schemas.team import (
+    AcceptInviteRequest,
+    InviteCreate,
+    MemberMoveRequest,
+    ProductAccessUpdate,
+    TeamMemberRoleUpdate,
+)
+from noctusai_lib.api.auth.effective_org import platform_staff_role
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
+from noctusai_lib.primitives.roles import ADMIN_ROLES
 from noctusai_lib.domain.invitations import (
     create_invitation,
     validate_invitation,
-    accept_invitation as mark_accepted,
     cancel_invitation,
     list_pending_invitations,
 )
@@ -65,18 +80,35 @@ async def _get_user_profile(db, user_id: str) -> dict:
     return profile.data
 
 
-async def _require_team_manage(user, db):
-    """Verify the caller has team:manage permission. Returns the user profile."""
-    profile = await _get_user_profile(db, user.id)
-    org_id = profile["org_id"]
+_NO_TEAM_PERMISSION = "Você não tem permissão para gerenciar a equipe"
 
-    has_perm = await check_permission(user.id, org_id, "team:manage")
-    if not has_perm:
-        raise HTTPException(
-            status_code=403,
-            detail="Você não tem permissão para gerenciar a equipe",
-        )
-    return profile
+
+async def _team_scope(user, db, org_id: Optional[str], permission: Optional[str]) -> tuple[dict, str, Optional[str]]:
+    """``(authority, org_id, platform_role)`` for a team call.
+
+    * No ``org_id`` (or the caller's profile org): the caller's profile org, judged by the RBAC
+      ``permission`` as before (``None`` = no check -- the plain team list).
+    * Another org: platform staff (D2 -- the NoctusAI owner and admins manage ANY org's team) or
+      an ACTIVE owner/admin MEMBER of that org; anyone else 403. ``authority`` is then the caller's
+      profile with ``org_role`` = their role in THAT org (the grant/touch rules read it).
+
+    ``platform_role`` is ``owner`` | ``admin`` for platform staff, else ``None``."""
+    profile = await _get_user_profile(db, user.id)
+    staff = platform_staff_role(db, user.id)
+    if org_id is None or str(org_id) == str(profile["org_id"]):
+        target = profile["org_id"]
+        if permission is not None and staff is None and not await check_permission(user.id, target, permission):
+            raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
+        return profile, target, staff
+    org_id = str(org_id)
+    if staff is not None:
+        if not db.table("organizations").select("id").eq("id", org_id).execute().data:
+            raise HTTPException(status_code=404, detail="Organização não encontrada")
+        return {**profile, "org_id": org_id}, org_id, staff
+    membership = team_memberships.get_membership(db, org_id, user.id)
+    if not membership or membership.get("status") != "active" or membership.get("org_role") not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
+    return {**profile, "org_id": org_id, "org_role": membership.get("org_role")}, org_id, None
 
 
 #: Who may grant which org role (mirror of the seed team router's ``_GRANT_REQUIRES``).
@@ -103,12 +135,14 @@ def _require_can_grant(profile: dict, role: str) -> None:
         )
 
 
-def _require_can_touch_target(profile: dict, target_org_role: Optional[str]) -> None:
+def _require_can_touch_target(profile: dict, target_org_role: Optional[str], platform_role: Optional[str] = None) -> None:
     """Acting ON a member (role change / removal) mirrors the grant rule: an ``owner`` target
-    is untouchable here (strict 403); an ``admin`` target needs a caller who is owner/admin
-    or the platform superadmin -- otherwise any ``team:manage`` holder (e.g. a manager) could
-    demote or delete the admins above them."""
-    if target_org_role == "owner":
+    is untouchable here (strict 403) -- except for platform staff (D2, 2026-10-14: the NoctusAI
+    owner and admins manage any org's team; the LAST owner stays protected in SQL, overridable by
+    the NoctusAI owner only); an ``admin`` target needs a caller who is owner/admin or the
+    platform superadmin -- otherwise any ``team:manage`` holder (e.g. a manager) could demote or
+    delete the admins above them."""
+    if target_org_role == "owner" and platform_role is None:
         raise HTTPException(status_code=403, detail="Não é possível alterar o proprietário da organização")
     if target_org_role == "admin" and profile.get("org_role") not in _GRANT_REQUIRES["admin"] \
             and profile.get("role") != "admin":
@@ -120,13 +154,15 @@ def _require_can_touch_target(profile: dict, target_org_role: Optional[str]) -> 
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def listar_membros(authorization: Optional[str] = Header(None)):
-    """List all members in the caller's organization."""
+async def listar_membros(
+    authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
+):
+    """List all members of the caller's organization (or ``org_id``, D2 scope rules)."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _get_user_profile(db, user.id)
-    org_id = profile["org_id"]
+    _profile, org_id, _staff = await _team_scope(user, db, org_id, None)
 
     # Members of THIS org = its ACTIVE memberships. noctus_users.org_id is only each user's
     # last-active org, so filtering on it would hide every member whose last-active org is elsewhere.
@@ -139,6 +175,7 @@ async def convidar_membro(
     request: Request,
     body: InviteCreate,
     authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
 ):
     """Create an invitation record with a unique token.
 
@@ -147,8 +184,7 @@ async def convidar_membro(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _require_team_manage(user, db)
-    org_id = profile["org_id"]
+    profile, org_id, _staff = await _team_scope(user, db, org_id, "team:manage")
     _require_can_grant(profile, body.role)
 
     # Ensure the email is not already a member of this org (the profile is only the identity
@@ -243,16 +279,18 @@ async def convidar_membro(
 async def remover_membro(
     user_id: str,
     authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
 ):
     """Remove a member from the organization.
 
-    Cannot remove yourself or the org owner.
+    Cannot remove yourself; an owner only by platform staff (D2), the LAST owner only by the
+    NoctusAI owner (SQL). A member whose ONLY active membership is this org keeps their profile
+    in a new personal org (D4) -- the profile is never deleted.
     """
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _require_team_manage(user, db)
-    org_id = profile["org_id"]
+    profile, org_id, staff = await _team_scope(user, db, org_id, "team:manage")
 
     # Cannot remove yourself
     if user_id == user.id:
@@ -264,22 +302,21 @@ async def remover_membro(
         raise HTTPException(status_code=404, detail="Membro não encontrado")
     target_role = target_membership.get("org_role")
 
-    # Cannot remove the owner; removing an admin needs owner/admin (or superadmin)
-    if target_role == "owner":
+    # Cannot remove the owner (platform staff excepted, D2); removing an admin needs owner/admin
+    if target_role == "owner" and staff is None:
         raise HTTPException(
             status_code=403,
             detail="Não é possível remover o proprietário da organização",
         )
-    _require_can_touch_target(profile, target_role)
+    _require_can_touch_target(profile, target_role, staff)
 
-    # Email for SSO cache invalidation (read BEFORE the remove: the profile may be deleted by it).
     target_profile = team_memberships.profiles_by_id(db, [user_id], "id, email").get(user_id) or {}
 
-    # End the membership. ONE transaction (core team_membership_ops): when this org is the
-    # user's profile org the profile moves to their most recently updated other ACTIVE
-    # membership, or is deleted when there is none -- the deferred profile-org invariant
-    # refuses anything else at COMMIT.
-    outcome = team_memberships.remove_member(db, org_id, user_id)
+    # End the membership. ONE transaction (core team_membership_ops + member_access_rules): when
+    # this org is the user's profile org the profile moves to their most recently updated other
+    # ACTIVE membership, or -- sole membership -- to a personal org of their own (D4); the
+    # deferred profile-org invariant refuses anything else at COMMIT.
+    outcome = team_memberships.remove_member_keeping_profile(db, org_id, user_id, actor_id=user.id)
 
     logger.info(f"Member {user_id} removed from org={org_id} ({outcome})")
 
@@ -301,7 +338,8 @@ async def remover_membro(
             details={
                 "membership_ended": True,
                 "profile_moved_to": outcome.get("profile_moved_to"),
-                "profile_deleted": bool(outcome.get("profile_deleted")),
+                "personal_org_id": outcome.get("personal_org_id"),
+                "platform_role": staff,
             },
         )
     except Exception as exc:
@@ -324,16 +362,17 @@ async def alterar_role_membro(
     user_id: str,
     body: TeamMemberRoleUpdate,
     authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
 ):
     """Change a member's role within the organization.
 
-    Cannot change the owner's role. Cannot promote to owner.
+    Cannot promote to owner. An owner's role only by platform staff (D2); the LAST owner is
+    never demoted except by the NoctusAI owner (SQL).
     """
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _require_team_manage(user, db)
-    org_id = profile["org_id"]
+    profile, org_id, staff = await _team_scope(user, db, org_id, "team:manage")
 
     _require_can_grant(profile, body.role)
 
@@ -364,16 +403,16 @@ async def alterar_role_membro(
         raise HTTPException(status_code=404, detail="Membro não encontrado")
     target_role = target_membership.get("org_role")
 
-    # Cannot change the owner's role; changing an admin's needs owner/admin (or superadmin)
-    if target_role == "owner":
+    # Cannot change the owner's role (platform staff excepted, D2); an admin's needs owner/admin
+    if target_role == "owner" and staff is None:
         raise HTTPException(
             status_code=403,
             detail="Não é possível alterar o papel do proprietário",
         )
-    _require_can_touch_target(profile, target_role)
+    _require_can_touch_target(profile, target_role, staff)
 
     # Membership role + the profile mirror (only when this org IS the profile org): one transaction.
-    outcome = team_memberships.set_member_role(db, org_id, user_id, body.role)
+    outcome = team_memberships.set_member_role(db, org_id, user_id, body.role, actor_id=user.id)
 
     logger.info(f"Member {user_id} role changed to {body.role} in org={org_id}")
 
@@ -404,21 +443,15 @@ async def alterar_role_membro(
 
 
 @router.get("/invitations")
-async def listar_convites(authorization: Optional[str] = Header(None)):
-    """List pending invitations for the caller's organization."""
+async def listar_convites(
+    authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
+):
+    """List pending invitations for the caller's organization (or ``org_id``, D2 scope rules)."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _get_user_profile(db, user.id)
-    org_id = profile["org_id"]
-
-    # Check at least team:read permission
-    has_perm = await check_permission(user.id, org_id, "team:read")
-    if not has_perm:
-        raise HTTPException(
-            status_code=403,
-            detail="Você não tem permissão para ver convites",
-        )
+    _profile, org_id, _staff = await _team_scope(user, db, org_id, "team:read")
 
     return {"data": list_pending_invitations(db, "invitations", org_id)}
 
@@ -427,13 +460,13 @@ async def listar_convites(authorization: Optional[str] = Header(None)):
 async def cancelar_convite(
     invitation_id: str,
     authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
 ):
     """Cancel a pending invitation."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = await _require_team_manage(user, db)
-    org_id = profile["org_id"]
+    _profile, org_id, _staff = await _team_scope(user, db, org_id, "team:manage")
 
     cancel_invitation(db, "invitations", invitation_id, org_id)
     return {"message": "Convite cancelado com sucesso"}
@@ -503,23 +536,14 @@ async def aceitar_convite(
     if membership and membership.get("status") == "suspended":
         raise HTTPException(status_code=403, detail="Sua participação nesta organização está suspensa")
 
-    if existing_data:
-        # An EXISTING user: activate (or re-activate a removed) membership in the inviting org and
-        # mark the invitation accepted -- one transaction. The profile does NOT move: their
-        # last-active org stays, and the new org is reached through the platform org picker.
-        team_memberships.accept_invitation_as_member(db, invite_data["id"], user_id)
-    else:
-        # First-time invitee: create the profile in the inviting org (the core 079 trigger
-        # mirrors the ACTIVE membership).
-        db.table("noctus_users").insert({
-            "id": user_id,
-            "email": user_email or invite_data["email"],
-            "nome": body.nome or user_email or invite_data["email"],
-            "org_id": invite_data["org_id"],
-            "org_role": invite_data["role"],
-            "role": "user",
-        }).execute()
-        mark_accepted(db, "invitations", invite_data["id"])
+    # ONE transaction (core member_access_rules): an EXISTING user gets an ACTIVE (or re-activated)
+    # membership in the inviting org and keeps their profile where it is (the new org is reached
+    # through the org picker); a FIRST-TIME invitee gets their profile in the inviting org. Either
+    # way the membership is linked to the invitation (invited_by/invitation_id, D4) and the
+    # invitation is marked accepted.
+    team_memberships.accept_invitation(
+        db, invite_data["id"], user_id, body.nome or user_email or invite_data["email"],
+    )
 
     try:
         from app.services import audit_service
@@ -542,3 +566,130 @@ async def aceitar_convite(
             "role": invite_data["role"],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# D3 -- move a user between orgs
+# ---------------------------------------------------------------------------
+
+@router.post("/move")
+@limiter.limit(DEFAULT_AUTH_RL)
+async def mover_membro(
+    request: Request,
+    body: MemberMoveRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Move a user from ``source_org_id`` to ``target_org_id`` (owner decision D3, 2026-10-14).
+
+    ``mode=transfer`` ends the source membership (the last-owner rule applies; only the NoctusAI
+    owner may override it), ``mode=add`` keeps it. Platform staff may move anyone between any
+    orgs; an org owner/admin only between orgs where they are owner/admin in BOTH. ``role`` (in
+    the target) is never above the actor's own role there. All of it is decided in ONE SQL
+    transaction (``team_member_move``) -- this route authenticates, validates the role exists
+    and maps the refusals."""
+    user, _token = await get_current_user(authorization)
+    db = get_admin_client()
+
+    if not db.table("roles").select("id").eq("slug", body.role).execute().data:
+        raise HTTPException(status_code=400, detail="Papel inválido")
+
+    user_id, source, target = str(body.user_id), str(body.source_org_id), str(body.target_org_id)
+    outcome = team_memberships.move_member(
+        db, actor_id=user.id, user_id=user_id, source_org_id=source, target_org_id=target,
+        role=body.role, mode=body.mode,
+    )
+    logger.info("team: user %s moved %s -> %s (%s) by %s", user_id, source, target, body.mode, user.id)
+
+    try:
+        from app.routers.sso import invalidate_sso_cache_for_user
+        email = team_memberships.profiles_by_id(db, [user_id], "id, email").get(user_id, {}).get("email")
+        if email:
+            invalidate_sso_cache_for_user(email)
+    except Exception as exc:
+        logger.warning("SSO cache invalidation after move failed: %s", exc)
+
+    details = {"source_org_id": source, "target_org_id": target, "mode": body.mode, "org_role": body.role,
+               "previous_org_role": outcome.get("previous_org_role"),
+               "profile_moved": bool(outcome.get("profile_moved"))}
+    for org in (source, target):
+        try:
+            from app.services import audit_service
+            await audit_service.log(
+                user_id=user.id, org_id=org, action="member_move", resource_type="team_member",
+                resource_id=user_id, details=details,
+            )
+        except Exception as exc:
+            logger.warning("team: move audit log failed for user_id=%s org=%s (%s); move succeeded", user_id, org, exc)
+
+    return {"data": outcome}
+
+
+# ---------------------------------------------------------------------------
+# D5 -- per-member product access
+# ---------------------------------------------------------------------------
+
+@router.get("/{user_id}/product-access")
+async def listar_acesso_produtos(
+    user_id: str,
+    authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
+):
+    """The member's access to every product the org is licensed for (D5). Readable by whoever
+    may change it: platform staff, or an ACTIVE owner/admin of the org."""
+    user, _token = await get_current_user(authorization)
+    db = get_admin_client()
+    profile = await _get_user_profile(db, user.id)
+    org_id = str(org_id or profile["org_id"])
+    if team_memberships.manager_role(db, user.id, org_id) is None:
+        raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
+    membership = team_memberships.get_membership(db, org_id, user_id)
+    if not membership or membership.get("status") != "active":
+        raise HTTPException(status_code=404, detail="Membro não encontrado")
+    return {"data": {
+        "user_id": user_id, "org_id": org_id,
+        "products": team_memberships.member_product_access(db, org_id, user_id),
+    }}
+
+
+@router.put("/{user_id}/product-access/{product_slug}")
+async def alterar_acesso_produto(
+    user_id: str,
+    product_slug: str,
+    body: ProductAccessUpdate,
+    authorization: Optional[str] = Header(None),
+    org_id: Optional[str] = Query(None),
+):
+    """Block (``blocked=true``) or unblock a member's access to a product inside the org (D5).
+    Blocked => that org is not an eligible choice for them in the product, SSO does not admit
+    through it, the resolver/RLS never resolve to it and the dashboard does not offer it there.
+    Authority (platform staff or the org's owner/admin) is decided in SQL."""
+    user, _token = await get_current_user(authorization)
+    db = get_admin_client()
+    profile = await _get_user_profile(db, user.id)
+    org_id = str(org_id or profile["org_id"])
+    outcome = team_memberships.set_product_access(
+        db, actor_id=user.id, org_id=org_id, user_id=user_id, product_slug=product_slug,
+        blocked=body.blocked,
+    )
+
+    try:
+        from app.routers.sso import invalidate_sso_cache_for_user
+        email = team_memberships.profiles_by_id(db, [user_id], "id, email").get(user_id, {}).get("email")
+        if email:
+            invalidate_sso_cache_for_user(email)
+    except Exception as exc:
+        logger.warning("SSO cache invalidation after product-access change failed: %s", exc)
+
+    if outcome.get("changed"):
+        try:
+            from app.services import audit_service
+            await audit_service.log(
+                user_id=user.id, org_id=org_id,
+                action="product_block" if body.blocked else "product_unblock",
+                resource_type="team_member", resource_id=user_id,
+                details={"product_slug": product_slug, "product_id": outcome.get("product_id")},
+            )
+        except Exception as exc:
+            logger.warning("team: product-access audit log failed for user_id=%s (%s); change succeeded", user_id, exc)
+
+    return {"data": outcome}

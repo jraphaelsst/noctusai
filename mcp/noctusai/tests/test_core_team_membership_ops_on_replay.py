@@ -27,6 +27,9 @@ from tools.noctus.dev import verify_db_guards as vdg
 
 _MIGRATIONS = Path(REPO_ROOT) / "products/core/backend/migrations"
 _M082 = str(migration_path(_MIGRATIONS, "team_membership_ops").relative_to(REPO_ROOT))
+#: Core 083 (S4b) re-declares the three functions (the 082 signatures become wrappers): the
+#: "without 082" run drops it too.
+_M083 = str(migration_path(_MIGRATIONS, "member_access_rules").relative_to(REPO_ROOT))
 _SENT = re.compile(r"NOC_PROBE:(\w+):")
 _FIXTURE = "core-082-team-fixture"
 
@@ -129,17 +132,12 @@ _SCENARIOS = {
     RAISE EXCEPTION 'NOC_PROBE:violation: membership B not ended';
   END IF;
 """ + _OK,
-    "remove_sole_membership_deletes_the_profile": """
-  v_res := public.team_member_remove(v_c, u_solo);
-  SET CONSTRAINTS ALL IMMEDIATE;
-  IF EXISTS (SELECT 1 FROM public.noctus_users WHERE id = u_solo) THEN
-    RAISE EXCEPTION 'NOC_PROBE:violation: profile still there';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.org_memberships WHERE user_id = u_solo AND org_id = v_c AND status = 'removed') THEN
-    RAISE EXCEPTION 'NOC_PROBE:violation: membership not ended';
-  END IF;
-  IF NOT (v_res ->> 'profile_deleted')::boolean THEN
-    RAISE EXCEPTION 'NOC_PROBE:violation: result says not deleted %', v_res;
+    # Core 083 (owner D4, 2026-10-14) superseded "delete the profile": the 082 signature now refuses
+    # a sole membership (no personal org given) and the profile stays -- see the 083 replay test.
+    "remove_sole_membership_never_deletes_the_profile": _expect_refusal(
+        "PERFORM public.team_member_remove(v_c, u_solo);", "personal_org_required") + """
+  IF NOT EXISTS (SELECT 1 FROM public.noctus_users WHERE id = u_solo AND org_id = v_c) THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: profile gone or moved';
   END IF;
 """ + _OK,
     "remove_ends_live_org_selections_for_the_org": """
@@ -154,6 +152,8 @@ _SCENARIOS = {
     "remove_last_owner_is_refused": _expect_refusal("PERFORM public.team_member_remove(v_a, u_owner_a);", "last_owner") + _OK,
     "remove_an_owner_is_allowed_when_another_owner_remains": """
   UPDATE public.org_memberships SET org_role = 'owner' WHERE user_id = u_multi AND org_id = v_a;
+  -- owner_a also belongs to B, so the profile moves there (a sole membership needs a personal org, D4)
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status) VALUES (u_owner_a, v_b, 'member', 'active');
   PERFORM public.team_member_remove(v_a, u_owner_a);
   SET CONSTRAINTS ALL IMMEDIATE;
 """ + _OK,
@@ -271,5 +271,5 @@ def test_every_scenario_and_probe_holds_with_082(pglite):
 
 
 def test_without_082_the_probes_and_scenarios_fail(pglite):
-    out = _run({_M082: "SELECT 1;\n"})
+    out = _run({_M082: "SELECT 1;\n", _M083: "SELECT 1;\n"})
     assert {k for k, v in out.items() if v in _PASS} == set(), out

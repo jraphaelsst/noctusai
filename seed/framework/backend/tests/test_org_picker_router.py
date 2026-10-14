@@ -62,6 +62,11 @@ def _make(*, ready=True, users=None, mfa_optional=False, members=None):
             STAFF: {HOME: "owner"}, OWNER: {CLIENT_A: "owner"},
         },
     )
+    # the same ACTIVE memberships as core rows (``manageable_orgs`` reads org_memberships)
+    core.set_table_data("org_memberships", [
+        {"user_id": u, "org_id": o, "org_role": r, "status": "active"}
+        for u, orgs in store.members.items() for o, r in orgs.items()
+    ])
 
     async def get_current_user(authorization: Optional[str] = Header(None)):
         if not authorization or not authorization.startswith("Bearer "):
@@ -488,24 +493,56 @@ class TestMemberPicker:
         sel = c.get("/api/me/access", headers=_h(OWNER, aal="aal1")).json()["org_selection"]
         assert (sel["available"], sel["required"]) == (False, False)
 
-    def test_multi_org_member_with_licensed_last_active_org_is_not_asked(self):
+    def test_d1_two_licensed_orgs_require_a_choice_on_every_entry(self):
+        # D1 (owner, 2026-10-14) replaces Q2: a licensed last-active org is NOT landed in.
         c, _ = self._c()
-        sel = c.get("/api/me/access", headers=_h(MEMBER, aal="aal1")).json()["org_selection"]
-        assert (sel["available"], sel["required"]) == (True, False)
-        assert c.get("/api/things", headers=_h(MEMBER, aal="aal1")).json() == {"org_id": CLIENT_A}
+        h = _h(MEMBER, aal="aal1")
+        sel = c.get("/api/me/access", headers=h).json()["org_selection"]
+        assert (sel["available"], sel["required"]) == (True, True)
+        assert [(o["id"], o["is_home"], o["org_role"]) for o in sel["eligible_orgs"]] == [
+            (CLIENT_A, True, "owner"), (CLIENT_Z, False, "viewer")]
+        gated = c.get("/api/things", headers=h)
+        assert (gated.status_code, gated.json()["code"]) == (409, "org_selection_required")
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h).status_code == 200
+        assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_Z}
+        # the next ENTRY (the SPA ends the product's selection on entry) asks again
+        assert c.delete("/api/me/org-choice", headers=h).status_code == 204
+        again = c.get("/api/things", headers=h)
+        assert (again.status_code, again.json()["code"]) == (409, "org_selection_required")
 
-    def test_unlicensed_last_active_org_requires_a_choice_on_gated_routes_only(self):
+    def test_d1_one_eligible_org_is_landed_in_silently_without_a_popup(self):
         users = [{"id": MEMBER, "org_id": UNLICENSED, "org_role": "owner", "role": "user"}]
         members = {MEMBER: {UNLICENSED: "owner", CLIENT_Z: "viewer"}}
         c, _ = _make(users=users, members=members)
         h = _h(MEMBER, aal="aal1")
-        gated = c.get("/api/things", headers=h)
-        assert (gated.status_code, gated.json()["code"]) == (409, "org_selection_required")
-        sel = c.get("/api/me/access", headers=h).json()
-        assert (sel["has_access"], sel["org_selection"]["required"], sel["org_selection"]["available"]) == (
-            False, True, True)
-        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h).status_code == 200
         assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_Z}
+        body = c.get("/api/me/access", headers=h).json()
+        sel = body["org_selection"]
+        assert (body["has_access"], sel["required"], sel["available"]) == (True, False, False)
+        assert (sel["org"]["id"], sel["org_role"]) == (CLIENT_Z, "viewer")
+
+    def test_d5_a_blocked_org_is_not_a_choice_and_cannot_be_picked(self):
+        c, store = self._c()
+        store.blocked.add((MEMBER, CLIENT_Z, SLUG))
+        h = _h(MEMBER, aal="aal1")
+        orgs = c.get("/api/me/org-choices", headers=h).json()["orgs"]
+        assert [o["id"] for o in orgs] == [CLIENT_A]
+        r = c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h)
+        assert (r.status_code, r.json()["code"]) == (403, "product_blocked")
+        # one eligible org left -> silent landing, no choice
+        assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_A}
+        sel = c.get("/api/me/access", headers=h).json()["org_selection"]
+        assert (sel["available"], sel["required"], [o["id"] for o in sel["eligible_orgs"]]) == (
+            False, False, [CLIENT_A])
+
+    def test_access_exposes_the_manageable_orgs_and_the_platform_role(self):
+        c, _ = self._c()
+        sel = c.get("/api/me/access", headers=_h(MEMBER, aal="aal1")).json()["org_selection"]
+        assert (sel["platform_role"], sel["manage_any_org"]) == (None, False)
+        assert [(o["id"], o["org_role"]) for o in sel["manageable_orgs"]] == [(CLIENT_A, "owner")]
+        c2, _ = _make()  # USERS: STAFF is the NoctusAI owner (platform org, org_role owner)
+        staff = c2.get("/api/me/access", headers=_h(STAFF, aal="aal2")).json()["org_selection"]
+        assert (staff["platform_role"], staff["manage_any_org"], staff["eligible_orgs"]) == ("owner", True, [])
 
     def test_product_not_ready_is_409_for_members_too(self):
         c, _ = self._c(ready=False)

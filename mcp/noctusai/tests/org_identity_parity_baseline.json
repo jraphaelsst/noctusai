@@ -40,6 +40,7 @@
   "products/core/backend/migrations/065_act_as_sessions.sql::current_user_org_id": "e224d51243461e21d4816a77ecfe267e26954321ff2f697d06d43656817245bf",
   "products/core/backend/migrations/070_platform_org_selections.sql::current_org_id_for": "20e6d07a433c80bf2dd6be8b834d5166966761446448720a4712f9de6b0cbdee",
   "products/core/backend/migrations/073_org_picker_mfa_flag.sql::current_org_id_for": "da57678cc3fbb0fe05428fd12762e8b8dc518c71a0d23d27a2f6fd5729341a2c",
-  "products/core/backend/migrations/078_org_picker_postgrest_entry.sql::current_org_id_for": "c9efafae11c88a14af700bb93529a17718fa100734a672aaa1bd35dce84f1940"
+  "products/core/backend/migrations/078_org_picker_postgrest_entry.sql::current_org_id_for": "c9efafae11c88a14af700bb93529a17718fa100734a672aaa1bd35dce84f1940",
+  "products/core/backend/migrations/081_org_member_selection.sql::current_org_id_for": "194b06bd05c83d4f9f9e3581f5d6c6e7e537075bf76f2b1ee2e88946c4a5be9a"
  }
 }

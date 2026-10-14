@@ -12,7 +12,6 @@ The OAuth flow uses Supabase's built-in OAuth:
 5. If new user, creates organization and profile (like signup)
 """
 import logging
-import re
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -20,6 +19,7 @@ from app.config import settings
 from app.database import get_admin_client, get_supabase_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
+from app.services import org_provisioning
 from app.schemas.oauth import OAuthCallbackBody
 
 logger = logging.getLogger(__name__)
@@ -40,24 +40,9 @@ PROVIDERS = [
 ]
 
 
-def _slugify(text: str) -> str:
-    """Generate a URL-safe slug from text (max 44 chars, leaving room for prefix_)."""
-    slug = text.lower().strip()
-    slug = re.sub(r'[^\w\s-]', '', slug)
-    slug = re.sub(r'[\s_]+', '-', slug)
-    slug = re.sub(r'-+', '-', slug)
-    return slug[:44]
-
-
-def _make_org_slug(base_name: str, org_type: str = "individual") -> str:
-    """Build a prefixed slug: 'indv_<base>' or 'comp_<base>'.
-
-    OAuth signups default to 'individual' — the user can update org_type
-    later via the onboarding company_details step.
-    """
-    prefix = "comp" if org_type == "company" else "indv"
-    base = _slugify(base_name)
-    return f"{prefix}_{base}"
+# The slug rule + org insert live in ONE place: app.services.org_provisioning (OAuth signups
+# default to 'individual' -- the user updates org_type in the onboarding company_details step).
+_make_org_slug = org_provisioning.make_org_slug
 
 
 @router.get("/providers")
@@ -133,34 +118,17 @@ async def oauth_callback(
 
     # Create organization (append suffix if slug already taken).
     # OAuth signups default to 'individual' — user updates org_type in onboarding.
-    org_name = f"Org de {nome}"
-    org_slug = _make_org_slug(nome, org_type="individual")
-
-    existing_slug = db.table("organizations").select("id").eq("slug", org_slug).execute()
-    if existing_slug.data:
-        import uuid
-        org_slug = f"{org_slug}-{uuid.uuid4().hex[:6]}"
-
-    org_result = db.table("organizations").insert({
-        "nome": org_name,
-        "slug": org_slug,
-        "plano": "free",
-        "owner_id": user_id,
-        "org_type": "individual",
-        "number_of_users": 1,
-        "onboarding_completed": False,
-        "onboarding_steps": {
+    org = org_provisioning.create_owned_org(
+        db, owner_id=user_id, nome=f"Org de {nome}", slug_base=nome, org_type="individual",
+        number_of_users=1,
+        onboarding_completed=False,
+        onboarding_steps={
             "company_details": False,
             "choose_plan": False,
             "invite_team": False,
             "enable_product": False,
         },
-    }).execute()
-
-    if not org_result.data:
-        raise HTTPException(status_code=500, detail="Erro ao criar organização")
-
-    org = org_result.data[0]
+    )
 
     # Create noctus_users profile
     profile_result = db.table("noctus_users").insert({

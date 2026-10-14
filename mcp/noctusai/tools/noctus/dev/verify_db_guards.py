@@ -2596,6 +2596,37 @@ _ORG_MEMBER_FIXTURE = """
   INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
   VALUES (v_plain, v_mtarget, 'viewer', 'active')
   ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = 'viewer', status = 'active', ended_at = NULL;
+  -- D1 counts ELIGIBLE orgs: the borrowed user's OTHER real memberships and D5 blocks would make
+  -- the expectation data-dependent, so they are set aside inside this rolled-back probe.
+  UPDATE public.org_memberships SET status = 'removed', ended_at = now()
+   WHERE user_id = v_plain AND org_id NOT IN (v_plain_home, v_mtarget) AND status = 'active';
+  IF to_regclass('public.org_member_product_access') IS NOT NULL THEN
+    EXECUTE 'UPDATE public.org_member_product_access SET unblocked_at = now()
+              WHERE user_id = $1 AND unblocked_at IS NULL' USING v_plain;
+  END IF;
+"""
+
+#: Core 083 (owner D1/D5, 2026-10-14): the member branch counts ELIGIBLE orgs and honours blocks.
+_ACCESS_RULES_MIGRATIONS = _ORG_MEMBER_MIGRATIONS + ("083_member_access_rules.sql",)
+
+_PLAIN_HOME_LICENSED_SQL = """
+  INSERT INTO public.licenses (org_id, product_id, status)
+  SELECT v_plain_home, v_pid, 'active'
+   WHERE NOT EXISTS (SELECT 1 FROM public.licenses l
+                      WHERE l.org_id = v_plain_home AND l.product_id = v_pid
+                        AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()));
+"""
+
+_PLAIN_HOME_UNLICENSED_SQL = """
+  DELETE FROM public.licenses WHERE org_id = v_plain_home AND product_id = v_pid;
+"""
+
+_BLOCK_SQL = """
+  IF to_regclass('public.org_member_product_access') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.org_member_product_access missing — core 083 not applied';
+  END IF;
+  EXECUTE 'INSERT INTO public.org_member_product_access (user_id, org_id, product_id) VALUES ($1, $2, $3)'
+    USING v_plain, {org}, v_pid;
 """
 
 _ORG_MEMBER_REMOVE = """
@@ -2613,10 +2644,13 @@ def _member_refusal_probe(*, probe_id: str, rationale: str, setup: str) -> Guard
     )
 
 
-def _member_helper_probe(*, probe_id: str, rationale: str, steps: str, expect: str, what: str) -> GuardProbe:
+def _member_helper_probe(
+    *, probe_id: str, rationale: str, steps: str, expect: str, what: str,
+    migrations: tuple[str, ...] = _ORG_MEMBER_MIGRATIONS,
+) -> GuardProbe:
     return _picker_helper_probe(
         probe_id=probe_id, rationale=rationale, steps=_ORG_MEMBER_FIXTURE + steps,
-        expect=expect, what=what, migrations=_ORG_MEMBER_MIGRATIONS,
+        expect=expect, what=what, migrations=migrations,
     )
 
 
@@ -2668,13 +2702,19 @@ _ORG_MEMBER_NEVER_REMOVED_ORG_PROBE = _member_helper_probe(
     rationale=(
         "The profile follows a member's pick (owner Q3), so after a RPC selection the 'home' IS the "
         "target. Removing that membership must NOT fall back to it: the home rule itself needs an "
-        "ACTIVE membership, so the answer is NULL -- never the org they were removed from."
+        "ACTIVE membership. With D1 (core 083) the one remaining eligible org (the old home, when "
+        "licensed) is landed in silently; otherwise NULL -- never the org they were removed from."
     ),
     steps="""
   PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
 """ + _ORG_MEMBER_REMOVE + _caller_sql("v_plain::text", aal="aal1"),
-    expect="NULL::uuid",
-    what="a removed member resolves NULL, never the removed org",
+    expect=(
+        "CASE WHEN EXISTS (SELECT 1 FROM public.licenses l WHERE l.org_id = v_plain_home "
+        "AND l.product_id = v_pid AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now())) "
+        "THEN v_plain_home ELSE NULL::uuid END"
+    ),
+    what="a removed member never resolves the removed org (the remaining eligible org, else NULL)",
+    migrations=_ACCESS_RULES_MIGRATIONS,
 )
 
 _ORG_MEMBER_PIN_PROBE = _member_helper_probe(
@@ -2688,32 +2728,206 @@ _ORG_MEMBER_PIN_PROBE = _member_helper_probe(
 )
 
 _ORG_MEMBER_CUSTOMER_PROBE = _member_helper_probe(
-    probe_id="current_org_id_for.null_for_customer_role_membership",
+    probe_id="current_org_id_for.customer_role_membership_is_never_served",
     rationale=(
-        "An end customer (customer-role membership) never acts through the picker: like a customer "
-        "home, the helper answers NULL -- the membership grants a seat, not staff access."
+        "An end customer (customer-role membership) never acts through the picker: a selection of "
+        "it is not honoured and it is never an ELIGIBLE org (D1, core 083) -- the membership grants "
+        "a seat, not staff access. The user lands in their one eligible org (home), never the target."
     ),
+    migrations=_ACCESS_RULES_MIGRATIONS,
     steps="""
   UPDATE public.org_memberships SET org_role = 'membro' WHERE user_id = v_plain AND org_id = v_mtarget;
   INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
   VALUES (v_plain, v_pid, v_mtarget, v_plain_home, v_sid);
 """ + _caller_sql("v_plain::text", aal="aal1"),
-    expect="NULL::uuid",
-    what="a customer-role membership resolves NULL",
+    expect="v_plain_home",
+    what="a customer-role membership is never served (the home org is)",
 )
 
 _ORG_MEMBER_HOME_REMOVED_PROBE = _member_helper_probe(
-    probe_id="current_org_id_for.null_when_home_membership_removed",
+    probe_id="current_org_id_for.removed_home_is_never_served",
     rationale=(
         "Even with no selection at all, a user whose profile still names an org they were REMOVED "
-        "from never resolves it: the home rule requires an ACTIVE membership."
+        "from never resolves it: the home rule requires an ACTIVE membership. With D1 (core 083) "
+        "their only remaining eligible org (the licensed target) is landed in instead."
     ),
     steps="""
   UPDATE public.org_memberships SET status = 'removed', ended_at = now()
    WHERE user_id = v_plain AND org_id = v_plain_home;
 """ + _caller_sql("v_plain::text", aal="aal1"),
+    expect="v_mtarget",
+    what="a user removed from their home org never resolves it (the one eligible org instead)",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+)
+
+# ---- Multi-org S4b (core 083, owner decisions D1/D5 2026-10-14) ---------------------------------
+_D1_TWO_ELIGIBLE_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.member_with_two_eligible_orgs_and_no_selection_is_null",
+    rationale=(
+        "D1: a member with >=2 eligible orgs (active, non-customer, licensed, not blocked) chooses "
+        "on EVERY entry -- without a valid selection PostgREST must not silently serve the "
+        "last-active org (the SQL half of the resolver's 409 org_selection_required)."
+    ),
+    steps=_PLAIN_HOME_LICENSED_SQL + _caller_sql("v_plain::text", aal="aal1"),
     expect="NULL::uuid",
-    what="a user removed from their home org resolves NULL",
+    what="two eligible orgs and no selection resolve NULL",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+)
+
+_D1_ONE_ELIGIBLE_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.member_with_one_eligible_org_lands_there",
+    rationale=(
+        "D1: exactly ONE eligible org is landed in silently, even when it is not the last-active "
+        "(profile) org -- here the home is unlicensed, so the licensed target is the only choice."
+    ),
+    steps=_PLAIN_HOME_UNLICENSED_SQL + _caller_sql("v_plain::text", aal="aal1"),
+    expect="v_mtarget",
+    what="the only eligible org is resolved without a selection",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+)
+
+_D5_BLOCKED_SELECTION_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.blocked_org_is_never_resolved",
+    rationale=(
+        "D5: blocking a member from the product in an org makes a live selection of it stop "
+        "resolving on the next query (re-checked every call); the remaining eligible org is served."
+    ),
+    steps=_PLAIN_HOME_LICENSED_SQL + """
+  PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
+""" + _BLOCK_SQL.format(org="v_mtarget") + _caller_sql("v_plain::text", aal="aal1"),
+    expect="v_plain_home",
+    what="a blocked selected org is never resolved",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+)
+
+_D5_BLOCKED_PICK_PROBE = _picker_rpc_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_blocked_member",
+    code="product_blocked",
+    rationale="D5: the selection RPC itself refuses an org the member is blocked from for the product.",
+    setup=_ORG_MEMBER_FIXTURE + _BLOCK_SQL.format(org="v_mtarget"),
+    call="PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+)
+
+
+def _block_table_probe(*, probe_id: str, guard_name: str, rationale: str, steps: str, what: str) -> GuardProbe:
+    return _org_picker_probe(
+        probe_id=probe_id, guard_name=guard_name, kind="write_refusal", rationale=rationale,
+        migrations=_ACCESS_RULES_MIGRATIONS,
+        steps=_ORG_MEMBER_FIXTURE + f"""
+  BEGIN
+{steps}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what} succeeded — the {guard_name} guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;""",
+    )
+
+
+_D5_ONE_LIVE_BLOCK_PROBE = _block_table_probe(
+    probe_id="org_member_product_access.one_live_block",
+    guard_name="org_member_product_access_one_live",
+    rationale="At most ONE live block per (user, org, product): unblocking closes THE row.",
+    steps=_BLOCK_SQL.format(org="v_mtarget") + _BLOCK_SQL.format(org="v_mtarget"),
+    what="a second live block for the same (user, org, product)",
+)
+
+_D5_APPEND_ONLY_PROBE = _block_table_probe(
+    probe_id="org_member_product_access.append_only",
+    guard_name="org_member_product_access_append_only",
+    rationale=(
+        "A block row is audit history: identity and blocked_at never change and a closed block is "
+        "never re-opened or re-dated -- only closing a live block is allowed."
+    ),
+    steps=_BLOCK_SQL.format(org="v_mtarget") + """
+    EXECUTE 'UPDATE public.org_member_product_access SET blocked_at = blocked_at - interval ''1 day''
+              WHERE user_id = $1 AND org_id = $2' USING v_plain, v_mtarget;""",
+    what="rewriting blocked_at of a block row",
+)
+
+_D5_UNBLOCK_PAIR_PROBE = _block_table_probe(
+    probe_id="org_member_product_access.unblocked_by_needs_at",
+    guard_name="org_member_product_access_unblocked_by_needs_at",
+    rationale="An unblocker without an unblock time is a half-closed block; the CHECK refuses it.",
+    steps="""
+    EXECUTE 'INSERT INTO public.org_member_product_access (user_id, org_id, product_id, unblocked_by)
+             VALUES ($1, $2, $3, $1)' USING v_plain, v_mtarget, v_pid;""",
+    what="an unblocked_by without unblocked_at",
+)
+
+_D3_MOVE_FORBIDDEN_PROBE = _org_picker_probe(
+    probe_id="team_member_move.refuses_an_actor_who_does_not_manage_both_orgs",
+    guard_name="team_member_move",
+    kind="write_refusal",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+    rationale=(
+        "D3: an org owner/admin may move a user only between orgs where they are owner/admin in "
+        "BOTH (platform staff anywhere). A viewer in the source moving themselves out is refused in "
+        "SQL -- no caller can skip it."
+    ),
+    steps=_ORG_MEMBER_FIXTURE + """
+  BEGIN
+    PERFORM public.team_member_move(v_plain, v_plain, v_mtarget, v_plain_home, 'member', 'add');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a non-manager moved a user — the authority check did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'team_membership:forbidden%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;""",
+)
+
+_D4_SOLE_MEMBER_KEEPS_PROFILE_PROBE = _org_picker_probe(
+    probe_id="team_member_remove.sole_member_keeps_the_profile_in_a_personal_org",
+    guard_name="team_member_remove",
+    kind="state_assertion",
+    migrations=_ACCESS_RULES_MIGRATIONS,
+    rationale=(
+        "D4: removing a user whose ONLY active membership is this org never deletes the profile "
+        "(audit history is append-only); in the same transaction it moves to a personal org of "
+        "their own as its owner. Fires the deferred invariant IMMEDIATE (what COMMIT judges)."
+    ),
+    steps=_ORG_MEMBER_FIXTURE + """
+  -- v_plain: a plain member of their home only (mtarget set aside), not an owner there
+  UPDATE public.org_memberships SET status = 'removed', ended_at = now()
+   WHERE user_id = v_plain AND org_id = v_mtarget;
+  UPDATE public.org_memberships SET org_role = 'member' WHERE user_id = v_plain AND org_id = v_plain_home;
+  INSERT INTO public.organizations (nome, slug, owner_id, is_personal)
+  VALUES ('Pessoal — probe', 'noc-probe-' || gen_random_uuid()::text, v_plain, true)
+  RETURNING id INTO v_target;
+  BEGIN
+    PERFORM public.team_member_remove(v_plain_home, v_plain, NULL::uuid, v_target);
+    SET CONSTRAINTS public.org_memberships_profile_org_active IMMEDIATE;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: removing the sole-org member raised: %', SQLERRM;
+  END;
+  IF EXISTS (SELECT 1 FROM public.noctus_users n WHERE n.id = v_plain AND n.org_id = v_target AND n.org_role = 'owner')
+     AND EXISTS (SELECT 1 FROM public.org_memberships m
+                  WHERE m.user_id = v_plain AND m.org_id = v_target AND m.status = 'active' AND m.org_role = 'owner') THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: the profile is kept, owner of its personal org';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: the profile was not moved to the personal org as its owner';""",
+)
+
+_ACCESS_RULES_PROBES: tuple[GuardProbe, ...] = (
+    _D1_TWO_ELIGIBLE_PROBE,
+    _D1_ONE_ELIGIBLE_PROBE,
+    _D5_BLOCKED_SELECTION_PROBE,
+    _D5_BLOCKED_PICK_PROBE,
+    _D5_ONE_LIVE_BLOCK_PROBE,
+    _D5_APPEND_ONLY_PROBE,
+    _D5_UNBLOCK_PAIR_PROBE,
+    _D3_MOVE_FORBIDDEN_PROBE,
+    _D4_SOLE_MEMBER_KEEPS_PROFILE_PROBE,
 )
 
 _ORG_MEMBER_ROLE_PROBE = _org_picker_probe(
@@ -3158,6 +3372,7 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_PRODUCT_REVOKE_PROBE,
     *_ORG_MEMBER_PROBES,
     *_TEAM_OPS_PROBES,
+    *_ACCESS_RULES_PROBES,
     _ACTING_AUDIT_ACTING_WRITE_PROBE,
     _ACTING_AUDIT_PLAIN_WRITE_PROBE,
 )

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
 from app.schemas.users import UserUpdate
+from app.services import team_memberships
 from noctusai_lib.primitives.responses import paginated_response, success_response, ok_response, calculate_pagination
 
 logger = logging.getLogger(__name__)
@@ -111,13 +112,12 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
 async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional[str] = Header(None)):
     """Update user fields (nome, role, org_role, org_id). Admin only.
 
-    `org_id` is the org assign/revoke lever. A user belongs to exactly one org
-    (`noctus_users.org_id` is NOT NULL, no membership join table), so "revoke"
-    is a move to another org, never a detach. The move is what actually grants
-    product data access: every product's RLS resolves through
-    `public.current_org_id()` → `noctus_users.org_id`; the platform `role='admin'`
-    flag alone grants nothing at the data layer (platform staff enter another org only
-    through the 2FA-gated org picker, which RLS honours via `current_org_id_for`).
+    `org_id` reassigns the user: a TRANSFER through the same membership op every move uses
+    (owner decision D3, 2026-10-14, SQL `team_member_move`): the source membership ENDS (it used
+    to stay ACTIVE), the target membership is created with the resulting `org_role`, the profile
+    follows, live org selections for the source end -- one transaction, with the last-owner rule
+    (only the NoctusAI owner may override it) and the actor's authority decided in SQL (platform
+    staff). The auth `user_metadata.org_id` is synced FIRST: if the move then fails it is restored.
     """
     admin_user, _token = await get_current_admin(authorization)
     db = get_admin_client()
@@ -144,16 +144,27 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
     moving_org = new_org_id is not None and new_org_id != current_org_id
     if moving_org:
         _guard_org_reassignment(db, user_id, current_org_id, new_org_id, data, check.data)
-        data["org_id"] = new_org_id
+        resulting_role = data.pop("org_role", None) or check.data.get("org_role") or "member"
+        # Metadata first (nothing else has changed yet, so a failure is a clean 502); then the
+        # transactional move. A refused/failed move restores the metadata before re-raising.
+        _sync_org_to_auth_metadata(db, user_id, new_org_id)
+        try:
+            team_memberships.move_member(
+                db, actor_id=admin_user.id, user_id=user_id, source_org_id=str(current_org_id),
+                target_org_id=new_org_id, role=resulting_role, mode="transfer",
+            )
+        except Exception:
+            _restore_auth_metadata(db, user_id, current_org_id)
+            raise
 
-    result = db.table("noctus_users").update(data).eq("id", user_id).execute()
+    if data:
+        result = db.table("noctus_users").update(data).eq("id", user_id).execute()
+    else:
+        result = db.table("noctus_users").select("*").eq("id", user_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
     if moving_org:
-        # Before the audit log: a move that could not sync is REVERTED and
-        # raises, so it must never be recorded as having happened.
-        _sync_org_to_auth_metadata(db, user_id, new_org_id, revert_to=current_org_id)
         try:
             from app.services import audit_service
             await audit_service.log(
@@ -173,7 +184,7 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
     return success_response(result.data[0])
 
 
-def _sync_org_to_auth_metadata(db, user_id: str, new_org_id: str, *, revert_to) -> None:
+def _sync_org_to_auth_metadata(db, user_id: str, new_org_id: str) -> None:
     """Mirror the new org onto the auth user's `user_metadata`.
 
     🔴 A REASSIGNMENT IS TWO WRITES, AND HALF OF IT IS INVISIBLE.
@@ -189,11 +200,11 @@ def _sync_org_to_auth_metadata(db, user_id: str, new_org_id: str, *, revert_to) 
     the org's five stages sat right there, because her token still carried
     One Consultoria. Signup already syncs this (`auth.py`); this route did not.
 
-    UNLIKE SIGNUP, A FAILURE HERE IS NOT BEST-EFFORT. Signup can warn and move
-    on because nothing is inconsistent yet. Here, a failed sync is precisely
-    the split-brain being fixed, so the profile write is REVERTED and the
-    caller gets a 502. A half-applied move that reports success is how an admin
-    ends up debugging an empty board instead of retrying a button.
+    UNLIKE SIGNUP, A FAILURE HERE IS NOT BEST-EFFORT: it runs BEFORE the membership
+    move, so a failed sync is a clean 502 with nothing changed, and a failed move
+    afterwards restores the metadata (`_restore_auth_metadata`). A half-applied move
+    that reports success is how an admin ends up debugging an empty board instead of
+    retrying a button.
 
     The user still has to re-authenticate for a new token to be minted — that
     is inherent to reading org off a JWT and is stated in the API response.
@@ -204,26 +215,28 @@ def _sync_org_to_auth_metadata(db, user_id: str, new_org_id: str, *, revert_to) 
         )
     except Exception as exc:
         logger.error(
-            "users: auth metadata sync failed for user_id=%s org_id=%s — reverting "
-            "the profile write so the two stores cannot disagree",
+            "users: auth metadata sync failed for user_id=%s org_id=%s — the move was not attempted",
             user_id, new_org_id, exc_info=True,
         )
-        try:
-            db.table("noctus_users").update({"org_id": revert_to}).eq("id", user_id).execute()
-        except Exception:
-            # Now genuinely split — say so loudly rather than imply a clean undo.
-            logger.critical(
-                "users: REVERT FAILED for user_id=%s — noctus_users says %s while "
-                "auth metadata says %s; needs manual repair",
-                user_id, new_org_id, revert_to, exc_info=True,
-            )
         raise HTTPException(
             status_code=502,
             detail=(
                 "Não foi possível sincronizar a organização no login do usuário. "
-                "A alteração foi revertida — tente novamente."
+                "Nada foi alterado — tente novamente."
             ),
         ) from exc
+
+
+def _restore_auth_metadata(db, user_id: str, org_id) -> None:
+    """Put `user_metadata.org_id` back after a refused/failed move. A failure here is a genuine
+    split (metadata says the target, the DB the source) -- logged CRITICAL with both ids."""
+    try:
+        db.auth.admin.update_user_by_id(user_id, {"user_metadata": {"org_id": org_id}})
+    except Exception:
+        logger.critical(
+            "users: metadata RESTORE FAILED for user_id=%s — auth metadata names the move target "
+            "while noctus_users stays in %s; needs manual repair", user_id, org_id, exc_info=True,
+        )
 
 
 def _guard_org_reassignment(
