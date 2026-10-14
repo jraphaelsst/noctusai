@@ -40,7 +40,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 34 | 41 | 60 | 4 | 91 | 1,170 |
+| Core | 34 | 41 | 62 | 4 | 92 | 1,173 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,897 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
@@ -48,24 +48,24 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 28 | 60 | 218 | 174 | 511 | 8,338 |
+| Social Wiring | 28 | 60 | 220 | 174 | 512 | 8,341 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
-| Igig | 23 | 26 | 31 | 26 | 43 | 974 |
+| Igig | 23 | 26 | 33 | 26 | 44 | 977 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 9 | 25 | 189 |
 | Agents | 17 | 1 | 45 | 29 | 93 | 1,255 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 34 | 5 | 7 | 46 |
-| **Total** | **300** | **336** | **740** | **456** | **1234** | **17,895** |
+| **Total** | **300** | **336** | **746** | **456** | **1237** | **17,904** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (18):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 839** declared across those schemas.
+- **Tables: 878** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
