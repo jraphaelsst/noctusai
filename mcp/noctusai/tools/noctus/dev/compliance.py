@@ -13943,6 +13943,11 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "products/commerce/backend/migrations/017_finance.sql",
+        "fin_entries_source_check",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
         "uq_fin_accounts_gateway",
         "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
     ),
