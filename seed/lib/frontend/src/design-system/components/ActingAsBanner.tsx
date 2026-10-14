@@ -5,8 +5,10 @@
  *   "Você está atuando em <org> (NoctusAI)"  [Trocar org]
  *
  * Full banner when `available && acting`; a slim "Trocar org" bar when
- * `available && !acting`; NOTHING for non-staff (`!available`). Role/label
- * come from `/api/me/access`, never from user_metadata.
+ * `available && !acting`; NOTHING for non-staff -- including a multi-org MEMBER
+ * whose picker applies (D1): a member is never "acting" (their profile follows the
+ * selection), so they switch through `<OrgSwitcher/>` in the shell header instead.
+ * Role/label come from `/api/me/access`, never from user_metadata.
  */
 import { useOrgSelection } from '../../org-selection';
 
@@ -60,6 +62,8 @@ export function ActingAsBanner() {
   const sel = useOrgSelection();
   const s = sel.selection;
   if (!s.available || !s.org) return null;
+  // Staff-only: a member's picker is reached from the shell header (`OrgSwitcher`).
+  if (sel.memberPicker) return null;
   // The mandatory picker is up (incl. an entry whose leftover selection is being
   // ended): no banner/bar — it would name an org this visit has not chosen.
   if (sel.pickerRequired) return null;

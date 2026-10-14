@@ -149,19 +149,27 @@ class TestD3Move:
         mock_sb = client.mock_supabase
         self._roles(mock_sb)
         _refuse(mock_sb, "forbidden")
-        assert client.post("/api/team/move", json=self.BODY).status_code == 403
+        resp = client.post("/api/team/move", json=self.BODY)
+        assert resp.status_code == 403
+        # The contract's machine code reaches the client (the team UI maps it to pt-BR).
+        assert resp.json()["code"] == "forbidden"
+        assert resp.json()["detail"] == "Você não tem permissão para gerenciar esta organização"
 
     def test_a_role_above_the_actor_is_refused_403(self, client):
         mock_sb = client.mock_supabase
         self._roles(mock_sb)
         _refuse(mock_sb, "role_above_actor")
-        assert client.post("/api/team/move", json=self.BODY).status_code == 403
+        resp = client.post("/api/team/move", json=self.BODY)
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "role_above_actor"
 
     def test_transfer_of_the_last_owner_is_refused_409(self, client):
         mock_sb = client.mock_supabase
         self._roles(mock_sb)
         _refuse(mock_sb, "last_owner")
-        assert client.post("/api/team/move", json=self.BODY).status_code == 409
+        resp = client.post("/api/team/move", json=self.BODY)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "last_owner"
 
     def test_unknown_mode_is_422_and_unknown_role_is_400(self, client):
         mock_sb = client.mock_supabase
@@ -260,7 +268,9 @@ class TestD5ProductAccess:
         for code, status in (("forbidden", 403), ("not_licensed", 409), ("product_not_found", 404),
                              ("not_a_member", 404)):
             _refuse(mock_sb, code)
-            assert client.put("/api/team/u-m/product-access/x", json={"blocked": True}).status_code == status
+            resp = client.put("/api/team/u-m/product-access/x", json={"blocked": True})
+            assert resp.status_code == status
+            assert resp.json()["code"] == code
 
     def test_unauthenticated_is_401(self, unauth_client):
         assert unauth_client.get("/api/team/u-m/product-access").status_code == 401

@@ -1,0 +1,24 @@
+name: OrgSwitcher
+path: seed/lib/frontend/src/design-system/components/OrgSwitcher.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Header control (seed shell `actions`) for a MEMBER with >=2 eligible orgs for the product (owner D1, 2026-10-14): shows the org of this visit and opens the SAME OrgPickerModal staff use (useOrgSelection().openPicker) -- never a second mechanism."
+  - "Renders only when useOrgSelection().memberPicker AND a live selection exists AND the picker is not required; staff keep ActingAsBanner, single-org members and customers render nothing."
+  - "Member vs staff comes from /api/me/access org_selection.manage_any_org === false (isMemberOrgPicker); a pre-S4b backend never sends it, so absence reads as staff (the only pickers then)."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Reusing ActingAsBanner's slim bar for members rejected: members are never 'acting' (owner brief S5) and the bar sits above the shell, not in it."
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

@@ -153,6 +153,8 @@ export const OrgSelectionGate: React.FC = () => <div data-testid="org-selection-
 export const OrgContentGate: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
   <div data-testid="org-content-gate-stub">{children}</div>
 );
+/** Member org switcher (header): inert marker in the harness. */
+export const OrgSwitcher: React.FC = () => <span data-testid="org-switcher-stub" />;
 /** Harness switch: tests flip it to simulate a required picker / pending entry. */
 export const orgEntryState = { pending: false };
 export const useOrgEntryPending = (): boolean => orgEntryState.pending;

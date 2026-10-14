@@ -40,6 +40,7 @@ import {
   LLMSpendBadge,
   OrgSelectionGate,
   OrgContentGate,
+  OrgSwitcher,
   useOrgEntryPending,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
@@ -517,13 +518,14 @@ export function createProductLayout(config: ProductLayoutConfig) {
                 enrichment.aiBadge !== undefined
                   ? enrichment.aiBadge
                   : <AIBadgeStack badges={DEFAULT_AI_BADGES} />;
-              return aiBadgeContent ? (
+              // `<OrgSwitcher/>`: a multi-org MEMBER switches org here (owner D1 — the same
+              // picker staff use); it renders nothing for staff / single-org users.
+              return (
                 <span className="inline-flex items-center gap-2">
+                  <OrgSwitcher />
                   {aiBadgeContent}
                   <NotificationBell />
                 </span>
-              ) : (
-                <NotificationBell />
               );
             })()}
             canEditEmail={enrichment.canEditEmail}

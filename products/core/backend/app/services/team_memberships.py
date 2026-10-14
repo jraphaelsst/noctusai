@@ -196,7 +196,10 @@ def _call(db, fn: str, params: dict) -> dict:
         if code is None:
             raise
         status, detail = ERROR_MAP[code]
-        raise HTTPException(status_code=status, detail=detail) from exc
+        # Seed error shape (`{detail, code}`, passed through flat by the seed handler): the S4b
+        # contract names these codes, and the team UI maps each one to its own pt-BR message --
+        # a plain-string detail reached the client as a generic per-status code only.
+        raise HTTPException(status_code=status, detail={"detail": detail, "code": code}) from exc
     if isinstance(data, list):
         data = data[0] if data else {}
     return data if isinstance(data, dict) else {}

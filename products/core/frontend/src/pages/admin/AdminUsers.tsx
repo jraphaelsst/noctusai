@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { teamErrorMessage } from '../../lib/team-errors';
 import { Search, Pencil, Trash2, X } from 'lucide-react';
 import { ORG_ROLE_LABELS, ASSIGNABLE_ROLES } from '@noctusai/lib';
 
@@ -99,8 +100,9 @@ export function AdminUsers() {
       await api.patch(`/api/admin/users/${editUser.id}`, payload);
       setEditUser(null);
       fetchUsers();
-    } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar');
+    } catch (err: unknown) {
+      // An org change is a D3 transfer: its refusals (last_owner, already_member, …) carry codes.
+      alert(teamErrorMessage(err, 'Erro ao atualizar'));
     } finally {
       setSaving(false);
     }
@@ -376,9 +378,10 @@ export function AdminUsers() {
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Define quais dados o usuario enxerga em todos os produtos. Um
-                  usuario pertence a exatamente uma organizacao — revogar e mover
-                  para outra.
+                  Trocar a organizacao aqui TRANSFERE o usuario: a participacao
+                  na organizacao atual termina. Para adiciona-lo a mais uma
+                  organizacao sem tira-lo da atual, use Equipe → Mover →
+                  "Adicionar".
                 </p>
                 {editUser && editForm.org_id !== editUser.org_id && (
                   // The org also rides on the user's token, which is only

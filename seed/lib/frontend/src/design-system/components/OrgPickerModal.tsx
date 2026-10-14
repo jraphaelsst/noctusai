@@ -1,5 +1,6 @@
 /**
- * `<OrgPickerModal/>` — popup where platform staff choose which org to enter.
+ * `<OrgPickerModal/>` — popup where platform staff, and members with >=2 eligible orgs for
+ * this product (owner D1, 2026-10-14), choose which org to enter. ONE picker for both.
  *
  * Shown by `<OrgSelectionGate/>` on every ENTRY into the product (non-dismissible
  * while required — see `org-visit.ts`), and reopened by "Trocar org" (dismissible).
@@ -9,6 +10,10 @@
  * it carries its own "Sair" (logout) — otherwise a staff user who cannot pick
  * (2FA broken, no licensed org, list error) is trapped (2026-10-09).
  *
+ * Member view (`memberView`): the server order is kept (their last-active org first), every
+ * row names the org and the member's role THERE (owner in A can be a viewer in B), and the
+ * org already in use is marked "Atual" on a "Trocar organização". No 2FA (Q1), no NoctusAI label.
+ *
  * `OrgPickerModalView` is the pure presentational half; `OrgPickerModal`
  * binds it to `useOrgSelection()`.
  */
@@ -17,6 +22,7 @@ import { Loader2 } from 'lucide-react';
 
 import type { OrgChoice } from '../../access';
 import { env } from '../../env';
+import { ORG_ROLE_LABELS } from '../../roles';
 import { useOrgSelection } from '../../org-selection';
 import { setOrgPickerOpen } from '../../org-pin';
 import { Button } from '../ui/Button';
@@ -42,6 +48,15 @@ export interface OrgPickerModalViewProps {
   chooseErrorMessage?: string | null;
   /** Shell logout. Shown as "Sair" only while `required` (the modal hides the header's avatar menu). */
   onSignOut?: () => void | Promise<void>;
+  /** A member (not platform staff) is choosing: see the module doc. */
+  memberView?: boolean;
+  /** Member view: the org this visit is already in (marked "Atual"); `null` on an entry. */
+  currentOrgId?: string | null;
+}
+
+function roleLabel(role: string | undefined): string | null {
+  if (!role) return null;
+  return ORG_ROLE_LABELS[role as keyof typeof ORG_ROLE_LABELS] ?? role;
 }
 
 const noop = () => {};
@@ -50,6 +65,7 @@ export function OrgPickerModalView(props: OrgPickerModalViewProps) {
   const {
     open, required, onClose, mfaRequired, mfaUrl, choices, loading, error, onRetry,
     onChoose, chooseBlocked = false, choosingId = null, chooseErrorMessage = null, onSignOut,
+    memberView = false, currentOrgId = null,
   } = props;
   const busy = choosingId !== null || chooseBlocked;
 
@@ -85,6 +101,35 @@ export function OrgPickerModalView(props: OrgPickerModalViewProps) {
         Nenhuma organização com licença ativa para este produto.
       </p>
     );
+  } else if (memberView) {
+    // Server order: the member's last-active org first, then by name.
+    body = (
+      <ul className="space-y-2" data-testid="org-picker-list">
+        {choices.map((c) => {
+          const current = c.id === currentOrgId;
+          const role = roleLabel(c.org_role);
+          return (
+            <li key={c.id}>
+              <button
+                type="button"
+                disabled={busy || current}
+                aria-current={current ? 'true' : undefined}
+                onClick={() => onChoose(c.id)}
+                className="flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{c.nome}</span>
+                  {role && <span className="block text-xs text-muted-foreground">{role}</span>}
+                </span>
+                {choosingId === c.id
+                  ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  : current && <span className="shrink-0 text-xs text-muted-foreground">Atual</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
   } else {
     // Client orgs first (server order: by name), the home org LAST (owner 2026-10-12).
     const ordered = [...choices.filter((c) => !c.is_home), ...choices.filter((c) => c.is_home)];
@@ -118,6 +163,11 @@ export function OrgPickerModalView(props: OrgPickerModalViewProps) {
         )}
       </DialogHeader>
       <DialogBody>
+        {memberView && !mfaRequired && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            Você participa de mais de uma organização com acesso a este produto.
+          </p>
+        )}
         {body}
         {chooseErrorMessage && (
           <p role="alert" className="mt-3 text-sm text-destructive">{chooseErrorMessage}</p>
@@ -175,6 +225,8 @@ export function OrgPickerModal({ onSignOut }: { onSignOut?: () => void | Promise
       choosingId={choosingId}
       chooseErrorMessage={chooseErr}
       onSignOut={onSignOut}
+      memberView={sel.memberPicker}
+      currentOrgId={sel.selection.selection_id && !sel.pickerRequired ? sel.selection.org?.id ?? null : null}
     />
   );
 }

@@ -6,6 +6,7 @@ organ_version: "1.0"
 validation_status: emerging
 
 known_facts:
+  - "Members too (multi-org S5, owner D1 2026-10-14): a non-staff user with >=2 eligible orgs for the product gets the SAME modal and entry handshake. Member view (memberView = useOrgSelection().memberPicker): server order kept (last-active first), the role IN each org under its name, the current org marked 'Atual' and disabled on a switch, no NoctusAI label, no 2FA."
   - "Popup where platform staff pick the org to enter once per login. Non-dismissible while org_selection.required (no Escape/backdrop/close). Home org listed first as 'Entrar como NoctusAI (minha org)'."
   - "choose(orgId) = PUT /api/me/org-choice then window.location.reload(). Loading/empty/error states; mfa_required swaps the list for a 'Configurar 2FA' link to core /security."
   - "Server is the gate (strict 403 for non-staff / no aal2); this is UX only. Mounted by OrgSelectionGate in the seed layout."

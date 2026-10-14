@@ -1,5 +1,5 @@
 /// <reference types="@testing-library/jest-dom" />
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ vi.mock('@noctusai/seed/infra', () => ({
 import { ActingAsBanner } from './ActingAsBanner';
 import { OrgPickerModal, OrgPickerModalView } from './OrgPickerModal';
 import { OrgContentGate, OrgSelectionGate, useOrgEntryPending } from './OrgSelectionGate';
+import { OrgSwitcher } from './OrgSwitcher';
 import { endOrgSelectionBestEffort, resetOrgSelectionPage, setOrgPickerForced } from '../../org-selection';
 import { getOrgPin, notifyOrgSelectionChanged, setOrgPin } from '../../org-pin';
 import { hasOrgVisitMarker, markOrgVisit } from '../../org-visit';
@@ -453,5 +454,148 @@ describe('every entry is a choice (owner 2026-10-12)', () => {
     mount(<><OrgSelectionGate /><Header /></>);
     await screen.findByRole('dialog');
     expect(screen.queryByTestId('bell')).toBeNull();
+  });
+});
+
+// --- multi-org MEMBERS (owner D1, 2026-10-14): the SAME picker + entry handshake, per user x product ---
+describe('members with >=2 eligible orgs (D1)', () => {
+  const reload = vi.fn();
+  const orig = window.location;
+  const PESSOAL = { id: 'm1', nome: 'Pessoal — Ana' };
+  const EMPRESA = { id: 'm2', nome: 'Empresa Ana' };
+  const memberChoices = { orgs: [
+    { id: 'm1', nome: 'Pessoal — Ana', is_home: true, org_role: 'owner' },
+    { id: 'm2', nome: 'Empresa Ana', is_home: false, org_role: 'viewer' },
+  ] };
+  const memberSel = (over: object = {}) => ({
+    available: true, required: true, mfa_required: false, acting: false,
+    org: PESSOAL, home_org: PESSOAL, selection_id: null, org_role: 'owner',
+    eligible_orgs: [
+      { id: 'm1', nome: 'Pessoal — Ana', org_role: 'owner', is_home: true },
+      { id: 'm2', nome: 'Empresa Ana', org_role: 'viewer', is_home: false },
+    ],
+    platform_role: null, manage_any_org: false, manageable_orgs: [], ...over,
+  });
+  const singleOrg = {
+    ...base, org: PESSOAL,
+    org_selection: memberSel({ available: false, required: false, eligible_orgs: [
+      { id: 'm1', nome: 'Pessoal — Ana', org_role: 'owner', is_home: true }] }),
+  };
+  function routeMember(first: object, after: object = first) {
+    let ended = false;
+    apiDelete.mockImplementation(async () => { ended = true; });
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === '/api/me/access') return ended ? after : first;
+      if (path === '/api/me/org-choices') return memberChoices;
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+  function mountShell() {
+    return mount(
+      <>
+        <OrgSelectionGate />
+        <OrgSwitcher />
+        <OrgContentGate><p data-testid="product-content">conteúdo</p></OrgContentGate>
+      </>,
+    );
+  }
+
+  beforeEach(() => {
+    [apiGet, apiPut, apiDelete, reload, removeAllChannels].forEach((m) => m.mockReset());
+    setOrgPin(null);
+    resetOrgSelectionPage();
+    setOrgPickerForced(false);
+    window.sessionStorage.clear();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
+  });
+  afterEach(() => {
+    cleanup();
+    window.sessionStorage.clear();
+    Object.defineProperty(window, 'location', { configurable: true, value: orig });
+  });
+
+  it('entry: the leftover pick is ENDED (same handshake as staff) and the choice is REQUIRED again', async () => {
+    // A pick from an earlier visit is still live server-side: it must not last the whole login.
+    routeMember(
+      { ...base, org: EMPRESA, org_selection: memberSel({ required: false, org: EMPRESA, selection_id: 's-old' }) },
+      { ...base, org_selection: memberSel() },
+    );
+    mountShell();
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice'));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Fechar')).toBeNull(); // non-dismissible
+    expect(screen.queryByTestId('product-content')).toBeNull();
+    expect(screen.queryByTestId('org-switcher')).toBeNull();
+    expect(getOrgPin()).toBeNull(); // the leftover org is never adopted
+  });
+
+  it('member list: server order (last-active first), org names + the role in EACH org, no NoctusAI label', async () => {
+    routeMember({ ...base, org_selection: memberSel() });
+    mountShell();
+    const items = await screen.findAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('Pessoal — Ana');
+    expect(items[0]).toHaveTextContent('Proprietário');
+    expect(items[1]).toHaveTextContent('Empresa Ana');
+    expect(items[1]).toHaveTextContent('Visualizador');
+    expect(screen.queryByText('Entrar como NoctusAI (minha org)')).toBeNull();
+    expect(screen.queryByTestId('org-picker-mfa')).toBeNull();
+  });
+
+  it('choosing PUTs the org, marks the visit with it, pins, reloads', async () => {
+    routeMember({ ...base, org_selection: memberSel() });
+    apiPut.mockResolvedValue({});
+    mountShell();
+    await userEvent.click(await screen.findByText('Empresa Ana'));
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(apiPut).toHaveBeenCalledWith('/api/me/org-choice', { org_id: 'm2' });
+    expect(getOrgPin()).toBe('m2');
+    expect(hasOrgVisitMarker()).toBe(true);
+  });
+
+  it('within the visit: content renders, NO acting banner, the header switcher names the org and reopens the SAME picker', async () => {
+    markOrgVisit('m2');
+    routeMember({ ...base, org: EMPRESA, org_selection: memberSel({ required: false, org: EMPRESA, selection_id: 's2' }) });
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    const switcher = await screen.findByTestId('org-switcher');
+    expect(switcher).toHaveTextContent('Empresa Ana');
+    expect(screen.queryByTestId('acting-as-banner')).toBeNull();
+    expect(screen.queryByTestId('org-switch-bar')).toBeNull();
+    expect(apiDelete).not.toHaveBeenCalled();
+    await waitFor(() => expect(getOrgPin()).toBe('m2'));
+    await userEvent.click(switcher);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('Fechar')).toBeInTheDocument(); // dismissible switch
+    const list = await screen.findByTestId('org-picker-list');
+    const current = within(list).getByRole('button', { name: /Empresa Ana/ });
+    expect(current).toHaveAttribute('aria-current', 'true');
+    expect(current).toBeDisabled();
+  });
+
+  it('exactly ONE eligible org: no popup, no DELETE, no switcher, content renders', async () => {
+    routeMember(singleOrg);
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('org-switcher')).toBeNull();
+    expect(apiDelete).not.toHaveBeenCalled();
+    expect(apiGet).not.toHaveBeenCalledWith('/api/me/org-choices');
+  });
+
+  it('a member who gained a 2nd org mid-visit (single-org marker) is prompted, never silently adopted', async () => {
+    markOrgVisit(); // set while they had one org
+    routeMember({ ...base, org: EMPRESA, org_selection: memberSel({ required: false, org: EMPRESA, selection_id: 's2' }) });
+    mountShell();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('product-content')).toBeNull();
+    expect(screen.queryByTestId('org-switcher')).toBeNull();
+  });
+
+  it('staff are unchanged: no member switcher, the slim staff bar instead', async () => {
+    markOrgVisit('h');
+    route({ ...base, org_selection: sel({ required: false, acting: false, selection_id: 's', manage_any_org: true, platform_role: 'admin' }) });
+    mountShell();
+    expect(await screen.findByTestId('org-switch-bar')).toBeInTheDocument();
+    expect(screen.queryByTestId('org-switcher')).toBeNull();
   });
 });

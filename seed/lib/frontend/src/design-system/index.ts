@@ -32,6 +32,8 @@ export type { OrgPickerModalViewProps } from "./components/OrgPickerModal";
 export { ActingAsBanner, ActingAsBannerView } from "./components/ActingAsBanner";
 export type { ActingAsBannerViewProps } from "./components/ActingAsBanner";
 export { OrgSelectionGate, OrgContentGate, useOrgEntryPending } from "./components/OrgSelectionGate";
+export { OrgSwitcher, OrgSwitcherView } from "./components/OrgSwitcher";
+export type { OrgSwitcherViewProps } from "./components/OrgSwitcher";
 export { useOrgSelection, endOrgSelectionBestEffort, ME_ACCESS_QUERY_KEY, ORG_CHOICES_QUERY_KEY } from "../org-selection";
 export type { UseOrgSelectionResult } from "../org-selection";
 export { useIsOrgAdmin } from "../use-is-org-admin";

@@ -160,7 +160,9 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     tab's choice; that tab gets 409 org_selection_changed → picker reopens.
   - Picker list order: client orgs first (alphabetical), the home org "Entrar como NoctusAI
     (minha org)" LAST.
-  - Single-org / non-staff users: no picker, no behaviour change at all.
+  - Users the picker does not apply to (non-staff with fewer than 2 eligible orgs, D1 below):
+    no picker, no behaviour change at all. A member with ≥2 eligible orgs follows these rules
+    exactly as staff do (§ Members, Front end).
 
   **Visit marker (seed FE, `org-visit.ts`):** `sessionStorage['noctus:org-visit:<slug>']`
   (per tab, per product); every access is try/catch and unavailable storage reads as "no
@@ -306,6 +308,20 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
       `team_member_move.refuses_an_actor_who_does_not_manage_both_orgs`,
       `team_member_remove.sole_member_keeps_the_profile_in_a_personal_org`; real Postgres:
       `mcp/noctusai/tests/test_core_member_access_rules_on_replay.py`.
+  - **Front end (S5, 2026-10-14).** No member-specific flow: `useOrgSelection` keys everything off
+    `org_selection.available`, so a member with ≥2 eligible orgs gets the staff entry handshake
+    as-is (no marker ⇒ `DELETE /api/me/org-choice` ⇒ required picker ⇒ choice ⇒ marker + reload;
+    cross-tab rule 1A) — a pick lasts ONE visit, never the whole login. Member vs staff is only
+    presentation, from `isMemberOrgPicker(sel)` (`available && manage_any_org === false`; absent on
+    a pre-S4b backend = staff): `OrgPickerModal` keeps the server order (last-active first), names
+    the role IN each org and marks the current one "Atual"; `ActingAsBanner` (and its slim bar)
+    render for staff only; the member switches from `<OrgSwitcher/>` in the seed shell header
+    `actions`, which opens the same picker. Single-org members: `available=false`, no popup, no
+    switcher. Core `/team` (`hooks/useTeam.ts`): org selector over `manageable_orgs` (staff:
+    `/api/organizations`, acting as owner), every team call `?org_id=`, "Mover" (target + role
+    capped by the actor's role there + mode chosen each time, none preselected), "Acessos" (switch
+    per licensed product), removal copy for D4. Refusals reach the client as `{detail, code}`
+    (`team_memberships._call`) and `lib/team-errors.ts` maps each contract code to pt-BR.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

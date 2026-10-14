@@ -24,23 +24,55 @@ export const ORG_SELECTION_REQUIRED_CODE = 'org_selection_required';
 
 export interface OrgRef { id: string; nome: string }
 
-/** `org_selection` block of `GET /api/me/access` (org-picker contract). */
+/** A member's eligible org for this product (`org_selection.eligible_orgs`, owner D1). */
+export interface EligibleOrg { id: string; nome: string | null; org_role: string; is_home: boolean }
+
+/** An org whose team the caller manages (`org_selection.manageable_orgs`, owner D2/D3). */
+export interface ManageableOrg { id: string; nome: string | null; org_role: string }
+
+/**
+ * `org_selection` block of `GET /api/me/access` (org-picker contract; multi-org S4b contract in
+ * `project-history/roadmaps/multi-org-membership-2026-10.md`).
+ */
 export interface OrgSelectionState {
-  /** Product is picker-ready AND the caller is platform staff. */
+  /**
+   * Product is picker-ready AND the caller may choose: platform staff, or a MEMBER with >=2
+   * eligible orgs for this product (owner D1, 2026-10-14).
+   */
   available: boolean;
   /** available AND no live selection for this login yet → picker is mandatory. */
   required: boolean;
-  /** Staff without aal2: picking is blocked until 2FA. */
+  /** Staff without aal2: picking is blocked until 2FA (members never need it, Q1). */
   mfa_required: boolean;
-  /** Live selection whose target differs from the home org. */
+  /** Staff live selection whose target differs from the home org (a member is never acting). */
   acting: boolean;
   org: OrgRef | null;
   home_org: OrgRef | null;
   selection_id: string | null;
+  /** The caller's role in the EFFECTIVE org (absent on a pre-picker backend). */
+  org_role?: string | null;
+  /** Member: this product's eligible orgs, home first (`[]` for staff). Absent pre-S4b. */
+  eligible_orgs?: EligibleOrg[];
+  /** `owner` = THE NoctusAI owner, `admin` = NoctusAI admin, `null` = not platform staff. */
+  platform_role?: 'owner' | 'admin' | null;
+  /** Platform staff: may manage ANY org's team. Absent pre-S4b. */
+  manage_any_org?: boolean;
+  /** The caller's ACTIVE owner/admin memberships. Absent pre-S4b. */
+  manageable_orgs?: ManageableOrg[];
 }
 
-/** `GET /api/me/org-choices` row. */
-export interface OrgChoice { id: string; nome: string; is_home: boolean }
+/**
+ * True when the picker applies to a MEMBER (non-staff with >=2 eligible orgs, D1) rather than to
+ * platform staff. Same picker, same entry handshake -- only the presentation differs (no "acting"
+ * banner, the home org is the member's last-active org, roles per org). A pre-S4b backend never
+ * sends `manage_any_org`; there only staff could pick, so absence reads as staff.
+ */
+export function isMemberOrgPicker(selection: OrgSelectionState): boolean {
+  return selection.available && selection.manage_any_org === false;
+}
+
+/** `GET /api/me/org-choices` row (`org_role` on member rows). */
+export interface OrgChoice { id: string; nome: string; is_home: boolean; org_role?: string }
 
 /** `GET /api/me/access` */
 export interface MeAccess {

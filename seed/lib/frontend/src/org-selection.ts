@@ -1,22 +1,29 @@
 /**
- * Org picker client (platform staff choose the org EVERY time they enter a product).
+ * Org picker client -- ONE mechanism for platform staff AND multi-org members.
+ *
+ * Who picks: platform staff (any org licensed for the product), and -- owner decision D1,
+ * 2026-10-14 -- a non-staff MEMBER who holds >=2 eligible orgs for THIS product (active,
+ * non-customer, licensed, not blocked). The server decides it per user x product and says so
+ * in `/api/me/access` (`org_selection.available`); exactly one eligible org => `available` is
+ * false => no picker, the server serves that org silently.
  *
  * `useOrgSelection()` exposes the access snapshot, the choices and the
  * choose/end actions. Server is the gate; this is UX only. Swapping orgs
  * hard-reloads the page so no cross-org React-Query cache survives.
  *
- * Entry handshake (owner decision 2026-10-12, see `org-visit.ts`): a page load
- * with no visit marker is an ENTRY. For staff on a picker-ready product it ends
- * any selection left from a previous visit (`DELETE /api/me/org-choice`), refetches
- * access and keeps the picker REQUIRED (and the product content unrendered) until a
- * choice -- which sets the marker and reloads. Reloads of the same tab keep the
- * choice. Non-staff: the marker is set, nothing else happens.
+ * Entry handshake (owner decision 2026-10-12, see `org-visit.ts`; extended to members by D1):
+ * a page load with no visit marker is an ENTRY. Whenever the picker applies on a picker-ready
+ * product, it ends any selection left from a previous visit (`DELETE /api/me/org-choice`),
+ * refetches access and keeps the picker REQUIRED (and the product content unrendered) until a
+ * choice -- which sets the marker and reloads. Reloads of the same tab keep the choice. So a
+ * member's pick lasts one visit, exactly like staff's, never the whole login. When no picker
+ * applies, the marker is set and nothing else happens.
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, supabase } from '@noctusai/seed/infra';
 
-import { orgSelectionOf } from './access';
+import { isMemberOrgPicker, orgSelectionOf } from './access';
 import type { MeAccess, OrgChoice, OrgSelectionState } from './access';
 import {
   getOrgPin, setOrgPin, setOrgSelectionChangedHandler, subscribeOrgPin,
@@ -77,12 +84,17 @@ export interface UseOrgSelectionResult {
   pickerRequired: boolean;
   /**
    * The product's routes/children must NOT render: an entry whose access is still
-   * pending, a staff entry handshake in flight, or a required picker. Non-staff
-   * within a visit: always `false`.
+   * pending, an entry handshake in flight, or a required picker. No picker
+   * (non-staff with <2 eligible orgs) within a visit: always `false`.
    */
   contentBlocked: boolean;
   /** This page load's entry phase (see `org-visit.ts`). */
   entryPhase: OrgEntryPhase;
+  /**
+   * The picker applies to a MEMBER (>=2 eligible orgs, D1), not to platform staff: same flow,
+   * member presentation (no "acting" banner; the shell switcher instead).
+   */
+  memberPicker: boolean;
   /** PUT the choice, pin it, reload. Rejects with the ApiError on failure. */
   choose: (orgId: string) => Promise<void>;
   choosing: boolean;
@@ -151,14 +163,15 @@ export function useOrgSelection():UseOrgSelectionResult {
   const accessLoaded = accessQ.data !== undefined;
 
   // Entry handshake -- runs once per page load (module-level phase; every hook
-  // instance sees the same transition). Staff: end the leftover selection BEFORE
-  // the product renders, then refetch so the server agrees (`required`).
+  // instance sees the same transition). Whenever the picker applies (staff, or a member
+  // with >=2 eligible orgs -- D1): end the leftover selection BEFORE the product renders,
+  // then refetch so the server agrees (`required`).
   useEffect(() => {
     // Read the LIVE phase: sibling hook instances run this effect in the same
     // commit with the same stale render value -- only the first may start the DELETE.
     if (getOrgEntryPhase() !== 'entry' || !accessLoaded) return;
     if (!selection.available) {
-      markOrgVisit(); // (sentinel) non-staff / not picker-ready: no picker, behaviour unchanged
+      markOrgVisit(); // (sentinel) no picker (<2 eligible orgs / not picker-ready): behaviour unchanged
       setOrgEntryPhase('visit');
       return;
     }
@@ -221,7 +234,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     queryKey: ORG_CHOICES_QUERY_KEY,
     queryFn: () => api.get<{ orgs: OrgChoice[] }>('/api/me/org-choices'),
     // Starts as soon as the FIRST access says the picker applies -- in parallel with the
-    // entry DELETE (the list does not depend on the selection). Never fires for non-staff.
+    // entry DELETE (the list does not depend on the selection). Never fires without a picker.
     enabled: selection.available && !selection.mfa_required,
     // Kept for the page so "Trocar org" opens instantly; a choice reloads the page anyway.
     staleTime: CHOICES_STALE_MS,
@@ -270,6 +283,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     pickerRequired,
     contentBlocked,
     entryPhase,
+    memberPicker: isMemberOrgPicker(selection),
     choose,
     choosing: chooseM.isPending,
     chooseError: chooseM.error,
@@ -282,13 +296,13 @@ export function useOrgSelection():UseOrgSelectionResult {
 }
 
 /**
- * Logout path: end this product's selection server-side. Best-effort — a
- * failure (no selection, non-staff 403, network) must never block signOut, and
- * core's logout ends all selections anyway.
+ * Logout path: end the caller's selections server-side (staff and members alike). Best-effort —
+ * a failure (no selection, network) must never block signOut, and core's logout ends all
+ * selections anyway.
  */
 export async function endOrgSelectionBestEffort(): Promise<void> {
   try {
-    // ?all=true ends the selections for EVERY product (staff-only server-side).
+    // ?all=true ends the caller's selections for EVERY product.
     await api.delete('/api/me/org-choice?all=true');
   } catch {
     /* best-effort by design: signOut proceeds; core logout ends all selections */

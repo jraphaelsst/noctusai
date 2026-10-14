@@ -309,11 +309,14 @@ describe("org picker gate (layout)", () => {
       const { unmount } = renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
       expect(screen.queryByTestId("notification-bell-stub")).toBeNull();
       expect(screen.queryByTestId("llm-spend-badge-stub")).toBeNull();
+      expect(screen.queryByTestId("org-switcher-stub")).toBeNull(); // the picker itself is up
       expect(screen.getByTestId("logout-button")).toBeInTheDocument(); // avatar/name stays
       unmount();
       stub.orgEntryState.pending = false;
       renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
       expect(screen.getByTestId("notification-bell-stub")).toBeInTheDocument();
+      // the member org switcher (multi-org S5) rides in the header actions
+      expect(screen.getByTestId("org-switcher-stub")).toBeInTheDocument();
     } finally {
       stub.orgEntryState.pending = false;
     }
