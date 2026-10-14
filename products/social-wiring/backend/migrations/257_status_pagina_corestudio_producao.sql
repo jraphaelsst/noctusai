@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 255 · social_wiring: CoreStudio pages leave 'desenvolvimento'
+-- Migration 257 · social_wiring: CoreStudio pages leave 'desenvolvimento'
 -- ============================================================================
 -- WHY
 -- ---
@@ -23,7 +23,7 @@ SET search_path = social_wiring, public;
 DO $guard$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM social_wiring.status_pagina WHERE nome_pagina = 'media-creation-esteira') THEN
-    RAISE EXCEPTION 'Migration 255 requires the media-creation-esteira status row (migration 241) -- apply 241 first';
+    RAISE EXCEPTION 'Migration 257 requires the media-creation-esteira status row (migration 241) -- apply 241 first';
   END IF;
 END
 $guard$;
