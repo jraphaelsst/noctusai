@@ -71,6 +71,7 @@ const EmailListasNoc = lazyWithReload(() => import("@/pages/email/Listas"));
 const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates"));
 const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
+const LaisAvisoPrivacidade = lazyWithReload(() => import("@/pages/lais/AvisoPrivacidade"));
 const EmailDescadastro = lazyWithReload(() => import("@/pages/email/Descadastro"));
 const EmailConfirmarEmail = lazyWithReload(() => import("@/pages/email/ConfirmarEmail"));
 const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
@@ -230,6 +231,8 @@ export default createProductApp({
     { path: "/descadastro/:token", component: EmailDescadastro },
     // Public double opt-in confirmation link target (token-authenticated, no login).
     { path: "/confirmar-email/:token", component: EmailConfirmarEmail },
+    // Public per-org Lais/Julia privacy notice (LGPD; linked in the first WhatsApp message).
+    { path: "/privacidade/:slug", component: LaisAvisoPrivacidade },
   ],
   Layout,
   ...infra.appConfig,

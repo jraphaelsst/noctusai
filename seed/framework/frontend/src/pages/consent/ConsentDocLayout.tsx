@@ -39,26 +39,51 @@ function NoctusMark() {
   );
 }
 
-export function ConsentDocLayout({ doc }: { doc: ConsentDoc }) {
+/**
+ * Named seam: a consumer that renders ITS OWN controller's notice (e.g. a
+ * per-org privacy notice) passes `brand`. In brand mode the NoctusAI mark,
+ * the NoctusAI doc switcher, controller/DPO block and canonical footer are
+ * replaced by the consumer's own header name, metadata rows and contact
+ * block. Omitted `brand` ⇒ the NoctusAI shell, unchanged.
+ */
+export interface ConsentDocBrand {
+  name: string;
+  homeHref?: string;
+  /** Metadata rows under the title (brand mode only). */
+  meta?: { label: string; value: string }[];
+  /** Contact card (brand mode only). */
+  contact?: { title: string; lines: { label: string; value: string; href?: string }[] };
+}
+
+/** What the layout needs of a document (a `ConsentDoc` satisfies it). */
+export type ConsentDocLike = Pick<ConsentDoc, "title" | "intro" | "sections"> & { slug?: string };
+
+export function ConsentDocLayout({ doc, brand }: { doc: ConsentDocLike; brand?: ConsentDocBrand }) {
   useEffect(() => {
     const prev = document.title;
-    document.title = `${doc.title} — ${CONSENT_META.platform}`;
+    document.title = `${doc.title} — ${brand ? brand.name : CONSENT_META.platform}`;
     return () => {
       document.title = prev;
     };
-  }, [doc.title]);
+  }, [doc.title, brand?.name]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Top bar */}
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-5 py-4">
-          <Link to="/consent" className="flex items-center gap-2.5">
-            <NoctusMark />
-            <span className="text-lg font-semibold tracking-tight">
-              Noctus<span className="text-muted-foreground">AI</span>
-            </span>
-          </Link>
+          {brand ? (
+            <Link to={brand.homeHref ?? "#"} className="flex items-center gap-2.5" data-testid="consent-brand">
+              <span className="text-lg font-semibold tracking-tight">{brand.name}</span>
+            </Link>
+          ) : (
+            <Link to="/consent" className="flex items-center gap-2.5">
+              <NoctusMark />
+              <span className="text-lg font-semibold tracking-tight">
+                Noctus<span className="text-muted-foreground">AI</span>
+              </span>
+            </Link>
+          )}
           <span className="text-xs uppercase tracking-widest text-muted-foreground">
             Documentos legais
           </span>
@@ -66,47 +91,61 @@ export function ConsentDocLayout({ doc }: { doc: ConsentDoc }) {
       </header>
 
       <main className="mx-auto max-w-3xl px-5 py-10">
-        {/* Doc switcher */}
-        <nav className="mb-8 flex flex-wrap gap-2" aria-label="Documentos">
-          {CONSENT_DOCS.map((d) => {
-            const active = d.slug === doc.slug;
-            return (
-              <Link
-                key={d.slug}
-                to={`/consent/${d.slug}`}
-                aria-current={active ? "page" : undefined}
-                className={
-                  "rounded-md border px-3 py-1.5 text-sm transition-colors " +
-                  (active
-                    ? "border-foreground/20 bg-accent font-medium text-foreground"
-                    : "border-border text-muted-foreground hover:bg-accent/60")
-                }
-              >
-                {d.shortLabel}
-              </Link>
-            );
-          })}
-        </nav>
+        {/* Doc switcher (NoctusAI shell only) */}
+        {!brand && (
+          <nav className="mb-8 flex flex-wrap gap-2" aria-label="Documentos">
+            {CONSENT_DOCS.map((d) => {
+              const active = d.slug === doc.slug;
+              return (
+                <Link
+                  key={d.slug}
+                  to={`/consent/${d.slug}`}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    "rounded-md border px-3 py-1.5 text-sm transition-colors " +
+                    (active
+                      ? "border-foreground/20 bg-accent font-medium text-foreground"
+                      : "border-border text-muted-foreground hover:bg-accent/60")
+                  }
+                >
+                  {d.shortLabel}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
 
         {/* Title + metadata */}
         <h1 className="text-3xl font-semibold tracking-tight">{doc.title}</h1>
-        <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
-          <div>
-            <span className="font-medium text-foreground/80">Controlador:</span>{" "}
-            {CONSENT_META.controllerName} ({CONSENT_META.controllerLocation})
-          </div>
-          <div>
-            <span className="font-medium text-foreground/80">Versão:</span> {CONSENT_META.version}
-          </div>
-          <div>
-            <span className="font-medium text-foreground/80">Última atualização:</span>{" "}
-            {CONSENT_META.lastUpdated}
-          </div>
-          <div>
-            <span className="font-medium text-foreground/80">Plataforma:</span>{" "}
-            {CONSENT_META.platform}
-          </div>
-        </dl>
+        {brand ? (
+          brand.meta && brand.meta.length > 0 && (
+            <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
+              {brand.meta.map((m) => (
+                <div key={m.label}>
+                  <span className="font-medium text-foreground/80">{m.label}:</span> {m.value}
+                </div>
+              ))}
+            </dl>
+          )
+        ) : (
+          <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2">
+            <div>
+              <span className="font-medium text-foreground/80">Controlador:</span>{" "}
+              {CONSENT_META.controllerName} ({CONSENT_META.controllerLocation})
+            </div>
+            <div>
+              <span className="font-medium text-foreground/80">Versão:</span> {CONSENT_META.version}
+            </div>
+            <div>
+              <span className="font-medium text-foreground/80">Última atualização:</span>{" "}
+              {CONSENT_META.lastUpdated}
+            </div>
+            <div>
+              <span className="font-medium text-foreground/80">Plataforma:</span>{" "}
+              {CONSENT_META.platform}
+            </div>
+          </dl>
+        )}
 
         <p className="mt-6 border-l-2 border-border pl-4 text-[0.95rem] leading-relaxed text-foreground/80">
           {doc.intro}
@@ -126,44 +165,68 @@ export function ConsentDocLayout({ doc }: { doc: ConsentDoc }) {
           ))}
         </div>
 
-        {/* Contact / DPO */}
-        <section className="mt-12 rounded-lg border border-border bg-card p-5">
-          <h2 className="text-base font-semibold tracking-tight">Encarregado (DPO) e contato</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {CONSENT_META.dpoName} — {CONSENT_META.controllerKind}.
-          </p>
-          <ul className="mt-3 space-y-1 text-sm">
-            <li>
-              <span className="text-muted-foreground">E-mail:</span>{" "}
-              <a className="font-medium underline underline-offset-2" href={`mailto:${CONSENT_META.email}`}>
-                {CONSENT_META.email}
-              </a>
-            </li>
-            <li>
-              <span className="text-muted-foreground">Telefone/WhatsApp:</span>{" "}
-              <a
-                className="font-medium underline underline-offset-2"
-                href={`tel:${CONSENT_META.phone.replace(/[^+\d]/g, "")}`}
-              >
-                {CONSENT_META.phone}
-              </a>
-            </li>
-            <li>
-              <span className="text-muted-foreground">Localização:</span>{" "}
-              {CONSENT_META.controllerLocation}
-            </li>
-          </ul>
-        </section>
+        {brand ? (
+          brand.contact && (
+            <section className="mt-12 rounded-lg border border-border bg-card p-5">
+              <h2 className="text-base font-semibold tracking-tight">{brand.contact.title}</h2>
+              <ul className="mt-3 space-y-1 text-sm">
+                {brand.contact.lines.map((l) => (
+                  <li key={l.label}>
+                    <span className="text-muted-foreground">{l.label}:</span>{" "}
+                    {l.href ? (
+                      <a className="font-medium underline underline-offset-2" href={l.href}>
+                        {l.value}
+                      </a>
+                    ) : (
+                      l.value
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )
+        ) : (
+          <>
+            {/* Contact / DPO */}
+            <section className="mt-12 rounded-lg border border-border bg-card p-5">
+              <h2 className="text-base font-semibold tracking-tight">Encarregado (DPO) e contato</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {CONSENT_META.dpoName} — {CONSENT_META.controllerKind}.
+              </p>
+              <ul className="mt-3 space-y-1 text-sm">
+                <li>
+                  <span className="text-muted-foreground">E-mail:</span>{" "}
+                  <a className="font-medium underline underline-offset-2" href={`mailto:${CONSENT_META.email}`}>
+                    {CONSENT_META.email}
+                  </a>
+                </li>
+                <li>
+                  <span className="text-muted-foreground">Telefone/WhatsApp:</span>{" "}
+                  <a
+                    className="font-medium underline underline-offset-2"
+                    href={`tel:${CONSENT_META.phone.replace(/[^+\d]/g, "")}`}
+                  >
+                    {CONSENT_META.phone}
+                  </a>
+                </li>
+                <li>
+                  <span className="text-muted-foreground">Localização:</span>{" "}
+                  {CONSENT_META.controllerLocation}
+                </li>
+              </ul>
+            </section>
 
-        {/* Footer nav */}
-        <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-6 text-sm text-muted-foreground">
-          <Link to="/consent" className="underline underline-offset-2 hover:text-foreground">
-            ← Todos os documentos legais
-          </Link>
-          <span>
-            {CONSENT_META.platform} · {CONSENT_META.canonicalBase}/{doc.slug}
-          </span>
-        </footer>
+            {/* Footer nav */}
+            <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-6 text-sm text-muted-foreground">
+              <Link to="/consent" className="underline underline-offset-2 hover:text-foreground">
+                ← Todos os documentos legais
+              </Link>
+              <span>
+                {CONSENT_META.platform} · {CONSENT_META.canonicalBase}/{doc.slug}
+              </span>
+            </footer>
+          </>
+        )}
       </main>
     </div>
   );

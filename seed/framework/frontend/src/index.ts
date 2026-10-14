@@ -27,6 +27,9 @@ export { ConsentSettingsPage } from './pages/ConsentSettingsPage';
 export { ConsentHubPage } from './pages/consent/ConsentHubPage';
 export { PrivacyPolicyPage } from './pages/consent/PrivacyPolicyPage';
 export { TermsOfUsePage } from './pages/consent/TermsOfUsePage';
+// Named seam for a consumer's OWN controller notice (per-org privacy notice).
+export { ConsentDocLayout } from './pages/consent/ConsentDocLayout';
+export type { ConsentDocBrand, ConsentDocLike } from './pages/consent/ConsentDocLayout';
 export {
   CONSENT_META,
   CONSENT_DOCS,
