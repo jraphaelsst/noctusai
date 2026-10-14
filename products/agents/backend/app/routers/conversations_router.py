@@ -40,6 +40,7 @@ from app.dependencies import (
     get_message_store_dep,
     get_persona_store_dep,
     get_realtime_bus_dep,
+    require_admin,
     require_member,
 )
 from app.config import settings
@@ -102,6 +103,9 @@ def _conversation_out(record: ConversationRecord, agent_key: str) -> Conversatio
         agent_key=agent_key,
         version_id=record.version_id,
         client_id=record.client_id,
+        channel=record.channel,
+        channel_ref=record.channel_ref,
+        contact=record.contact,
     )
 
 
@@ -179,7 +183,7 @@ def _conversation_payload(record: ConversationRecord) -> dict[str, Any]:
     return {
         "id": str(record.id),
         "agent_id": str(record.agent_id),
-        "owner_user_id": str(record.owner_user_id),
+        "owner_user_id": str(record.owner_user_id) if record.owner_user_id else None,
         "titulo": record.titulo,
         "sdk_session_id": record.sdk_session_id,
         "status": record.status,
@@ -270,6 +274,25 @@ async def list_conversations(
     else:
         agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
     records = store.list_owned(ctx.org_id, ctx.user_id, agent_id=agent.id)
+    items = [_conversation_out(r, agent.key) for r in records]
+    return ConversationListOut(items=items, total=len(items))
+
+
+@router.get("/channel", response_model=ConversationListOut)
+async def list_channel_conversations(
+    agent_key: str = Query(..., min_length=1, max_length=64),
+    channel: str | None = Query(default=None, min_length=1, max_length=32),
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_conversation_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+) -> ConversationListOut:
+    """Lais A2 (contract §3.3): the CHANNEL conversations of one agent — leads on
+    WhatsApp etc., driven by a product token — listed READ-ONLY for the agents
+    UI, filterable by ``channel``. Admin-only: they hold third-party personal
+    data (LGPD). Reading one is the normal conversation/messages/stream routes
+    (admins may read); writing to one is a 404 (``get_owned`` — it has no owner)."""
+    agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
+    records = store.list_channel(ctx.org_id, agent_id=agent.id, channel=channel)
     items = [_conversation_out(r, agent.key) for r in records]
     return ConversationListOut(items=items, total=len(items))
 

@@ -51,6 +51,8 @@ from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agents_router import router as agents_router
 from app.routers.api_keys_router import router as api_keys_router
+from app.routers.channel_token_router import router as channel_token_router
+from app.routers.channels_router import router as channels_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.editorial_router import router as editorial_router
@@ -198,6 +200,9 @@ app = create_product_app(
         agents_router,
         persona_router,
         conversations_router,
+        # Lais A2: the product-to-product channel turn API (+ its token mint).
+        channels_router,
+        channel_token_router,
         approvals_router,
         admin_credentials_router,
         # Lais A1: per-org LLM provider keys (openai/anthropic), admin-only, with POST .../test.

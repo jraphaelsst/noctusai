@@ -596,6 +596,10 @@ class TestAgentsStudioProbes:
         "agent_versions_model_check",
         "agent_versions_provider_check",
         "agents_runtime_check",
+        # Lais A2 (migration 025).
+        "conversations_channel_owner_check",
+        "uq_agents_conversations_channel_ref",
+        "uq_agents_channel_inbound_msg",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -604,6 +608,7 @@ class TestAgentsStudioProbes:
         ("006_agents.sql", "015_haiku_model.sql"),
         ("012_agent_studio_definitions.sql", "015_haiku_model.sql"),
         ("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
+        ("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
     }
 
     @staticmethod

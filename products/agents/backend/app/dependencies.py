@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from noctusai_seed import (
     create_database_module,
     create_dependencies,
@@ -220,6 +220,49 @@ PACKAGE_TOKEN_SCOPES = frozenset({
     SCOPE_STUDIO_PUBLISH,
 })
 
+# ── Channel turn API scopes (Lais A2, contract §3 / §4 / §10.1 M1 + L1) ────
+#
+# The product-to-product surface a CHANNEL TRANSPORT (social-wiring) drives with
+# a minted `pk_*` token. Split scopes (L1): turns vs. link-health status. Both
+# are minted together onto the channel token (§4) — status is what SW calls to
+# validate a pasted token — but a route only ever demands its own.
+SCOPE_CHANNEL_TURN = "agents:channel-turn"
+SCOPE_CHANNEL_STATUS = "agents:channel-status"
+CHANNEL_TOKEN_SCOPES = frozenset({SCOPE_CHANNEL_TURN, SCOPE_CHANNEL_STATUS})
+#: Who may hold a channel token. Read off the STORED token row (`api_tokens.
+#: issuer`, set only server-side at mint) — a token minted for any other
+#: transport answers 403 `issuer_not_allowed` even with the scope.
+CHANNEL_ALLOWED_ISSUERS = frozenset({"social-wiring"})
+#: The server-side registry of scopes an admin-initiated mint may put on a
+#: token (the union of every documented, product-honoured set).
+MINTABLE_TOKEN_SCOPES = PACKAGE_TOKEN_SCOPES | CHANNEL_TOKEN_SCOPES
+
+
+def _require_channel(scope: str):
+    """Product-token-only gate for one channel scope + the issuer allowlist.
+    `restrict="product_only"`: a human session answers 403 `product_required`;
+    a wrong/absent scope 403 `scope_missing`; a bad/expired token 401 comes from
+    `get_auth_context` itself."""
+    base = require_scopes(
+        scope,
+        get_auth_context=get_auth_context,
+        restrict="product_only",
+    )
+
+    def _dep(ctx: AuthContext = Depends(base)) -> AuthContext:
+        if ctx.issuer not in CHANNEL_ALLOWED_ISSUERS:
+            raise HTTPException(
+                status_code=403,
+                detail={"detail": "Token issuer not allowed for this API", "code": "issuer_not_allowed"},
+            )
+        return ctx
+
+    return _dep
+
+
+require_channel_turn = _require_channel(SCOPE_CHANNEL_TURN)
+require_channel_status = _require_channel(SCOPE_CHANNEL_STATUS)
+
 require_packages_read = require_scopes(
     SCOPE_PACKAGES_READ,
     user_roles=MEMBER_ROLES,
@@ -343,14 +386,87 @@ def get_message_store_dep():
     return get_message_store(settings)
 
 
-def get_llm_runtime_dep(msg_store=Depends(get_message_store_dep)):
+_handoff_collector = None
+
+
+def get_handoff_collector_dep():
+    """The process-wide :class:`~app.channels.tools.HandoffCollector` the
+    ``handoff`` tool writes to and the channel turn route reads from."""
+    global _handoff_collector
+    if _handoff_collector is None:
+        from app.channels.tools import HandoffCollector
+
+        _handoff_collector = HandoffCollector()
+    return _handoff_collector
+
+
+def get_llm_runtime_dep(
+    msg_store=Depends(get_message_store_dep), collector=Depends(get_handoff_collector_dep)
+):
     """The provider-neutral runtime (``agents.runtime='llm'``, Lais A1) —
     memory over the SAME message store the route persists to, so a test that
     overrides ``get_message_store_dep`` (or this dep, with a ``FakeProvider``-
-    driven ``LlmToolRuntime``) reaches it. Cheap: no network at construction."""
+    driven ``LlmToolRuntime``) reaches it. Cheap: no network at construction.
+
+    Carries the page-0 ``handoff`` tool (§7) so the studio TEST chat of an
+    ``llm`` agent behaves like the channel one (the tool call shows as a block;
+    nothing is dispatched)."""
+    from app.channels.tools import make_channel_tools_factory
     from app.runtime import get_llm_runtime
 
-    return get_llm_runtime(settings, messages=msg_store)
+    return get_llm_runtime(
+        settings, messages=msg_store, tools_factory=make_channel_tools_factory(collector)
+    )
+
+
+def get_channel_llm_runtime_dep(
+    msg_store=Depends(get_message_store_dep), collector=Depends(get_handoff_collector_dep)
+):
+    """The runtime a CHANNEL turn runs on: the same provider-neutral runtime,
+    with the per-org daily cap ON by default (`channel_daily_budget_usd`, §10.1
+    M4) and the ``handoff`` tool bound to this process's collector. Tests
+    override THIS dep with a ``FakeProvider``-driven runtime."""
+    from app.channels.tools import make_channel_tools_factory
+    from app.runtime import get_llm_runtime
+
+    return get_llm_runtime(
+        settings,
+        messages=msg_store,
+        tools_factory=make_channel_tools_factory(collector),
+        daily_cap_usd=float(settings.channel_daily_budget_usd),
+    )
+
+
+def get_channel_inbound_store_dep():
+    from app.stores.channel_inbound import get_channel_inbound_store
+
+    return get_channel_inbound_store(settings)
+
+
+def get_channel_retention_dep():
+    from app.channels.retention import get_channel_retention
+
+    return get_channel_retention(settings)
+
+
+def get_org_llm_key_resolver_dep():
+    """``(provider, org_id) -> key | None`` — THIS org's key only (B1)."""
+    from app.credentials.org_keys import make_org_llm_key_resolver
+
+    return make_org_llm_key_resolver()
+
+
+def get_product_token_admin_dep():
+    """Service-side ``api_tokens`` writer (the seed's ``ProductTokenAdmin``)."""
+    from noctusai_lib.api.auth.session import make_product_token_admin
+
+    return make_product_token_admin(get_admin_client() if settings.supabase_service_role_key else None)
+
+
+def get_token_audit_dep():
+    from app.channels.token_audit import get_token_audit
+
+    return get_token_audit(settings)
 
 
 def get_persona_store_dep():
@@ -402,6 +518,20 @@ def get_build_julia_spec_dep():
 
 
 __all__ = [
+    "CHANNEL_ALLOWED_ISSUERS",
+    "CHANNEL_TOKEN_SCOPES",
+    "MINTABLE_TOKEN_SCOPES",
+    "SCOPE_CHANNEL_STATUS",
+    "SCOPE_CHANNEL_TURN",
+    "get_channel_inbound_store_dep",
+    "get_channel_llm_runtime_dep",
+    "get_channel_retention_dep",
+    "get_handoff_collector_dep",
+    "get_org_llm_key_resolver_dep",
+    "get_product_token_admin_dep",
+    "get_token_audit_dep",
+    "require_channel_status",
+    "require_channel_turn",
     "PACKAGE_TOKEN_SCOPES",
     "SCOPE_LEARNINGS_READ",
     "SCOPE_LEARNINGS_WRITE",

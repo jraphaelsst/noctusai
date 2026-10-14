@@ -69,8 +69,16 @@ class LlmCapacityError(LlmRuntimeError):
 
 class LlmUpstreamError(LlmRuntimeError):
     """The provider failed (after the seed's retries) or cannot serve tool
-    calling. Contract §3.1: 502 ``llm_upstream``. ``detail`` is for logs —
-    a lead-facing surface never shows it (§10.1 L2)."""
+    calling. Contract §3.1: 502 ``llm_upstream``.
+
+    ``detail`` is a FIXED lead-safe message (§10.1 L2: a lead-facing or
+    transport-facing surface never shows provider text, which can carry request
+    ids or key fragments); the provider's own text is kept on ``cause_text``
+    for logs only."""
 
     http_status = 502
     code = "llm_upstream"
+
+    def __init__(self, cause_text: str = "") -> None:
+        super().__init__("O provedor de IA não respondeu agora. Tente novamente em instantes.")
+        self.cause_text = cause_text

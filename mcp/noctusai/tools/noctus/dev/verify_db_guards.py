@@ -3992,6 +3992,67 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "dispatches."
         ),
     ),
+    _agents_studio_probe(
+        probe_id="conversations.channel_owner_identity",
+        guard_name="conversations_channel_owner_check",
+        migrations=("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
+        requires_table="channel_inbound",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, owner_user_id) "
+            "VALUES (v_org, v_agent, NULL);"
+        ),
+        guard_fragment="conversations_channel_owner_check",
+        what="a user conversation (no channel) with no owner",
+        rationale=(
+            "Lais A2 (migration 025): `owner_user_id` became nullable ONLY for channel "
+            "conversations; this CHECK is what keeps every user conversation owned — "
+            "without it an ownerless row would be invisible to the owner-scoped routes "
+            "and readable by no one, or (worse) matched by a null-owner lookup."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="conversations.channel_identity_unique",
+        guard_name="uq_agents_conversations_channel_ref",
+        migrations=("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
+        requires_table="channel_inbound",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, channel, channel_ref) "
+            "VALUES (v_org, v_agent, 'whatsapp', '{\"connection_id\": \"c\", \"chat_id\": \"x\"}'::jsonb);\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, channel, channel_ref) "
+            "VALUES (v_org, v_agent, 'whatsapp', '{\"connection_id\": \"c\", \"chat_id\": \"x\"}'::jsonb);"
+        ),
+        guard_fragment="uq_agents_conversations_channel_ref",
+        what="a second conversation for the same (org, agent, channel, channel_ref)",
+        rationale=(
+            "Lais A2 (migration 025): the channel identity IS the conversation key — "
+            "two rows for one chat would split a lead's history across two memories "
+            "and answer the same inbound batch twice."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="channel_inbound.message_idempotency_unique",
+        guard_name="uq_agents_channel_inbound_msg",
+        migrations=("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
+        requires_table="channel_inbound",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, channel, channel_ref) "
+            "VALUES (v_org, v_agent, 'whatsapp', '{\"connection_id\": \"c\", \"chat_id\": \"x\"}'::jsonb) "
+            "RETURNING id INTO v_version;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.channel_inbound "
+            "(org_id, connection_id, provider_message_id, conversation_id, texto_sha256) "
+            "VALUES (v_org, v_org, 'wamid.noc-probe', v_version, repeat('a', 64));\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.channel_inbound "
+            "(org_id, connection_id, provider_message_id, conversation_id, texto_sha256) "
+            "VALUES (v_org, v_org, 'wamid.noc-probe', v_version, repeat('b', 64));"
+        ),
+        guard_fragment="uq_agents_channel_inbound_msg",
+        what="the same (org, connection, provider_message_id) recorded twice",
+        rationale=(
+            "Lais A2 (migration 025, contract §10.1 M2): this UNIQUE is the idempotency "
+            "key — without it a re-sent webhook batch would run a second model turn "
+            "(and bill it) instead of replaying the stored reply."
+        ),
+    ),
 )
 
 

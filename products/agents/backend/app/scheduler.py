@@ -18,6 +18,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 JOB_NAME = "agents_credential_maintenance"
+CHANNEL_PURGE_JOB_NAME = "agents_channel_retention_purge"
 
 
 async def credential_maintenance_job() -> None:
@@ -30,6 +31,22 @@ async def credential_maintenance_job() -> None:
     )
 
 
+async def channel_retention_purge_job() -> None:
+    """LGPD (Lais contract §10.1 M5): erase channel conversations idle for
+    ``channel_retention_days`` (180) — messages, contact, idempotency rows."""
+    from app.channels.retention import get_channel_retention, purge_expired
+
+    # One SQL transaction of synchronous IO — keep it off the loop.
+    await asyncio.to_thread(
+        purge_expired, get_channel_retention(settings),
+        retention_days=settings.channel_retention_days,
+    )
+
+
 def configure() -> None:
     # Generous grace: a restart spanning 09:00 should still run today.
     register(JOB_NAME, credential_maintenance_job, cron="0 9 * * *", misfire_grace_time=6 * 3600)
+    register(
+        CHANNEL_PURGE_JOB_NAME, channel_retention_purge_job, cron="30 3 * * *",
+        misfire_grace_time=6 * 3600,
+    )

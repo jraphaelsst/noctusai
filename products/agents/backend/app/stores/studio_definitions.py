@@ -58,6 +58,7 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "STUDIO_RUNTIMES",
     "MODELS",
     "MODELS_BY_PROVIDER",
     "PROVIDERS",
@@ -134,6 +135,9 @@ _DRAFT_FIELDS = (
 )
 #: 017 `agents.kind` CHECK — immutable once the row exists.
 AGENT_KINDS = ("runtime", "dev-advisor")
+#: `agents.runtime` values a studio agent may be created with (024 CHECK minus
+#: `external`, which means "another product runs it" and is never a studio agent).
+STUDIO_RUNTIMES = ("claude_sdk", "llm")
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The version-row settings that feed the compile — changing one invalidates
@@ -171,6 +175,9 @@ class StudioAgentRecord:
     updated_at: datetime
     #: 017: ``runtime`` (IsaIA, Julia, ...) | ``dev-advisor`` (a package).
     kind: str = "runtime"
+    #: 006: the product that owns the agent's transport (``social-wiring`` for
+    #: ``lead-imob``); ``None`` for agents agents itself serves.
+    owner_product: str | None = None
 
 
 @dataclass(frozen=True)
@@ -467,9 +474,12 @@ class StudioDefinitionStore(Protocol):
     def get_agent(self, org_id: UUID, key: str) -> StudioAgentRecord: ...
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
+        runtime: str = "claude_sdk", owner_product: str | None = None,
     ) -> StudioAgentRecord:
-        """``definition_mode='studio'``, ``runtime='claude_sdk'``, ``ativo=false``,
-        ``kind`` (017; immutable afterwards). Raises ``StudioConflict('key_taken')``."""
+        """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
+        ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
+        seeded provider-neutral agents), ``kind`` (017; immutable afterwards).
+        Raises ``StudioConflict('key_taken')``."""
         ...
     def update_agent(
         self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
@@ -717,16 +727,20 @@ class FakeStudioDefinitionStore:
 
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
+        runtime: str = "claude_sdk", owner_product: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
+        if runtime not in STUDIO_RUNTIMES:
+            raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         if (org_id, key) in self._agents:
             raise StudioConflict("key_taken", f"agent key {key!r} already exists")
         now = self._now()
         rec = StudioAgentRecord(
             id=uuid4(), org_id=org_id, key=key, nome=nome, descricao=descricao,
-            definition_mode="studio", runtime="claude_sdk", ativo=False,
+            definition_mode="studio", runtime=runtime, ativo=False,
             publicacao_limiar=0.8, created_at=now, updated_at=now, kind=kind,
+            owner_product=owner_product,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -1296,7 +1310,7 @@ class SupabaseStudioDefinitionStore:
             ativo=bool(row.get("ativo", False)),
             publicacao_limiar=_float(row.get("publicacao_limiar", 0.8)),
             created_at=row["created_at"], updated_at=row["updated_at"],
-            kind=row.get("kind") or "runtime",
+            kind=row.get("kind") or "runtime", owner_product=row.get("owner_product"),
         )
 
     @staticmethod
@@ -1386,12 +1400,16 @@ class SupabaseStudioDefinitionStore:
 
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
+        runtime: str = "claude_sdk", owner_product: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
+        if runtime not in STUDIO_RUNTIMES:
+            raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         payload = {
             "org_id": str(org_id), "key": key, "nome": nome, "descricao": descricao,
-            "runtime": "claude_sdk", "definition_mode": "studio", "ativo": False, "kind": kind,
+            "runtime": runtime, "definition_mode": "studio", "ativo": False, "kind": kind,
+            "owner_product": owner_product,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))

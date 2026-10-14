@@ -82,7 +82,8 @@ class PersonaUpdateRequest(StrictHttpModel):
 class ConversationOut(BaseModel):
     id: UUID
     agent_id: UUID
-    owner_user_id: UUID
+    #: ``None`` only for a channel conversation (Lais A2: no human owner).
+    owner_user_id: UUID | None
     titulo: str | None
     sdk_session_id: str | None
     status: str
@@ -93,6 +94,11 @@ class ConversationOut(BaseModel):
     agent_key: str
     version_id: UUID | None = None
     client_id: UUID | None = None
+    # Lais A2 (additive): a channel conversation's identity + display contact.
+    # ``channel`` is null for every user conversation.
+    channel: str | None = None
+    channel_ref: dict[str, Any] | None = None
+    contact: dict[str, Any] | None = None
 
 
 class ConversationListOut(BaseModel):

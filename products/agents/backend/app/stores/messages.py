@@ -227,6 +227,12 @@ class FakeMessageStore:
             )
         return total
 
+    def purge_conversation(self, org_id: UUID, conversation_id: UUID) -> int:
+        """Test-double half of ``agents.delete_channel_conversation`` (the Real
+        one is a single SQL transaction): drop every message of the
+        conversation. Returns how many."""
+        return len(self._rows.pop((org_id, conversation_id), []))
+
     @staticmethod
     def _to_record(row: dict[str, Any]) -> MessageRecord:
         return MessageRecord(**row)

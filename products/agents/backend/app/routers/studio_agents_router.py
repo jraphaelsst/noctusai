@@ -81,6 +81,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
+from app.studio.lead_imob import ensure_lead_imob
 from app.studio.models import (
     CompiledPrompt,
     EvalGate,
@@ -394,6 +395,9 @@ async def list_studio_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentListOut:
+    # Lais A2 (§7): `lead-imob` (Julia, the lead agent) is seeded per org on first
+    # use — an idempotent draft, never published or switched on here.
+    ensure_lead_imob(ctx.org_id, studio_store=store, created_by=ctx.user_id)
     return AgentListOut(items=[_summary(store, ctx.org_id, a) for a in store.list_agents(ctx.org_id)])
 
 

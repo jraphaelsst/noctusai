@@ -9,16 +9,19 @@ lock, no separate SELECT-then-UPDATE pair).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from app.stores._db_errors import StudioConflict, exec_query
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
 
 __all__ = [
     "STATUSES",
+    "ChannelConversationStore",
     "ConversationRecord",
     "ConversationStore",
     "FakeConversationStore",
@@ -38,7 +41,9 @@ class ConversationRecord:
     id: UUID
     org_id: UUID
     agent_id: UUID
-    owner_user_id: UUID
+    #: ``None`` ONLY for a channel conversation (025: a lead on a channel,
+    #: driven by a product token — there is no human owner).
+    owner_user_id: UUID | None
     titulo: str | None
     sdk_session_id: str | None
     status: str
@@ -49,6 +54,13 @@ class ConversationRecord:
     #: pinned to, and its client brain. Both ``None`` for Julia.
     version_id: UUID | None = None
     client_id: UUID | None = None
+    #: Lais A2 (025): the channel identity. ``channel`` is ``None`` for every
+    #: user conversation. ``channel_ref`` = ``{"connection_id", "chat_id"}``;
+    #: ``contact`` = ``{"phone_e164", "display_name"}`` (display only — never
+    #: part of a prompt, §10.1 M3).
+    channel: str | None = None
+    channel_ref: dict[str, Any] | None = None
+    contact: dict[str, Any] | None = None
 
 
 class ConversationStore(Protocol):
@@ -126,6 +138,41 @@ class ConversationStore(Protocol):
         ...
 
 
+class ChannelConversationStore(Protocol):
+    """The channel half of the store (Lais A2): conversations a product token
+    drives for an external contact. Every method is org-scoped."""
+
+    def find_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        """The conversation for ``(org, agent, channel, channel_ref)`` or
+        ``None`` (an explicit maybe-read, not an error)."""
+        ...
+
+    def create_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
+        contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+    ) -> ConversationRecord:
+        """Insert the channel conversation. A concurrent create of the same
+        identity (the 025 unique index) returns the EXISTING row — never a
+        second one, never an error."""
+        ...
+
+    def list_channel(
+        self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
+    ) -> list[ConversationRecord]:
+        """Channel conversations of the org (newest first), optionally per
+        agent / channel. Read-only listing for the agents UI."""
+        ...
+
+    def touch_activity(
+        self, org_id: UUID, id: UUID, *, contact: dict[str, Any] | None = None
+    ) -> ConversationRecord:
+        """Stamp ``last_message_at = now`` (the 180-day retention clock) and,
+        when given, refresh ``contact``. Raises :class:`NotFound`."""
+        ...
+
+
 class FakeConversationStore:
     """In-memory :class:`ConversationStore`."""
 
@@ -155,6 +202,9 @@ class FakeConversationStore:
             "_turn_lock_instance_id": None,
             "version_id": version_id,
             "client_id": client_id,
+            "channel": None,
+            "channel_ref": None,
+            "contact": None,
         }
         self._rows[row["id"]] = row
         return self._to_record(row)
@@ -239,6 +289,88 @@ class FakeConversationStore:
         row["updated_at"] = utcnow()
         return self._to_record(row)
 
+    # ── channel conversations (Lais A2) ─────────────────────────────────
+
+    def find_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        for row in self._rows.values():
+            if (
+                row["org_id"] == org_id and row["agent_id"] == agent_id
+                and row["channel"] == channel and row["channel_ref"] == channel_ref
+            ):
+                return self._to_record(row)
+        return None
+
+    def create_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
+        contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+    ) -> ConversationRecord:
+        existing = self.find_channel(org_id, agent_id, channel, channel_ref)
+        if existing is not None:
+            return existing
+        now = utcnow()
+        row: dict[str, Any] = {
+            "id": uuid4(), "org_id": org_id, "agent_id": agent_id, "owner_user_id": None,
+            "titulo": None, "sdk_session_id": None, "status": "ativa", "last_message_at": None,
+            "created_at": now, "updated_at": now, "_turn_lock_until": None,
+            "_turn_lock_instance_id": None, "version_id": version_id, "client_id": None,
+            "channel": channel, "channel_ref": dict(channel_ref),
+            "contact": dict(contact) if contact is not None else None,
+        }
+        self._rows[row["id"]] = row
+        return self._to_record(row)
+
+    def list_channel(
+        self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
+    ) -> list[ConversationRecord]:
+        rows = [
+            r for r in self._rows.values()
+            if r["org_id"] == org_id and r["channel"] is not None
+            and (agent_id is None or r["agent_id"] == agent_id)
+            and (channel is None or r["channel"] == channel)
+        ]
+        rows.sort(key=lambda r: r["last_message_at"] or r["created_at"], reverse=True)
+        return [self._to_record(r) for r in rows]
+
+    def touch_activity(
+        self, org_id: UUID, id: UUID, *, contact: dict[str, Any] | None = None
+    ) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        now = utcnow()
+        row["last_message_at"] = now
+        row["updated_at"] = now
+        if contact is not None:
+            row["contact"] = dict(contact)
+        return self._to_record(row)
+
+    def purge_conversation(self, org_id: UUID, id: UUID) -> bool:
+        """Test-double half of ``agents.delete_channel_conversation`` (the Real
+        one is a single SQL transaction): drop the row. Used by
+        :class:`~app.channels.retention.FakeChannelRetention`."""
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id or row["channel"] is None:
+            return False
+        del self._rows[id]
+        return True
+
+    def channel_ids_inactive_since(self, cutoff: datetime) -> list[tuple[UUID, UUID]]:
+        """``(org_id, id)`` of channel conversations whose last activity is
+        before ``cutoff`` and that hold no live turn lock."""
+        now = utcnow()
+        out = []
+        for r in self._rows.values():
+            if r["channel"] is None:
+                continue
+            held = r["_turn_lock_until"]
+            if held is not None and held >= now:
+                continue
+            if (r["last_message_at"] or r["created_at"]) < cutoff:
+                out.append((r["org_id"], r["id"]))
+        return out
+
     @staticmethod
     def _to_record(row: dict[str, Any]) -> ConversationRecord:
         return ConversationRecord(
@@ -254,6 +386,9 @@ class FakeConversationStore:
             updated_at=row["updated_at"],
             version_id=row["version_id"],
             client_id=row["client_id"],
+            channel=row.get("channel"),
+            channel_ref=dict(row["channel_ref"]) if row.get("channel_ref") is not None else None,
+            contact=dict(row["contact"]) if row.get("contact") is not None else None,
         )
 
 
@@ -418,13 +553,84 @@ class SupabaseConversationStore:
             raise NotFound(f"conversation {id} not found for org {org_id}")
         return self._record(rows[0])
 
+    # ── channel conversations (Lais A2) ─────────────────────────────────
+
+    def find_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        resp = (
+            self._table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("agent_id", str(agent_id))
+            .eq("channel", channel)
+            .eq("channel_ref", json.dumps(channel_ref, sort_keys=True))
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return self._record(rows[0]) if rows else None
+
+    def create_channel(
+        self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
+        contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+    ) -> ConversationRecord:
+        payload: dict[str, Any] = {
+            "org_id": str(org_id), "agent_id": str(agent_id), "owner_user_id": None,
+            "status": "ativa", "channel": channel, "channel_ref": channel_ref,
+            "contact": contact,
+        }
+        if version_id is not None:
+            payload["version_id"] = str(version_id)
+        try:
+            resp = exec_query(self._table().insert(payload), unique_code="channel_exists")
+        except StudioConflict:
+            # A concurrent first call of the same chat won the unique index
+            # (uq_agents_conversations_channel_ref): reuse ITS row.
+            existing = self.find_channel(org_id, agent_id, channel, channel_ref)
+            if existing is None:  # pragma: no cover — the conflicting row vanished mid-flight
+                raise
+            return existing
+        rows = resp.data or []
+        return self._record(rows[0] if rows else payload)
+
+    def list_channel(
+        self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
+    ) -> list[ConversationRecord]:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        def _page(start: int, end: int):
+            query = self._table().select("*").eq("org_id", str(org_id)).not_.is_("channel", "null")
+            if agent_id is not None:
+                query = query.eq("agent_id", str(agent_id))
+            if channel is not None:
+                query = query.eq("channel", channel)
+            return query.order("created_at", desc=True).order("id").range(start, end).execute().data
+
+        return [self._record(r) for r in iter_paged_rows(_page)]
+
+    def touch_activity(
+        self, org_id: UUID, id: UUID, *, contact: dict[str, Any] | None = None
+    ) -> ConversationRecord:
+        patch: dict[str, Any] = {"last_message_at": utcnow_iso(), "updated_at": utcnow_iso()}
+        if contact is not None:
+            patch["contact"] = contact
+        resp = (
+            self._table().update(patch).eq("id", str(id)).eq("org_id", str(org_id)).execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._record(rows[0])
+
     @staticmethod
     def _record(row: dict[str, Any]) -> ConversationRecord:
+        owner = row.get("owner_user_id")
         return ConversationRecord(
             id=UUID(str(row["id"])),
             org_id=UUID(str(row["org_id"])),
             agent_id=UUID(str(row["agent_id"])),
-            owner_user_id=UUID(str(row["owner_user_id"])),
+            owner_user_id=UUID(str(owner)) if owner else None,
             titulo=row.get("titulo"),
             sdk_session_id=row.get("sdk_session_id"),
             status=row.get("status", "ativa"),
@@ -433,6 +639,9 @@ class SupabaseConversationStore:
             updated_at=row["updated_at"],
             version_id=UUID(str(row["version_id"])) if row.get("version_id") else None,
             client_id=UUID(str(row["client_id"])) if row.get("client_id") else None,
+            channel=row.get("channel"),
+            channel_ref=row.get("channel_ref"),
+            contact=row.get("contact"),
         )
 
 

@@ -162,6 +162,21 @@ class SeedSettings(ProductSettings):
     # budget (`org_settings.monthly_llm_budget_brl`) applies on top, always.
     llm_daily_budget_usd: float = 0.0
 
+    # ── Channel turn API (Lais A2, contract §3 / §10.1 M4 + M5) ──────────
+    # Per-ORG daily spend cap (USD) for CHANNEL turns (a lead on a transport
+    # such as WhatsApp). Unlike `llm_daily_budget_usd` it is ON by default: a
+    # flood of inbound messages must hit a 429 `capacidade` out of the box,
+    # not only after someone remembered to configure a cap. 0 disables it.
+    channel_daily_budget_usd: float = 5.0
+    # The synchronous hop's budget: the transport waits at most 60 s, so the
+    # turn stops here first (and answers 502 `llm_upstream`, no reply).
+    channel_turn_timeout_seconds: int = 55
+    # LGPD retention (M5): a channel conversation idle for this long is purged
+    # by the daily cron.
+    channel_retention_days: int = 180
+    # The channel token (§4): 30 days, overlapping rotation.
+    channel_token_ttl_days: int = 30
+
     # ── Per-conversation isolation (contract §E.11) ─────────────────────
     # Fixed slot count: uid/gid `2000+K` for K in `range(julia_cli_slots)`,
     # each with its own tmpfs mount `/run/julia-K`. `app.runtime.slots.

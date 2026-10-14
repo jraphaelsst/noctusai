@@ -178,6 +178,7 @@ def get_llm_runtime(
     key_resolver: Callable[[str, UUID], str | None] | None = None,
     provider_impl: Any | None = None,
     tools_factory: Callable[[Any, Any], Any] | None = None,
+    daily_cap_usd: float | None = None,
 ) -> AgentRuntime:
     """The provider-neutral runtime (Lais A1) — what an ``agents.runtime='llm'``
     agent runs on, and what A2's channel turns call.
@@ -201,7 +202,11 @@ def get_llm_runtime(
         key_resolver=key_resolver if key_resolver is not None else make_org_llm_key_resolver(),
         limiter=_llm_limiter_singleton,
         budget_guard=make_budget_guard(
-            messages=store, daily_cap_usd=float(getattr(settings, "llm_daily_budget_usd", 0.0) or 0.0)
+            messages=store,
+            daily_cap_usd=(
+                float(daily_cap_usd) if daily_cap_usd is not None
+                else float(getattr(settings, "llm_daily_budget_usd", 0.0) or 0.0)
+            ),
         ),
         tools_factory=tools_factory,
         provider_impl=provider_impl,

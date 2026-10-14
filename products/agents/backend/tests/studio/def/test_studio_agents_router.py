@@ -109,7 +109,8 @@ class TestAuthBoundary:
         resp = studio.get(f"{BASE}/isa")
         assert resp.status_code == 404
         assert resp.json()["code"] == "agent_not_found"
-        assert studio.get(BASE).json()["items"] == []
+        # The other org sees none of OUR agents (only its own seeded default, `lead-imob`).
+        assert [a["key"] for a in studio.get(BASE).json()["items"]] == ["lead-imob"]
         assert studio.patch(f"{BASE}/isa", json={"nome": "hijack"}).status_code == 404
         # Their own agent with the same key cannot reach our version id.
         _create(studio)

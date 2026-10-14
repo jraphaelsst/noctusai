@@ -38,7 +38,11 @@ RUNTIMES = ("claude_sdk", "external")
 #: The two rows `ensure_default_agents` seeds, per org. Never inserted by
 #: the migration itself (org_id is per-org) — the migration header notes
 #: this; this module is the idempotent seeding path.
-DEFAULT_AGENT_KEYS = ("julia", "one-chat")
+#: Also reserves `lead-imob` (Lais A2): seeded per org by
+#: `app.studio.lead_imob.ensure_lead_imob` (a studio agent on the `llm`
+#: runtime, not by this store) — a studio agent squatting the key would stop
+#: the seed and leave the channel API without its agent.
+DEFAULT_AGENT_KEYS = ("julia", "one-chat", "lead-imob")
 
 
 @dataclass(frozen=True)
