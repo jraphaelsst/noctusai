@@ -213,6 +213,9 @@ class SocialWiringSettings(ProductSettings):
     # One debounced batch is capped at this many characters in total (oldest
     # messages dropped first) -- agents also caps each message at 8000.
     lais_agente_batch_max_chars: int = 16000
+    # Concurrent lead turns across ALL chats (one per chat key always). Lead turns run
+    # off the single conversation-worker thread so they never delay operator batches.
+    lais_agente_max_concurrent_turns: int = 4
     # How long a conversation's memory list lives in Redis after the last
     # touch. 1h is the seed default and matches the operator's expected
     # session duration (one property → 5-10 min conversation; idle past

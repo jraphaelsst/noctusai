@@ -583,5 +583,7 @@ class TestEndToEnd:
             loop.run_until_complete(asyncio.sleep(0.05))
         t.join()
         assert result["n"] == 1
+        # the worker thread only hands the lead batch over; the turn runs on the loop
+        loop.run_until_complete(rt.module.lead_dispatcher.shutdown(grace_s=10))
         assert rt.w.agents.turns, "the lead key went to agents, not to the operator path"
         assert rt.w.waha.sent_messages

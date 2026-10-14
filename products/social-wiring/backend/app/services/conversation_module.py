@@ -30,8 +30,13 @@ processor closure, running in the worker thread, dispatches async work
 (WAHA send, OpenAI tool-loop) back to the main loop via
 ``asyncio.run_coroutine_threadsafe(...)`` and blocks the worker thread on
 the resulting future. The worker thread is dedicated to one conversation
-at a time, so blocking it is fine; the asyncio loop stays responsive for
-other requests in parallel.
+at a time, so blocking it is fine for OPERATOR keys; the asyncio loop stays
+responsive for other requests in parallel.
+
+**Lead keys never block the worker thread.** A Julia lead turn is a slow HTTP
+call to agents, so ``lead:`` keys are handed to ``LeadTurnDispatcher``
+(``lais_lead_dispatcher``): bounded concurrency across chats
+(``lais_agente_max_concurrent_turns``), one in-flight turn per key.
 
 **Memory key unification.** The seed buffer uses the prefix
 ``conversation:memory:`` for its memory lists. ``chatbot_service.py``
@@ -147,6 +152,7 @@ class ConversationModule:
     admin_supabase: Any
     org_id: UUID
     worker_task: Optional[asyncio.Task] = field(default=None)
+    lead_dispatcher: Optional[Any] = field(default=None)
 
 
 _module: Optional[ConversationModule] = None
@@ -210,6 +216,13 @@ def configure_conversation_module(
             debounce_seconds=settings.message_debounce_seconds,
         )
 
+        lead_dispatcher = _build_lead_dispatcher(
+            buffer=buffer,
+            admin_supabase=admin_supabase,
+            agents_client_factory=agents_client_factory,
+            waha_factory=waha_factory,
+            cfg=cfg,
+        )
         worker = ConversationWorker(
             buffer_service=buffer,
             processor=_build_processor(
@@ -217,9 +230,7 @@ def configure_conversation_module(
                 main_loop=loop,
                 admin_supabase=admin_supabase,
                 org_id=org_id,
-                agents_client_factory=agents_client_factory,
-                waha_factory=waha_factory,
-                cfg=cfg,
+                lead_dispatcher=lead_dispatcher,
             ),
             idle_processor=None,
             poll_seconds=2.0,
@@ -231,6 +242,7 @@ def configure_conversation_module(
             main_loop=loop,
             admin_supabase=admin_supabase,
             org_id=org_id,
+            lead_dispatcher=lead_dispatcher,
         )
 
     logger.info(
@@ -291,9 +303,7 @@ def _build_processor(
     main_loop: asyncio.AbstractEventLoop,
     admin_supabase: Any,
     org_id: UUID,
-    agents_client_factory: Optional[Callable[[UUID], Any]] = None,
-    waha_factory: Optional[Callable[..., Any]] = None,
-    cfg: Any = None,
+    lead_dispatcher: Any,
 ):
     """Return the ``ConversationProcessor`` closure the worker invokes.
 
@@ -309,17 +319,9 @@ def _build_processor(
         # provider_message_id -- they never enter the operator path below (no
         # intake, no ChatbotService, no operator tools).
         if conversation_id.startswith(LEAD_PREFIX):
-            future = asyncio.run_coroutine_threadsafe(
-                _dispatch_lead(
-                    conversation_id, memory, buffer=buffer, admin_supabase=admin_supabase,
-                    agents_client_factory=agents_client_factory, waha_factory=waha_factory, cfg=cfg,
-                ),
-                main_loop,
-            )
-            try:
-                future.result(timeout=PROCESSOR_TIMEOUT_S)
-            except Exception:
-                logger.exception("conv=%s: lead dispatch failed", conversation_id)
+            # Hand over, never block: a lead turn is a slow HTTP call to agents and
+            # must not hold this (single) worker thread -- see lais_lead_dispatcher.
+            lead_dispatcher.submit_threadsafe(main_loop, conversation_id, memory)
             return
 
         unanswered = _join_unanswered_inbound(memory)
@@ -341,6 +343,32 @@ def _build_processor(
             logger.exception("conv=%s: dispatch failed", conversation_id)
 
     return _process
+
+
+def _build_lead_dispatcher(
+    *,
+    buffer: ConversationBufferService,
+    admin_supabase: Any,
+    agents_client_factory: Optional[Callable[[UUID], Any]],
+    waha_factory: Optional[Callable[..., Any]],
+    cfg: Any = None,
+):
+    from app.services.lais_lead_dispatcher import LeadTurnDispatcher
+
+    effective = cfg if cfg is not None else settings
+
+    async def _run(key: str, memory: list[dict[str, Any]]) -> None:
+        await _dispatch_lead(
+            key, memory, buffer=buffer, admin_supabase=admin_supabase,
+            agents_client_factory=agents_client_factory, waha_factory=waha_factory, cfg=cfg,
+        )
+
+    return LeadTurnDispatcher(
+        _run,
+        max_concurrent=getattr(effective, "lais_agente_max_concurrent_turns", 4),
+        timeout_s=PROCESSOR_TIMEOUT_S,
+        reload_memory=buffer.memory_for,
+    )
 
 
 async def _dispatch_lead(
@@ -575,6 +603,8 @@ async def stop_worker(timeout: float = 5.0) -> None:
     notice — the timeout cancels the task hard at that point.
     """
     module = _module
+    if module is not None and module.lead_dispatcher is not None:
+        await module.lead_dispatcher.shutdown(grace_s=timeout)
     if module is None or module.worker_task is None:
         return
     module.worker.stop()
