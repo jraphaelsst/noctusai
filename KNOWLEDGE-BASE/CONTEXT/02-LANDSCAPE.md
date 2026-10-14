@@ -54,11 +54,11 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Igig | 23 | 26 | 31 | 26 | 43 | 974 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 26 | 9 | 24 | 186 |
-| Agents | 17 | 1 | 43 | 29 | 91 | 1,243 |
+| Agents | 17 | 1 | 43 | 29 | 92 | 1,252 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 28 | 4 | 7 | 43 |
-| **Total** | **300** | **336** | **728** | **455** | **1230** | **17,874** |
+| **Total** | **300** | **336** | **728** | **455** | **1231** | **17,883** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
