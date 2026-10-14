@@ -34,7 +34,7 @@
  * display logic (e.g. WhatsApp JID stripping) — so this component stays
  * provider-blind.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   AlertCircle,
   Ban,
@@ -66,6 +66,11 @@ export interface ChatThread {
   lastMessageAt?: string | null;
   lastDirection?: "inbound" | "outbound" | null;
   unreadCount?: number;
+  /**
+   * Opaque adapter-owned data, handed back untouched to `adapter.ThreadHeaderExtra`
+   * (e.g. WhatsApp's "an agent is paused on this chat" flag). The organ never reads it.
+   */
+  meta?: Record<string, unknown>;
 }
 
 /**
@@ -259,6 +264,14 @@ export interface ChatWindowAdapter {
    * (WhatsApp, Instagram DMs).
    */
   useRenameThread?: (scopeId: string | null) => ChatRenameThreadResult;
+  /**
+   * Optional header slot (2026-10-14, Lais W2): a component rendered in the open
+   * thread's header, between the title and the auto-reply switch — for per-thread
+   * chips / actions the organ has no business knowing about (e.g. "Julia
+   * atendendo" + pause toggle). It is a COMPONENT, not a render function, so it
+   * may call hooks. Omit ⇒ the header is byte-identical to before.
+   */
+  ThreadHeaderExtra?: ComponentType<{ scopeId: string | null; thread: ChatThread }>;
 }
 
 export interface ChatWindowProps {
@@ -878,6 +891,9 @@ function ThreadPanel({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{thread.title}</p>
         </div>
+        {adapter.ThreadHeaderExtra && (
+          <adapter.ThreadHeaderExtra scopeId={scopeId} thread={thread} />
+        )}
         {autoReply && (
           <div className="flex flex-shrink-0 items-center gap-1.5" title={autoReply.enabled ? "IA respondendo automaticamente." : "Auto-resposta IA desativada."}>
             <span className="hidden text-xs text-muted-foreground sm:inline">IA</span>

@@ -317,6 +317,28 @@ describe("ChatWindow — auto-reply toggle", () => {
   });
 });
 
+describe("ChatWindow — ThreadHeaderExtra seam", () => {
+  it("renders the adapter's header component for the OPEN thread with scopeId + thread (meta intact)", () => {
+    const Extra = ({ scopeId, thread }: { scopeId: string | null; thread: ChatThread }) => (
+      <span data-testid="hdr-extra">{`${scopeId}:${thread.id}:${String(thread.meta?.flag)}`}</span>
+    );
+    const adapter = makeAdapter({
+      useThreads: () => ({ data: [{ ...threadA, meta: { flag: true } }], isLoading: false, isError: false }),
+      ThreadHeaderExtra: Extra,
+    });
+    render(<ChatWindow scopeId="scope-1" adapter={adapter} />);
+    expect(screen.queryByTestId("hdr-extra")).toBeNull();
+    fireEvent.click(screen.getByTestId(`chat-thread-${threadA.id}`));
+    expect(screen.getByTestId("hdr-extra").textContent).toBe(`scope-1:${threadA.id}:true`);
+  });
+
+  it("is absent when the adapter omits it", () => {
+    render(<ChatWindow scopeId="scope-1" adapter={makeAdapter()} />);
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    expect(screen.queryByTestId("hdr-extra")).toBeNull();
+  });
+});
+
 // ─── Read-state + pagination seams (added 2026-08 with the realtime inbox) ──
 describe("ChatWindow — read-state seam", () => {
   it("marks a thread read exactly once when it is opened", async () => {
