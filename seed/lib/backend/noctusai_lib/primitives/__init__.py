@@ -22,6 +22,7 @@ know about our domain, it goes here.
 - `exceptions.py` — base exception types
 - `_correlation.py` — `ContextVar` for correlation IDs (used by
   `logging_config.py` at the seed-lib root and by `api/middleware.py`)
+- `money.py` — `to_cents` (NUMERIC reais → integer cents, round-half-even: the ONE seed rounding policy), `to_decimal`, `cents_to_decimal`
 - `roles.py` — pure role constants + predicates (`ORG_ROLES`,
   `ADMIN_ROLES`, `DEV_ROLES`, `is_dev_or_owner`, etc.). Imported by
   `domain/page_status.py` and `api/` consumers; the placement here

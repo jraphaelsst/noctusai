@@ -98,6 +98,7 @@ def register_all(server) -> None:
     from . import prod_consent
     from . import certidoes_emissao_aprendizado
     from . import schema_drift
+    from . import finance_import_igig
     from . import tunnel_config
     from . import products
     from . import promotion
@@ -249,6 +250,7 @@ def register_all(server) -> None:
     prod_consent.register(server)
     certidoes_emissao_aprendizado.register(server)
     schema_drift.register(server)
+    finance_import_igig.register(server)
     tunnel_config.register(server)
     products.register(server)
     promotion.register(server)
