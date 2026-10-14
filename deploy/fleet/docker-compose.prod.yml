@@ -604,6 +604,36 @@ services:
       - /tmp:mode=1777,size=96m
     mem_limit: 512m
 
+  # ── commerce 8019 — e-commerce + back office, host-resolved storefront (prod
+  # exposure consented 2026-10-14; deploy/consent/commerce.prod.yml). Per-org Asaas
+  # keys live in the DB (commerce.credentials, Fernet with the fleet ENCRYPTION_KEY);
+  # COMMERCE_LINK_SECRET comes from the fleet .env. Only NON-SECRET config here.
+  # No mem_limit (owner decision: server protection without per-container limits).
+  commerce:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-commerce:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-commerce
+    environment:
+      <<: *prod-env
+      COMMERCE_PUBLIC_URL: https://commerce.noctusai.com
+    expose:
+      - "8019"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8019/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # /tmp only: Starlette spools multipart parts over 1MB to a tempfile (back-office
+    # product photo uploads). mode=1777 mirrors standard /tmp for the `noctus` user.
+    tmpfs:
+      - /tmp:mode=1777,size=96m
+
   # ── transcriber 9000 — self-hosted faster-whisper worker (infra, NOT a product) ─
   # Contract: products/social-wiring/projects/core-studio/specs/transcription-contract.md §2.
   # Deliberately NOT <<: *prod-defaults: no env_file (holds no credentials besides

@@ -54,6 +54,8 @@ ingress:
     service: http://community:8017
   - hostname: store.noctusai.com
     service: http://store:8018
+  - hostname: commerce.noctusai.com
+    service: http://commerce:8019
   - hostname: igig.noctusai.com
     service: http://igig:8013
   - hostname: p-studio.noctusai.com

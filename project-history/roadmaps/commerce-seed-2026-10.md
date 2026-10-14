@@ -108,6 +108,10 @@ Week numbers are estimates from 2026-10-12 (W1). Each phase gets its own `projec
 | **P11** Tracker product | tracker | W12–13 | **T3 all three stores live** | noc product from this tracker's data model; realtime via the seed SSE bus (`seed/lib/frontend/src/realtime.ts`), kanban/pipeline organs | parity with the artifact tracker |
 | **P12** Sell + provision pipeline | sales | W14–15 | T3 + owner session | landing → purchase → client data → market spec → branded org; Cloudflare custom-domain automation | to be specified with the owner |
 
+## Prod exposure
+
+- ✅ prod-exposure · 2026-10-14 · the owner authorized commerce for production in-session ("I authorize commerce to be published to production."; consent record `deploy/consent/commerce.prod.yml`) after approving core 080 + commerce 001–012 on the prod DB. Ships the P3 state (back office + host-resolved storefront at `commerce.noctusai.com`); P4 money work follows in later releases. Asaas stays at `sandbox` until per-org keys are saved. `deploy_scope='live'` is set through core's `POST /api/products/{id}/deploy-scope` (core 075 SSO callback probe) once the container serves.
+
 ## Trigger conditions
 
 - **T1** — owner signs off this roadmap (tracker task "Your sign-off on the plan" → done). Unlocks P2–P5.
