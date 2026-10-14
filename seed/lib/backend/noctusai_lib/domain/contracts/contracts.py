@@ -16,7 +16,8 @@ import logging
 from datetime import date, timedelta
 from typing import Any, Mapping, Optional
 
-from noctusai_lib.domain.finance.entries import mask_doc, normalize_doc
+from noctusai_lib.domain._organ_common import mask_doc
+from noctusai_lib.domain.finance.entries import normalize_doc
 from noctusai_lib.domain.finance.errors import DOCUMENTO_INVALIDO
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 

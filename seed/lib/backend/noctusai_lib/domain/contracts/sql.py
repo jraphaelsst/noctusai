@@ -20,7 +20,8 @@ Prerequisite (not created here): `public.current_org_id_for(text)` (core 070).
 from __future__ import annotations
 
 from noctusai_lib.domain.finance.types import EntrySource
-from noctusai_lib.domain.sql_templates import rls_subquery_policy, service_role_bypass, set_search_path
+from noctusai_lib.domain._organ_common import org_rls
+from noctusai_lib.domain.sql_templates import set_search_path
 
 from .config import ContractsConfig
 from .types import (
@@ -35,19 +36,6 @@ CONTRACTS_TABLES: tuple[str, ...] = (
 
 def _in(enum_cls) -> str:
     return ", ".join(f"'{v}'" for v in values(enum_cls))
-
-
-def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
-    select_name = f"{table}_select_own_org"
-    return "\n".join([
-        f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
-        f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-        rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
-        f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-        service_role_bypass(table, schema=schema),
-        f"GRANT SELECT ON {schema}.{table} TO authenticated;",
-        f"GRANT ALL ON {schema}.{table} TO service_role;",
-    ])
 
 
 def _tables(cfg: ContractsConfig, s: str) -> list[str]:
@@ -194,7 +182,7 @@ CREATE TABLE IF NOT EXISTS {s}.{t['contract_attachments']} (
 );
 CREATE INDEX IF NOT EXISTS idx_{t['contract_attachments']}_contract ON {s}.{t['contract_attachments']} (org_id, contract_id, created_at);
 """
-    return [f"{ddl}\n{_org_rls(s, t[name], o)}" for name, ddl in (
+    return [f"{ddl}\n{org_rls(s, t[name], o, grants=True)}" for name, ddl in (
         ("contracts", contracts), ("contract_lines", lines), ("contract_versions", versions),
         ("contract_billings", billings), ("contract_usage", usage), ("contract_attachments", attachments),
     )]
