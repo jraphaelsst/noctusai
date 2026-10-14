@@ -20,7 +20,7 @@ import re
 from datetime import datetime as dt, timezone
 from typing import Optional, Tuple, List
 
-from fastapi import Header, HTTPException, Request, Response
+from fastapi import Depends, Header, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
@@ -164,6 +164,16 @@ async def get_org_id(user) -> str:
     if not profile.data or not profile.data.get("org_id"):
         raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
     return profile.data["org_id"]
+
+
+async def get_platform_finance_auth(admin: Tuple = Depends(get_current_admin)) -> Tuple:
+    """Finance organ auth for NOC's own books: PLATFORM admin (401 unauthenticated / 403 otherwise),
+    scoped to the platform admin's own org (`noctus_users.org_id`) -- yields `(user, token, org_id)`.
+
+    The organ's write gate (`make_organ_auth`) additionally needs an org owner/admin role in that org.
+    """
+    user, token = admin
+    return user, token, await get_org_id(user)
 
 
 def check_org_license(db, org_id: str, product_id: str) -> bool:

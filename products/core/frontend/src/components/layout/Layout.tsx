@@ -19,6 +19,7 @@ import {
   BookOpen,
   UserPlus,
   ShieldCheck,
+  Landmark,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -61,6 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { name: 'Planos', href: '/admin/plans', icon: ClipboardList },
           { name: 'Assinaturas', href: '/admin/subs', icon: CreditCard },
           { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
+          { name: 'Financeiro', href: '/admin/financeiro', icon: Landmark },
         ],
       },
       {

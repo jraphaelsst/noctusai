@@ -11,9 +11,12 @@ routers at `public` schema — seed's counterparts would collide. The standard
 product.
 """
 from noctusai_seed import create_product_app
+from noctusai_seed.organs import mount_finance
 
 from app.config import settings
 from app.rate_limit import limiter
+from app.database import _db, get_admin_client
+from app.dependencies import get_platform_finance_auth
 from app.scheduler import configure as configure_scheduler, start_scheduler, stop_scheduler
 from app.routers import auth, organizations, products, licenses, sso
 from app.routers import plans, subscriptions, api_keys, test_accounts, billing
@@ -58,6 +61,18 @@ async def _lifespan_shutdown() -> None:
         stop_scheduler()
 
 
+# NOC's own books (platform finances) -- the seed finance organ in the `public` schema (`fin_*` tables),
+# platform admins only. Nothing feeds it yet.
+# NOC-REMEDIATE[core-finance-billing-bridge]: feed fin_entries from core billing/licensing (paid subscription
+# invoices -> receivable entries settled on the Stripe payout, infra costs -> payable recurrences) -- roadmap
+# erp-seed-2026-10 E11 -- 2026-10-14.
+finance_organ = mount_finance(
+    schema="public",
+    auth_dependency=get_platform_finance_auth,
+    get_admin_client=get_admin_client,
+    get_core_client=lambda: _db.get_core_client(),
+)
+
 app = create_product_app(
     name="Core",
     schema="public",
@@ -71,6 +86,7 @@ app = create_product_app(
     },
     standard_routers=["health", "notificacoes", "ai_feedback", "status_paginas"],
     consent_features="app.services.ai_consent_features",
+    organs=[finance_organ],
     routers=[
         auth.router,
         organizations.router,
