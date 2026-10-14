@@ -4,6 +4,7 @@ export const ERP_DASHBOARD_MESSAGES = {
   'common.refreshing': 'Atualizando…',
   'common.retry': 'Tentar novamente',
   'common.empty': 'Nada por aqui.',
+  'common.open': 'Abrir',
 
   'dashboard.title': 'Visão geral do negócio',
   'dashboard.subtitle': 'Financeiro, estoque, compras, contratos e orçamentos num só lugar.',

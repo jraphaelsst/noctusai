@@ -7,11 +7,11 @@ export interface ErpInventoryTilesProps extends ErpTileGroupProps {
   hooks: InventoryHooks;
 }
 
-export function ErpInventoryTiles({ hooks, t }: ErpInventoryTilesProps) {
+export function ErpInventoryTiles({ hooks, t, onNavigate }: ErpInventoryTilesProps) {
   const low = hooks.useLowStock();
   const valuation = hooks.useValuation();
   return (
-    <ErpTileSection title={t('inventory.title')} testId="erp-inventory">
+    <ErpTileSection title={t('inventory.title')} testId="erp-inventory" openLabel={t('common.open')} onOpen={onNavigate ? () => onNavigate('inventory') : undefined}>
       <ErpStat testId="erp-low-stock" t={t} query={low} label={t('inventory.low_stock')} hint={t('inventory.low_stock_hint')}
         value={low.data ? String(low.data.length) : '—'} />
       <ErpStat testId="erp-valuation" t={t} query={valuation} label={t('inventory.valuation')}

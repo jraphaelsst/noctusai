@@ -90,3 +90,15 @@ describe('ErpDashboard', () => {
     expect(await screen.findByText('Stock')).toBeInTheDocument();
   });
 });
+
+describe('ErpDashboard navigation', () => {
+  it('offers a deep link per group only when the host passes onNavigate', async () => {
+    mount({ inventory: hooks.inventory() });
+    expect(screen.queryByRole('button', { name: 'Abrir' })).toBeNull();
+    cleanup();
+    const seen: string[] = [];
+    mount({ inventory: hooks.inventory(), onNavigate: (t) => seen.push(t) });
+    await userEvent.click(await screen.findByRole('button', { name: 'Abrir' }));
+    expect(seen).toEqual(['inventory']);
+  });
+});

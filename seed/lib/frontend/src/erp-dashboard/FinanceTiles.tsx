@@ -9,7 +9,7 @@ export interface ErpFinanceTilesProps extends ErpTileGroupProps {
   hooks: FinanceHooks;
 }
 
-export function ErpFinanceTiles({ hooks, t, now }: ErpFinanceTilesProps) {
+export function ErpFinanceTiles({ hooks, t, now, onNavigate }: ErpFinanceTilesProps) {
   const base = React.useMemo(() => now ?? new Date(), [now]);
   const dre = hooks.useDre({ from: monthStartIso(base), to: monthEndIso(base), view: 'statement' });
   const cash = hooks.useCashflow({ from: monthStartIso(base), to: monthEndIso(base, 5) });
@@ -21,7 +21,7 @@ export function ErpFinanceTiles({ hooks, t, now }: ErpFinanceTilesProps) {
   const apCount = overduePayable.data?.pagination.total ?? 0;
 
   return (
-    <ErpTileSection title={t('finance.title')} testId="erp-finance">
+    <ErpTileSection title={t('finance.title')} testId="erp-finance" openLabel={t('common.open')} onOpen={onNavigate ? () => onNavigate('finance') : undefined}>
       <ErpStat testId="erp-month-result" t={t} query={dre} label={t('finance.month_result')} hint={t('finance.month_result_hint')}
         value={dre.data ? formatCents(dre.data.net_result_cents) : '—'} />
       <ErpStat testId="erp-cash" t={t} query={cash} label={t('finance.cash')} hint={t('finance.cash_hint')}

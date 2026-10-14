@@ -10,7 +10,7 @@ export interface ErpQuotesTilesProps extends ErpTileGroupProps {
 
 const WINDOW_DAYS = 7;
 
-export function ErpQuotesTiles({ hooks, t, now }: ErpQuotesTilesProps) {
+export function ErpQuotesTiles({ hooks, t, now, onNavigate }: ErpQuotesTilesProps) {
   const base = React.useMemo(() => now ?? new Date(), [now]);
   const sent = hooks.useQuotes({ status: 'sent', page: 1, page_size: 100 });
   const viewed = hooks.useQuotes({ status: 'viewed', page: 1, page_size: 100 });
@@ -30,7 +30,7 @@ export function ErpQuotesTiles({ hooks, t, now }: ErpQuotesTilesProps) {
     refetch: () => Promise.all(queries.map((q) => q.refetch())),
   };
   return (
-    <ErpTileSection title={t('quotes.title')} testId="erp-quotes">
+    <ErpTileSection title={t('quotes.title')} testId="erp-quotes" openLabel={t('common.open')} onOpen={onNavigate ? () => onNavigate('quotes') : undefined}>
       <ErpStat testId="erp-quotes-open" t={t} query={query} label={t('quotes.open')}
         hint={ready ? t('quotes.open_hint', { amount: formatCents(open.reduce((s, q) => s + q.total_cents, 0)) }) : undefined}
         value={ready ? String(openTotal) : '—'} />

@@ -10,7 +10,7 @@ export interface ErpContractsTilesProps extends ErpTileGroupProps {
 
 const WINDOW_DAYS = 30;
 
-export function ErpContractsTiles({ hooks, t, now }: ErpContractsTilesProps) {
+export function ErpContractsTiles({ hooks, t, now, onNavigate }: ErpContractsTilesProps) {
   const base = React.useMemo(() => now ?? new Date(), [now]);
   const active = hooks.useContracts({ status: 'active', page: 1, page_size: 100 });
   const expiring = hooks.useContracts({ status: 'active', expiring_within_days: WINDOW_DAYS, page: 1, page_size: 1 });
@@ -24,7 +24,7 @@ export function ErpContractsTiles({ hooks, t, now }: ErpContractsTilesProps) {
   });
 
   return (
-    <ErpTileSection title={t('contracts.title')} testId="erp-contracts">
+    <ErpTileSection title={t('contracts.title')} testId="erp-contracts" openLabel={t('common.open')} onOpen={onNavigate ? () => onNavigate('contracts') : undefined}>
       <ErpStat testId="erp-contracts-active" t={t} query={active} label={t('contracts.active')}
         hint={active.data ? t('contracts.active_hint', { amount: formatCents(cycleTotal) }) : undefined}
         value={active.data ? String(activeTotal) : '—'} />

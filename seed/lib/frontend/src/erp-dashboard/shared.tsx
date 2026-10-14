@@ -1,6 +1,7 @@
 /** Building blocks every dashboard tile group shares (not exported from the barrel). */
 import * as React from 'react';
 import { StatTile } from '../design-system/charts/StatTile';
+import { Button } from '../design-system/ui/Button';
 import { RefreshingBar, RetryError } from '../organ-kit/controls';
 import { errorMessage } from '../organ-kit/query';
 import type { ErpDashboardTranslate } from './i18n';
@@ -51,10 +52,20 @@ export function ErpStat({ label, value, hint, query, t, testId }: {
   );
 }
 
-export function ErpTileSection({ title, testId, children }: { title: string; testId: string; children: React.ReactNode }) {
+export function ErpTileSection({ title, testId, children, openLabel, onOpen }: {
+  title: string;
+  testId: string;
+  children: React.ReactNode;
+  /** Deep link to the organ's page (shown only when the host supplied `onNavigate`). */
+  openLabel?: string;
+  onOpen?: () => void;
+}) {
   return (
     <section className="space-y-2" data-testid={testId} aria-label={title}>
-      <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+        {onOpen ? <Button size="sm" variant="ghost" onClick={onOpen}>{openLabel}</Button> : null}
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
     </section>
   );

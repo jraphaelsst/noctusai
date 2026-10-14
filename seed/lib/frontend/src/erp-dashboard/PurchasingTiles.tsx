@@ -6,7 +6,7 @@ export interface ErpPurchasingTilesProps extends ErpTileGroupProps {
   hooks: PurchasingHooks;
 }
 
-export function ErpPurchasingTiles({ hooks, t }: ErpPurchasingTilesProps) {
+export function ErpPurchasingTiles({ hooks, t, onNavigate }: ErpPurchasingTilesProps) {
   // `pagination.total` is exact whatever the page size, so one row per status is enough.
   const draft = hooks.usePurchaseOrders({ status: 'draft', page: 1, page_size: 1 });
   const approved = hooks.usePurchaseOrders({ status: 'approved', page: 1, page_size: 1 });
@@ -24,7 +24,7 @@ export function ErpPurchasingTiles({ hooks, t }: ErpPurchasingTilesProps) {
     refetch: () => Promise.all(receiptQueries.map((q) => q.refetch())),
   };
   return (
-    <ErpTileSection title={t('purchasing.title')} testId="erp-purchasing">
+    <ErpTileSection title={t('purchasing.title')} testId="erp-purchasing" openLabel={t('common.open')} onOpen={onNavigate ? () => onNavigate('purchasing') : undefined}>
       <ErpStat testId="erp-po-approval" t={t} query={draft} label={t('purchasing.awaiting_approval')} hint={t('purchasing.awaiting_approval_hint')}
         value={draft.data ? String(draft.data.pagination.total) : '—'} />
       <ErpStat testId="erp-po-receipt" t={t} query={receipt} label={t('purchasing.awaiting_receipt')} hint={t('purchasing.awaiting_receipt_hint')}
