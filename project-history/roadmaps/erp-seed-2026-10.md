@@ -2,7 +2,7 @@
 
 > **Status:** IN PROGRESS 2026-10-14. Owner delegated every decision ("dont ask me anything, go all the to the end and to the prod … build. i'll refine later"; "recommended paths by you always"). Every E-decision below is a **tech-lead default — owner refines later**.
 > **Method:** `KB § PATTERNS/architect/vertical-seed.md` (same as `commerce-seed-2026-10.md`) · accounting authority: agent `accountant` + `KB § PATTERNS/finance/dre-structure.md`.
-> **Inputs:** ERP codebase map (2026-10-14, Explore) · architect design (2026-10-14) · ERP market brief (in flight) · commerce P4 decisions D32–D56.
+> **Inputs:** ERP codebase map (2026-10-14, Explore) · architect design (2026-10-14) · ERP market brief [`erp-seed-2026-10-market-brief.md`](erp-seed-2026-10-market-brief.md) · commerce P4 decisions D32–D56.
 
 ## Origin
 
@@ -34,6 +34,17 @@ Commerce is a sibling vertical seed that **consumes** ERP organs (finance bridge
 - 2026-10-14 · **E11 per-product finance report is measured** — predeploy_check (schema exposure/drift, db guards) + spa_smoke `/financeiro` + sso_smoke, one row per product.
 - 2026-10-14 · **E12 risks owned** — migrations re-runnable + `migration_replay` (applied twice) before `migrate_product`; RLS + org-picker path + strict 401 tests per table; NUMERIC→cents policy decided once in seed; stock concurrency guarded at the DB.
 
+- 2026-10-14 · **E13 regimes** — data model covers MEI, Simples and Lucro Presumido (regime is a profile field); MEI + Simples get the deep behaviour first (Livro Caixa, Relatório Mensal de Receitas Brutas, DAS views). Presumido obligations (EFD-Contribuições, EFD ICMS/IPI, ECF) are the accountant's files — the seed exports data, never files.
+- 2026-10-14 · **E14 inventory is generic** (brief §C: every operational ERP has it); valuation **average cost** (LIFO not permitted; brief §B). Lots/serials, Bloco K and production/BOM are market-specific.
+- 2026-10-14 · **E15 bank feed** — v1 is OFX/CSV import (already in finance) + a `BankFeed` Protocol + Fake; a Real Open Finance aggregator adapter (e.g. Pluggy, ≥ R$2.500/mo) waits for a paying market. ERP cannot join Open Finance directly (brief §E).
+- 2026-10-14 · **E16 accountant export** — new seed module after purchasing: Domínio layout first (documented), CSV/OFX already exist; an accountant **read-only role** instead of a white-label portal in v1.
+- 2026-10-14 · **E17 NFC-e / PDV** — retail-market specific, not in the generic seed (SP requires NFC-e since CF-e-SAT ended 2026-01-01 — note for the artifacts store).
+- 2026-10-14 · **E18 payroll** — via the accountant (no operational ERP in the brief ships native payroll); the seed keeps people as `parties` role employee + AP entries.
+- 2026-10-14 · **E19 IBS/CBS** — the fiscal profile gets the 2027 "IBS/CBS inside or outside the DAS" choice now (data only, default "inside", provisional — contador); invoice IBS/CBS fields per NT v1.52 when the fiscal adapter is next touched.
+- 2026-10-14 · **E20 one org = one CNPJ** — an owner with several CNPJs uses several orgs (multi-org exists); consolidated view later.
+- 2026-10-14 · **E21 finance additions** — budget vs actual per category/month, Livro Caixa view, MEI monthly revenue report, an optional accounting code per category (for the Domínio export). Added to W5.
+- 2026-10-14 · **E22 pricing/packaging** — not a seed concern; decided per market product (P12 of the commerce roadmap). Brief §D records the market levers (revenue band, users, feature tiers, AI credits).
+
 ## Waves
 
 | Wave | Slices | Class |
@@ -43,7 +54,7 @@ Commerce is a sibling vertical seed that **consumes** ERP organs (finance bridge
 | W2 | finance fan-out to 7 hosts ∥ `inventory` | disjoint; migration numbers from the tool |
 | W3 | commerce↔inventory ∥ `purchasing` | serialize the commerce migration slot |
 | W4 | `quotes` ∥ `contracts` | disjoint |
-| W5 | ERP dashboard + `templates/product-erp` overlay + igig importer dry-run | disjoint |
+| W5 | ERP dashboard + `templates/product-erp` overlay + igig importer dry-run + accountant export (Domínio) + finance additions (E21) | disjoint |
 
 Gate: `gate_sweep` on the merged dev tip before each bless; prod via `noc-ship` (predeploy_check + CI green; migrations via `migration_replay` then `migrate_product`).
 
