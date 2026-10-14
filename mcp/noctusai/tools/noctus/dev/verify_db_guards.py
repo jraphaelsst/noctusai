@@ -6324,6 +6324,59 @@ _SW_231_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_TRANSACOES = "266_imovel_transacoes.sql"
+_T_TRANSACOES = f"{_S}.imovel_transacoes"
+
+
+def _transacao_ins(**over: str) -> str:
+    """A valid imovel_transacoes row with the named columns overridden by SQL literals."""
+    cols = {"valor_transacao": "1", "fonte": "'manual'", "fonte_ref": "'NOC_PROBE'", **over}
+    return (
+        f"    INSERT INTO {_S}.imovel_transacoes (org_id, {', '.join(cols)})\n"
+        f"    VALUES (v_org, {', '.join(cols.values())});"
+    )
+
+
+def _transacao_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, what: str,
+                     sqlstate: str = _CHECK) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"imovel_transacoes.{probe_id}", guard_name=guard, migration=_M_TRANSACOES,
+        rationale=rationale, fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=sqlstate,
+        what=what, tabelas=(_T_TRANSACOES,),
+    )
+
+
+#: Migration 266 -- the closing-price ledger the price evaluator trains/validates on. A bad row here
+#: would silently poison every comparable, so each guard is proven by writing the forbidden row.
+_SW_TRANSACOES_PROBES: tuple[GuardProbe, ...] = (
+    _transacao_probe("tipo_valido", "imovel_transacoes_tipo_valido",
+                     "Only venda is modelled; another tipo would mix rentals into sale comparables.",
+                     _transacao_ins(tipo="'noc_probe_bogus'"), "a transacao with an unknown tipo"),
+    _transacao_probe("fonte_valida", "imovel_transacoes_fonte_valida",
+                     "The source decides how far a price is trusted; an unknown one has no trust level.",
+                     _transacao_ins(fonte="'noc_probe_bogus'"), "a transacao with an unknown fonte"),
+    _transacao_probe("vinculo_valido", "imovel_transacoes_vinculo_valido",
+                     "Only pendente/confirmado/rejeitado exist; another value is neither reviewed nor used.",
+                     _transacao_ins(vinculo_status="'noc_probe_bogus'"), "a transacao with an unknown vinculo_status"),
+    _transacao_probe("valor_positivo", "imovel_transacoes_valor_positivo",
+                     "A zero or negative closing price would drag every comparable median.",
+                     _transacao_ins(valor_transacao="0"), "a transacao with valor_transacao = 0"),
+    _transacao_probe("anunciado_positivo", "imovel_transacoes_anunciado_positivo",
+                     "A non-positive asking price would make every sale look like a discount of infinity.",
+                     _transacao_ins(valor_anunciado_ultimo="0"), "a transacao with valor_anunciado_ultimo = 0"),
+    _transacao_probe("parcelas_validas", "imovel_transacoes_parcelas_validas",
+                     "A negative instalment count is a parsing error that must not reach the evaluator.",
+                     _transacao_ins(n_parcelas="-1"), "a transacao with n_parcelas = -1"),
+    _transacao_probe("confirmado_exige_codigo", "imovel_transacoes_confirmado_exige_codigo",
+                     "A confirmed link without an imóvel would be counted as ground truth for nothing.",
+                     _transacao_ins(vinculo_status="'confirmado'"), "a confirmed transacao with no codigo_canonical"),
+    _transacao_probe("fonte_ref_unica", "uq_imovel_transacoes_org_fonte_ref",
+                     "One row per (org, fonte, fonte_ref) is what makes the importer's re-run idempotent.",
+                     _transacao_ins() + "\n" + _transacao_ins(), "two transacoes for the same (fonte, fonte_ref)",
+                     sqlstate=_UNIQ),
+)
+
+
 _SW_IMOVEL_MANUAL_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
         probe_id="imovel_captacao.valores_positivos",
@@ -8009,6 +8062,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_218_PROBES,
     *_SW_PROPOSTAS_PROBES,
     *_SW_IMOVEL_MANUAL_PROBES,
+    *_SW_TRANSACOES_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

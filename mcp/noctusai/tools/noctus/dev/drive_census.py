@@ -1659,6 +1659,137 @@ def ref_candidates_folder(folder_id: str, snapshot: dict[str, Any], *, top: int 
             "empate_no_topo": empate}
 
 
+# ─── answer keys → imovel_transacoes payload (non-PII) ────────────────────
+#
+# Roadmap ``sw-price-evaluator-2026-10``: the scarcest input to the price evaluator is the REAL
+# closing price. The owner approved reading it from the signed contracts. ``transacoes`` projects each
+# answer key onto the columns of ``social_wiring.imovel_transacoes`` (migration 266) and nothing
+# else: price, date, deal number, payment-shape flags and the candidate imóvel CODES with score and
+# evidence NAMES. Never a name, CPF, RG, e-mail, matrícula or address (the private answer key keeps
+# those). The link to a SW imóvel stays ``pendente``: the importer only PROPOSES, an org admin confirms.
+#
+# This action never writes to a database. It writes ``transacoes/payload.json`` + an idempotent
+# ``transacoes/apply.sql`` (0600, private dir) for the tech-lead to apply; the upsert refreshes only
+# rows still ``pendente`` so it can never undo a human's confirmation.
+
+TRANSACOES_COLUMNS = ("org_id", "processo_numero", "tipo", "valor_transacao", "data_transacao",
+                      "financiamento", "fgts", "permuta", "n_parcelas", "fonte", "fonte_ref",
+                      "vinculo_status", "vinculo_candidatos")
+_FONTE_POR_TIPO = {"d4sign": "contrato_d4sign"}  # anything else (rev_final, revisao) → contrato_revisao
+
+
+def _iso_date(s: Any) -> Optional[str]:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(str(s)[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def transacao_from_key(stem: str, key: dict[str, Any], cands: Optional[dict[str, Any]], *,
+                       org_id: str = SW_ORG_ID) -> Optional[dict[str, Any]]:
+    """One ``imovel_transacoes`` row from an answer key, or None when it carries no usable price."""
+    if key.get("status") != "ok":
+        return None
+    neg = key.get("negociacao") or {}
+    try:
+        valor = Decimal(str(neg.get("valor_negociado")))
+    except (InvalidOperation, TypeError):
+        return None
+    if valor <= 0:
+        return None
+    parcelas = neg.get("parcelas") or []
+    tipos = {p.get("tipo") for p in parcelas}
+    fonte_tipo = (key.get("fonte") or {}).get("tipo")
+    data = _iso_date((key.get("contrato") or {}).get("assinatura_data")) or _iso_date((key.get("fonte") or {}).get("assinado_em"))
+    candidatos = [{"codigo": c["codigo"], "pontos": c["pontos"], "forca": c["forca"], "evidencias": c["evidencias"]}
+                  for c in ((cands or {}).get("candidatos") or [])]
+    return {
+        "org_id": org_id,
+        "processo_numero": (key.get("folder") or {}).get("numero"),
+        "tipo": "venda",
+        "valor_transacao": str(valor),
+        "data_transacao": data,
+        "financiamento": "financiamento" in tipos,
+        "fgts": "fgts" in tipos,
+        "permuta": "permuta" in tipos or bool(neg.get("tem_permuta")),
+        "n_parcelas": len(parcelas),
+        "fonte": _FONTE_POR_TIPO.get(fonte_tipo, "contrato_revisao"),
+        "fonte_ref": stem,
+        "vinculo_status": "pendente",
+        "vinculo_candidatos": candidatos,
+    }
+
+
+def _sql_lit(v: Any) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float, Decimal)):
+        return str(v)
+    if isinstance(v, (list, dict)):
+        return "'" + json.dumps(v, ensure_ascii=False).replace("'", "''") + "'::jsonb"
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def transacoes_sql(rows: list[dict[str, Any]]) -> str:
+    """Idempotent upsert. ``DO UPDATE ... WHERE vinculo_status = 'pendente'``: a confirmed or rejected
+    row is never touched by a re-run."""
+    if not rows:
+        return "-- no transacoes\n"
+    values = ",\n".join("  (" + ", ".join(_sql_lit(r[c]) for c in TRANSACOES_COLUMNS) + ")" for r in rows)
+    return (
+        f"INSERT INTO social_wiring.imovel_transacoes ({', '.join(TRANSACOES_COLUMNS)})\nVALUES\n{values}\n"
+        "ON CONFLICT (org_id, fonte, fonte_ref) DO UPDATE SET\n"
+        "  processo_numero = EXCLUDED.processo_numero, valor_transacao = EXCLUDED.valor_transacao,\n"
+        "  data_transacao = EXCLUDED.data_transacao, financiamento = EXCLUDED.financiamento,\n"
+        "  fgts = EXCLUDED.fgts, permuta = EXCLUDED.permuta, n_parcelas = EXCLUDED.n_parcelas,\n"
+        "  vinculo_candidatos = EXCLUDED.vinculo_candidatos\n"
+        "WHERE social_wiring.imovel_transacoes.vinculo_status = 'pendente';\n"
+    )
+
+
+def transacoes_payload(only: Optional[str] = None) -> dict[str, Any]:
+    keys_dir = _dir("answer-keys")
+    cands_dir = _dir("ref-candidates")
+    rows: list[dict[str, Any]] = []
+    sem_valor: list[str] = []
+    total = 0
+    for path in sorted(keys_dir.glob("*.json")):
+        if path.stem.endswith("-empresas-verificado") or (only and path.stem != only):
+            continue
+        total += 1
+        key = json.loads(path.read_text(encoding="utf-8"))
+        cpath = cands_dir / path.name
+        cands = json.loads(cpath.read_text(encoding="utf-8")) if cpath.is_file() else None
+        row = transacao_from_key(path.stem, key, cands)
+        if row is None:
+            sem_valor.append(path.stem)
+            continue
+        rows.append(row)
+    out = _dir("transacoes")
+    _write_private(out / "payload.json", rows)
+    sql_path = out / "apply.sql"
+    fd = os.open(sql_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(transacoes_sql(rows))
+    best = [max((c["forca"] for c in r["vinculo_candidatos"]), key=lambda f: {"forte": 3, "media": 2, "fraca": 1}[f], default=None)
+            for r in rows]
+    return {
+        "answer_keys": total, "rows": len(rows), "sem_preco_ou_sem_contrato": len(sem_valor),
+        "com_data": sum(1 for r in rows if r["data_transacao"]),
+        "por_fonte": {f: sum(1 for r in rows if r["fonte"] == f) for f in sorted({r["fonte"] for r in rows})},
+        "melhor_candidato": {"forte": best.count("forte"), "media": best.count("media"), "fraca": best.count("fraca"),
+                             "nenhum": best.count(None)},
+        "permuta": sum(1 for r in rows if r["permuta"]), "financiamento": sum(1 for r in rows if r["financiamento"]),
+        "fgts": sum(1 for r in rows if r["fgts"]),
+        "payload": str(out / "payload.json"), "sql": str(sql_path),
+        "writes_database": False,
+    }
+
+
 # ─── tool entry ───────────────────────────────────────────────────────────
 
 
@@ -1668,7 +1799,7 @@ def _resolve_folders(folder_id: Optional[str]) -> list[str]:
     return [p.name for p in _mirror_dirs()]
 
 
-_ACTIONS = ("extract", "census", "answer_key", "ref_candidates")
+_ACTIONS = ("extract", "census", "answer_key", "ref_candidates", "transacoes")
 
 
 def drive_census(action: str, folder_id: Optional[str] = None, *, refresh: bool = False,
@@ -1676,6 +1807,10 @@ def drive_census(action: str, folder_id: Optional[str] = None, *, refresh: bool 
     """``extract`` | ``census`` | ``answer_key`` | ``ref_candidates`` over one mirrored folder, or ``all``."""
     if action not in _ACTIONS:
         raise ValueError(f"action must be {' | '.join(_ACTIONS)}, got {action!r}")
+    if action == "transacoes":  # reads the answer keys + ref-candidates already on disk; no mirror, no DB
+        summary = transacoes_payload(only=folder_id if folder_id and folder_id != "all" else None)
+        return {"action": action, "folders": summary["answer_keys"], "results": [summary], "errors": 0,
+                "private_dir": str(_dp.private_root())}
     folders = _resolve_folders(folder_id)
     results: list[dict[str, Any]] = []
     snapshot = ref_snapshot(executor=executor, refresh=refresh) if action == "ref_candidates" else None
@@ -1718,7 +1853,11 @@ def register(server) -> None:
             "dir; the result carries counts and flags only, never personal data. "
             "action='ref_candidates' [refresh] → per deal, the top-3 SW/Vista imóvel candidates "
             "(matrícula / inscrição exact = forte; condomínio + unidade + m² = media) from a cached "
-            "read-only SW snapshot. Candidates only: the owner confirms every match; nothing is linked."
+            "read-only SW snapshot. Candidates only: the owner confirms every match; nothing is linked. "
+            "action='transacoes' → projects the answer keys + ref-candidates onto the NON-PII rows of "
+            "social_wiring.imovel_transacoes (price, date, deal nº, payment flags, candidate codes+scores) and "
+            "writes payload.json + an idempotent apply.sql (0600, private dir). Never writes a database; "
+            "the result carries counts only."
         ),
     )
     def _drive_census(action: str, folder_id: str | None = None, refresh: bool = False) -> dict:

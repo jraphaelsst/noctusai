@@ -544,3 +544,84 @@ def test_registry_address_is_a_documentary_signal() -> None:
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="extract \\| census \\| answer_key"):
         C.drive_census("nope")
+
+
+# ─── transacoes: answer keys → non-PII imovel_transacoes payload ──────────
+
+
+def _tx_key(numero, *, valor="500000.00", fonte="d4sign", assinatura="2026-08-10", tipos=("sinal", "financiamento"), permuta=False):
+    return {
+        "status": "ok",
+        "folder": {"numero": numero, "titulo": "Fulana Exemplo da Silva"},
+        "fonte": {"tipo": fonte, "assinado_em": "2026-08-12"},
+        "contrato": {"assinatura_data": assinatura},
+        "partes": [{"clientes": {"nome_oficial": "ANA EXEMPLO SILVA", "cpf": "111.222.333-44", "email": "ana@example.com"}}],
+        "imovel": {"imovel_dados": {"numero_matricula": "4.321", "endereco_registro_texto": "Rua Fictícia 10"}},
+        "negociacao": {"valor_negociado": valor, "tem_permuta": permuta,
+                       "parcelas": [{"ordem": i, "tipo": t, "valor": "1.00", "texto": "Parcela em favor de ANA, CPF 111.222.333-44"}
+                                    for i, t in enumerate(tipos, 1)],
+                       "favorecidos": [{"nome": "ANA EXEMPLO SILVA", "cpf_cnpj": "11122233344"}]},
+    }
+
+
+def _seed_keys(private, keys, cands=None):
+    kd = private / "answer-keys"
+    kd.mkdir(parents=True)
+    for stem, k in keys.items():
+        (kd / f"{stem}.json").write_text(json.dumps(k), encoding="utf-8")
+    if cands:
+        cd = private / "ref-candidates"
+        cd.mkdir(parents=True)
+        for stem, c in cands.items():
+            (cd / f"{stem}.json").write_text(json.dumps(c), encoding="utf-8")
+
+
+def test_transacoes_payload_is_non_pii_private_and_never_a_db_write(private) -> None:
+    cands = {"900": {"candidatos": [
+        {"codigo": "CA0001", "pontos": 90, "forca": "forte", "evidencias": ["matricula"],
+         "evidencias_detalhe": {"matricula": "4.321"}, "logradouro": "Rua Fictícia", "empreendimento": "X"},
+        {"codigo": "CA0002", "pontos": 45, "forca": "media", "evidencias": ["condominio"]}]}}
+    _seed_keys(private, {
+        "900": _tx_key("900", permuta=True, tipos=("sinal", "permuta", "fgts")),
+        "901": _tx_key("901", fonte="revisao", assinatura=None, tipos=("sinal",)),
+        "902": _tx_key("902", valor=None),
+        "903": {"status": "sem_contrato"},
+        "900-empresas-verificado": {"empresas": []},
+    }, cands)
+    out = C.drive_census("transacoes")
+    summary = out["results"][0]
+    assert summary["writes_database"] is False
+    assert (summary["answer_keys"], summary["rows"], summary["sem_preco_ou_sem_contrato"]) == (4, 2, 2)
+    assert summary["por_fonte"] == {"contrato_d4sign": 1, "contrato_revisao": 1}
+    assert summary["melhor_candidato"] == {"forte": 1, "media": 0, "fraca": 0, "nenhum": 1}
+    assert (summary["permuta"], summary["fgts"], summary["financiamento"]) == (1, 1, 0)
+
+    payload = json.loads((private / "transacoes" / "payload.json").read_text())
+    by = {r["fonte_ref"]: r for r in payload}
+    assert by["900"]["valor_transacao"] == "500000.00" and by["900"]["data_transacao"] == "2026-08-10"
+    assert by["900"]["vinculo_status"] == "pendente" and by["900"]["n_parcelas"] == 3
+    assert by["901"]["data_transacao"] == "2026-08-12"  # fallback to the D4Sign stamp when the contract states none
+    assert set(by["900"]) == set(C.TRANSACOES_COLUMNS)
+    assert by["900"]["vinculo_candidatos"][0] == {"codigo": "CA0001", "pontos": 90, "forca": "forte", "evidencias": ["matricula"]}
+
+    blob = (private / "transacoes" / "payload.json").read_text() + (private / "transacoes" / "apply.sql").read_text()
+    for pii in ("ANA", "111.222", "ana@", "4.321", "Fictícia", "Fulana", "11122233344"):
+        assert pii not in blob, pii
+    assert "".join(str(v) for v in out.values() if isinstance(v, str)).find("ANA") == -1
+    for f in ("payload.json", "apply.sql"):
+        assert oct((private / "transacoes" / f).stat().st_mode & 0o777) == "0o600"
+
+
+def test_transacoes_sql_is_an_idempotent_upsert_that_spares_resolved_rows() -> None:
+    row = C.transacao_from_key("it's", _tx_key("9"), None)
+    sql = C.transacoes_sql([row])
+    assert "ON CONFLICT (org_id, fonte, fonte_ref) DO UPDATE" in sql
+    assert "WHERE social_wiring.imovel_transacoes.vinculo_status = 'pendente'" in sql
+    assert "'it''s'" in sql and "'[]'::jsonb" in sql
+    assert "vinculo_status = EXCLUDED" not in sql  # a re-run never changes a resolved link
+
+
+def test_transacoes_rejects_non_positive_or_unparseable_price() -> None:
+    assert C.transacao_from_key("1", _tx_key("1", valor="0"), None) is None
+    assert C.transacao_from_key("1", _tx_key("1", valor="abc"), None) is None
+    assert C.transacao_from_key("1", {"status": "contrato_so_imagem"}, None) is None

@@ -13,6 +13,7 @@ Routes
 ──────
     GET/PATCH   /api/imoveis/{codigo}/dados
     GET/POST    /api/imoveis/{codigo}/documentos
+    GET/POST    /api/imovel-transacoes[/{id}/confirmar|rejeitar]   (admin; migration 266)
     GET         /api/imoveis/{codigo}/documentos/{documento_id}/url
     DELETE      /api/imoveis/{codigo}/documentos/{documento_id}
 
@@ -53,6 +54,7 @@ def register() -> Any:
     from app.modules.imovel_hub.interesses_router import router as interesses_router
     from app.modules.imovel_hub.pessoa_router import router as pessoa_router
     from app.modules.imovel_hub.router import router
+    from app.modules.imovel_hub.transacoes_router import router as transacoes_router
 
     extracao_scheduler.configure()
 
@@ -63,6 +65,7 @@ def register() -> Any:
             interesses_router,
             imovel_relacionamentos_router,
             pessoa_router,
+            transacoes_router,
         ],
         standard_routers=(),
     )

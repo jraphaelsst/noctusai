@@ -35,8 +35,10 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
     assert paths, "no imovel_hub routes are registered — the router isn't wired"
 
     for method, path in sorted(paths):
-        concrete = path.replace("{codigo}", _CODIGO).replace(
-            "{documento_id}", _DOCUMENTO_ID
+        concrete = (
+            path.replace("{codigo}", _CODIGO)
+            .replace("{documento_id}", _DOCUMENTO_ID)
+            .replace("{transacao_id}", _DOCUMENTO_ID)
         )
         kwargs = {}
         # Only PATCH takes a JSON body here. A multipart upload route must
