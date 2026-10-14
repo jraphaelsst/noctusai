@@ -1,0 +1,206 @@
+# Commerce seed P4 — contract (payments · commerce money states · finance · invoices)
+
+> **Authoritative for slices A–F.** Change it only through the tech-lead; every slice builds to these exact names. Decisions: roadmap D32–D40. Extends `projects/commerce-seed-p3/CONTRACT.md` (conventions unchanged: money **integer cents** (`*_cents`), ISO-8601 UTC, UUID ids, every table `org_id uuid not null` + RLS via the organ config's `org_id_expr`, `success_response` / `paginated_response` envelopes, pt-BR error codes).
+> **Reviewed 2026-10-13** by `architect` + `security` (read-only); their MUST-FIX items are folded in below.
+> **Additive rule.** Existing consumers of the payments organ — `products/store` (Asaas), `products/community` (**Asaas AND Stripe**), the commerce webhook — keep working unchanged: nothing in §1 renames or remaps an existing `EventKind`, field or method.
+
+## 0 · Cross-cutting rules (every slice)
+
+- **Authorization.** RLS is the floor, never the only check. Org staff (`get_current_user_org`) may read. **Org admin** (`noctusai_lib.api.auth.platform.require_org_admin`) is required for: refunds, invoice issue/cancel, `PUT /fiscal`, certificate upload, NFS-e cutover (and its rollback), finance writes (entries, settlements, reversals, transfers, recurrences, accounts, categories, cost centers, statement import + match) and every export. A platform admin acting on another org goes through `require_platform_admin` only, and the action records the real `actor`. Request history comes from the seed audit middleware (`noctusai_lib.api.audit`); domain history lives in the domain rows themselves (order events, refund rows, settlement reversals — §3.3), so no new audit table.
+- **Never trust a webhook body for money.** Any payment/refund/dispute/invoice webhook re-reads the gateway/provider (`get_charge` / `get`) and derives state from that read.
+- **Secrets never leave the call.** Certificates, passwords, tokens: never in logs, exception messages, `raw` fields, error-tracker locals (Sentry `include_local_variables=False` or a scrubber). Provider error bodies are mapped to generic pt-BR codes before reaching the client.
+- **Jobs.** Idempotent periodic sweeps use the seed scheduler (`noctusai_lib.api.scheduler.register`). Work that must retry with backoff (invoice issue/cancel) uses the durable jobs worker (`noctusai_lib.domain.jobs`, `dedupe_key` = the invoice `ref`).
+
+---
+
+## 1 · Payments organ (`noctusai_lib.integrations.payments`) — slice A
+
+### 1.1 New Protocol `ChargeOperations` (`charges.py`; `FakeChargeOperations`, `AsaasChargeOperations`, `StripeChargeOperations`; factory `make_charge_operations(...)` mirrors `make_hosted_checkout`, fake-or-refuse)
+
+| Method | Returns | Notes |
+|---|---|---|
+| `get_charge(charge_id_at_gateway)` | `GatewayCharge` | read-only |
+| `refund_charge(charge_id_at_gateway, *, amount: Money \| None, description: str)` | `GatewayRefund` | `None` = full remaining. Asaas `POST /v3/payments/{id}/refund {value, description}`; Stripe `POST /v1/refunds`. Above refundable ⇒ `PaymentGatewayError(code="refund_exceeds_balance")` before calling out |
+| `cancel_charge(charge_id_at_gateway)` | `GatewayCharge` | unpaid only (Asaas `DELETE /v3/payments/{id}`; Stripe expire session / cancel PaymentIntent). Paid ⇒ `PaymentGatewayError(code="charge_already_paid")` |
+| `list_balance_transactions(*, since: date, cursor: str \| None)` | `BalanceTransactionPage{items, next_cursor}` | Asaas `GET /v3/financialTransactions`; Stripe `GET /v1/balance_transactions` |
+
+Types (`types.py`):
+- `ChargeStatus` = `pending` · `confirmed` (card approved, money not yet available) · `received` · `overdue` · `partially_refunded` · `refunded` · `disputed` · `chargeback` · `cancelled`. Unknown gateway status **raises** `PaymentGatewayError(code="unknown_charge_status")`.
+- `GatewayCharge{id_at_gateway, status, method: PaymentMethod, amount: Money, net: Money | None, fee: Money | None, refunded: Money, refunds: list[GatewayRefund], installment_count: int, due_date, paid_at, credit_date (when funds become available), external_reference, raw}`
+- `GatewayRefund{id_at_gateway | None, charge_id_at_gateway, amount: Money, status: "pending" | "done", created_at, raw}`
+- `BalanceTransaction{id_at_gateway, occurred_at, kind: "charge" | "fee" | "refund" | "chargeback" | "transfer" | "adjustment" | "other", amount: Money (signed), charge_id_at_gateway | None, description, raw}`
+
+### 1.2 `CheckoutRequest` additions (backward-compatible defaults)
+- `installment_count: int = 1` — `>1` only with `billing_method="credit_card"` on a one-off; Asaas sends `installmentCount` + `totalValue`; Stripe refuses `>1` with `PaymentGatewayError(code="installments_unsupported")`.
+- `customer_reference: str | None = None` — when set, `ensure_customer` is keyed on it (one gateway customer per buyer); `external_reference` stays the per-charge conciliation key. Fixes the P3 drift "one Asaas customer per order".
+
+### 1.3 `GatewayEvent` refinement (additive)
+New field `detail: EventDetail | None`, with `EventDetail = Literal["overdue", "partial", "chargeback_opened", "evidence_submitted", "won", "lost", "confirmed", "received"]`. New kinds `charge_partially_refunded`, `charge_dispute` and `charge_cancelled`. **Existing kind mappings are unchanged.**
+
+| Gateway event | `kind` | `detail` |
+|---|---|---|
+| Asaas `PAYMENT_CONFIRMED` / `PAYMENT_RECEIVED` | `charge_paid` (unchanged) | `confirmed` / `received` |
+| Asaas `PAYMENT_OVERDUE` | `charge_failed` (unchanged) | `overdue` |
+| Asaas `PAYMENT_REFUNDED` | `charge_refunded` (unchanged) | — |
+| Asaas `PAYMENT_PARTIALLY_REFUNDED` | `charge_partially_refunded` (new; was `ignored`) | `partial` |
+| Asaas `PAYMENT_CHARGEBACK_REQUESTED` | `charge_refunded` (unchanged) | `chargeback_opened` |
+| Asaas `PAYMENT_CHARGEBACK_DISPUTE` | `charge_dispute` (new) | `evidence_submitted` |
+| Asaas `PAYMENT_AWAITING_CHARGEBACK_REVERSAL` | `charge_dispute` | `won` |
+| Asaas `PAYMENT_DELETED` | `charge_cancelled` (new; was `ignored`) | — |
+| Stripe `charge.refunded` | `charge_refunded` (unchanged) | `partial` when `amount_refunded < amount` |
+| Stripe `charge.dispute.created` / `.closed` | `charge_dispute` (new) | `chargeback_opened` / `won` \| `lost` |
+
+- **Partial refunds (Asaas):** the kind for `PAYMENT_PARTIALLY_REFUNDED` is the new **`charge_partially_refunded`** (was `ignored`) — NOT `charge_refunded`, which `store` reads as "stop downloads". Community, which does book Stripe partial refunds via `charge_refunded`, is untouched because the Stripe mapping above keeps `charge_refunded`.
+- **Stripe disputes** move from `ignored` to `charge_dispute` — community's if/elif chain has no branch for it, so it stays a no-op there (no false refund booked).
+- **Slice A verifies** every Asaas event name and the "dispute lost" signal against `docs.asaas.com` and cites the source in its delivery note. If Asaas has no "lost" event, the lost path is reached by `get_charge` returning `chargeback` (slice B's `commerce_dispute_poll`).
+
+---
+
+## 2 · Commerce organ money states (`noctusai_lib.domain.commerce`) — slice B
+
+### 2.1 Enums (`types.py` + `commerce/types.ts`, parity test)
+- `OrderStatus` **adds** `partially_refunded`, `disputed` (UI label "Contestado").
+- New `RefundStatus` = `requested` · `done` · `failed`; `ChargeAttemptStatus` = `pending` · `paid` · `expired` · `cancelled` · `failed`; `ReminderKind` = `before_expiry` · `after_expiry`.
+- `InvoiceKind`, `InvoiceStatus`, `NfseMode` are **owned by `integrations/invoices/types.py`** (slice E) and re-exported by commerce (integrations never import domain).
+
+### 2.2 Transitions (`order_state.TRANSITIONS`, additions; one target per `(state, event)`)
+| From | Event | To |
+|---|---|---|
+| `expired` | `RETRY` (buyer regenerates) | `pending_payment` |
+| `paid` | `PARTIAL_REFUND` | `partially_refunded` |
+| `partially_refunded` | `PARTIAL_REFUND` / `REFUND` | `partially_refunded` / `refunded` |
+| `paid`, `partially_refunded` | `DISPUTE_OPENED` | `disputed` |
+| `disputed` | `DISPUTE_WON` / `DISPUTE_WON_PARTIAL` | `paid` / `partially_refunded` (service picks by Σ done refunds) |
+| `disputed` | `DISPUTE_LOST` | `chargeback` (terminal) |
+| `partially_refunded` | `CHARGEBACK` | `chargeback` (counterpart of the P3 `paid → chargeback` edge, which stays) |
+
+- **`webhook.py` rewrite:** branch on `kind` / `detail` only, never on `raw`. `charge_refunded` + `detail=chargeback_opened` ⇒ `DISPUTE_OPENED` (not `CHARGEBACK`). `charge_paid` + `confirmed` ⇒ `paid`; `received` ⇒ finance settlement (§2.4). Refund/partial/dispute events ⇒ re-read `get_charge` and reconcile (§2.4).
+- **Fulfillment seam:** `FulfillmentHandler` gains `on_paused(order)` / `on_resumed(order)` (→/← `disputed`), `on_revoked(order)` (→ `refunded` | `chargeback`), `on_expired(order)` (→ `expired`). All default no-op. Commerce has no inventory yet, so "release stock" (D35) is `on_expired` — named destination P9.
+
+### 2.3 Tables (added to `commerce_migration`; rendered into a NEW host migration, never editing `012`)
+| Table | Key columns |
+|---|---|
+| `commerce_order_charges` | `id` · `order_id` · `attempt` int (unique per order) · `gateway` · `gateway_charge_id` (unique per gateway) · `payment_method` · `installment_count` · `amount_cents` (incl. buyer interest) · `status` · `checkout_url` · `pix_qr` jsonb · `due_at` · `created_at` · `closed_at`. `commerce_orders.gateway_charge_id` points at the **current** attempt; `commerce_orders.charge_attempts` int |
+| `commerce_refunds` | `id` · `order_id` · `charge_id` → `commerce_order_charges` · `amount_cents` (>0) · `reason` · `status` · `gateway_refund_id` (unique when not null) · `idempotency_key` (unique per order when not null) · `requested_by` (null = made in the gateway panel) · `created_at` · `done_at` |
+| `commerce_order_reminders` | PK (`order_id`, `kind`) · `sent_at` |
+| `commerce_invoices` | `id` · `order_id` · `kind` · `ref` (unique; `"{org_short}-{order_id}-{kind}-{n}"`) · `status` · `number` · `series` · `access_key` · `verification_code` · `pdf_path` · `xml_path` (private bucket copies, kept for the D30 5-year fiscal retention) · `rejection` jsonb · `issued_at` · `cancelled_at` · `provider` |
+| `commerce_store_profiles` **adds** | `installments_max` (1–12, default 12) · `installments_interest_free` (1..max, default 3) · `installment_interest_monthly_bps` (§7 Q1) · `inscricao_municipal` · `inscricao_estadual` · `municipio_ibge` · `nfse_mode` · `nfse_cutover` jsonb `{requested_at, approved_at, approved_by, previous_mode, validation_until}` · `invoice_company_ref` · `certificate_valid_until` · `certificate_cnpj` · `auto_issue_invoices` bool default false. Per-company provider tokens are NOT here — they live in the encrypted credentials table (§4) |
+
+### 2.4 Rules
+- **Installments (D33):** quote lists `installment_options` for card, counts `1..installments_max`; `≤ installments_interest_free` ⇒ buyer pays the order total; above ⇒ Price-table total at `installment_interest_monthly_bps`. Rounded to the cent; the last installment absorbs the remainder.
+- **Refunds (D32):** `create_refund` runs in one transaction: `SELECT … FOR UPDATE` on the order (RPC), recompute refundable **server-side** = paid charge `amount_cents` − Σ non-failed refunds (cross-checked against `get_charge().refunded`), refuse a second refund while one is `requested` (409 `estorno_em_andamento`), honor the `Idempotency-Key` header. Then `refund_charge` ⇒ `done`; gateway error ⇒ `failed` + 502 `estorno_falhou`.
+- **Webhook ↔ API reconciliation:** on any refund / partial / dispute event the handler calls `get_charge` and compares `GatewayCharge.refunds` with `commerce_refunds`: matches by `gateway_refund_id` mark rows `done`; any gateway refund with no row (made in the Asaas panel) becomes a `done` row with `requested_by=null`, `reason='gateway'`. Order status is derived from the totals.
+- **Chargeback (D34):** `chargeback_opened` ⇒ `disputed` + `on_paused` + staff alert (e-mail to `contact_email` + order event); `won` ⇒ back (`on_resumed`); lost ⇒ `chargeback` + `on_revoked`. Job **`commerce_dispute_poll`** (every 6 h) calls `get_charge` on `disputed` orders to catch a loss with no webhook.
+- **Expiry + recovery (D35):** jobs `commerce_expire_orders` (hourly; past-`expires_at` `pending_payment` ⇒ `expired` + `on_expired`; the `charge_failed/overdue` webhook does the same — first wins) and `commerce_expiry_reminders` (hourly; `before_expiry` 24 h before, `after_expiry` 24 h after; the link is a **signed, expiring `access_links` token**, not the bare order token; at most one e-mail per recipient per hour).
+- **Regenerate payment (public):** conditional update on `(status, charge_attempts)` so two concurrent calls cannot both create a charge; max **5 attempts per order**, **≥60 s** between attempts (429 `muitas_tentativas`), rate limit `DEFAULT_PORTAL_RL` per IP+token. Order: `cancel_charge` on the current attempt — **if the cancel fails, refuse with 409 `cobranca_anterior_ativa`** (no second live charge) — then a new attempt ⇒ `expired|failed → pending_payment`. A method switch from `pending_payment` creates a new attempt with **no status change**; same method with an unexpired charge returns the existing one. If a superseded attempt is paid anyway (late Pix / boleto), the order records the extra payment, alerts staff and suggests a refund — never silent. Closes `NOC-REMEDIATE[commerce-regenerate-payment]` + `[commerce-gateway-cancel]`.
+- **Fiscal purge (D30):** job `commerce_fiscal_purge` (daily) calls `purge_expired_fiscal_retention`. Closes `NOC-REMEDIATE[commerce-fiscal-purge-schedule]`.
+- **Invoices (D36/D37):** on `→ paid`, if `auto_issue_invoices`, enqueue (jobs worker) one invoice per tax treatment present: `service_nfse` → `nfse`, `goods_nfe` → `nfe`; `rights_receipt` → none here (P5 receipt/certificate); `none` → none. On `authorized`, copy PDF + XML into the private bucket. Full refund or lost chargeback ⇒ enqueue cancel; a provider refusal (cancel window) records `rejection` + alerts staff.
+- **NFS-e mode (D37):** `tax_regime ∈ {mei, simples}` ⇒ forced `nacional`; `municipal` ⇒ 422 `nfse_nacional_obrigatorio`. Other regimes default `municipal` and switch only via the cutover endpoint (D19; `KB § CONTEXT/PATTERNS/architect/approved-cutover.md`); the rollback to `municipal` during `validation_until` (default +60 days) is org-admin only and recorded in `nfse_cutover`.
+- **Finance bridge (slice B owns it, not D):** through the `FinanceBooking` seam (§3.5) only — `→ paid` (`confirmed`) ⇒ `book_receivable`; `charge_paid/received` (or gateway sync) ⇒ `book_settlement(kind=payment)` with net + fee, **per installment credit for cards** (cash is booked when money is available, not when the card is approved); each `done` refund / lost chargeback ⇒ `book_settlement(kind=refund, external_ref=<refund id>)`.
+
+### 2.5 Staff API additions (org admin unless marked "staff")
+| Method + path | Body | Returns `data` |
+|---|---|---|
+| `GET /api/commerce/orders/{id}` (staff) | — | order + `charges`, `refunds`, `invoices`, `reminders` |
+| `POST /api/commerce/orders/{id}/refunds` | `{amount_cents?, reason}` + header `Idempotency-Key` | refund (422 `valor_excede_saldo`, 409 `pedido_nao_reembolsavel` / `estorno_em_andamento`, 502 `estorno_falhou`) |
+| `POST /api/commerce/orders/{id}/invoices` | `{kind}` | invoice (issue, or retry a rejected one) |
+| `POST /api/commerce/invoices/{id}/cancel` | `{reason}` (≥15 chars) | invoice |
+| `GET /api/commerce/fiscal` (staff) · `PUT /api/commerce/fiscal` | fiscal fields + `expected_version` | fiscal view — never includes provider tokens (422 `nfse_nacional_obrigatorio`) |
+| `POST /api/commerce/fiscal/certificate` | multipart `.pfx` (**≤ 64 KB**) + `password` (≤ 128 chars) | `{certificate_valid_until, certificate_cnpj}`. The `.pfx` is opened locally (`cryptography` pkcs12) to read CNPJ + expiry; CNPJ ≠ store CNPJ ⇒ 422 `certificado_cnpj_divergente` **before** anything is sent; bad file/password ⇒ 422 `certificado_invalido` (generic). Then forwarded; never persisted (D38) |
+| `POST /api/commerce/fiscal/nfse-cutover` | `{confirm: "MIGRAR PARA NFS-E NACIONAL"}` | fiscal view |
+| `POST /api/commerce/fiscal/nfse-cutover/rollback` | `{confirm: "VOLTAR PARA NFS-E MUNICIPAL"}` | fiscal view (only within `validation_until`) |
+
+### 2.6 Storefront API additions (public)
+- `POST /api/storefront/checkout/quote` adds `installment_options: [{count, installment_cents, total_cents, interest_free}]` (card only).
+- `POST /api/storefront/checkout` adds `installments: int = 1` (422 `parcelamento_invalido`).
+- `POST /api/storefront/orders/{token}/payment` `{payment_method, installments?}` ⇒ `{status, checkout_url?, pix_qr?, expires_at}` — rules in §2.4; otherwise 409 `pedido_nao_pagavel`.
+- Invoice webhook `POST /api/webhooks/invoices/{provider}/{org_id}`: per-org token in a **header** (never the query string), constant-time compare, fail-closed when unset; the `ref` must belong to `{org_id}`; inbox key `(provider, ref + ":" + status)`; the handler then calls `get(kind, ref)` and trusts only that (never the body's status / URLs).
+
+---
+
+## 3 · Finance organ (`noctusai_lib.domain.finance`, new) — slice C (model, service, API) + slice D (import, reconciliation, export)
+
+Product-agnostic. `FinanceConfig(schema, table_prefix="fin_", org_id_expr=...)`; `finance_migration(cfg, schema) -> str` rendered into each consumer's migration + parity test. Router factory `make_finance_router(cfg, auth_dependency, admin_dependency)` at `/api/finance`. igig's later migration keeps its `fatura`/`fatura_item` (receivable + line items) and books one receivable per fatura (`source_ref = fatura.id`).
+
+### 3.1 Enums
+`AccountKind` = `checking` · `savings` · `cash` · `gateway` · `credit_card` · `investment` · `EntryDirection` = `payable` · `receivable` · `EntryStatus` = `open` · `partial` · `paid` · `cancelled` (`overdue` **computed on read**) · `CategoryDirection` = `income` · `expense` · `transfer` · `Frequency` = `daily` · `weekly` · `biweekly` · `monthly` · `bimonthly` · `quarterly` · `semiannual` · `annual` · `EntrySource` = `manual` · `recurrence` · `installment` · `commerce_order` · `import` · `external` · `SettlementKind` = `payment` · `refund` · `LedgerOrigin` = `settlement` · `fee` · `transfer` · `adjustment` · `opening` · `StatementFormat` = `ofx` · `csv` · `MatchStatus` = `unmatched` · `suggested` · `matched` · `ignored`.
+
+### 3.2 Tables
+| Table | Key columns |
+|---|---|
+| `fin_accounts` | `id` · `name` · `kind` · `bank_code` · `agency` · `number` · `opening_balance_cents` · `opening_date` · `gateway` · `active` · unique (org, `gateway`) where `kind='gateway'` |
+| `fin_categories` | `id` · `parent_id` · `name` · `direction` · `is_default` · `active` · unique (org, parent, lower(name)); defaults seeded per org on first use |
+| `fin_cost_centers` | `id` · `code` (unique per org) · `name` · `active` |
+| `fin_entries` | `id` · `direction` · `status` · `description` · `counterparty_name` · `counterparty_doc` (CPF/CNPJ — LGPD, see §3.3) · `category_id` · `cost_center_id` · `expected_account_id` · `competence_month` (day 1) · `due_date` · `amount_cents` (>0) · `settled_cents` · `source` · `source_ref` (unique per org+source when not null) · `recurrence_id` · `installment_group_id` · `installment_n` · `installment_total` · `notes` · timestamps |
+| `fin_recurrences` | `id` · `template` jsonb · `frequency` · `next_date` · `end_date` · `active` — generation idempotent on (`recurrence_id`, `due_date`) |
+| `fin_settlements` | `id` · `entry_id` · `account_id` · `kind` · `settled_on` · `amount_cents` (>0) · `fee_cents` (≥0) · `method` · `external_ref` (gateway payment id for payments, refund id for refunds) · `statement_line_id` · `created_by` · `reversed_at` · `reversed_by` · `reversal_reason` — partial unique (`kind`, `external_ref`) where not null. **Never deleted**: a reversal sets `reversed_*` and books opposite ledger rows |
+| `fin_ledger` | `id` · `account_id` · `occurred_on` · `direction` (`in`·`out`) · `amount_cents` (>0) · `origin` · `settlement_id` · `transfer_group` · `reverses_id` · `description` · unique (`settlement_id`, `origin`) where `settlement_id` not null and `reverses_id` is null |
+| `fin_statement_imports` | `id` · `account_id` · `format` · `filename` · `sha256` (unique per account; 409 `extrato_ja_importado` never reveals other accounts) · `period_start` · `period_end` · `imported_by` · `at` |
+| `fin_statement_lines` | `id` · `import_id` · `account_id` · `posted_on` · `amount_cents` (signed) · `description` · `fitid` (unique per account; CSV: hash of account + date + amount + description + **line position**) · `match_status` · `ledger_id` (unique when not null) · `suggested_entry_id` |
+| `fin_attachments` | `id` · `entry_id` · `storage_path` (server-generated, org-prefixed, via `noctusai_lib.integrations.storage`) · `filename` · `content_type` · `size_bytes` · `uploaded_by` · `at` |
+| `fin_gateway_sync` | `account_id` PK · `cursor` · `last_synced_at` · `last_error` |
+
+### 3.3 Rules
+- Installments by integer division; the last absorbs the remainder.
+- `settled_cents` = Σ unreversed payment − Σ unreversed refund settlements; status recomputed (`open` / `partial` / `paid`). A settlement books ledger rows: net on the account (`settlement`) + `fee` `out` when `fee_cents > 0`.
+- Every finance write checks that referenced ids (`account_id`, `category_id`, `cost_center_id`, `entry_id`) belong to the caller's org — beyond RLS.
+- Transfers = two ledger rows sharing `transfer_group`; never an entry.
+- Cash flow = realized (ledger) + projected (open entries by `due_date`); DRE by `competence_month` × category tree; aging = overdue receivables by counterparty.
+- Cancelling an entry with unreversed settlements ⇒ 409 `lancamento_com_baixa`.
+- **LGPD:** `counterparty_doc` is masked in lists and CSV exports (`***.456.789-**`) unless the caller is org admin; flagged via `noctus.dev.lgpd_flag`; kept as a fiscal record under the D30 retention rule; a commerce privacy deletion does not erase finance rows of paid orders (art. 16 II), mirroring D30.
+
+### 3.4 API (`/api/finance`; reads = staff, writes + exports = org admin)
+| Method + path | Notes |
+|---|---|
+| `GET/POST /accounts` · `PATCH …/{id}` · `GET …/{id}/balance?on=` | |
+| `GET/POST /categories` · `PATCH/DELETE …/{id}` | in use ⇒ 409 `categoria_em_uso` |
+| `GET/POST /cost-centers` · `PATCH …/{id}` | |
+| `GET /entries?direction=&status=&overdue=&from=&to=&category_id=&cost_center_id=&q=&page=` · `POST` · `GET/PATCH …/{id}` · `POST …/{id}/cancel` | `POST` with `installments: n` creates the group |
+| `POST /entries/{id}/settlements` · `POST /settlements/{id}/reverse {reason}` | |
+| `GET/POST /recurrences` · `PATCH …/{id}` | job `finance_generate_recurrences` (daily) |
+| `POST /transfers` | |
+| `GET /reports/cashflow?…` · `GET /reports/dre?…` · `GET /reports/aging` | |
+| `POST /statements` (multipart `file` ≤ **5 MB**, ≤ 50k lines, checked before parsing; `account_id`) · `GET /statements/{id}/lines` · `POST /statement-lines/{id}/match {entry_id}` · `POST …/{id}/ignore` | OFX 2.x via **`defusedxml`** (DTD/entities forbidden); OFX 1.x SGML via our own bounded parser; CSV with a column map. Auto-suggest: same amount, ±3 days, same direction. **Match order:** link to an unreconciled `fin_ledger` row first (no new money); create a settlement only when the entry is still open (fixes erp-imobiliario's never-paid defect without double-booking what commerce or gateway sync already settled) |
+| `POST /accounts/{id}/gateway-sync` | pulls `list_balance_transactions` into the gateway account; rows not already booked by the commerce bridge listed for review; job `finance_gateway_sync` (every 6 h; failures in `last_error`, retried next tick) |
+| `GET/POST /entries/{id}/attachments` · `DELETE /attachments/{id}` | 10 MB cap; pdf/png/jpg/xml validated by **magic bytes** (`media.validate_upload` precedent); served `Content-Disposition: attachment` via signed URL ≤ 10 min |
+| `GET /exports/entries.csv?…` · `GET /exports/ledger.ofx?account_id=&from=&to=` | CSV cells starting with `= + - @ \t \r` get a `'` prefix; row cap 50k; org-scoped |
+
+### 3.5 Seam for other organs
+`FinanceBooking` Protocol (`domain/finance/booking.py`): `book_receivable(org_id, *, source, source_ref, description, counterparty_name, counterparty_doc, amount_cents, competence_month, due_date, category_hint) -> entry_id` (idempotent on `source`+`source_ref`) · `book_settlement(org_id, *, source, source_ref, kind, external_ref, amount_cents, fee_cents, settled_on, account_hint="gateway:asaas")` (idempotent on `kind`+`external_ref`). `NoopFinanceBooking` for products without finance; `make_finance_booking(...)` factory.
+
+---
+
+## 4 · Invoice organ (`noctusai_lib.integrations.invoices`, new) — slice E
+
+`InvoiceProvider` Protocol + `FakeInvoiceProvider` + `FocusNFeInvoiceProvider` (`httpx`, Basic auth) + `make_invoice_provider(provider, use_fake, ...)` (fake-or-refuse). `types.py` owns `InvoiceKind` (`nfe`·`nfse`), `InvoiceStatus` (`processing`·`authorized`·`rejected`·`cancelled`·`error`), `NfseMode` (`nacional`·`municipal`). Lifted from `products/adconnect/backend/app/services/nfe_service.py` with its defects fixed: lookups/cancel by **our `ref`**; **no silent `pendente`** (unknown status ⇒ `InvoiceProviderError(code="unknown_status")`, 404 ⇒ `InvoiceNotFound`); **no `exc` logging of HTTP errors** (adconnect `nfe_service.py:293,352,374` log raw exceptions).
+
+| Method | Returns |
+|---|---|
+| `verify_credentials()` | None / raises |
+| `ensure_company(CompanyRequest)` | `ProviderCompany{ref, cnpj, nfse_mode, nfe_enabled, nfse_enabled, company_token}` — Focus `POST/PUT /v2/empresas`; `nfse_mode` maps to `habilita_nfsen_*` vs `habilita_nfse` |
+| `upload_certificate(company_ref, *, pfx: bytes, password: str)` | `CertificateInfo{valid_until, subject_cnpj}` — bytes + password live only for the call |
+| `set_nfse_mode(company_ref, mode)` | `ProviderCompany` |
+| `issue(InvoiceRequest)` | `InvoiceResult` — idempotent on `ref`; NF-e `/v2/nfe`, municipal NFS-e `/v2/nfse`, NFS-e Nacional `/v2/nfsen` |
+| `get(kind, ref)` · `cancel(kind, ref, *, reason)` | `InvoiceResult` |
+| `fetch_document(url) -> bytes` | for the private-bucket copy |
+| `parse_webhook(headers, body, *, token)` | `InvoiceEvent{ref, kind, status_hint, raw}` — header token, constant-time, fail-closed; `status_hint` is never authoritative (§2.6) |
+
+Types: `CompanyRequest{cnpj, legal_name, trade_name, inscricao_municipal, inscricao_estadual, tax_regime, address, email, nfse_mode, enable_nfe}` · `InvoiceRequest{ref, kind, company_ref, issued_on, competence, taker{name, doc, email, address}, items[{description, quantity, unit_cents, total_cents, service_code, nbs_code, cfop, ncm, c_class_trib}], total_cents, iss_rate_bps, iss_retained, ibs_cbs: dict | None, additional_info}` · `InvoiceResult{ref, kind, status, number, series, access_key, verification_code, pdf_url, xml_url, rejection_reasons, raw}` (`raw` scrubbed of tokens).
+**Credentials:** the Focus account token is platform tier (`resolve_credential("focusnfe_token")`); per-company tokens from `/v2/empresas` are stored encrypted per org (`noctusai_lib.security.encrypted_tokens` + `credential_resolvers`), never returned by any API, rotated on CNPJ change.
+**Production guard (D36):** `producao` requires BOTH env `FOCUSNFE_ALLOW_PRODUCTION=1` AND a platform-tier credential `focusnfe_environment=producao`; the environment comes from config, never from a request; the adapter refuses a mismatch between token tier and environment.
+**Tests:** Fake round-trip (issue → authorized → cancel; rejection; idempotent re-issue) · Focus adapter on recorded `httpx.MockTransport` fixtures · a test asserting no log record or exception payload contains the certificate bytes, password or tokens · one opt-in live homologação test (skipped without a token). `security` agent reviews before integrate.
+
+---
+
+## 5 · Frontend organ additions (`@noctusai/lib`) — slice F
+`commerce/`: `RefundDialog` · `OrderMoneyPanel` (charges, refunds, invoices, reminders) · `InstallmentsSettings` · `FiscalSettingsForm` (regime-aware NFS-e mode, certificate upload, cutover + rollback danger dialogs with typed phrase) · storefront `InstallmentPicker` + order-page "gerar novo pagamento". `finance/` (new organ): `createFinanceHooks(apiBase)` · `EntriesTable` · `EntryForm` · `SettleDialog` · `AccountsManager` · `CategoryTree` · `CostCenters` · `CashflowChart` · `DreTable` · `AgingTable` · `StatementImport` + `ReconcileList` · `AttachmentsField` · `ExportMenu`. Two-signal loading everywhere; admin-only actions hidden for staff (server still enforces).
+
+## 6 · Host product `products/commerce` — slice F
+New migration (number via `noctus.dev.next_migration_number`) with the P4 commerce tables + `finance_migration` output + the jobs table if not present + parity tests; mount `make_finance_router`; register scheduler jobs `commerce_expire_orders`, `commerce_expiry_reminders`, `commerce_dispute_poll`, `commerce_fiscal_purge`, `finance_generate_recurrences`, `finance_gateway_sync` (`app/scheduler.py` + lifespan) and the jobs worker for invoices; pages `/admin/financeiro/*` + `status_pagina` rows (`desenvolvimento`); settings `FOCUSNFE_TOKEN`, `INVOICES_ALLOW_FAKE` (environment from the platform credential, §4).
+
+## 7 · Open points
+1. **Owner — buyer interest above the interest-free count (D33):** proposed platform default **1.99 % a.m.** (`installment_interest_monthly_bps = 199`), editable per store; confirmed before slice F ships.
+2. **Slice A — Asaas "dispute lost" signal** (§1.3).
+
+## 8 · Wave plan + collisions
+Wave 1 = A (`integrations/payments/**`), C (`domain/finance/**`, model + service + API), E (`integrations/invoices/**`) — file-disjoint. Shared generated files (KB counts, `catalog.md`, seed barrels / `__init__` exports) may collide: the tech-lead re-runs gates on the merged tip. Wave 2 = B (commerce money states + finance bridge) and D (statement import, reconciliation, gateway sync, exports — inside `domain/finance/**` new files). Wave 3 = F.

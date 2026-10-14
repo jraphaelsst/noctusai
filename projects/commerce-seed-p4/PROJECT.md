@@ -4,7 +4,7 @@
 
 - **Created:** 2026-10-13
 - **Last updated:** 2026-10-13
-- **Status:** 🟡 Phase 0 — decisions recorded (D32–D40); contract-first next, then wave 1
+- **Status:** 🟡 Phase 0 — decisions D32–D40 + CONTRACT.md (architect + security reviewed); wave 1 next
 - **Owner / stakeholders:** noc owner · tech-lead session · architect + security (advisors)
 - **Related docs:** roadmap · `projects/commerce-seed-p3/CONTRACT.md` · `KB § PATTERNS/architect/approved-cutover.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `INTEGRATIONS/payments.md`
 - **Project slug:** `commerce-seed-p4` (cross-product seed work → `projects/`)
@@ -44,11 +44,11 @@ P4 makes commerce handle money end to end: the payments organ gains refunds, ins
 | Wave | Slice | Scope | Owner |
 |---|---|---|---|
 | 0 | **C0 contract** | `CONTRACT.md`: payments Protocol additions, order state machine (+`contestado`, `expirado`, partial refund), finance tables + API, invoice Protocol + `nfse_mode` | tech-lead |
-| 1 | **A payments organ** | `refund_charge` (full/partial), `get_payment`, installments on one-off checkout, chargeback events (requested/dispute/reversal) as their own kinds, one-off expiry; split `external_reference` from order id; Fake + Asaas + Stripe parity | backend |
+| 1 | **A payments organ** | `ChargeOperations` (get/refund full+partial/cancel/balance feed), installments on one-off checkout, `GatewayEvent.detail` + additive kinds (CONTRACT §1), one-off expiry; split `external_reference` from order id; Fake + Asaas + Stripe parity | backend |
 | 1 | **C finance organ** | `domain/finance` SQL generator + service: accounts, categories, cost centers, payables/receivables with recurrence + installments, ledger, attachments | backend |
 | 1 | **E invoice organ** | `integrations/invoices`: Protocol + Fake + Focus (NF-e, municipal NFS-e, NFS-e Nacional, company + cert forward), webhooks, `nfse_mode` per org with approved cutover | backend + security review |
 | 2 | **B commerce money states** | refunds table + history, `contestado`, `expirado` + stock release, regenerate payment, gateway cancel, reminder + fiscal-purge jobs on the seed scheduler | backend |
-| 2 | **D reconciliation + import/export** | Asaas payout reconciliation, OFX/CSV import + matching, CSV/OFX export, paid orders → receivables | backend |
+| 2 | **D reconciliation + import/export** | gateway sync, OFX/CSV import + matching, CSV/OFX export (paid orders → receivables is slice B via `FinanceBooking`) | backend |
 | 3 | **F host + pages** | `products/commerce` wiring + `/admin/financeiro`, refunds UI, installments settings, invoices + certificate upload + cutover button | frontend + backend |
 
 Exit criteria (roadmap P4): Asaas sandbox e2e; invoice Fake round-trip; Focus homologação round-trip.
