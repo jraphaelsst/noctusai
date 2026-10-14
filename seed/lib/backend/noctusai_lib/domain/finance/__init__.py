@@ -15,8 +15,14 @@ Mount it from a product:
                                            resolve_context=..., get_db=..., get_storage=...))
     booking = make_finance_booking("supabase", db=..., cfg=cfg)   # the seam other organs book through
 
-Slice D (wave 2) adds, in new files of this package: statement import + reconciliation,
-gateway sync and exports. Their tables are already in `finance_migration`.
+Slice D adds (new files): statement import (`statements`, `ofx`, `csv_import`), reconciliation
+(`matching`), gateway sync (`gateway_sync`) and exports (`exports`), served by a SECOND router the
+host mounts next to the first:
+
+    app.include_router(make_finance_reconciliation_router(cfg, auth, admin, resolve_context=..., get_db=...,
+                                                          get_storage=..., get_charge_operations=...))
+    max_body_path_overrides[STATEMENT_UPLOAD_PATH_PATTERN] = STATEMENT_UPLOAD_MAX_BYTES
+    register_gateway_sync(cfg, get_db=..., operations_for=...)        # job `finance_gateway_sync`, every 6 h
 
 Contract: `projects/commerce-seed-p4/CONTRACT.md §3`. Jobs the host registers:
 `finance_generate_recurrences` (daily, `recurrences.generate_due_recurrences`).
@@ -27,9 +33,13 @@ from . import (
     booking,
     categories,
     entries,
+    exports,
+    gateway_sync,
+    matching,
     recurrences,
     reports,
     settlements,
+    statements,
 )
 from .attachments import ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_PATH_PATTERN
 from .booking import (
@@ -42,8 +52,11 @@ from .booking import (
 from .config import FinanceConfig, FinanceContext
 from .entries import mask_doc
 from .errors import FinanceError
+from .gateway_sync import register_gateway_sync, run_gateway_sync_all
 from .recurrences import calcular_proxima_data, generate_due_recurrences
+from .reconciliation_router import make_finance_reconciliation_router
 from .router import make_finance_router
+from .statements import STATEMENT_UPLOAD_MAX_BYTES, STATEMENT_UPLOAD_PATH_PATTERN
 from .sql import APPEND_ONLY_TABLES, FINANCE_TABLES, finance_migration
 from .types import (
     AccountKind,
@@ -79,6 +92,8 @@ __all__ = [
     "LedgerOrigin",
     "MatchStatus",
     "NoopFinanceBooking",
+    "STATEMENT_UPLOAD_MAX_BYTES",
+    "STATEMENT_UPLOAD_PATH_PATTERN",
     "SettlementKind",
     "StatementFormat",
     "SupabaseFinanceBooking",
@@ -88,12 +103,19 @@ __all__ = [
     "calcular_proxima_data",
     "categories",
     "entries",
+    "exports",
     "finance_migration",
+    "gateway_sync",
     "generate_due_recurrences",
     "make_finance_booking",
+    "make_finance_reconciliation_router",
     "make_finance_router",
     "mask_doc",
+    "matching",
     "recurrences",
+    "register_gateway_sync",
     "reports",
+    "run_gateway_sync_all",
     "settlements",
+    "statements",
 ]
