@@ -204,10 +204,8 @@ register_organ(
         migration=_finance_migration,
         migration_header=FINANCE_MIGRATION_HEADER,
         max_body_path_overrides=_finance_overrides,
-        # NOC-REMEDIATE[finance-fe-route]: the FE organ (feat/finance-fe-organ) is not on dev yet; the seed
-        # shell has no manifest-driven route mechanism, so the host adds
-        #   <Route path="/financeiro/*" element={<FinanceOrgan />} />  (lazy, gated by status_pagina)
-        # once `@noctusai/lib` exports it -- 2026-10-14.
+        # FE: the host mounts `<FinanceRoutedPage basePath="/financeiro" api={api} isAdmin={...} />` from
+        # `@noctusai/lib` under this splat route (gated by status_pagina); the organ owns the URL <-> section sync.
         fe_route="/financeiro/*",
         optional_requires=('parties',),
         guard_probes=_guard_probes_loader("finance", "finance_guard_probes"),

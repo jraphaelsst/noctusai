@@ -18,6 +18,8 @@ export { t as financeT, useFinanceT } from './i18n';
 
 export { FinanceShell, FINANCE_SECTIONS, REGISTER_TABS, ACCOUNTANT_TABS, financeSectionFromPath, financeSectionPath } from './FinanceShell';
 export type { FinanceShellProps, FinanceSectionKey, RegisterTab, AccountantTab } from './FinanceShell';
+export { FinanceRoutedPage } from './FinanceRoutedPage';
+export type { FinanceRoutedPageProps } from './FinanceRoutedPage';
 export { FinanceOverview } from './FinanceOverview';
 export type { FinanceOverviewProps } from './FinanceOverview';
 export { EntriesTable } from './EntriesTable';

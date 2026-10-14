@@ -1,33 +1,23 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+/**
+ * Route test: the seed finance organ page mounted at `/financeiro/*` -- the shell renders its section nav, the section
+ * follows the URL (and writes it back), and the page talks to `/api/finance` through the product's `api` client.
+ * The organ's own URL sync is covered in `seed/lib` (`FinanceRoutedPage.test.tsx`); this pins the product wiring.
+ */
+/// <reference types="@testing-library/jest-dom" />
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
-const mockAdmin = vi.fn();
-vi.mock("@/lib/api", () => ({ api: { marker: "api" } }));
-vi.mock("@noctusai/lib/design-system", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@noctusai/lib/design-system")>()),
-  useIsOrgAdmin: () => mockAdmin(),
+const { api } = vi.hoisted(() => ({
+  api: {
+    get: vi.fn((_path: string) => new Promise(() => {})),
+    post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn(), upload: vi.fn(), download: vi.fn(),
+  },
 }));
-vi.mock("@noctusai/lib", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@noctusai/lib")>()),
-  createFinanceHooks: (api: unknown) => ({ api }),
-  FinanceShell: ({
-    isAdmin,
-    section,
-    onSectionChange,
-  }: {
-    isAdmin: boolean;
-    section: string;
-    onSectionChange: (key: string) => void;
-  }) => (
-    <div>
-      <span data-testid="section">{section}</span>
-      <span data-testid="admin">{String(isAdmin)}</span>
-      <button onClick={() => onSectionChange("payable")}>go-payable</button>
-      <button onClick={() => onSectionChange("overview")}>go-overview</button>
-    </div>
-  ),
-}));
+vi.mock("@/lib/api", () => ({ api }));
+vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => true }));
 
 import Financeiro from "../Financeiro";
 
@@ -36,39 +26,41 @@ function Where() {
 }
 
 function renderAt(path: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/financeiro/*" element={<><Financeiro /><Where /></>} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/financeiro/*" element={<><Financeiro /><Where /></>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  api.get.mockClear();
+});
 
 describe("Financeiro route", () => {
-  it("maps the URL segment to the shell section and passes the admin gate", () => {
-    mockAdmin.mockReturnValue(true);
-    renderAt("/financeiro/receber");
-    expect(screen.getByTestId("section").textContent).toBe("receivable");
-    expect(screen.getByTestId("admin").textContent).toBe("true");
-  });
-
-  it("the bare route is the overview; a non-admin gets isAdmin=false", () => {
-    mockAdmin.mockReturnValue(false);
+  it("renders the finance shell navigation at the overview", () => {
     renderAt("/financeiro");
-    expect(screen.getByTestId("section").textContent).toBe("overview");
-    expect(screen.getByTestId("admin").textContent).toBe("false");
+    expect(screen.getByRole("navigation", { name: "Financeiro" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Visão geral" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("section changes write the URL back (and the overview returns to /financeiro)", () => {
-    mockAdmin.mockReturnValue(true);
+  it("follows the URL segment to the matching section and reads from /api/finance", () => {
+    renderAt("/financeiro/receber");
+    expect(screen.getByRole("button", { name: "Contas a receber" })).toHaveAttribute("aria-current", "page");
+    expect(api.get.mock.calls.some(([p]) => String(p).startsWith("/api/finance/"))).toBe(true);
+  });
+
+  it("section changes write the URL back (the overview returns to /financeiro)", () => {
     renderAt("/financeiro/dre");
-    fireEvent.click(screen.getByText("go-payable"));
+    fireEvent.click(screen.getByRole("button", { name: "Contas a pagar" }));
     expect(screen.getByTestId("where").textContent).toBe("/financeiro/pagar");
-    expect(screen.getByTestId("section").textContent).toBe("payable");
-    fireEvent.click(screen.getByText("go-overview"));
+    fireEvent.click(screen.getByRole("button", { name: "Visão geral" }));
     expect(screen.getByTestId("where").textContent).toBe("/financeiro");
   });
 });

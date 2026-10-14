@@ -1,0 +1,33 @@
+name: FinanceRoutedPage
+kind: component
+path: seed/lib/frontend/src/finance/FinanceRoutedPage.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "URL-synced host of the finance organ: owns the URL segment <-> section sync (financeSectionFromPath/financeSectionPath) over react-router-dom, and redirects (replace) an unknown or non-canonical segment to the canonical URL of the section it maps to."
+  - "Props: basePath (splat-route prefix), hooks OR api (built once via createFinanceHooks), isAdmin, isAccountant (UX gates only; the server enforces), optional title/className/now."
+  - "Replaced seven near-identical host pages (commerce, seed, academia-de-reciclagem, agents, igig, core, social-wiring) that differed only in base path, api client and admin source; closes NOC-REMEDIATE[finance-fe-route]."
+  - "Mount under a splat route: <Route path='/financeiro/*' element={<Page/>} />; the page is a one-liner that supplies basePath, api and isAdmin."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "Before this organ only commerce redirected unknown segments; the other hosts silently rendered the overview at a bogus URL."
+
+alternatives_considered:
+  - "Keeping the sync in each host page was rejected: seven copies (N>=3 recurrence rule)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

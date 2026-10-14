@@ -47,11 +47,11 @@ afterEach(cleanup);
 describe("Admin › Financeiro", () => {
   const ROUTES = { "/admin/financeiro/*": <Financeiro /> };
 
-  it("mounts the FinanceShell at the base URL (overview) with its eight sections", async () => {
+  it("mounts the FinanceShell at the base URL (overview) with its nine sections", async () => {
     renderRoutes("/admin/financeiro", ROUTES);
     expect(await screen.findByRole("heading", { name: "Financeiro", level: 1 })).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Financeiro" });
-    expect(nav.querySelectorAll("button")).toHaveLength(8);
+    expect(nav.querySelectorAll("button")).toHaveLength(9);
     expect(screen.getByRole("button", { name: "Visão geral" })).toHaveAttribute("aria-current", "page");
   });
 
