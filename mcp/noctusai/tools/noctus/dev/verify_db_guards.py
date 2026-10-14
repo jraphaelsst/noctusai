@@ -4018,8 +4018,13 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
         probe_id="agent_versions.provider_allowlist",
         guard_name="agent_versions_provider_check",
         migrations=("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
+        # A provider outside the allowlist ALSO fails agent_versions_model_check (the
+        # model list is per provider), and Postgres reports that one first -- so the
+        # probe drops model_check inside its always-rolled-back transaction to prove
+        # provider_check on its own.
         attack_sql=(
             f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    ALTER TABLE {_AGENTS_SCHEMA}.agent_versions DROP CONSTRAINT agent_versions_model_check;\n"
             f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET provider = 'noc-probe-vendor' WHERE id = v_version;"
         ),
         guard_fragment="agent_versions_provider_check",
