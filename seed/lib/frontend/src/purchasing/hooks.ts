@@ -10,8 +10,9 @@
  * every read they can change. A receive also changes stock + payables, so hosts that mount those organs pass
  * `onReceived` to invalidate their own keys (`inventoryKeys.all`, the finance entries key).
  */
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
+import { errorMessage, keep, signals } from '../organ-kit/query';
 import { defaultPurchasingT, type PurchasingTranslate } from './i18n';
 import type {
   PurchaseOrder,
@@ -39,10 +40,6 @@ export const purchasingKeys = {
   settings: ['purchasing', 'settings'] as const,
 };
 
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /** pt-BR copy for the stable backend error codes; falls back to the server message. */
 export function purchasingErrorMessage(err: unknown, t: PurchasingTranslate = defaultPurchasingT): string {
   if (err instanceof ApiError && err.code) {
@@ -51,20 +48,6 @@ export function purchasingErrorMessage(err: unknown, t: PurchasingTranslate = de
   }
   return errorMessage(err);
 }
-
-function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
-  return {
-    data: q.data,
-    error: q.error,
-    isError: q.isError,
-    isPending: q.isPending,
-    refetch: q.refetch,
-    showSkeleton: q.isPending && !q.data && q.fetchStatus !== 'idle',
-    isRefreshing: q.isFetching && !!q.data,
-  };
-}
-
-const keep = <T,>(prev: T | undefined) => prev;
 
 function query(params: object): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {};

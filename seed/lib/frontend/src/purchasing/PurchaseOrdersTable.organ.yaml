@@ -15,7 +15,7 @@ known_facts:
 errors_encountered: []
 
 drifts_surfaced:
-  - "controls.tsx re-exports inventory/controls (ListSkeleton / RetryError / RefreshingBar now serve commerce + inventory + parties + purchasing): lift into design-system and repoint only the controls files."
+  - "ListSkeleton / RetryError / RefreshingBar come from organ-kit (shared by every organ)."
 
 alternatives_considered:
   - "Per-product copies were rejected (replication-to-seed symmetry): built once in the seed."

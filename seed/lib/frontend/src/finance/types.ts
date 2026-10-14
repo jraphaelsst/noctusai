@@ -38,7 +38,7 @@ export const FREQUENCIES = [
 ] as const;
 export type Frequency = (typeof FREQUENCIES)[number];
 
-export const ENTRY_SOURCES = ['manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external'] as const;
+export const ENTRY_SOURCES = ['manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing'] as const;
 export type EntrySource = (typeof ENTRY_SOURCES)[number];
 
 export const SETTLEMENT_KINDS = ['payment', 'refund'] as const;
@@ -135,6 +135,8 @@ export interface FinanceEntry {
   category_id: string | null;
   cost_center_id: string | null;
   expected_account_id: string | null;
+  /** Link to the parties organ (null when not linked / not mounted); `counterparty_*` stays the snapshot. */
+  party_id?: string | null;
   competence_month: string;
   due_date: string;
   amount_cents: number;
@@ -256,6 +258,7 @@ export interface EntryInput {
   category_id?: string | null;
   cost_center_id?: string | null;
   expected_account_id?: string | null;
+  party_id?: string | null;
   competence_month?: string | null;
   due_date: string;
   amount_cents: number;

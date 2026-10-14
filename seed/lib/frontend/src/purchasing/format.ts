@@ -1,5 +1,5 @@
 /** Purchasing display helpers. Quantities/money parsing reuse the inventory + commerce seams (one answer per rule). */
-import { formatCents, parseMoneyToCents } from '../commerce/format';
+import { formatCents, parseMoneyToCents } from '../organ-kit';
 import { formatQty, parseQty } from '../inventory/format';
 
 export { formatCents, formatQty, parseMoneyToCents, parseQty };

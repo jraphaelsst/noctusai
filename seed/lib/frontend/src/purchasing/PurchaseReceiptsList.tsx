@@ -1,8 +1,11 @@
 /** `<PurchaseReceiptsList/>` — receipts (all, or one order's) with their landed amounts and posting state (stock + payables). */
 import * as React from 'react';
-import { Badge, Button, EmptyState, FormError, ListSkeleton, RefreshingBar, RetryError } from './controls';
+import { EmptyState, FormError, ListSkeleton, RefreshingBar, RetryError } from '../organ-kit';
+import { Badge } from '../design-system/ui/Badge';
+import { Button } from '../design-system/ui/Button';
 import { formatCents, formatDate } from './format';
-import { errorMessage, purchasingErrorMessage } from './hooks';
+import { errorMessage } from '../organ-kit';
+import { purchasingErrorMessage } from './hooks';
 import { defaultPurchasingT } from './i18n';
 import type { PurchasingOrganProps } from './shared';
 

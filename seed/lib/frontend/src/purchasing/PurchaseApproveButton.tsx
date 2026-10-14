@@ -5,7 +5,8 @@
  * a button the user can never use, and a refusal is rendered with its stable code's pt-BR copy.
  */
 import * as React from 'react';
-import { Button, FormError } from './controls';
+import { FormError } from '../organ-kit';
+import { Button } from '../design-system/ui/Button';
 import { formatCents } from './format';
 import { purchasingErrorMessage } from './hooks';
 import { defaultPurchasingT } from './i18n';

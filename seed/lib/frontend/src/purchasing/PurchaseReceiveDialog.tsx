@@ -5,7 +5,9 @@
  * the warning is shown with a repost button instead of pretending success.
  */
 import * as React from 'react';
-import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, Field, FormError, Input, Textarea } from './controls';
+import { Field, FormError, Input, Textarea } from '../organ-kit';
+import { Button } from '../design-system/ui/Button';
+import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../design-system/ui/Dialog';
 import { formatQty, newIdempotencyKey, parseQty, qtyToWire } from './format';
 import { purchasingErrorMessage } from './hooks';
 import { defaultPurchasingT } from './i18n';

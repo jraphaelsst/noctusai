@@ -1,8 +1,10 @@
 /** `<PurchaseOrdersTable/>` — purchase orders with status filter, supplier/number search and paging. */
 import * as React from 'react';
-import { Badge, Button, EmptyState, Input, ListSkeleton, RefreshingBar, RetryError, Select } from './controls';
+import { EmptyState, Input, ListSkeleton, RefreshingBar, RetryError, Select } from '../organ-kit';
+import { Badge } from '../design-system/ui/Badge';
+import { Button } from '../design-system/ui/Button';
 import { formatCents, formatDate } from './format';
-import { errorMessage } from './hooks';
+import { errorMessage } from '../organ-kit';
 import { defaultPurchasingT } from './i18n';
 import type { PurchasingOrganProps } from './shared';
 import { PURCHASE_ORDER_STATUSES, type PurchaseOrder, type PurchaseOrderStatus } from './types';

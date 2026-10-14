@@ -4,9 +4,8 @@ RPC refusals (raised inside Postgres, returned as `{"status": "refused", "code"}
 """
 from __future__ import annotations
 
-from typing import Optional
-
-from noctusai_lib.primitives.exceptions import AppException, NotFoundError
+from noctusai_lib.domain._organ_common import OrganError, error_factories, not_found
+from noctusai_lib.primitives.exceptions import AppException
 
 PEDIDO_INEXISTENTE = "pedido_inexistente"
 PEDIDO_NAO_EDITAVEL = "pedido_nao_editavel"
@@ -74,33 +73,15 @@ _CONFLICT = {
 }
 
 
-class PurchasingError(AppException):
+class PurchasingError(OrganError):
     """A purchasing refusal carrying its stable machine `code`."""
 
-    def __init__(
-        self, code: str, message: str, status_code: int = 422, *, field: Optional[str] = None, details: Optional[dict] = None
-    ) -> None:
-        merged = dict(details or {})
-        if field:
-            merged["field"] = field
-        super().__init__(code=code, message=message, status_code=status_code, details=merged)
 
-
-def invalid(field: str, message: str, code: str = "invalid") -> PurchasingError:
-    return PurchasingError(code, message, 422, field=field)
-
-
-def conflict(code: str, message: str, **details) -> PurchasingError:
-    return PurchasingError(code, message, 409, details=details)
+invalid, conflict = error_factories(PurchasingError)
 
 
 def forbidden(code: str, message: str) -> PurchasingError:
     return PurchasingError(code, message, 403)
-
-
-def not_found(what: str) -> NotFoundError:
-    """The platform's 404 -- a foreign-org id is indistinguishable from a missing one."""
-    return NotFoundError(what)
 
 
 def from_refusal(payload: dict) -> AppException:

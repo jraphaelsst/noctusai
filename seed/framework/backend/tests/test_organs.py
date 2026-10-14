@@ -103,7 +103,7 @@ def test_create_product_app_organs_seam_mounts_routers_and_covers_upload_routes(
 
 
 def test_every_registered_organ_header_prefixes_its_generated_migration():
-    assert {"finance", "items", "commerce_money", "commerce_fiscal", "jobs"} <= set(ORGAN_REGISTRY)
+    assert {"finance", "items", "commerce_money", "commerce_fiscal", "jobs", "parties", "inventory", "purchasing"} <= set(ORGAN_REGISTRY)
     for name, spec in ORGAN_REGISTRY.items():
         assert organ_migration_sql(name, "erp").startswith(spec.migration_header), name
 
@@ -138,3 +138,96 @@ def test_mount_finance_passes_default_tax_regime_to_the_router():
         default_tax_regime=lambda ctx: "mei",
     )
     assert len(organ.routers) == 2
+
+
+# -- parties / inventory / purchasing ------------------------------------------------------------------
+
+
+def _app_of(organ):
+    from noctusai_lib.primitives.exceptions import AppException, app_exception_handler
+
+    app = FastAPI()
+    app.add_exception_handler(AppException, app_exception_handler)
+    routers, _ = mount_organs([organ])
+    for r in routers:
+        app.include_router(r)
+    return app
+
+
+def test_mount_parties_routes_overrides_and_strict_401():
+    from noctusai_lib.domain.parties import IMPORT_UPLOAD_MAX_BYTES, IMPORT_UPLOAD_PATH_PATTERN
+    from noctusai_seed.organs import mount_parties
+
+    organ = mount_parties(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
+    assert organ.max_body_path_overrides == {IMPORT_UPLOAD_PATH_PATTERN: IMPORT_UPLOAD_MAX_BYTES}
+    app = _app_of(organ)
+    assert any(r.path == IMPORT_UPLOAD_PATH_PATTERN for r in app.routes)
+    client = TestClient(app)
+    assert client.get("/api/parties").status_code == 401
+    assert client.post("/api/parties", json={}).status_code == 401
+    # a host that mounts elsewhere gets the override re-derived from ITS prefix
+    moved = mount_parties(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(), prefix="/api/pty")
+    assert list(moved.max_body_path_overrides) == ["/api/pty/import"]
+
+
+def test_mount_inventory_routes_and_strict_401():
+    from noctusai_seed.organs import mount_inventory
+
+    organ = mount_inventory(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
+    assert organ.max_body_path_overrides == {}
+    client = TestClient(_app_of(organ))
+    for method, path in (("GET", "/api/inventory/balances"), ("POST", "/api/inventory/receive"), ("GET", "/api/inventory/warehouses")):
+        assert client.request(method, path, json={} if method == "POST" else None).status_code == 401, path
+
+
+def test_mount_rejects_a_cfg_for_another_schema():
+    from noctusai_lib.domain.inventory import InventoryConfig
+    from noctusai_seed.organs import mount_inventory
+
+    with pytest.raises(ValueError):
+        mount_inventory(schema="erp", cfg=InventoryConfig(schema="other"), auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
+
+
+ORDER_ID = "44444444-4444-4444-8444-444444444444"
+
+
+def _purchasing_client(*, role: str, grants=(), threshold=None, total=100_000):
+    from noctusai_lib.domain.permissions import FakePermissionGrantRepository
+    from noctusai_lib.testing import MockSupabaseClient
+    from noctusai_seed.organs import mount_purchasing
+
+    core = MockSupabaseClient()
+    core.set_table_data("noctus_users", [{"id": "u1", "org_id": "org-1", "org_role": role, "role": "user"}])
+    db = MockSupabaseClient()
+    db.table("pur_orders").insert({"id": ORDER_ID, "org_id": "org-1", "number": 1, "status": "draft", "supplier_name": "F", "total_cents": total, "goods_cents": total}).execute()
+    if threshold is not None:
+        db.table("pur_settings").insert({"org_id": "org-1", "approval_threshold_cents": threshold}).execute()
+    db.set_rpc_data("pur_transition", {"status": "ok", "order_id": ORDER_ID})
+    organ = mount_purchasing(
+        schema="erp", auth_dependency=_auth, get_admin_client=lambda: db, get_core_client=lambda: core,
+        permissions=FakePermissionGrantRepository([("u1", "purchasing.approve")] if grants else []),
+    )
+    return TestClient(_app_of(organ))
+
+
+APPROVE = f"/api/purchasing/orders/{ORDER_ID}/approve"
+H = {"Authorization": "Bearer x"}
+
+
+def test_mount_purchasing_strict_401_on_every_route_and_admin_gates_the_writes():
+    client = _purchasing_client(role="member")
+    for method, path in (("GET", "/api/purchasing/orders"), ("GET", "/api/purchasing/settings"), ("POST", APPROVE),
+                         ("POST", "/api/purchasing/orders"), ("PUT", "/api/purchasing/settings"), ("GET", "/api/purchasing/receipts")):
+        assert client.request(method, path, json={} if method in ("POST", "PUT") else None).status_code == 401, path
+    assert client.post("/api/purchasing/orders", json={}, headers=H).status_code == 403  # member: not admin
+    assert client.get("/api/purchasing/orders", headers=H).status_code == 200
+
+
+def test_purchasing_approval_comes_from_the_selected_org_role_and_the_permission_grant():
+    assert _purchasing_client(role="member").post(APPROVE, headers=H).status_code == 403            # staff, no grant
+    assert _purchasing_client(role="member", grants=(1,)).post(APPROVE, headers=H).status_code == 200  # grant holder, not admin
+    assert _purchasing_client(role="owner").post(APPROVE, headers=H).status_code == 200            # admin, no threshold
+    # above the org threshold only the permission holder approves
+    assert _purchasing_client(role="owner", threshold=50_000).post(APPROVE, headers=H).status_code == 403
+    assert _purchasing_client(role="owner", grants=(1,), threshold=50_000).post(APPROVE, headers=H).status_code == 200
+    assert _purchasing_client(role="owner", threshold=500_000).post(APPROVE, headers=H).status_code == 200
