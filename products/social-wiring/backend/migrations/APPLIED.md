@@ -606,3 +606,7 @@ Authored 2026-10-14 (Lais slice W1, contract `projects/lais/specs/julia-agent-co
 ## 259 — status_pagina: Lais › Agente (`lais_agente`) — NOT APPLIED
 
 Authored 2026-10-14 (Lais slice W2). One `status_pagina` row (`lais_agente`) copying the status of `whatsapp_chat` at apply time (same rule as 252), so the new `/lais/agente` nav item shows. Idempotent (`ON CONFLICT DO NOTHING`), no CHECK/UNIQUE/trigger. Apply with (or before) the image that ships the page; until then the nav item is simply hidden (the route itself still works by URL).
+
+## 265 — condomínios master list — NOT APPLIED
+
+Authored 2026-10-14. Adds `condominios`, `condominio_aliases` (unique `(org_id, alias_normalizado)`), append-only `condominio_eventos` (trigger refuses UPDATE/DELETE), the `condominio_imoveis` resolution view (`security_invoker`; manual `imovel_dados.empreendimento_manual` wins over the Vista mirror) and the `status_pagina` row `condominios` = `producao`. RLS: own-org SELECT + service_role; no authenticated writes (the API writes through the admin client). Additive + idempotent; nothing on the Vista mirror is written. Apply BEFORE deploying the image that mounts `/api/condominios`; until applied the page's calls 500 (tables absent) and the nav item is hidden (no status_pagina row). After applying, an admin clicks "Gerar sugestões" once.

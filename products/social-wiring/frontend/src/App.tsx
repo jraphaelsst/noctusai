@@ -35,6 +35,7 @@ const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
 const Custos = lazyWithReload(() => import("@/pages/Custos"));
 const Financeiro = lazyWithReload(() => import("@/pages/Financeiro"));
 const Permutas = lazyWithReload(() => import("@/pages/Permutas"));
+const Condominios = lazyWithReload(() => import("@/pages/Condominios"));
 const Settings = lazyWithReload(() => import("@/pages/Settings"));
 const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
 const N8n = lazyWithReload(() => import("@/pages/N8n"));
@@ -206,6 +207,7 @@ export default createProductApp({
     { path: "/imoveis", component: Imoveis },
     { path: "/imoveis/:codigo", component: ImovelDetalhes },
     { path: "/permutas", component: Permutas },
+    { path: "/condominios", component: Condominios },
     { path: "/agendamentos", component: Agendamentos },
     { path: "/email", component: EmailPainel },
     { path: "/email/campanhas", component: EmailCampanhasNoc },

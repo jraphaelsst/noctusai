@@ -273,6 +273,7 @@ from app.modules.portal_leads import register as _portal_leads
 from app.modules.scheduling import register as _scheduling
 from app.modules.agentes_financeiros import register as _agentes_financeiros
 from app.modules.permutas import register as _permutas
+from app.modules.condominios import register as _condominios
 from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
@@ -339,6 +340,10 @@ MODULES = [
     # prefix. Its OWN internal order matters and is handled inside its router
     # (`/matches` and `/gerar` are declared before `/{ativo_id}`), not here.
     _permutas,
+    # `/api/condominios` -- unique 2-segment literal prefix, no 1-segment dynamic
+    # path at its root; its own `/sugerir` is declared before `/{id}`. No upload,
+    # no sweep.
+    _condominios,
     # Edição de Fotos (R1). `/api/edicao-fotos/<section>` is a unique literal
     # prefix with no 1-segment dynamic path at its root, so its position is
     # free. Declares one upload route (see `_MAX_BODY_PATH_OVERRIDES`),

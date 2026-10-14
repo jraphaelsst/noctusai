@@ -6377,6 +6377,110 @@ _SW_TRANSACOES_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_CONDOMINIOS = "265_condominios.sql"
+_T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
+
+
+def _cond_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return (
+        f"    INSERT INTO {_S}.condominios (org_id, nome, nome_normalizado{extra_c})\n"
+        f"    VALUES (v_org, 'NOC_PROBE', 'NOC_PROBE'{extra_v});"
+    )
+
+
+def _cond_child_ins(table: str, cols: str, vals: str) -> str:
+    """Insert a condominio, then a child row pointing at it (rolled back)."""
+    return (
+        _cond_ins() + "\n"
+        + f"    INSERT INTO {_S}.{table} (org_id, condominio_id, {cols})\n"
+        f"    SELECT v_org, id, {vals} FROM {_S}.condominios\n"
+        "    WHERE org_id = v_org AND nome_normalizado = 'NOC_PROBE';"
+    )
+
+
+def _cond_probe(probe_id: str, guard_name: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=probe_id, guard_name=guard_name, migration=_M_CONDOMINIOS, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_COND,
+    )
+
+
+#: Migration 265 -- condomínios master list. Unapplied guards read `no_fixture`
+#: (the tables do not exist yet) and must read `refused` once applied.
+_SW_CONDOMINIOS_PROBES: tuple[GuardProbe, ...] = (
+    _cond_probe(
+        "condominios.tipo_valido", "condominios_tipo_check",
+        "tipo feeds the price evaluator's location driver; an out-of-vocabulary value would be a silent miss.",
+        _cond_ins("tipo", "'castelo'"), _CHECK, "a condomínio with an unknown tipo",
+    ),
+    _cond_probe(
+        "condominios.status_valido", "condominios_status_check",
+        "Only sugerido/validado/descartado exist; another value would escape the validation workflow.",
+        _cond_ins("status_validacao", "'noc_probe_bogus'"), _CHECK, "a condomínio with an unknown status_validacao",
+    ),
+    _cond_probe(
+        "condominios.seguranca_faixa", "condominios_seguranca_check",
+        "The security level is a 1-5 scale; outside it the evaluator's feature is meaningless.",
+        _cond_ins("seguranca_nivel", "9"), _CHECK, "a condomínio with seguranca_nivel 9",
+    ),
+    _cond_probe(
+        "condominios.distancia_nao_negativa", "condominios_distancia_check",
+        "A negative distance to Raposo is a typing error that would corrupt the location feature.",
+        _cond_ins("distancia_raposo_km", "-1"), _CHECK, "a condomínio with a negative distancia_raposo_km",
+    ),
+    _cond_probe(
+        "condominios.nome_unico_por_cidade", "uq_sw_condominios_org_nome_cidade",
+        "One condomínio per (org, name, cidade): a duplicate would split one place's imóveis across two rows.",
+        _cond_ins() + "\n" + _cond_ins(), _UNIQ, "two condomínios with the same normalized name and cidade",
+    ),
+    _cond_probe(
+        "condominio_aliases.origem_valida", "condominio_aliases_origem_check",
+        "origem tells the owner where a spelling came from; an unknown value breaks the merge-undo logic.",
+        _cond_child_ins("condominio_aliases", "alias, alias_normalizado, origem", "'X', 'X', 'noc_probe_bogus'"),
+        _CHECK, "an alias with an unknown origem",
+    ),
+    _cond_probe(
+        "condominio_eventos.tipo_valido", "condominio_eventos_tipo_check",
+        "The audit trail is a closed vocabulary; an unknown event type would be unreadable history.",
+        _cond_child_ins("condominio_eventos", "tipo", "'noc_probe_bogus'"),
+        _CHECK, "an audit event with an unknown tipo",
+    ),
+    GuardProbe(
+        id="condominio_eventos.append_only",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="condominio_eventos_append_only",
+        kind="write_refusal",
+        migrations=(_M_CONDOMINIOS,),
+        rationale="The merge/validate audit trail must be immutable; a rewritable log proves nothing.",
+        sql=_do_block(
+            "DECLARE\n  v_org uuid;\n  v_codigo text;\nBEGIN\n"
+            + "".join(_table_fixture_check(t) for t in _T_COND)
+            + "".join(
+                f"  {select_sql.replace(' FROM ', ' INTO ' + into_vars + ' FROM ', 1)};\n"
+                f"  IF {into_vars.split(',')[-1].strip()} IS NULL THEN\n"
+                "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row for the registry fixture';\n"
+                "  END IF;\n"
+                for select_sql, into_vars in (_SW_FIXTURES["registry"],)
+            )
+            + "  BEGIN\n"
+            + _cond_child_ins("condominio_eventos", "tipo", "'sugerido'") + "\n"
+            + f"    UPDATE {_S}.condominio_eventos SET tipo = 'merge' WHERE org_id = v_org;\n"
+            "    RAISE EXCEPTION 'NOC_PROBE:permitted: rewriting an audit event succeeded -- the trigger did not fire';\n"
+            "  EXCEPTION WHEN OTHERS THEN\n"
+            "    IF SQLERRM LIKE 'NOC_PROBE:%' THEN\n      RAISE;\n"
+            "    ELSIF SQLERRM LIKE '%condominio_eventos is append-only%' THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;\n"
+            "    ELSE\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;\n"
+            "    END IF;\n  END;\nEND;\n"
+        ),
+    ),
+)
+
+
 _SW_IMOVEL_MANUAL_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
         probe_id="imovel_captacao.valores_positivos",
@@ -8063,6 +8167,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_PROPOSTAS_PROBES,
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_TRANSACOES_PROBES,
+    *_SW_CONDOMINIOS_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

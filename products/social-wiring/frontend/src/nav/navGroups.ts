@@ -36,6 +36,7 @@ import {
   FileText,
   Send,
   ArrowLeftRight,
+  Building,
   Building2,
   Target,
   Megaphone,
@@ -95,6 +96,7 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
       { name: "Permutas", href: "/permutas", icon: ArrowLeftRight, route: "permutas" },
+      { name: "Condomínios", href: "/condominios", icon: Building, route: "condominios" },
     ],
   },
   {
