@@ -25,7 +25,11 @@ export async function mockDashboardAPIs(page: Page) {
 }
 
 export async function mockTeamAPIs(page: Page) {
-  await page.route('**/api/team', (route) => {
+  // Every team call carries `?org_id=` since multi-org S4b/S5 (the team page is scoped to one
+  // org), and a string glob like '**/api/team' never matches a URL with a query string. Match
+  // the PATH, query or not.
+  const path = (p: string) => new RegExp(`/api/team${p}(\\?.*)?$`);
+  await page.route(path(''), (route) => {
     if (route.request().method() === 'GET') {
       return route.fulfill({
         status: 200,
@@ -36,10 +40,10 @@ export async function mockTeamAPIs(page: Page) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{"message":"OK"}' });
   });
 
-  await page.route('**/api/team/invitations', jsonResponse({ data: mockInvitations }));
-  await page.route('**/api/team/invitations/*', okResponse());
-  await page.route('**/api/team/invite', okResponse('Convite enviado'));
-  await page.route('**/api/team/*/role', okResponse());
+  await page.route(path('/invitations'), jsonResponse({ data: mockInvitations }));
+  await page.route(path('/invitations/[^/?]+'), okResponse());
+  await page.route(path('/invite'), okResponse('Convite enviado'));
+  await page.route(path('/[^/?]+/role'), okResponse());
   await page.route('**/api/roles', jsonResponse({ data: mockRoles }));
 }
 

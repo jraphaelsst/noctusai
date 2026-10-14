@@ -14,7 +14,8 @@ test.describe('Team Management', () => {
     await page.goto('/team');
 
     await expect(page.getByRole('heading', { name: 'Equipe' })).toBeVisible();
-    await expect(page.getByText('2 membros na organização')).toBeVisible();
+    // Multi-org S5: the page is scoped to ONE org and names it ("2 membros em <org>").
+    await expect(page.getByText(/^2 membros em .+/)).toBeVisible();
 
     // Members table (first table on the page) + its column headers.
     const membersTable = page.locator('table').first();
