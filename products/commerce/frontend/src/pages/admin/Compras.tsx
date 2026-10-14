@@ -28,7 +28,7 @@ const RECEIVABLE = new Set(["approved", "sent", "partially_received"]);
 /** `null` = the list; `"new"` = a new draft; otherwise the order being opened. */
 type Open = string | null;
 
-function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
+function PurchaseOrderView({ id, onBack }: { id: string; onBack: () => void }) {
   const { t } = usePageT();
   const isAdmin = useIsOrgAdmin();
   const qc = useQueryClient();
@@ -92,7 +92,7 @@ function PurchasingBody() {
   const roster = staffTeam.useTeamRoster(isAdmin);
   const members = (roster.data ?? []).map((m) => ({ id: m.id, label: m.nome || m.email }));
 
-  if (open !== null) return <OrderDetail id={open} onBack={() => setOpen(null)} />;
+  if (open !== null) return <PurchaseOrderView id={open} onBack={() => setOpen(null)} />;
   return (
     <Tabs defaultValue="orders">
       <TabsList>

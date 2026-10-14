@@ -1398,7 +1398,20 @@ jobs:
           done
           run_suite "dev_team"                     dev_team
           run_suite "scripts/codemods"             .          scripts/codemods
-          run_suite "templates/product-seed"       templates/product-seed/backend
+          # The template is not a runnable product until its `{{PLACEHOLDER}}`s are
+          # filled: the seed organs validate their schema (`FinanceConfig.schema` must
+          # be a bare identifier), so the raw `{{SCHEMA_NAME}}` fails app build. Test a
+          # RENDERED copy: every placeholder becomes its own lowercase name
+          # (`{{SCHEMA_NAME}}` -> `schema_name`), derived by regex rather than a
+          # placeholder list kept by hand. `seed/` is symlinked beside it, because
+          # the template conftest finds the seed at parents[4].
+          RENDER="$RUNNER_TEMP/template-render"
+          rm -rf "$RENDER" && mkdir -p "$RENDER/templates/product-seed"
+          cp -R templates/product-seed/backend "$RENDER/templates/product-seed/backend"
+          ln -s "$GITHUB_WORKSPACE/seed" "$RENDER/seed"
+          grep -rlZE '\{\{[A-Z_]+\}\}' "$RENDER/templates/product-seed/backend" \
+            | xargs -0 -r sed -i -E 's/\{\{([A-Z_]+)\}\}/\L\1/g'
+          run_suite "templates/product-seed"       "$RENDER/templates/product-seed/backend"
 
           if [ ${#failed[@]} -ne 0 ]; then
             echo "::error::${#failed[@]} tooling suite(s) failed: ${failed[*]}"

@@ -19,6 +19,7 @@ pgvector>=0.2.5  # register_vector() for psycopg2 — silences "pgvector not ins
 packaging>=23.0  # dep_preflight.py — Requirement/specifier matching at server startup
 PyYAML>=6.0  # organ_knowledge.py + find_reusable_component.py parse sidecar YAML (was undeclared → CI collection error)
 numpy>=1.24  # graph/build.py SEMANTIC_NEIGHBOR (vectorized cosine); was only transitive via pgvector
+email-validator>=2.0.0  # test_scaffold_overlay runs a scaffolded product backend here; noctusai_seed.auth_router uses EmailStr
 # Editable install of the platform shared lib — gives MCP tools access to
 # `noctusai_lib.logging_config.auto_configure_for_cli(...)` so MCP CLI/server
 # output uses the same formatter as backend products. Path is relative to
