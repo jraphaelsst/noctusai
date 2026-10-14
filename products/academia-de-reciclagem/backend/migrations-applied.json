@@ -1,0 +1,7 @@
+{
+  "_doc": "Migration files applied in prod (filename -> sha256 as stored in the ledger). Maintained by noctus.dev.migrate_product confirm=True; applied files are frozen. KB \u00a7 PATTERNS/architect/vertical-seed.md.",
+  "applied": {
+    "019_finance.sql": "8f6880400e725dc78cb5889976d910552ea27f70e7cf69cc8c690174533df5f7",
+    "020_status_pagina_financeiro.sql": "aeae338a35b5a6eb0a326857a65a39285faa18e72da77c82ca77d698e5c29564"
+  }
+}
