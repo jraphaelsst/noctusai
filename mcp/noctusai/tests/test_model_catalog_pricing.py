@@ -43,6 +43,7 @@ import pytest
 
 from noctusai_lib.integrations.documents.providers import (
     DOCUMENT_ANALYSIS_MODELS,
+    ESCALATION_OCR_MODELS,
     OCR_MODELS,
 )
 from noctusai_lib.integrations.llm.models import MODELS
@@ -110,13 +111,33 @@ def test_every_selectable_document_analysis_model_is_priced(provider: str, model
     assert _priced(provider, model), f"{provider}/{model} is selectable but unpriced"
 
 
-def test_the_document_pins_are_priced_at_list_price() -> None:
-    """Haiku 4.5 is both document rungs' Anthropic pin — it must be priced at
-    Anthropic's list rate ($1 / $5 per 1M), not an older tier's."""
+#: Anthropic list price per 1M tokens (input + output) of each model a
+#: document rung may pin — real-document benchmark pins, 2026-10-13.
+_LISTA_ANTHROPIC = {
+    "claude-haiku-4-5": 1.00 + 5.00,
+    "claude-sonnet-5": 2.00 + 10.00,
+    "claude-opus-5-5": 4.00 + 20.00,
+    "claude-fable-5-1": 10.00 + 50.00,
+}
+
+
+@pytest.mark.parametrize(
+    "rung,model",
+    [
+        ("ocr", OCR_MODELS["anthropic"]),
+        ("analysis", DOCUMENT_ANALYSIS_MODELS["anthropic"]),
+        ("escalation", ESCALATION_OCR_MODELS["anthropic"]),
+    ],
+)
+def test_the_document_pins_are_priced_at_list_price(rung: str, model: str) -> None:
+    """Every document rung's Anthropic pin must be priced at Anthropic's list
+    rate, not an older tier's — whichever model the real-document benchmark
+    pinned (Sonnet 5 OCR / Opus 5.5 escalation / Haiku 4.5 analysis today)."""
+    assert model in _LISTA_ANTHROPIC, f"{rung} pin {model} has no list price here"
     assert estimate_cost_usd(
-        provider="anthropic", model=OCR_MODELS["anthropic"],
+        provider="anthropic", model=model,
         prompt_tokens=1_000_000, completion_tokens=1_000_000,
-    ) == pytest.approx(6.00)
+    ) == pytest.approx(_LISTA_ANTHROPIC[model])
 
 
 def test_the_gap_list_does_not_outlive_the_gap() -> None:
