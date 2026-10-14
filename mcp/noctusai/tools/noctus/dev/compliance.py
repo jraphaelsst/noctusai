@@ -7528,6 +7528,26 @@ def _tracked_test_files(root: Path) -> list[str]:
     return files
 
 
+_TEMPLATE_SYNC_SOURCE = ("templates/product-seed/", "products/seed/")
+
+
+def _is_gated_template_copy(root: Path, rel: str) -> bool:
+    """A `templates/product-seed/` test that is BYTE-IDENTICAL to its `products/seed/` source
+    runs in CI through that source (product-*-tests; the pre-commit seed→template sync keeps
+    them equal). Judged per file, never by prefix: a template-only or drifted test still counts
+    as ungated (2026-10-14, seed `Financeiro.test.tsx` synced into the template)."""
+    tpl, src = _TEMPLATE_SYNC_SOURCE
+    if not rel.startswith(tpl):
+        return False
+    source = src + rel[len(tpl):]
+    if not any(source.startswith(p) for p in _GATED_PREFIXES):
+        return False
+    try:
+        return (root / rel).read_bytes() == (root / source).read_bytes()
+    except OSError:
+        return False
+
+
 def check_every_test_file_is_gated(repo_root: Path | None = None) -> list[dict]:
     """Every tracked test file must sit under an area a workflow runs.
 
@@ -7546,6 +7566,8 @@ def check_every_test_file_is_gated(repo_root: Path | None = None) -> list[dict]:
         if any(rel.startswith(p) for p in _GATED_PREFIXES):
             continue
         if any(pat.match(rel) for pat, _ in _GATED_PATTERNS):
+            continue
+        if _is_gated_template_copy(root, rel):
             continue
         area = rel.rsplit("/", 1)[0]
         ungated.setdefault(area, []).append(rel)

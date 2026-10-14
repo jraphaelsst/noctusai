@@ -61,6 +61,24 @@ class TestCheckEveryTestFileIsGated:
         assert issues[0]["severity"] == "high"
         assert "tools/newthing/tests" in issues[0]["file"]
 
+    def test_a_template_copy_identical_to_its_gated_seed_source_is_clean(self, tmp_path):
+        _git_repo(tmp_path)
+        body = "it('x', () => {});\n"
+        _track(tmp_path, "products/seed/frontend/src/pages/__tests__/Fin.test.tsx", body)
+        _track(tmp_path, "templates/product-seed/frontend/src/pages/__tests__/Fin.test.tsx", body)
+
+        assert check_every_test_file_is_gated(tmp_path) == []
+
+    def test_a_drifted_or_template_only_copy_is_still_flagged(self, tmp_path):
+        _git_repo(tmp_path)
+        _track(tmp_path, "products/seed/frontend/src/pages/__tests__/Fin.test.tsx", "it('a', () => {});\n")
+        _track(tmp_path, "templates/product-seed/frontend/src/pages/__tests__/Fin.test.tsx", "it('b', () => {});\n")
+        _track(tmp_path, "templates/product-seed/frontend/src/pages/__tests__/Only.test.tsx", "it('c', () => {});\n")
+
+        issues = check_every_test_file_is_gated(tmp_path)
+        assert len(issues) == 1, issues
+        assert "templates/product-seed/frontend/src/pages/__tests__" in issues[0]["file"]
+
     def test_a_gated_area_is_clean(self, tmp_path):
         _git_repo(tmp_path)
         _track(tmp_path, "dev_team/tests/test_it.py")

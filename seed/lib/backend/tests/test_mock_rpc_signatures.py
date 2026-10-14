@@ -64,3 +64,19 @@ def test_function_seeded_by_the_test_without_a_signature_is_judged_on_nothing(db
 
 def test_validation_off_keeps_the_lenient_shape():
     MockSupabaseClient(validate_schema=False, schema="rpcx").rpc("anything", {"x": 1})
+
+
+def test_default_public_mock_resolves_a_product_schema_function_by_bare_name():
+    """A mock left on the default `public` stands in for a product's schema-pinned client
+    (social-wiring `cs_rebind_roteiro` lives in `social_wiring`) — still judged by names."""
+    prev = _schema_cache.set_functions_for_tests(parse_function_sql(SQL))
+    try:
+        pub = MockSupabaseClient(validate_schema=True)
+        pub.rpc("do_thing", {"p_org": "o", "p_row": {}}).execute()
+        with pytest.raises(APIError) as err:
+            pub.rpc("do_thing", {"p_org_id": "o", "p_row": {}})
+        assert err.value.code == "PGRST202"
+        with pytest.raises(APIError):
+            pub.rpc("no_such_fn", {})
+    finally:
+        _schema_cache.set_functions_for_tests(prev, merge=False)

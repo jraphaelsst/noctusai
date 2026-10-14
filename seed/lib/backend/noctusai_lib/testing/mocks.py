@@ -1971,6 +1971,11 @@ class MockSupabaseClient:
             keys = [k for k in get_function_map() if k.split(".", 1)[1] == bare]
         funcs = get_function_map()
         overloads = [sig for k in keys for sig in funcs.get(k, [])]
+        if not overloads and (self._schema or "public").lower() == "public" and "." not in name:
+            # A mock left on the default `public` stands in for a product's schema-pinned
+            # client; resolve the bare name across declared schemas (social-wiring
+            # `cs_rebind_roteiro` lives in `social_wiring`) — a still-unknown name refuses below.
+            overloads = [sig for k, sigs in funcs.items() if k.split(".", 1)[1] == bare for sig in sigs]
         if not overloads:
             if name in self._rpcs:
                 return  # declared by the test via set_rpc_data; no migration signature to judge
