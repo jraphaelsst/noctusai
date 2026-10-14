@@ -38,12 +38,16 @@ import logging
 
 from noctusai_seed import HealthEndpointConfig, create_product_app
 from noctusai_seed.auth_router import create_auth_router
+from noctusai_seed.organs import mount_finance
 
 from app.config import settings
 from app.dependencies import (
     _LazyApiTokenResolver,
     _legacy_jwt_resolver,
     auth_router_deps,
+    get_admin_client,
+    get_core_client,
+    get_current_user_org,
 )
 from app.rate_limit import limiter
 from app.routers.admin_credentials_router import router as admin_credentials_router
@@ -221,6 +225,16 @@ app = create_product_app(
         studio_package_sync_router,
         # Anonymous public ask (limiar-open-question S3) — 404 unless PUBLIC_ASK_ENABLED.
         public_ask_router,
+    ],
+    # Finance organ (accounts, entries, DRE, reconciliation): one-call seed mount. Gateway sync stays
+    # 503-not-configured.
+    organs=[
+        mount_finance(
+            schema="agents",
+            auth_dependency=get_current_user_org,
+            get_admin_client=get_admin_client,
+            get_core_client=get_core_client,
+        )
     ],
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,

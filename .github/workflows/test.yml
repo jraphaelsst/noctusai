@@ -572,6 +572,7 @@ jobs:
           - community
           - store
           - commerce
+          - seed
 
     steps:
       - uses: actions/checkout@v7

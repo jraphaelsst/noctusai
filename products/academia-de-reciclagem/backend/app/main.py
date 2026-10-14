@@ -26,6 +26,7 @@ product currently has no LLM-backed feature.
 """
 from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
 from noctusai_seed import create_product_app
+from noctusai_seed.organs import mount_finance
 from noctusai_seed.auth_router import create_auth_router
 
 from app.config import settings
@@ -34,6 +35,9 @@ from app.dependencies import (
     _LazyAuditWriter,
     _legacy_jwt_resolver,
     auth_router_deps,
+    get_admin_client,
+    get_core_client,
+    get_current_user_org,
 )
 from app.rate_limit import limiter
 from app.routers.content_router import router as content_router
@@ -91,6 +95,16 @@ app = create_product_app(
         sources_router,
         import_router,
         interessados_router,
+    ],
+    # Finance organ (accounts, entries, DRE, reconciliation): one-call seed mount; its upload body
+    # overrides are merged by create_product_app. Gateway sync stays 503-not-configured.
+    organs=[
+        mount_finance(
+            schema="academia_de_reciclagem",
+            auth_dependency=get_current_user_org,
+            get_admin_client=get_admin_client,
+            get_core_client=get_core_client,
+        )
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # Contract §D: a missing/empty approval-assertion key list must

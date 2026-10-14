@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,6 +20,8 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+// Finance organ (seed `FinanceShell`) -- `/financeiro/*`; section in the URL.
+const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // Julia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
 const Julia = lazy(() => import("@/pages/Julia"));
 const Agentes = lazy(() => import("@/pages/Agentes"));
@@ -54,6 +56,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: SlidersHorizontal,
     items: [
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound, route: "credenciais" },
       { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles, route: "chaves-ia" },
@@ -80,6 +83,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: SlidersHorizontal,
     items: [
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound },
       { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles },
@@ -104,6 +108,7 @@ export default createProductApp({
     { path: "/agentes/julia/persona", component: JuliaPersona },
     { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
+    { path: "/financeiro/*", component: Financeiro },
     { path: "/credenciais", component: Credenciais },
     { path: "/chaves-ia", component: ChavesIA },
     { path: "/configuracoes-agente", component: ConfiguracoesAgente },

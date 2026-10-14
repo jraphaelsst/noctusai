@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Recycle, BookOpen, Scale, HelpCircle, ListTodo, UserPlus } from "lucide-react";
+import { LayoutDashboard, Users, Home, Recycle, BookOpen, Scale, HelpCircle, ListTodo, UserPlus, Wallet } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,6 +20,8 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+// Finance organ (seed `FinanceShell`) -- `/financeiro/*`; section in the URL.
+const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // Domain pages — contract `projects/julia-agents-academia-CONTRACT.md` §B.1-B.4.
 const Kb = lazy(() => import("@/pages/Kb"));
 const KbDetail = lazy(() => import("@/pages/KbDetail"));
@@ -44,6 +46,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Interessados", href: "/interessados", icon: UserPlus, route: "interessados" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
     ],
   },
   {
@@ -68,6 +71,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Interessados", href: "/interessados", icon: UserPlus },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet },
     ],
   },
   {
@@ -101,6 +105,7 @@ export default createProductApp({
     { path: "/perguntas", component: Perguntas },
     { path: "/roadmap", component: Roadmap },
     { path: "/equipe", component: Equipe },
+    { path: "/financeiro/*", component: Financeiro },
     { path: "/interessados", component: Interessados },
   ],
   // Public site — reachable regardless of auth state (contract `projects/

@@ -23,7 +23,9 @@ over `gpt-4o-mini`):
     )
 """
 from noctusai_seed import create_product_app
+from noctusai_seed.organs import mount_finance
 from app.config import settings
+from app.dependencies import _db, get_admin_client, get_current_user_org
 from app.rate_limit import limiter
 from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
@@ -40,6 +42,17 @@ app = create_product_app(
     # ``app/routers/example_router.py`` (CRUD shape) and
     # ``app/routers/webhook_router.py`` (signed-receiver shape).
     routers=[example_router, webhook_router],
+    # Finance organ (accounts, entries, DRE, reconciliation): one-call seed mount. Tables `fin_*` are
+    # rendered by `noctus.dev.render_organ_migration` (migrations/012_finance.sql). Gateway sync stays
+    # 503-not-configured until a product supplies `get_charge_operations`.
+    organs=[
+        mount_finance(
+            schema="{{SCHEMA_NAME}}",
+            auth_dependency=get_current_user_org,
+            get_admin_client=get_admin_client,
+            get_core_client=lambda: _db.get_core_client(),
+        )
+    ],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):
