@@ -161,10 +161,34 @@ class CheckoutRequest:
     #: ignores them (no Connect split in this seam).
     split_wallet_id: Optional[str] = None
     split_percent: Optional[float] = None
+    #: One-off, card only: number of installments (parcelas). ``1`` = pay in
+    #: full. Asaas sends ``installmentCount`` + ``totalValue``; Stripe's seam
+    #: refuses ``> 1`` (`PaymentGatewayError(code="installments_unsupported")`).
+    installment_count: int = 1
+    #: One gateway customer per BUYER: when set, ``ensure_customer`` is keyed on
+    #: it instead of ``external_reference``, which stays the per-charge
+    #: conciliation key (what the webhook matches an order by).
+    customer_reference: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.installment_count, int) or isinstance(self.installment_count, bool):
+            raise TypeError(f"installment_count must be an int, got {self.installment_count!r}")
+        if self.installment_count < 1:
+            raise ValueError(f"installment_count must be >= 1, got {self.installment_count}")
+        if self.installment_count > 1 and (self.billing_cycle is not None or self.billing_method != "card"):
+            raise ValueError(
+                "installment_count > 1 is only valid for a one-off (billing_cycle=None) "
+                "card charge (billing_method='card')"
+            )
 
     @property
     def is_one_off(self) -> bool:
         return self.billing_cycle is None
+
+    @property
+    def customer_key(self) -> str:
+        """The key ``ensure_customer`` is called with."""
+        return self.customer_reference or self.external_reference
 
 
 @dataclass(frozen=True)
@@ -236,6 +260,14 @@ class StripeHostedCheckout:
         return []
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
+        if request.installment_count > 1:
+            raise PaymentGatewayError(
+                "stripe",
+                "installments are not supported on the Stripe checkout seam "
+                f"(installment_count={request.installment_count}).",
+                code="installments_unsupported",
+                retryable=False,
+            )
         if request.is_one_off:
             return self._create_one_off(request)
         if not request.plan_ref:
@@ -256,7 +288,7 @@ class StripeHostedCheckout:
             )
 
         customer = self._gateway.ensure_customer(
-            external_reference=request.external_reference,
+            external_reference=request.customer_key,
             email=request.email,
             name=request.name,
             tax_id=request.tax_id,
@@ -306,7 +338,7 @@ class StripeHostedCheckout:
                 retryable=False,
             )
         customer = self._gateway.ensure_customer(
-            external_reference=request.external_reference,
+            external_reference=request.customer_key,
             email=request.email,
             name=request.name,
             tax_id=request.tax_id,
@@ -420,7 +452,7 @@ class AsaasHostedCheckout:
         consumer's thank-you page. Request shape lifted from p-studio's
         `criar_cobranca`."""
         customer = self._gateway.ensure_customer(
-            external_reference=request.external_reference,
+            external_reference=request.customer_key,
             email=request.email,
             name=request.name,
             tax_id=request.tax_id,
@@ -428,12 +460,19 @@ class AsaasHostedCheckout:
         body: dict[str, Any] = {
             "customer": customer.id_at_gateway,
             "billingType": _BILLING_METHOD_MAP[request.billing_method],
-            "value": request.price.amount_cents / 100,
             "dueDate": (self._gateway._today() + _dt.timedelta(days=request.due_days)).isoformat(),
             "description": request.description or request.external_reference,
             # The conciliation key — without it the webhook cannot be matched.
             "externalReference": request.external_reference,
         }
+        if request.installment_count > 1:
+            # Asaas creates a parcelamento from `installmentCount` + `totalValue`
+            # (it splits the total; any remainder lands on the last parcela). The
+            # response is the FIRST parcela; the parcelamento id is `installment`.
+            body["installmentCount"] = request.installment_count
+            body["totalValue"] = request.price.amount_cents / 100
+        else:
+            body["value"] = request.price.amount_cents / 100
         if request.success_url:
             body["callback"] = {"successUrl": request.success_url, "autoRedirect": True}
         if request.split_wallet_id and request.split_percent:
@@ -480,7 +519,7 @@ class AsaasHostedCheckout:
             )
 
         customer = self._gateway.ensure_customer(
-            external_reference=request.external_reference,
+            external_reference=request.customer_key,
             email=request.email,
             name=request.name,
             tax_id=request.tax_id,

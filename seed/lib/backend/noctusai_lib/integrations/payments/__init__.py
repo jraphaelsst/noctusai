@@ -46,6 +46,13 @@ one factory call, not by hunting down every `if provider == "stripe"`.
 """
 from __future__ import annotations
 
+from .charges import (
+    AsaasChargeOperations,
+    ChargeOperations,
+    FakeChargeOperations,
+    StripeChargeOperations,
+    make_charge_operations,
+)
 from .errors import PaymentGatewayError
 from .factory import make_payment_gateway
 from .fake import FakePaymentGateway
@@ -53,31 +60,48 @@ from .protocol import PaymentGateway
 from .real_asaas import AsaasPaymentGateway
 from .real_stripe import StripePaymentGateway
 from .types import (
+    BalanceTransaction,
+    BalanceTransactionPage,
     BillingCycle,
     BillingMethod,
+    ChargeStatus,
     FeeBreakdown,
+    GatewayCharge,
     GatewayCustomer,
+    GatewayRefund,
     GatewaySubscription,
     GatewaySubscriptionStatus,
     Money,
     PaymentGatewayName,
+    PaymentMethod,
     SubscriptionRequest,
 )
 
 __all__ = [
+    "AsaasChargeOperations",
     "AsaasPaymentGateway",
+    "BalanceTransaction",
+    "BalanceTransactionPage",
     "BillingCycle",
     "BillingMethod",
+    "ChargeOperations",
+    "ChargeStatus",
+    "FakeChargeOperations",
     "FakePaymentGateway",
     "FeeBreakdown",
+    "GatewayCharge",
     "GatewayCustomer",
+    "GatewayRefund",
     "GatewaySubscription",
     "GatewaySubscriptionStatus",
     "Money",
     "PaymentGateway",
     "PaymentGatewayError",
     "PaymentGatewayName",
+    "PaymentMethod",
+    "StripeChargeOperations",
     "StripePaymentGateway",
     "SubscriptionRequest",
+    "make_charge_operations",
     "make_payment_gateway",
 ]

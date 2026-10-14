@@ -61,7 +61,29 @@ logger = logging.getLogger(__name__)
 #: gateway adding a new event type later must never turn into a webhook
 #: 500; it turns into a `GatewayEvent(kind="ignored")` a consumer skips.
 EventKind = Literal[
-    "subscription_updated", "charge_paid", "charge_failed", "charge_refunded", "ignored"
+    "subscription_updated",
+    "charge_paid",
+    "charge_failed",
+    "charge_refunded",
+    # P4 (additive): a partial refund that must NOT read as "stop downloads"
+    # (`charge_refunded`), a dispute lifecycle event, and a removed charge.
+    "charge_partially_refunded",
+    "charge_dispute",
+    "charge_cancelled",
+    "ignored",
+]
+
+#: Refines a `kind` without changing it (P4, additive). Consumers branch on
+#: `(kind, detail)` and never on `raw`. See CONTRACT §1.3.
+EventDetail = Literal[
+    "overdue",
+    "partial",
+    "chargeback_opened",
+    "evidence_submitted",
+    "won",
+    "lost",
+    "confirmed",
+    "received",
 ]
 
 
@@ -103,6 +125,9 @@ class GatewayEvent:
     #: docstring). A consumer maps this to a `noctusai_lib.domain.payments.
     #: SubscriptionState` transition itself; this module never guesses one.
     subscription_status: Optional[GatewaySubscriptionStatus] = None
+    #: Refines `kind` (additive, P4): e.g. `charge_paid` + `confirmed` (card
+    #: approved, money not yet available) vs `received` (available).
+    detail: Optional[EventDetail] = None
     #: Forensic — the normalized fields above are a lossy projection.
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -135,6 +160,10 @@ _STRIPE_EVENT_KIND_MAP: dict[str, EventKind] = {
     "invoice.payment_succeeded": "charge_paid",
     "invoice.payment_failed": "charge_failed",
     "charge.refunded": "charge_refunded",
+    # P4: a dispute used to be `ignored`; community's if/elif has no branch
+    # for `charge_dispute`, so there it stays a no-op (no false refund booked).
+    "charge.dispute.created": "charge_dispute",
+    "charge.dispute.closed": "charge_dispute",
 }
 
 
@@ -170,6 +199,7 @@ def _parse_stripe_event(
     subscription_id: Optional[str] = None
     charge_id: Optional[str] = None
     subscription_status: Optional[GatewaySubscriptionStatus] = None
+    detail: Optional[EventDetail] = None
 
     if event_type.startswith("customer.subscription."):
         subscription_id = _stripe_field(data_object, "id")
@@ -182,6 +212,22 @@ def _parse_stripe_event(
         charge_id = _stripe_field(data_object, "charge")
     elif event_type == "charge.refunded":
         charge_id = _stripe_field(data_object, "id")
+        refunded = _stripe_field(data_object, "amount_refunded")
+        amount = _stripe_field(data_object, "amount")
+        if isinstance(refunded, int) and isinstance(amount, int) and refunded < amount:
+            detail = "partial"
+    elif event_type in ("charge.dispute.created", "charge.dispute.closed"):
+        charge_id = _stripe_field(data_object, "charge")
+        if event_type == "charge.dispute.created":
+            detail = "chargeback_opened"
+        else:
+            dispute_status = _stripe_field(data_object, "status")
+            if dispute_status in ("won", "lost"):
+                detail = dispute_status
+            else:
+                # `warning_closed` / `prevented`: an inquiry closed without a
+                # chargeback ever being booked -- nothing for a consumer to do.
+                kind = "ignored"
 
     return GatewayEvent(
         gateway="stripe",
@@ -191,6 +237,7 @@ def _parse_stripe_event(
         subscription_id_at_gateway=subscription_id,
         charge_id_at_gateway=charge_id,
         subscription_status=subscription_status,
+        detail=detail,
         raw=event.to_dict(),
     )
 
@@ -209,6 +256,25 @@ _ASAAS_EVENT_KIND_MAP: dict[str, EventKind] = {
     "PAYMENT_OVERDUE": "charge_failed",
     "PAYMENT_REFUNDED": "charge_refunded",
     "PAYMENT_CHARGEBACK_REQUESTED": "charge_refunded",
+    # P4 additions (events that used to fall through to "ignored"):
+    "PAYMENT_PARTIALLY_REFUNDED": "charge_partially_refunded",
+    "PAYMENT_CHARGEBACK_DISPUTE": "charge_dispute",
+    "PAYMENT_AWAITING_CHARGEBACK_REVERSAL": "charge_dispute",
+    "PAYMENT_DELETED": "charge_cancelled",
+}
+
+# Asaas `event` → `GatewayEvent.detail` (CONTRACT §1.3). Absent = no detail.
+# Asaas has NO "chargeback lost" webhook (docs.asaas.com/docs/webhook-para-cobrancas
+# lists none): a lost dispute is only visible by re-reading the payment --
+# `payment.chargeback.status == "DISPUTE_LOST"` -- see ASAAS-EVENTS.md.
+_ASAAS_EVENT_DETAIL_MAP: dict[str, EventDetail] = {
+    "PAYMENT_CONFIRMED": "confirmed",
+    "PAYMENT_RECEIVED": "received",
+    "PAYMENT_OVERDUE": "overdue",
+    "PAYMENT_PARTIALLY_REFUNDED": "partial",
+    "PAYMENT_CHARGEBACK_REQUESTED": "chargeback_opened",
+    "PAYMENT_CHARGEBACK_DISPUTE": "evidence_submitted",
+    "PAYMENT_AWAITING_CHARGEBACK_REVERSAL": "won",
 }
 
 
@@ -300,6 +366,7 @@ def _parse_asaas_event(
         # get_subscription` directly (its `_map_subscription_status` is
         # what that call already reuses — nothing to map on this path).
         subscription_status=None,
+        detail=_ASAAS_EVENT_DETAIL_MAP.get(event_name),
         raw=payload,
     )
 
@@ -351,6 +418,7 @@ def make_fake_gateway_event(
     subscription_id_at_gateway: Optional[str] = None,
     charge_id_at_gateway: Optional[str] = None,
     subscription_status: Optional[GatewaySubscriptionStatus] = None,
+    detail: Optional[EventDetail] = None,
     raw: Optional[dict[str, Any]] = None,
 ) -> GatewayEvent:
     """Build a `GatewayEvent` directly — the dev/test seam for consumer code
@@ -368,11 +436,13 @@ def make_fake_gateway_event(
         subscription_id_at_gateway=subscription_id_at_gateway,
         charge_id_at_gateway=charge_id_at_gateway,
         subscription_status=subscription_status,
+        detail=detail,
         raw=raw or {},
     )
 
 
 __all__ = [
+    "EventDetail",
     "EventKind",
     "GatewayEvent",
     "PaymentWebhookSignatureError",

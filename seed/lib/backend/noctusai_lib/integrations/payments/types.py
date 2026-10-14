@@ -15,6 +15,7 @@ that shows up as "the ledger is off by one cent" three months later.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
@@ -204,14 +205,122 @@ class GatewaySubscription:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+# ── one-off charges (`ChargeOperations`, commerce P4 slice A) ─────────────
+
+#: A charge's lifecycle as the GATEWAY reports it, in one vocabulary.
+#: `confirmed` = card approved but the money is not yet available;
+#: `received` = money available. An unknown gateway status is never mapped
+#: to a default: the adapters raise `PaymentGatewayError(code=
+#: "unknown_charge_status")` so a new vendor state surfaces loudly.
+ChargeStatus = Literal[
+    "pending",
+    "confirmed",
+    "received",
+    "overdue",
+    "partially_refunded",
+    "refunded",
+    "disputed",
+    "chargeback",
+    "cancelled",
+]
+
+#: The payer-facing method of a charge. `pix` / `boleto` / `credit_card` are
+#: what the commerce organ sells (same string values as its `PaymentMethod`
+#: enum -- the integrations layer never imports the domain). `undefined` is an
+#: Asaas charge the payer has not picked a method for yet; `other` is a method
+#: the seed does not sell (debit card, transfer, deposit) but must still read.
+PaymentMethod = Literal["pix", "boleto", "credit_card", "undefined", "other"]
+
+
+@dataclass(frozen=True)
+class GatewayRefund:
+    """One refund of a charge, as the gateway reports it.
+
+    `id_at_gateway` is ``None`` for Asaas: its payment object lists refunds
+    without an id, so a consumer reconciles Asaas refunds by amount/time, not
+    by id. `status` is only ``pending`` or ``done``; a cancelled/failed refund
+    is omitted from `GatewayCharge.refunds` (it moved no money).
+    """
+
+    id_at_gateway: Optional[str]
+    charge_id_at_gateway: str
+    amount: Money
+    status: Literal["pending", "done"]
+    created_at: Optional[_dt.datetime] = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class GatewayCharge:
+    """A one-off charge as the gateway reports it (read-only snapshot).
+
+    `amount` is what the payer was charged; `net`/`fee` are the gateway's
+    split when it reports one (``None`` until settled). `refunded` is the sum
+    of non-cancelled refund value. `credit_date` is when funds become
+    available. For an Asaas installment (``installment_count > 1``) this is ONE
+    parcela -- each parcela is its own payment id; the parcelamento id is in
+    ``raw["installment"]``.
+    """
+
+    id_at_gateway: str
+    status: ChargeStatus
+    method: PaymentMethod
+    amount: Money
+    refunded: Money
+    net: Optional[Money] = None
+    fee: Optional[Money] = None
+    refunds: list[GatewayRefund] = field(default_factory=list)
+    installment_count: int = 1
+    due_date: Optional[_dt.date] = None
+    paid_at: Optional[_dt.datetime] = None
+    credit_date: Optional[_dt.date] = None
+    external_reference: Optional[str] = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+BalanceTransactionKind = Literal[
+    "charge", "fee", "refund", "chargeback", "transfer", "adjustment", "other"
+]
+
+
+@dataclass(frozen=True)
+class BalanceTransaction:
+    """One line of the gateway's account statement. `amount` is SIGNED (money
+    in positive, money out negative). Stripe puts the fee on the charge's own
+    line; the adapter splits it into a separate ``fee`` line with id
+    ``<id>:fee`` so a ledger sees the same shape from both gateways."""
+
+    id_at_gateway: str
+    occurred_at: _dt.datetime
+    kind: BalanceTransactionKind
+    amount: Money
+    charge_id_at_gateway: Optional[str] = None
+    description: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BalanceTransactionPage:
+    items: list[BalanceTransaction]
+    #: Opaque; pass back as ``cursor`` for the next page. ``None`` = last page.
+    next_cursor: Optional[str] = None
+
+
 __all__ = [
+    "BalanceTransaction",
+    "BalanceTransactionKind",
+    "BalanceTransactionPage",
     "BillingCycle",
     "BillingMethod",
+    "ChargeStatus",
     "FeeBreakdown",
+    "GatewayCharge",
     "GatewayCustomer",
+    "GatewayRefund",
     "GatewaySubscription",
     "GatewaySubscriptionStatus",
     "Money",
     "PaymentGatewayName",
+    "PaymentMethod",
     "SubscriptionRequest",
 ]
