@@ -435,7 +435,7 @@ def storefront_router(
     get_gateway: Callable[..., CheckoutGateway],
     get_email: Callable[..., EmailSender],
     get_license_checker: Callable[..., LicenseChecker],
-    get_link_secret: Callable[..., str],
+    get_link_secret: Callable[[], str],
     rate_limit: Optional[RateLimit] = None,
     prefix: str = "/api/storefront",
     tags: Optional[list[str]] = None,
@@ -500,12 +500,17 @@ def storefront_router(
         )
         return success_response(result)
 
-    def secret_dep() -> Optional[str]:
-        """The link secret, or None when the host has none configured (only a SIGNED order link needs it)."""
+    def secret_dep(request: Request) -> Optional[str]:
+        """The link secret, or None when the host has none configured (only a SIGNED order link needs it).
+
+        Called here rather than through `Depends(get_link_secret)` because a missing secret must not
+        break the bare-token path; `get_link_secret` is therefore a ZERO-ARG getter (the type below
+        says so), and a test's `dependency_overrides` entry for it is honored."""
+        getter = request.app.dependency_overrides.get(get_link_secret, get_link_secret)
         try:
-            return get_link_secret()
-        except Exception:  # noqa: BLE001 - a bare order token must keep working without the secret; a signed one then 503s
-            logger.debug("commerce: link secret unavailable for an order route", exc_info=True)
+            return getter()
+        except Exception as exc:  # noqa: BLE001 - a bare order token must keep working without the secret; a signed one then 503s
+            logger.warning("commerce: link secret unavailable for an order route (%s); signed order links will 503", type(exc).__name__)
             return None
 
     async def order_by_token(
@@ -525,11 +530,14 @@ def storefront_router(
         secret: Optional[str] = Depends(secret_dep),
     ) -> dict:
         base = _base_url(request)
+        presented = token
         token = store_svc.resolve_order_token(db, org_id, token, secret)
         result = regenerate_svc.regenerate_payment(
             db, org_id, cfg, gateway, token,
             payment_method=body.payment_method.value, installments=body.installments,
-            order_url_for=lambda t: base + cfg.order_path_template.format(token=t),
+            # The gateway return URL carries what the buyer PRESENTED: a 48 h signed link must not
+            # redirect to the order's permanent token after payment.
+            order_url_for=lambda _t: base + cfg.order_path_template.format(token=presented),
         )
         return success_response(result)
 

@@ -194,8 +194,12 @@ class TestSignedOrderLink:
         h, offer = shop
         order = _place(h, offer)
         h.db.table("commerce_orders").update({"last_charge_attempt_at": (now() - timedelta(minutes=5)).isoformat()}).eq("id", order["id"]).execute()
-        r = h.client.post(f"/api/storefront/orders/{self._link(order)}/payment", json={"payment_method": "boleto"}, headers=h.shop())
+        link = self._link(order)
+        r = h.client.post(f"/api/storefront/orders/{link}/payment", json={"payment_method": "boleto"}, headers=h.shop())
         assert r.status_code == 200
+        # The gateway return URL carries the signed link the buyer presented, never the permanent token.
+        request = [c for c in h.gateway.checkout.calls if c[0] == "create_checkout"][-1][1]
+        assert link in request.success_url and order["token"] not in request.success_url
 
     def test_expired_forged_and_wrong_purpose_links_are_400(self, shop):
         from noctusai_lib.domain.commerce import access_links
