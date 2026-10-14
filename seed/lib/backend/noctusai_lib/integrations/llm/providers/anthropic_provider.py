@@ -36,6 +36,7 @@ from anthropic import AsyncAnthropic, APIError as AnthropicAPIError
 from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderNotImplemented
 from ..registry import register
 from ..stream_types import StreamOutcome
+from ..tool_calling import ChatMessage, ChatToolsResponse, ToolCall, ToolSpec, build_usage
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,127 @@ def _split_system_and_messages(
     if needs_block_shape:
         return [b for b in system_blocks if b.get("text")], rest
     return "\n\n".join(p for p in system_parts if p), rest
+
+
+# ── tool calling (chat_with_tools) — pure wire mapping ───────────────────────
+
+_ANTHROPIC_FINISH = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "tool_use": "tool_calls",
+    "max_tokens": "length",
+}
+
+
+def to_anthropic_messages(
+    messages: Sequence[ChatMessage],
+) -> tuple[Union[str, list[dict]], list[dict]]:
+    """Normalized messages → (`system`, Anthropic `messages`).
+
+    System messages go through `_split_system_and_messages` (so a
+    `cache=True` system message keeps its `cache_control` breakpoint).
+    An assistant turn becomes text + `tool_use` blocks; consecutive `tool`
+    messages merge into ONE user message of `tool_result` blocks (the API
+    requires every result of an assistant turn in a single user turn).
+    """
+    system_dicts: list[dict] = []
+    convo: list[dict] = []
+    for m in messages:
+        if m.role == "system":
+            d: dict = {"role": "system", "content": m.content or ""}
+            if m.cache:
+                d["cache_control"] = {"type": "ephemeral"}
+            system_dicts.append(d)
+        elif m.role == "user":
+            convo.append({"role": "user", "content": m.content or ""})
+        elif m.role == "assistant":
+            blocks: list[dict] = []
+            if m.content:
+                blocks.append({"type": "text", "text": m.content})
+            for tc in m.tool_calls:
+                blocks.append({"type": "tool_use", "id": tc.call_id, "name": tc.name, "input": tc.arguments})
+            convo.append({"role": "assistant", "content": blocks or [{"type": "text", "text": ""}]})
+        else:  # tool
+            block: dict = {"type": "tool_result", "tool_use_id": m.tool_call_id, "content": m.content or ""}
+            if m.is_error:
+                block["is_error"] = True
+            prev = convo[-1] if convo else None
+            if prev and prev["role"] == "user" and isinstance(prev["content"], list) and all(
+                b.get("type") == "tool_result" for b in prev["content"]
+            ):
+                prev["content"].append(block)
+            else:
+                convo.append({"role": "user", "content": [block]})
+    system, _ = _split_system_and_messages(system_dicts)
+    return system, convo
+
+
+def to_anthropic_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
+    return [{"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools]
+
+
+def _anthropic_tool_choice(tool_choice: str) -> dict[str, Any]:
+    return {
+        "auto": {"type": "auto"},
+        "none": {"type": "none"},
+        "required": {"type": "any"},
+    }.get(tool_choice) or {"type": "tool", "name": tool_choice}
+
+
+def build_anthropic_request(
+    messages: Sequence[ChatMessage],
+    tools: Sequence[ToolSpec],
+    *,
+    model: str,
+    max_tokens: Optional[int] = None,
+    tool_choice: str = "auto",
+) -> dict[str, Any]:
+    """The exact kwargs sent to `client.messages.create` (no `temperature`:
+    the SDK dropped it, see `chat_completion`)."""
+    system, convo = to_anthropic_messages(messages)
+    payload: dict[str, Any] = {
+        "model": model,
+        "system": system or "",
+        "messages": convo,
+        "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
+    }
+    if tools:
+        payload["tools"] = to_anthropic_tools(tools)
+        if tool_choice != "auto":
+            payload["tool_choice"] = _anthropic_tool_choice(tool_choice)
+    return payload
+
+
+def parse_anthropic_response(response: Any, *, model: str) -> ChatToolsResponse:
+    """Anthropic Messages response (SDK object) → `ChatToolsResponse`."""
+    texts: list[str] = []
+    calls: list[ToolCall] = []
+    for block in response.content:
+        kind = getattr(block, "type", None)
+        if kind == "tool_use":
+            args = getattr(block, "input", None)
+            calls.append(ToolCall(block.id, block.name, args if isinstance(args, dict) else {}))
+        elif getattr(block, "text", None):
+            texts.append(block.text)
+    usage = getattr(response, "usage", None)
+    finish = _ANTHROPIC_FINISH.get(getattr(response, "stop_reason", None) or "end_turn", "other")
+    if calls:
+        finish = "tool_calls"
+    return ChatToolsResponse(
+        text="\n".join(texts).strip(),
+        tool_calls=tuple(calls),
+        usage=build_usage(
+            "anthropic",
+            model,
+            prompt_tokens=getattr(usage, "input_tokens", None),
+            completion_tokens=getattr(usage, "output_tokens", None),
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", None),
+            cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", None),
+        ),
+        finish_reason=finish,
+        model_version=getattr(response, "model", None),
+        content_raw="\n".join(texts) if texts else None,
+    )
 
 
 class AnthropicProvider:
@@ -223,6 +345,47 @@ class AnthropicProvider:
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_completion failed: %s", exc)
             raise LLMAPIError("anthropic", str(exc)) from exc
+
+    async def chat_with_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        model: str,
+        api_key: str,
+        temperature: float = 1.0,  # noqa: ARG002 — SDK 1.x has no temperature
+        max_tokens: Optional[int] = None,
+        tool_choice: str = "auto",
+        org_id: Optional[str] = None,
+    ) -> ChatToolsResponse:
+        """One tool-calling turn (see `tool_calling.chat_with_tools`)."""
+        from ..usage import record_usage
+
+        client = self._client_for(api_key)
+        payload = build_anthropic_request(
+            messages, tools, model=model, max_tokens=max_tokens, tool_choice=tool_choice
+        )
+        try:
+            response = await client.messages.create(**payload)
+        except AnthropicAPIError as exc:
+            logger.error("Anthropic chat_with_tools failed: %s", exc)
+            raise LLMAPIError("anthropic", str(exc)) from exc
+        parsed = parse_anthropic_response(response, model=model)
+        u = parsed.usage
+        await record_usage(
+            provider="anthropic",
+            model=model,
+            operation="chat",
+            org_id=org_id,
+            prompt_tokens=u.prompt_tokens,
+            completion_tokens=u.completion_tokens,
+            total_tokens=(u.prompt_tokens or 0) + (u.completion_tokens or 0)
+            if u.prompt_tokens is not None or u.completion_tokens is not None else None,
+            cache_creation_input_tokens=u.cache_creation_tokens,
+            cache_read_input_tokens=u.cache_read_tokens,
+            model_version=parsed.model_version,
+        )
+        return parsed
 
     async def generate_embedding(
         self,

@@ -1,6 +1,12 @@
 """OpenAI tool-loop dispatcher — runs the chat-completion + tool-call
 loop until the model produces a text reply or hits the iteration cap.
 
+Since Lais S0 the loop is NOT implemented here: `reply` is a synchronous
+facade over the platform's single tool loop
+(`integrations.llm.tool_loop.run_tool_loop`) driving `chat_with_tools`
+through an `OpenAIClientAdapter` around the injected client — same wire
+calls as before, one loop instead of four.
+
 Ported from
 `whatsapp-google-scheduling/app/services/openai/conversation.py:ConversationGptService`
 2026-05-03 via `projects/whatsapp-seed-absorption/` Phase 5.
@@ -26,38 +32,35 @@ works even when the consumer doesn't (yet) wire audit persistence.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
+
+from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIClientAdapter
+from noctusai_lib.integrations.llm.tool_calling import (
+    ToolCall,
+    ToolResult,
+    chat_with_tools,
+)
+from noctusai_lib.integrations.llm.tool_loop import (
+    DEFAULT_FALLBACK_REPLY,
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    run_tool_loop_sync,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOOL_ITERATIONS = 5
-DEFAULT_FALLBACK_REPLY = (
-    "I had trouble completing that request. Could you summarize what you need again?"
-)
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """Normalized OpenAI tool-call from the model."""
-
-    call_id: str
-    name: str
-    arguments: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class ToolResult:
-    """Tool-handler return value. `content` is sent back to the model
-    as the tool message body — typically a JSON string but plain text
-    is fine."""
-
-    call_id: str
-    content: str
-
+# `ToolCall` / `ToolResult` are the seed-wide normalized types
+# (`integrations.llm.tool_calling`), re-exported here for existing importers.
+__all__ = [
+    "DEFAULT_FALLBACK_REPLY",
+    "DEFAULT_MAX_TOOL_ITERATIONS",
+    "AuditWriter",
+    "LLMDispatcher",
+    "ToolCall",
+    "ToolHandler",
+    "ToolResult",
+]
 
 ToolHandler = Callable[[ToolCall], ToolResult]
 AuditWriter = Callable[[ToolCall, ToolResult], None]
@@ -102,72 +105,21 @@ class LLMDispatcher:
           replies with text, returns it.
         - On loop exhaustion, returns `fallback_reply` and logs a warning.
         """
-        if tools is None or tool_handler is None:
-            response = self.client.chat.completions.create(
-                model=self.model, messages=messages
-            )
-            return (response.choices[0].message.content or "").strip()
-
         writer = audit_writer if audit_writer is not None else _noop_audit_writer
-        # Local mutable copy — we append to it across iterations.
-        loop_messages = list(messages)
+        adapter = OpenAIClientAdapter(self.client)
 
-        for _iteration in range(self.max_tool_iterations):
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=loop_messages,
-                tools=tools,
-            )
-            message = response.choices[0].message
-            tool_calls = getattr(message, "tool_calls", None) or []
-
-            if not tool_calls:
-                return (message.content or "").strip()
-
-            loop_messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                }
+        async def _chat(msgs, specs):
+            return await chat_with_tools(
+                msgs, specs, model=self.model, provider_impl=adapter
             )
 
-            for tc in tool_calls:
-                arguments_raw = tc.function.arguments or "{}"
-                try:
-                    arguments = json.loads(arguments_raw)
-                except json.JSONDecodeError:
-                    arguments = {}
-                call = ToolCall(call_id=tc.id, name=tc.function.name, arguments=arguments)
-                result = tool_handler(call)
-                try:
-                    writer(call, result)
-                except Exception:
-                    logger.exception(
-                        "audit_writer failed for tool call %s (%s)",
-                        call.call_id,
-                        call.name,
-                    )
-                loop_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": result.call_id,
-                        "content": result.content,
-                    }
-                )
-
-        logger.warning(
-            "LLMDispatcher tool loop hit max iterations (%d) without a final reply",
-            self.max_tool_iterations,
+        result = run_tool_loop_sync(
+            messages,
+            tools,
+            tool_handler,
+            chat=_chat,
+            max_iterations=self.max_tool_iterations,
+            fallback_reply=self.fallback_reply,
+            audit_writer=writer,
         )
-        return self.fallback_reply
+        return result.text

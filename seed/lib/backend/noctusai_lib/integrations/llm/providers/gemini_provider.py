@@ -482,6 +482,17 @@ class GeminiProvider:
             total_tokens=total_tokens,
         )
 
+    async def chat_with_tools(self, *args: Any, **kwargs: Any) -> Any:
+        """Tool calling is not implemented for Gemini — typed, never silent.
+
+        NOC-REMEDIATE[llm-tool-calling-gemini]: map `ToolSpec`/`ChatMessage`
+        to google-genai `FunctionDeclaration`/`Content` parts (+ a recorded
+        fixture test) when a Gemini-backed agent needs tools — 2026-10-14
+        """
+        from ..tool_calling import ToolCallingNotImplemented
+
+        raise ToolCallingNotImplemented("gemini")
+
     async def close(self) -> None:  # pragma: no cover — no resources to release
         self._clients.clear()
 

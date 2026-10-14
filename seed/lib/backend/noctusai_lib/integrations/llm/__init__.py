@@ -56,6 +56,17 @@ from .client import (
     shutdown_llm,
 )
 from .config import KeyProvider, LLMConfig
+from .tool_calling import (
+    ChatMessage,
+    ChatToolsResponse,
+    LLMUsage,
+    ToolCall,
+    ToolCallingNotImplemented,
+    ToolResult,
+    ToolSpec,
+    chat_with_tools,
+)
+from .tool_loop import ToolLoopResult, run_tool_loop, run_tool_loop_sync
 from .embeddings import generate_embedding, generate_embeddings_batch
 from .provider_choice import resolve_llm_provider
 from .vision import analyze_image, analyze_images
@@ -192,6 +203,18 @@ __all__ = [
     # High-level entry points (what product services call)
     "chat_completion",
     "chat_completion_stream",
+    # Provider-neutral tool calling (Lais S0)
+    "chat_with_tools",
+    "run_tool_loop",
+    "run_tool_loop_sync",
+    "ChatMessage",
+    "ToolSpec",
+    "ToolCall",
+    "ToolResult",
+    "LLMUsage",
+    "ChatToolsResponse",
+    "ToolLoopResult",
+    "ToolCallingNotImplemented",
     "StreamOutcome",
     "build_cached_messages",
     "generate_embedding",

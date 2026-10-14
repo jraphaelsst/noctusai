@@ -27,6 +27,7 @@ from collections import deque
 from typing import Any, Deque, Iterable, List, Optional, Sequence, Union
 
 from ..stream_types import StreamOutcome
+from ..tool_calling import ChatMessage, ChatToolsResponse, LLMUsage, ToolCall, ToolSpec
 from ..vision_types import VisionResult
 
 
@@ -52,6 +53,10 @@ class FakeProvider:
         # Aligned by call order with `stream_responses` — same convention as
         # `vision_truncated`. Unset ⇒ every stream reports `truncated=False`.
         stream_truncated: Optional[Iterable[bool]] = None,
+        # Scripted `chat_with_tools` turns, consumed in order. Each item is a
+        # `ChatToolsResponse`, a `str` (a final text turn), or a list/tuple of
+        # `ToolCall` (a tool-calling turn). Exhausted ⇒ a deterministic text turn.
+        tool_responses: Optional[Iterable[Union[ChatToolsResponse, str, Sequence[ToolCall]]]] = None,
     ) -> None:
         self._chat: Deque[str] = deque(chat_responses or [])
         self._embeddings: Deque[List[float]] = deque(embedding_responses or [])
@@ -62,6 +67,7 @@ class FakeProvider:
         # The outer deque.popleft() returns one full scripted stream per call.
         self._streams: Deque[List[str]] = deque(stream_responses or [])
         self._stream_truncated: Deque[bool] = deque(stream_truncated or [])
+        self._tool_turns: Deque[Union[ChatToolsResponse, str, Sequence[ToolCall]]] = deque(tool_responses or [])
 
         # Call log — tests can inspect what was called, with what args.
         self.calls: list[dict] = []
@@ -209,6 +215,43 @@ class FakeProvider:
         if outcome is not None:
             outcome.truncated = truncated
             outcome.stop_reason = "max_tokens" if truncated else "end_turn"
+
+    async def chat_with_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        model: str,
+        api_key: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        tool_choice: str = "auto",
+        org_id: Optional[str] = None,
+    ) -> ChatToolsResponse:
+        """Deterministic, scriptable tool-calling turn (no network, no usage
+        recording). The call — including the normalized messages and tool
+        specs it received — is logged on `self.calls`."""
+        self._record(
+            "chat_with_tools",
+            messages=list(messages),
+            tools=list(tools),
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tool_choice=tool_choice,
+            org_id=org_id,
+        )
+        if not self._tool_turns:
+            return ChatToolsResponse(text=f"[FAKE] default tool-chat response for model={model}")
+        turn = self._tool_turns.popleft()
+        if isinstance(turn, ChatToolsResponse):
+            return turn
+        if isinstance(turn, str):
+            return ChatToolsResponse(text=turn, usage=LLMUsage(0, 0, 0, 0, 0.0))
+        return ChatToolsResponse(
+            tool_calls=tuple(turn), finish_reason="tool_calls", usage=LLMUsage(0, 0, 0, 0, 0.0)
+        )
 
     async def close(self) -> None:
         # Nothing to close; FakeProvider holds no resources.

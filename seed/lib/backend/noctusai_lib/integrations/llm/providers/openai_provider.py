@@ -15,6 +15,7 @@ Errors from the SDK surface as `LLMAPIError`. Missing keys surface as
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional, Sequence, Union
 
@@ -25,6 +26,14 @@ import openai
 from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderQuotaExhausted
 from ..registry import register
 from ..stream_types import StreamOutcome
+from ..tool_calling import (
+    ChatMessage,
+    ChatToolsResponse,
+    ToolCall,
+    ToolSpec,
+    build_usage,
+    parse_arguments,
+)
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
@@ -88,6 +97,112 @@ def _to_llm_error(exc: OpenAIError) -> LLMAPIError:
     if is_quota_exhausted(exc):
         return ProviderQuotaExhausted("openai", str(exc))
     return LLMAPIError("openai", str(exc))
+
+
+# ── tool calling (chat_with_tools) — pure wire mapping ───────────────────────
+
+_OPENAI_FINISH = {"stop": "stop", "tool_calls": "tool_calls", "function_call": "tool_calls", "length": "length"}
+
+
+def to_openai_messages(messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    """Normalized messages → OpenAI chat-completions `messages`."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.role == "tool":
+            out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content or ""})
+        elif m.role == "assistant" and m.tool_calls:
+            out.append(
+                {
+                    "role": "assistant",
+                    "content": m.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.raw_arguments
+                                if tc.raw_arguments is not None
+                                else json.dumps(tc.arguments, ensure_ascii=False),
+                            },
+                        }
+                        for tc in m.tool_calls
+                    ],
+                }
+            )
+        else:
+            out.append({"role": m.role, "content": m.content or ""})
+    return out
+
+
+def to_openai_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
+    return [
+        t.openai_raw
+        if t.openai_raw is not None
+        else {
+            "type": "function",
+            "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+        }
+        for t in tools
+    ]
+
+
+def _openai_tool_choice(tool_choice: str) -> Any:
+    if tool_choice in ("auto", "none", "required"):
+        return tool_choice
+    return {"type": "function", "function": {"name": tool_choice}}
+
+
+def build_openai_request(
+    messages: Sequence[ChatMessage],
+    tools: Sequence[ToolSpec],
+    *,
+    model: str,
+    temperature: Optional[float] = 1.0,
+    max_tokens: Optional[int] = None,
+    tool_choice: str = "auto",
+) -> dict[str, Any]:
+    """The exact kwargs sent to `client.chat.completions.create`."""
+    payload: dict[str, Any] = {"model": model, "messages": to_openai_messages(messages)}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if tools:
+        payload["tools"] = to_openai_tools(tools)
+        if tool_choice != "auto":
+            payload["tool_choice"] = _openai_tool_choice(tool_choice)
+    return payload
+
+
+def parse_openai_response(response: Any, *, model: str) -> ChatToolsResponse:
+    """OpenAI chat-completion response (SDK object) → `ChatToolsResponse`."""
+    choice = response.choices[0]
+    message = choice.message
+    calls = tuple(
+        ToolCall(tc.id, tc.function.name, parse_arguments(tc.function.arguments), tc.function.arguments)
+        for tc in (getattr(message, "tool_calls", None) or [])
+    )
+    raw = message.content
+    usage = getattr(response, "usage", None)
+    details = getattr(usage, "prompt_tokens_details", None)
+    finish = _OPENAI_FINISH.get(getattr(choice, "finish_reason", None) or "stop", "other")
+    if calls:
+        finish = "tool_calls"
+    return ChatToolsResponse(
+        text=(raw or "").strip(),
+        tool_calls=calls,
+        usage=build_usage(
+            "openai",
+            model,
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            cache_read_tokens=getattr(details, "cached_tokens", None),
+        ),
+        finish_reason=finish,
+        model_version=getattr(response, "model", None),
+        content_raw=raw,
+    )
 
 
 class OpenAIProvider:
@@ -530,6 +645,46 @@ class OpenAIProvider:
             model_version=model_version,
         )
 
+    async def chat_with_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        model: str,
+        api_key: str,
+        temperature: float = 1.0,
+        max_tokens: Optional[int] = None,
+        tool_choice: str = "auto",
+        org_id: Optional[str] = None,
+    ) -> ChatToolsResponse:
+        """One tool-calling turn (see `tool_calling.chat_with_tools`)."""
+        from ..usage import record_usage
+
+        client = self._client_for(api_key)
+        payload = build_openai_request(
+            messages, tools, model=model, temperature=temperature,
+            max_tokens=max_tokens, tool_choice=tool_choice,
+        )
+        try:
+            response = await _create_retrying(client.chat.completions.create, **payload)
+        except OpenAIError as exc:
+            logger.error("OpenAI chat_with_tools failed: %s", exc)
+            raise _to_llm_error(exc) from exc
+        parsed = parse_openai_response(response, model=model)
+        u = parsed.usage
+        await record_usage(
+            provider="openai",
+            model=model,
+            operation="chat",
+            org_id=org_id,
+            prompt_tokens=u.prompt_tokens,
+            completion_tokens=u.completion_tokens,
+            total_tokens=(u.prompt_tokens or 0) + (u.completion_tokens or 0)
+            if u.prompt_tokens is not None or u.completion_tokens is not None else None,
+            model_version=parsed.model_version,
+        )
+        return parsed
+
     async def close(self) -> None:
         """Close every cached AsyncOpenAI client. Called on app shutdown."""
         for client in self._clients.values():
@@ -538,6 +693,46 @@ class OpenAIProvider:
             except Exception as exc:  # pragma: no cover — best-effort cleanup
                 logger.debug("Error closing OpenAI client: %s", exc)
         self._clients.clear()
+
+
+class OpenAIClientAdapter:
+    """`chat_with_tools` over an SDK client the CALLER owns (sync or async).
+
+    For callers that inject their own OpenAI-shaped client (`LLMDispatcher`,
+    `OpenAIToolOrchestrator`, social-wiring `ChatbotService`): the wire call
+    is the same `client.chat.completions.create(model, messages[, tools])`
+    they always made — no temperature, no retry wrapper, no key resolution,
+    no budget — only the loop that drives it is now the shared one. Pass it
+    as `chat_with_tools(..., provider_impl=OpenAIClientAdapter(client))`.
+    """
+
+    name = "openai-client"
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def chat_with_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[ToolSpec],
+        *,
+        model: str,
+        api_key: str = "",  # noqa: ARG002 — the client carries its own credential
+        temperature: float = 1.0,  # noqa: ARG002
+        max_tokens: Optional[int] = None,
+        tool_choice: str = "auto",
+        org_id: Optional[str] = None,  # noqa: ARG002
+    ) -> ChatToolsResponse:
+        import inspect
+
+        payload = build_openai_request(
+            messages, tools, model=model, temperature=None,
+            max_tokens=max_tokens, tool_choice=tool_choice,
+        )
+        response = self._client.chat.completions.create(**payload)
+        if inspect.isawaitable(response):
+            response = await response
+        return parse_openai_response(response, model=model)
 
 
 register("openai", OpenAIProvider)

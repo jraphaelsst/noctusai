@@ -18,9 +18,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from noctusai_lib.integrations.llm import ToolCall, ToolResult, chat_with_tools, run_tool_loop
+from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIClientAdapter
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+FALLBACK_REPLY = "Tive dificuldade em concluir. Pode resumir o pedido de upload de novo?"
 
 SYSTEM_PROMPT = """\
 Voce e o assistente multimodal da plataforma NoctusAI. Conversa pode
@@ -340,65 +345,34 @@ class ChatbotService:
         messages.extend(self._memory_to_messages(memory))
         messages.append({"role": "user", "content": inbound_text})
 
-        client = self._client()
-        tool_payload = self._tools_payload()
+        adapter = OpenAIClientAdapter(self._client())
 
-        for _ in range(MAX_TOOL_ITERATIONS):
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                tools=tool_payload,
-            )
-            message = response.choices[0].message
-            tool_calls = getattr(message, "tool_calls", None) or []
-            if not tool_calls:
-                text = (message.content or "").strip()
-                if append_inbound:
-                    self._append_memory("inbound", inbound_text)
-                if append_outbound:
-                    self._append_memory("outbound", text)
-                return text
+        async def _chat(msgs, specs):
+            return await chat_with_tools(msgs, specs, model=self._model, provider_impl=adapter)
 
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                }
+        async def _handle(call: ToolCall) -> ToolResult:
+            result = await self._dispatch_tool(call.name, call.arguments)
+            return ToolResult(
+                call_id=call.call_id,
+                content=json.dumps(result, ensure_ascii=False, default=str),
             )
 
-            for tc in tool_calls:
-                raw_args = tc.function.arguments or "{}"
-                try:
-                    args = json.loads(raw_args)
-                except json.JSONDecodeError:
-                    args = {}
-                result = await self._dispatch_tool(tc.function.name, args)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(result, ensure_ascii=False, default=str),
-                    }
-                )
-
-        logger.warning("ChatbotService hit max tool iterations for session=%s", self._session_id)
-        fallback = "Tive dificuldade em concluir. Pode resumir o pedido de upload de novo?"
+        loop_result = await run_tool_loop(
+            messages,
+            self._tools_payload(),
+            _handle,
+            chat=_chat,
+            max_iterations=MAX_TOOL_ITERATIONS,
+            fallback_reply=FALLBACK_REPLY,
+        )
+        if loop_result.exhausted:
+            logger.warning("ChatbotService hit max tool iterations for session=%s", self._session_id)
+        text = loop_result.text
         if append_inbound:
             self._append_memory("inbound", inbound_text)
         if append_outbound:
-            self._append_memory("outbound", fallback)
-        return fallback
+            self._append_memory("outbound", text)
+        return text
 
     # ─── Memory helpers (Redis-backed conversation log) ────────────────
     def _client(self):
