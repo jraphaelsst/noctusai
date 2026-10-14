@@ -92,7 +92,7 @@ describe("Card (a) — Agents link", () => {
     expect(st).toContain("anthropic / claude-x");
     expect(st).toContain("Configurada");
     expect((screen.getByTestId("editar-julia-link") as HTMLAnchorElement).href).toBe(
-      "https://agents.example.test/agentes/julia/persona",
+      "https://agents.example.test/studio/lead-imob",
     );
   });
 

@@ -9,8 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mensagemErroLais, useSalvarTokenAgents, type LaisAgente } from "@/hooks/useLaisAgente";
 
-/** Where the Julia persona is edited, inside the agents product. */
-const JULIA_PERSONA_PATH = "/agentes/julia/persona";
+/** Where Julia-of-Lais (agent key `lead-imob`; `julia` is the academia agent) is edited, in agents' Agent Studio. */
+const LAIS_JULIA_STUDIO_PATH = "/studio/lead-imob";
 
 export function AgentsLinkCard({ data, isAdmin }: { data: LaisAgente; isAdmin: boolean }) {
   const salvar = useSalvarTokenAgents();
@@ -86,7 +86,7 @@ export function AgentsLinkCard({ data, isAdmin }: { data: LaisAgente; isAdmin: b
 
         {data.agents_url ? (
           <a
-            href={`${data.agents_url.replace(/\/$/, "")}${JULIA_PERSONA_PATH}`}
+            href={`${data.agents_url.replace(/\/$/, "")}${LAIS_JULIA_STUDIO_PATH}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-sm text-primary underline"
