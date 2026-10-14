@@ -38,6 +38,22 @@ LIVE_STATUSES: frozenset[str] = frozenset(
 )
 
 
+#: Short-lived download links for the private PDF/XML copies (security: <= 600 s).
+DOCUMENT_URL_TTL_SECONDS = 300
+
+#: First-company creation is single-flight: the winner parks `claim:<unix>:<nonce>` in
+#: `invoice_company_ref` BEFORE the provider POST; a claim older than this may be taken over
+#: (the claimer crashed).
+COMPANY_CLAIM_PREFIX = "claim:"
+COMPANY_CLAIM_TTL_SECONDS = 120
+
+
+def company_ref_of(profile) -> "str | None":
+    """The REAL provider company ref, or None (unset, or only an in-flight claim)."""
+    ref = (profile or {}).get("invoice_company_ref")
+    return None if (not ref or str(ref).startswith(COMPANY_CLAIM_PREFIX)) else str(ref)
+
+
 def forced_nacional(tax_regime: str) -> bool:
     return str(getattr(tax_regime, "value", tax_regime)) in NACIONAL_FORCED_REGIMES
 
@@ -51,7 +67,10 @@ def effective_nfse_mode(profile: dict) -> NfseMode:
 
 
 __all__ = [
+    "COMPANY_CLAIM_PREFIX",
+    "COMPANY_CLAIM_TTL_SECONDS",
     "CUTOVER_PHRASE",
+    "DOCUMENT_URL_TTL_SECONDS",
     "InvoiceKind",
     "InvoiceStatus",
     "LIVE_STATUSES",
@@ -63,6 +82,7 @@ __all__ = [
     "REISSUABLE_STATUSES",
     "ROLLBACK_PHRASE",
     "VALIDATION_WINDOW_DAYS",
+    "company_ref_of",
     "effective_nfse_mode",
     "forced_nacional",
 ]

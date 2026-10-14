@@ -54,11 +54,13 @@ from ._common import digits, first, get_row, new_id, now, now_iso, tbl
 from .config import CommerceConfig
 from .errors import CommerceError, conflict, not_found
 from .fiscal_types import (
+    DOCUMENT_URL_TTL_SECONDS,
     LIVE_STATUSES,
     MIN_CANCEL_REASON_CHARS,
     REISSUABLE_STATUSES,
     InvoiceKind,
     InvoiceStatus,
+    company_ref_of,
 )
 from .orders import get_order, list_items
 from .profile import get_profile
@@ -296,7 +298,7 @@ async def issue_for_staff(
     profile = get_profile(db, org_id) or {}
     if order["status"] not in _ISSUABLE_ORDER_STATUSES:
         raise conflict("pedido_nao_pago", "A nota só pode ser emitida para um pedido pago.")
-    if not profile.get("invoice_company_ref"):
+    if not company_ref_of(profile):
         raise conflict("emissao_indisponivel", "Cadastre os dados fiscais e o certificado da loja antes de emitir.")
     if kind not in plan_invoices(db, org_id, order_id, profile):
         raise CommerceError("tipo_nota_invalido", "Este pedido não tem itens para esse tipo de nota.", 422, field="kind")
@@ -333,7 +335,7 @@ async def document_url(cfg: CommerceConfig, storage: StorageBackend, db: Any, or
     key = inv.get("pdf_path" if fmt == "pdf" else "xml_path")
     if fmt not in ("pdf", "xml") or not key:
         raise not_found("Documento")
-    ttl = cfg.signed_url_ttl_seconds
+    ttl = min(DOCUMENT_URL_TTL_SECONDS, cfg.signed_url_ttl_seconds)  # dedicated, short: fiscal documents carry PII
     url = await storage.signed_url(bucket=cfg.bucket, key=key, expires_in_seconds=ttl)
     return {"url": url, "expires_in": ttl}
 
@@ -450,7 +452,8 @@ async def copy_documents(rt: InvoiceRuntime, db: Any, org_id: Any, inv: Mapping[
     """Copy the authorized PDF + XML into the PRIVATE bucket (D30 retention); idempotent."""
     provider = rt.make_provider(str(org_id))
     patch: dict[str, Any] = {}
-    for fmt, url, mime in (("pdf", result.pdf_url, "application/pdf"), ("xml", result.xml_url, "application/xml")):
+    # NOC-REMEDIATE[finance-attachment-download-disposition]: StorageBackend.signed_url has no download=/Content-Disposition, so the XML is stored as octet-stream (a browser will not render it inline) -- same as finance attachments; destination: the storage seam grows `signed_url(download=)`. — 2026-10-14
+    for fmt, url, mime in (("pdf", result.pdf_url, "application/pdf"), ("xml", result.xml_url, "application/octet-stream")):
         column = f"{fmt}_path"
         if inv.get(column) or not url:
             continue
@@ -556,12 +559,12 @@ def make_invoice_job_handlers(
         try:
             if inv["status"] == InvoiceStatus.AUTHORIZED.value:  # a retry after a failed document copy
                 provider = make_provider(str(org_id))
-                result = await asyncio.to_thread(provider.get, InvoiceKind(inv["kind"]), inv["ref"], company_ref=(get_profile(db, org_id) or {}).get("invoice_company_ref"))
+                result = await asyncio.to_thread(provider.get, InvoiceKind(inv["kind"]), inv["ref"], company_ref=company_ref_of(get_profile(db, org_id)))
                 await copy_documents(rt, db, org_id, inv, result)
                 return
             order = get_order(db, org_id, inv["order_id"])
             profile = get_profile(db, org_id) or {}
-            company_ref = profile.get("invoice_company_ref")
+            company_ref = company_ref_of(profile)
             request = build_request(db, org_id, order, inv, profile, company_ref) if company_ref else None
             if request is None:
                 why = "empresa fiscal nao cadastrada" if not company_ref else "comprador sem CPF/CNPJ ou pedido sem itens da nota"
@@ -600,7 +603,7 @@ def make_invoice_job_handlers(
             return  # already cancelled / never authorized: idempotent
         try:
             provider = make_provider(str(org_id))
-            company_ref = (get_profile(db, org_id) or {}).get("invoice_company_ref")
+            company_ref = company_ref_of(get_profile(db, org_id))
             try:
                 result = await asyncio.to_thread(
                     provider.cancel, InvoiceKind(inv["kind"]), inv["ref"], reason=inv.get("cancel_reason") or "", company_ref=company_ref
@@ -645,15 +648,19 @@ async def handle_invoice_event(
         logger.warning("commerce invoice webhook: ref not found for org=%s (ignored)", org_id)
         return IGNORED
     provider = rt.make_provider(str(org_id))
-    key = f"{event.ref}:{event.status_hint.value if event.status_hint else 'unknown'}"
-    if not inbox.claim(gateway=provider.name, event_id=key):
+    # Inbox dedupe only when the delivery names a status: `(ref, status_hint)` is then a real replay
+    # key. A status-less body has no honest key (a constant would swallow every later delivery for
+    # the ref forever), and none is needed -- the `get()` re-read below makes processing idempotent.
+    key = f"{event.ref}:{event.status_hint.value}" if event.status_hint else None
+    if key is not None and not inbox.claim(gateway=provider.name, event_id=key):
         return DUPLICATE
     try:
-        company_ref = (get_profile(db, org_id) or {}).get("invoice_company_ref")
+        company_ref = company_ref_of(get_profile(db, org_id))
         result = await asyncio.to_thread(provider.get, InvoiceKind(inv["kind"]), inv["ref"], company_ref=company_ref)
         await apply_result(rt, db, org_id, inv, result, jobs=jobs)
     except Exception:
-        inbox.release(gateway=provider.name, event_id=key)  # let the provider's retry through
+        if key is not None:
+            inbox.release(gateway=provider.name, event_id=key)  # let the provider's retry through
         raise
     return PROCESSED
 

@@ -43,7 +43,14 @@ def _auth(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     role = authorization.split(" ", 1)[1]
-    return {"org_id": ORG_B if role.startswith("org-b") else ORG_A, "user_id": USER_ID, "admin": role in ("admin", "org-b-admin")}
+    return {"org_id": ORG_B if role.startswith("org-b") else ORG_A, "user_id": USER_ID,
+            "admin": role in ("admin", "org-b-admin"), "platform": role == "platform"}
+
+
+def _platform(auth: dict = Depends(_auth)) -> dict:
+    if not auth["platform"]:
+        raise HTTPException(status_code=403, detail={"detail": "Restrito a administradores da plataforma", "code": "platform_admin_required"})
+    return auth
 
 
 def _admin(auth: dict = Depends(_auth)) -> dict:
@@ -57,12 +64,13 @@ class App:
     client: TestClient
     fh: FH
     limited: list[str]
+    provider_builds: list[str]
 
 
-@pytest.fixture
-def app(fh) -> App:
+def build_app(fh: FH, *, platform: bool = False) -> App:
     limiter = Limiter(key_func=get_remote_address)
     limited: list[str] = []
+    builds: list[str] = []
 
     def rl(limit: str):
         real = limiter.limit(limit)
@@ -73,14 +81,19 @@ def app(fh) -> App:
 
         return deco
 
+    def make_provider(org: str):
+        builds.append(org)
+        return fh.provider
+
     staff = commerce_fiscal_router(
         CFG, auth_dependency=_auth, admin_dependency=_admin,
         resolve_context=lambda auth, db: CommerceContext(db=db, org_id=auth["org_id"], user_id=auth["user_id"]),
-        get_db=lambda: fh.db, get_storage=lambda: fh.storage, get_jobs=lambda: fh.jobs, make_provider=lambda org: fh.provider,
+        get_db=lambda: fh.db, get_storage=lambda: fh.storage, get_jobs=lambda: fh.jobs, make_provider=make_provider,
+        platform_admin_dependency=_platform if platform else None,
     )
     hook = commerce_invoice_webhook_router(
         CFG, get_db=lambda: fh.db, get_storage=lambda: fh.storage, get_event_inbox=lambda: fh.inbox,
-        make_provider=lambda org: fh.provider,
+        make_provider=make_provider,
         get_webhook_token=lambda org: HOOK_TOKEN if org == ORG_A else None,  # ORG_B: unset => fail-closed
         get_jobs=lambda: fh.jobs, get_mailer=lambda: fh.mailer, rate_limit=rl,
     )
@@ -92,7 +105,17 @@ def app(fh) -> App:
     api.add_exception_handler(ValidationError, validation_exception_handler)
     api.include_router(staff)
     api.include_router(hook)
-    return App(TestClient(api), fh, limited)
+    return App(TestClient(api), fh, limited, builds)
+
+
+@pytest.fixture
+def app(fh) -> App:
+    return build_app(fh)
+
+
+@pytest.fixture
+def papp(fh) -> App:
+    return build_app(fh, platform=True)
 
 
 STAFF, ADMIN, OTHER = {"Authorization": "Bearer user"}, {"Authorization": "Bearer admin"}, {"Authorization": "Bearer org-b"}
@@ -200,7 +223,7 @@ class TestInvoiceRoutes:
         listed = app.client.get(base, headers=STAFF).json()["data"]
         assert [i["status"] for i in listed] == ["authorized"]
         doc = app.client.get(f"/api/commerce/invoices/{iid}/documents/pdf", headers=STAFF)
-        assert doc.status_code == 200 and doc.json()["data"]["url"] and doc.json()["data"]["expires_in"] == CFG.signed_url_ttl_seconds
+        assert doc.status_code == 200 and doc.json()["data"]["url"] and 0 < doc.json()["data"]["expires_in"] <= 600
         assert app.client.get(f"/api/commerce/invoices/{iid}/documents/exe", headers=STAFF).status_code == 422
         short = app.client.post(f"/api/commerce/invoices/{iid}/cancel", json={"reason": "curto"}, headers=ADMIN)
         assert short.status_code == 422 and short.json()["error"]["code"] == "justificativa_curta"
@@ -245,7 +268,7 @@ class TestInvoiceWebhook:
 
     def test_unknown_provider_path_is_404_and_bad_body_is_400(self, app):
         self._setup(app)
-        assert self._post(app, ORG_A, {"ref": "x"}, provider="otherpay").status_code == 404
+        assert self._post(app, ORG_A, {"ref": "x"}, provider="otherpay").status_code == 401  # authed, but not this org's provider
         assert self._post(app, ORG_A, None, raw=b"not json").status_code == 400
         assert self._post(app, ORG_A, {"no_ref": 1}).status_code == 400
         assert self._post(app, ORG_A, {"ref": "../../etc"}).status_code == 400
@@ -311,3 +334,62 @@ def _req(app: App, row: dict):
     order = app.fh.db.table("commerce_orders").select("*").eq("id", row["order_id"]).execute().data[0]
     profile = inv.get_profile(app.fh.db, ORG_A)
     return inv.build_request(app.fh.db, ORG_A, order, row, profile, profile["invoice_company_ref"])
+
+
+class TestWebhookPreAuthUniformity:
+    """Item 1: nothing is built / read for an unauthenticated caller, and every refusal looks identical."""
+
+    def test_every_pre_auth_failure_is_the_same_401_and_builds_no_provider(self, app):
+        _, row = TestInvoiceWebhook()._setup(app)
+        body = {"ref": row["ref"], "status": "authorized"}
+        poster = TestInvoiceWebhook()._post
+        unknown_org = "00000000-0000-4000-8000-000000000000"
+        refusals = [
+            poster(app, unknown_org, body),                       # unknown org
+            poster(app, ORG_B, body),                             # org with the token unset (fail-closed)
+            poster(app, ORG_A, body, token="wrong"),              # wrong token
+            poster(app, ORG_A, body, token=None),                 # no token
+            poster(app, ORG_A, body, token="wrong", provider="otherpay"),  # unknown provider, bad token
+        ]
+        assert {r.status_code for r in refusals} == {401}
+        assert len({r.text for r in refusals}) == 1  # byte-identical bodies: no oracle
+        assert app.provider_builds == []              # the provider was never even constructed
+
+    def test_authenticated_unknown_provider_is_the_same_401(self, app):
+        _, row = TestInvoiceWebhook()._setup(app)
+        r = TestInvoiceWebhook()._post(app, ORG_A, {"ref": row["ref"]}, provider="otherpay")
+        assert r.status_code == 401 and r.json()["error"]["code"] == "assinatura_invalida"
+
+
+class TestPlatformAdminWrites:
+    """Item 2: contract 0 -- a platform admin acting on another org, real actor recorded."""
+
+    PLATFORM = {"Authorization": "Bearer platform"}
+
+    def test_without_the_dependency_behaviour_is_unchanged(self, app):
+        seed_fiscal_org(app.fh, auto=False, cert=False, company=False)
+        assert app.client.put("/api/commerce/fiscal", json={"expected_version": 1}, headers=self.PLATFORM).status_code == 403
+
+    def test_platform_admin_may_write_and_the_ledger_names_the_real_actor(self, papp):
+        seed_fiscal_org(papp.fh, auto=False, cert=False, company=False)
+        r = papp.client.put("/api/commerce/fiscal", json={"expected_version": 1, "inscricao_municipal": "77"}, headers=self.PLATFORM)
+        assert r.status_code == 200 and r.json()["data"]["version"] == 2
+        ledger = [v for v in papp.fh.db.table("commerce_store_profile_versions").select("*").eq("org_id", ORG_A).execute().data if v["version"] == 2][0]
+        assert ledger["changed_by"] == USER_ID and ledger["snapshot"]["acted_by_platform_admin"] is True
+
+    def test_org_admin_is_not_marked_as_platform(self, papp):
+        seed_fiscal_org(papp.fh, auto=False, cert=False, company=False)
+        papp.client.put("/api/commerce/fiscal", json={"expected_version": 1, "inscricao_municipal": "77"}, headers=ADMIN)
+        ledger = [v for v in papp.fh.db.table("commerce_store_profile_versions").select("*").eq("org_id", ORG_A).execute().data if v["version"] == 2][0]
+        assert "acted_by_platform_admin" not in ledger["snapshot"]
+
+    def test_plain_staff_is_still_403_and_unauthenticated_still_401(self, papp):
+        assert papp.client.put("/api/commerce/fiscal", json={"expected_version": 1}, headers=STAFF).status_code == 403
+        assert papp.client.put("/api/commerce/fiscal", json={"expected_version": 1}).status_code == 401
+        assert papp.client.post("/api/commerce/fiscal/nfse-cutover", json={"confirm": "x"}).status_code == 401
+
+    def test_cutover_by_platform_admin_is_recorded_as_such(self, papp):
+        seed_fiscal_org(papp.fh, regime="lucro_presumido", auto=False)
+        r = papp.client.post("/api/commerce/fiscal/nfse-cutover", json={"confirm": CUTOVER_PHRASE}, headers=self.PLATFORM)
+        assert r.status_code == 200 and r.json()["data"]["nfse_cutover"]["via"] == "platform_admin"
+        assert r.json()["data"]["nfse_cutover"]["approved_by"] == USER_ID

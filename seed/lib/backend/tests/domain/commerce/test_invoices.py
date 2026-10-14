@@ -301,3 +301,45 @@ def test_org_isolation_of_invoice_reads(fh):
 def test_fake_provider_satisfies_the_protocol_used_here():
     from noctusai_lib.integrations.invoices import InvoiceProvider
     assert isinstance(FakeInvoiceProvider(), InvoiceProvider)
+
+
+class TestDocumentsAndWebhookKeys:
+    def test_document_links_use_a_short_dedicated_ttl_and_xml_is_octet_stream(self, fh):
+        seed_fiscal_org(fh)
+        (row,) = run(inv.on_order_paid(fh.db, seed_paid_order(fh), jobs=fh.jobs))
+        drain(fh)
+        done = inv.get_invoice(fh.db, ORG_A, row["id"])
+        assert CFG.signed_url_ttl_seconds > 600  # the media TTL is NOT what documents use
+        out = run(inv.document_url(CFG, fh.storage, fh.db, ORG_A, row["id"], "pdf"))
+        assert 0 < out["expires_in"] <= 600 and "expires=" in out["url"]
+        assert run(fh.storage.get(bucket=CFG.bucket, key=done["xml_path"])).metadata.content_type == "application/octet-stream"
+        assert run(fh.storage.get(bucket=CFG.bucket, key=done["pdf_path"])).metadata.content_type == "application/pdf"
+
+    def test_status_less_deliveries_are_never_deduped_forever(self, fh):
+        from noctusai_lib.integrations.invoices import InvoiceEvent
+
+        seed_fiscal_org(fh)
+        fh.provider._auto_authorize = False
+        order = seed_paid_order(fh)
+        (row,) = inv.register_invoices(fh.db, ORG_A, order)
+        profile = inv.get_profile(fh.db, ORG_A)
+        fh.provider.issue(inv.build_request(fh.db, ORG_A, order, row, profile, profile["invoice_company_ref"]))
+        event = InvoiceEvent(ref=row["ref"], kind=None, status_hint=None)
+        rt = fh.runtime()
+        assert run(inv.handle_invoice_event(rt, fh.db, ORG_A, event, inbox=fh.inbox)) == "processed"
+        assert inv.get_invoice(fh.db, ORG_A, row["id"])["status"] == "processing"
+        fh.provider.authorize(InvoiceKind.NFSE, row["ref"])  # the provider moves on; the 2nd status-less delivery must see it
+        assert run(inv.handle_invoice_event(rt, fh.db, ORG_A, event, inbox=fh.inbox)) == "processed"
+        assert inv.get_invoice(fh.db, ORG_A, row["id"])["status"] == "authorized"
+
+    def test_hinted_deliveries_still_dedupe(self, fh):
+        from noctusai_lib.integrations.invoices import InvoiceEvent, InvoiceStatus
+
+        seed_fiscal_org(fh)
+        order = seed_paid_order(fh)
+        (row,) = inv.register_invoices(fh.db, ORG_A, order)
+        profile = inv.get_profile(fh.db, ORG_A)
+        fh.provider.issue(inv.build_request(fh.db, ORG_A, order, row, profile, profile["invoice_company_ref"]))
+        event = InvoiceEvent(ref=row["ref"], kind=None, status_hint=InvoiceStatus.AUTHORIZED)
+        outcomes = [run(inv.handle_invoice_event(fh.runtime(), fh.db, ORG_A, event, inbox=fh.inbox)) for _ in range(2)]
+        assert outcomes == ["processed", "duplicate"]

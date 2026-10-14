@@ -251,3 +251,135 @@ class TestCutover:
 def test_other_orgs_fiscal_data_is_invisible(fh):
     seed_fiscal_org(fh, ORG_A, auto=False)
     assert fs.get_fiscal(fh.db, ORG_B) is None
+
+
+class TestSingleFlightFirstCompany:
+    """Item 5: validate first; the FIRST provider company is created by exactly one caller."""
+
+    def test_refused_validation_never_reaches_the_provider(self, fh):
+        fh.provider = CountingProvider()
+        seed_profile(fh.db)
+        for data in ({"auto_issue_invoices": True}, {"municipio_ibge": "12"}, {"nfse_mode": "municipal"}):
+            with pytest.raises(CommerceError):
+                fs.update_fiscal(fh.db, ORG_A, USER_ID, data, expected_version=1, provider=fh.provider)
+        with pytest.raises(CommerceError):  # stale version
+            fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=0, provider=fh.provider)
+        assert fh.provider.ensure_calls == 0 and fs.get_profile(fh.db, ORG_A).get("invoice_company_ref") in (None, "")
+
+    def test_concurrent_first_put_creates_one_company_and_the_loser_gets_409(self, fh):
+        seed_profile(fh.db)
+        results = {}
+
+        class Racing(CountingProvider):
+            def ensure_company(self, request):
+                if self.ensure_calls == 0:  # the second PUT lands while the first is at the provider
+                    try:
+                        fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=self)
+                    except CommerceError as exc:
+                        results["loser"] = exc
+                return super().ensure_company(request)
+
+        fh.provider = Racing()
+        view = fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=fh.provider)
+        assert results["loser"].code == "empresa_fiscal_em_andamento" and results["loser"].status_code == 409
+        assert fh.provider.ensure_calls == 1 and len(fh.provider._companies) == 1
+        assert view["invoice_company_ref"] and not view["invoice_company_ref"].startswith("claim:")
+        assert fs.get_profile(fh.db, ORG_A)["invoice_company_ref"] == view["invoice_company_ref"]
+
+    def test_the_claim_is_invisible_and_not_a_ref(self, fh):
+        seed_profile(fh.db)
+        fh.db.table("commerce_store_profiles").update({"invoice_company_ref": f"claim:{int(now().timestamp())}:abc"}).eq("org_id", ORG_A).execute()
+        view = fs.get_fiscal(fh.db, ORG_A)
+        assert view["invoice_company_ref"] is None
+        with pytest.raises(CommerceError) as e:
+            fs.upload_certificate(fh.db, ORG_A, pfx=b"x", password="x", provider=fh.provider)
+        assert code_of(e) == "empresa_fiscal_ausente"
+
+    def test_provider_failure_releases_the_claim_so_a_retry_can_proceed(self, fh):
+        seed_profile(fh.db)
+
+        class Down(FakeInvoiceProvider):
+            def ensure_company(self, request):
+                raise InvoiceProviderError("fake", "boom", code="timeout", retryable=True)
+
+        with pytest.raises(CommerceError):
+            fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=Down())
+        assert not fs.get_profile(fh.db, ORG_A).get("invoice_company_ref")
+        assert fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=fh.provider)["invoice_company_ref"]
+
+    def test_a_stale_claim_from_a_crashed_caller_is_taken_over(self, fh):
+        seed_profile(fh.db)
+        old = int((now() - timedelta(minutes=10)).timestamp())
+        fh.db.table("commerce_store_profiles").update({"invoice_company_ref": f"claim:{old}:dead"}).eq("org_id", ORG_A).execute()
+        assert fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=fh.provider)["invoice_company_ref"]
+
+    def test_a_fresh_claim_blocks_even_a_new_request(self, fh):
+        seed_profile(fh.db)
+        fh.db.table("commerce_store_profiles").update({"invoice_company_ref": f"claim:{int(now().timestamp())}:live"}).eq("org_id", ORG_A).execute()
+        fh.provider = CountingProvider()
+        with pytest.raises(CommerceError) as e:
+            fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=fh.provider)
+        assert code_of(e) == "empresa_fiscal_em_andamento" and fh.provider.ensure_calls == 0
+
+    def test_a_lost_version_race_after_creation_never_loses_the_company_ref(self, fh):
+        seed_profile(fh.db)
+
+        class Bumping(CountingProvider):
+            def ensure_company(self, request):  # a concurrent profile save lands while we are at the provider
+                fh.db.table("commerce_store_profiles").update({"version": 2}).eq("org_id", ORG_A).execute()
+                return super().ensure_company(request)
+
+        fh.provider = Bumping()
+        with pytest.raises(CommerceError) as e:
+            fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=1, provider=fh.provider)
+        assert code_of(e) == "versao_conflitante"
+        ref = fs.get_profile(fh.db, ORG_A)["invoice_company_ref"]
+        assert ref and not ref.startswith("claim:")  # the created company's ref survived the conflict
+        fs.update_fiscal(fh.db, ORG_A, USER_ID, {}, expected_version=2, provider=fh.provider)  # retry reuses it
+        assert len(fh.provider._companies) == 1
+
+
+class CountingProvider(FakeInvoiceProvider):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.ensure_calls = 0
+
+    def ensure_company(self, request):
+        company = super().ensure_company(request)
+        self.ensure_calls += 1
+        return company
+
+
+class TestCertificateLeavesHistory:
+    """Item 3: replacing an A1 goes through the versioned ledger."""
+
+    def test_upload_bumps_version_stamps_updated_by_and_writes_a_ledger_row(self, fh, pfx_ok):
+        seed_fiscal_org(fh, cert=False, auto=False)
+        before = fs.get_profile(fh.db, ORG_A)["version"]
+        fs.upload_certificate(fh.db, ORG_A, pfx=pfx_ok[0], password=PFX_PASSWORD, provider=fh.provider, user_id="user-42")
+        row = fs.get_profile(fh.db, ORG_A)
+        assert row["version"] == before + 1 and row["updated_by"] == "user-42"
+        ledger = [v for v in fh.db.table("commerce_store_profile_versions").select("*").eq("org_id", ORG_A).execute().data if v["version"] == before + 1][0]
+        assert ledger["changed_by"] == "user-42" and ledger["snapshot"]["certificate_cnpj"] == VALID_CNPJ
+        assert PFX_PASSWORD not in repr(ledger)
+
+    def test_replacing_a_certificate_adds_another_ledger_row(self, fh, pfx_ok):
+        seed_fiscal_org(fh, cert=False, auto=False)
+        for _ in range(2):
+            fs.upload_certificate(fh.db, ORG_A, pfx=build_pfx()[0], password=PFX_PASSWORD, provider=fh.provider, user_id=USER_ID)
+        versions = sorted(v["version"] for v in fh.db.table("commerce_store_profile_versions").select("*").eq("org_id", ORG_A).execute().data)
+        assert versions == list(range(1, versions[-1] + 1)) and versions[-1] >= 4
+
+    def test_a_concurrent_profile_save_is_retried_once_not_lost(self, fh, pfx_ok):
+        seed_fiscal_org(fh, cert=False, auto=False)
+
+        class Bumping(FakeInvoiceProvider):
+            def upload_certificate(self, company_ref, **kw):
+                fh.db.table("commerce_store_profiles").update({"version": 50}).eq("org_id", ORG_A).execute()
+                return super().upload_certificate(company_ref, **kw)
+
+        fh.provider = Bumping()
+        fh.provider.ensure_company(fs._company_request(fs.get_profile(fh.db, ORG_A), {}, fs.effective_nfse_mode(fs.get_profile(fh.db, ORG_A))))
+        fs.upload_certificate(fh.db, ORG_A, pfx=pfx_ok[0], password=PFX_PASSWORD, provider=fh.provider, user_id=USER_ID)
+        row = fs.get_profile(fh.db, ORG_A)
+        assert row["certificate_cnpj"] == VALID_CNPJ and row["version"] == 51

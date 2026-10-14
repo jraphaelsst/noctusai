@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional
 
@@ -37,11 +38,14 @@ from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 from ._common import digits, first, now, now_iso, tbl
 from .errors import VERSAO_CONFLITANTE, CommerceError
 from .fiscal_types import (
+    COMPANY_CLAIM_PREFIX,
+    COMPANY_CLAIM_TTL_SECONDS,
     CUTOVER_PHRASE,
     MAX_CERTIFICATE_BYTES,
     MAX_CERTIFICATE_PASSWORD_CHARS,
     ROLLBACK_PHRASE,
     VALIDATION_WINDOW_DAYS,
+    company_ref_of,
     effective_nfse_mode,
     forced_nacional,
 )
@@ -131,6 +135,7 @@ def fiscal_view(profile: Optional[Mapping[str, Any]], at: Optional[datetime] = N
     if profile is None:
         return None
     view = {k: profile.get(k) for k in VIEW_FIELDS}
+    view["invoice_company_ref"] = company_ref_of(profile)  # an in-flight claim is not a ref
     view["nfse_cutover"] = dict(profile.get("nfse_cutover") or {})
     view["auto_issue_invoices"] = bool(profile.get("auto_issue_invoices"))
     mode = effective_nfse_mode(dict(profile))
@@ -166,7 +171,9 @@ def _require_profile(db: Any, org_id: Any) -> dict:
     return profile
 
 
-def _save_patch(db: Any, org_id: Any, user_id: Any, profile: Mapping[str, Any], patch: Mapping[str, Any]) -> dict:
+def _save_patch(
+    db: Any, org_id: Any, user_id: Any, profile: Mapping[str, Any], patch: Mapping[str, Any], *, platform_actor: bool = False
+) -> dict:
     """Apply `patch` at `version + 1` through the same ledger as `profile.put_profile`
     (ledger row first -> PK conflict = a concurrent save; compensated if the write fails)."""
     cur_v = int(profile["version"])
@@ -176,7 +183,8 @@ def _save_patch(db: Any, org_id: Any, user_id: Any, profile: Mapping[str, Any], 
     ledger = {
         "org_id": str(org_id),
         "version": cur_v + 1,
-        "snapshot": dict(row),
+        # `acted_by_platform_admin`: a platform admin acting on this org -- `changed_by` stays the REAL user.
+        "snapshot": {**row, **({"acted_by_platform_admin": True} if platform_actor else {})},
         "changed_by": str(user_id) if user_id else None,
         "changed_at": stamp,
     }
@@ -251,6 +259,37 @@ def _check_mode_request(profile: Mapping[str, Any], requested: Optional[str]) ->
         )
 
 
+def _claim_value(at: datetime) -> str:
+    return f"{COMPANY_CLAIM_PREFIX}{int(at.timestamp())}:{uuid.uuid4().hex}"
+
+
+def _claim_is_stale(claim: str, at: datetime) -> bool:
+    try:
+        return at.timestamp() - int(claim.split(":")[1]) > COMPANY_CLAIM_TTL_SECONDS
+    except (IndexError, ValueError):
+        return True
+
+
+def _claim_first_company(db: Any, org_id: Any, profile: Mapping[str, Any], at: datetime) -> str:
+    """Single-flight for the FIRST provider company: park a claim in `invoice_company_ref` with a
+    conditional UPDATE (`ref IS NULL` / the exact stale claim) so only ONE caller proceeds to the
+    provider POST. The loser gets 409 `empresa_fiscal_em_andamento`. Returns the claim value."""
+    claim = _claim_value(at)
+    current = profile.get("invoice_company_ref")
+    query = tbl(db, _PROFILE).update({"invoice_company_ref": claim}).eq("org_id", str(org_id))
+    query = query.is_("invoice_company_ref", "null") if not current else query.eq("invoice_company_ref", current)
+    if first(query.execute()) is None:
+        raise CommerceError(
+            "empresa_fiscal_em_andamento", "O cadastro fiscal da loja já está sendo criado. Aguarde um instante e tente de novo.", 409
+        )
+    return claim
+
+
+def _release_claim(db: Any, org_id: Any, claim: str, ref: Optional[str] = None) -> None:
+    """Drop the claim (`ref=None`) or turn it into the real ref -- only if it is still OURS."""
+    tbl(db, _PROFILE).update({"invoice_company_ref": ref}).eq("org_id", str(org_id)).eq("invoice_company_ref", claim).execute()
+
+
 def update_fiscal(
     db: Any,
     org_id: Any,
@@ -260,13 +299,19 @@ def update_fiscal(
     expected_version: int,
     provider: InvoiceProvider,
     at: Optional[datetime] = None,
+    platform_actor: bool = False,
 ) -> dict:
-    """`PUT /fiscal`: validate -> register/update the company at the provider -> versioned save.
+    """`PUT /fiscal`: validate EVERYTHING -> (first time) claim the company slot -> register/update the
+    company at the provider -> versioned save.
 
-    `data` carries only the fields the client SENT. Raises 422 `nfse_nacional_obrigatorio` /
-    `nfse_mode_via_cutover` / `municipio_invalido` / `emissao_automatica_requer_certificado`,
-    409 `versao_conflitante` / `perfil_ausente`, 502/503 for the provider.
+    Nothing reaches the provider before every local rule passed and the version matched, so a refused
+    save never creates a company; and the first creation is single-flight (see `_claim_first_company`),
+    so two concurrent first PUTs cannot create two. `data` carries only the fields the client SENT.
+    Raises 422 `nfse_nacional_obrigatorio` / `nfse_mode_via_cutover` / `municipio_invalido` /
+    `emissao_automatica_requer_certificado`, 409 `versao_conflitante` / `perfil_ausente` /
+    `empresa_fiscal_em_andamento`, 502/503 for the provider.
     """
+    moment = at or now()
     profile = _require_profile(db, org_id)
     cur_v = int(profile["version"])
     if int(expected_version) != cur_v:
@@ -281,26 +326,43 @@ def update_fiscal(
             patch[key] = str(patch[key]).strip()[:30] or None
     if "auto_issue_invoices" in patch:
         patch["auto_issue_invoices"] = bool(patch["auto_issue_invoices"])
-
-    mode = effective_nfse_mode(profile)
-    try:
-        company = provider.ensure_company(_company_request(profile, patch, mode))
-    except InvoiceProviderError as exc:
-        raise map_provider_error(exc) from None
-    patch["invoice_company_ref"] = company.ref
+    if patch.get("auto_issue_invoices") and certificate_status({**profile, **patch}, moment) != "valido":
+        raise CommerceError(
+            "emissao_automatica_requer_certificado",
+            "Envie um certificado A1 válido da empresa antes de ativar a emissão automática.",
+            422,
+            field="auto_issue_invoices",
+        )
     if forced_nacional(profile.get("tax_regime", "")):
         patch["nfse_mode"] = NfseMode.NACIONAL.value  # persist the forced value explicitly
 
-    if patch.get("auto_issue_invoices"):
-        merged = {**profile, **patch}
-        if certificate_status(merged, at) != "valido":
+    existing_ref = company_ref_of(profile)
+    claim: Optional[str] = None
+    current = profile.get("invoice_company_ref")
+    if existing_ref is None:
+        if current and not _claim_is_stale(str(current), moment):
             raise CommerceError(
-                "emissao_automatica_requer_certificado",
-                "Envie um certificado A1 válido da empresa antes de ativar a emissão automática.",
-                422,
-                field="auto_issue_invoices",
+                "empresa_fiscal_em_andamento", "O cadastro fiscal da loja já está sendo criado. Aguarde um instante e tente de novo.", 409
             )
-    return fiscal_view(_save_patch(db, org_id, user_id, profile, patch), at)  # type: ignore[return-value]
+        claim = _claim_first_company(db, org_id, profile, moment)
+    try:
+        company = provider.ensure_company(_company_request({**profile, "invoice_company_ref": existing_ref}, patch, effective_nfse_mode(profile)))
+    except InvoiceProviderError as exc:
+        if claim:
+            _release_claim(db, org_id, claim)
+        raise map_provider_error(exc) from None
+    except Exception:
+        if claim:
+            _release_claim(db, org_id, claim)
+        raise
+    patch["invoice_company_ref"] = company.ref
+    try:
+        saved = _save_patch(db, org_id, user_id, {**profile, "invoice_company_ref": claim or existing_ref}, patch, platform_actor=platform_actor)
+    except Exception:
+        if claim:  # the company EXISTS now: never lose its ref, whatever happened to the rest of the save
+            _release_claim(db, org_id, claim, company.ref)
+        raise
+    return fiscal_view(saved, moment)  # type: ignore[return-value]
 
 
 # ─── certificate ─────────────────────────────────────────────────────────
@@ -313,15 +375,20 @@ def upload_certificate(
     pfx: bytes,
     password: str,
     provider: InvoiceProvider,
+    user_id: Any = None,
     at: Optional[datetime] = None,
+    platform_actor: bool = False,
 ) -> dict:
     """Open the A1 locally (bounds + CNPJ match), forward it, store ONLY expiry + CNPJ.
 
     The bytes and the password never leave this call: not stored, not logged, not in an
-    exception -- every failure is re-raised as a generic `CommerceError` `from None`.
+    exception -- every failure is re-raised as a generic `CommerceError` `from None`. The expiry + CNPJ
+    go through the versioned ledger (`_save_patch`), so replacing an A1 leaves domain history; a
+    concurrent profile save (409) is retried once on the fresh row -- the certificate is already
+    at the provider, so its metadata must not be lost to an unrelated edit.
     """
     profile = _require_profile(db, org_id)
-    ref = profile.get("invoice_company_ref")
+    ref = company_ref_of(profile)
     if not ref:
         raise CommerceError("empresa_fiscal_ausente", "Salve os dados fiscais da loja antes de enviar o certificado.", 409)
     if len(pfx or b"") > MAX_CERTIFICATE_BYTES or len(password or "") > MAX_CERTIFICATE_PASSWORD_CHARS:
@@ -340,9 +407,15 @@ def upload_certificate(
     stored = {
         "certificate_valid_until": info.valid_until.isoformat(),
         "certificate_cnpj": info.subject_cnpj or expected,
-        "updated_at": now_iso(),
     }
-    tbl(db, _PROFILE).update(stored).eq("org_id", str(org_id)).execute()
+    for attempt in (1, 2):
+        try:
+            _save_patch(db, org_id, user_id, profile, stored, platform_actor=platform_actor)
+            break
+        except CommerceError as exc:
+            if exc.code != VERSAO_CONFLITANTE or attempt == 2:
+                raise
+            profile = _require_profile(db, org_id)
     return {"certificate_valid_until": stored["certificate_valid_until"], "certificate_cnpj": stored["certificate_cnpj"]}
 
 
@@ -362,6 +435,7 @@ def request_cutover(
     confirm: str,
     provider: InvoiceProvider,
     at: Optional[datetime] = None,
+    platform_actor: bool = False,
 ) -> dict:
     """`municipal` -> `nacional`, on the org admin's typed approval. Opens the validation window."""
     _require_phrase(confirm, CUTOVER_PHRASE)
@@ -369,7 +443,7 @@ def request_cutover(
     moment = at or now()
     if effective_nfse_mode(profile) is NfseMode.NACIONAL:
         raise CommerceError("nfse_ja_nacional", "A loja já emite NFS-e pelo Emissor Nacional.", 409)
-    ref = profile.get("invoice_company_ref")
+    ref = company_ref_of(profile)
     if not ref:
         raise CommerceError("empresa_fiscal_ausente", "Salve os dados fiscais da loja antes de migrar.", 409)
     if certificate_status(profile, moment) != "valido":
@@ -384,8 +458,9 @@ def request_cutover(
         "approved_by": str(user_id) if user_id else None,
         "previous_mode": NfseMode.MUNICIPAL.value,
         "validation_until": (moment + timedelta(days=VALIDATION_WINDOW_DAYS)).isoformat(),
+        **({"via": "platform_admin"} if platform_actor else {}),
     }
-    return _save_switching(db, org_id, user_id, profile, ref, provider, NfseMode.NACIONAL, NfseMode.MUNICIPAL, record, moment)
+    return _save_switching(db, org_id, user_id, profile, ref, provider, NfseMode.NACIONAL, NfseMode.MUNICIPAL, record, moment, platform_actor)
 
 
 def rollback_cutover(
@@ -396,6 +471,7 @@ def rollback_cutover(
     confirm: str,
     provider: InvoiceProvider,
     at: Optional[datetime] = None,
+    platform_actor: bool = False,
 ) -> dict:
     """`nacional` -> `municipal`, only inside `validation_until`; recorded in `nfse_cutover`."""
     _require_phrase(confirm, ROLLBACK_PHRASE)
@@ -405,23 +481,26 @@ def rollback_cutover(
         raise CommerceError("nfse_nacional_obrigatorio", "MEI e Simples Nacional não voltam ao modo municipal.", 422)
     if not cutover_window_open(profile, moment):
         raise CommerceError("janela_rollback_encerrada", "A janela de validação da migração terminou.", 409)
-    ref = profile["invoice_company_ref"]
+    ref = company_ref_of(profile)
+    if not ref:
+        raise CommerceError("empresa_fiscal_ausente", "Empresa fiscal não cadastrada.", 409)
     try:
         provider.set_nfse_mode(ref, NfseMode.MUNICIPAL)
     except InvoiceProviderError as exc:
         raise map_provider_error(exc) from None
-    record = {**(profile.get("nfse_cutover") or {}), "rolled_back_at": moment.isoformat(), "rolled_back_by": str(user_id) if user_id else None}
-    return _save_switching(db, org_id, user_id, profile, ref, provider, NfseMode.MUNICIPAL, NfseMode.NACIONAL, record, moment)
+    record = {**(profile.get("nfse_cutover") or {}), "rolled_back_at": moment.isoformat(), "rolled_back_by": str(user_id) if user_id else None,
+              **({"rolled_back_via": "platform_admin"} if platform_actor else {})}
+    return _save_switching(db, org_id, user_id, profile, ref, provider, NfseMode.MUNICIPAL, NfseMode.NACIONAL, record, moment, platform_actor)
 
 
 def _save_switching(
     db: Any, org_id: Any, user_id: Any, profile: Mapping[str, Any], ref: str, provider: InvoiceProvider,
-    new_mode: NfseMode, old_mode: NfseMode, record: Mapping[str, Any], moment: datetime,
+    new_mode: NfseMode, old_mode: NfseMode, record: Mapping[str, Any], moment: datetime, platform_actor: bool = False,
 ) -> dict:
     """Persist the new mode; if that fails after the provider already switched, switch it back
     (best effort, logged) so the provider and the store never disagree silently."""
     try:
-        saved = _save_patch(db, org_id, user_id, profile, {"nfse_mode": new_mode.value, "nfse_cutover": dict(record)})
+        saved = _save_patch(db, org_id, user_id, profile, {"nfse_mode": new_mode.value, "nfse_cutover": dict(record)}, platform_actor=platform_actor)
     except Exception:
         try:
             provider.set_nfse_mode(ref, old_mode)
