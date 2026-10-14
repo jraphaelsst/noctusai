@@ -53,6 +53,7 @@ from noctusai_lib.config.product_urls import canonical_prod_url
 from noctusai_lib.sql import prelude
 
 from .check_framework_deps import ensure_framework_deps_for_product
+from .scaffold_overlay import OverlayError, apply_overlay, preflight as preflight_overlay
 
 logger = logging.getLogger(__name__)
 
@@ -647,6 +648,8 @@ def scaffold_product(
     worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     template_dir: Path | None = None,
+    overlay: str | None = None,
+    overlay_dir: Path | None = None,
 ) -> dict:
     """Create a new product from the seed template.
 
@@ -683,6 +686,14 @@ def scaffold_product(
             ``templates/product-seed/``). Tests targeting an in-worktree
             template variant pass an explicit path.
 
+        overlay: Vertical-seed overlay applied ON TOP of the base template (``"erp"`` ->
+            ``templates/product-erp/``): the vertical's organ bindings (backend mounts, scheduler jobs, rendered organ
+            migrations in ``OrganSpec.requires`` order, FE pages/nav/dashboard). The product is registered
+            ``deploy_scope='dev'`` -- an agent never takes a market product to prod. An unknown overlay or a base
+            template that drifted from the overlay's anchors fails BEFORE/without leaving a half-built product.
+            See ``scaffold_overlay.py`` and KB § GUIDES/new-product.md § Market products from a vertical seed.
+        overlay_dir: Override for the overlay root (test seam; default ``<template parent>/product-<overlay>``).
+
     Raises:
         ValueError: ``worktree_path`` is given but does not look like a
         valid worktree root (per ``resolve_caller_root`` contract). No
@@ -706,6 +717,19 @@ def scaffold_product(
     if not base_template_dir.exists():
         return {"error": f"Template not found at {base_template_dir}"}
 
+    overlay_manifest: dict | None = None
+    resolved_overlay_dir: Path | None = None
+    if overlay:
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", overlay):
+            return {"error": f"Invalid overlay name {overlay!r}"}
+        resolved_overlay_dir = overlay_dir if overlay_dir is not None else base_template_dir.parent / f"product-{overlay}"
+        if not resolved_overlay_dir.is_dir():
+            return {"error": f"Overlay {overlay!r} not found at {resolved_overlay_dir}"}
+        try:  # validate BEFORE any file is created
+            overlay_manifest = preflight_overlay(resolved_overlay_dir)
+        except OverlayError as exc:
+            return {"error": f"Overlay {overlay!r} cannot be applied: {exc}"}
+
     # ─── 1. Copy template (skeleton, not content) ───────────────────────
     shutil.copytree(base_template_dir, target, ignore=shutil.ignore_patterns("node_modules", "__pycache__", ".backup", "*.egg-info"))
     # ─── 1.b. Canonicalize the seed migration (rename + prelude swap) ─
@@ -714,6 +738,15 @@ def scaffold_product(
     # header is replaced with the canonical `prelude(schema)` output
     # so every new product starts from a single source of truth.
     canonical_migration = _canonicalize_seed_migration(target, slug, schema)
+
+    # ─── 1.c Vertical-seed overlay (organ bindings), BEFORE substitution ─
+    overlay_result: dict | None = None
+    if overlay_manifest is not None:
+        try:
+            overlay_result = apply_overlay(target, resolved_overlay_dir, schema=schema, manifest=overlay_manifest)
+        except OverlayError as exc:
+            shutil.rmtree(target, ignore_errors=True)  # never leave a half-overlaid product behind
+            return {"error": f"Overlay {overlay!r} could not be applied (product removed): {exc}"}
 
     # ─── 2. Write the brief FIRST (durable record before any prose edit)
     # Per user rule (2026-05-05): the brief survives any subsequent failure
@@ -871,6 +904,7 @@ def scaffold_product(
         backend_port=backend_port,
         products_dir=base_products_dir,
         schema=schema,
+        deploy_scope=overlay_manifest["deploy_scope"] if overlay_manifest else None,
     )
 
     start_sh_registration = _register_in_start_sh(
@@ -922,6 +956,12 @@ def scaffold_product(
         next_steps.append(
             f"Manually add to start.sh (backend {backend_port}, "
             f"frontend {frontend_port}): {start_sh_registration['skipped']}"
+        )
+    if overlay_result is not None:
+        next_steps.append(
+            f"Overlay {overlay!r} applied (organs: {', '.join(overlay_result['organs'])}); registered deploy_scope="
+            f"'{overlay_result['deploy_scope']}' -- dev only. Taking this market product to prod is the owner's call "
+            "(prod_consent), never an agent's."
         )
     if brief is None:
         next_steps.append(
@@ -984,6 +1024,7 @@ def scaffold_product(
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
         "canonical_migration": canonical_migration,
+        "overlay": overlay_result,
         "start_sh_registration": start_sh_registration,
         "docker_patch": docker_patch,
         "root_compose_registration": root_compose_registration,
@@ -1254,6 +1295,7 @@ def _emit_products_seed_row_migration(
     backend_port: int,
     products_dir: Path,
     schema: str | None = None,
+    deploy_scope: str | None = None,
 ) -> dict:
     """Emit a numbered migration that seeds the new product into `public.products`.
 
@@ -1292,6 +1334,11 @@ def _emit_products_seed_row_migration(
     path = core_migrations / filename
 
     desc_sql = _sql_text_or_null(description)
+    if deploy_scope is not None and deploy_scope not in ("dev", "live"):
+        raise ValueError(f"deploy_scope must be 'dev' or 'live', got {deploy_scope!r}")
+    # Explicit (not just the column default) for an overlay product: the row says 'dev' on its face.
+    scope_col = ", deploy_scope" if deploy_scope else ""
+    scope_val = f",\n    {_sql_text(deploy_scope)}" if deploy_scope else ""
     pgrst_block = f"\n{_pgrst_schema_exposure_sql(schema)}" if schema else ""
     # products.db_schema (core 070) keys the org picker: the seed chain's org-picker migrations
     # (attach_acting_audit_triggers + the ready flip) refuse / match nothing without it.
@@ -1311,7 +1358,7 @@ def _emit_products_seed_row_migration(
 -- on the live DB ("MCP migrations mirror the file" rule).
 -- ============================================================
 
-INSERT INTO public.products (nome, slug, descricao, icone, url_base, cor, ativo)
+INSERT INTO public.products (nome, slug, descricao, icone, url_base, cor, ativo{scope_col})
 VALUES (
     {_sql_text(name)},
     {_sql_text(slug)},
@@ -1319,7 +1366,7 @@ VALUES (
     {_sql_text(icon)},
     {_sql_text(canonical_prod_url(slug))},
     {_sql_text(color)},
-    true
+    true{scope_val}
 )
 ON CONFLICT (slug) DO NOTHING;
 
@@ -2028,6 +2075,12 @@ def register(server) -> None:
             "and registers the product in start.sh. Pass brief=None to enter "
             "the skip path (mechanical substitution skipped; LLM rewrite "
             "uses name+slug only; surfaced loudly in next_steps). "
+            "overlay='erp' applies templates/product-erp ON TOP of the base: "
+            "the ERP organ mounts (parties/items/inventory/purchasing/"
+            "contracts/quotes + the base finance), scheduler jobs, organ "
+            "migrations rendered in OrganSpec.requires order, FE pages/nav/"
+            "dashboard; the product is registered deploy_scope='dev' only "
+            "(an agent never takes a market product to prod). "
             "When called from inside a git worktree, pass `worktree_path` "
             "(the worktree's absolute root) so writes land in the worktree, "
             "NOT the MCP server's startup workspace — required because the "
@@ -2047,6 +2100,7 @@ def register(server) -> None:
         brief: dict | None = None,
         llm_provider: str = "anthropic",
         worktree_path: str | None = None,
+        overlay: str | None = None,
     ) -> dict:
         return scaffold_product(
             name,
@@ -2060,6 +2114,7 @@ def register(server) -> None:
             brief=brief,
             llm_provider=llm_provider,
             worktree_path=worktree_path,
+            overlay=overlay,
         )
 
     @server.tool(

@@ -1,7 +1,7 @@
 ---
 name: noc-new-product
 description: Use when creating a product — triggers "create a new noc product", "scaffold a product", "new noc product", "add a product", "new e-commerce / store / ERP for <market>", "a product for <client>", "build the <market> version of the seed", "new product inside the store" — seed-first by construction; never hand-author the shape. Routes plain products, market products from a vertical seed, client onboarding, client extension packs and products-inside-products.
-version: 2.0.0
+version: 2.1.0
 ---
 
 # noc-new-product — seed-first, layer-aware
@@ -20,7 +20,7 @@ version: 2.0.0
 1. **Learning round?** First run of a market, seed or process ⇒ skill `noc-learn-refine` — open trials on the method (this skill included) before step 2.
 2. **Market spec (vertical/market products).** Follow `KB § CONTEXT/GUIDES/new-product.md § Market products from a vertical seed`: market research brief → module classification (generic / per-type / per-market) → interview in AskUserQuestion rounds (never assume) → decisions written to the roadmap before code.
 3. **Verify the seed ships it.** Skill `noc-verify-seed` for every organ the product will consume; missing organ ⇒ build it in the seed/vertical layer first, not in the product.
-4. **Scaffold.** `noctus.dev.reserve_port_range` → `noctus.dev.scaffold_product` (brief = the market spec). `url_base` = the HOUSE port.
+4. **Scaffold.** `noctus.dev.reserve_port_range` → `noctus.dev.scaffold_product` (brief = the market spec). `url_base` = the HOUSE port. **Market ERP** ⇒ `overlay="erp"` (the ERP organ bindings on top of the base; registered `deploy_scope='dev'` only — taking it to prod is the owner's call): `KB § CONTEXT/GUIDES/new-product.md § Market products from a vertical seed`.
 5. **Fill seams + domain code only**, contract-first (skill `noc-contract-first`). Pages wire to real endpoints that return real data (`noc-wiring-audit`).
 6. **Register + onboard.** `public.products` row + `status_pagina` nav rows + migration; for each client: org, license, store profile (CNPJ validated, tax regime, language/currency, brand, subdomain), keys via org settings.
 7. **Finish gates.** Backend `pytest`, frontend `vite build`, `mcp/noctusai` tests if a `.tsx` count changed.

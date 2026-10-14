@@ -140,7 +140,17 @@ When the product belongs to a market family (e-commerce, ERP, CRM …), it is bu
 
 **Stage 7 — Learning round close.** Trial verdicts (`noctus.dev.method_trial`) → apply refinements to: this section, `vertical-seed.md`, skill `noc-new-product`, the market spec library, organ knowledge sidecars. Append one line to the revision log below.
 
+**ERP overlay (`overlay="erp"`).** For a market ERP, scaffold with `noctus.dev.scaffold_product(..., overlay="erp", brief=<market spec>)`. The overlay `templates/product-erp/` (manifest `overlay.json`) sits ON TOP of `templates/product-seed` and carries only the ERP organ bindings; the base is never duplicated. Applied before placeholder substitution, in this order, and all-or-nothing (a missing anchor or an undeclared file collision removes the half-built product and errors):
+
+1. Files copied over the base: `backend/app/erp_organs.py` (one-call `mount_*` for finance, parties, items, inventory, purchasing, contracts, quotes), `erp_scheduler.py` (finance recurrences + the contracts billing job, inert without `NOCTUS_SCHEDULERS_ENABLED`), `tests/test_erp_wiring.py`, FE `lib/erpHooks.ts` and one page per organ; the base `Dashboard.tsx` is replaced by the seed `ErpDashboard` (declared in `replaces`).
+2. Anchored patches: `main.py` (`organs=ERP_ORGANS` + scheduler lifespan) and `App.tsx` (lazy pages, lucide icons, the "Cadastros" / "Operação" nav groups, routes).
+3. Organ migrations rendered with the `render_organ_migration` logic (`expected_organ_migration`) and numbered after the base chain in `OrganSpec.requires` order, then `NNN_status_pagina_erp.sql` (a nav page without a row is hidden from everyone).
+4. The seed-row migration registers the product with explicit `deploy_scope='dev'`. **An agent never takes a market ERP to prod**: exposure is the owner's decision (`../PATTERNS/devops/prod-exposure-consent.md`).
+
+After scaffolding: fill the ERP seams (`../PATTERNS/architect/vertical-seed.md` §2), run the product's backend tests (`tests/test_erp_wiring.py` pins migration == generator, `requires` order, mounted routes, strict 401, jobs) and `vite build`, then apply the migrations in dev. Open seams left at the seed default on purpose: quotes' signed public accept link (`get_link_secret`), contracts' e-signature (`get_signature`), finance gateway sync, and the finance-to-parties link (`FinanceConfig.with_parties` is off because finance is numbered 012 in the base, before parties; `NOC-REMEDIATE[erp-overlay-finance-parties-link]`: when a market needs it, ship it as a finance revision after parties).
+
 **Revision log**
+- 2026-10-14 — ERP overlay procedure added (erp seed W5: `scaffold_product(overlay="erp")`, `templates/product-erp/`).
 - 2026-10-12 — v1 written at the start of the commerce seed run (stages 0–7). Next refinements due: after the photo store (P8), after the artifacts store and Gilson's Store (P10).
 
 ## Checklist for launch

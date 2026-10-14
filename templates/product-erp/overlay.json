@@ -1,0 +1,20 @@
+{
+  "name": "erp",
+  "description": "ERP organ bindings on top of templates/product-seed: parties, items, inventory, purchasing, contracts, quotes (finance is already in the base). Carries ONLY the bindings; the base template is never duplicated.",
+  "base_organs": ["finance"],
+  "organs": ["parties", "items", "inventory", "purchasing", "contracts", "quotes"],
+  "deploy_scope": "dev",
+  "replaces": ["frontend/src/pages/Dashboard.tsx"],
+  "pages": [
+    {"file": "Parceiros", "route": "parceiros", "name": "Parceiros", "icon": "Contact", "group": "cadastros"},
+    {"file": "Itens", "route": "itens", "name": "Itens", "icon": "Package", "group": "cadastros"},
+    {"file": "Estoque", "route": "estoque", "name": "Estoque", "icon": "Warehouse", "group": "operacao"},
+    {"file": "Compras", "route": "compras", "name": "Compras", "icon": "ShoppingCart", "group": "operacao"},
+    {"file": "Contratos", "route": "contratos", "name": "Contratos", "icon": "FileSignature", "group": "operacao"},
+    {"file": "Orcamentos", "route": "orcamentos", "name": "Orçamentos", "icon": "FileText", "group": "operacao"}
+  ],
+  "groups": {
+    "cadastros": "Cadastros",
+    "operacao": "Operação"
+  }
+}

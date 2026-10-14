@@ -40,6 +40,22 @@ A vertical seed is only reusable if the places where markets differ are **named 
 | storefront layout | theme tokens (settings) → layout slots → full layout override (pack) | brand → structure, cheapest first |
 | lifecycle hooks | `order.paid`, `order.fulfilled`, `product.published`, … | where client scripts attach (§3) |
 
+### ERP seams (2026-10-14, `project-history/roadmaps/erp-seed-2026-10.md`)
+
+The ERP vertical declares these before the first market ERP is built. Defaults are the seed's canonical answer, not one market's coincidence:
+
+| Seam | Values / shape | Where a market differs |
+|---|---|---|
+| `item_type` | open string; the seed set is `goods` · `service` · `raw_material` · `asset` (`items`) | a market adds types (e.g. `recipe`, `kit`); stock applies only to stocked types |
+| `party_role` | `customer` · `supplier` · `employee` · `carrier` (`parties`, PF/PJ, CPF/CNPJ) | a market adds roles; commerce `commerce_customers` links, never merges (E4) |
+| `costing_method` | **average cost only** (`inventory` valuation `average_cost`) | none: LIFO is not permitted in Brazil (E14); lots/serials/BOM are market-specific modules, not a method switch |
+| `approval_policy` | `purchasing`: org admin + membership in the org's approver list (`pur_approvers`) + a per-org threshold (`approval_threshold_cents`) | thresholds and approvers are org settings; a different policy is a named hook, never a fork |
+| `billing_model` | `one_time` · `installments` · `recurring` · `retainer` (`contracts`, over finance recurrences; daily billing job) | indices/readjustment rules and the e-signature adapter (`get_signature`) |
+| fiscal regime | `mei` · `simples` · `presumido` · `unknown` as a finance profile field (DRE, Livro Caixa, DAS views); IBS/CBS-in-DAS choice (E19) | Presumido obligations are the accountant's files (E13); the seed exports data, never files |
+| quote accept | `QuoteAcceptHandler` (convert-on-accept), signed public link needs a host `get_link_secret` | what an accepted quote becomes (contract, sales order, work order) |
+
+Scaffold a market ERP from this layer with `noctus.dev.scaffold_product(overlay="erp")` (`templates/product-erp/`, registered `deploy_scope='dev'` only): `../../GUIDES/new-product.md § Market products from a vertical seed`.
+
 ## 3 · Client extension packs — client-specific CODE, contained
 
 Owner requirement (2026-10-12): a client may want a structurally different layout or a script no other client uses, so client-specific changes **can be code**. They live in a pack, never in shared code.
