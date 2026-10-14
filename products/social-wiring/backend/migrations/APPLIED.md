@@ -499,79 +499,79 @@ migration header and `NOC-REMEDIATE[transcricao-formatacao-backfill]`.
 
 All were applied one file per request (each request is one implicit transaction) and recorded in `social_wiring.schema_migrations`.
 
-## 215 — org_imobiliarias (signing companies per org) — NOT APPLIED
+## 215 — org_imobiliarias (signing companies per org) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (projects/signing-companies/CONTRACT.md). Creates `org_imobiliarias`, adds `atendimento_contratos.imobiliaria_id`, backfills the org's current company as registry entry #1 and points every existing contract at it, org-picker RLS, acting-audit attach, `status_pagina('imobiliarias')`. Applying it is the tech-lead's + owner's call; apply BEFORE deploying the image that reads it.
 
-## 216 — cliente_origens_excluidas (tombstones for deleted clientes) — NOT APPLIED
+## 216 — cliente_origens_excluidas (tombstones for deleted clientes) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (owner decision "mark as deleted, keep leads"). Creates `cliente_origens_excluidas` (UNIQUE (origem_tabela, origem_id), org-picker RLS, acting-audit attach). `excluir_cliente` writes one tombstone per touched source; `run_backfill` skips tombstoned sources. Apply BEFORE deploying the image that reads/writes it (the new code writes the table on every cliente delete).
 
-## atendimento_propostas (file: `*_atendimento_propostas.sql`) (proposta = offer snapshot) — NOT APPLIED
+## atendimento_propostas (file: `*_atendimento_propostas.sql`) (proposta = offer snapshot) — APPLIED as 222 (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §4.1). Creates `atendimento_propostas` (status CHECK, `valor_proposto > 0` CHECK, partial UNIQUE one `aceita` per atendimento, org-picker RLS, acting-audit attach). Apply BEFORE deploying the image that reads/writes it.
 
-## 219 — visita_feedback (visitas.nao_realizada_motivo/realizada_em, roteiros.feedback_status/feedback_em/hora_visita) — NOT APPLIED
+## 219 — visita_feedback (visitas.nao_realizada_motivo/realizada_em, roteiros.feedback_status/feedback_em/hora_visita) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (sw-lead-to-contract CONTRACT §3.1). Additive columns + CHECKs + a partial index; no new table. Apply BEFORE deploying the image that reads/writes them.
 
-## 224 — cs_cerebro (Segundo Cérebro: brains, answers, imports, extractions, profile bio) — NOT APPLIED
+## 224 — cs_cerebro (Segundo Cérebro: brains, answers, imports, extractions, profile bio) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (projects/core-studio/specs/cerebro-contract.md §2 + §10). Creates `cs_brain_templates`/`cs_brain_questions` (seeded from `cerebro_templates.py`), `cs_brains`, `cs_brain_answers`, `cs_brain_imports`, `cs_extractions`, `cs_extraction_targets`, `cs_marca_perfil`, `cs_brain_append()`, the private `social-wiring-cerebro` bucket and `status_pagina('media-creation-cerebro','desenvolvimento')`. `transcricao_id` columns are plain uuids until `social_wiring.transcricoes` exists (`NOC-REMEDIATE[fk-transcricoes]`). Requires 217. Apply BEFORE deploying the image that reads/writes it.
 
-## 226 — imovel_captacao_manual (manual captação + deal refs on imovel_dados + `imoveis_catalogo` view) — NOT APPLIED
+## 226 — imovel_captacao_manual (manual captação + deal refs on imovel_dados + `imoveis_catalogo` view) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §8, S6). Creates `imovel_captacao` (FK → `imovel_registry`, org-picker RLS, acting-audit attach), adds `imovel_dados.processo_atual_numero/drive_folder_url/drive_folder_id` (+ Drive-URL CHECK) and the `imoveis_catalogo` view (`security_invoker`, Vista ∪ manual). Apply BEFORE deploying the image that reads it (the list route reads the view).
 
-## 227 — campanha_veiculacoes_nivel_not_null (218's nivel CHECK let NULL through for meta_ads) — NOT APPLIED
+## 227 — campanha_veiculacoes_nivel_not_null (218's nivel CHECK let NULL through for meta_ads) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (fix-forward of 218, caught post-deploy by `verify_db_guards` probe `social_wiring.campanha_veiculacoes.meta_requires_nivel`). Recreates `campanha_veiculacoes_nivel_valido` with `nivel IS NOT NULL` on the meta_ads arm — a CHECK passes on NULL, so `nivel IN (...)` alone never refused a missing level. Pre-check refuses if any meta_ads row already has nivel NULL (prod table was empty at authoring). No image dependency — apply any time.
 
-## 225 — transcricoes (shared voice transcription: table, reservar_transcricao quota RPC, private sw-transcricoes bucket, cs_* transcricao_id FKs) — NOT APPLIED
+## 225 — transcricoes (shared voice transcription: table, reservar_transcricao quota RPC, private sw-transcricoes bucket, cs_* transcricao_id FKs) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-09 (projects/core-studio/specs/transcription-contract.md S3). Requires 224. Apply BEFORE deploying the image that reads/writes it. The kill switch `transcricao_habilitada` ships OFF.
 
-## 229 — cs_geracao (Geração: Meu Perfil columns, taxonomies, Biblioteca, Headlines, Roteiros, Chat, Treinamentos, library transcription lane) — NOT APPLIED
+## 229 — cs_geracao (Geração: Meu Perfil columns, taxonomies, Biblioteca, Headlines, Roteiros, Chat, Treinamentos, library transcription lane) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §2, BE-0). Adds `cs_marca_perfil.nichos/profissoes/apresentacao_magnetica/ctas`; creates `cs_nichos`/`cs_profissoes`/`cs_formatos_video`/`cs_treinamentos` (seeded from `geracao_taxonomias.py`), `cs_perfis_monitorados`, `cs_virais`, `cs_biblioteca_referencias`, `cs_headline_lotes`, `cs_headlines`, `cs_roteiros`, `cs_chat_conversas`/`cs_chat_mensagens`, `cs_memorias`, the private `sw-biblioteca` bucket and 10 `status_pagina(media-creation-*, desenvolvimento)` rows. Adds `transcricoes.origem` and `reservar_transcricao_biblioteca()`, and REDEFINES `reservar_transcricao()` so every voice counter sees only `origem=usuario`. Requires 217, 221, 224 and 225. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied. Library ingestion stays OFF (`biblioteca_ingestao_habilitada`, default OFF) until the security review is recorded.
 
-## 233 — cs_biblioteca_optouts (Biblioteca de virais opt-out / deletion registry) — NOT APPLIED
+## 233 — cs_biblioteca_optouts (Biblioteca de virais opt-out / deletion registry) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §9.3, BE-OPTOUT). Requires 229. Platform-wide `cs_biblioteca_optouts` (UNIQUE normalized handle, `origem` email|dpo|admin), RLS on with a service_role-only policy, `REVOKE ALL` from authenticated/anon. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied.
 
-## 238 — clientes_email_proveniencia (email provenance quintet for the ficha cadastral e-mail) — NOT APPLIED
+## 238 — clientes_email_proveniencia (email provenance quintet for the ficha cadastral e-mail) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10. Adds `clientes.email_origem/_documento_id/_em/_confirmado_por/_confirmado_em` (nullable, idempotent). Apply BEFORE deploying the image that writes them; `predeploy_check` `schema_drift` fails until applied.
 
-## 239 — spawn_funil_card_sem_descarte_silencioso (org-scoped meta-lead unique + no silent card drop + funil_card_anomalias) — NOT APPLIED
+## 239 — spawn_funil_card_sem_descarte_silencioso (org-scoped meta-lead unique + no silent card drop + funil_card_anomalias) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (prod incident: 6 funil cards silently dropped by `ON CONFLICT DO NOTHING` against the GLOBAL `uq_sw_atendimentos_meta_lead`). Replaces that index with `uq_sw_atendimentos_org_meta_lead (org_id, meta_ads_lead_id)`, creates `funil_card_anomalias` (RLS: org select, service_role all), and redefines `spawn_funil_card()` without DO NOTHING (same-org collision handled + recorded; other violations raise). Apply BEFORE deploying; `predeploy_check` `schema_drift` fails until applied. After apply: backfill the 6 lost cards.
 
-## 241 — cs_esteira (Esteira de reels: cs_posts, cs_equipe, `esteira` pipeline CHECK widening, post card hub, cs_rebind_roteiro, status_pagina) — NOT APPLIED
+## 241 — cs_esteira (Esteira de reels: cs_posts, cs_equipe, `esteira` pipeline CHECK widening, post card hub, cs_rebind_roteiro, status_pagina) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (projects/core-studio/specs/esteira-contract.md §2, BE-0). Widens `pipeline_stages`/`pipeline_movimentos` pipeline CHECK to include `esteira` and the `papel` CHECK to gravacao/postado/cancelado; creates `cs_equipe`, `cs_posts` (composite FKs on `(id, marca_id)` to `cs_headlines`/`cs_roteiros`, `ON DELETE SET NULL (col)`), `UNIQUE (id, marca_id)` on both library tables, `cs_headline_lotes.post_id`, the generated `cs_post_*` card hub + private `sw-esteira` bucket, `cs_rebind_roteiro()` (service_role only), and 3 `status_pagina` rows (the legacy `media_creation` row is untouched; A-3 deactivates it in wave 3). Requires 034, 087, 224, 229. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `_SW_241_PROBES`.
 
-## 242 — cs_legenda_geracoes (durable counter for the Esteira AI-caption daily cap `legendas_dia_usuario`) — NOT APPLIED
+## 242 — cs_legenda_geracoes (durable counter for the Esteira AI-caption daily cap `legendas_dia_usuario`) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (esteira-contract.md §5.3, BE-2). One row per caption generation (model reached), `post_id` ON DELETE SET NULL (deleting a post does not refund quota), index `(org_id, user_id, created_at DESC)` for the rolling-24h count, RLS: own-org SELECT + service_role ALL. No CHECK/UNIQUE/trigger, so no GuardProbe. Requires 241. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied.
 
-## 244 — contacts.email_optin + email_confirmed_at (email-marketing P1b(d) double opt-in) — NOT APPLIED
+## 244 — contacts.email_optin + email_confirmed_at (email-marketing P1b(d) double opt-in) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (`projects/email-marketing-p1b-CONTRACT.md` § (d)). Additive + idempotent: `email_optin TEXT NOT NULL DEFAULT 'not_required'` with the named `contacts_email_optin_check` (`not_required|pending|confirmed`, added only if absent) and `email_confirmed_at TIMESTAMPTZ`. Existing rows (incl. WhatsApp contacts — `contacts.status` is untouched) become `not_required`. Apply BEFORE deploying the image that reads/writes it (the campaign/automation send gate selects `email_optin`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.contacts_email_optin_check`.
 
-## 243 — automation_enrollments.pause_reason + paused_at (email-marketing step executor) — NOT APPLIED
+## 243 — automation_enrollments.pause_reason + paused_at (email-marketing step executor) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10. Additive + idempotent (ADD COLUMN IF NOT EXISTS). The step executor records why it paused an enrollment (webhook step, malformed config, missing template/list); Automações shows it; re-enrolling clears it. No CHECK/UNIQUE/trigger, so no GuardProbe.
 
-## 245 — DROP the retired legacy `mailing` schema — NOT APPLIED
+## 245 — DROP the retired legacy `mailing` schema — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (owner decision: retire legacy mailing; value harvested into email_marketing). REQUIRES core 077 (removes `mailing` from authenticator's pgrst.db_schemas) applied FIRST — 245 refuses while `mailing` is still exposed (dropping an exposed schema can break PostgREST's schema reload for every product). Prod `mailing`: 16 tables, 0 rows except status_pagina 9; no outside dependency. Snapshot (catalog + every row): `~/.noctusai/private/incidents/2026-10-10-mailing-teardown/`. Order at release: `migrate_product core sha=<blessed>` → `migrate_product social-wiring sha=<blessed>`.
 
-## 246 — status_pagina_media_creation_desativado (retire the legacy Criação de mídia page, A-3) — NOT APPLIED
+## 246 — status_pagina_media_creation_desativado (retire the legacy Criação de mídia page, A-3) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.media_creation` to `desativado`; no data touched (legacy posts/brand-kit tables + routers stay). Requires 241. Apply together with the image that ships the `/media-creation` → Carrosséis/Branding redirect.
 
-## 248 — link_clicks: drop ip_address + user_agent (LGPD — clicks store nothing personal) — NOT APPLIED
+## 248 — link_clicks: drop ip_address + user_agent (LGPD — clicks store nothing personal) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store no IP and no user agent). Destroys any captured values with the columns. The writer stopped sending them in the same commit. Between apply and the new image going live, an old-image click insert would fail; harmless in practice because prod sends no marketing email yet (Resend webhook secret + frontend base URL unset), so no tracked links exist.
 
@@ -579,11 +579,11 @@ Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store 
 
 Authored 2026-10-11 (owner decision "both structures"). Additive + idempotent: `estrutura TEXT NOT NULL DEFAULT 'corestudio'` (every existing row was generated with the CoreStudio order, so the default is the truthful backfill) with the named `cs_roteiros_estrutura_check` (`corestudio|metodo`, DROP IF EXISTS + ADD). Requires 229. Apply BEFORE deploying the image that reads/writes it (create/reprocessar insert `estrutura`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`.
 
-## 252 — status_pagina_lais (nav keys `lais_conversas` + `lais_configuracoes` for the Lais group) — NOT APPLIED
+## 252 — status_pagina_lais (nav keys `lais_conversas` + `lais_configuracoes` for the Lais group) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-13 (owner decision: WhatsApp leaves "Conexões" and becomes the "Lais" chatbot group, /lais/conversas + /lais/configuracoes). Inserts both rows copying the CURRENT `whatsapp_chat` status (guard: refuses if that row is absent); `whatsapp_chat` row kept (/whatsapp-chat now redirects). ON CONFLICT DO NOTHING; no CHECK/UNIQUE/trigger, so no GuardProbe. Requires 014. Apply together with (or before) the image that ships the Lais nav group — until applied, the two Lais nav items stay hidden (routes still reachable directly).
 
-## 253 — cs_roteiros.estrutura value rename (corestudio→cta_inicio, metodo→cta_final) — NOT APPLIED
+## 253 — cs_roteiros.estrutura value rename (corestudio→cta_inicio, metodo→cta_final) — APPLIED (verified in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-13 (owner decision "no leftovers from Core"). Drops `cs_roteiros_estrutura_check`, rewrites existing rows, sets the default `'cta_inicio'`, re-adds the same-named CHECK (`cta_inicio|cta_final`). Idempotent. Requires 250. Apply BEFORE deploying the image that reads/writes the new values (create/reprocessar insert `cta_inicio`/`cta_final`); until then an old-values DB rejects them. Then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`. (Renumbered from 252 at integrate: 252 was taken by `status_pagina_lais`.)
 
