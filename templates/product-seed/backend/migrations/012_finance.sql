@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.fin_accounts (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_accounts_gateway ON {{SCHEMA_NAME}}.fin_accounts (org_id, gateway)
     WHERE kind = 'gateway';
 CREATE INDEX IF NOT EXISTS idx_fin_accounts_org ON {{SCHEMA_NAME}}.fin_accounts (org_id);
+-- Accounting code (E21): the contador's reduced account code for this bank/cash/gateway account (free text, optional);
+-- the Domínio export refuses to run while a used account has none.
+ALTER TABLE {{SCHEMA_NAME}}.fin_accounts ADD COLUMN IF NOT EXISTS accounting_code TEXT;
 ALTER TABLE {{SCHEMA_NAME}}.fin_accounts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_accounts_select_own_org" ON {{SCHEMA_NAME}}.fin_accounts;
 CREATE POLICY "fin_accounts_select_own_org" ON {{SCHEMA_NAME}}.fin_accounts FOR SELECT TO authenticated
@@ -52,6 +55,11 @@ ALTER TABLE {{SCHEMA_NAME}}.fin_categories ADD COLUMN IF NOT EXISTS dre_line TEX
 ALTER TABLE {{SCHEMA_NAME}}.fin_categories ADD COLUMN IF NOT EXISTS behavior TEXT
     CHECK (behavior IN ('variable', 'fixed'));
 ALTER TABLE {{SCHEMA_NAME}}.fin_categories ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT NULL DEFAULT false;
+-- E21: the contador's reduced account code (free text, optional -- only the Domínio export needs it) and the MEI
+-- activity group (comércio / indústria / serviços) the Relatório Mensal de Receitas Brutas splits revenue by.
+ALTER TABLE {{SCHEMA_NAME}}.fin_categories ADD COLUMN IF NOT EXISTS accounting_code TEXT;
+ALTER TABLE {{SCHEMA_NAME}}.fin_categories ADD COLUMN IF NOT EXISTS activity_kind TEXT
+    CHECK (activity_kind IN ('comercio', 'industria', 'servicos'));
 ALTER TABLE {{SCHEMA_NAME}}.fin_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_categories_select_own_org" ON {{SCHEMA_NAME}}.fin_categories;
 CREATE POLICY "fin_categories_select_own_org" ON {{SCHEMA_NAME}}.fin_categories FOR SELECT TO authenticated
@@ -114,7 +122,7 @@ CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.fin_entries (
     due_date             DATE NOT NULL,
     amount_cents         BIGINT NOT NULL CHECK (amount_cents > 0),
     settled_cents        BIGINT NOT NULL DEFAULT 0 CHECK (settled_cents >= 0 AND settled_cents <= amount_cents),
-    source               TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing')),
+    source               TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing')),
     source_ref           TEXT,
     recurrence_id        UUID REFERENCES {{SCHEMA_NAME}}.fin_recurrences(id) ON DELETE SET NULL,
     installment_group_id UUID,
@@ -139,9 +147,11 @@ CREATE INDEX IF NOT EXISTS idx_fin_entries_org_due ON {{SCHEMA_NAME}}.fin_entrie
 CREATE INDEX IF NOT EXISTS idx_fin_entries_org_status ON {{SCHEMA_NAME}}.fin_entries (org_id, status, due_date);
 CREATE INDEX IF NOT EXISTS idx_fin_entries_org_competence ON {{SCHEMA_NAME}}.fin_entries (org_id, competence_month);
 CREATE INDEX IF NOT EXISTS idx_fin_entries_category ON {{SCHEMA_NAME}}.fin_entries (category_id);
+-- E21: did this sale carry a nota fiscal? NULL = not informed (the MEI report counts it as "sem nota" and warns).
+ALTER TABLE {{SCHEMA_NAME}}.fin_entries ADD COLUMN IF NOT EXISTS has_invoice BOOLEAN;
 -- Entry source vocabulary: re-stated so tables created before a source existed accept it.
 ALTER TABLE {{SCHEMA_NAME}}.fin_entries DROP CONSTRAINT IF EXISTS fin_entries_source_check;
-ALTER TABLE {{SCHEMA_NAME}}.fin_entries ADD CONSTRAINT fin_entries_source_check CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'import', 'external', 'purchasing'));
+ALTER TABLE {{SCHEMA_NAME}}.fin_entries ADD CONSTRAINT fin_entries_source_check CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing'));
 ALTER TABLE {{SCHEMA_NAME}}.fin_entries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_entries_select_own_org" ON {{SCHEMA_NAME}}.fin_entries;
 CREATE POLICY "fin_entries_select_own_org" ON {{SCHEMA_NAME}}.fin_entries FOR SELECT TO authenticated
@@ -330,6 +340,25 @@ CREATE POLICY "fin_dre_settings_select_own_org" ON {{SCHEMA_NAME}}.fin_dre_setti
   USING (org_id = (SELECT public.current_org_id_for('{{SCHEMA_NAME}}')));
 DROP POLICY IF EXISTS "service_role_bypass" ON {{SCHEMA_NAME}}.fin_dre_settings;
 CREATE POLICY "service_role_bypass" ON {{SCHEMA_NAME}}.fin_dre_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Budgets (E21): the planned amount per (category, month); the report compares it with the DRE-basis actual. One row per (org, category, month).
+CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.fin_budgets (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        UUID NOT NULL,
+    category_id   UUID NOT NULL REFERENCES {{SCHEMA_NAME}}.fin_categories(id) ON DELETE CASCADE,
+    month         DATE NOT NULL CHECK (EXTRACT(DAY FROM month) = 1),
+    amount_cents  BIGINT NOT NULL CHECK (amount_cents >= 0),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, category_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_fin_budgets_org_month ON {{SCHEMA_NAME}}.fin_budgets (org_id, month);
+ALTER TABLE {{SCHEMA_NAME}}.fin_budgets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "fin_budgets_select_own_org" ON {{SCHEMA_NAME}}.fin_budgets;
+CREATE POLICY "fin_budgets_select_own_org" ON {{SCHEMA_NAME}}.fin_budgets FOR SELECT TO authenticated
+  USING (org_id = (SELECT public.current_org_id_for('{{SCHEMA_NAME}}')));
+DROP POLICY IF EXISTS "service_role_bypass" ON {{SCHEMA_NAME}}.fin_budgets;
+CREATE POLICY "service_role_bypass" ON {{SCHEMA_NAME}}.fin_budgets FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Settle under a row lock: the balance is checked and the settlement inserted in ONE transaction.
 CREATE OR REPLACE FUNCTION {{SCHEMA_NAME}}.fin_settle_entry_locked(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
