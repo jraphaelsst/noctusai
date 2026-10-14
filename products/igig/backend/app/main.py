@@ -130,9 +130,12 @@ _MAX_BODY_PATH_OVERRIDES = {
 # Seed finance organ, mounted IN PARALLEL to the live agency finance (`/api/financeiro`, migration 011,
 # NUMERIC money, untouched). The organ owns `/api/finance/*` and its own `fin_*` tables (no collision with
 # `igig.fatura*`). The FE page is labelled "Financeiro (novo)" and gated 'desenvolvimento'.
-# NOC-REMEDIATE[igig-finance-cutover]: importer plan (roadmap erp-seed-2026-10 E10) -- map igig.fatura/fatura_item
-# + custos into fin_entries (NUMERIC reais -> integer cents, cliente -> fin party), verify totals against the
-# live Financeiro page, then flip 'financeiro-novo' to 'producao', retire /api/financeiro + pages/Financeiro.tsx
+# NOC-REMEDIATE[igig-finance-cutover]: importer BUILT -- `noctus.dev.finance_import_igig(org_id)` (seed
+# `domain/finance/importers/igig.py`: fatura -> fin_entries/settlements, NUMERIC -> cents via `primitives.money.to_cents`,
+# per-month reconciliation to the cent). Remaining steps, in order, ALL owner-run (live DB is the owner's call; the
+# tool refuses prod without `allow_prod=True`): (1) dry-run on prod and read the reconciliation; (2) confirm
+# (dry_run=False, confirm=True; idempotent); (3) ONE matching monthly close (organ DRE/entries vs the live
+# Financeiro page); (4) flip 'financeiro-novo' to 'producao'; (5) retire /api/financeiro + pages/Financeiro.tsx
 # and rename the nav entry -- 2026-10-14.
 finance_organ = mount_finance(
     schema="igig",
