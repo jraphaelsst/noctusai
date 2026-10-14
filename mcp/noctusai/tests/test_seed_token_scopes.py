@@ -557,11 +557,29 @@ class TestMakeRequireOrgAdmin:
         async def _get_current_user_org():
             return auth
 
-        core = _FakeCoreClient([{"id": str(_USER), "org_role": "owner"}])
+        # B3 (2026-10-14): the role is the one of the SELECTED org's membership,
+        # so the trusted row must carry the org the request is acting in.
+        core = _FakeCoreClient([{"id": str(_USER), "org_id": str(_ORG), "org_role": "owner"}])
         dep = make_require_org_admin(_get_current_user_org, lambda: core)
 
         result = _run(dep(auth=auth))
         assert result is auth
+
+    def test_home_owner_acting_in_another_org_is_403(self):
+        """B3: owner of the HOME org, request scoped to a DIFFERENT org ->
+        no admin there (fail closed), never the home role."""
+        other_org = "00000000-0000-0000-0000-0000000000b3"
+        auth = (self._user("member"), "token", other_org)
+
+        async def _get_current_user_org():
+            return auth
+
+        core = _FakeCoreClient([{"id": str(_USER), "org_id": str(_ORG), "org_role": "owner"}])
+        dep = make_require_org_admin(_get_current_user_org, lambda: core)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(auth=auth))
+        assert exc_info.value.status_code == 403
 
     def test_wired_through_a_real_fastapi_dependency(self):
         """Same ASGI-wiring proof `test_missing_credential_is_exactly_401
