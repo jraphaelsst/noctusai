@@ -269,6 +269,7 @@ def make_finance_router(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         view: str = Query("statement", pattern="^(statement|managerial)$"),
+        _a=admin,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         end = date_to or today()
@@ -279,6 +280,7 @@ def make_finance_router(
     async def simples_base_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
+        _a=admin,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         end = date_to or today()
@@ -297,7 +299,7 @@ def make_finance_router(
         )
 
     @router.get("/accountant-checklist", name="finance_accountant_checklist")
-    async def accountant_checklist_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    async def accountant_checklist_route(_a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         links = {
             "dre_csv": f"{prefix}/exports/dre.csv",
             "entries_csv": f"{prefix}/exports/entries.csv",

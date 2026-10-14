@@ -20,6 +20,7 @@ from noctusai_lib.primitives.exceptions import (
     validation_exception_handler,
 )
 
+from noctusai_lib.domain.finance._common import Scope
 from .conftest import CFG, ORG_A, ORG_B, USER_ID, _admin, _auth, _resolve, make_db, mk_account, mk_entry
 from .recon_support import rh  # noqa: F401
 
@@ -128,7 +129,7 @@ def test_the_host_can_prefill_the_regime_until_the_org_saves_its_own():
     staff = {"Authorization": "Bearer user"}
     got = client.get(f"{P}/dre-settings", headers=staff).json()["data"]
     assert got["tax_regime"] == "simples" and got["tax_regime_prefilled"] is True and got["persisted"] is False
-    assert "regime_nao_informado" not in {w["code"] for w in client.get(f"{P}/reports/dre", headers=staff).json()["data"]["warnings"]}
+    assert "regime_nao_informado" not in {w["code"] for w in client.get(f"{P}/reports/dre", headers={"Authorization": "Bearer admin"}).json()["data"]["warnings"]}
     client.put(f"{P}/dre-settings", headers={"Authorization": "Bearer admin"}, json={"tax_regime": "mei"})
     assert client.get(f"{P}/dre-settings", headers=staff).json()["data"]["tax_regime"] == "mei"
 
@@ -194,10 +195,10 @@ def test_simples_base_interest_always_counts_even_when_the_dre_line_is_financial
 
 def test_simples_base_org_scope_validation_and_http(h, s_b):
     mk_entry(s_b, amount_cents=777, due_date="2027-01-05", category_id=cat(s_b, "Vendas")["id"])
-    r = call(h, "GET", f"{P}/reports/simples-base?from=2027-01-01&to=2027-01-31", h.staff())
+    r = call(h, "GET", f"{P}/reports/simples-base?from=2027-01-01&to=2027-01-31", h.admin)
     assert r.status_code == 200 and r.json()["data"]["totals"]["base_cents"] == 0
-    assert call(h, "GET", f"{P}/reports/simples-base?from=2027-03-01&to=2027-01-01", h.staff()).status_code == 422
-    assert call(h, "GET", f"{P}/reports/simples-base?from=2010-01-01&to=2027-01-01", h.staff()).json()["error"]["code"] == "periodo_grande_demais"
+    assert call(h, "GET", f"{P}/reports/simples-base?from=2027-03-01&to=2027-01-01", h.admin).status_code == 422
+    assert call(h, "GET", f"{P}/reports/simples-base?from=2010-01-01&to=2027-01-01", h.admin).json()["error"]["code"] == "periodo_grande_demais"
     assert call(h, "GET", f"{P}/reports/simples-base").status_code == 401
 
 
@@ -211,7 +212,7 @@ def test_simples_base_presumido_is_flagged(s):
 
 
 def test_checklist_lists_provisional_choices_questions_and_export_links(h):
-    r = call(h, "GET", f"{P}/accountant-checklist", h.staff())
+    r = call(h, "GET", f"{P}/accountant-checklist", h.admin)
     assert r.status_code == 200
     data = r.json()["data"]
     assert [c["choice"] for c in data["provisional_choices"]] == list(dre_settings.CHOICES) and data["confirmed_choices"] == []
@@ -228,10 +229,10 @@ def test_checklist_lists_provisional_choices_questions_and_export_links(h):
 
 def test_checklist_moves_a_confirmed_choice_out_of_the_provisional_list(h):
     call(h, "PUT", f"{P}/dre-settings", h.admin, json={"tax_regime": "simples", "confirmations": {"chargeback_line": {"confirmed": True}}})
-    data = call(h, "GET", f"{P}/accountant-checklist", h.staff()).json()["data"]
+    data = call(h, "GET", f"{P}/accountant-checklist", h.admin).json()["data"]
     assert "chargeback_line" not in [c["choice"] for c in data["provisional_choices"]]
     assert [c["choice"] for c in data["confirmed_choices"]] == ["chargeback_line"] and data["tax_regime_informed"] is True
-    other = call(h, "GET", f"{P}/accountant-checklist", h.staff("org-b")).json()["data"]
+    other = call(h, "GET", f"{P}/accountant-checklist", h.staff("org-b-admin")).json()["data"]
     assert other["confirmed_choices"] == []  # org isolation
 
 
@@ -283,3 +284,48 @@ def test_dre_csv_route_is_admin_only_and_org_scoped(rh):
     assert c.get(f"{P}/exports/dre.csv?view=pie", headers=rh.admin).status_code == 422
     with pytest.raises(FinanceError):
         exports.dre_csv(rh.s, date(2026, 3, 1), date(2026, 1, 1))
+
+
+def test_financial_statements_are_admin_only_strict(h):
+    for path in (f"{P}/reports/dre", f"{P}/reports/simples-base", f"{P}/accountant-checklist"):
+        assert call(h, "GET", path).status_code == 401, path
+        assert call(h, "GET", path, h.staff("user")).status_code == 403, path
+        assert call(h, "GET", path, h.admin).status_code == 200, path
+    # cashflow + aging stay staff-readable
+    for path in (f"{P}/reports/cashflow", f"{P}/reports/aging"):
+        assert call(h, "GET", path, h.staff("user")).status_code == 200, path
+
+
+class _RacingDb:
+    """DB proxy: the loser's first dre_settings INSERT is preceded by the winner's committed write."""
+
+    def __init__(self, db, winner):
+        self._db, self._winner, self._fired = db, winner, False
+
+    def table(self, name):
+        tbl = self._db.table(name)
+        if not name.endswith("dre_settings") or self._fired:
+            return tbl
+        outer = self
+
+        class _T:
+            def __getattr__(self, attr):
+                return getattr(tbl, attr)
+
+            def insert(self, row):
+                outer._fired = True
+                outer._winner()  # winner commits first
+                raise RuntimeError("duplicate key value violates unique constraint (23505)")
+
+        return _T()
+
+
+def test_first_put_race_loser_reapplies_against_winner_row(db):
+    winner = Scope(db, CFG, ORG_A)
+    loser = Scope(_RacingDb(db, lambda: dre_settings.update_settings(
+        winner, {"confirmations": {"chargeback_line": {"confirmed": True}}}, user_id="winner")), CFG, ORG_A)
+    out = dre_settings.update_settings(
+        loser, {"tax_regime": "simples", "confirmations": {"gateway_fee_line": {"confirmed": True}}}, user_id="loser")
+    ch = out["choices"]
+    assert ch["chargeback_line"]["confirmed_by"] == "winner" and ch["chargeback_line"]["provisional"] is False
+    assert ch["gateway_fee_line"]["confirmed_by"] == "loser" and out["tax_regime"] == "simples"

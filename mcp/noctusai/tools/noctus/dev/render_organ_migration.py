@@ -22,6 +22,8 @@ from .scaffold_migration import (
     _format_number,
     _resolve_migrations_dir,
     next_migration_number,
+    validate_schema_identifier,
+    validate_product_slug,
 )
 
 
@@ -43,6 +45,9 @@ def render_organ_migration(
             refused_catalog_scope | error
     """
     result: dict[str, Any] = {"product": product, "organ": organ, "warnings": []}
+    bad = validate_product_slug(product) or (validate_schema_identifier(schema) if schema is not None else None)
+    if bad:
+        return {**result, "status": "error", "error": bad}
 
     catalog_scope = _catalog_scope_guard.check_catalog_scope(product, live_products_fn)
     result["catalog_scope"] = catalog_scope
@@ -76,6 +81,11 @@ def render_organ_migration(
 
     resolved_schema, schema_source = _resolve_schema(product, schema, base)
     result.update(schema=resolved_schema, schema_source=schema_source)
+    if schema_source == "slug_fallback":
+        return {**result, "status": "error", "error": (
+            f"Could not derive the DB schema of {product!r} from its app/main.py create_product_app(schema=...) "
+            f"declaration; refusing to render DDL into a guessed schema. Pass schema= explicitly."
+        )}
     sql = organ_migration_sql(organ, resolved_schema)
 
     existing = [

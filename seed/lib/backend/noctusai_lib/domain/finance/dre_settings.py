@@ -139,8 +139,9 @@ def update_settings(s: Scope, data: Mapping[str, Any], *, user_id: Optional[str]
         except Exception as exc:
             if not is_unique_violation(exc):
                 raise
-            # Lost the first-PUT race: the winner's row exists, so this becomes a plain update.
-            s.tbl("dre_settings").update(patch).eq("org_id", s.org_id).execute()
+            # Lost the first-PUT race: the winner's row exists. Re-load it and re-apply the request against
+            # IT (a stale patch built from defaults would overwrite the winner's choice_meta).
+            return update_settings(s, data, user_id=user_id, regime_prefill=regime_prefill)
     else:
         s.tbl("dre_settings").update(patch).eq("org_id", s.org_id).execute()
     return present(load_row(s), regime_prefill=regime_prefill)

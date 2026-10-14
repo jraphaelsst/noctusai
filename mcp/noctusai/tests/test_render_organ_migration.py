@@ -70,3 +70,24 @@ def test_unknown_organ_errors(tmp_path):
     products, _ = _product(tmp_path)
     r = render("demo", "nope", products_dir=products, live_products_fn=_live("demo"), skip_fetch=True)
     assert r["status"] == "error" and "unknown organ" in r["error"]
+
+
+def test_hostile_slug_is_refused_before_any_filesystem_access(tmp_path):
+    products, _ = _product(tmp_path)
+    for bad in ("../demo", "demo/../../x", "Demo", "-x", "a b"):
+        r = render(bad, "finance", products_dir=products, schema="erp", skip_fetch=True, live_products_fn=_live(bad))
+        assert r["status"] == "error" and "Invalid product slug" in r["error"], bad
+
+
+def test_invalid_schema_identifier_is_refused(tmp_path):
+    products, _ = _product(tmp_path)
+    for bad in ("erp; DROP SCHEMA x", "Erp", "1erp", 'e"rp', ""):
+        r = render("demo", "finance", products_dir=products, schema=bad, skip_fetch=True, live_products_fn=_live("demo"))
+        assert r["status"] == "error", bad
+
+
+def test_slug_fallback_schema_is_refused(tmp_path):
+    products, mig = _product(tmp_path)  # no app/main.py declaration -> slug_fallback
+    r = render("demo", "finance", products_dir=products, skip_fetch=True, live_products_fn=_live("demo"), confirm=True)
+    assert r["status"] == "error" and "schema=" in r["error"]
+    assert [p.name for p in mig.glob("*.sql")] == ["001_seed.sql"]

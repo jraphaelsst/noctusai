@@ -858,3 +858,14 @@ class TestScaffoldMigrationWarningsPassthrough:
         result = sm.scaffold_migration("demo", "thing", products_dir=repo / "products")
         assert result.get("created") is True, result
         assert result["warnings"], "expected scaffold_migration to surface the degraded source"
+
+
+def test_scaffold_rejects_hostile_slug_and_schema(tmp_path):
+    from tools.noctus.dev.scaffold_migration import scaffold_migration
+
+    products = tmp_path / "products"
+    (products / "demo" / "backend" / "migrations").mkdir(parents=True)
+    r = scaffold_migration("../demo", "x", products_dir=products)
+    assert "Invalid product slug" in r["error"]
+    r = scaffold_migration("demo", "x", schema="erp; drop", products_dir=products)
+    assert "Invalid schema" in r["error"]

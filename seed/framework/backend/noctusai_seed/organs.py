@@ -29,7 +29,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
+
+from noctusai_seed.organ_auth import make_organ_auth
 
 __all__ = [
     "MountedOrgan",
@@ -152,8 +154,8 @@ def mount_finance(
     """Build the finance + reconciliation routers for one product, with house auth.
 
     auth_dependency: the product's license-gated `get_current_user_org` (yields `(user, token, org_id)`;
-        401/403 live there). Writes/exports additionally require an ORG ADMIN (trusted `noctus_users`
-        role via `is_org_admin`, never `user_metadata`).
+        401/403 live there). Writes/exports additionally require an ORG ADMIN (role resolved for the SELECTED org
+        via `make_organ_auth`, never the home-org role or `user_metadata`).
     get_admin_client: schema-pinned service client (the organ filters `org_id` on every query).
     get_core_client: `public`-schema client (role lookups).
     get_storage: `StorageBackend` dependency; default = Supabase storage over the admin client when it
@@ -163,7 +165,6 @@ def mount_finance(
     get_charge_operations: gateway `ChargeOperations` dependency for statement sync; default raises 503
         (the declared not-configured state) -- reconciliation reads/imports still work.
     """
-    from noctusai_lib.api.auth.session.scopes import is_org_admin, require_org_admin_role
     from noctusai_lib.domain.finance import (
         FinanceConfig,
         FinanceContext,
@@ -180,19 +181,17 @@ def mount_finance(
 
     storage = get_storage or _default_storage_dependency(get_admin_client)
 
+    organ_auth = make_organ_auth(auth_dependency, get_core_client, context="Financeiro")
+    auth_dependency, admin_dependency = organ_auth.auth, organ_auth.admin
+
     def resolve_context(auth: Any, db: Any) -> FinanceContext:
         user, _token, org_id = auth
-        uid = getattr(user, "id", None)
         return FinanceContext(
             db=db,
             org_id=str(org_id),
-            user_id=str(uid or ""),
-            is_admin=is_org_admin(get_core_client(), uid),
+            user_id=str(getattr(user, "id", None) or ""),
+            is_admin=bool(getattr(auth, "is_admin", False)),  # role IN the selected org; absent => masked
         )
-
-    async def admin_dependency(auth: Any = Depends(auth_dependency)) -> Any:
-        require_org_admin_role(get_core_client(), getattr(auth[0], "id", None), "Financeiro")
-        return auth
 
     def no_gateway() -> Any:
         raise HTTPException(status_code=503, detail="Gateway de cobrança não configurado.")
@@ -215,7 +214,7 @@ def mount_finance(
     return MountedOrgan(
         name="finance",
         routers=tuple(routers),
-        max_body_path_overrides=dict(_finance_overrides()),
+        max_body_path_overrides=_rebase_overrides(_finance_overrides(), "/api/finance", prefix),
     )
 
 
@@ -340,10 +339,9 @@ def mount_items(
 ) -> MountedOrgan:
     """Build the items router for one product, with house auth (same contract as :func:`mount_finance`).
 
-    Writes/imports require an ORG ADMIN (trusted `noctus_users` role); the CSV import path's body-size
+    Writes/imports require an ORG ADMIN of the SELECTED org (`make_organ_auth`); the CSV import path's body-size
     override rides on the returned organ.
     """
-    from noctusai_lib.api.auth.session.scopes import is_org_admin, require_org_admin_role
     from noctusai_lib.domain.items import ItemsConfig, ItemsContext, make_items_router
 
     cfg = cfg or ItemsConfig(schema=schema)
@@ -353,21 +351,31 @@ def mount_items(
     def get_db() -> Any:
         return get_admin_client()
 
+    organ_auth = make_organ_auth(auth_dependency, get_core_client, context="Itens")
+    auth_dependency, admin_dependency = organ_auth.auth, organ_auth.admin
+
     def resolve_context(auth: Any, db: Any) -> ItemsContext:
         user, _token, org_id = auth
-        uid = getattr(user, "id", None)
         return ItemsContext(
-            db=db, org_id=str(org_id), user_id=str(uid or ""), is_admin=is_org_admin(get_core_client(), uid)
+            db=db, org_id=str(org_id), user_id=str(getattr(user, "id", None) or ""),
+            is_admin=bool(getattr(auth, "is_admin", False)),  # role IN the selected org; absent => masked
         )
-
-    async def admin_dependency(auth: Any = Depends(auth_dependency)) -> Any:
-        require_org_admin_role(get_core_client(), getattr(auth[0], "id", None), "Itens")
-        return auth
 
     router = make_items_router(
         cfg, auth_dependency, admin_dependency, resolve_context=resolve_context, get_db=get_db, prefix=prefix
     )
-    return MountedOrgan(name="items", routers=(router,), max_body_path_overrides=dict(_items_overrides()))
+    return MountedOrgan(name="items", routers=(router,), max_body_path_overrides=_rebase_overrides(_items_overrides(), "/api/items", prefix))
+
+
+def _rebase_overrides(overrides: Mapping[str, int], default_prefix: str, prefix: str) -> dict[str, int]:
+    """Upload-size patterns are declared against the organ's default prefix; a host that mounts the
+    routers elsewhere gets the patterns re-derived from ITS prefix (else the override never matches)."""
+    out: dict[str, int] = {}
+    for pattern, limit in overrides.items():
+        if not pattern.startswith(default_prefix):
+            raise ValueError(f"override {pattern!r} does not start with {default_prefix!r}")
+        out[prefix.rstrip("/") + pattern[len(default_prefix):]] = limit
+    return out
 
 
 def _default_storage_dependency(get_admin_client: Callable[[], Any]) -> Callable[[], Any]:
@@ -397,5 +405,11 @@ def mount_organs(organs: Sequence[MountedOrgan]) -> tuple[list[APIRouter], dict[
     overrides: dict[str, int] = {}
     for organ in organs:
         routers.extend(organ.routers)
-        overrides.update(organ.max_body_path_overrides)
+        for pattern, limit in organ.max_body_path_overrides.items():
+            if pattern in overrides and overrides[pattern] != limit:
+                raise ValueError(
+                    f"conflicting body-size override for {pattern!r}: {overrides[pattern]} vs {limit} "
+                    f"(organ {organ.name!r})"
+                )
+            overrides[pattern] = limit
     return routers, overrides

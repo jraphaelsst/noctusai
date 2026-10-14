@@ -69,6 +69,24 @@ logger = logging.getLogger(__name__)
 _NN_RE = re.compile(r"^(\d+)_.+\.sql$")
 
 
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_SQL_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def validate_product_slug(product_slug: str) -> str | None:
+    """Error text when ``product_slug`` is not a plain slug (path traversal / separators), else None."""
+    if not isinstance(product_slug, str) or not _SLUG_RE.fullmatch(product_slug):
+        return f"Invalid product slug {product_slug!r}: must match ^[a-z0-9][a-z0-9-]*$."
+    return None
+
+
+def validate_schema_identifier(schema: str) -> str | None:
+    """Error text when ``schema`` is not a plain lowercase SQL identifier (it is interpolated into DDL)."""
+    if not isinstance(schema, str) or not _SQL_IDENT_RE.fullmatch(schema) or len(schema) > 63:
+        return f"Invalid schema {schema!r}: must be a lowercase SQL identifier ^[a-z_][a-z0-9_]*$ (<= 63 chars)."
+    return None
+
+
 def _slug_to_default_schema(product_slug: str) -> str:
     """`youtube-crawler` → `youtube_crawler` (matches scaffold_product convention)."""
     return product_slug.replace("-", "_")
@@ -96,6 +114,9 @@ def _resolve_migrations_dir(
     the identical error text. A caller seeing two DIFFERENT error strings for
     the same failure from two different tools is its own kind of drift.
     """
+    slug_err = validate_product_slug(product_slug)
+    if slug_err:
+        return None, None, {"error": slug_err}
     if products_dir is not None:
         base_products_dir = products_dir
     elif worktree_path is not None:
@@ -104,6 +125,8 @@ def _resolve_migrations_dir(
         base_products_dir = PRODUCTS_DIR
 
     product_dir = base_products_dir / product_slug
+    if base_products_dir.resolve() not in product_dir.resolve().parents:
+        return None, None, {"error": f"Product dir {product_dir} resolves outside {base_products_dir}."}
     if not product_dir.is_dir():
         return None, None, {
             "error": (
@@ -490,6 +513,10 @@ def scaffold_migration(
     # number from the moment they scaffolded, undetected until the tech-lead's
     # eventual commit). Delegating here means using the standard tool is
     # sufficient; no extra step to remember.
+    resolved_schema = schema if schema is not None else _slug_to_default_schema(product_slug)
+    schema_err = validate_schema_identifier(resolved_schema) if resolved_schema else None
+    if schema_err:
+        return {"error": schema_err}
     number_result = next_migration_number(
         product_slug,
         worktree_path=worktree_path,
@@ -501,7 +528,6 @@ def scaffold_migration(
     next_n = number_result["next_number"]
     warnings = number_result["warnings"]
 
-    resolved_schema = schema if schema is not None else _slug_to_default_schema(product_slug)
     if not resolved_schema:
         return {"error": "Resolved schema is empty (slug derived to '')"}
 
