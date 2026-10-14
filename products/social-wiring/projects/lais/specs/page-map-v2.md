@@ -957,6 +957,31 @@ From the Bubble API Connector catalogue (`bubble-app-definition.md` §2). Hosts 
 
 Rules for every live step: owner's session, own agency id only, open → read → close **without saving**, never click a control that maps to a W/S endpoint above, never type in a field that triggers a write. Screenshots with staff or lead data go to the private set outside the repo.
 
+### 59.0 Live gap pass — 2026-10-14 (owner session, read-only, nothing saved)
+
+Every drawer/modal below was opened, read and closed with ✕ / Cancelar / Escape; no Salvar, Criar, Próximo-after-typing, toggle or popup button was pressed. No personal data recorded.
+
+| # | Result | Evidence |
+| --- | --- | --- |
+| a1 | **Not reachable read-only.** Step 2 needs an edit: "Próximo" is `disabled` until the rule set changes. Stays code-only (`routes.md` /configs_qualification). | C live (button `disabled=true`) |
+| a2 | Minutes drawer: switch "Reengajamento em minutos" + **Intervalo** select = 5, 10, 15 … 55 minutos, 1 hora (step 5); copy "Funciona em qualquer horário"; info box: lead reply restarts the flow, leads who closed the conversation are never contacted, never-replied leads are covered by the hours tier. Hours drawer: switch + select **1–11 horas**; copy "Funciona das 8h às 20h"; targets leads who stopped replying **or never replied**. URL mode `?reengage=minutes|hours`. **Resolves §0.2 #2: 1–11 h (Bubble/live) is right; the mock list 1/2/4/8/12/24 is not what ships.** | C live |
+| a3 | Visit drawer (`?type=visit`): status chip · checkbox "Diferenciar configuração para leads de compra e aluguel" · switch "Pré-agendamento de visita" · switch "Solicitação de CPF obrigatória?" · "Período disponível": Tempo mínimo (Dias + Horas selects), Tempo máximo (Dias) · "Horários disponíveis": De/Até per weekday Segunda–Domingo (current 09–17 weekdays, 09–18 weekend). `/configs_visits_embed` renders the same editor chrome-less (for the Bubble drawer). | C live |
+| a4 | Template preview drawer: name, status, category, WhatsApp-bubble preview, "Simule com exemplos" (one input per variable, local), [Excluir modelo] (W), [OK]. "Novo modelo de mensagem" modal: Nome do modelo · Categoria (Administrativo, Campanha, Cobrança, Documentação, Primeiro contato, Reativação, Visita, Outros) · Conteúdo (max **1024** chars) · "Adicionar parâmetros" chips: Nome da pessoa, Nome da Lais, Nome da imobiliária, Mensagem, Data da visita, Código do imóvel, Link do imóvel, Nome do atendente, Imóvel da visita, Data e horário da visita · [Cancelar] [Criar]. | C live |
+| a5 | Bubble `configs_behavior` opened standalone renders the tab headers only (body needs the parent's postMessage token). Not retried inside casa. BUBBLE-DEF (§ Bubble forms) stays the source. | C live (empty body) |
+| a6, a7 | **Skipped** — the Conversas page lists lead names/phones; held back with bucket (d). | — |
+| a8 | "Filtro de leads": Data do primeiro contato (range) · Nome · E-mail · Telefone · Imóvel · Link da conversa · Operação (Aluguel, Compra, Administração) · Atendimento da Lais (Sem atendimento, Atendido pela Lais) · Status CRM (Enviado ao CRM, Erro no envio, Não pronto) · **Canal: 60 origins** (portals incl. the Guia de Imóveis regional family, Grupo Zap, ImovelWeb, Chaves na Mão, NetImoveis, Kenlo, RD Station; ads Facebook/Instagram/Google; WhatsApp, Site Próprio, Placa, Remarketing, Conversas; **AI assistants ChatGPT, Claude, MCP**) · Campanha de origem · Anúncio de origem · [Limpar] [Filtrar]. | C live |
+| a9 | Calendar views not renderable while visits are off (empty state only). Code-only. | C live |
+| a10 | "+ Adicionar usuário": drawer "Informações da conta", Passo 1 de 3: Nome completo, E-mail (steps 2–3 need typing — not reached; code: level + seat). "+ Criar equipe": "Configurar nova equipe", Passo 1 de 3: Nome da equipe* + radio "Esta equipe atende clientes diretamente após a Lais?" Sim (assumes conversations when Lais ends pre-service; can receive leads automatically) / Não (manual assignment only). Team row [Editar] = menu Configurações · Usuários · Excluir equipe (W). | C live |
+| a11 | Skipped (billing contacts are private). | — |
+| a12 | "Filtro de notificações": Data · Operações (Todas, Aluguel, Compra) · **Tipo: 11 types** — Solicitação de pré-agendamento de visita, Cobrança de atendimento, Relatórios da Lais, Remarketing, Captação, Atualização de base de imóveis, Novo lead gerado, Novo atendimento, Nova mensagem, Avaliações no Google (+ the toggle "Notificar lead pronto para atendimento", W, untouched). | C live |
+| a13 | `/relatorio-v2`: no export menu exists (gap was speculative); controls = Operação combobox, month picker, tabs Imóveis/Bairros, property codes are buttons. `/relatorio-v3` = same content; the duplicated Top-10 rows bug is present in both. | C live |
+| a14, a15 | Bubble (developments, owners) — same standalone-render limit as a5; not retried. | — |
+| a16 | Not repeated (S1 already covers Início). | — |
+| a17 | `/relatorio-v3` see a13 · `/captacao` renders an **empty** shell (title only — the sidebar uses `/notifications?type=lead-property-acquisition&view=acquisition` instead) · `/plans` = Bubble iframe `legado.lais.ai/plans` · `/configs_visits_embed` see a3. | C live |
+| a18 | User menu = **Editar perfil** (`/perfil`) · **Sair**. | C live |
+
+Also seen: the remarketing upsell popup ("Dispare o Remarketing para N leads", [Depois] [Ir para Disparos]) appears mid-session on any page; never touched (b6).
+
 ### 59.a Safely viewable read-only (open, capture, close)
 
 | # | Route | Open | Capture | Why it is safe |
