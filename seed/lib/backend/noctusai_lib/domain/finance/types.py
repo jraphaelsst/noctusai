@@ -128,6 +128,14 @@ class CategoryBehavior(_StrEnum):
     FIXED = "fixed"
 
 
+class ActivityKind(_StrEnum):
+    """MEI Relatório Mensal de Receitas Brutas (Res. CGSN 140 Anexo X): the three activity groups of the model."""
+
+    COMERCIO = "comercio"
+    INDUSTRIA = "industria"
+    SERVICOS = "servicos"
+
+
 def values(enum_cls: type[Enum]) -> tuple[str, ...]:
     """The wire values of an enum, in declaration order (SQL CHECKs + parity tests)."""
     return tuple(member.value for member in enum_cls)
@@ -135,6 +143,7 @@ def values(enum_cls: type[Enum]) -> tuple[str, ...]:
 
 __all__ = [
     "AccountKind",
+    "ActivityKind",
     "CategoryBehavior",
     "CategoryDirection",
     "DreLine",

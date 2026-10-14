@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ACCOUNT_KINDS, CATEGORY_BEHAVIORS, CATEGORY_DIRECTIONS, ENTRY_DIRECTIONS, ENTRY_SOURCES, ENTRY_STATUSES, FREQUENCIES,
-  LEDGER_ORIGINS, MATCH_STATUSES, SETTLEMENT_KINDS, STATEMENT_FORMATS, AGING_BUCKET_KEYS,
+  LEDGER_ORIGINS, MATCH_STATUSES, SETTLEMENT_KINDS, STATEMENT_FORMATS, AGING_BUCKET_KEYS, ACTIVITY_KINDS,
 } from './types';
 import { DRE_ASSIGNABLE_LINES, DRE_LINE_SETTING_KEYS, DRE_LINES, DRE_SUBTOTAL_KEYS, FINANCE_TAX_REGIMES } from './dreTypes';
 import { MESSAGES } from './messages';
@@ -28,6 +28,7 @@ describe('finance enums (CONTRACT §3.1)', () => {
       LedgerOrigin: LEDGER_ORIGINS,
       StatementFormat: STATEMENT_FORMATS,
       MatchStatus: MATCH_STATUSES,
+      ActivityKind: ACTIVITY_KINDS,
     }).toEqual({
       AccountKind: ['checking', 'savings', 'cash', 'gateway', 'credit_card', 'investment'],
       EntryDirection: ['payable', 'receivable'],
@@ -39,6 +40,7 @@ describe('finance enums (CONTRACT §3.1)', () => {
       LedgerOrigin: ['settlement', 'fee', 'transfer', 'adjustment', 'opening'],
       StatementFormat: ['ofx', 'csv'],
       MatchStatus: ['unmatched', 'suggested', 'matched', 'ignored'],
+      ActivityKind: ['comercio', 'industria', 'servicos'],
     });
   });
 
@@ -82,7 +84,9 @@ describe('finance messages', () => {
       ...AGING_BUCKET_KEYS.map((k) => `aging.bucket_${k}`),
       ...[...DRE_LINES, ...DRE_SUBTOTAL_KEYS].map((l) => `dre_line.${l}`),
       ...['revenue', 'variable_costs', 'contribution_margin', 'fixed_costs', 'other_income', 'net_result'].flatMap((k) => [`dre_managerial.${k}`, `dre_managerial_help.${k}`]),
-      ...['dre_csv', 'entries_csv'].map((k) => `accountant.export_${k}`),
+      ...['dre_csv', 'entries_csv', 'livro_caixa_csv', 'livro_caixa_pdf'].map((k) => `accountant.export_${k}`),
+      ...ACTIVITY_KINDS.map((k) => `activity.${k}`),
+      ...['lancamento_sem_categoria', 'tarifa_sem_categoria', 'categoria_de_tarifa_ausente', 'conta_desconhecida', 'baixa_sem_lancamento', 'ajuste_manual_sem_categoria', 'transferencia_sem_contrapartida'].map((c) => `dominio.issue_${c}`),
       ...[...DRE_LINES, ...DRE_SUBTOTAL_KEYS].flatMap((l) => [`dre_help.${l}.what`, `dre_help.${l}.example`, `dre_help.${l}.source`]),
       ...FINANCE_TAX_REGIMES.flatMap((r) => [`finance_regime.${r}`, `dre_settings.regime_help_${r}`]),
       ...DRE_LINE_SETTING_KEYS.flatMap((k) => [`dre_settings.${k}`, `dre_settings.${k}_help`]),

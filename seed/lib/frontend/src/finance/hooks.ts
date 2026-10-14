@@ -60,6 +60,13 @@ import type {
   TransferResult,
 } from './types';
 import type {
+  Budget,
+  BudgetItemInput,
+  BudgetReportData,
+  LivroCaixaData,
+  MeiMonthlyData,
+} from './accountantTypes';
+import type {
   AccountantChecklistData,
   DreConfirmInput,
   DreReportData,
@@ -441,6 +448,55 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     };
   }
 
+  // ---- budgets, Livro Caixa, MEI monthly (E21) -----------------------------------------------
+  function useBudgetReport(params: PeriodParams = {}) {
+    const q = useQuery<BudgetReportData>({
+      queryKey: [...financeKeys.reports, 'budget', params],
+      queryFn: () => data(api.get(p('/reports/budget'), params)),
+      placeholderData: keep,
+    });
+    return signals(q);
+  }
+  function useBudgetMutations() {
+    const inv = useInvalidate();
+    const done = () => inv(financeKeys.reports);
+    return {
+      save: useMutation({
+        mutationFn: (items: BudgetItemInput[]) => data<Budget[]>(api.put(p('/budgets'), { items })),
+        onSuccess: done,
+      }),
+      remove: useMutation({
+        mutationFn: (id: string) => api.delete(p(`/budgets/${id}`)),
+        onSuccess: done,
+      }),
+    };
+  }
+  function useBudgets(params: PeriodParams = {}) {
+    const q = useQuery<Budget[]>({
+      queryKey: [...financeKeys.reports, 'budgets', params],
+      queryFn: () => data(api.get(p('/budgets'), params)),
+      placeholderData: keep,
+    });
+    return signals(q);
+  }
+  function useLivroCaixa(params: PeriodParams & { page?: number; page_size?: number } = {}) {
+    const q = useQuery<LivroCaixaData>({
+      queryKey: [...financeKeys.reports, 'livro-caixa', params],
+      queryFn: () => data(api.get(p('/reports/livro-caixa'), params)),
+      placeholderData: keep,
+    });
+    return signals(q);
+  }
+  /** `month` = any day of the month (`YYYY-MM-DD`). */
+  function useMeiMonthly(month: string) {
+    const q = useQuery<MeiMonthlyData>({
+      queryKey: [...financeKeys.reports, 'mei-monthly', month],
+      queryFn: () => data(api.get(p('/reports/mei-monthly'), { month })),
+      placeholderData: keep,
+    });
+    return signals(q);
+  }
+
   // ---- reconciliation ----------------------------------------------------
   function useStatements(params: { account_id?: string; page?: number } = {}) {
     const q = useQuery<FinancePaginated<StatementImport>>({
@@ -492,7 +548,7 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     };
   }
 
-  // ---- exports (admin) ---------------------------------------------------
+  // ---- exports (admin or the accountant read grant) ---------------------------------------------------
   function useExport() {
     return useMutation({
       mutationFn: async ({ path, params, filename }: DownloadInput) => {
@@ -522,6 +578,11 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     useAging,
     useDre,
     useSimplesBase,
+    useBudgetReport,
+    useBudgetMutations,
+    useBudgets,
+    useLivroCaixa,
+    useMeiMonthly,
     useAccountantChecklist,
     useDreSettings,
     useDreSettingsMutations,
@@ -539,4 +600,9 @@ export const FINANCE_EXPORT_PATHS = {
   entries: `${FINANCE_BASE}/exports/entries.csv`,
   ledger: `${FINANCE_BASE}/exports/ledger.ofx`,
   dre: `${FINANCE_BASE}/exports/dre.csv`,
+  livroCaixaCsv: `${FINANCE_BASE}/exports/livro-caixa.csv`,
+  livroCaixaPdf: `${FINANCE_BASE}/exports/livro-caixa.pdf`,
+  meiCsv: `${FINANCE_BASE}/exports/mei-monthly.csv`,
+  meiPdf: `${FINANCE_BASE}/exports/mei-monthly.pdf`,
+  dominio: `${FINANCE_BASE}/exports/dominio.txt`,
 } as const;

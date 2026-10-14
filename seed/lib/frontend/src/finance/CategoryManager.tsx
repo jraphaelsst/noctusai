@@ -10,7 +10,7 @@ import { ConfirmButton, EmptyState, Field, FormError, HelpTip, Input, ListSkelet
 import { errorMessage, type FinanceHooks } from './hooks';
 import { t } from './i18n';
 import type { DreAssignableLine, DreLine } from './dreTypes';
-import { CATEGORY_BEHAVIORS, CATEGORY_DIRECTIONS, type CategoryBehavior, type CategoryDirection, type FinanceCategory } from './types';
+import { ACTIVITY_KINDS, CATEGORY_BEHAVIORS, CATEGORY_DIRECTIONS, type ActivityKind, type CategoryBehavior, type CategoryDirection, type FinanceCategory } from './types';
 
 /** Which DRE lines make sense per category direction (dre-structure.md §2a). */
 export const DRE_LINES_BY_DIRECTION: Record<CategoryDirection, readonly DreAssignableLine[]> = {
@@ -61,6 +61,8 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
   const [dreLine, setDreLine] = React.useState('');
   const [behavior, setBehavior] = React.useState('');
   const [isDas, setIsDas] = React.useState(false);
+  const [accountingCode, setAccountingCode] = React.useState('');
+  const [activityKind, setActivityKind] = React.useState('');
   const [nameError, setNameError] = React.useState<string | null>(null);
 
   function open(c: FinanceCategory | null) {
@@ -71,6 +73,8 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
     setDreLine(c?.dre_line ?? '');
     setBehavior(c?.behavior ?? '');
     setIsDas(c?.is_das ?? false);
+    setAccountingCode(c?.accounting_code ?? '');
+    setActivityKind(c?.activity_kind ?? '');
     setNameError(null);
   }
 
@@ -82,7 +86,16 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
     }
     setNameError(null);
     const formDirection = editing && editing !== 'new' ? editing.direction : direction;
-    const mapping = formDirection === 'transfer' ? {} : { dre_line: (dreLine || null) as DreLine | null, behavior: (behavior || null) as CategoryBehavior | null, is_das: formDirection === 'expense' ? isDas : false };
+    const mapping = formDirection === 'transfer'
+      ? {}
+      : {
+          dre_line: (dreLine || null) as DreLine | null,
+          behavior: (behavior || null) as CategoryBehavior | null,
+          is_das: formDirection === 'expense' ? isDas : false,
+          // Sent when set, or when clearing a previous value (an untouched empty field stays out of the body).
+          ...(accountingCode.trim() || (editing && editing !== 'new' && editing.accounting_code) ? { accounting_code: accountingCode.trim() || null } : {}),
+          ...(formDirection === 'income' ? { activity_kind: (activityKind || null) as ActivityKind | null } : {}),
+        };
     try {
       if (editing === 'new') await m.create.mutateAsync({ name: name.trim(), direction, parent_id: parent || null, ...mapping });
       else if (editing) await m.update.mutateAsync({ id: editing.id, name: name.trim(), parent_id: parent || null, ...mapping });
@@ -124,6 +137,7 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
               <th className="p-2">{t('categories.direction')}</th>
               <th className="p-2">{t('categories.dre_line')}</th>
               <th className="p-2">{t('categories.behavior')}</th>
+              <th className="p-2">{t('categories.accounting_code')}</th>
               <th className="p-2"><span className="sr-only">{t('common.actions')}</span></th>
             </tr>
           </thead>
@@ -171,6 +185,10 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
                     ) : (
                       <span>{c.behavior ? t(`behavior.${c.behavior}`) : t('categories.behavior_default')}</span>
                     )}
+                  </td>
+                  <td className="p-2 text-xs">
+                    {c.direction === 'transfer' ? '—' : (c.accounting_code ?? <span className="text-muted-foreground">{t('categories.no_code')}</span>)}
+                    {c.activity_kind ? <span className="block text-muted-foreground">{t(`activity.${c.activity_kind}`)}</span> : null}
                   </td>
                   <td className="p-2 text-right whitespace-nowrap">
                     {isAdmin ? (
@@ -222,6 +240,21 @@ export function FinanceCategoryManager({ hooks, isAdmin = false }: FinanceCatego
                 </Select>
               </Field>
             </>
+          ) : null}
+          {formDirection !== 'transfer' ? (
+            <Field label={t('categories.accounting_code')}>
+              <Input value={accountingCode} onChange={(e) => setAccountingCode(e.target.value)} maxLength={40} />
+              <span className="block text-xs text-muted-foreground">{t('categories.accounting_code_help')}</span>
+            </Field>
+          ) : null}
+          {formDirection === 'income' ? (
+            <Field label={t('categories.activity_kind')}>
+              <Select value={activityKind} onChange={(e) => setActivityKind(e.target.value)}>
+                <option value="">{t('categories.activity_inherit')}</option>
+                {ACTIVITY_KINDS.map((k) => <option key={k} value={k}>{t(`activity.${k}`)}</option>)}
+              </Select>
+              <span className="block text-xs text-muted-foreground">{t('categories.activity_help')}</span>
+            </Field>
           ) : null}
           {formDirection === 'expense' ? (
             <label className="flex items-center gap-2 self-end text-sm">

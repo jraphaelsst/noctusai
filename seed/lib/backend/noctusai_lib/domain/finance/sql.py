@@ -30,6 +30,7 @@ from noctusai_lib.domain.sql_templates import (
 from .config import FinanceConfig
 from .types import (
     AccountKind,
+    ActivityKind,
     CategoryBehavior,
     CategoryDirection,
     DreLine,
@@ -61,6 +62,7 @@ FINANCE_TABLES: tuple[str, ...] = (
     "attachments",
     "gateway_sync",
     "dre_settings",
+    "budgets",
 )
 
 #: Rows that are only ever appended (history): settlements and ledger rows are
@@ -100,7 +102,9 @@ def _entries_additive(cfg: FinanceConfig, s: str, entries: str) -> str:
     - `party_id` (only when `cfg.with_parties`): nullable link to the parties organ, composite FK so a link can never
       cross tenants; `counterparty_*` stays a snapshot (the parties-finance link).
     """
-    out = f"""-- Entry source vocabulary: re-stated so tables created before a source existed accept it.
+    out = f"""-- E21: did this sale carry a nota fiscal? NULL = not informed (the MEI report counts it as "sem nota" and warns).
+ALTER TABLE {s}.{entries} ADD COLUMN IF NOT EXISTS has_invoice BOOLEAN;
+-- Entry source vocabulary: re-stated so tables created before a source existed accept it.
 ALTER TABLE {s}.{entries} DROP CONSTRAINT IF EXISTS {entries}_source_check;
 ALTER TABLE {s}.{entries} ADD CONSTRAINT {entries}_source_check CHECK (source IN ({_in(EntrySource)}));
 """
@@ -148,6 +152,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['accounts']}_gateway ON {s}.{t['accounts
     WHERE kind = 'gateway';
 CREATE INDEX IF NOT EXISTS idx_{t['accounts']}_org ON {s}.{t['accounts']} (org_id);
 """,
+        extra=f"""-- Accounting code (E21): the contador's reduced account code for this bank/cash/gateway account (free text, optional);
+-- the Domínio export refuses to run while a used account has none.
+ALTER TABLE {s}.{t['accounts']} ADD COLUMN IF NOT EXISTS accounting_code TEXT;
+""",
     )
     add(
         "Categories (tree). Unique (org, parent, lower(name)); defaults are seeded per org on first use.",
@@ -176,6 +184,11 @@ ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS dre_line TEXT
 ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS behavior TEXT
     CHECK (behavior IN ({_in(CategoryBehavior)}));
 ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT NULL DEFAULT false;
+-- E21: the contador's reduced account code (free text, optional -- only the Domínio export needs it) and the MEI
+-- activity group (comércio / indústria / serviços) the Relatório Mensal de Receitas Brutas splits revenue by.
+ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS accounting_code TEXT;
+ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS activity_kind TEXT
+    CHECK (activity_kind IN ({_in(ActivityKind)}));
 """,
     )
     add(
@@ -434,6 +447,24 @@ CREATE TABLE IF NOT EXISTS {s}.{t['dre_settings']} (
 );
 """,
     )
+    add(
+        "Budgets (E21): the planned amount per (category, month); the report compares it with the DRE-basis actual. "
+        "One row per (org, category, month).",
+        "budgets",
+        f"""
+CREATE TABLE IF NOT EXISTS {s}.{t['budgets']} (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        UUID NOT NULL,
+    category_id   UUID NOT NULL REFERENCES {s}.{t['categories']}(id) ON DELETE CASCADE,
+    month         DATE NOT NULL CHECK (EXTRACT(DAY FROM month) = 1),
+    amount_cents  BIGINT NOT NULL CHECK (amount_cents >= 0),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, category_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_{t['budgets']}_org_month ON {s}.{t['budgets']} (org_id, month);
+""",
+    )
     return out
 
 
@@ -543,7 +574,7 @@ GRANT EXECUTE ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) TO service
 def finance_migration(cfg: FinanceConfig, schema: str) -> str:
     """The whole finance DDL for `schema`, as one re-runnable migration body.
 
-    Includes the 12 `FINANCE_TABLES` and the private attachments bucket with
+    Includes the 13 `FINANCE_TABLES` and the private attachments bucket with
     per-org object RLS. Prerequisites: see the module docstring.
     """
     if not schema or not schema.strip():

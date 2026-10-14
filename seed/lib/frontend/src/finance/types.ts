@@ -57,6 +57,10 @@ export type MatchStatus = (typeof MATCH_STATUSES)[number];
 export const CATEGORY_BEHAVIORS = ['variable', 'fixed'] as const;
 export type CategoryBehavior = (typeof CATEGORY_BEHAVIORS)[number];
 
+/** MEI Relatório Mensal activity groups (E21); mirrors the backend `ActivityKind`. */
+export const ACTIVITY_KINDS = ['comercio', 'industria', 'servicos'] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
 // ---------------------------------------------------------------------------
 // Envelopes
 // ---------------------------------------------------------------------------
@@ -90,6 +94,8 @@ export interface FinanceAccount {
   opening_date: string | null;
   gateway: string | null;
   active: boolean;
+  /** The contador's reduced account code for this account (Domínio export); null = not set. */
+  accounting_code?: string | null;
 }
 
 export interface AccountBalance {
@@ -113,6 +119,10 @@ export interface FinanceCategory {
   behavior?: CategoryBehavior | null;
   /** The DAS tax category (routed by tax regime, CONTRACT §10.5.2). */
   is_das?: boolean;
+  /** The contador's reduced account code for this category (Domínio export); null = not set. */
+  accounting_code?: string | null;
+  /** MEI Relatório Mensal group (comércio / indústria / serviços); inherited from the parent when null. */
+  activity_kind?: ActivityKind | null;
 }
 
 export interface CostCenter {
@@ -148,6 +158,8 @@ export interface FinanceEntry {
   installment_n?: number | null;
   installment_total?: number | null;
   notes: string | null;
+  /** Did the sale carry a nota fiscal? Feeds the MEI monthly report; null = not informed. */
+  has_invoice?: boolean | null;
 }
 
 export interface Settlement {
@@ -231,6 +243,7 @@ export interface AccountInput {
   opening_balance_cents?: number;
   opening_date?: string | null;
   gateway?: string | null;
+  accounting_code?: string | null;
 }
 export type AccountPatch = Partial<Omit<AccountInput, 'kind'>> & { active?: boolean };
 
@@ -241,6 +254,8 @@ export interface FinanceCategoryInput {
   dre_line?: DreLine | null;
   behavior?: CategoryBehavior | null;
   is_das?: boolean;
+  accounting_code?: string | null;
+  activity_kind?: ActivityKind | null;
 }
 export type FinanceCategoryPatch = Partial<Omit<FinanceCategoryInput, 'direction'>> & { active?: boolean };
 
@@ -264,6 +279,7 @@ export interface EntryInput {
   amount_cents: number;
   installments?: number;
   notes?: string | null;
+  has_invoice?: boolean | null;
 }
 export type EntryPatch = Partial<Omit<EntryInput, 'direction' | 'installments'>>;
 

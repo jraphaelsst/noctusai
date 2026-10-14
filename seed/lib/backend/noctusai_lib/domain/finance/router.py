@@ -2,9 +2,14 @@
 
 Authorization (contract §0): org STAFF may read (`auth_dependency`); every write
 (entries, settlements, reversals, transfers, recurrences, accounts, categories, cost
-centers, attachments) additionally requires `admin_dependency` -- the host's org-admin
+centers, attachments, budgets) additionally requires `admin_dependency` -- the host's org-admin
 dep (`require_org_admin(...)`). RLS is the floor, never the only check: every service
 call is scoped by the caller's org and every referenced id is verified to belong to it.
+
+Accountant read access (E16/E21): the admin-only REPORTS and EXPORTS (DRE, Simples base, budget, Livro Caixa, MEI report, the
+accountant checklist and every download) sit behind `accountant_dependency` -- "org admin OR holds the named permission
+`finance.accountant_read:<org_id>`" (a per-org grant). It defaults to `admin_dependency` (no behaviour change for a host that wires nothing). It grants READ only:
+no write route ever uses it, and `FinanceContext.is_admin` stays False for a non-admin, so counterparty CPF/CNPJ stay masked.
 
 Factory (commerce / card_hub precedent): the seed cannot know the product's auth, its
 schema-scoped database accessor or its storage, so they arrive as FastAPI DEPENDENCIES
@@ -35,9 +40,13 @@ from noctusai_lib.primitives.responses import paginated_response, success_respon
 from . import accounts as accounts_svc
 from . import attachments as attachments_svc
 from . import accountant as accountant_svc
+from . import budgets as budgets_svc
 from . import categories as categories_svc
+from . import dominio as dominio_svc
 from . import dre_settings as dre_settings_svc
 from . import exports as exports_svc
+from . import livro_caixa as livro_svc
+from . import mei as mei_svc
 from . import simples_base as simples_base_svc
 from . import entries as entries_svc
 from . import recurrences as recurrences_svc
@@ -50,6 +59,7 @@ from .errors import invalid
 from .schemas import (
     AccountBody,
     AccountPatch,
+    BudgetsBody,
     CategoryBody,
     CategoryPatch,
     CostCenterBody,
@@ -69,6 +79,13 @@ def _dump(model: Any, **kw: Any) -> dict:
     return model.model_dump(mode="python", **kw)
 
 
+def _download(body: bytes, media_type: str, filename: str) -> Response:
+    return Response(
+        content=body, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
 def make_finance_router(
     cfg: FinanceConfig,
     auth_dependency: Callable[..., Any],
@@ -80,6 +97,7 @@ def make_finance_router(
     prefix: str = "/api/finance",
     tags: Optional[list[str]] = None,
     default_tax_regime: Optional[Callable[[FinanceContext], Optional[str]]] = None,
+    accountant_dependency: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Build the finance router.
 
@@ -92,6 +110,9 @@ def make_finance_router(
         default_tax_regime: optional host seam `(ctx) -> 'mei'|'simples'|'presumido'|None` (CONTRACT §10.5.1:
             "prefilled from the commerce store profile when present"). Used ONLY until the org saves its own
             DRE settings; the finance organ never reads another organ's tables itself.
+        accountant_dependency: gate for the admin-only reports/exports that an external accountant may READ: passes an org admin
+            OR a caller holding the per-org grant `accountant_permission_for(cfg, org_id)` (decided server-side, never from `user_metadata`); 401/403 live there.
+            Default = `admin_dependency` (admins only). It must never be used for a write.
     """
     router = APIRouter(prefix=prefix, tags=tags or ["finance"])
 
@@ -102,6 +123,7 @@ def make_finance_router(
         return Scope(ctx.db, cfg, str(ctx.org_id))
 
     admin = Depends(admin_dependency)
+    reader = Depends(accountant_dependency or admin_dependency)
 
     def prefill(ctx: FinanceContext) -> Optional[str]:
         return default_tax_regime(ctx) if default_tax_regime is not None else None
@@ -269,7 +291,7 @@ def make_finance_router(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         view: str = Query("statement", pattern="^(statement|managerial)$"),
-        _a=admin,
+        _a=reader,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         end = date_to or today()
@@ -280,7 +302,7 @@ def make_finance_router(
     async def simples_base_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
-        _a=admin,
+        _a=reader,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         end = date_to or today()
@@ -299,11 +321,16 @@ def make_finance_router(
         )
 
     @router.get("/accountant-checklist", name="finance_accountant_checklist")
-    async def accountant_checklist_route(_a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    async def accountant_checklist_route(_a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         links = {
             "dre_csv": f"{prefix}/exports/dre.csv",
             "entries_csv": f"{prefix}/exports/entries.csv",
             "ledger_ofx": f"{prefix}/exports/ledger.ofx",
+            "livro_caixa_csv": f"{prefix}/exports/livro-caixa.csv",
+            "livro_caixa_pdf": f"{prefix}/exports/livro-caixa.pdf",
+            "dominio_txt": f"{prefix}/exports/dominio.txt",
+            "mei_monthly_csv": f"{prefix}/exports/mei-monthly.csv",
+            "mei_monthly_pdf": f"{prefix}/exports/mei-monthly.pdf",
         }
         return success_response(accountant_svc.build_checklist(scope(ctx), export_links=links, regime_prefill=prefill(ctx)))
 
@@ -312,7 +339,7 @@ def make_finance_router(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         view: str = Query("statement", pattern="^(statement|managerial)$"),
-        _a=admin,
+        _a=reader,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> Response:
         end = date_to or today()
@@ -323,6 +350,109 @@ def make_finance_router(
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="dre.csv"', "Cache-Control": "no-store"},
         )
+
+
+    # ── budget vs actual (E21) ──
+    @router.get("/budgets", name="finance_list_budgets")
+    async def list_budgets_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> dict:
+        end = date_to or today()
+        start = date_from or end.replace(month=1, day=1)
+        return success_response(budgets_svc.list_budgets(scope(ctx), start, end))
+
+    @router.put("/budgets", name="finance_put_budgets")
+    async def put_budgets_route(body: BudgetsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+        return success_response(budgets_svc.upsert_budgets(scope(ctx), [_dump(i) for i in body.items]))
+
+    @router.delete("/budgets/{budget_id}", status_code=204, name="finance_delete_budget")
+    async def delete_budget_route(budget_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+        budgets_svc.delete_budget(scope(ctx), budget_id)
+        return Response(status_code=204)
+
+    @router.get("/reports/budget", name="finance_report_budget")
+    async def budget_report_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> dict:
+        end = date_to or today()
+        start = date_from or end.replace(month=1, day=1)
+        return success_response(budgets_svc.budget_report(scope(ctx), start, end, regime_prefill=prefill(ctx)))
+
+    # ── Livro Caixa (E21) ──
+    def _book_range(date_from: Optional[date], date_to: Optional[date]) -> tuple[date, date]:
+        end = date_to or today()
+        return date_from or end.replace(day=1), end
+
+    @router.get("/reports/livro-caixa", name="finance_report_livro_caixa")
+    async def livro_caixa_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(100, ge=1, le=500),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> dict:
+        start, end = _book_range(date_from, date_to)
+        return success_response(livro_svc.page_of(livro_svc.livro_caixa(scope(ctx), start, end), page, page_size))
+
+    @router.get("/exports/livro-caixa.csv", name="finance_export_livro_caixa_csv")
+    async def livro_caixa_csv_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> Response:
+        start, end = _book_range(date_from, date_to)
+        body = livro_svc.livro_caixa_csv(livro_svc.livro_caixa(scope(ctx), start, end))
+        return _download(body, "text/csv; charset=utf-8", "livro-caixa.csv")
+
+    @router.get("/exports/livro-caixa.pdf", name="finance_export_livro_caixa_pdf")
+    async def livro_caixa_pdf_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> Response:
+        start, end = _book_range(date_from, date_to)
+        body = livro_svc.livro_caixa_pdf(livro_svc.livro_caixa(scope(ctx), start, end, max_rows=livro_svc.PDF_MAX_ROWS))
+        return _download(body, "application/pdf", "livro-caixa.pdf")
+
+    # ── MEI Relatório Mensal de Receitas Brutas (E21) ──
+    @router.get("/reports/mei-monthly", name="finance_report_mei_monthly")
+    async def mei_monthly_route(
+        month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)
+    ) -> dict:
+        return success_response(mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx)))
+
+    @router.get("/exports/mei-monthly.csv", name="finance_export_mei_csv")
+    async def mei_csv_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+        report = mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx))
+        return _download(mei_svc.mei_monthly_csv(report), "text/csv; charset=utf-8", "relatorio-mensal-receitas-brutas.csv")
+
+    @router.get("/exports/mei-monthly.pdf", name="finance_export_mei_pdf")
+    async def mei_pdf_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+        report = mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx))
+        return _download(mei_svc.mei_monthly_pdf(report), "application/pdf", "relatorio-mensal-receitas-brutas.pdf")
+
+    # ── Domínio export (E16/E21) ──
+    @router.get("/exports/dominio.txt", name="finance_export_dominio")
+    async def dominio_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        cnpj: str = Query(..., min_length=11, max_length=18),
+        history_code: Optional[int] = Query(None, ge=1, le=999_999),
+        _a=reader,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> Response:
+        start, end = _book_range(date_from, date_to)
+        body = dominio_svc.dominio_export(scope(ctx), start, end, inscription=cnpj, history_code=history_code)
+        return _download(body, "text/plain; charset=us-ascii", "dominio.txt")
 
     @router.get("/reports/aging", name="finance_report_aging")
     async def aging_route(as_of: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:

@@ -13,7 +13,7 @@ from .types import AccountKind, LedgerDirection
 
 logger = logging.getLogger(__name__)
 
-_FIELDS = ("name", "bank_code", "agency", "number", "opening_balance_cents", "opening_date", "gateway", "active")
+_FIELDS = ("name", "bank_code", "agency", "number", "opening_balance_cents", "opening_date", "gateway", "active", "accounting_code")
 _LEDGER = "ledger"
 
 
@@ -25,6 +25,8 @@ def _clean(data: Mapping[str, Any]) -> dict[str, Any]:
     out = {k: _plain(v) for k, v in data.items() if k in _FIELDS or k == "kind"}
     if "opening_date" in out:
         out["opening_date"] = iso(out["opening_date"])
+    if "accounting_code" in out:
+        out["accounting_code"] = str(out["accounting_code"]).strip() or None if out["accounting_code"] is not None else None
     if "gateway" in out and out["gateway"]:
         out["gateway"] = str(out["gateway"]).strip().lower()
     return out
@@ -66,6 +68,8 @@ def create_account(s: Scope, data: Mapping[str, Any]) -> dict:
             raise conflict(CONTA_GATEWAY_DUPLICADA, "Já existe uma conta para este gateway.")
     else:
         row["gateway"] = None
+    if row.get("accounting_code") is None:
+        row.pop("accounting_code", None)  # E21 additive column: sent only when set
     now = now_iso()
     row.setdefault("opening_balance_cents", 0)
     row.setdefault("active", True)

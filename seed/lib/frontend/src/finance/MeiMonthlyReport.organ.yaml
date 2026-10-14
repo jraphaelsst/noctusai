@@ -1,0 +1,33 @@
+name: MeiMonthlyReport
+kind: component
+path: seed/lib/frontend/src/finance/MeiMonthlyReport.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "MEI Relatório Mensal de Receitas Brutas (Res. CGSN 140/2018 art. 106/108/109, Annex X): cash-basis receipts split by activity (comércio / indústria / serviços) x with/without nota fiscal. Only for tax_regime = mei."
+  - "The field structure of the official model is UNVERIFIED against the official PDF (the brief cites the report, not its fields); a receipt in a category with no activity is shown apart and never guessed."
+  - "Part of the finance organ; money is integer cents end to end, formatted only via formatCents; pt-BR copy in finance/messages.ts."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading, never a bare isFetching gate."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client; isAdmin / canExport are UX gates only (the server enforces the admin and accountant-read gates)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by products/commerce and later products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

@@ -19,7 +19,7 @@ from .errors import (
     conflict,
     invalid,
 )
-from .types import CategoryBehavior, CategoryDirection, DreLine, values
+from .types import ActivityKind, CategoryBehavior, CategoryDirection, DreLine, values
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class DefaultCategory:
     dre_line: Optional[DreLine] = None
     behavior: Optional[CategoryBehavior] = None
     das: bool = False
+    #: MEI Relatório Mensal group (E21); only meaningful on gross-revenue categories.
+    activity: Optional[ActivityKind] = None
 
 
 _V, _F = CategoryBehavior.VARIABLE, CategoryBehavior.FIXED
@@ -46,9 +48,9 @@ DEFAULT_CATEGORIES: tuple[tuple[str, str, tuple[DefaultCategory, ...]], ...] = (
         "Receitas operacionais",
         "income",
         (
-            DefaultCategory("Vendas", _L.GROSS_REVENUE, _V),
-            DefaultCategory("Serviços", _L.GROSS_REVENUE, _V),
-            DefaultCategory("Mensalidades", _L.GROSS_REVENUE, _V),
+            DefaultCategory("Vendas", _L.GROSS_REVENUE, _V, activity=ActivityKind.COMERCIO),
+            DefaultCategory("Serviços", _L.GROSS_REVENUE, _V, activity=ActivityKind.SERVICOS),
+            DefaultCategory("Mensalidades", _L.GROSS_REVENUE, _V, activity=ActivityKind.SERVICOS),
             DefaultCategory("Juros de parcelamento", _L.GROSS_REVENUE, _V),
             DefaultCategory("Outras receitas", _L.OTHER_OPERATING),
             DefaultCategory("Rendimentos e juros recebidos", _L.FINANCIAL_REVENUE),
@@ -100,6 +102,12 @@ def _plain(value: Any) -> Any:
     return getattr(value, "value", value)
 
 
+def clean_code(value: Any) -> Optional[str]:
+    """An accounting code is free text the contador chose (`1.1.01.001`, `31102`...): trimmed, blank -> NULL."""
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
 # ─── categories ──────────────────────────────────────────────────────────────
 
 
@@ -113,6 +121,8 @@ def _insert_category(
     dre_line: Optional[str] = None,
     behavior: Optional[str] = None,
     is_das: bool = False,
+    accounting_code: Optional[str] = None,
+    activity_kind: Optional[str] = None,
 ) -> dict:
     now = now_iso()
     row = {
@@ -128,6 +138,9 @@ def _insert_category(
         "active": True,
         "created_at": now,
         "updated_at": now,
+        # E21 additive columns: sent only when set (a database that has not applied them yet still seeds its tree)
+        **({"accounting_code": accounting_code} if accounting_code is not None else {}),
+        **({"activity_kind": activity_kind} if activity_kind is not None else {}),
     }
     try:
         return first(s.tbl("categories").insert(row).execute()) or row
@@ -152,6 +165,7 @@ def seed_default_categories(s: Scope) -> list[dict]:
         line = spec.dre_line.value if spec and spec.dre_line else None
         behavior = spec.behavior.value if spec and spec.behavior else None
         das = bool(spec and spec.das)
+        activity = spec.activity.value if spec and spec.activity else None
         if key in seen:
             row = seen[key]
             if row.get("is_default") and spec is not None:
@@ -162,6 +176,8 @@ def seed_default_categories(s: Scope) -> list[dict]:
                     patch["behavior"] = behavior
                 if das and not row.get("is_das"):
                     patch["is_das"] = True
+                if activity and row.get("activity_kind") is None:
+                    patch["activity_kind"] = activity
                 if patch:
                     patch["updated_at"] = now_iso()
                     s.tbl("categories").update(patch).eq("org_id", s.org_id).eq("id", str(row["id"])).execute()
@@ -171,7 +187,7 @@ def seed_default_categories(s: Scope) -> list[dict]:
         try:
             row = _insert_category(
                 s, name=name, direction=direction, parent_id=parent, is_default=True,
-                dre_line=line, behavior=behavior, is_das=das,
+                dre_line=line, behavior=behavior, is_das=das, activity_kind=activity,
             )
         except Exception:
             # Lost a seed race with a concurrent first request: take the winner's row.
@@ -251,6 +267,7 @@ def create_category(s: Scope, data: Mapping[str, Any]) -> dict:
     return _insert_category(
         s, name=name, direction=direction, parent_id=parent_id, is_default=False,
         dre_line=_plain(data.get("dre_line")), behavior=_plain(data.get("behavior")), is_das=bool(data.get("is_das") or False),
+        accounting_code=clean_code(data.get("accounting_code")), activity_kind=_plain(data.get("activity_kind")),
     )
 
 
@@ -261,9 +278,11 @@ def update_category(s: Scope, category_id: Any, data: Mapping[str, Any]) -> dict
         patch["name"] = str(data["name"]).strip()
     if "active" in data and data["active"] is not None:
         patch["active"] = bool(data["active"])
-    for col in ("dre_line", "behavior"):  # None is a value here: it unclassifies / returns to the line's default
+    for col in ("dre_line", "behavior", "activity_kind"):  # None is a value here: it unclassifies / returns to the default
         if col in data:
             patch[col] = _plain(data[col])
+    if "accounting_code" in data:
+        patch["accounting_code"] = clean_code(data["accounting_code"])
     if data.get("is_das") is not None:
         patch["is_das"] = bool(data["is_das"])
     if "parent_id" in data:

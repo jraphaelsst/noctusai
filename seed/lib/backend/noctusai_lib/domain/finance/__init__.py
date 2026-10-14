@@ -25,6 +25,10 @@ host mounts next to the first:
     max_body_path_overrides[STATEMENT_UPLOAD_PATH_PATTERN] = STATEMENT_UPLOAD_MAX_BYTES
     register_gateway_sync(cfg, get_db=..., operations_for=...)        # job `finance_gateway_sync`, every 6 h
 
+Accountant additions (E16/E21): budget vs actual (`budgets`), the Livro Caixa (`livro_caixa`), the MEI Relatório Mensal (`mei`), the
+Domínio export (`dominio`, layout notes in `DOMINIO-LAYOUT.md`) and a READ-only accountant grant -- pass
+`accountant_dependency=` (org admin OR the PER-ORG permission `finance.accountant_read:<org_id>`) to both routers.
+
 Contract: `projects/commerce-seed-p4/CONTRACT.md §3`. Jobs the host registers:
 `finance_generate_recurrences` (daily, `recurrences.generate_due_recurrences`).
 """
@@ -33,13 +37,17 @@ from . import (
     accounts,
     attachments,
     booking,
+    budgets,
     categories,
+    dominio,
     dre,
     dre_settings,
     entries,
     exports,
     gateway_sync,
+    livro_caixa,
     matching,
+    mei,
     recurrences,
     reports,
     settlements,
@@ -54,7 +62,7 @@ from .booking import (
     SupabaseFinanceBooking,
     make_finance_booking,
 )
-from .config import FinanceConfig, FinanceContext
+from .config import ACCOUNTANT_READ_PERMISSION, FinanceConfig, FinanceContext, accountant_permission_for
 from .entries import mask_doc
 from .errors import FinanceError
 from .gateway_sync import register_gateway_sync, run_gateway_sync_all
@@ -65,6 +73,7 @@ from .statements import STATEMENT_UPLOAD_MAX_BYTES, STATEMENT_UPLOAD_PATH_PATTER
 from .sql import APPEND_ONLY_TABLES, FINANCE_TABLES, finance_migration
 from .types import (
     AccountKind,
+    ActivityKind,
     CategoryBehavior,
     CategoryDirection,
     DreLine,
@@ -81,10 +90,12 @@ from .types import (
 )
 
 __all__ = [
+    "ACCOUNTANT_READ_PERMISSION",
     "APPEND_ONLY_TABLES",
     "ATTACHMENT_UPLOAD_MAX_BYTES",
     "ATTACHMENT_UPLOAD_PATH_PATTERN",
     "AccountKind",
+    "ActivityKind",
     "CategoryBehavior",
     "CategoryDirection",
     "DreLine",
@@ -109,11 +120,14 @@ __all__ = [
     "SupabaseFinanceBooking",
     "TaxRegime",
     "accountant",
+    "accountant_permission_for",
     "accounts",
     "attachments",
     "booking",
+    "budgets",
     "calcular_proxima_data",
     "categories",
+    "dominio",
     "dre",
     "dre_settings",
     "entries",
@@ -121,11 +135,13 @@ __all__ = [
     "finance_migration",
     "gateway_sync",
     "generate_due_recurrences",
+    "livro_caixa",
     "make_finance_booking",
     "make_finance_reconciliation_router",
     "make_finance_router",
     "mask_doc",
     "matching",
+    "mei",
     "recurrences",
     "register_gateway_sync",
     "reports",

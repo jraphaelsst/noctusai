@@ -222,8 +222,10 @@ export interface AccountantChecklistData {
   provisional_choices: AccountantChoiceItem[];
   confirmed_choices: AccountantChoiceItem[];
   open_questions: AccountantOpenQuestion[];
-  /** `name` ∈ dre_csv · entries_csv · ledger_ofx. */
+  /** `name` ∈ dre_csv · entries_csv · ledger_ofx · livro_caixa_csv · livro_caixa_pdf · dominio_txt · mei_monthly_csv · mei_monthly_pdf. */
   exports: { name: string; path: string }[];
+  /** How many active categories / accounts still lack the contador's account code (Domínio export). */
+  dominio_readiness?: { categories_without_code: number; accounts_without_code: number; ready: boolean };
   disclaimer: string;
 }
 

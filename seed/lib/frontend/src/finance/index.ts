@@ -1,6 +1,7 @@
 /** Finance organ — public surface (re-exported from the `@noctusai/lib` barrel). */
 export * from './types';
 export * from './dreTypes';
+export * from './accountantTypes';
 export { createFinanceHooks, createFinanceTransport, financeKeys, FINANCE_EXPORT_PATHS, FINANCE_BASE } from './hooks';
 export type {
   FinanceApi,
@@ -56,3 +57,11 @@ export { AccountantChecklist } from './AccountantChecklist';
 export type { AccountantChecklistProps } from './AccountantChecklist';
 export { SimplesBaseReport } from './SimplesBaseReport';
 export type { SimplesBaseReportProps } from './SimplesBaseReport';
+export { BudgetPage } from './BudgetPage';
+export type { BudgetPageProps } from './BudgetPage';
+export { LivroCaixaReport } from './LivroCaixaReport';
+export type { LivroCaixaReportProps } from './LivroCaixaReport';
+export { MeiMonthlyReport } from './MeiMonthlyReport';
+export type { MeiMonthlyReportProps } from './MeiMonthlyReport';
+export { DominioExport } from './DominioExport';
+export type { DominioExportProps } from './DominioExport';

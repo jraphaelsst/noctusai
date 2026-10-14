@@ -39,6 +39,7 @@ export function EntryDialog({ hooks, open, onClose, direction, entry, onSaved }:
   const [accountId, setAccountId] = React.useState('');
   const [installments, setInstallments] = React.useState('1');
   const [notes, setNotes] = React.useState('');
+  const [invoice, setInvoice] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
@@ -53,9 +54,11 @@ export function EntryDialog({ hooks, open, onClose, direction, entry, onSaved }:
     setAccountId(entry?.expected_account_id ?? '');
     setInstallments('1');
     setNotes(entry?.notes ?? '');
+    setInvoice(entry?.has_invoice === true ? 'yes' : entry?.has_invoice === false ? 'no' : '');
     setErrors({});
   }, [open, entry]);
 
+  const initialInvoice = entry?.has_invoice === true ? 'yes' : entry?.has_invoice === false ? 'no' : '';
   const wantedCategoryDirection = dir === 'receivable' ? 'income' : 'expense';
   const categoryOptions = (categories.data ?? []).filter((c) => c.direction === wantedCategoryDirection && c.active);
   const mutErr = m.create.error ?? m.update.error;
@@ -82,6 +85,8 @@ export function EntryDialog({ hooks, open, onClose, direction, entry, onSaved }:
       competence_month: competence ? `${competence}-01` : toCompetenceMonth(due),
       amount_cents: cents as number,
       notes: notes.trim() || null,
+      // Sent only when the user changed it (a receivable's nota fiscal feeds the MEI monthly report).
+      ...(dir === 'receivable' && invoice !== initialInvoice ? { has_invoice: invoice === 'yes' ? true : invoice === 'no' ? false : null } : {}),
     };
     try {
       if (editing && entry) {
@@ -155,6 +160,16 @@ export function EntryDialog({ hooks, open, onClose, direction, entry, onSaved }:
             ))}
           </Select>
         </Field>
+        {dir === 'receivable' ? (
+          <Field label={t('entry.invoice')}>
+            <Select value={invoice} onChange={(e) => setInvoice(e.target.value)}>
+              <option value="">{t('entry.invoice_unknown')}</option>
+              <option value="yes">{t('entry.invoice_yes')}</option>
+              <option value="no">{t('entry.invoice_no')}</option>
+            </Select>
+            <span className="block text-xs text-muted-foreground">{t('entry.invoice_help')}</span>
+          </Field>
+        ) : null}
         {!editing ? (
           <Field label={t('entry.installments')} error={errors.installments}>
             <Input type="number" min={1} max={MAX_INSTALLMENTS} value={installments} onChange={(e) => setInstallments(e.target.value)} />

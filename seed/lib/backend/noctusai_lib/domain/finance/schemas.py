@@ -17,6 +17,7 @@ from noctusai_lib.api import StrictHttpModel
 from .entries import MAX_INSTALLMENTS
 from .types import (
     AccountKind,
+    ActivityKind,
     CategoryBehavior,
     CategoryDirection,
     DreLine,
@@ -39,6 +40,7 @@ class AccountBody(StrictHttpModel):
     opening_balance_cents: int = Field(default=0, ge=-MAX_CENTS, le=MAX_CENTS)
     opening_date: Optional[date] = None
     gateway: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    accounting_code: Optional[str] = Field(default=None, max_length=40)
 
 
 class AccountPatch(StrictHttpModel):
@@ -50,6 +52,7 @@ class AccountPatch(StrictHttpModel):
     opening_date: Optional[date] = None
     gateway: Optional[str] = Field(default=None, min_length=1, max_length=40)
     active: Optional[bool] = None
+    accounting_code: Optional[str] = Field(default=None, max_length=40)
 
 
 class CategoryBody(StrictHttpModel):
@@ -59,6 +62,8 @@ class CategoryBody(StrictHttpModel):
     dre_line: Optional[DreLine] = None
     behavior: Optional[CategoryBehavior] = None
     is_das: bool = False
+    accounting_code: Optional[str] = Field(default=None, max_length=40)
+    activity_kind: Optional[ActivityKind] = None
 
 
 class CategoryPatch(StrictHttpModel):
@@ -69,6 +74,8 @@ class CategoryPatch(StrictHttpModel):
     dre_line: Optional[DreLine] = None
     behavior: Optional[CategoryBehavior] = None
     is_das: Optional[bool] = None
+    accounting_code: Optional[str] = Field(default=None, max_length=40)
+    activity_kind: Optional[ActivityKind] = None
 
 
 class CostCenterBody(StrictHttpModel):
@@ -98,6 +105,8 @@ class EntryBody(StrictHttpModel):
     source: Literal["manual", "external"] = "manual"
     source_ref: Optional[str] = Field(default=None, min_length=1, max_length=120)
     notes: Optional[str] = Field(default=None, max_length=2000)
+    #: Did this sale carry a nota fiscal? Feeds the MEI Relatório Mensal (null = not informed).
+    has_invoice: Optional[bool] = None
 
 
 class EntryPatch(StrictHttpModel):
@@ -112,6 +121,7 @@ class EntryPatch(StrictHttpModel):
     due_date: Optional[date] = None
     amount_cents: Optional[int] = Field(default=None, gt=0, le=MAX_CENTS)
     notes: Optional[str] = Field(default=None, max_length=2000)
+    has_invoice: Optional[bool] = None
 
 
 class SettleBody(StrictHttpModel):
@@ -176,6 +186,18 @@ class TransferBody(StrictHttpModel):
     description: Optional[str] = Field(default=None, max_length=300)
 
 
+class BudgetItemBody(StrictHttpModel):
+    category_id: UUID
+    month: date
+    amount_cents: int = Field(ge=0, le=MAX_CENTS)
+
+
+class BudgetsBody(StrictHttpModel):
+    """`PUT /budgets` -- an upsert by `(category_id, month)`; at most one grid screen (12 months x 40 categories)."""
+
+    items: list[BudgetItemBody] = Field(min_length=1, max_length=500)
+
+
 _DRE_LINE_CHOICE = Optional[DreLine]
 
 
@@ -205,6 +227,8 @@ class DreSettingsBody(StrictHttpModel):
 __all__ = [
     "AccountBody",
     "AccountPatch",
+    "BudgetItemBody",
+    "BudgetsBody",
     "CategoryBody",
     "CategoryPatch",
     "CostCenterBody",

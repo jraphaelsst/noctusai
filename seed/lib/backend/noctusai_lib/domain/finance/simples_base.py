@@ -17,10 +17,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from . import dre_settings as settings_svc
 from ._common import Scope, add_months, iso, month_start
-from .categories import ensure_default_categories
-from .dre import CHARGEBACK_PREFIX, INTEREST_SUFFIX, MAX_REPORT_MONTHS, _fetch_by_ids, _inherited, _month_key, _months, _Route
+from .dre import CHARGEBACK_PREFIX, INTEREST_SUFFIX, MAX_REPORT_MONTHS, _fetch_by_ids, _inherited, _month_key, _months, _Route, make_route
 from .errors import invalid
 from .types import DreLine, EntryDirection, EntryStatus, SettlementKind, TaxRegime
 
@@ -62,11 +60,8 @@ def simples_base(s: Scope, month_from: date, month_to: date, *, regime_prefill: 
     if len(months) > MAX_REPORT_MONTHS:
         raise invalid("to", f"O período pode ter no máximo {MAX_REPORT_MONTHS} meses.", code="periodo_grande_demais")
 
-    ensure_default_categories(s)
-    cats = {str(c["id"]): c for c in s.rows("categories")}
-    row = settings_svc.load_row(s)
-    cfg = {**settings_svc.defaults(regime_prefill), **{k: v for k, v in (row or {}).items() if v is not None}}
-    route = _Route(cats, cfg)
+    route, _row = make_route(s, regime_prefill)
+    cfg = route.cfg
     after = add_months(end, 1)
 
     rows = {m: {"month": m, "basis": basis_of(m), "sales_cents": 0, "interest_cents": 0, "refunds_cents": 0,

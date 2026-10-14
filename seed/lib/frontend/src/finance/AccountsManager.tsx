@@ -32,6 +32,7 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
   const [opening, setOpening] = React.useState('');
   const [openingDate, setOpeningDate] = React.useState('');
   const [gateway, setGateway] = React.useState('');
+  const [accountingCode, setAccountingCode] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   function open(a: FinanceAccount | null) {
@@ -44,6 +45,7 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
     setOpening(a ? centsToInput(a.opening_balance_cents) : '');
     setOpeningDate(a?.opening_date ?? '');
     setGateway(a?.gateway ?? '');
+    setAccountingCode(a?.accounting_code ?? '');
     setErrors({});
   }
 
@@ -66,6 +68,7 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
       opening_balance_cents: openingCents,
       opening_date: openingDate || null,
       gateway: kind === 'gateway' ? gateway.trim() : null,
+      ...(accountingCode.trim() || (editing && editing !== 'new' && editing.accounting_code) ? { accounting_code: accountingCode.trim() || null } : {}),
     };
     try {
       if (editing === 'new') await m.create.mutateAsync({ kind, ...common });
@@ -113,6 +116,7 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
                   {t(`account_kind.${a.kind}`)}
                   {a.gateway ? ` · ${a.gateway}` : ''}
                   {a.opening_date ? ` · ${t('accounts.opening_on')} ${formatDate(a.opening_date)}` : ''}
+                  {a.accounting_code ? ` · ${t('accounts.code_tag')} ${a.accounting_code}` : ''}
                 </span>
               </span>
               <span className="flex items-center gap-3">
@@ -160,6 +164,10 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
           </Field>
           <Field label={t('accounts.opening_date')}>
             <Input type="date" value={openingDate} onChange={(e) => setOpeningDate(e.target.value)} />
+          </Field>
+          <Field label={t('accounts.accounting_code')}>
+            <Input value={accountingCode} onChange={(e) => setAccountingCode(e.target.value)} maxLength={40} aria-describedby="account-code-help" />
+            <span id="account-code-help" className="block text-xs text-muted-foreground">{t('accounts.accounting_code_help')}</span>
           </Field>
           <div className="flex items-end gap-2">
             <Button type="submit" disabled={m.create.isPending || m.update.isPending}>{t('common.save')}</Button>

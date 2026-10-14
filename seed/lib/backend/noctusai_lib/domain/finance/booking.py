@@ -49,8 +49,12 @@ class FinanceBooking(Protocol):
         competence_month: date,
         due_date: date,
         category_hint: Optional[str] = None,
+        has_invoice: Optional[bool] = None,
     ) -> Optional[str]:
-        """Create (or find) the receivable for `(source, source_ref)`; returns its entry id."""
+        """Create (or find) the receivable for `(source, source_ref)`; returns its entry id.
+
+        `has_invoice` (E21): did the sale carry a nota fiscal? A bridge that knows (commerce, from its fiscal documents)
+        passes it; None = not informed. It feeds the MEI Relatório Mensal de Receitas Brutas."""
         ...
 
     def book_payable(
@@ -165,6 +169,7 @@ class SupabaseFinanceBooking:
         competence_month: date,
         due_date: date,
         category_hint: Optional[str] = None,
+        has_invoice: Optional[bool] = None,
     ) -> Optional[str]:
         s = self._scope(org_id)
         if source not in values(EntrySource):
@@ -185,6 +190,7 @@ class SupabaseFinanceBooking:
             "competence_month": month_start(competence_month),
             "due_date": due_date,
             "category_id": find_category_by_hint(s, category_hint, CategoryDirection.INCOME),
+            "has_invoice": has_invoice,
         }
         try:
             return self._create(s, data)

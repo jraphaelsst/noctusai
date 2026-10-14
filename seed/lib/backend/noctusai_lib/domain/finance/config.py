@@ -14,6 +14,9 @@ from typing import Any, Optional
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
+#: The named permission (seed `domain/permissions`) that lets an external accountant READ the reports and exports (E16).
+ACCOUNTANT_READ_PERMISSION = "finance.accountant_read"
+
 #: Contract §3.4: a download link lives at most 10 minutes.
 MAX_SIGNED_URL_TTL_SECONDS = 600
 
@@ -39,6 +42,10 @@ class FinanceConfig:
             `fin_entries.party_id` (composite FK `(party_id, org_id)` -> `<parties_prefix>parties`);
             `counterparty_*` stays a SNAPSHOT of the party at booking time (roadmap E4).
         parties_prefix: table prefix of the `parties` organ (`pty_`).
+        accountant_permission: BASE name of the permission that grants READ of the reports/exports to a non-admin
+            accountant. The grant is PER ORG: the host's `accountant_dependency` checks `accountant_permission_for(cfg, org_id)`
+            (`finance.accountant_read:<org_id>`) through the seed permissions repo -- a user-global grant would let an
+            accountant who serves several clients read all of them once ONE org's admin granted it.
     """
 
     schema: str
@@ -48,6 +55,7 @@ class FinanceConfig:
     org_id_expr: Optional[str] = None
     with_parties: bool = False
     parties_prefix: str = "pty_"
+    accountant_permission: str = ACCOUNTANT_READ_PERMISSION
 
     def __post_init__(self) -> None:
         if not _IDENT.match(self.schema or ""):
@@ -60,6 +68,8 @@ class FinanceConfig:
             raise ValueError("FinanceConfig.org_id_expr must be a non-empty SQL expression (or unset)")
         if not _IDENT.match(self.parties_prefix or ""):
             raise ValueError(f"FinanceConfig.parties_prefix must be a bare lowercase identifier, got {self.parties_prefix!r}")
+        if not self.accountant_permission.strip():
+            raise ValueError("FinanceConfig.accountant_permission must be a non-empty permission name")
         if not _BUCKET.match(self.bucket or ""):
             raise ValueError(f"FinanceConfig.bucket must be a bucket id, got {self.bucket!r}")
         if not 1 <= self.signed_url_ttl_seconds <= MAX_SIGNED_URL_TTL_SECONDS:
@@ -72,6 +82,11 @@ class FinanceConfig:
     @property
     def parties_table(self) -> str:
         return f"{self.parties_prefix}parties"
+
+
+def accountant_permission_for(cfg: FinanceConfig, org_id: object) -> str:
+    """The per-org permission string checked for an accountant: `<base>:<org_id>` (permissions are opaque strings)."""
+    return f"{cfg.accountant_permission}:{org_id}"
 
 
 @dataclass(frozen=True)
@@ -89,4 +104,4 @@ class FinanceContext:
     is_admin: bool = False
 
 
-__all__ = ["FinanceConfig", "FinanceContext", "MAX_SIGNED_URL_TTL_SECONDS"]
+__all__ = ["ACCOUNTANT_READ_PERMISSION", "FinanceConfig", "accountant_permission_for", "FinanceContext", "MAX_SIGNED_URL_TTL_SECONDS"]

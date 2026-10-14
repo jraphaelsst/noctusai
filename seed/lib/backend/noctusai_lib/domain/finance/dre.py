@@ -195,6 +195,18 @@ class _Route:
         return _inherited(cat, self.cats, "behavior") or default_behavior(line).value
 
 
+def make_route(s: Scope, regime_prefill: Optional[str] = None) -> tuple[_Route, Optional[dict]]:
+    """The per-request routing context (categories + the store's settings) every report needs, and the raw settings row.
+
+    Seeds the default category tree on first use. One place for what `build_dre`, `simples_base`, the budget report and
+    the MEI report all do first (recurrence rule)."""
+    ensure_default_categories(s)
+    cats = {str(c["id"]): c for c in s.rows("categories")}
+    row = settings_svc.load_row(s)
+    cfg = {**settings_svc.defaults(regime_prefill), **{k: v for k, v in (row or {}).items() if v is not None}}
+    return _Route(cats, cfg), row
+
+
 def _collect(s: Scope, months: list[str], route: _Route) -> _Facts:
     facts = _Facts()
     first_day = month_start(date.fromisoformat(months[0] + "-01"))
@@ -512,11 +524,7 @@ def build_dre(
     _check_range(start, end)
     months = _months(start, end)
 
-    ensure_default_categories(s)
-    cats = {str(c["id"]): c for c in s.rows("categories")}
-    row = settings_svc.load_row(s)
-    cfg = {**settings_svc.defaults(regime_prefill), **{k: v for k, v in (row or {}).items() if v is not None}}
-    route = _Route(cats, cfg)
+    route, row = make_route(s, regime_prefill)
 
     # Trailing 12 months ending at the last month: needs facts BEYOND the window when the window is short.
     trailing_start = min(start, add_months(end, -11))
@@ -574,4 +582,5 @@ __all__ = [
     "VIEWS",
     "build_dre",
     "classify_fee",
+    "make_route",
 ]

@@ -1,7 +1,8 @@
 /**
  * `<AccountantChecklist/>` — "Para o contador": every provisional choice and open question the store should take
  * to its contador, with sources, plus the exports he/she needs (DRE CSV, lançamentos CSV; the ledger OFX needs an
- * account, so it lives in the Exportações tab). The software prepares and exports; it never signs, files or decides
+ * account, so it lives in the Exportações tab; the Livro Caixa and the Domínio file have their own tabs, linked below). The
+ * software prepares and exports; it never signs, files or decides
  * a regime. `GET /api/finance/accountant-checklist` (CONTRACT §10.4).
  */
 import * as React from 'react';
@@ -16,9 +17,18 @@ import { t } from './i18n';
 export interface AccountantChecklistProps {
   hooks: FinanceHooks;
   isAdmin?: boolean;
+  /** UX only: downloads offered (default: `isAdmin`; pass true for the accountant read grant). */
+  canExport?: boolean;
+  /** Jump to another Contador tab (`livro_caixa` · `dominio` · `mei`). */
+  onOpenTab?: (tab: 'livro_caixa' | 'dominio' | 'mei') => void;
 }
 
-const EXPORT_FILENAME: Record<string, string> = { dre_csv: 'dre.csv', entries_csv: 'lancamentos.csv' };
+const EXPORT_FILENAME: Record<string, string> = {
+  dre_csv: 'dre.csv',
+  entries_csv: 'lancamentos.csv',
+  livro_caixa_csv: 'livro-caixa.csv',
+  livro_caixa_pdf: 'livro-caixa.pdf',
+};
 
 function ChoiceCard({ item }: { item: AccountantChoiceItem }) {
   const current = item.options[item.current_value] ?? item.current_value;
@@ -46,7 +56,8 @@ function ChoiceCard({ item }: { item: AccountantChoiceItem }) {
   );
 }
 
-export function AccountantChecklist({ hooks, isAdmin = false }: AccountantChecklistProps) {
+export function AccountantChecklist({ hooks, isAdmin = false, canExport, onOpenTab }: AccountantChecklistProps) {
+  const allowed = canExport ?? isAdmin;
   const list = hooks.useAccountantChecklist();
   const exp = hooks.useExport();
 
@@ -105,6 +116,25 @@ export function AccountantChecklist({ hooks, isAdmin = false }: AccountantCheckl
           ) : null}
         </>
       )}
+      {data?.dominio_readiness || onOpenTab ? (
+        <div className="space-y-2" data-section="books">
+          <h3 className="text-sm font-semibold">{t('accountant.books_title')}</h3>
+          {data?.dominio_readiness ? (
+            <p className="text-xs text-muted-foreground" role="status">
+              {data.dominio_readiness.ready
+                ? t('accountant.dominio_ready')
+                : t('accountant.dominio_not_ready', { categories: data.dominio_readiness.categories_without_code, accounts: data.dominio_readiness.accounts_without_code })}
+            </p>
+          ) : null}
+          {onOpenTab ? (
+            <ul className="flex flex-wrap gap-2">
+              <li><Button size="sm" variant="outline" onClick={() => onOpenTab('livro_caixa')}>{t('accountant.open_livro_caixa')}</Button></li>
+              <li><Button size="sm" variant="outline" onClick={() => onOpenTab('dominio')}>{t('accountant.open_dominio')}</Button></li>
+              {data?.tax_regime === 'mei' ? <li><Button size="sm" variant="outline" onClick={() => onOpenTab('mei')}>{t('accountant.open_mei')}</Button></li> : null}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {downloadable.length > 0 ? (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">{t('accountant.exports')}</h3>
@@ -112,13 +142,13 @@ export function AccountantChecklist({ hooks, isAdmin = false }: AccountantCheckl
           <ul className="flex flex-wrap gap-2">
             {downloadable.map((x) => (
               <li key={x.name}>
-                <Button size="sm" variant="outline" disabled={!isAdmin || exp.isPending} onClick={() => exp.mutate({ path: x.path, filename: EXPORT_FILENAME[x.name] })}>
+                <Button size="sm" variant="outline" disabled={!allowed || exp.isPending} onClick={() => exp.mutate({ path: x.path, filename: EXPORT_FILENAME[x.name] })}>
                   {t(`accountant.export_${x.name}`)}
                 </Button>
               </li>
             ))}
           </ul>
-          <p className="text-xs text-muted-foreground">{isAdmin ? t('accountant.ledger_hint') : t('exports.admin_only')}</p>
+          <p className="text-xs text-muted-foreground">{allowed ? t('accountant.ledger_hint') : t('exports.admin_only')}</p>
         </div>
       ) : null}
     </section>

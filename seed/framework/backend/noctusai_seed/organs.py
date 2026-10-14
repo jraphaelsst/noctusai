@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from noctusai_seed.organ_auth import make_organ_auth
 
@@ -227,6 +227,7 @@ def mount_finance(
     prefix: str = "/api/finance",
     reconciliation: bool = True,
     default_tax_regime: Optional[Callable[[Any], Optional[str]]] = None,
+    permissions: Any = None,
 ) -> MountedOrgan:
     """Build the finance + reconciliation routers for one product, with house auth.
 
@@ -241,10 +242,16 @@ def mount_finance(
         tax regime from another organ's data (e.g. the commerce store profile) until the org saves its own.
     get_charge_operations: gateway `ChargeOperations` dependency for statement sync; default raises 503
         (the declared not-configured state) -- reconciliation reads/imports still work.
+    permissions: the seed permission-grant repo behind the ACCOUNTANT READ role (default: Supabase over `get_core_client()`;
+        inject the Fake in tests). An external accountant is invited to the org as ordinary staff and granted the PER-ORG
+        permission `accountant_permission_for(cfg, org_id)` (`finance.accountant_read:<org_id>` -- never user-global, so a grant
+        by one client's admin cannot open another client's books); that passes the admin-only REPORTS and EXPORTS but never a
+        write, and counterparty documents stay masked (the context's `is_admin` stays False).
     """
     from noctusai_lib.domain.finance import (
         FinanceConfig,
         FinanceContext,
+        accountant_permission_for,
         make_finance_reconciliation_router,
         make_finance_router,
     )
@@ -260,6 +267,21 @@ def mount_finance(
 
     organ_auth = make_organ_auth(auth_dependency, get_core_client, context="Financeiro")
     auth_dependency, admin_dependency = organ_auth.auth, organ_auth.admin
+    repo = permissions
+
+    async def accountant_dependency(request: Request, response: Response, a: Any = Depends(organ_auth.auth)) -> Any:
+        """Org admin (same assurance as a write) OR the accountant read grant; anything else is a 403."""
+        nonlocal repo
+        if a.is_admin:
+            return await organ_auth.admin(request, response, a)
+        if repo is None:
+            from noctusai_lib.domain.permissions import make_permission_grant_repository
+
+            repo = make_permission_grant_repository(supabase_client=get_core_client())
+        granted = await repo.has_permission(user_id=getattr(a[0], "id", None), permission=accountant_permission_for(cfg, a[2]))
+        if not granted:
+            raise HTTPException(status_code=403, detail="Financeiro: leitura restrita a administradores e ao contador autorizado.")
+        return a
 
     def resolve_context(auth: Any, db: Any) -> FinanceContext:
         user, _token, org_id = auth
@@ -277,7 +299,7 @@ def mount_finance(
         make_finance_router(
             cfg, auth_dependency, admin_dependency,
             resolve_context=resolve_context, get_db=get_db, get_storage=storage, prefix=prefix,
-            default_tax_regime=default_tax_regime,
+            default_tax_regime=default_tax_regime, accountant_dependency=accountant_dependency,
         )
     ]
     if reconciliation:
@@ -286,6 +308,7 @@ def mount_finance(
                 cfg, auth_dependency, admin_dependency,
                 resolve_context=resolve_context, get_db=get_db, get_storage=storage,
                 get_charge_operations=get_charge_operations or no_gateway, prefix=prefix,
+                accountant_dependency=accountant_dependency,
             )
         )
     return MountedOrgan(

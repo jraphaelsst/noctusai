@@ -114,6 +114,20 @@ RULES: dict[str, tuple[str, str]] = {
         f"INSERT INTO {SCHEMA}.fin_categories(org_id,name,direction,dre_line) VALUES (o,'x','expense','nope')"),
     "category behavior is an enum": ("check_violation",
         f"INSERT INTO {SCHEMA}.fin_categories(org_id,name,direction,behavior) VALUES (o,'x','expense','semi')"),
+    "category MEI activity is an enum": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(org_id,name,direction,activity_kind) VALUES (o,'x','income','agro')"),
+    "one budget per org+category+month": ("unique_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(id,org_id,name,direction) VALUES (r,o,'Cat','expense'); "
+        f"INSERT INTO {SCHEMA}.fin_budgets(org_id,category_id,month,amount_cents) VALUES (o,r,'2026-10-01',100); "
+        f"INSERT INTO {SCHEMA}.fin_budgets(org_id,category_id,month,amount_cents) VALUES (o,r,'2026-10-01',200)"),
+    "budget month is day 1": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(id,org_id,name,direction) VALUES (r,o,'Cat','expense'); "
+        f"INSERT INTO {SCHEMA}.fin_budgets(org_id,category_id,month,amount_cents) VALUES (o,r,'2026-10-15',100)"),
+    "budget amount cannot be negative": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(id,org_id,name,direction) VALUES (r,o,'Cat','expense'); "
+        f"INSERT INTO {SCHEMA}.fin_budgets(org_id,category_id,month,amount_cents) VALUES (o,r,'2026-10-01',-1)"),
+    "a budget needs a category": ("foreign_key_violation",
+        f"INSERT INTO {SCHEMA}.fin_budgets(org_id,category_id,month,amount_cents) VALUES (o,gen_random_uuid(),'2026-10-01',1)"),
     "statement sha256 unique per account": ("unique_violation",
         f"INSERT INTO {SCHEMA}.fin_statement_imports(org_id,account_id,format,filename,sha256) VALUES (o,a,'ofx','a.ofx','h'); "
         f"INSERT INTO {SCHEMA}.fin_statement_imports(org_id,account_id,format,filename,sha256) VALUES (o,a,'ofx','b.ofx','h')"),
@@ -145,7 +159,7 @@ INSERT INTO {LEGACY}.fin_categories(org_id, name, direction, is_default) VALUES 
 LEGACY_CHECK = f"""
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM {LEGACY}.fin_categories WHERE name = 'Vendas' AND dre_line IS NULL AND behavior IS NULL AND is_das = false) <> 1 THEN
+  IF (SELECT count(*) FROM {LEGACY}.fin_categories WHERE name = 'Vendas' AND dre_line IS NULL AND behavior IS NULL AND is_das = false AND accounting_code IS NULL AND activity_kind IS NULL) <> 1 THEN
     RAISE EXCEPTION 'legacy row did not survive the upgrade with NULL lines';
   END IF;
   UPDATE {LEGACY}.fin_categories SET dre_line = 'gross_revenue', behavior = 'variable' WHERE name = 'Vendas';

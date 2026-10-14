@@ -222,7 +222,11 @@ def test_checklist_lists_provisional_choices_questions_and_export_links(h):
     assert {q["id"] for q in data["open_questions"]} >= {"Q4", "Q5", "Q6", "Q7", "Q8", "Q9"}
     assert all(q["sources"] for q in data["open_questions"])
     assert {e["name"]: e["path"] for e in data["exports"]} == {
-        "dre_csv": f"{P}/exports/dre.csv", "entries_csv": f"{P}/exports/entries.csv", "ledger_ofx": f"{P}/exports/ledger.ofx"}
+        "dre_csv": f"{P}/exports/dre.csv", "entries_csv": f"{P}/exports/entries.csv", "ledger_ofx": f"{P}/exports/ledger.ofx",
+        "livro_caixa_csv": f"{P}/exports/livro-caixa.csv", "livro_caixa_pdf": f"{P}/exports/livro-caixa.pdf",
+        "dominio_txt": f"{P}/exports/dominio.txt", "mei_monthly_csv": f"{P}/exports/mei-monthly.csv",
+        "mei_monthly_pdf": f"{P}/exports/mei-monthly.pdf"}
+    assert data["dominio_readiness"] == {"categories_without_code": 0, "accounts_without_code": 0, "ready": True}  # nothing seeded yet
     assert "não assina" in data["disclaimer"]
     assert call(h, "GET", f"{P}/accountant-checklist").status_code == 401
 

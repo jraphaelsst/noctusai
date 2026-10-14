@@ -79,6 +79,10 @@ def build_checklist(
     s: Scope, *, export_links: Optional[dict[str, str]] = None, regime_prefill: Optional[str] = None
 ) -> dict:
     settings = settings_svc.get_settings(s, regime_prefill=regime_prefill)
+    categories_missing = [
+        c for c in s.rows("categories", eq={"active": True}) if c["direction"] != "transfer" and not str(c.get("accounting_code") or "").strip()
+    ]
+    accounts_missing = [a for a in s.rows("accounts", eq={"active": True}) if not str(a.get("accounting_code") or "").strip()]
     provisional = []
     confirmed = []
     for name, state in settings["choices"].items():
@@ -106,6 +110,11 @@ def build_checklist(
         "provisional_choices": provisional,
         "confirmed_choices": confirmed,
         "open_questions": list(OPEN_QUESTIONS),
+        "dominio_readiness": {
+            "categories_without_code": len(categories_missing),
+            "accounts_without_code": len(accounts_missing),
+            "ready": not categories_missing and not accounts_missing,
+        },
         "exports": [{"name": k, "path": v} for k, v in (export_links or {}).items()],
         "disclaimer": DISCLAIMER,
     }

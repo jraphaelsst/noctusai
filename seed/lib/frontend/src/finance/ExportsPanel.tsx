@@ -1,4 +1,4 @@
-/** `<ExportsPanel/>` — downloads for the contador: lançamentos (CSV), razão (OFX) and DRE (CSV). Admin-only on the server. */
+/** `<ExportsPanel/>` — downloads for the contador: lançamentos (CSV), razão (OFX) and DRE (CSV). Org admin or the accountant read grant on the server. */
 import * as React from 'react';
 import { Button } from '../design-system/ui/Button';
 import { Card, Field, FormError, Input, PageHeader, Select } from './controls';
@@ -10,10 +10,13 @@ import { ENTRY_DIRECTIONS, ENTRY_STATUSES } from './types';
 export interface ExportsPanelProps {
   hooks: FinanceHooks;
   isAdmin?: boolean;
+  /** UX only: downloads offered (default: `isAdmin`; pass true for the accountant read grant). The server enforces it. */
+  canExport?: boolean;
   now?: Date;
 }
 
-export function ExportsPanel({ hooks, isAdmin = false, now }: ExportsPanelProps) {
+export function ExportsPanel({ hooks, isAdmin = false, canExport, now }: ExportsPanelProps) {
+  const allowed = canExport ?? isAdmin;
   const base = React.useMemo(() => now ?? new Date(), [now]);
   const accounts = hooks.useAccounts();
   const exp = hooks.useExport();
@@ -37,7 +40,7 @@ export function ExportsPanel({ hooks, isAdmin = false, now }: ExportsPanelProps)
     }
   }
 
-  if (!isAdmin) {
+  if (!allowed) {
     return (
       <section className="space-y-3">
         <PageHeader title={t('exports.title')} />

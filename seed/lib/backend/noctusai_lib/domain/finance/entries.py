@@ -138,6 +138,8 @@ def _base_row(s: Scope, data: Mapping[str, Any], direction: str) -> dict:
         "due_date": iso(due),
         "settled_cents": 0,
         "notes": data.get("notes") or None,
+        # E21: sent only when informed, so a database that has not yet applied the additive column keeps working
+        **({"has_invoice": bool(data["has_invoice"])} if data.get("has_invoice") is not None else {}),
     }
 
 
@@ -273,7 +275,7 @@ def list_entries(
 
 _EDITABLE = (
     "description", "counterparty_name", "counterparty_doc", "category_id", "cost_center_id",
-    "expected_account_id", "competence_month", "due_date", "amount_cents", "notes", "party_id",
+    "expected_account_id", "competence_month", "due_date", "amount_cents", "notes", "party_id", "has_invoice",
 )
 
 

@@ -5,8 +5,9 @@
                                                           get_storage=..., get_charge_operations=...))
 
 Same dependency style and `/api/finance` prefix as the main router. Authorization (contract §0):
-reads = org staff (`auth_dependency`); statement import, match / ignore, gateway sync and EVERY export =
-org admin (`admin_dependency`). Each handler scopes by the caller's org and every referenced id is
+reads = org staff (`auth_dependency`); statement import, match / ignore and gateway sync = org admin
+(`admin_dependency`); the two EXPORTS here (entries CSV, ledger OFX) = org admin OR the accountant read grant
+(`accountant_dependency`, default = admin only). Each handler scopes by the caller's org and every referenced id is
 checked against it.
 
 HOST NOTES
@@ -64,6 +65,7 @@ def make_finance_reconciliation_router(
     get_charge_operations: Callable[..., Any],
     prefix: str = "/api/finance",
     tags: Optional[list[str]] = None,
+    accountant_dependency: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     router = APIRouter(prefix=prefix, tags=tags or ["finance-reconciliation"])
 
@@ -74,6 +76,7 @@ def make_finance_reconciliation_router(
         return Scope(ctx.db, cfg, str(ctx.org_id))
 
     admin = Depends(admin_dependency)
+    reader = Depends(accountant_dependency or admin_dependency)  # READ-only exports an external accountant may fetch
 
     # ── statements ──
     @router.post("/statements", status_code=201, name="finance_import_statement")
@@ -156,7 +159,7 @@ def make_finance_reconciliation_router(
         category_id: Optional[UUID] = Query(None),
         cost_center_id: Optional[UUID] = Query(None),
         q: Optional[str] = Query(None, max_length=100),
-        _a=admin,
+        _a=reader,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> Response:
         body = exports_svc.entries_csv(
@@ -174,7 +177,7 @@ def make_finance_reconciliation_router(
         account_id: UUID = Query(...),
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
-        _a=admin,
+        _a=reader,
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> Response:
         body = exports_svc.ledger_ofx(scope(ctx), account_id, date_from=date_from, date_to=date_to)

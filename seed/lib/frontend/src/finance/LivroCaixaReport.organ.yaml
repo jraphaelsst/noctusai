@@ -1,0 +1,33 @@
+name: LivroCaixaReport
+kind: component
+path: seed/lib/frontend/src/finance/LivroCaixaReport.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Livro Caixa (cash book) over every account: data, histórico, entrada, saída, saldo corrido; CSV + PDF downloads. A view over the ledger: transfers between own accounts are left out. LC 123/2006 art. 26 §2; Res. CGSN 140/2018 art. 63."
+  - "Totals and saldo cover the whole period; the table is paginated for display only."
+  - "Part of the finance organ; money is integer cents end to end, formatted only via formatCents; pt-BR copy in finance/messages.ts."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading, never a bare isFetching gate."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client; isAdmin / canExport are UX gates only (the server enforces the admin and accountant-read gates)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by products/commerce and later products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

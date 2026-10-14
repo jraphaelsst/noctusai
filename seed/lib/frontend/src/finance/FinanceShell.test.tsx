@@ -26,8 +26,8 @@ function routes() {
 }
 
 describe('FinanceShell', () => {
-  it('exposes the eight sections in order and maps URL segments both ways', () => {
-    expect(FINANCE_SECTIONS.map((s) => s.key)).toEqual(['overview', 'receivable', 'payable', 'cashflow', 'dre', 'reconciliation', 'registers', 'accountant']);
+  it('exposes the nine sections in order and maps URL segments both ways', () => {
+    expect(FINANCE_SECTIONS.map((s) => s.key)).toEqual(['overview', 'receivable', 'payable', 'cashflow', 'dre', 'budget', 'reconciliation', 'registers', 'accountant']);
     expect(financeSectionFromPath('receber')).toBe('receivable');
     expect(financeSectionFromPath('/contador/')).toBe('accountant');
     expect(financeSectionFromPath('')).toBe('overview');

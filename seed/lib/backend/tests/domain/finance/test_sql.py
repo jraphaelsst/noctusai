@@ -10,6 +10,7 @@ import pytest
 from noctusai_lib.domain.finance import APPEND_ONLY_TABLES, FINANCE_TABLES, FinanceConfig, finance_migration
 from noctusai_lib.domain.finance.types import (
     AccountKind,
+    ActivityKind,
     CategoryDirection,
     EntryDirection,
     EntrySource,
@@ -34,15 +35,18 @@ SQL = finance_migration(CFG, "commerce")
 CONTRACT_COLUMNS = {
     "accounts": {
         "id", "org_id", "name", "kind", "bank_code", "agency", "number", "opening_balance_cents",
-        "opening_date", "gateway", "active",
+        "opening_date", "gateway", "active", "accounting_code",
     },
-    "categories": {"id", "org_id", "parent_id", "name", "direction", "is_default", "active", "dre_line", "behavior", "is_das"},
+    "categories": {
+        "id", "org_id", "parent_id", "name", "direction", "is_default", "active", "dre_line", "behavior", "is_das",
+        "accounting_code", "activity_kind",
+    },
     "cost_centers": {"id", "org_id", "code", "name", "active"},
     "entries": {
         "id", "org_id", "direction", "status", "description", "counterparty_name", "counterparty_doc",
         "category_id", "cost_center_id", "expected_account_id", "competence_month", "due_date", "amount_cents",
         "settled_cents", "source", "source_ref", "recurrence_id", "installment_group_id", "installment_n",
-        "installment_total", "notes", "created_at", "updated_at",
+        "installment_total", "notes", "created_at", "updated_at", "has_invoice",
     },
     "recurrences": {"id", "org_id", "template", "frequency", "next_date", "end_date", "active"},
     "settlements": {
@@ -64,6 +68,8 @@ CONTRACT_COLUMNS = {
         "id", "org_id", "entry_id", "storage_path", "filename", "content_type", "size_bytes", "uploaded_by", "at",
     },
     "gateway_sync": {"account_id", "cursor", "last_synced_at", "last_error"},
+    # E21: planned amount per (org, category, month).
+    "budgets": {"id", "org_id", "category_id", "month", "amount_cents", "created_at", "updated_at"},
     # CONTRACT §10.5 (the shape of the per-choice confirmation is the `choice_meta` JSON, documented in dre_settings.py).
     "dre_settings": {
         "id", "org_id", "tax_regime", "das_split_irpj_csll", "das_irpj_csll_share_bps", "gateway_fee_line",
@@ -147,6 +153,16 @@ def test_enum_checks_match_the_python_enums():
         found = re.search(check, _block(table))
         assert found, f"{table}.{col} CHECK missing"
         assert tuple(re.findall(r"'([^']+)'", found.group(1))) == values(enum)
+
+
+def test_e21_additions_are_additive_and_rerunnable():
+    # accounting codes (categories + accounts), MEI activity, entry nota fiscal, and the budgets table: nothing bare.
+    for table, col in (("fin_categories", "accounting_code"), ("fin_categories", "activity_kind"), ("fin_accounts", "accounting_code"), ("fin_entries", "has_invoice")):
+        assert f"ALTER TABLE commerce.{table} ADD COLUMN IF NOT EXISTS {col} " in SQL
+    kinds = re.search(r"ADD COLUMN IF NOT EXISTS activity_kind TEXT\s+CHECK \(activity_kind IN \(([^)]*)\)\)", SQL)
+    assert kinds and tuple(re.findall(r"'([^']+)'", kinds.group(1))) == values(ActivityKind)
+    assert re.search(r"UNIQUE \(org_id, category_id, month\)", _block("fin_budgets"))
+    assert "CHECK (amount_cents >= 0)" in _block("fin_budgets") and "EXTRACT(DAY FROM month) = 1" in _block("fin_budgets")
 
 
 def test_dre_columns_are_additive_and_rerunnable():
