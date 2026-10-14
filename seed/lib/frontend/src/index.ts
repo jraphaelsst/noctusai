@@ -284,3 +284,8 @@ export * from './inventory';
 // noctusai_lib.domain.purchasing. Product-agnostic; the host passes its authenticated api client (+ the parties / items /
 // inventory hooks for the pickers). Names are Purchase* / Purchasing* to avoid barrel collisions.
 export * from './purchasing';
+
+// Quotes organ (orçamentos: versions, signed public accept link, convert-on-accept seam, PDF/DOCX). Backend:
+// noctusai_lib.domain.quotes. Product-agnostic; the host passes its authenticated api client (staff) / base URL (public page).
+// Barrel names are `Quote*`-prefixed: commerce already exports `Quote` / `QuoteLine` (the cart quote).
+export * from './quotes';

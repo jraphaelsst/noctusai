@@ -1,0 +1,36 @@
+name: QuoteAcceptPage
+kind: component
+path: seed/lib/frontend/src/quotes/QuoteAcceptPage.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "The customer's public page behind the signed link (no login, no host chrome). Explicit consent: name + tick + the exact server-authored sentence shown; expired/superseded/decided states show NO decision form; renders only the server's allow-listed view."
+  - "Part of the quotes organ (project-history/roadmaps/erp-seed-2026-10.md E2/W4; mined from igig `orcamento`, erp-imobiliario `propostas`, social-wiring `atendimento_propostas`, N=3); backend noctusai_lib.domain.quotes. Wire types mirror types.py/schemas.py; renaming a member is a wire-contract change."
+  - "Money is integer cents (organ-kit formatCents/parseMoneyToCents); quantities are decimal STRINGS up to 3 places (inventory formatQty/parseQty); the server computes every total (half-up per line) and the editor only previews it with the same rounding (previewTotals)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Barrel names are Quote*-prefixed because commerce already exports Quote/QuoteLine (the cart quote). Seed-portable: no product coupling; the host passes its api client (staff) or base URL (public page) and the party/item option lists. pt-BR copy in quotes/messages.ts."
+
+errors_encountered:
+  - "A 5xx on the public link is transient (the hook retries with backoff) but a 4xx is an ANSWER (bad/expired link): retrying it would hammer the endpoint, so usePublicQuote does not."
+
+drifts_surfaced:
+  - "None open. The shared controls/money/query helpers are consumed from organ-kit (no new copies); the numeric qty helpers are imported from the inventory organ rather than copied."
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): built once in the seed and consumed by igig / erp-imobiliario / social-wiring."
+  - "A client-computed total was rejected: the client previews, the server stores; the wire carries no total on writes."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
