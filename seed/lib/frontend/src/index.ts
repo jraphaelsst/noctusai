@@ -255,3 +255,8 @@ export {
 // projects/commerce-seed-p3/CONTRACT.md. Product-agnostic; the host product
 // supplies the api client (staff) or base URL (public storefront).
 export * from './commerce';
+
+// Items organ (SKU catalog + fiscal data) — backend `noctusai_lib.domain.items`;
+// roadmap project-history/roadmaps/erp-seed-2026-10.md (E2/E5/E8). Product-agnostic;
+// the host passes its authenticated api client to `createItemsHooks`.
+export * from './items';

@@ -1,0 +1,32 @@
+name: ItemsImport
+kind: component
+path: seed/lib/frontend/src/items/ItemsImport.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "CSV import form: validate-only by default, optional update of existing SKUs, lists every row problem of a 422 importacao_invalida (line, field, message); nothing is written when any row is bad."
+  - "Part of the items organ (backend noctusai_lib.domain.items; roadmap project-history/roadmaps/erp-seed-2026-10.md E2/E5/E8); money is integer cents end to end, formatted only via commerce formatCents; pt-BR copy in items/messages.ts."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Seed-portable: no product coupling; the host product passes its authenticated api client."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by ERP-shaped products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
