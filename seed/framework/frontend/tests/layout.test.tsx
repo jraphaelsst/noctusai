@@ -376,3 +376,70 @@ describe("helpChat layout option", () => {
     expect(screen.queryByTestId("help-chat-bubble-stub")).not.toBeInTheDocument();
   });
 });
+
+describe("effective org of the visit (multi-org S5b) — subtitle + role follow /api/me/access", () => {
+  const TOKEN_META = { org_name: "Org Token", org_role: "member" };
+  const accessFor = (org: { id: string; nome: string } | null, orgRole: string | null) => ({
+    has_access: true,
+    product_slug: "test",
+    org,
+    org_selection: {
+      available: true, required: false, mfa_required: false, acting: false,
+      org, home_org: null, selection_id: "sel-1", org_role: orgRole,
+    },
+  });
+
+  function renderWith(metadata: Record<string, unknown>) {
+    return renderLayout(createProductLayout({
+      ...baseConfig(),
+      useAuthStore: () => ({ user: { id: "u1", email: "u1@example.com", user_metadata: metadata } }),
+      supabase: makeSupabaseClient(),
+    }));
+  }
+
+  async function withAccess(data: unknown, fn: () => void) {
+    const stub = await import("./stubs/design-system");
+    stub.meAccessState.data = data;
+    try { fn(); } finally { stub.meAccessState.data = undefined; }
+  }
+
+  it("access pending: the SSO token's org + role stand in", async () => {
+    await withAccess(undefined, () => {
+      renderWith(TOKEN_META);
+      expect(screen.getByTestId("sidebar-subtitle")).toHaveTextContent("Org Token");
+      expect(screen.getByTestId("header-user-role")).toHaveTextContent("Membro");
+    });
+  });
+
+  it("after a member switch: the shell shows the NEW org's name and the role in it", async () => {
+    await withAccess(accessFor({ id: "org-b", nome: "Org B" }, "manager"), () => {
+      renderWith(TOKEN_META);
+      expect(screen.getByTestId("sidebar-subtitle")).toHaveTextContent("Org B");
+      expect(screen.getByTestId("header-user-role")).toHaveTextContent("Gerente");
+    });
+  });
+
+  it("the token's admin role does not survive a switch into an org where the user is a member", async () => {
+    await withAccess(accessFor({ id: "org-b", nome: "Org B" }, "member"), () => {
+      renderWith({ org_name: "Org Token", org_role: "owner" });
+      expect(screen.getByTestId("header-user-role")).toHaveTextContent("Membro");
+      expect(screen.getByTestId("header-user-role")).not.toHaveTextContent("Administrador");
+    });
+  });
+
+  it("staff acting in another org: the subtitle is the picked org (platform admin label kept)", async () => {
+    await withAccess(accessFor({ id: "org-c", nome: "Cliente C" }, "admin"), () => {
+      renderWith({ org_name: "NoctusAI HQ", org_role: "owner", noctus_role: "admin" });
+      expect(screen.getByTestId("sidebar-subtitle")).toHaveTextContent("Cliente C");
+      expect(screen.getByTestId("header-user-role")).toHaveTextContent("Administrador");
+    });
+  });
+
+  it("access answered without an org: never falls back to the token's org", async () => {
+    await withAccess({ has_access: false, product_slug: "test", org: null }, () => {
+      renderWith(TOKEN_META);
+      expect(screen.getByTestId("sidebar-subtitle")).toHaveTextContent("NoctusAI");
+      expect(screen.getByTestId("sidebar-subtitle")).not.toHaveTextContent("Org Token");
+    });
+  });
+});

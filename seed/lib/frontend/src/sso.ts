@@ -10,6 +10,7 @@
 
 import { ADMIN_ROLES } from './roles';
 import type { OrgRole } from './roles';
+import type { MeAccess } from './access';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Metadata = Record<string, any> | undefined | null;
@@ -147,4 +148,60 @@ export function licenseDaysRemaining(ctx: SSOContext): number | null {
  */
 export function isOrgAdmin(ctx: Pick<SSOContext, 'isProductAdmin'> & { org: { role: string } }): boolean {
   return ctx.isProductAdmin || ADMIN_ROLES.includes(ctx.org.role as OrgRole);
+}
+
+// ---------------------------------------------------------------------------
+// Effective org of THIS visit (multi-org S5b)
+// ---------------------------------------------------------------------------
+
+/** Where the org/role of an {@link EffectiveSSOContext} came from. */
+export type EffectiveOrgSource = 'access' | 'token';
+
+export interface EffectiveSSOContext extends SSOContext {
+  /**
+   * `access` = the server's EFFECTIVE org (`GET /api/me/access`); `token` = the SSO
+   * token's org, used ONLY while access has not answered (pending, or no answer).
+   */
+  orgSource: EffectiveOrgSource;
+  /** The effective org's id (access `org.id`; the token's `org_id` only as the fallback). */
+  orgId: string | null;
+}
+
+/**
+ * The SSO context with `org` + `isProductAdmin` re-based on the EFFECTIVE org of this
+ * visit. The SSO token names the org that ADMITTED the user; after a member (or staff)
+ * switches org through the picker, the server's effective org (`/api/me/access` `org` +
+ * `org_selection.org_role`) is a different one -- the shell's subtitle, role label and
+ * admin gate must follow it, never the token.
+ *
+ * - `access` undefined (pending / no answer) -> the token, `orgSource: 'token'`.
+ * - `access` answered -> its org name (null when it has none -- never the token's) and its
+ *   `org_role` (`null` -> `member`). A pre-picker backend sends no `org_role` (`undefined`):
+ *   no switch is possible there, so the token's role IS the effective one.
+ * - `isProductAdmin` = platform admin (`noctus_role`, platform-wide) OR an owner/admin
+ *   EFFECTIVE role -- the token's `org_role` no longer counts once access answered.
+ *
+ * Plan / subscription / license stay the token's (out of scope: core syncs them per
+ * admitting org). UX only -- the server re-enforces on every request.
+ */
+export function resolveEffectiveSSOContext(
+  metadata: Metadata,
+  access: MeAccess | null | undefined,
+): EffectiveSSOContext {
+  const token = resolveSSOContext(metadata);
+  if (!access) {
+    const tokenOrgId = typeof metadata?.org_id === 'string' ? metadata.org_id : null;
+    return { ...token, orgSource: 'token', orgId: tokenOrgId };
+  }
+  const answered = access.org_selection?.org_role;
+  const role = answered === undefined ? token.org.role : (answered ?? 'member');
+  const isPlatformAdmin = metadata?.noctus_role === 'admin';
+  return {
+    ...token,
+    isProductAdmin: isPlatformAdmin || ADMIN_ROLES.includes(role as OrgRole),
+    // /api/me/access carries no logo: the token's belongs to the token's org.
+    org: { name: access.org?.nome ?? null, logoUrl: null, role },
+    orgSource: 'access',
+    orgId: access.org?.id ?? null,
+  };
 }

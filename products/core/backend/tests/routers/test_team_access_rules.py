@@ -205,6 +205,9 @@ class TestD4SoleOrgRemovalKeepsTheProfile:
         assert (org["owner_id"], org["is_personal"], org["org_type"]) == ("u-solo", True, "individual")
         assert org["slug"].startswith("indv_ana-solo")
         assert mock_sb.rpc_calls[0][1]["p_personal_org_id"] == "mock-organizations-1"
+        # S5b: the response says what happened (the personal org the profile now lives in)
+        assert resp.json()["data"] == {"removed": True, "profile_moved_to": "mock-organizations-1",
+                                       "personal_org_id": "mock-organizations-1"}
 
     def test_a_failed_removal_discards_the_unused_personal_org(self, admin_client):
         mock_sb = admin_client.mock_supabase

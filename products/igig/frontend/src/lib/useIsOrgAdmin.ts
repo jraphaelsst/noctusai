@@ -9,15 +9,15 @@
  * Esteira board checked `isProductAdmin` only — an org owner could edit one
  * board's stages and not the other's, though the server allows both.
  *
+ * The expression is the seed's canonical `useIsOrgAdmin` (this file is its local
+ * name, kept so the call sites and their test mocks stay put). It reads the
+ * EFFECTIVE org of the visit (`/api/me/access`) — after a member switches org,
+ * the role in the org they are now in decides, not the SSO token's (multi-org
+ * S5b). This file used to re-implement it over `user_metadata`, which kept the
+ * token's role after a switch.
+ *
  * UX only: it hides what the server would refuse. The server's check (the
  * TRUSTED `public.noctus_users` cascade, not `user_metadata`) stays
  * authoritative.
  */
-import { ADMIN_ROLES, resolveSSOContext, type OrgRole } from "@noctusai/lib";
-import { useAuthStore } from "@noctusai/seed/infra";
-
-export function useIsOrgAdmin(): boolean {
-  const { user } = useAuthStore();
-  const sso = resolveSSOContext(user?.user_metadata);
-  return sso.isProductAdmin || ADMIN_ROLES.includes(sso.org.role as OrgRole);
-}
+export { useIsOrgAdmin } from "@noctusai/lib/design-system";

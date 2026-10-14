@@ -62,6 +62,20 @@ function reloadPage(): void {
   window.location.reload();
 }
 
+/**
+ * THE `GET /api/me/access` query -- one key, one fetcher, one cache entry for every consumer
+ * (picker, gate, switcher, the shell's effective org, `useIsOrgAdmin`).
+ */
+export function useMeAccess() {
+  return useQuery<MeAccess>({
+    queryKey: ME_ACCESS_QUERY_KEY,
+    queryFn: () => api.get<MeAccess>('/api/me/access'),
+    staleTime: 60_000,
+    retry: false,
+    placeholderData: (prev) => prev,
+  });
+}
+
 export interface UseOrgSelectionResult {
   access: MeAccess | undefined;
   selection: OrgSelectionState;
@@ -144,13 +158,7 @@ export function useOrgSelection():UseOrgSelectionResult {
   const pickerForced = useSyncExternalStore(subscribeForced, () => forced, () => forced);
   const entryPhase = useSyncExternalStore(subscribeOrgEntryPhase, getOrgEntryPhase, getOrgEntryPhase);
 
-  const accessQ = useQuery<MeAccess>({
-    queryKey: ME_ACCESS_QUERY_KEY,
-    queryFn: () => api.get<MeAccess>('/api/me/access'),
-    staleTime: 60_000,
-    retry: false,
-    placeholderData: (prev) => prev,
-  });
+  const accessQ = useMeAccess();
   const selection = orgSelectionOf(accessQ.data);
 
   // Pin the org the server says we are in. The FIRST pin of a page load is

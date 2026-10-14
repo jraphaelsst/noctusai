@@ -22,6 +22,7 @@ import type { TeamMember } from '../hooks/useTeam';
 import { teamErrorMessage } from '../lib/team-errors';
 import { MoveMemberDialog } from './team/MoveMemberDialog';
 import { ProductAccessDialog } from './team/ProductAccessDialog';
+import { removeMemberMessage } from './team/removeMessage';
 import { roleName } from './team/roleName';
 
 export function TeamManagement() {
@@ -92,8 +93,11 @@ export function TeamManagement() {
   async function handleRemoveMember() {
     if (!confirmRemove) return;
     try {
-      await remove.mutateAsync(confirmRemove.id);
-      toast.success(`${confirmRemove.nome} foi removido(a) de ${orgNome}.`);
+      const result = await remove.mutateAsync(confirmRemove.id);
+      toast.success(removeMemberMessage(
+        confirmRemove.nome, orgNome, result,
+        (id) => scopeOrgs.find((o) => o.id === id)?.nome,
+      ));
       setConfirmRemove(null);
     } catch (err) {
       toast.error(teamErrorMessage(err, 'Erro ao remover membro'));

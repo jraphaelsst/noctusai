@@ -79,12 +79,16 @@ class TestRemoveMemberIsAMembershipOperation:
         assert mock_sb.table("organizations").inserted_payloads == []
         # never the old PostgREST-sequence shape: the router does not write the profile itself
         assert mock_sb.table("noctus_users").updated_payloads == []
+        # S5b: the response says where the profile went; no personal org was created
+        assert resp.json()["data"] == {"removed": True, "profile_moved_to": "org-2", "personal_org_id": None}
 
     def test_removal_of_a_member_whose_profile_is_elsewhere_leaves_the_profile_to_the_db(self, admin_client):
         mock_sb = admin_client.mock_supabase
         _team(mock_sb, target_profile_org="org-9")
         mock_sb.set_rpc_data("team_member_remove", {"profile_moved_to": None, "profile_deleted": False})
-        assert admin_client.delete("/api/team/u-target").status_code == 200
+        resp = admin_client.delete("/api/team/u-target")
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {"removed": True, "profile_moved_to": None, "personal_org_id": None}
         assert mock_sb.table("noctus_users").updated_payloads == []
 
     def test_target_without_an_active_membership_here_is_404_and_nothing_runs(self, admin_client):

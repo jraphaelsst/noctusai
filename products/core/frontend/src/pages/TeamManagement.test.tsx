@@ -252,4 +252,41 @@ describe('Equipe — remover (D4)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar remoção' }));
     await waitFor(() => expect(del).toHaveBeenCalledWith('/api/team/u2?org_id=A'));
   });
+
+  async function removeBiaWith(data: unknown) {
+    routeGet(OWNER_A_ADMIN_B);
+    del.mockResolvedValue({ message: 'Membro removido com sucesso', data });
+    renderPage();
+    fireEvent.click(within(await screen.findByTestId('member-row-u2')).getByRole('button', { name: 'Remover' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirmar remoção' }));
+  }
+
+  it('sole-org member: the success message says a personal org now holds the account (S5b)', async () => {
+    await removeBiaWith({ removed: true, profile_moved_to: 'P', personal_org_id: 'P' });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      'Bia foi removido(a) de Alfa. Como esta era a única organização da pessoa, a conta foi mantida em uma '
+      + 'organização pessoal própria, com o histórico preservado.',
+    ));
+  });
+
+  it('profile moved to another org the viewer knows: names it', async () => {
+    await removeBiaWith({ removed: true, profile_moved_to: 'B', personal_org_id: null });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      'Bia foi removido(a) de Alfa. A conta passa a usar Beta como organização principal.',
+    ));
+  });
+
+  it('profile moved to an org the viewer cannot see: says so without inventing a name', async () => {
+    await removeBiaWith({ removed: true, profile_moved_to: 'Z', personal_org_id: null });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      'Bia foi removido(a) de Alfa. A conta passa a usar outra organização de que a pessoa participa.',
+    ));
+  });
+
+  it('this was not their profile org: nothing moved', async () => {
+    await removeBiaWith({ removed: true, profile_moved_to: null, personal_org_id: null });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      'Bia foi removido(a) de Alfa. A pessoa continua nas outras organizações de que participa.',
+    ));
+  });
 });

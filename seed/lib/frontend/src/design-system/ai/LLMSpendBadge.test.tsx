@@ -15,11 +15,13 @@
  */
 /// <reference types="@testing-library/jest-dom" />
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 afterEach(() => {
   cleanup();
   mockMetadata = { org_id: 'org-1', org_role: 'owner' };
+  mockAccess = PENDING;
   vi.resetModules();
 });
 
@@ -30,13 +32,20 @@ vi.mock('./useLLMSpend', () => ({
   LLM_SPEND_REFETCH_INTERVAL_MS: 300000,
 }));
 
-// The auth store is the only seam: the REAL `useIsOrgAdmin` runs over it, so
-// the gate under test is the canonical one, not a stub of it.
+// The auth store + the `/api/me/access` fetch are the only seams: the REAL
+// effective-org gate (`useEffectiveSSOContext` → `isOrgAdmin`) runs over them,
+// so the gate under test is the canonical one, not a stub of it.
 let mockMetadata: Record<string, unknown> = { org_id: 'org-1', org_role: 'owner' };
+// `PENDING` = access never answers (the token stands in); otherwise the access body.
+const PENDING = Symbol('pending');
+let mockAccess: unknown = PENDING;
 
 vi.mock('@noctusai/seed/infra', () => ({
   useAuthStore: () => ({ user: { user_metadata: mockMetadata } }),
   coreApi: { get: vi.fn() },
+  api: {
+    get: vi.fn(() => (mockAccess === PENDING ? new Promise(() => {}) : Promise.resolve(mockAccess))),
+  },
 }));
 
 vi.mock('./SpendDetailModal', () => ({
@@ -46,7 +55,10 @@ vi.mock('./SpendDetailModal', () => ({
 async function renderBadge() {
   const React = (await import('react')).default;
   const { LLMSpendBadge } = await import('./LLMSpendBadge');
-  return render(React.createElement(LLMSpendBadge));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    React.createElement(QueryClientProvider, { client: qc }, React.createElement(LLMSpendBadge)),
+  );
 }
 
 describe('<LLMSpendBadge/> — never render a warning nobody can read', () => {
@@ -128,6 +140,36 @@ describe('<LLMSpendBadge/> — only fetches for the roles core admits (2026-10-0
     mockUseLLMSpend.mockReturnValue(warn);
     const { container } = await renderBadge();
     expect(mockUseLLMSpend).toHaveBeenCalledWith('org-1', false);
+    expect(container.textContent).toBe('');
+  });
+});
+
+describe('<LLMSpendBadge/> — role AND org come from the EFFECTIVE org (multi-org S5b)', () => {
+  const warn = { data: { status: 'warn', used_pct: 85, spent_brl: 85, budget_brl: 100 } };
+  const accessIn = (id: string, orgRole: string) => ({
+    has_access: true, product_slug: 'p', org: { id, nome: id },
+    org_selection: {
+      available: true, required: false, mfa_required: false, acting: false,
+      org: { id, nome: id }, home_org: null, selection_id: 's', org_role: orgRole,
+    },
+  });
+
+  it('member who switched INTO an org they own: fetches THAT org, enabled', async () => {
+    mockMetadata = { org_id: 'org-1', org_role: 'member' };
+    mockAccess = accessIn('org-2', 'owner');
+    mockUseLLMSpend.mockReset();
+    mockUseLLMSpend.mockReturnValue(warn);
+    await renderBadge();
+    await waitFor(() => expect(mockUseLLMSpend).toHaveBeenLastCalledWith('org-2', true));
+  });
+
+  it('owner of the token org who switched into an org where they are a member: disabled', async () => {
+    mockMetadata = { org_id: 'org-1', org_role: 'owner' };
+    mockAccess = accessIn('org-2', 'member');
+    mockUseLLMSpend.mockReset();
+    mockUseLLMSpend.mockReturnValue(warn);
+    const { container } = await renderBadge();
+    await waitFor(() => expect(mockUseLLMSpend).toHaveBeenLastCalledWith('org-2', false));
     expect(container.textContent).toBe('');
   });
 });

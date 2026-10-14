@@ -54,9 +54,10 @@ export const AppShell: React.FC<any> = ({ sidebar, header, children }) => {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const Sidebar: React.FC<any> = ({ brandTitle, navGroups, standaloneItems, footerContent, onNavigate }) => (
+export const Sidebar: React.FC<any> = ({ brandTitle, brandSubtitle, navGroups, standaloneItems, footerContent, onNavigate }) => (
   <nav data-testid="sidebar-stub">
     <span data-testid="sidebar-brand">{brandTitle}</span>
+    <span data-testid="sidebar-subtitle">{brandSubtitle}</span>
     <span data-testid="sidebar-nav-group-count">{navGroups?.length ?? 0}</span>
     <span data-testid="sidebar-nav-item-count">
       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
@@ -85,6 +86,7 @@ export const Header: React.FC<any> = ({
   <header data-testid="header-stub">
     <span data-testid="header-user-name">{user?.name}</span>
     <span data-testid="header-user-email">{user?.email}</span>
+    <span data-testid="header-user-role">{user?.role}</span>
     <button data-testid="menu-toggle-button" onClick={() => onMenuToggle?.()}>
       Menu
     </button>
@@ -163,3 +165,14 @@ export const orgSelectionCalls: string[] = [];
 export const endOrgSelectionBestEffort = async (): Promise<void> => {
   orgSelectionCalls.push("end");
 };
+/**
+ * `/api/me/access` query stand-in (the real one needs seed infra). Tests set `data`
+ * (undefined = still pending) to drive the shell's EFFECTIVE org (multi-org S5b).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const meAccessState: { data: any } = { data: undefined };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const useMeAccess = (): { data: any; isPending: boolean } => ({
+  data: meAccessState.data,
+  isPending: meAccessState.data === undefined,
+});

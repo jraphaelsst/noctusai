@@ -159,10 +159,20 @@ export function useInviteMember(orgId: string | null) {
   });
 }
 
+/** `DELETE /api/team/{user_id}` → `data` (S5b): what happened to the removed person's profile. */
+export interface RemoveMemberResult {
+  removed: true;
+  /** Org the profile now points at; `null` = this org was not their profile org (nothing moved). */
+  profile_moved_to: string | null;
+  /** Set only when a personal org was created for a sole-org member (D4). */
+  personal_org_id: string | null;
+}
+
 export function useRemoveMember(orgId: string | null) {
   const invalidate = useInvalidateTeam();
   return useMutation({
-    mutationFn: (userId: string) => api.delete(`/api/team/${userId}${qs(orgId!)}`),
+    mutationFn: async (userId: string) =>
+      (await api.delete<{ data: RemoveMemberResult }>(`/api/team/${userId}${qs(orgId!)}`)).data,
     onSuccess: () => invalidate(orgId!),
   });
 }

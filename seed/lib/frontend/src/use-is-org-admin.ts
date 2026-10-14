@@ -1,17 +1,16 @@
 /**
- * `useIsOrgAdmin()` — the canonical org-admin UX gate for a component.
+ * `useIsOrgAdmin()` -- the canonical org-admin UX gate for a component.
  *
- * Reads the signed-in user off the auth store and applies `isOrgAdmin`
- * (sso.ts). Lives beside `useOrgSelection` (not the dependency-free root
- * barrel) because it needs `@noctusai/seed/infra`. UX only — the server
- * enforces. Org picker: platform staff carry `noctus_role: 'admin'`, so
- * this is true for them in any picked org.
+ * Applies `isOrgAdmin` (sso.ts) to the EFFECTIVE org of this visit
+ * (`useEffectiveSSOContext`): after a member switches org, their role in the
+ * org they are now in decides -- not the role the SSO token was minted with.
+ * The token's role stands in only while `/api/me/access` has not answered.
+ * Platform staff carry `noctus_role: 'admin'`, so this is true for them in any
+ * picked org. UX only -- the server enforces.
  */
-import { useAuthStore } from '@noctusai/seed/infra';
-
-import { isOrgAdmin, resolveSSOContext } from './sso';
+import { isOrgAdmin } from './sso';
+import { useEffectiveSSOContext } from './use-effective-sso-context';
 
 export function useIsOrgAdmin(): boolean {
-  const { user } = useAuthStore();
-  return isOrgAdmin(resolveSSOContext(user?.user_metadata));
+  return isOrgAdmin(useEffectiveSSOContext());
 }

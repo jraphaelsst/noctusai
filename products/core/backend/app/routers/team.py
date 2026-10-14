@@ -354,7 +354,19 @@ async def remover_membro(
     except Exception as exc:
         logger.warning("team: webhook dispatch on remove-member failed for user_id=%s (%s); removal succeeded", user_id, exc)
 
-    return {"message": "Membro removido com sucesso"}
+    # What happened (S5b): the RPC already reports where the profile went. `profile_moved_to` is
+    # null when this org was not the user's profile org (nothing moved); `personal_org_id` is set
+    # only when a personal org was created for a sole-org member (D4).
+    moved_to = outcome.get("profile_moved_to")
+    personal = outcome.get("personal_org_id")
+    return {
+        "message": "Membro removido com sucesso",
+        "data": {
+            "removed": True,
+            "profile_moved_to": str(moved_to) if moved_to else None,
+            "personal_org_id": str(personal) if personal else None,
+        },
+    }
 
 
 @router.patch("/{user_id}/role")

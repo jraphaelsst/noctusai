@@ -42,11 +42,12 @@ import {
   OrgContentGate,
   OrgSwitcher,
   useOrgEntryPending,
+  useMeAccess,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
 import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
-  resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
+  resolveEffectiveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
@@ -371,6 +372,10 @@ export function createProductLayout(config: ProductLayoutConfig) {
     // Staff behind the org picker (or a pending entry): org-scoped header widgets are not
     // mounted (no bell / AI-badge fetches) and the enrichment "Carregando" state is moot.
     const orgEntryPending = useOrgEntryPending();
+    // The EFFECTIVE org of this visit (multi-org S5b): after a member/staff org switch the
+    // subtitle, role label and nav role follow `/api/me/access`, not the SSO token (which
+    // names the org that admitted the user). The token stands in only until access answers.
+    const { data: meAccess } = useMeAccess();
 
     // If enrichment is loading, show loading state
     if (enrichment.isLoading && !orgEntryPending) {
@@ -381,7 +386,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
       );
     }
 
-    const ssoCtx = resolveSSOContext(user?.user_metadata);
+    const ssoCtx = resolveEffectiveSSOContext(user?.user_metadata, meAccess);
     const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
     const licenseDays = licenseDaysRemaining(ssoCtx);
     const effectiveRole = enrichment.effectiveDevRole ?? ssoCtx.org.role;

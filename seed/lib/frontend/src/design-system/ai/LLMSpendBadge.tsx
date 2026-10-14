@@ -13,7 +13,7 @@
  * **Org-admin visibility.** `useIsOrgAdmin()` (org owner/admin or platform
  * admin) gates it; core answers the same set for the caller's own org
  * (owner decision 2026-10-09). Non-admins see nothing. The hook itself is `enabled: false` for non-admins so
- * we don't even fetch.
+ * we don't even fetch. Role AND org id are the EFFECTIVE org's (`useEffectiveSSOContext`).
  *
  * **Click target.** `onClick` fires `onOpenDetail(orgId)` if provided
  * (lets products route to their own admin spend page) — otherwise falls
@@ -22,10 +22,10 @@
  * current page.
  */
 import { useState } from 'react';
-import { useAuthStore } from '@noctusai/seed/infra';
 
 // Relative, not the design-system barrel: this file IS inside that barrel.
-import { useIsOrgAdmin } from '../../use-is-org-admin';
+import { isOrgAdmin as isOrgAdminCtx } from '../../sso';
+import { useEffectiveSSOContext } from '../../use-effective-sso-context';
 
 import { useLLMSpend, type SpendStatus } from './useLLMSpend';
 import { SpendDetailModal } from './SpendDetailModal';
@@ -49,14 +49,14 @@ function _formatBRL(value: number | null | undefined): string {
 }
 
 export function LLMSpendBadge({ onOpenDetail, className = '' }: LLMSpendBadgeProps) {
-  const auth = useAuthStore();
-  const user = (auth as { user?: { user_metadata?: Record<string, unknown> } | null })?.user ?? null;
-  const metadata = user?.user_metadata ?? null;
-  // THE canonical org-admin UX gate (org owner/admin or platform admin) —
-  // the same role set core's `require_spend_reader` admits for the caller's
-  // own org, so the badge never fetches for someone the endpoint would 403.
-  const isOrgAdmin = useIsOrgAdmin();
-  const orgId = (metadata?.org_id as string | undefined) ?? null;
+  // THE canonical org-admin UX gate (org owner/admin or platform admin) over the
+  // EFFECTIVE org of this visit — the same `useIsOrgAdmin` predicate, and the org id
+  // from the SAME context, so role and org never come from two different orgs (after a
+  // member switches org the token's `org_id` is the org they left; core moved their
+  // profile org — what `require_spend_reader` checks — to the chosen one).
+  const ctx = useEffectiveSSOContext();
+  const isOrgAdmin = isOrgAdminCtx(ctx);
+  const orgId = ctx.orgId;
 
   const { data } = useLLMSpend(orgId, isOrgAdmin);
   const [modalOpen, setModalOpen] = useState(false);

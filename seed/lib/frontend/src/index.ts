@@ -38,8 +38,8 @@ export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupab
 export { clearLocalIdentity, dropProductCookieSession, isAuthRejection, verifySessionWithServer } from './identity';
 
 // SSO
-export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining, isOrgAdmin } from './sso';
-export type { SSORoleInfo, SSOContext, SSOPlanInfo, SSOSubscriptionInfo, SSOLicenseInfo, SSOOrgInfo } from './sso';
+export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining, isOrgAdmin, resolveEffectiveSSOContext } from './sso';
+export type { SSORoleInfo, SSOContext, SSOPlanInfo, SSOSubscriptionInfo, SSOLicenseInfo, SSOOrgInfo, EffectiveSSOContext, EffectiveOrgSource } from './sso';
 
 // Roles
 export { ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROLES, LEGAL_REVIEW_ROLES, ASSIGNABLE_ROLES, ELEVATED_GRANT_ROLES, grantableRoles, ORG_ROLE_LABELS, isDevOrOwner, canManageTeam, canManageBilling, canReviewLegal, CUSTOMER_ORG_ROLES, isCustomerRole } from './roles';
