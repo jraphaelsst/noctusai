@@ -1,6 +1,6 @@
 # Lais module — build roadmap (our own agent inside social-wiring)
 
-Status 2026-10-13: owner confirmed (round 3, `DECISIONS.md`): **the agent (Julia) is built in the `agents` product**, SW integrates via API and its pages mirror Lais. Page 0 contract: `specs/julia-agent-contract.md` (draft). No code yet.
+Status 2026-10-14: owner answered the page-0 questions (round 4, contract v3 §11); dispatch started. Earlier: owner confirmed (round 3, `DECISIONS.md`): **the agent (Julia) is built in the `agents` product**, SW integrates via API and its pages mirror Lais. Page 0 contract: `specs/julia-agent-contract.md` (draft). No code yet.
 Cadence (same as CoreStudio → Criação de Mídia): per page → contract (`specs/<page>-contract.md`) →
 BE/FE waves in worktrees → gates on merged dev → release → owner tests in prod → next page.
 Reference: `analysis/agent-brain.md` (what Lais does), `analysis/bubble-app-definition.md` (their forms),

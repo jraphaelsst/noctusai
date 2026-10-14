@@ -16,11 +16,13 @@
 | 2026-10-13 | Multi-tenant | SW will be sold to another client besides One Consultoria → every personal/tenant item (keys, tokens, numbers, persona, knowledge) is per-org configuration, never hard-coded; designed to swap. |
 | 2026-10-13 | Persona name | **Julia** (shown to leads). |
 | 2026-10-13 | Provider | **OpenAI now, switchable** by configuration (Anthropic account at its monthly limit until 2026-11-01). |
+| 2026-10-14 | Who Julia answers on the shared number | **Only chats that start after she is switched on** (snapshot of existing chats at switch-on; contract §11.1). |
+| 2026-10-14 | Privacy notice | **Create a page, don't propose** — per-org public notice at `/privacidade/<slug>`, default text now, owner refines later (contract §11.2). First message must disclose the virtual assistant and link it (§11.3). |
+| 2026-10-14 | Handoff notification | **The connection's owner for now, swappable for an admin.** Never a member-only, corretor, dev or jurídico (contract §11.4). |
 
 ## Open
 - Stage 3 (mechanisms): paused — reading more lead conversations was refused by the session's PII permission check; continue only with the owner's explicit permission rule or anonymised excerpts the owner pastes.
 - Security observations to report to Lastro (agency param in Bubble URLs; 4-digit history code) — owner's call.
-- Same number as One Chat: senders on the connection's authorized list keep reaching One Chat (operator); everyone else would reach Julia — confirm before switching Julia on (see `specs/julia-agent-contract.md`).
 
 ## Done
 - Lais nav group live in prod (`67e60888d`, migrations 252 + 253 applied by the release lane, 2026-10-13).

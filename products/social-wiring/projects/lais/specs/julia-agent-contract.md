@@ -1,6 +1,6 @@
 # Contract — Page 0 "Agente": Julia, the lead-facing WhatsApp agent
 
-Status: **v2 2026-10-13 — architect + security reviews folded in (§10 is binding and wins over §1–§9 where they conflict). Waiting for the owner's answers in §9, then dispatch.**
+Status: **v3 2026-10-14 — owner answered §9 (§11, binding). Precedence: §11 > §10 > §1–§9. Ready for dispatch.**
 Owner decisions: `../DECISIONS.md` (round 3). Reuse inventory and page plan: `../BUILD-ROADMAP.md`.
 Existing shapes quoted here were extracted from the tree on 2026-10-13 (file:line in brackets).
 
@@ -134,7 +134,7 @@ SW routes (new, `lais_agente_router.py`, prefix `/api/lais/agente`, member read 
 - X: one real-route contract test in dev: SW `HttpAgentsClient` → agents `/api/channels/turns` with the fake provider, asserting the exact §3.1 response shape.
 - Gates: predeploy for agents + social-wiring; LGPD intake (`noctus.dev.lgpd_flag`): lead conversations (retention, consent text in the greeting, deletion on request).
 
-## 9. Open for the owner
+## 9. Open for the owner (answered 2026-10-14 → §11)
 1. Same number as One Chat: every contact **not** in that connection's authorized list will be answered by Julia once the switch is on. That includes personal contacts on that number. OK, or should Julia only answer chats that start after the switch is turned on?
 2. Julia's first-message wording (it should state it's a virtual assistant — LGPD/transparency).
 3. Handoff target: who is notified when Julia hands off (SW notification to the connection's owner? a team?).
@@ -166,3 +166,38 @@ SW routes (new, `lais_agente_router.py`, prefix `/api/lais/agente`, member read 
 
 ### 10.3 Slice order (v2)
 LGPD flag → S0 → A1 (B1, per-org keys, runtime dispatch) → A2 (turn API, M1/M2, mint reuse) ∥ W1 on the Fake (H1–H3, B2–B4, M4, L3) → W2 (UI) → X (real-route contract test) → owner tunes Julia in agents' test chat → switch on (owner).
+
+## 11. Owner answers (v3, 2026-10-14, binding — wins over §1–§10)
+
+### 11.1 Julia answers only chats that start after she is switched on
+Owner: "only chats after her creation". Contacts that already had a chat on the number (personal contacts, One Chat users) are **never** sent to Julia.
+- **Snapshot at switch-on.** `PUT /api/lais/agente/conexoes/{id}` with `agente_leads_ativo=true` first lists every chat of that WAHA session (`GET /api/{session}/chats`, paginated to the end) and stores each chat id in `social_wiring.lais_agente_chats_preexistentes (org_id, connection_id, chat_id, capturado_em)`, PK `(connection_id, chat_id)`. Both the `@c.us`/`@s.whatsapp.net` and the `@lid` form are stored when WAHA exposes both. Then it sets `agente_leads_ativo=true` and `agente_leads_ativado_em=now()`. **If the listing fails or is incomplete, the switch stays off** and the call returns 502 `snapshot_falhou` (fail closed). Snapshot + flag are one transaction.
+- **Eligibility at routing time** (lead path, §5 step 2): a chat reaches Julia only if (a) it is not in the snapshot table, **and** (b) SW's `whatsapp_chats` row for it did not exist before `agente_leads_ativado_em` (a row created earlier ⇒ not eligible, even if the snapshot missed it). Otherwise the message keeps today's behaviour (stored; operator/denial path as today) and **never** calls agents. A chat Julia already owns (`agente_conversation_id` set) stays eligible.
+- **Switch off → on again:** a new snapshot is taken; chats Julia already owns stay hers; every other existing chat is excluded.
+- Tests: pre-existing chat → no turn; new chat → turn; snapshot failure → 502 + switch still off; pre-existing `@lid` alias of a snapshotted phone chat → no turn.
+
+### 11.2 Privacy notice page — slice P (built now, owner refines the text later)
+Owner: "create a page for it, don't propose, just create". The notice belongs to the **org (the controller, e.g. One Consultoria)**, not to NoctusAI, so it is per-org and swappable.
+- **Data (SW):** `social_wiring.lais_aviso_privacidade (org_id pk, slug text unique not null, titulo text, empresa_nome text, contato_email text null, contato_whatsapp text null, secoes jsonb not null, mensagem_inicial text not null, versao int not null default 1, atualizado_em timestamptz, atualizado_por uuid)`. `secoes` uses the seed consent shape (`DocSection[]`: `{n, title, blocks:[{p}|{ul}]}`). On first read, a row is created from a **default pt-BR template** (controller = org name; what is collected — name, phone, messages, property preferences; purpose — answer and qualify real-estate enquiries and pass them to a human broker; legal basis — art. 7º V/IX LGPD; processors — WhatsApp/WAHA host, the AI provider (OpenAI), NoctusAI as operator; retention 180 days; rights of the data subject (art. 18) and how to exercise them — reply "apagar meus dados" or the contact email; no automated decision with legal effect; updates). Placeholders are filled from org data; anything unknown shows "a definir" and the Lais › Agente page warns that the notice is incomplete.
+- **Public read:** `GET /api/public/lais/privacidade/{slug}` — no auth, rate-limited, returns only the notice fields (never org ids, users or settings). 404 for an unknown slug. Response `{ data: { titulo, empresa_nome, contato_email, contato_whatsapp, secoes, versao, atualizado_em } }`.
+- **Admin:** `GET /api/lais/agente/aviso` (member read) and `PUT /api/lais/agente/aviso` (admin, core org role owner/admin) with `{ titulo, empresa_nome, contato_email, contato_whatsapp, secoes, mensagem_inicial }` → 200 row, `versao += 1`. `slug` is generated once from the org name (unique, URL-safe) and is not editable at page 0.
+- **Public page (SW SPA, outside auth):** `/privacidade/:slug`, rendered with the seed `ConsentDocLayout` through a **new named seam**: `ConsentDocLayout` gains an optional `brand` prop (`{ name, homeHref? }`, default = NoctusAI mark) so the org name replaces the NoctusAI header. No local re-declaration of the seed consent pages (`check_consent_routes_mounted`). Loading/empty/error states per the two-signal rule; 404 shows "Aviso não encontrado".
+- **Editing UI:** a "Aviso de privacidade" card on Lais › Agente (W2) — form for the fields + a link to the public page. Until W2 ships, the default template is what is served.
+- **Promotion:** a per-org public privacy notice is likely needed by other products (store, igig). Built in SW now consuming the seed layout seam; `NOC-REMEDIATE[seed-promotion]` marker on the router names the destination (seed `org_privacy_notice`) at the second consumer.
+
+### 11.3 First message (disclosure) — deterministic, not left to the model
+- On the **first turn of a channel conversation** (SW has no `agente_conversation_id` for the chat yet), SW sends `mensagem_inicial` **as its own bubble before** Julia's reply. Default template (owner refines on the Agente page): `Oi! Eu sou a Julia, assistente virtual da {empresa}. 😊 Como tratamos seus dados: {link}` where `{link}` = `<SW public base URL>/privacidade/<slug>`. `{empresa}`/`{link}` are filled by SW; `{link}` is mandatory — `PUT …/aviso` rejects a `mensagem_inicial` without `{link}` (422 `link_obrigatorio`), and the Julia switch refuses to turn on while the notice has no `empresa_nome` (409 `aviso_incompleto`).
+- The `lead-imob` prompt states that the introduction was already sent, so Julia does not introduce herself again and goes straight to the question ("comprar ou alugar?").
+- Test: first turn → disclosure bubble then reply bubbles, in that order; later turns → no disclosure.
+
+### 11.4 Handoff notification target
+Owner: "the connection's owner for now, swappable for an admin. never a member-only directly, nor corretores (for now) nor devs, nor jurídico."
+- New per-connection field `agente_handoff_notificar_user_id uuid null`. Null ⇒ notify the connection's owner (`whatsapp_connections.user_id`, the creator).
+- When set, the target must hold core org role **owner or admin** in that org (checked with the core role lookup used by `require_org_admin_role`); member, corretor, dev, jurídico or any other role → 422 `destinatario_invalido`. Set via `PUT /api/lais/agente/conexoes/{id}` (admin) with `agente_handoff_notificar_user_id`.
+- **Re-checked at send time**: if the configured user is no longer owner/admin (or left the org), the notification goes to the connection owner and an error is logged. The connection owner is always allowed.
+- Channel: seed in-app notification (`write_in_app`, type `lais_handoff`) with the chat name, the `motivo` (escaped, ≤ 280 chars) and a deep link to `/lais/conversas?chat=<chat_id>`. Never sent to the lead; never to a team broadcast at page 0.
+- Tests: default → connection owner; admin target → that admin; member/corretor target → 422; demoted admin → falls back to owner.
+
+### 11.5 Slice order (v3)
+LGPD flag (done with this commit) → **S0 ∥ P** → A1 → **A2 ∥ W1** (Fake; includes 11.1, 11.3, 11.4) → W2 (incl. the notice card + handoff target select) → X → owner tunes Julia → owner switches on.
+New migrations (re-check with `noctus.dev.next_migration_number`): SW 255 (connection/chat fields of §5 + 11.1 + 11.4, snapshot table), SW 256 (notice table, slice P — P may take 255 if it lands first; the number tool decides). P adds no status_pagina (public route).
