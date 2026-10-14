@@ -608,6 +608,9 @@ services:
   # exposure consented 2026-10-14; deploy/consent/commerce.prod.yml). Per-org Asaas
   # keys live in the DB (commerce.credentials, Fernet with the fleet ENCRYPTION_KEY);
   # COMMERCE_LINK_SECRET comes from the fleet .env. Only NON-SECRET config here.
+  # Invoices (P4): FOCUSNFE_TOKEN / invoice_webhook_token are platform credentials (platform_settings
+  # or the root .env, resolved at request time); FOCUSNFE_ALLOW_PRODUCTION=1 + the platform credential
+  # focusnfe_environment=producao are BOTH required to issue real notes -- left unset, homologacao.
   # No mem_limit (owner decision: server protection without per-container limits).
   commerce:
     <<: *prod-defaults

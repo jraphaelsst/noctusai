@@ -30,6 +30,13 @@ class SeedSettings(ProductSettings):
     # Test harness / local dev only: a silent Fake in a real deploy would hand a
     # paying buyer a fake checkout URL.
     payments_allow_fake: bool = False
+    # Invoices (NFS-e / NF-e via Focus NFe). The provider TOKEN is a platform credential
+    # (`focusnfe_token`: org -> platform_settings -> env FOCUSNFE_TOKEN, via `resolve_credential`);
+    # an absent token REFUSES (503) unless this is explicitly on -- test harness / local dev only,
+    # a silent Fake in a real deploy would "issue" notes that never reach the tax authority.
+    # Production additionally needs env FOCUSNFE_ALLOW_PRODUCTION=1 + platform credential
+    # `focusnfe_environment=producao` (+ `focusnfe_token_environment`).
+    invoices_allow_fake: bool = False
     # Origin the Asaas readiness probe uses as `successUrl`.
     commerce_public_url: str = "https://commerce.noctusai.com"
 

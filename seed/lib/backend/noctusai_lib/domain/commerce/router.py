@@ -53,7 +53,7 @@ from .config import CommerceConfig, CommerceContext
 from .errors import CommerceError
 from .fulfillment import FulfillmentRegistry, make_fulfillment_registry
 from .gateway import GATEWAY_NAME, CheckoutGateway
-from .money import MoneyDeps
+from .money import MoneyDeps, OrderHook
 from .schemas import (
     AccessLinkBody,
     CategoryBody,
@@ -133,6 +133,8 @@ def commerce_staff_router(
     get_finance: Optional[Callable[..., FinanceBooking]] = None,
     get_fulfillment: Optional[Callable[..., FulfillmentRegistry]] = None,
     get_email: Optional[Callable[..., EmailSender]] = None,
+    on_paid_hooks: tuple[OrderHook, ...] = (),
+    on_revoked_hooks: tuple[OrderHook, ...] = (),
     prefix: str = "/api/commerce",
     tags: Optional[list[str]] = None,
 ) -> APIRouter:
@@ -148,6 +150,8 @@ def commerce_staff_router(
             Never derived from client input.
         admin_dependency: the ORG-admin gate (`require_org_admin(...)`; 403 for plain staff) -- required for
             refunds (CONTRACT §0). Left unset it FAILS CLOSED: every admin action answers 403.
+        on_paid_hooks / on_revoked_hooks: `MoneyDeps` hooks (`hook(db, order)` / `hook(db, order, reason=...)`),
+            e.g. the fiscal slice's `on_order_paid` / `on_order_revoked` bound to a job repository.
         get_gateway / get_finance / get_fulfillment / get_email: the money collaborators (P4). Without
             `get_gateway` the refund route answers 503 `pagamento_indisponivel` and cancelling an order cannot
             void its charge; without `get_finance` nothing is booked; without `get_email` staff alerts are logged.
@@ -174,7 +178,10 @@ def commerce_staff_router(
     def money_deps(gateway=Depends(gw_dep), finance=Depends(fin_dep), fulfillment=Depends(ful_dep), email=Depends(mail_dep)) -> Optional[MoneyDeps]:
         if gateway is None:
             return None
-        return MoneyDeps(cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email)
+        return MoneyDeps(
+            cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email,
+            on_paid_hooks=on_paid_hooks, on_revoked_hooks=on_revoked_hooks,
+        )
 
     # ── profile ──
     @router.get("/profile", name="commerce_get_profile")
@@ -621,6 +628,8 @@ def commerce_webhook_router(
     get_fulfillment: Optional[Callable[..., FulfillmentRegistry]] = None,
     get_finance: Optional[Callable[..., FinanceBooking]] = None,
     get_email: Optional[Callable[..., EmailSender]] = None,
+    on_paid_hooks: tuple[OrderHook, ...] = (),
+    on_revoked_hooks: tuple[OrderHook, ...] = (),
     rate_limit: Optional[RateLimit] = None,
     prefix: str = "/api/webhooks/payments",
     tags: Optional[list[str]] = None,
@@ -659,7 +668,10 @@ def commerce_webhook_router(
         except PaymentWebhookSignatureError as exc:
             logger.warning("commerce webhook: verification failed (org=%s): %s", org_id, getattr(exc, "detail", exc))
             raise CommerceError("assinatura_invalida", "Assinatura do webhook inválida.", 401) from exc
-        deps = MoneyDeps(cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email)
+        deps = MoneyDeps(
+            cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email,
+            on_paid_hooks=on_paid_hooks, on_revoked_hooks=on_revoked_hooks,
+        )
         outcome = await webhook_svc.handle_event(db, str(org_id), event, inbox=inbox, deps=deps)
         return {"received": True, "outcome": outcome}
 

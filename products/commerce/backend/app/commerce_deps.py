@@ -12,12 +12,25 @@ adapter never silently becomes a Fake -- only an explicit `PAYMENTS_ALLOW_FAKE=t
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from noctusai_lib.api.auth.effective_org import is_platform_staff
-from noctusai_lib.domain.commerce import CommerceContext, make_checkout_gateway
+from noctusai_lib.api.auth.session.scopes import require_org_admin_role
+from noctusai_lib.domain.commerce import CommerceContext, MoneyDeps, make_checkout_gateway, make_fulfillment_registry
+from noctusai_lib.domain.commerce import invoices as invoices_svc
+from noctusai_lib.domain.commerce.errors import GatewayNotConfigured
+from noctusai_lib.domain.commerce.fulfillment import FulfillmentRegistry
 from noctusai_lib.domain.commerce.gateway import CheckoutGateway
+from noctusai_lib.domain.commerce.profile import get_profile
+from noctusai_lib.domain.finance import FinanceContext
+from noctusai_lib.domain.finance.booking import FinanceBooking, make_finance_booking
+from noctusai_lib.domain.jobs import JobRepository, make_job_repository
+from noctusai_lib.integrations.invoices import InvoiceProvider, make_invoice_provider
+from noctusai_lib.integrations.invoices.credentials import CompanyTokenStore
+from noctusai_lib.integrations.invoices.factory import resolve_invoice_environment
+from noctusai_lib.integrations.payments.charges import ChargeOperations
+from noctusai_lib.primitives.exceptions import ForbiddenError
 from noctusai_lib.domain.licensing import LicenseChecker, make_license_checker
 from noctusai_lib.domain.payments import EventInbox, make_event_inbox
 from noctusai_lib.integrations.cnpj_registry import make_cnpj_registry_lookup
@@ -30,10 +43,10 @@ from noctusai_lib.integrations.storage.fake import FakeStorageBackend
 from noctusai_lib.integrations.storage.protocol import StorageBackend
 
 from app.api_keys import build_store
-from app.commerce import CFG, SCHEMA
+from app.commerce import CFG, FINANCE_CFG, SCHEMA
 from app.config import settings
 from app.database import _db
-from app.dependencies import get_admin_client
+from app.dependencies import get_admin_client, get_current_user_org
 
 logger = logging.getLogger(__name__)
 
@@ -153,4 +166,122 @@ def get_email_sender() -> EmailSender:
         build_fake=lambda: make_email_sender(None),
         allow_fake=settings.payments_allow_fake,
         unconfigured=UnconfiguredEmailSender,
+    )
+
+
+# ── org-admin gate / platform-admin gate ───────────────────────────────────
+
+
+async def require_org_admin(auth: Any = Depends(get_current_user_org)) -> Any:
+    """ORG-admin gate for money-moving / fiscal writes (CONTRACT §0). The role is read from the
+    TRUSTED `noctus_users` row (core client), never `user_metadata`; plain staff get 403."""
+    require_org_admin_role(_db.get_core_client(), getattr(auth[0], "id", None), "Comércio")
+    return auth
+
+
+def require_platform_admin(auth: Any = Depends(get_current_user_org)) -> None:
+    """Widens WHO may write fiscal settings to platform staff acting on another org (server-side check)."""
+    if not is_platform_admin(auth):
+        raise ForbiddenError("Apenas a administração da plataforma pode fazer isso.")
+
+
+# ── fulfillment / finance ──────────────────────────────────────────────────
+
+_fulfillment = make_fulfillment_registry()
+
+
+def get_fulfillment() -> FulfillmentRegistry:
+    return _fulfillment
+
+
+def get_finance() -> FinanceBooking:
+    """Books receivables / settlements / fees into the finance organ (same schema, `fin_*`)."""
+    return make_finance_booking("supabase", db=get_admin_client(), cfg=FINANCE_CFG)
+
+
+def get_charge_operations(auth: Any = Depends(get_current_user_org)) -> ChargeOperations:
+    """The CALLER'S org's gateway `ChargeOperations` (finance statement sync). An org with no usable
+    gateway credentials answers 503 -- the declared not-configured state, reads still work."""
+    try:
+        return get_gateway().charge_operations(auth[2])
+    except GatewayNotConfigured:
+        raise HTTPException(status_code=503, detail="Gateway de cobrança não configurado.") from None
+
+
+def charge_operations_for(org_id: str, gateway: str) -> Optional[ChargeOperations]:
+    """Scheduler-side lookup for `finance_gateway_sync`: `None` skips an org without credentials."""
+    try:
+        return get_gateway().charge_operations(org_id)
+    except GatewayNotConfigured:
+        logger.info("finance gateway sync: org %s has no usable gateway credentials; skipped", org_id)
+        return None
+
+
+_TAX_REGIME_TO_FINANCE = {"mei": "mei", "simples": "simples", "lucro_presumido": "presumido"}
+
+
+def default_tax_regime(ctx: FinanceContext) -> Optional[str]:
+    """Finance DRE prefill (CONTRACT §10.5.1): the commerce store profile's tax regime, mapped to the
+    finance enum. `lucro_real` / `outro` / no profile => `None` (the DRE then reports `regime_nao_informado`)."""
+    profile = get_profile(ctx.db, ctx.org_id)
+    return _TAX_REGIME_TO_FINANCE.get(str((profile or {}).get("tax_regime") or ""))
+
+
+# ── invoices (fiscal) ──────────────────────────────────────────────────────
+
+
+def get_jobs() -> JobRepository:
+    return make_job_repository(supabase_client=get_admin_client(), schema_name=SCHEMA)
+
+
+def make_provider(org_id: str) -> InvoiceProvider:
+    """ONE provider per org/call (the per-company token sink is org-bound). Fake-or-refuse: a missing
+    `focusnfe_token` REFUSES unless `INVOICES_ALLOW_FAKE`. Company tokens live Fernet-encrypted in
+    `commerce.credentials`; the store is built lazily so the Fake path needs no `ENCRYPTION_KEY`."""
+    tokens: dict[str, CompanyTokenStore] = {}
+
+    def store() -> CompanyTokenStore:
+        if "s" not in tokens:
+            tokens["s"] = CompanyTokenStore(build_store(), environment=resolve_invoice_environment())
+        return tokens["s"]
+
+    return make_invoice_provider(
+        "focusnfe",
+        allow_fake=settings.invoices_allow_fake,
+        company_tokens=lambda ref: store().resolver_for(org_id)(ref),
+        token_sink=lambda ref, cnpj, token: store().sink_for(org_id)(ref, cnpj, token),
+    )
+
+
+def get_webhook_token(org_id: str) -> Optional[str]:
+    """Per-org invoice-webhook secret, resolved per request (org -> platform -> env); fail-closed when unset."""
+    return platform_resolve("invoice_webhook_token", org_id) or None
+
+
+_REVOKE_TEXT = {
+    "refunded": "Pedido {id} reembolsado integralmente",
+    "chargeback": "Pedido {id} com contestação de pagamento perdida (chargeback)",
+}
+
+
+async def invoices_on_paid(db: Any, order: Any) -> None:
+    """`MoneyDeps.on_paid_hooks`: enqueue the invoices when the store opted into `auto_issue_invoices`."""
+    await invoices_svc.on_order_paid(db, order, jobs=get_jobs())
+
+
+async def invoices_on_revoked(db: Any, order: Any, reason: Optional[str] = None) -> None:
+    """`MoneyDeps.on_revoked_hooks`: full refund / lost chargeback => cancel every authorized invoice."""
+    text = _REVOKE_TEXT.get(str(reason), "Pedido {id} estornado integralmente").format(id=order["id"])
+    await invoices_svc.on_order_revoked(db, order, jobs=get_jobs(), reason=text)
+
+
+ON_PAID_HOOKS = (invoices_on_paid,)
+ON_REVOKED_HOOKS = (invoices_on_revoked,)
+
+
+def get_money_deps() -> MoneyDeps:
+    """The same collaborator set the routers build, for the scheduler (per tick; never captured)."""
+    return MoneyDeps(
+        cfg=CFG, gateway=get_gateway(), fulfillment=get_fulfillment(), finance=get_finance(),
+        email=get_email_sender(), on_paid_hooks=ON_PAID_HOOKS, on_revoked_hooks=ON_REVOKED_HOOKS,
     )

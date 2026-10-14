@@ -13891,6 +13891,111 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Commerce P4 organ migrations 014-018 (host `products/commerce`, 2026-10-14) are FILE-ONLY: the tech-lead
+    # applies them to prod later (migrate_product). `verify_db_guards`'s `SqlExecutor` probes LIVE production, so it
+    # cannot exercise a constraint on a table that does not exist there yet. Remove these entries and register real
+    # `GuardProbe`s in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migrations.
+    # NOC-REMEDIATE[commerce-p4-guard-probes]: unique/CHECK probes for the money, finance and items organs — 2026-10-14.
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "commerce_orders_status_check",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "commerce_order_events_from_status_check",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "commerce_order_events_to_status_check",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "uq_commerce_order_charges_attempt",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "uq_commerce_order_charges_gateway",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "uq_commerce_refunds_gateway_id",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "uq_commerce_refunds_idempotency",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/014_commerce_money.sql",
+        "uq_commerce_refunds_one_requested",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/015_commerce_fiscal.sql",
+        "commerce_store_profiles_nfse_regime_ck",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_accounts_gateway",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_categories_name",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_entries_source_ref",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_entries_recurrence_due",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_entries_installment",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_statement_lines_ledger",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_settlements_external",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_ledger_settlement_origin",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "uq_fin_ledger_reverses",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/018_items.sql",
+        "uq_itm_item_categories_name",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/018_items.sql",
+        "uq_itm_items_sku",
+        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still

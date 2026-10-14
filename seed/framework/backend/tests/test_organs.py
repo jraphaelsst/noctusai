@@ -97,3 +97,44 @@ def test_create_product_app_organs_seam_mounts_routers_and_covers_upload_routes(
     assert any(p.startswith("/api/finance/entries") for p in paths)
     with TestClient(app) as client:
         assert client.get("/api/finance/entries").status_code == 401
+
+
+# -- items + the commerce money/fiscal/jobs registry entries + the finance tax-regime seam ------------------
+
+
+def test_every_registered_organ_header_prefixes_its_generated_migration():
+    assert {"finance", "items", "commerce_money", "commerce_fiscal", "jobs"} <= set(ORGAN_REGISTRY)
+    for name, spec in ORGAN_REGISTRY.items():
+        assert organ_migration_sql(name, "erp").startswith(spec.migration_header), name
+
+
+def test_registered_migration_headers_are_unique_prefixes():
+    headers = [s.migration_header for s in ORGAN_REGISTRY.values()]
+    for h in headers:
+        assert sum(o.startswith(h) for o in headers) == 1, h  # a pin helper finds a file by header
+
+
+def test_mount_items_routes_overrides_and_strict_401():
+    from noctusai_lib.domain.items import ITEMS_IMPORT_MAX_BYTES, ITEMS_IMPORT_PATH_PATTERN
+    from noctusai_seed.organs import mount_items
+
+    organ = mount_items(
+        schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(),
+    )
+    assert organ.max_body_path_overrides == {ITEMS_IMPORT_PATH_PATTERN: ITEMS_IMPORT_MAX_BYTES}
+    app = FastAPI()
+    routers, _ = mount_organs([organ])
+    for r in routers:
+        app.include_router(r)
+    assert any(r.path == ITEMS_IMPORT_PATH_PATTERN for r in app.routes)
+    client = TestClient(app)
+    assert client.get("/api/items").status_code == 401
+    assert client.post("/api/items", json={}).status_code == 401
+
+
+def test_mount_finance_passes_default_tax_regime_to_the_router():
+    organ = mount_finance(
+        schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(),
+        default_tax_regime=lambda ctx: "mei",
+    )
+    assert len(organ.routers) == 2
