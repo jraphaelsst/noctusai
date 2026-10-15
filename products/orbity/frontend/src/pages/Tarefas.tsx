@@ -9,6 +9,9 @@
  */
 import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
+import { ClientSelect } from '@/components/ClientSelect';
+import { PageError } from '@/components/PageError';
+import { useClientOptions, nameLookup } from '@/hooks/useClients';
 import {
   useTasks,
   useCreateTask,
@@ -41,7 +44,6 @@ import {
   ClipboardList,
   Plus,
   Loader2,
-  AlertCircle,
   Trash2,
   Pencil,
   ArrowRight,
@@ -77,9 +79,10 @@ interface TaskCardProps {
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
   onStatusChange: (id: string, status: TaskStatus) => void;
+  clientName?: string | null;
 }
 
-function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardProps) {
+function TaskCard({ task, onEdit, onDelete, onStatusChange, clientName }: TaskCardProps) {
   const priorityCfg = PRIORITY_BADGE[task.priority as TaskPriority] ?? PRIORITY_BADGE.med;
   const currentIdx = STATUS_COLUMNS.findIndex((c) => c.key === task.status);
   const canMoveBack = currentIdx > 0;
@@ -115,6 +118,9 @@ function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardProps) {
         <Badge variant={priorityCfg.variant} className="text-xs">
           {priorityCfg.label}
         </Badge>
+        {clientName && (
+          <span className="text-xs text-muted-foreground">Cliente: {clientName}</span>
+        )}
         {task.due_date && (
           <span className="text-xs text-muted-foreground">
             Prazo: {new Date(task.due_date).toLocaleDateString('pt-BR')}
@@ -123,6 +129,19 @@ function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardProps) {
       </div>
 
       <div className="flex gap-1 pt-1">
+        {task.status !== 'canceled' && (
+          <>
+            <button
+              onClick={() => onStatusChange(task.id, 'canceled')}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+              aria-label="Cancelar tarefa"
+            >
+              <XCircle className="h-3 w-3" />
+              Cancelar
+            </button>
+            <span className="text-muted-foreground text-xs">·</span>
+          </>
+        )}
         {canMoveBack && (
           <button
             onClick={() => onStatusChange(task.id, STATUS_COLUMNS[currentIdx - 1].key)}
@@ -168,27 +187,31 @@ function TaskFormDialog({ open, onClose, task }: TaskFormDialogProps) {
   const [description, setDescription] = useState(task?.description ?? '');
   const [priority, setPriority] = useState<TaskPriority>(task?.priority as TaskPriority ?? 'med');
   const [dueDate, setDueDate] = useState(task?.due_date ?? '');
+  const [status, setStatus] = useState<TaskStatus>(task?.status ?? 'todo');
+  const [clientId, setClientId] = useState<string | undefined>(task?.client_id ?? undefined);
 
   // Reset form fields when dialog opens for a new task or different task
   const handleOpenChange = (v: boolean) => {
     if (!v) onClose();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const data: TaskCreateData = {
       title: title.trim(),
       description: description.trim() || undefined,
       priority,
       due_date: dueDate || undefined,
+      status,
+      client_id: clientId,
     };
 
+    // mutate + onSuccess: hook toasts the error; dialog stays open on failure.
     if (isEdit && task) {
-      await updateTask.mutateAsync({ id: task.id, ...data });
+      updateTask.mutate({ id: task.id, ...data }, { onSuccess: onClose });
     } else {
-      await createTask.mutateAsync(data);
+      createTask.mutate(data, { onSuccess: onClose });
     }
-    onClose();
   };
 
   const isPending = createTask.isPending || updateTask.isPending;
@@ -247,6 +270,24 @@ function TaskFormDialog({ open, onClose, task }: TaskFormDialogProps) {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Status</label>
+              <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todo">A Fazer</SelectItem>
+                  <SelectItem value="doing">Em Andamento</SelectItem>
+                  <SelectItem value="done">Concluído</SelectItem>
+                  <SelectItem value="canceled">Cancelada</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <ClientSelect value={clientId} onChange={setClientId} id="task-client" />
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>
               Cancelar
@@ -275,7 +316,9 @@ export default function Tarefas() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  const { data, isPending, isError, error } = useTasks(
+  const clientsQ = useClientOptions();
+  const clientName = nameLookup(clientsQ.data);
+  const { data, isPending, isError, error, refetch } = useTasks(
     filterPriority ? { priority: filterPriority } : undefined
   );
   const updateStatus = useUpdateTaskStatus();
@@ -319,14 +362,8 @@ export default function Tarefas() {
   }
 
   // ── Error state ──
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3 text-destructive">
-        <AlertCircle className="h-8 w-8" />
-        <p className="text-sm font-medium">Erro ao carregar tarefas</p>
-        <p className="text-xs text-muted-foreground">{(error as Error)?.message}</p>
-      </div>
-    );
+  if (isError && !data) {
+    return <PageError title="Erro ao carregar tarefas" error={error} onRetry={() => void refetch()} />;
   }
 
   return (
@@ -394,6 +431,7 @@ export default function Tarefas() {
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onStatusChange={handleStatusChange}
+                  clientName={clientName(task.client_id)}
                 />
               ))}
             </div>
@@ -420,6 +458,7 @@ export default function Tarefas() {
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onStatusChange={handleStatusChange}
+                  clientName={clientName(task.client_id)}
                 />
               ))}
           </div>

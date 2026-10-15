@@ -405,3 +405,58 @@ export function useSpendLeadsAggregate(
     staleTime: 5 * 60 * 1000,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Campaign metrics — manual daily entry + history
+// ---------------------------------------------------------------------------
+
+export interface CampaignMetricUpsertData {
+  date: string; // YYYY-MM-DD
+  spend: number;
+  impressions: number;
+  leads: number;
+  cpl?: number;
+}
+
+/** GET /api/meta-ads/campaigns/{id}/metrics -> plain list, newest first. */
+export function useCampaignMetrics(campaignId: string | null) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["meta-ads-metrics", campaignId],
+    queryFn: async () => {
+      return api.get<CampaignMetric[]>(
+        `/api/meta-ads/campaigns/${campaignId}/metrics`,
+      );
+    },
+    placeholderData: (prev) => prev,
+    enabled: !!user && !!campaignId,
+    staleTime: 60 * 1000,
+  });
+}
+
+/**
+ * PUT /api/meta-ads/campaigns/{id}/metrics — manual daily metric entry
+ * (campaign_id + date is the upsert key). Body mirrors campaign_metrics
+ * (migration 009) minus campaign_id, which the path carries.
+ */
+export function useUpsertCampaignMetric(campaignId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: CampaignMetricUpsertData) => {
+      return api.put<CampaignMetric>(
+        `/api/meta-ads/campaigns/${campaignId}/metrics`,
+        data,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["meta-ads-metrics", campaignId] });
+      queryClient.invalidateQueries({ queryKey: ["meta-ads-aggregate"] });
+      toast.success("Métricas salvas");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao salvar métricas", { description: error.message });
+    },
+  });
+}

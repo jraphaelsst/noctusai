@@ -9,6 +9,7 @@
  */
 import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
+import { PageError } from '@/components/PageError';
 import {
   useRoutines,
   useCreateRoutine,
@@ -40,7 +41,6 @@ import {
   RefreshCw,
   Plus,
   Loader2,
-  AlertCircle,
   Trash2,
   Pencil,
   Play,
@@ -168,7 +168,7 @@ function RoutineFormDialog({ open, onClose, routine }: RoutineFormDialogProps) {
     if (!v) onClose();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const data: RoutineCreateData = {
       title: title.trim(),
@@ -178,12 +178,12 @@ function RoutineFormDialog({ open, onClose, routine }: RoutineFormDialogProps) {
       active,
     };
 
+    // mutate + onSuccess: hook toasts the error; dialog stays open on failure.
     if (isEdit && routine) {
-      await updateRoutine.mutateAsync({ id: routine.id, ...data });
+      updateRoutine.mutate({ id: routine.id, ...data }, { onSuccess: onClose });
     } else {
-      await createRoutine.mutateAsync(data);
+      createRoutine.mutate(data, { onSuccess: onClose });
     }
-    onClose();
   };
 
   const isPending = createRoutine.isPending || updateRoutine.isPending;
@@ -284,7 +284,8 @@ export default function Rotinas() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
 
-  const { data: routines, isPending, isError, error } = useRoutines(showActiveOnly);
+  const { data: routines, isPending, isError, error, refetch } = useRoutines(showActiveOnly);
+  const refetchRoutines = () => void refetch();
   const deleteRoutine = useDeleteRoutine();
   const updateRoutine = useUpdateRoutine();
   const runDue = useRunDueRoutines();
@@ -338,14 +339,8 @@ export default function Rotinas() {
   }
 
   // ── Error state ──
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3 text-destructive">
-        <AlertCircle className="h-8 w-8" />
-        <p className="text-sm font-medium">Erro ao carregar rotinas</p>
-        <p className="text-xs text-muted-foreground">{(error as Error)?.message}</p>
-      </div>
-    );
+  if (isError && !routines) {
+    return <PageError title="Erro ao carregar rotinas" error={error} onRetry={refetchRoutines} />;
   }
 
   return (

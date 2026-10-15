@@ -18,6 +18,8 @@
  *   - "conteudo"
  */
 import { useState } from "react";
+import { approvalPublicUrl } from "@/lib/publicLinks";
+import { ClientSelect } from "@/components/ClientSelect";
 import {
   LayoutGrid,
   List,
@@ -116,9 +118,9 @@ function PlatformIcon({ platform, className = "h-3.5 w-3.5" }: { platform: Platf
 
 const POST_STATUS_LABELS: Record<PostStatus, string> = {
   draft: "Rascunho",
-  pending_approval: "Aguard. aprovacao",
+  pending_approval: "Aguard. aprovação",
   approved: "Aprovado",
-  revision: "Em revisao",
+  revision: "Em revisão",
   published: "Publicado",
 };
 
@@ -226,19 +228,17 @@ function ApprovalLinkDialog({
 
   if (!open) return null;
 
-  async function handleCreate() {
-    const result = await createApproval.mutateAsync({
-      postId,
-      expires_in_days: expiresInDays,
-    });
-    // result.public_token is the UUID token the client uses
-    setCreatedToken(result.public_token);
+  function handleCreate() {
+    // mutate + onSuccess: hook toasts errors; no unhandled rejection.
+    createApproval.mutate(
+      { postId, expires_in_days: expiresInDays },
+      // result.public_token is the UUID token the client uses
+      { onSuccess: (result) => setCreatedToken(result.public_token) },
+    );
   }
 
   // Build a shareable URL path — the actual host is env-resolved at runtime
-  const approveUrl = createdToken
-    ? `${window.location.origin}/api/content/approve/${createdToken}`
-    : null;
+  const approveUrl = createdToken ? approvalPublicUrl(createdToken) : null;
 
   return (
     <div
@@ -250,7 +250,7 @@ function ApprovalLinkDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">Enviar para aprovacao</h2>
+          <h2 className="text-lg font-semibold text-foreground">Enviar para aprovação</h2>
           <button
             onClick={onClose}
             className="rounded-md p-1.5 text-muted-foreground hover:bg-muted transition-colors"
@@ -268,10 +268,8 @@ function ApprovalLinkDialog({
         {!createdToken ? (
           <>
             <div className="mb-4">
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Validade do link (dias)
-              </label>
-              <input
+              <label htmlFor="con-validade-do-link-dias" className="mb-1 block text-sm font-medium text-foreground">Validade do link (dias)</label>
+              <input id="con-validade-do-link-dias"
                 type="number"
                 min={1}
                 max={90}
@@ -309,12 +307,12 @@ function ApprovalLinkDialog({
         ) : (
           <>
             <div className="mb-4 rounded-md bg-muted/50 border border-border p-3">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">Link de aprovacao:</p>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Link de aprovação:</p>
               <p className="break-all text-xs text-foreground font-mono">{approveUrl}</p>
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
               Compartilhe este link com o cliente. O post foi movido para{" "}
-              <strong>Aguardando aprovacao</strong>.
+              <strong>Aguardando aprovação</strong>.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -344,7 +342,16 @@ function ApprovalLinkDialog({
 // Post dialog (create / edit)
 // ---------------------------------------------------------------------------
 
-function PostDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function PostDialog(props: React.ComponentProps<typeof PostDialogInner>) {
+  if (!props.open) return null;
+  return <PostDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function PostDialogInner({
   open,
   editing,
   campaigns,
@@ -366,11 +373,12 @@ function PostDialog({
     status: editing?.status ?? "draft",
     campaign_id: editing?.campaign_id ?? "",
     media_url: editing?.media_url ?? "",
+    client_id: editing?.client_id ?? undefined,
   });
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
       ...form,
@@ -379,13 +387,13 @@ function PostDialog({
       scheduled_for: form.scheduled_for || undefined,
       campaign_id: form.campaign_id || undefined,
       media_url: form.media_url || undefined,
+      client_id: form.client_id || undefined,
     };
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...payload });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -414,8 +422,8 @@ function PostDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Plataforma *</label>
-              <select
+              <label htmlFor="con-plataforma" className="mb-1 block text-sm font-medium text-foreground">Plataforma *</label>
+              <select id="con-plataforma"
                 value={form.platform}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, platform: e.target.value as Platform }))
@@ -430,8 +438,8 @@ function PostDialog({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
-              <select
+              <label htmlFor="con-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+              <select id="con-status"
                 value={form.status}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as PostStatus }))
@@ -439,17 +447,17 @@ function PostDialog({
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="draft">Rascunho</option>
-                <option value="pending_approval">Aguard. aprovacao</option>
+                <option value="pending_approval">Aguard. aprovação</option>
                 <option value="approved">Aprovado</option>
-                <option value="revision">Em revisao</option>
+                <option value="revision">Em revisão</option>
                 <option value="published">Publicado</option>
               </select>
             </div>
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Campanha</label>
-            <select
+            <label htmlFor="con-campanha" className="mb-1 block text-sm font-medium text-foreground">Campanha</label>
+            <select id="con-campanha"
               value={form.campaign_id ?? ""}
               onChange={(e) =>
                 setForm((f) => ({ ...f, campaign_id: e.target.value || undefined }))
@@ -466,10 +474,8 @@ function PostDialog({
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Legenda / Caption
-            </label>
-            <textarea
+            <label htmlFor="con-legenda-caption" className="mb-1 block text-sm font-medium text-foreground">Legenda / Caption</label>
+            <textarea id="con-legenda-caption"
               rows={4}
               value={form.caption ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, caption: e.target.value }))}
@@ -479,8 +485,8 @@ function PostDialog({
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Hashtags</label>
-            <input
+            <label htmlFor="con-hashtags" className="mb-1 block text-sm font-medium text-foreground">Hashtags</label>
+            <input id="con-hashtags"
               type="text"
               value={form.hashtags ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, hashtags: e.target.value }))}
@@ -491,10 +497,8 @@ function PostDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Agendamento
-              </label>
-              <input
+              <label htmlFor="con-agendamento" className="mb-1 block text-sm font-medium text-foreground">Agendamento</label>
+              <input id="con-agendamento"
                 type="datetime-local"
                 value={
                   form.scheduled_for
@@ -511,8 +515,8 @@ function PostDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">URL da midia</label>
-              <input
+              <label htmlFor="con-url-da-midia" className="mb-1 block text-sm font-medium text-foreground">URL da midia</label>
+              <input id="con-url-da-midia"
                 type="url"
                 value={form.media_url ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, media_url: e.target.value }))}
@@ -522,6 +526,11 @@ function PostDialog({
             </div>
           </div>
 
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="postdialog-client"
+          />
           <div className="flex justify-end gap-3 pt-1">
             <button
               type="button"
@@ -541,7 +550,7 @@ function PostDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar post"
               )}
@@ -684,7 +693,7 @@ function PipelineTab({
                               <button
                                 onClick={() => setApprovalPostId(post.id)}
                                 className="rounded p-1 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
-                                title="Enviar para aprovacao"
+                                title="Enviar para aprovação"
                               >
                                 <Send className="h-3.5 w-3.5" />
                               </button>
@@ -779,7 +788,7 @@ function PostsTab({
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Campanha</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Agendamento</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -840,7 +849,7 @@ function PostsTab({
                           <button
                             onClick={() => setApprovalPostId(post.id)}
                             className="rounded-md p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
-                            title="Enviar para aprovacao"
+                            title="Enviar para aprovação"
                           >
                             <Send className="h-4 w-4" />
                           </button>
@@ -889,7 +898,7 @@ function PostsTab({
           >
             <h2 className="mb-2 text-lg font-semibold text-foreground">Remover post</h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover este post? Esta acao nao pode ser desfeita.
+              Tem certeza que deseja remover este post? Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -910,7 +919,7 @@ function PostsTab({
                 {deleteMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
-                Confirmar remocao
+                Confirmar remoção
               </button>
             </div>
           </div>
@@ -924,7 +933,16 @@ function PostsTab({
 // Campaign dialog (create / edit)
 // ---------------------------------------------------------------------------
 
-function CampaignDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function CampaignDialog(props: React.ComponentProps<typeof CampaignDialogInner>) {
+  if (!props.open) return null;
+  return <CampaignDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function CampaignDialogInner({
   open,
   editing,
   onClose,
@@ -940,18 +958,18 @@ function CampaignDialog({
     name: editing?.name ?? "",
     month: editing?.month ?? new Date().toISOString().slice(0, 7),
     status: editing?.status ?? "active",
+    client_id: editing?.client_id ?? undefined,
   });
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...form });
+      updateMut.mutate({ id: editing.id, ...form }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(form);
+      createMut.mutate(form, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -978,8 +996,8 @@ function CampaignDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Nome *</label>
-            <input
+            <label htmlFor="con-nome" className="mb-1 block text-sm font-medium text-foreground">Nome *</label>
+            <input id="con-nome"
               type="text"
               required
               value={form.name}
@@ -990,8 +1008,8 @@ function CampaignDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Mes *</label>
-              <input
+              <label htmlFor="con-mes" className="mb-1 block text-sm font-medium text-foreground">Mês *</label>
+              <input id="con-mes"
                 type="month"
                 required
                 value={form.month}
@@ -1000,8 +1018,8 @@ function CampaignDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
-              <select
+              <label htmlFor="con-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+              <select id="con-status"
                 value={form.status}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as CampaignStatus }))
@@ -1015,6 +1033,11 @@ function CampaignDialog({
               </select>
             </div>
           </div>
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="campaigndialog-client"
+          />
           <div className="flex justify-end gap-3 pt-1">
             <button
               type="button"
@@ -1034,7 +1057,7 @@ function CampaignDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar campanha"
               )}
@@ -1102,9 +1125,9 @@ function CampanhasTab({
             <thead className="border-b border-border bg-muted/50">
               <tr>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Nome</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Mes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Mês</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1186,7 +1209,7 @@ function CampanhasTab({
             <h2 className="mb-2 text-lg font-semibold text-foreground">Remover campanha</h2>
             <p className="mb-6 text-sm text-muted-foreground">
               Tem certeza que deseja remover a campanha{" "}
-              <strong className="text-foreground">{confirmDelete.name}</strong>? Esta acao nao pode ser desfeita.
+              <strong className="text-foreground">{confirmDelete.name}</strong>? Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -1207,7 +1230,7 @@ function CampanhasTab({
                 {deleteMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
-                Confirmar remocao
+                Confirmar remoção
               </button>
             </div>
           </div>
@@ -1249,9 +1272,9 @@ export default function Conteudo() {
         <div className="flex items-center gap-3">
           <Megaphone className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Conteudo</h1>
+            <h1 className="text-2xl font-bold text-foreground">Conteúdo</h1>
             <p className="text-sm text-muted-foreground">
-              Studio de conteudo social — posts, campanhas e aprovacoes
+              Studio de conteudo social — posts, campanhas e aprovações
             </p>
           </div>
         </div>

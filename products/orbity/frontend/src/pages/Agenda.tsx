@@ -9,6 +9,10 @@
  */
 import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
+import { toLocalInput, fromLocalInput, localDayKey } from '@/lib/dates';
+import { ClientSelect } from '@/components/ClientSelect';
+import { PageError } from '@/components/PageError';
+import { useClientOptions, nameLookup } from '@/hooks/useClients';
 import {
   useAgendaEvents,
   useCreateAgendaEvent,
@@ -81,13 +85,13 @@ function formatDateLabel(isoStr: string): string {
   });
 }
 
-function groupByDay(events: AgendaEvent[]): Map<string, AgendaEvent[]> {
+export function groupByDay(events: AgendaEvent[]): Map<string, AgendaEvent[]> {
   const map = new Map<string, AgendaEvent[]>();
   const sorted = [...events].sort(
     (a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()
   );
   for (const ev of sorted) {
-    const dayKey = ev.starts_at.slice(0, 10); // YYYY-MM-DD
+    const dayKey = localDayKey(ev.starts_at); // local calendar day (BRT), not UTC
     if (!map.has(dayKey)) map.set(dayKey, []);
     map.get(dayKey)!.push(ev);
   }
@@ -104,9 +108,10 @@ interface EventCardProps {
   onDelete: (id: string) => void;
   onSyncGcal: (id: string) => void;
   isSyncing: boolean;
+  clientName?: string | null;
 }
 
-function EventCard({ event, onEdit, onDelete, onSyncGcal, isSyncing }: EventCardProps) {
+function EventCard({ event, onEdit, onDelete, onSyncGcal, isSyncing, clientName }: EventCardProps) {
   const typeCfg = EVENT_TYPE_CONFIG[event.event_type as EventType] ?? EVENT_TYPE_CONFIG.other;
 
   return (
@@ -119,10 +124,16 @@ function EventCard({ event, onEdit, onDelete, onSyncGcal, isSyncing }: EventCard
               {typeCfg.label}
             </Badge>
             {event.gcal_event_id && (
-              <span className="flex items-center gap-1 text-xs text-green-600">
+              <span
+                className="flex items-center gap-1 text-xs text-amber-600"
+                title="Sincronização simulada: o Google Calendar ainda não está conectado"
+              >
                 <CheckCircle2 className="h-3 w-3" />
-                GCal
+                GCal (simulado)
               </span>
+            )}
+            {clientName && (
+              <span className="text-xs text-muted-foreground">Cliente: {clientName}</span>
             )}
           </div>
         </div>
@@ -131,8 +142,8 @@ function EventCard({ event, onEdit, onDelete, onSyncGcal, isSyncing }: EventCard
             onClick={() => onSyncGcal(event.id)}
             disabled={isSyncing}
             className="text-muted-foreground hover:text-blue-600 transition-colors p-1 rounded"
-            aria-label="Sincronizar com Google Calendar"
-            title="Sincronizar com Google Calendar"
+            aria-label="Sincronizar com Google Calendar (simulado)"
+            title="Simular sincronização — Google Calendar não conectado"
           >
             {isSyncing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -192,41 +203,37 @@ function EventFormDialog({ open, onClose, event }: EventFormDialogProps) {
   const createEvent = useCreateAgendaEvent();
   const updateEvent = useUpdateAgendaEvent();
 
-  // Derive datetime-local strings for the form inputs
-  const toLocalInput = (isoStr: string | undefined) => {
-    if (!isoStr) return '';
-    // datetime-local expects "YYYY-MM-DDTHH:mm"
-    return isoStr.slice(0, 16);
-  };
-
   const [title, setTitle] = useState(event?.title ?? '');
   const [description, setDescription] = useState(event?.description ?? '');
   const [eventType, setEventType] = useState<EventType>(event?.event_type as EventType ?? 'other');
   const [startsAt, setStartsAt] = useState(toLocalInput(event?.starts_at));
   const [endsAt, setEndsAt] = useState(toLocalInput(event?.ends_at));
   const [location, setLocation] = useState(event?.location ?? '');
+  const [clientId, setClientId] = useState<string | undefined>(event?.client_id ?? undefined);
 
   const handleOpenChange = (v: boolean) => {
     if (!v) onClose();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const data: AgendaEventCreateData = {
       title: title.trim(),
       description: description.trim() || undefined,
       event_type: eventType,
-      starts_at: new Date(startsAt).toISOString(),
-      ends_at: new Date(endsAt).toISOString(),
+      starts_at: fromLocalInput(startsAt),
+      ends_at: fromLocalInput(endsAt),
       location: location.trim() || undefined,
+      client_id: clientId,
     };
 
+    // mutate (not mutateAsync): the hook already toasts the error, and the
+    // dialog only closes on success — no unhandled rejection, form kept.
     if (isEdit && event) {
-      await updateEvent.mutateAsync({ id: event.id, ...data });
+      updateEvent.mutate({ id: event.id, ...data }, { onSuccess: onClose });
     } else {
-      await createEvent.mutateAsync(data);
+      createEvent.mutate(data, { onSuccess: onClose });
     }
-    onClose();
   };
 
   const isPending = createEvent.isPending || updateEvent.isPending;
@@ -285,6 +292,8 @@ function EventFormDialog({ open, onClose, event }: EventFormDialogProps) {
             </div>
           </div>
 
+          <ClientSelect value={clientId} onChange={setClientId} id="agenda-client" />
+
           <div className="space-y-1">
             <label className="text-sm font-medium text-foreground">Local</label>
             <Input
@@ -335,7 +344,9 @@ export default function Agenda() {
   const [editingEvent, setEditingEvent] = useState<AgendaEvent | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
 
-  const { data, isPending, isError, error } = useAgendaEvents(
+  const clientsQ = useClientOptions();
+  const clientName = nameLookup(clientsQ.data);
+  const { data, isPending, isError, error, refetch } = useAgendaEvents(
     filterType ? { event_type: filterType } : undefined
   );
   const deleteEvent = useDeleteAgendaEvent();
@@ -383,14 +394,8 @@ export default function Agenda() {
   }
 
   // ── Error state ──
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3 text-destructive">
-        <AlertCircle className="h-8 w-8" />
-        <p className="text-sm font-medium">Erro ao carregar agenda</p>
-        <p className="text-xs text-muted-foreground">{(error as Error)?.message}</p>
-      </div>
-    );
+  if (isError && !data) {
+    return <PageError title="Erro ao carregar agenda" error={error} onRetry={() => void refetch()} />;
   }
 
   return (
@@ -429,6 +434,18 @@ export default function Agenda() {
         </div>
       </div>
 
+      {/* Honesty banner: the calendar adapter is a Fake until credentials are wired */}
+      <div
+        role="note"
+        className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+      >
+        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>
+          Google Calendar <strong>não está conectado</strong>: a sincronização é simulada
+          e nenhum evento é enviado à sua agenda real.
+        </span>
+      </div>
+
       {/* Empty state */}
       {events.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
@@ -459,6 +476,7 @@ export default function Agenda() {
                     onDelete={handleDelete}
                     onSyncGcal={handleSyncGcal}
                     isSyncing={syncingId === ev.id}
+                    clientName={clientName(ev.client_id)}
                   />
                 ))}
               </div>

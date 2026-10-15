@@ -188,10 +188,12 @@ export function useSyncGcal() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orbity-agenda-events'] });
       queryClient.invalidateQueries({ queryKey: ['orbity-agenda-event', data.id] });
-      toast.success('Evento sincronizado com Google Calendar!');
+      toast.success('Sincronização simulada', {
+        description: 'Google Calendar não conectado — nada foi enviado à agenda real.',
+      });
     },
     onError: (error: Error) => {
-      toast.error('Erro ao sincronizar com Google Calendar', { description: error.message });
+      toast.error('Erro ao simular sincronização', { description: error.message });
     },
   });
 }

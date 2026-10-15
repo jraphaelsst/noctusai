@@ -350,10 +350,10 @@ export function useCancelExecution() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
-      toast.success("Execucao cancelada!");
+      toast.success("Execução cancelada!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao cancelar execucao", { description: error.message });
+      toast.error("Erro ao cancelar execução", { description: error.message });
     },
   });
 }
@@ -372,11 +372,11 @@ export function useRunDue() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success(
-        `Processadas ${data.processed} acoes — ${data.sent} enviadas, ${data.skipped} ignoradas, ${data.failed} falhas.`,
+        `Processadas ${data.processed} ações — ${data.sent} enviadas, ${data.skipped} ignoradas, ${data.failed} falhas.`,
       );
     },
     onError: (error: Error) => {
-      toast.error("Erro ao processar acoes pendentes", {
+      toast.error("Erro ao processar ações pendentes", {
         description: error.message,
       });
     },

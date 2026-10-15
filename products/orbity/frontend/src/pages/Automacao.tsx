@@ -67,7 +67,7 @@ const TRIGGER_LABELS: Record<TriggerType, string> = {
   owner_changed: "Responsavel alterado",
   task_created: "Tarefa criada",
   task_completed: "Tarefa concluida",
-  meeting_created: "Reuniao criada",
+  meeting_created: "Reunião criada",
   proposal_sent: "Proposta enviada",
   client_created: "Cliente criado",
   lead_status_changed: "Status do lead alterado",
@@ -78,9 +78,9 @@ const STEP_TYPE_LABELS: Record<StepType, string> = {
   send_message: "Enviar mensagem",
   send_whatsapp_media: "Enviar midia WhatsApp",
   wait: "Aguardar",
-  condition: "Condicao",
-  action: "Acao",
-  branch: "Ramificacao",
+  condition: "Condição",
+  action: "Ação",
+  branch: "Ramificação",
   end: "Fim",
 };
 
@@ -189,7 +189,16 @@ function EmptyState({
 // Flow dialog (create / edit)
 // ---------------------------------------------------------------------------
 
-function FlowDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function FlowDialog(props: React.ComponentProps<typeof FlowDialogInner>) {
+  if (!props.open) return null;
+  return <FlowDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function FlowDialogInner({
   open,
   editing,
   onClose,
@@ -232,7 +241,7 @@ function FlowDialog({
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">
-            {editing ? "Editar fluxo" : "Novo fluxo de automacao"}
+            {editing ? "Editar fluxo" : "Novo fluxo de automação"}
           </h2>
           <button
             onClick={onClose}
@@ -243,10 +252,8 @@ function FlowDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Nome *
-            </label>
-            <input
+            <label htmlFor="aut-nome" className="mb-1 block text-sm font-medium text-foreground">Nome *</label>
+            <input id="aut-nome"
               type="text"
               required
               value={form.name}
@@ -258,10 +265,8 @@ function FlowDialog({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Gatilho *
-            </label>
-            <select
+            <label htmlFor="aut-gatilho" className="mb-1 block text-sm font-medium text-foreground">Gatilho *</label>
+            <select id="aut-gatilho"
               value={form.trigger_type}
               onChange={(e) =>
                 setForm((f) => ({
@@ -314,7 +319,7 @@ function FlowDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar fluxo"
               )}
@@ -341,7 +346,16 @@ const STEP_CONFIG_PLACEHOLDERS: Partial<Record<StepType, string>> = {
   end: "{}",
 };
 
-function StepDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function StepDialog(props: React.ComponentProps<typeof StepDialogInner>) {
+  if (!props.open) return null;
+  return <StepDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function StepDialogInner({
   open,
   flowId,
   editing,
@@ -372,7 +386,7 @@ function StepDialog({
     try {
       return JSON.parse(raw);
     } catch {
-      setConfigError("JSON invalido");
+      setConfigError("JSON inválido");
       return null;
     }
   }
@@ -425,10 +439,8 @@ function StepDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Tipo de passo *
-            </label>
-            <select
+            <label htmlFor="aut-tipo-de-passo" className="mb-1 block text-sm font-medium text-foreground">Tipo de passo *</label>
+            <select id="aut-tipo-de-passo"
               value={stepType}
               onChange={(e) => {
                 const t = e.target.value as StepType;
@@ -447,10 +459,8 @@ function StepDialog({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Config (JSON)
-            </label>
-            <textarea
+            <label htmlFor="aut-config-json" className="mb-1 block text-sm font-medium text-foreground">Config (JSON)</label>
+            <textarea id="aut-config-json"
               rows={5}
               value={configStr}
               onChange={(e) => {
@@ -694,10 +704,8 @@ function TriggerDialog({
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              ID do lead (UUID) *
-            </label>
-            <input
+            <label htmlFor="aut-id-do-lead-uuid" className="mb-1 block text-sm font-medium text-foreground">ID do lead (UUID) *</label>
+            <input id="aut-id-do-lead-uuid"
               type="text"
               required
               value={leadId}
@@ -776,7 +784,7 @@ function FlowsTab() {
 
       {items.length === 0 ? (
         <EmptyState
-          label="Nenhum fluxo de automacao encontrado"
+          label="Nenhum fluxo de automação encontrado"
           onAdd={() => {
             setEditing(null);
             setDialogOpen(true);
@@ -915,7 +923,7 @@ function FlowsTab() {
             <p className="mb-6 text-sm text-muted-foreground">
               Tem certeza que deseja remover o fluxo{" "}
               <strong className="text-foreground">{confirmDelete.name}</strong>?
-              Todos os passos e execucoes serao perdidos.
+              Todos os passos e execuções serao perdidos.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -936,7 +944,7 @@ function FlowsTab() {
                 {deleteMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
-                Confirmar remocao
+                Confirmar remoção
               </button>
             </div>
           </div>
@@ -956,7 +964,7 @@ function ExecutionsTab() {
   const runDueMut = useRunDue();
   const [confirmCancel, setConfirmCancel] = useState<Execution | null>(null);
 
-  if (isPending && !executions) return <LoadingState label="Carregando execucoes..." />;
+  if (isPending && !executions) return <LoadingState label="Carregando execuções..." />;
   if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
@@ -967,7 +975,7 @@ function ExecutionsTab() {
       {/* Run-due button */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {items.length} {items.length === 1 ? "execucao" : "execucoes"} listadas
+          {items.length} {items.length === 1 ? "execução" : "execuções"} listadas
         </p>
         <button
           onClick={() => runDueMut.mutate()}
@@ -982,14 +990,14 @@ function ExecutionsTab() {
           ) : (
             <>
               <RefreshCw className="h-4 w-4" />
-              Executar acoes pendentes
+              Executar ações pendentes
             </>
           )}
         </button>
       </div>
 
       {items.length === 0 ? (
-        <EmptyState label="Nenhuma execucao encontrada" />
+        <EmptyState label="Nenhuma execução encontrada" />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-left text-sm">
@@ -1005,13 +1013,13 @@ function ExecutionsTab() {
                   Passo atual
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">
-                  Proxima acao
+                  Proxima ação
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden xl:table-cell">
                   Erro
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">
-                  Acoes
+                  Ações
                 </th>
               </tr>
             </thead>
@@ -1062,7 +1070,7 @@ function ExecutionsTab() {
                         <button
                           onClick={() => setConfirmCancel(exec)}
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                          title="Cancelar execucao"
+                          title="Cancelar execução"
                         >
                           <XCircle className="h-4 w-4" />
                         </button>
@@ -1086,10 +1094,10 @@ function ExecutionsTab() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-2 text-lg font-semibold text-foreground">
-              Cancelar execucao
+              Cancelar execução
             </h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Cancelar esta execucao para o lead{" "}
+              Cancelar esta execução para o lead{" "}
               <strong className="font-mono text-foreground text-xs">
                 {confirmCancel.lead_id}
               </strong>
@@ -1132,7 +1140,7 @@ type TabKey = "flows" | "executions";
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: "flows", label: "Fluxos", icon: Zap },
-  { key: "executions", label: "Execucoes", icon: Play },
+  { key: "executions", label: "Execuções", icon: Play },
 ];
 
 export default function Automacao() {
@@ -1144,9 +1152,9 @@ export default function Automacao() {
       <div className="flex items-center gap-3">
         <Zap className="h-6 w-6 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Automacao</h1>
+          <h1 className="text-2xl font-bold text-foreground">Automação</h1>
           <p className="text-sm text-muted-foreground">
-            Fluxos de automacao WhatsApp — gatilhos, passos e execucoes
+            Fluxos de automação WhatsApp — gatilhos, passos e execuções
           </p>
         </div>
       </div>

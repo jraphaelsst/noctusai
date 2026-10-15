@@ -14,6 +14,8 @@
  */
 import { useState } from "react";
 import { format } from "date-fns";
+import { ClientSelect } from "@/components/ClientSelect";
+import { EntitySelect } from "@/components/EntitySelect";
 import {
   DollarSign,
   TrendingUp,
@@ -143,7 +145,7 @@ function OverviewTab({ month }: { month: string }) {
 
   if (isPending && !data) return <LoadingState label="Carregando fluxo de caixa..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
-  if (!data) return <EmptyState label="Sem dados para este mes" />;
+  if (!data) return <EmptyState label="Sem dados para este mês" />;
 
   const netPositive = data.net >= 0;
 
@@ -240,7 +242,16 @@ const CONTRACT_STATUS_COLORS: Record<ContractStatus, string> = {
   ended: "bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400",
 };
 
-function ContractDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function ContractDialog(props: React.ComponentProps<typeof ContractDialogInner>) {
+  if (!props.open) return null;
+  return <ContractDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function ContractDialogInner({
   open,
   editing,
   onClose,
@@ -259,24 +270,25 @@ function ContractDialog({
     start_date: editing?.start_date ?? "",
     end_date: editing?.end_date ?? "",
     status: editing?.status ?? "active",
+    client_id: editing?.client_id ?? undefined,
     notes: editing?.notes ?? "",
   });
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
       ...form,
       end_date: form.end_date || undefined,
       notes: form.notes || undefined,
     };
+    // mutate + onSuccess: the hook toasts errors; the dialog stays open on failure.
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...payload });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -303,8 +315,8 @@ function ContractDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Titulo *</label>
-            <input
+            <label htmlFor="fin-titulo" className="mb-1 block text-sm font-medium text-foreground">Título *</label>
+            <input id="fin-titulo"
               type="text"
               required
               value={form.title}
@@ -314,8 +326,8 @@ function ContractDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Valor mensal (R$) *</label>
-              <input
+              <label htmlFor="fin-valor-mensal-r" className="mb-1 block text-sm font-medium text-foreground">Valor mensal (R$) *</label>
+              <input id="fin-valor-mensal-r"
                 type="number"
                 min="0"
                 step="0.01"
@@ -328,8 +340,8 @@ function ContractDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Dia de cobranca</label>
-              <input
+              <label htmlFor="fin-dia-de-cobranca" className="mb-1 block text-sm font-medium text-foreground">Dia de cobrança</label>
+              <input id="fin-dia-de-cobranca"
                 type="number"
                 min="1"
                 max="31"
@@ -343,8 +355,8 @@ function ContractDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Inicio *</label>
-              <input
+              <label htmlFor="fin-inicio" className="mb-1 block text-sm font-medium text-foreground">Início *</label>
+              <input id="fin-inicio"
                 type="date"
                 required
                 value={form.start_date}
@@ -353,8 +365,8 @@ function ContractDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Termino</label>
-              <input
+              <label htmlFor="fin-termino" className="mb-1 block text-sm font-medium text-foreground">Término</label>
+              <input id="fin-termino"
                 type="date"
                 value={form.end_date ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))}
@@ -363,8 +375,8 @@ function ContractDialog({
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
-            <select
+            <label htmlFor="fin-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+            <select id="fin-status"
               value={form.status}
               onChange={(e) =>
                 setForm((f) => ({ ...f, status: e.target.value as ContractStatus }))
@@ -376,9 +388,14 @@ function ContractDialog({
               <option value="ended">Encerrado</option>
             </select>
           </div>
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="contract-client"
+          />
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Notas</label>
-            <textarea
+            <label htmlFor="fin-notas" className="mb-1 block text-sm font-medium text-foreground">Notas</label>
+            <textarea id="fin-notas"
               rows={2}
               value={form.notes ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -404,7 +421,7 @@ function ContractDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar contrato"
               )}
@@ -450,11 +467,11 @@ function ContractsTab() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-muted/50">
               <tr>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Titulo</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Valor/mes</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Inicio</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Título</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Valor/mês</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Início</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -522,7 +539,7 @@ function ContractsTab() {
             <h2 className="mb-2 text-lg font-semibold text-foreground">Remover contrato</h2>
             <p className="mb-6 text-sm text-muted-foreground">
               Tem certeza que deseja remover o contrato{" "}
-              <strong className="text-foreground">{confirmDelete.title}</strong>? Esta acao nao pode ser desfeita.
+              <strong className="text-foreground">{confirmDelete.title}</strong>? Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -546,7 +563,7 @@ function ContractsTab() {
                     Removendo...
                   </>
                 ) : (
-                  "Confirmar remocao"
+                  "Confirmar remoção"
                 )}
               </button>
             </div>
@@ -567,7 +584,16 @@ const RECURRENCE_LABELS: Record<ExpenseRecurrence, string> = {
   installment: "Parcelada",
 };
 
-function ExpenseDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function ExpenseDialog(props: React.ComponentProps<typeof ExpenseDialogInner>) {
+  if (!props.open) return null;
+  return <ExpenseDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function ExpenseDialogInner({
   open,
   editing,
   onClose,
@@ -592,19 +618,19 @@ function ExpenseDialog({
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
       ...form,
       installments_total: form.installments_total || undefined,
       installment_n: form.installment_n || undefined,
     };
+    // mutate + onSuccess: the hook toasts errors; the dialog stays open on failure.
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...payload });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -631,8 +657,8 @@ function ExpenseDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">Descricao *</label>
-            <input
+            <label htmlFor="fin-descricao" className="mb-1 block text-sm font-medium text-foreground">Descrição *</label>
+            <input id="fin-descricao"
               type="text"
               required
               value={form.description}
@@ -642,8 +668,8 @@ function ExpenseDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Valor (R$) *</label>
-              <input
+              <label htmlFor="fin-valor-r" className="mb-1 block text-sm font-medium text-foreground">Valor (R$) *</label>
+              <input id="fin-valor-r"
                 type="number"
                 min="0.01"
                 step="0.01"
@@ -656,8 +682,8 @@ function ExpenseDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Vencimento *</label>
-              <input
+              <label htmlFor="fin-vencimento" className="mb-1 block text-sm font-medium text-foreground">Vencimento *</label>
+              <input id="fin-vencimento"
                 type="date"
                 required
                 value={form.due_date}
@@ -668,8 +694,8 @@ function ExpenseDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Categoria</label>
-              <input
+              <label htmlFor="fin-categoria" className="mb-1 block text-sm font-medium text-foreground">Categoria</label>
+              <input id="fin-categoria"
                 type="text"
                 value={form.category ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
@@ -678,8 +704,8 @@ function ExpenseDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Recorrencia</label>
-              <select
+              <label htmlFor="fin-recorrencia" className="mb-1 block text-sm font-medium text-foreground">Recorrência</label>
+              <select id="fin-recorrencia"
                 value={form.recurrence}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, recurrence: e.target.value as ExpenseRecurrence }))
@@ -723,7 +749,7 @@ function ExpenseDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar despesa"
               )}
@@ -769,12 +795,12 @@ function ExpensesTab() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-muted/50">
               <tr>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Descricao</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Descrição</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Valor</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Vencimento</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Recorrencia</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Recorrência</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -868,7 +894,7 @@ function ExpensesTab() {
                 className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
               >
                 {deleteMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Confirmar remocao
+                Confirmar remoção
               </button>
             </div>
           </div>
@@ -903,7 +929,16 @@ const REVENUE_STATUS_ICONS: Record<RevenueStatus, React.ElementType> = {
   canceled: XCircle,
 };
 
-function RevenueDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function RevenueDialog(props: React.ComponentProps<typeof RevenueDialogInner>) {
+  if (!props.open) return null;
+  return <RevenueDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function RevenueDialogInner({
   open,
   editing,
   onClose,
@@ -915,6 +950,7 @@ function RevenueDialog({
   const createMut = useCreateRevenue();
   const updateMut = useUpdateRevenue();
 
+  const contractsQ = useContracts();
   const currentMonth = format(new Date(), "yyyy-MM-01");
 
   const [form, setForm] = useState<RevenueCreate>({
@@ -929,7 +965,7 @@ function RevenueDialog({
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
       ...form,
@@ -937,12 +973,12 @@ function RevenueDialog({
       contract_id: form.contract_id || undefined,
       paid_at: form.paid_at || undefined,
     };
+    // mutate + onSuccess: the hook toasts errors; the dialog stays open on failure.
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...payload });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -970,8 +1006,8 @@ function RevenueDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Valor (R$) *</label>
-              <input
+              <label htmlFor="fin-valor-r" className="mb-1 block text-sm font-medium text-foreground">Valor (R$) *</label>
+              <input id="fin-valor-r"
                 type="number"
                 min="0.01"
                 step="0.01"
@@ -984,8 +1020,8 @@ function RevenueDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Vencimento *</label>
-              <input
+              <label htmlFor="fin-vencimento" className="mb-1 block text-sm font-medium text-foreground">Vencimento *</label>
+              <input id="fin-vencimento"
                 type="date"
                 required
                 value={form.due_date}
@@ -996,8 +1032,8 @@ function RevenueDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Mes referencia *</label>
-              <input
+              <label htmlFor="fin-mes-referencia" className="mb-1 block text-sm font-medium text-foreground">Mês referência *</label>
+              <input id="fin-mes-referencia"
                 type="date"
                 required
                 value={form.reference_month}
@@ -1006,8 +1042,8 @@ function RevenueDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
-              <select
+              <label htmlFor="fin-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+              <select id="fin-status"
                 value={form.status}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as RevenueStatus }))
@@ -1021,10 +1057,29 @@ function RevenueDialog({
               </select>
             </div>
           </div>
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="revenue-client"
+          />
+          <EntitySelect
+            id="revenue-contract"
+            label="Contrato"
+            noneLabel="Sem contrato"
+            value={form.contract_id}
+            onChange={(id) => setForm((f) => ({ ...f, contract_id: id }))}
+            options={contractsQ.data?.items
+              .filter((c) => !form.client_id || !c.client_id || c.client_id === form.client_id)
+              .map((c) => ({ id: c.id, name: c.title }))}
+            isPending={contractsQ.isPending}
+            isError={contractsQ.isError}
+            onRetry={() => void contractsQ.refetch()}
+            emptyLabel="Nenhum contrato cadastrado."
+          />
           {form.status === "paid" && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Data de pagamento</label>
-              <input
+              <label htmlFor="fin-data-de-pagamento" className="mb-1 block text-sm font-medium text-foreground">Data de pagamento</label>
+              <input id="fin-data-de-pagamento"
                 type="date"
                 value={form.paid_at ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, paid_at: e.target.value }))}
@@ -1051,7 +1106,7 @@ function RevenueDialog({
                   Salvando...
                 </>
               ) : editing ? (
-                "Salvar alteracoes"
+                "Salvar alterações"
               ) : (
                 "Criar receita"
               )}
@@ -1097,11 +1152,11 @@ function RevenuesTab() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-muted/50">
               <tr>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Mes ref.</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Mês ref.</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Valor</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Vencimento</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1169,7 +1224,7 @@ function RevenuesTab() {
           >
             <h2 className="mb-2 text-lg font-semibold text-foreground">Remover receita</h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover esta receita? Esta acao nao pode ser desfeita.
+              Tem certeza que deseja remover esta receita? Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -1188,7 +1243,7 @@ function RevenuesTab() {
                 className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
               >
                 {deleteMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Confirmar remocao
+                Confirmar remoção
               </button>
             </div>
           </div>
@@ -1203,7 +1258,7 @@ function RevenuesTab() {
 // ---------------------------------------------------------------------------
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
-  { key: "overview", label: "Visao Geral", icon: BarChart3 },
+  { key: "overview", label: "Visão Geral", icon: BarChart3 },
   { key: "contracts", label: "Contratos", icon: FileText },
   { key: "expenses", label: "Despesas", icon: Receipt },
   { key: "revenues", label: "Receitas", icon: Banknote },
@@ -1230,8 +1285,8 @@ export default function Financeiro() {
         </div>
         {activeTab === "overview" && (
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-muted-foreground">Mes</label>
-            <input
+            <label htmlFor="fin-mes" className="text-sm font-medium text-muted-foreground">Mês</label>
+            <input id="fin-mes"
               type="month"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}

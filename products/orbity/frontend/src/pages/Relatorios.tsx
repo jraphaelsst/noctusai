@@ -13,6 +13,10 @@
  * status_pagina keys surfaced: ["relatorios"]
  */
 import { useState } from "react";
+import { format } from "date-fns";
+import { reportPublicUrl } from "@/lib/publicLinks";
+import { ClientSelect } from "@/components/ClientSelect";
+import { useClientOptions, nameLookup } from "@/hooks/useClients";
 import {
   FileBarChart2,
   Plus,
@@ -63,10 +67,9 @@ function fmtDateTime(iso: string): string {
   }
 }
 
+// The SPA public page (/relatorio/:token) — NOT the /api JSON endpoint.
 function buildPublicUrl(publicToken: string): string {
-  // Use the API public endpoint (works without auth)
-  const base = window.location.origin;
-  return `${base}/api/reports/public/${publicToken}`;
+  return reportPublicUrl(publicToken);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +197,20 @@ interface ReportDialogProps {
   onClose: () => void;
 }
 
-function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function ReportDialog(props: React.ComponentProps<typeof ReportDialogInner>) {
+  if (!props.open) return null;
+  return <ReportDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
   const createMut = useCreateReport();
   const updateMut = useUpdateReport();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = format(new Date(), "yyyy-MM-dd");
 
   const [form, setForm] = useState<ReportCreate>({
     name: editing?.name ?? "",
@@ -211,7 +223,7 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload: ReportCreate = {
       ...form,
@@ -219,11 +231,10 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
       expires_at: form.expires_at || undefined,
     };
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...payload });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -251,10 +262,8 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Nome do relatório *
-            </label>
-            <input
+            <label htmlFor="rel-nome-do-relatorio" className="mb-1 block text-sm font-medium text-foreground">Nome do relatório *</label>
+            <input id="rel-nome-do-relatorio"
               type="text"
               required
               value={form.name}
@@ -266,10 +275,8 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Período — início *
-              </label>
-              <input
+              <label htmlFor="rel-periodo-inicio" className="mb-1 block text-sm font-medium text-foreground">Período — início *</label>
+              <input id="rel-periodo-inicio"
                 type="date"
                 required
                 value={form.period_start}
@@ -278,10 +285,8 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Período — fim *
-              </label>
-              <input
+              <label htmlFor="rel-periodo-fim" className="mb-1 block text-sm font-medium text-foreground">Período — fim *</label>
+              <input id="rel-periodo-fim"
                 type="date"
                 required
                 value={form.period_end}
@@ -293,8 +298,8 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">Status</label>
-              <select
+              <label htmlFor="rel-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+              <select id="rel-status"
                 value={form.status}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as ReportStatus }))
@@ -306,10 +311,8 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Expira em
-              </label>
-              <input
+              <label htmlFor="rel-expira-em" className="mb-1 block text-sm font-medium text-foreground">Expira em</label>
+              <input id="rel-expira-em"
                 type="datetime-local"
                 value={form.expires_at ? form.expires_at.slice(0, 16) : ""}
                 onChange={(e) =>
@@ -323,20 +326,11 @@ function ReportDialog({ open, editing, onClose }: ReportDialogProps) {
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              ID do cliente (UUID, opcional)
-            </label>
-            <input
-              type="text"
-              value={form.client_id ?? ""}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, client_id: e.target.value || undefined }))
-              }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Deixe em branco para sem cliente"
-            />
-          </div>
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="report-client"
+          />
 
           <div className="flex justify-end gap-3 pt-1">
             <button
@@ -384,6 +378,8 @@ function ListTab({ onSelectReport }: ListTabProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Report | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Report | null>(null);
+  const clientsQ = useClientOptions();
+  const clientName = nameLookup(clientsQ.data);
 
   if (isPending && !data) return <LoadingState label="Carregando relatórios..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
@@ -444,7 +440,7 @@ function ListTab({ onSelectReport }: ListTabProps) {
                       </div>
                       {report.client_id && (
                         <div className="text-xs text-muted-foreground truncate max-w-[180px]">
-                          Cliente: {report.client_id}
+                          Cliente: {clientName(report.client_id) ?? "—"}
                         </div>
                       )}
                     </td>

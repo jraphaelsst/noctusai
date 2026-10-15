@@ -16,11 +16,14 @@
  */
 import { useState } from "react";
 import { format, subMonths } from "date-fns";
+import { ClientSelect } from "@/components/ClientSelect";
+import { CampaignMetricsDialog } from "@/components/CampaignMetricsDialog";
 import {
   Target,
   Plus,
   Pencil,
   Trash2,
+  LineChart,
   Loader2,
   AlertCircle,
   FileText,
@@ -239,7 +242,7 @@ function AggregateCard() {
   const periodEnd = format(today, "yyyy-MM-dd");
   const periodStart = format(subMonths(today, 1), "yyyy-MM-dd");
 
-  const { data, isPending, error } = useSpendLeadsAggregate(
+  const { data, isPending, error, refetch } = useSpendLeadsAggregate(
     periodStart,
     periodEnd,
   );
@@ -255,7 +258,15 @@ function AggregateCard() {
     );
   }
 
-  if (error || !data) {
+  if (error && !data) {
+    return (
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-5">
+        <ErrorState message={error.message} onRetry={() => void refetch()} />
+      </div>
+    );
+  }
+
+  if (!data) {
     return null;
   }
 
@@ -266,9 +277,9 @@ function AggregateCard() {
     return (
       <div className="rounded-lg border border-dashed border-border bg-muted/30 p-5 text-center">
         <p className="text-sm text-muted-foreground">
-          Nenhum investimento ou lead cadastrado nos últimos 30 dias. Estes
-          valores não vêm da Meta — eles refletem apenas o que foi digitado
-          manualmente nas campanhas.
+          Nenhum investimento ou lead lançado nos últimos 30 dias. Estes valores
+          não vêm da Meta — use o botão de métricas (gráfico) em cada campanha
+          para lançar investimento, impressões e leads manualmente.
         </p>
       </div>
     );
@@ -339,7 +350,16 @@ interface CampaignDialogProps {
   onClose: () => void;
 }
 
-function CampaignDialog({
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function CampaignDialog(props: React.ComponentProps<typeof CampaignDialogInner>) {
+  if (!props.open) return null;
+  return <CampaignDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function CampaignDialogInner({
   open,
   editing,
   adAccounts,
@@ -363,7 +383,7 @@ function CampaignDialog({
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const payload = {
       ...form,
@@ -381,11 +401,11 @@ function CampaignDialog({
         result_metric: payload.result_metric,
         situation: payload.situation,
       };
-      await updateMut.mutateAsync(updatePayload);
+      // mutate + onSuccess: hook toasts errors; dialog stays open on failure.
+      updateMut.mutate(updatePayload, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -413,10 +433,8 @@ function CampaignDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {!editing && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Conta de Anúncio *
-              </label>
-              <select
+              <label htmlFor="tra-conta-de-anuncio" className="mb-1 block text-sm font-medium text-foreground">Conta de Anúncio *</label>
+              <select id="tra-conta-de-anuncio"
                 required
                 value={form.ad_account_id}
                 onChange={(e) =>
@@ -434,10 +452,8 @@ function CampaignDialog({
           )}
           {!editing && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                ID Externo (Meta) *
-              </label>
-              <input
+              <label htmlFor="tra-id-externo-meta" className="mb-1 block text-sm font-medium text-foreground">ID Externo (Meta) *</label>
+              <input id="tra-id-externo-meta"
                 type="text"
                 required
                 value={form.external_campaign_id}
@@ -457,10 +473,8 @@ function CampaignDialog({
             </div>
           )}
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Nome *
-            </label>
-            <input
+            <label htmlFor="tra-nome" className="mb-1 block text-sm font-medium text-foreground">Nome *</label>
+            <input id="tra-nome"
               type="text"
               required
               value={form.name}
@@ -472,10 +486,8 @@ function CampaignDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Objetivo
-              </label>
-              <input
+              <label htmlFor="tra-objetivo" className="mb-1 block text-sm font-medium text-foreground">Objetivo</label>
+              <input id="tra-objetivo"
                 type="text"
                 value={form.objective ?? ""}
                 onChange={(e) =>
@@ -486,10 +498,8 @@ function CampaignDialog({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Orçamento Diário (R$)
-              </label>
-              <input
+              <label htmlFor="tra-orcamento-diario-r" className="mb-1 block text-sm font-medium text-foreground">Orçamento Diário (R$)</label>
+              <input id="tra-orcamento-diario-r"
                 type="number"
                 min="0"
                 step="0.01"
@@ -508,10 +518,8 @@ function CampaignDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Status
-              </label>
-              <select
+              <label htmlFor="tra-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+              <select id="tra-status"
                 value={form.status}
                 onChange={(e) =>
                   setForm((f) => ({
@@ -527,10 +535,8 @@ function CampaignDialog({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Situação
-              </label>
-              <select
+              <label htmlFor="tra-situacao" className="mb-1 block text-sm font-medium text-foreground">Situação</label>
+              <select id="tra-situacao"
                 value={form.situation}
                 onChange={(e) =>
                   setForm((f) => ({
@@ -547,17 +553,15 @@ function CampaignDialog({
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Métrica de Resultado
-            </label>
-            <input
+            <label htmlFor="tra-metrica-de-resultado" className="mb-1 block text-sm font-medium text-foreground">Métrica de Resultado</label>
+            <input id="tra-metrica-de-resultado"
               type="text"
               value={form.result_metric ?? ""}
               onChange={(e) =>
                 setForm((f) => ({ ...f, result_metric: e.target.value }))
               }
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="ex: leads, conversoes"
+              placeholder="ex: leads, conversões"
             />
           </div>
           <div className="flex justify-end gap-3 pt-1">
@@ -606,6 +610,7 @@ function CampanhasTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Campaign | null>(null);
+  const [metricsFor, setMetricsFor] = useState<Campaign | null>(null);
 
   const adAccounts = accountsData?.items ?? [];
   const campaigns = data?.items ?? [];
@@ -782,20 +787,13 @@ function CampanhasTab() {
                           situation: e.target.value as SituationLiteral,
                         })
                       }
-                      className="appearance-none rounded border-none bg-transparent text-xs font-medium cursor-pointer focus:outline-none"
-                      style={{ padding: 0 }}
+                      className={`rounded-full border-none px-2.5 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${SITUATION_COLORS[campaign.situation as SituationLiteral]}`}
                       aria-label="Situação da campanha"
                     >
-                      <option value="on-track">No Prazo</option>
-                      <option value="attention">Atenção</option>
-                      <option value="off">Fora do Prazo</option>
+                      <option value="on-track">{SITUATION_LABEL["on-track"]}</option>
+                      <option value="attention">{SITUATION_LABEL.attention}</option>
+                      <option value="off">{SITUATION_LABEL.off}</option>
                     </select>
-                    <span className="sr-only">
-                      <SituationChip value={campaign.situation as SituationLiteral} />
-                    </span>
-                    <SituationChip
-                      value={campaign.situation as SituationLiteral}
-                    />
                   </td>
                   <td className="px-4 py-3 text-foreground hidden md:table-cell">
                     {campaign.daily_budget != null
@@ -804,6 +802,14 @@ function CampanhasTab() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setMetricsFor(campaign)}
+                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                        title="Métricas (lançamento manual e histórico)"
+                        aria-label="Métricas da campanha"
+                      >
+                        <LineChart className="h-4 w-4" />
+                      </button>
                       <button
                         onClick={() => {
                           setEditing(campaign);
@@ -828,6 +834,10 @@ function CampanhasTab() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {metricsFor && (
+        <CampaignMetricsDialog campaign={metricsFor} onClose={() => setMetricsFor(null)} />
       )}
 
       <CampaignDialog
@@ -893,7 +903,16 @@ interface AdAccountDialogProps {
   onClose: () => void;
 }
 
-function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
+/**
+ * Remount per open/target so form state never leaks from a previous
+ * create/edit (re-opening "Novo" used to come back pre-filled).
+ */
+function AdAccountDialog(props: React.ComponentProps<typeof AdAccountDialogInner>) {
+  if (!props.open) return null;
+  return <AdAccountDialogInner key={props.editing?.id ?? "new"} {...props} />;
+}
+
+function AdAccountDialogInner({ open, editing, onClose }: AdAccountDialogProps) {
   const createMut = useCreateAdAccount();
   const updateMut = useUpdateAdAccount();
 
@@ -906,24 +925,29 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (editing) {
-      await updateMut.mutateAsync({
-        id: editing.id,
-        name: form.name,
-        status: form.status,
-        client_id: form.client_id || undefined,
-      });
+      updateMut.mutate(
+        {
+          id: editing.id,
+          name: form.name,
+          status: form.status,
+          client_id: form.client_id || undefined,
+        },
+        { onSuccess: onClose },
+      );
     } else {
-      await createMut.mutateAsync({
-        external_account_id: form.external_account_id,
-        name: form.name,
-        status: form.status,
-        client_id: form.client_id || undefined,
-      });
+      createMut.mutate(
+        {
+          external_account_id: form.external_account_id,
+          name: form.name,
+          status: form.status,
+          client_id: form.client_id || undefined,
+        },
+        { onSuccess: onClose },
+      );
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -959,10 +983,8 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {!editing && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                ID da Conta (Meta) *
-              </label>
-              <input
+              <label htmlFor="tra-id-da-conta-meta" className="mb-1 block text-sm font-medium text-foreground">ID da Conta (Meta) *</label>
+              <input id="tra-id-da-conta-meta"
                 type="text"
                 required
                 value={form.external_account_id}
@@ -982,10 +1004,8 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Nome *
-            </label>
-            <input
+            <label htmlFor="tra-nome" className="mb-1 block text-sm font-medium text-foreground">Nome *</label>
+            <input id="tra-nome"
               type="text"
               required
               value={form.name}
@@ -996,10 +1016,8 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Status
-            </label>
-            <select
+            <label htmlFor="tra-status" className="mb-1 block text-sm font-medium text-foreground">Status</label>
+            <select id="tra-status"
               value={form.status}
               onChange={(e) =>
                 setForm((f) => ({
@@ -1014,6 +1032,11 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
               <option value="disconnected">Desconectada</option>
             </select>
           </div>
+          <ClientSelect
+            value={form.client_id}
+            onChange={(id) => setForm((f) => ({ ...f, client_id: id }))}
+            id="adaccount-client"
+          />
           <div className="flex justify-end gap-3 pt-1">
             <button
               type="button"

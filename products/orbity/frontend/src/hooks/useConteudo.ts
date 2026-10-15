@@ -318,10 +318,10 @@ export function useCreateApproval() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["content-approvals", variables.postId] });
       queryClient.invalidateQueries({ queryKey: ["content-posts"] });
-      toast.success("Link de aprovacao criado!");
+      toast.success("Link de aprovação criado!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao criar link de aprovacao", { description: error.message });
+      toast.error("Erro ao criar link de aprovação", { description: error.message });
     },
   });
 }
