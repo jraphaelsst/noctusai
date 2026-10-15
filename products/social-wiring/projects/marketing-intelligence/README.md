@@ -38,6 +38,7 @@ The share pages render with JavaScript (a plain fetch returns only the title); t
 | `DECISIONS.md` | What the owners asked for (decided) vs what ChatGPT proposed (unvalidated), and the open questions. |
 | `specs/simec.md` | SIMEC: modules, reliability rules, cadence, v2 automation architecture, comments module, API limits, LGPD. |
 | `specs/central-editorial.md` | Central Editorial: EBAC syllabus mapping, environments, commands, loop with SIMEC, SIMEC-vs-Central matrix. |
+| `specs/phase0-audit.md` | Architect Phase-0 audit (2026-10-15): what already ships, metric feasibility on our own collection, module split, build order, owner questions. |
 | `specs/ar3-method.md` | AR3 rules, numbers, command, and its first application's skeleton. |
 | `content/ar3-01-maternidade-maturidade-vida-adulta.md` | AR3 application 01, the full tree (3 roots → 729 microthemes): a ready topic bank for Mônica's content. |
 | `kits/simec-1.0/` | The original SIMEC kit, verbatim: `01_INSTRUCOES_PARA_PROJETO.txt` (the system prompt), `02_MANUAL_DE_USO.md`, `03_FICHA_DO_PERFIL.txt`, and `SIMEC_Instagram.xlsx` / `SIMEC_TikTok.xlsx` (5 sheets each: INÍCIO · PAINEL · DADOS · DECISÕES · GLOSSÁRIO; 3,436 formulas each). **The workbooks are the most precise spec of SIMEC's metrics and formulas.** |
