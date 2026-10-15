@@ -365,11 +365,11 @@ class TestAcoes:
 
     async def test_an_unknown_handler_emits_an_event_and_never_drops_the_rest(self, world):
         c = _mk_contato(world)
-        out = await _apply(world, c, LaisAction("pedido_visita", 1, {"codigo_imovel": "X1"}),
+        out = await _apply(world, c, LaisAction("captacao", 1, {"codigo_imovel": "X1"}),
                            LaisAction("salvar_slots", 2, {"slots": {"bairro": "A"}}))
         assert [o["estado"] for o in out] == ["sem_handler", "aplicada"]
         ev = world.rows("lais_eventos")
-        assert [(e["tipo"], e["payload"]) for e in ev] == [("acao_sem_handler", {"tipo": "pedido_visita", "seq": 1})]
+        assert [(e["tipo"], e["payload"]) for e in ev] == [("acao_sem_handler", {"tipo": "captacao", "seq": 1})]
         assert world.rows("lais_acoes_aplicadas", seq=1)[0]["resultado"] == {"sem_handler": True}
         assert world.rows("lais_contatos")[0]["slots"] == {"bairro": "A"}
 
@@ -572,7 +572,7 @@ class TestWorkerIntegration:
     async def test_an_action_without_a_handler_never_drops_the_reply(self, world):
         world.agents = FakeAgentsClient([TurnResult(
             conversation_id=CONV, partes=("Vou agendar!",), status="respondido",
-            actions=(LaisAction("pedido_visita", 1, {"codigo_imovel": "X1"}),))])
+            actions=(LaisAction("captacao", 1, {"codigo_imovel": "X1"}),))])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["quero visitar"]))
         assert world.sent_texts()[-1] == "Vou agendar!"
         assert [e["tipo"] for e in world.rows("lais_eventos")] == ["acao_sem_handler"]

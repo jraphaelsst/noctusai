@@ -156,7 +156,7 @@ class TestPedidoVisita:
             svc.registrar_hook("on_visita_solicitada", anterior)
         assert r["estado"] == "aplicada"
         (v,) = w.rows("lais_visitas")
-        assert v["status"] == "solicitada" and v["codigo_imovel"] == "CA1" and v["agendamento_id"] is None
+        assert v["status"] == "solicitada" and v["codigo_imovel"] == "CA1" and v.get("agendamento_id") is None
         assert [e["tipo"] for e in w.rows("lais_eventos")] == ["pre_agendamento_visita"]
         assert visto == [(ORG_ID, contato["id"], "solicitada")]
 
