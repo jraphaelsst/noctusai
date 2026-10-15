@@ -5,6 +5,7 @@
  * `abrir_skill` tool (§E3); only nome + descrição reach the master prompt.
  * Without a draft (or for members) everything is read-only.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowDown, ArrowUp, FileText, Plus, Trash2, Upload } from "lucide-react";
@@ -75,6 +76,7 @@ function SkillFilesPanel({
   skill: Skill;
   editable: boolean;
 }) {
+  const confirm = useConfirm();
   const [selected, setSelected] = useState<string | null>(null); // file id or NOVA
   const file = useSkillFile(agentKey, skill.id, selected && selected !== NOVA ? selected : null);
   const upsert = useUpsertSkillFile(agentKey, draftId);
@@ -124,7 +126,7 @@ function SkillFilesPanel({
   }
 
   async function handleDelete(f: SkillFileSummary) {
-    if (!window.confirm(`Remover o arquivo ${f.caminho}?`)) return;
+    if (!(await confirm({ title: `Remover o arquivo ${f.caminho}?`, confirmLabel: "Remover", tone: "danger" }))) return;
     try {
       await del.mutateAsync({ skillId: skill.id, fileId: f.id });
       if (selected === f.id) setSelected(null);
@@ -229,6 +231,7 @@ function SkillFilesPanel({
 // ── Tab ───────────────────────────────────────────────────────────────────────
 
 export default function SkillsTab({ agentKey }: { agentKey: string }) {
+  const confirm = useConfirm();
   const isAdmin = useIsAdmin();
   const [params, setParams] = useSearchParams();
   const refs = useAgentVersionRefs(agentKey);
@@ -296,7 +299,7 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
   }
 
   async function handleDelete(s: Skill) {
-    if (!window.confirm(`Remover a skill ${s.nome} e seus arquivos do rascunho?`)) return;
+    if (!(await confirm({ title: `Remover a skill ${s.nome}?`, description: "Os arquivos dela também serão removidos do rascunho.", confirmLabel: "Remover", tone: "danger" }))) return;
     try {
       await remove.mutateAsync({ skillId: s.id });
       select(null);

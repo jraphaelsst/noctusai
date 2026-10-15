@@ -5,6 +5,7 @@
  * publish dialog with the eval-gate status. Deep link `?publicar=1` opens the
  * dialog (the Visão geral quick action).
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, FilePlus2, Rocket, Trash2 } from "lucide-react";
@@ -211,6 +212,7 @@ function PublishDialog({
 // ── Tab ───────────────────────────────────────────────────────────────────────
 
 export default function VersionsTab({ agentKey }: { agentKey: string }) {
+  const confirm = useConfirm();
   const isAdmin = useIsAdmin();
   const [params, setParams] = useSearchParams();
   const { data: agent, draft, ativa, showSkeleton, isRefreshing, isError, error, refetch } = useAgentVersionRefs(agentKey);
@@ -250,7 +252,7 @@ export default function VersionsTab({ agentKey }: { agentKey: string }) {
   }
 
   async function handleDiscard(v: VersionSummary) {
-    if (!window.confirm(`Descartar o rascunho v${v.versao}? Esta ação não pode ser desfeita.`)) return;
+    if (!(await confirm({ title: `Descartar o rascunho v${v.versao}?`, description: "Esta ação não pode ser desfeita.", confirmLabel: "Descartar", tone: "danger" }))) return;
     try {
       await discard.mutateAsync({ draftId: v.id });
       toast.success("Rascunho descartado.");
