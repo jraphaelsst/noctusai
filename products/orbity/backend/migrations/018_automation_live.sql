@@ -133,3 +133,12 @@ ALTER TABLE orbity.automation_pending_actions
 CREATE INDEX IF NOT EXISTS automation_pending_actions_processing_idx
     ON orbity.automation_pending_actions (org_id, claimed_at)
     WHERE status = 'processing';
+
+-- ============================================================================
+-- Nav: the WhatsApp connections page (/whatsapp). A route with NO
+-- orbity.status_pagina row is silently hidden by the seed nav filter (see 013).
+-- ============================================================================
+
+INSERT INTO orbity.status_pagina (nome_pagina, status) VALUES
+    ('whatsapp', 'producao')
+ON CONFLICT (nome_pagina) DO NOTHING;
