@@ -562,7 +562,13 @@ def montar_contexto(
         # baixa — even when a matrícula certidão was presented (it predates
         # the baixa).
         pendencias.append(frases.pendencia_matricula_baixa(im.situacao_onus or ""))
-    elif "matricula" not in apresentadas:
+    elif "matricula" not in apresentadas or any(
+        c.tipo == "matricula" and c.emitida_em
+        and (assinatura - c.emitida_em).days > politica.certidao_max_dias
+        for c in cert_imovel
+    ):
+        # A matrícula older than the certidão window at signing is presented
+        # AND requested updated (deal 876: issued 27/08, signed 12/10).
         pendencias.append(frases.PENDENCIA_MATRICULA)
     pendencias.extend(frases.PENDENCIAS_CONTAS_CONSUMO)
     if "cnd_iptu" not in apresentadas:

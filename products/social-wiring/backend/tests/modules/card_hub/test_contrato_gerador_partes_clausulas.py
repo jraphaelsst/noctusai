@@ -516,3 +516,21 @@ class TestAditivoRecusaPartesSemRedacao:
         av = avaliar_aditivo(variante(), _aditivo(PAGAMENTO, parcelas=_novas_parcelas()),
                              fx.POLITICA_PADRAO, DATA, DATA)
         assert codigo in _codigos(av.bloqueios)
+
+
+class TestMatriculaAtualizadaPendente:
+    """A matrícula presented but older than the certidão window at signing is
+    also requested updated (deal 876: issued 46 days before signing)."""
+
+    def _com_matricula(self, dias: int):
+        d = fx.variante(1)
+        return replace(
+            d, processo_legado=True,
+            imovel=replace(d.imovel, certidoes=fx.certidoes_do_imovel(fx.dias_antes(dias))),
+        )
+
+    def test_a_stale_matricula_is_also_requested_updated(self):
+        assert "Matrícula Atualizada do Imóvel" in _texto(1, self._com_matricula(46))
+
+    def test_a_fresh_matricula_is_not_requested_again(self):
+        assert "Matrícula Atualizada do Imóvel" not in _texto(1, self._com_matricula(5))
