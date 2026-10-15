@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { MarkdownRenderer } from "@noctusai/lib/components";
+import { MarkdownRenderer, useConfirm } from "@noctusai/lib/components";
 import { Badge, Button, EmptyState, ErrorState, Skeleton } from "@noctusai/lib/design-system";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -58,6 +58,7 @@ export function BrandingView({
   const del = useDeleteBranding();
   const [tab, setTab] = useState("colors");
   const [themeId, setThemeId] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   if (showSkeleton) {
     return (
@@ -73,8 +74,8 @@ export function BrandingView({
   const tokens = data.tokens;
   const activeTheme = themeId ?? tokens?.color.themes[0]?.id ?? "";
 
-  const remove = () => {
-    if (!window.confirm(`Remover o branding "${data.name}"? Os arquivos enviados também serão removidos.`)) return;
+  const remove = async () => {
+    if (!(await confirm({ title: `Remover o branding "${data.name}"?`, description: "Os arquivos enviados também serão removidos.", confirmLabel: "Remover", tone: "danger" }))) return;
     del.mutate(id, {
       onSuccess: () => {
         toast.success("Branding removido");

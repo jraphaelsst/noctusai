@@ -20,6 +20,7 @@
  * miss it and the leads still arrive, just pulled by reconciliation
  * instead. A rising reconcile share is what that looks like from outside.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -74,6 +75,7 @@ export default function ImovelWebWebhookCard() {
   const register = useRegisterImovelWebCallback();
   const backfill = useImovelWebBackfill();
   const reconcile = useImovelWebReconcile();
+  const confirm = useConfirm();
   const [copied, setCopied] = useState(false);
 
   const receiverUrl = useMemo(
@@ -101,12 +103,15 @@ export default function ImovelWebWebhookCard() {
   const runRegister = async () => {
     // The blast radius is named in the prompt, not buried in a tooltip:
     // this configuration has no agency code, so it moves everyone's leads.
-    const confirmed = window.confirm(
-      "Registrar o receptor no ImovelWeb?\n\n" +
+    const confirmed = await confirm({
+      title: "Registrar o receptor no ImovelWeb?",
+      description:
         "Esta configuração é ÚNICA para toda a integração — não existe " +
         "código de imobiliária nesta chamada. Ela afeta TODAS as " +
         "imobiliárias autorizadas ao mesmo tempo.",
-    );
+      confirmLabel: "Registrar",
+      tone: "danger",
+    });
     if (!confirmed) return;
     try {
       const result = await register.mutateAsync({});

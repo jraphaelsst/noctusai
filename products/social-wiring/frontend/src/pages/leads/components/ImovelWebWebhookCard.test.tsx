@@ -8,7 +8,8 @@
  * believes it delivered). If this card does not show them, nothing does.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ConfirmProvider } from "@noctusai/lib/components";
 
 const {
   useEventsMock,
@@ -279,19 +280,21 @@ describe("the reconcile share", () => {
 
 describe("the integrator-wide write", () => {
   it("names the blast radius before registering", async () => {
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockImplementation(() => false);
     const mutateAsync = vi.fn();
     useRegisterMock.mockReturnValue({ mutateAsync, isPending: false });
 
-    render(<ImovelWebWebhookCard />);
-    screen.getByTestId("imovelweb-register").click();
+    render(
+      <ConfirmProvider>
+        <ImovelWebWebhookCard />
+      </ConfirmProvider>,
+    );
+    fireEvent.click(screen.getByTestId("imovelweb-register"));
 
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/TODAS as imobiliárias/);
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(dialog.textContent).toMatch(/TODAS as imobiliárias/);
     // Declining must perform NO write.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByTestId("confirm-dialog")).toBeNull());
     expect(mutateAsync).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 });
