@@ -48,6 +48,10 @@ class TurnContext:
     #: resume nor mirror a durable transcript for it (the transcript table
     #: FKs the conversation). ``False`` for every route-driven turn.
     ephemeral: bool = False
+    #: Lais F-AG (§2.1): the validated per-turn ``ChannelContexto`` of a channel
+    #: turn (``None`` everywhere else → page-0 behaviour). Rendered as a second
+    #: system message by ``LlmToolRuntime`` and read by the channel tools factory.
+    contexto: Any | None = None
 
 
 @dataclass(frozen=True)

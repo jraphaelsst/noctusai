@@ -22,6 +22,7 @@ from noctusai_lib.api.auth.session import AuthContext, FakeProductTokenAdmin
 from noctusai_lib.integrations.llm import FakeProvider
 
 from app.channels.retention import FakeChannelRetention
+from app.clients.social_wiring import FakeSocialWiringClient
 from app.channels.token_audit import FakeTokenAudit
 from app.channels.tools import HandoffCollector, make_channel_tools_factory
 from app.dependencies import (
@@ -75,6 +76,7 @@ class ChannelHarness:
         self.inbound = FakeChannelInboundStore()
         self.retention = FakeChannelRetention(rt_.stores.conversations, rt_.stores.messages, self.inbound)
         self.collector = HandoffCollector()
+        self.lais = FakeSocialWiringClient()
         self.provider = FakeProvider(tool_responses=["Oi! Você quer comprar ou alugar?"])
         self.keys: dict[tuple[str, UUID], str] = {("openai", rt_.org_id): ORG_KEY}
         self.limiter = LlmTurnLimiter(4)
@@ -111,7 +113,7 @@ class ChannelHarness:
             key_resolver=lambda provider, org: self.keys.get((provider, org)),
             limiter=self.limiter,
             budget_guard=make_budget_guard(messages=self.rt.stores.messages, daily_cap_usd=self.daily_cap_usd),
-            tools_factory=make_channel_tools_factory(self.collector),
+            tools_factory=make_channel_tools_factory(self.collector, lais_client_factory=lambda: self.lais),
             provider_impl=self.provider,
         )
         self.runtime = runtime

@@ -32,11 +32,14 @@ def _code(resp) -> str | None:
     return body.get("code") or (body.get("detail") or {}).get("code") if isinstance(body, dict) else None
 
 
-def test_the_channel_route_set_is_exactly_the_three_documented(chan):
+def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
     assert _routes((CHANNEL_PREFIX,)) == [
         ("DELETE", "/api/channels/conversations"),
+        ("DELETE", "/api/channels/ferramentas-token"),
         ("GET", "/api/channels/agents/{agent_key}/status"),
+        ("POST", "/api/channels/conversations/{conversation_id}/resumo"),
         ("POST", "/api/channels/turns"),
+        ("PUT", "/api/channels/ferramentas-token"),
     ]
 
 

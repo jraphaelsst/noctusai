@@ -307,7 +307,13 @@ class LlmToolRuntime:
             provider_impl=self._provider_impl,
         )
         history = self._history(ctx, prompt)
-        messages: list[ChatMessage] = [ChatMessage.system(spec.prompt_append, cache=True), *history]
+        messages: list[ChatMessage] = [ChatMessage.system(spec.prompt_append, cache=True)]
+        if ctx.contexto is not None:
+            # Dynamic per-turn section AFTER the cacheable compiled prompt (§2.1(b)).
+            from app.channels.contexto import render_contexto_system
+
+            messages.append(ChatMessage.system(render_contexto_system(ctx.contexto)))
+        messages.extend(history)
         if prompt:
             messages.append(ChatMessage.user(prompt))
 
@@ -365,6 +371,43 @@ class LlmToolRuntime:
                 "tokens_cache_leitura": usage.cache_read_tokens,
             },
         }
+
+    async def structured_extract(
+        self,
+        *,
+        provider: str,
+        model: str,
+        org_id: UUID,
+        system: str,
+        user: str,
+        tool: ToolSpec,
+    ) -> tuple[dict[str, Any], Any]:
+        """One structured-output call (Lais F-AG ``/resumo``): the model is
+        FORCED to call ``tool`` (the provider-neutral structured-output path of
+        the seed's tool calling), the call's arguments are returned with the
+        turn's ``LLMUsage``. Same org-only key (B1) + budget guard as a turn;
+        provider failures map to the typed runtime errors. No persistence here."""
+        await self.preflight(provider, org_id)
+        api_key = self._resolve_key(provider, org_id)
+        try:
+            response = await chat_with_tools(
+                [ChatMessage.system(system), ChatMessage.user(user)],
+                [tool],
+                model=model, provider=provider, org_id=str(org_id), api_key=api_key,
+                require_explicit_key=True, temperature=0.0, max_tokens=self._max_tokens,
+                tool_choice=tool.name, provider_impl=self._provider_impl,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — mapped to the typed error or re-raised
+            mapped = _map_error(exc, provider)
+            if mapped is exc:
+                raise
+            raise mapped from exc
+        for call in response.tool_calls:
+            if call.name == tool.name:
+                return dict(call.arguments or {}), response.usage
+        raise LlmUpstreamError("structured output: the model did not call the extraction tool")
 
     # ── internals ───────────────────────────────────────────────────────
 

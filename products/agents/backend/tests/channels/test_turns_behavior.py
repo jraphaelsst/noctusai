@@ -144,7 +144,7 @@ class TestHandoff:
         chan.use_provider(self._handoff_provider("Cliente pediu para falar com um corretor."))
         body = chan.turn(turn_body("Quero falar com um humano")).json()
         assert body["status"] == "handoff"
-        assert body["actions"] == [{"type": "handoff", "motivo": "Cliente pediu para falar com um corretor."}]
+        assert body["actions"] == [{"seq": 1, "type": "handoff", "motivo": "Cliente pediu para falar com um corretor."}]
         assert body["reply"]["partes"] == ["Vou chamar alguém da equipe."]
         assert body["usage"]["custo_usd"] == pytest.approx(0.003)
 

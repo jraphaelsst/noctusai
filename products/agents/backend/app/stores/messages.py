@@ -52,6 +52,9 @@ class MessageRecord:
     custo_usd: float | None = None
     tokens_entrada: int | None = None
     tokens_saida: int | None = None
+    #: Lais F-AG (029): sha256 of the per-turn `contexto` an assistant message
+    #: ran with (channel turns only; `None` everywhere else).
+    contexto_hash: str | None = None
 
 
 class MessageStore(Protocol):
@@ -66,6 +69,7 @@ class MessageStore(Protocol):
         token_usage: dict[str, Any] | None = None,
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
+        contexto_hash: str | None = None,
     ) -> MessageRecord:
         ...
 
@@ -143,6 +147,7 @@ class FakeMessageStore:
         token_usage: dict[str, Any] | None = None,
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
+        contexto_hash: str | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -159,6 +164,7 @@ class FakeMessageStore:
             "updated_at": now,
             "version_id": version_id,
             "compiled_hash": compiled_hash,
+            "contexto_hash": contexto_hash,
         }
         self._rows.setdefault((org_id, conversation_id), []).append(row)
         return self._to_record(row)
@@ -258,6 +264,7 @@ class SupabaseMessageStore:
         token_usage: dict[str, Any] | None = None,
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
+        contexto_hash: str | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -274,6 +281,8 @@ class SupabaseMessageStore:
             payload["version_id"] = str(version_id)
         if compiled_hash is not None:
             payload["compiled_hash"] = compiled_hash
+        if contexto_hash is not None:
+            payload["contexto_hash"] = contexto_hash
         resp = self._table().insert(payload).execute()
         rows = resp.data or []
         return self._record(rows[0] if rows else payload)
@@ -387,6 +396,7 @@ class SupabaseMessageStore:
             updated_at=row["updated_at"],
             version_id=UUID(str(row["version_id"])) if row.get("version_id") else None,
             compiled_hash=row.get("compiled_hash"),
+            contexto_hash=row.get("contexto_hash"),
             custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
             tokens_entrada=row.get("tokens_entrada"),
             tokens_saida=row.get("tokens_saida"),
