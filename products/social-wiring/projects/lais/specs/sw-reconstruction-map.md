@@ -129,6 +129,13 @@ Some routes carry two statuses (an existing page plus new wiring); the counts us
 
 ---
 
+## 1.10 · Owner decisions that change this map (2026-10-15, `DECISIONS.md`)
+
+- **Histórico do cliente** → no shared 4-digit code. A per-conversation link (`/lais/conversas/<id>`-style) that opens only after login, and only for the conversation's owner (assigned attendant / connection owner) or an org owner/admin; same-org members without ownership get 403, other orgs never resolve it. Lives in **Conversas v2 (wave 7)**.
+- **Distribuição (wave 11)** → SW stores teams, members, mode (**Via Lais** = Julia assigns at handoff / **Via CRM-equivalent** = card created unassigned in the funil) and "keep last responsible"; **Julia reads it** through the agents API at handoff (SW is the source of truth).
+- **Análise de crédito** and **Avaliações no Google** → moved from "not rebuilt" to **NEW (build)**, late waves (13+); credit analysis needs a provider choice + an LGPD consent step.
+- **Cloud API pages (wave 12)** wait for the owner's Meta app verification.
+
 ## 2 · Proposed build order (extends `BUILD-ROADMAP.md` 0–5)
 
 | Wave | Page (Lais ›) | Why here |

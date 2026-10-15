@@ -982,6 +982,17 @@ Every drawer/modal below was opened, read and closed with ✕ / Cancelar / Escap
 
 Also seen: the remarketing upsell popup ("Dispare o Remarketing para N leads", [Depois] [Ir para Disparos]) appears mid-session on any page; never touched (b6).
 
+### 59.0b Live pass 2 — 2026-10-15 (owner session, read-only, nothing saved)
+
+| Item | Result | Evidence |
+| --- | --- | --- |
+| a7 `/chats` "+" | Drawer **"Contato — Escolha quem a Lais deve chamar"**, Passo 1 de 3: Nome da pessoa*, Número do contato* (format `(00) 00000-0000`), [Próximo] disabled until filled. Not advanced (steps 2–3 = template + send, S-class). | C live |
+| a6 `/chats?view=kanban` | Board: fixed column **"Todas (n)"** with eye toggle, collapsed **"Arquivadas"** lane, **"Adicionar coluna"** → popover **"Selecionar etiqueta"** (search, "Sem etiqueta", "Criar nova etiqueta"): **kanban columns are tags** (one column per etiqueta), not saved filters. Agency has no tags yet. Closed with Escape. | C live |
+| b2 Régua 1 | `/configs_reengage/rules/{uuid}`: card **Regras** [Inativo] Operação "Aluguel e compra", Período "Das 8h às 20h", [Editar] → drawer "Editar régua de reengajamento": switch "Ativar régua" · Nome da régua · Operação checkboxes Aluguel/Compra · notes ("starts after the last default-reengage attempt", "leads who closed are not contacted", **"A Lais pode reescrever o texto da mensagem com as próprias palavras"**, "only leads who interacted then stopped") · [Excluir régua] (W) · [Salvar]. Card **Tentativas de contato 0/3** + "Nova tentativa de contato" (not clicked). **Code (chunk 2470) closes the gap:** client `getConfigs/getDelayOptions/getTemplates/upsertConfig(PUT configs)/listRules/createRule(POST)/getRule/updateRule(PATCH)/activateRule(POST …/activate)/deactivateRule(POST …/deactivate)/addAttempt(POST …/attempts)/updateAttempt(PATCH …/attempts/{id})/deleteAttempt/deleteRule`; attempt = `{attemptIndex, delayValue, delayUnit (default "days"), templateId, enabled}`; an active rule needs ≥1 attempt; attempt without template shows "Sem modelo". Help text says "até 5 tentativas para compra ou até 3 para locação" while the card limit is 3 (`maxCount:3`) — vendor inconsistency (§0.2). | C live + C code |
+| a10 team Configurações | Drawer "Editar configurações": Nome da equipe* · "Esta equipe atende clientes diretamente após a Lais?" Sim/Não · **"Como os leads serão atribuídos?" — Via CRM (Padrão: lead sent to CRM with an assignment link) / Via Lais (Atendimento mais rápido: Lais assigns directly to attendants when pre-service ends)** · switch **"Manter atribuição ao último responsável"** (returning lead goes to the same attendant) · [Salvar]. Team menu: Configurações · Usuários · Excluir equipe. | C live |
+| a5, a14, a15 Bubble | `/configs_behavior` inside casa: spinner forever (legado iframe blocked by third-party cookies in this Chrome), same as S1. Final: BUBBLE-DEF is the source for these forms. | C live |
+| Stage 3 conversations | Owner authorized (2026-10-15); the session's PII classifier denied the read-only `GET /web/chats/agency` again. Not attempted further. | — |
+
 ### 59.a Safely viewable read-only (open, capture, close)
 
 | # | Route | Open | Capture | Why it is safe |

@@ -19,9 +19,14 @@
 | 2026-10-14 | Who Julia answers on the shared number | **Only chats that start after she is switched on** (snapshot of existing chats at switch-on; contract §11.1). |
 | 2026-10-14 | Privacy notice | **Create a page, don't propose** — per-org public notice at `/privacidade/<slug>`, default text now, owner refines later (contract §11.2). First message must disclose the virtual assistant and link it (§11.3). |
 | 2026-10-14 | Handoff notification | **The connection's owner for now, swappable for an admin.** Never a member-only, corretor, dev or jurídico (contract §11.4). |
+| 2026-10-15 | Stage 3 (read conversations) | **Yes.** Owner authorizes reading Lais lead conversations for the mechanism study. Still blocked by the session's PII classifier (needs a permission rule on the owner's side, or anonymised excerpts pasted). Raw text never in the repo. |
+| 2026-10-15 | WhatsApp Cloud API (templates, Disparos, owner updates, Meta-form first contact) | **After the owner verifies the app with Meta** (Meta App Review / business verification). Until then WAHA only; waves 12–13 wait on it. |
+| 2026-10-15 | Client-history link (Lais' 4-digit code) | **Never a shared code — login required.** Each conversation has its own id/thread link; it opens only for a logged-in user who OWNS that conversation (assigned attendant / connection owner) **or is an org admin/owner**. Other members of the same org cannot open it; users of another org never can (org isolation is absolute). |
+| 2026-10-15 | Credit analysis + Google reviews | **Build both** (later waves; credit analysis needs a provider decision + LGPD consent step). |
+| 2026-10-15 | Lead distribution (roleta / last attendant / teams) | **SW owns the data and rules** (teams, members, distribution mode, last-responsible); **Julia consumes it** via the agents API at handoff. |
 
 ## Open
-- Stage 3 (mechanisms): paused — reading more lead conversations was refused by the session's PII permission check; continue only with the owner's explicit permission rule or anonymised excerpts the owner pastes.
+- Stage 3 (mechanisms): owner said YES (2026-10-15) but the session's PII classifier still refuses the read (re-tried 2026-10-15, denied). Unblock = a permission rule on the owner's side, or anonymised excerpts pasted into the chat.
 - Security observations to report to Lastro (agency param in Bubble URLs; 4-digit history code) — owner's call.
 
 ## Done
