@@ -34,19 +34,24 @@ describe.each([
     expect(keys.indexOf(LAIS_NAV_KEY)).toBe(keys.indexOf("principal") + 1);
     const lais = byKey(groups, LAIS_NAV_KEY)!;
     expect(lais.label).toBe(LAIS_LABEL);
-    expect(lais.items.map((i) => [i.name, i.href])).toEqual([
+    // The group IS LAIS_PAGES, in order (derived -- each Lais wave adds one LAIS_PAGES entry, never edits this test).
+    expect(lais.items.map((i) => [i.name, i.href])).toEqual(Object.values(LAIS_PAGES).map((p) => [p.name, p.href]));
+    // The first three are fixed (page 0 + the original group).
+    expect(lais.items.slice(0, 3).map((i) => [i.name, i.href])).toEqual([
       ["Conversas", "/lais/conversas"],
       ["Configurações", "/lais/configuracoes"],
       ["Agente", "/lais/agente"],
-      ["Conhecimento", "/lais/conhecimento"],
     ]);
   });
 });
 
 describe("route keys", () => {
-  it("Lais items are gated by lais_conversas / lais_configuracoes / lais_agente / lais_conhecimento (migrations 252, 259)", () => {
+  it("every Lais item is gated by its own lais_* status_pagina key (one migration row per page)", () => {
     const lais = byKey(NAV_GROUPS as AnyGroup[], LAIS_NAV_KEY)!;
-    expect(lais.items.map((i) => i.route)).toEqual(["lais_conversas", "lais_configuracoes", "lais_agente", "lais_conhecimento"]);
+    const routes = lais.items.map((i) => (i as { route?: string }).route);
+    expect(routes).toEqual(Object.values(LAIS_PAGES).map((p) => p.route));
+    expect(routes.every((r) => typeof r === "string" && r.startsWith("lais_"))).toBe(true);
+    expect(new Set(routes).size).toBe(routes.length);
   });
 
   it("the fallback is NAV_GROUPS minus every route key (derived, cannot drift)", () => {
