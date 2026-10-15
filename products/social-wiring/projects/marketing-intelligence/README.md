@@ -29,10 +29,7 @@ All three are operators, each with their own data. Nobody on the team programs, 
 
 The share pages render with JavaScript (a plain fetch returns only the title); they were read in the owner's Chrome. The links are the recovery pointer for anything not copied here.
 
-**Not retrieved yet** (see `DECISIONS.md` § Open):
-- SIMEC 1.0 kit — zip + install instructions, manual, profile registration form, Instagram and TikTok spreadsheets (ChatGPT sandbox files; download buttons on the share page).
-- Central Editorial 1.0 kit — 27 files (instructions, commands, per-profile dossiers, CSV bases).
-- Mônica's hand-drawn AR3 sketch (WhatsApp image, 2026-10-12).
+**Kits and sketch retrieved 2026-10-15** (owner OK) from the share pages' sandbox files — see `kits/` and `assets/`. The SIMEC zip was byte-identical to its five individual files, so only the extracted files are kept.
 
 ## Layout
 
@@ -43,6 +40,11 @@ The share pages render with JavaScript (a plain fetch returns only the title); t
 | `specs/central-editorial.md` | Central Editorial: EBAC syllabus mapping, environments, commands, loop with SIMEC, SIMEC-vs-Central matrix. |
 | `specs/ar3-method.md` | AR3 rules, numbers, command, and its first application's skeleton. |
 | `content/ar3-01-maternidade-maturidade-vida-adulta.md` | AR3 application 01, the full tree (3 roots → 729 microthemes): a ready topic bank for Mônica's content. |
+| `kits/simec-1.0/` | The original SIMEC kit, verbatim: `01_INSTRUCOES_PARA_PROJETO.txt` (the system prompt), `02_MANUAL_DE_USO.md`, `03_FICHA_DO_PERFIL.txt`, and `SIMEC_Instagram.xlsx` / `SIMEC_TikTok.xlsx` (5 sheets each: INÍCIO · PAINEL · DADOS · DECISÕES · GLOSSÁRIO; 3,436 formulas each). **The workbooks are the most precise spec of SIMEC's metrics and formulas.** |
+| `kits/central-editorial-1.0/` | The original Central Editorial SMM kit, verbatim (27 files): `00_COMECE_AQUI.md`, `01_INSTRUCOES_DE_PROJETO.txt`, per-profile dossiers `02_PERFIL_{MONICA,GILSON,ISADORA}.md`, `03_COMANDOS.md`, `04_MAPA_EBAC.md`, `05_TRELLO_E_ROTINA.md`, `06_ESQUEMA_DAS_BASES.md`, and per-profile CSV bases `{MONICA,GILSON,ISADORA}/{CALENDARIO,PAUTAS,CAMPANHAS,COMUNIDADE,DECISOES}.csv` + `LEIA_ESTE_PERFIL.txt`. |
+| `assets/ar3-sketch-monica-2026-10-12.jpg` | Mônica's hand-drawn AR3 sketch (FOTOGRAFIA → Ângulos/Luz/Método; ARTE → Escultura/Movimentos artísticos/Técnicas). |
+
+The kits are **ChatGPT-generated drafts**, kept verbatim as source material — not validated, not to be copied into code as-is (same rule as `../core-studio/prompts/`).
 
 ## Status
 

@@ -1,0 +1,1 @@
+Pasta exclusiva de GILSON. Não insira dados de outro perfil. Use as instruções globais do kit, o arquivo 02_PERFIL_GILSON.md e os resultados SIMEC correspondentes. Cada linha de CALENDARIO representa uma publicação, com ID que corresponde ao cartão do Trello e à publicação do SIMEC, quando disponível. Deixe em branco dados ausentes.

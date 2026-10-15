@@ -51,7 +51,7 @@ Same management method across three very different niches — compare without mi
 | `IMPORTAR RESULTADOS SIMEC` | Turns analyzed results into decisions for the next contents |
 | `FECHAR MÊS` | Monthly editorial evaluation and pending items |
 
-## 5 · v1.0 kit (ChatGPT, not retrieved)
+## 5 · v1.0 kit (ChatGPT) — verbatim in `../kits/central-editorial-1.0/`
 
 27 files: instructions, commands, per-profile dossiers, separate CSV bases for calendars, topics, campaigns and decisions. Proposed install: three ChatGPT Projects (one per person). Trello suggested for tasks (prepares tasks; does not register them until connected). Publishing and private metrics depend on external integrations.
 

@@ -71,11 +71,13 @@ AI can be wrong; conference mechanisms are part of the design. A metric that is 
 
 Implementation: (1) technical protocol (metrics, formulas, comparison criteria, report templates) → (2) structured spreadsheet with per-profile panels → (3) initial audit over the last 60–90 days → (4) 4-week test against original data.
 
-## 6 · v1.0 kit (ChatGPT, not retrieved)
+## 6 · v1.0 kit (ChatGPT) — verbatim in `../kits/simec-1.0/`
 
 Files: full kit (zip) · instructions to install in ChatGPT · install-and-usage manual · per-profile registration form · Instagram intelligence spreadsheet · TikTok intelligence spreadsheet. Spreadsheets: formulas, checks, separate dashboards, 200 rows per platform per profile, tested with fake data including missing values and duplicate rows. Install: one ChatGPT Project per account, paste instructions, attach the platform's spreadsheet. No sync between accounts.
 
-## 7 · v2.0 — automated architecture
+## 7 · v2.0 — automated architecture (ChatGPT proposal)
+
+> **Owner decision 2026-10-15: build it in-home on our own collection — no Metricool / Make.** Keep this section as the *requirements* reference (what to collect, cadence, alerts, permissions), not as the implementation.
 
 ```
 Instagram / TikTok (authorized professional accounts)
