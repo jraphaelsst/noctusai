@@ -5,7 +5,8 @@
  * Payload shape (BE reports service): leads, revenues, expenses, scope,
  * meta_ads { spend, leads, cpl, active_campaigns }. For client-scoped reports
  * `expenses` may be `{ available: false, reason }` (expenses are not
- * attributable to a client) — rendered as "Indisponível" + the reason.
+ * attributable to a client) — internal view: "Indisponível" + a pt-BR reason;
+ * public (client-facing) view: omitted. Metadata keys never become tiles.
  */
 export type PayloadKind = "number" | "money" | "text" | "unavailable";
 
@@ -23,11 +24,28 @@ const SCOPE_LABEL: Record<string, string> = {
   agency: "Agência (todos os clientes)",
 };
 
+/** Backend reasons are English developer strings; never show them raw. */
+const REASON_PT: Record<string, string> = {
+  "expenses are not attributed to clients": "Despesas não são vinculadas a clientes — veja o relatório da agência.",
+};
+
+/** Snapshot bookkeeping, not metrics: the pages show these elsewhere (header). */
+const METADATA_KEYS = new Set(["generated_at", "period_start", "period_end", "report_id", "client_id", "org_id"]);
+
+export interface DescribeOptions {
+  /** "public" = the client-facing page: drop unavailable metrics and the scope line. */
+  audience?: "internal" | "public";
+}
+
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-export function describePayload(payload: Record<string, unknown>): PayloadItem[] {
+export function describePayload(
+  payload: Record<string, unknown>,
+  { audience = "internal" }: DescribeOptions = {},
+): PayloadItem[] {
   const out: PayloadItem[] = [];
+  const isPublic = audience === "public";
 
   if (typeof payload.leads === "number")
     out.push({ key: "leads", label: "Leads gerados", kind: "number", value: payload.leads });
@@ -37,13 +55,16 @@ export function describePayload(payload: Record<string, unknown>): PayloadItem[]
   const exp = payload.expenses;
   if (typeof exp === "number") {
     out.push({ key: "expenses", label: "Despesas", kind: "money", value: exp });
-  } else if (isObj(exp) && exp.available === false) {
+  } else if (isObj(exp) && exp.available === false && !isPublic) {
     out.push({
       key: "expenses",
       label: "Despesas",
       kind: "unavailable",
       value: null,
-      hint: typeof exp.reason === "string" ? exp.reason : "Não disponível para este escopo.",
+      hint:
+        typeof exp.reason === "string" && REASON_PT[exp.reason]
+          ? REASON_PT[exp.reason]
+          : "Não disponível para este escopo.",
     });
   }
 
@@ -59,12 +80,12 @@ export function describePayload(payload: Record<string, unknown>): PayloadItem[]
       out.push({ key: "meta_active", label: "Campanhas ativas", kind: "number", value: meta.active_campaigns });
   }
 
-  if (typeof payload.scope === "string")
+  if (typeof payload.scope === "string" && !isPublic)
     out.push({ key: "scope", label: "Escopo", kind: "text", value: SCOPE_LABEL[payload.scope] ?? payload.scope });
 
   const handled = new Set(["leads", "revenues", "expenses", "meta_ads", "scope"]);
   for (const [k, v] of Object.entries(payload)) {
-    if (handled.has(k) || v === null || v === undefined) continue;
+    if (handled.has(k) || METADATA_KEYS.has(k) || v === null || v === undefined) continue;
     if (typeof v === "number") out.push({ key: k, label: k.replace(/_/g, " "), kind: "number", value: v });
     else if (typeof v === "string") out.push({ key: k, label: k.replace(/_/g, " "), kind: "text", value: v });
   }

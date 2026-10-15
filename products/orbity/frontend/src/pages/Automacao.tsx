@@ -67,15 +67,24 @@ const TRIGGER_LABELS: Record<TriggerType, string> = {
   whatsapp_message_received: "Mensagem WhatsApp recebida",
   keyword_received: "Palavra-chave recebida",
   tag_added: "Tag adicionada",
-  owner_changed: "Responsavel alterado",
+  owner_changed: "Responsável alterado",
   task_created: "Tarefa criada",
-  task_completed: "Tarefa concluida",
+  task_completed: "Tarefa concluída",
   meeting_created: "Reunião criada",
   proposal_sent: "Proposta enviada",
   client_created: "Cliente criado",
   lead_status_changed: "Status do lead alterado",
   manual: "Manual",
 };
+
+/**
+ * Triggers the backend actually EMITS. Today only `manual` — no service emits
+ * the event triggers yet (KB § PRODUCTS/orbity/PAGES-AND-DATAFLOW.md § Automação).
+ * The rest stay visible as "em breve" but are not selectable, so a gestor never
+ * builds a flow that silently never runs. Add a type here in the same commit
+ * that adds its emitter.
+ */
+const LIVE_TRIGGERS: ReadonlySet<TriggerType> = new Set<TriggerType>(["manual"]);
 
 const STEP_TYPE_LABELS: Record<StepType, string> = {
   send_message: "Enviar mensagem",
@@ -280,8 +289,8 @@ function FlowDialogInner({
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {(Object.keys(TRIGGER_LABELS) as TriggerType[]).map((t) => (
-                <option key={t} value={t}>
-                  {TRIGGER_LABELS[t]}
+                <option key={t} value={t} disabled={!LIVE_TRIGGERS.has(t)}>
+                  {LIVE_TRIGGERS.has(t) ? TRIGGER_LABELS[t] : `${TRIGGER_LABELS[t]} (em breve)`}
                 </option>
               ))}
             </select>

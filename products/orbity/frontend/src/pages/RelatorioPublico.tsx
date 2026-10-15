@@ -94,7 +94,7 @@ const ITEM_STYLE: Record<string, { icon: React.ElementType; color: string }> = {
 function SnapshotCards({ payload }: { payload: Record<string, unknown> }) {
   const cards: React.ReactNode[] = [];
 
-  for (const item of describePayload(payload)) {
+  for (const item of describePayload(payload, { audience: "public" })) {
     const meta = ITEM_STYLE[item.key] ?? { icon: FileBarChart2, color: "bg-gray-100 text-gray-600" };
     cards.push(
       <StatCard

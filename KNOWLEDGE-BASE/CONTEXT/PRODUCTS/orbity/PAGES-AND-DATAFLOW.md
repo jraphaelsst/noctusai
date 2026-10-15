@@ -62,8 +62,9 @@ page (frontend/src/pages/X.tsx)
 ### Clientes — `orbity.clients`
 - **Dataflow:** seed `ResourceManager` → `GET/POST /api/clients`, `PATCH /api/clients/{id}`,
   `POST /api/clients/{id}/archive` → `clients_router` → `ClientsService`.
-- **CRUD:** C ✅ · R ✅ · U ✅ (phone edit verified) · D = archive (soft) ✅. Reactivate =
-  `PATCH active=true`; list defaults to `active_only=true`.
+- **CRUD:** C ✅ · R ✅ · U ✅ (phone edit verified) · D = archive (soft) ✅ · "Mostrar arquivados"
+  + "Reativar" (`PATCH active=true`). Empty email / due day are omitted by `lib/clientPayload.ts`
+  (ResourceManager's `toPayload`) — the organ itself still sends `''`/`0`.
 - **Fields:** name*, company, email, phone, monthly_value, due_date (1–31), billing_type
   (boleto/pix/cartão/transferência), billing_automation flag (no backend behaviour yet).
 
@@ -71,31 +72,34 @@ page (frontend/src/pages/X.tsx)
 - **Dataflow:** `useCrm` → `GET /api/crm/funil` (stages + leads), `POST/PATCH/DELETE /api/crm/leads[/{id}]`,
   `PATCH /leads/{id}/stage` (optimistic), `GET/POST /leads/{id}/activities`,
   `POST /stages/seed-defaults`. Seed `KanbanBoard` organ.
-- **CRUD:** Lead C 🔴→fixed (UUID 502, `5e7c010c3`) · R ✅ · U · D (confirm organ). Stage: seed-defaults
-  only (no rename/reorder/colour). Activity: C/R only.
+- **CRUD:** Lead C ✅ (was a live 502 — UUID serialization, fixed `5e7c010c3`) · R ✅ · U · D ✅ (in-app
+  confirm). Card buttons `stopPropagation`; the detail panel closes on Esc and when its lead
+  disappears. Stage: seed-defaults only (no rename/reorder/colour). Activity: C/R only.
 - **Orphans (backend without UI):** scoring rules CRUD, `POST /leads/{id}/score`,
   public capture `POST /api/capture/{org_id}` (rate-limited; no embed/URL shown in UI).
 
 ### Tarefas — `orbity.tasks`
 - **Dataflow:** `useTasks` → `GET /api/tasks` (page_size 200), `POST`, `PATCH /{id}`,
   `PATCH /{id}/status` (optimistic), `DELETE /{id}`.
-- **CRUD:** C ✅ · R ✅ · U ✅ (status move verified) · D (confirm organ).
+- **CRUD:** C ✅ · R ✅ · U ✅ (status move verified; `canceled` settable) · D ✅ (in-app confirm).
 
 ### Agenda — `orbity.agenda_events`
 - **Dataflow:** `useAgenda` → `/api/agenda/events` CRUD + `POST /{id}/sync-gcal`.
-- **CRUD:** C ✅ (19:00 BRT stored as 22:00Z, displayed 19:00) · R ✅ · U · D (confirm organ).
+- **CRUD:** C ✅ (19:00 BRT stored as 22:00Z, displayed 19:00) · R ✅ · U (local-time edit input,
+  `lib/dates.ts`) · D (in-app confirm). Sync button + badge say "simulado".
 - **Seam:** Google Calendar = **FakeCalendarAdapter, no env switch** (`agenda_router.py`
   → `agenda_service.py`); UI must label sync as simulated until the Real adapter is wired.
 
 ### Rotinas — `orbity.routines` → inserts `orbity.tasks`
 - **Dataflow:** `useRoutines` → `/api/routines` CRUD + `POST /api/routines/run-due`.
-- **CRUD:** full; run-due is manual (no scheduler).
+- **CRUD:** C ✅ · R ✅ · run-due ✅ (created the task, next run +7d) · U · D; run-due is manual (no scheduler).
 
 ### Financeiro — `contracts`, `expenses`, `revenues`
 - **Dataflow:** `useFinancial` → `/api/financial/{contracts,expenses,revenues}` CRUD +
   `GET /cash-flow/{month}` (Visão Geral cards: receitas pagas, despesas pagas, resultado,
   pendentes, em atraso).
 - **CRUD:** Contract C ✅ · R ✅ · D ✅ (delete verified live) · U. Expenses/Revenues full CRUD.
+  Contracts/revenues carry `client_id` via `ClientSelect`; dialogs remount per open (no stale prefill).
 - **Caveats:** contracts never generate revenues; no "mark paid" quick action;
   `NOC-REMEDIATE[orbity-finance-fiscal]` in `financial_service.py`.
 
@@ -104,19 +108,28 @@ page (frontend/src/pages/X.tsx)
   `PATCH /campaigns/{id}/situation`, `POST /sync`, `GET /aggregate`,
   `GET|PUT /campaigns/{id}/metrics` (PUT = manual metric entry: date, spend, impressions,
   leads, cpl?; added `5e7c010c3`).
+- **Live:** account C ✅ (linked to a client) · campaign C ✅ · manual metric PUT ✅ (spend 120 /
+  6 leads → CPL 20 derived) · 30-day aggregate ✅.
 - **Seam:** Meta Ads = **Fake client, unconditional** (`NOC-REMEDIATE[orbity-meta-ads-live]`);
   page carries an honesty banner. `sync_campaigns` no longer overwrites `situation`.
 
 ### Automação — `automation_flows`, `automation_steps`, `automation_executions`, `automation_pending_actions`
 - **Dataflow:** `useAutomacao` → `/api/automation/flows` CRUD, `/flows/{id}/steps` + `/steps/{id}`,
   `POST /flows/{id}/trigger`, `GET/DELETE /executions`, `POST /run-due`.
-- **Seam:** WhatsApp sender = **FakeWhatsAppSender, unconditional**; 13 of 14 trigger types are
-  never emitted (manual trigger only); `action` steps are no-ops; no scheduler
-  (`NOC-REMEDIATE[orbity-automation-scheduler]`).
+- **Live:** flow C ✅ · step C ✅ · manual trigger for a lead (LeadSelect) ✅ → execution "Concluída".
+- **Seam:** WhatsApp sender = **FakeWhatsAppSender, unconditional** (page banner says "simulado");
+  13 of 14 trigger types are never emitted — the select shows them "(em breve)" and disabled
+  (`LIVE_TRIGGERS` in `Automacao.tsx`: add a type there in the same commit as its emitter);
+  `action` steps are no-ops; no scheduler (`NOC-REMEDIATE[orbity-automation-scheduler]`).
 
 ### Conteúdo — `content_campaigns`, `content_posts`, `post_approvals`
 - **Dataflow:** `useConteudo` → `/api/content/campaigns` CRUD, `/posts` CRUD,
   `POST /posts/{id}/approvals` (token link → `/aprovar/{token}`).
+- **Live:** post C ✅ (client-linked) → "Enviar para aprovação" ✅ → `/aprovar/{token}` ✅ → client
+  "Aprovar" ✅ → post `approved`. Public page type mirrors backend `PublicApprovalView` (FLAT —
+  a nested FE type once made every link render "Decisão já registrada"). The decision notifies
+  the post assignee, else org `ADMIN_ROLES`, via seed `write_in_app` (kind `aprovacao_conteudo`);
+  the page claims "equipe notificada" only when `team_notified > 0`.
 - **Caveats:** "Publicado" is a manual status (`NOC-REMEDIATE[orbity-content-publish]`);
   approval history endpoints exist (`GET /approvals*`) without UI.
 
@@ -126,6 +139,9 @@ page (frontend/src/pages/X.tsx)
 - **Scoping (fixed `5e7c010c3`):** a report with `client_id` aggregates ONLY that client's
   leads/revenues/Meta campaigns; `expenses` has no `client_id`, so client reports return
   `{available:false, reason}` instead of the org total. Query failures raise — no silent zeros.
+- **Live:** report C ✅ (client-linked, published) → snapshot ✅ (Meta spend/leads/CPL scoped to the
+  client) → `/relatorio/{token}` ✅. `lib/reportPayload.ts` `audience:"public"` hides unavailable
+  metrics, scope and snapshot metadata from the client page; backend reasons are mapped to pt-BR.
 
 ### Equipe
 - Seed `TeamPage` + admin-only `StatusPaginaPanel` (`@noctusai/lib`) → seed `/api/team/*`,
