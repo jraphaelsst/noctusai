@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
 import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
+import { StatTile, StatTileRow } from "@noctusai/lib/design-system";
+import { useDashboardKpis } from "@/hooks/useDashboard";
+import { pipelineSummary, taskSummary, upcomingCount } from "@/lib/dashboardKpis";
 import {
   LayoutDashboard,
   UserCheck,
@@ -13,21 +16,38 @@ import {
   Megaphone,
   FileBarChart2,
   ArrowRight,
+  RefreshCw,
+  Users,
+  TrendingUp,
+  CheckSquare,
+  Wallet,
 } from "lucide-react";
 
 /**
  * Dashboard — the logged-in home screen.
  *
- * Honest overview + navigation shell: no fabricated KPIs. Real-metric
- * wiring (leads this week, tarefas atrasadas, receita do mês, etc.) is a
- * later slice once each module's aggregate endpoints exist — at that
- * point the module cards below should each grow a real-data summary
- * line fed by that module's own hook (`useCrm`, `useFinancial`, ...).
+ * KPI row = real data from the modules' existing endpoints (clientes, funil,
+ * tarefas, fluxo de caixa do mês, agenda dos próximos 7 dias). Each KPI is its
+ * own query: it shows a skeleton only while it has NO data (isPending && !data),
+ * and a failing KPI shows "—" + a retry — never a fabricated zero.
  */
+const brl = (v: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 export default function Dashboard() {
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const orgName = ssoCtx.org.name;
+  const k = useDashboardKpis();
+
+  const showSkeleton = (q: { isPending: boolean; data?: unknown }) => q.isPending && !q.data;
+  const anyError = [k.clients, k.funil, k.tasks, k.cashFlow, k.agenda].some((q) => q.isError && !q.data);
+  const retryAll = () => {
+    for (const q of [k.clients, k.funil, k.tasks, k.cashFlow, k.agenda]) if (q.isError) void q.refetch();
+  };
+  const pipe = k.funil.data ? pipelineSummary(k.funil.data) : null;
+  const tasks = k.tasks.data ? taskSummary(k.tasks.data.items) : null;
+  const upcoming = k.agenda.data ? upcomingCount(k.agenda.data.items) : null;
+  const dash = "—";
 
   return (
     <div className="space-y-6">
@@ -43,6 +63,62 @@ export default function Dashboard() {
           </p>
         </div>
       </div>
+
+      {/* KPI row — real data */}
+      <section aria-label="Indicadores" className="space-y-2">
+        <StatTileRow>
+          <StatTile
+            icon={Users}
+            label="Clientes ativos"
+            loading={showSkeleton(k.clients)}
+            value={k.clients.data ?? dash}
+            hint={k.clients.isError && !k.clients.data ? "Falha ao carregar" : undefined}
+          />
+          <StatTile
+            icon={TrendingUp}
+            label="Leads em aberto"
+            loading={showSkeleton(k.funil)}
+            value={pipe ? pipe.openLeads : dash}
+            hint={pipe ? `Pipeline: ${brl(pipe.pipelineValue)}` : k.funil.isError ? "Falha ao carregar" : undefined}
+          />
+          <StatTile
+            icon={CheckSquare}
+            label="Tarefas abertas"
+            loading={showSkeleton(k.tasks)}
+            value={tasks ? tasks.todo + tasks.doing : dash}
+            hint={
+              tasks
+                ? `${tasks.todo} a fazer · ${tasks.doing} em andamento · ${tasks.overdue} atrasadas`
+                : k.tasks.isError
+                  ? "Falha ao carregar"
+                  : undefined
+            }
+          />
+          <StatTile
+            icon={Wallet}
+            label={`Caixa do mês (${k.month})`}
+            loading={showSkeleton(k.cashFlow)}
+            value={k.cashFlow.data ? brl(k.cashFlow.data.net) : dash}
+            hint={k.cashFlow.isError && !k.cashFlow.data ? "Falha ao carregar" : "Receitas pagas − despesas pagas"}
+          />
+          <StatTile
+            icon={CalendarDays}
+            label="Agenda · próximos 7 dias"
+            loading={showSkeleton(k.agenda)}
+            value={upcoming ?? dash}
+            hint={k.agenda.isError && !k.agenda.data ? "Falha ao carregar" : undefined}
+          />
+        </StatTileRow>
+        {anyError && (
+          <button
+            type="button"
+            onClick={retryAll}
+            className="inline-flex items-center gap-1 text-xs text-destructive underline"
+          >
+            <RefreshCw className="h-3 w-3" /> Alguns indicadores falharam — tentar novamente
+          </button>
+        )}
+      </section>
 
       {/* Module navigation */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -101,6 +177,12 @@ const MODULES = [
     title: "Financeiro",
     description: "Contratos, despesas, receitas e fluxo de caixa.",
     icon: DollarSign,
+  },
+  {
+    href: "/rotinas",
+    title: "Rotinas",
+    description: "Tarefas recorrentes geradas automaticamente.",
+    icon: RefreshCw,
   },
   {
     href: "/trafego",
