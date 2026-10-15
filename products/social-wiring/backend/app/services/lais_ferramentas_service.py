@@ -7,7 +7,7 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
     ARGS[nome]  -> the StrictHttpModel the router validates the body with
 
   buscar_imoveis           F      Vista mirror `imoveis`, at most 5 results
-  detalhes_imovel          F      wave 1 switches ON `iptu` and the full `endereco`
+  detalhes_imovel          F      wave 1 switches (lais_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
   horarios_visita          wave 5 (config + SchedulingEngine); until then `[]`
   consultar_empreendimento wave 12; until then `[]`
 
@@ -25,6 +25,8 @@ from uuid import UUID
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+
+from app.services import lais_conhecimento_service
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +124,10 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
     if not rows or not _publicado(rows[0]):
         return {"codigo": a.codigo.strip(), "encontrado": False}
     r = rows[0]
-    # Wave 1 flips these two ("Meu negócio" switches): until then the IPTU is withheld and the
-    # address is the neighbourhood, never the street + number.
-    mostrar_iptu = False
-    mostrar_endereco_completo = False
+    # Wave 1 ("Meu negócio › Endereço e IPTU"): both default to withheld until the org opts in.
+    politica = lais_conhecimento_service.politica_endereco_iptu(client, org_id)
+    mostrar_iptu = politica["usar_iptu"]
+    mostrar_endereco_completo = politica["endereco_completo"]
     endereco = ", ".join(p for p in (r.get("bairro"), r.get("cidade")) if p)
     if mostrar_endereco_completo:
         rua = " ".join(p for p in (r.get("logradouro"), r.get("numero")) if p)

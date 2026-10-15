@@ -6445,6 +6445,17 @@ _SW_LAIS_PROBES: tuple[GuardProbe, ...] = (
         f"    INSERT INTO {_S}.lais_eventos (org_id, tipo)\n    VALUES (v_org, 'NOC PROBE BOGUS');",
         _CHECK, "a lais_evento with a malformed tipo",
     ),
+    # Migration 268 -- wave 1 Conhecimento: the closed set of knowledge sections.
+    _sw_junction_probe(
+        probe_id="lais.conhecimento.secao_valida", guard_name="lais_conhecimento_secao_valida",
+        migration="268_lais_conhecimento.sql",
+        rationale="`secao` selects the pydantic model that validates `dados` and the render block; an unknown "
+        "one would be stored unvalidated and never rendered.",
+        fixtures=("registry",),
+        ops_sql=f"    INSERT INTO {_S}.lais_conhecimento_secoes (org_id, secao)\n    VALUES (v_org, 'noc_probe_bogus');",
+        sqlstate_condition=_CHECK, what="a lais_conhecimento_secoes row with an unknown secao",
+        tabelas=(f"{_S}.lais_conhecimento_secoes",),
+    ),
 )
 
 

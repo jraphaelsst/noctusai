@@ -44,7 +44,7 @@ from app.clients.agents import (
     TurnResult,
 )
 from app.config import settings as _default_settings
-from app.services import lais_acoes_service, lais_contatos_service, lais_contexto_service
+from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service
 from app.services import lais_agente_service as lais
 from app.services import lais_aviso_service
 from app.services.message_store import DuplicateMessage, MessageStore
@@ -239,6 +239,9 @@ class LaisTurn:
 
     contato: dict[str, Any]
     contexto: dict[str, Any]
+    #: Deterministic messages sent BEFORE Julia's reply on this turn (wave 1: the recesso notice on the
+    #: first turn of an interacao inside the period). Empty = nothing extra.
+    avisos: list[str] = field(default_factory=list)
 
     @property
     def perguntas(self) -> list[dict[str, Any]]:
@@ -274,7 +277,8 @@ async def _preparar_lais(
         if interacao is None:
             interacao = lais_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
         contexto = lais_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao)
-        return LaisTurn(contato=contato, contexto=contexto)
+        recesso = lais_conhecimento_service.mensagem_recesso_primeiro_turno(deps.scoped, org_id, contato, interacao)
+        return LaisTurn(contato=contato, contexto=contexto, avisos=[recesso] if recesso else [])
     except Exception:
         logger.exception("lais: foundation prep failed conn=%s chat=%s -- turn runs without contexto", connection.id, chat_id)
         return None
@@ -519,6 +523,9 @@ async def _deliver(
     handoff = result.handoff
     primeira = not ((state or {}).get("agente_conversation_id") or (fresh or {}).get("agente_conversation_id"))
     partes = list(result.partes)
+    if lais_turn is not None and lais_turn.avisos:
+        # Wave 1: the deterministic recesso notice goes first (after the privacy disclosure, inserted below).
+        partes[0:0] = lais_turn.avisos
     if not partes and handoff is None:
         await _pos_turno(deps, enviou=False, **pos)  # silence can still carry actions
         close_run(deps.buffer, key, run)  # status `silencio`: stay silent, nothing to disclose
