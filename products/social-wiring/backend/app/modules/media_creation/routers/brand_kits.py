@@ -31,7 +31,7 @@ async def list_brand_kits(auth=Depends(get_current_user_org)):
 @router.post("", status_code=201)
 async def create_brand_kit(body: BrandKitCreate, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _svc(org_id).create_kit(body.model_dump(), str(user.id))
+    result = _svc(org_id).create_kit(body.model_dump(mode="json"), str(user.id))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar kit de marca")
     return success_response(result)
@@ -51,7 +51,7 @@ async def update_brand_kit(
     kit_id: str, body: BrandKitUpdate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth
-    result = _svc(org_id).update_kit(kit_id, body.model_dump(exclude_unset=True))
+    result = _svc(org_id).update_kit(kit_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail="Kit de marca não encontrado")
     return success_response(result)

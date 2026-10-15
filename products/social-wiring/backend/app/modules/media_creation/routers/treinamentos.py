@@ -45,7 +45,7 @@ async def treinamentos_admin(auth=Depends(get_current_user_org), is_admin=Depend
 @router.post("", status_code=201)
 async def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platform_admin)):
     try:
-        return success_response(_svc(auth).criar(**body.model_dump()))
+        return success_response(_svc(auth).criar(**body.model_dump(mode="json")))
     except TreinamentoError as exc:
         _raise(exc)
 

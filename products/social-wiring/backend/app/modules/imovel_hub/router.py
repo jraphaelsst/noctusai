@@ -110,7 +110,7 @@ async def criar_imovel_manual_route(
     `Imovel` (`fonte: "manual"`). Código `SW-NNNN` is generated."""
     user, org_id = _auth_parts(auth)
     return captacao_svc.registrar_manual(
-        client, org_id, body.model_dump(exclude_unset=True),
+        client, org_id, body.model_dump(mode="json", exclude_unset=True),
         usuario_id=getattr(user, "id", None),
     )
 
@@ -126,7 +126,7 @@ async def atualizar_imovel_manual_route(
     código the registry knows through another path (Vista is read-only here);
     404 unknown / other org."""
     user, org_id = _auth_parts(auth)
-    valores = body.model_dump(exclude_unset=True)
+    valores = body.model_dump(mode="json", exclude_unset=True)
     if valores.get("endereco") is None:
         valores.pop("endereco", None)
     return captacao_svc.atualizar_manual(
@@ -325,7 +325,7 @@ async def registrar_imovel_route(
     canonico = dados_svc.registrar_imovel(client, org_id, codigo, origem="manual")
     if not canonico:
         raise HTTPException(status_code=400, detail="Código do imóvel é obrigatório.")
-    valores = {f"endereco_manual_{k}": v for k, v in body.model_dump().items()}
+    valores = {f"endereco_manual_{k}": v for k, v in body.model_dump(mode="json").items()}
     dados_svc.gravar_endereco_manual(
         client,
         org_id,

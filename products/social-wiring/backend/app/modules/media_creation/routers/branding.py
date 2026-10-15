@@ -80,7 +80,7 @@ async def create_branding(
 ):
     user, _, org_id = auth
     try:
-        return success_response(await _svc(org_id, storage).create(body.model_dump(), str(user.id)))
+        return success_response(await _svc(org_id, storage).create(body.model_dump(mode="json"), str(user.id)))
     except BrandingError as exc:
         raise _http(exc) from exc
 
@@ -134,7 +134,7 @@ async def update_branding(
     user, _, org_id = auth
     try:
         return success_response(
-            await _svc(org_id, storage).update(kit_id, body.model_dump(exclude_unset=True))
+            await _svc(org_id, storage).update(kit_id, body.model_dump(mode="json", exclude_unset=True))
         )
     except BrandingError as exc:
         raise _http(exc) from exc
@@ -177,7 +177,7 @@ async def upsert_component(
 ):
     user, _, org_id = auth
     try:
-        return success_response(_svc(org_id, storage).upsert_component(kit_id, body.model_dump()))
+        return success_response(_svc(org_id, storage).upsert_component(kit_id, body.model_dump(mode="json")))
     except BrandingError as exc:
         raise _http(exc) from exc
 

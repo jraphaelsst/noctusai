@@ -27,7 +27,7 @@ async def list_automations(auth = Depends(get_current_user_org), status: Optiona
 @router.post("")
 async def create_automation(body: AutomationCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _get_service(org_id).create_automation(body.model_dump(), str(user.id))
+    result = _get_service(org_id).create_automation(body.model_dump(mode="json"), str(user.id))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar automacao")
     return success_response(result)
@@ -47,7 +47,7 @@ async def get_automation(automation_id: str, auth = Depends(get_current_user_org
 @router.patch("/{automation_id}")
 async def update_automation(automation_id: str, body: AutomationUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _get_service(org_id).update_automation(automation_id, body.model_dump(exclude_unset=True))
+    result = _get_service(org_id).update_automation(automation_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail="Automacao nao encontrada")
     return success_response(result)
@@ -90,7 +90,7 @@ async def list_steps(automation_id: str, auth = Depends(get_current_user_org)):
 @router.post("/{automation_id}/steps")
 async def add_step(automation_id: str, body: StepCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _get_service(org_id).add_step(automation_id, body.model_dump())
+    result = _get_service(org_id).add_step(automation_id, body.model_dump(mode="json"))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao adicionar step")
     return success_response(result)
@@ -99,7 +99,7 @@ async def add_step(automation_id: str, body: StepCreate, auth = Depends(get_curr
 @router.patch("/{automation_id}/steps/{step_id}")
 async def update_step(automation_id: str, step_id: str, body: StepUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _get_service(org_id).update_step(automation_id, step_id, body.model_dump(exclude_unset=True))
+    result = _get_service(org_id).update_step(automation_id, step_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail="Step nao encontrado")
     return success_response(result)

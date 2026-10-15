@@ -224,7 +224,7 @@ async def create_campanha(
 ) -> CampanhaOut:
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = svc.create_campanha(org_id, **body.model_dump())
+    row = svc.create_campanha(org_id, **body.model_dump())  # noc-allow: model-dump-json — typed kwargs (UUID/date); the service validates the period on dates and isoformats every column itself
     return CampanhaOut(**row)
 
 
@@ -237,7 +237,7 @@ async def update_campanha(
 ) -> CampanhaOut:
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = svc.update_campanha(org_id, campanha_id, **body.model_dump(exclude_unset=True))
+    row = svc.update_campanha(org_id, campanha_id, **body.model_dump(exclude_unset=True))  # noc-allow: model-dump-json — typed kwargs (UUID/date); the service isoformats every column itself
     return CampanhaOut(**row)
 
 

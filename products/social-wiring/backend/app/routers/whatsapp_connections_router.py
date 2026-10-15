@@ -482,7 +482,7 @@ async def update_connection(
     if "authorized_numbers" in body.model_fields_set and body.authorized_numbers is not None:
         _extra["authorized_numbers"] = body.authorized_numbers
     if "bound_chats" in body.model_fields_set and body.bound_chats is not None:
-        _extra["bound_chats"] = [bc.model_dump() for bc in body.bound_chats]
+        _extra["bound_chats"] = [bc.model_dump(mode="json") for bc in body.bound_chats]
     # Migration 017 — marca_id three-state via _UNSET sentinel.
     # Absent from request  → keep current (_UNSET propagated).
     # Explicit null        → clear the link (None propagated).

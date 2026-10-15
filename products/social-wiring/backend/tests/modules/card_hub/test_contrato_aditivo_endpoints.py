@@ -249,3 +249,23 @@ class TestRevisaoJuridica:
         r = client.patch(f"{_base(ids)}/{ad['id']}", json={"status": "enviado_assinatura"}, headers=_auth())
         assert r.status_code == 200 and r.json()["status"] == "enviado_assinatura"
         assert len(_rows(scoped, "atendimento_contrato_aditivo_versao_acessos")) >= 3
+
+
+class TestJsonModeParcelas:
+    """Fleet sweep 2026-10-15: the router dumps the restated parcelas with
+    `model_dump(mode="json")` (UUID/date/Decimal -> str — a raw object is
+    `not JSON serializable` for supabase-py, live 502 shape in orbity). The
+    store used to call `.isoformat()` on `vencimento`, which only a `date`
+    has; this pins the JSON-mode path end to end (router -> real store ->
+    MockSupabase, which refuses non-serializable writes)."""
+
+    def test_a_dated_decimal_parcela_is_written_as_json(self, client, scoped):
+        ids = _seed(scoped)
+        parcelas = _parcelas(ids)
+        parcelas[1]["vencimento"] = "2027-01-10"
+        r = _criar(client, ids, alteracoes=[PAGAMENTO], parcelas=parcelas)
+        assert r.status_code == 201, r.text
+        linhas = sorted(_rows(scoped, "atendimento_contrato_aditivo_parcelas"), key=lambda p: p["ordem"])
+        assert linhas[1]["vencimento"] == "2027-01-10"
+        assert linhas[1]["valor"] == "50000.00"
+        assert linhas[1]["favorecido_id"] == str(ids["fav_vendedor"])

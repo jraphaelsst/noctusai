@@ -31,7 +31,7 @@ async def list_campaigns(
 async def create_campaign(body: CampaignCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    result = svc.create_campaign(body.model_dump(), str(user.id))
+    result = svc.create_campaign(body.model_dump(mode="json"), str(user.id))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar campanha")
     return success_response(result)
@@ -53,7 +53,7 @@ async def get_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
 async def update_campaign(campaign_id: str, body: CampaignUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    data = body.model_dump(exclude_unset=True)
+    data = body.model_dump(mode="json", exclude_unset=True)
     result = svc.update_campaign(campaign_id, data)
     if not result:
         raise HTTPException(status_code=400, detail="Campanha nao pode ser editada neste status")

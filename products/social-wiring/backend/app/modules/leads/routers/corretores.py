@@ -41,7 +41,7 @@ def create_corretor(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = dimensions_service.create_corretor(client, org_id, **body.model_dump())
+    row = dimensions_service.create_corretor(client, org_id, **body.model_dump(mode="json"))
     return success_response(row)
 
 
@@ -101,7 +101,7 @@ def update_corretor(
     # why (an explicit null now genuinely means "clear this field" where
     # the column allows it).
     row = dimensions_service.update_corretor(
-        client, org_id, corretor_id, **body.model_dump(exclude_unset=True)
+        client, org_id, corretor_id, **body.model_dump(mode="json", exclude_unset=True)
     )
     if row is None:
         raise NotFoundError("lead_corretores", str(corretor_id))

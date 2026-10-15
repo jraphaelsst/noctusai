@@ -206,10 +206,10 @@ def _dump(body) -> dict:
     treatment or the service receives `InteresseBody` instances and its
     `k in item` membership tests silently match nothing.
     """
-    dados = body.model_dump(exclude_unset=True)
+    dados = body.model_dump(mode="json", exclude_unset=True)
     if dados.get("interesses") is not None:
         dados["interesses"] = [
-            i if isinstance(i, dict) else i.model_dump(exclude_unset=True)
+            i if isinstance(i, dict) else i.model_dump(mode="json", exclude_unset=True)
             for i in dados["interesses"]
         ]
     # UUIDs go back out over PostgREST as JSON.

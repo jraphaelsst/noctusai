@@ -133,8 +133,8 @@ def put_aviso(
         )
     _validar_blocos(payload.secoes)
     row, client, (_u, org_id) = _admin_row(auth)
-    dados = payload.model_dump()
-    dados["secoes"] = [s.model_dump() for s in payload.secoes]
+    dados = payload.model_dump(mode="json")
+    dados["secoes"] = [s.model_dump(mode="json") for s in payload.secoes]
     novo = svc.atualizar(client, org_id, row, dados, getattr(user, "id", None))
     return {"data": _saida_admin(novo)}
 

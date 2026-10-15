@@ -250,7 +250,12 @@ def _gravar_parcelas(
                 "aditivo_id": aditivo_id,
                 "tipo": p["tipo"],
                 "valor": str(p["valor"]),
-                "vencimento": p["vencimento"].isoformat() if p.get("vencimento") else None,
+                # The router hands a JSON-mode dump (ISO str); other callers may
+                # still pass a `date` — PostgREST needs the ISO string either way.
+                "vencimento": (
+                    p["vencimento"].isoformat() if hasattr(p["vencimento"], "isoformat")
+                    else str(p["vencimento"])
+                ) if p.get("vencimento") else None,
                 "evento": p.get("evento"),
                 "forma_pagamento": p.get("forma_pagamento"),
                 "favorecido_id": str(p["favorecido_id"]) if p.get("favorecido_id") else None,

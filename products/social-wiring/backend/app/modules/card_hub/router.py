@@ -390,7 +390,7 @@ async def patch_agendamento_route(
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(mode="json", exclude_unset=True)
     return agenda_svc.atualizar(
         client,
         org_id,
@@ -470,7 +470,7 @@ async def patch_roteiro_route(
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(mode="json", exclude_unset=True)
     return roteiros_svc.atualizar(
         client,
         org_id,
@@ -576,7 +576,7 @@ async def patch_visita_route(
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(mode="json", exclude_unset=True)
     return roteiros_svc.atualizar_visita(
         client,
         org_id,
@@ -610,7 +610,7 @@ async def patch_visita_proposta_route(
     value (undo), so ABSENCE is the only thing that can mean "leave alone".
     """
     user, org_id = _auth_parts(auth)
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(mode="json", exclude_unset=True)
     return roteiros_svc.registrar_proposta(
         client,
         org_id,

@@ -913,7 +913,7 @@ def _validar_divisao(
     tipos_valor: set[str] = set()
     for i, bruta in enumerate(entradas):
         # A PATCH hands over the body models themselves, a POST their dump.
-        e = bruta.model_dump() if hasattr(bruta, "model_dump") else bruta
+        e = bruta.model_dump(mode="json") if hasattr(bruta, "model_dump") else bruta
         fav = str(e["favorecido_id"])
         if fav in vistos:
             raise ValidationError_(

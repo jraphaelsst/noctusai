@@ -33,7 +33,7 @@ async def list_posts(
 @router.post("", status_code=201)
 async def create_post(body: PostCreate, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
-    result = _svc(org_id).create_post(body.model_dump(), str(user.id))
+    result = _svc(org_id).create_post(body.model_dump(mode="json"), str(user.id))
     if not result:
         raise HTTPException(status_code=400, detail="Kit de marca inválido")
     return success_response(result)
@@ -53,7 +53,7 @@ async def update_post(
     post_id: str, body: PostUpdate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth
-    result = _svc(org_id).update_post(post_id, body.model_dump(exclude_unset=True))
+    result = _svc(org_id).update_post(post_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail="Post não encontrado")
     return success_response(result)

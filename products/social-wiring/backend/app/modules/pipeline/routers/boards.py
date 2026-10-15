@@ -346,7 +346,7 @@ def atualizar_atendimento(
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise ValidationError_("Nenhum campo para atualizar.")
     rows = (
@@ -521,7 +521,7 @@ def atualizar_processo(
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise ValidationError_("Nenhum campo para atualizar.")
     rows = (

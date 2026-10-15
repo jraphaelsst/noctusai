@@ -51,7 +51,7 @@ async def create_contact(
 ):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    result = svc.create_contact(body.model_dump())
+    result = svc.create_contact(body.model_dump(mode="json"))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar contato")
     if result.get("email_optin") == OPTIN_PENDING:
@@ -81,7 +81,7 @@ async def update_contact(
 ):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    data = body.model_dump(exclude_unset=True)
+    data = body.model_dump(mode="json", exclude_unset=True)
     result = svc.update_contact(contact_id, data)
     if not result:
         raise HTTPException(status_code=404, detail="Contato nao encontrado")
@@ -109,7 +109,7 @@ async def import_contacts(
 ):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    contacts_data = [c.model_dump() for c in body.contacts]
+    contacts_data = [c.model_dump(mode="json") for c in body.contacts]
     result = svc.import_contacts(contacts_data, double_opt_in=body.double_opt_in)
     pending = result.pop("pending")
     if body.double_opt_in:

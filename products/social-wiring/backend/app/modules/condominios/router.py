@@ -68,7 +68,7 @@ def obter_route(condominio_id: UUID, auth=Depends(get_current_user_org),
 def atualizar_route(condominio_id: UUID, body: CondominioPatchBody, auth=Depends(get_current_user_org),
                     client=Depends(get_imovel_hub_client)) -> dict:
     user_id, org_id = _parts(auth)
-    return svc.atualizar(client, org_id, condominio_id, body.model_dump(exclude_unset=True), user_id)
+    return svc.atualizar(client, org_id, condominio_id, body.model_dump(mode="json", exclude_unset=True), user_id)
 
 
 def _acao(nome: str, rotulo: str, fn):

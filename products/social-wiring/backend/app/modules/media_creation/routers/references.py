@@ -42,7 +42,7 @@ async def create_reference(
     kit_id: str, body: ReferenceCreate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth
-    result = _svc(org_id).create_reference(kit_id, body.model_dump())
+    result = _svc(org_id).create_reference(kit_id, body.model_dump(mode="json"))
     if not result:
         raise HTTPException(status_code=404, detail="Kit de marca não encontrado")
     return success_response(result)

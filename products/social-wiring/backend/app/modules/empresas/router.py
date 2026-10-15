@@ -77,7 +77,7 @@ async def update_empresa_route(
     document-sourced fields — see `dados_service.atualizar_manual`'s
     docstring. `cnpj` is never gated."""
     user, org_id = _auth_parts(auth)
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(mode="json", exclude_unset=True)
     return dados_service.atualizar_manual(
         client, org_id, empresa_id,
         acting_user_id=getattr(user, "id", None),

@@ -42,7 +42,7 @@ def create_source(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = dimensions_service.create_source(client, org_id, **body.model_dump())
+    row = dimensions_service.create_source(client, org_id, **body.model_dump(mode="json"))
     return success_response(row)
 
 
@@ -105,7 +105,7 @@ def update_source(
     # `dimensions_service.update_source`'s docstring for how each field
     # handles an explicit null.
     row = dimensions_service.update_source(
-        client, org_id, source_id, **body.model_dump(exclude_unset=True)
+        client, org_id, source_id, **body.model_dump(mode="json", exclude_unset=True)
     )
     if row is None:
         raise NotFoundError("lead_sources", str(source_id))

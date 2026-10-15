@@ -192,7 +192,7 @@ def update_recipient(
     supabase = get_user_client(token)
     update_payload = {
         k: v
-        for k, v in payload.model_dump(exclude_none=True).items()
+        for k, v in payload.model_dump(mode="json", exclude_none=True).items()
     }
     # `marca_id` needs the explicit-null distinction the shared exclude_none
     # path erases: sending `null` must CLEAR the scope back to org-wide, while
@@ -1631,7 +1631,7 @@ def update_dados_imobiliaria(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    valores = body.model_dump(exclude_unset=True)
+    valores = body.model_dump(mode="json", exclude_unset=True)
     linha = {campo: valores[campo] for campo in _IMOBILIARIA_CAMPOS if campo in valores}
     linha["org_id"] = str(org_id)
     if getattr(user, "id", None):
@@ -1777,7 +1777,7 @@ def create_imobiliaria(
     _exigir_cnpj_livre(supabase, org_id, body.cnpj)
     linha = {
         campo: valor
-        for campo, valor in body.model_dump().items()
+        for campo, valor in body.model_dump(mode="json").items()
         if campo in imobiliarias_svc.CAMPOS
     }
     linha["id"] = str(uuid4())
@@ -1803,7 +1803,7 @@ def update_imobiliaria(
 ) -> dict:
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    patch = body.model_dump(exclude_unset=True)
+    patch = body.model_dump(mode="json", exclude_unset=True)
     if not patch:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no fields to update"
@@ -2020,7 +2020,7 @@ def update_testemunha(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    patch = body.model_dump(exclude_unset=True)
+    patch = body.model_dump(mode="json", exclude_unset=True)
     if not patch:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -68,7 +68,7 @@ def create_agente_route(
     return svc.criar(
         client,
         org_id,
-        dados=body.model_dump(exclude_unset=True),
+        dados=body.model_dump(mode="json", exclude_unset=True),
         user_id=getattr(user, "id", None),
     )
 
@@ -87,7 +87,7 @@ def update_agente_route(
         client,
         org_id,
         agente_id,
-        dados=body.model_dump(exclude_unset=True),
+        dados=body.model_dump(mode="json", exclude_unset=True),
         user_id=getattr(user, "id", None),
     )
 

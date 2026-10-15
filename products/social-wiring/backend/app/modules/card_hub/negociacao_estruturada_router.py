@@ -78,7 +78,7 @@ async def put_termos_negocio_route(
     user, org_id = _auth_parts(auth)
     return svc.atualizar_termos(
         client, org_id, cliente_id,
-        valores=body.model_dump(), usuario_id=getattr(user, "id", None),
+        valores=body.model_dump(mode="json"), usuario_id=getattr(user, "id", None),
     )
 
 
@@ -95,7 +95,7 @@ async def create_parcela_route(
     user, org_id = _auth_parts(auth)
     return svc.criar_parcela(
         client, org_id, cliente_id,
-        valores=body.model_dump(), usuario_id=getattr(user, "id", None),
+        valores=body.model_dump(mode="json"), usuario_id=getattr(user, "id", None),
     )
 
 
@@ -174,7 +174,7 @@ async def create_favorecido_route(
     user, org_id = _auth_parts(auth)
     return svc.criar_favorecido(
         client, org_id, cliente_id,
-        valores=body.model_dump(), usuario_id=getattr(user, "id", None),
+        valores=body.model_dump(mode="json"), usuario_id=getattr(user, "id", None),
     )
 
 
@@ -218,7 +218,7 @@ async def create_intermediario_route(
     user, org_id = _auth_parts(auth)
     return svc.criar_intermediario(
         client, org_id, cliente_id,
-        valores=body.model_dump(), usuario_id=getattr(user, "id", None),
+        valores=body.model_dump(mode="json"), usuario_id=getattr(user, "id", None),
     )
 
 

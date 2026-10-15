@@ -246,7 +246,7 @@ def _imovel_to_row(imovel: Imovel, org_id: UUID, synced_at: str) -> dict:
         "banheiro_social": imovel.banheiro_social,
         "foto_destaque": imovel.foto_destaque,
         "fotos": list(imovel.fotos),
-        "corretores": [c.model_dump() for c in imovel.corretores],
+        "corretores": [c.model_dump(mode="json") for c in imovel.corretores],
         "construtora": imovel.construtora,
         "data_cadastro": imovel.data_cadastro.isoformat() if imovel.data_cadastro else None,
         "data_atualizacao": (

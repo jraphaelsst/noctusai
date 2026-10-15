@@ -29,7 +29,7 @@ async def list_templates(
 async def create_template(body: TemplateCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    result = svc.create_template(body.model_dump())
+    result = svc.create_template(body.model_dump(mode="json"))
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar template")
     return success_response(result)
@@ -49,7 +49,7 @@ async def get_template(template_id: str, auth = Depends(get_current_user_org)):
 async def update_template(template_id: str, body: TemplateUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
-    data = body.model_dump(exclude_unset=True)
+    data = body.model_dump(mode="json", exclude_unset=True)
     result = svc.update_template(template_id, data)
     if not result:
         raise HTTPException(status_code=404, detail="Template nao encontrado")

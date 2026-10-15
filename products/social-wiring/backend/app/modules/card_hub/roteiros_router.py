@@ -56,7 +56,7 @@ async def feedback_route(
     return svc.responder(
         client, org_id, cliente_id, roteiro_id,
         aconteceu=body.aconteceu,
-        visitas=[v.model_dump() for v in body.visitas],
+        visitas=[v.model_dump(mode="json") for v in body.visitas],
     )
 
 

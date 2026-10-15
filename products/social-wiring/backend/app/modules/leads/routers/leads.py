@@ -108,7 +108,7 @@ def create_lead(
     """
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    payload = body.model_dump(exclude_unset=True)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     # §3.6: the código is required (schema) AND must be a known imóvel —
     # validated BEFORE any write so an unknown one leaves nothing behind.
     payload["codigo_imovel"] = atendimento_imoveis_service.resolver_codigo_para_lead(
@@ -206,7 +206,7 @@ def update_lead(
     """
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = leads_service.update_lead(client, org_id, lead_id, body.model_dump(exclude_unset=True))
+    row = leads_service.update_lead(client, org_id, lead_id, body.model_dump(mode="json", exclude_unset=True))
     if row is None:
         raise NotFoundError("lead", str(lead_id))
     refs = leads_service.build_refs(client, org_id)

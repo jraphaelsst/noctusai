@@ -93,7 +93,7 @@ def create_condominium(
 ) -> CondominiumOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    body = payload.model_dump()
+    body = payload.model_dump(mode="json")
     body["org_id"] = str(org_id)
     resp = _scoped(token).table("sched_condominiums").insert(body).execute()
     rows = resp.data or []
@@ -112,7 +112,7 @@ def update_condominium(
     auth: tuple = Depends(get_current_user_org),
 ) -> CondominiumOut:
     _user, token, _raw_org = auth
-    body = {k: v for k, v in payload.model_dump().items() if v is not None}
+    body = {k: v for k, v in payload.model_dump(mode="json").items() if v is not None}
     if not body:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -178,7 +178,7 @@ def update_property(
     auth: tuple = Depends(get_current_user_org),
 ) -> PropertyOut:
     _user, token, _raw_org = auth
-    body = {k: v for k, v in payload.model_dump().items() if v is not None}
+    body = {k: v for k, v in payload.model_dump(mode="json").items() if v is not None}
     if not body:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -225,7 +225,7 @@ def create_service(
 ) -> ServiceOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    body = payload.model_dump()
+    body = payload.model_dump(mode="json")
     body["org_id"] = str(org_id)
     resp = _scoped(token).table("sched_services").insert(body).execute()
     rows = resp.data or []
@@ -262,7 +262,7 @@ def create_user(
 ) -> UserOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    body = payload.model_dump()
+    body = payload.model_dump(mode="json")
     body["org_id"] = str(org_id)
     resp = _scoped(token).table("sched_users").insert(body).execute()
     rows = resp.data or []

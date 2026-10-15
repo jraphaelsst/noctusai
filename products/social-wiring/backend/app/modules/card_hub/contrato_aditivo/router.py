@@ -74,7 +74,7 @@ async def post_aditivo_route(
         contrato_id,
         estilo=body.estilo,
         alteracoes=body.alteracoes,
-        parcelas=[p.model_dump() for p in body.parcelas],
+        parcelas=[p.model_dump(mode="json") for p in body.parcelas],
         assinatura_data=body.assinatura_data,
         modalidade_assinatura=body.modalidade_assinatura,
         usuario_id=getattr(user, "id", None),
@@ -99,7 +99,7 @@ async def patch_aditivo_route(
         if campo == "alteracoes":
             valores[campo] = body.alteracoes
         elif campo == "parcelas":
-            valores[campo] = [p.model_dump() for p in body.parcelas] if body.parcelas is not None else None
+            valores[campo] = [p.model_dump(mode="json") for p in body.parcelas] if body.parcelas is not None else None
         else:
             valores[campo] = getattr(body, campo)
     return store.atualizar(

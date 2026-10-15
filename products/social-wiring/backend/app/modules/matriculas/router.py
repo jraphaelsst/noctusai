@@ -800,7 +800,7 @@ async def definir_selecao_route(
             extracao_id=body.extracao_id,
             ato_ids=body.ato_ids,
             usuario_id=getattr(user, "id", None),
-            permutas=[p.model_dump() for p in body.permutas],
+            permutas=[p.model_dump(mode="json") for p in body.permutas],
         )
     )
 
@@ -826,7 +826,7 @@ async def confirmar_detalhes_route(
             client,
             UUID(org_id),
             ato_id,
-            valores=body.model_dump(include=body.model_fields_set),
+            valores=body.model_dump(mode="json", include=body.model_fields_set),
             usuario_id=getattr(user, "id", None),
         )
     )

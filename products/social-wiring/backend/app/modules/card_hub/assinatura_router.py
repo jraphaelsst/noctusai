@@ -95,7 +95,7 @@ async def post_assinatura_route(
         cliente_id,
         contrato_id,
         versao_id=body.versao_id,
-        signatarios=[s.model_dump() for s in body.signatarios],
+        signatarios=[s.model_dump(mode="json") for s in body.signatarios],
         mensagem=body.mensagem,
         usuario_id=getattr(user, "id", None),
     )

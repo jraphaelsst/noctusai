@@ -484,7 +484,7 @@ async def criar_consulta(
     ]
 
     consulta_data = {
-        **body.model_dump(exclude_none=True, exclude={"incluir_tjsp"}),
+        **body.model_dump(mode="json", exclude_none=True, exclude={"incluir_tjsp"}),
         "org_id": str(org_id),
         "created_by": str(user.id),
         "status": "pendente",
@@ -623,7 +623,7 @@ async def criar_consulta_manual(
 
     consulta_data = {
         **body.model_dump(
-            exclude_none=True,
+            mode="json", exclude_none=True,
             exclude={"atendimento_parte_id", "cliente_id", "incluir_tjsp"},
         ),
         "org_id": str(org_id),

@@ -99,7 +99,7 @@ async def create_favorecido_registro_route(
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
     svc.exigir_escrita(get_core_client(), auth, request)
-    return svc.criar(client, org_id, valores=body.model_dump(), usuario_id=usuario_id)
+    return svc.criar(client, org_id, valores=body.model_dump(mode="json"), usuario_id=usuario_id)
 
 
 @router.patch("/api/card-hub/favorecidos/{favorecido_id}")

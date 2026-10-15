@@ -335,7 +335,7 @@ def simular_lead(
             status_code=status.HTTP_403_FORBIDDEN,
         )
     org_id = coerce_org_uuid(raw_org)
-    result = svc.process_simulated(org_id=org_id, body=body.model_dump())
+    result = svc.process_simulated(org_id=org_id, body=body.model_dump(mode="json"))
     return JSONResponse({"data": result})
 
 
