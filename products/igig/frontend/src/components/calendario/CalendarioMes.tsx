@@ -17,6 +17,7 @@
  * an "auto" badge so contract-planned content is distinguishable from
  * hand-planned content.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -128,14 +129,18 @@ export function CalendarioMes({ clienteId, className }: CalendarioMesProps) {
   // Unsaved legenda/direção text is lost silently on close today (achado
   // 14) — the editor reports its own dirtiness here so EVERY close path
   // (×, backdrop click, Escape) goes through the same guard.
+  const confirm = useConfirm();
   const [editorSujo, setEditorSujo] = useState(false);
 
-  function fecharEditor() {
+  async function fecharEditor() {
     if (
       editorSujo &&
-      !window.confirm(
-        "Você tem alterações não salvas na legenda ou na direção de vídeo. Fechar sem salvar?",
-      )
+      !(await confirm({
+        title: "Fechar sem salvar?",
+        description: "Você tem alterações não salvas na legenda ou na direção de vídeo.",
+        confirmLabel: "Fechar sem salvar",
+        tone: "danger",
+      }))
     ) {
       return;
     }

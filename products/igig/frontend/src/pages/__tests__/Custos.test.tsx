@@ -15,6 +15,7 @@ const { api, mockUser } = vi.hoisted(() => ({
 }));
 vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: () => ({ user: mockUser.current }) }));
 
+import { ConfirmProvider } from "@noctusai/lib/components";
 import Custos from "../Custos";
 
 const FUNCAO = { id: "f1", org_id: "o", nome: "Designer", custo_hora_padrao: 85 };
@@ -27,7 +28,9 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Custos />
+      <ConfirmProvider>
+        <Custos />
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -35,7 +38,6 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUser.current = { id: "usuario-1", user_metadata: { org_role: "admin" } };
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   api.get.mockImplementation(async (path: string) => {
     if (path === "/api/custos/funcoes") return [FUNCAO];
     if (path === "/api/custos/profissionais") return [PROF];
@@ -72,21 +74,22 @@ describe("Custos — profissional edit + delete confirmation", () => {
   it("asks for confirmation before removing a função", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Remover Designer" }));
-    expect(window.confirm).toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Remover" }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/custos/funcoes/f1"));
   });
 
   it("asks for confirmation before removing a profissional", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Remover Ana" }));
-    expect(window.confirm).toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Remover" }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/custos/profissionais/p1"));
   });
 
   it("declining the confirmation does not delete", async () => {
-    (window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Remover Ana" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByTestId("confirm-dialog")).toBeNull());
     expect(api.delete).not.toHaveBeenCalled();
   });
 });

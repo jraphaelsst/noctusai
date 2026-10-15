@@ -11,6 +11,7 @@
  * hidden. Their hours would otherwise cost zero and quietly overstate the
  * margin on every account they touch.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, Input, TableSkeleton } from "@noctusai/lib/design-system";
@@ -37,6 +38,7 @@ import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function Custos() {
+  const confirm = useConfirm();
   const isAdmin = useIsOrgAdmin();
   const { funcoes, loading: carregandoFuncoes, error: erroFuncoes } = useFuncoes();
   const {
@@ -187,8 +189,8 @@ export default function Custos() {
                 funcao={f}
                 isAdmin={isAdmin}
                 removendo={removerFuncao.isPending}
-                onRemover={() => {
-                  if (window.confirm(`Remover a função "${f.nome}"? Os profissionais vinculados ficam sem função.`)) {
+                onRemover={async () => {
+                  if (await confirm({ title: `Remover a função "${f.nome}"?`, description: "Os profissionais vinculados ficam sem função.", confirmLabel: "Remover", tone: "danger" })) {
                     removerFuncao.mutate(f.id, {
                       onError: (erro) =>
                         toast.error(describeError(erro, "Não foi possível remover a função.")),
@@ -304,8 +306,8 @@ export default function Custos() {
                     { onError: (erro) => toast.error(describeError(erro, "Não foi possível salvar o profissional.")) },
                   )
                 }
-                onRemover={() => {
-                  if (window.confirm(`Remover o profissional "${p.nome}"?`)) {
+                onRemover={async () => {
+                  if (await confirm({ title: `Remover o profissional "${p.nome}"?`, confirmLabel: "Remover", tone: "danger" })) {
                     removerProf.mutate(p.id, {
                       onError: (erro) =>
                         toast.error(describeError(erro, "Não foi possível remover o profissional.")),

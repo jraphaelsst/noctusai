@@ -13,6 +13,7 @@
  * DELETE of a product an orçamento references is a SOFT delete server-side
  * (`ativo=false`, 200) — the toast says which one happened.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Badge, Button, EmptyState, Field, FormError, Input, Select, Skeleton, Switch, Textarea } from "@noctusai/lib/design-system";
@@ -55,11 +56,12 @@ export default function ProdutosServicos() {
   const { produtos, showSkeleton, isRefreshing, isError, error } = useProdutosServicos(
     mostrarInativos ? {} : { ativo: true },
   );
+  const confirm = useConfirm();
   const { remover, atualizar } = useProdutoServicoMutations();
   const [editando, setEditando] = useState<{ id: string | null; valores: ProdutoServicoInput } | null>(null);
 
-  function excluir(p: ProdutoServico) {
-    if (!window.confirm(`Excluir "${p.nome}"?`)) return;
+  async function excluir(p: ProdutoServico) {
+    if (!(await confirm({ title: `Excluir "${p.nome}"?`, confirmLabel: "Excluir", tone: "danger" }))) return;
     remover.mutate(p.id, {
       onSuccess: (r) =>
         toast.success(
