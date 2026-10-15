@@ -162,7 +162,7 @@ async def get_lead(lead_id: str, authorization: Optional[str] = Header(None)):
 @router.patch("/leads/{lead_id}")
 async def patch_lead(lead_id: str, body: WebsiteLeadPatch, authorization: Optional[str] = Header(None)):
     user, _token, _role = await get_website_editor(authorization)
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(mode="json", exclude_none=True)
     if not updates:
         raise HTTPException(status_code=422, detail="Nenhum campo para atualizar")
 

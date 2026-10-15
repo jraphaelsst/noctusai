@@ -233,7 +233,7 @@ async def atualizar_role(
             detail="Papéis de sistema não podem ser editados",
         )
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

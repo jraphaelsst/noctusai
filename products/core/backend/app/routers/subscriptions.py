@@ -99,7 +99,7 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
     if not plan.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     result = db.table("subscriptions").insert(data).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar assinatura")
@@ -148,7 +148,7 @@ async def atualizar_subscription(
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

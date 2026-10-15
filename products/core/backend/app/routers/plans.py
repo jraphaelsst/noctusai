@@ -54,7 +54,7 @@ async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(Non
     if existing.data:
         raise HTTPException(status_code=409, detail="Já existe um plano com este slug")
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     data["ativo"] = True
 
     result = db.table("plans").insert(data).execute()
@@ -71,7 +71,7 @@ async def atualizar_plan(plan_id: str, body: PlanUpdate, authorization: Optional
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

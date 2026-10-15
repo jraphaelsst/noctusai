@@ -143,7 +143,7 @@ async def criar_product(body: ProductCreate, authorization: Optional[str] = Head
     if existing.data:
         raise HTTPException(status_code=409, detail="Já existe um produto com este slug")
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     data["ativo"] = True
 
     result = db.table("products").insert(data).execute()
@@ -162,7 +162,7 @@ async def atualizar_product(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

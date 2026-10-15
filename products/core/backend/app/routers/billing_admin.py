@@ -125,7 +125,7 @@ async def create_plan(
         raise HTTPException(status_code=409, detail="Já existe um plano com este slug")
     if body.product_id:
         _one(ctx, "products", body.product_id)
-    payload = body.model_dump(exclude_none=True)
+    payload = body.model_dump(mode="json", exclude_none=True)
     payload["ativo"] = True
     created = ctx.db.table("plans").insert(payload).execute().data or []
     if not created:
@@ -141,7 +141,7 @@ async def update_plan(
     ctx: BillingContext = Depends(get_billing_context),
 ):
     _one(ctx, "plans", plan_id)
-    payload = body.model_dump(exclude_unset=True)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     if not payload:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     if payload.get("product_id"):
@@ -170,7 +170,7 @@ async def create_price(
     ).eq("currency", body.currency).eq("ativo", True).execute()
     created = (
         ctx.db.table("plan_prices")
-        .insert({**body.model_dump(exclude_none=True), "plan_id": plan_id, "ativo": True})
+        .insert({**body.model_dump(mode="json", exclude_none=True), "plan_id": plan_id, "ativo": True})
         .execute()
         .data
         or []
@@ -188,7 +188,7 @@ async def update_price(
     ctx: BillingContext = Depends(get_billing_context),
 ):
     _one(ctx, "plan_prices", price_id)
-    payload = body.model_dump(exclude_unset=True)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     if not payload:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     for key in ("stripe_price_id_test", "stripe_price_id_live"):

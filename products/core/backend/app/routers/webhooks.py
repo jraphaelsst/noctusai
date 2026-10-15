@@ -128,7 +128,7 @@ async def atualizar_webhook(
     user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
-    update_data = body.model_dump(exclude_none=True)
+    update_data = body.model_dump(mode="json", exclude_none=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

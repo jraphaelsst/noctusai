@@ -129,7 +129,7 @@ async def atualizar_api_key(
     await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

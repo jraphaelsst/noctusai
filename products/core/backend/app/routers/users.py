@@ -122,7 +122,7 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
     admin_user, _token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

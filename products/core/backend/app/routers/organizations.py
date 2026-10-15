@@ -79,7 +79,7 @@ async def atualizar_organization(org_id: str, body: OrgUpdate, authorization: Op
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
     is_platform_admin = profile.data.get("role") == "admin"
 
-    data = body.model_dump(exclude_none=True)
+    data = body.model_dump(mode="json", exclude_none=True)
 
     if not is_platform_admin:
         if profile.data.get("org_id") != org_id:

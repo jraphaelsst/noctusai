@@ -385,7 +385,7 @@ async def update_profile(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_data = {k: v for k, v in body.model_dump(mode="json").items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
