@@ -222,3 +222,32 @@ class TestAgentSettings:
     def test_invalid_updates_422(self, admin_client, body):
         _seed_user(admin_client, role="admin")
         assert admin_client.put("/api/admin/agent-settings", json=body).status_code == 422
+
+
+class TestAgentSettingsJsonModeWrite:
+    """Fleet sweep 2026-10-15: router -> REAL service -> REAL Supabase store ->
+    MockSupabase. The router dump is `model_dump(mode="json")` so whatever the
+    patch carries reaches supabase-py JSON-encodable (a UUID/date/Decimal left
+    as a Python object is `not JSON serializable` -> 502 live, orbity)."""
+
+    def test_put_upserts_a_json_serializable_row(self, admin_client):
+        import json
+
+        from app.main import app
+        from app.stores.runtime_settings import SupabaseRuntimeSettingsStore
+
+        _seed_user(admin_client, role="admin")
+        sb = admin_client.mock_supabase
+        runtime = RuntimeSettingsService(
+            SupabaseRuntimeSettingsStore(sb),
+            type("S", (), {"approval_timeout_seconds": 300, "julia_max_turns": None,
+                           "messages_rate_limit": "20/minute", "turn_timeout_seconds": 600,
+                           "julia_cli_slots": 3})(),
+            ttl_seconds=0,
+        )
+        app.dependency_overrides[get_runtime_settings_service_dep] = lambda: runtime
+        resp = admin_client.put("/api/admin/agent-settings", json={"max_turns": 30})
+        assert resp.status_code == 200, resp.text
+        upserted = sb.table("runtime_settings").upserted_payloads
+        assert upserted, "the update never reached the client"
+        json.dumps(upserted[-1])

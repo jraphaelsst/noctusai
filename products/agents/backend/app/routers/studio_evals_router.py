@@ -170,7 +170,7 @@ async def update_case(
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
-    fields = payload.model_dump(exclude_unset=True)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
     try:
         with store_errors():
             record = store.update_case(

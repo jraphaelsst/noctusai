@@ -172,7 +172,7 @@ async def update_collection(
     defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
-    fields = payload.model_dump(exclude_unset=True)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
     try:
         with store_errors():
             record = store.update_collection(
@@ -320,7 +320,7 @@ async def update_document(
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
-    fields = payload.model_dump(exclude_unset=True)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
     motivo = fields.pop("motivo", None)
     try:
         with store_errors():

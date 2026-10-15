@@ -36,7 +36,7 @@ async def update_agent_settings(
     ctx: AuthContext = Depends(require_platform_admin),
     service: RuntimeSettingsService = Depends(get_runtime_settings_service_dep),
 ) -> AgentSettingsOut:
-    patch = payload.model_dump(exclude_unset=True)
+    patch = payload.model_dump(mode="json", exclude_unset=True)
     try:
         return _out(service.update(patch, updated_by=ctx.user_id))
     except RuntimeSettingsError as exc:

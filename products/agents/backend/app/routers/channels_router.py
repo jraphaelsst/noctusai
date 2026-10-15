@@ -255,7 +255,7 @@ async def run_channel_turn(
     try:
         conversation = existing or conv_store.create_channel(
             org_id, agent.id, payload.channel, channel_ref,
-            payload.contact.model_dump(), version_id=active.id,
+            payload.contact.model_dump(mode="json"), version_id=active.id,
         )
         acquired = conv_store.try_acquire_turn(
             org_id, conversation.id, INSTANCE_ID, settings.turn_lock_ttl_seconds
@@ -268,7 +268,7 @@ async def run_channel_turn(
         if plan.replay is not None:
             return ChannelTurnResponse(**plan.replay)
 
-        conv_store.touch_activity(org_id, conversation.id, contact=payload.contact.model_dump())
+        conv_store.touch_activity(org_id, conversation.id, contact=payload.contact.model_dump(mode="json"))
         for msg in plan.new:
             record = msg_store.add(org_id, conversation.id, "user", msg.texto)
             try:

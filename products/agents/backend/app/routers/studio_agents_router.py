@@ -192,7 +192,7 @@ def store_errors() -> Iterator[None]:
 def patch_fields(payload, *, nullable: frozenset[str] = frozenset()) -> dict[str, Any]:
     """``exclude_unset`` PATCH body; an explicit ``null`` on a NOT NULL
     column is a 422 (never silently dropped)."""
-    fields = payload.model_dump(exclude_unset=True)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
     for name, value in fields.items():
         if value is None and name not in nullable:
             raise http_error(422, "invalid_field", f"{name} cannot be null")

@@ -322,7 +322,7 @@ def _skill_payload(skill: BundleSkill) -> dict[str, Any]:
 
 
 def _proveniencia(doc: BundleDocumento) -> dict[str, Any]:
-    return doc.proveniencia.model_dump(exclude_none=True)
+    return doc.proveniencia.model_dump(mode="json", exclude_none=True)
 
 
 def import_bundle(
