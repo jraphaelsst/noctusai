@@ -49,6 +49,7 @@ export type StepType =
   | "end";
 
 export type ExecutionStatus = "running" | "done" | "canceled" | "failed";
+export type SubjectType = "lead" | "client" | "task" | "meeting";
 
 export interface Flow {
   id: string;
@@ -78,7 +79,11 @@ export interface Execution {
   id: string;
   org_id: string;
   flow_id: string;
-  lead_id: string;
+  /** Null for task/client/meeting runs (those carry subject_id). */
+  lead_id: string | null;
+  subject_type?: SubjectType | string;
+  subject_id?: string | null;
+  trigger_key?: string | null;
   status: ExecutionStatus;
   current_step_ord: number;
   started_at: string | null;

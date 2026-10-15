@@ -30,6 +30,9 @@ vi.mock("@/hooks/useClients", () => ({
   useLeadOptions: () => ({ data: [] }),
   nameLookup: () => () => "Maria",
 }));
+vi.mock("@/hooks/useCrm", () => ({
+  useFunil: () => ({ data: [{ stage: { id: "st1", name: "Proposta" }, leads: [] }] }),
+}));
 vi.mock("@/components/LeadSelect", () => ({ LeadSelect: () => null }));
 
 const flow = { id: "f1", name: "Boas-vindas", trigger_type: "manual", trigger_config: {}, active: true, schedule_window: null, stop_rules: null };

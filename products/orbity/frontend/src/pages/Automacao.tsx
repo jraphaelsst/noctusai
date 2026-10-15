@@ -16,6 +16,12 @@ import { LeadSelect } from "@/components/LeadSelect";
 import { useLeadOptions, nameLookup } from "@/hooks/useClients";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useFunil } from "@/hooks/useCrm";
+import {
+  TriggerConfigFields,
+  buildTriggerConfig,
+  subjectLabel,
+} from "@/components/TriggerConfigFields";
 import { useWhatsAppConnectionState } from "@/hooks/useWhatsApp";
 import {
   SendMessageFields,
@@ -88,13 +94,23 @@ const TRIGGER_LABELS: Record<TriggerType, string> = {
 };
 
 /**
- * Triggers the backend actually EMITS. Today only `manual` — no service emits
- * the event triggers yet (KB § PRODUCTS/orbity/PAGES-AND-DATAFLOW.md § Automação).
+ * Triggers the backend actually EMITS (automation_triggers.py `disparar`).
  * The rest stay visible as "em breve" but are not selectable, so a gestor never
  * builds a flow that silently never runs. Add a type here in the same commit
  * that adds its emitter.
  */
-const LIVE_TRIGGERS: ReadonlySet<TriggerType> = new Set<TriggerType>(["manual"]);
+const LIVE_TRIGGERS: ReadonlySet<TriggerType> = new Set<TriggerType>([
+  "manual",
+  "lead_created",
+  "pipeline_stage_entered",
+  "lead_status_changed",
+  "task_created",
+  "task_completed",
+  "client_created",
+  "meeting_created",
+  "whatsapp_message_received",
+  "keyword_received",
+]);
 
 const STEP_TYPE_LABELS: Record<StepType, string> = {
   send_message: "Enviar mensagem",
@@ -122,6 +138,7 @@ const STEP_TYPE_COLORS: Record<StepType, string> = {
 
 const EXECUTION_STATUS_LABELS: Record<string, string> = {
   running: "Executando",
+  processing: "Processando",
   done: "Concluida",
   canceled: "Cancelada",
   failed: "Falhou",
@@ -130,6 +147,8 @@ const EXECUTION_STATUS_LABELS: Record<string, string> = {
 const EXECUTION_STATUS_COLORS: Record<string, string> = {
   running:
     "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  processing:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
   done: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
   canceled:
     "bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400",
@@ -237,16 +256,41 @@ function FlowDialogInner({
     trigger_type: editing?.trigger_type ?? "manual",
     active: editing?.active ?? true,
   });
+  const initCfg = editing?.trigger_config ?? {};
+  const [keyword, setKeyword] = useState(String(initCfg.keyword ?? ""));
+  const [stageId, setStageId] = useState(String(initCfg.stage_id ?? ""));
+  const [leadStatus, setLeadStatus] = useState(String(initCfg.status ?? ""));
+  const [stopOnReply, setStopOnReply] = useState(
+    (editing?.stop_rules ?? {}).stop_on_reply !== false,
+  );
+  const [cfgError, setCfgError] = useState("");
+  const funilQ = useFunil();
+  const stages = (funilQ.data ?? []).map((f) => f.stage);
 
   if (!open) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const built = buildTriggerConfig(form.trigger_type, editing?.trigger_config, {
+      keyword,
+      stageId,
+      leadStatus,
+    });
+    if (built.error || !built.config) {
+      setCfgError(built.error ?? "Configuração inválida");
+      return;
+    }
+    setCfgError("");
+    const payload: FlowCreate = {
+      ...form,
+      trigger_config: built.config,
+      stop_rules: { ...(editing?.stop_rules ?? {}), stop_on_reply: stopOnReply },
+    };
     // mutate + onSuccess: hook toasts errors; dialog stays open on failure.
     if (editing) {
-      updateMut.mutate({ id: editing.id, ...form }, { onSuccess: onClose });
+      updateMut.mutate({ id: editing.id, ...payload }, { onSuccess: onClose });
     } else {
-      createMut.mutate(form, { onSuccess: onClose });
+      createMut.mutate(payload, { onSuccess: onClose });
     }
   }
 
@@ -304,6 +348,29 @@ function FlowDialogInner({
                 </option>
               ))}
             </select>
+          </div>
+          <TriggerConfigFields
+            triggerType={form.trigger_type}
+            keyword={keyword}
+            onKeyword={(v) => { setKeyword(v); setCfgError(""); }}
+            stageId={stageId}
+            onStageId={setStageId}
+            stages={stages}
+            leadStatus={leadStatus}
+            onLeadStatus={setLeadStatus}
+            error={cfgError}
+          />
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="aut-stop-on-reply"
+              checked={stopOnReply}
+              onChange={(e) => setStopOnReply(e.target.checked)}
+              className="h-4 w-4 rounded border-input accent-primary"
+            />
+            <label htmlFor="aut-stop-on-reply" className="text-sm font-medium text-foreground">
+              Parar quando o lead responder
+            </label>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -1112,7 +1179,7 @@ function ExecutionsTab() {
                     </td>
                     <td className="px-4 py-3 text-foreground hidden sm:table-cell">
                       <span className="text-xs truncate block max-w-[180px]">
-                        {leadName(exec.lead_id) ?? "Lead removido ou indisponível"}
+                        {subjectLabel(exec, leadName)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-foreground hidden md:table-cell">
