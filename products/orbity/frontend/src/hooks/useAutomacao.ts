@@ -372,7 +372,7 @@ export function useRunDue() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success(
-        `Processadas ${data.processed} ações — ${data.sent} enviadas, ${data.skipped} ignoradas, ${data.failed} falhas.`,
+        `Processadas ${data.processed} ações — ${data.sent} simuladas (WhatsApp não conectado), ${data.skipped} ignoradas, ${data.failed} falhas.`,
       );
     },
     onError: (error: Error) => {

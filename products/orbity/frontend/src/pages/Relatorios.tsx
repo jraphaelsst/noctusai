@@ -12,6 +12,7 @@
  * Nav: route key "relatorios" — requires a status_pagina row with page_key = "relatorios".
  * status_pagina keys surfaced: ["relatorios"]
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { format } from "date-fns";
 import { reportPublicUrl } from "@/lib/publicLinks";
@@ -377,7 +378,19 @@ function ListTab({ onSelectReport }: ListTabProps) {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Report | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Report | null>(null);
+  const confirm = useConfirm();
+  const askDeleteReport = async (item: Report) => {
+    if (
+      await confirm({
+        title: `Remover relatório "${item.name}"?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
   const clientsQ = useClientOptions();
   const clientName = nameLookup(clientsQ.data);
 
@@ -478,7 +491,7 @@ function ListTab({ onSelectReport }: ListTabProps) {
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => setConfirmDelete(report)}
+                          onClick={() => void askDeleteReport(report)}
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                           title="Remover"
                         >
@@ -500,50 +513,6 @@ function ListTab({ onSelectReport }: ListTabProps) {
         onClose={() => setDialogOpen(false)}
       />
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover relatório</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover o relatório{" "}
-              <strong className="text-foreground">{confirmDelete.name}</strong>? Esta ação não
-              pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Removendo...
-                  </>
-                ) : (
-                  "Confirmar remoção"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

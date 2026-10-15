@@ -11,6 +11,9 @@
  * Nav: registered under route key "automacao" — requires a status_pagina
  * row with page_key = "automacao" (see return note).
  */
+import { useConfirm } from "@noctusai/lib/components";
+import { LeadSelect } from "@/components/LeadSelect";
+import { useLeadOptions, nameLookup } from "@/hooks/useClients";
 import { useState } from "react";
 import {
   Zap,
@@ -218,14 +221,14 @@ function FlowDialogInner({
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // mutate + onSuccess: hook toasts errors; dialog stays open on failure.
     if (editing) {
-      await updateMut.mutateAsync({ id: editing.id, ...form });
+      updateMut.mutate({ id: editing.id, ...form }, { onSuccess: onClose });
     } else {
-      await createMut.mutateAsync(form);
+      createMut.mutate(form, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -391,28 +394,25 @@ function StepDialogInner({
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setConfigError("");
     const config = parseConfig();
     if (config === null) return;
 
     if (editing) {
-      await updateMut.mutateAsync({
-        stepId: editing.id,
-        flowId,
-        step_type: stepType,
-        config,
-      });
+      updateMut.mutate(
+        { stepId: editing.id, flowId, step_type: stepType, config },
+        { onSuccess: onClose },
+      );
     } else {
       const payload: StepCreate = {
         ord: nextOrd,
         step_type: stepType,
         config,
       };
-      await createMut.mutateAsync(payload);
+      createMut.mutate(payload, { onSuccess: onClose });
     }
-    onClose();
   }
 
   const isPending = createMut.isPending || updateMut.isPending;
@@ -514,7 +514,18 @@ function StepsEditor({ flow }: { flow: Flow }) {
   const deleteMut = useDeleteStep();
   const [stepDialogOpen, setStepDialogOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<Step | null>(null);
-  const [confirmDeleteStep, setConfirmDeleteStep] = useState<Step | null>(null);
+  const confirm = useConfirm();
+  const askDeleteStep = async (step: Step) => {
+    if (
+      await confirm({
+        title: `Remover o passo ${STEP_TYPE_LABELS[step.step_type]} (ordem ${step.ord})?`,
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate({ stepId: step.id, flowId: flow.id });
+    }
+  };
 
   if (isPending && !steps) return <LoadingState label="Carregando passos..." />;
   if (error)
@@ -584,7 +595,7 @@ function StepsEditor({ flow }: { flow: Flow }) {
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => setConfirmDeleteStep(step)}
+                  onClick={() => void askDeleteStep(step)}
                   className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                   title="Remover passo"
                 >
@@ -604,51 +615,6 @@ function StepsEditor({ flow }: { flow: Flow }) {
         onClose={() => setStepDialogOpen(false)}
       />
 
-      {confirmDeleteStep && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDeleteStep(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">
-              Remover passo
-            </h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Remover o passo{" "}
-              <strong className="text-foreground">
-                {STEP_TYPE_LABELS[confirmDeleteStep.step_type]}
-              </strong>{" "}
-              (ordem {confirmDeleteStep.ord})?
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDeleteStep(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(
-                    { stepId: confirmDeleteStep.id, flowId: flow.id },
-                    { onSettled: () => setConfirmDeleteStep(null) },
-                  );
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                Remover
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -671,11 +637,13 @@ function TriggerDialog({
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await triggerMut.mutateAsync({ flowId: flow.id, lead_id: leadId });
-    onClose();
-    setLeadId("");
+    if (!leadId) return;
+    triggerMut.mutate(
+      { flowId: flow.id, lead_id: leadId },
+      { onSuccess: () => { setLeadId(""); onClose(); } },
+    );
   }
 
   return (
@@ -703,17 +671,7 @@ function TriggerDialog({
           <strong className="text-foreground">{flow.name}</strong> para um lead.
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="aut-id-do-lead-uuid" className="mb-1 block text-sm font-medium text-foreground">ID do lead (UUID) *</label>
-            <input id="aut-id-do-lead-uuid"
-              type="text"
-              required
-              value={leadId}
-              onChange={(e) => setLeadId(e.target.value)}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
+          <LeadSelect value={leadId} onChange={(id) => setLeadId(id ?? "")} id="trigger-lead" required />
           <div className="flex justify-end gap-3">
             <button
               type="button"
@@ -757,7 +715,19 @@ function FlowsTab() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Flow | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Flow | null>(null);
+  const confirm = useConfirm();
+  const askDeleteFlow = async (item: Flow) => {
+    if (
+      await confirm({
+        title: `Remover fluxo "${item.name}"?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
   const [expandedFlow, setExpandedFlow] = useState<string | null>(null);
   const [triggerFlow, setTriggerFlow] = useState<Flow | null>(null);
 
@@ -873,7 +843,7 @@ function FlowsTab() {
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => setConfirmDelete(flow)}
+                      onClick={() => void askDeleteFlow(flow)}
                       className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                       title="Remover fluxo"
                     >
@@ -908,48 +878,6 @@ function FlowsTab() {
         />
       )}
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">
-              Remover fluxo
-            </h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover o fluxo{" "}
-              <strong className="text-foreground">{confirmDelete.name}</strong>?
-              Todos os passos e execuções serao perdidos.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar remoção
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -958,11 +886,41 @@ function FlowsTab() {
 // Executions tab
 // ---------------------------------------------------------------------------
 
+function SimulatedSendBanner() {
+  return (
+    <div
+      role="note"
+      className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+      <span>
+        O envio de WhatsApp é <strong>simulado</strong> (sem conexão real): nenhuma
+        mensagem sai de verdade e os números de execução contam envios{" "}
+        <strong>simulados</strong>, não mensagens entregues.
+      </span>
+    </div>
+  );
+}
+
 function ExecutionsTab() {
   const { data: executions, isPending, error, refetch } = useExecutions();
   const cancelMut = useCancelExecution();
   const runDueMut = useRunDue();
-  const [confirmCancel, setConfirmCancel] = useState<Execution | null>(null);
+  const confirm = useConfirm();
+  const leadsQ = useLeadOptions();
+  const leadName = nameLookup(leadsQ.data);
+  const askCancel = async (exec: Execution) => {
+    if (
+      await confirm({
+        title: `Cancelar esta execução para o lead ${leadName(exec.lead_id) ?? "selecionado"}?`,
+        confirmLabel: "Cancelar execução",
+        cancelLabel: "Voltar",
+        tone: "danger",
+      })
+    ) {
+      cancelMut.mutate(exec.id);
+    }
+  };
 
   if (isPending && !executions) return <LoadingState label="Carregando execuções..." />;
   if (error)
@@ -1007,13 +965,13 @@ function ExecutionsTab() {
                   Status
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">
-                  Lead ID
+                  Lead
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">
                   Passo atual
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">
-                  Proxima ação
+                  Próxima ação
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden xl:table-cell">
                   Erro
@@ -1044,8 +1002,8 @@ function ExecutionsTab() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-foreground hidden sm:table-cell">
-                      <span className="font-mono text-xs truncate block max-w-[140px]">
-                        {exec.lead_id}
+                      <span className="text-xs truncate block max-w-[180px]">
+                        {leadName(exec.lead_id) ?? "Lead removido ou indisponível"}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-foreground hidden md:table-cell">
@@ -1068,7 +1026,7 @@ function ExecutionsTab() {
                     <td className="px-4 py-3">
                       {isRunning && (
                         <button
-                          onClick={() => setConfirmCancel(exec)}
+                          onClick={() => void askCancel(exec)}
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                           title="Cancelar execução"
                         >
@@ -1084,50 +1042,6 @@ function ExecutionsTab() {
         </div>
       )}
 
-      {confirmCancel && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmCancel(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">
-              Cancelar execução
-            </h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Cancelar esta execução para o lead{" "}
-              <strong className="font-mono text-foreground text-xs">
-                {confirmCancel.lead_id}
-              </strong>
-              ?
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmCancel(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Voltar
-              </button>
-              <button
-                onClick={() => {
-                  cancelMut.mutate(confirmCancel.id, {
-                    onSettled: () => setConfirmCancel(null),
-                  });
-                }}
-                disabled={cancelMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {cancelMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar cancelamento
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1158,6 +1072,8 @@ export default function Automacao() {
           </p>
         </div>
       </div>
+
+      <SimulatedSendBanner />
 
       {/* Tabs */}
       <div className="border-b border-border">

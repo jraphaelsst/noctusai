@@ -17,6 +17,7 @@
  * status_pagina keys required:
  *   - "conteudo"
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { approvalPublicUrl } from "@/lib/publicLinks";
 import { ClientSelect } from "@/components/ClientSelect";
@@ -739,7 +740,19 @@ function PostsTab({
   const deleteMut = useDeletePost();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Post | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Post | null>(null);
+  const confirm = useConfirm();
+  const askDeletePost = async (item: Post) => {
+    if (
+      await confirm({
+        title: `Remover este post?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
   const [approvalPostId, setApprovalPostId] = useState<string | null>(null);
   const approvalPost = approvalPostId
     ? (data?.items ?? []).find((p) => p.id === approvalPostId) ?? null
@@ -855,7 +868,7 @@ function PostsTab({
                           </button>
                         )}
                         <button
-                          onClick={() => setConfirmDelete(post)}
+                          onClick={() => void askDeletePost(post)}
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                           title="Remover"
                         >
@@ -887,44 +900,6 @@ function PostsTab({
         />
       )}
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover post</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover este post? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar remoção
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1082,7 +1057,19 @@ function CampanhasTab({
   const deleteMut = useDeleteCampaign();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Campaign | null>(null);
+  const confirm = useConfirm();
+  const askDeleteCampaign = async (item: Campaign) => {
+    if (
+      await confirm({
+        title: `Remover campanha "${item.name}"?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
   const [activeCampaignId, setActiveCampaignId] = useState<string | undefined>(undefined);
 
   if (isPending && !data) return <LoadingState label="Carregando campanhas..." />;
@@ -1176,7 +1163,7 @@ function CampanhasTab({
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => setConfirmDelete(campaign)}
+                        onClick={() => void askDeleteCampaign(campaign)}
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                         title="Remover"
                       >
@@ -1197,45 +1184,6 @@ function CampanhasTab({
         onClose={() => setDialogOpen(false)}
       />
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover campanha</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover a campanha{" "}
-              <strong className="text-foreground">{confirmDelete.name}</strong>? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar remoção
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

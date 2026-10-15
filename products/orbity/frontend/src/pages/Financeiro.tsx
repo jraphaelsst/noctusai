@@ -12,6 +12,7 @@
  * Nav: registered under route key "financeiro" — requires a status_pagina
  * row with page_key = "financeiro" (see return note).
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { format } from "date-fns";
 import { ClientSelect } from "@/components/ClientSelect";
@@ -438,7 +439,19 @@ function ContractsTab() {
   const deleteMut = useDeleteContract();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Contract | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Contract | null>(null);
+  const confirm = useConfirm();
+  const askDeleteContract = async (item: Contract) => {
+    if (
+      await confirm({
+        title: `Remover contrato "${item.title}"?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
 
   if (isPending && !data) return <LoadingState label="Carregando contratos..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
@@ -506,7 +519,7 @@ function ContractsTab() {
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => setConfirmDelete(contract)}
+                        onClick={() => void askDeleteContract(contract)}
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                         title="Remover"
                       >
@@ -527,49 +540,6 @@ function ContractsTab() {
         onClose={() => setDialogOpen(false)}
       />
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover contrato</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover o contrato{" "}
-              <strong className="text-foreground">{confirmDelete.title}</strong>? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Removendo...
-                  </>
-                ) : (
-                  "Confirmar remoção"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -766,7 +736,19 @@ function ExpensesTab() {
   const deleteMut = useDeleteExpense();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Expense | null>(null);
+  const confirm = useConfirm();
+  const askDeleteExpense = async (item: Expense) => {
+    if (
+      await confirm({
+        title: `Remover despesa "${item.description}"?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
 
   if (isPending && !data) return <LoadingState label="Carregando despesas..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
@@ -842,7 +824,7 @@ function ExpensesTab() {
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => setConfirmDelete(expense)}
+                        onClick={() => void askDeleteExpense(expense)}
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                         title="Remover"
                       >
@@ -863,43 +845,6 @@ function ExpensesTab() {
         onClose={() => setDialogOpen(false)}
       />
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover despesa</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover a despesa{" "}
-              <strong className="text-foreground">{confirmDelete.description}</strong>?
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Confirmar remoção
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1123,7 +1068,19 @@ function RevenuesTab() {
   const deleteMut = useDeleteRevenue();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Revenue | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Revenue | null>(null);
+  const confirm = useConfirm();
+  const askDeleteRevenue = async (item: Revenue) => {
+    if (
+      await confirm({
+        title: `Remover esta receita?`,
+        description: "Esta ação não pode ser desfeita.",
+        confirmLabel: "Remover",
+        tone: "danger",
+      })
+    ) {
+      deleteMut.mutate(item.id);
+    }
+  };
 
   if (isPending && !data) return <LoadingState label="Carregando receitas..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
@@ -1191,7 +1148,7 @@ function RevenuesTab() {
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => setConfirmDelete(revenue)}
+                          onClick={() => void askDeleteRevenue(revenue)}
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                           title="Remover"
                         >
@@ -1213,42 +1170,6 @@ function RevenuesTab() {
         onClose={() => setDialogOpen(false)}
       />
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover receita</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover esta receita? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  deleteMut.mutate(confirmDelete.id, {
-                    onSettled: () => setConfirmDelete(null),
-                  });
-                }}
-                disabled={deleteMut.isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {deleteMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Confirmar remoção
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
