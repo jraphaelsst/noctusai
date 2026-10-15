@@ -6531,6 +6531,63 @@ _SW_PERGUNTAS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_VIS = "272_lais_visitas.sql"
+_T_LAIS_VIS = (f"{_S}.lais_contatos", f"{_S}.lais_visitas", f"{_S}.lais_visitas_config")
+
+
+def _lais_vis_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais.{probe_id}", guard_name=guard, migration=_M_LAIS_VIS, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_VIS,
+    )
+
+
+def _lais_visita_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return _lais_child_ins(
+        "lais_visitas", f"inicio, fim{extra_c}", f"'2099-01-01T12:00:00Z'::timestamptz, '2099-01-01T12:30:00Z'::timestamptz{extra_v}"
+    )
+
+
+#: Migration 272 -- Lais wave 5 (visitas). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_VISITAS_PROBES: tuple[GuardProbe, ...] = (
+    _lais_vis_probe(
+        "visitas.status_valido", "lais_visitas_status_valido",
+        "The visit status drives which transitions are legal; a free-text value would escape the state machine.",
+        _lais_contato_ins() + "\n" + _lais_visita_ins("status", "'noc_probe_bogus'"), _CHECK,
+        "a lais_visita with an unknown status",
+    ),
+    _lais_vis_probe(
+        "visitas.fim_apos_inicio", "lais_visitas_fim_apos_inicio",
+        "A visit that ends before it starts would corrupt the calendar and the slot-conflict check.",
+        _lais_contato_ins() + "\n" + _lais_child_ins(
+            "lais_visitas", "inicio, fim",
+            "'2099-01-01T12:30:00Z'::timestamptz, '2099-01-01T12:00:00Z'::timestamptz"),
+        _CHECK, "a lais_visita whose fim is not after inicio",
+    ),
+    _lais_vis_probe(
+        "visitas.cpf_formato", "lais_visitas_cpf_formato",
+        "LGPD (contract 17): only a sha256 hash + last 3 digits may be stored; a clear CPF in cpf_hash "
+        "would defeat the whole point.",
+        _lais_contato_ins() + "\n" + _lais_visita_ins("cpf_hash, cpf_final", "'noc_probe_clear', '123'"), _CHECK,
+        "a lais_visita whose cpf_hash is not a sha256 hex",
+    ),
+    _lais_vis_probe(
+        "visitas.slot_vivo_unico", "lais_visitas_slot_vivo_uq",
+        "One live visit per (org, inicio): two concurrent requests must not book the same slot.",
+        _lais_contato_ins() + "\n" + _lais_visita_ins() + "\n" + _lais_visita_ins(), _UNIQ,
+        "two live lais_visitas at the same inicio",
+    ),
+    _lais_vis_probe(
+        "visitas_config.objeto", "lais_visitas_config_objeto",
+        "The drawer config is read as a mapping profile->rules; an array/scalar would crash every slot computation.",
+        f"    INSERT INTO {_S}.lais_visitas_config (org_id, config)\n    VALUES (v_org, '[]'::jsonb);",
+        _CHECK, "a lais_visitas_config whose config is not a JSON object",
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -8451,6 +8508,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_CONDOMINIOS_PROBES,
     *_SW_LAIS_PROBES,
     *_SW_PERGUNTAS_PROBES,
+    *_SW_LAIS_VISITAS_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

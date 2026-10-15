@@ -8,7 +8,7 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
 
   buscar_imoveis           F      Vista mirror `imoveis`, at most 5 results
   detalhes_imovel          F      wave 1 switches (lais_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
-  horarios_visita          wave 5 (config + SchedulingEngine); until then `[]`
+  horarios_visita          wave 5 (config + SchedulingEngine), `lais_visitas_service`
   consultar_empreendimento wave 12; until then `[]`
 
 PRIVACY (contract, binding): a tool NEVER returns owner/proprietario personal data. The row is read
@@ -141,10 +141,12 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
     }
 
 
-def horarios_visita(_client: Any, _org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
-    HorariosVisitaArgs(**args)
-    # NOC-REMEDIATE[lais-horarios-visita]: wave 5 wires the visit-scheduling config + SchedulingEngine slots here — 2026-10-15
-    return []
+def horarios_visita(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
+    """Free 30-min slots from the wave-5 config + the seed SchedulingEngine (`lais_visitas_service`)."""
+    from app.services import lais_visitas_service
+
+    parsed = HorariosVisitaArgs(**args)
+    return lais_visitas_service.horarios_para_ferramenta(client, org_id, parsed.dias)
 
 
 def consultar_empreendimento(_client: Any, _org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
