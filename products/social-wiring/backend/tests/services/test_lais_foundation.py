@@ -223,45 +223,45 @@ class TestContexto:
         assert on == ["buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento"]
 
     def test_the_provider_registry_is_the_extension_point_and_replaces_in_place(self, world, monkeypatch):
-        monkeypatch.setattr(ctxsvc, "PROVIDERS", list(ctxsvc.PROVIDERS))
+        reg = list(ctxsvc.PROVIDERS)
         c, i = self._base(world)
-        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": f"# {ctx.org_id}"})
-        ctxsvc.registrar_provider("perguntas", lambda ctx: {"perguntas": [{"chave": f"q{n}"} for n in range(12)]})
-        ctxsvc.registrar_provider("estado_extra", lambda ctx: {"estado": {"extra": 1}})
-        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)
+        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": f"# {ctx.org_id}"}, registro=reg)
+        ctxsvc.registrar_provider("perguntas", lambda ctx: {"perguntas": [{"chave": f"q{n}"} for n in range(12)]}, registro=reg)
+        ctxsvc.registrar_provider("estado_extra", lambda ctx: {"estado": {"extra": 1}}, registro=reg)
+        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert ctx["conhecimento_md"] == f"# {ORG}"
         assert len(ctx["perguntas"]) == 8  # capped at the contract's 0..8
         assert ctx["estado"]["extra"] == 1 and ctx["estado"]["interacao_id"] == i["id"]  # merged, not replaced
-        assert [n for n, _ in ctxsvc.PROVIDERS][:2] == ["conhecimento", "perguntas"]  # position kept
+        assert [n for n, _ in reg][:2] == ["conhecimento", "perguntas"]  # position kept
 
     def test_a_provider_that_raises_is_contained_and_the_rest_still_render(self, world, monkeypatch, caplog):
-        monkeypatch.setattr(ctxsvc, "PROVIDERS", list(ctxsvc.PROVIDERS))
+        reg = list(ctxsvc.PROVIDERS)
 
         def boom(_ctx):
             raise RuntimeError("wave 1 is broken")
 
-        ctxsvc.registrar_provider("conhecimento", boom)
+        ctxsvc.registrar_provider("conhecimento", boom, registro=reg)
         c, i = self._base(world)
         with caplog.at_level("ERROR"):
-            ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)
+            ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert ctx["conhecimento_md"] == "" and ctx["estado"]["interacao_id"] == i["id"]
         assert "provider 'conhecimento' failed" in caplog.text
 
     def test_an_unknown_key_from_a_provider_is_refused_loudly(self, world, monkeypatch, caplog):
-        monkeypatch.setattr(ctxsvc, "PROVIDERS", list(ctxsvc.PROVIDERS))
-        ctxsvc.registrar_provider("rogue", lambda ctx: {"segredo": "x"})
+        reg = list(ctxsvc.PROVIDERS)
+        ctxsvc.registrar_provider("rogue", lambda ctx: {"segredo": "x"}, registro=reg)
         c, i = self._base(world)
         with caplog.at_level("ERROR"):
-            ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)
+            ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert "segredo" not in ctx and "unknown key" in caplog.text
 
     def test_oversized_knowledge_is_truncated_to_60000_and_the_whole_stays_under_80000(self, world, monkeypatch):
         import json
 
-        monkeypatch.setattr(ctxsvc, "PROVIDERS", list(ctxsvc.PROVIDERS))
-        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": "x" * 90_000})
+        reg = list(ctxsvc.PROVIDERS)
+        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": "x" * 90_000}, registro=reg)
         c, i = self._base(world)
-        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)
+        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert len(ctx["conhecimento_md"]) == 60_000
         assert len(json.dumps(ctx, ensure_ascii=False)) <= ctxsvc.CONTEXTO_MAX
 
@@ -290,11 +290,11 @@ class TestContexto:
 PERGUNTAS = [{"chave": "bairro"}, {"chave": "orcamento"}]
 
 
-async def _apply(world, contato, *actions, lote="L1", agents=None, perguntas=PERGUNTAS, conv=CONV):
+async def _apply(world, contato, *actions, lote="L1", agents=None, perguntas=PERGUNTAS, conv=CONV, handlers=None):
     return await acoes.aplicar(
         world.sw, org_id=ORG, contato=contato, result=_turn(*actions), lote_hash=lote,
         conversation_id=conv, agents_client=agents or world.agents, core_client=world.core, perguntas=perguntas,
-        connection_id=CONNECTION_ID, chat_id="chat-1",
+        connection_id=CONNECTION_ID, chat_id="chat-1", handlers=handlers,
     )
 
 
@@ -374,16 +374,16 @@ class TestAcoes:
         assert world.rows("lais_contatos")[0]["slots"] == {"bairro": "A"}
 
     async def test_a_registered_handler_receives_the_raw_payload_and_the_ledger_a_sanitised_one(self, world, monkeypatch):
-        monkeypatch.setattr(acoes, "HANDLERS", dict(acoes.HANDLERS))
+        reg = dict(acoes.HANDLERS)
         seen = {}
 
         def handler(ctx, payload):
             seen.update(payload=payload, tipo=ctx.tipo, seq=ctx.seq, lote=ctx.lote_hash, chat=ctx.chat_id)
             return {"ok": True}
 
-        acoes.registrar_handler("pedido_visita", handler)
+        acoes.registrar_handler("pedido_visita", handler, registro=reg)
         c = _mk_contato(world)
-        await _apply(world, c, LaisAction("pedido_visita", 4, {"codigo_imovel": "X1", "cpf": "111.222.333-44"}))
+        await _apply(world, c, LaisAction("pedido_visita", 4, {"codigo_imovel": "X1", "cpf": "111.222.333-44"}), handlers=reg)
         assert seen["payload"]["cpf"] == "111.222.333-44" and (seen["tipo"], seen["seq"], seen["chat"]) == ("pedido_visita", 4, "chat-1")
         led = world.rows("lais_acoes_aplicadas")[0]
         assert "cpf" not in led["payload"] and led["payload"]["cpf_final"] == "344" and len(led["payload"]["cpf_hash"]) == 64
@@ -391,27 +391,27 @@ class TestAcoes:
         assert "111" not in str(led["payload"])
 
     async def test_an_async_handler_is_awaited(self, world, monkeypatch):
-        monkeypatch.setattr(acoes, "HANDLERS", dict(acoes.HANDLERS))
+        reg = dict(acoes.HANDLERS)
 
         async def handler(ctx, payload):
             return {"async": True}
 
-        acoes.registrar_handler("captacao", handler)
+        acoes.registrar_handler("captacao", handler, registro=reg)
         c = _mk_contato(world)
-        await _apply(world, c, LaisAction("captacao", 1, {"descricao": "casa"}))
+        await _apply(world, c, LaisAction("captacao", 1, {"descricao": "casa"}), handlers=reg)
         assert world.rows("lais_acoes_aplicadas")[0]["resultado"] == {"async": True}
 
     async def test_a_handler_that_raises_is_contained_logged_and_reported_as_an_event(self, world, monkeypatch, caplog):
-        monkeypatch.setattr(acoes, "HANDLERS", dict(acoes.HANDLERS))
+        reg = dict(acoes.HANDLERS)
 
         def handler(ctx, payload):
             raise RuntimeError("wave 3 bug")
 
-        acoes.registrar_handler("qualificar_lead", handler)
+        acoes.registrar_handler("qualificar_lead", handler, registro=reg)
         c = _mk_contato(world)
         with caplog.at_level("ERROR"):
             out = await _apply(world, c, LaisAction("qualificar_lead", 1, {"motivo": "m"}),
-                               LaisAction("salvar_slots", 2, {"slots": {"bairro": "A"}}))
+                               LaisAction("salvar_slots", 2, {"slots": {"bairro": "A"}}), handlers=reg)
         assert [o["estado"] for o in out] == ["falhou", "aplicada"]
         assert world.rows("lais_eventos")[0]["tipo"] == "acao_falhou"
         assert world.rows("lais_acoes_aplicadas", seq=1)[0]["resultado"] == {"erro": "RuntimeError"}

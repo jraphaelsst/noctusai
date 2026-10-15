@@ -32,7 +32,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -102,13 +102,17 @@ PROVIDERS: list[tuple[str, Provider]] = [
 ]
 
 
-def registrar_provider(nome: str, fn: Provider) -> None:
-    """Replace the provider called `nome` in place (keeps its position), or append it."""
-    for i, (n, _f) in enumerate(PROVIDERS):
+def registrar_provider(nome: str, fn: Provider, *, registro: Optional[list[tuple[str, Provider]]] = None) -> None:
+    """Replace the provider called `nome` in place (keeps its position), or append it.
+
+    `registro` defaults to THE module registry; pass your own list (e.g. `list(PROVIDERS)`) to
+    build an isolated registry and hand it to `montar(..., providers=...)` -- no module patching."""
+    alvo = PROVIDERS if registro is None else registro
+    for i, (n, _f) in enumerate(alvo):
         if n == nome:
-            PROVIDERS[i] = (nome, fn)
+            alvo[i] = (nome, fn)
             return
-    PROVIDERS.append((nome, fn))
+    alvo.append((nome, fn))
 
 
 # ── the tools token ─────────────────────────────────────────────────────────
@@ -157,8 +161,10 @@ def montar(
     interacao: Optional[dict[str, Any]] = None,
     agora: Optional[datetime] = None,
     ferramentas_habilitadas: Optional[bool] = None,
+    providers: Optional[Sequence[tuple[str, Provider]]] = None,
 ) -> dict[str, Any]:
-    """Render contract 2.1(a). `ferramentas_habilitadas=None` asks the DB (`org_tem_token_ferramentas`)."""
+    """Render contract 2.1(a). `ferramentas_habilitadas=None` asks the DB (`org_tem_token_ferramentas`).
+    `providers=None` uses THE registry (`PROVIDERS`); pass an explicit sequence to render with another."""
     agora = agora or datetime.now(timezone.utc)
     if ferramentas_habilitadas is None:
         ferramentas_habilitadas = org_tem_token_ferramentas(client, org_id, agora=agora)
@@ -166,7 +172,7 @@ def montar(
                       ferramentas_habilitadas=ferramentas_habilitadas)
 
     out: dict[str, Any] = {"conhecimento_md": "", "perguntas": [], "estado": {}, "ferramentas": [], "acoes": []}
-    for nome, fn in PROVIDERS:
+    for nome, fn in (PROVIDERS if providers is None else providers):
         try:
             parcial = fn(ctx) or {}
         except Exception:

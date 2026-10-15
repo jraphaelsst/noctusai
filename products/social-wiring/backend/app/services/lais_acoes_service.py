@@ -35,7 +35,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional, Sequence, Union
+from typing import Any, Awaitable, Callable, Optional, Sequence, Union, Mapping
 from uuid import UUID
 
 from app.clients.agents import AgentsClient, AgentsClientError, ResumoRequest, TurnResult
@@ -209,8 +209,10 @@ HANDLERS: dict[str, Handler] = {
 }
 
 
-def registrar_handler(tipo: str, fn: Handler) -> None:
-    HANDLERS[tipo] = fn
+def registrar_handler(tipo: str, fn: Handler, *, registro: Optional[dict[str, Handler]] = None) -> None:
+    """Register `fn` for action `tipo` in THE module registry, or in `registro` when given
+    (an isolated copy, e.g. `dict(HANDLERS)`, handed to `aplicar(..., handlers=...)`)."""
+    (HANDLERS if registro is None else registro)[tipo] = fn
 
 
 # ── apply ───────────────────────────────────────────────────────────────────
@@ -238,8 +240,9 @@ async def aplicar(
     perguntas: Sequence[dict[str, Any]] = (),
     connection_id: Optional[UUID | str] = None,
     chat_id: Optional[str] = None,
+    handlers: Optional[Mapping[str, Handler]] = None,
 ) -> list[dict[str, Any]]:
-    """Apply `result.lais_actions` in `seq` order; returns one summary per action
+    """`handlers=None` uses THE registry (`HANDLERS`). Apply `result.lais_actions` in `seq` order; returns one summary per action
     `{seq, tipo, estado}` with estado in `aplicada | repetida | sem_handler | falhou`. Never raises."""
     resumo: list[dict[str, Any]] = []
     conversation_id = conversation_id or result.conversation_id
@@ -249,6 +252,7 @@ async def aplicar(
                 client, org_id=org_id, contato_id=contato["id"], acao=acao, lote_hash=lote_hash,
                 conversation_id=conversation_id, agents_client=agents_client, core_client=core_client,
                 perguntas=perguntas, connection_id=connection_id, chat_id=chat_id,
+                handlers=HANDLERS if handlers is None else handlers,
             ))
         except Exception:
             # The ledger insert itself failed (DB down): the reply is already sent, so report, don't raise.
@@ -260,7 +264,7 @@ async def aplicar(
 async def _aplicar_uma(
     client: Any, *, org_id: UUID | str, contato_id: Any, acao: Any, lote_hash: str, conversation_id: Optional[str],
     agents_client: Optional[AgentsClient], core_client: Any, perguntas: Sequence[dict[str, Any]],
-    connection_id: Optional[UUID | str], chat_id: Optional[str],
+    connection_id: Optional[UUID | str], chat_id: Optional[str], handlers: Mapping[str, Handler],
 ) -> dict[str, Any]:
     inserted = _ledger(client).upsert(
         {
@@ -273,7 +277,7 @@ async def _aplicar_uma(
         logger.info("lais: action %s seq=%s of lote %s already applied -- skipped", acao.type, acao.seq, lote_hash[:12])
         return {"seq": acao.seq, "tipo": acao.type, "estado": "repetida"}
 
-    handler = HANDLERS.get(acao.type)
+    handler = handlers.get(acao.type)
     if handler is None:
         logger.warning("lais: no handler for action %r (its wave is not built) org=%s", acao.type, org_id)
         eventos.emitir(client, org_id, "acao_sem_handler", contato_id, {"tipo": acao.type, "seq": acao.seq})
