@@ -20,6 +20,7 @@ Endpoints:
   PATCH  /api/meta-ads/campaigns/{id}/situation     update gestor situation signal
 
   GET    /api/meta-ads/campaigns/{id}/metrics       list daily metrics
+  PUT    /api/meta-ads/campaigns/{id}/metrics       manual daily metric entry (upsert)
   POST   /api/meta-ads/sync                         trigger campaign sync (seam)
   GET    /api/meta-ads/aggregate                    spend vs leads per client/month
 
@@ -50,6 +51,7 @@ from app.schemas.meta_ads import (
     AdAccountOut,
     AdAccountUpdate,
     CampaignCreate,
+    CampaignMetricManualEntry,
     CampaignMetricOut,
     CampaignMetricUpsert,
     CampaignOut,
@@ -112,7 +114,7 @@ async def create_ad_account(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _svc(token, org_id).create_ad_account(payload.model_dump(exclude_none=True))
+        row = _svc(token, org_id).create_ad_account(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("meta_ads.create_ad_account failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao conectar conta de anúncio")
@@ -152,7 +154,7 @@ async def update_ad_account(
 ) -> AdAccountOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -275,7 +277,7 @@ async def update_campaign(
 ) -> CampaignOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -365,6 +367,45 @@ async def list_campaign_metrics(
             org_id, campaign_id,
         )
         raise HTTPException(status_code=502, detail="Falha ao listar métricas de campanha")
+
+
+@router.put(
+    "/api/meta-ads/campaigns/{campaign_id}/metrics",
+    response_model=CampaignMetricOut,
+    status_code=status.HTTP_200_OK,
+)
+async def put_campaign_metric(
+    campaign_id: UUID,
+    payload: CampaignMetricManualEntry,
+    auth: tuple = Depends(get_current_user_org),
+) -> CampaignMetricOut:
+    """Manual daily metric entry — idempotent upsert on (campaign_id, date)."""
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    svc = _svc(token, org_id)
+    try:
+        campaign = svc.get_campaign(str(campaign_id))
+    except Exception:
+        logger.exception(
+            "meta_ads.put_campaign_metric lookup failed org=%s campaign=%s",
+            org_id, campaign_id,
+        )
+        raise HTTPException(status_code=502, detail="Falha ao registrar métrica")
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    data = payload.model_dump(mode="json", exclude_none=True)
+    if "cpl" not in data and data["leads"] > 0:
+        data["cpl"] = round(data["spend"] / data["leads"], 4)
+    data["campaign_id"] = str(campaign_id)
+    try:
+        row = svc.upsert_campaign_metric(data)
+    except Exception:
+        logger.exception(
+            "meta_ads.put_campaign_metric failed org=%s campaign=%s",
+            org_id, campaign_id,
+        )
+        raise HTTPException(status_code=502, detail="Falha ao registrar métrica")
+    return CampaignMetricOut(**row)
 
 
 # ---------------------------------------------------------------------------

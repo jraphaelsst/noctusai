@@ -501,8 +501,10 @@ class MetaAdsService:
                 "objective": camp.get("objective"),
                 "status": camp.get("status", "active"),
                 "daily_budget": camp.get("daily_budget"),
-                # situation defaults to "on-track" for newly synced campaigns
-                "situation": "on-track",
+                # `situation` is deliberately ABSENT: it is the gestor's own
+                # health signal. Omitting it lets the DB default ('on-track')
+                # apply on INSERT while an upsert's merge-duplicates leaves
+                # the existing value untouched on UPDATE.
             }
             if not row["external_campaign_id"]:
                 logger.warning(

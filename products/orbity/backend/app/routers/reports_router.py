@@ -18,12 +18,13 @@ Endpoints:
 
   GET    /api/reports/public/{token}          PUBLIC token-gated report read
 """
-from __future__ import annotations
 
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+
+from noctusai_lib.api.rate_limit import client_ip_key
 
 from app.dependencies import (
     coerce_org_uuid,
@@ -38,6 +39,7 @@ from app.schemas.reports import (
     ReportSnapshotOut,
     ReportUpdate,
 )
+from app.rate_limit import limiter
 from app.services.reports_service import ReportsPublicService, ReportsService
 
 logger = logging.getLogger(__name__)
@@ -219,7 +221,8 @@ async def generate_snapshot(
     response_model=PublicReportOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_public_report(token: str) -> PublicReportOut:
+@limiter.limit("30/minute;300/hour", key_func=client_ip_key)
+async def get_public_report(request: Request, token: str) -> PublicReportOut:
     """Token-gated public report — no authentication required.
 
     The token IS the authorization. The server validates:

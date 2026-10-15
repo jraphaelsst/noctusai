@@ -91,7 +91,7 @@ async def create_flow(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _svc(token, org_id).create_flow(payload.model_dump(exclude_none=True))
+        row = _svc(token, org_id).create_flow(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("automation.create_flow failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar fluxo")
@@ -131,7 +131,7 @@ async def update_flow(
 ) -> FlowOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -196,7 +196,7 @@ async def create_step(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_step(
-            flow_id, payload.model_dump(exclude_none=True)
+            flow_id, payload.model_dump(mode="json", exclude_none=True)
         )
     except Exception:
         logger.exception("automation.create_step failed org=%s flow=%s", org_id, flow_id)
@@ -216,7 +216,7 @@ async def update_step(
 ) -> StepOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

@@ -323,3 +323,53 @@ class TestSyncHappyPath:
             "?period_start=2026-01-01&period_end=2026-01-31"
         )
         assert resp.status_code in (200, 502)
+
+
+from app.dependencies import coerce_org_uuid  # noqa: E402
+
+
+class TestManualMetricEntry:
+    """PUT /api/meta-ads/campaigns/{id}/metrics — manual daily entry."""
+
+    CAMP = "11111111-1111-1111-1111-111111111111"
+
+    def test_put_metrics_without_auth_returns_401(self, client):
+        resp = client.raw().put(
+            f"/api/meta-ads/campaigns/{self.CAMP}/metrics",
+            json={"date": "2026-01-02", "spend": 10},
+        )
+        assert resp.status_code == 401
+
+    def test_put_metrics_unknown_campaign_returns_404(self, client):
+        client.mock_supabase.set_table_data("campaigns", [])
+        resp = client.put(
+            f"/api/meta-ads/campaigns/{self.CAMP}/metrics",
+            json={"date": "2026-01-02", "spend": 10},
+        )
+        assert resp.status_code == 404
+
+    def test_put_metrics_extra_field_returns_422(self, client):
+        resp = client.put(
+            f"/api/meta-ads/campaigns/{self.CAMP}/metrics",
+            json={"date": "2026-01-02", "spend": 10, "campaign_id": self.CAMP},
+        )
+        assert resp.status_code == 422
+
+    def test_put_metrics_negative_spend_returns_422(self, client):
+        resp = client.put(
+            f"/api/meta-ads/campaigns/{self.CAMP}/metrics",
+            json={"date": "2026-01-02", "spend": -1},
+        )
+        assert resp.status_code == 422
+
+    def test_put_metrics_upserts_serializable_row_with_derived_cpl(self, client):
+        client.mock_supabase.set_table_data("campaigns", [{"id": self.CAMP, "org_id": str(coerce_org_uuid("test-org-123"))}])
+        resp = client.put(
+            f"/api/meta-ads/campaigns/{self.CAMP}/metrics",
+            json={"date": "2026-01-02", "spend": 50, "impressions": 1000, "leads": 5},
+        )
+        assert resp.status_code != 502, resp.text
+        rows = client.mock_supabase.table("campaign_metrics").upserted_payloads
+        assert rows and rows[-1]["campaign_id"] == self.CAMP
+        assert rows[-1]["date"] == "2026-01-02"
+        assert rows[-1]["cpl"] == 10.0

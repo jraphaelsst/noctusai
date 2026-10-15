@@ -6,9 +6,13 @@ Aggregation sources (generate_snapshot):
   - orbity.revenues (sum + count, filtered by period)
   - orbity.expenses (sum + count, filtered by period)
 
-NOC-REMEDIATE[orbity-reports-metrics-source]: when the Meta-ads organ lands,
-extend generate_snapshot to pull spend/cpl/campaigns from
-orbity.ad_account_metrics and orbity.selected_ad_accounts. — 2026-06-03
+  - orbity.campaign_metrics (spend / leads / cpl; scoped via campaigns /
+    ad_accounts.client_id for client reports)
+
+Client-scoped reports (report.client_id set) aggregate ONLY that client's rows.
+orbity.expenses has no client_id, so the expenses block is reported as
+``{"available": False, ...}`` for them rather than leaking the org total.
+Query failures raise — never silent zeros.
 
 Public token read:
   Uses the admin (service_role) client so RLS is bypassed. The server
@@ -26,7 +30,16 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
+
+_IN_BATCH = 100  # ids per `.in_()` — values ride in the URL query string
+
 logger = logging.getLogger(__name__)
+
+
+def _batched(values: list, size: int = _IN_BATCH):
+    for i in range(0, len(values), size):
+        yield values[i : i + size]
 
 
 class ReportsService:
@@ -163,25 +176,35 @@ class ReportsService:
         period_start: str = _to_iso_date(report["period_start"])
         period_end: str = _to_iso_date(report["period_end"])
 
-        # Leads aggregation
-        leads_payload = self._aggregate_leads(period_start, period_end)
+        # A client-scoped report MUST NOT aggregate org-wide numbers (that
+        # would leak other clients' data into a link handed to one client).
+        client_id: str | None = (
+            str(report["client_id"]) if report.get("client_id") else None
+        )
 
-        # Revenues aggregation (orbity.revenues table from financial organ)
-        revenues_payload = self._aggregate_revenues(period_start, period_end)
-
-        # Expenses aggregation
-        expenses_payload = self._aggregate_expenses(period_start, period_end)
-
-        # NOC-REMEDIATE[orbity-reports-metrics-source]: extend here with
-        # spend/cpl/campaigns from orbity.ad_account_metrics + selected_ad_accounts
-        # once the Meta-ads organ lands (migration 013+). The payload key
-        # "meta_ads" will be added: {"spend": ..., "cpl": ..., "active_campaigns": ...} — 2026-06-03
+        leads_payload = self._aggregate_leads(period_start, period_end, client_id)
+        revenues_payload = self._aggregate_revenues(period_start, period_end, client_id)
+        if client_id is None:
+            expenses_payload: dict[str, Any] = self._aggregate_expenses(
+                period_start, period_end
+            )
+        else:
+            # orbity.expenses has NO client_id column (006_financial_core):
+            # expenses are agency overhead, not attributable to one client.
+            # Say so explicitly instead of leaking the org-wide total.
+            expenses_payload = {
+                "available": False,
+                "reason": "expenses are not attributed to clients",
+            }
+        meta_ads_payload = self._aggregate_meta_ads(period_start, period_end, client_id)
 
         payload: dict[str, Any] = {
             "period": {"start": period_start, "end": period_end},
+            "scope": {"client_id": client_id} if client_id else {"org_wide": True},
             "leads": leads_payload,
             "revenues": revenues_payload,
             "expenses": expenses_payload,
+            "meta_ads": meta_ads_payload,
             "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         }
 
@@ -207,84 +230,145 @@ class ReportsService:
             raise RuntimeError("Snapshot insert returned no data")
         return rows[0]
 
-    def _aggregate_leads(self, period_start: str, period_end: str) -> dict[str, Any]:
-        """Count leads created in period, grouped by temperature."""
+    def _fetch_all(self, label: str, build: Any) -> list[dict[str, Any]]:
+        """Read EVERY matching row (PostgREST caps an unbounded select at 1000).
+
+        ``build()`` returns a fresh filtered query; paging adds order+range.
+        DB errors propagate — an aggregate must never degrade to zeros.
+        """
         try:
-            result = (
+            return list(
+                iter_paged_rows(
+                    lambda start, end: build().order("id").range(start, end).execute().data,
+                    label=label,
+                )
+            )
+        except Exception:
+            logger.exception("reports.%s failed org=%s", label, self._org_id)
+            raise
+
+    def _aggregate_leads(
+        self, period_start: str, period_end: str, client_id: str | None = None
+    ) -> dict[str, Any]:
+        """Count leads created in period, grouped by temperature."""
+
+        def build():
+            q = (
                 self._t("leads")
-                .select("temperature")
+                .select("id, temperature")
                 .eq("org_id", self._org_id)
                 .gte("created_at", period_start)
                 .lte("created_at", period_end + "T23:59:59+00:00")
-                .execute()
             )
-        except Exception:
-            logger.exception(
-                "reports._aggregate_leads failed org=%s period=%s/%s",
-                self._org_id, period_start, period_end,
-            )
-            raise
-        rows = result.data or []
-        total = len(rows)
-        hot = sum(1 for r in rows if r.get("temperature") == "hot")
-        warm = sum(1 for r in rows if r.get("temperature") == "warm")
-        cold = sum(1 for r in rows if r.get("temperature") == "cold")
-        return {"total": total, "hot": hot, "warm": warm, "cold": cold}
+            return q.eq("client_id", client_id) if client_id else q
 
-    def _aggregate_revenues(self, period_start: str, period_end: str) -> dict[str, Any]:
-        """Sum revenues paid in period from orbity.revenues (financial organ).
+        rows = self._fetch_all("aggregate_leads", build)
+        return {
+            "total": len(rows),
+            "hot": sum(1 for r in rows if r.get("temperature") == "hot"),
+            "warm": sum(1 for r in rows if r.get("temperature") == "warm"),
+            "cold": sum(1 for r in rows if r.get("temperature") == "cold"),
+        }
 
-        Filters by paid_at (when the payment was confirmed) falling within
-        the report period. Revenues with status='paid' and paid_at in period.
+    def _aggregate_revenues(
+        self, period_start: str, period_end: str, client_id: str | None = None
+    ) -> dict[str, Any]:
+        """Sum revenues paid in period (status='paid', paid_at in period)."""
 
-        NOC-REMEDIATE[orbity-reports-metrics-source]: if financial organ
-        tables (revenues) are not yet in this branch, this returns zeros
-        gracefully — the table not existing raises an exception caught below. — 2026-06-03
-        """
-        try:
-            result = (
+        def build():
+            q = (
                 self._t("revenues")
-                .select("amount")
+                .select("id, amount")
                 .eq("org_id", self._org_id)
                 .eq("status", "paid")
                 .gte("paid_at", period_start)
                 .lte("paid_at", period_end + "T23:59:59+00:00")
-                .execute()
             )
-            rows = result.data or []
-            total = sum(float(r.get("amount") or 0) for r in rows)
-            return {"total": round(total, 2), "count": len(rows)}
-        except Exception:
-            logger.warning(
-                "reports._aggregate_revenues failed org=%s period=%s/%s — "
-                "revenues table may not exist yet; returning zeros. "
-                "NOC-REMEDIATE[orbity-reports-metrics-source]",
-                self._org_id, period_start, period_end,
-            )
-            return {"total": 0.0, "count": 0}
+            return q.eq("client_id", client_id) if client_id else q
+
+        rows = self._fetch_all("aggregate_revenues", build)
+        total = sum(float(r.get("amount") or 0) for r in rows)
+        return {"total": round(total, 2), "count": len(rows)}
 
     def _aggregate_expenses(self, period_start: str, period_end: str) -> dict[str, Any]:
-        """Sum expenses with due_date in period from orbity.expenses (financial organ)."""
-        try:
-            result = (
+        """Sum expenses with due_date in period. Org-wide only (no client_id column)."""
+
+        def build():
+            return (
                 self._t("expenses")
-                .select("amount")
+                .select("id, amount")
                 .eq("org_id", self._org_id)
                 .gte("due_date", period_start)
                 .lte("due_date", period_end)
-                .execute()
             )
-            rows = result.data or []
-            total = sum(float(r.get("amount") or 0) for r in rows)
-            return {"total": round(total, 2), "count": len(rows)}
-        except Exception:
-            logger.warning(
-                "reports._aggregate_expenses failed org=%s period=%s/%s — "
-                "expenses table may not exist yet; returning zeros. "
-                "NOC-REMEDIATE[orbity-reports-metrics-source]",
-                self._org_id, period_start, period_end,
+
+        rows = self._fetch_all("aggregate_expenses", build)
+        total = sum(float(r.get("amount") or 0) for r in rows)
+        return {"total": round(total, 2), "count": len(rows)}
+
+    def _aggregate_meta_ads(
+        self, period_start: str, period_end: str, client_id: str | None = None
+    ) -> dict[str, Any]:
+        """Spend / leads / CPL from orbity.campaign_metrics for the period.
+
+        Client-scoped: only campaigns owned by the client, either directly
+        (campaigns.client_id) or through one of the client's ad accounts
+        (ad_accounts.client_id). Metrics are read in id batches (``.in_`` rides
+        in the URL) and paged.
+        """
+        if client_id:
+            account_ids = [
+                r["id"]
+                for r in self._fetch_all(
+                    "aggregate_meta_ads.accounts",
+                    lambda: self._t("ad_accounts")
+                    .select("id")
+                    .eq("org_id", self._org_id)
+                    .eq("client_id", client_id),
+                )
+            ]
+            camps = self._fetch_all(
+                "aggregate_meta_ads.campaigns.direct",
+                lambda: self._t("campaigns")
+                .select("id, status")
+                .eq("org_id", self._org_id)
+                .eq("client_id", client_id),
             )
-            return {"total": 0.0, "count": 0}
+            for batch in _batched(account_ids):
+                camps += self._fetch_all(
+                    "aggregate_meta_ads.campaigns.via_account",
+                    lambda batch=batch: self._t("campaigns")
+                    .select("id, status")
+                    .eq("org_id", self._org_id)
+                    .in_("ad_account_id", batch),
+                )
+        else:
+            camps = self._fetch_all(
+                "aggregate_meta_ads.campaigns",
+                lambda: self._t("campaigns").select("id, status").eq("org_id", self._org_id),
+            )
+        by_id = {c["id"]: c for c in camps}
+
+        spend = 0.0
+        leads = 0
+        for batch in _batched(list(by_id)):
+            rows = self._fetch_all(
+                "aggregate_meta_ads.metrics",
+                lambda batch=batch: self._t("campaign_metrics")
+                .select("id, spend, leads")
+                .eq("org_id", self._org_id)
+                .in_("campaign_id", batch)
+                .gte("date", period_start)
+                .lte("date", period_end),
+            )
+            spend += sum(float(r.get("spend") or 0) for r in rows)
+            leads += sum(int(r.get("leads") or 0) for r in rows)
+        return {
+            "spend": round(spend, 2),
+            "leads": leads,
+            "cpl": round(spend / leads, 4) if leads else None,
+            "active_campaigns": sum(1 for c in by_id.values() if c.get("status") == "active"),
+        }
 
 
 # ---------------------------------------------------------------------------

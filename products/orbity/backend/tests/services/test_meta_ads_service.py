@@ -408,6 +408,16 @@ class TestSyncCampaigns:
         assert result["errors"] == 0
         assert result["source"] == "fake"
 
+    def test_sync_does_not_overwrite_gestor_situation(self):
+        """Upsert row must NOT carry `situation` — otherwise every sync resets
+        a gestor's 'attention'/'off' signal back to 'on-track'."""
+        account = _account(id_="aa-1", external_id="act_123")
+        db, svc = _svc([account], meta_client=self._fake_client_with_campaigns())
+        svc.sync_campaigns("aa-1")
+        upserts = db.table("campaigns").upserted_payloads
+        assert upserts, "sync should have upserted a campaign"
+        assert all("situation" not in row for row in upserts)
+
     def test_sync_missing_account_raises_lookup_error(self):
         _, svc = _svc([])
         try:

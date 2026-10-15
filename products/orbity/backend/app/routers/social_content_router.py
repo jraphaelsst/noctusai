@@ -32,12 +32,12 @@ Endpoints:
   GET    /api/content/approve/{token}                 PUBLIC — fetch post for client
   POST   /api/content/approve/{token}                 PUBLIC — submit decision
 """
-from __future__ import annotations
-
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+
+from noctusai_lib.api.rate_limit import client_ip_key
 
 from app.dependencies import (
     coerce_org_uuid,
@@ -57,6 +57,7 @@ from app.schemas.social_content import (
     PostUpdate,
     PublicApprovalView,
 )
+from app.rate_limit import limiter
 from app.services.social_content_service import PublicApprovalService, SocialContentService
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ async def create_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_campaign(
-            payload.model_dump(exclude_none=True)
+            payload.model_dump(mode="json", exclude_none=True)
         )
     except Exception:
         logger.exception("content.create_campaign failed org=%s", org_id)
@@ -164,7 +165,7 @@ async def update_campaign(
 ) -> CampaignOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -237,7 +238,7 @@ async def create_post(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_post(
-            payload.model_dump(exclude_none=True)
+            payload.model_dump(mode="json", exclude_none=True)
         )
     except Exception:
         logger.exception("content.create_post failed org=%s", org_id)
@@ -278,7 +279,7 @@ async def update_post(
 ) -> PostOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -401,7 +402,8 @@ async def get_approval(
     response_model=PublicApprovalView,
     status_code=status.HTTP_200_OK,
 )
-async def public_get_approval(token: str) -> PublicApprovalView:
+@limiter.limit("30/minute;300/hour", key_func=client_ip_key)
+async def public_get_approval(request: Request, token: str) -> PublicApprovalView:
     """Public — fetch the post for the client via approval token.
 
     No auth required. Returns a safe PublicApprovalView (no org_id).
@@ -447,7 +449,9 @@ async def public_get_approval(token: str) -> PublicApprovalView:
     "/api/content/approve/{token}",
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("10/minute;60/hour", key_func=client_ip_key)
 async def public_submit_approval(
+    request: Request,  # required positionally by @limiter.limit (slowapi)
     token: str,
     payload: ApprovalDecision,
 ) -> dict:

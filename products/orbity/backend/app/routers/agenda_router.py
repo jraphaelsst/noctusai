@@ -96,7 +96,7 @@ async def create_event(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _svc(token, org_id).create_event(payload.model_dump(exclude_none=True))
+        row = _svc(token, org_id).create_event(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("agenda.create_event failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar evento")
@@ -136,7 +136,7 @@ async def update_event(
 ) -> AgendaEventOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

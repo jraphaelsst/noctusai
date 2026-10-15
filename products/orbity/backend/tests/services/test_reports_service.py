@@ -213,15 +213,15 @@ class TestGenerateSnapshot:
         db.set_table_data("reports", [report])
         in_period = "2026-05-15T00:00:00+00:00"
         db.set_table_data("leads", [
-            {"temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
-            {"temperature": "warm", "created_at": in_period, "org_id": str(ORG)},
-            {"temperature": "cold", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "warm", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "cold", "created_at": in_period, "org_id": str(ORG)},
         ])
         db.set_table_data("revenues", [
-            {"amount": 5000, "status": "paid", "paid_at": "2026-05-10T00:00:00+00:00", "org_id": str(ORG)},
-            {"amount": 3000, "status": "paid", "paid_at": "2026-05-20T00:00:00+00:00", "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "amount": 5000, "status": "paid", "paid_at": "2026-05-10T00:00:00+00:00", "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "amount": 3000, "status": "paid", "paid_at": "2026-05-20T00:00:00+00:00", "org_id": str(ORG)},
         ])
-        db.set_table_data("expenses", [{"amount": 2000, "due_date": "2026-05-15", "org_id": str(ORG)}])
+        db.set_table_data("expenses", [{"id": str(uuid.uuid4()), "amount": 2000, "due_date": "2026-05-15", "org_id": str(ORG)}])
 
         result = svc.generate_snapshot("report-1")
 
@@ -246,10 +246,10 @@ class TestGenerateSnapshot:
         # Include created_at so gte/lte predicates in _aggregate_leads match the rows
         in_period = "2026-05-15T00:00:00+00:00"
         db.set_table_data("leads", [
-            {"temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
-            {"temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
-            {"temperature": "warm", "created_at": in_period, "org_id": str(ORG)},
-            {"temperature": None, "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "hot", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": "warm", "created_at": in_period, "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "temperature": None, "created_at": in_period, "org_id": str(ORG)},
         ])
         db.set_table_data("revenues", [])
         db.set_table_data("expenses", [])
@@ -272,8 +272,8 @@ class TestGenerateSnapshot:
         db.set_table_data("leads", [])
         # revenues rows: status=paid + paid_at in period (columns from migration 006)
         db.set_table_data("revenues", [
-            {"amount": "5000.00", "status": "paid", "paid_at": "2026-05-10T00:00:00+00:00", "org_id": str(ORG)},
-            {"amount": "3000.00", "status": "paid", "paid_at": "2026-05-20T00:00:00+00:00", "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "amount": "5000.00", "status": "paid", "paid_at": "2026-05-10T00:00:00+00:00", "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "amount": "3000.00", "status": "paid", "paid_at": "2026-05-20T00:00:00+00:00", "org_id": str(ORG)},
         ])
         db.set_table_data("expenses", [])
 
@@ -352,3 +352,101 @@ class TestReportsPublicService:
         result = pub.get_published_report_by_token(row["public_token"])
         assert result is not None
         assert result["snapshot"] is None
+
+
+# ---------------------------------------------------------------------------
+# Client-scoped reports must not leak org-wide data; failures must not be zeros
+# ---------------------------------------------------------------------------
+
+CLIENT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+CLIENT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def _row(**kw) -> dict:
+    return {"id": str(uuid.uuid4()), "org_id": str(ORG), **kw}
+
+
+class TestClientScopedSnapshot:
+    def _seed(self, report_client):
+        report = _report(id_="rep-c", period_start="2026-05-01", period_end="2026-05-31")
+        report["client_id"] = report_client
+        db, svc = _svc([_snapshot("rep-c")])
+        d = "2026-05-15T00:00:00+00:00"
+        db.set_table_data("reports", [report])
+        db.set_table_data("leads", [
+            _row(temperature="hot", created_at=d, client_id=CLIENT_A),
+            _row(temperature="hot", created_at=d, client_id=CLIENT_B),
+            _row(temperature="cold", created_at=d, client_id=CLIENT_B),
+        ])
+        db.set_table_data("revenues", [
+            _row(amount=100, status="paid", paid_at=d, client_id=CLIENT_A),
+            _row(amount=900, status="paid", paid_at=d, client_id=CLIENT_B),
+        ])
+        db.set_table_data("expenses", [_row(amount=555, due_date="2026-05-10")])
+        db.set_table_data("ad_accounts", [_row(client_id=CLIENT_A), _row(client_id=CLIENT_B)])
+        return db, svc
+
+    def test_client_report_only_counts_that_clients_leads_and_revenue(self):
+        db, svc = self._seed(CLIENT_A)
+        svc.generate_snapshot("rep-c")
+        payload = db.table("report_snapshots").inserted_payloads[0]["payload"]
+        assert payload["leads"]["total"] == 1
+        assert payload["revenues"]["total"] == 100.0
+        assert payload["scope"] == {"client_id": CLIENT_A}
+
+    def test_client_report_does_not_leak_org_expenses(self):
+        db, svc = self._seed(CLIENT_A)
+        svc.generate_snapshot("rep-c")
+        expenses = db.table("report_snapshots").inserted_payloads[0]["payload"]["expenses"]
+        assert expenses["available"] is False
+        assert "total" not in expenses
+
+    def test_org_wide_report_keeps_org_totals(self):
+        db, svc = self._seed(None)
+        svc.generate_snapshot("rep-c")
+        payload = db.table("report_snapshots").inserted_payloads[0]["payload"]
+        assert payload["leads"]["total"] == 3
+        assert payload["revenues"]["total"] == 1000.0
+        assert payload["expenses"]["total"] == 555.0
+        assert payload["scope"] == {"org_wide": True}
+
+    def test_meta_ads_scoped_to_client_directly_and_via_ad_account(self):
+        db, svc = self._seed(CLIENT_A)
+        acct_a, acct_b = "acct-a", "acct-b"
+        db.set_table_data("ad_accounts", [
+            _row(id=acct_a, client_id=CLIENT_A), _row(id=acct_b, client_id=CLIENT_B),
+        ])
+        db.set_table_data("campaigns", [
+            _row(id="c-direct", client_id=CLIENT_A, ad_account_id="x", status="active"),
+            _row(id="c-via", client_id=None, ad_account_id=acct_a, status="paused"),
+            _row(id="c-other", client_id=CLIENT_B, ad_account_id=acct_b, status="active"),
+        ])
+        d = "2026-05-12"
+        db.set_table_data("campaign_metrics", [
+            _row(campaign_id="c-direct", date=d, spend=40, leads=2),
+            _row(campaign_id="c-via", date=d, spend=60, leads=3),
+            _row(campaign_id="c-other", date=d, spend=1000, leads=50),
+        ])
+        out = svc._aggregate_meta_ads("2026-05-01", "2026-05-31", CLIENT_A)
+        assert out["spend"] == 100.0
+        assert out["leads"] == 5
+        assert out["cpl"] == 20.0
+        assert out["active_campaigns"] == 1
+
+    def test_revenue_query_failure_raises_not_zero(self):
+        db, _ = self._seed(CLIENT_A)
+        svc = ReportsService(_Boom(db, "revenues"), org_id=ORG)
+        with pytest.raises(RuntimeError, match="revenues unavailable"):
+            svc.generate_snapshot("rep-c")
+
+
+class _Boom:
+    """Wraps a client; `.table(name)` raises for one table (real failure path)."""
+
+    def __init__(self, inner, bad):
+        self._inner, self._bad = inner, bad
+
+    def table(self, name):
+        if name == self._bad:
+            raise RuntimeError(f"{name} unavailable")
+        return self._inner.table(name)

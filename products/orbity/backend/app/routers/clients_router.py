@@ -57,7 +57,7 @@ async def create_client(
     org_id = coerce_org_uuid(raw_org)
     svc = ClientsService(get_user_client(token), org_id=org_id)
     try:
-        row = svc.create(payload.model_dump(exclude_none=True))
+        row = svc.create(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("clients.create failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar cliente")
@@ -90,7 +90,7 @@ async def update_client(
 ) -> ClientOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     svc = ClientsService(get_user_client(token), org_id=org_id)

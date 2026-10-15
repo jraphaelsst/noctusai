@@ -102,7 +102,7 @@ async def create_contract(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _fin(token, org_id).create_contract(payload.model_dump(exclude_none=True))
+        row = _fin(token, org_id).create_contract(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("financial.create_contract failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar contrato")
@@ -142,7 +142,7 @@ async def update_contract(
 ) -> ContractOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -210,7 +210,7 @@ async def create_expense(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _fin(token, org_id).create_expense(payload.model_dump(exclude_none=True))
+        row = _fin(token, org_id).create_expense(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("financial.create_expense failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar despesa")
@@ -250,7 +250,7 @@ async def update_expense(
 ) -> ExpenseOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -320,7 +320,7 @@ async def create_revenue(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _fin(token, org_id).create_revenue(payload.model_dump(exclude_none=True))
+        row = _fin(token, org_id).create_revenue(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("financial.create_revenue failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar receita")
@@ -360,7 +360,7 @@ async def update_revenue(
 ) -> RevenueOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

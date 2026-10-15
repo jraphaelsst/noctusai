@@ -7,6 +7,7 @@ Outbound models use extra="ignore" (DB may return extra columns).
 """
 from __future__ import annotations
 
+from datetime import date as date_type
 from typing import Any, Literal, Optional
 from uuid import UUID
 
@@ -82,6 +83,19 @@ class CampaignMetricUpsert(StrictHttpModel):
     spend: float = Field(..., ge=0)
     impressions: int = Field(..., ge=0)
     leads: int = Field(..., ge=0)
+    cpl: Optional[float] = Field(default=None, ge=0)
+
+
+class CampaignMetricManualEntry(StrictHttpModel):
+    """Manual daily metric entry — PUT /api/meta-ads/campaigns/{id}/metrics.
+
+    campaign_id comes from the path (never the body). ``cpl`` is derived
+    (spend / leads) when omitted and leads > 0.
+    """
+    date: date_type
+    spend: float = Field(..., ge=0)
+    impressions: int = Field(default=0, ge=0)
+    leads: int = Field(default=0, ge=0)
     cpl: Optional[float] = Field(default=None, ge=0)
 
 

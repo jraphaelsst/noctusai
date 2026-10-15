@@ -31,12 +31,12 @@ Endpoints:
 
   POST   /api/capture/{org_id}               PUBLIC lead capture
 """
-from __future__ import annotations
-
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+
+from noctusai_lib.api.rate_limit import client_ip_key
 
 from app.dependencies import (
     coerce_org_uuid,
@@ -57,6 +57,7 @@ from app.schemas.crm import (
     ScoringRuleUpdate,
     StageMoveRequest,
 )
+from app.rate_limit import limiter
 from app.services.crm_service import CRMService
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ async def create_lead(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _crm(token, org_id).create_lead(payload.model_dump(exclude_none=True))
+        row = _crm(token, org_id).create_lead(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("crm.create_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar lead")
@@ -209,7 +210,7 @@ async def update_lead(
 ) -> LeadOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -388,7 +389,7 @@ async def create_scoring_rule(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     svc = _crm(token, org_id)
-    row_data = {**payload.model_dump(), "org_id": str(org_id)}
+    row_data = {**payload.model_dump(mode="json"), "org_id": str(org_id)}
     try:
         result = svc._t("lead_scoring_rules").insert(row_data).execute()
     except Exception:
@@ -412,7 +413,7 @@ async def update_scoring_rule(
 ) -> ScoringRuleOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     svc = _crm(token, org_id)
@@ -468,7 +469,9 @@ async def delete_scoring_rule(
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("20/minute;200/hour", key_func=client_ip_key)
 async def capture_lead(
+    request: Request,  # required positionally by @limiter.limit (slowapi)
     org_id: UUID,
     payload: LeadCaptureRequest,
 ) -> dict:

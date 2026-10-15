@@ -97,7 +97,7 @@ async def create_task(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _svc(token, org_id).create_task(payload.model_dump(exclude_none=True))
+        row = _svc(token, org_id).create_task(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("tasks.create_task failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar tarefa")
@@ -137,7 +137,7 @@ async def update_task(
 ) -> TaskOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -224,7 +224,7 @@ async def create_routine(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _svc(token, org_id).create_routine(payload.model_dump(exclude_none=True))
+        row = _svc(token, org_id).create_routine(payload.model_dump(mode="json", exclude_none=True))
     except Exception:
         logger.exception("tasks.create_routine failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar rotina")
@@ -264,7 +264,7 @@ async def update_routine(
 ) -> RoutineOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
