@@ -24,7 +24,7 @@
  * Nav key: "funil" — needs a status_pagina row (see return note).
  */
 import { useConfirm } from "@noctusai/lib/components";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useFunil,
   useCreateLead,
@@ -688,6 +688,24 @@ export default function Funil() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>("");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+
+  // Close the detail panel when its lead disappears from the funil data
+  // (deleted here or elsewhere) — never show a deleted lead.
+  useEffect(() => {
+    if (!selectedLead || !funilData) return;
+    const stillThere = funilData.some((col) => col.leads.some((l) => l.id === selectedLead.id));
+    if (!stillThere) setSelectedLead(null);
+  }, [funilData, selectedLead]);
+
+  // Escape closes the slide-over.
+  useEffect(() => {
+    if (!selectedLead) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedLead(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedLead]);
 
   // ── handlers ──
 

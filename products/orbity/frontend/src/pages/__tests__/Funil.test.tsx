@@ -222,6 +222,35 @@ describe("Funil — canonical KanbanBoard organ", () => {
   });
 });
 
+describe("Funil — detail panel lifecycle", () => {
+  it("Escape closes the detail panel", () => {
+    mockUseFunil.mockReturnValue(funilQuery());
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
+    fireEvent.click(screen.getByText("Ana Prospect"));
+    expect(screen.getByText("ana@exemplo.com")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByText("ana@exemplo.com")).not.toBeInTheDocument();
+  });
+
+  it("closes the panel when the selected lead disappears from the funil data", () => {
+    mockUseFunil.mockReturnValue(funilQuery());
+    const { rerender } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
+    fireEvent.click(screen.getByText("Ana Prospect"));
+    expect(screen.getByText("ana@exemplo.com")).toBeInTheDocument();
+    const without = STAGES.map((c) => ({ ...c, leads: c.leads.filter((l) => l.id !== LEAD_A.id) }));
+    mockUseFunil.mockReturnValue(funilQuery({ data: without }));
+    rerender(<ConfirmProvider><Funil /></ConfirmProvider>);
+    expect(screen.queryByText("ana@exemplo.com")).not.toBeInTheDocument();
+  });
+
+  it("clicking a card's delete button does not open the detail panel", () => {
+    mockUseFunil.mockReturnValue(funilQuery());
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
+    fireEvent.click(screen.getAllByTitle("Remover lead")[0]);
+    expect(screen.queryByText("Atividades")).not.toBeInTheDocument();
+  });
+});
+
 // ─── The lying-loading race ──────────────────────────────────────────────────
 
 describe("Funil — loading vs empty", () => {
