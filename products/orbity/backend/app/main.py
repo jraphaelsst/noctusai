@@ -28,7 +28,6 @@ over `gpt-4o-mini`):
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
-from app.routers.webhook_router import router as webhook_router
 from app.routers.clients_router import router as clients_router
 from app.routers.crm_router import router as crm_router, capture_router
 from app.routers.financial_router import router as financial_router
@@ -47,7 +46,6 @@ app = create_product_app(
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team", "status_paginas"],
     routers=[
-        webhook_router,
         # CRM Wave 1
         clients_router,    # /api/clients  — clients CRUD
         crm_router,        # /api/crm/*    — leads, funil, scoring
