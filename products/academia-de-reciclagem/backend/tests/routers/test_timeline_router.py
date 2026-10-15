@@ -61,3 +61,46 @@ class TestCreateAndList:
         assert len(resp.json()["items"]) == 2
         # newest first
         assert resp.json()["items"][0]["titulo"] == "E2"
+
+
+class TestJsonModeWrite:
+    """Fleet sweep 2026-10-15: `TimelineEventCreate.data` is a `date`; the router
+    used `payload.model_dump()` so the PG store sent a `datetime.date` as the
+    `p_data` RPC param -> supabase-py `Object of type date is not JSON
+    serializable` (live 502 shape, orbity). Router -> REAL `PgKnowledgeStore`
+    -> MockSupabase; the mock's `rpc` does not encode, so the test does."""
+
+    def test_pg_store_rpc_params_are_json_serializable(self, client, set_auth):
+        import json
+
+        from app.dependencies import get_store
+        from app.knowledge.pg import PgKnowledgeStore
+        from app.main import app
+
+        set_auth(_user_ctx())
+        _seed_role(client)
+        sb = client.mock_supabase
+        sb.set_rpc_data("create_timeline_event", {
+            "data": "2026-01-15", "titulo": "Marco", "descricao": "d",
+        })
+        app.dependency_overrides[get_store] = lambda: PgKnowledgeStore(sb)
+        try:
+            resp = client.raw().post(
+                "/api/timeline",
+                json={"titulo": "Marco", "descricao": "d", "data": "2026-01-15"},
+            )
+        finally:
+            app.dependency_overrides.pop(get_store, None)
+        assert resp.status_code == 201, resp.text
+        name, params = sb.rpc_calls[-1]
+        assert name == "create_timeline_event"
+        assert json.loads(json.dumps(params))["p_data"] == "2026-01-15"
+
+    def test_fake_lists_mixed_explicit_and_default_dates(self, client, store, set_auth):
+        set_auth(_user_ctx())
+        _seed_role(client)
+        client.raw().post("/api/timeline", json={"titulo": "A", "descricao": "d", "data": "2020-01-01"})
+        client.raw().post("/api/timeline", json={"titulo": "B", "descricao": "d"})
+        resp = client.raw().get("/api/timeline")
+        assert resp.status_code == 200, resp.text
+        assert [i["titulo"] for i in resp.json()["items"]] == ["B", "A"]

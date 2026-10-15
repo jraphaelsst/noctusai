@@ -542,7 +542,12 @@ class FakeKnowledgeStore:
         row = {
             "id": uuid4(),
             "org_id": org_id,
-            "data": data.get("data") or date.today(),
+            # The router dumps in JSON mode (ISO str, like the PG RPC param);
+            # keep the fake's column a `date` so list ordering never mixes types.
+            "data": (
+                date.fromisoformat(data["data"]) if isinstance(data.get("data"), str)
+                else data.get("data")
+            ) or date.today(),
             "titulo": data["titulo"],
             "descricao": data["descricao"],
             "created_at": _now(),

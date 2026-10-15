@@ -130,7 +130,7 @@ async def update_phase(
     store: KnowledgeStore = Depends(get_store),
 ) -> PhaseOut:
     prov = await build_write_provenance(ctx, request, keys=keys)
-    changes = payload.model_dump(exclude_none=True)
+    changes = payload.model_dump(mode="json", exclude_none=True)
     try:
         row = await store.update_phase(ctx.org_id, codigo, changes, prov)
     except KnowledgeStoreError as exc:
@@ -163,7 +163,7 @@ async def create_task(
 ) -> TaskOut:
     prov = await build_write_provenance(ctx, request, keys=keys)
     try:
-        row = await store.create_task(ctx.org_id, payload.model_dump(), prov)
+        row = await store.create_task(ctx.org_id, payload.model_dump(mode="json"), prov)
     except KnowledgeStoreError as exc:
         raise error_response(exc) from exc
     return _task_out(row)
@@ -179,7 +179,7 @@ async def update_task(
     store: KnowledgeStore = Depends(get_store),
 ) -> TaskOut:
     prov = await build_write_provenance(ctx, request, keys=keys)
-    changes = payload.model_dump(exclude_none=True)
+    changes = payload.model_dump(mode="json", exclude_none=True)
     try:
         row = await store.update_task(ctx.org_id, codigo, changes, prov)
     except KnowledgeStoreError as exc:

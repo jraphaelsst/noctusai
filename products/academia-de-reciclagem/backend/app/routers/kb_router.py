@@ -174,7 +174,7 @@ async def create_kb(
     store: KnowledgeStore = Depends(get_store),
 ) -> KbEntryOut:
     prov = await build_write_provenance(ctx, request, keys=keys, motivo=payload.motivo)
-    data = payload.model_dump(exclude={"motivo"})
+    data = payload.model_dump(mode="json", exclude={"motivo"})
     data["slug"] = data.get("slug") or _slugify_kebab(payload.titulo)
     try:
         row = await store.create_kb(ctx.org_id, data, prov)
@@ -193,7 +193,7 @@ async def update_kb(
     store: KnowledgeStore = Depends(get_store),
 ) -> KbEntryOut:
     prov = await build_write_provenance(ctx, request, keys=keys, motivo=payload.motivo)
-    changes = payload.model_dump(exclude={"motivo"}, exclude_none=True)
+    changes = payload.model_dump(mode="json", exclude={"motivo"}, exclude_none=True)
     try:
         row = await store.update_kb(ctx.org_id, slug, changes, prov)
     except KnowledgeStoreError as exc:

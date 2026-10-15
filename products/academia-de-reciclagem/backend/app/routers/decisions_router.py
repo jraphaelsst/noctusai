@@ -103,7 +103,7 @@ async def create_decision(
 ) -> DecisionOut:
     prov = await build_write_provenance(ctx, request, keys=keys)
     try:
-        row = await store.create_decision(ctx.org_id, payload.model_dump(), prov)
+        row = await store.create_decision(ctx.org_id, payload.model_dump(mode="json"), prov)
     except KnowledgeStoreError as exc:
         raise error_response(exc) from exc
     return _out(row)
@@ -123,7 +123,7 @@ async def supersede_decision(
     prov = await build_write_provenance(ctx, request, keys=keys)
     try:
         nova, substituida = await store.supersede_decision(
-            ctx.org_id, codigo, payload.model_dump(), prov
+            ctx.org_id, codigo, payload.model_dump(mode="json"), prov
         )
     except KnowledgeStoreError as exc:
         raise error_response(exc) from exc

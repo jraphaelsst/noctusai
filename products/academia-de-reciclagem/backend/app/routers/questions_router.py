@@ -83,7 +83,7 @@ async def create_question(
 ) -> QuestionOut:
     prov = await build_write_provenance(ctx, request, keys=keys)
     try:
-        row = await store.create_question(ctx.org_id, payload.model_dump(), prov)
+        row = await store.create_question(ctx.org_id, payload.model_dump(mode="json"), prov)
     except KnowledgeStoreError as exc:
         raise error_response(exc) from exc
     return question_out(row)
