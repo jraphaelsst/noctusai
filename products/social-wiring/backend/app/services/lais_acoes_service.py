@@ -41,6 +41,7 @@ from uuid import UUID
 from app.clients.agents import AgentsClient, AgentsClientError, ResumoRequest, TurnResult
 from app.services import lais_contatos_service as contatos
 from app.services import lais_eventos_service as eventos
+from app.services import lais_slots_sensiveis as sensiveis
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +82,17 @@ def lote_hash_de(conversation_id: str, provider_message_ids: Sequence[str]) -> s
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def sanitizar_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """The ledger copy: a CPF is stored as hash + last 3 digits only (contract 17, wave 5)."""
+def sanitizar_payload(payload: dict[str, Any], org_id: Optional[UUID | str] = None) -> dict[str, Any]:
+    """The ledger copy: a CPF is stored as hash + last 3 digits only (contract 17, wave 5); the
+    sensitive slots of a `salvar_slots` batch (cpf / renda, wave 2) are protected the same way."""
     out = dict(payload)
+    slots = out.get("slots")
+    if isinstance(slots, dict):
+        out["slots"] = {
+            k: (sensiveis.proteger(str(k), v, str(org_id or "")) or "[protegido]")
+            if str(k) in sensiveis.SENSIVEIS and isinstance(v, (str, int, float)) and not isinstance(v, bool) else v
+            for k, v in slots.items()
+        }
     cpf = out.pop("cpf", None)
     if cpf:
         digitos = re.sub(r"\D", "", str(cpf))
@@ -269,7 +278,7 @@ async def _aplicar_uma(
     inserted = _ledger(client).upsert(
         {
             "org_id": str(org_id), "contato_id": str(contato_id), "conversation_id": conversation_id,
-            "lote_hash": lote_hash, "seq": acao.seq, "tipo": acao.type, "payload": sanitizar_payload(acao.payload),
+            "lote_hash": lote_hash, "seq": acao.seq, "tipo": acao.type, "payload": sanitizar_payload(acao.payload, org_id),
         },
         on_conflict="org_id,lote_hash,seq", ignore_duplicates=True,
     ).execute().data or []

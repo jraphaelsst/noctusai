@@ -6459,6 +6459,78 @@ _SW_LAIS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_PERGUNTAS = "269_lais_perguntas.sql"
+_T_PERGUNTAS = (f"{_S}.lais_perguntas_org", f"{_S}.lais_perguntas_catalogo")
+_PERGUNTAS_ORG = "'00000000-0000-4000-8000-000000000269'"
+
+
+def _perguntas_ins(limit: int, offset: int, qualificatoria: bool) -> str:
+    """Insert `limit` catalogue questions for the synthetic probe org, starting at catalogue position
+    `offset` (all rolled back). `objetivo` sorts first, so it rides in the first batch."""
+    return (
+        f"    INSERT INTO {_S}.lais_perguntas_org (org_id, chave, qualificatoria)\n"
+        f"    SELECT {_PERGUNTAS_ORG}, chave, {'true' if qualificatoria else 'false'}\n"
+        f"    FROM {_S}.lais_perguntas_catalogo ORDER BY ordem LIMIT {limit} OFFSET {offset};"
+    )
+
+
+def _perguntas_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais.perguntas.{probe_id}", guard_name=guard, migration=_M_PERGUNTAS, rationale=rationale,
+        fixtures=(), ops_sql=ops_sql, sqlstate_condition=_CHECK, what=what, tabelas=_T_PERGUNTAS,
+    )
+
+
+#: Migration 269 -- the limits trigger on lais_perguntas_org (<= 8 active, <= 5 qualifying, `objetivo`
+#: locked). The probe org is synthetic (no FK on org_id), so nothing depends on a real tenant row.
+_SW_PERGUNTAS_PROBES: tuple[GuardProbe, ...] = (
+    _perguntas_probe(
+        "limite_ativas", "lais_perguntas_org_limites",
+        "More than 8 active questions bloat every turn's prompt and break the 'max 8' contract the "
+        "Perguntas page promises.",
+        _perguntas_ins(8, 0, False) + "\n" + _perguntas_ins(1, 8, False), "a 9th active pergunta for one org",
+    ),
+    _perguntas_probe(
+        "limite_qualificatorias", "lais_perguntas_org_limites",
+        "A 6th qualifying question would make 'ready to send' unreachable for most leads.",
+        _perguntas_ins(5, 0, True) + "\n" + _perguntas_ins(1, 5, True), "a 6th qualifying pergunta for one org",
+    ),
+    _perguntas_probe(
+        "objetivo_obrigatorio", "lais_perguntas_org_objetivo_obrigatorio",
+        "`objetivo` decides compra vs aluguel; without it Julia cannot route the conversation.",
+        _perguntas_ins(1, 0, False) + "\n"
+        + f"    DELETE FROM {_S}.lais_perguntas_org WHERE org_id = {_PERGUNTAS_ORG} AND chave = 'objetivo';",
+        "removing the objetivo pergunta from an org",
+    ),
+    _perguntas_probe(
+        "qualificatoria_exige_ativa", "lais_perguntas_org_qualificatoria_ativa",
+        "A qualifying question that is switched off would still gate 'ready to send' on a slot Julia never asks.",
+        f"    INSERT INTO {_S}.lais_perguntas_org (org_id, chave, ativa, qualificatoria)\n"
+        f"    VALUES ({_PERGUNTAS_ORG}, 'nome', false, true);",
+        "a qualifying pergunta that is not active",
+    ),
+    *(
+        _perguntas_probe(
+            f"catalogo.{pid}", guard,
+            f"The catalogue drives the Perguntas page and the contexto sent to the model; {why}",
+            f"    INSERT INTO {_S}.lais_perguntas_catalogo (chave, label, categoria, ordem{extra_cols})\n"
+            f"    VALUES ('{chave}', 'x', '{cat}', 9999{extra_vals});",
+            what,
+        )
+        for pid, guard, why, chave, cat, extra_cols, extra_vals, what in (
+            ("chave_valida", "lais_perguntas_catalogo_chave_valida", "a key that is not snake_case cannot be a slot key.",
+             "Noc Probe", "lead", "", "", "a catalogue question with a malformed chave"),
+            ("categoria_valida", "lais_perguntas_catalogo_categoria_valida", "an unknown category has no filter tab.",
+             "noc_probe", "bogus", "", "", "a catalogue question in an unknown categoria"),
+            ("operacao_valida", "lais_perguntas_catalogo_operacao_valida", "an unknown operation never matches a contato.",
+             "noc_probe", "lead", ", operacao", ", 'bogus'", "a catalogue question scoped to an unknown operacao"),
+            ("sensivel_valido", "lais_perguntas_catalogo_sensivel_valido", "an unknown protection mode would store the value raw.",
+             "noc_probe", "lead", ", sensivel", ", 'bogus'", "a catalogue question with an unknown sensivel mode"),
+        )
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -8378,6 +8450,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_TRANSACOES_PROBES,
     *_SW_CONDOMINIOS_PROBES,
     *_SW_LAIS_PROBES,
+    *_SW_PERGUNTAS_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

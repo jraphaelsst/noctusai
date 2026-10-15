@@ -1,0 +1,305 @@
+"""Lais wave 2 (lais-build-contract section 4): `/api/lais/perguntas`, the contato read route, the
+`perguntas` contexto provider, the protected CPF/renda slots. Strict `== 401` on the auth boundary.
+
+Seams: mock DB (the catalogue rows are PARSED from migration 269, so the seed itself is under test),
+and the routes' own `Depends` factory `get_perguntas_client`. Nothing of ours is patched; no personal
+data in fixtures (the CPF below is the well-known invalid test number, the renda is a round figure)."""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse
+from noctusai_lib.testing.migrations import migration_path
+
+from app.services import lais_acoes_service as acoes
+from app.services import lais_contexto_service as contexto
+from app.services import lais_perguntas_service as svc
+from app.services import lais_slots_sensiveis as sens
+from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
+
+MIGRATION = migration_path(Path(__file__).resolve().parents[2], "lais_perguntas")
+_ROW = re.compile(
+    r"^    \('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\w+)', (NULL|'\w+'), (true|false), (true|false), "
+    r"(NULL|'\w+'), (\d+)\)", re.M)
+H = {"Authorization": "Bearer test-token"}
+URL = "/api/lais/perguntas"
+CONTATO_URL = f"/api/lais/contatos/{CONNECTION_ID}/{LEAD_CHAT}"
+CPF_DE_TESTE = "111.111.111-11"
+
+
+def catalogo_do_seed() -> list[dict]:
+    rows = []
+    for c, label, dica, cat, op, num, moeda, sensivel, ordem in _ROW.findall(MIGRATION.read_text(encoding="utf-8")):
+        rows.append({"chave": c, "label": label.replace("''", "'"), "dica": dica.replace("''", "'"), "categoria": cat,
+                     "operacao": None if op == "NULL" else op.strip("'"), "numerica": num == "true",
+                     "moeda": moeda == "true", "sensivel": None if sensivel == "NULL" else sensivel.strip("'"),
+                     "ordem": int(ordem)})
+    return rows
+
+
+class Scene:
+    def __init__(self, tc, world):
+        self.tc, self.w = tc, world
+
+    def get(self, url):
+        return self.tc.get(url, headers=H)
+
+    def put(self, selecao):
+        return self.tc.put(URL, json={"selecao": selecao}, headers=H)
+
+    def rows(self, org=ORG_ID):
+        return {r["chave"]: r for r in self.w.sw.table("lais_perguntas_org").select("*").execute().data if r["org_id"] == org}
+
+
+def sel(*chaves, qual=()):
+    return [{"chave": c, "qualificatoria": c in qual} for c in chaves]
+
+
+def _scene(role):
+    world = World()
+    world.sw.set_table_data("lais_perguntas_catalogo", catalogo_do_seed())
+    world.sw.set_table_data("lais_perguntas_org", [])
+    world.core.set_table_data("noctus_users", [
+        {"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role},
+    ])
+    world.root.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(org_id=ORG_ID, org_role=role)))
+    with (
+        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=world.root),
+        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=world.root),
+        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
+    ):
+        from app.main import app
+        from app.routers.lais_perguntas_router import get_perguntas_client
+
+        app.dependency_overrides[get_perguntas_client] = lambda: world.sw
+        yield Scene(TestClient(app), world)
+        app.dependency_overrides.pop(get_perguntas_client, None)
+
+
+@pytest.fixture
+def admin():
+    yield from _scene("owner")
+
+
+@pytest.fixture
+def member():
+    yield from _scene("member")
+
+
+# ── the seed ────────────────────────────────────────────────────────────────
+class TestCatalogoSeed:
+    def test_every_key_is_snake_case_unique_and_the_categories_are_the_six(self):
+        rows = catalogo_do_seed()
+        chaves = [r["chave"] for r in rows]
+        assert len(chaves) == len(set(chaves)) and len(rows) >= 57
+        assert all(re.fullmatch(r"[a-z][a-z0-9_]{1,63}", c) for c in chaves)
+        assert {r["categoria"] for r in rows} == {"operacao", "lead", "imovel", "localizacao", "financeiro", "interesses"}
+        assert [r["chave"] for r in rows if r["categoria"] == "operacao"] == ["objetivo"]
+
+    def test_sensitive_marks_match_the_slot_protection_table(self):
+        marcadas = {r["chave"]: r["sensivel"] for r in catalogo_do_seed() if r["sensivel"]}
+        assert marcadas == sens.SENSIVEIS
+
+
+# ── GET / PUT ───────────────────────────────────────────────────────────────
+class TestAuth:
+    @pytest.mark.parametrize("method,url", [("get", URL), ("put", URL), ("get", CONTATO_URL)])
+    def test_no_token_is_exactly_401(self, admin, method, url):
+        kw = {"json": {"selecao": []}} if method == "put" else {}
+        assert getattr(admin.tc, method)(url, **kw).status_code == 401
+
+    def test_a_member_can_read(self, member):
+        assert member.get(URL).status_code == 200
+
+    def test_a_member_cannot_write_403(self, member):
+        assert member.put(sel("objetivo")).status_code == 403
+
+
+class TestGet:
+    def test_shape_and_the_locked_objetivo_default(self, admin):
+        data = admin.get(URL).json()["data"]
+        assert data["limites"] == {"max_ativas": 8, "max_qualificatorias": 5}
+        por = {q["chave"]: q for q in data["catalogo"]}
+        assert len(por) == len(catalogo_do_seed())
+        assert set(por["objetivo"]) == {"chave", "label", "dica", "categoria", "operacao", "ativa", "qualificatoria",
+                                        "bloqueada", "usada_em_criterio"}
+        assert por["objetivo"]["ativa"] and por["objetivo"]["bloqueada"]
+        assert [c for c, q in por.items() if q["ativa"]] == ["objetivo"]
+        assert not any(q["usada_em_criterio"] for q in por.values())
+
+    def test_another_orgs_selection_is_invisible(self, admin):
+        admin.w.sw.set_table_data("lais_perguntas_org", [
+            {"org_id": OTHER_ORG_ID, "chave": "nome", "ativa": True, "qualificatoria": True}])
+        por = {q["chave"]: q for q in admin.get(URL).json()["data"]["catalogo"]}
+        assert not por["nome"]["ativa"]
+
+
+class TestPut:
+    def test_full_replace_roundtrip(self, admin):
+        r = admin.put(sel("objetivo", "nome", "faixa_preco", qual=("objetivo", "faixa_preco")))
+        assert r.status_code == 200
+        por = {q["chave"]: q for q in r.json()["data"]["catalogo"]}
+        assert {c for c, q in por.items() if q["ativa"]} == {"objetivo", "nome", "faixa_preco"}
+        assert por["faixa_preco"]["qualificatoria"] and not por["nome"]["qualificatoria"]
+        r = admin.put(sel("objetivo", "bairro_desejado", qual=("objetivo",)))
+        assert set(admin.rows()) == {"objetivo", "bairro_desejado"}
+        assert r.json()["data"]["catalogo"] == admin.get(URL).json()["data"]["catalogo"]
+
+    def test_objetivo_is_required(self, admin):
+        r = admin.put(sel("nome"))
+        assert r.status_code == 422 and r.json()["error"]["code"] == "objetivo_obrigatorio"
+        assert admin.rows() == {}
+
+    def test_ninth_active_is_refused(self, admin):
+        ok = [q["chave"] for q in catalogo_do_seed() if q["chave"] != "objetivo"][:7]
+        assert admin.put(sel("objetivo", *ok)).status_code == 200
+        outro = [q["chave"] for q in catalogo_do_seed() if q["chave"] != "objetivo"][7]
+        r = admin.put(sel("objetivo", *ok, outro))
+        assert r.status_code == 422 and r.json()["error"]["code"] == "limite_ativas"
+        assert len(admin.rows()) == 8
+
+    def test_sixth_qualifying_is_refused(self, admin):
+        chaves = [q["chave"] for q in catalogo_do_seed() if q["chave"] != "objetivo"][:5]
+        r = admin.put(sel("objetivo", *chaves, qual=("objetivo", *chaves)))
+        assert r.status_code == 422 and r.json()["error"]["code"] == "limite_qualificatorias"
+        assert admin.put(sel("objetivo", *chaves, qual=("objetivo", *chaves[:4]))).status_code == 200
+
+    def test_unknown_key_and_duplicates_are_422(self, admin):
+        r = admin.put(sel("objetivo", "nao_existe"))
+        assert r.status_code == 422 and r.json()["error"]["code"] == "chave_desconhecida"
+        r = admin.put(sel("objetivo", "nome", "nome"))
+        assert r.status_code == 422 and r.json()["error"]["code"] == "selecao_invalida"
+
+    def test_unknown_body_field_is_422(self, admin):
+        r = admin.tc.put(URL, json={"selecao": sel("objetivo"), "extra": 1}, headers=H)
+        assert r.status_code == 422
+
+    @pytest.fixture
+    def criterio_de_preco(self):
+        # the seam wave 3 binds its reader through; restored to the default (no criteria) afterwards
+        svc.registrar_criterios(lambda _c, _o: {"faixa_preco": ["Preço até 900 mil"]})
+        yield
+        svc.registrar_criterios(svc._sem_criterios)  # noqa: SLF001
+
+    def test_a_criterion_blocks_deactivation_409(self, admin, criterio_de_preco):
+        admin.put(sel("objetivo", "faixa_preco", qual=("objetivo",)))
+        r = admin.put(sel("objetivo"))
+        assert r.status_code == 409 and r.json()["error"]["code"] == "usada_em_criterio"
+        assert r.json()["error"]["details"]["criterios"] == ["Preço até 900 mil"]
+        assert "faixa_preco" in admin.rows()
+        por = {q["chave"]: q for q in admin.get(URL).json()["data"]["catalogo"]}
+        assert por["faixa_preco"]["usada_em_criterio"]
+        assert admin.put(sel("objetivo", "faixa_preco")).status_code == 200  # keeping it is fine
+
+
+# ── contexto provider ───────────────────────────────────────────────────────
+class TestProvider:
+    def _ctx(self, w, operacao=None):
+        return contexto.ContextoCtx(client=w.sw, org_id=ORG_ID, contato={"operacao": operacao, "slots": {}})
+
+    def test_registered_in_place_without_editing_the_provider_list(self):
+        assert dict(contexto.PROVIDERS)["perguntas"] is svc.contexto_provider
+        assert [n for n, _ in contexto.PROVIDERS] == ["conhecimento", "perguntas", "estado", "ferramentas", "acoes"]
+
+    def test_renders_the_active_questions_in_contract_shape(self, admin):
+        admin.put(sel("objetivo", "nome", "faixa_preco", qual=("objetivo", "faixa_preco")))
+        out = contexto.montar(admin.w.sw, ORG_ID, {"operacao": None, "slots": {}}, ferramentas_habilitadas=False)
+        pergs = out["perguntas"]
+        assert {p["chave"] for p in pergs} == {"objetivo", "nome", "faixa_preco"}
+        assert set(pergs[0]) == {"chave", "label", "dica", "categoria", "qualificatoria", "operacao"}
+        assert {p["chave"]: p["qualificatoria"] for p in pergs} == {"objetivo": True, "nome": False, "faixa_preco": True}
+
+    def test_a_fresh_org_is_asked_only_the_objetivo(self, admin):
+        assert [p["chave"] for p in svc.contexto_provider(self._ctx(admin.w))["perguntas"]] == ["objetivo"]
+
+    def test_operation_scoped_questions_follow_the_contato(self, admin):
+        admin.put(sel("objetivo", "recurso_entrada", "garantia_locacao"))
+        chaves = lambda op: {p["chave"] for p in svc.contexto_provider(self._ctx(admin.w, op))["perguntas"]}  # noqa: E731
+        assert chaves("compra") == {"objetivo", "recurso_entrada"}
+        assert chaves("aluguel") == {"objetivo", "garantia_locacao"}
+        assert chaves(None) == {"objetivo", "recurso_entrada", "garantia_locacao"}
+
+
+# ── salvar_slots + sensitive slots ──────────────────────────────────────────
+class TestSalvarSlots:
+    def _ctx(self, w, perguntas):
+        contato = w.sw.table("lais_contatos").insert({
+            "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "slots": {}}).execute().data[0]
+        return acoes.AcaoCtx(client=w.sw, org_id=ORG_ID, contato=contato, interacao=None, lote_hash="h", seq=1,
+                             tipo="salvar_slots", perguntas=perguntas)
+
+    def test_the_handler_is_the_wrapping_one(self):
+        assert acoes.HANDLERS["salvar_slots"] is svc._h_salvar_slots  # noqa: SLF001
+
+    def test_cpf_and_renda_are_stored_protected_never_raw(self, admin):
+        admin.put(sel("objetivo", "cpf", "renda_familiar", "nome"))
+        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
+            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
+        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": CPF_DE_TESTE, "renda_familiar": "R$ 6.500,00", "nome": "Ana"}})
+        assert set(res["salvos"]) == {"cpf", "renda_familiar", "nome"}
+        row = admin.w.sw.table("lais_contatos").select("*").execute().data[0]
+        assert row["slots"]["renda_familiar"] == "faixa:5k_10k"
+        assert row["slots"]["cpf"].startswith("sha256:") and row["slots"]["cpf"].endswith("|final:111")
+        assert "11111111111" not in str(row) and CPF_DE_TESTE not in str(row) and "6.500" not in str(row)
+
+    def test_an_unprotectable_value_is_dropped_not_stored_raw(self, admin):
+        admin.put(sel("objetivo", "cpf", "renda_familiar"))
+        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
+            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
+        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": "123", "renda_familiar": "depende"}})
+        assert res["salvos"] == [] and set(res["ignorados"]) == {"cpf", "renda_familiar"}
+        assert admin.w.sw.table("lais_contatos").select("*").execute().data[0]["slots"] == {}
+
+    def test_keys_outside_the_active_set_are_still_ignored(self, admin):
+        admin.put(sel("objetivo", "nome"))
+        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
+            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
+        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"quartos": "3"}})
+        assert res == {"salvos": [], "ignorados": ["quartos"]}
+
+    def test_the_ledger_copy_is_sanitised_too(self):
+        out = acoes.sanitizar_payload({"slots": {"cpf": CPF_DE_TESTE, "renda_familiar": "8000", "quartos": "3"}}, ORG_ID)
+        assert CPF_DE_TESTE not in str(out) and "8000" not in str(out)
+        assert out["slots"]["quartos"] == "3" and out["slots"]["renda_familiar"] == "faixa:5k_10k"
+
+    @pytest.mark.parametrize("texto,faixa", [("1500", "ate_2k"), ("R$ 2.000,00", "2k_5k"), ("5 mil", "5k_10k"),
+                                             ("10000", "10k_20k"), ("25k", "acima_20k"), ("3,5 mil", "2k_5k")])
+    def test_renda_buckets(self, texto, faixa):
+        assert sens.faixa_renda(texto) == f"faixa:{faixa}"
+
+
+# ── contato read route ──────────────────────────────────────────────────────
+class TestContato:
+    def _seed(self, w, org=ORG_ID, slots=None):
+        c = w.sw.table("lais_contatos").insert({
+            "org_id": org, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "nome": "Ana", "operacao": "compra",
+            "slots": slots or {"faixa_preco": "900000", "quartos": "3"}}).execute().data[0]
+        w.sw.table("lais_interacoes").insert({"org_id": org, "contato_id": c["id"], "operacao": "compra"}).execute()
+        return c
+
+    def test_shape_and_org_scoping(self, member):
+        self._seed(member.w)
+        d = member.get(CONTATO_URL).json()["data"]
+        assert set(d) == {"contato", "slots", "interacao_atual"}
+        assert d["contato"]["nome"] == "Ana" and d["interacao_atual"]["operacao"] == "compra"
+        assert d["slots"] == {}  # neither slot is an active question (only objetivo is)
+
+    def test_only_active_questions_show_their_values(self, admin):
+        self._seed(admin.w)
+        admin.put(sel("objetivo", "faixa_preco"))
+        assert admin.get(CONTATO_URL).json()["data"]["slots"] == {"faixa_preco": "900000"}
+
+    def test_another_orgs_contato_is_404(self, admin):
+        self._seed(admin.w, org=OTHER_ORG_ID)
+        r = admin.get(CONTATO_URL)
+        assert r.status_code == 404 and r.json()["error"]["code"] == "contato_nao_encontrado"
+
+    def test_unknown_chat_is_404_and_no_open_episode_is_null(self, admin):
+        assert admin.get(CONTATO_URL).status_code == 404
+        c = admin.w.sw.table("lais_contatos").insert({
+            "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT}).execute().data[0]
+        assert c and admin.get(CONTATO_URL).json()["data"]["interacao_atual"] is None
