@@ -38,14 +38,15 @@ describe.each([
       ["Conversas", "/lais/conversas"],
       ["Configurações", "/lais/configuracoes"],
       ["Agente", "/lais/agente"],
+      ["Conhecimento", "/lais/conhecimento"],
     ]);
   });
 });
 
 describe("route keys", () => {
-  it("Lais items are gated by lais_conversas / lais_configuracoes / lais_agente (migrations 252, 259)", () => {
+  it("Lais items are gated by lais_conversas / lais_configuracoes / lais_agente / lais_conhecimento (migrations 252, 259)", () => {
     const lais = byKey(NAV_GROUPS as AnyGroup[], LAIS_NAV_KEY)!;
-    expect(lais.items.map((i) => i.route)).toEqual(["lais_conversas", "lais_configuracoes", "lais_agente"]);
+    expect(lais.items.map((i) => i.route)).toEqual(["lais_conversas", "lais_configuracoes", "lais_agente", "lais_conhecimento"]);
   });
 
   it("the fallback is NAV_GROUPS minus every route key (derived, cannot drift)", () => {
