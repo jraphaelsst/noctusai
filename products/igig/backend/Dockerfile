@@ -42,6 +42,7 @@ ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
 COPY products/igig/frontend/package*.json ./products/igig/frontend/
 WORKDIR /app/products/igig/frontend
+# NOC-REMEDIATE[vitest-4112-hold]: package.json holds vitest <4.1.12 (4.1.12, published 2026-10-15, is an inconsistent set that crashes npm10 arborist on this lockfile-less install). Drop the hold once a vitest > 4.1.12 resolves cleanly lockfile-less — 2026-10-15
 # Drop the host lockfile before install: package-lock.json is generated on
 # the dev's machine (darwin-arm64) and PINS the platform-optional native
 # binaries (rollup/esbuild/lightningcss/@swc) to that os/cpu. npm honours
