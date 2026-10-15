@@ -14151,6 +14151,41 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
+    (
+        "products/orbity/backend/migrations/018_automation_live.sql",
+        "idx_orbity_whatsapp_connections_webhook_token",
+        "Migration 018 (orbity) unapplied until the tech-lead applies it at integration — the unique webhook_token index on the new whatsapp_connections table has no live "
+        "object to probe against yet. Remove these five entries and register real `GuardProbe`s in "
+        "`verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migration.",
+    ),
+    (
+        "products/orbity/backend/migrations/018_automation_live.sql",
+        "automation_executions_subject_type_check",
+        "Migration 018 (orbity) unapplied until the tech-lead applies it at integration — the subject_type CHECK on the new automation_executions column has no live "
+        "object to probe against yet. Remove these five entries and register real `GuardProbe`s in "
+        "`verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migration.",
+    ),
+    (
+        "products/orbity/backend/migrations/018_automation_live.sql",
+        "automation_executions_subject_check",
+        "Migration 018 (orbity) unapplied until the tech-lead applies it at integration — the one-resolvable-subject CHECK over the new subject_type/subject_id columns has no live "
+        "object to probe against yet. Remove these five entries and register real `GuardProbe`s in "
+        "`verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migration.",
+    ),
+    (
+        "products/orbity/backend/migrations/018_automation_live.sql",
+        "automation_executions_flow_trigger_key_ux",
+        "Migration 018 (orbity) unapplied until the tech-lead applies it at integration — the per-flow per-occurrence partial unique index on the new trigger_key column has no live "
+        "object to probe against yet. Remove these five entries and register real `GuardProbe`s in "
+        "`verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migration.",
+    ),
+    (
+        "products/orbity/backend/migrations/018_automation_live.sql",
+        "automation_pending_actions_status_check",
+        "Migration 018 (orbity) unapplied until the tech-lead applies it at integration — the widened status CHECK (+'processing') on automation_pending_actions has no live "
+        "object to probe against yet. Remove these five entries and register real `GuardProbe`s in "
+        "`verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migration.",
+    ),
 )
 
 
