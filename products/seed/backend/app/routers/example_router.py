@@ -82,7 +82,7 @@ async def create_example(
     client = get_user_client(token)
     service = ExampleService(client, org_id=org_id)
     try:
-        row = await service.create(payload=payload.model_dump())
+        row = await service.create(payload=payload.model_dump(mode="json"))
     except ExampleServiceError as exc:
         logger.exception("example.create failed for org=%s", org_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -122,7 +122,7 @@ async def update_example(
     org_id = coerce_org_uuid(raw_org)
     client = get_user_client(token)
     service = ExampleService(client, org_id=org_id)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

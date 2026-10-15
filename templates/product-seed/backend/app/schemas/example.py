@@ -27,7 +27,7 @@ class ExampleUpdate(BaseModel):
     """Request body for ``PATCH /api/example/{id}`` — partial update.
 
     Every field optional; the router drops ``None`` via
-    ``model_dump(exclude_none=True)`` and 400s on an empty body. This is
+    ``model_dump(mode="json", exclude_none=True)`` and 400s on an empty body. This is
     the canonical page-scoped-CRUD *edit* shape.
 
     TODO(new-product): rename + extend with the real domain fields.
