@@ -156,6 +156,36 @@ def recovery_outcome(state: dict[str, Any], stage: str) -> dict[str, Any]:
     }
 
 
+class WahaWebhookError(RuntimeError):
+    """Raised by ``set_webhook`` / ``remove_webhook`` when the session's current
+    webhook list cannot be read (GET failed or malformed). The write is
+    refused: PUT is a full replace, so writing without the current list would
+    silently drop other products' webhooks."""
+
+    def __init__(self, op: str, detail: str = ""):
+        self.op = op
+        super().__init__(f"{op}: {detail}" if detail else op)
+
+
+def _default_owned_prefix(url: str) -> str | None:
+    """``url`` minus its last path segment (keeping the trailing ``/``), or
+    ``None`` (exact match only) when no non-empty path segment would remain."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if len(segments) < 2 or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}/" + "/".join(segments[:-1]) + "/"
+
+
+def _webhook_owned(hook: dict[str, Any], url: str, prefix: str | None) -> bool:
+    existing = hook.get("url")
+    if not isinstance(existing, str):
+        return False
+    return existing == url or bool(prefix and existing.startswith(prefix))
+
+
 def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Build a FULL WAHA session-config payload — ALWAYS carries the NOWEB store.
 
@@ -553,39 +583,105 @@ class WahaClient:
         response.raise_for_status()
         return response.content
 
-    async def set_webhook(
-        self, url: str, events: list[str]
-    ) -> dict[str, Any]:
-        """PUT /api/sessions/{session} — wire the inbound webhook.
+    async def _read_webhooks(self, op: str) -> list[dict[str, Any]]:
+        """Read the session's CURRENT webhook list (``config.webhooks``).
 
-        WAHA restarts the session on a config change; the paired account
-        survives (credentials persist on the WAHA volume).
-
-        🔴 The PUT is a full config REPLACE — so this re-asserts the NOWEB
-        store block alongside the webhook (via ``_session_config``). Sending
-        only ``webhooks`` here is what silently dropped the store and emptied
-        the chat inbox on 2026-06-23.
+        Raises ``WahaWebhookError`` when the read fails or the shape is not
+        what WAHA documents — a write built on an unreadable list would be a
+        blind full-replace that silently drops another product's webhook, so
+        there is deliberately NO fallback. ``config`` / ``config.webhooks``
+        absent or ``null`` means "no webhooks configured" (a session started
+        without config); anything non-list is shape drift and raises.
         """
-        payload = _session_config(
-            webhooks=[
-                {
-                    "url": url,
-                    "events": events,
-                    "hmac": None,
-                    "retries": None,
-                    "customHeaders": None,
-                }
-            ]
-        )
+        try:
+            body = await self.get_session()
+        except Exception as exc:  # noqa: BLE001 — re-raised typed, never swallowed
+            raise WahaWebhookError(op, f"cannot read current webhooks: {exc}") from exc
+        if not isinstance(body, dict) or not ("name" in body or "config" in body):
+            # `_safe_json` coerces empty / non-JSON bodies to {} (and wraps
+            # non-objects as {"raw": …}): a real session GET carries `name` /
+            # `config`, so anything else is unreadable —
+            # never read it as "no webhooks" (that would be a blind clobber).
+            raise WahaWebhookError(op, "session GET returned an empty or non-object body")
+        config = body.get("config")
+        if config is None:
+            return []
+        if not isinstance(config, dict):
+            raise WahaWebhookError(op, "session GET `config` is not an object")
+        hooks = config.get("webhooks")
+        if hooks is None:
+            return []
+        if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
+            raise WahaWebhookError(op, "session GET `config.webhooks` is not a list of objects")
+        return [dict(h) for h in hooks]
+
+    async def _put_webhooks(self, webhooks: list[dict[str, Any]]) -> dict[str, Any]:
         response = await self._request(
             "put",
             f"/api/sessions/{self.session}",
             timeout=30,
-            json=payload,
+            json=_session_config(webhooks=webhooks),
             headers=self._headers(json=True),
         )
         response.raise_for_status()
         return _safe_json(response)
+
+    async def set_webhook(
+        self, url: str, events: list[str], *, owned_prefix: str | None = None
+    ) -> dict[str, Any]:
+        """Register ``url`` as a webhook on the session — MERGING, not replacing.
+
+        🔴 WAHA's ``PUT /api/sessions/{session}`` is a full config REPLACE, and
+        one WAHA session can serve SEVERAL products (each with its own webhook
+        route). So this does read-merge-write: GET the current
+        ``config.webhooks``, drop only THIS product's entries (``url`` exactly,
+        or anything starting with ``owned_prefix``), append the new entry, PUT
+        the merged list. Foreign entries (hmac / retries / customHeaders /
+        events) are preserved verbatim.
+
+        ``owned_prefix`` defaults to ``url`` minus its last path segment (the
+        product's webhook route, with a trailing ``/``) so re-registering with
+        a NEW token replaces the old token URL instead of accumulating. When
+        that would leave no path (``https://host/wh``) the default is exact
+        match only — never a bare host prefix that could match a peer.
+
+        WAHA restarts the session on a config change; the paired account
+        survives. The PUT re-asserts the NOWEB store block via
+        ``_session_config`` (omitting it emptied the inbox on 2026-06-23).
+
+        Raises ``WahaWebhookError`` if the current list cannot be read — no
+        blind-replace fallback.
+        """
+        prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
+        existing = await self._read_webhooks("set_webhook")
+        merged = [h for h in existing if not _webhook_owned(h, url, prefix)]
+        merged.append(
+            {
+                "url": url,
+                "events": events,
+                "hmac": None,
+                "retries": None,
+                "customHeaders": None,
+            }
+        )
+        return await self._put_webhooks(merged)
+
+    async def remove_webhook(self, url_or_prefix: str) -> dict[str, Any]:
+        """Remove this product's webhook(s) — entries whose url equals
+        ``url_or_prefix`` or starts with it — leaving foreign entries intact.
+
+        No-op (no PUT, so no session restart) when nothing matches; returns
+        ``{"removed": 0}``. Raises ``WahaWebhookError`` if the current list
+        cannot be read.
+        """
+        existing = await self._read_webhooks("remove_webhook")
+        kept = [h for h in existing if not _webhook_owned(h, url_or_prefix, url_or_prefix)]
+        if len(kept) == len(existing):
+            return {"removed": 0}
+        result = await self._put_webhooks(kept)
+        result = dict(result) if isinstance(result, dict) else {}
+        result["removed"] = len(existing) - len(kept)
+        return result
 
     async def list_chats(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         """GET /api/{session}/chats — list conversations from the NOWEB store.

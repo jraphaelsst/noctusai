@@ -317,6 +317,12 @@ def test_set_webhook_put_body_reasserts_noweb_store(
         async def __aexit__(self, *_):
             return False
 
+        async def get(self, url, *, headers=None, **_):
+            # set_webhook now reads the current webhooks first (merge).
+            resp = _make_response(200, {"config": {"webhooks": []}})
+            resp.content = b'{"config":{"webhooks":[]}}'
+            return resp
+
         async def put(self, url, *, json=None, headers=None):
             captured["url"] = url
             captured["json"] = json

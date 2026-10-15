@@ -17,6 +17,9 @@ from noctusai_lib.integrations.whatsapp.client import (
     RECOVER_READY_STATUSES,
     WahaGroupError,
     WahaSessionNotReady,
+    WahaWebhookError,
+    _default_owned_prefix,
+    _webhook_owned,
     recovery_outcome,
 )
 from noctusai_lib.integrations.whatsapp.types import (
@@ -56,6 +59,11 @@ class FakeWahaClient:
         self.session_status: str = "SCAN_QR_CODE"
         self.me: dict[str, Any] | None = None
         self.webhook_config: dict[str, Any] | None = None
+        # Models WAHA's config.webhooks list (shared-session semantics).
+        self.session_webhooks: list[dict[str, Any]] = []
+        # When True, set/remove_webhook raise WahaWebhookError (mirrors an
+        # unreadable session GET) and leave state untouched.
+        self.fail_webhook_read: bool = False
         self.restart_count = 0
         self.start_count = 0
         # When True, start_session/restart_session leave session_status
@@ -166,6 +174,7 @@ class FakeWahaClient:
             "status": self.session_status,
             "me": self.me,
             "engine": {"engine": "FAKE"},
+            "config": {"webhooks": [dict(h) for h in self.session_webhooks]},
         }
 
     async def start_session(self) -> dict[str, Any]:
@@ -207,14 +216,44 @@ class FakeWahaClient:
             raise WahaSessionNotReady(status=self.session_status)
         return _FAKE_QR_PNG
 
-    async def set_webhook(self, url: str, events: list[str]) -> dict[str, Any]:
+    async def set_webhook(
+        self, url: str, events: list[str], *, owned_prefix: str | None = None
+    ) -> dict[str, Any]:
+        """Mirror ``WahaClient.set_webhook``: MERGE into ``session_webhooks``
+        (drop own url / ``owned_prefix`` entries, append the new one).
+        ``webhook_config`` stays the last-registered entry (back-compat)."""
+        if self.fail_webhook_read:
+            raise WahaWebhookError("set_webhook", "cannot read current webhooks")
+        prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
+        self.session_webhooks = [
+            h for h in self.session_webhooks if not _webhook_owned(h, url, prefix)
+        ]
         self.webhook_config = {"url": url, "events": list(events)}
+        self.session_webhooks.append(
+            {**self.webhook_config, "hmac": None, "retries": None, "customHeaders": None}
+        )
         # Real WAHA restarts on config change; mirror the status churn.
         return {
             "name": self.session,
             "status": self.session_status,
-            "config": {"webhooks": [self.webhook_config]},
+            "config": {"webhooks": [dict(h) for h in self.session_webhooks]},
         }
+
+    async def remove_webhook(self, url_or_prefix: str) -> dict[str, Any]:
+        """Mirror ``WahaClient.remove_webhook`` (no-op when nothing matches)."""
+        if self.fail_webhook_read:
+            raise WahaWebhookError("remove_webhook", "cannot read current webhooks")
+        kept = [
+            h for h in self.session_webhooks
+            if not _webhook_owned(h, url_or_prefix, url_or_prefix)
+        ]
+        removed = len(self.session_webhooks) - len(kept)
+        self.session_webhooks = kept
+        if self.webhook_config and not any(
+            h.get("url") == self.webhook_config["url"] for h in kept
+        ):
+            self.webhook_config = None
+        return {"removed": removed}
 
     async def recover_session(self, *, settle_seconds: float = 8.0) -> dict[str, Any]:
         """Deterministic mirror of ``WahaClient.recover_session``'s ladder.

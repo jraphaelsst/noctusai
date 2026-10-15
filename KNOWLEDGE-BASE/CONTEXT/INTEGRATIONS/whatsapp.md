@@ -259,6 +259,19 @@ config-writing path routes through `client._session_config()`.
   `noweb.store` block that `start_session` had set, so the engine kept no
   history and `GET /api/{session}/chats` began 400-ing (2026-06-23, empty-inbox
   incident).
+- **A session can serve several products — `set_webhook` MERGES.** Because the
+  PUT replaces the whole `config.webhooks` list, a naive write by product B
+  silently dropped product A's webhook on a shared session. `set_webhook(url,
+  events, *, owned_prefix=None)` therefore GETs the current list, drops only
+  its own entries (`url` exactly, or `owned_prefix` — default: `url` minus its
+  last path segment; exact-match-only when no path would remain), appends the
+  new entry and PUTs the merged list (foreign `hmac`/`retries`/`customHeaders`
+  verbatim, NOWEB store block still re-asserted). A re-registration with a new
+  token replaces that product's old token URL. `remove_webhook(url_or_prefix)`
+  is the symmetric remove (no PUT / no restart when nothing matches). If the
+  GET fails or is malformed both raise `WahaWebhookError` — never a blind
+  replace. The seed connections router calls `remove_webhook` on DELETE
+  (best-effort, ERROR-logged on failure; no logout).
 - **WAHA's store key is camelCase `fullSync`, not `full_sync`.** The client sent
   the snake_case spelling for weeks; WAHA silently ignored the unknown key and
   applied the default (`false`), so NOWEB **never backfilled history** while the

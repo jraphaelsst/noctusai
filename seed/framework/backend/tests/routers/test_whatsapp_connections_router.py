@@ -238,6 +238,24 @@ class TestUpdateAndDelete:
         resp2 = TestClient(app).delete(f"/api/whatsapp/connections/{created['id']}")
         assert resp2.status_code == 404
 
+    def test_delete_removes_only_own_webhook_and_never_logs_out(self):
+        app, _store, waha = _app()
+        created = self._create(app)
+        waha.session_webhooks.append({"url": "https://peer.example.com/hook/x", "events": []})
+        resp = TestClient(app).delete(f"/api/whatsapp/connections/{created['id']}")
+        assert resp.status_code == 204
+        assert [h["url"] for h in waha.session_webhooks] == ["https://peer.example.com/hook/x"]
+        assert waha.me is None and waha.session_status == "SCAN_QR_CODE"  # no logout side effect
+
+    def test_delete_still_204_but_logs_error_when_waha_unreadable(self, caplog):
+        app, _store, waha = _app()
+        created = self._create(app)
+        waha.fail_webhook_read = True
+        with caplog.at_level("ERROR"):
+            resp = TestClient(app).delete(f"/api/whatsapp/connections/{created['id']}")
+        assert resp.status_code == 204
+        assert any("remove_webhook failed" in r.message for r in caplog.records)
+
     def test_auth_boundary_strict_401(self):
         app, _store, _waha = _app(raise_401=True)
         resp = TestClient(app).delete(f"/api/whatsapp/connections/{uuid.uuid4()}")

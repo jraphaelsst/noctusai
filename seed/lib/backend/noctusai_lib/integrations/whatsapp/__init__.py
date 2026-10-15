@@ -75,6 +75,7 @@ from noctusai_lib.integrations.whatsapp.client import (
     WahaClient,
     WahaGroupError,
     WahaSessionNotReady,
+    WahaWebhookError,
 )
 from noctusai_lib.integrations.whatsapp.dedup import (
     InMemoryWebhookDedup,
@@ -226,6 +227,7 @@ __all__ = [
     "WahaGroupError",
     "WahaIgnoredEvent",
     "WahaSessionNotReady",
+    "WahaWebhookError",
     "WahaInboundMessage",
     "WahaMedia",
     "WahaPayloadError",

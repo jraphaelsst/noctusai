@@ -381,7 +381,30 @@ def create_whatsapp_connections_router(
         store: WhatsAppConnectionStore = Depends(_store_dep),
     ) -> Response:
         _user, _token, raw_org = auth
-        deleted = store.delete_connection(connection_id=connection_id, org_id=resolve_org_id(raw_org))
+        org_id = resolve_org_id(raw_org)
+        # Best-effort WAHA cleanup BEFORE the row (and its api_key) is gone:
+        # remove only THIS connection's webhook so a shared session keeps its
+        # other products' hooks. Never blocks the delete (204 has no body to
+        # carry a warning) but is NOT silent — failures log ERROR. No logout:
+        # the paired account belongs to the session, not to this connection.
+        try:
+            record = store.get_connection(connection_id=connection_id, org_id=org_id, decrypt=True)
+        except Exception as exc:  # noqa: BLE001 — logged below, delete proceeds
+            record = None
+            logger.error(
+                "WAHA remove_webhook skipped for connection %s: cannot load record: %s",
+                connection_id, exc,
+            )
+        if record is not None and record.webhook_url:
+            try:
+                await _waha_client(record).remove_webhook(record.webhook_url)
+            except Exception as exc:  # noqa: BLE001 — best-effort, logged
+                logger.error(
+                    "WAHA remove_webhook failed for connection %s (session=%s): %s "
+                    "— webhook %s may remain registered on WAHA",
+                    connection_id, record.session_name, exc, record.webhook_url,
+                )
+        deleted = store.delete_connection(connection_id=connection_id, org_id=org_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
