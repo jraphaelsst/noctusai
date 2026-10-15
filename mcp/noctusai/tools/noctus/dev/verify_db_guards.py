@@ -8098,6 +8098,133 @@ _COMMERCE_COUPON_CODE_UNIQUE_PROBE = _commerce_coupon_probe(
 )
 
 
+# ---------------------------------------------------------------------------
+# Orbity migration 018 (automation live) -- idempotency key, subject CHECKs,
+# claim status vocabulary, WhatsApp connection webhook token uniqueness.
+# Each probe provisions its own flow/step/execution specimen inside the
+# rollback-only wrapper (nothing persists).
+# ---------------------------------------------------------------------------
+
+_ORBITY_SCHEMA = "orbity"
+
+_ORBITY_FLOW_FIXTURE = (
+    f"INSERT INTO {_ORBITY_SCHEMA}.automation_flows (id, org_id, name, trigger_type) "
+    "VALUES (v_flow, v_org, 'noc_probe', 'task_created');"
+)
+
+
+def _orbity_018_probe(*, probe_id: str, guard_name: str, kind: str, rationale: str, setup_sql: str, rows_sql: str, permitted: str, table: str) -> GuardProbe:
+    return GuardProbe(
+        id=probe_id,
+        product="orbity",
+        schema=_ORBITY_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=("018_automation_live.sql",),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_flow uuid := gen_random_uuid();
+  v_step uuid := gen_random_uuid();
+  v_exec uuid := gen_random_uuid();
+BEGIN
+  IF to_regclass('{_ORBITY_SCHEMA}.{table}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_ORBITY_SCHEMA}.{table} does not exist (orbity 018 not applied)';
+  END IF;
+  {setup_sql}
+  BEGIN
+    {rows_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {permitted} -- the {kind} guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ORBITY_EXEC_INS = (
+    f"INSERT INTO {_ORBITY_SCHEMA}.automation_executions (org_id, flow_id, subject_type, subject_id{{extra_cols}}) "
+    "VALUES (v_org, v_flow, {subject_type}, {subject_id}{extra_vals});"
+)
+
+_ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
+    _orbity_018_probe(
+        probe_id="orbity.whatsapp_connections.webhook_token_unique",
+        guard_name="idx_orbity_whatsapp_connections_webhook_token",
+        kind="unique",
+        table="whatsapp_connections",
+        rationale="The webhook token routes an unauthenticated inbound call to an org; two connections sharing one would cross-deliver messages between orgs.",
+        setup_sql="",
+        rows_sql=(
+            f"INSERT INTO {_ORBITY_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token) "
+            "VALUES (v_org, gen_random_uuid(), 'a', 'http://x', 'k', 'noc_probe_tok');\n"
+            f"    INSERT INTO {_ORBITY_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token) "
+            "VALUES (v_org, gen_random_uuid(), 'b', 'http://x', 'k', 'noc_probe_tok');"
+        ),
+        permitted="two connections with the same webhook_token were inserted",
+    ),
+    _orbity_018_probe(
+        probe_id="orbity.automation_executions.subject_type_vocab",
+        guard_name="automation_executions_subject_type_check",
+        kind="check",
+        table="automation_executions",
+        rationale="subject_type selects how the engine loads the run's contact; an unknown value would resolve to no subject.",
+        setup_sql=_ORBITY_FLOW_FIXTURE,
+        rows_sql=_ORBITY_EXEC_INS.format(extra_cols="", extra_vals="", subject_type="'noc_probe_bogus'", subject_id="gen_random_uuid()"),
+        permitted="an execution with an out-of-vocabulary subject_type was inserted",
+    ),
+    _orbity_018_probe(
+        probe_id="orbity.automation_executions.one_resolvable_subject",
+        guard_name="automation_executions_subject_check",
+        kind="check",
+        table="automation_executions",
+        rationale="Every run needs a resolvable subject: a non-lead run without subject_id (or a lead run without lead_id) can never load its contact and would orphan.",
+        setup_sql=_ORBITY_FLOW_FIXTURE,
+        rows_sql=_ORBITY_EXEC_INS.format(extra_cols="", extra_vals="", subject_type="'task'", subject_id="NULL"),
+        permitted="a task-subject execution without subject_id was inserted",
+    ),
+    _orbity_018_probe(
+        probe_id="orbity.automation_executions.trigger_key_unique_per_flow",
+        guard_name="automation_executions_flow_trigger_key_ux",
+        kind="unique",
+        table="automation_executions",
+        rationale="The per-occurrence key is the idempotency guarantee: a re-delivered event must never start the same flow twice (a client would get the message twice).",
+        setup_sql=_ORBITY_FLOW_FIXTURE,
+        rows_sql=(
+            _ORBITY_EXEC_INS.format(extra_cols=", trigger_key", extra_vals=", 'noc_probe_key'", subject_type="'task'", subject_id="gen_random_uuid()")
+            + "\n    "
+            + _ORBITY_EXEC_INS.format(extra_cols=", trigger_key", extra_vals=", 'noc_probe_key'", subject_type="'task'", subject_id="gen_random_uuid()")
+        ),
+        permitted="a second execution with the same (flow_id, trigger_key) was inserted",
+    ),
+    _orbity_018_probe(
+        probe_id="orbity.automation_pending_actions.status_vocab",
+        guard_name="automation_pending_actions_status_check",
+        kind="check",
+        table="automation_pending_actions",
+        rationale="The drain's claim protocol depends on the closed status vocabulary (pending/processing/sent/skipped/failed); an unknown status would never be picked up nor recovered.",
+        setup_sql=(
+            _ORBITY_FLOW_FIXTURE
+            + f"\n  INSERT INTO {_ORBITY_SCHEMA}.automation_steps (id, org_id, flow_id, ord, step_type) VALUES (v_step, v_org, v_flow, 0, 'end');"
+            + "\n  " + _ORBITY_EXEC_INS.format(extra_cols="", extra_vals="", subject_type="'task'", subject_id="gen_random_uuid()").replace("(org_id, flow_id,", "(id, org_id, flow_id,").replace("VALUES (v_org,", "VALUES (v_exec, v_org,")
+        ),
+        rows_sql=(
+            f"INSERT INTO {_ORBITY_SCHEMA}.automation_pending_actions (org_id, execution_id, step_id, scheduled_for, status) "
+            "VALUES (v_org, v_exec, v_step, now(), 'noc_probe_bogus');"
+        ),
+        permitted="a pending action with an out-of-vocabulary status was inserted",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -8179,6 +8306,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _CORE_JOBS_DEDUPE_UNIQUE_PROBE,
     _COMMERCE_COUPON_PERCENT_PROBE,
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
+    *_ORBITY_018_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

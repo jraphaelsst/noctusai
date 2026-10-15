@@ -59,6 +59,48 @@ def fin_db():
     return create_client(url, key, options=ClientOptions(schema="orbity"))
 
 
+class _AnonQuery:
+    """Proxy a PostgREST query builder; `execute()` maps SQLSTATE 42501 to NO ROWS.
+
+    Migration 016 revoked table privileges from anon outright, so an anon read now
+    fails with `permission denied` (42501) instead of returning an RLS-filtered
+    empty set. Both outcomes mean "org A's rows are invisible to anon" — the
+    property these tests assert — so the denial is normalised to `data == []`.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def _call(*a, **k):
+            out = attr(*a, **k)
+            return _AnonQuery(out) if hasattr(out, "execute") else out
+
+        return _call
+
+    def execute(self):
+        from postgrest.exceptions import APIError
+
+        try:
+            return self._inner.execute()
+        except APIError as exc:
+            if getattr(exc, "code", None) == "42501":
+                return type("DeniedResponse", (), {"data": [], "count": None})()
+            raise
+
+
+class _AnonIsolationClient:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def table(self, name):
+        return _AnonQuery(self._inner.table(name))
+
+
 @pytest.fixture(scope="session")
 def anon_fin_db():
     """Anon-key client for RLS isolation tests.
@@ -72,7 +114,7 @@ def anon_fin_db():
     anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
     if not anon_key:
         pytest.skip("SUPABASE_ANON_KEY not set — skipping RLS isolation tests")
-    return create_client(url, anon_key, options=ClientOptions(schema="orbity"))
+    return _AnonIsolationClient(create_client(url, anon_key, options=ClientOptions(schema="orbity")))
 
 
 @pytest.fixture(scope="session")
