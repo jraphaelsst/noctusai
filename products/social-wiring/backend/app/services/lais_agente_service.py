@@ -38,7 +38,7 @@ from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentsClient, make_agents_client
-from app.services import lais_aviso_service
+from app.services import lais_aviso_service, lais_contatos_service
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,8 @@ LINK_ERROR_MESSAGES = {
     "agent_unavailable": "Agente inativo ou sem versão publicada.",
     "llm_not_configured": "Chave do provedor de IA ausente no produto agents.",
     "nao_configurado": "Token do agente ainda não configurado.",
+    # PUT /token stored the channel token but could not hand agents its tools token (contract 2.2).
+    "ferramentas_indisponiveis": "Ferramentas da Julia indisponíveis — reenvie o token.",
 }
 
 
@@ -586,6 +588,7 @@ class ResultadoApagar:
     sw_contatos: int
     agents_ok: bool
     agents_apagou: bool
+    lais_contatos: int = 0  # `lais_contatos` rows (+ interacoes/acoes/eventos) of the chat, contract 17
 
 
 async def apagar_dados_do_chat(
@@ -642,15 +645,19 @@ async def apagar_dados_do_chat(
         "org_id", str(connection.org_id)
     ).in_("chat_id", alias).execute()
 
+    # Lais foundation rows (contato + episodes + applied actions + events): the data subject's
+    # right covers them too. Not swallowed -- a failure here must be loud, the request is not done.
+    lais_contatos = lais_contatos_service.apagar_do_chat(client, connection.org_id, connection.id, alias)
+
     if buffer is not None:
         for a in alias:
             buffer.clear_conversation(lead_key(connection.id, a))
 
     logger.info(
-        "lais: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s agents_ok=%s",
-        connection.id, chat_id, removed, contatos, agents_ok,
+        "lais: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s lais_contatos=%s agents_ok=%s",
+        connection.id, chat_id, removed, contatos, lais_contatos, agents_ok,
     )
-    return ResultadoApagar(removed, contatos, agents_ok, agents_apagou)
+    return ResultadoApagar(removed, contatos, agents_ok, agents_apagou, lais_contatos)
 
 
 MENSAGEM_APAGADO = (

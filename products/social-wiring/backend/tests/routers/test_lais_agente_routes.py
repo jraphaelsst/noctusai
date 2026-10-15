@@ -7,16 +7,19 @@ Seams: mock DB, seed `FakeWahaClient`, `FakeAgentsClient` -- injected through th
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from noctusai_lib.api.auth.session import FakeProductTokenAdmin
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import (
     AgentNotFound,
     AgentsTimeout,
     AgentsTokenInvalid,
+    AgentsUpstreamError,
     AgentStatus,
     FakeAgentsClient,
 )
@@ -46,6 +49,7 @@ class Scene:
         self.tc, self.w = tc, world
         self.token_builder_agents: FakeAgentsClient | None = None
         self.token_builds: list[str] = []
+        self.token_admin = FakeProductTokenAdmin()
 
     def get(self, url, **kw):
         return self.tc.get(url, headers=H, **kw)
@@ -80,7 +84,9 @@ def _scene(monkeypatch, override_settings_factory, *, role: str | None):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_agente_router import get_agents_client_factory, get_agents_token_client_builder
+        from app.routers.lais_agente_router import (
+            get_agents_client_factory, get_agents_token_client_builder, get_lais_token_admin,
+        )
         from app.routers.whatsapp_connections_router import get_waha_client_factory
 
         bind_consent_module_to_mock(world.root)
@@ -97,11 +103,12 @@ def _scene(monkeypatch, override_settings_factory, *, role: str | None):
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: world.agents)
         app.dependency_overrides[get_agents_token_client_builder] = builder
         app.dependency_overrides[get_waha_client_factory] = lambda: (lambda **kw: world.waha)
+        app.dependency_overrides[get_lais_token_admin] = lambda: scene.token_admin
         override_settings_factory(
             encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret="sekrit", redis_url="redis://fake:6379/0",
         )
         yield scene
-        for dep in (get_agents_client_factory, get_agents_token_client_builder, get_waha_client_factory):
+        for dep in (get_agents_client_factory, get_agents_token_client_builder, get_waha_client_factory, get_lais_token_admin):
             app.dependency_overrides.pop(dep, None)
     reset_bus_cache()
 
@@ -570,3 +577,77 @@ class TestDeletionRoute:
     def test_an_unknown_connection_is_404(self, admin):
         r = admin.tc.post(f"{BASE}/conexoes/00000000-0000-4000-8000-0000000000ee/chats/{LEAD_CHAT}/apagar-dados", headers=H)
         assert r.status_code == 404
+
+
+# ── PUT /token also mints + pushes the Lais tools token (lais-build-contract 2.2) ──
+class TestToolsToken:
+    ROWS = lambda self, admin: admin.token_admin.rows.get("social_wiring", [])  # noqa: E731
+
+    def test_a_valid_token_mints_the_scoped_tools_token_and_pushes_it_to_agents(self, admin):
+        fake = FakeAgentsClient()
+        admin.token_builder_agents = fake
+        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
+        rows = self.ROWS(admin)
+        assert len(rows) == 1
+        row = rows[0]
+        assert (row["org_id"], row["label"], row["issuer"]) == (ORG_ID, "agents · ferramentas lais", "agents")
+        assert row["scopes"] == ["social-wiring:lais-tools"] and row["revoked_at"] is None
+        exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+        assert timedelta(days=89) < exp - datetime.now(timezone.utc) <= timedelta(days=90, minutes=1)
+        # the secret handed to agents is the one whose hash is stored -- and is never stored itself
+        assert len(fake.ferramentas_tokens) == 1
+        secret = fake.ferramentas_tokens[0]
+        assert secret.startswith("pk_") and secret not in str(row)
+        assert admin.token_admin.find_by_secret("social_wiring", secret) is not None
+        assert admin.get(BASE).json()["data"]["erro"] is None
+
+    def test_the_tools_token_never_reaches_the_response_or_the_logs(self, admin, caplog):
+        fake = FakeAgentsClient()
+        admin.token_builder_agents = fake
+        with caplog.at_level("DEBUG"):
+            r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+            body = admin.get(BASE).text
+        secret = fake.ferramentas_tokens[0]
+        assert secret not in r.text and secret not in body
+        assert all(secret not in rec.getMessage() for rec in caplog.records)
+
+    def test_a_push_failure_is_still_204_records_the_new_erro_and_revokes_the_undelivered_token(self, admin):
+        admin.token_builder_agents = FakeAgentsClient(ferramentas_token_error=AgentsUpstreamError(code="encryption_not_configured"))
+        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
+        assert lais.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"  # channel token IS stored
+        assert admin.get(BASE).json()["data"]["erro"] == "Ferramentas da Julia indisponíveis — reenvie o token."
+        assert [r["revoked_at"] is not None for r in self.ROWS(admin)] == [True]  # no orphan secret stays valid
+
+    def test_a_mint_failure_is_still_204_with_the_same_erro(self, admin):
+        admin.token_admin.fail_mint = True
+        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
+        assert admin.get(BASE).json()["data"]["erro"] == "Ferramentas da Julia indisponíveis — reenvie o token."
+        assert self.ROWS(admin) == []
+
+    def test_a_later_good_paste_clears_the_erro(self, admin):
+        admin.token_builder_agents = FakeAgentsClient(ferramentas_token_error=AgentsUpstreamError())
+        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        admin.token_builder_agents = FakeAgentsClient()
+        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        assert admin.get(BASE).json()["data"]["erro"] is None
+
+    def test_a_refused_channel_token_mints_nothing(self, admin):
+        admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTokenInvalid())
+        assert admin.put(f"{BASE}/token", {"token": "pk_wrong_token"}).status_code == 422
+        assert self.ROWS(admin) == []
+
+    def test_repasting_retires_the_previous_tools_token_only_after_the_new_one_is_delivered(self, admin):
+        admin.token_builder_agents = FakeAgentsClient()
+        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        old_id = self.ROWS(admin)[0]["id"]
+        # the scoped client reads `api_tokens`: mirror the fake's row there (production: same table)
+        admin.w.sw.table("api_tokens").insert(dict(self.ROWS(admin)[0])).execute()
+        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        by_id = {r["id"]: r for r in self.ROWS(admin)}
+        assert len(by_id) == 2 and by_id[old_id]["revoked_at"] is not None
+        assert [r for i, r in by_id.items() if i != old_id][0]["revoked_at"] is None
+
+    def test_the_tools_token_is_per_org(self, admin):
+        admin.token_builder_agents = FakeAgentsClient()
+        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        assert {r["org_id"] for r in self.ROWS(admin)} == {ORG_ID}

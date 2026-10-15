@@ -122,9 +122,13 @@ class TestWireShapes:
         with pytest.raises(AgentsUpstreamError):
             await _client(lambda r: httpx.Response(200, content=b"<html>")).run_turn(_req())
 
-    async def test_unknown_action_types_are_ignored_not_trusted(self):
+    async def test_an_unknown_action_type_is_kept_as_a_lais_action_never_a_handoff(self):
+        # Lais contract 2.1(d): unknown != dropped -- the apply service answers it with an
+        # `acao_sem_handler` event. It must never be mistaken for the page-0 handoff.
         client = _client(lambda r: httpx.Response(200, json=_ok_body(actions=[{"type": "salvar_slot", "x": 1}])))
-        assert (await client.run_turn(_req())).actions == ()
+        result = await client.run_turn(_req())
+        assert result.handoff is None
+        assert [(a.type, a.payload) for a in result.lais_actions] == [("salvar_slot", {"x": 1})]
 
     async def test_motivo_is_capped_at_280(self):
         client = _client(lambda r: httpx.Response(200, json=_ok_body(

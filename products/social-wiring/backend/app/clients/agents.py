@@ -4,6 +4,10 @@ Contract: products/social-wiring/projects/lais/specs/julia-agent-contract.md
   section 3.1  POST /api/channels/turns                 -> `run_turn`
   section 3.2  GET  /api/channels/agents/{key}/status   -> `agent_status`
   section 10.1 M5  deletion on request                  -> `delete_conversation_data`
+Lais build contract (lais-build-contract.md) 2.1:
+  (a) `contexto` rides in the turn request; (d) the response carries action objects
+  (`LaisAction`); (e) POST /api/channels/conversations/{id}/resumo -> `resumo`;
+  (f) PUT /api/channels/ferramentas-token -> `put_ferramentas_token`.
 
 Fake + Real + factory (KB § PATTERNS/backend/seed-fake-real-adapter.md):
   * `AgentsClient`      -- the Protocol the lead path depends on;
@@ -56,8 +60,17 @@ class TurnRequest:
     phone_e164: Optional[str] = None
     display_name: Optional[str] = None
     channel: str = "whatsapp"
+    #: Lais build contract 2.1(a): the per-turn dynamic context SW renders
+    #: (`lais_contexto_service.montar`). None = page-0 behaviour, key omitted.
+    contexto: Optional[dict[str, Any]] = None
 
     def to_wire(self) -> dict[str, Any]:
+        wire = self._base_wire()
+        if self.contexto is not None:
+            wire["contexto"] = self.contexto
+        return wire
+
+    def _base_wire(self) -> dict[str, Any]:
         return {
             "agent_key": self.agent_key,
             "channel": self.channel,
@@ -81,18 +94,39 @@ class HandoffAction:
 
 
 @dataclass(frozen=True)
+class LaisAction:
+    """One of the Lais action shapes of contract 2.1(d) (`salvar_slots`, `definir_operacao`,
+    `qualificar_lead`, `pedido_visita`, `captacao`, `encerrar`). `payload` is the action
+    object minus `type`/`seq`. An UNKNOWN type is kept (not dropped): the apply service
+    answers it with an `acao_sem_handler` event so a newer agents build never loses data
+    silently."""
+
+    type: str
+    seq: int
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+Action = Union[HandoffAction, LaisAction]
+
+
+@dataclass(frozen=True)
 class TurnResult:
     conversation_id: str
     partes: tuple[str, ...]
-    status: str  # respondido | silencio | handoff
-    actions: tuple[HandoffAction, ...] = ()
+    status: str  # respondido | silencio | handoff | encerrado
+    actions: tuple[Action, ...] = ()
     custo_usd: Optional[float] = None
     tokens_entrada: Optional[int] = None
     tokens_saida: Optional[int] = None
 
     @property
     def handoff(self) -> Optional[HandoffAction]:
-        return next((a for a in self.actions if a.type == "handoff"), None)
+        return next((a for a in self.actions if isinstance(a, HandoffAction)), None)
+
+    @property
+    def lais_actions(self) -> tuple[LaisAction, ...]:
+        """The non-handoff actions, in `seq` order (ties keep arrival order)."""
+        return tuple(sorted((a for a in self.actions if isinstance(a, LaisAction)), key=lambda a: a.seq))
 
 
 @dataclass(frozen=True)
@@ -132,6 +166,32 @@ class DeletionResult:
     messages_deleted: int = 0
 
 
+@dataclass(frozen=True)
+class ResumoRequest:
+    """Contract 2.1(e) body: the question catalogue + the window to summarise."""
+
+    perguntas: tuple[dict[str, Any], ...] = ()
+    desde: Optional[datetime] = None
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "perguntas": [dict(p) for p in self.perguntas],
+            "desde": self.desde.isoformat() if self.desde else None,
+        }
+
+
+@dataclass(frozen=True)
+class ResumoResult:
+    resumo: str
+    slots: dict[str, str] = field(default_factory=dict)
+    operacao: Optional[str] = None
+    intencoes: tuple[str, ...] = ()
+    desfecho: str = "em_andamento"
+    custo_usd: Optional[float] = None
+    tokens_entrada: Optional[int] = None
+    tokens_saida: Optional[int] = None
+
+
 # ── typed errors (one per row of the section 3.1 error table) ───────────────
 class AgentsClientError(Exception):
     """Base of every failure of a call to agents. `code` is agents' own code."""
@@ -151,6 +211,10 @@ class AgentsTokenInvalid(AgentsClientError):
 
 class AgentNotFound(AgentsClientError):
     """404 agent_not_found."""
+
+
+class ConversationNotFound(AgentsClientError):
+    """404 conversation_not_found (the `resumo` route)."""
 
 
 class AgentUnavailable(AgentsClientError):
@@ -198,6 +262,10 @@ class AgentsClient(Protocol):
 
     async def delete_conversation_data(self, req: DeletionRequest) -> DeletionResult: ...
 
+    async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult: ...
+
+    async def put_ferramentas_token(self, token: str) -> None: ...
+
 
 # ── Fake ────────────────────────────────────────────────────────────────────
 ScriptedReply = Union[TurnResult, AgentsClientError, Callable[[TurnRequest], TurnResult]]
@@ -224,8 +292,12 @@ class FakeAgentsClient:
         status: Optional[AgentStatus] = None,
         status_error: Optional[AgentsClientError] = None,
         default_partes: Sequence[str] = DEFAULT_PARTES,
+        resumo_script: Sequence[Union[ResumoResult, AgentsClientError]] = (),
+        ferramentas_token_error: Optional[AgentsClientError] = None,
     ):
         self._script = list(script)
+        self._resumo_script = list(resumo_script)
+        self._ferramentas_token_error = ferramentas_token_error
         self._status = status
         self._status_error = status_error
         self._default_partes = tuple(default_partes)
@@ -233,6 +305,8 @@ class FakeAgentsClient:
         self.turns: list[TurnRequest] = []
         self.status_calls: list[str] = []
         self.deletions: list[DeletionRequest] = []
+        self.resumos: list[tuple[str, ResumoRequest]] = []
+        self.ferramentas_tokens: list[str] = []
 
     @staticmethod
     def conversation_id_for(req: TurnRequest) -> str:
@@ -278,6 +352,22 @@ class FakeAgentsClient:
         return DeletionResult(deleted=had, messages_deleted=2 * len(self.turns) if had else 0)
 
 
+    async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
+        self.resumos.append((conversation_id, req))
+        if self._resumo_script:
+            nxt = self._resumo_script.pop(0)
+            if isinstance(nxt, AgentsClientError):
+                raise nxt
+            return nxt
+        return ResumoResult(resumo="Resumo de teste da conversa.", desfecho="em_andamento", custo_usd=0.0,
+                            tokens_entrada=0, tokens_saida=0)
+
+    async def put_ferramentas_token(self, token: str) -> None:
+        if self._ferramentas_token_error is not None:
+            raise self._ferramentas_token_error
+        self.ferramentas_tokens.append(token)
+
+
 # ── Real ────────────────────────────────────────────────────────────────────
 def _error_code(response: httpx.Response) -> Optional[str]:
     """agents' errors are `HTTPException(detail={"detail", "code"})`; the seed auth
@@ -316,6 +406,8 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
     if status == 404:
         if code == "agent_not_found":
             raise AgentNotFound("agent not found", code=code)
+        if code == "conversation_not_found":
+            raise ConversationNotFound("conversation not found", code=code)
         raise AgentsUpstreamError("agents answered 404", code=code)
     if status == 409:
         if code == "turn_in_progress":
@@ -347,22 +439,51 @@ def parse_turn_result(body: Any) -> TurnResult:
     if not all(isinstance(p, str) for p in partes):
         raise AgentsUpstreamError("malformed agents response: reply.partes")
     status = _need(body, "status", str)
-    if status not in ("respondido", "silencio", "handoff"):
+    if status not in ("respondido", "silencio", "handoff", "encerrado"):
         raise AgentsUpstreamError("malformed agents response: status")
     actions_raw = _need(body, "actions", list)
-    actions: list[HandoffAction] = []
-    for a in actions_raw:
-        if not isinstance(a, dict) or a.get("type") != "handoff":
-            # page 0 only knows `handoff`; a later action type is ignored, not trusted.
-            logger.warning("agents returned an unknown action type: %r", (a or {}).get("type") if isinstance(a, dict) else a)
+    actions: list[Action] = []
+    for idx, a in enumerate(actions_raw):
+        if not isinstance(a, dict) or not isinstance(a.get("type"), str) or not a.get("type"):
+            logger.warning("agents returned a malformed action: %r", a)
             continue
-        actions.append(HandoffAction(motivo=str(a.get("motivo") or "")[:280]))
+        if a["type"] == "handoff":
+            actions.append(HandoffAction(motivo=str(a.get("motivo") or "")[:280]))
+            continue
+        # A Lais action (contract 2.1(d)); an unknown type is kept so the apply
+        # service can report `acao_sem_handler` instead of losing it silently.
+        seq = a.get("seq")
+        actions.append(LaisAction(
+            type=a["type"],
+            seq=seq if isinstance(seq, int) and not isinstance(seq, bool) else idx,
+            payload={k: v for k, v in a.items() if k not in ("type", "seq")},
+        ))
     usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
     return TurnResult(
         conversation_id=conversation_id,
         partes=tuple(p for p in partes if p.strip()),
         status=status,
         actions=tuple(actions),
+        custo_usd=usage.get("custo_usd"),
+        tokens_entrada=usage.get("tokens_entrada"),
+        tokens_saida=usage.get("tokens_saida"),
+    )
+
+
+def parse_resumo_result(body: Any) -> ResumoResult:
+    """Strict parse of the contract 2.1(e) 200 body; a malformed one is an upstream fault."""
+    resumo = _need(body, "resumo", str)
+    slots_raw = _need(body, "slots", dict)
+    intencoes = _need(body, "intencoes", list)
+    desfecho = _need(body, "desfecho", str)
+    operacao = body.get("operacao")
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    return ResumoResult(
+        resumo=resumo,
+        slots={str(k): str(v) for k, v in slots_raw.items() if v is not None},
+        operacao=operacao if isinstance(operacao, str) else None,
+        intencoes=tuple(str(i) for i in intencoes if isinstance(i, str)),
+        desfecho=desfecho,
         custo_usd=usage.get("custo_usd"),
         tokens_entrada=usage.get("tokens_entrada"),
         tokens_saida=usage.get("tokens_saida"),
@@ -457,6 +578,20 @@ class HttpAgentsClient:
             return DeletionResult(deleted=bool(body["deleted"]))
         return DeletionResult(deleted=body is not None)
 
+    async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
+        """`POST /api/channels/conversations/{id}/resumo` (contract 2.1(e))."""
+        body = await self._send(
+            "POST", f"/api/channels/conversations/{quote(conversation_id, safe='')}/resumo", json=req.to_wire()
+        )
+        return parse_resumo_result(body)
+
+    async def put_ferramentas_token(self, token: str) -> None:
+        """`PUT /api/channels/ferramentas-token` (contract 2.1(f)); auth = the org's channel
+        token (this client's own bearer). 204 on success."""
+        if not token:
+            raise ValueError("put_ferramentas_token needs a token")
+        await self._send("PUT", "/api/channels/ferramentas-token", json={"token": token})
+
 
 # ── factory ─────────────────────────────────────────────────────────────────
 def make_agents_client(
@@ -479,9 +614,9 @@ def make_agents_client(
 __all__ = [
     "AgentNotFound", "AgentStatus", "AgentUnavailable", "AgentsBadRequest", "AgentsClient",
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid",
-    "AgentsUpstreamError", "CapacityExceeded", "DeletionRequest", "DeletionResult",
-    "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
-    "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "TurnInProgress",
-    "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status",
-    "parse_turn_result",
+    "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DeletionRequest",
+    "DeletionResult", "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
+    "LaisAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
+    "ResumoResult", "TurnInProgress", "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client",
+    "parse_agent_status", "parse_resumo_result", "parse_turn_result",
 ]

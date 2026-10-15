@@ -16,7 +16,7 @@
 # `@limiter.limit` (check_slowapi_with_pep563).
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import require_org_admin_for
+from noctusai_lib.api.auth.session import ProductTokenAdmin, make_product_token_admin, require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import (
@@ -33,6 +33,10 @@ from app.clients.agents import (
     AgentsClientError,
     AgentsTokenInvalid,
     HttpAgentsClient,
+)
+from app.services import lais_contatos_service
+from app.services.lais_contexto_service import (
+    TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_LABEL, TOOLS_TOKEN_SCOPE,
 )
 from app.config import settings
 from app.dependencies import (
@@ -164,6 +168,16 @@ def get_agents_token_client_builder() -> Callable[[str], AgentsClient]:
         return HttpAgentsClient(base, token)
 
     return build
+
+
+def get_lais_token_admin() -> ProductTokenAdmin:
+    """DI seam: the service-side `api_tokens` writer used to mint the Lais tools token
+    (the seed `ProductTokenAdmin`; the in-memory Fake when no service-role key is set)."""
+    return make_product_token_admin(get_admin_client() if settings.supabase_service_role_key else None)
+
+
+TOOLS_TOKEN_TTL = timedelta(days=90)
+_TOOLS_TOKEN_SCHEMA = "social_wiring"
 
 
 class ConexaoAgenteUpdate(StrictHttpModel):
@@ -340,15 +354,23 @@ async def put_token(
     auth: tuple = Depends(get_current_user_org),
     cfg=Depends(get_settings),
     build_client=Depends(get_agents_token_client_builder),
+    token_admin: ProductTokenAdmin = Depends(get_lais_token_admin),
     request: Request = None,
 ) -> Response:
     """Paste the org's agents channel token. It is VALIDATED against agents' status
     route first (``token_invalido`` if refused) and stored Fernet-encrypted; it is
-    never returned or logged."""
-    _user, org_id = _require_admin(auth, request, "O token do agente")
+    never returned or logged.
+
+    Then (Lais contract 2.2) SW mints the tools token agents calls back with
+    (``social-wiring:lais-tools``, issuer ``agents``, 90 days) and pushes it to agents'
+    ``PUT /api/channels/ferramentas-token`` -- so the owner never pastes a second token.
+    A failure there still answers 204 (the channel token IS stored and Julia answers):
+    the page shows ``Ferramentas da Julia indisponíveis — reenvie o token`` via ``erro``."""
+    user, org_id = _require_admin(auth, request, "O token do agente")
     token = payload.token.strip()
+    agents_client = build_client(token)
     try:
-        await build_client(token).agent_status(lais.DEFAULT_AGENT_KEY)
+        await agents_client.agent_status(lais.DEFAULT_AGENT_KEY)
     except AgentsTokenInvalid as exc:
         raise AppException("token_invalido", "O produto agents recusou este token.", status_code=422) from exc
     except AgentNotFound:
@@ -365,7 +387,58 @@ async def put_token(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     api_keys_store.put_api_key(store, str(org_id), lais.AGENTS_KEY_NAME, token)
     lais.limpar_erro_link(org_id, cfg=cfg)
+    if not await _entregar_token_ferramentas(token_admin, agents_client, org_id, getattr(user, "id", None)):
+        lais.registrar_erro_link(org_id, "ferramentas_indisponiveis", cfg=cfg)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _uuid_ou_none(value: Any) -> Optional[UUID]:
+    try:
+        return UUID(str(value)) if value else None
+    except ValueError:
+        return None  # `minted_by` is audit metadata: a non-UUID user id must not block the mint
+
+
+def _tokens_ferramentas_ativos(org_id: UUID) -> list[UUID]:
+    """Ids of the org's non-revoked tools tokens (read through the scoped client)."""
+    rows = (
+        get_scoped_admin_client("social_wiring").table("api_tokens").select("id, issuer, revoked_at")
+        .eq("org_id", str(org_id)).eq("label", TOOLS_TOKEN_LABEL).execute().data or []
+    )
+    return [UUID(str(r["id"])) for r in rows if not r.get("revoked_at") and r.get("issuer") == TOOLS_TOKEN_ISSUER]
+
+
+async def _entregar_token_ferramentas(
+    token_admin: ProductTokenAdmin, agents_client: AgentsClient, org_id: UUID, minted_by: Any,
+) -> bool:
+    """Mint the tools token, hand it to agents, retire the previous ones. True = agents has it.
+    Never raises: every failure is logged and ends in False (the caller records the page error).
+    A token that could not be delivered is revoked at once -- no orphan secret stays valid."""
+    try:
+        anteriores = _tokens_ferramentas_ativos(org_id)
+        minted = token_admin.mint(
+            _TOOLS_TOKEN_SCHEMA, org_id=org_id, label=TOOLS_TOKEN_LABEL, scopes=[TOOLS_TOKEN_SCOPE],
+            expires_at=datetime.now(timezone.utc) + TOOLS_TOKEN_TTL, issuer=TOOLS_TOKEN_ISSUER,
+            minted_by=_uuid_ou_none(minted_by),
+        )
+    except Exception:
+        logger.exception("lais: could not mint the tools token for org=%s", org_id)
+        return False
+    try:
+        await agents_client.put_ferramentas_token(minted.secret)
+    except Exception as exc:  # AgentsClientError or anything the transport raises
+        logger.error("lais: agents refused the tools token org=%s (%s)", org_id, type(exc).__name__)
+        try:
+            token_admin.revoke(_TOOLS_TOKEN_SCHEMA, minted.info.id, org_id=org_id)
+        except Exception:
+            logger.exception("lais: could not revoke the undelivered tools token org=%s id=%s", org_id, minted.info.id)
+        return False
+    for antigo in anteriores:
+        try:
+            token_admin.revoke(_TOOLS_TOKEN_SCHEMA, antigo, org_id=org_id)
+        except Exception:
+            logger.exception("lais: could not retire the previous tools token org=%s id=%s", org_id, antigo)
+    return True
 
 
 @router.patch("/api/whatsapp/connections/{connection_id}/chats/{chat_id:path}/agente")
@@ -384,6 +457,10 @@ async def patch_chat_agente(
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
     if not chat_store.set_agente_pausado(connection_id=connection_id, chat_id=chat_id, pausado=payload.pausado):
         raise HTTPException(status_code=404, detail="chat not found")
+    try:  # contract 0.2: a pause/resume invalidates every job queued for this contato
+        lais_contatos_service.bump_gen_do_chat(get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id)
+    except Exception:
+        logger.exception("lais: gen bump on pause failed conn=%s chat=%s (the flag IS set)", connection_id, chat_id)
     summary = chat_store.get_chat(connection_id=connection_id, chat_id=chat_id)
     event = {**summary.as_dict(), "agente_pausado": payload.pausado} if summary else {
         "chat_id": chat_id, "agente_pausado": payload.pausado,
@@ -415,7 +492,7 @@ async def post_apagar_dados(
     )
     return {"data": {
         "sw_mensagens": res.sw_mensagens, "sw_contatos": res.sw_contatos,
-        "agents_ok": res.agents_ok, "agents_apagou": res.agents_apagou,
+        "agents_ok": res.agents_ok, "agents_apagou": res.agents_apagou, "lais_contatos": res.lais_contatos,
     }}
 
 

@@ -44,6 +44,7 @@ from app.clients.agents import (
     TurnResult,
 )
 from app.config import settings as _default_settings
+from app.services import lais_acoes_service, lais_contatos_service, lais_contexto_service
 from app.services import lais_agente_service as lais
 from app.services import lais_aviso_service
 from app.services.message_store import DuplicateMessage, MessageStore
@@ -231,6 +232,85 @@ async def publish_pause(deps: LeadDeps, *, connection: WhatsAppConnectionRecord,
     await publish_whatsapp_event(deps.bus, connection_id=connection.id, event=EVENT_CHAT_UPSERT, payload=payload)
 
 
+# ── Lais foundation: contato / episode / contexto / actions (contract 2.2) ──
+@dataclass
+class LaisTurn:
+    """What the foundation prepared BEFORE the turn and needs again AFTER it."""
+
+    contato: dict[str, Any]
+    contexto: dict[str, Any]
+
+    @property
+    def perguntas(self) -> list[dict[str, Any]]:
+        return list(self.contexto.get("perguntas") or [])
+
+
+async def _preparar_lais(
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str],
+    display_name: Optional[str], state: Optional[dict[str, Any]], agents_client: Optional[AgentsClient],
+) -> Optional[LaisTurn]:
+    """Upsert the contato, bump `gen` for this inbound, settle the episode (24 h of silence
+    closes the old one with a summary, then a new one opens), render the `contexto`.
+
+    Best-effort by design: ANY failure is logged at ERROR and the turn runs with page-0
+    behaviour (no contexto) -- the foundation must never stop Julia answering a lead."""
+    org_id = connection.org_id
+    try:
+        contato = lais_contatos_service.obter_ou_criar_contato(
+            deps.scoped, org_id=org_id, connection_id=connection.id, chat_id=chat_id,
+            telefone_e164=phone, nome=display_name,
+        )
+        contato, anterior = lais_contatos_service.registrar_inbound(deps.scoped, contato)
+        interacao = lais_contatos_service.interacao_aberta(deps.scoped, contato["id"])
+        if interacao is not None and lais_contatos_service.episodio_vencido(anterior):
+            perguntas = lais_contexto_service.montar(
+                deps.scoped, org_id, contato, interacao=interacao, ferramentas_habilitadas=False,
+            ).get("perguntas") or []
+            await lais_acoes_service.fechar_interacao(
+                deps.scoped, org_id=org_id, contato=contato, interacao=interacao, agents_client=agents_client,
+                conversation_id=(state or {}).get("agente_conversation_id"), perguntas=perguntas,
+            )
+            interacao = None
+        if interacao is None:
+            interacao = lais_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
+        contexto = lais_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao)
+        return LaisTurn(contato=contato, contexto=contexto)
+    except Exception:
+        logger.exception("lais: foundation prep failed conn=%s chat=%s -- turn runs without contexto", connection.id, chat_id)
+        return None
+
+
+def _registrar_inbound_pausado(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str]) -> None:
+    """A human is handling the chat: no turn, but the inbound still counts (`gen + 1`, last inbound)."""
+    try:
+        contato = lais_contatos_service.obter_ou_criar_contato(
+            deps.scoped, org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id, telefone_e164=phone,
+        )
+        lais_contatos_service.registrar_inbound(deps.scoped, contato)
+    except Exception:
+        logger.exception("lais: inbound bookkeeping failed for the paused chat conn=%s chat=%s", connection.id, chat_id)
+
+
+async def _pos_turno(
+    deps: LeadDeps, *, lais_turn: Optional[LaisTurn], connection: WhatsAppConnectionRecord, chat_id: str,
+    result: TurnResult, lote_hash: Optional[str], agents_client: Optional[AgentsClient], enviou: bool,
+) -> None:
+    """After the reply (or its deliberate silence): stamp the outbound, apply the actions.
+    Never raises -- the reply is out and must not be undone by bookkeeping."""
+    if lais_turn is None or lote_hash is None:
+        return
+    try:
+        if enviou:
+            lais_contatos_service.registrar_outbound(deps.scoped, lais_turn.contato["id"])
+        await lais_acoes_service.aplicar(
+            deps.scoped, org_id=connection.org_id, contato=lais_turn.contato, result=result, lote_hash=lote_hash,
+            conversation_id=result.conversation_id, agents_client=agents_client, core_client=deps.core_client,
+            perguntas=lais_turn.perguntas, connection_id=connection.id, chat_id=chat_id,
+        )
+    except Exception:
+        logger.exception("lais: post-turn bookkeeping failed conn=%s chat=%s", connection.id, chat_id)
+
+
 # ── the worker entry point ──────────────────────────────────────────────────
 def _phone_e164(chat_id: str) -> Optional[str]:
     d = lais.phone_digits(chat_id)
@@ -297,6 +377,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     if state and state.get("agente_pausado"):
         logger.info("lais: chat %s paused (human handling) -- no turn", chat_id)
+        _registrar_inbound_pausado(deps, connection=connection, chat_id=chat_id, phone=_phone_e164(chat_id))
         close_run(deps.buffer, key, run)
         return
 
@@ -325,12 +406,17 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     phone = _phone_e164(chat_id)
     if phone is None and lais.is_lid(chat_id):
         phone = await _resolve_lid_phone(deps, connection, chat_id)
+    lais_turn = await _preparar_lais(
+        deps, connection=connection, chat_id=chat_id, phone=phone,
+        display_name=(meta.get("push_name") or None), state=state, agents_client=client,
+    )
     req = TurnRequest(
         agent_key=agent_key,
         connection_id=str(connection.id),
         chat_id=chat_id,
         phone_e164=phone,
         display_name=(meta.get("push_name") or None),
+        contexto=lais_turn.contexto if lais_turn else None,
         messages=tuple(
             TurnMessage(texto=m["text"], provider_message_id=str(m["provider_message_id"]), at=_as_datetime(m.get("timestamp")))
             for m in batch if m.get("provider_message_id")
@@ -354,7 +440,11 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     _clear_attempts(deps, key)
     lais.limpar_erro_link(org_id, cfg=deps.cfg)
 
-    await _deliver(deps, connection=connection, chat_id=chat_id, key=key, run=run, result=result, state=state, chat_store=chat_store)
+    await _deliver(
+        deps, connection=connection, chat_id=chat_id, key=key, run=run, result=result, state=state, chat_store=chat_store,
+        lais_turn=lais_turn, agents_client=client,
+        lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [m.provider_message_id for m in req.messages]),
+    )
 
 
 def _handle_turn_error(
@@ -412,12 +502,17 @@ async def _resolve_lid_phone(deps: LeadDeps, connection: WhatsAppConnectionRecor
 async def _deliver(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str,
     run: list[dict[str, Any]], result: TurnResult, state: Optional[dict[str, Any]], chat_store: Any,
+    lais_turn: Optional[LaisTurn] = None, agents_client: Optional[AgentsClient] = None, lote_hash: Optional[str] = None,
 ) -> None:
+    pos = dict(lais_turn=lais_turn, connection=connection, chat_id=chat_id, result=result, lote_hash=lote_hash,
+               agents_client=agents_client)
     # L3: a human may have taken over WHILE the turn was running -- re-check the
     # flag before sending anything.
     fresh = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     if fresh and fresh.get("agente_pausado"):
         logger.info("lais: chat %s paused during the turn -- reply discarded", chat_id)
+        # The reply is dropped, but what the model extracted (slots, operacao) is still the lead's data.
+        await _pos_turno(deps, enviou=False, **pos)
         close_run(deps.buffer, key, run)
         return
 
@@ -425,6 +520,7 @@ async def _deliver(
     primeira = not ((state or {}).get("agente_conversation_id") or (fresh or {}).get("agente_conversation_id"))
     partes = list(result.partes)
     if not partes and handoff is None:
+        await _pos_turno(deps, enviou=False, **pos)  # silence can still carry actions
         close_run(deps.buffer, key, run)  # status `silencio`: stay silent, nothing to disclose
         return
 
@@ -462,6 +558,7 @@ async def _deliver(
 
     if handoff is not None:
         await _apply_handoff(deps, connection=connection, chat_id=chat_id, chat_store=chat_store, motivo=handoff.motivo)
+    await _pos_turno(deps, enviou=bool(enviadas), **pos)
     close_run(deps.buffer, key, run)
 
 
@@ -469,6 +566,10 @@ async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord
     """handoff => `agente_pausado=true` + `chat.upsert` + the in-app notification
     (contract 5 / 11.4). A notification failure is logged, never undoes the pause."""
     chat_store.set_agente_pausado(connection_id=connection.id, chat_id=chat_id, pausado=True)
+    try:  # contract 0.2: a handoff invalidates every job queued for this contato
+        lais_contatos_service.bump_gen_do_chat(deps.scoped, connection.org_id, connection.id, chat_id)
+    except Exception:
+        logger.exception("lais: gen bump on handoff failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
     await publish_pause(deps, connection=connection, chat_id=chat_id, pausado=True)
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)

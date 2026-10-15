@@ -92,6 +92,8 @@ class World:
         self.sw.set_table_data("lais_agente_chats_preexistentes", [])
         self.sw.set_table_data("lais_aviso_privacidade", [])
         self.sw.set_table_data("whatsapp_connections", [])
+        for t in ("lais_contatos", "lais_interacoes", "lais_acoes_aplicadas", "lais_eventos"):
+            self.sw.set_table_data(t, [])
 
     # ── seeding ────────────────────────────────────────────────────────────
     def seed_connection(self, **over: Any) -> dict[str, Any]:
@@ -132,6 +134,16 @@ class World:
 
     def messages(self, chat_id: str = LEAD_CHAT) -> list[dict[str, Any]]:
         return self.sw.table("conversation_messages").select("*").eq("chat_id", chat_id).execute().data or []
+
+    def rows(self, table: str, **eq: Any) -> list[dict[str, Any]]:
+        q = self.sw.table(table).select("*")
+        for k, v in eq.items():
+            q = q.eq(k, v)
+        return q.execute().data or []
+
+    def contato(self, chat_id: str = LEAD_CHAT) -> dict[str, Any] | None:
+        rows = self.rows("lais_contatos", connection_id=CONNECTION_ID, chat_id=chat_id)
+        return rows[0] if rows else None
 
     def notifications(self) -> list[dict[str, Any]]:
         return self.core.table("notifications").select("*").execute().data or []

@@ -6377,6 +6377,77 @@ _SW_TRANSACOES_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS = "267_lais_fundacao.sql"
+_T_LAIS = (f"{_S}.lais_contatos", f"{_S}.lais_interacoes", f"{_S}.lais_acoes_aplicadas", f"{_S}.lais_eventos")
+_LAIS_CONEXAO = "'00000000-0000-4000-8000-000000000267'"
+
+
+def _lais_contato_ins(extra_cols: str = "", extra_vals: str = "") -> str:
+    cols = f", {extra_cols}" if extra_cols else ""
+    vals = f", {extra_vals}" if extra_vals else ""
+    return (
+        f"    INSERT INTO {_S}.lais_contatos (org_id, connection_id, chat_id{cols})\n"
+        f"    VALUES (v_org, {_LAIS_CONEXAO}, 'noc_probe'{vals});"
+    )
+
+
+def _lais_child_ins(table: str, cols: str, vals: str) -> str:
+    """Insert a probe contato, then a child row pointing at it (all rolled back)."""
+    return (
+        f"    INSERT INTO {_S}.{table} (org_id, contato_id, {cols})\n"
+        f"    SELECT v_org, id, {vals} FROM {_S}.lais_contatos\n"
+        f"    WHERE org_id = v_org AND connection_id = {_LAIS_CONEXAO} AND chat_id = 'noc_probe';"
+    )
+
+
+def _lais_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais.{probe_id}", guard_name=guard, migration=_M_LAIS, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS,
+    )
+
+
+#: Migration 267 -- the Lais foundation (contatos / interacoes / acoes aplicadas / eventos). Unapplied
+#: guards read `no_fixture` (the tables do not exist yet) and must read `refused` once applied.
+_SW_LAIS_PROBES: tuple[GuardProbe, ...] = (
+    _lais_probe(
+        "contatos.status_envio_valido", "lais_contatos_status_envio_valido",
+        "status_envio drives the 'Enviado ao SW' column and the retry button; a free-text value would be "
+        "neither shown nor retried.",
+        _lais_contato_ins("status_envio", "'noc_probe_bogus'"), _CHECK, "a lais_contato with an unknown status_envio",
+    ),
+    _lais_probe(
+        "contatos.um_por_chat", "lais_contatos_org_conexao_chat_uq",
+        "One contato per (org, connection, chat): a second row would fork the person's slots, gen and "
+        "episodes, and the stale guard would read the wrong gen.",
+        _lais_contato_ins() + "\n" + _lais_contato_ins(), _UNIQ, "two lais_contatos for the same chat",
+    ),
+    _lais_probe(
+        "interacoes.uma_aberta", "lais_interacoes_uma_aberta_uq",
+        "At most one OPEN episode per contato: two concurrent inbound turns must not open two, or the "
+        "summary would be written to an arbitrary one.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_interacoes", "iniciada_at", "now()") + "\n"
+        + _lais_child_ins("lais_interacoes", "iniciada_at", "now()"),
+        _UNIQ, "two open lais_interacoes for one contato",
+    ),
+    _lais_probe(
+        "acoes.lote_seq_unico", "lais_acoes_aplicadas_lote_seq_uq",
+        "The idempotency ledger: (org, lote_hash, seq) unique is what makes a replayed batch apply "
+        "nothing twice (a duplicated qualificar_lead would create two leads).",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'")
+        + "\n" + _lais_child_ins("lais_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'"),
+        _UNIQ, "the same action applied twice for one (lote_hash, seq)",
+    ),
+    _lais_probe(
+        "eventos.tipo_valido", "lais_eventos_tipo_valido",
+        "The event type becomes a notification kind ('lais_' || tipo); a malformed token would mint an "
+        "unroutable category.",
+        f"    INSERT INTO {_S}.lais_eventos (org_id, tipo)\n    VALUES (v_org, 'NOC PROBE BOGUS');",
+        _CHECK, "a lais_evento with a malformed tipo",
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -8295,6 +8366,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_TRANSACOES_PROBES,
     *_SW_CONDOMINIOS_PROBES,
+    *_SW_LAIS_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
