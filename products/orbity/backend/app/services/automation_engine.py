@@ -594,7 +594,7 @@ def _fail_execution(db: Any, org_id: str, execution_id: str, reason: str) -> Non
         logger.exception("run_due_actions: could not fail execution=%s", execution_id)
 
 
-def _claim(db: Any, org_id: str, action_id: str) -> bool:
+def claim_action(db: Any, org_id: str, action_id: str) -> bool:
     """Compare-and-set pending -> processing. True only for the ONE caller whose
     UPDATE actually matched the still-'pending' row (concurrent drains lose)."""
     res = (
@@ -729,7 +729,7 @@ def run_due_actions(
         payload: dict[str, Any] = row.get("payload") or {}
 
         try:
-            if not _claim(db, org_id, action_id):
+            if not claim_action(db, org_id, action_id):
                 logger.debug("run_due_actions: action=%s claimed elsewhere — skip", action_id)
                 continue
         except Exception:

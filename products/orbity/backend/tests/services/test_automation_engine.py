@@ -843,7 +843,7 @@ class TestRunDueActions:
         row = self._pending("send_message")
         db = self._db([row])
         sender = FakeWhatsAppSender()
-        real_claim = eng._claim
+        real_claim = eng.claim_action
         # Peer wins the race: flip the row between our SELECT and our claim.
         db.table("automation_pending_actions").update({"status": "processing"}).eq(
             "id", row["id"]
