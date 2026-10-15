@@ -61,6 +61,7 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
+from app.modules.card_hub.banco_texto import com_banco_separado
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
 from app.modules.card_hub.contrato_gerador.dados import MODO_ACRESCENTAR, MODOS_CLAUSULA_EXTRA
@@ -319,7 +320,11 @@ def _exigir_favorecido(
 
 def _favorecido_canonico(valores: dict) -> dict:
     """`cpf_cnpj` is stored in its canonical PUNCTUATED form when it fits its
-    type (owner rule 2026-10-01, `canonical-identifiers`); as typed otherwise."""
+    type (owner rule 2026-10-01, `canonical-identifiers`); as typed otherwise.
+    Agência/conta typed inside `banco` move to their own fields
+    (`banco_texto.com_banco_separado`)."""
+    if "banco" in valores:
+        valores = com_banco_separado(valores)
     if "cpf_cnpj" not in valores:
         return valores
     return {**valores, "cpf_cnpj": idf.canonico_cpf_cnpj(valores["cpf_cnpj"])}

@@ -45,10 +45,20 @@ class TestBancoComDadosDeContaNaoVaza:
         assert det["banco"] == "Itaú (341)" and det["banco_requer_revisao"] is True
         assert "Ag. 1234" not in str(det) and "56789-0" not in str(det)
 
-    def test_create_and_patch_refuse_conta_data_in_banco(self, client, scoped):
+    def test_create_moves_agencia_and_conta_out_of_banco(self, client, scoped):
         scoped.set_table_data("favorecidos", [])
         _papel(client, "member")
-        r = _criar(client, banco=_BANCO_LEGADO)
+        r = _criar(client, banco=_BANCO_LEGADO, agencia=None, conta=None)
+        assert r.status_code == 201, r.text
+        linha = r.json()
+        assert (linha["banco"], linha["agencia"], linha["conta"]) == (
+            "Itaú (341)", "1234", "56789-0",
+        )
+
+    def test_create_and_patch_refuse_conta_data_that_does_not_split(self, client, scoped):
+        scoped.set_table_data("favorecidos", [])
+        _papel(client, "member")
+        r = _criar(client, banco="Itaú CC 56789-0", agencia=None, conta=None)
         assert r.status_code == 400 and "Agência e Conta" in r.text
         fid = _criar(client).json()["id"]
         r = client.patch(
@@ -70,3 +80,25 @@ class TestReadinessBancoComDadosDeConta:
         av = _avaliar(replace(d, favorecidos=favs), 1)
         assert not av.pronto
         assert "estão no campo Banco" in str(av.faltando)
+
+
+class TestSepararBanco:
+    def test_splits_the_full_triple(self):
+        from app.modules.card_hub.banco_texto import separar_banco
+
+        assert separar_banco(_BANCO_LEGADO) == ("Itaú (341)", "1234", "56789-0")
+        assert separar_banco("Bradesco, Agência: 0123-4, Conta Corrente 98765-X") == (
+            "Bradesco", "0123-4", "98765-X",
+        )
+
+    def test_any_other_shape_is_left_alone(self):
+        from app.modules.card_hub.banco_texto import separar_banco
+
+        for texto in ("Itaú (341)", "Itaú CC 56789-0", "Itaú Ag. 1234", "Ag. 1234 CC 5 obs", None):
+            assert separar_banco(texto) is None
+
+    def test_filled_fields_are_never_overwritten(self):
+        from app.modules.card_hub.banco_texto import com_banco_separado
+
+        v = {"banco": _BANCO_LEGADO, "agencia": "9", "conta": None}
+        assert com_banco_separado(v) is v

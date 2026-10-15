@@ -717,3 +717,14 @@ class TestIntermediarioQualificacao:
         assert r.status_code == 200, r.text
         item = r.json()["intermediarios"][0]
         assert (item["pessoa_tipo"], item["documento"], item["creci"]) == ("pf", CPF, "12345-F")
+
+
+class TestFavorecidoDoAtendimentoBancoSeparado:
+    def test_agencia_and_conta_typed_in_banco_move_to_their_fields(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Fulana", "banco": "Itaú (341) Ag. 1234 CC 56789-0"},
+            headers=_auth(),
+        ).json()["favorecidos"][0]
+        assert (fav["banco"], fav["agencia"], fav["conta"]) == ("Itaú (341)", "1234", "56789-0")

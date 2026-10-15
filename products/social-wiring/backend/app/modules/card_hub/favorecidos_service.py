@@ -45,7 +45,11 @@ from noctusai_lib.primitives.exceptions import (
 )
 
 from app.modules.card_hub import negociacao_estruturada_service as estruturada
-from app.modules.card_hub.banco_texto import banco_saneado, banco_tem_dados_de_conta
+from app.modules.card_hub.banco_texto import (
+    banco_saneado,
+    banco_tem_dados_de_conta,
+    com_banco_separado,
+)
 from app.services import identificadores as idf
 from app.services import table_reads
 
@@ -251,6 +255,7 @@ def _normalizar(valores: dict, *, atual: Optional[dict] = None) -> dict:
                 f"{campo} deve ser um de: {', '.join(validos)}", field=campo
             )
 
+    mesclado = com_banco_separado(mesclado)
     if banco_tem_dados_de_conta(mesclado["banco"]):
         raise ValidationError_(
             "O campo Banco deve conter apenas o nome do banco; "
