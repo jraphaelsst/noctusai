@@ -79,6 +79,10 @@ from noctusai_lib.primitives.exceptions import (
 )
 
 from app.modules.card_hub import negociacao_service
+from app.modules.card_hub.contrato_gerador.citacao_matricula import (
+    averbacao_deve_ser_citada,
+    titulo_curto_averbacao,
+)
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
@@ -1030,6 +1034,23 @@ def _ref(row: dict, texto: str, termo: str) -> dict:
     }
 
 
+def averbacoes_citaveis(texto: str, atos: list[dict]) -> list[dict]:
+    """Every `AV` act whose wording changes the property's physical
+    description — the SAME predicate the contract quote applies
+    (`citacao_matricula.averbacao_deve_ser_citada`), so "would be quoted if
+    selected" has one definition. Pure. `{id, numero, titulo}` per act."""
+    saida = []
+    for r in sorted(atos, key=lambda r: r["ordem"]):
+        if r["kind"] != "AV":
+            continue
+        corpo = _fatia(texto, int(r["char_inicio"]), int(r["char_fim"]))
+        if averbacao_deve_ser_citada(corpo):
+            saida.append(
+                {"id": r["id"], "numero": r.get("numero"), "titulo": titulo_curto_averbacao(corpo)}
+            )
+    return saida
+
+
 def sugerir(
     texto: str, atos: list[dict], detalhes: Optional[dict[str, dict]] = None
 ) -> dict:
@@ -1119,7 +1140,11 @@ def sugerir(
                 }
             )
             break
-    return {"titulo_aquisitivo": titulo, "onus": onus}
+    # Quotable averbações (construção, numeração, demolição …): the contract's
+    # `IMÓVEL:` quote carries ONLY the ones the operator selects, so the UI
+    # pre-ticks these — leaving one out silently sells the lot as bare land.
+    descricao = [{**a, "sugerido": True} for a in averbacoes_citaveis(texto, ordenados)]
+    return {"titulo_aquisitivo": titulo, "onus": onus, "descricao": descricao}
 
 
 # ─── título aquisitivo / ônus pointers ─────────────────────────────────────

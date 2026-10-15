@@ -673,6 +673,27 @@ def _imobiliaria(client: Any, org_id: UUID, imobiliaria_id: Any) -> Imobiliaria:
     )
 
 
+def _averbacoes_citaveis_nao_selecionadas(
+    client: Any, org_id: UUID, selecao: dict
+) -> tuple[tuple[Optional[str], str], ...]:
+    """Quotable `AV` acts (`estrutura_service.averbacoes_citaveis` — the
+    quote's own predicate, no second term list) of the contract's extraction
+    that the operator left out of the selection. Without an extraction there
+    is nothing to compare."""
+    extracao_id = selecao.get("extracao_id")
+    if not extracao_id:
+        return ()
+    extracao = estrutura_service.exigir_extracao(client, org_id, UUID(str(extracao_id)))
+    texto = extracao.get("texto_extraido") or ""
+    selecionados = {str(a.get("ato_id")) for a in (selecao.get("atos") or [])}
+    atos = estrutura_service.atos_da_extracao(client, org_id, extracao)
+    return tuple(
+        (a["numero"], a["titulo"])
+        for a in estrutura_service.averbacoes_citaveis(texto, atos)
+        if str(a["id"]) not in selecionados
+    )
+
+
 def _testemunhas_selecionadas(
     client: Any, org_id: UUID, atendimento_id: UUID, contrato_id: UUID
 ) -> list[Testemunha]:
@@ -843,6 +864,9 @@ def carregar(
                 (a.get("numero"), a.get("texto") or "")
                 for a in (selecao.get("atos") or [])
                 if str(a.get("kind") or "").upper() == "AV"
+            ),
+            averbacoes_citaveis_nao_selecionadas=_averbacoes_citaveis_nao_selecionadas(
+                client, org_id, selecao
             ),
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
