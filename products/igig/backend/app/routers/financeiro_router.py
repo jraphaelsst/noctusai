@@ -114,9 +114,7 @@ async def criar_fatura(
             # surfacing as a foreign-key violation mislabelled below as
             # "duplicate invoice" (finding #7).
             raise HTTPException(status_code=404, detail="Contrato não encontrado")
-    valores = payload.model_dump(exclude_none=True)
-    if payload.vencimento is not None:
-        valores["vencimento"] = payload.vencimento.isoformat()
+    valores = payload.model_dump(mode="json", exclude_none=True)  # vencimento -> ISO str
     try:
         registro = repos.fatura.criar(org_id, valores)
     except UniqueViolation:
@@ -176,7 +174,7 @@ async def adicionar_item(
             },
         )
     itens_atuais = repos.fatura_item.da_fatura(org_id, fatura_id)
-    novo_item = payload.model_dump()
+    novo_item = payload.model_dump(mode="json")
     prospectivo = sum(valor_da_linha_fatura(i) for i in itens_atuais) + valor_da_linha_fatura(novo_item)
     if round(prospectivo, 2) < 0:
         raise HTTPException(
@@ -234,9 +232,7 @@ async def editar_fatura(
     contract's existing invoice (same unique index as creation)."""
     org_id = _org(auth)
     atual = _fatura_aberta(repos, org_id, fatura_id)
-    valores = payload.model_dump(exclude_unset=True)
-    if valores.get("vencimento") is not None:
-        valores["vencimento"] = valores["vencimento"].isoformat()
+    valores = payload.model_dump(mode="json", exclude_unset=True)  # vencimento -> ISO str
     if not valores:
         return FaturaOut(**atual)
     try:
@@ -264,7 +260,7 @@ async def editar_item(
     org_id = _org(auth)
     _fatura_aberta(repos, org_id, fatura_id)
     item = _item_da_fatura(repos, org_id, fatura_id, item_id)
-    valores = payload.model_dump(exclude_none=True)
+    valores = payload.model_dump(mode="json", exclude_none=True)
     if valores:
         itens = repos.fatura_item.da_fatura(org_id, fatura_id)
         prospectivo = sum(

@@ -411,7 +411,7 @@ async def criar_acesso(
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
-    campos = payload.model_dump(exclude_none=True)
+    campos = payload.model_dump(mode="json", exclude_none=True)
     campos.pop("cliente_id", None)
     rotulo = campos.pop("rotulo")
     senha = campos.pop("senha", None)
@@ -443,7 +443,7 @@ async def atualizar_acesso(
     """
     org_id = _org(auth)
     senha = payload.senha
-    dados = payload.model_dump(exclude_unset=True, exclude={"senha"})
+    dados = payload.model_dump(mode="json", exclude_unset=True, exclude={"senha"})
     if senha:
         from noctusai_lib.security.encrypted_tokens import encrypt
 

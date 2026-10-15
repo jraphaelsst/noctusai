@@ -48,7 +48,7 @@ async def criar_produto(
     db: Any = Depends(get_db),
 ) -> dict:
     try:
-        return success_response(svc.criar(db, _org(auth), payload.model_dump()))
+        return success_response(svc.criar(db, _org(auth), payload.model_dump(mode="json")))
     except RegraViolada as erro:
         raise http_de(erro) from erro
 
@@ -62,7 +62,7 @@ async def atualizar_produto(
 ) -> dict:
     try:
         return success_response(
-            svc.atualizar(db, _org(auth), produto_id, payload.model_dump(exclude_unset=True))
+            svc.atualizar(db, _org(auth), produto_id, payload.model_dump(mode="json", exclude_unset=True))
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro

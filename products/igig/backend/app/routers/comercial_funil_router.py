@@ -140,7 +140,7 @@ async def criar_negocio(
     if payload.lead is not None:
         criado = (
             db.table("lead").insert(
-                {"org_id": org_id, "origem": "manual", **payload.lead.model_dump(exclude_none=True)}
+                {"org_id": org_id, "origem": "manual", **payload.lead.model_dump(mode="json", exclude_none=True)}
             ).execute().data or []
         )
         if not criado:
@@ -170,7 +170,7 @@ async def atualizar_negocio(
     db: Any = Depends(get_db),
 ) -> dict:
     org_id = _org(auth)
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise HTTPException(status_code=422, detail="Nenhum campo para atualizar.")
     if dados.get("responsavel_id"):

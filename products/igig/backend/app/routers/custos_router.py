@@ -93,7 +93,7 @@ async def criar_funcao(
 ) -> FuncaoOut:
     org_id = _org(auth)
     try:
-        row = repos.funcao.criar(org_id, payload.model_dump())
+        row = repos.funcao.criar(org_id, payload.model_dump(mode="json"))
     except UniqueViolation as erro:
         raise HTTPException(
             status_code=409,
@@ -117,7 +117,7 @@ async def atualizar_funcao(
     repos: Repositorios = Depends(get_repositorios),
 ) -> FuncaoOut:
     org_id = _org(auth)
-    data = payload.model_dump(exclude_none=True)
+    data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -176,7 +176,7 @@ async def criar_profissional(
     # exclude_unset, NOT exclude_none: `custo_hora_override=None` sent
     # explicitly means "inherit the função", and dropping it would silently
     # keep a stale override.
-    row = repos.profissional.criar(org_id, payload.model_dump(exclude_unset=True))
+    row = repos.profissional.criar(org_id, payload.model_dump(mode="json", exclude_unset=True))
     logger.info("profissional criado org=%s id=%s", org_id, row.get("id"))
     return _com_taxa(repos, org_id, row)
 
@@ -194,7 +194,7 @@ async def atualizar_profissional(
     org_id = _org(auth)
     # Same reasoning as create: clearing an override is a legitimate edit, so
     # an explicitly-sent null must survive into the update.
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(mode="json", exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

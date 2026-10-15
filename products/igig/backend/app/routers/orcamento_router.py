@@ -97,7 +97,7 @@ async def calcular(
     org_id = _org(auth)
     custo_hora, alertas = OrcamentoService(repos).custo_hora_medio(org_id)
     try:
-        itens = svc.normalizar_itens(i.model_dump() for i in payload.itens)
+        itens = svc.normalizar_itens(i.model_dump(mode="json") for i in payload.itens)
         produtos = svc.produtos_dos_itens(db, org_id, itens)
         totais = svc.calcular_totais(
             itens, desconto=payload.desconto,
@@ -127,8 +127,8 @@ async def criar_orcamento(
 ) -> dict:
     org_id = _org(auth)
     custo_hora, _alertas = OrcamentoService(repos).custo_hora_medio(org_id)
-    dados = payload.model_dump()
-    dados["itens"] = [i.model_dump() for i in payload.itens]
+    dados = payload.model_dump(mode="json")
+    dados["itens"] = [i.model_dump(mode="json") for i in payload.itens]
     try:
         return success_response(svc.criar(db, org_id, dados, custo_hora=custo_hora))
     except RegraViolada as erro:
@@ -144,11 +144,11 @@ async def atualizar_orcamento(
     repos: Repositorios = Depends(get_repositorios),
 ) -> dict:
     org_id = _org(auth)
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise http_de(RegraViolada(422, "sem_campos", "Nenhum campo para atualizar."))
     if payload.itens is not None:
-        dados["itens"] = [i.model_dump() for i in payload.itens]
+        dados["itens"] = [i.model_dump(mode="json") for i in payload.itens]
     custo_hora, _alertas = OrcamentoService(repos).custo_hora_medio(org_id)
     try:
         return success_response(
@@ -181,7 +181,7 @@ async def nova_versao(
 ) -> dict:
     org_id = _org(auth)
     custo_hora, _alertas = OrcamentoService(repos).custo_hora_medio(org_id)
-    dados = payload.model_dump(exclude_unset=True) if payload is not None else {}
+    dados = payload.model_dump(mode="json", exclude_unset=True) if payload is not None else {}
     validade_arg = dados["validade"] if "validade" in dados else svc.VALIDADE_AUTOMATICA
     try:
         return success_response(

@@ -141,7 +141,7 @@ async def capturar_lead(
     id. An anonymous endpoint that echoed data back would be a scraping
     surface, and the submitter has no use for it.
     """
-    dados = payload.model_dump(exclude_none=True)
+    dados = payload.model_dump(mode="json", exclude_none=True)
     org_id = str(dados.pop("org_id"))
     if not _org_existe(core_db, org_id):
         raise HTTPException(status_code=404, detail="Organização não encontrada.")
@@ -215,7 +215,7 @@ async def atualizar_lead(
     org-scoped by :class:`LeadRepository`'s `atualizar` (`BaseRepository`,
     every write scoped to `org_id`); a 404 for a lead outside this org."""
     org_id = _org(auth)
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise HTTPException(status_code=422, detail="Nenhum campo para atualizar.")
     try:

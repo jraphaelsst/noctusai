@@ -108,7 +108,7 @@ async def criar_pauta(
         repos.cliente.buscar(org_id, payload.cliente_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
-    return _out(repos.pauta.criar(org_id, payload.model_dump(exclude_none=True)))
+    return _out(repos.pauta.criar(org_id, payload.model_dump(mode="json", exclude_none=True)))
 
 
 @router.get("/{pauta_id}", response_model=PautaOut)
@@ -136,7 +136,7 @@ async def atualizar_pauta(
     explicit null to unschedule a pauta) must be distinguishable from not
     mentioning it. `exclude_none` would silently make unscheduling impossible.
     """
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

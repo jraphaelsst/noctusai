@@ -156,8 +156,7 @@ async def editar_contrato(
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
 ) -> dict:
-    campos = {k: (v.isoformat() if isinstance(v, date) else v)
-              for k, v in body.model_dump(exclude_unset=True).items()}
+    campos = body.model_dump(mode="json", exclude_unset=True)  # dates -> ISO str
     try:
         contrato = svc.editar(db, _org(auth), contrato_id, campos)
     except RegraViolada as erro:

@@ -246,7 +246,7 @@ async def atualizar_tarefa(
     (achado 3). Never touches `etapa_id`: moving stages stays `mover-etapa`'s
     job (the forward/back rules, the refação count, the automations)."""
     org_id = _org(auth)
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     if payload.responsavel_id:

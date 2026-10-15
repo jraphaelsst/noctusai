@@ -82,7 +82,7 @@ class AcaoIn(StrictHttpModel):
     def _params_do_tipo(self) -> "AcaoIn":
         # Normalised through the tipo's own model: unknown keys refused,
         # defaults filled, so the stored JSON is exactly what the engine reads.
-        self.params = PARAMS_POR_TIPO[self.tipo].model_validate(self.params).model_dump()
+        self.params = PARAMS_POR_TIPO[self.tipo].model_validate(self.params).model_dump(mode="json")
         return self
 
 

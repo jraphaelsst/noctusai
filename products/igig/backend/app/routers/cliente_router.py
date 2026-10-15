@@ -72,7 +72,7 @@ async def criar_cliente(
     """Create a client. Always enters the funnel as ``prospect``."""
     _user, _token, raw_org = auth
     org_id = str(coerce_org_uuid(raw_org))
-    row = repos.cliente.criar(org_id, payload.model_dump(exclude_none=True))
+    row = repos.cliente.criar(org_id, payload.model_dump(mode="json", exclude_none=True))
     logger.info("cliente criado org=%s id=%s", org_id, row.get("id"))
     return ClienteOut(**row)
 
@@ -107,7 +107,7 @@ async def atualizar_cliente(
     # field the operator just cleared would stay at its old value with no
     # error at all (achado #17 — the FE side of the same bug sent `""`
     # instead of `null`, which this alone would not have fixed).
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(mode="json", exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:

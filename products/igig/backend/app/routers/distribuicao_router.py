@@ -321,7 +321,7 @@ async def registrar_metrica(
         repos.publicacao.buscar(org_id, publicacao_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Publicação não encontrada")
-    return MetricaOut(**repos.metrica.registrar(org_id, publicacao_id, **payload.model_dump()))
+    return MetricaOut(**repos.metrica.registrar(org_id, publicacao_id, **payload.model_dump(mode="json")))
 
 
 @router.get("/publicacoes/{publicacao_id}/metricas", response_model=list[MetricaOut])

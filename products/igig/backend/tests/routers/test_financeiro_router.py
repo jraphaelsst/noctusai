@@ -1131,3 +1131,23 @@ class TestEditarFatura:
         assert api.raw().patch("/api/financeiro/faturas/x", json={}).status_code == 401
         assert api.raw().patch("/api/financeiro/faturas/x/itens/y", json={}).status_code == 401
         assert api.raw().delete("/api/financeiro/faturas/x/itens/y").status_code == 401
+
+
+class TestVencimentoJsonModeDump:
+    """Fleet sweep 2026-10-15: router dumps are `model_dump(mode="json")`, so a
+    `date` body field reaches the write as an ISO string (a raw `date` is
+    `not JSON serializable` for supabase-py -> 502). The PATCH used to call
+    `.isoformat()` on the dumped value — with JSON mode that is already a str,
+    so the write path must pass it through untouched."""
+
+    def test_create_and_patch_vencimento_persist_iso_strings(self, api, repos, cliente):
+        criada = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08", "vencimento": "2026-09-10",
+        })
+        assert criada.status_code == 201, criada.text
+        fatura_id = criada.json()["id"]
+        resp = api.patch(f"/api/financeiro/faturas/{fatura_id}", json={"vencimento": "2026-09-15"})
+        assert resp.status_code == 200, resp.text
+        assert str(resp.json()["vencimento"])[:10] == "2026-09-15"
+        linha = repos.fatura.buscar(ORG, fatura_id)
+        assert linha["vencimento"] == "2026-09-15"

@@ -104,7 +104,7 @@ async def criar_automacao(
     db: Any = Depends(get_db),
 ) -> dict:
     org_id = _org(auth)
-    acao = payload.acao.model_dump()
+    acao = payload.acao.model_dump(mode="json")
     _validar(db, org_id, payload.pipeline, payload.stage_id, acao)
     criado = (
         db.table("automacao").insert(
@@ -134,7 +134,7 @@ async def atualizar_automacao(
 ) -> dict:
     org_id = _org(auth)
     atual = qc.carregar(db, "automacao", org_id, automacao_id, rotulo="automação")
-    dados = payload.model_dump(exclude_unset=True)
+    dados = payload.model_dump(mode="json", exclude_unset=True)
     if not dados:
         raise HTTPException(status_code=422, detail="Nenhum campo para atualizar.")
 
