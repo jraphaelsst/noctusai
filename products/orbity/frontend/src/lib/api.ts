@@ -11,10 +11,5 @@
  *      (e.g., translating `{items, next_cursor}` into a paginator).
  *
  * Mirrors the 4-product convention (core, dev-team, ERP, PF, therapy).
- *
- * TODO(new-product): add typed wrapper functions per domain endpoint
- * (e.g., `listExamples()`, `createExample(payload)`). The hooks in
- * `src/hooks/` then call these wrappers instead of `api.get(url)`
- * directly — keeps URL strings + payload shapes in one place.
  */
 export { api } from "@noctusai/seed/infra";

@@ -76,54 +76,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Conteúdo", href: "/conteudo", icon: Megaphone, route: "conteudo" },
       { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
-      { name: "Automacao", href: "/automacao", icon: Zap, route: "automacao" },
+      { name: "Automação", href: "/automacao", icon: Zap, route: "automacao" },
       { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
     ],
   },
 ];
 
-const NAV_FALLBACK: NavGroup[] = [
-  {
-    key: "principal",
-    label: "Principal",
-    icon: Home,
-    items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Equipe", href: "/equipe", icon: Users },
-      { name: "Financeiro", href: "/financeiro", icon: DollarSign },
-    ],
-  },
-  {
-    key: "crm",
-    label: "CRM",
-    icon: UserCheck,
-    items: [
-      { name: "Clientes", href: "/clientes", icon: UserCheck },
-      { name: "Funil", href: "/funil", icon: Kanban },
-    ],
-  },
-  {
-    key: "operacoes",
-    label: "Operações",
-    icon: ClipboardList,
-    items: [
-      { name: "Tarefas", href: "/tarefas", icon: ClipboardList },
-      { name: "Agenda", href: "/agenda", icon: CalendarDays },
-      { name: "Rotinas", href: "/rotinas", icon: RefreshCw },
-    ],
-  },
-  {
-    key: "marketing",
-    label: "Marketing",
-    icon: Megaphone,
-    items: [
-      { name: "Conteúdo", href: "/conteudo", icon: Megaphone },
-      { name: "Tráfego", href: "/trafego", icon: Target },
-      { name: "Automacao", href: "/automacao", icon: Zap },
-      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2 },
-    ],
-  },
-];
+// Fallback nav (used before status_pagina resolves) derives from the single
+// NAV_GROUPS source — the `route` key is the only extra field.
+const NAV_FALLBACK: NavGroup[] = NAV_GROUPS as NavGroup[]; // every group/item above sets `icon`; `route` is the only extra field
 
 const Layout = createProductLayout({
   brandIcon: Box,

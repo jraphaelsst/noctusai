@@ -15,7 +15,9 @@
 import { useConfirm, type ConfirmFn } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import { ResourceManager } from "@noctusai/lib/components";
-import { Archive } from "lucide-react";
+import { useState } from "react";
+import { clientPayload } from "@/lib/clientPayload";
+import { Archive, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 interface ClientRow {
@@ -61,18 +63,41 @@ async function archiveClient(id: string, reload: () => void, confirm: ConfirmFn)
   }
 }
 
+async function reactivateClient(id: string, reload: () => void) {
+  try {
+    await api.patch(`/api/clients/${id}`, { active: true });
+    toast.success("Cliente reativado");
+    reload();
+  } catch (err: unknown) {
+    toast.error("Falha ao reativar cliente", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
+}
+
 export default function Clientes() {
   const confirm = useConfirm();
+  const [showArchived, setShowArchived] = useState(false);
   return (
+    <div className="space-y-3">
+    <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <input
+        type="checkbox"
+        checked={showArchived}
+        onChange={(e) => setShowArchived(e.target.checked)}
+      />
+      Mostrar arquivados
+    </label>
     <ResourceManager<ClientRow>
       title="Clientes"
       description="Gerencie os clientes da agência"
       api={api}
-      apiPath="/api/clients"
+      apiPath={showArchived ? "/api/clients?active_only=false" : "/api/clients"}
+      toPayload={(form) => clientPayload(form)}
       singularName="Cliente"
       canDelete={false}
       emptyMessage="Nenhum cliente cadastrado ainda."
-      rowActions={(row, reload) => (
+      rowActions={(row, reload) => row.active ? (
         <button
           type="button"
           onClick={() => archiveClient(row.id, reload, confirm)}
@@ -81,6 +106,16 @@ export default function Clientes() {
         >
           <Archive className="h-3.5 w-3.5" />
           Arquivar
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => reactivateClient(row.id, reload)}
+          title="Reativar"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:text-green-700 hover:bg-green-50 transition-colors"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Reativar
         </button>
       )}
       columns={[
@@ -179,5 +214,6 @@ export default function Clientes() {
         },
       ]}
     />
+    </div>
   );
 }

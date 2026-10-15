@@ -122,7 +122,7 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
         >
           <button
             type="button"
-            onClick={() => onEdit(lead)}
+            onClick={(e) => { e.stopPropagation(); onEdit(lead); }}
             title="Editar lead"
             className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700"
           >
@@ -130,7 +130,8 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
           </button>
           <button
             type="button"
-            onClick={async () => {
+            onClick={async (e) => {
+              e.stopPropagation();
               if (await confirm({ title: `Remover lead "${lead.name}"?`, confirmLabel: 'Remover', tone: 'danger' })) {
                 onDelete(lead.id);
               }
@@ -180,7 +181,7 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
         <div className={`relative ${isDragging ? "hidden" : ""}`}>
           <button
             type="button"
-            onClick={() => setShowMoveMenu((v) => !v)}
+            onClick={(e) => { e.stopPropagation(); setShowMoveMenu((v) => !v); }}
             title="Mover para etapa"
             className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700"
           >
@@ -193,7 +194,8 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
                   key={s.stage.id}
                   type="button"
                   disabled={s.stage.id === lead.stage_id}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     onMoveStage(lead.id, s.stage.id);
                     setShowMoveMenu(false);
                   }}
@@ -251,7 +253,7 @@ function LeadFormDialog({
     company: initial.company ?? "",
     source: initial.source ?? "",
     value: initial.value ?? "",
-    stage_id: initial.stage_id ?? defaultStageId ?? "",
+    stage_id: initial.stage_id ?? defaultStageId ?? stages[0]?.stage.id ?? "",
     tags: initial.tags ?? "",
   });
 
@@ -366,10 +368,11 @@ function LeadFormDialog({
               </label>
               <select
                 value={form.stage_id}
+                required
                 onChange={(e) => set("stage_id", e.target.value)}
                 className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
               >
-                <option value="">Sem etapa</option>
+                <option value="" disabled>Selecione uma etapa</option>
                 {stages.map((s) => (
                   <option key={s.stage.id} value={s.stage.id}>
                     {s.stage.name}

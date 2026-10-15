@@ -3,7 +3,8 @@ import { Box } from "lucide-react";
 import { AcceptInvitePage } from "@noctusai/lib/design-system";
 import { env } from "@noctusai/lib";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8010";
+// seed env getter (same-origin when VITE_BACKEND_API_URL is unset) — no hardcoded localhost
+const BACKEND_URL = env.BACKEND_API_URL;
 // canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
 const CORE_URL = env.CORE_URL;
 
