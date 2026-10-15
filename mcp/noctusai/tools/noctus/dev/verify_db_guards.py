@@ -6588,6 +6588,104 @@ _SW_LAIS_VISITAS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_REENG = "271_lais_reengajamento.sql"
+_T_LAIS_REENG = (f"{_S}.lais_reengajamento_config", f"{_S}.lais_reguas", f"{_S}.lais_regua_tentativas")
+
+
+def _reeng_regua_ins(extra_cols: str = "", extra_vals: str = "") -> str:
+    cols = f", {extra_cols}" if extra_cols else ""
+    vals = f", {extra_vals}" if extra_vals else ""
+    return f"    INSERT INTO {_S}.lais_reguas (org_id, nome{cols})\n    VALUES (v_org, 'noc_probe'{vals});"
+
+
+def _reeng_tent_ins(cols: str, vals: str) -> str:
+    """A tentativa under the probe regua (the regua is inserted first in the same rolled-back block)."""
+    return (
+        f"    INSERT INTO {_S}.lais_regua_tentativas (org_id, regua_id, {cols})\n"
+        f"    SELECT v_org, id, {vals} FROM {_S}.lais_reguas WHERE org_id = v_org AND nome = 'noc_probe';"
+    )
+
+
+def _reeng_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_reeng.{probe_id}", guard_name=guard, migration=_M_LAIS_REENG, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_REENG,
+    )
+
+
+_REENG_TENT_OK = "1, 1, 'dias', 'noc probe', true"
+_REENG_TENT_COLS = "ordem, espera_valor, espera_unidade, texto, ativa"
+
+#: Migration 271 -- Lais wave 4 (reengajamento). Unapplied guards read `no_fixture` (tables absent) and
+#: must read `refused` once applied.
+_SW_LAIS_REENG_PROBES: tuple[GuardProbe, ...] = (
+    _reeng_probe(
+        "config.minutos_intervalo", "lais_reeng_minutos_intervalo_valido",
+        "The minutes tier is 5..60 in steps of 5; a 7-minute value would fire the default re-engagement off-grid.",
+        f"    INSERT INTO {_S}.lais_reengajamento_config (org_id, minutos_intervalo) VALUES (v_org, 7);",
+        _CHECK, "a re-engagement config with a 7-minute interval",
+    ),
+    _reeng_probe(
+        "config.horas_intervalo", "lais_reeng_horas_intervalo_valido",
+        "The hours tier is 1..11; 12 h or more would collide with the next business window.",
+        f"    INSERT INTO {_S}.lais_reengajamento_config (org_id, horas_intervalo) VALUES (v_org, 12);",
+        _CHECK, "a re-engagement config with a 12-hour interval",
+    ),
+    _reeng_probe(
+        "reguas.nome_valido", "lais_reguas_nome_valido",
+        "A regua with a blank name is unselectable in the UI.",
+        _reeng_regua_ins().replace("'noc_probe'", "'   '"), _CHECK, "a regua with a blank name",
+    ),
+    _reeng_probe(
+        "tentativas.ordem_1_a_3", "lais_regua_tentativas_ordem_1_a_3",
+        "At most 3 attempts per regua is structural: ordem is 1..3 (and unique), so a 4th cannot exist.",
+        _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "4, 1, 'dias', 'noc probe', true"),
+        _CHECK, "a 4th regua tentativa (ordem 4)",
+    ),
+    _reeng_probe(
+        "tentativas.ordem_unica", "lais_regua_tentativas_ordem_uq",
+        "Two attempts with the same ordem would both fire at the same step of the regua.",
+        _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK) + "\n"
+        + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK),
+        _UNIQ, "two tentativas with the same ordem in one regua",
+    ),
+    _reeng_probe(
+        "tentativas.espera_valida", "lais_regua_tentativas_espera_valida",
+        "A zero or negative wait would fire the attempt immediately, ignoring the lead's silence window.",
+        _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "1, 0, 'dias', 'noc probe', true"),
+        _CHECK, "a tentativa with a zero wait",
+    ),
+    _reeng_probe(
+        "tentativas.unidade_valida", "lais_regua_tentativas_unidade_valida",
+        "The wait unit is minutos|horas|dias; anything else cannot be turned into a schedule.",
+        _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "1, 1, 'semanas', 'noc probe', true"),
+        _CHECK, "a tentativa with an unknown wait unit",
+    ),
+    _reeng_probe(
+        "tentativas.texto_ou_template", "lais_regua_tentativas_texto_ou_template",
+        "An attempt carries free text XOR a Cloud template: neither has nothing to send, both is ambiguous "
+        "(a template needs the Cloud transport, free text must not go out as a mass send).",
+        _reeng_regua_ins() + "\n"
+        + _reeng_tent_ins("ordem, espera_valor, espera_unidade, ativa", "1, 1, 'dias', true"),
+        _CHECK, "a tentativa with neither texto nor template_id",
+    ),
+    _reeng_probe(
+        "reguas.ativa_exige_tentativa", "lais_regua_ativa_exige_tentativa_fn",
+        "An active regua with no active attempt would be 'on' and do nothing; the live UI refuses to turn it on.",
+        _reeng_regua_ins("ativa", "true"), _CHECK, "an active regua with no active tentativa",
+    ),
+    _reeng_probe(
+        "tentativas.ultima_ativa", "lais_regua_ultima_tentativa_ativa_fn",
+        "Removing the last active attempt of an active regua would silently turn it into a no-op.",
+        _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK) + "\n"
+        f"    UPDATE {_S}.lais_reguas SET ativa = true WHERE org_id = v_org AND nome = 'noc_probe';\n"
+        f"    DELETE FROM {_S}.lais_regua_tentativas WHERE org_id = v_org "
+        f"AND regua_id IN (SELECT id FROM {_S}.lais_reguas WHERE org_id = v_org AND nome = 'noc_probe');",
+        _CHECK, "deleting the last active tentativa of an active regua",
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -8509,6 +8607,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_PROBES,
     *_SW_PERGUNTAS_PROBES,
     *_SW_LAIS_VISITAS_PROBES,
+    *_SW_LAIS_REENG_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
