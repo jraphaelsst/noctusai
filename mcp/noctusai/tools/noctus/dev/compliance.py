@@ -7431,6 +7431,253 @@ def check_redis_client_via_seam(
 
 
 # ---------------------------------------------------------------------------
+# `check_model_dump_json_mode` — a pydantic `.model_dump()` that flows into a
+# supabase write must be `.model_dump(mode="json")`.
+#
+# WHY (orbity, 2026-10-15). A request model with a `UUID` / `datetime` /
+# `Decimal` / `date` field, dumped with the default `mode="python"`, keeps the
+# raw Python objects. supabase-py serialises the body with stdlib `json` →
+# `TypeError: Object of type UUID is not JSON serializable` → a live 502 on the
+# write route. Unit tests with a Fake client never serialise, so the bug ships
+# green. `mode="json"` coerces every field to its JSON form first — the dump IS
+# the compliance mechanism, one keyword at the producing call.
+# → KB § PATTERNS/backend/backend.md § Pydantic → supabase writes
+#
+# Detection is AST, intra-function data-flow (flow-insensitive fixed point):
+#   SOURCE  `<x>.model_dump(...)` whose `mode` is absent or a constant ≠ "json"
+#           (a non-constant `mode=` is unknowable → not a source).
+#   TAINT   a name assigned from a tainted expr; a dict literal with a tainted
+#           `**` unpack or value; `dict(tainted)`; `tainted | {...}`;
+#           `tainted.copy()`; a comprehension whose element is tainted or that
+#           iterates `tainted.items()`; `name.update(tainted)` (dict merge).
+#   SINK    `.insert(` / `.upsert(` with a tainted arg; `.update(` with a
+#           tainted arg on a non-Name receiver (a supabase chain) or with
+#           keywords / >1 positional arg (a service method — a bare
+#           `name.update(x)` is the dict-merge idiom above); any call whose
+#           name is, or starts with `<verb>_` for, a write verb in
+#           `_MODEL_DUMP_WRITE_VERBS` (`create_campaign(...)`, `service.create`).
+# Escape: `# noc-allow: model-dump-json — <reason>` on the sink line or on the
+# dump line (a reason is required — a bare marker does not count).
+#
+# Scope. `products/<slug>/backend/app/**` for ACTIVE products only
+# (`_active_product_dirs` ⇐ deploy/fleet/active-scope.txt). `paths=[...]`
+# (pre-commit's staged files) judges only those files → blocks NEW occurrences
+# in what a commit touches; omitted = full audit (`model_dump_json_mode_report`
+# adds per-product counts). Severity high.
+# ---------------------------------------------------------------------------
+
+#: Write-verbs whose call (exact name, or `<verb>_…`) is a supabase-write sink.
+#: English (the brief's create_/update_/upsert_/insert_ + the scaffold's own
+#: bare `service.create(payload=…)`) and the pt-BR repository verbs igig uses.
+_MODEL_DUMP_WRITE_VERBS = ("create", "update", "upsert", "insert", "criar", "atualizar", "inserir")
+_MODEL_DUMP_ALLOW_RE = re.compile(r"noc-allow:\s*model-dump-json\s*(?:—|–|-|:)\s*\S")
+
+
+def _model_dump_allow_lines(src: str) -> set[int]:
+    """Line numbers carrying a `# noc-allow: model-dump-json — <reason>` comment
+    (via `tokenize` — comments are not in the AST)."""
+    import io
+    import tokenize
+
+    lines: set[int] = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.COMMENT and _MODEL_DUMP_ALLOW_RE.search(tok.string):
+                lines.add(tok.start[0])
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass  # un-tokenizable → ast.parse fails too; check_outlined owns it
+    return lines
+
+
+def _is_raw_model_dump(node: "ast.AST", allow: set[int]) -> bool:
+    """`<x>.model_dump(...)` without `mode="json"` (and not escaped on its line)."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "model_dump"):
+        return False
+    if node.lineno in allow:
+        return False
+    for kw in node.keywords:
+        if kw.arg == "mode":
+            return isinstance(kw.value, ast.Constant) and kw.value.value != "json"
+    return True
+
+
+def _model_dump_tainted(expr: "ast.AST | None", tainted: set[str], allow: set[int]) -> bool:
+    """True when `expr` evaluates to (or embeds) a raw model_dump value."""
+    if expr is None:
+        return False
+    if _is_raw_model_dump(expr, allow):
+        return True
+    t = lambda e: _model_dump_tainted(e, tainted, allow)  # noqa: E731
+    if isinstance(expr, ast.Name):
+        return expr.id in tainted
+    if isinstance(expr, ast.Dict):
+        return any(t(v) for v in expr.values)
+    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        return any(t(e) for e in expr.elts)
+    if isinstance(expr, ast.Starred):
+        return t(expr.value)
+    if isinstance(expr, ast.IfExp):
+        return t(expr.body) or t(expr.orelse)
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.BitOr):
+        return t(expr.left) or t(expr.right)
+    if isinstance(expr, ast.Await):
+        return False
+    if isinstance(expr, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        elt = expr.value if isinstance(expr, ast.DictComp) else expr.elt
+        if t(elt) or (isinstance(expr, ast.DictComp) and t(expr.key)):
+            return True
+        for gen in expr.generators:
+            it = gen.iter
+            if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) \
+                    and it.func.attr in ("items", "values"):
+                it = it.func.value
+            if t(it):
+                return True
+        return False
+    if isinstance(expr, ast.Call):
+        f = expr.func
+        if isinstance(f, ast.Name) and f.id == "dict":
+            return any(t(a) for a in expr.args) or any(t(k.value) for k in expr.keywords)
+        if isinstance(f, ast.Attribute) and f.attr == "copy" and not expr.args:
+            return t(f.value)
+    return False
+
+
+def _model_dump_call_name(call: "ast.Call") -> str | None:
+    f = call.func
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    if isinstance(f, ast.Name):
+        return f.id
+    return None
+
+
+def _model_dump_is_write_verb(name: str) -> bool:
+    return any(name == v or name.startswith(v + "_") for v in _MODEL_DUMP_WRITE_VERBS)
+
+
+def _model_dump_function_findings(fn: "ast.AST", allow: set[int]) -> list[tuple[int, str]]:
+    """(lineno, sink-name) for each supabase-write sink fed a raw model_dump in `fn`."""
+    tainted: set[str] = set()
+    nodes = list(ast.walk(fn))
+    changed = True
+    while changed:  # flow-insensitive fixed point over the function body
+        changed = False
+        for n in nodes:
+            targets: list[ast.AST] = []
+            value: ast.AST | None = None
+            if isinstance(n, ast.Assign):
+                targets, value = n.targets, n.value
+            elif isinstance(n, (ast.AnnAssign, ast.AugAssign)):
+                targets, value = [n.target], n.value
+            elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr == "update" and isinstance(n.func.value, ast.Name)
+                  and len(n.args) == 1 and not n.keywords):
+                targets, value = [n.func.value], n.args[0]  # dict.update(tainted)
+            if value is None or not _model_dump_tainted(value, tainted, allow):
+                continue
+            for tg in targets:
+                if isinstance(tg, ast.Name) and tg.id not in tainted:
+                    tainted.add(tg.id)
+                    changed = True
+    out: list[tuple[int, str]] = []
+    for n in nodes:
+        if not isinstance(n, ast.Call):
+            continue
+        name = _model_dump_call_name(n)
+        if not name or not _model_dump_is_write_verb(name):
+            continue
+        if (name == "update" and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name) and len(n.args) == 1 and not n.keywords):
+            continue  # `d.update(x)` — the dict-merge idiom (propagated above)
+        args = [*n.args, *(k.value for k in n.keywords)]
+        if not any(_model_dump_tainted(a, tainted, allow) for a in args):
+            continue
+        span = range(n.lineno, (getattr(n, "end_lineno", None) or n.lineno) + 1)
+        if any(ln in allow for ln in span):
+            continue
+        out.append((n.lineno, name))
+    return out
+
+
+def _model_dump_file_findings(src: str) -> list[tuple[int, str]]:
+    """All (lineno, sink) findings in one module's source (deduped, sorted)."""
+    tree = ast.parse(src)
+    allow = _model_dump_allow_lines(src)
+    found: set[tuple[int, str]] = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found.update(_model_dump_function_findings(fn, allow))
+    return sorted(found)
+
+
+def check_model_dump_json_mode(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag a raw `.model_dump()` (no `mode="json"`) flowing into a supabase
+    insert/update/upsert or a create_/update_/upsert_/insert_ write call."""
+    root = repo_root or REPO_ROOT
+    active = _active_product_dirs(root / "products")  # product-scope: active
+    active_slugs = {d.name for d in active}
+    if paths is not None:
+        files = [root / p for p in paths if p.endswith(".py")]
+    else:
+        files = [f for d in active if (d / "backend" / "app").is_dir()
+                 for f in (d / "backend" / "app").rglob("*.py")]
+    issues: list[dict] = []
+    for f in sorted(set(files)):
+        try:
+            rel = f.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        parts = rel.split("/")
+        if not (len(parts) > 4 and parts[0] == "products" and parts[1] in active_slugs
+                and parts[2] == "backend" and parts[3] == "app") or not f.is_file():
+            continue
+        if {"node_modules", ".venv", "venv", "__pycache__"} & set(parts):
+            continue
+        try:
+            findings = _model_dump_file_findings(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, ValueError):
+            continue  # un-parseable files are check_outlined's finding
+        for lineno, sink in findings:
+            issues.append({
+                "product": parts[1],
+                "file": rel,
+                "line": lineno,
+                "issue": (
+                    "model_dump() without mode=\"json\" flows into a supabase write — "
+                    "UUID/datetime/Decimal fields stay Python objects and supabase-py's "
+                    "json encoder 502s (\"Object of type UUID is not JSON serializable\", "
+                    f"orbity 2026-10-15). Sink: `{sink}(` at `{rel}:{lineno}`. "
+                    "Dump with `.model_dump(mode=\"json\", ...)`, or "
+                    "escape a proven-safe line with `# noc-allow: model-dump-json — "
+                    "<reason>`. See KB § PATTERNS/backend/backend.md § Pydantic → "
+                    "supabase writes."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+def model_dump_json_mode_report(repo_root: Path | None = None, paths: list[str] | None = None) -> dict:
+    """Full (or `paths`-scoped) audit with per-product counts — the reporting
+    face of `check_model_dump_json_mode` (CLI `--check-model-dump-json-mode`,
+    MCP `noctus.dev.check_model_dump_json_mode`)."""
+    issues = check_model_dump_json_mode(repo_root=repo_root, paths=paths)
+    by_product: dict[str, int] = {}
+    for i in issues:
+        by_product[i["product"]] = by_product.get(i["product"], 0) + 1
+    return {
+        "status": "clean" if not issues else "violation",
+        "total": len(issues),
+        "by_product": dict(sorted(by_product.items())),
+        "findings": issues,
+    }
+
+
+# ---------------------------------------------------------------------------
 # `check_every_test_file_is_gated` — no tracked test file may live outside an
 # area some workflow actually runs.
 #
@@ -16779,6 +17026,9 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_product_declared_imports())
     all_issues.extend(check_not_configured_carries_marker())
     all_issues.extend(check_redis_client_via_seam())
+    # 2026-10-15 (orbity live 502): raw model_dump() → supabase write.
+    # KB § PATTERNS/backend/backend.md § Pydantic → supabase writes.
+    all_issues.extend(check_model_dump_json_mode())
     all_issues.extend(check_every_test_file_is_gated())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
     # class: a product's `max_body_path_overrides` map. Only social-wiring
@@ -23300,6 +23550,22 @@ def register(server) -> None:
     )
     def _validate_product(slug: str) -> dict:
         return validate_one_product(slug)
+
+    @server.tool(
+        name="noctus.dev.check_model_dump_json_mode",
+        description=(
+            "Keeper report: a pydantic `.model_dump()` without mode=\"json\" whose value "
+            "flows into a supabase .insert/.update/.upsert (directly, via a local, via "
+            "{**dump} merge, or into a create_/update_/upsert_/insert_ write call) — the "
+            "orbity 2026-10-15 'Object of type UUID is not JSON serializable' 502. AST, "
+            "intra-function data-flow; ACTIVE products' backend/app only. `paths` (repo-"
+            "relative) scopes to those files (pre-commit delta); omitted = full audit. "
+            "Returns {status, total, by_product, findings}. Escape: `# noc-allow: "
+            "model-dump-json — <reason>`. KB § PATTERNS/backend/backend.md."
+        ),
+    )
+    def _check_model_dump_json_mode(paths: list[str] | None = None) -> dict:
+        return model_dump_json_mode_report(paths=paths)
 
 
 def check_ledger_drain_after_settle(repo_root: Path | None = None) -> list[dict]:

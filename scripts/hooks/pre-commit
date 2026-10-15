@@ -885,6 +885,23 @@ if [[ -n "$STAGED_REDIS_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies-ter. model_dump(mode="json") before supabase writes (blocking, ─
+# only when staged product backend/app python) ──────────────────────────────
+# Keeper `check_model_dump_json_mode` + `KB § PATTERNS/backend/backend.md §
+# Pydantic → supabase writes`. A raw `.model_dump()` (default mode="python")
+# that flows into a supabase insert/update/upsert keeps UUID/datetime objects
+# and 502s live (orbity 2026-10-15). Scoped to STAGED files (--paths) — a
+# commit is judged only on what it touches; asleep products are filtered out.
+STAGED_MDJ_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/app/.*\.py$' || true)
+if [[ -n "$STAGED_MDJ_PY" ]] && have_py; then
+    echo "[pre-commit] product backend/app python staged — checking model_dump(mode=\"json\") before supabase writes..."
+    if ! "$PY" "$CLI" --check-model-dump-json-mode --paths "$(echo "$STAGED_MDJ_PY" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] MODEL-DUMP-JSON-MODE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Dump with .model_dump(mode=\"json\", ...) before the supabase write, or mark a proven-safe line '# noc-allow: model-dump-json — <reason>'. See KB § PATTERNS/backend/backend.md § Pydantic → supabase writes." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies. Upload-route body-override gate (blocking, only when a ─
 # product backend .py file changed) ────────────────────────────────────────
 # Keeper `check_upload_route_body_override` + `KB § PATTERNS/backend/

@@ -506,7 +506,7 @@ helper is shape-agnostic.
 
 ## Recurring CI-hygiene standards (create it correctly the first time)
 
-Three classes keep tripping CI reactively. Each now has an enforcing gate — but
+These classes keep tripping CI (or prod) reactively. Each now has an enforcing gate — but
 the point is to author correctly the first time so the gate never fires. Fixing
 these in CI is the slip; the standards below are the by-construction path.
 
@@ -545,6 +545,37 @@ fleet-wide `2.12.0` was the 2026-06-30 red; the 2026-09-30 CVE bump to `2.14.0`
 landed in all 16 requirements files in one commit. Before bumping one product, bump
 the fleet (or don't diverge): grep the pin across `products/*/backend/requirements.txt`
 + root `requirements.txt`, land the same value everywhere in one commit.
+
+### 3. Pydantic → supabase writes — dump with `mode="json"`
+
+**Rule.** A pydantic model whose dump reaches a supabase `.insert(` / `.update(` /
+`.upsert(` — directly, via a local, via a `{**dump, ...}` merge, or through a
+service write method (`create_*` / `update_*` / `upsert_*` / `insert_*`, pt-BR
+`criar` / `atualizar` / `inserir`) — is dumped with **`.model_dump(mode="json", ...)`**
+(`exclude_unset=True` / `exclude_none=True` compose with it).
+
+**Why (orbity, 2026-10-15).** The default `mode="python"` keeps `UUID` / `datetime` /
+`date` / `Decimal` fields as Python objects; supabase-py serialises the request body
+with stdlib `json` → `TypeError: Object of type UUID is not JSON serializable` → a
+live **502** on the write route. A Fake/Mock client never serialises, so the route
+ships green — the bug only exists against the real HTTP client. `mode="json"` at the
+producing call IS the by-construction mechanism: one keyword, and every field
+leaves as its JSON form. A dump used for a response body or a log line is
+untouched by the rule (FastAPI's encoder handles responses).
+
+**Regression-test shape.** Drive the route with a payload carrying a `UUID` (and/or
+`datetime`) field, capture what the fake client received, and assert it survives
+`json.dumps(captured_payload)` — i.e. the test re-does the serialisation the real
+client does. Asserting the fake was "called with" a dict is not enough: the dict
+with a `UUID` inside is exactly the bug.
+
+**Gate.** Keeper `check_model_dump_json_mode` (AST, intra-function data-flow;
+ACTIVE products' `backend/app` only) — pre-commit judges staged files and blocks a
+new occurrence; `python mcp/noctusai/cli.py --check-model-dump-json-mode` (or MCP
+`noctus.dev.check_model_dump_json_mode`) is the full audit with per-product counts.
+A proven-safe line (all-`str` model) may carry
+`# noc-allow: model-dump-json — <reason>` on the sink or dump line; a bare marker
+without a reason does not count.
 
 ---
 
