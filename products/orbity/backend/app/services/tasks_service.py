@@ -283,3 +283,29 @@ class TasksService:
                 raise
 
         return spawned
+
+
+def orgs_with_due_routines(db: Any, *, as_of: str | None = None) -> list[str]:
+    """Org ids that have an active routine due on/before `as_of` (today) — the
+    scheduler's per-org work list. Paged: PostgREST caps an unbounded select at
+    1 000 rows silently."""
+    from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+    today = as_of or date.today().isoformat()
+
+    def fetch(start: int, end: int):
+        return (
+            db.table("routines")
+            .select("id, org_id")
+            .eq("active", True)
+            .lte("next_run", today)
+            .order("id")
+            .range(start, end)
+            .execute()
+            .data
+        )
+
+    orgs: dict[str, None] = {}
+    for row in iter_paged_rows(fetch, label="orbity due routines"):
+        orgs[str(row["org_id"])] = None
+    return list(orgs)

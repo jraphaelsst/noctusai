@@ -6,11 +6,13 @@ All methods scope queries to org_id; RLS provides the second defence.
 No silent errors: every except logs at the right level and re-raises.
 
 Engine integration:
-  - start_execution(flow_id, lead_id) → inserts automation_executions row
-    + calls advance_execution() for immediate steps.
-  - advance_execution(execution_id) → loads flow/steps/lead, calls
-    AutomationEngine.advance(), applies the AdvanceResult to DB.
-  - run_due(org_id) → delegates to automation_engine.run_due_actions().
+  - start_execution(flow_id, lead_id | subject, trigger_key) → inserts the
+    automation_executions row (idempotent per flow × trigger_key) and
+    advances it until it blocks on a scheduled send/wait/action.
+  - advance_execution(execution_id) → loads flow/steps/subject, calls
+    AutomationEngine.advance() in a chain, applies each AdvanceResult.
+  - run_due() → automation_engine.run_due_actions(): claims due actions,
+    executes them (real send / CRM action), then advances their executions.
 """
 from __future__ import annotations
 
@@ -19,9 +21,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+
+from app.services.automation_actions import execute_action
 from app.services.automation_engine import (
     AutomationEngine,
-    FakeWhatsAppSender,
     WhatsAppSender,
     run_due_actions,
 )
@@ -30,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 _engine = AutomationEngine()
 
+#: Hard stop for one advance chain — a backward `branch` could otherwise spin.
+MAX_CHAIN_STEPS = 100
+
+SUBJECT_TYPES = ("lead", "client", "task", "meeting")
+
 
 class AutomationService:
     """DB-backed automation service.
@@ -37,8 +46,9 @@ class AutomationService:
     Args:
         db:      Supabase client (schema-scoped to orbity by the database module)
         org_id:  tenant UUID (string form used in queries)
-        sender:  WhatsAppSender implementation; defaults to FakeWhatsAppSender.
-                 NOC-REMEDIATE[orbity-automation-live-send] — inject RealWhatsAppSender. — 2026-06-03
+        sender:  WhatsAppSender used by `run_due`. Default (None) is the REAL
+                 sender resolved lazily from the org's WhatsApp connection —
+                 the Fake is injected explicitly by tests only.
     """
 
     def __init__(
@@ -49,7 +59,14 @@ class AutomationService:
     ) -> None:
         self._db = db
         self._org_id = str(org_id)
-        self._sender: WhatsAppSender = sender if sender is not None else FakeWhatsAppSender()
+        self._sender_override = sender
+
+    @property
+    def _sender(self) -> WhatsAppSender:
+        if self._sender_override is not None:
+            return self._sender_override
+        from app.services.whatsapp_sender import make_default_sender
+        return make_default_sender()
 
     def _t(self, table: str):
         return self._db.table(table)
@@ -209,104 +226,208 @@ class AutomationService:
     # Execution lifecycle
     # ------------------------------------------------------------------
 
-    def start_execution(self, flow_id: str, lead_id: str) -> dict[str, Any]:
-        """Create a new automation_executions row and kick off the first advance.
+    def start_execution(
+        self,
+        flow_id: str,
+        lead_id: str | None = None,
+        *,
+        subject_type: str = "lead",
+        subject_id: str | None = None,
+        trigger_key: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create an execution and run it until it blocks (a scheduled send/wait)
+        or ends. Returns the execution row after that first chain.
 
-        Returns the execution row (after first advance applied).
+        `trigger_key` makes the start idempotent per flow: a second start with
+        the same key returns the EXISTING execution untouched.
         """
+        execution, _created = self.start_execution_once(
+            flow_id, lead_id, subject_type=subject_type, subject_id=subject_id,
+            trigger_key=trigger_key, context=context,
+        )
+        return execution
+
+    def start_execution_once(
+        self,
+        flow_id: str,
+        lead_id: str | None,
+        *,
+        subject_type: str = "lead",
+        subject_id: str | None = None,
+        trigger_key: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """(execution, created). `created=False` => the key was already used."""
+        if subject_type not in SUBJECT_TYPES:
+            raise ValueError(f"subject_type inválido: {subject_type}")
+        if subject_type == "lead" and not lead_id:
+            raise ValueError("lead_id é obrigatório para execuções de lead")
+        if subject_type != "lead" and not subject_id:
+            raise ValueError("subject_id é obrigatório para execuções que não são de lead")
+
         flow = self.get_flow(flow_id)
         if not flow:
             raise LookupError(f"Flow {flow_id} not found in org")
 
-        exec_row = {
+        if trigger_key:
+            existing = self._find_by_trigger_key(flow_id, trigger_key)
+            if existing:
+                logger.debug(
+                    "automation.start: flow=%s key=%s already started — no-op", flow_id, trigger_key
+                )
+                return existing, False
+
+        exec_row: dict[str, Any] = {
             "org_id": self._org_id,
             "flow_id": flow_id,
-            "lead_id": lead_id,
+            "lead_id": lead_id if subject_type == "lead" else None,
+            "subject_type": subject_type,
+            "subject_id": subject_id if subject_type != "lead" else None,
             "status": "running",
             "current_step_ord": 0,
             "started_at": datetime.now(timezone.utc).isoformat(),
-            "context": {},
+            "context": context or {},
         }
+        if trigger_key:
+            exec_row["trigger_key"] = trigger_key
         try:
             result = self._t("automation_executions").insert(exec_row).execute()
-        except Exception:
+        except Exception as exc:
+            if trigger_key and is_unique_violation(exc):
+                # Lost a race against a concurrent start of the same occurrence.
+                existing = self._find_by_trigger_key(flow_id, trigger_key)
+                if existing:
+                    return existing, False
             logger.exception(
-                "automation.start_execution insert failed org=%s flow=%s lead=%s",
-                self._org_id, flow_id, lead_id,
+                "automation.start_execution insert failed org=%s flow=%s subject=%s/%s",
+                self._org_id, flow_id, subject_type, subject_id or lead_id,
             )
             raise
         rows = result.data or []
         if not rows:
             raise RuntimeError("Execution insert returned no data")
-        execution = rows[0]
-
-        # Kick off the first advance immediately
-        return self.advance_execution(str(execution["id"]))
-
-    def advance_execution(self, execution_id: str) -> dict[str, Any]:
-        """Run one advance step on the given execution.
-
-        Loads flow + steps + lead, calls AutomationEngine.advance(),
-        applies AdvanceResult to the DB.
-        Returns the updated execution row.
-        """
+        execution_id = str(rows[0]["id"])
         try:
-            exec_res = (
+            return self.advance_execution(execution_id), True
+        except Exception:
+            # Never leave an orphan 'running' row nothing will ever resume.
+            self._fail_execution(execution_id, "Falha ao iniciar a automação.")
+            raise
+
+    def _find_by_trigger_key(self, flow_id: str, trigger_key: str) -> dict[str, Any] | None:
+        try:
+            res = (
                 self._t("automation_executions")
                 .select("*")
                 .eq("org_id", self._org_id)
-                .eq("id", execution_id)
+                .eq("flow_id", flow_id)
+                .eq("trigger_key", trigger_key)
                 .execute()
             )
         except Exception:
-            logger.exception(
-                "automation.advance_execution: fetch execution failed id=%s", execution_id
-            )
+            logger.exception("automation._find_by_trigger_key failed flow=%s", flow_id)
             raise
-        exec_rows = exec_res.data or []
-        if not exec_rows:
+        rows = res.data or []
+        return rows[0] if rows else None
+
+    def advance_execution(self, execution_id: str) -> dict[str, Any]:
+        """Advance the execution until it BLOCKS — it scheduled a send/wait/action
+        (resumed by the drain) — or ends. condition/branch steps resolve inline,
+        so a chain of them never needs a scheduler tick. Returns the execution row.
+        """
+        execution: dict[str, Any] | None = None
+        for _ in range(MAX_CHAIN_STEPS):
+            execution, blocked = self._advance_once(execution_id)
+            if blocked:
+                return execution
+        self._fail_execution(execution_id, "Fluxo excedeu o limite de passos (laço?).")
+        logger.error("automation.advance_execution: chain limit hit execution=%s", execution_id)
+        return execution or {}
+
+    def _subject_snapshot(self, execution: dict[str, Any]) -> dict[str, Any]:
+        """The 'lead-shaped' dict the engine interpolates/branches on.
+
+        lead -> the leads row. client/task/meeting -> the contact (client row, or
+        the task/meeting's client) mapped to name/phone/email/company, so a send
+        step reaches the client; no contact => no phone => the engine skips the
+        send and the skip is recorded on the execution.
+        """
+        subject_type = execution.get("subject_type") or "lead"
+        if subject_type == "lead":
+            return self._fetch_one("leads", str(execution["lead_id"])) or {}
+
+        subject_id = str(execution.get("subject_id") or "")
+        custom: dict[str, Any] = {}
+        client: dict[str, Any] | None = None
+        if subject_type == "client":
+            client = self._fetch_one("clients", subject_id)
+        elif subject_type == "task":
+            task = self._fetch_one("tasks", subject_id) or {}
+            custom["tarefa"] = task.get("title")
+            if task.get("client_id"):
+                client = self._fetch_one("clients", str(task["client_id"]))
+        elif subject_type == "meeting":
+            event = self._fetch_one("agenda_events", subject_id) or {}
+            custom["data_reuniao"] = event.get("starts_at")
+            if event.get("client_id"):
+                client = self._fetch_one("clients", str(event["client_id"]))
+        client = client or {}
+        return {
+            "name": client.get("name"),
+            "phone": client.get("phone"),
+            "email": client.get("email"),
+            "company": client.get("company"),
+            "custom_fields": custom,
+        }
+
+    def _fetch_one(self, table: str, row_id: str) -> dict[str, Any] | None:
+        try:
+            res = (
+                self._t(table).select("*").eq("org_id", self._org_id).eq("id", row_id).execute()
+            )
+        except Exception:
+            logger.exception("automation._fetch_one failed table=%s id=%s", table, row_id)
+            raise
+        rows = res.data or []
+        return rows[0] if rows else None
+
+    def _advance_once(self, execution_id: str) -> tuple[dict[str, Any], bool]:
+        """One engine step. Returns (execution, blocked): blocked when the
+        execution is no longer running or the step scheduled a pending action."""
+        execution = self._fetch_one("automation_executions", execution_id)
+        if not execution:
             raise LookupError(f"Execution {execution_id} not found")
-        execution = exec_rows[0]
 
         if execution["status"] != "running":
             logger.debug(
                 "automation.advance_execution: execution=%s status=%s — nothing to do",
                 execution_id, execution["status"],
             )
-            return execution
+            return execution, True
 
         flow = self.get_flow(str(execution["flow_id"]))
         if not flow:
-            self._fail_execution(execution_id, "flow not found")
+            self._fail_execution(execution_id, "Fluxo não encontrado.")
             raise LookupError(f"Flow {execution['flow_id']} not found")
 
         steps = self.list_steps(str(flow["id"]))
-
-        # Load lead snapshot
-        try:
-            lead_res = (
-                self._t("leads")
-                .select("*")
-                .eq("org_id", self._org_id)
-                .eq("id", str(execution["lead_id"]))
-                .execute()
-            )
-        except Exception:
-            logger.exception(
-                "automation.advance_execution: fetch lead failed execution=%s", execution_id
-            )
-            raise
-        lead_rows = lead_res.data or []
-        lead = lead_rows[0] if lead_rows else {}
+        lead = self._subject_snapshot(execution)
 
         result = _engine.advance(flow, steps, execution, lead)
 
-        # Apply result to DB
         patch: dict[str, Any] = {"status": result.new_status}
         if result.next_step_ord is not None:
             patch["current_step_ord"] = result.next_step_ord
         if result.next_action_at is not None:
             patch["next_action_at"] = result.next_action_at.isoformat()
+        if result.skip_reason:
+            ctx = dict(execution.get("context") or {})
+            ctx["skipped_steps"] = [
+                *(ctx.get("skipped_steps") or []),
+                {"ord": execution.get("current_step_ord"), "reason": result.skip_reason},
+            ]
+            patch["context"] = ctx
 
         try:
             upd = (
@@ -322,9 +443,8 @@ class AutomationService:
             )
             raise
         upd_rows = upd.data or []
-        updated_exec = upd_rows[0] if upd_rows else execution
+        updated_exec = upd_rows[0] if upd_rows else {**execution, **patch}
 
-        # Insert pending_action if produced
         if result.pending_action:
             try:
                 self._t("automation_pending_actions").insert(result.pending_action).execute()
@@ -333,9 +453,13 @@ class AutomationService:
                     "automation.advance_execution: insert pending_action failed execution=%s",
                     execution_id,
                 )
+                # The step is consumed but its action was not queued: stop the
+                # run loudly instead of silently dropping a message.
+                self._fail_execution(execution_id, "Falha ao agendar a etapa da automação.")
                 raise
+            return updated_exec, True
 
-        return updated_exec
+        return updated_exec, updated_exec.get("status") != "running"
 
     def list_executions(self, *, lead_id: str | None = None) -> list[dict[str, Any]]:
         try:
@@ -371,15 +495,48 @@ class AutomationService:
         return rows[0] if rows else None
 
     def run_due(self) -> dict[str, int]:
-        """Process due pending actions for this org.
-
-        Delegates to automation_engine.run_due_actions() with the configured sender.
-        """
+        """Drain this org's due pending actions (claim -> execute -> advance)."""
         try:
-            return run_due_actions(self._db, self._org_id, self._sender)
+            return run_due_actions(
+                self._db,
+                self._org_id,
+                self._sender,
+                advance=self.advance_execution,
+                run_action=lambda payload: execute_action(self._db, self._org_id, payload),
+            )
         except Exception:
             logger.exception("automation.run_due failed org=%s", self._org_id)
             raise
+
+    def stop_on_reply(self, lead_id: str) -> int:
+        """The lead answered on WhatsApp. For its RUNNING executions: cancel those
+        whose flow has `stop_on_reply` (default true — the Orbity default), and
+        mark the rest `context.lead_replied = true` for branch/condition steps.
+        Returns the number canceled."""
+        try:
+            running = (
+                self._t("automation_executions")
+                .select("id, flow_id, context")
+                .eq("org_id", self._org_id)
+                .eq("lead_id", lead_id)
+                .eq("status", "running")
+                .execute()
+            ).data or []
+        except Exception:
+            logger.exception("automation.stop_on_reply: fetch failed lead=%s", lead_id)
+            raise
+        canceled = 0
+        for ex in running:
+            flow = self.get_flow(str(ex["flow_id"]))
+            if flow and (flow.get("stop_rules") or {}).get("stop_on_reply", True):
+                if self.cancel_execution(str(ex["id"])):
+                    canceled += 1
+            else:
+                ctx = {**(ex.get("context") or {}), "lead_replied": True}
+                self._t("automation_executions").update({"context": ctx}).eq(
+                    "org_id", self._org_id
+                ).eq("id", str(ex["id"])).execute()
+        return canceled
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -395,3 +552,4 @@ class AutomationService:
             logger.exception(
                 "automation._fail_execution: could not mark failed id=%s", execution_id
             )
+

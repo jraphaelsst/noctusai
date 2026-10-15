@@ -58,6 +58,7 @@ from app.schemas.crm import (
     StageMoveRequest,
 )
 from app.rate_limit import limiter
+from app.services.automation_triggers import adisparar
 from app.services.crm_service import CRMService
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,31 @@ def _admin_crm(org_id: UUID) -> CRMService:
     RLS service_role bypass policy allows the INSERT.
     """
     return CRMService(get_admin_client(), org_id=org_id)
+
+
+async def _emit_stage_change(
+    org_id: UUID, lead: dict, previous_stage_id: str | None, stage: dict | None
+) -> None:
+    """Fire `pipeline_stage_entered` (and `lead_status_changed` for won/lost
+    stages) when the lead's stage really changed. The key carries the lead's
+    DB `updated_at`, so a re-entry later is a new occurrence while a retried
+    delivery of the same write is not. Never raises."""
+    new_stage_id = str(lead.get("stage_id") or "")
+    if not new_stage_id or not lead.get("id") or new_stage_id == (previous_stage_id or ""):
+        return
+    stamp = lead.get("updated_at") or ""
+    await adisparar(
+        "pipeline_stage_entered", org_id, lead_id=lead["id"],
+        payload={"stage_id": new_stage_id},
+        trigger_key=f"stage:{lead['id']}:{new_stage_id}:{stamp}",
+    )
+    final = "won" if (stage or {}).get("is_won") else "lost" if (stage or {}).get("is_lost") else None
+    if final:
+        await adisparar(
+            "lead_status_changed", org_id, lead_id=lead["id"],
+            payload={"status": final, "stage_id": new_stage_id},
+            trigger_key=f"status:{lead['id']}:{final}:{stamp}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +200,7 @@ async def create_lead(
     except Exception:
         logger.exception("crm.create_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar lead")
+    await adisparar("lead_created", org_id, lead_id=row.get("id"))
     return LeadOut(**row)
 
 
@@ -213,13 +240,21 @@ async def update_lead(
     data = payload.model_dump(mode="json", exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    previous_stage_id = None
+    stage = None
     try:
-        row = _crm(token, org_id).update_lead(lead_id, data)
+        svc = _crm(token, org_id)
+        if data.get("stage_id"):
+            before = svc.get_lead(lead_id)
+            previous_stage_id = str(before["stage_id"]) if before and before.get("stage_id") else None
+            stage = svc.get_stage(data["stage_id"])
+        row = svc.update_lead(lead_id, data)
     except Exception:
         logger.exception("crm.update_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar lead")
     if not row:
         raise HTTPException(status_code=404, detail="Lead não encontrado")
+    await _emit_stage_change(org_id, row, previous_stage_id, stage)
     return LeadOut(**row)
 
 
@@ -257,7 +292,7 @@ async def move_stage(
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        row = _crm(token, org_id).move_lead_stage(
+        row, previous_stage_id, stage = _crm(token, org_id).move_lead_stage_ex(
             lead_id,
             str(payload.stage_id),
             user_id=str(user.id) if hasattr(user, "id") else None,
@@ -269,6 +304,7 @@ async def move_stage(
         raise HTTPException(status_code=502, detail="Falha ao mover lead")
     if not row:
         raise HTTPException(status_code=404, detail="Lead não encontrado")
+    await _emit_stage_change(org_id, row, previous_stage_id, stage)
     return LeadOut(**row)
 
 
@@ -492,4 +528,5 @@ async def capture_lead(
     except Exception:
         logger.exception("capture_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar lead")
+    await adisparar("lead_created", org_id, lead_id=row.get("id"))
     return {"ok": True, "id": row.get("id")}

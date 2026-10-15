@@ -333,8 +333,9 @@ async def run_due(
 ) -> RunDueResult:
     """Process due automation_pending_actions for this org.
 
-    Intended to be called by the scheduler (pg_cron / Celery beat).
-    NOC-REMEDIATE[orbity-automation-scheduler] — attach real trigger. — 2026-06-03
+    The scheduler job `orbity_automacao_run_due` drains every org each minute;
+    this endpoint is the on-demand "run now" for the caller's own org. It sends
+    REAL WhatsApp messages (an unconnected org gets explicit failures).
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)

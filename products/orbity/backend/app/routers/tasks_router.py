@@ -40,9 +40,24 @@ from app.schemas.tasks import (
     TaskStatusUpdate,
     TaskUpdate,
 )
+from app.services.automation_triggers import adisparar
 from app.services.tasks_service import TasksService
 
 logger = logging.getLogger(__name__)
+
+async def _emit_task_completed(org_id: UUID, before: dict | None, row: dict) -> None:
+    """Fire `task_completed` only on the transition INTO done (a repeated
+    'done' write is not a new completion). Never raises."""
+    if row.get("status") != "done" or not row.get("id"):
+        return
+    if before is not None and before.get("status") == "done":
+        return
+    stamp = row.get("completed_at") or row.get("updated_at") or ""
+    await adisparar(
+        "task_completed", org_id, subject_type="task", subject_id=row["id"],
+        trigger_key=f"task_completed:{row['id']}:{stamp}",
+    )
+
 
 router = APIRouter(tags=["Tasks"])
 
@@ -101,6 +116,7 @@ async def create_task(
     except Exception:
         logger.exception("tasks.create_task failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar tarefa")
+    await adisparar("task_created", org_id, subject_type="task", subject_id=row.get("id"))
     return TaskOut(**row)
 
 
@@ -141,12 +157,15 @@ async def update_task(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
-        row = _svc(token, org_id).update_task(task_id, data)
+        svc = _svc(token, org_id)
+        before = svc.get_task(task_id) if data.get("status") == "done" else None
+        row = svc.update_task(task_id, data)
     except Exception:
         logger.exception("tasks.update_task failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar tarefa")
     if not row:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    await _emit_task_completed(org_id, before, row)
     return TaskOut(**row)
 
 
@@ -185,12 +204,15 @@ async def update_task_status(
         from datetime import datetime, timezone
         update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
     try:
-        row = _svc(token, org_id).update_task(task_id, update_data)
+        svc = _svc(token, org_id)
+        before = svc.get_task(task_id) if payload.status == "done" else None
+        row = svc.update_task(task_id, update_data)
     except Exception:
         logger.exception("tasks.update_task_status failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar status")
     if not row:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    await _emit_task_completed(org_id, before, row)
     return TaskOut(**row)
 
 

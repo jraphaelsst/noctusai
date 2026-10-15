@@ -51,7 +51,7 @@ StepType = Literal[
 ]
 
 ExecutionStatus = Literal["running", "done", "canceled", "failed"]
-PendingActionStatus = Literal["pending", "sent", "skipped", "failed"]
+PendingActionStatus = Literal["pending", "processing", "sent", "skipped", "failed"]
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,11 @@ class ExecutionOut(StrictHttpModel):
     id: UUID
     org_id: UUID
     flow_id: UUID
-    lead_id: UUID
+    # lead runs carry lead_id; task/client/meeting runs carry subject_id
+    lead_id: Optional[UUID] = None
+    subject_type: str = "lead"
+    subject_id: Optional[UUID] = None
+    trigger_key: Optional[str] = None
     status: str
     current_step_ord: int
     started_at: Optional[datetime] = None

@@ -8,19 +8,16 @@ Design:
     full step list + the lead context, returns the outcome (next_step_ord,
     pending_action to schedule, status transition). No DB calls.
 
-  - WhatsAppSender Protocol seam — the actual WAHA/chatbot send is behind
-    this interface. The Fake default is used in tests and when the real
-    WAHA integration is not yet attached.
-    NOC-REMEDIATE[orbity-automation-live-send] — attach real send here:
-      from noctusai_lib.domain.chatbot.delivery import send_reply_parts_sync
-      class RealWhatsAppSender:
-          def send(self, phone, message, org_id):
-              send_reply_parts_sync(phone, message, org_id=org_id) — 2026-06-03
+  - WhatsAppSender Protocol seam — the actual WAHA send is behind this
+    interface. The app default is `whatsapp_sender.RealWhatsAppSender`
+    (real send, or an explicit "WhatsApp não conectado" failure); the Fake
+    exists for tests / explicit injection only.
 
-  - run_due_actions(db, org_id) — process automation_pending_actions where
-    scheduled_for <= now(). Calls WhatsAppSender.send for send_message steps.
-    NOC-REMEDIATE[orbity-automation-scheduler] — attach a pg_cron trigger or
-      Celery beat task that calls this method every minute per org. — 2026-06-03
+  - run_due_actions(db, org_id, sender, advance=..., run_action=...) —
+    drains automation_pending_actions where scheduled_for <= now: CLAIMS each
+    row atomically (pending -> processing, compare-and-set), executes it,
+    marks it sent / skipped / failed (a failed send is NEVER 'sent'), then
+    advances its execution so the flow does not stall after the first step.
 
 Step types handled:
   send_message / send_whatsapp_media → schedule a pending_action (send seam)
@@ -46,7 +43,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from app.services.automation_errors import AutomationUserError
 
 logger = logging.getLogger(__name__)
 
@@ -208,14 +208,10 @@ class AdvanceResult:
 class WhatsAppSender(Protocol):
     """Protocol for the actual WhatsApp send seam.
 
-    The Fake is used by default (tests + pre-live-send state).
-    The Real attaches via dependency injection in the service layer.
-
-    NOC-REMEDIATE[orbity-automation-live-send] — real implementation:
-        from noctusai_lib.domain.chatbot.delivery import send_reply_parts_sync
-        class RealWhatsAppSender:
-            def send(self, phone: str, message: str, org_id: str) -> None:
-                send_reply_parts_sync(phone, message, org_id=org_id) — 2026-06-03
+    `send` returns None on success and RAISES on failure
+    (`whatsapp_sender.WhatsAppNotConnected` / `WhatsAppSendError` carry a
+    pt-BR message that is stored on the failed action). The Real is the app
+    default; the Fake is injected explicitly by tests.
     """
 
     def send(self, phone: str, message: str, org_id: str) -> None:
@@ -349,6 +345,7 @@ class AutomationEngine:
                         "step_type": step_type,
                         "phone": phone,
                         "message": rendered,
+                        "media_url": config.get("media_url") or config.get("media"),
                         "lead_id": str(lead.get("id") or ""),
                     },
                 }
@@ -459,6 +456,8 @@ class AutomationEngine:
                         "action_type": action_type,
                         "config": config,
                         "lead_id": str(lead.get("id") or ""),
+                        "subject_type": execution.get("subject_type") or "lead",
+                        "subject_id": str(execution.get("subject_id") or lead.get("id") or ""),
                     },
                 }
                 next_ord = _next_ord(current_ord, steps_by_ord)
@@ -498,58 +497,188 @@ def _next_ord(current_ord: int, steps_by_ord: dict[int, Any]) -> int | None:
     return None
 
 
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_DEFAULT_TZ = "America/Sao_Paulo"
+
+
 def _apply_schedule_window(
     dt: datetime,
     window: dict[str, Any],
 ) -> datetime:
-    """Adjust dt to respect the flow schedule window.
+    """Move `dt` to the next instant inside the flow's schedule window.
 
-    If outside_window_behavior is 'schedule_next_available' and the
-    proposed datetime is outside the allowed hours, push it to the next
-    available window start.
-
-    This implementation handles the hour boundary; timezone awareness is
-    a NOC-REMEDIATE[orbity-automation-tz] concern — the real implementation
-    should use pytz/zoneinfo to translate America/Sao_Paulo offsets.
-
-    Current simplified behaviour (safe default):
-      - If no window config or behavior != 'schedule_next_available': pass-through.
-      - Otherwise: if hour < start_hour or hour >= end_hour → push to next day
-        at start_hour (UTC approximation, +0).
+    Honors the window's `tz` (default America/Sao_Paulo), `days` (mon..sun;
+    default every day when absent) and `start`/`end` (HH:MM, local).
+    Only `outside_window_behavior == "schedule_next_available"` reschedules;
+    any other behaviour (or a malformed window) passes `dt` through unchanged.
+    Returns an aware UTC datetime.
     """
-    behavior = window.get("outside_window_behavior")
-    if behavior != "schedule_next_available":
+    if window.get("outside_window_behavior") != "schedule_next_available":
         return dt
 
-    start_str: str = window.get("start", "08:00")
-    end_str: str = window.get("end", "17:00")
     try:
-        start_h, start_m = (int(x) for x in start_str.split(":"))
-        end_h, end_m = (int(x) for x in end_str.split(":"))
-    except (ValueError, AttributeError):
+        start_h, start_m = (int(x) for x in str(window.get("start", "08:00")).split(":"))
+        end_h, end_m = (int(x) for x in str(window.get("end", "17:00")).split(":"))
+        tz = ZoneInfo(str(window.get("tz") or _DEFAULT_TZ))
+    except (ValueError, AttributeError, ZoneInfoNotFoundError):
+        logger.warning("automation_engine: malformed schedule_window %r — pass-through", window)
         return dt
 
-    # Ensure timezone-aware
+    raw_days = window.get("days")
+    days = {d for d in raw_days if d in _WEEKDAYS} if isinstance(raw_days, list) else set(_WEEKDAYS)
+    if not days:
+        days = set(_WEEKDAYS)
+
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(tz)
+    start_min = start_h * 60 + start_m
+    end_min = end_h * 60 + end_m
 
-    h = dt.hour
-    m = dt.minute
-    in_window = (h * 60 + m) >= (start_h * 60 + start_m) and (h * 60 + m) < (end_h * 60 + end_m)
-
-    if in_window:
-        return dt
-
-    # Outside window: push to next window start
-    next_start = dt.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
-    if next_start <= dt:
-        next_start = next_start + timedelta(days=1)
-    return next_start
+    for offset in range(0, 9):
+        day = (local + timedelta(days=offset)).date()
+        if _WEEKDAYS[day.weekday()] not in days:
+            continue
+        day_start = datetime(day.year, day.month, day.day, start_h, start_m, tzinfo=tz)
+        day_end = datetime(day.year, day.month, day.day, tzinfo=tz) + timedelta(minutes=end_min)
+        if offset == 0:
+            minutes = local.hour * 60 + local.minute
+            if start_min <= minutes < end_min:
+                return dt.astimezone(timezone.utc)
+            if minutes >= end_min:
+                continue
+        if day_end > day_start:
+            return day_start.astimezone(timezone.utc)
+    logger.warning("automation_engine: no open slot found in schedule_window %r — pass-through", window)
+    return dt
 
 
 # ---------------------------------------------------------------------------
-# run_due_actions — processes automation_pending_actions where scheduled_for <= now
+# run_due_actions — the drain
 # ---------------------------------------------------------------------------
+
+#: A 'processing' claim older than this belongs to a drain that died mid-send.
+STALE_CLAIM_MINUTES = 15
+
+_SEND_TYPES = ("send_message", "send_whatsapp_media")
+
+
+class ActionError(AutomationUserError):
+    """An `action` step could not run. The message is pt-BR and is stored as
+    the failed action's `error_detail` (shown in the UI)."""
+
+
+class _Skip(Exception):
+    """Internal: the action is intentionally not performed (reason is pt-BR)."""
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _mark_action(db: Any, org_id: str, action_id: str, status: str, detail: str | None = None) -> None:
+    patch: dict[str, Any] = {"status": status, "processed_at": _now_iso()}
+    if detail:
+        patch["error_detail"] = detail
+    db.table("automation_pending_actions").update(patch).eq("org_id", org_id).eq(
+        "id", action_id
+    ).execute()
+
+
+def _fail_execution(db: Any, org_id: str, execution_id: str, reason: str) -> None:
+    try:
+        db.table("automation_executions").update(
+            {"status": "failed", "error_detail": reason}
+        ).eq("org_id", org_id).eq("id", execution_id).execute()
+    except Exception:
+        logger.exception("run_due_actions: could not fail execution=%s", execution_id)
+
+
+def _claim(db: Any, org_id: str, action_id: str) -> bool:
+    """Compare-and-set pending -> processing. True only for the ONE caller whose
+    UPDATE actually matched the still-'pending' row (concurrent drains lose)."""
+    res = (
+        db.table("automation_pending_actions")
+        .update({"status": "processing", "claimed_at": _now_iso()})
+        .eq("org_id", org_id)
+        .eq("id", action_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    return bool(res.data)
+
+
+def recover_stale_claims(db: Any, org_id: str) -> int:
+    """Fail 'processing' rows whose drain died. NEVER re-sends (at-most-once:
+    a duplicate WhatsApp to a client is worse than a flagged failure)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)).isoformat()
+    res = (
+        db.table("automation_pending_actions")
+        .select("id, execution_id")
+        .eq("org_id", org_id)
+        .eq("status", "processing")
+        .lt("claimed_at", cutoff)
+        .limit(200)
+        .execute()
+    )
+    recovered = 0
+    for row in res.data or []:
+        reason = "Processamento interrompido; a mensagem não foi reenviada para evitar duplicidade."
+        claimed = (
+            db.table("automation_pending_actions")
+            .update({"status": "failed", "error_detail": reason, "processed_at": _now_iso()})
+            .eq("org_id", org_id)
+            .eq("id", str(row["id"]))
+            .eq("status", "processing")
+            .execute()
+        )
+        if claimed.data:
+            recovered += 1
+            _fail_execution(db, org_id, str(row["execution_id"]), reason)
+            logger.warning("run_due_actions: stale claim action=%s failed org=%s", row["id"], org_id)
+    return recovered
+
+
+def _execution_status(db: Any, org_id: str, execution_id: str) -> str | None:
+    res = (
+        db.table("automation_executions")
+        .select("status")
+        .eq("org_id", org_id)
+        .eq("id", execution_id)
+        .execute()
+    )
+    rows = res.data or []
+    return rows[0].get("status") if rows else None
+
+
+def _perform(
+    payload: dict[str, Any],
+    org_id: str,
+    sender: WhatsAppSender,
+    run_action: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    """Execute one action. Returns on success; raises `_Skip` (not performed,
+    flow continues) or any other exception (failure, flow stops)."""
+    step_type = payload.get("step_type", "")
+    if step_type in _SEND_TYPES:
+        phone = str(payload.get("phone") or "")
+        message = str(payload.get("message") or "")
+        if not phone or not message:
+            raise _Skip("Contato sem telefone ou mensagem vazia — envio ignorado.")
+        if payload.get("media_url"):
+            raise ActionError(
+                "Envio de mídia pelo WhatsApp ainda não é suportado nas automações."
+            )
+        sender.send(phone=phone, message=message, org_id=org_id)
+    elif step_type == "wait":
+        return
+    elif step_type == "action":
+        if run_action is None:
+            raise ActionError("Execução de ações indisponível neste contexto.")
+        run_action(payload)
+    else:
+        raise _Skip(f"Tipo de etapa desconhecido: {step_type or 'vazio'}.")
+
 
 def run_due_actions(
     db: Any,
@@ -557,35 +686,36 @@ def run_due_actions(
     sender: WhatsAppSender | None = None,
     *,
     batch_size: int = 50,
+    advance: Callable[[str], Any] | None = None,
+    run_action: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, int]:
-    """Process pending automation actions that are due.
+    """Drain this org's due pending actions.
 
-    Queries automation_pending_actions WHERE:
-      org_id = org_id AND status = 'pending' AND scheduled_for <= now()
+    For each due row (oldest first): CLAIM it (atomic compare-and-set), skip it
+    if its execution was canceled/failed meanwhile, execute it, mark it
+    sent / skipped / failed, then `advance(execution_id)` so the flow moves
+    on. A send failure marks the action 'failed' with a pt-BR reason and FAILS
+    the execution — never 'sent'.
 
-    For each:
-      - send_message / send_whatsapp_media → call sender.send() (seam)
-      - wait → mark sent (the wait is over; engine advances on next tick)
-      - action → mark sent (actual side-effect NOC-REMEDIATE[orbity-automation-action-exec])
-
-    Marks each row as 'sent' or 'failed'. Returns counts.
-
-    NOC-REMEDIATE[orbity-automation-scheduler] — call this from pg_cron or
-      a Celery beat task every minute, per-org or globally. — 2026-06-03
+    `sender=None` resolves the app-default REAL sender (an unconnected org
+    yields explicit failures); the Fake only exists via explicit injection.
+    `advance` / `run_action` are the service's seams (`AutomationService`).
     """
     if sender is None:
-        sender = FakeWhatsAppSender()
+        from app.services.whatsapp_sender import make_default_sender
+        sender = make_default_sender()
 
-    now_iso = datetime.now(timezone.utc).isoformat()
     counts = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0}
 
     try:
+        recover_stale_claims(db, org_id)
         result = (
             db.table("automation_pending_actions")
             .select("*")
             .eq("org_id", org_id)
             .eq("status", "pending")
-            .lte("scheduled_for", now_iso)
+            .lte("scheduled_for", _now_iso())
+            .order("scheduled_for", desc=False)
             .limit(batch_size)
             .execute()
         )
@@ -593,71 +723,89 @@ def run_due_actions(
         logger.exception("run_due_actions: fetch pending failed org=%s", org_id)
         raise
 
-    rows: list[dict[str, Any]] = result.data or []
-    if not rows:
-        return counts
-
-    for row in rows:
-        action_id: str = str(row["id"])
+    for row in result.data or []:
+        action_id = str(row["id"])
+        execution_id = str(row.get("execution_id") or "")
         payload: dict[str, Any] = row.get("payload") or {}
-        step_type: str = payload.get("step_type", "")
-        counts["processed"] += 1
 
         try:
-            if step_type in ("send_message", "send_whatsapp_media"):
-                phone: str = payload.get("phone", "")
-                message: str = payload.get("message", "")
-                if phone and message:
-                    sender.send(phone=phone, message=message, org_id=org_id)
-                    counts["sent"] += 1
-                else:
-                    logger.warning(
-                        "run_due_actions: action=%s missing phone or message — skipping",
-                        action_id,
-                    )
-                    counts["skipped"] += 1
-
-            elif step_type == "wait":
-                # Wait is over; mark sent so engine can advance
-                counts["sent"] += 1
-
-            elif step_type == "action":
-                # NOC-REMEDIATE[orbity-automation-action-exec] — execute CRM
-                # side-effects: create_task, move_lead, add_tag, etc. — 2026-06-03
-                action_type = payload.get("action_type", "")
-                logger.info(
-                    "run_due_actions: action=%s action_type=%r — side-effects pending remediation",
-                    action_id, action_type,
-                )
-                counts["sent"] += 1  # acknowledged; actual effect is NOC-REMEDIATE
-
-            else:
-                logger.warning(
-                    "run_due_actions: action=%s unknown step_type=%r — skipping",
-                    action_id, step_type,
-                )
-                counts["skipped"] += 1
-
-            # Mark as sent
-            db.table("automation_pending_actions").update({
-                "status": "sent",
-                "processed_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", action_id).execute()
-
+            if not _claim(db, org_id, action_id):
+                logger.debug("run_due_actions: action=%s claimed elsewhere — skip", action_id)
+                continue
         except Exception:
-            logger.exception(
-                "run_due_actions: action=%s failed — marking failed", action_id
+            logger.exception("run_due_actions: claim failed action=%s", action_id)
+            counts["failed"] += 1
+            continue
+
+        counts["processed"] += 1
+        try:
+            status = _execution_status(db, org_id, execution_id) if execution_id else None
+            if status in ("canceled", "failed"):
+                _mark_action(db, org_id, action_id, "skipped", "Execução encerrada antes do envio.")
+                counts["skipped"] += 1
+                continue
+
+            try:
+                _perform(payload, org_id, sender, run_action)
+            except _Skip as skip:
+                _mark_action(db, org_id, action_id, "skipped", str(skip))
+                counts["skipped"] += 1
+            else:
+                _mark_action(db, org_id, action_id, "sent")
+                counts["sent"] += 1
+        except Exception as exc:  # noqa: BLE001 — a failed action is recorded, never raised
+            reason = _failure_reason(exc)
+            logger.warning(
+                "run_due_actions: action=%s failed org=%s: %s", action_id, org_id, reason,
+                exc_info=not isinstance(exc, AutomationUserError),
             )
             counts["failed"] += 1
             try:
-                db.table("automation_pending_actions").update({
-                    "status": "failed",
-                    "error_detail": "exception during processing",
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", action_id).execute()
+                _mark_action(db, org_id, action_id, "failed", reason)
+            except Exception:
+                logger.exception("run_due_actions: could not mark action=%s failed", action_id)
+            if execution_id:
+                _fail_execution(db, org_id, execution_id, reason)
+            continue
+
+        if advance is not None and execution_id:
+            try:
+                advance(execution_id)
             except Exception:
                 logger.exception(
-                    "run_due_actions: could not mark action=%s as failed", action_id
+                    "run_due_actions: advance failed execution=%s org=%s", execution_id, org_id
                 )
+                _fail_execution(db, org_id, execution_id, "Falha ao avançar o fluxo de automação.")
 
     return counts
+
+
+def _failure_reason(exc: Exception) -> str:
+    """pt-BR reason for the failed action: our own typed errors carry one;
+    anything unexpected gets a generic message (the traceback is in the log)."""
+    if isinstance(exc, AutomationUserError) and str(exc):
+        return str(exc)
+    return "Falha inesperada ao executar a etapa da automação."
+
+
+def orgs_with_due_work(db: Any) -> list[str]:
+    """Org ids that have a due 'pending' action or a possibly-stale 'processing'
+    one — paged (PostgREST caps an unbounded select at 1 000 rows silently)."""
+    from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+    now = _now_iso()
+    stale_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)).isoformat()
+    orgs: dict[str, None] = {}
+
+    def _scan(status: str, col: str, op: str, bound: str):
+        def fetch(start: int, end: int):
+            q = db.table("automation_pending_actions").select("id, org_id").eq("status", status)
+            q = q.lte(col, bound) if op == "lte" else q.lt(col, bound)
+            return q.order("id").range(start, end).execute().data
+
+        for r in iter_paged_rows(fetch, label=f"automation due ({status})"):
+            orgs[str(r["org_id"])] = None
+
+    _scan("pending", "scheduled_for", "lte", now)
+    _scan("processing", "claimed_at", "lt", stale_cutoff)
+    return list(orgs)

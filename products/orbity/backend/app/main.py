@@ -37,6 +37,13 @@ from app.routers.meta_ads_router import router as meta_ads_router
 from app.routers.automation_router import router as automation_router
 from app.routers.social_content_router import router as social_content_router, approve_router
 from app.routers.reports_router import router as reports_router, public_reports_router
+from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
+from app.routers.whatsapp_webhook_router import router as whatsapp_webhook_router
+from app.scheduler import configure as _configure_scheduler, start_scheduler, stop_scheduler
+
+# Register the jobs at import (they only FIRE when NOCTUS_SCHEDULERS_ENABLED —
+# the seed guard — and the lifespan hooks below start the scheduler).
+_configure_scheduler()
 
 app = create_product_app(
     name="Orbity",
@@ -65,7 +72,12 @@ app = create_product_app(
         # Reports organ (Wave 3)
         reports_router,          # /api/reports/* — authenticated CRUD + generate
         public_reports_router,   # /api/reports/public/{token} — unauthenticated token read
+        # WhatsApp (WAHA) — admin-managed connections + per-connection inbound webhook
+        whatsapp_connections_router,  # /api/whatsapp/connections* — Conexões WhatsApp (admin)
+        whatsapp_webhook_router,      # /api/whatsapp/webhook/{token} — WAHA inbound (token-auth)
     ],
+    lifespan_startup=start_scheduler,
+    lifespan_shutdown=stop_scheduler,
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):

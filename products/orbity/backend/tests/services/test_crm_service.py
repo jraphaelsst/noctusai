@@ -361,3 +361,41 @@ class TestOrgIsolation:
         # stamped in the service query — the actual filter is DB-side (RLS + eq).
         # Here we verify the service passes the right org_id to the query.
         assert svc._org_id == str(ORG)
+
+
+# ---------------------------------------------------------------------------
+# move_lead_stage — won_at must be a REAL timestamp (was the literal "now()")
+# ---------------------------------------------------------------------------
+
+class TestMoveLeadStageWonAt:
+    def _db(self, *, is_won: bool, is_lost: bool = False, prev_stage="s-0"):
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("lead_stages", [
+            {"id": "s-won", "org_id": str(ORG), "name": "Fechado", "is_won": is_won, "is_lost": is_lost},
+        ])
+        lead = _lead("l-1", stage_id=prev_stage)
+        lead["org_id"] = str(ORG)
+        db.set_table_data("leads", [lead])
+        return db
+
+    def test_won_stage_stamps_a_real_iso_timestamp(self):
+        from datetime import datetime
+
+        db = self._db(is_won=True)
+        svc = CRMService(db, org_id=ORG)
+        updated = svc.move_lead_stage("l-1", "s-won")
+        assert updated["won_at"] != "now()"
+        parsed = datetime.fromisoformat(updated["won_at"])  # raises on the old literal
+        assert parsed.tzinfo is not None
+
+    def test_non_won_stage_does_not_touch_won_at(self):
+        db = self._db(is_won=False)
+        svc = CRMService(db, org_id=ORG)
+        updated = svc.move_lead_stage("l-1", "s-won")
+        assert updated["won_at"] is None
+
+    def test_move_ex_reports_previous_stage_and_target_stage(self):
+        db = self._db(is_won=True, prev_stage="s-0")
+        updated, previous, stage = CRMService(db, org_id=ORG).move_lead_stage_ex("l-1", "s-won")
+        assert previous == "s-0"
+        assert stage["is_won"] is True and updated["stage_id"] == "s-won"

@@ -36,6 +36,7 @@ from app.schemas.agenda import (
     AgendaEventUpdate,
 )
 from app.services.agenda_service import AgendaService
+from app.services.automation_triggers import adisparar
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,8 @@ async def create_event(
     except Exception:
         logger.exception("agenda.create_event failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar evento")
+    if row.get("event_type") == "meeting":
+        await adisparar("meeting_created", org_id, subject_type="meeting", subject_id=row.get("id"))
     return AgendaEventOut(**row)
 
 

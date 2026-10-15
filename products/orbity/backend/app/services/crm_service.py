@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -198,6 +199,21 @@ class CRMService:
             "page_size": page_size,
         }
 
+    def get_stage(self, stage_id: str) -> dict[str, Any] | None:
+        try:
+            res = (
+                self._t("lead_stages")
+                .select("id, name, is_won, is_lost")
+                .eq("org_id", self._org_id)
+                .eq("id", stage_id)
+                .execute()
+            )
+        except Exception:
+            logger.exception("crm.get_stage failed org=%s id=%s", self._org_id, stage_id)
+            raise
+        rows = res.data or []
+        return rows[0] if rows else None
+
     def get_lead(self, lead_id: str) -> dict[str, Any] | None:
         try:
             result = (
@@ -269,6 +285,14 @@ class CRMService:
         self, lead_id: str, stage_id: str, *, user_id: str | None = None
     ) -> dict[str, Any] | None:
         """Move a lead to a new stage; record an activity."""
+        updated, _previous, _stage = self.move_lead_stage_ex(lead_id, stage_id, user_id=user_id)
+        return updated
+
+    def move_lead_stage_ex(
+        self, lead_id: str, stage_id: str, *, user_id: str | None = None
+    ) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
+        """`move_lead_stage` + what an automation emitter needs:
+        (updated_lead, previous_stage_id, target_stage_row)."""
         # Verify stage belongs to the same org
         try:
             stage_res = (
@@ -286,9 +310,12 @@ class CRMService:
             raise ValueError(f"Stage {stage_id} not found in org")
         stage = stage_rows[0]
 
+        previous = self.get_lead(lead_id)
+        previous_stage_id = str(previous["stage_id"]) if previous and previous.get("stage_id") else None
+
         patch: dict[str, Any] = {"stage_id": stage_id}
         if stage["is_won"]:
-            patch["won_at"] = "now()"  # let Supabase stamp it
+            patch["won_at"] = datetime.now(timezone.utc).isoformat()
         elif stage["is_lost"]:
             pass  # won_at stays if previously set
 
@@ -300,7 +327,7 @@ class CRMService:
                 note=f"Movido para {stage['name']}",
                 created_by=user_id,
             )
-        return updated
+        return updated, previous_stage_id, stage
 
     # ------------------------------------------------------------------
     # Activities

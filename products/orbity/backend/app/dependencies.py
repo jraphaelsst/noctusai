@@ -99,3 +99,19 @@ def coerce_org_uuid(raw_org: Any) -> UUID:
         return UUID(str(raw_org))
     except (ValueError, TypeError):
         return _uuid.uuid5(_uuid.NAMESPACE_OID, str(raw_org))
+
+
+# ── org-admin gate (Conexões WhatsApp management) ───────────────────────────
+def require_org_admin_for_whatsapp(request, auth: tuple) -> None:
+    """403 unless the caller is an owner/admin of the SELECTED org.
+
+    Role read from the TRUSTED ``public.noctus_users`` row (core client) via the
+    seed's ``require_org_admin_role`` — never ``user_metadata`` (user-writable).
+    """
+    from noctusai_lib.api.auth.effective_org import acting_header_of
+    from noctusai_lib.api.auth.session.scopes import require_org_admin_role
+
+    require_org_admin_role(
+        _db.get_core_client(), getattr(auth[0], "id", None), "Conexões de WhatsApp",
+        org_id=auth[2], token=auth[1], acting_header=acting_header_of(request),
+    )

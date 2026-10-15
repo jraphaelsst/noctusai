@@ -44,6 +44,7 @@ from app.services.automation_engine import (
 # ---------------------------------------------------------------------------
 
 ORG_ID = str(uuid.uuid4())
+EXEC_ID = str(uuid.uuid4())
 FLOW_ID = str(uuid.uuid4())
 LEAD_ID = str(uuid.uuid4())
 EXEC_ID = str(uuid.uuid4())
@@ -727,117 +728,236 @@ class TestEvaluateCondition:
 # ---------------------------------------------------------------------------
 
 class TestRunDueActions:
-    """run_due_actions with a mock DB and FakeWhatsAppSender."""
+    """run_due_actions over the stateful MockSupabaseClient + injected sender."""
 
-    def _make_db(self, rows: list[dict]) -> MagicMock:
-        """Build a mock DB that returns the given rows from the pending query."""
-        db = MagicMock()
-        # Chain: .table().select().eq().eq().lte().limit().execute()
-        select_result = MagicMock()
-        select_result.data = rows
+    def _db(self, actions: list[dict], executions: list[dict] | None = None):
+        from noctusai_lib.testing import MockSupabaseClient
 
-        table_mock = MagicMock()
-        table_mock.select.return_value.eq.return_value.eq.return_value.lte.return_value.limit.return_value.execute.return_value = select_result
-
-        # update chain: .table().update().eq().execute()
-        update_result = MagicMock()
-        update_result.data = [{"id": "x"}]
-        table_mock.update.return_value.eq.return_value.execute.return_value = update_result
-
-        db.table.return_value = table_mock
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("automation_pending_actions", actions)
+        db.set_table_data(
+            "automation_executions",
+            executions if executions is not None else [
+                {"id": EXEC_ID, "org_id": ORG_ID, "status": "running"}
+            ],
+        )
         return db
 
-    def _pending(self, step_type: str, phone: str = "5511999990000") -> dict:
+    def _pending(self, step_type: str, phone: str = "5511999990000", **payload) -> dict:
         return {
             "id": str(uuid.uuid4()),
             "org_id": ORG_ID,
+            "execution_id": EXEC_ID,
             "status": "pending",
+            "scheduled_for": "2026-01-01T00:00:00+00:00",
             "payload": {
                 "step_type": step_type,
                 "phone": phone,
                 "message": "Hello!",
-                "action_type": "create_task",
+                "action_type": "add_tag",
+                **payload,
             },
         }
 
+    @staticmethod
+    def _row(db, table: str, row_id: str) -> dict:
+        return next(r for r in db.table(table).select("*").execute().data if r["id"] == row_id)
+
     def test_no_due_actions_returns_zeros(self):
-        db = self._make_db([])
-        sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
+        counts = run_due_actions(self._db([]), ORG_ID, FakeWhatsAppSender())
         assert counts == {"processed": 0, "sent": 0, "skipped": 0, "failed": 0}
 
-    def test_send_message_action_calls_sender(self):
+    def test_send_message_sends_marks_sent_and_advances(self):
         row = self._pending("send_message")
-        db = self._make_db([row])
+        db = self._db([row])
         sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["sent"] == 1
-        assert counts["processed"] == 1
-        assert len(sender.sent) == 1
+        advanced: list[str] = []
+        counts = run_due_actions(db, ORG_ID, sender, advance=advanced.append)
+        assert counts == {"processed": 1, "sent": 1, "skipped": 0, "failed": 0}
         assert sender.sent[0]["phone"] == "5511999990000"
+        stored = self._row(db, "automation_pending_actions", row["id"])
+        assert stored["status"] == "sent" and stored["processed_at"]
+        assert advanced == [EXEC_ID]
 
-    def test_send_whatsapp_media_calls_sender(self):
-        row = self._pending("send_whatsapp_media")
-        db = self._make_db([row])
+    def test_send_failure_is_failed_never_sent_and_stops_the_flow(self):
+        from app.services.whatsapp_sender import WhatsAppSendError
+
+        class Boom:
+            def send(self, phone, message, org_id):
+                raise WhatsAppSendError("Falha ao enviar pelo WhatsApp: HTTP 500")
+
+        row = self._pending("send_message")
+        db = self._db([row])
+        advanced: list[str] = []
+        counts = run_due_actions(db, ORG_ID, Boom(), advance=advanced.append)
+        assert counts["failed"] == 1 and counts["sent"] == 0
+        stored = self._row(db, "automation_pending_actions", row["id"])
+        assert stored["status"] == "failed"
+        assert stored["error_detail"] == "Falha ao enviar pelo WhatsApp: HTTP 500"
+        ex = self._row(db, "automation_executions", EXEC_ID)
+        assert ex["status"] == "failed" and "WhatsApp" in ex["error_detail"]
+        assert advanced == []
+
+    def test_unexpected_exception_gets_generic_message_not_the_traceback(self):
+        class Boom:
+            def send(self, phone, message, org_id):
+                raise ValueError("secret-token=abc")
+
+        row = self._pending("send_message")
+        db = self._db([row])
+        run_due_actions(db, ORG_ID, Boom())
+        detail = self._row(db, "automation_pending_actions", row["id"])["error_detail"]
+        assert "secret" not in detail and detail.startswith("Falha inesperada")
+
+    def test_not_connected_org_fails_explicitly(self):
+        from app.services.whatsapp_sender import RealWhatsAppSender
+        from types import SimpleNamespace
+
+        row = self._pending("send_message")
+        db = self._db([row])
+        stub = SimpleNamespace(
+            encryption_key="", waha_base_url="", waha_api_key="", waha_session="default",
+            waha_external_base_url="", whatsapp_allow_fake=False,
+        )
+        counts = run_due_actions(db, ORG_ID, RealWhatsAppSender(lambda: db, stub))
+        assert counts["failed"] == 1 and counts["sent"] == 0
+        assert "WhatsApp não conectado" in self._row(
+            db, "automation_pending_actions", row["id"]
+        )["error_detail"]
+
+    def test_second_drain_does_not_resend_claimed_row(self):
+        """The claim is a compare-and-set: a row already processed/claimed is
+        invisible to the next drain, so concurrent drains never double-send."""
+        row = self._pending("send_message")
+        db = self._db([row])
         sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["sent"] == 1
+        run_due_actions(db, ORG_ID, sender)
+        run_due_actions(db, ORG_ID, sender)
         assert len(sender.sent) == 1
 
-    def test_wait_action_marked_sent_no_send_call(self):
-        row = self._pending("wait")
-        db = self._make_db([row])
-        sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["sent"] == 1
-        assert len(sender.sent) == 0  # wait doesn't send
+    def test_lost_claim_race_skips_without_sending(self):
+        """Row listed as pending but flipped to 'processing' by a peer before our
+        CAS: our update matches nothing, so we must not send."""
+        from app.services import automation_engine as eng
 
-    def test_action_type_marked_sent_no_send_call(self):
+        row = self._pending("send_message")
+        db = self._db([row])
+        sender = FakeWhatsAppSender()
+        real_claim = eng._claim
+        # Peer wins the race: flip the row between our SELECT and our claim.
+        db.table("automation_pending_actions").update({"status": "processing"}).eq(
+            "id", row["id"]
+        ).execute()
+        assert real_claim(db, ORG_ID, row["id"]) is False
+        assert sender.sent == []
+
+    def test_wait_marked_sent_no_send_and_advances(self):
+        row = self._pending("wait")
+        db = self._db([row])
+        sender = FakeWhatsAppSender()
+        advanced: list[str] = []
+        counts = run_due_actions(db, ORG_ID, sender, advance=advanced.append)
+        assert counts["sent"] == 1 and sender.sent == []
+        assert advanced == [EXEC_ID]
+
+    def test_action_runs_via_run_action(self):
         row = self._pending("action")
-        db = self._make_db([row])
+        db = self._db([row])
+        ran: list[dict] = []
+        counts = run_due_actions(db, ORG_ID, FakeWhatsAppSender(), run_action=ran.append)
+        assert counts["sent"] == 1
+        assert ran[0]["action_type"] == "add_tag"
+
+    def test_action_error_fails_action_and_execution(self):
+        from app.services.automation_engine import ActionError
+
+        def boom(payload):
+            raise ActionError("Tipo de ação não suportado: x.")
+
+        row = self._pending("action")
+        db = self._db([row])
+        counts = run_due_actions(db, ORG_ID, FakeWhatsAppSender(), run_action=boom)
+        assert counts["failed"] == 1
+        assert self._row(db, "automation_pending_actions", row["id"])["error_detail"] == (
+            "Tipo de ação não suportado: x."
+        )
+        assert self._row(db, "automation_executions", EXEC_ID)["status"] == "failed"
+
+    def test_action_without_executor_fails_explicitly_never_acked(self):
+        row = self._pending("action")
+        db = self._db([row])
+        counts = run_due_actions(db, ORG_ID, FakeWhatsAppSender())
+        assert counts["failed"] == 1 and counts["sent"] == 0
+
+    def test_media_step_with_media_url_fails_explicitly(self):
+        row = self._pending("send_whatsapp_media", media_url="https://x/y.png")
+        db = self._db([row])
         sender = FakeWhatsAppSender()
         counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["sent"] == 1
-        assert len(sender.sent) == 0
+        assert counts["failed"] == 1 and sender.sent == []
+        assert "mídia" in self._row(db, "automation_pending_actions", row["id"])["error_detail"]
 
     def test_send_no_phone_skips(self):
         row = self._pending("send_message", phone="")
-        db = self._make_db([row])
+        db = self._db([row])
         sender = FakeWhatsAppSender()
         counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["skipped"] == 1
-        assert len(sender.sent) == 0
-
-    def test_multiple_due_actions_processed(self):
-        rows = [
-            self._pending("send_message"),
-            self._pending("wait"),
-            self._pending("action"),
-        ]
-        db = self._make_db(rows)
-        sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
-        assert counts["processed"] == 3
-        assert counts["sent"] == 3
+        assert counts["skipped"] == 1 and sender.sent == []
+        assert self._row(db, "automation_pending_actions", row["id"])["status"] == "skipped"
 
     def test_unknown_step_type_skips(self):
-        row = {
-            "id": str(uuid.uuid4()),
-            "org_id": ORG_ID,
-            "status": "pending",
-            "payload": {"step_type": "unknown_future_type"},
-        }
-        db = self._make_db([row])
-        sender = FakeWhatsAppSender()
-        counts = run_due_actions(db, ORG_ID, sender)
+        row = {**self._pending("x"), "payload": {"step_type": "unknown_future_type"}}
+        counts = run_due_actions(self._db([row]), ORG_ID, FakeWhatsAppSender())
         assert counts["skipped"] == 1
 
-    def test_default_sender_is_fake(self):
-        """run_due_actions uses FakeWhatsAppSender when no sender given."""
+    def test_canceled_execution_skips_without_sending(self):
         row = self._pending("send_message")
-        db = self._make_db([row])
-        counts = run_due_actions(db, ORG_ID)  # no sender → Fake
-        assert counts["sent"] == 1
+        db = self._db([row], [{"id": EXEC_ID, "org_id": ORG_ID, "status": "canceled"}])
+        sender = FakeWhatsAppSender()
+        advanced: list[str] = []
+        counts = run_due_actions(db, ORG_ID, sender, advance=advanced.append)
+        assert counts["skipped"] == 1 and sender.sent == [] and advanced == []
+
+    def test_future_actions_are_not_due(self):
+        row = {**self._pending("send_message"), "scheduled_for": "2999-01-01T00:00:00+00:00"}
+        sender = FakeWhatsAppSender()
+        counts = run_due_actions(self._db([row]), ORG_ID, sender)
+        assert counts["processed"] == 0 and sender.sent == []
+
+    def test_stale_processing_claim_is_failed_not_resent(self):
+        row = {
+            **self._pending("send_message"),
+            "status": "processing",
+            "claimed_at": "2020-01-01T00:00:00+00:00",
+        }
+        db = self._db([row])
+        sender = FakeWhatsAppSender()
+        run_due_actions(db, ORG_ID, sender)
+        assert sender.sent == []
+        stored = self._row(db, "automation_pending_actions", row["id"])
+        assert stored["status"] == "failed" and "duplicidade" in stored["error_detail"]
+        assert self._row(db, "automation_executions", EXEC_ID)["status"] == "failed"
+
+    def test_advance_failure_fails_the_execution(self):
+        row = self._pending("wait")
+        db = self._db([row])
+
+        def bad(execution_id):
+            raise RuntimeError("db down")
+
+        run_due_actions(db, ORG_ID, FakeWhatsAppSender(), advance=bad)
+        assert self._row(db, "automation_executions", EXEC_ID)["status"] == "failed"
+
+    def test_orgs_with_due_work_lists_pending_and_stale_orgs(self):
+        from app.services.automation_engine import orgs_with_due_work
+
+        rows = [
+            {**self._pending("wait"), "org_id": "org-a"},
+            {**self._pending("wait"), "org_id": "org-b", "scheduled_for": "2999-01-01T00:00:00+00:00"},
+            {**self._pending("wait"), "org_id": "org-c", "status": "processing",
+             "claimed_at": "2020-01-01T00:00:00+00:00"},
+        ]
+        assert sorted(orgs_with_due_work(self._db(rows))) == ["org-a", "org-c"]
 
 
 # ---------------------------------------------------------------------------

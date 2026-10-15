@@ -24,6 +24,7 @@ from app.dependencies import (
 )
 from app.schemas.clients import ClientCreate, ClientOut, ClientUpdate
 from app.services.clients_service import ClientsService
+from app.services.automation_triggers import adisparar
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ async def create_client(
     except Exception:
         logger.exception("clients.create failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar cliente")
+    await adisparar("client_created", org_id, subject_type="client", subject_id=row.get("id"))
     return ClientOut(**row)
 
 
