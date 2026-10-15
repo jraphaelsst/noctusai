@@ -16,6 +16,7 @@ import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { format } from "date-fns";
 import { reportPublicUrl } from "@/lib/publicLinks";
+import { describePayload, formatPayloadValue, type PayloadItem } from "@/lib/reportPayload";
 import { ClientSelect } from "@/components/ClientSelect";
 import { useClientOptions, nameLookup } from "@/hooks/useClients";
 import {
@@ -521,31 +522,20 @@ function ListTab({ onSelectReport }: ListTabProps) {
 // Snapshot payload renderer
 // ---------------------------------------------------------------------------
 
-interface SnapshotPayload {
-  leads?: number | Record<string, unknown>;
-  revenues?: number | Record<string, unknown>;
-  expenses?: number | Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-function PayloadCard({ label, value }: { label: string; value: unknown }) {
-  const display =
-    typeof value === "number"
-      ? value.toLocaleString("pt-BR", { minimumFractionDigits: 0 })
-      : typeof value === "object"
-      ? JSON.stringify(value, null, 2)
-      : String(value ?? "—");
-
+function PayloadCard({ item }: { item: PayloadItem }) {
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-4">
-      <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
-      {typeof value === "object" ? (
-        <pre className="text-xs text-foreground overflow-auto max-h-32 whitespace-pre-wrap">
-          {display}
-        </pre>
-      ) : (
-        <p className="text-xl font-bold text-foreground">{display}</p>
-      )}
+      <p className="text-xs font-medium text-muted-foreground mb-1">{item.label}</p>
+      <p
+        className={
+          item.kind === "unavailable"
+            ? "text-sm font-medium text-muted-foreground"
+            : "text-xl font-bold text-foreground"
+        }
+      >
+        {formatPayloadValue(item)}
+      </p>
+      {item.hint && <p className="mt-1 text-xs text-muted-foreground">{item.hint}</p>}
     </div>
   );
 }
@@ -570,7 +560,7 @@ function DetailTab({ report, onBack }: DetailTabProps) {
   const latestSnapshot =
     Array.isArray(snapshots) && snapshots.length > 0 ? snapshots[0] : null;
 
-  const payload = latestSnapshot?.payload as SnapshotPayload | undefined;
+  const payload = latestSnapshot?.payload as Record<string, unknown> | undefined;
 
   return (
     <div className="space-y-6">
@@ -678,20 +668,9 @@ function DetailTab({ report, onBack }: DetailTabProps) {
             </p>
             {payload && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {payload.leads !== undefined && (
-                  <PayloadCard label="Leads" value={payload.leads} />
-                )}
-                {payload.revenues !== undefined && (
-                  <PayloadCard label="Receitas" value={payload.revenues} />
-                )}
-                {payload.expenses !== undefined && (
-                  <PayloadCard label="Despesas" value={payload.expenses} />
-                )}
-                {Object.entries(payload)
-                  .filter(([k]) => !["leads", "revenues", "expenses"].includes(k))
-                  .map(([k, v]) => (
-                    <PayloadCard key={k} label={k} value={v} />
-                  ))}
+                {describePayload(payload).map((item) => (
+                  <PayloadCard key={item.key} item={item} />
+                ))}
               </div>
             )}
           </div>

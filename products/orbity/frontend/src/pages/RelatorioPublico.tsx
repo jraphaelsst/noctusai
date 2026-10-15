@@ -10,6 +10,7 @@
  * The api client is used as-is — the backend endpoint requires no
  * Authorization header. No useAuthStore reference here.
  */
+import { describePayload, formatPayloadValue } from "@/lib/reportPayload";
 import { useParams } from "react-router-dom";
 import { usePublicReport, type PublicReport } from "@/hooks/useRelatorios";
 import { FileBarChart2, AlertCircle, Clock, TrendingUp, DollarSign, TrendingDown } from "lucide-react";
@@ -84,58 +85,24 @@ function formatBRL(val: number) {
   return val.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+const ITEM_STYLE: Record<string, { icon: React.ElementType; color: string }> = {
+  leads: { icon: TrendingUp, color: "bg-blue-50 text-blue-600" },
+  revenues: { icon: DollarSign, color: "bg-green-50 text-green-600" },
+  expenses: { icon: TrendingDown, color: "bg-red-50 text-red-600" },
+};
+
 function SnapshotCards({ payload }: { payload: Record<string, unknown> }) {
   const cards: React.ReactNode[] = [];
 
-  if (typeof payload.leads === "number") {
+  for (const item of describePayload(payload)) {
+    const meta = ITEM_STYLE[item.key] ?? { icon: FileBarChart2, color: "bg-gray-100 text-gray-600" };
     cards.push(
       <StatCard
-        key="leads"
-        label="Leads gerados"
-        value={payload.leads}
-        icon={TrendingUp}
-        color="bg-blue-50 text-blue-600"
-      />,
-    );
-  }
-  if (typeof payload.revenues === "number") {
-    cards.push(
-      <StatCard
-        key="revenues"
-        label="Receitas"
-        value={formatBRL(payload.revenues)}
-        icon={DollarSign}
-        color="bg-green-50 text-green-600"
-      />,
-    );
-  }
-  if (typeof payload.expenses === "number") {
-    cards.push(
-      <StatCard
-        key="expenses"
-        label="Despesas"
-        value={formatBRL(payload.expenses)}
-        icon={TrendingDown}
-        color="bg-red-50 text-red-600"
-      />,
-    );
-  }
-
-  // Extra keys not covered above
-  for (const [key, val] of Object.entries(payload)) {
-    if (["leads", "revenues", "expenses"].includes(key)) continue;
-    if (val === null || val === undefined) continue;
-    const display =
-      typeof val === "number"
-        ? val.toLocaleString("pt-BR")
-        : String(val);
-    cards.push(
-      <StatCard
-        key={key}
-        label={key.replace(/_/g, " ")}
-        value={display}
-        icon={FileBarChart2}
-        color="bg-gray-100 text-gray-600"
+        key={item.key}
+        label={item.hint && item.kind === "unavailable" ? `${item.label} — ${item.hint}` : item.label}
+        value={formatPayloadValue(item)}
+        icon={meta.icon}
+        color={meta.color}
       />,
     );
   }
