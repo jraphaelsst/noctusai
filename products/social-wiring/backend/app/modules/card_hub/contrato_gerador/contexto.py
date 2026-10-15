@@ -56,6 +56,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     empresas_exigidas,
     foro_comarca,
     indice_certidoes,
+    intermediario_do_escritorio,
     grupos_de_parcelas,
     numero_da_parcela,
     numeros_impressos,
@@ -731,7 +732,7 @@ def montar_contexto(
     corretagem: dict[str, Any] = {}
     if sw["tem_intermediacao"]:
         qualificados = []
-        if any(i.corretor_id for i in d.intermediarios):
+        if any(intermediario_do_escritorio(i, d.imobiliaria) for i in d.intermediarios):
             qualificados.append(frases.qualificacao_imobiliaria(d.imobiliaria))
         # [§6.1 #21] Each external intermediário is qualified from its OWN
         # row. Migration 162 — a 'parceiro_split' row (a commission-split
@@ -742,7 +743,7 @@ def montar_contexto(
         qualificados += [
             frases.qualificacao_intermediario(i)
             for i in d.intermediarios
-            if not i.corretor_id and i.natureza == "intermediario"
+            if not intermediario_do_escritorio(i, d.imobiliaria) and i.natureza == "intermediario"
         ]
         # gated: derivacao._intermediacao `negociacao.corretagem_contratantes` (+ known value)
         texto, texto_cap, contrata = frases.corretagem_contratantes(

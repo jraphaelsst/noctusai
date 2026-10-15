@@ -115,14 +115,20 @@ def endereco_texto(e: Endereco) -> str:
     Logradouro, bairro and cidade go through `titulo_lugar` (signed style:
     "Al. Liverpool, nº 81 - Reserva do Vianna - Cotia/SP"); the UF stays
     upper-case and the CEP digits-and-hyphen."""
-    texto = f"{titulo_lugar(e.logradouro)}, nº {e.numero}"
+    # Parties' addresses are gated complete; a company's sede may carry its
+    # number inside the logradouro ("km 22 - Bloco F") and no CEP — a missing
+    # piece is omitted, never printed as "nº None" / "CEP: ".
+    texto = titulo_lugar(e.logradouro)
+    if (e.numero or "").strip():
+        texto += f", nº {e.numero}"
     if e.complemento:
         texto += f" - {e.complemento}"
     # A missing bairro is an aviso upstream (`ENDERECO_SEM_BAIRRO`), never a
     # dangling " -  - ": the segment is simply omitted.
     if (e.bairro or "").strip():
         texto += f" - {titulo_lugar(e.bairro)}"
-    return f"{texto} - {titulo_lugar(e.cidade)}/{(e.uf or '').strip().upper()} – CEP: {cep(e.cep)}"
+    texto += f" - {titulo_lugar(e.cidade)}/{(e.uf or '').strip().upper()}"
+    return f"{texto} – CEP: {cep(e.cep)}" if (e.cep or "").strip() else texto
 
 
 def matricula_numero(valor: Optional[str]) -> str:

@@ -66,3 +66,35 @@ class TestAvisoCorretagem:
     def test_a_payee_without_a_document_does_not_warn(self):
         av = _avaliar(self._com_favorecido(None))
         assert self.CODIGO not in [a["codigo"] for a in av.avisos]
+
+
+class TestIntermediarioDoEscritorioPeloCnpj:
+    """An intermediário typed as an external PJ whose CNPJ is the office's own
+    is the office: qualified from the company record (deal 876)."""
+
+    def _externo(self, documento: str):
+        d = fx.variante(1)
+        it = replace(d.intermediarios[0], corretor_id=None, pessoa_tipo="pj", documento=documento)
+        return d, it
+
+    def test_the_offices_own_cnpj_is_the_office(self):
+        d, it = self._externo("11.222.333/0001-81")
+        assert derivacao.intermediario_do_escritorio(it, d.imobiliaria)
+
+    def test_another_cnpj_is_external(self):
+        d, it = self._externo("11444777000161")
+        assert not derivacao.intermediario_do_escritorio(it, d.imobiliaria)
+
+    def test_a_linked_corretor_is_the_office(self):
+        d = fx.variante(1)
+        assert derivacao.intermediario_do_escritorio(d.intermediarios[0], d.imobiliaria)
+
+
+class TestEnderecoIncompleto:
+    def test_missing_number_and_cep_are_omitted(self):
+        from app.modules.card_hub.contrato_gerador.dados import Endereco
+
+        e = Endereco(logradouro="Rodovia Exemplo, km 22 - Bloco F", cidade="Cidade Exemplo", uf="sp")
+        texto = frases.endereco_texto(e)
+        assert "None" not in texto and "CEP" not in texto
+        assert texto.endswith("/SP")

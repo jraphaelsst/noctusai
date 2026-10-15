@@ -70,6 +70,8 @@ from app.modules.card_hub.contrato_gerador.dados import (
     CertidaoImovel,
     DadosContrato,
     Empresa,
+    Imobiliaria,
+    Intermediario,
     Parcela,
     ParteJuridica,
     Pessoa,
@@ -982,6 +984,17 @@ def posse_multa_diaria(d: DadosContrato) -> Optional[Decimal]:
     if d.termos.posse_multa_diaria is not None:
         return d.termos.posse_multa_diaria
     return d.imobiliaria.posse_multa_diaria
+
+
+def intermediario_do_escritorio(it: Intermediario, org: Imobiliaria) -> bool:
+    """Is this intermediário the office signing the contract? Linked to one of
+    its corretores (`corretor_id`), or typed as a PJ whose CNPJ IS the office's
+    own (deal 876: Tangerino typed as an external row) — either way it is
+    qualified from the company record, never from the bare row."""
+    if it.corretor_id:
+        return True
+    cnpj_org = frases.so_digitos(org.cnpj)
+    return bool(cnpj_org) and it.pessoa_tipo == "pj" and frases.so_digitos(it.documento) == cnpj_org
 
 
 def clausulas_extras_ativas(d: DadosContrato) -> dict[str, tuple[list[str], str]]:
@@ -3049,7 +3062,7 @@ def _corretagem_favorecido_vs_imobiliaria(av: Avaliacao, d: DadosContrato) -> No
         return
     favorecidos = {f.id: f for f in d.favorecidos}
     for it in d.intermediarios:
-        if not it.corretor_id or not it.favorecido_id:
+        if not intermediario_do_escritorio(it, org) or not it.favorecido_id:
             continue
         fav = favorecidos.get(it.favorecido_id)
         digitos = "".join(ch for ch in ((fav.cpf_cnpj if fav else None) or "") if ch.isdigit())
