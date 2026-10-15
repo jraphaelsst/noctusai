@@ -15,6 +15,16 @@ import { useConfirm } from "@noctusai/lib/components";
 import { LeadSelect } from "@/components/LeadSelect";
 import { useLeadOptions, nameLookup } from "@/hooks/useClients";
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useWhatsAppConnectionState } from "@/hooks/useWhatsApp";
+import {
+  SendMessageFields,
+  WaitFields,
+  buildSendMessageConfig,
+  buildWaitConfig,
+  parseWaitConfig,
+  type WaitUnit,
+} from "@/components/StepConfigForm";
 import {
   Zap,
   Plus,
@@ -348,7 +358,7 @@ function FlowDialogInner({
 // ---------------------------------------------------------------------------
 
 const STEP_CONFIG_PLACEHOLDERS: Partial<Record<StepType, string>> = {
-  send_message: '{"template": "Ola {{lead_name}}, bem-vindo!"}',
+  send_message: '{"template": "Olá {{nome}}, bem-vindo!"}',
   send_whatsapp_media:
     '{"template": "Confira nosso material", "media_url": "https://..."}',
   wait: '{"duration_minutes": 60}',
@@ -390,6 +400,15 @@ function StepDialogInner({
     editing ? JSON.stringify(editing.config, null, 2) : "",
   );
   const [configError, setConfigError] = useState<string>("");
+  const [advanced, setAdvanced] = useState(false);
+  const [template, setTemplate] = useState<string>(
+    editing?.step_type === "send_message" ? String(editing.config.template ?? "") : "",
+  );
+  const initialWait = parseWaitConfig(editing?.step_type === "wait" ? editing.config : undefined);
+  const [waitAmount, setWaitAmount] = useState(initialWait.amount);
+  const [waitUnit, setWaitUnit] = useState<WaitUnit>(initialWait.unit);
+  const hasForm = stepType === "send_message" || stepType === "wait";
+  const showForm = hasForm && !advanced;
 
   if (!open) return null;
 
@@ -406,7 +425,21 @@ function StepDialogInner({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setConfigError("");
-    const config = parseConfig();
+    let config: Record<string, unknown> | null;
+    if (showForm) {
+      const base = editing && editing.step_type === stepType ? editing.config : {};
+      const built =
+        stepType === "send_message"
+          ? buildSendMessageConfig(template, base)
+          : buildWaitConfig(waitAmount, waitUnit, base);
+      if (built.error || !built.config) {
+        setConfigError(built.error ?? "Configuração inválida");
+        return;
+      }
+      config = built.config;
+    } else {
+      config = parseConfig();
+    }
     if (config === null) return;
 
     if (editing) {
@@ -454,6 +487,7 @@ function StepDialogInner({
               onChange={(e) => {
                 const t = e.target.value as StepType;
                 setStepType(t);
+                setConfigError("");
                 if (!editing) {
                   setConfigStr(STEP_CONFIG_PLACEHOLDERS[t] ?? "{}");
                 }
@@ -467,6 +501,17 @@ function StepDialogInner({
               ))}
             </select>
           </div>
+          {stepType === "send_message" && showForm && (
+            <SendMessageFields template={template} onChange={(v) => { setTemplate(v); setConfigError(""); }} />
+          )}
+          {stepType === "wait" && showForm && (
+            <WaitFields
+              amount={waitAmount}
+              unit={waitUnit}
+              onChange={(a, u) => { setWaitAmount(a); setWaitUnit(u); setConfigError(""); }}
+            />
+          )}
+          {!showForm && (
           <div>
             <label htmlFor="aut-config-json" className="mb-1 block text-sm font-medium text-foreground">Config (JSON)</label>
             <textarea id="aut-config-json"
@@ -479,10 +524,34 @@ function StepDialogInner({
               placeholder={STEP_CONFIG_PLACEHOLDERS[stepType] ?? "{}"}
               className="flex w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
             />
-            {configError && (
-              <p className="mt-1 text-xs text-destructive">{configError}</p>
-            )}
           </div>
+          )}
+          {configError && (
+            <p role="alert" className="text-xs text-destructive">{configError}</p>
+          )}
+          {hasForm && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!advanced) {
+                  const built =
+                    stepType === "send_message"
+                      ? buildSendMessageConfig(template || " ", editing?.config)
+                      : buildWaitConfig(waitAmount, waitUnit, editing?.config);
+                  if (built.config) {
+                    const c = { ...built.config };
+                    if (stepType === "send_message") c.template = template;
+                    setConfigStr(JSON.stringify(c, null, 2));
+                  }
+                }
+                setAdvanced(!advanced);
+                setConfigError("");
+              }}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              {advanced ? "Voltar ao formulário" : "Avançado (JSON)"}
+            </button>
+          )}
           <div className="flex justify-end gap-3 pt-1">
             <button
               type="button"
@@ -895,17 +964,40 @@ function FlowsTab() {
 // Executions tab
 // ---------------------------------------------------------------------------
 
-function SimulatedSendBanner() {
+function WhatsAppStatusBanner() {
+  const state = useWhatsAppConnectionState();
+  if (state.kind === "loading") return null;
+  if (state.kind === "connected") {
+    return (
+      <div
+        role="note"
+        data-testid="wa-banner-connected"
+        className="flex items-start gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+      >
+        <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>
+          WhatsApp conectado
+          {state.number ? <> · <strong>{state.number}</strong></> : null} ({state.label}, sessão {state.session}).
+        </span>
+      </div>
+    );
+  }
+  const message =
+    state.kind === "error"
+      ? `Não foi possível verificar a conexão do WhatsApp (${state.message}) — mensagens podem não ser enviadas.`
+      : "WhatsApp não conectado — mensagens não serão enviadas.";
   return (
     <div
       role="note"
+      data-testid="wa-banner-disconnected"
       className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
     >
       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
       <span>
-        O envio de WhatsApp é <strong>simulado</strong> (sem conexão real): nenhuma
-        mensagem sai de verdade e os números de execução contam envios{" "}
-        <strong>simulados</strong>, não mensagens entregues.
+        {message}{" "}
+        <Link to="/whatsapp" className="font-medium underline">
+          Conectar WhatsApp
+        </Link>
       </span>
     </div>
   );
@@ -1009,6 +1101,14 @@ function ExecutionsTab() {
                         />
                         {EXECUTION_STATUS_LABELS[exec.status] ?? exec.status}
                       </span>
+                      {exec.error_detail && (
+                        <span
+                          data-testid="exec-failure-reason"
+                          className="mt-1 block max-w-[260px] text-xs text-destructive xl:hidden"
+                        >
+                          {exec.error_detail}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-foreground hidden sm:table-cell">
                       <span className="text-xs truncate block max-w-[180px]">
@@ -1025,7 +1125,7 @@ function ExecutionsTab() {
                     </td>
                     <td className="px-4 py-3 text-foreground hidden xl:table-cell">
                       {exec.error_detail ? (
-                        <span className="text-destructive text-xs truncate block max-w-[200px]">
+                        <span className="text-destructive text-xs block max-w-[320px] whitespace-normal break-words" title={exec.error_detail}>
                           {exec.error_detail}
                         </span>
                       ) : (
@@ -1082,7 +1182,7 @@ export default function Automacao() {
         </div>
       </div>
 
-      <SimulatedSendBanner />
+      <WhatsAppStatusBanner />
 
       {/* Tabs */}
       <div className="border-b border-border">
