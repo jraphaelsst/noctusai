@@ -9,6 +9,9 @@
     "260_finance.sql": "f6adb3bf27aa281dbef4d941ca786bd261c76499c87fec1189c1cd75e03e54b2",
     "261_status_pagina_financeiro.sql": "c92a1e036b68480453ba43b9ee4539759641a1130a35f6548f5dac9257b437cd",
     "262_imovel_preco_historico.sql": "64bb31f2370247737e266a1a34db4b23fe93aa87ffea3f90be35bbbc9eb51cc2",
-    "263_atendimento_motivo_perda_categoria.sql": "1968afeea0681caba179229bf80296ec11422976de667b03f47b81253d0cc1d5"
+    "263_atendimento_motivo_perda_categoria.sql": "1968afeea0681caba179229bf80296ec11422976de667b03f47b81253d0cc1d5",
+    "264_imovel_dados_avaliacao.sql": "4c4e6b05075c6c2d31a091c7adaa533008436190255d30c271038f2ef542300b",
+    "265_condominios.sql": "b53f10ad31d05c28532213da58e4f1cb0dedfcbdba107060848ec9c488a7b3a6",
+    "266_imovel_transacoes.sql": "c35f5791818d4b621f5315419bab6ffe59c344a1a5867646376c8eeaaa4fc022"
   }
 }
