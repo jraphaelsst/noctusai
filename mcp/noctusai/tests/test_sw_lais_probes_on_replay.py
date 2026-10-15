@@ -21,7 +21,7 @@ def _outcomes() -> dict[str, str]:
     root = Path(REPO_ROOT)
     steps = mr._steps_for(root, "social-wiring", set(), "worktree", {})
     probes = [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_LAIS_PROBES]
-    assert len(probes) == 5
+    assert probes, "no _SW_LAIS_PROBES registered"  # count derives from the registry (each wave adds its own)
     steps.append({"product": "social-wiring", "file": "seed", "sql": _SEED, "mode": "file", "twice": False})
     for p in probes:
         steps.append({"product": "social-wiring", "file": p.id, "sql": vdg.wrap_rollback_only(p.sql),
@@ -41,4 +41,4 @@ def _outcomes() -> dict[str, str]:
 def test_every_lais_guard_refuses_on_the_real_chain(pglite):
     out = _outcomes()
     assert set(out.values()) == {"refused"}, out
-    assert len(out) == 5
+    assert len(out) == len([p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_LAIS_PROBES])
