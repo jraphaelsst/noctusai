@@ -60,6 +60,9 @@ class ContextoCtx:
     interacao: Optional[dict[str, Any]] = None
     agora: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     ferramentas_habilitadas: bool = False
+    #: Extra `contexto.estado` keys for THIS turn only (wave 4: `reengajamento`, `reescrever`, ...); merged
+    #: key-by-key by `_prov_estado`, additive to the base estado.
+    estado_extra: dict[str, Any] = field(default_factory=dict)
 
 
 Provider = Callable[[ContextoCtx], dict[str, Any]]
@@ -81,6 +84,7 @@ def _prov_estado(ctx: ContextoCtx) -> dict[str, Any]:
         "operacao": op if op in _OPERACOES_ESTADO else None,
         "interacao_id": str((ctx.interacao or {}).get("id") or ""),
         "encerrado": bool(ctx.contato.get("encerrado_at")),
+        **ctx.estado_extra,
     }}
 
 
@@ -162,6 +166,7 @@ def montar(
     agora: Optional[datetime] = None,
     ferramentas_habilitadas: Optional[bool] = None,
     providers: Optional[Sequence[tuple[str, Provider]]] = None,
+    estado_extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Render contract 2.1(a). `ferramentas_habilitadas=None` asks the DB (`org_tem_token_ferramentas`).
     `providers=None` uses THE registry (`PROVIDERS`); pass an explicit sequence to render with another."""
@@ -169,7 +174,8 @@ def montar(
     if ferramentas_habilitadas is None:
         ferramentas_habilitadas = org_tem_token_ferramentas(client, org_id, agora=agora)
     ctx = ContextoCtx(client=client, org_id=org_id, contato=contato, interacao=interacao, agora=agora,
-                      ferramentas_habilitadas=ferramentas_habilitadas)
+                      ferramentas_habilitadas=ferramentas_habilitadas,
+                      estado_extra=dict(estado_extra or {}))
 
     out: dict[str, Any] = {"conhecimento_md": "", "perguntas": [], "estado": {}, "ferramentas": [], "acoes": []}
     for nome, fn in (PROVIDERS if providers is None else providers):

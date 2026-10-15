@@ -79,6 +79,24 @@ def _default_connection_lookup(cfg: Any) -> Callable[[UUID], Optional[WhatsAppCo
     return lookup
 
 
+def _default_job_repository() -> Any:
+    """The `social_wiring.jobs` queue over the admin client; None (logged) when there is none -- the
+    re-engagement timers are a side effect of a reply, never a precondition for sending it."""
+    from noctusai_lib.domain.jobs import make_job_repository
+
+    from app.dependencies import get_admin_client
+
+    admin = get_admin_client()
+    if admin is None:
+        logger.warning("lais: no admin client -- re-engagement timers will not be armed")
+        return None
+    try:
+        return make_job_repository(supabase_client=admin, schema_name="social_wiring")
+    except Exception:
+        logger.exception("lais: could not build the job repository -- re-engagement timers will not be armed")
+        return None
+
+
 @dataclass
 class LeadDeps:
     buffer: Any
@@ -93,6 +111,7 @@ class LeadDeps:
     message_store_factory: Callable[[UUID], Any] = None  # type: ignore[assignment]
     redis: Any = None
     bus: Any = None
+    jobs: Any = None  # seed `JobRepository` (re-engagement timers); built lazily, None = no timers
     sleep: Callable[[float], Any] = asyncio.sleep
     turn_timeout_s: float = TURN_TIMEOUT_S
 
@@ -118,6 +137,8 @@ class LeadDeps:
             self.redis = make_redis_client(self.cfg.redis_url, decode_responses=True)
         if self.bus is None:
             self.bus = get_whatsapp_bus(self.cfg.redis_url)
+        if self.jobs is None:
+            self.jobs = _default_job_repository()
 
 
 # ── the buffer run: which inbound messages are still unanswered ─────────────
@@ -313,6 +334,27 @@ async def _pos_turno(
         )
     except Exception:
         logger.exception("lais: post-turn bookkeeping failed conn=%s chat=%s", connection.id, chat_id)
+    if enviou:
+        await _armar_reengajamento(deps, connection=connection, chat_id=chat_id)
+
+
+async def _armar_reengajamento(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str) -> None:
+    """After a Julia outbound AND its actions: arm the re-engagement timers against the contato's CURRENT
+    `gen` (an `encerrar` / handoff in the same turn already bumped it and set `encerrado_at`). Never raises."""
+    if deps.jobs is None:
+        return
+    try:
+        from app.services import lais_reengajamento_service
+
+        fresh = lais_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
+        if fresh is not None:
+            await lais_reengajamento_service.agendar_apos_outbound(deps.scoped, deps.jobs, connection.org_id, fresh)
+    except Exception:
+        logger.exception("lais: could not arm the re-engagement timers conn=%s chat=%s", connection.id, chat_id)
+
+
+#: The system marker that stands in for the lead's message in a re-engagement turn (agents needs >= 1).
+REENGAJAMENTO_MARCADOR = "[sistema] O lead não respondeu. Retome a conversa."
 
 
 # ── the worker entry point ──────────────────────────────────────────────────
@@ -507,7 +549,8 @@ async def _deliver(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str,
     run: list[dict[str, Any]], result: TurnResult, state: Optional[dict[str, Any]], chat_store: Any,
     lais_turn: Optional[LaisTurn] = None, agents_client: Optional[AgentsClient] = None, lote_hash: Optional[str] = None,
-) -> None:
+) -> bool:
+    """Send the reply; True when at least one bubble went out."""
     pos = dict(lais_turn=lais_turn, connection=connection, chat_id=chat_id, result=result, lote_hash=lote_hash,
                agents_client=agents_client)
     # L3: a human may have taken over WHILE the turn was running -- re-check the
@@ -518,7 +561,7 @@ async def _deliver(
         # The reply is dropped, but what the model extracted (slots, operacao) is still the lead's data.
         await _pos_turno(deps, enviou=False, **pos)
         close_run(deps.buffer, key, run)
-        return
+        return False
 
     handoff = result.handoff
     primeira = not ((state or {}).get("agente_conversation_id") or (fresh or {}).get("agente_conversation_id"))
@@ -529,7 +572,7 @@ async def _deliver(
     if not partes and handoff is None:
         await _pos_turno(deps, enviou=False, **pos)  # silence can still carry actions
         close_run(deps.buffer, key, run)  # status `silencio`: stay silent, nothing to disclose
-        return
+        return False
 
     waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
     sender = LeadSender(connection=connection, waha=waha, deps=deps)
@@ -544,7 +587,7 @@ async def _deliver(
         except Exception:
             logger.exception("lais: cannot build the privacy disclosure for org=%s -- reply NOT sent", connection.org_id)
             close_run(deps.buffer, key, run)
-            return
+            return False
         partes.insert(0, disclosure)
 
     lais.marcar_envio_em_curso(deps.redis, connection.id, chat_id)
@@ -567,6 +610,50 @@ async def _deliver(
         await _apply_handoff(deps, connection=connection, chat_id=chat_id, chat_store=chat_store, motivo=handoff.motivo)
     await _pos_turno(deps, enviou=bool(enviadas), **pos)
     close_run(deps.buffer, key, run)
+    return bool(enviadas)
+
+
+async def run_reengajamento_turn(
+    deps: LeadDeps, connection: WhatsAppConnectionRecord, chat_id: str, contato: dict[str, Any],
+    estado_extra: dict[str, Any], marker_id: str,
+) -> bool:
+    """A re-engagement turn (wave 4): the ordinary lead turn with `contexto.estado.<estado_extra>`, no
+    inbound from the lead. agents requires >= 1 message, so ONE system marker (never sent to the lead,
+    unique per job through `marker_id`) stands in for it. Does NOT bump `gen` (nothing came in). Returns True
+    when a message went out; an agents failure is logged and reads as False (the job still completes: a
+    re-engagement is best-effort, a retry storm against a down agents is worse)."""
+    org_id = connection.org_id
+    client = deps.agents_client_factory(org_id)
+    if client is None:
+        lais.registrar_erro_link(org_id, "nao_configurado", cfg=deps.cfg)
+        logger.error("lais: agents not configured for org %s -- re-engagement not sent", org_id)
+        return False
+    chat_store = deps.chat_store_factory(org_id)
+    state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
+    interacao = lais_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
+    contexto = lais_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao, estado_extra=estado_extra)
+    phone = contato.get("telefone_e164") or _phone_e164(chat_id)
+    req = TurnRequest(
+        agent_key=connection.agente_leads_key or lais.DEFAULT_AGENT_KEY,
+        connection_id=str(connection.id), chat_id=chat_id, phone_e164=phone, display_name=contato.get("nome"),
+        contexto=contexto,
+        messages=(TurnMessage(
+            texto=REENGAJAMENTO_MARCADOR, provider_message_id=marker_id[:256], at=datetime.now(timezone.utc),
+        ),),
+    )
+    try:
+        result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
+    except asyncio.TimeoutError:
+        logger.error("lais: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
+        return False
+    except AgentsClientError as exc:
+        logger.error("lais: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
+        return False
+    return await _deliver(
+        deps, connection=connection, chat_id=chat_id, key=f"lead:{connection.id}:{chat_id}", run=[], result=result,
+        state=state, chat_store=chat_store, lais_turn=LaisTurn(contato=contato, contexto=contexto),
+        agents_client=client, lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [marker_id]),
+    )
 
 
 async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, chat_store: Any, motivo: str) -> None:

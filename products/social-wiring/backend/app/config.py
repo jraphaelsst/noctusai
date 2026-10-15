@@ -385,6 +385,10 @@ class SocialWiringSettings(ProductSettings):
     geracao_worker_enabled: bool = True
     geracao_poll_seconds: float = 2.0
     geracao_lease_seconds: float = 600.0
+    # Lais wave 4 (reengajamento): worker over the `lais_reengajar_*` / `lais_regua_tentativa` job types.
+    lais_reengajamento_worker_enabled: bool = True
+    lais_reengajamento_poll_seconds: float = 5.0
+    lais_reengajamento_lease_seconds: float = 600.0
     biblioteca_poll_seconds: float = 5.0
     biblioteca_lease_seconds: float = 600.0
     # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.
