@@ -28,6 +28,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 // which vitest injects under `globals: true`. See
 // [[reference_lib_frontend_vitest_render_harness_gap]].
 import "@testing-library/jest-dom";
+import { ConfirmProvider } from "@noctusai/lib/components";
 import type { FunilStage, Lead } from "@/hooks/useCrm";
 
 const { mockUseFunil, mockMoveMutate, idleMutation } = vi.hoisted(() => ({
@@ -157,7 +158,7 @@ beforeEach(() => {
 describe("Funil — canonical KanbanBoard organ", () => {
   it("renders one droppable column per stage, tagged by the organ", () => {
     mockUseFunil.mockReturnValue(funilQuery());
-    const { container } = render(<Funil />);
+    const { container } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     const columns = container.querySelectorAll("[data-kanban-column-id]");
     expect(columns).toHaveLength(2);
@@ -168,7 +169,7 @@ describe("Funil — canonical KanbanBoard organ", () => {
 
   it("renders each lead as a sortable card carrying its lead id", () => {
     mockUseFunil.mockReturnValue(funilQuery());
-    const { container } = render(<Funil />);
+    const { container } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     const cards = container.querySelectorAll("[data-kanban-card-id]");
     expect(Array.from(cards).map((c) => c.getAttribute("data-kanban-card-id"))).toEqual([
@@ -181,7 +182,7 @@ describe("Funil — canonical KanbanBoard organ", () => {
 
   it("keeps the column chrome the pre-organ board had: name, count, subtotal", () => {
     mockUseFunil.mockReturnValue(funilQuery());
-    const { container } = render(<Funil />);
+    const { container } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     // Scope to the column the organ rendered, so this also proves the header
     // landed in the RIGHT column — a page-wide getByText would happily match
@@ -203,7 +204,7 @@ describe("Funil — canonical KanbanBoard organ", () => {
 
   it("shows the consumer's empty-column copy, not the organ's default", () => {
     mockUseFunil.mockReturnValue(funilQuery());
-    render(<Funil />);
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     expect(screen.getByText("Nenhum lead")).toBeInTheDocument();
     expect(screen.queryByText("Nenhum item nesta etapa")).not.toBeInTheDocument();
@@ -211,7 +212,7 @@ describe("Funil — canonical KanbanBoard organ", () => {
 
   it("still opens the detail panel on click — drag listeners do not swallow it", () => {
     mockUseFunil.mockReturnValue(funilQuery());
-    render(<Funil />);
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     fireEvent.click(screen.getByText("Ana Prospect"));
 
@@ -226,7 +227,7 @@ describe("Funil — canonical KanbanBoard organ", () => {
 describe("Funil — loading vs empty", () => {
   it("shows the skeleton on first load", () => {
     mockUseFunil.mockReturnValue(funilQuery({ data: undefined, isPending: true }));
-    const { container } = render(<Funil />);
+    const { container } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
     expect(screen.queryByText("Nenhuma etapa configurada")).not.toBeInTheDocument();
@@ -238,7 +239,7 @@ describe("Funil — loading vs empty", () => {
     mockUseFunil.mockReturnValue(
       funilQuery({ data: [], isPending: false, isFetching: true })
     );
-    const { container } = render(<Funil />);
+    const { container } = render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     expect(screen.queryByText("Nenhuma etapa configurada")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /criar etapas padrão/i })).not.toBeInTheDocument();
@@ -249,7 +250,7 @@ describe("Funil — loading vs empty", () => {
     mockUseFunil.mockReturnValue(
       funilQuery({ data: [], isPending: false, isFetching: false })
     );
-    render(<Funil />);
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     expect(screen.getByText("Nenhuma etapa configurada")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /criar etapas padrão/i })).toBeInTheDocument();
@@ -259,7 +260,7 @@ describe("Funil — loading vs empty", () => {
     mockUseFunil.mockReturnValue(
       funilQuery({ data: undefined, isError: true, error: new Error("boom") })
     );
-    render(<Funil />);
+    render(<ConfirmProvider><Funil /></ConfirmProvider>);
 
     expect(screen.getByText("Falha ao carregar o funil")).toBeInTheDocument();
     expect(screen.getByText("boom")).toBeInTheDocument();

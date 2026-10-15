@@ -41,6 +41,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { ApiClient } from '../api';
+import { useConfirm } from './confirm';
 
 /** A column in the listing table. */
 export interface ResourceColumn<T> {
@@ -168,6 +169,7 @@ export function ResourceManager<T extends Record<string, any>>(
     onMutate,
   } = props;
 
+  const confirm = useConfirm();
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -268,7 +270,12 @@ export function ResourceManager<T extends Record<string, any>>(
     const confirmMsg = deleteConfirm
       ? deleteConfirm(row)
       : `${deleteLabel} "${row[fields[0]?.name] ?? row[idKey]}"?`;
-    if (!window.confirm(confirmMsg)) return;
+    const ok = await confirm({
+      title: confirmMsg,
+      confirmLabel: deleteLabel,
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.delete(`${apiPath}/${String(row[idKey])}`);
       toast.success(`${singularName} ${deleteLabel === 'Desativar' ? 'desativado(a)' : 'excluído(a)'}`);

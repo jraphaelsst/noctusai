@@ -8,13 +8,14 @@
  *
  * Rendered with `@testing-library/react`; matchers from
  * `@testing-library/jest-dom` (registered in the seed framework's vitest
- * setup). `window.confirm` is stubbed (jsdom does not implement it).
+ * setup). Delete goes through the seed `useConfirm` organ (rendered under `ConfirmProvider`).
  */
 /// <reference types="@testing-library/jest-dom" />
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 
 import { ResourceManager } from './ResourceManager';
+import { ConfirmProvider } from './confirm';
 import type { ApiClient } from '../api';
 
 interface Row {
@@ -44,6 +45,7 @@ const FIELDS = [
 
 function renderRM(api: ApiClient) {
   return render(
+    <ConfirmProvider>
     <ResourceManager<Row>
       title="Itens"
       api={api}
@@ -51,14 +53,12 @@ function renderRM(api: ApiClient) {
       singularName="Item"
       columns={COLUMNS}
       fields={FIELDS}
-    />,
+    />
+    </ConfirmProvider>,
   );
 }
 
 describe('<ResourceManager/>', () => {
-  beforeEach(() => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-  });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -111,8 +111,10 @@ describe('<ResourceManager/>', () => {
     await screen.findByText('Delta');
 
     fireEvent.click(screen.getByText('Excluir'));
+    expect(api.delete).not.toHaveBeenCalled(); // gated behind the dialog
+    const dialog = await screen.findByTestId('confirm-dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Excluir' }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/items/7'));
-    expect(window.confirm).toHaveBeenCalled();
   });
 
   it('surfaces a fetch error instead of a silent zero state', async () => {

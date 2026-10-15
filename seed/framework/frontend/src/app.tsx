@@ -10,7 +10,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, createAuthProvider, SSOCallback, env } from "@noctusai/lib";
+import { ErrorBoundary, ConfirmProvider, createAuthProvider, SSOCallback, env } from "@noctusai/lib";
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
@@ -417,11 +417,13 @@ export function createProductApp(config: ProductAppConfig) {
     return (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <BrowserRouter>
-            <AuthProvider>
-              <AppRoutes />
-            </AuthProvider>
-          </BrowserRouter>
+          <ConfirmProvider>
+            <BrowserRouter>
+              <AuthProvider>
+                <AppRoutes />
+              </AuthProvider>
+            </BrowserRouter>
+          </ConfirmProvider>
           <Toaster richColors position="top-right" />
         </TooltipProvider>
       </QueryClientProvider>

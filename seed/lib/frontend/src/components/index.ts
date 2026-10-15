@@ -4,6 +4,8 @@ export type { SSOCallbackProps } from './SSOCallback';
 export { createAuthProvider } from './AuthProvider';
 export { FakeModeBadge } from './FakeModeBadge';
 export type { FakeModeBadgeProps, FakeModeBadgeVariant } from './FakeModeBadge';
+export { ConfirmProvider, useConfirm } from './confirm';
+export type { ConfirmOptions, ConfirmFn } from './confirm';
 export { ResourceManager } from './ResourceManager';
 export type {
   ResourceManagerProps,

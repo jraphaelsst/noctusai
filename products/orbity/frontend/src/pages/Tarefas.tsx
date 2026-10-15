@@ -7,6 +7,7 @@
  *
  * status_pagina key: "tarefas"  ← tech-lead must seed this row.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
 import {
   useTasks,
@@ -269,6 +270,7 @@ function TaskFormDialog({ open, onClose, task }: TaskFormDialogProps) {
 // ---------------------------------------------------------------------------
 
 export default function Tarefas() {
+  const confirm = useConfirm();
   const [filterPriority, setFilterPriority] = useState<TaskPriority | ''>('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -296,8 +298,8 @@ export default function Tarefas() {
     setEditingTask(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Excluir esta tarefa?')) {
+  const handleDelete = async (id: string) => {
+    if (await confirm({ title: 'Excluir esta tarefa?', confirmLabel: 'Excluir', tone: 'danger' })) {
       deleteTask.mutate(id);
     }
   };

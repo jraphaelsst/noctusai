@@ -99,6 +99,8 @@ export { createProductSupabase, assertSupabaseBuildEnv } from './supabase';
 
 // Components
 export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';
+export { ConfirmProvider, useConfirm } from './components/index';
+export type { ConfirmOptions, ConfirmFn } from './components/index';
 export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from './components/index';
 
 // Page-visibility admin organ — the WRITE side of the status_pagina system

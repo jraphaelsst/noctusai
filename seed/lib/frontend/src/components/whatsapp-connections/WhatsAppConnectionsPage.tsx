@@ -31,6 +31,7 @@ import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Skeleton } from '../../design-system/ui/Skeleton';
 import { ApiError } from '../../api';
+import { useConfirm } from '../confirm';
 import type {
   WhatsAppConnectionLine,
   WhatsAppConnectionsHooks,
@@ -123,8 +124,14 @@ export function WhatsAppConnectionsPage({
 
   const detailLine = data?.find((l) => l.id === detailId) ?? null;
 
-  const handleDelete = (line: WhatsAppConnectionLine) => {
-    if (!window.confirm(`Excluir a conexão "${line.label}"?`)) return;
+  const confirm = useConfirm();
+  const handleDelete = async (line: WhatsAppConnectionLine) => {
+    const ok = await confirm({
+      title: `Excluir a conexão "${line.label}"?`,
+      confirmLabel: 'Excluir',
+      tone: 'danger',
+    });
+    if (!ok) return;
     mutations.remove.mutate(line.id);
   };
 

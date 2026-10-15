@@ -23,6 +23,7 @@
  *
  * Nav key: "funil" — needs a status_pagina row (see return note).
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import {
   useFunil,
@@ -106,6 +107,7 @@ interface LeadCardProps {
 }
 
 function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = false }: LeadCardProps) {
+  const confirm = useConfirm();
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
   return (
@@ -128,8 +130,8 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (window.confirm(`Remover lead "${lead.name}"?`)) {
+            onClick={async () => {
+              if (await confirm({ title: `Remover lead "${lead.name}"?`, confirmLabel: 'Remover', tone: 'danger' })) {
                 onDelete(lead.id);
               }
             }}

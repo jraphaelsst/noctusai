@@ -7,6 +7,7 @@
  *
  * status_pagina key: "rotinas"  ← tech-lead must seed this row.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
 import {
   useRoutines,
@@ -278,6 +279,7 @@ function RoutineFormDialog({ open, onClose, routine }: RoutineFormDialogProps) {
 // ---------------------------------------------------------------------------
 
 export default function Rotinas() {
+  const confirm = useConfirm();
   const [showActiveOnly, setShowActiveOnly] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
@@ -308,8 +310,8 @@ export default function Rotinas() {
     setEditingRoutine(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Excluir esta rotina?')) {
+  const handleDelete = async (id: string) => {
+    if (await confirm({ title: 'Excluir esta rotina?', confirmLabel: 'Excluir', tone: 'danger' })) {
       deleteRoutine.mutate(id);
     }
   };
@@ -318,9 +320,9 @@ export default function Rotinas() {
     updateRoutine.mutate({ id: routine.id, active: !routine.active });
   };
 
-  const handleRunDue = () => {
+  const handleRunDue = async () => {
     if (dueCount === 0) return;
-    if (confirm(`Executar ${dueCount} rotina(s) vencida(s) e criar as tarefas?`)) {
+    if (await confirm({ title: `Executar ${dueCount} rotina(s) vencida(s) e criar as tarefas?`, confirmLabel: 'Executar' })) {
       runDue.mutate();
     }
   };

@@ -1,0 +1,35 @@
+name: ConfirmProvider
+kind: provider+hook
+path: seed/lib/frontend/src/components/confirm/ConfirmProvider.tsx
+phase: pilot-seed
+registered_at: "2026-10-15"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Replaces native window.confirm(): `const confirm = useConfirm(); if (!(await confirm({title, description?, confirmLabel?, cancelLabel?, tone?}))) return;`. Resolves true on confirm; false on cancel, Esc or backdrop click."
+  - "Mounted ONCE by seed createProductApp (framework/frontend/src/app.tsx, inside TooltipProvider) — products never wire it. Defaults pt-BR (Confirmar/Cancelar). tone 'danger' = destructive button + initial focus on Cancel (stray Enter cannot destroy data); default tone focuses Confirm."
+  - "Built on design-system Dialog (Esc + backdrop close) + Button; adds Tab trap between the two buttons and focus restore on close. Concurrent confirm() calls queue FIFO."
+  - "useConfirm() outside the provider returns a confirm() that REJECTS at call time (loud) — never a silent window.confirm fallback, which would hide a missing mount. Call-time (not render-time) so consumer render tests that never click a destructive action keep working. Flow tests wrap in <ConfirmProvider>."
+  - "Why: native confirm blocks the renderer (breaks browser automation / E2E), is unstyled and not consistent. ~38 fleet sites at 2026-10-15; pilot consumer = orbity."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "pipeline/DeleteStageDialog is a bespoke inline dialog with extra inputs (reassign target) — NOT a use case for this organ; kept as is."
+
+alternatives_considered:
+  - "Per-product ConfirmDialog component — rejected (N copies; the organ is needed by every product)."
+  - "Fallback to window.confirm outside provider — rejected (silent fallback)."
+
+manual_validation_log: []
+
+integration_test_status: unit-tested (ConfirmProvider.test.tsx)
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

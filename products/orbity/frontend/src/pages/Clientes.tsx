@@ -12,6 +12,7 @@
  *
  * Nav key: "clientes" — needs a status_pagina row (see return note).
  */
+import { useConfirm, type ConfirmFn } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import { ResourceManager } from "@noctusai/lib/components";
 import { Archive } from "lucide-react";
@@ -47,8 +48,8 @@ function formatDate(value: string): string {
   return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("pt-BR");
 }
 
-async function archiveClient(id: string, reload: () => void) {
-  if (!window.confirm("Arquivar este cliente?")) return;
+async function archiveClient(id: string, reload: () => void, confirm: ConfirmFn) {
+  if (!(await confirm({ title: "Arquivar este cliente?", confirmLabel: "Arquivar" }))) return;
   try {
     await api.post(`/api/clients/${id}/archive`, {});
     toast.success("Cliente arquivado");
@@ -61,6 +62,7 @@ async function archiveClient(id: string, reload: () => void) {
 }
 
 export default function Clientes() {
+  const confirm = useConfirm();
   return (
     <ResourceManager<ClientRow>
       title="Clientes"
@@ -73,7 +75,7 @@ export default function Clientes() {
       rowActions={(row, reload) => (
         <button
           type="button"
-          onClick={() => archiveClient(row.id, reload)}
+          onClick={() => archiveClient(row.id, reload, confirm)}
           title="Arquivar"
           className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:text-amber-600 hover:bg-amber-50 transition-colors"
         >

@@ -7,6 +7,7 @@
  *
  * status_pagina key: "agenda"  ← tech-lead must seed this row.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from 'react';
 import {
   useAgendaEvents,
@@ -328,6 +329,7 @@ function EventFormDialog({ open, onClose, event }: EventFormDialogProps) {
 // ---------------------------------------------------------------------------
 
 export default function Agenda() {
+  const confirm = useConfirm();
   const [filterType, setFilterType] = useState<EventType | ''>('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<AgendaEvent | null>(null);
@@ -357,8 +359,8 @@ export default function Agenda() {
     setEditingEvent(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Excluir este evento?')) {
+  const handleDelete = async (id: string) => {
+    if (await confirm({ title: 'Excluir este evento?', confirmLabel: 'Excluir', tone: 'danger' })) {
       deleteEvent.mutate(id);
     }
   };

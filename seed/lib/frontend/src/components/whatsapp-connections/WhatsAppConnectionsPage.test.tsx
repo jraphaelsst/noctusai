@@ -19,6 +19,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { createWhatsAppConnectionsHooks } from '../../whatsapp';
 import { WhatsAppConnectionsPage } from './WhatsAppConnectionsPage';
+import { ConfirmProvider } from '../confirm';
 import type { ApiClient } from '../../api';
 import type { WhatsAppConnectionLine, WhatsAppConnectionStatus, WhatsAppConnectionQr } from '../../whatsapp';
 
@@ -77,7 +78,9 @@ function renderPage(api: ApiClient, props: Partial<React.ComponentProps<typeof W
   const hooks = createWhatsAppConnectionsHooks(api);
   const utils = render(
     <QueryClientProvider client={client}>
-      <WhatsAppConnectionsPage hooks={hooks} {...props} />
+      <ConfirmProvider>
+        <WhatsAppConnectionsPage hooks={hooks} {...props} />
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
   return { ...utils, api };
@@ -192,14 +195,11 @@ describe('WhatsAppConnectionsPage: detail dialog', () => {
 // ── 7. Delete ──────────────────────────────────────────────────────────────────
 
 describe('WhatsAppConnectionsPage: delete', () => {
-  beforeEach(() => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-  });
-
   it('DELETEs after the user confirms', async () => {
     const { api } = renderPage(makeApi());
     const deleteButton = await screen.findByLabelText('Remover Atendimento');
     fireEvent.click(deleteButton);
+    fireEvent.click(within(await screen.findByTestId('confirm-dialog')).getByRole('button', { name: 'Excluir' }));
 
     await waitFor(() =>
       expect(api.delete).toHaveBeenCalledWith('/api/whatsapp/connections/conn-1'),
@@ -207,10 +207,10 @@ describe('WhatsAppConnectionsPage: delete', () => {
   });
 
   it('does NOT delete when the user cancels the confirm', async () => {
-    (window.confirm as any).mockReturnValue(false);
     const { api } = renderPage(makeApi());
     const deleteButton = await screen.findByLabelText('Remover Atendimento');
     fireEvent.click(deleteButton);
+    fireEvent.click(within(await screen.findByTestId('confirm-dialog')).getByRole('button', { name: 'Cancelar' }));
 
     expect(api.delete).not.toHaveBeenCalled();
   });
