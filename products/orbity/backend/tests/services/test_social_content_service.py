@@ -334,29 +334,54 @@ class TestPublicDecide:
         svc = PublicApprovalService(db)
         return db, svc
 
+    # These two were vacuous until 2026-10-15 (`try/except: pass` + `if payloads:`),
+    # i.e. green even if decide() broke. decide() runs fine on the mock — assert hard.
     def test_decide_approved_calls_update(self):
-        approval = _approval()
-        db, svc = self._setup_decide([approval])
-        try:
-            svc.decide(TOKEN, "approved", feedback=None)
-        except Exception:
-            pass  # may fail on mock update empty-return — that's ok; assert payload
+        db, svc = self._setup_decide([_approval()])
+        result = svc.decide(TOKEN, "approved", feedback=None)
         payloads = db.table("post_approvals").updated_payloads
-        if payloads:
-            assert payloads[0]["status"] == "approved"
-            assert "decided_at" in payloads[0]
+        assert payloads[0]["status"] == "approved"
+        assert "decided_at" in payloads[0]
+        assert db.table("content_posts").updated_payloads[-1] == {"status": "approved"}
+        assert result["status"] == "approved"
 
     def test_decide_revision_with_feedback(self):
-        approval = _approval()
-        db, svc = self._setup_decide([approval])
-        try:
-            svc.decide(TOKEN, "revision", feedback="More contrast please")
-        except Exception:
-            pass
+        db, svc = self._setup_decide([_approval()])
+        svc.decide(TOKEN, "revision", feedback="More contrast please")
         payloads = db.table("post_approvals").updated_payloads
-        if payloads:
-            assert payloads[0]["status"] == "revision"
-            assert payloads[0]["client_feedback"] == "More contrast please"
+        assert payloads[0]["status"] == "revision"
+        assert payloads[0]["client_feedback"] == "More contrast please"
+
+    # --- team notification (the client page promises "a equipe foi notificada") ---
+
+    def _core(self, users):
+        return MockSupabaseClient(data=users, schema="public")
+
+    def test_decide_notifies_org_admins_when_post_has_no_assignee(self):
+        db = MockSupabaseClient(data=[_approval(), _post()], schema="orbity")
+        core = self._core([{"id": "u-admin", "org_id": str(ORG), "org_role": "admin"}])
+        result = PublicApprovalService(db, core_db=core).decide(TOKEN, "approved", feedback=None)
+        sent = core.table("notifications").inserted_payloads
+        assert [n["user_id"] for n in sent] == ["u-admin"]
+        assert sent[0]["metadata"]["tipo"] == "aprovacao_conteudo"
+        assert sent[0]["metadata"]["decision"] == "approved"
+        assert sent[0]["org_id"] == str(ORG)
+        assert result["team_notified"] == 1
+
+    def test_decide_notifies_assignee_with_feedback_on_revision(self):
+        db = MockSupabaseClient(data=[_approval(), _post(assignee_user_id="u-assignee")], schema="orbity")
+        core = self._core([])
+        PublicApprovalService(db, core_db=core).decide(TOKEN, "revision", feedback="Trocar a foto")
+        sent = core.table("notifications").inserted_payloads
+        assert [n["user_id"] for n in sent] == ["u-assignee"]
+        assert "Trocar a foto" in sent[0]["message"]
+
+    def test_decide_without_core_client_records_decision_and_reports_zero(self, caplog):
+        db, svc = self._setup_decide([_approval()])  # no core_db
+        result = svc.decide(TOKEN, "approved", feedback=None)
+        assert result["status"] == "approved"
+        assert result["team_notified"] == 0
+        assert "notify skipped" in caplog.text
 
     def test_decide_raises_lookup_when_not_found(self):
         _db, svc = _pub_svc([])

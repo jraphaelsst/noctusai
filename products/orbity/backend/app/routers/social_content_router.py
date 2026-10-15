@@ -42,6 +42,7 @@ from noctusai_lib.api.rate_limit import client_ip_key
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
+    get_core_client,
     get_current_user_org,
     get_user_client,
 )
@@ -80,7 +81,7 @@ def _admin_approval_svc() -> PublicApprovalService:
     Mirrors _admin_crm() in crm_router — service_role bypasses RLS for the
     public approve path. Security guarantee is entirely at the token level.
     """
-    return PublicApprovalService(get_admin_client())
+    return PublicApprovalService(get_admin_client(), core_db=get_core_client())
 
 
 # ---------------------------------------------------------------------------
@@ -476,4 +477,9 @@ async def public_submit_approval(
     except Exception:
         logger.exception("public_submit_approval failed token=%s", token)
         raise HTTPException(status_code=502, detail="Falha ao registrar decisão")
-    return {"ok": True, "approval_id": updated.get("id"), "status": updated.get("status")}
+    return {
+        "ok": True,
+        "approval_id": updated.get("id"),
+        "status": updated.get("status"),
+        "team_notified": updated.get("team_notified", 0),
+    }

@@ -113,7 +113,7 @@ function TerminalState({
 // Success state (confirmed decision)
 // ---------------------------------------------------------------------------
 
-function DoneState({ decision }: { decision: ApprovalDecision }) {
+function DoneState({ decision, teamNotified }: { decision: ApprovalDecision; teamNotified: boolean }) {
   return (
     <PageShell>
       <div className="rounded-xl bg-white border border-gray-200 p-10 text-center shadow-sm">
@@ -126,9 +126,14 @@ function DoneState({ decision }: { decision: ApprovalDecision }) {
           {decision === "approved" ? "Conteúdo aprovado!" : "Revisão solicitada!"}
         </h2>
         <p className="text-sm text-gray-500">
+          {/* Only claim a notification the backend actually wrote (`team_notified`). */}
           {decision === "approved"
-            ? "Ótimo! O conteúdo foi aprovado e a equipe foi notificada."
-            : "A equipe foi notificada com o seu feedback e irá revisar o conteúdo."}
+            ? teamNotified
+              ? "Ótimo! O conteúdo foi aprovado e a equipe foi notificada."
+              : "Ótimo! Sua aprovação foi registrada."
+            : teamNotified
+              ? "A equipe foi notificada com o seu feedback e irá revisar o conteúdo."
+              : "Seu pedido de revisão foi registrado."}
         </p>
       </div>
     </PageShell>
@@ -167,7 +172,7 @@ export default function AprovacaoPublica() {
 
   const [feedback, setFeedback] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
-  const [submitted, setSubmitted] = useState<ApprovalDecision | null>(null);
+  const [submitted, setSubmitted] = useState<{ decision: ApprovalDecision; teamNotified: boolean } | null>(null);
 
   // --- Loading ---
   if (isPending && !data) return <LoadingState />;
@@ -190,13 +195,15 @@ export default function AprovacaoPublica() {
 
   if (!data) return null;
 
+  // Submitted this session — checked first: a post-decision refetch flips
+  // approval_status away from "pending", and the client must see their own
+  // confirmation, not the generic "already decided" screen.
+  if (submitted) return <DoneState decision={submitted.decision} teamNotified={submitted.teamNotified} />;
+
   // Already decided (from API status)
-  if (data.status !== "pending") {
+  if (data.approval_status !== "pending") {
     return <TerminalState reason="decided" />;
   }
-
-  // Submitted this session
-  if (submitted) return <DoneState decision={submitted} />;
 
   // --- Expired ---
   const expiresAt = new Date(data.expires_at);
@@ -207,11 +214,14 @@ export default function AprovacaoPublica() {
       setShowFeedback(true);
       return;
     }
-    await decide.mutateAsync({ decision, feedback: feedback.trim() || undefined });
-    setSubmitted(decision);
+    decide.mutate(
+      { decision, feedback: feedback.trim() || undefined },
+      // Failure stays on this screen: `decide.isError` renders the message below.
+      { onSuccess: (res) => setSubmitted({ decision, teamNotified: (res?.team_notified ?? 0) > 0 }) },
+    );
   }
 
-  const { post } = data;
+  const post = data;
 
   return (
     <PageShell>

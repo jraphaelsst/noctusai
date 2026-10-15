@@ -60,6 +60,7 @@ import {
   useCreateApproval,
   usePublicApproval,
   useDecideApproval,
+  type PublicApproval,
 } from "@/hooks/useConteudo";
 
 // ---------------------------------------------------------------------------
@@ -409,21 +410,18 @@ describe("useCreateApproval", () => {
 // Sample data — public approval
 // ---------------------------------------------------------------------------
 
-const PUBLIC_APPROVAL = {
+// Mirrors backend PublicApprovalView exactly (flat). A hand-shaped nested fixture
+// here once masked a FE↔BE contract break — keep it byte-compatible with the API.
+const PUBLIC_APPROVAL: PublicApproval = {
   approval_id: "apv-pub-1",
   post_id: "post-1",
-  token: "tok-pub-abc",
-  status: "pending" as const,
+  platform: "instagram",
+  caption: "Caption de aprovação de conteúdo",
+  hashtags: "#orbity #social",
+  media_url: null,
+  scheduled_for: "2026-06-20T10:00:00Z",
+  approval_status: "pending",
   expires_at: "2099-06-30T00:00:00Z",
-  decided_at: null,
-  post: {
-    id: "post-1",
-    platform: "instagram" as const,
-    caption: "Caption de aprovação de conteúdo",
-    hashtags: "#orbity #social",
-    media_url: null,
-    scheduled_for: "2026-06-20T10:00:00Z",
-  },
 };
 
 // ---------------------------------------------------------------------------
@@ -451,10 +449,10 @@ describe("usePublicApproval", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockGet).toHaveBeenCalledWith("/api/content/approve/tok-pub-abc");
-    const pub = result.current.data as typeof PUBLIC_APPROVAL;
-    expect(pub.status).toBe("pending");
-    expect(pub.post.platform).toBe("instagram");
-    expect(pub.post.caption).toBe("Caption de aprovação de conteúdo");
+    const pub = result.current.data as PublicApproval;
+    expect(pub.approval_status).toBe("pending");
+    expect(pub.platform).toBe("instagram");
+    expect(pub.caption).toBe("Caption de aprovação de conteúdo");
   });
 
   it("error state — expired or not found (404/410)", async () => {

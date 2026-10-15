@@ -33,6 +33,9 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 from uuid import UUID
 
+from noctusai_lib.domain.notifications import write_in_app
+from noctusai_lib.primitives.roles import ADMIN_ROLES
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,8 +327,11 @@ class PublicApprovalService:
     No org_id is ever trusted from the caller.
     """
 
-    def __init__(self, admin_db: Any) -> None:
+    def __init__(self, admin_db: Any, core_db: Any = None) -> None:
         self._db = admin_db
+        # core `public` client — notification recipients + writes. None ⇒ the
+        # decision is still recorded but `notify_team` reports it was skipped.
+        self._core = core_db
 
     def _t(self, table: str):
         return self._db.table(table)
@@ -455,4 +461,53 @@ class PublicApprovalService:
                 "public_approval.decide failed token=%s approval_id=%s", token, approval_id
             )
             raise
+        # The client's decision is already committed; a notification failure must
+        # not undo it, so it is logged at ERROR (never swallowed) and returned.
+        updated_approval["team_notified"] = self.notify_team(approval, post, decision, feedback)
         return updated_approval
+
+    def notify_team(
+        self,
+        approval: dict[str, Any],
+        post: dict[str, Any],
+        decision: str,
+        feedback: str | None,
+    ) -> int:
+        """In-app notification for the agency when a client decides.
+
+        Recipients: the post's `assignee_user_id` when set, otherwise the org's
+        admins (`ADMIN_ROLES` in core `noctus_users`). Written through the seed's
+        single writer `write_in_app`. Returns how many were notified (0 on skip
+        or failure — both logged).
+        """
+        org_id = str(approval["org_id"])
+        if self._core is None:
+            logger.error("public_approval.notify skipped: no core client org=%s", org_id)
+            return 0
+        try:
+            if post.get("assignee_user_id"):
+                recipients = [str(post["assignee_user_id"])]
+            else:
+                rows = (
+                    self._core.table("noctus_users").select("id").eq("org_id", org_id)
+                    .in_("org_role", list(ADMIN_ROLES)).execute().data or []
+                )
+                recipients = [str(r["id"]) for r in rows if r.get("id")]
+            caption = (post.get("caption") or "").strip()
+            label = f"“{caption[:60]}…”" if len(caption) > 60 else (f"“{caption}”" if caption else "um post")
+            if decision == "approved":
+                title, message = "Cliente aprovou um post", f"O cliente aprovou {label}."
+            else:
+                title = "Cliente pediu revisão de um post"
+                message = f"O cliente pediu revisão de {label}." + (f" Comentário: {feedback}" if feedback else "")
+            sent = write_in_app(
+                self._core, user_ids=recipients, kind="aprovacao_conteudo",
+                title=title, message=message, org_id=org_id,
+                metadata={"post_id": str(approval["post_id"]), "approval_id": str(approval["id"]), "decision": decision},
+            )
+            if not sent:
+                logger.warning("public_approval.notify no recipients org=%s", org_id)
+            return sent
+        except Exception:
+            logger.exception("public_approval.notify failed org=%s approval_id=%s", org_id, approval["id"])
+            return 0

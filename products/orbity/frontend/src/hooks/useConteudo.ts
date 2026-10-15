@@ -336,23 +336,22 @@ export function useCreateApproval() {
 // Mirror of usePublicReport in useRelatorios.ts.
 // ---------------------------------------------------------------------------
 
-export interface PublicApprovalPost {
-  id: string;
+/**
+ * Mirrors `PublicApprovalView` (backend/app/schemas/social_content.py) — a FLAT
+ * shape. The previous nested `{status, post: {...}}` type never matched the
+ * backend, so `data.status` was always undefined and every link rendered
+ * "Decisão já registrada" (found by the 2026-10-15 live smoke).
+ */
+export interface PublicApproval {
+  approval_id: string;
+  post_id: string;
   platform: Platform;
   caption: string | null;
   hashtags: string | null;
   media_url: string | null;
   scheduled_for: string | null;
-}
-
-export interface PublicApproval {
-  approval_id: string;
-  post_id: string;
-  token: string;
-  status: ApprovalStatus;
+  approval_status: ApprovalStatus;
   expires_at: string;
-  decided_at: string | null;
-  post: PublicApprovalPost;
 }
 
 export type ApprovalDecision = "approved" | "revision";
@@ -377,7 +376,10 @@ export function usePublicApproval(token: string | null) {
 export function useDecideApproval(token: string | null) {
   return useMutation({
     mutationFn: async (payload: DecideApprovalPayload) => {
-      return api.post<{ ok: boolean }>(`/api/content/approve/${token}`, payload);
+      return api.post<{ ok: boolean; approval_id: string; status: string; team_notified: number }>(
+        `/api/content/approve/${token}`,
+        payload,
+      );
     },
   });
 }

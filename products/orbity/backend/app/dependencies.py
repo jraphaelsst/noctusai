@@ -76,6 +76,11 @@ def get_admin_client():
     return _db.get_admin_client()
 
 
+def get_core_client():
+    """Service-role client on core's `public` schema (noctus_users, notifications)."""
+    return _db.get_core_client()
+
+
 def coerce_org_uuid(raw_org: Any) -> UUID:
     """Coerce the auth-side org_id into a UUID.
 
