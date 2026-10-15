@@ -116,14 +116,14 @@ const FEATURES = [
       "Contratos, despesas, receitas e fluxo de caixa mensal sempre à mão.",
   },
   {
-    title: "Tráfego (Meta Ads)",
+    title: "Tráfego (Meta Ads) — lançamento manual",
     description:
-      "Conecte contas de anúncio, acompanhe campanhas e métricas de investimento por cliente.",
+      "Cadastre contas e campanhas e lance investimento, impressões e leads manualmente. A integração automática com a Meta está em breve.",
   },
   {
-    title: "Automação de WhatsApp",
+    title: "Automação de WhatsApp (em breve)",
     description:
-      "Fluxos automáticos de mensagens para cada etapa da jornada do cliente.",
+      "Monte fluxos de mensagens para cada etapa da jornada. O envio real pelo WhatsApp está em breve — hoje a execução é simulada.",
   },
   {
     title: "Conteúdo e Relatórios",
