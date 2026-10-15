@@ -133,6 +133,16 @@ def averbacao_deve_ser_citada(texto: str) -> bool:
     return any(t in corpo[:250] for t in AVERBACOES_CITADAS)
 
 
+def titulo_curto_averbacao(texto: str) -> str:
+    """The act's nature as the operator reads it (`construção / logradouro`):
+    its leading ALL-CAPS title lowercased, else the first words of its body."""
+    resto = _CABECALHO_AV.sub("", texto or "", count=1).strip()
+    achado = _TITULO_CAIXA_ALTA.match(resto)
+    if achado:
+        return re.sub(r"\s*[-–—:]\s*$", "", achado.group(0)).strip().lower()
+    return " ".join(resto.split())[:40].lower()
+
+
 def corpo_do_ato(texto: str) -> str:
     """The act's BODY only: header (once) and nature title dropped, registry
     page furniture / signature lines dropped, the closing "Foi apresentada

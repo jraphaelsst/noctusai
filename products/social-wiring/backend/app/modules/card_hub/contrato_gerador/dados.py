@@ -445,6 +445,12 @@ class Matricula:
     #: texto)` — the `IMÓVEL:` quote carries them after the description
     #: (`citacao_matricula`). `R` acts are never quoted.
     averbacoes: tuple[tuple[Optional[str], str], ...] = ()
+    #: `AV` acts of the CURRENT extraction that `citacao_matricula` WOULD quote
+    #: (they change the physical description: construção, numeração …) but
+    #: the operator did NOT select, as `(numero, título curto)`. Each blocks
+    #: generation (`derivacao`): leaving one out sells a built house as bare
+    #: land (deal 876, 2026-10-15).
+    averbacoes_citaveis_nao_selecionadas: tuple[tuple[Optional[str], str], ...] = ()
 
 
 @dataclass

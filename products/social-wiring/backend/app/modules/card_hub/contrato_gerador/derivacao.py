@@ -1858,6 +1858,22 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "MATRICULA_DE_OUTRO_IMOVEL",
             "Os atos selecionados são de uma matrícula de outro imóvel.",
         )
+    # [deal 876, 2026-10-15] A quotable averbação (construção, numeração …)
+    # the operator did not select is silently absent from the `IMÓVEL:` quote
+    # — three contracts sold a built house as bare land. A plain `falta`, not
+    # a confirmable item: the confirmation gate (`confirmacoes`) records an
+    # operator's ciência of a machine/validity fact stored on its own row;
+    # here the fix is one click (select the act), and a deliberate omission
+    # of a description-changing act is exactly what must not pass silently.
+    if d.matricula.num_atos > 0:
+        for numero, titulo in d.matricula.averbacoes_citaveis_nao_selecionadas:
+            rotulo_av = f"AV.{int(numero):02d}" if str(numero or "").isdigit() else "Averbação"
+            av.falta(
+                f"imovel.matricula.averbacao.{numero if numero not in (None, '') else 'sem_numero'}",
+                f"{rotulo_av} ({titulo}) da matrícula não está selecionada — sem ela o contrato "
+                "descreve o imóvel sem essa alteração. Selecione-a em Matrícula → Atos do contrato.",
+                "matricula",
+            )
     # 🔴 The highest-value check in this file: text with a literal `**`/`<u>`
     # marker reaching a SIGNED DEED is the actual harm — a pre-migration-135
     # transcription (or a malformed vision reply `parse_markup` had to keep
