@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone, MessageCircle } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -35,6 +35,7 @@ const Relatorios = lazy(() => import("@/pages/Relatorios"));
 // Meta Ads / Tráfego module
 const Trafego = lazy(() => import("@/pages/Trafego"));
 const Automacao = lazy(() => import("@/pages/Automacao"));
+const Whatsapp = lazy(() => import("@/pages/Whatsapp"));
 // Content / Social Studio module
 const Conteudo = lazy(() => import("@/pages/Conteudo"));
 
@@ -77,6 +78,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Conteúdo", href: "/conteudo", icon: Megaphone, route: "conteudo" },
       { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
       { name: "Automação", href: "/automacao", icon: Zap, route: "automacao" },
+      { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
       { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
     ],
   },
@@ -112,6 +114,7 @@ export default createProductApp({
     { path: "/relatorios", component: Relatorios },
     { path: "/trafego", component: Trafego },
     { path: "/automacao", component: Automacao },
+    { path: "/whatsapp", component: Whatsapp },
     { path: "/conteudo", component: Conteudo },
   ],
   Layout,
