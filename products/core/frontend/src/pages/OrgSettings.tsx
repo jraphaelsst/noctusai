@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -56,8 +57,9 @@ export function OrgSettings() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleDelete(key: string) {
-    if (!confirm(`Remover configuração "${key}"?`)) return;
+    if (!(await confirm({ title: `Remover configuração "${key}"?`, confirmLabel: 'Remover', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/settings/org/${key}`);
       fetchSettings();

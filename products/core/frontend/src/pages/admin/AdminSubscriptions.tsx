@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
@@ -115,8 +116,9 @@ export function AdminSubscriptions() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleCancel(id: string) {
-    if (!confirm('Cancelar esta assinatura?')) return;
+    if (!(await confirm({ title: 'Cancelar esta assinatura?', confirmLabel: 'Cancelar assinatura', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/subscriptions/${id}`);
       fetchData();

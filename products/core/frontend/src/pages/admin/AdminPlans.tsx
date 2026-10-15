@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
@@ -84,8 +85,9 @@ export function AdminPlans() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleDelete(id: string) {
-    if (!confirm('Desativar este plano?')) return;
+    if (!(await confirm({ title: 'Desativar este plano?', confirmLabel: 'Desativar', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/plans/${id}`);
       fetchPlans();

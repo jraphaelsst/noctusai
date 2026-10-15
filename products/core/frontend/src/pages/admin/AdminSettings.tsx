@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { StatusPaginaPanel } from '@noctusai/lib';
@@ -105,8 +106,9 @@ export function AdminSettings() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleDelete(key: string) {
-    if (!confirm(`Remover configuracao "${key}"?`)) return;
+    if (!(await confirm({ title: `Remover configuração "${key}"?`, confirmLabel: 'Remover', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/settings/platform/${key}`);
       fetchSettings();

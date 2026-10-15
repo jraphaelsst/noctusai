@@ -5,6 +5,7 @@
  */
 import { useState } from 'react';
 import { Badge, Button, Input, TableSkeleton } from '@noctusai/lib/design-system';
+import { useConfirm } from '@noctusai/lib/components';
 import {
   type AdminSubscription,
   type SubscriptionStatus,
@@ -77,6 +78,7 @@ function ManualOnboarding({ onDone }: { onDone: () => void }) {
 }
 
 function RowActions({ sub }: { sub: AdminSubscription }) {
+  const confirm = useConfirm();
   const [renewUntil, setRenewUntil] = useState('');
   const cancel = useBillingMutation((b, atPeriodEnd: boolean) => b.cancel(sub.id, atPeriodEnd));
   const renew = useBillingMutation((b, until: string) => b.renew(sub.id, until));
@@ -109,7 +111,9 @@ function RowActions({ sub }: { sub: AdminSubscription }) {
           size="sm"
           variant="outline"
           disabled={busy}
-          onClick={() => { if (window.confirm('Cancelar ao fim do período pago?')) cancel.mutate(true); }}
+          onClick={async () => {
+            if (await confirm({ title: 'Cancelar ao fim do período pago?', confirmLabel: 'Cancelar no fim', tone: 'danger' })) cancel.mutate(true);
+          }}
         >
           Cancelar no fim
         </Button>
@@ -119,7 +123,9 @@ function RowActions({ sub }: { sub: AdminSubscription }) {
           size="sm"
           variant="destructive"
           disabled={busy}
-          onClick={() => { if (window.confirm('Cancelar agora e revogar a licença?')) cancel.mutate(false); }}
+          onClick={async () => {
+            if (await confirm({ title: 'Cancelar agora e revogar a licença?', confirmLabel: 'Cancelar agora', tone: 'danger' })) cancel.mutate(false);
+          }}
         >
           Cancelar agora
         </Button>

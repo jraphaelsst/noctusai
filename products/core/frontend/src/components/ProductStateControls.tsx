@@ -20,6 +20,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Pencil } from 'lucide-react';
+import { useConfirm } from '@noctusai/lib/components';
 
 export type DeployScope = 'live' | 'dev';
 
@@ -115,7 +116,9 @@ export function StatusToggle({
 }) {
   const pad = size === 'xs' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs';
 
-  function handleClick(e: React.MouseEvent) {
+  const confirm = useConfirm();
+
+  async function handleClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (busy) return;
     if (ativo) {
@@ -127,7 +130,7 @@ export function StatusToggle({
         deployScope === 'live'
           ? '\n\nEste produto esta LIVE. Ele sera movido para DEV antes de ser desativado (um produto inativo nunca pode estar live).'
           : '';
-      if (!confirm(`Desativar este produto?${extra}`)) return;
+      if (!(await confirm({ title: 'Desativar este produto?', description: extra.trim() || undefined, confirmLabel: 'Desativar', tone: 'danger' }))) return;
     }
     onToggle(!ativo);
   }

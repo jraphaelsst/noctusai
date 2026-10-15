@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
@@ -48,8 +49,9 @@ export function AdminApiKeys() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleRevoke(id: string) {
-    if (!confirm('Revogar esta chave API?')) return;
+    if (!(await confirm({ title: 'Revogar esta chave API?', confirmLabel: 'Revogar', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/api-keys/${id}`);
       fetchKeys();

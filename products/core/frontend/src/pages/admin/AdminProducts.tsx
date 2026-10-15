@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -301,8 +302,9 @@ export function AdminProducts() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleRevokeLicense(licenseId: string) {
-    if (!confirm('Revogar acesso desta organizacao?')) return;
+    if (!(await confirm({ title: 'Revogar acesso desta organização?', confirmLabel: 'Revogar', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/licenses/${licenseId}`);
       if (selectedProduct) {

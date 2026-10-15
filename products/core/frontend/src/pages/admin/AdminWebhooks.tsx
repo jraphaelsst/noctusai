@@ -1,3 +1,4 @@
+import { useConfirm } from '@noctusai/lib/components';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
@@ -123,8 +124,9 @@ export function AdminWebhooks() {
     }
   }
 
+  const confirm = useConfirm();
   async function handleDelete(id: string) {
-    if (!confirm('Excluir este webhook endpoint?')) return;
+    if (!(await confirm({ title: 'Excluir este webhook endpoint?', confirmLabel: 'Excluir', tone: 'danger' }))) return;
     try {
       await api.delete(`/api/webhooks/${id}`);
       fetchEndpoints();
