@@ -272,6 +272,13 @@ config-writing path routes through `client._session_config()`.
   GET fails or is malformed both raise `WahaWebhookError` — never a blind
   replace. The seed connections router calls `remove_webhook` on DELETE
   (best-effort, ERROR-logged on failure; no logout).
+  The rest of the config is carried forward too (`_merged_session_config`).
+  Only `webhooks` changes; the session owner's other keys stay as set
+  (`noweb.markOnline`, `store.fullSync`, `metadata`, …). `store.enabled` is
+  forced on, and `fullSync` defaults to `true` only when absent. Rebuilding
+  from `_session_config` defaults would have flipped the shared prod session's
+  `markOnline: true, fullSync: false` (found 2026-10-15, before orbity first
+  connected).
 - **WAHA's store key is camelCase `fullSync`, not `full_sync`.** The client sent
   the snake_case spelling for weeks; WAHA silently ignored the unknown key and
   applied the default (`false`), so NOWEB **never backfilled history** while the

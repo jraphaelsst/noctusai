@@ -162,3 +162,55 @@ def test_fake_mirrors_merge_semantics() -> None:
     with pytest.raises(WahaWebhookError):
         asyncio.run(fake.set_webhook(f"{SW}/x", []))
     assert [h["url"] for h in fake.session_webhooks] == [f"{ORB}/o"]
+
+
+# ---------------------------------------------------------------------------
+# Shared-session config preservation (2026-10-15). The live prod session that
+# social-wiring paired runs `noweb.markOnline: true` + `store.fullSync: false`;
+# a webhook write by ANOTHER product must not rewrite those settings.
+# ---------------------------------------------------------------------------
+
+_SHARED_SESSION = {
+    "name": "default",
+    "config": {
+        "webhooks": [{"url": "https://social.example/api/whatsapp/webhook/tokA", "events": ["message"]}],
+        "noweb": {"markOnline": True, "store": {"enabled": True, "fullSync": False}},
+        "metadata": {"owner": "social-wiring"},
+    },
+}
+
+
+def test_set_webhook_preserves_the_owners_other_session_config():
+    waha = _Waha(body_override=_SHARED_SESSION)
+    asyncio.run(waha.client().set_webhook("https://orbity.example/api/whatsapp/webhook/tokB", ["message"]))
+    cfg = waha.puts[-1]["config"]
+    assert cfg["noweb"]["markOnline"] is True
+    assert cfg["noweb"]["store"] == {"enabled": True, "fullSync": False}
+    assert cfg["metadata"] == {"owner": "social-wiring"}
+    assert [h["url"] for h in cfg["webhooks"]] == [
+        "https://social.example/api/whatsapp/webhook/tokA",
+        "https://orbity.example/api/whatsapp/webhook/tokB",
+    ]
+
+
+def test_remove_webhook_preserves_the_owners_other_session_config():
+    session = {
+        "name": "default",
+        "config": {
+            **_SHARED_SESSION["config"],
+            "webhooks": _SHARED_SESSION["config"]["webhooks"]
+            + [{"url": "https://orbity.example/api/whatsapp/webhook/tokB", "events": ["message"]}],
+        },
+    }
+    waha = _Waha(body_override=session)
+    asyncio.run(waha.client().remove_webhook("https://orbity.example/api/whatsapp/webhook/tokB"))
+    cfg = waha.puts[-1]["config"]
+    assert cfg["noweb"]["markOnline"] is True and cfg["noweb"]["store"]["fullSync"] is False
+    assert [h["url"] for h in cfg["webhooks"]] == ["https://social.example/api/whatsapp/webhook/tokA"]
+
+
+def test_store_is_forced_on_when_the_existing_config_lacks_it():
+    waha = _Waha(body_override={"name": "default", "config": {"noweb": {"markOnline": False}}})
+    asyncio.run(waha.client().set_webhook("https://p.example/api/whatsapp/webhook/t", ["message"]))
+    cfg = waha.puts[-1]["config"]
+    assert cfg["noweb"] == {"markOnline": False, "store": {"enabled": True, "fullSync": True}}

@@ -10,6 +10,7 @@ in an event loop, so we expose explicit sync siblings instead.
 
 from __future__ import annotations
 
+import copy
 import asyncio
 import logging
 import time
@@ -184,6 +185,33 @@ def _webhook_owned(hook: dict[str, Any], url: str, prefix: str | None) -> bool:
     if not isinstance(existing, str):
         return False
     return existing == url or bool(prefix and existing.startswith(prefix))
+
+
+def _merged_session_config(
+    existing: dict[str, Any], webhooks: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The PUT body for a webhook write on a POSSIBLY SHARED session.
+
+    Starts from the session's CURRENT config (deep copy) and replaces only
+    ``webhooks``: every other key is someone else's setting (a shared
+    session's ``noweb.markOnline`` / ``store.fullSync`` were set by the product
+    that paired it — 2026-10-15 the shared prod session ran
+    ``markOnline: true, fullSync: false``, which a rebuild from
+    ``_session_config`` defaults would have silently flipped). The NOWEB store
+    invariant of ``_session_config`` still holds: ``store.enabled`` is forced
+    on, and ``fullSync`` defaults to ``True`` only when absent.
+    """
+    config = copy.deepcopy(existing) if existing else {}
+    config["webhooks"] = webhooks
+    noweb = config.get("noweb")
+    if not isinstance(noweb, dict):
+        noweb = config["noweb"] = {}
+    store = noweb.get("store")
+    if not isinstance(store, dict):
+        store = noweb["store"] = {}
+    store["enabled"] = True
+    store.setdefault("fullSync", True)
+    return {"config": config}
 
 
 def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -583,8 +611,15 @@ class WahaClient:
         response.raise_for_status()
         return response.content
 
-    async def _read_webhooks(self, op: str) -> list[dict[str, Any]]:
-        """Read the session's CURRENT webhook list (``config.webhooks``).
+    async def _read_session_config(
+        self, op: str
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Read the session's CURRENT config and its webhook list (``config.webhooks``).
+
+        Returns ``(config, webhooks)``. The whole config is returned because a
+        shared session's other keys (``noweb.markOnline``, ``store.fullSync``,
+        proxy, metadata, …) belong to whoever configured it — a webhook write
+        must carry them forward unchanged (see ``_merged_session_config``).
 
         Raises ``WahaWebhookError`` when the read fails or the shape is not
         what WAHA documents — a write built on an unreadable list would be a
@@ -605,22 +640,24 @@ class WahaClient:
             raise WahaWebhookError(op, "session GET returned an empty or non-object body")
         config = body.get("config")
         if config is None:
-            return []
+            return {}, []
         if not isinstance(config, dict):
             raise WahaWebhookError(op, "session GET `config` is not an object")
         hooks = config.get("webhooks")
         if hooks is None:
-            return []
+            return config, []
         if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
             raise WahaWebhookError(op, "session GET `config.webhooks` is not a list of objects")
-        return [dict(h) for h in hooks]
+        return config, [dict(h) for h in hooks]
 
-    async def _put_webhooks(self, webhooks: list[dict[str, Any]]) -> dict[str, Any]:
+    async def _put_webhooks(
+        self, config: dict[str, Any], webhooks: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         response = await self._request(
             "put",
             f"/api/sessions/{self.session}",
             timeout=30,
-            json=_session_config(webhooks=webhooks),
+            json=_merged_session_config(config, webhooks),
             headers=self._headers(json=True),
         )
         response.raise_for_status()
@@ -646,14 +683,17 @@ class WahaClient:
         match only — never a bare host prefix that could match a peer.
 
         WAHA restarts the session on a config change; the paired account
-        survives. The PUT re-asserts the NOWEB store block via
-        ``_session_config`` (omitting it emptied the inbox on 2026-06-23).
+        survives. The PUT carries the session's EXISTING config forward
+        (``_merged_session_config``: only ``webhooks`` changes; other keys such
+        as ``noweb.markOnline`` / ``store.fullSync`` stay as their owner set
+        them) and guarantees the NOWEB store is enabled (omitting it emptied
+        the inbox on 2026-06-23).
 
         Raises ``WahaWebhookError`` if the current list cannot be read — no
         blind-replace fallback.
         """
         prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
-        existing = await self._read_webhooks("set_webhook")
+        config, existing = await self._read_session_config("set_webhook")
         merged = [h for h in existing if not _webhook_owned(h, url, prefix)]
         merged.append(
             {
@@ -664,7 +704,7 @@ class WahaClient:
                 "customHeaders": None,
             }
         )
-        return await self._put_webhooks(merged)
+        return await self._put_webhooks(config, merged)
 
     async def remove_webhook(self, url_or_prefix: str) -> dict[str, Any]:
         """Remove this product's webhook(s) — entries whose url equals
@@ -674,11 +714,11 @@ class WahaClient:
         ``{"removed": 0}``. Raises ``WahaWebhookError`` if the current list
         cannot be read.
         """
-        existing = await self._read_webhooks("remove_webhook")
+        config, existing = await self._read_session_config("remove_webhook")
         kept = [h for h in existing if not _webhook_owned(h, url_or_prefix, url_or_prefix)]
         if len(kept) == len(existing):
             return {"removed": 0}
-        result = await self._put_webhooks(kept)
+        result = await self._put_webhooks(config, kept)
         result = dict(result) if isinstance(result, dict) else {}
         result["removed"] = len(existing) - len(kept)
         return result
