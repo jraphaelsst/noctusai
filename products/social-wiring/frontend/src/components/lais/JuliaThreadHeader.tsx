@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useApagarDadosChat, useSetChatAgentePausado } from "@/hooks/useWhatsAppChats";
+import { PainelLead } from "@/components/lais/PainelLead";
 import { useLaisAgente, mensagemErroLais } from "@/hooks/useLaisAgente";
 
 export function JuliaThreadHeader({
@@ -78,6 +79,7 @@ export function JuliaThreadHeader({
 
   return (
     <div className="flex flex-shrink-0 items-center gap-2" data-testid="julia-thread-header">
+      {juliaLigada && <PainelLead connectionId={scopeId} chatId={thread.id} />}
       {juliaLigada && (
         <span
           data-testid="julia-chip"

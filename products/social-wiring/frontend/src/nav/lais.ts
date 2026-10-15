@@ -11,7 +11,7 @@
  * `LAIS_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Bot, MessagesSquare, Settings2, Sparkles } from "lucide-react";
+import { BookOpen, Bot, HelpCircle, MessagesSquare, Settings2, Sparkles } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -53,6 +53,12 @@ export const LAIS_PAGES = {
     href: "/lais/conhecimento",
     icon: BookOpen,
     route: "lais_conhecimento",
+  },
+  perguntas: {
+    name: "Perguntas",
+    href: "/lais/perguntas",
+    icon: HelpCircle,
+    route: "lais_perguntas",
   },
 } as const satisfies Record<string, LaisPage>;
 
