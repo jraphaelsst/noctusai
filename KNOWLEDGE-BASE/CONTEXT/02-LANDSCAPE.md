@@ -48,17 +48,17 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 28 | 60 | 222 | 176 | 520 | 8,407 |
+| Social Wiring | 28 | 60 | 222 | 176 | 520 | 8,412 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 9 | 11 | 22 | 19 | 32 | 676 |
 | Igig | 23 | 26 | 33 | 26 | 44 | 977 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 9 | 25 | 189 |
-| Agents | 17 | 1 | 45 | 29 | 93 | 1,255 |
+| Agents | 18 | 1 | 45 | 29 | 94 | 1,303 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 39 | 6 | 8 | 64 |
-| **Total** | **299** | **336** | **755** | **461** | **1247** | **18,010** |
+| **Total** | **300** | **336** | **755** | **461** | **1248** | **18,063** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
