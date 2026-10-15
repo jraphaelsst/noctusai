@@ -2,9 +2,13 @@
 
 Agency-management SaaS for marketing/digital agencies: client CRM, sales
 funnel, tasks, agenda, financials, Meta Ads traffic, WhatsApp automation,
-content/social studio, and client-facing reports. Live in production at
-orbity.noctusai.com. Built on the NoctusAI seed framework (`noctusai_lib` +
-`noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend).
+content/social studio, and client-facing reports. Deploy scope comes from the
+catalog (`public.products.deploy_scope`), never from this file: as of 2026-10-15
+it is `ativo=true` + `deploy_scope=dev` (no prod container; orbity.noctusai.com
+is reserved for the `live` promotion). Pages, CRUD matrix and dataflow:
+`KNOWLEDGE-BASE/CONTEXT/PRODUCTS/orbity/PAGES-AND-DATAFLOW.md`. Built on the
+NoctusAI seed framework (`noctusai_lib` + `noctusai_seed` backend,
+`@noctusai/lib` + `@noctusai/seed` frontend).
 
 ## Stack
 

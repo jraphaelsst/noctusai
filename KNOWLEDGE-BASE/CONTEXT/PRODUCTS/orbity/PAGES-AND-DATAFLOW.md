@@ -1,0 +1,146 @@
+# orbity · pages, CRUD matrix and dataflow
+
+> Born 2026-10-15 from the re-activation pass (catalog `ativo=true`, `deploy_scope=dev`):
+> a read-only code audit of every page + a live browser smoke test against the real
+> Supabase project (local backend :8010 / frontend :8140 / Core :8000). Read this before
+> touching any orbity page, adding an entity, or wiring an integration seam. It is the
+> per-page map; the absorption history lives in `KB § ABSORPTIONS/orbity/`.
+>
+> **Status column legend** — ✅ verified live (browser) · 🧪 covered by tests only ·
+> ⚠️ works with a caveat · 🔴 broken / missing.
+
+## 0 · Shape of every page
+
+```
+page (frontend/src/pages/X.tsx)
+  └─ hook (frontend/src/hooks/useX.ts, TanStack Query; invalidates its own keys)
+       └─ HTTP  /api/<area>/…  (Bearer = Supabase session JWT; org from noctus_users)
+            └─ router (backend/app/routers/<area>_router.py — strict Pydantic in/out)
+                 └─ service (backend/app/services/<area>_service.py — user-scoped client, RLS)
+                      └─ table(s) in schema `orbity` (RLS on every table; migrations 001–017)
+```
+
+- **Payload rule:** every router dumps request models with `model_dump(mode="json", …)`
+  before they reach supabase-py. Plain `model_dump()` leaks `UUID`/`date`/`Decimal` into
+  the JSON encoder → live 502 (this happened on `POST /api/crm/leads`, fixed `5e7c010c3`).
+  Regression shape: `backend/tests/routers/test_json_serialization_e2e.py` (router → real
+  service → seed `MockSupabaseClient`, which validates JSON-serializability).
+- **Destructive actions** confirm through the seed organ `useConfirm()` (`@noctusai/lib`,
+  provider mounted by `createProductApp`) — never `window.confirm` (it freezes the renderer
+  and breaks browser automation).
+- **Loading signals:** `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`
+  (`KB § PATTERNS/frontend/lying-loading-state.md`).
+- **Shell calls on every page:** `GET /api/me/access` (orbity), `GET /api/notificacoes*`
+  (seed), and Core `GET /api/me/consents` + `GET /api/admin/llm-spend/{org}` (port 8000).
+  Locally, Core must run too or a "Servidor indisponível" toast fires on every page.
+- **Nav visibility:** `App.tsx` `NAV_GROUPS`, filtered by `orbity.status_pagina`
+  (all keys seeded `producao` in 001/008/013).
+
+## 1 · Route table
+
+| Path | Page | Nav (group) | Auth |
+|---|---|---|---|
+| `/` | Dashboard | Dashboard (Principal) | yes |
+| `/equipe` | Equipe | Equipe (Principal) | yes |
+| `/financeiro` | Financeiro | Financeiro (Principal) | yes |
+| `/clientes` | Clientes | Clientes (CRM) | yes |
+| `/funil` | Funil | Funil (CRM) | yes |
+| `/tarefas` · `/agenda` · `/rotinas` | Tarefas · Agenda · Rotinas | Operações | yes |
+| `/conteudo` · `/trafego` · `/automacao` · `/relatorios` | Conteúdo · Tráfego · Automação · Relatórios | Marketing | yes |
+| `/relatorio/:token` | RelatorioPublico | — | public, token + published + expiry, rate-limited |
+| `/aprovar/:token` | AprovacaoPublica | — | public, token, rate-limited |
+| landing / login / forgot / accept-invite / 404 | seed slots of `createProductApp` | — | public |
+
+## 2 · Per page
+
+### Dashboard
+- **Purpose:** landing after login — KPI row + module cards.
+- **Dataflow:** composes existing endpoints only (clients, `GET /api/crm/funil`, `GET /api/tasks`,
+  `GET /api/financial/cash-flow/{YYYY-MM}`, agenda next 7 days). No dashboard-specific backend.
+- **CRUD:** none (navigation hub).
+
+### Clientes — `orbity.clients`
+- **Dataflow:** seed `ResourceManager` → `GET/POST /api/clients`, `PATCH /api/clients/{id}`,
+  `POST /api/clients/{id}/archive` → `clients_router` → `ClientsService`.
+- **CRUD:** C ✅ · R ✅ · U ✅ (phone edit verified) · D = archive (soft) ✅. Reactivate =
+  `PATCH active=true`; list defaults to `active_only=true`.
+- **Fields:** name*, company, email, phone, monthly_value, due_date (1–31), billing_type
+  (boleto/pix/cartão/transferência), billing_automation flag (no backend behaviour yet).
+
+### Funil — `leads`, `lead_stages`, `lead_activities`, `lead_scoring_rules`
+- **Dataflow:** `useCrm` → `GET /api/crm/funil` (stages + leads), `POST/PATCH/DELETE /api/crm/leads[/{id}]`,
+  `PATCH /leads/{id}/stage` (optimistic), `GET/POST /leads/{id}/activities`,
+  `POST /stages/seed-defaults`. Seed `KanbanBoard` organ.
+- **CRUD:** Lead C 🔴→fixed (UUID 502, `5e7c010c3`) · R ✅ · U · D (confirm organ). Stage: seed-defaults
+  only (no rename/reorder/colour). Activity: C/R only.
+- **Orphans (backend without UI):** scoring rules CRUD, `POST /leads/{id}/score`,
+  public capture `POST /api/capture/{org_id}` (rate-limited; no embed/URL shown in UI).
+
+### Tarefas — `orbity.tasks`
+- **Dataflow:** `useTasks` → `GET /api/tasks` (page_size 200), `POST`, `PATCH /{id}`,
+  `PATCH /{id}/status` (optimistic), `DELETE /{id}`.
+- **CRUD:** C ✅ · R ✅ · U ✅ (status move verified) · D (confirm organ).
+
+### Agenda — `orbity.agenda_events`
+- **Dataflow:** `useAgenda` → `/api/agenda/events` CRUD + `POST /{id}/sync-gcal`.
+- **CRUD:** C ✅ (19:00 BRT stored as 22:00Z, displayed 19:00) · R ✅ · U · D (confirm organ).
+- **Seam:** Google Calendar = **FakeCalendarAdapter, no env switch** (`agenda_router.py`
+  → `agenda_service.py`); UI must label sync as simulated until the Real adapter is wired.
+
+### Rotinas — `orbity.routines` → inserts `orbity.tasks`
+- **Dataflow:** `useRoutines` → `/api/routines` CRUD + `POST /api/routines/run-due`.
+- **CRUD:** full; run-due is manual (no scheduler).
+
+### Financeiro — `contracts`, `expenses`, `revenues`
+- **Dataflow:** `useFinancial` → `/api/financial/{contracts,expenses,revenues}` CRUD +
+  `GET /cash-flow/{month}` (Visão Geral cards: receitas pagas, despesas pagas, resultado,
+  pendentes, em atraso).
+- **CRUD:** Contract C ✅ · R ✅ · D ✅ (delete verified live) · U. Expenses/Revenues full CRUD.
+- **Caveats:** contracts never generate revenues; no "mark paid" quick action;
+  `NOC-REMEDIATE[orbity-finance-fiscal]` in `financial_service.py`.
+
+### Tráfego — `ad_accounts`, `campaigns`, `campaign_metrics`
+- **Dataflow:** `useMetaAds` → `/api/meta-ads/ad-accounts` CRUD, `/campaigns` CRUD,
+  `PATCH /campaigns/{id}/situation`, `POST /sync`, `GET /aggregate`,
+  `GET|PUT /campaigns/{id}/metrics` (PUT = manual metric entry: date, spend, impressions,
+  leads, cpl?; added `5e7c010c3`).
+- **Seam:** Meta Ads = **Fake client, unconditional** (`NOC-REMEDIATE[orbity-meta-ads-live]`);
+  page carries an honesty banner. `sync_campaigns` no longer overwrites `situation`.
+
+### Automação — `automation_flows`, `automation_steps`, `automation_executions`, `automation_pending_actions`
+- **Dataflow:** `useAutomacao` → `/api/automation/flows` CRUD, `/flows/{id}/steps` + `/steps/{id}`,
+  `POST /flows/{id}/trigger`, `GET/DELETE /executions`, `POST /run-due`.
+- **Seam:** WhatsApp sender = **FakeWhatsAppSender, unconditional**; 13 of 14 trigger types are
+  never emitted (manual trigger only); `action` steps are no-ops; no scheduler
+  (`NOC-REMEDIATE[orbity-automation-scheduler]`).
+
+### Conteúdo — `content_campaigns`, `content_posts`, `post_approvals`
+- **Dataflow:** `useConteudo` → `/api/content/campaigns` CRUD, `/posts` CRUD,
+  `POST /posts/{id}/approvals` (token link → `/aprovar/{token}`).
+- **Caveats:** "Publicado" is a manual status (`NOC-REMEDIATE[orbity-content-publish]`);
+  approval history endpoints exist (`GET /approvals*`) without UI.
+
+### Relatórios — `reports`, `report_snapshots` (+ reads leads/revenues/expenses/campaign_metrics)
+- **Dataflow:** `useRelatorios` → `/api/reports` CRUD, `GET /{id}/snapshots`, `POST /{id}/generate`;
+  public read `GET /api/reports/public/{token}` (rate-limited).
+- **Scoping (fixed `5e7c010c3`):** a report with `client_id` aggregates ONLY that client's
+  leads/revenues/Meta campaigns; `expenses` has no `client_id`, so client reports return
+  `{available:false, reason}` instead of the org total. Query failures raise — no silent zeros.
+
+### Equipe
+- Seed `TeamPage` + admin-only `StatusPaginaPanel` (`@noctusai/lib`) → seed `/api/team/*`,
+  `/api/status-paginas` → `orbity.invitations`, `orbity.status_pagina`.
+
+## 3 · Integration seams (Fake vs Real)
+
+| Seam | Selected at | Today | To go Real |
+|---|---|---|---|
+| Google Calendar | `agenda_router.py` → `agenda_service.py` | Fake, no switch | settings flag + seed GCal Real adapter + per-org OAuth (`KB § INTEGRATIONS/`) |
+| Meta Ads | `meta_ads_service._make_default_client` | Fake, no switch | seed Meta Real client + insights pull into `campaign_metrics` |
+| WhatsApp | `automation_service.py` / `automation_engine.py` | Fake, no switch | seed WAHA sender + `whatsapp_connections` organ + inbound webhook to emit triggers |
+
+## 4 · Known debt (named destinations)
+
+`NOC-REMEDIATE[orbity-finance-fiscal]` · `[orbity-meta-ads-live]` · `[orbity-automation-scheduler]` ·
+`[orbity-content-publish]` · `[orbity-agenda-gcal]` · `orbity.examples` scaffold table (drop in a
+future migration) · `MetaAdsService.get_spend_leads_aggregate` unbatched `.in_` + unpaged select.
