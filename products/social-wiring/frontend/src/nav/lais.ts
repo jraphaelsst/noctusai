@@ -126,6 +126,12 @@ export const LAIS_PAGES = {
     icon: Building2,
     route: "lais_captacao",
   },
+  equipes: {
+    name: "Equipes",
+    href: "/lais/equipes",
+    icon: Users,
+    route: "lais_equipes",
+  },
 } as const satisfies Record<string, LaisPage>;
 
 export type LaisPageKey = keyof typeof LAIS_PAGES;

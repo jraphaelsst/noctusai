@@ -3,6 +3,7 @@ import { useState } from "react";
 import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
+import { useLaisEquipes } from "@/hooks/useLaisEquipes";
 import { useTeamMembers } from "@/hooks/useTeam";
 import {
   FILTROS_VAZIOS, SEM_RESPONSAVEL, useEtiquetas,
@@ -46,6 +47,7 @@ interface Props {
 export function FiltroConversasDrawer({ filtros, onAplicar, onClose }: Props) {
   const [d, setD] = useState<FiltrosConversas>(filtros);
   const { data: membros = [] } = useTeamMembers();
+  const { data: equipes = [] } = useLaisEquipes();
   const { data: etiquetas = [] } = useEtiquetas();
   const set = (p: Partial<FiltrosConversas>) => setD((x) => ({ ...x, ...p }));
 
@@ -89,8 +91,8 @@ export function FiltroConversasDrawer({ filtros, onAplicar, onClose }: Props) {
           {membros.map((m) => check(m.nome || m.email, d.responsaveis.includes(m.id), () => set({ responsaveis: alternar(d.responsaveis, m.id) })))}
         </Grupo>
         <Grupo titulo="Equipe">
-          {/* Equipes arrive with wave 11 (Distribuição); until then there is nothing to pick. */}
-          <p className="text-xs text-muted-foreground">Nenhuma equipe cadastrada.</p>
+          {equipes.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma equipe cadastrada.</p>}
+          {equipes.map((e) => check(e.nome, d.equipes.includes(e.id), () => set({ equipes: alternar(d.equipes, e.id) })))}
         </Grupo>
         <Grupo titulo="Etiquetas">
           {etiquetas.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma etiqueta criada.</p>}
