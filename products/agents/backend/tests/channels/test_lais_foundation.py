@@ -195,6 +195,23 @@ class TestActionTools:
         assert body["status"] == "encerrado"
         assert body["actions"] == [{"seq": 1, "type": "encerrar", "motivo": "lead_encerrou"}]
 
+    @pytest.mark.parametrize("aceito", [True, False])
+    def test_consentimento_credito_is_recorded_with_its_boolean(self, chan, aceito):
+        ctx = contexto(acoes=["consentimento_credito"])
+        body = self._turn(chan, ToolCall("1", "consentimento_credito", {"aceito": aceito}), ctx=ctx).json()
+        assert body["actions"] == [{"seq": 1, "type": "consentimento_credito", "aceito": aceito}]
+
+    @pytest.mark.parametrize("args", [{}, {"aceito": "sim"}, {"aceito": True, "x": 1}])
+    def test_consentimento_credito_invalid_args_refused(self, chan, args):
+        ctx = contexto(acoes=["consentimento_credito"])
+        body = self._turn(chan, ToolCall("1", "consentimento_credito", args), ctx=ctx).json()
+        assert body["actions"] == []
+        assert tool_results(chan.provider)[0].startswith("Argumentos inválidos")
+
+    def test_consentimento_credito_not_callable_unless_in_acoes(self, chan):
+        body = self._turn(chan, ToolCall("1", "consentimento_credito", {"aceito": True})).json()
+        assert body["actions"] == []
+
     def test_handoff_wins_over_encerrar_and_only_the_first_handoff_is_kept(self, chan):
         body = self._turn(
             chan,
@@ -351,6 +368,19 @@ class TestReplay:
         assert second.json()["status"] == "encerrado"
         assert [a["seq"] for a in second.json()["actions"]] == [1, 2]
         assert len(chan.provider.calls) == calls_before  # the model never ran twice
+
+
+class TestReplayConsentimentoCredito:
+    def test_replay_identical(self, chan):
+        chan.seed_agent()
+        chan.use_provider(tool_turn(ToolCall("1", "consentimento_credito", {"aceito": True})))
+        body = body_with(contexto(acoes=["consentimento_credito"]), "Aceito", ids=["wamid.cred"])
+        first = chan.turn(body)
+        calls = len(chan.provider.calls)
+        second = chan.turn(body)
+        assert second.json() == first.json()
+        assert second.json()["actions"] == [{"seq": 1, "type": "consentimento_credito", "aceito": True}]
+        assert len(chan.provider.calls) == calls
 
 
 class TestAuthStrict:

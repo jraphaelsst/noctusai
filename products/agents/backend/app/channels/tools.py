@@ -176,6 +176,19 @@ ACTION_SPECS: dict[str, ToolSpec] = {
             "required": ["motivo"], "additionalProperties": False,
         },
     ),
+    "consentimento_credito": ToolSpec(
+        name="consentimento_credito",
+        description=(
+            "Registra a resposta do cliente ao pedido de consentimento para a análise de crédito "
+            "(aceito=true se ele concordou explicitamente; false se recusou). Só chame depois de "
+            "perguntar e receber uma resposta clara."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"aceito": {"type": "boolean"}},
+            "required": ["aceito"], "additionalProperties": False,
+        },
+    ),
 }
 
 READ_SPECS: dict[str, ToolSpec] = {

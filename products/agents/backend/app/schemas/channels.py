@@ -25,6 +25,7 @@ __all__ = [
     "FERRAMENTA_NAMES",
     "ActionArgs",
     "CaptacaoActionOut",
+    "ConsentimentoCreditoActionOut",
     "ChannelActionOut",
     "ChannelAgentStatusOut",
     "ChannelContexto",
@@ -98,13 +99,13 @@ _CONTEXTO_TOO_BIG = "contexto_grande"
 Operacao = Literal["compra", "aluguel"]
 FerramentaName = Literal["buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento"]
 AcaoName = Literal[
-    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "handoff"
+    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "consentimento_credito", "handoff"
 ]
 FERRAMENTA_NAMES: tuple[str, ...] = (
     "buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento",
 )
 ACAO_NAMES: tuple[str, ...] = (
-    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "handoff",
+    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "consentimento_credito", "handoff",
 )
 
 
@@ -213,11 +214,16 @@ class EncerrarActionOut(_ActionOut):
     motivo: Literal["lead_encerrou", "sem_interesse", "invalido", "outro"]
 
 
+class ConsentimentoCreditoActionOut(_ActionOut):
+    type: Literal["consentimento_credito"]
+    aceito: bool
+
+
 #: Discriminated union on ``type`` (§2.1(d)).
 ChannelActionOut = Annotated[
     Union[
         HandoffActionOut, SalvarSlotsActionOut, DefinirOperacaoActionOut, QualificarLeadActionOut,
-        PedidoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut,
+        PedidoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut, ConsentimentoCreditoActionOut,
     ],
     Field(discriminator="type"),
 ]
@@ -231,6 +237,7 @@ ActionArgs = {
     "pedido_visita": PedidoVisitaActionOut,
     "captacao": CaptacaoActionOut,
     "encerrar": EncerrarActionOut,
+    "consentimento_credito": ConsentimentoCreditoActionOut,
 }
 
 
