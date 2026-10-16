@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), patch: vi.fn(), post: vi.fn(), delete: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
-vi.mock("@noctusai/lib/components", () => ({ useConfirm: () => async () => true }));
+vi.mock("@noctusai/lib/components", async (orig) => ({ ...(await orig<object>()), useConfirm: () => async () => true }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import LaisModelos from "@/pages/lais/Modelos";

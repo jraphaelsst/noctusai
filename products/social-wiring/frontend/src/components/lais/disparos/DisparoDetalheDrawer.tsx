@@ -1,9 +1,8 @@
 /** Disparo detail: summary, targets status, send/cancel (send gated by transport). */
 import { toast } from "sonner";
-import { useConfirm } from "@noctusai/lib/components";
+import { SideDrawer, useConfirm } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
-import { Drawer } from "@/components/lais/reengajamento/Drawer";
 import {
   STATUS_LABEL,
   TIPO_LABEL,
@@ -56,7 +55,7 @@ export function DisparoDetalheDrawer({
   }
 
   return (
-    <Drawer open={!!disparo} onOpenChange={(o) => !o && onClose()} title={d?.nome ?? "Disparo"} description="Detalhes do disparo" testId="disparo-detalhe">
+    <SideDrawer open={!!disparo} onOpenChange={(o) => !o && onClose()} title={d?.nome ?? "Disparo"} description="Detalhes do disparo" testId="disparo-detalhe">
       {d && (
         <div className="mt-4 space-y-4 text-sm">
           <dl className="grid grid-cols-2 gap-2">
@@ -97,6 +96,6 @@ export function DisparoDetalheDrawer({
           )}
         </div>
       )}
-    </Drawer>
+    </SideDrawer>
   );
 }

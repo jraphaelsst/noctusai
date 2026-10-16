@@ -1,12 +1,11 @@
 /** "Pré-visualização" drawer — WhatsApp bubble + per-parameter simulation + delete. */
 import { useState } from "react";
 import { toast } from "sonner";
-import { useConfirm } from "@noctusai/lib/components";
+import { SideDrawer, useConfirm } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Drawer } from "@/components/lais/reengajamento/Drawer";
 import { PARAMETROS, parametrosDoTexto, simular, useExcluirModelo, type Modelo } from "@/hooks/useLaisModelos";
 import { mensagemErroLais } from "@/hooks/useLaisAgente";
 
@@ -29,7 +28,7 @@ export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null
   }
 
   return (
-    <Drawer open={!!modelo} onOpenChange={(o) => !o && onClose()} title="Pré-visualização" description={modelo?.nome} testId="modelo-preview">
+    <SideDrawer open={!!modelo} onOpenChange={(o) => !o && onClose()} title="Pré-visualização" description={modelo?.nome} testId="modelo-preview">
       {modelo && (
         <div className="mt-4 space-y-4">
           <div className="rounded-lg bg-emerald-50 p-3 text-sm whitespace-pre-wrap" data-testid="preview-bolha">
@@ -62,6 +61,6 @@ export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null
           </div>
         </div>
       )}
-    </Drawer>
+    </SideDrawer>
   );
 }
