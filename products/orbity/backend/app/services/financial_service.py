@@ -16,6 +16,8 @@ from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
 from app.services.billing_charges import CHARGES, CLIENTS, ENTRIES
 
 logger = logging.getLogger(__name__)
@@ -97,10 +99,13 @@ class FinancialService:
 
     def monthly_cash_flow(self, reference_month: str) -> dict[str, Any]:
         first, nxt = month_bounds(reference_month)
-        entries = (
-            self._t(ENTRIES).select("id,direction,status,amount_cents,settled_cents,due_date,competence_month")
-            .eq("org_id", self._org_id).eq("competence_month", first.isoformat()).execute().data or []
-        )
+        def page(start: int, end: int):
+            return (
+                self._t(ENTRIES).select("id,direction,status,amount_cents,settled_cents,due_date,competence_month")
+                .eq("org_id", self._org_id).eq("competence_month", first.isoformat()).order("id").range(start, end).execute().data
+            )
+
+        entries = list(iter_paged_rows(page, label="financial cash flow entries"))  # PostgREST silently caps a bare select at 1000
         receivables = [e for e in entries if e["direction"] == "receivable"]
         payables = [e for e in entries if e["direction"] == "payable"]
 
@@ -179,7 +184,11 @@ class FinancialService:
 
     def open_charges_of_client(self, client_id: str) -> list[dict]:
         """The client's receivables still open (pending + overdue, possibly partially paid), oldest first."""
-        charges = self._t(CHARGES).select("*").eq("org_id", self._org_id).eq("client_id", client_id).execute().data or []
+        def page(start: int, end: int):
+            return (self._t(CHARGES).select("*").eq("org_id", self._org_id).eq("client_id", client_id)
+                    .order("id").range(start, end).execute().data)
+
+        charges = list(iter_paged_rows(page, label="client charges"))
         presented = [c for c in self.present_charges(charges) if c["entry_status"] in _OPEN]
         presented.sort(key=lambda c: (c["due_date"], c["entry_id"]))
         return presented

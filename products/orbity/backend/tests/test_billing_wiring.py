@@ -124,6 +124,26 @@ def test_the_upload_surface_of_the_organs_is_covered_by_a_body_override():
     assert FIN_ATTACHMENT in finance_organ.max_body_path_overrides
 
 
+class TestTheContractsCustomerIsAClient:
+    """`party_resolver`: the editor's picker sends only the client id; the organ verifies it in the org and snapshots the legal name + CPF/CNPJ."""
+
+    def test_the_client_is_snapshotted_with_its_legal_name_and_document(self):
+        from noctusai_lib.domain.contracts import ContractsScope, contracts
+
+        db = _db()
+        c = contracts.create_contract(ContractsScope(db, CONTRACTS_CFG, ORG), {
+            "title": "Gestão", "billing_model": "recurring", "amount_cents": 100_000, "first_due_date": "2026-11-20", "party_id": CLIENT})
+        assert (c["party_id"], c["party_name"], c["party_doc"]) == (CLIENT, "Acme LTDA", "11222333000181")
+
+    def test_another_orgs_client_cannot_be_contracted(self):
+        from noctusai_lib.domain.contracts import ContractsError, ContractsScope, contracts
+
+        with pytest.raises(ContractsError) as exc:
+            contracts.create_contract(ContractsScope(_db(), CONTRACTS_CFG, "another-org"), {
+                "title": "Gestão", "billing_model": "recurring", "amount_cents": 100_000, "first_due_date": "2026-11-20", "party_id": CLIENT})
+        assert exc.value.code == "parte_invalida"
+
+
 # ── the seed billing run, through Orbity's billing seam ─────────────────────────────────────────────────────
 
 

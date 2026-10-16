@@ -3,8 +3,8 @@
 * Finance (`fin_*`) and contracts (`ctr_*`) live in this product's schema (migrations 019 / 021, generator output
   verbatim; pinned by ``tests/test_billing_wiring.py``).
 * Orbity mounts NO parties/items organ: a contract's ``party_id`` IS ``orbity.clients.id`` (a plain UUID by
-  ``ContractsConfig.with_parties=False``), and ``party_name`` / ``party_doc`` are snapshots of the client's legal name
-  and CPF/CNPJ.
+  ``ContractsConfig.with_parties=False``), verified in the org and snapshotted (legal name + CPF/CNPJ) through the
+  organ's ``party_resolver`` seam -- the editor's party picker sends only the id.
 * The gateway is Asaas, resolved PER ORG (key / environment / webhook token are org credentials, org settings ->
   platform settings -> env). No credential => ``GatewayNotConfigured`` => the charge stays a plain receivable; the
   Fake is reachable ONLY through ``PAYMENTS_ALLOW_FAKE`` (never a silent default).
@@ -32,8 +32,19 @@ logger = logging.getLogger(__name__)
 
 SCHEMA = "orbity"
 
+def client_party_resolver(db: Any, org_id: str, party_id: str) -> Optional[dict]:
+    """The contracts organ's ``party_resolver`` seam: the contract's customer IS an ``orbity.clients`` row of the SAME org.
+
+    Snapshots the Razão Social (what the gateway charges) and the CPF/CNPJ; ``None`` => the id is not this org's client."""
+    rows = db.table("clients").select("legal_name,name,document").eq("org_id", str(org_id)).eq("id", str(party_id)).limit(1).execute().data or []
+    if not rows:
+        return None
+    row = rows[0]
+    return {"party_name": row.get("legal_name") or row.get("name"), "party_doc": row.get("document")}
+
+
 FINANCE_CFG = FinanceConfig(schema=SCHEMA)
-CONTRACTS_CFG = ContractsConfig(schema=SCHEMA)
+CONTRACTS_CFG = ContractsConfig(schema=SCHEMA, party_resolver=client_party_resolver)
 
 #: Only the credential NAMES / default environment of the commerce gateway config are used (asaas_api_key,
 #: asaas_environment, asaas_webhook_token, sandbox default) -- Orbity runs no storefront.
@@ -89,6 +100,6 @@ def get_cnpj_lookup() -> CnpjRegistryLookup:
 
 
 __all__ = [
-    "CONTRACTS_CFG", "FINANCE_CFG", "GATEWAY_NAME", "OrbityAsaasGateway", "SCHEMA", "gateway_is_configured",
+    "CONTRACTS_CFG", "client_party_resolver", "FINANCE_CFG", "GATEWAY_NAME", "OrbityAsaasGateway", "SCHEMA", "gateway_is_configured",
     "get_cnpj_lookup", "get_gateway",
 ]

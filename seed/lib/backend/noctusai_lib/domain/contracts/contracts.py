@@ -144,9 +144,19 @@ def list_contracts(s: Scope, *, q: Optional[str] = None, status: Optional[str] =
 
 
 def _resolve_party(s: Scope, party_id: Optional[str]) -> dict:
-    """With the parties organ mounted: the party must belong to this org; its name/doc are snapshotted."""
-    if not party_id or not s.cfg.with_parties:
+    """With the parties organ mounted: the party must belong to this org; its name/doc are snapshotted.
+
+    Without it, a host that keeps its customers in its own table supplies `cfg.party_resolver` (same contract: verified in the
+    org, name/doc snapshotted); with neither, `party_id` is a plain UUID and the caller's `party_name` stands."""
+    if not party_id:
         return {}
+    if not s.cfg.with_parties:
+        if s.cfg.party_resolver is None:
+            return {}
+        found = s.cfg.party_resolver(s.db, s.org_id, str(party_id))
+        if found is None:
+            raise invalid("party_id", "Parte não encontrada.", code=PARTE_INVALIDA)
+        return {"party_name": found.get("party_name"), "party_doc": found.get("party_doc")}
     resp = (s.db.table(s.cfg.parties_table).select("id,legal_name,doc").eq("org_id", s.org_id).eq("id", str(party_id))
             .limit(1).execute())
     row = first(resp)

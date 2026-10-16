@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Mapping, Optional
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -31,6 +31,10 @@ class ContractsConfig:
             for periodic vs one-off billing. Defaults are the DRE starter tree's (dre-structure.md §2a).
         billing_lead_days: the job books a receivable this many days BEFORE it is due.
         bucket: PRIVATE storage bucket for attachments (`<org>/contracts/<contract>/<att>.<ext>`).
+        party_resolver: the named seam for a host WITHOUT the parties organ whose customers live in its own table
+            (`with_parties=False`, `party_id` = that table's id): `(db, org_id, party_id) -> {"party_name", "party_doc"}`, or
+            None when the id is not a customer of `org_id` (the contract is then refused `parte_invalida`). Without it a
+            `party_id` stays an unverified, unsnapshotted UUID. Ignored when `with_parties` is on.
     """
 
     schema: str
@@ -46,6 +50,7 @@ class ContractsConfig:
     billing_lead_days: int = 30
     bucket: str = "contract-attachments"
     signed_url_ttl_seconds: int = MAX_SIGNED_URL_TTL_SECONDS
+    party_resolver: Optional[Callable[[Any, str, str], Optional[Mapping[str, Any]]]] = None
 
     def __post_init__(self) -> None:
         for label, val in (("schema", self.schema), ("table_prefix", self.table_prefix),

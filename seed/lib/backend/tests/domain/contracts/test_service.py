@@ -9,7 +9,9 @@ from noctusai_lib.domain.contracts import ContractFromQuote, QuoteLine, contract
 from noctusai_lib.domain.contracts import billing_run
 from noctusai_lib.domain.contracts.errors import ContractsError
 
-from .conftest import ORG_A, ORG_B, USER_ID, body, mk, mk_party
+from noctusai_lib.domain.contracts._common import Scope
+
+from .conftest import CFG, ORG_A, ORG_B, USER_ID, body, make_db, mk, mk_party
 
 ON = date(2026, 11, 1)
 
@@ -430,3 +432,32 @@ def test_every_read_and_write_is_org_scoped(s, s_b, billing):
         with pytest.raises(NotFoundError):
             call()
     assert contracts.list_contracts(s_b)[1] == 0
+
+
+def test_a_host_without_the_parties_organ_snapshots_its_own_customers_through_party_resolver(contracts_schema_cache):
+    """`ContractsConfig.party_resolver`: verified in the org, name/doc snapshotted -- no parties table involved."""
+    from dataclasses import replace
+
+    customers = {(ORG_A, "11111111-1111-4111-8111-111111111111"): {"party_name": "Acme Comércio LTDA", "party_doc": "11222333000181"}}
+    seen = []
+
+    def resolver(db, org_id, party_id):
+        seen.append((org_id, party_id))
+        return customers.get((org_id, party_id))
+
+    cfg = replace(CFG, with_parties=False, with_items=False, party_resolver=resolver)
+    db = make_db()
+    c = mk(Scope(db, cfg, ORG_A), party_id="11111111-1111-4111-8111-111111111111")
+    assert (c["party_name"], c["party_doc"]) == ("Acme Comércio LTDA", "11222333000181")
+    with pytest.raises(ContractsError) as e:
+        mk(Scope(db, cfg, ORG_B), party_id="11111111-1111-4111-8111-111111111111")  # another org's customer
+    assert e.value.code == "parte_invalida"
+    assert (ORG_B, "11111111-1111-4111-8111-111111111111") in seen
+
+
+def test_without_a_resolver_a_party_id_without_the_parties_organ_stays_a_plain_uuid(contracts_schema_cache):
+    from dataclasses import replace
+
+    cfg = replace(CFG, with_parties=False, with_items=False)
+    c = mk(Scope(make_db(), cfg, ORG_A), party_id="22222222-2222-4222-8222-222222222222", party_name="Digitado")
+    assert c["party_id"] == "22222222-2222-4222-8222-222222222222" and c["party_name"] == "Digitado"
