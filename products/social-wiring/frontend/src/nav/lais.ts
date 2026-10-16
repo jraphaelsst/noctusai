@@ -11,7 +11,7 @@
  * `LAIS_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Bell, Bot, CalendarClock, HelpCircle, MessagesSquare, RefreshCw, Settings2, Sparkles } from "lucide-react";
+import { Bell, BookOpen, Bot, CalendarClock, FileText, HelpCircle, Home, MessagesSquare, RefreshCw, Send, Settings2, Sparkles } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -77,6 +77,24 @@ export const LAIS_PAGES = {
     href: "/lais/notificacoes",
     icon: Bell,
     route: "lais_notificacoes",
+  },
+  modelos: {
+    name: "Modelos",
+    href: "/lais/modelos",
+    icon: FileText,
+    route: "lais_modelos",
+  },
+  disparos: {
+    name: "Disparos",
+    href: "/lais/disparos",
+    icon: Send,
+    route: "lais_disparos",
+  },
+  proprietarios: {
+    name: "Atualização de imóveis",
+    href: "/lais/proprietarios",
+    icon: Home,
+    route: "lais_proprietarios",
   },
 } as const satisfies Record<string, LaisPage>;
 
