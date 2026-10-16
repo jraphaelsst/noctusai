@@ -20,6 +20,7 @@ const C = (id: string, d: Date, status: Captacao["status"] = "nova"): Captacao =
   id, contato: { id: `ct-${id}`, nome: `Pessoa ${id}`, telefone: "5511999990000" },
   descricao: `Casa ${id}`, endereco: `Rua ${id}, 10`, operacao: "venda", status, created_at: d.toISOString(),
   imovel_id: status === "registrada" ? `im-${id}` : null,
+  imovel_codigo: status === "registrada" ? `SW-${id}` : null,
 });
 const ITENS = [C("a", agora), C("b", ontem, "registrada")];
 
@@ -74,12 +75,12 @@ describe("Captação page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expandir" }));
     const d2 = screen.getAllByTestId("captacao-detalhe")[1];
     expect(within(d2).queryByRole("button", { name: "Registrar captação" })).toBeNull();
-    expect(within(d2).getByRole("link", { name: /Ver imóvel/ }).getAttribute("href")).toBe("/imoveis/im-b");
+    expect(within(d2).getByRole("link", { name: /Ver imóvel/ }).getAttribute("href")).toBe("/imoveis/SW-b");
   });
 
   it("registrar posts, toasts success and refetches", async () => {
     setup();
-    api.post.mockResolvedValue({ data: { imovel_id: "im-9" } });
+    api.post.mockResolvedValue({ data: { imovel_id: "im-9", imovel_codigo: "SW-9" } });
     await screen.findByText("Exibindo 2 captações");
     fireEvent.click(screen.getAllByRole("button", { name: "Expandir" })[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Registrar captação" }));

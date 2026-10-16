@@ -45,8 +45,8 @@ export function CaptacaoCard({ captacao: c, ocupado, onRegistrar, onDescartar }:
           </dl>
           <div className="flex flex-wrap items-center gap-2">
             <Link to={`${LAIS_PAGES.conversas.href}?contato=${c.contato.id}`} className="text-primary underline">Abrir conversa</Link>
-            {c.status === "registrada" && c.imovel_id && (
-              <Link to={`/imoveis/${c.imovel_id}`} className="inline-flex items-center gap-1 text-primary underline">
+            {c.status === "registrada" && c.imovel_codigo && (
+              <Link to={`/imoveis/${encodeURIComponent(c.imovel_codigo)}`} className="inline-flex items-center gap-1 text-primary underline">
                 Ver imóvel <ExternalLink className="h-3 w-3" />
               </Link>
             )}

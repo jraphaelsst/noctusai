@@ -40,11 +40,11 @@ export default function LaisCaptacao() {
 
   function aoRegistrar(c: LaisCaptacao) {
     registrar.mutate(c.id, {
-      onSuccess: ({ imovel_id }) =>
+      onSuccess: ({ imovel_codigo }) =>
         toast.success(
           <span>
             Captação registrada.{" "}
-            <Link to={`/imoveis/${imovel_id}`} className="underline">Abrir imóvel</Link>
+            <Link to={`/imoveis/${encodeURIComponent(imovel_codigo)}`} className="underline">Abrir imóvel</Link>
           </span>,
         ),
       onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível registrar a captação.")),

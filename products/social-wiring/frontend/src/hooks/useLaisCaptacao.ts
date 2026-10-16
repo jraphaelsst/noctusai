@@ -2,7 +2,7 @@
  * Lais › Captação (contract wave 8).
  *
  *   GET  /api/lais/captacoes?status&de&ate&page&page_size → {data:{items,total}}
- *   POST /api/lais/captacoes/{id}/registrar → {data:{imovel_id}}
+ *   POST /api/lais/captacoes/{id}/registrar → {data:{imovel_id, imovel_codigo}}
  *   POST /api/lais/captacoes/{id}/descartar → 204
  *
  * Loading = two signals off `data` (never `isLoading`); `placeholderData: prev`
@@ -25,6 +25,8 @@ export interface LaisCaptacao {
   status: CaptacaoStatus;
   created_at: string;
   imovel_id: string | null;
+  /** SW imóvel route key (`/imoveis/:codigo`); null until registered. */
+  imovel_codigo: string | null;
 }
 export interface CaptacoesPage { items: LaisCaptacao[]; total: number }
 export interface CaptacaoFiltro { status: StatusFiltro; de: string; ate: string; page: number; pageSize: number }
@@ -51,7 +53,7 @@ export function useRegistrarCaptacao() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) =>
-      (await api.post(`/api/lais/captacoes/${id}/registrar`, {})).data as { imovel_id: string },
+      (await api.post(`/api/lais/captacoes/${id}/registrar`, {})).data as { imovel_id: string; imovel_codigo: string },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
