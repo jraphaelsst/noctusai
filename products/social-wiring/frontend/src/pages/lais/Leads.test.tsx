@@ -23,7 +23,13 @@ const err = (status: number, code: string) =>
   Object.assign(new Error("x"), { status, body: { error: { code, message: "srv" } } });
 
 function setup(items: unknown[] = [L("a"), L("b")], total = items.length) {
-  api.get.mockResolvedValue({ data: { items, total } });
+  api.get.mockImplementation((url: string) =>
+    Promise.resolve(
+      url.includes("/leads/canais")
+        ? { data: [{ slug: "claude", label: "Claude" }, { slug: "mcp", label: "MCP" }] }
+        : { data: { items, total } },
+    ),
+  );
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><LaisLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>,
@@ -73,14 +79,14 @@ describe("Leads page", () => {
     const d = screen.getByTestId("leads-filtro");
     fireEvent.change(within(d).getByLabelText("Nome"), { target: { value: "Maria" } });
     fireEvent.click(within(d).getByLabelText("Erro no envio"));
-    fireEvent.click(within(d).getByLabelText("Claude"));
+    fireEvent.click(await within(d).findByLabelText("Claude"));
     fireEvent.click(within(d).getByLabelText("MCP"));
     fireEvent.click(within(d).getByTestId("filtro-filtrar"));
     await waitFor(() => {
-      const url = api.get.mock.calls.at(-1)![0] as string;
+      const url = api.get.mock.calls.map((c) => c[0] as string).filter((u) => !u.includes("/canais")).at(-1)!;
       expect(url).toContain("nome=Maria");
       expect(url).toContain("status=erro");
-      expect(url).toContain("canal=Claude&canal=MCP");
+      expect(url).toContain("canal=claude&canal=mcp");
       expect(url).toContain("page=1");
     });
     expect(screen.getByTestId("leads-filtros").textContent).toContain("(3)");

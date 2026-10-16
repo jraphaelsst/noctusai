@@ -153,3 +153,15 @@ export async function baixarLeadsCsv(filtros: FiltrosLeads, ids?: string[]): Pro
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+
+export interface CanalOrigem { slug: string; label: string }
+
+/** The org's real lead origins (SW lead_sources + Lais origin codes + stored canais) — GET /api/lais/leads/canais. */
+export function useLaisCanais() {
+  return useQuery({
+    queryKey: ["lais", "leads", "canais"],
+    queryFn: async () => ((await api.get("/api/lais/leads/canais")).data ?? []) as CanalOrigem[],
+    staleTime: 5 * 60_000,
+  });
+}
