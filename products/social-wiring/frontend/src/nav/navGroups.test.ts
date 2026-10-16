@@ -29,7 +29,7 @@ describe.each([
     expect(allItems(groups).some((i) => i.href === "/whatsapp-chat")).toBe(false);
   });
 
-  it("has the Lais group directly after Principal, with Conversas + Configurações + Agente", () => {
+  it("has the Lais group directly after Principal, with Painel + Conversas + Configurações", () => {
     const keys = groups.map((g) => g.key);
     expect(keys.indexOf(LAIS_NAV_KEY)).toBe(keys.indexOf("principal") + 1);
     const lais = byKey(groups, LAIS_NAV_KEY)!;
@@ -38,9 +38,9 @@ describe.each([
     expect(lais.items.map((i) => [i.name, i.href])).toEqual(Object.values(LAIS_PAGES).map((p) => [p.name, p.href]));
     // The first three are fixed (page 0 + the original group).
     expect(lais.items.slice(0, 3).map((i) => [i.name, i.href])).toEqual([
+      ["Painel", "/lais/painel"],
       ["Conversas", "/lais/conversas"],
       ["Configurações", "/lais/configuracoes"],
-      ["Agente", "/lais/agente"],
     ]);
   });
 });

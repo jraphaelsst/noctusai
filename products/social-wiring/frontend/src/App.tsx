@@ -50,6 +50,7 @@ const EmailCampanhas = lazyWithReload(() => import("@/pages/EmailCampanhas"));
 const EmailMarketingConfig = lazyWithReload(() => import("@/pages/EmailMarketingConfig"));
 const EmailMembros = lazyWithReload(() => import("@/pages/EmailMembros"));
 const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
+const LaisPainel = lazyWithReload(() => import("@/pages/lais/Painel"));
 const LaisConversas = lazyWithReload(() => import("@/pages/lais/Conversas"));
 const LaisConfiguracoes = lazyWithReload(() => import("@/pages/lais/Configuracoes"));
 const LaisAgente = lazyWithReload(() => import("@/pages/lais/Agente"));
@@ -232,6 +233,7 @@ export default createProductApp({
     { path: "/email/dominios", component: EmailDominios },
     { path: "/monitor", component: Monitor },
     // Lais (chatbot module) — WhatsApp conversations + connection settings
+    { path: LAIS_PAGES.painel.href, component: LaisPainel },
     { path: LAIS_PAGES.conversas.href, component: LaisConversas },
     { path: LAIS_PAGES.configuracoes.href, component: LaisConfiguracoes },
     { path: LAIS_PAGES.agente.href, component: LaisAgente },

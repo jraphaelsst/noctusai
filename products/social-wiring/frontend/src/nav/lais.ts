@@ -11,7 +11,7 @@
  * `LAIS_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, FileText, HelpCircle, Home, MessagesSquare, RefreshCw, Send, Settings2, Sparkles, Users } from "lucide-react";
+import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, Sparkles, Users } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -30,6 +30,12 @@ interface LaisPage extends NavItemWithRoute {
 
 /** Every Lais page, in nav order. */
 export const LAIS_PAGES = {
+  painel: {
+    name: "Painel",
+    href: "/lais/painel",
+    icon: LayoutDashboard,
+    route: "lais_painel",
+  },
   conversas: {
     name: "Conversas",
     href: "/lais/conversas",
