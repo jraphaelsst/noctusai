@@ -91,6 +91,15 @@ def registrar_client_provider(fn: Optional[Callable[[], Any]]) -> None:
     _client_provider = fn
 
 
+_core_provider: Optional[Callable[[], Any]] = None
+
+
+def registrar_core_provider(fn: Optional[Callable[[], Any]]) -> None:
+    """Core client used by the wave-11 attendant distribution (org users); default `get_core_client()`."""
+    global _core_provider
+    _core_provider = fn
+
+
 def registrar_repo(repo: Any) -> None:
     global _repo
     _repo = repo
@@ -330,6 +339,24 @@ def _falhar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: s
     _entrega(client, org_id, contato["id"], gatilho, "erro", erro)
 
 
+def _atribuir_antes_de_notificar(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> None:
+    """Wave 11: pick the attendant (teams that take over after Julia) BEFORE `novo_lead` is emitted, so the
+    notification reaches the chosen attendant. Distribution must never block a send: a failure is logged loudly
+    and the lead stays with its current responsável (or none)."""
+    from app.services import lais_equipes_service
+
+    try:
+        if _core_provider is not None:
+            core = _core_provider()
+        else:
+            from app.dependencies import get_core_client
+
+            core = get_core_client()
+        lais_equipes_service.atribuir_responsavel(client, core, org_id, contato, "envio")
+    except Exception:
+        logger.exception("lais envio: attendant distribution failed (org=%s contato=%s) -- lead sent unassigned", org_id, contato.get("id"))
+
+
 def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, *, agora: Optional[datetime] = None) -> dict[str, Any]:
     """Send `contato` to the SW. Returns `{status_envio, lead_id, ja_enviado, criado}`.
 
@@ -368,6 +395,7 @@ def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: st
         status = STATUS_POR_GATILHO.get(gatilho, "enviado_auto")
         contatos.atualizar_contato(client, contato["id"], {"lead_id": lead_id, "status_envio": status})
         _entrega(client, org_id, contato["id"], gatilho, "ok", lead_id=lead_id)
+        _atribuir_antes_de_notificar(client, org_id, {**contato, "lead_id": lead_id})
         eventos.emitir(client, org_id, "novo_lead", contato["id"], {"lead_id": lead_id, "gatilho": gatilho, "criado": criado})
     except AppException:
         raise

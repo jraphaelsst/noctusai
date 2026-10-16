@@ -36,13 +36,21 @@ def world() -> World:
     w.seed_connection()
     w.seed_chat()
     for t in (envio.T_REGRAS, envio.T_POLITICAS, envio.T_ENTREGAS, "leads", "lead_sources", "lead_source_aliases",
-              "cliente_notas", "clientes", "cliente_touches", "atendimentos"):
+              "cliente_notas", "clientes", "cliente_touches", "atendimentos",
+              "lais_equipes", "lais_equipe_membros", "lais_distribuicao_cursor", "lais_atribuicoes"):
         w.sw.set_table_data(t, [])
     w.sw.set_table_data("lais_perguntas_catalogo", [
         {"chave": k, "label": k, "categoria": "lead", "ordem": i, "sensivel": None, "operacao": None}
         for i, k in enumerate(("objetivo", "orcamento", "quartos", "renda_familiar", "cpf", "codigo_imovel"))
     ])
     return w
+
+
+@pytest.fixture(autouse=True)
+def core_provider(world):
+    envio.registrar_core_provider(lambda: world.core)
+    yield
+    envio.registrar_core_provider(None)
 
 
 @pytest.fixture
@@ -607,3 +615,21 @@ class TestCanais:
         out = {c["slug"]: c["label"] for c in leads.canais(world.sw, ORG)}
         assert out["indicacao"] == "Indicação" and out["GrupoZapLais"] == "Grupo Zap" and out["ProprioNovoLais"] == "Proprio Novo"
         assert all(set(c) == {"slug", "label"} for c in leads.canais(world.sw, ORG))
+
+
+# ── wave 11: the attendant is picked BEFORE `novo_lead` is notified ─────────
+class TestDistribuicaoNoEnvio:
+    def test_a_sent_lead_gets_the_next_attendant_of_a_team_that_takes_over_after_julia(self, world):
+        uid = "00000000-0000-0000-0000-0000000000a1"
+        world.core.set_table_data("noctus_users", [{"id": uid, "org_id": ORG, "org_role": "corretor", "nome": "Carla"}])
+        world.sw.set_table_data("lais_equipes", [{"id": "eq-1", "org_id": ORG, "nome": "Vendas", "atende_apos_julia": True,
+                                                  "modo": "julia", "manter_ultimo": False}])
+        world.sw.set_table_data("lais_equipe_membros", [{"equipe_id": "eq-1", "org_id": ORG, "user_id": uid, "ativo": True, "ordem": 1}])
+        c = _contato(world, operacao="compra")
+        envio.enviar(world.sw, ORG, c, "qualificado")
+        assert str(world.contato()["responsavel_user_id"]) == uid
+
+    def test_without_an_auto_team_the_send_still_succeeds_unassigned(self, world):
+        c = _contato(world, operacao="compra")
+        r = envio.enviar(world.sw, ORG, c, "qualificado")
+        assert r["status_envio"] == "enviado" and not world.contato().get("responsavel_user_id")
