@@ -18,6 +18,8 @@ Jobs:
     ``contracts_organ.register_jobs``). Renews/expires lapsed contracts and books
     each active contract's monthly receivable (idempotent per contract + cycle)
     through ``OrbityContractsBilling``, which also records the gateway state.
+  * ``finance_billing_reminders`` — daily 12:00 America/Sao_Paulo (the seed reminders organ's job, via
+    ``reminders_organ.register_jobs``). WhatsApp dunning for the orgs that turned reminders on; dedup-first ledger.
   * ``orbity_billing_process`` — every 2 minutes. Claims queued gateway charges
     (``billing_reserve_charges``: SKIP LOCKED + recovery of rows a crashed worker
     left mid-processing), creates the Asaas charge with its idempotency
@@ -140,6 +142,7 @@ def configure() -> None:
     seed_scheduler.register(RECURRENCES_JOB, job_finance_recurrences, cron="10 3 * * *")
     seed_scheduler.register(CONTENT_CLAIMS_JOB, job_content_claims_sweep, minutes=5)
     # The seed contracts organ's own daily job (registered through its mounted organ so it books through the host's billing).
-    from app.routers.organs import contracts_organ
+    from app.routers.organs import contracts_organ, reminders_organ
 
     contracts_organ.register_jobs()
+    reminders_organ.register_jobs()  # `finance_billing_reminders`, daily 12:00 America/Sao_Paulo, reminders ON per org only

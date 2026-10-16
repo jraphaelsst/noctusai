@@ -13,6 +13,7 @@ vi.mock("@/components/ChargesPanel", () => ({ ChargesPanel: ({ isAdmin }: { isAd
 vi.mock("@noctusai/lib", async (orig) => ({
   ...(await orig<typeof import("@noctusai/lib")>()),
   ContractsTable: ({ canWrite }: { canWrite: boolean }) => <div data-testid="contracts" data-write={String(canWrite)} />,
+  RemindersPage: ({ isAdmin }: { isAdmin: boolean }) => <div data-testid="reminders" data-admin={String(isAdmin)} />,
   FinanceRoutedPage: ({ basePath, isAdmin }: { basePath: string; isAdmin: boolean }) => <div data-testid="finance" data-base={basePath} data-admin={String(isAdmin)} />,
 }));
 vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<typeof import("@noctusai/lib/design-system")>()), useIsOrgAdmin: () => true }));
@@ -24,7 +25,7 @@ const at = (path: string) => render(<MemoryRouter initialEntries={[path]}><Finan
 describe("tabFromPath", () => {
   it.each([
     ["/financeiro", "financeiro"], ["/financeiro/receber", "financeiro"], ["/financeiro/contratos", "contratos"],
-    ["/financeiro/contratos/", "contratos"], ["/financeiro/cobrancas", "cobrancas"], ["/financeiro/dre", "financeiro"],
+    ["/financeiro/contratos/", "contratos"], ["/financeiro/cobrancas", "cobrancas"], ["/financeiro/lembretes", "lembretes"], ["/financeiro/dre", "financeiro"],
   ])("%s -> %s", (path, tab) => expect(tabFromPath(path)).toBe(tab));
 });
 
@@ -45,6 +46,13 @@ describe("Financeiro", () => {
   it("/financeiro/cobrancas mounts the gateway charges view", () => {
     at("/financeiro/cobrancas");
     expect(screen.getByTestId("charges")).toHaveAttribute("data-admin", "true");
+  });
+
+  it("/financeiro/lembretes mounts the seed billing-reminders page", () => {
+    at("/financeiro/lembretes");
+    expect(screen.getByTestId("reminders")).toHaveAttribute("data-admin", "true");
+    expect(screen.queryByTestId("charges")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Lembretes" })).toHaveAttribute("aria-current", "page");
   });
 
   it("the tab bar marks the current section and links to the others", () => {

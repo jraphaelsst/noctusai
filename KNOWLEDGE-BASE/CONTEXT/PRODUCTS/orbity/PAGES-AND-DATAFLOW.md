@@ -107,7 +107,8 @@ page (frontend/src/pages/X.tsx)
   DRE · conciliação · cadastros) over `/api/finance`; **Contratos** = seed `ContractsTable` (editor, aditivos, reajuste, suspender,
   encerrar, prévia das próximas cobranças) over `/api/contracts`, the customer picked from Clientes (`party_id` = client id);
   **Cobranças** = `ChargesPanel` over `/api/financial/*`: month summary + every receivable with its gateway **status banner**
-  (queued / generating / retrying / generated / failed + last error / skipped + why).
+  (queued / generating / retrying / generated / failed + last error / skipped + why); **Lembretes** = seed `RemindersPage` over
+  `/api/finance/reminders` (chave geral, regras, "Saem hoje", histórico).
 - **Billing:** the seed job `contracts_generate_billing` (daily) books each active contract's monthly receivable — idempotent per
   contract + cycle (`source='contracts'`, `source_ref=<contract>:<due>`). It books through `OrbityContractsBilling` (the
   `mount_contracts(get_billing=…)` seam), which records the receivable's gateway state in `billing_charges`.
@@ -122,8 +123,19 @@ page (frontend/src/pages/X.tsx)
 - **Data placement:** the organs own their tables (`fin_*`, `ctr_*` — there is no organ-over-product-tables seam), so migration 023
   MOVED `orbity.contracts/revenues/expenses` onto them (ids and cents preserved, SMOKE-TEST rows included); the old tables remain as
   `*_legacy`, and read-only views `orbity.revenues/expenses` keep `reports_service` answering from the new ledger.
-- **Caveats:** Conexa has no seed adapter (`NOC-REMEDIATE[orbity-conexa-adapter]` in `app/billing.py`); billing reminders are a separate
-  organ; `NOC-REMEDIATE[orbity-reports-on-fin-entries]` (move `reports_service` onto `fin_entries`, drop the views).
+- **Lembretes de cobrança** (seed organ `finance_reminders`, migration 024, `app/services/billing_reminders.py`): WhatsApp reminders
+  at offsets from each open receivable's due date (default rules -3 / 0 / +1 / +7, pt-BR templates with `{nome} {razao_social}
+  {nome_fantasia} {valor} {vencimento} {link_pagamento} {pix_copia_cola} {dias_atraso}`). **OFF per org** until an admin flips the switch
+  on the Lembretes tab — the first enable seeds the default rules (an unknown `{variable}` is refused with its name). The daily job
+  `finance_billing_reminders` runs at **12:00 America/Sao_Paulo** and shares its `ReminderPorts` with the "Saem hoje" preview, so the
+  preview is exactly what goes out. Host side: contact = the receivable's client (`name` = nome fantasia, `legal_name` = Razão Social,
+  `phone`), payment link / PIX copia-e-cola = that charge's `billing_charges.invoice_url` / `pix_payload` (its line is left out of the message
+  when empty); VETO = a client inactivated whose charge was not kept ("preservada"), or a charge whose gateway cancel is pending/done.
+  Dedup is a UNIQUE ledger claimed BEFORE the send; a send failure is a `failed` row retried by later days (3 attempts), never a silent
+  skip. The line is the org's OWN saved WhatsApp connection (no purpose column yet ⇒ newest line), sent through the 9th-digit-resolving
+  path, with NO fallback to the fleet `WAHA_*` number; no connection ⇒ a loud `failed` row "sem linha de WhatsApp conectada".
+- **Caveats:** Conexa has no seed adapter (`NOC-REMEDIATE[orbity-conexa-adapter]` in `app/billing.py`); reminders are WhatsApp-only (the `email`
+  channel is reserved in the organ, no adapter); `NOC-REMEDIATE[orbity-reports-on-fin-entries]` (move `reports_service` onto `fin_entries`, drop the views).
 
 ### Tráfego — `ad_accounts`, `campaigns`, `campaign_metrics`
 - **Dataflow:** `useMetaAds` → `/api/meta-ads/ad-accounts` CRUD, `/campaigns` CRUD,

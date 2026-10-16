@@ -40,6 +40,10 @@ def test_contracts_migration_is_the_generators_output_for_this_hosts_config():
     assert "REFERENCES orbity.pty_parties" not in path.read_text(encoding="utf-8")
 
 
+def test_finance_reminders_migration_is_the_generators_output():
+    assert_organ_migration_current(PRODUCT_DIR, "finance_reminders", schema=SCHEMA)
+
+
 def test_migrations_are_numbered_in_dependency_order():
     from noctusai_seed.organs import ORGAN_REGISTRY
 
@@ -48,6 +52,8 @@ def test_migrations_are_numbered_in_dependency_order():
     (ctr,) = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["contracts"].migration_header)
     (delta,) = [p for p in migrations_dir(PRODUCT_DIR).glob("*.sql") if "billing_on_seed_organs" in p.name]
     assert num(fin) < num(ctr) < num(delta)  # contracts widens fin_entries.source; the data move needs both organs
+    (rem,) = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["finance_reminders"].migration_header)
+    assert num(fin) < num(rem)  # reminders alter fin_entries and reference fin_reminder_* -> fin_entries
 
 
 def test_applied_migrations_were_not_rewritten():
@@ -68,6 +74,10 @@ ORGAN_ROUTES = [
     ("GET", "/api/finance/entries"), ("POST", "/api/finance/entries"), ("GET", "/api/finance/reports/dre"),
     ("GET", "/api/contracts"), ("POST", "/api/contracts"), ("POST", "/api/contracts/{contract_id}/activate"),
     ("POST", "/api/contracts/{contract_id}/suspend"), ("POST", "/api/contracts/{contract_id}/terminate"),
+    ("GET", "/api/finance/reminders/settings"), ("PUT", "/api/finance/reminders/settings"), ("GET", "/api/finance/reminders/rules"),
+    ("POST", "/api/finance/reminders/rules"), ("PATCH", "/api/finance/reminders/rules/{rule_id}"),
+    ("PUT", "/api/finance/reminders/receivables/{entry_id}/opt-out"), ("GET", "/api/finance/reminders/log"),
+    ("GET", "/api/finance/reminders/preview"),
     ("GET", "/api/contracts/{contract_id}/billing-preview"), ("POST", "/api/contracts/billing/run"),
 ]
 BILLING_ROUTES = [
@@ -90,6 +100,10 @@ def test_route_is_mounted(client, method, path):
     ("GET", "/api/contracts"), ("POST", "/api/contracts"), ("GET", f"/api/contracts/{UUID0}"),
     ("POST", f"/api/contracts/{UUID0}/activate"), ("POST", f"/api/contracts/{UUID0}/terminate"),
     ("POST", "/api/contracts/billing/run"),
+    ("GET", "/api/finance/reminders/settings"), ("PUT", "/api/finance/reminders/settings"), ("GET", "/api/finance/reminders/rules"),
+    ("POST", "/api/finance/reminders/rules"), ("DELETE", f"/api/finance/reminders/rules/{UUID0}"),
+    ("PUT", f"/api/finance/reminders/receivables/{UUID0}/opt-out"), ("GET", "/api/finance/reminders/log"),
+    ("GET", "/api/finance/reminders/preview"),
 ])
 def test_organ_routes_are_strictly_401_without_auth(client, method, path):
     assert client.raw().request(method, path).status_code == 401
@@ -102,6 +116,28 @@ def test_contract_writes_need_an_org_admin(client):
     assert client.get("/api/contracts").status_code == 200
 
 
+def test_reminder_writes_need_an_org_admin(client):
+    assert client.put("/api/finance/reminders/settings", json={"enabled": True}).status_code == 403
+    assert client.post("/api/finance/reminders/rules", json={"offset_days": 1, "template": "x"}).status_code == 403
+    assert client.put(f"/api/finance/reminders/receivables/{UUID0}/opt-out", json={"opt_out": True}).status_code == 403
+
+
+def test_an_admin_enabling_reminders_seeds_the_default_rules_and_they_start_off(client):
+    from tests.routers.test_financial_router import make_admin
+
+    mock = client.mock_supabase
+    for table in ("fin_reminder_settings", "fin_reminder_rules", "fin_reminder_log"):
+        mock.set_table_data(table, [])
+    make_admin(client)
+    off = client.get("/api/finance/reminders/settings").json()["data"]
+    assert off["enabled"] is False and client.get("/api/finance/reminders/rules").json()["data"] == []
+    assert client.put("/api/finance/reminders/settings", json={"enabled": True}).status_code == 200
+    rules = client.get("/api/finance/reminders/rules").json()["data"]
+    assert sorted(r["offset_days"] for r in rules) == [-3, 0, 1, 7] and all(r["enabled"] for r in rules)
+    bad = client.post("/api/finance/reminders/rules", json={"offset_days": 2, "template": "Oi {nom}"})
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "variavel_desconhecida"
+
+
 def test_the_billing_jobs_ride_on_the_seed_scheduler():
     from noctusai_lib.api import scheduler as seed_scheduler
 
@@ -109,8 +145,10 @@ def test_the_billing_jobs_ride_on_the_seed_scheduler():
 
     configure()
     ids = {j.id for j in seed_scheduler.scheduler.get_jobs()}
-    assert {"contracts_generate_billing", "orbity_billing_process", "finance_generate_recurrences",
-            "orbity_automacao_run_due", "orbity_rotinas_run_due"} <= ids
+    assert {"contracts_generate_billing", "orbity_billing_process", "finance_generate_recurrences", "finance_billing_reminders",
+            "orbity_automacao_run_due", "orbity_rotinas_run_due", "orbity_content_claims_sweep"} <= ids
+    reminders = seed_scheduler.scheduler.get_job("finance_billing_reminders")
+    assert "hour='12'" in str(reminders.trigger) and "minute='0'" in str(reminders.trigger)
 
 
 def test_the_upload_surface_of_the_organs_is_covered_by_a_body_override():

@@ -4,13 +4,14 @@
  *   /financeiro/*            the seed `FinanceRoutedPage` (visão geral · receber · pagar · fluxo de caixa · DRE · conciliação · cadastros)
  *   /financeiro/contratos    the seed `ContractsTable` (editor, aditivos, reajuste, suspender, encerrar, prévia das próximas cobranças)
  *   /financeiro/cobrancas    `ChargesPanel`: month summary + every receivable with its gateway status banner
+ *   /financeiro/lembretes    the seed `RemindersPage`: billing reminders by WhatsApp (OFF per org until an admin turns them on)
  *
  * The URL is the tab state (deep links and the back button work). Writes are offered to org admins only (UX -- the
  * server enforces every write again). Contracts generate the monthly receivable automatically; no gateway configured
  * means the charge stays a plain receivable, and the banner says so.
  */
 import { Link, useLocation } from "react-router-dom";
-import { ContractsTable, FinanceRoutedPage, createContractsHooks, createFinanceHooks } from "@noctusai/lib";
+import { ContractsTable, FinanceRoutedPage, RemindersPage, createContractsHooks, createFinanceHooks, createFinanceReminderHooks } from "@noctusai/lib";
 import { Select, useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { ChargesPanel } from "@/components/ChargesPanel";
 import { useClientOptions } from "@/hooks/useClients";
@@ -20,18 +21,20 @@ export const FINANCE_BASE_PATH = "/financeiro";
 
 const finance = createFinanceHooks(api);
 const contracts = createContractsHooks(api);
+const reminders = createFinanceReminderHooks(api);
 
-type TabKey = "financeiro" | "contratos" | "cobrancas";
+type TabKey = "financeiro" | "contratos" | "cobrancas" | "lembretes";
 
 const TABS: { key: TabKey; label: string; to: string }[] = [
   { key: "financeiro", label: "Financeiro", to: FINANCE_BASE_PATH },
   { key: "contratos", label: "Contratos", to: `${FINANCE_BASE_PATH}/contratos` },
   { key: "cobrancas", label: "Cobranças", to: `${FINANCE_BASE_PATH}/cobrancas` },
+  { key: "lembretes", label: "Lembretes", to: `${FINANCE_BASE_PATH}/lembretes` },
 ];
 
 export function tabFromPath(pathname: string): TabKey {
   const segment = pathname.replace(/^\/financeiro\/?/, "").split("/")[0];
-  return segment === "contratos" || segment === "cobrancas" ? segment : "financeiro";
+  return segment === "contratos" || segment === "cobrancas" || segment === "lembretes" ? segment : "financeiro";
 }
 
 /** The contract editor's party seam: the contract's customer is one of the org's clients (`party_id` = the client id). */
@@ -81,6 +84,8 @@ export default function Financeiro() {
         <ContractsTable hooks={contracts} canWrite={isAdmin} renderPartyPicker={(props) => <ClientPartyPicker {...props} />} />
       ) : tab === "cobrancas" ? (
         <ChargesPanel isAdmin={isAdmin} />
+      ) : tab === "lembretes" ? (
+        <RemindersPage hooks={reminders} isAdmin={isAdmin} />
       ) : (
         <FinanceRoutedPage basePath={FINANCE_BASE_PATH} hooks={finance} isAdmin={isAdmin} />
       )}

@@ -32,7 +32,7 @@ from app.routers.clients_router import router as clients_router
 from app.routers.crm_router import router as crm_router, capture_router
 from app.routers.financial_router import router as financial_router
 from app.routers.billing_webhook_router import router as billing_webhook_router
-from app.routers.organs import contracts_organ, finance_organ
+from app.routers.organs import contracts_organ, finance_organ, reminders_organ
 from app.routers.tasks_router import router as tasks_router
 from app.routers.agenda_router import router as agenda_router
 from app.routers.meta_ads_router import router as meta_ads_router
@@ -82,7 +82,7 @@ app = create_product_app(
         whatsapp_webhook_router,      # /api/whatsapp/webhook/{token} — WAHA inbound (token-auth)
     ],
     # Money lives on the seed organs: finance (/api/finance) + contracts (/api/contracts); their upload body limits ride along.
-    organs=[finance_organ, contracts_organ],
+    organs=[finance_organ, contracts_organ, reminders_organ],
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
     # Uncomment when this product registers AI features in
