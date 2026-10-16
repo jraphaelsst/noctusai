@@ -230,6 +230,19 @@ def registrar_pos_encerrar(fn: Callable[[AcaoCtx, str], Any]) -> None:
         POS_ENCERRAR.append(fn)
 
 
+#: Hooks run after a handler of action `tipo` SUCCEEDED: `hook(ctx, payload, resultado)` (sync or async). Wave 13
+#: binds the credit-analysis trigger onto `pedido_visita` here (`registrar_pos_acao`) -- composing the wave-5
+#: handler, never forking it. A failing hook is logged and never undoes the action.
+POS_ACAO: dict[str, list[Callable[..., Any]]] = {}
+
+
+def registrar_pos_acao(tipo: str, fn: Callable[..., Any]) -> None:
+    """Idempotent: binding the same function twice keeps one entry."""
+    hooks = POS_ACAO.setdefault(tipo, [])
+    if fn not in hooks:
+        hooks.append(fn)
+
+
 #: THE registry. Waves append `"<tipo>": <fn>` (or call `registrar_handler`).
 HANDLERS: dict[str, Handler] = {
     "salvar_slots": _h_salvar_slots,
@@ -332,11 +345,19 @@ async def _aplicar_uma(
         eventos.emitir(client, org_id, "acao_falhou", contato_id, {"tipo": acao.type, "seq": acao.seq, "erro": type(exc).__name__})
         _atualizar_resultado(client, org_id, lote_hash, acao.seq, {"erro": type(exc).__name__})
         return {"seq": acao.seq, "tipo": acao.type, "estado": "falhou"}
+    for hook in tuple(POS_ACAO.get(acao.type, ())):
+        try:
+            res = hook(ctx, acao.payload, out)
+            if inspect.isawaitable(res):
+                await res
+        except Exception:
+            logger.exception("lais: pos-acao hook %s for %s failed (org=%s)", getattr(hook, "__name__", "?"), acao.type, org_id)
     _atualizar_resultado(client, org_id, lote_hash, acao.seq, out or {})
     return {"seq": acao.seq, "tipo": acao.type, "estado": "aplicada"}
 
 
 __all__ = [
     "AcaoCtx", "HANDLERS", "Handler", "MOTIVOS_ENCERRAR", "OPERACOES", "aplicar", "fechar_interacao",
-    "POS_ENCERRAR", "lote_hash_de", "registrar_handler", "registrar_pos_encerrar", "sanitizar_payload",
+    "POS_ACAO", "POS_ENCERRAR", "lote_hash_de", "registrar_handler", "registrar_pos_acao", "registrar_pos_encerrar",
+    "sanitizar_payload",
 ]

@@ -19,7 +19,7 @@ from typing import Any, Optional
 from noctusai_lib.domain.jobs import JobRepository, RetryPolicy, Worker, make_job_repository
 from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 
-from app.services import lais_envio_service, lais_reengajamento_service as svc
+from app.services import lais_credito_service, lais_envio_service, lais_reengajamento_service as svc
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,14 @@ def build_worker(repo: JobRepository, cfg: Any) -> Worker:
 
     # the cold-lead hook (end of the last attempt) arms `lais_envio_frio` on THIS repo; the same worker fires it
     lais_envio_service.registrar_repo(repo)
+    lais_credito_service.registrar_repo(repo)  # the credit analysis (wave 13) is queued on the same repo
     return Worker(
         repo,
         worker_id=worker_id(),
         handlers={
             **svc.handlers(deps_factory=_lead_deps_factory(cfg), repo=repo, run_turn=run_reengajamento_turn),
             **lais_envio_service.handlers(),
+            **lais_credito_service.handlers(),
         },
         retry_policy=RETRY_POLICY,
         poll_interval_seconds=float(cfg.lais_reengajamento_poll_seconds),

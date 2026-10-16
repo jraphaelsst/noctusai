@@ -28,7 +28,9 @@ TIPOS_DIAGNOSTICO: frozenset[str] = frozenset({"acao_sem_handler", "acao_falhou"
 #: Wave 4 (reengajamento): `reengajamento` is the timeline system event ("Lead não respondeu mais...");
 #: `regua_sem_transporte` records a template attempt skipped until wave 12's Cloud transport exists.
 TIPOS_REENGAJAMENTO: frozenset[str] = frozenset({"reengajamento", "regua_sem_transporte"})
-TIPOS: frozenset[str] = TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO
+#: Wave 13 (credito): `credito_analisado` (payload `{analise_id, status}` only -- never financial data).
+TIPOS_CREDITO: frozenset[str] = frozenset({"credito_analisado"})
+TIPOS: frozenset[str] = TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no
 #: emitting caller is edited; a failing sink is logged and never reaches the caller.

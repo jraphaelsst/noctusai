@@ -220,7 +220,8 @@ def apagar_do_chat(client: Any, org_id: UUID | str, connection_id: UUID | str, c
     ids = [str(c["id"]) for c in contatos]
     if not ids:
         return 0
-    for tabela in (T_EVENTOS, T_ACOES, T_INTERACOES):
+    # wave 13: the credit-analysis rows (consent log + analyses) are personal/financial data -- erased explicitly too
+    for tabela in (T_EVENTOS, T_ACOES, "lais_credito_analises", "lais_credito_consentimentos", T_INTERACOES):
         client.table(tabela).delete().eq("org_id", str(org_id)).in_("contato_id", ids).execute()
     client.table(T_CONTATOS).delete().eq("org_id", str(org_id)).in_("id", ids).execute()
     return len(ids)

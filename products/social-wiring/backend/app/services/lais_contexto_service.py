@@ -106,6 +106,29 @@ PROVIDERS: list[tuple[str, Provider]] = [
 ]
 
 
+#: Extra action names a wave exposes ON TOP of whatever the `acoes` provider returned: `fn(ctx) -> list[str]`.
+#: Wave 13 adds `consentimento_credito` only while the credit analysis is relevant for the contato. Additive:
+#: the wave-3 `acoes` provider (which may DROP actions) stays untouched, and an extra can never remove one.
+ACOES_EXTRAS: list[Callable[[ContextoCtx], Sequence[str]]] = []
+
+
+def registrar_acoes_extra(fn: Callable[[ContextoCtx], Sequence[str]]) -> None:
+    """Idempotent: binding the same function twice keeps one entry."""
+    if fn not in ACOES_EXTRAS:
+        ACOES_EXTRAS.append(fn)
+
+
+#: Extra `contexto.estado` keys a wave adds on top of the base estado: `fn(ctx) -> dict` merged key-by-key (wave 13:
+#: `credito`). Same shape as `ACOES_EXTRAS`; it does NOT touch the ordered PROVIDERS list.
+ESTADO_EXTRAS: list[Callable[[ContextoCtx], dict[str, Any]]] = []
+
+
+def registrar_estado_extra(fn: Callable[[ContextoCtx], dict[str, Any]]) -> None:
+    """Idempotent: binding the same function twice keeps one entry."""
+    if fn not in ESTADO_EXTRAS:
+        ESTADO_EXTRAS.append(fn)
+
+
 def registrar_provider(nome: str, fn: Provider, *, registro: Optional[list[tuple[str, Provider]]] = None) -> None:
     """Replace the provider called `nome` in place (keeps its position), or append it.
 
@@ -192,6 +215,22 @@ def montar(
             else:
                 out[chave] = valor
 
+    for fn_estado in tuple(ESTADO_EXTRAS):
+        try:
+            out["estado"] = {**out["estado"], **(fn_estado(ctx) or {})}
+        except Exception:
+            logger.exception("lais: contexto estado extra %r failed (org=%s) -- contributes nothing",
+                             getattr(fn_estado, "__name__", "?"), org_id)
+
+    for fn_extra in tuple(ACOES_EXTRAS):
+        try:
+            extras = [a for a in (fn_extra(ctx) or ()) if a not in out["acoes"]]
+        except Exception:
+            logger.exception("lais: contexto acoes extra %r failed (org=%s) -- contributes nothing",
+                             getattr(fn_extra, "__name__", "?"), org_id)
+            continue
+        out["acoes"] = [*out["acoes"], *extras]
+
     if len(out["conhecimento_md"]) > CONHECIMENTO_MAX:
         logger.warning("lais: conhecimento_md %d chars > %d -- truncated (org=%s)",
                        len(out["conhecimento_md"]), CONHECIMENTO_MAX, org_id)
@@ -212,7 +251,7 @@ def montar(
 
 
 __all__ = [
-    "ACOES_LAIS", "ContextoCtx", "FERRAMENTAS_LAIS", "FUSO", "PROVIDERS", "Provider",
+    "ACOES_EXTRAS", "ACOES_LAIS", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_LAIS", "FUSO", "PROVIDERS", "Provider",
     "TOOLS_TOKEN_ISSUER", "TOOLS_TOKEN_LABEL", "TOOLS_TOKEN_SCOPE", "calcular_hash", "montar",
-    "org_tem_token_ferramentas", "registrar_provider",
+    "org_tem_token_ferramentas", "registrar_acoes_extra", "registrar_estado_extra", "registrar_provider",
 ]

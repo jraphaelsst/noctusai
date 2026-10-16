@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso, lais_contatos_service, lais_conhecimento_service, lais_visitas_service
+from app.services import lais_acesso, lais_contatos_service, lais_conhecimento_service, lais_credito_service, lais_visitas_service
 from app.services.lais_acesso import AcessoCtx
 
 logger = logging.getLogger(__name__)
@@ -162,7 +162,8 @@ def _chats_dos_contatos(client: Any, org_id: UUID | str, contatos: list[dict[str
     return out
 
 
-def _item(c: dict[str, Any], chat: Optional[dict[str, Any]], etiquetas: list[dict[str, Any]]) -> dict[str, Any]:
+def _item(c: dict[str, Any], chat: Optional[dict[str, Any]], etiquetas: list[dict[str, Any]],
+          credito: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     pausado = bool((chat or {}).get("agente_pausado"))
     return {
         "id": str(c["id"]), "contato_id": str(c["id"]), "connection_id": str(c["connection_id"]), "chat_id": c["chat_id"],
@@ -177,6 +178,8 @@ def _item(c: dict[str, Any], chat: Optional[dict[str, Any]], etiquetas: list[dic
         "unread_count": (chat or {}).get("unread_count") or 0,
         "nao_lidas": (chat or {}).get("unread_count") or 0,
         "etiquetas": etiquetas,
+        # wave 13: the contato's latest credit analysis `{status, atualizado_at}`, or null (never analysed)
+        "credito": credito,
     }
 
 
@@ -217,7 +220,9 @@ def _filtros_de_coluna(itens: list[dict[str, Any]], *, operacao: list[str], stat
 def _enriquecer(client: Any, ctx: AcessoCtx, contatos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chats = _chats_dos_contatos(client, ctx.org_id, contatos)
     tags = _etiquetas_dos_contatos(client, ctx.org_id, [str(c["id"]) for c in contatos])
-    return [_item(c, chats.get((str(c["connection_id"]), str(c["chat_id"]))), tags.get(str(c["id"]), [])) for c in contatos]
+    credito = lais_credito_service.credito_por_contato(client, ctx.org_id, [str(c["id"]) for c in contatos])
+    return [_item(c, chats.get((str(c["connection_id"]), str(c["chat_id"]))), tags.get(str(c["id"]), []), credito.get(str(c["id"])))
+            for c in contatos]
 
 
 def _membros_do_filtro(client: Any, ctx: AcessoCtx, equipe: Optional[list[str]]) -> Optional[set[str]]:

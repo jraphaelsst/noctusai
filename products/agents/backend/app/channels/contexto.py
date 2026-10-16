@@ -69,5 +69,6 @@ def render_contexto_system(contexto: ChannelContexto) -> str:
         elif credito.consentimento:
             out.append("O cliente consentiu com a análise de crédito. Não pergunte de novo.")
         else:
-            out.append("O cliente NÃO consentiu com a análise de crédito. Não insista nem pergunte de novo.")
+            out.append("O cliente NÃO consentiu com a análise de crédito. Não insista nem pergunte de novo; "
+                "só registre `consentimento_credito` aceito=true se ELE mesmo mudar de ideia e aceitar explicitamente.")
     return "\n".join(out) + "\n"

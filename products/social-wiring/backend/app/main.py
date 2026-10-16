@@ -138,6 +138,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.lais_relatorios_router import router as lais_relatorios_router
     from app.routers.lais_captacao_router import router as lais_captacao_router
     from app.routers.lais_equipes_router import router as lais_equipes_router
+    from app.routers.lais_credito_router import router as lais_credito_router
     from app.services import lais_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -259,6 +260,7 @@ def _register_media_wiring() -> ModuleRegistration:
             lais_relatorios_router,
             lais_captacao_router,
             lais_equipes_router,
+            lais_credito_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,
