@@ -59,6 +59,8 @@ const LaisHistorico = lazyWithReload(() => import("@/pages/lais/Historico"));
 const LaisVisitas = lazyWithReload(() => import("@/pages/lais/Visitas"));
 const LaisReengajamento = lazyWithReload(() => import("@/pages/lais/Reengajamento"));
 const LaisNotificacoes = lazyWithReload(() => import("@/pages/lais/Notificacoes"));
+const LaisEnvio = lazyWithReload(() => import("@/pages/lais/Envio"));
+const LaisLeads = lazyWithReload(() => import("@/pages/lais/Leads"));
 const LaisReengajamentoRegua = lazyWithReload(() => import("@/pages/lais/ReengajamentoRegua"));
 const LaisModelos = lazyWithReload(() => import("@/pages/lais/Modelos"));
 const LaisDisparos = lazyWithReload(() => import("@/pages/lais/Disparos"));
@@ -236,6 +238,8 @@ export default createProductApp({
     { path: LAIS_PAGES.visitas.href, component: LaisVisitas },
     { path: LAIS_PAGES.reengajamento.href, component: LaisReengajamento },
     { path: LAIS_PAGES.notificacoes.href, component: LaisNotificacoes },
+    { path: LAIS_PAGES.envio.href, component: LaisEnvio },
+    { path: LAIS_PAGES.leads.href, component: LaisLeads },
     { path: `${LAIS_PAGES.reengajamento.href}/reguas/:id`, component: LaisReengajamentoRegua },
     { path: LAIS_PAGES.modelos.href, component: LaisModelos },
     { path: LAIS_PAGES.disparos.href, component: LaisDisparos },
