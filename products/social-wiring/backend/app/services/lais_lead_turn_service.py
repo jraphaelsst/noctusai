@@ -47,7 +47,7 @@ from app.config import settings as _default_settings
 from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
 from app.services import lais_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import lais_agente_service as lais
-from app.services import lais_aviso_service
+from app.services import lais_aviso_service, lais_capi_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -302,6 +302,7 @@ async def _preparar_lais(
         )
         contato, anterior = lais_contatos_service.registrar_inbound(deps.scoped, contato)
         _registrar_resposta_de_disparo(deps, org_id, contato, phone)
+        await lais_capi_service.registrar_resposta(deps.scoped, org_id, contato)  # wave 13 CAPI `resposta_cliente` (never raises)
         interacao = lais_contatos_service.interacao_aberta(deps.scoped, contato["id"])
         if interacao is not None and lais_contatos_service.episodio_vencido(anterior):
             perguntas = lais_contexto_service.montar(

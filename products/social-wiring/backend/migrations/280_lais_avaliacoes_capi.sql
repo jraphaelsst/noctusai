@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.lais_avaliacao_config (
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT lais_avaliacao_config_review_url_https
-        CHECK (google_review_url IS NULL OR (google_review_url ~ '^https://[^[:space:]]+$' AND char_length(google_review_url) <= 500)),
+        CHECK (google_review_url IS NULL OR (google_review_url ~ '^https://\S+$' AND char_length(google_review_url) <= 500)),
     CONSTRAINT lais_avaliacao_config_pixel_valido
         CHECK (capi_pixel_id IS NULL OR capi_pixel_id ~ '^[0-9]{5,20}$')
 );

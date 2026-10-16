@@ -117,6 +117,7 @@ async def fechar_interacao(
     conversation_id: Optional[str],
     perguntas: Sequence[dict[str, Any]] = (),
     agora: Optional[datetime] = None,
+    origem: str = "silencio",
 ) -> dict[str, Any]:
     """Close an open episode: ask agents for `/resumo` (when there is a conversation to summarise
     and a client), then stamp `encerrada_at` + summary/slots/intencoes/desfecho/custo."""
@@ -146,7 +147,16 @@ async def fechar_interacao(
     client.table(contatos.T_INTERACOES).update(patch).eq("id", str(interacao["id"])).is_("encerrada_at", "null").execute()
     if patch.get("intencoes"):
         notificacoes.avisar_cobranca(client, org_id, contato, interacao, patch["intencoes"])
-    return {**interacao, **patch}
+    fechada = {**interacao, **patch}
+    for hook in tuple(POS_FECHAR):
+        try:
+            out = hook(client, org_id, contato, fechada, origem)
+            if inspect.isawaitable(out):
+                await out
+        except Exception:
+            # a policy hook (wave 13: the Google review ask) must never undo the close
+            logger.exception("lais: pos-fechar hook %s failed (org=%s)", getattr(hook, "__name__", "?"), org_id)
+    return fechada
 
 
 # ── built-in handlers ───────────────────────────────────────────────────────
@@ -208,6 +218,7 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
         fechada = await fechar_interacao(
             ctx.client, org_id=ctx.org_id, contato=ctx.contato, interacao=ctx.interacao,
             agents_client=ctx.agents_client, conversation_id=ctx.conversation_id, perguntas=ctx.perguntas, agora=agora,
+            origem="encerrar",
         )
     for hook in tuple(POS_ENCERRAR):
         try:
@@ -217,6 +228,18 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
             logger.exception("lais: pos-encerrar hook %s failed (org=%s)", getattr(hook, "__name__", "?"), ctx.org_id)
     return {"motivo": motivo, "interacao_id": str(ctx.interacao["id"]) if ctx.interacao else None,
             "desfecho": (fechada or {}).get("desfecho")}
+
+
+#: Hooks run after ANY episode close (`fechar_interacao`: the `encerrar` action AND the 24 h-silence close at the
+#: next inbound): `hook(client, org_id, contato, interacao_fechada, origem)` (`origem` = `encerrar` | `silencio`), sync or async. Wave 13 binds the Google
+#: review ask here (`registrar_pos_fechar`); a failing hook is logged and never undoes the close.
+POS_FECHAR: list[Callable[..., Any]] = []
+
+
+def registrar_pos_fechar(fn: Callable[..., Any]) -> None:
+    """Idempotent: binding the same function twice keeps one entry."""
+    if fn not in POS_FECHAR:
+        POS_FECHAR.append(fn)
 
 
 #: Hooks run after an `encerrar` closed the episode: `hook(ctx, motivo)`. Wave 3 binds the
@@ -358,6 +381,6 @@ async def _aplicar_uma(
 
 __all__ = [
     "AcaoCtx", "HANDLERS", "Handler", "MOTIVOS_ENCERRAR", "OPERACOES", "aplicar", "fechar_interacao",
-    "POS_ACAO", "POS_ENCERRAR", "lote_hash_de", "registrar_handler", "registrar_pos_acao", "registrar_pos_encerrar",
-    "sanitizar_payload",
+    "POS_ACAO", "POS_ENCERRAR", "POS_FECHAR", "lote_hash_de", "registrar_handler", "registrar_pos_acao", "registrar_pos_encerrar",
+    "registrar_pos_fechar", "sanitizar_payload",
 ]

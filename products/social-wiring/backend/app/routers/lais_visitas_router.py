@@ -28,7 +28,7 @@ from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
 from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
-from app.services import lais_acesso, lais_visitas_service as svc
+from app.services import lais_acesso, lais_capi_service, lais_visitas_service as svc
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,10 @@ async def confirmar(
 ) -> dict[str, Any]:
     org = _org(auth)
     _guardar(client, auth, request, org, visita_id)
-    return await _responder(client, org, svc.confirmar(client, org, visita_id), "confirmar", store, waha_factory)
+    visita = svc.confirmar(client, org, visita_id)
+    # wave 13: the CAPI `visita_agendada` signal (Meta-ads leads only; best-effort, never raises)
+    await lais_capi_service.registrar_evento(client, org, visita["contato_id"], "visita_agendada", referencia=str(visita_id))
+    return await _responder(client, org, visita, "confirmar", store, waha_factory)
 
 
 @router.post("/{visita_id}/remarcar")

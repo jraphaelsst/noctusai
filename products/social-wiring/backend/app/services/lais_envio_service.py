@@ -432,8 +432,13 @@ def avaliar_e_enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], g
 
 
 # ── action handlers + hooks ─────────────────────────────────────────────────
-def _h_qualificar_lead(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    return avaliar_e_enviar(ctx.client, ctx.org_id, ctx.contato, "qualificado", qualificado=True, visita=False)
+async def _h_qualificar_lead(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    res = avaliar_e_enviar(ctx.client, ctx.org_id, ctx.contato, "qualificado", qualificado=True, visita=False)
+    from app.services import lais_capi_service  # lazy: capi -> avaliacoes -> this module (wave 13 CAPI signal)
+
+    # best-effort + only for Meta-ads leads (it never raises): the lead now exists/is linked after the send above
+    await lais_capi_service.registrar_evento(ctx.client, ctx.org_id, ctx.contato["id"], "lead_qualificado")
+    return res
 
 
 def aplicar_politica_captacao(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> dict[str, Any]:
