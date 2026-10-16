@@ -47,7 +47,7 @@ import {
 } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 
-import { WhatsAppChatWindow } from "@/components/WhatsAppChatWindow";
+import { ConversasPanel } from "@/components/lais/conversas/ConversasPanel";
 import { ConnectionSettingsPanel } from "@/components/ConnectionDetailDialog";
 import {
   useWhatsAppConnections,
@@ -122,10 +122,9 @@ function NoConnectionsState() {
 function ChatPanel({ connection }: { connection: WhatsAppConnectionLine | null }) {
   if (!connection) return <NoConnectionsState />;
   return (
-    <WhatsAppChatWindow
+    <ConversasPanel
       connectionId={connection.id}
       autoReplyEnabled={connection.auto_reply_enabled}
-      className="h-[calc(100vh-18rem)] min-h-[28rem] rounded-md border"
     />
   );
 }

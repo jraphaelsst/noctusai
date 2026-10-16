@@ -55,6 +55,7 @@ const LaisConfiguracoes = lazyWithReload(() => import("@/pages/lais/Configuracoe
 const LaisAgente = lazyWithReload(() => import("@/pages/lais/Agente"));
 const LaisConhecimento = lazyWithReload(() => import("@/pages/lais/Conhecimento"));
 const LaisPerguntas = lazyWithReload(() => import("@/pages/lais/Perguntas"));
+const LaisHistorico = lazyWithReload(() => import("@/pages/lais/Historico"));
 const LaisVisitas = lazyWithReload(() => import("@/pages/lais/Visitas"));
 const LaisReengajamento = lazyWithReload(() => import("@/pages/lais/Reengajamento"));
 const LaisNotificacoes = lazyWithReload(() => import("@/pages/lais/Notificacoes"));
@@ -253,6 +254,8 @@ export default createProductApp({
     { path: "/privacidade/:slug", component: LaisAvisoPrivacidade },
   ],
   Layout,
+  // Lais history link (A7): authenticated, chrome-light (no Layout).
+  unwrappedRoutes: [{ path: `${LAIS_PAGES.conversas.href}/h/:contatoId`, component: LaisHistorico }],
   ...infra.appConfig,
   Landing,
   Login,

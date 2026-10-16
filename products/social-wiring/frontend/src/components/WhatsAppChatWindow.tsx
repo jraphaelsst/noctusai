@@ -20,7 +20,7 @@
  * mounting it deeper (per thread) would open a server-side stream reader per
  * open conversation for identical data.
  */
-import { useMemo } from "react";
+import { createContext, useContext, useMemo } from "react";
 import {
   useWhatsAppChats,
   useWhatsAppChatMessages,
@@ -29,7 +29,7 @@ import {
   useMarkChatRead,
   useWhatsAppRealtime,
 } from "@/hooks/useWhatsAppChats";
-import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system";
+import { ChatWindow, type ChatThread, type ChatWindowAdapter } from "@noctusai/lib/design-system";
 import { JuliaThreadHeader } from "@/components/lais/JuliaThreadHeader";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -51,8 +51,24 @@ function displayContact(title: string | null | undefined, chatId: string): strin
 
 // ─── WhatsApp adapter ─────────────────────────────────────────────────────────
 
+/**
+ * Optional thread-list override (Lais Conversas v2): the Lais page feeds the
+ * organ the server-filtered `/api/lais/conversas` rows (tabs / filters / tags)
+ * instead of the raw WAHA chat list. Delivered through context so the adapter
+ * bag stays identity-stable and the hook order below never changes.
+ */
+export interface ThreadsFeed {
+  data: ChatThread[];
+  isLoading: boolean;
+  isError: boolean;
+}
+export const ThreadsFeedContext = createContext<ThreadsFeed | null>(null);
+
 function useWhatsAppThreadsAdapter(connectionId: string | null) {
-  const { data: chats, isPending, isError } = useWhatsAppChats(connectionId);
+  const feed = useContext(ThreadsFeedContext);
+  // With a feed the WAHA list is not read (null id ⇒ the query is disabled).
+  const { data: chats, isPending, isError } = useWhatsAppChats(feed ? null : connectionId);
+  if (feed) return feed;
   return {
     data: (chats ?? []).map((chat) => ({
       id: chat.chat_id,
@@ -160,12 +176,17 @@ interface WhatsAppChatWindowProps {
   /** Initial auto-reply state from the parent's connection object. */
   autoReplyEnabled?: boolean;
   className?: string;
+  /** Controlled selection, passed straight to the organ. */
+  selectedThreadId?: string | null;
+  onSelectThread?: (threadId: string | null) => void;
 }
 
 export function WhatsAppChatWindow({
   connectionId,
   autoReplyEnabled = false,
   className,
+  selectedThreadId,
+  onSelectThread,
 }: WhatsAppChatWindowProps) {
   // ONE stream per connection, owned here. Every hook in useWhatsAppChats reads
   // the caches this maintains; nothing below needs to know a transport exists.
@@ -185,6 +206,8 @@ export function WhatsAppChatWindow({
       adapter={adapter}
       emptyThreadsLabel="Nenhuma conversa nesta conexão."
       className={className}
+      selectedThreadId={selectedThreadId}
+      onSelectThread={onSelectThread}
     />
   );
 }

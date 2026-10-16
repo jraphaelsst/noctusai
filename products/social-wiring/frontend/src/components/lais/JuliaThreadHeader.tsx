@@ -30,6 +30,7 @@ import {
 import { useApagarDadosChat, useSetChatAgentePausado } from "@/hooks/useWhatsAppChats";
 import { PainelLead } from "@/components/lais/PainelLead";
 import { useLaisAgente, mensagemErroLais } from "@/hooks/useLaisAgente";
+import { ConversaAcoes, contatoMeta } from "@/components/lais/conversas/ConversaAcoes";
 
 export function JuliaThreadHeader({
   scopeId,
@@ -45,6 +46,8 @@ export function JuliaThreadHeader({
   const [confirmando, setConfirmando] = useState(false);
 
   const pausado = thread.meta?.agente_pausado === true;
+  // Present only when the thread comes from the Lais Conversas v2 feed.
+  const contato = contatoMeta(thread.meta);
   // The chip only means something on a connection where Julia is switched on.
   const juliaLigada =
     agente?.conexoes.find((c) => c.connection_id === scopeId)?.agente_leads_ativo === true;
@@ -79,6 +82,7 @@ export function JuliaThreadHeader({
 
   return (
     <div className="flex flex-shrink-0 items-center gap-2" data-testid="julia-thread-header">
+      {contato && <ConversaAcoes contato={contato} />}
       {juliaLigada && <PainelLead connectionId={scopeId} chatId={thread.id} />}
       {juliaLigada && (
         <span
