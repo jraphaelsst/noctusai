@@ -14,9 +14,20 @@ Jobs:
   * ``orbity_rotinas_run_due`` — every 15 minutes. Spawns tasks from every
     active routine due today or earlier, org by org
     (``TasksService.run_due_routines``).
+  * ``contracts_generate_billing`` — daily (the seed contracts organ's job, via
+    ``contracts_organ.register_jobs``). Renews/expires lapsed contracts and books
+    each active contract's monthly receivable (idempotent per contract + cycle)
+    through ``OrbityContractsBilling``, which also records the gateway state.
+  * ``orbity_billing_process`` — every 2 minutes. Claims queued gateway charges
+    (``billing_reserve_charges``: SKIP LOCKED + recovery of rows a crashed worker
+    left mid-processing), creates the Asaas charge with its idempotency
+    reference, retries transient failures with backoff, then cancels at the
+    gateway the charges whose receivable was cancelled.
+  * ``finance_generate_recurrences`` — daily. Books the due recurring finance
+    entries (the seed finance organ's ``generate_due_recurrences``).
 
-Both run their sync DB/HTTP work via ``anyio.to_thread.run_sync`` so the event
-loop is never blocked by a WAHA call.
+All run their sync DB/HTTP work via ``anyio.to_thread.run_sync`` /
+``asyncio.to_thread`` so the event loop is never blocked by a WAHA/gateway call.
 """
 from __future__ import annotations
 
@@ -26,7 +37,11 @@ from uuid import UUID
 import anyio
 from noctusai_lib.api import scheduler as seed_scheduler
 
+from noctusai_lib.domain.finance.recurrences import generate_due_recurrences
+
+from app import billing
 from app.dependencies import get_admin_client
+from app.services import billing_charges
 from app.services.automation_engine import orgs_with_due_work
 from app.services.automation_service import AutomationService
 from app.services.tasks_service import TasksService, orgs_with_due_routines
@@ -37,8 +52,11 @@ logger = logging.getLogger(__name__)
 start_scheduler = seed_scheduler.start_scheduler
 stop_scheduler = seed_scheduler.stop_scheduler
 
+BILLING_PROCESS_JOB = "orbity_billing_process"
+RECURRENCES_JOB = "finance_generate_recurrences"
+
 __all__ = [
-    "configure", "job_automacao_run_due", "job_rotinas_run_due",
+    "configure", "job_automacao_run_due", "job_billing_process", "job_finance_recurrences", "job_rotinas_run_due",
     "start_scheduler", "stop_scheduler",
 ]
 
@@ -79,6 +97,33 @@ async def job_rotinas_run_due() -> None:
         logger.exception("job orbity_rotinas_run_due falhou")
 
 
+async def job_billing_process() -> None:
+    try:
+        admin = get_admin_client()
+        if not await anyio.to_thread.run_sync(lambda: billing_charges.has_billing_work(admin)):
+            return
+        counts = await anyio.to_thread.run_sync(lambda: billing_charges.process_charges(admin, billing.get_gateway()))
+        if counts.get("reserved") or counts.get("gateway_cancel", {}).get("done"):
+            logger.info("job %s: %s", BILLING_PROCESS_JOB, counts)
+    except Exception:  # noqa: BLE001 — a job failure must be loud, not fatal to the loop
+        logger.exception("job %s falhou", BILLING_PROCESS_JOB)
+
+
+async def job_finance_recurrences() -> None:
+    try:
+        admin = get_admin_client()
+        summary = await anyio.to_thread.run_sync(lambda: generate_due_recurrences(admin, billing.FINANCE_CFG))
+        logger.info("job %s: %s", RECURRENCES_JOB, summary)
+    except Exception:  # noqa: BLE001 — a job failure must be loud, not fatal to the loop
+        logger.exception("job %s falhou", RECURRENCES_JOB)
+
+
 def configure() -> None:
     seed_scheduler.register("orbity_automacao_run_due", job_automacao_run_due, minutes=1)
     seed_scheduler.register("orbity_rotinas_run_due", job_rotinas_run_due, minutes=15)
+    seed_scheduler.register(BILLING_PROCESS_JOB, job_billing_process, minutes=2)
+    seed_scheduler.register(RECURRENCES_JOB, job_finance_recurrences, cron="10 3 * * *")
+    # The seed contracts organ's own daily job (registered through its mounted organ so it books through the host's billing).
+    from app.routers.organs import contracts_organ
+
+    contracts_organ.register_jobs()

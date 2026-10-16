@@ -1,406 +1,188 @@
-"""
-Financial service — contracts, expenses, revenues CRUD + monthly cash-flow summary.
+"""Financial service -- the Orbity layer over the seed finance organ: cash flow + the charges list.
 
-Tenancy: every write stamps org_id; every read filters by org_id.
-No silent errors: every except logs at the right level and re-raises.
-No mock-data fallbacks: callers receive explicit empty states / None.
+Receivables live in ``fin_entries`` (seed finance organ); the client a receivable belongs to and its gateway state live in
+``billing_charges`` (this product's sidecar). Everything is read through the SERVICE-ROLE client with ``org_id`` filtered
+on every query (the admin client does not carry RLS).
 
-Data-access pattern mirrors crm_service exactly:
-  - _t(table) → self._db.table(table) (schema already pinned at DB module init)
-  - org_id stripped from PATCH payloads to prevent escalation
-  - Supabase client is the sole IO seam (MockSupabaseClient in tests)
-
-NOC-REMEDIATE[orbity-finance-fiscal]
-  Conexa/Asaas gateway integration seam: when the fiscal adapter lands,
-  wire it at revenues.status → 'gateway_pending' + external_id column.
-  See KB § ABSORPTIONS/orbity/09-DEEPDIVE-FINANCIAL-MANAGEMENT.md §5 for
-  the dunning engine shape, billing_type enum, and gateway-fee netting. — 2026-06-03
+Cash-flow rule (upstream ``shouldIncludeOpenPayment``, the one that makes "inactivate a client but keep a charge" mean
+something): ``paid`` always counts (immutable history), ``cancelled`` never, an OPEN charge counts when it was explicitly
+KEPT after the client's inactivation or the client was still active in that month. A receivable with no client attached
+(typed straight into the finance page) has nobody to be inactive and always counts.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Optional
 from uuid import UUID
+
+from app.services.billing_charges import CHARGES, CLIENTS, ENTRIES
 
 logger = logging.getLogger(__name__)
 
+_OPEN = ("open", "partial")
+_CHUNK = 100
+
+
+# ── the rule (pure) ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+def month_bounds(reference_month: str) -> tuple[date, date]:
+    """``YYYY-MM-DD`` (or ``YYYY-MM``) -> (first day, first day of the next month). ValueError when not a month."""
+    text = str(reference_month).strip()
+    try:
+        first = date.fromisoformat(text[:7] + "-01")
+    except ValueError as exc:
+        raise ValueError(f"Invalid reference_month: {reference_month!r}") from exc
+    nxt = date(first.year + 1, 1, 1) if first.month == 12 else date(first.year, first.month + 1, 1)
+    return first, nxt
+
+
+def _as_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def was_client_active_in_month(client: dict, month_first: date) -> bool:
+    """Active now => yes. Inactive => only when the inactivation came AFTER the month ended."""
+    if client.get("active"):
+        return True
+    inactivated = _as_datetime(client.get("inactivated_at"))
+    if inactivated is None:
+        return False
+    _, nxt = month_bounds(month_first.isoformat())
+    return inactivated.replace(tzinfo=None) >= datetime(nxt.year, nxt.month, nxt.day)
+
+
+def should_include_open_payment(status: str, preserved: bool, client: Optional[dict], month_first: date) -> bool:
+    if status == "paid":
+        return True
+    if status == "cancelled":
+        return False
+    if preserved:
+        return True
+    if client is None:
+        return True
+    return was_client_active_in_month(client, month_first)
+
+
+def _cents_to_reais(cents: int) -> float:
+    return round(cents / 100, 2)
+
+
+def _chunks(items: list[str]):
+    for i in range(0, len(items), _CHUNK):
+        yield items[i:i + _CHUNK]
+
 
 class FinancialService:
-    def __init__(self, db: Any, org_id: UUID) -> None:
+    def __init__(self, db: Any, org_id: UUID | str) -> None:
         self._db = db
         self._org_id = str(org_id)
 
     def _t(self, table: str):
-        # Schema already pinned to "orbity" by create_database_module(settings,
-        # schema="orbity"). Calling .schema() again would break
-        # MockSupabaseClient's inserted_payloads tracking in tests.
         return self._db.table(table)
 
-    # ------------------------------------------------------------------
-    # contracts CRUD
-    # ------------------------------------------------------------------
+    def _by_ids(self, table: str, ids: list[str], columns: str = "*") -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for chunk in _chunks(sorted(set(ids))):
+            rows = self._t(table).select(columns).eq("org_id", self._org_id).in_("id", chunk).execute().data or []
+            out.update({str(r["id"]): r for r in rows})
+        return out
 
-    def list_contracts(
-        self,
-        *,
-        status: str | None = None,
-        client_id: str | None = None,
-        page: int = 1,
-        page_size: int = 50,
-    ) -> dict[str, Any]:
-        offset = (page - 1) * page_size
-        query = (
-            self._t("contracts")
-            .select("*", count="exact")
-            .eq("org_id", self._org_id)
-            .order("created_at", desc=True)
-            .range(offset, offset + page_size - 1)
-        )
-        if status:
-            query = query.eq("status", status)
-        if client_id:
-            query = query.eq("client_id", client_id)
-        try:
-            result = query.execute()
-        except Exception:
-            logger.exception("financial.list_contracts failed org=%s", self._org_id)
-            raise
-        return {
-            "items": result.data or [],
-            "total": result.count if result.count is not None else len(result.data or []),
-            "page": page,
-            "page_size": page_size,
-        }
-
-    def get_contract(self, contract_id: str) -> dict[str, Any] | None:
-        try:
-            result = (
-                self._t("contracts")
-                .select("*")
-                .eq("org_id", self._org_id)
-                .eq("id", contract_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.get_contract failed org=%s id=%s", self._org_id, contract_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def create_contract(self, payload: dict[str, Any]) -> dict[str, Any]:
-        row = {**payload, "org_id": self._org_id}
-        try:
-            result = self._t("contracts").insert(row).execute()
-        except Exception:
-            logger.exception("financial.create_contract failed org=%s", self._org_id)
-            raise
-        rows = result.data or []
-        if not rows:
-            logger.error("financial.create_contract returned no rows org=%s", self._org_id)
-            raise RuntimeError("Insert returned no data")
-        return rows[0]
-
-    def update_contract(self, contract_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        payload.pop("org_id", None)  # prevent escalation
-        try:
-            result = (
-                self._t("contracts")
-                .update(payload)
-                .eq("org_id", self._org_id)
-                .eq("id", contract_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.update_contract failed org=%s id=%s", self._org_id, contract_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def delete_contract(self, contract_id: str) -> bool:
-        try:
-            result = (
-                self._t("contracts")
-                .delete()
-                .eq("org_id", self._org_id)
-                .eq("id", contract_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.delete_contract failed org=%s id=%s", self._org_id, contract_id)
-            raise
-        return bool(result.data)
-
-    # ------------------------------------------------------------------
-    # expenses CRUD
-    # ------------------------------------------------------------------
-
-    def list_expenses(
-        self,
-        *,
-        paid: bool | None = None,
-        recurrence: str | None = None,
-        page: int = 1,
-        page_size: int = 50,
-    ) -> dict[str, Any]:
-        offset = (page - 1) * page_size
-        query = (
-            self._t("expenses")
-            .select("*", count="exact")
-            .eq("org_id", self._org_id)
-            .order("due_date", desc=True)
-            .range(offset, offset + page_size - 1)
-        )
-        if paid is not None:
-            query = query.eq("paid", paid)
-        if recurrence:
-            query = query.eq("recurrence", recurrence)
-        try:
-            result = query.execute()
-        except Exception:
-            logger.exception("financial.list_expenses failed org=%s", self._org_id)
-            raise
-        return {
-            "items": result.data or [],
-            "total": result.count if result.count is not None else len(result.data or []),
-            "page": page,
-            "page_size": page_size,
-        }
-
-    def get_expense(self, expense_id: str) -> dict[str, Any] | None:
-        try:
-            result = (
-                self._t("expenses")
-                .select("*")
-                .eq("org_id", self._org_id)
-                .eq("id", expense_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.get_expense failed org=%s id=%s", self._org_id, expense_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def create_expense(self, payload: dict[str, Any]) -> dict[str, Any]:
-        row = {**payload, "org_id": self._org_id}
-        try:
-            result = self._t("expenses").insert(row).execute()
-        except Exception:
-            logger.exception("financial.create_expense failed org=%s", self._org_id)
-            raise
-        rows = result.data or []
-        if not rows:
-            logger.error("financial.create_expense returned no rows org=%s", self._org_id)
-            raise RuntimeError("Insert returned no data")
-        return rows[0]
-
-    def update_expense(self, expense_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        payload.pop("org_id", None)  # prevent escalation
-        try:
-            result = (
-                self._t("expenses")
-                .update(payload)
-                .eq("org_id", self._org_id)
-                .eq("id", expense_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.update_expense failed org=%s id=%s", self._org_id, expense_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def delete_expense(self, expense_id: str) -> bool:
-        try:
-            result = (
-                self._t("expenses")
-                .delete()
-                .eq("org_id", self._org_id)
-                .eq("id", expense_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.delete_expense failed org=%s id=%s", self._org_id, expense_id)
-            raise
-        return bool(result.data)
-
-    # ------------------------------------------------------------------
-    # revenues CRUD
-    # ------------------------------------------------------------------
-
-    def list_revenues(
-        self,
-        *,
-        status: str | None = None,
-        client_id: str | None = None,
-        reference_month: str | None = None,
-        page: int = 1,
-        page_size: int = 50,
-    ) -> dict[str, Any]:
-        offset = (page - 1) * page_size
-        query = (
-            self._t("revenues")
-            .select("*", count="exact")
-            .eq("org_id", self._org_id)
-            .order("reference_month", desc=True)
-            .range(offset, offset + page_size - 1)
-        )
-        if status:
-            query = query.eq("status", status)
-        if client_id:
-            query = query.eq("client_id", client_id)
-        if reference_month:
-            query = query.eq("reference_month", reference_month)
-        try:
-            result = query.execute()
-        except Exception:
-            logger.exception("financial.list_revenues failed org=%s", self._org_id)
-            raise
-        return {
-            "items": result.data or [],
-            "total": result.count if result.count is not None else len(result.data or []),
-            "page": page,
-            "page_size": page_size,
-        }
-
-    def get_revenue(self, revenue_id: str) -> dict[str, Any] | None:
-        try:
-            result = (
-                self._t("revenues")
-                .select("*")
-                .eq("org_id", self._org_id)
-                .eq("id", revenue_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.get_revenue failed org=%s id=%s", self._org_id, revenue_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def create_revenue(self, payload: dict[str, Any]) -> dict[str, Any]:
-        row = {**payload, "org_id": self._org_id}
-        try:
-            result = self._t("revenues").insert(row).execute()
-        except Exception:
-            logger.exception("financial.create_revenue failed org=%s", self._org_id)
-            raise
-        rows = result.data or []
-        if not rows:
-            logger.error("financial.create_revenue returned no rows org=%s", self._org_id)
-            raise RuntimeError("Insert returned no data")
-        return rows[0]
-
-    def update_revenue(self, revenue_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        payload.pop("org_id", None)  # prevent escalation
-        try:
-            result = (
-                self._t("revenues")
-                .update(payload)
-                .eq("org_id", self._org_id)
-                .eq("id", revenue_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.update_revenue failed org=%s id=%s", self._org_id, revenue_id)
-            raise
-        rows = result.data or []
-        return rows[0] if rows else None
-
-    def delete_revenue(self, revenue_id: str) -> bool:
-        try:
-            result = (
-                self._t("revenues")
-                .delete()
-                .eq("org_id", self._org_id)
-                .eq("id", revenue_id)
-                .execute()
-            )
-        except Exception:
-            logger.exception("financial.delete_revenue failed org=%s id=%s", self._org_id, revenue_id)
-            raise
-        return bool(result.data)
-
-    # ------------------------------------------------------------------
-    # Monthly cash-flow summary
-    # ------------------------------------------------------------------
+    # ── cash flow ────────────────────────────────────────────────────────────────────────────────────────
 
     def monthly_cash_flow(self, reference_month: str) -> dict[str, Any]:
-        """Cash-basis aggregate for a single calendar month.
+        first, nxt = month_bounds(reference_month)
+        entries = (
+            self._t(ENTRIES).select("id,direction,status,amount_cents,settled_cents,due_date,competence_month")
+            .eq("org_id", self._org_id).eq("competence_month", first.isoformat()).execute().data or []
+        )
+        receivables = [e for e in entries if e["direction"] == "receivable"]
+        payables = [e for e in entries if e["direction"] == "payable"]
 
-        - paid_revenues:  Σ revenues.amount WHERE status='paid' AND reference_month=X
-        - paid_expenses:  Σ expenses.amount WHERE paid=true AND due_date within month
-        - pending/overdue revenues: additional AR aging buckets
-        - net: paid_revenues − paid_expenses
+        charges: dict[str, dict] = {}
+        for chunk in _chunks([str(e["id"]) for e in receivables]):
+            rows = self._t(CHARGES).select("entry_id,client_id,preserved_after_deactivation").eq("org_id", self._org_id).in_("entry_id", chunk).execute().data or []
+            charges.update({str(r["entry_id"]): r for r in rows})
+        clients = self._by_ids(CLIENTS, [str(c["client_id"]) for c in charges.values() if c.get("client_id")], "id,active,inactivated_at")
 
-        Note: expenses are matched by due_date within the ISO-month prefix
-        (YYYY-MM) of reference_month, since expenses don't carry a reference_month
-        column — this mirrors the absorbed source's cash-basis snapshot logic.
-        """
-        # Derive the month prefix (YYYY-MM) for due_date range filtering
-        try:
-            # reference_month is expected as YYYY-MM-DD (first of month)
-            month_prefix = reference_month[:7]  # "YYYY-MM"
-            month_start = f"{month_prefix}-01"
-            # Compute next month start for range (exclusive upper bound)
-            year, month = int(month_prefix[:4]), int(month_prefix[5:7])
-            if month == 12:
-                next_month_start = f"{year + 1}-01-01"
-            else:
-                next_month_start = f"{year}-{month + 1:02d}-01"
-        except (ValueError, IndexError):
-            logger.error(
-                "financial.monthly_cash_flow: invalid reference_month=%r org=%s",
-                reference_month, self._org_id,
-            )
-            raise ValueError(f"Invalid reference_month: {reference_month!r}")
-
-        # --- revenues ---
-        try:
-            rev_result = (
-                self._t("revenues")
-                .select("amount, status")
-                .eq("org_id", self._org_id)
-                .eq("reference_month", month_start)
-                .execute()
-            )
-        except Exception:
-            logger.exception(
-                "financial.monthly_cash_flow: revenues query failed org=%s month=%s",
-                self._org_id, reference_month,
-            )
-            raise
-
-        # --- expenses ---
-        try:
-            exp_result = (
-                self._t("expenses")
-                .select("amount, paid")
-                .eq("org_id", self._org_id)
-                .gte("due_date", month_start)
-                .lt("due_date", next_month_start)
-                .execute()
-            )
-        except Exception:
-            logger.exception(
-                "financial.monthly_cash_flow: expenses query failed org=%s month=%s",
-                self._org_id, reference_month,
-            )
-            raise
-
-        revenues = rev_result.data or []
-        expenses = exp_result.data or []
-
-        paid_revenues  = sum(float(r["amount"]) for r in revenues if r.get("status") == "paid")
-        pending_rev    = sum(float(r["amount"]) for r in revenues if r.get("status") == "pending")
-        overdue_rev    = sum(float(r["amount"]) for r in revenues if r.get("status") == "overdue")
-        paid_expenses  = sum(float(e["amount"]) for e in expenses if e.get("paid"))
-
+        today = date.today()
+        paid = pending = overdue = 0
+        for e in receivables:
+            charge = charges.get(str(e["id"]), {})
+            client = clients.get(str(charge["client_id"])) if charge.get("client_id") else None
+            if not should_include_open_payment(e["status"], bool(charge.get("preserved_after_deactivation")), client, first):
+                continue
+            if e["status"] == "paid":
+                paid += int(e["amount_cents"])
+            elif e["status"] in _OPEN:
+                open_cents = int(e["amount_cents"]) - int(e.get("settled_cents") or 0)
+                if date.fromisoformat(str(e["due_date"])[:10]) < today:
+                    overdue += open_cents
+                else:
+                    pending += open_cents
+        paid_expenses = sum(int(p["amount_cents"]) for p in payables if p["status"] == "paid")
         return {
-            "reference_month":  month_start,
-            "paid_revenues":    round(paid_revenues, 2),
-            "paid_expenses":    round(paid_expenses, 2),
-            "net":              round(paid_revenues - paid_expenses, 2),
-            "pending_revenues": round(pending_rev, 2),
-            "overdue_revenues": round(overdue_rev, 2),
+            "reference_month": first.isoformat(),
+            "paid_revenues": _cents_to_reais(paid),
+            "paid_expenses": _cents_to_reais(paid_expenses),
+            "net": _cents_to_reais(paid - paid_expenses),
+            "pending_revenues": _cents_to_reais(pending),
+            "overdue_revenues": _cents_to_reais(overdue),
         }
+
+    # ── charges ──────────────────────────────────────────────────────────────────────────────────────────
+
+    def present_charges(self, charges: list[dict]) -> list[dict]:
+        """Join the sidecar rows with their entry + client name into the wire shape."""
+        entries = self._by_ids(ENTRIES, [str(c["entry_id"]) for c in charges])
+        clients = self._by_ids(CLIENTS, [str(c["client_id"]) for c in charges if c.get("client_id")], "id,name,legal_name")
+        today = date.today()
+        out = []
+        for c in charges:
+            e = entries.get(str(c["entry_id"]))
+            if e is None:
+                continue
+            client = clients.get(str(c["client_id"])) if c.get("client_id") else None
+            due = str(e["due_date"])[:10]
+            out.append({
+                "entry_id": str(c["entry_id"]), "client_id": str(c["client_id"]) if c.get("client_id") else None,
+                "client_name": (client or {}).get("legal_name") or (client or {}).get("name"),
+                "contract_id": str(c["contract_id"]) if c.get("contract_id") else None,
+                "description": e["description"], "due_date": due, "amount_cents": int(e["amount_cents"]),
+                "settled_cents": int(e.get("settled_cents") or 0), "entry_status": e["status"],
+                "overdue": e["status"] in _OPEN and date.fromisoformat(due) < today,
+                "generation_status": c["generation_status"], "generation_attempts": int(c.get("generation_attempts") or 0),
+                "last_error": c.get("last_error"), "next_attempt_at": c.get("next_attempt_at"), "gateway": c.get("gateway"),
+                "billing_method": c.get("billing_method"), "external_id": c.get("external_id"), "invoice_url": c.get("invoice_url"),
+                "pix_payload": c.get("pix_payload"), "preserved_after_deactivation": bool(c.get("preserved_after_deactivation")),
+                "gateway_cancel_status": c.get("gateway_cancel_status"), "gateway_cancel_error": c.get("gateway_cancel_error"),
+            })
+        return out
+
+    def list_charges(self, *, client_id: Optional[str] = None, generation_status: Optional[str] = None,
+                     page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        offset = (page - 1) * page_size
+        q = self._t(CHARGES).select("*", count="exact").eq("org_id", self._org_id).order("created_at", desc=True)
+        if client_id:
+            q = q.eq("client_id", client_id)
+        if generation_status:
+            q = q.eq("generation_status", generation_status)
+        res = q.range(offset, offset + page_size - 1).execute()
+        rows = res.data or []
+        return {"items": self.present_charges(rows), "total": res.count if res.count is not None else len(rows),
+                "page": page, "page_size": page_size}
+
+    def open_charges_of_client(self, client_id: str) -> list[dict]:
+        """The client's receivables still open (pending + overdue, possibly partially paid), oldest first."""
+        charges = self._t(CHARGES).select("*").eq("org_id", self._org_id).eq("client_id", client_id).execute().data or []
+        presented = [c for c in self.present_charges(charges) if c["entry_status"] in _OPEN]
+        presented.sort(key=lambda c: (c["due_date"], c["entry_id"]))
+        return presented
+
+
+__all__ = ["FinancialService", "month_bounds", "should_include_open_payment", "was_client_active_in_month"]

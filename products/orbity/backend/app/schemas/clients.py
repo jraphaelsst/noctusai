@@ -7,7 +7,7 @@ pydantic-strict-http.md).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import EmailStr, Field
@@ -20,7 +20,12 @@ from noctusai_lib.api import StrictHttpModel
 # ---------------------------------------------------------------------------
 
 class ClientCreate(StrictHttpModel):
-    name: str = Field(..., min_length=1, max_length=255)
+    """``legal_name`` (Razão Social) is what the gateway charges and what contracts snapshot; ``name`` is the optional
+    nome fantasia -- when absent the legal name is used everywhere a short name is shown."""
+
+    legal_name: str = Field(..., min_length=1, max_length=255)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    document: Optional[str] = Field(default=None, max_length=30)  # CPF / CNPJ (validated in the router)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(default=None, max_length=30)
     company: Optional[str] = Field(default=None, max_length=255)
@@ -31,7 +36,9 @@ class ClientCreate(StrictHttpModel):
 
 
 class ClientUpdate(StrictHttpModel):
+    legal_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    document: Optional[str] = Field(default=None, max_length=30)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(default=None, max_length=30)
     company: Optional[str] = Field(default=None, max_length=255)
@@ -50,13 +57,16 @@ class ClientOut(StrictHttpModel):
     """Single client representation — returned by create / get / update."""
     id: UUID
     org_id: UUID
+    legal_name: str
     name: str
+    document: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
     monthly_value: Optional[float] = None
     due_date: Optional[int] = None
     active: bool
+    inactivated_at: Optional[str] = None
     default_billing_type: Optional[str] = None
     billing_automation_enabled: bool
     report_token: Optional[str] = None
@@ -64,3 +74,24 @@ class ClientOut(StrictHttpModel):
     updated_at: str
 
     model_config = {"extra": "ignore"}  # outbound: extra DB columns are safe to drop
+
+
+# ---------------------------------------------------------------------------
+# Inactivation (kept charges) + CNPJ lookup
+# ---------------------------------------------------------------------------
+
+class ChargeDecision(StrictHttpModel):
+    entry_id: str
+    action: Literal["cancel", "keep"] = "cancel"
+
+
+class ArchiveRequest(StrictHttpModel):
+    """One decision per open charge of the client (pending + overdue). Omitted/empty is valid only when it has none."""
+
+    charges: list[ChargeDecision] = Field(default_factory=list)
+
+
+class CnpjLookupOut(StrictHttpModel):
+    cnpj: str
+    legal_name: Optional[str] = None
+    situacao_cadastral: Optional[str] = None

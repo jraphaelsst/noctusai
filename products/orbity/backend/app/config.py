@@ -37,5 +37,12 @@ class SeedSettings(ProductSettings):
     # nothing sent (community, 2026-10-01).
     whatsapp_allow_fake: bool = False
 
+    # Payment gateway (Asaas) for the receivables the contracts organ books. The API key / environment / webhook
+    # token are PER-ORG credentials (`asaas_api_key`, `asaas_environment`, `asaas_webhook_token`: org settings ->
+    # platform settings -> env), never a settings field. Fake gateway ONLY under explicit opt-in (test harness /
+    # local dev, PAYMENTS_ALLOW_FAKE=true): a Fake in a real deploy would report "charge generated" with nothing
+    # generated. Unset + no credential => the charge stays a plain receivable (honest, never faked).
+    payments_allow_fake: bool = False
+
 
 settings = SeedSettings()

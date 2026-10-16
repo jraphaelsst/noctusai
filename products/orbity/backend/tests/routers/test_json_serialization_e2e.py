@@ -34,20 +34,8 @@ class TestUuidPayloadsSerialize:
         assert resp.status_code != 502 or "UUID" not in resp.text, resp.text
         assert resp.status_code in (200, 404), resp.text
 
-    def test_create_contract_with_client_id(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={"client_id": str(uuid4()), "title": "C", "monthly_value": 100,
-                  "start_date": "2026-01-01"},
-        )
-        _assert_ok(resp)
-
-    def test_create_revenue_with_client_and_contract_id(self, client):
-        resp = client.post(
-            "/api/financial/revenues",
-            json={"client_id": str(uuid4()), "contract_id": str(uuid4()),
-                  "reference_month": "2026-01-01", "amount": 100, "due_date": "2026-01-10"},
-        )
+    def test_create_client_with_legal_name_and_document(self, client):
+        resp = client.post("/api/clients", json={"legal_name": "Acme Comércio LTDA", "document": "11.222.333/0001-81"})
         _assert_ok(resp)
 
     def test_create_task_with_client_id(self, client):

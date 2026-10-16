@@ -18,6 +18,9 @@ def _row(**over) -> dict:
         "id": "c-1",
         "org_id": str(ORG),
         "name": "Cliente Teste",
+        "legal_name": "Cliente Teste LTDA",
+        "document": None,
+        "inactivated_at": None,
         "email": "t@t.com",
         "phone": None,
         "company": None,
@@ -105,13 +108,29 @@ class TestClientsUpdate:
         assert not any(p.get("org_id") == "attacker-org" for p in updated)
 
 
-class TestClientsArchive:
-    def test_archive_sets_active_false(self):
-        db, svc = _svc([_row(id="c-1")])
-        ok = svc.archive("c-1")
-        assert ok is True
-        assert any(p.get("active") is False for p in db.table("clients").updated_payloads)
+class TestClientsLegalName:
+    def test_create_falls_back_to_the_legal_name_for_the_nome_fantasia(self):
+        db, svc = _svc([])
+        svc.create({"legal_name": "Acme Comércio LTDA"})
+        sent = db.table("clients").inserted_payloads[-1]
+        assert sent["legal_name"] == "Acme Comércio LTDA" and sent["name"] == "Acme Comércio LTDA"
 
-    def test_archive_missing_returns_false(self):
-        _db, svc = _svc([])
-        assert svc.archive("ghost") is False
+    def test_create_keeps_an_explicit_nome_fantasia(self):
+        db, svc = _svc([])
+        svc.create({"legal_name": "Acme Comércio LTDA", "name": "Acme"})
+        assert db.table("clients").inserted_payloads[-1]["name"] == "Acme"
+
+    def test_changing_the_legal_name_moves_a_fallback_nome_fantasia_with_it(self):
+        db, svc = _svc([_row(id="c-1", name="Acme LTDA", legal_name="Acme LTDA")])
+        svc.update("c-1", {"legal_name": "Acme Brasil LTDA"})
+        assert db.table("clients").updated_payloads[-1]["name"] == "Acme Brasil LTDA"
+
+    def test_changing_the_legal_name_leaves_a_real_nome_fantasia_alone(self):
+        db, svc = _svc([_row(id="c-1", name="Acme", legal_name="Acme LTDA")])
+        svc.update("c-1", {"legal_name": "Acme Brasil LTDA"})
+        assert "name" not in db.table("clients").updated_payloads[-1]
+
+    def test_reactivating_clears_the_offboarding_timestamp(self):
+        db, svc = _svc([_row(id="c-1", active=False, inactivated_at="2026-09-01T00:00:00+00:00")])
+        svc.update("c-1", {"active": True})
+        assert db.table("clients").updated_payloads[-1]["inactivated_at"] is None

@@ -87,8 +87,9 @@ class ClientsService:
     # ------------------------------------------------------------------
 
     def create(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new client. org_id is always stamped server-side."""
+        """Insert a new client. org_id is always stamped server-side. ``name`` (nome fantasia) falls back to the legal name."""
         row = {**payload, "org_id": self._org_id}
+        row.setdefault("name", row.get("legal_name"))
         try:
             result = self._table().insert(row).execute()
         except Exception:
@@ -106,6 +107,13 @@ class ClientsService:
             return self.get(client_id)
         # Prohibit escalating org_id via patch
         payload.pop("org_id", None)
+        if "legal_name" in payload and "name" not in payload:
+            # the nome fantasia falls back to the legal name: keep that fallback true when the legal name changes
+            current = self.get(client_id)
+            if current is not None and current.get("name") == current.get("legal_name"):
+                payload["name"] = payload["legal_name"]
+        if payload.get("active") is True:
+            payload["inactivated_at"] = None  # reactivation: the offboarding timestamp no longer applies
         try:
             result = (
                 self._table()
@@ -120,7 +128,3 @@ class ClientsService:
         rows = result.data or []
         return rows[0] if rows else None
 
-    def archive(self, client_id: str) -> bool:
-        """Soft-delete via active=False. Returns True if found."""
-        row = self.update(client_id, {"active": False})
-        return row is not None

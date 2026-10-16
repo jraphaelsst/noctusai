@@ -96,6 +96,12 @@ DO $t$ DECLARE r jsonb; BEGIN
   IF (SELECT active OR inactivated_at IS NULL FROM orbity.clients WHERE id = 'c1000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'ASSERT client inactive'; END IF;
   IF jsonb_array_length(r->'gateway_cancel_entry_ids') <> 1 THEN RAISE EXCEPTION 'ASSERT gateway ids %', r; END IF;
 END $t$;"""),
+    _step("offboard_is_rerunnable", f"""
+DO $t$ DECLARE r jsonb; BEGIN
+  r := orbity.offboard_client('{_A}', 'c1000000-0000-4000-8000-000000000001', '{{}}'::uuid[], '{{}}'::uuid[]);
+  IF (r->>'cancelled')::int <> 0 OR (r->>'preserved')::int <> 0 THEN RAISE EXCEPTION 'ASSERT rerun must be a no-op, got %', r; END IF;
+  IF (SELECT status FROM orbity.fin_entries WHERE id = 'e5000000-0000-4000-8000-000000000005') <> 'open' THEN RAISE EXCEPTION 'ASSERT kept stays kept'; END IF;
+END $t$;"""),
     # --- billing_reserve_charges: claim once, recover the stale ----------------------------------------------------------
     _step("reserve_claims_once_and_recovers_the_stale", f"""
 DO $t$ DECLARE n int; BEGIN

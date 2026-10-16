@@ -437,8 +437,9 @@ REVOKE ALL ON FUNCTION orbity.billing_reserve_charges(INTEGER, TEXT, INTEGER, IN
 GRANT EXECUTE ON FUNCTION orbity.billing_reserve_charges(INTEGER, TEXT, INTEGER, INTEGER) TO service_role;
 
 -- Inactivate a client ATOMICALLY: every open receivable of the client is either cancelled or kept (flagged
--- preserved), and the client row goes inactive -- all or nothing. Every open charge MUST be decided (the dialog
--- defaults to cancel); a partially paid charge cannot be cancelled (keep it). The caller (the admin-only endpoint)
+-- preserved), and the client row goes inactive -- all or nothing. Every open charge not yet kept MUST be decided (the
+-- dialog defaults to cancel); a partially paid charge cannot be cancelled (keep it). Re-runnable: a retry after a
+-- later step failed finds nothing left to decide. The caller (the admin-only endpoint)
 -- then terminates the contracts through the seed contracts organ and cancels the gateway charges listed back.
 CREATE OR REPLACE FUNCTION orbity.offboard_client(p_org_id UUID, p_client_id UUID, p_cancel_entry_ids UUID[], p_preserve_entry_ids UUID[])
 RETURNS JSONB
@@ -473,7 +474,8 @@ BEGIN
       FROM orbity.billing_charges bc
       JOIN orbity.fin_entries e ON e.id = bc.entry_id
      WHERE bc.org_id = p_org_id AND bc.client_id = p_client_id AND e.org_id = p_org_id
-       AND e.direction = 'receivable' AND e.status IN ('open', 'partial');
+       AND e.direction = 'receivable' AND e.status IN ('open', 'partial')
+       AND NOT bc.preserved_after_deactivation;   -- already decided (kept) by an earlier inactivation: nothing to ask again
 
     IF EXISTS (SELECT 1 FROM unnest(v_cancel || v_preserve) AS x(id) WHERE x.id <> ALL (v_open)) THEN
         RAISE EXCEPTION 'charge_not_open_for_client' USING ERRCODE = '22023';

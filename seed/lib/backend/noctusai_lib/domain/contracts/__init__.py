@@ -30,6 +30,7 @@ Mount it from a product:
 The quotes organ's accept seam creates a draft with `create_contract_from_quote(scope, ContractFromQuote(...))`.
 """
 from . import attachments, billing_run, contracts, documents, schedule, signature
+from ._common import Scope as ContractsScope
 from .attachments import ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_PATH_PATTERN
 from .billing import (
     ContractsBilling, FakeContractsBilling, NoopContractsBilling, SupabaseContractsBilling, make_contracts_billing,
@@ -49,7 +50,7 @@ from .types import (
 __all__ = [
     "ATTACHMENT_UPLOAD_MAX_BYTES", "ATTACHMENT_UPLOAD_PATH_PATTERN", "BillingFrequency", "BillingKind", "BillingModel",
     "CONTRACTS_TABLES", "ContractFromQuote", "ContractStatus", "ContractsBilling", "ContractsConfig", "ContractsContext",
-    "ContractsError", "DocumentRenderer", "FakeContractsBilling", "JOB_ID", "NoopContractsBilling", "QuoteLine",
+    "ContractsError", "ContractsScope", "DocumentRenderer", "FakeContractsBilling", "JOB_ID", "NoopContractsBilling", "QuoteLine",
     "ReadjustmentIndex", "SignatureStatus", "SupabaseContractsBilling", "VersionKind", "attachments", "billing_run", "brl",
     "contracts", "contracts_generate_billing", "contracts_migration", "create_contract_from_quote", "documents",
     "handle_signature_webhook", "make_contracts_billing", "make_contracts_router", "register_contracts_billing",

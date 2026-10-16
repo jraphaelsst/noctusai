@@ -66,7 +66,7 @@ class TestEmittersAtTheRouterEdge:
         self._arm(client, "client_created")
         # The mock's generated row id is not a UUID, so ClientOut re-validation answers 422 AFTER
         # the write + emit already happened; the observable under test is the execution row.
-        client.post("/api/clients", json={"name": "ACME"})
+        client.post("/api/clients", json={"legal_name": "ACME"})
         assert self._executions(client)[0]["subject_type"] == "client"
 
     def test_lead_created_starts_flow(self, client):

@@ -1,320 +1,114 @@
-"""
-Auth-boundary + validation tests for the /api/financial/* router.
+"""/api/financial -- the Orbity layer over the seed finance + contracts organs.
 
-Auth: strict == 401 (not 404/422) for all protected endpoints.
-Pydantic: extra="forbid" on inbound schemas → 422 for unknown fields.
+Strict ``== 401`` on every route (a ``in (401, 404)`` would pass on a route that does not exist), member -> 403 on the
+writes, and the happy paths over ``MockSupabaseClient`` seeded rows. The money model itself (/api/finance, /api/contracts)
+is the seed organs' and is covered by their suites + ``tests/test_billing_wiring.py``.
 """
 import pytest
+from noctusai_lib.testing import TEST_USER_ID
 
+from app.dependencies import coerce_org_uuid
 
-TEST_ORG = "00000000-0000-0000-0000-000000000001"
+ORG = str(coerce_org_uuid("test-org-123"))
+ENTRY = "e1000000-0000-4000-8000-000000000001"
+CLIENT = "c1000000-0000-4000-8000-000000000001"
 
-# ---------------------------------------------------------------------------
-# Auth-boundary: every endpoint must return EXACTLY 401 (no 404/422 shortcut)
-# ---------------------------------------------------------------------------
+READS = [
+    ("GET", "/api/financial/gateway"),
+    ("GET", "/api/financial/cash-flow/2026-10-01"),
+    ("GET", "/api/financial/charges"),
+]
+WRITES = [
+    ("POST", "/api/financial/charges"),
+    ("POST", f"/api/financial/charges/{ENTRY}/generate"),
+]
 
-class TestFinancialContractsAuth:
-    """Every /api/financial/contracts/* endpoint requires authentication."""
 
-    def test_list_contracts_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/contracts").status_code == 401
+def make_admin(client):
+    client.mock_supabase.set_table_data(
+        "noctus_users", [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": "owner", "role": "user"}])
 
-    def test_create_contract_without_auth_returns_401(self, client):
-        assert client.raw().post(
-            "/api/financial/contracts",
-            json={
-                "title": "Contrato Teste",
-                "monthly_value": 1500.00,
-                "start_date": "2026-01-01",
-            },
-        ).status_code == 401
 
-    def test_get_contract_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/contracts/some-id").status_code == 401
-
-    def test_patch_contract_without_auth_returns_401(self, client):
-        assert client.raw().patch(
-            "/api/financial/contracts/some-id",
-            json={"title": "updated"},
-        ).status_code == 401
-
-    def test_delete_contract_without_auth_returns_401(self, client):
-        assert client.raw().delete("/api/financial/contracts/some-id").status_code == 401
-
-
-class TestFinancialExpensesAuth:
-    """Every /api/financial/expenses/* endpoint requires authentication."""
-
-    def test_list_expenses_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/expenses").status_code == 401
-
-    def test_create_expense_without_auth_returns_401(self, client):
-        assert client.raw().post(
-            "/api/financial/expenses",
-            json={
-                "description": "Licença SaaS",
-                "amount": 99.90,
-                "due_date": "2026-01-15",
-            },
-        ).status_code == 401
-
-    def test_get_expense_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/expenses/some-id").status_code == 401
-
-    def test_patch_expense_without_auth_returns_401(self, client):
-        assert client.raw().patch(
-            "/api/financial/expenses/some-id",
-            json={"paid": True},
-        ).status_code == 401
-
-    def test_delete_expense_without_auth_returns_401(self, client):
-        assert client.raw().delete("/api/financial/expenses/some-id").status_code == 401
-
-
-class TestFinancialRevenuesAuth:
-    """Every /api/financial/revenues/* endpoint requires authentication."""
-
-    def test_list_revenues_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/revenues").status_code == 401
-
-    def test_create_revenue_without_auth_returns_401(self, client):
-        assert client.raw().post(
-            "/api/financial/revenues",
-            json={
-                "amount": 2000.00,
-                "reference_month": "2026-01-01",
-                "due_date": "2026-01-10",
-            },
-        ).status_code == 401
-
-    def test_get_revenue_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/revenues/some-id").status_code == 401
-
-    def test_patch_revenue_without_auth_returns_401(self, client):
-        assert client.raw().patch(
-            "/api/financial/revenues/some-id",
-            json={"status": "paid"},
-        ).status_code == 401
-
-    def test_delete_revenue_without_auth_returns_401(self, client):
-        assert client.raw().delete("/api/financial/revenues/some-id").status_code == 401
-
-
-class TestFinancialCashFlowAuth:
-    """Cash-flow summary endpoint requires authentication."""
-
-    def test_cash_flow_without_auth_returns_401(self, client):
-        assert client.raw().get("/api/financial/cash-flow/2026-01-01").status_code == 401
-
+@pytest.mark.parametrize("method,path", READS + WRITES)
+def test_every_route_is_strictly_401_without_auth(client, method, path):
+    resp = client.raw().request(method, path, json={} if method == "POST" else None)
+    assert resp.status_code == 401
 
-# ---------------------------------------------------------------------------
-# Pydantic validation (StrictHttpModel extra="forbid")
-# ---------------------------------------------------------------------------
-
-class TestFinancialContractValidation:
-    """Inbound contract schema rejects unknown fields and invalid values."""
-
-    def test_create_contract_extra_field_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={
-                "title": "Contrato",
-                "monthly_value": 1000.0,
-                "start_date": "2026-01-01",
-                "rogue": True,
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_create_contract_missing_title_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={"monthly_value": 1000.0, "start_date": "2026-01-01"},
-        )
-        assert resp.status_code == 422
-
-    def test_create_contract_negative_value_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={"title": "X", "monthly_value": -1.0, "start_date": "2026-01-01"},
-        )
-        assert resp.status_code == 422
-
-    def test_create_contract_invalid_status_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={
-                "title": "X",
-                "monthly_value": 1000.0,
-                "start_date": "2026-01-01",
-                "status": "unknown",
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_create_contract_billing_day_out_of_range_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/contracts",
-            json={
-                "title": "X",
-                "monthly_value": 1000.0,
-                "start_date": "2026-01-01",
-                "billing_day": 32,
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_patch_contract_no_fields_returns_400(self, client):
-        """Empty PATCH body → 400 before service layer."""
-        resp = client.patch("/api/financial/contracts/some-id", json={})
-        assert resp.status_code == 400
-
-
-class TestFinancialExpenseValidation:
-    """Inbound expense schema rejects unknown fields and invalid values."""
-
-    def test_create_expense_extra_field_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/expenses",
-            json={
-                "description": "X",
-                "amount": 100.0,
-                "due_date": "2026-01-15",
-                "rogue": True,
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_create_expense_zero_amount_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/expenses",
-            json={"description": "X", "amount": 0, "due_date": "2026-01-15"},
-        )
-        assert resp.status_code == 422
-
-    def test_create_expense_invalid_recurrence_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/expenses",
-            json={
-                "description": "X",
-                "amount": 100.0,
-                "due_date": "2026-01-15",
-                "recurrence": "weekly",
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_patch_expense_no_fields_returns_400(self, client):
-        resp = client.patch("/api/financial/expenses/some-id", json={})
-        assert resp.status_code == 400
-
-
-class TestFinancialRevenueValidation:
-    """Inbound revenue schema rejects unknown fields and invalid values."""
-
-    def test_create_revenue_extra_field_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/revenues",
-            json={
-                "amount": 1000.0,
-                "reference_month": "2026-01-01",
-                "due_date": "2026-01-10",
-                "rogue": True,
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_create_revenue_invalid_status_returns_422(self, client):
-        resp = client.post(
-            "/api/financial/revenues",
-            json={
-                "amount": 1000.0,
-                "reference_month": "2026-01-01",
-                "due_date": "2026-01-10",
-                "status": "unknown",
-            },
-        )
-        assert resp.status_code == 422
-
-    def test_patch_revenue_no_fields_returns_400(self, client):
-        resp = client.patch("/api/financial/revenues/some-id", json={})
-        assert resp.status_code == 400
-
-
-# ---------------------------------------------------------------------------
-# Happy path (authenticated client — mock returns seeded data from conftest)
-# ---------------------------------------------------------------------------
-
-class TestFinancialContractsHappyPath:
-    """With auth + mock DB: read endpoints work; missing rows → 404."""
-
-    def test_list_contracts_authenticated_returns_200(self, client):
-        resp = client.get("/api/financial/contracts")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "items" in body
-        assert "total" in body
-
-    def test_get_contract_missing_returns_404(self, client):
-        resp = client.get("/api/financial/contracts/does-not-exist")
-        assert resp.status_code == 404
-
-    def test_delete_contract_missing_returns_404(self, client):
-        resp = client.delete("/api/financial/contracts/does-not-exist")
-        assert resp.status_code == 404
-
-
-class TestFinancialExpensesHappyPath:
-
-    def test_list_expenses_authenticated_returns_200(self, client):
-        resp = client.get("/api/financial/expenses")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "items" in body
-
-    def test_get_expense_missing_returns_404(self, client):
-        resp = client.get("/api/financial/expenses/does-not-exist")
-        assert resp.status_code == 404
-
-    def test_delete_expense_missing_returns_404(self, client):
-        resp = client.delete("/api/financial/expenses/does-not-exist")
-        assert resp.status_code == 404
-
-
-class TestFinancialRevenuesHappyPath:
-
-    def test_list_revenues_authenticated_returns_200(self, client):
-        resp = client.get("/api/financial/revenues")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "items" in body
-
-    def test_get_revenue_missing_returns_404(self, client):
-        resp = client.get("/api/financial/revenues/does-not-exist")
-        assert resp.status_code == 404
-
-    def test_delete_revenue_missing_returns_404(self, client):
-        resp = client.delete("/api/financial/revenues/does-not-exist")
-        assert resp.status_code == 404
-
-
-class TestFinancialCashFlowHappyPath:
-
-    def test_cash_flow_authenticated_returns_200(self, client):
-        resp = client.get("/api/financial/cash-flow/2026-01-01")
-        assert resp.status_code == 200
-        body = resp.json()
-        # shape check — all keys present
-        assert "reference_month" in body
-        assert "paid_revenues" in body
-        assert "paid_expenses" in body
-        assert "net" in body
-        assert "pending_revenues" in body
-        assert "overdue_revenues" in body
-
-    def test_cash_flow_response_has_correct_types(self, client):
-        resp = client.get("/api/financial/cash-flow/2026-06-01")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert isinstance(body["paid_revenues"], (int, float))
-        assert isinstance(body["net"], (int, float))
+
+@pytest.mark.parametrize("method,path", WRITES)
+def test_a_plain_member_cannot_write(client, method, path):
+    resp = client.post(path, json={"client_id": CLIENT, "description": "x", "amount_cents": 100, "due_date": "2026-10-20"})
+    assert resp.status_code == 403
+
+
+def test_the_removed_crud_surface_is_gone(client):
+    # contracts / expenses / revenues CRUD moved to the organs (/api/contracts, /api/finance): the old paths must 404, not linger.
+    for path in ("/api/financial/contracts", "/api/financial/expenses", "/api/financial/revenues"):
+        assert client.get(path).status_code in (404, 405)
+
+
+def test_cash_flow_rejects_a_month_that_is_not_a_month(client):
+    assert client.get("/api/financial/cash-flow/banana").status_code == 422
+
+
+def test_cash_flow_answers_the_summary_shape(client):
+    client.mock_supabase.set_table_data("fin_entries", [])
+    resp = client.get("/api/financial/cash-flow/2026-10-01")
+    assert resp.status_code == 200
+    assert resp.json() == {"reference_month": "2026-10-01", "paid_revenues": 0.0, "paid_expenses": 0.0, "net": 0.0,
+                           "pending_revenues": 0.0, "overdue_revenues": 0.0}
+
+
+def test_gateway_status_is_honest_when_nothing_is_configured(client):
+    resp = client.get("/api/financial/gateway")
+    assert resp.status_code == 200 and resp.json() == {"gateway": "asaas", "configured": False}
+
+
+def test_charges_list_joins_the_entry_the_client_and_the_gateway_state(client):
+    db = client.mock_supabase
+    db.set_table_data("billing_charges", [{
+        "id": "ch-1", "org_id": ORG, "entry_id": ENTRY, "client_id": CLIENT, "contract_id": None, "generation_status": "retrying",
+        "generation_attempts": 2, "last_error": "timeout calling /payments", "next_attempt_at": "2026-10-16T13:00:00+00:00",
+        "gateway": "asaas", "billing_method": "pix", "external_id": None, "invoice_url": None, "pix_payload": None,
+        "preserved_after_deactivation": True, "gateway_cancel_status": None, "gateway_cancel_error": None,
+        "created_at": "2026-10-01T00:00:00+00:00"}])
+    db.set_table_data("fin_entries", [{"id": ENTRY, "org_id": ORG, "direction": "receivable", "status": "open", "description": "Gestão — 10/2026",
+                                       "amount_cents": 150_000, "settled_cents": 0, "due_date": "2020-01-01"}])
+    db.set_table_data("clients", [{"id": CLIENT, "org_id": ORG, "name": "Acme", "legal_name": "Acme LTDA"}])
+    resp = client.get("/api/financial/charges")
+    assert resp.status_code == 200
+    (item,) = resp.json()["items"]
+    assert item["client_name"] == "Acme LTDA" and item["generation_status"] == "retrying" and item["last_error"].startswith("timeout")
+    assert item["overdue"] is True and item["preserved_after_deactivation"] is True and item["amount_cents"] == 150_000
+
+
+def test_charges_list_filters_validate(client):
+    assert client.get("/api/financial/charges?generation_status=banana").status_code == 422
+    assert client.get("/api/financial/charges?page_size=999").status_code == 422
+
+
+def test_an_admin_requeues_nothing_for_an_unknown_charge(client):
+    make_admin(client)
+    client.mock_supabase.set_table_data("billing_charges", [])
+    assert client.post(f"/api/financial/charges/{ENTRY}/generate").status_code == 404
+
+
+def test_an_admin_cannot_queue_a_charge_without_a_gateway(client):
+    make_admin(client)
+    client.mock_supabase.set_table_data("billing_charges", [{
+        "id": "ch-1", "org_id": ORG, "entry_id": ENTRY, "client_id": CLIENT, "generation_status": "skipped",
+        "created_at": "2026-10-01T00:00:00+00:00"}])
+    client.mock_supabase.set_table_data("fin_entries", [{"id": ENTRY, "org_id": ORG, "status": "open"}])
+    client.mock_supabase.set_table_data("clients", [{"id": CLIENT, "org_id": ORG, "default_billing_type": "boleto", "billing_automation_enabled": True}])
+    resp = client.post(f"/api/financial/charges/{ENTRY}/generate")
+    assert resp.status_code == 409 and "não configurado" in resp.text
+
+
+def test_extra_charge_validation(client):
+    make_admin(client)
+    base = {"client_id": CLIENT, "description": "Setup", "amount_cents": 1000, "due_date": "2026-10-20"}
+    assert client.post("/api/financial/charges", json={**base, "amount_cents": 0}).status_code == 422
+    assert client.post("/api/financial/charges", json={**base, "description": ""}).status_code == 422
+    assert client.post("/api/financial/charges", json={**base, "surprise": 1}).status_code == 422
+    client.mock_supabase.set_table_data("clients", [])
+    assert client.post("/api/financial/charges", json=base).status_code == 404
