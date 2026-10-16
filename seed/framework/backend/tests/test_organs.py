@@ -450,3 +450,33 @@ def test_a_stale_waiver_fails_loudly(tmp_path):
     organs = {"parties": 10, "items": 11}
     with pytest.raises(AssertionError, match="waiver"):
         assert_organ_migration_order(_render(tmp_path, organs), list(organs), waived=(("items", "parties"),))
+
+
+def test_mount_contracts_get_billing_seam_replaces_the_booking_for_the_job():
+    """A host that decorates the booking (gateway charge per receivable) passes `get_billing`: the daily job uses it."""
+    import asyncio
+
+    from noctusai_lib.domain.contracts import FakeContractsBilling
+    from noctusai_lib.testing import MockSupabaseClient
+    from noctusai_seed.organs import mount_contracts
+
+    db = MockSupabaseClient()
+    seen: list = []
+    billing = FakeContractsBilling()
+
+    def get_billing(client):
+        seen.append(client)
+        return billing
+
+    organ = mount_contracts(schema="erp", auth_dependency=_auth, get_admin_client=lambda: db, get_core_client=lambda: object(), get_billing=get_billing)
+
+    class Sched:
+        fns: dict = {}
+
+        def register(self, job_id, fn, **kw):
+            self.fns[job_id] = fn
+
+    sched = Sched()
+    organ.register_jobs(scheduler=sched)
+    asyncio.run(sched.fns["contracts_generate_billing"]())
+    assert seen == [db], "the job must book through the host's billing, resolved per run"

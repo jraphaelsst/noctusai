@@ -735,6 +735,7 @@ def mount_contracts(
     get_core_client: Callable[[], Any],
     get_storage: Optional[Callable[..., Any]] = None,
     get_signature: Optional[Callable[[Any], Any]] = None,
+    get_billing: Optional[Callable[[Any], Any]] = None,
     cfg: Any = None,
     prefix: str = "/api/contracts",
 ) -> MountedOrgan:
@@ -742,8 +743,11 @@ def mount_contracts(
     org. Receivables are booked into the finance organ through `SupabaseContractsBilling` (finance schema = this
     schema; a host without finance mounts nothing different -- its migration simply has no `fin_entries`). Attachment
     storage defaults like :func:`mount_finance`; `get_signature(ctx)` is the optional e-signature adapter getter
-    (None => the signature routes answer 409 `assinatura_nao_configurada`). The returned organ's `register_jobs`
-    registers the daily `contracts_generate_billing` job on the seed scheduler."""
+    (None => the signature routes answer 409 `assinatura_nao_configurada`). `get_billing(db) -> ContractsBilling` is the
+    named seam for a host that must DECORATE the booking (e.g. attach a payment-gateway charge to each receivable it
+    books, or keep a receivable it promised to preserve): it replaces the default `SupabaseContractsBilling` for the
+    router AND the job, so both paths book identically. The returned organ's `register_jobs` registers the daily
+    `contracts_generate_billing` job on the seed scheduler."""
     from noctusai_lib.domain.contracts import (
         ContractsConfig, ContractsContext, make_contracts_billing, make_contracts_router, register_contracts_billing,
     )
@@ -757,6 +761,8 @@ def mount_contracts(
     fin_cfg = FinanceConfig(schema=schema)
 
     def billing_for(db: Any) -> Any:
+        if get_billing is not None:
+            return get_billing(db)
         return make_contracts_billing("supabase", db=db, finance_cfg=fin_cfg)
 
     def resolve_context(auth: Any, db: Any) -> Any:

@@ -169,6 +169,14 @@ class CheckoutRequest:
     #: it instead of ``external_reference``, which stays the per-charge
     #: conciliation key (what the webhook matches an order by).
     customer_reference: Optional[str] = None
+    #: One-off, Asaas: the charge's EXACT due date (overrides ``due_days``). A receivable already carries its own
+    #: due date (a contract's monthly vencimento); deriving it from "today + N" would drift the day on every retry.
+    due_date: Optional[_dt.date] = None
+    #: One-off, Asaas: look the charge up by ``externalReference`` BEFORE creating it and return the existing one.
+    #: A timeout between Asaas accepting a ``POST /payments`` and us reading the answer is retried by the caller;
+    #: without this the retry creates a SECOND charge for the same receivable (double billing). Requires a
+    #: per-receivable-unique ``external_reference``. Stripe: ignored (its Checkout Session has no such lookup here).
+    reuse_existing: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.installment_count, int) or isinstance(self.installment_count, bool):
@@ -457,10 +465,15 @@ class AsaasHostedCheckout:
             name=request.name,
             tax_id=request.tax_id,
         )
+        if request.reuse_existing:
+            existing = self._find_by_external_reference(request.external_reference)
+            if existing is not None:
+                return self._session_from_payment(request, customer.id_at_gateway, existing)
+        due = request.due_date or (self._gateway._today() + _dt.timedelta(days=request.due_days))
         body: dict[str, Any] = {
             "customer": customer.id_at_gateway,
             "billingType": _BILLING_METHOD_MAP[request.billing_method],
-            "dueDate": (self._gateway._today() + _dt.timedelta(days=request.due_days)).isoformat(),
+            "dueDate": due.isoformat(),
             "description": request.description or request.external_reference,
             # The conciliation key — without it the webhook cannot be matched.
             "externalReference": request.external_reference,
@@ -480,6 +493,17 @@ class AsaasHostedCheckout:
                 {"walletId": request.split_wallet_id, "percentualValue": request.split_percent}
             ]
         payment = self._gateway._request("POST", "/payments", json=body)
+        return self._session_from_payment(request, customer.id_at_gateway, payment)
+
+    def _find_by_external_reference(self, external_reference: str) -> Optional[dict[str, Any]]:
+        """The live (not deleted) Asaas payment carrying ``externalReference``, or None."""
+        found = self._gateway._request("GET", "/payments", params={"externalReference": external_reference, "limit": 10})
+        for row in found.get("data") or []:
+            if row.get("id") and not row.get("deleted") and row.get("externalReference") == external_reference:
+                return row
+        return None
+
+    def _session_from_payment(self, request: CheckoutRequest, customer_id: str, payment: dict[str, Any]) -> CheckoutSession:
         invoice_url = payment.get("invoiceUrl")
         if not payment.get("id") or not invoice_url:
             raise PaymentGatewayError(
@@ -498,7 +522,7 @@ class AsaasHostedCheckout:
         return CheckoutSession(
             id_at_gateway=payment["id"],
             checkout_url=invoice_url,
-            customer_id_at_gateway=customer.id_at_gateway,
+            customer_id_at_gateway=customer_id,
             external_reference=request.external_reference,
             subscription_id_at_gateway=None,
             pix_qr=pix_qr,
@@ -613,6 +637,10 @@ class FakeHostedCheckout:
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         self.calls.append(("create_checkout", request))
+        if request.reuse_existing and request.is_one_off:
+            for prior in self.sessions.values():
+                if prior.external_reference == request.external_reference:
+                    return prior
         session_id = self._next_id("pay" if request.is_one_off else "cs")
         # Honour the P4 request fields like the Real adapters: a buyer keeps ONE gateway
         # customer (`customer_reference`) across charges; the per-charge key stays `external_reference`.
