@@ -110,7 +110,7 @@ export default function LaisAvaliacoes() {
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium">{a.autor ?? "Anônimo"} · {a.nota}★</span>
                           <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                            {fmt(a.publicado_at)}
+                            {fmt(a.data)}
                             {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" aria-label="Abrir avaliação no Google"><ExternalLink className="h-4 w-4" /></a>}
                           </span>
                         </div>

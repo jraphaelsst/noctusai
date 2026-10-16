@@ -26,7 +26,7 @@ export function AvaliacoesConfigDrawer({ onClose }: { onClose: () => void }) {
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button disabled={!f || salvar.isPending}
             onClick={() => f && salvar.mutate(
-              { ...f, google_review_url: f.google_review_url?.trim() || null },
+              { google_review_url: f.google_review_url?.trim() || null, capi_ativo: f.capi_ativo, capi_pixel_id: f.capi_pixel_id?.trim() || null },
               {
                 onSuccess: () => { toast.success("Configuração salva."); onClose(); },
                 onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível salvar.")),
@@ -50,6 +50,12 @@ export function AvaliacoesConfigDrawer({ onClose }: { onClose: () => void }) {
             Enviar sinais de qualificação para a Meta (CAPI)
             <Switch aria-label="Enviar sinais de qualificação para a Meta (CAPI)" checked={f.capi_ativo}
               onCheckedChange={(v) => setF({ ...f, capi_ativo: v })} />
+          </label>
+          <label className="block space-y-1 text-sm">
+            ID do pixel da Meta
+            <input aria-label="ID do pixel da Meta" inputMode="numeric" placeholder="123456789012345"
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              value={f.capi_pixel_id ?? ""} onChange={(e) => setF({ ...f, capi_pixel_id: e.target.value })} />
           </label>
         </div>
       )}

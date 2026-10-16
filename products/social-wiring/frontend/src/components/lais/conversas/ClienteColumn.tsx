@@ -9,11 +9,12 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirm } from "@noctusai/lib/components";
 
+import { CreditoStatusChip } from "@/components/lais/credito/StatusChip";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   codigoHttp, mensagemErroConversas, useHistorico, useNotaMutations, useNotas, usePatchContato,
-  type Etiqueta,
+  type Conversa, type Etiqueta,
 } from "@/hooks/useLaisConversas";
 import { EtiquetaPicker } from "./EtiquetaPicker";
 import { InteracoesLista, fmtData } from "./InteracoesLista";
@@ -109,9 +110,10 @@ interface Props {
   nome: string;
   /** Tags on the conversation row (the list is the freshest source). */
   etiquetas: Etiqueta[];
+  credito?: Conversa["credito"];
 }
 
-export function ClienteColumn({ contatoId, nome, etiquetas }: Props) {
+export function ClienteColumn({ contatoId, nome, etiquetas, credito = null }: Props) {
   const { data: hist, isPending, isError, error } = useHistorico(contatoId);
   const patch = usePatchContato();
   const setTags = (ids: string[]) =>
@@ -136,6 +138,7 @@ export function ClienteColumn({ contatoId, nome, etiquetas }: Props) {
         ) : (
           <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs">
             <dt className="text-muted-foreground">Nome</dt><dd>{contato?.nome ?? nome}</dd>
+            {credito && (<><dt className="text-muted-foreground">Crédito</dt><dd><CreditoStatusChip status={credito.status} /></dd></>)}
             <dt className="text-muted-foreground">Telefone</dt><dd>{contato?.telefone ?? "—"}</dd>
             <dt className="text-muted-foreground">E-mail</dt><dd>{contato?.email ?? "—"}</dd>
             <dt className="text-muted-foreground">Operação</dt><dd>{contato?.operacao ?? "—"}</dd>

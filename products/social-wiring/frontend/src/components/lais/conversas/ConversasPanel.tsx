@@ -127,7 +127,7 @@ export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
               onSelectThread={setSelecionado}
             />
           </ThreadsFeedContext.Provider>
-          {atual && <div className="hidden lg:flex"><ClienteColumn key={atual.contato_id} contatoId={atual.contato_id} nome={atual.nome} etiquetas={atual.etiquetas ?? []} /></div>}
+          {atual && <div className="hidden lg:flex"><ClienteColumn key={atual.contato_id} contatoId={atual.contato_id} nome={atual.nome} etiquetas={atual.etiquetas ?? []} credito={atual.credito ?? null} /></div>}
         </div>
       )}
 

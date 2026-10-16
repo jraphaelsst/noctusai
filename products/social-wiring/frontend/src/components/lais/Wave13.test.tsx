@@ -13,6 +13,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import LaisAvaliacoes from "@/pages/lais/Avaliacoes";
 import LaisCredito from "@/pages/lais/Credito";
+import { ClienteColumn } from "@/components/lais/conversas/ClienteColumn";
 
 function wrap(ui: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -20,10 +21,10 @@ function wrap(ui: React.ReactNode) {
 }
 const AV = {
   pedidos_enviados: 7, novas_avaliacoes: 3, distribuicao: { "1": 0, "2": 1, "3": 0, "4": 1, "5": 2 }, media: 4.25, total: 4,
-  ultimas: [{ autor: "Ana", nota: 5, texto: "Ótimo", publicado_at: "2026-10-01T10:00:00Z", link: "https://g.co/x" }],
+  ultimas: [{ autor: "Ana", nota: 5, texto: "Ótimo", data: "2026-10-01T10:00:00Z", link: "https://g.co/x" }],
   configurado: { review_url: true, gbp: true },
 };
-const mockAv = (d: object, cfg = { google_review_url: "https://a", capi_ativo: false }) =>
+const mockAv = (d: object, cfg = { google_review_url: "https://a", gbp_location_id: null, capi_ativo: false, capi_pixel_id: null }) =>
   api.get.mockImplementation(async (u: string) => (u.includes("/config") ? { data: cfg } : { data: d }));
 
 beforeEach(() => { h.admin = true; Object.values(api).forEach((f) => f.mockReset()); });
@@ -54,8 +55,10 @@ describe("Avaliações", () => {
     const input = await screen.findByLabelText("Link de avaliação do Google");
     fireEvent.change(input, { target: { value: "https://novo" } });
     fireEvent.click(screen.getByLabelText("Enviar sinais de qualificação para a Meta (CAPI)"));
+    fireEvent.change(screen.getByLabelText("ID do pixel da Meta"), { target: { value: " 123456 " } });
     fireEvent.click(screen.getByText("Salvar"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/avaliacoes/config", { google_review_url: "https://novo", capi_ativo: true }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/avaliacoes/config",
+      { google_review_url: "https://novo", capi_ativo: true, capi_pixel_id: "123456" }));
   });
   it("hides configure for non-admin", async () => {
     h.admin = false;
@@ -66,7 +69,11 @@ describe("Avaliações", () => {
   });
 });
 
-const C = (id: string, status: string) => ({ contato: { id, nome: `Lead ${id}` }, status, resumo: "r", created_at: "2026-10-01T10:00:00Z", updated_at: "2026-10-02T10:00:00Z", consentimento: true });
+// Real 13b-BE item shape (`lais_credito_service._serializar`).
+const C = (id: string, status: string) => ({
+  id: `a${id}`, contato_id: id, provider: "credaluga", status, resumo: "r", created_at: "2026-10-01T10:00:00Z", updated_at: "2026-10-02T10:00:00Z",
+  contato: { id, nome: `Lead ${id}`, telefone_e164: null, canal: "whatsapp" },
+});
 const mockCr = (provider: string | null) =>
   api.get.mockImplementation(async (u: string) =>
     u.includes("/config") ? { data: { ativo: true, provider, apenas_aluguel: true } } : { data: { items: [C("1", "aprovado"), C("2", "erro")], total: 2 } });
@@ -80,6 +87,8 @@ describe("Crédito", () => {
     expect(screen.queryByTestId("credito-sem-provedor")).toBeNull();
     fireEvent.change(screen.getByLabelText("Filtrar por status"), { target: { value: "erro" } });
     await waitFor(() => expect(api.get.mock.calls.some((c) => String(c[0]).includes("status=erro"))).toBe(true));
+    // BE accepts page_size 5|10|15|20 and defaults to 10 — the FE's pagination math assumes 20, so it must send it.
+    expect(api.get.mock.calls.every((c) => !String(c[0]).startsWith("/api/lais/credito?") || String(c[0]).includes("page_size=20"))).toBe(true);
   });
   it("banners when provider is null", async () => {
     mockCr(null);
@@ -101,5 +110,19 @@ describe("Crédito", () => {
     api.get.mockRejectedValue(new Error("boom"));
     wrap(<LaisCredito />);
     expect(await screen.findByTestId("credito-erro")).toBeTruthy();
+  });
+});
+
+describe("Conversas › credit chip", () => {
+  it("shows the conversa's credit status in the Cliente column (13b `credito` on list items)", async () => {
+    api.get.mockResolvedValue({ data: [] });
+    wrap(<ClienteColumn contatoId="c1" nome="Lead" etiquetas={[]} credito={{ status: "aprovado", atualizado_at: null }} />);
+    expect(await screen.findByText("Crédito")).toBeTruthy();
+  });
+  it("omits the row when the contato has no analysis", async () => {
+    api.get.mockResolvedValue({ data: [] });
+    wrap(<ClienteColumn contatoId="c1" nome="Lead" etiquetas={[]} />);
+    await screen.findByText("Nome");
+    expect(screen.queryByText("Crédito")).toBeNull();
   });
 });

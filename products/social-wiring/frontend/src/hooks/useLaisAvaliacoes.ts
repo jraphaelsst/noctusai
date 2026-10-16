@@ -3,13 +3,14 @@
  *
  *   GET /api/lais/avaliacoes?mes=YYYY-MM → {data:{pedidos_enviados, novas_avaliacoes,
  *       distribuicao:{"1".."5"}, media, total, ultimas[], configurado:{review_url, gbp}}}
- *   GET/PUT /api/lais/avaliacoes/config {google_review_url, capi_ativo} (admin)
+ *   GET /api/lais/avaliacoes/config (member) · PUT (admin, partial)
+ *       {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id}
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 
-export interface AvaliacaoGoogle { autor: string | null; nota: number; texto: string | null; publicado_at: string | null; link: string | null }
+export interface AvaliacaoGoogle { autor: string | null; nota: number; texto: string | null; data: string | null; link: string | null }
 export interface AvaliacoesResumo {
   pedidos_enviados: number;
   novas_avaliacoes: number;
@@ -19,7 +20,12 @@ export interface AvaliacoesResumo {
   ultimas: AvaliacaoGoogle[];
   configurado: { review_url: boolean; gbp: boolean };
 }
-export interface AvaliacoesConfig { google_review_url: string | null; capi_ativo: boolean }
+export interface AvaliacoesConfig {
+  google_review_url: string | null;
+  gbp_location_id: string | null;
+  capi_ativo: boolean;
+  capi_pixel_id: string | null;
+}
 
 const KEY = ["lais", "avaliacoes"] as const;
 
@@ -46,7 +52,7 @@ export function useAvaliacoesConfig(enabled: boolean) {
 export function useSalvarAvaliacoesConfig() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (c: AvaliacoesConfig) => (await api.put("/api/lais/avaliacoes/config", c)).data as AvaliacoesConfig,
+    mutationFn: async (c: Partial<AvaliacoesConfig>) => (await api.put("/api/lais/avaliacoes/config", c)).data as AvaliacoesConfig,
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

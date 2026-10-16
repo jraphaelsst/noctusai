@@ -1,8 +1,9 @@
 /**
  * Lais › Análise de crédito (contract wave 13).
  *
- *   GET /api/lais/credito?status&page → {data:{items:[{contato, status, resumo, created_at,
- *       updated_at, consentimento}], total}}
+ *   GET /api/lais/credito?status&page&page_size → {data:{items:[{id, contato_id, provider, status, resumo,
+ *       created_at, updated_at, contato:{id,nome,telefone_e164,canal}}], total}}
+ *   (an analysis only exists after the lead ACCEPTED consent — DB-enforced, so every row is consented)
  *   GET/PUT /api/lais/credito/config {ativo, provider, apenas_aluguel} (admin)
  *   POST /api/lais/credito/{contato_id}/reprocessar (admin)
  */
@@ -16,12 +17,10 @@ export interface CreditoItem {
   status: CreditoStatus;
   resumo: string | null;
   created_at: string;
-  updated_at: string;
-  /** true/false = answered in chat; null = not asked yet. */
-  consentimento: boolean | null;
+  updated_at: string | null;
 }
 export interface CreditoPage { items: CreditoItem[]; total: number }
-export interface CreditoConfig { ativo: boolean; provider: string | null; apenas_aluguel: boolean }
+export interface CreditoConfig { ativo: boolean; provider: string | null; apenas_aluguel: boolean; providers?: string[] }
 export const CREDITO_PAGE_SIZE = 20;
 
 const KEY = ["lais", "credito"] as const;
@@ -30,7 +29,7 @@ export function useLaisCredito(status: "" | CreditoStatus, page: number) {
   return useQuery({
     queryKey: [...KEY, "lista", status, page],
     queryFn: async () => {
-      const p = new URLSearchParams({ page: String(page) });
+      const p = new URLSearchParams({ page: String(page), page_size: String(CREDITO_PAGE_SIZE) });
       if (status) p.set("status", status);
       const r = await api.get(`/api/lais/credito?${p}`);
       return (r.data ?? { items: [], total: 0 }) as CreditoPage;

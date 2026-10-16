@@ -45,6 +45,8 @@ export interface Conversa {
   etiquetas?: Etiqueta[];
   operacao?: OperacaoConversa | null;
   status_sw?: StatusSw | null;
+  /** Wave 13: latest credit analysis for this contato (null = none). */
+  credito?: { status: string; atualizado_at: string | null } | null;
 }
 
 export interface FiltrosConversas {
@@ -195,8 +197,6 @@ export interface Interacao {
   resumo?: string | null;
   /** Intent flags the model raised ("quer visitar", "pediu financiamento"…). */
   intencoes?: string[] | null;
-  /** Wave 13 (optional-safe): credit-analysis status when the backend carries it. */
-  credito?: { status: string } | string | null;
 }
 export interface HistoricoMensagem {
   id: string;

@@ -124,8 +124,7 @@ export default function LaisCredito() {
                 </div>
                 {i.resumo && <p className="mt-1 text-muted-foreground">{i.resumo}</p>}
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Atualizado em {fmt(i.updated_at)} · Consentimento:{" "}
-                  {i.consentimento === true ? "concedido" : i.consentimento === false ? "negado" : "não solicitado"}
+                  Atualizado em {fmt(i.updated_at ?? i.created_at)} · Consentimento concedido na conversa
                 </p>
               </li>
             ))}
