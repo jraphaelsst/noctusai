@@ -70,7 +70,10 @@ def post_ferramenta(
         raise AppException(
             "invalid_field", "Argumentos inválidos.", status_code=422, details={"campos": campos},
         ) from exc
-    return {"data": svc.FERRAMENTAS[nome](client, coerce_org_uuid(ctx.org_id), args)}
+    org_id = coerce_org_uuid(ctx.org_id)
+    data = svc.FERRAMENTAS[nome](client, org_id, args)
+    svc.registrar_consulta(client, org_id, nome, args, data)  # feeds Relatorios "top imoveis"; never raises
+    return {"data": data}
 
 
 __all__ = ["router"]

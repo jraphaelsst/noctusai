@@ -143,6 +143,28 @@ class TestImoveis:
             {"codigo": "ZZ9", "tipo": None, "preco": None, "leads": 1},
         ]
 
+    def test_tool_lookups_count_per_distinct_lead_and_anonymous_or_out_of_month_ones_do_not(self, mundo, admin):
+        w = mundo
+        _imovel(w, "AP0123", "Apartamento", venda=450000)
+        a, b = _lead(w, {}), _lead(w, {})
+
+        def consulta(cid, codigos, quando=DENTRO):
+            w.sw.table("lais_eventos").insert({
+                "id": str(uuid4()), "org_id": ORG_ID, "tipo": "imovel_consultado", "contato_id": cid,
+                "payload": {"ferramenta": "buscar_imoveis", "codigos": codigos}, "created_at": quando}).execute()
+
+        consulta(a, ["AP0123", "ZZ9"])
+        consulta(a, ["ap0123"])                       # same lead again -> still one
+        _visita(w, b, "AP0123")                       # visit + lookup of the same code by two leads -> 2
+        consulta(None, ["AP0123"])                    # unknown contato -> stored, not a lead
+        consulta(b, ["ZZ9"], quando="2026-09-10T12:00:00+00:00")  # other month
+        d = admin(operacao="compra", mes=MES, aba="imoveis").json()["data"]
+        assert d["top_imoveis"] == [
+            {"codigo": "AP0123", "tipo": "Apartamento", "preco": 450000.0, "leads": 2},
+            {"codigo": "ZZ9", "tipo": None, "preco": None, "leads": 1},
+        ]
+        assert set(d) == {"operacao", "mes", "aba", "total_leads", "tipos", "top_imoveis"}  # shape unchanged
+
     def test_aluguel_uses_locacao_price(self, mundo, admin):
         w = mundo
         _imovel(w, "L1", "Casa", fin=("aluguel",), venda=None, locacao=3200)

@@ -9,7 +9,7 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
   buscar_imoveis           F      Vista mirror `imoveis`, at most 5 results
   detalhes_imovel          F      wave 1 switches (lais_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
   horarios_visita          wave 5 (config + SchedulingEngine), `lais_visitas_service`
-  consultar_empreendimento wave 12; until then `[]`
+  consultar_empreendimento development catalogue derived from `imoveis.empreendimento` / `construtora`
 
 PRIVACY (contract, binding): a tool NEVER returns owner/proprietario personal data. The row is read
 with an explicit column allow-list and rebuilt field by field -- `corretores`, `vista_raw`,
@@ -26,7 +26,7 @@ from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from app.services import lais_conhecimento_service
+from app.services import lais_conhecimento_service, lais_eventos_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,21 @@ COLUNAS = (
     "valor_condominio, valor_iptu, dormitorios, suites, vagas, area_total, area_privativa, "
     "descricao_web, caracteristicas, exibir_no_site, logradouro, numero"
 )
+#: Allow-list for the empreendimento tool (a subset of `COLUNAS` + the two development columns).
+COLUNAS_EMPREENDIMENTO = (
+    "codigo, titulo, categoria, empreendimento, construtora, bairro, cidade, valor_venda, valor_locacao, "
+    "dormitorios, area_privativa, exibir_no_site"
+)
+OVERFETCH_EMPREENDIMENTO = 200
+EMPREENDIMENTOS_MAX = 3
+EXEMPLOS_MAX = 5
 
 
 # ── request bodies (extra="forbid" via StrictHttpModel -> 422 invalid_field) ──
 class BuscarImoveisArgs(StrictHttpModel):
+    #: Optional: the turn's interacao (the agent has it in `estado.interacao_id`). Lets the lookup be tied to the
+    #: lead for Relatorios "top imoveis"; never used for scoping (the org is the token's).
+    interacao_id: Optional[UUID] = None
     operacao: str = Field(pattern="^(compra|aluguel)$")
     bairro: Optional[str] = Field(default=None, max_length=120)
     cidade: Optional[str] = Field(default=None, max_length=120)
@@ -55,6 +66,7 @@ class BuscarImoveisArgs(StrictHttpModel):
 
 
 class DetalhesImovelArgs(StrictHttpModel):
+    interacao_id: Optional[UUID] = None
     codigo: str = Field(min_length=1, max_length=40)
 
 
@@ -108,7 +120,7 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict
         {
             "codigo": r["codigo"], "titulo": _titulo(r), "tipo": r.get("categoria"), "bairro": r.get("bairro"),
             "cidade": r.get("cidade"), "preco": _preco(r, a.operacao), "quartos": r.get("dormitorios"),
-            # NOC-REMEDIATE[lais-imovel-link]: the public listing URL needs the org's site base URL, which wave 1 ("Meu negócio") stores; null until then — 2026-10-15
+            # NOC-REMEDIATE[lais-imovel-link]: OWNER QUESTION -- `imoveis` (Vista mirror, migrations 040/093) has NO per-listing URL column (only foto_destaque/fotos/video_destaque/tour_360) and Vista's `Imovel` payload the sync normalises carries no site URL, so the public listing path is not derivable from data. What is the public URL pattern of the imobiliaria site for a listing (e.g. `<site>/imovel/<codigo>`; per org or a single Vista site template)? Once answered: store the path template next to `site` in "Meu negócio" and build `link` from it here -- 2026-10-16
             "link": None,
         }
         for r in rows if _publicado(r)
@@ -149,10 +161,86 @@ def horarios_visita(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dic
     return lais_visitas_service.horarios_para_ferramenta(client, org_id, parsed.dias)
 
 
-def consultar_empreendimento(_client: Any, _org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
-    ConsultarEmpreendimentoArgs(**args)
-    # NOC-REMEDIATE[lais-empreendimentos]: wave 12 serves the empreendimento catalogue here — 2026-10-15
+def _faixa(valores: list[float]) -> Optional[dict[str, float]]:
+    return {"min": min(valores), "max": max(valores)} if valores else None
+
+
+def consultar_empreendimento(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
+    """Empreendimentos (building / development) matching `nome`, built from the Vista mirror.
+
+    SW has no separate catalogue: Vista sends `Empreendimento` + `Construtora` per listing and the sync
+    stores them on `imoveis` (migration 040), so a development IS the set of published listings sharing
+    that name. Same allow-list + published-only rules as `buscar_imoveis` (no owner data, ever)."""
+    a = ConsultarEmpreendimentoArgs(**args)
+    rows = (
+        client.table(TABLE).select(COLUNAS_EMPREENDIMENTO).eq("org_id", str(org_id))
+        .ilike("empreendimento", f"%{a.nome.strip()}%").order("data_atualizacao", desc=True)
+        .limit(OVERFETCH_EMPREENDIMENTO).execute().data or []
+    )
+    grupos: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        nome = (r.get("empreendimento") or "").strip()
+        if nome and _publicado(r):
+            grupos.setdefault(nome.casefold(), []).append(r)
+    out: list[dict[str, Any]] = []
+    for unidades in sorted(grupos.values(), key=lambda g: (-len(g), g[0]["empreendimento"]))[:EMPREENDIMENTOS_MAX]:
+        def nums(campo: str, _u: list[dict[str, Any]] = unidades) -> list[float]:
+            return [float(r[campo]) for r in _u if r.get(campo) is not None]
+
+        construtora = next((r["construtora"].strip() for r in unidades if (r.get("construtora") or "").strip()), None)
+        out.append({
+            "nome": unidades[0]["empreendimento"].strip(), "construtora": construtora,
+            "bairro": unidades[0].get("bairro"), "cidade": unidades[0].get("cidade"),
+            "unidades": len(unidades),
+            "tipos": sorted({(r.get("categoria") or "").strip() for r in unidades if (r.get("categoria") or "").strip()}),
+            "quartos": _faixa(nums("dormitorios")), "area_privativa": _faixa(nums("area_privativa")),
+            "preco_venda": _faixa(nums("valor_venda")), "preco_locacao": _faixa(nums("valor_locacao")),
+            "exemplos": [
+                {"codigo": r["codigo"], "titulo": _titulo(r), "tipo": r.get("categoria"), "quartos": r.get("dormitorios"),
+                 "preco": _preco(r, None)}
+                for r in unidades[:EXEMPLOS_MAX]
+            ],
+        })
+    return out
+
+
+#: Tools whose successful lookups feed Relatorios "top imoveis".
+CONSULTAS_REGISTRADAS = ("buscar_imoveis", "detalhes_imovel")
+
+
+def _codigos_consultados(nome: str, data: Any) -> list[str]:
+    if nome == "buscar_imoveis":
+        return [str(d["codigo"]) for d in (data or []) if d.get("codigo")]
+    if nome == "detalhes_imovel" and isinstance(data, dict) and data.get("encontrado"):
+        return [str(data["codigo"])]
     return []
+
+
+def registrar_consulta(client: Any, org_id: UUID, nome: str, args: dict[str, Any], data: Any) -> None:
+    """Record one `imovel_consultado` event for a successful lookup (codes returned / code viewed).
+
+    Best-effort and org-scoped: the contato is resolved from `interacao_id` only inside the caller's org, and a
+    failure here never reaches the tool response (emitir never raises; the lookup below is guarded)."""
+    if nome not in CONSULTAS_REGISTRADAS:
+        return
+    codigos = _codigos_consultados(nome, data)
+    if not codigos:
+        return
+    interacao_id = args.get("interacao_id")
+    contato_id = None
+    if interacao_id:
+        try:
+            rows = (
+                client.table("lais_interacoes").select("contato_id").eq("org_id", str(org_id))
+                .eq("id", str(interacao_id)).limit(1).execute().data or []
+            )
+            contato_id = rows[0]["contato_id"] if rows else None
+        except Exception:
+            logger.exception("lais: could not resolve the contato of interacao for a lookup event (org=%s)", org_id)
+    lais_eventos_service.emitir(
+        client, org_id, "imovel_consultado", contato_id,
+        {"ferramenta": nome, "codigos": codigos, "interacao_id": str(interacao_id) if interacao_id else None},
+    )
 
 
 Ferramenta = Callable[[Any, UUID, dict[str, Any]], Any]
@@ -173,4 +261,4 @@ ARGS: dict[str, type[StrictHttpModel]] = {
     "consultar_empreendimento": ConsultarEmpreendimentoArgs,
 }
 
-__all__ = ["ARGS", "FERRAMENTAS", "Ferramenta", "COLUNAS"]
+__all__ = ["ARGS", "FERRAMENTAS", "Ferramenta", "COLUNAS", "registrar_consulta"]

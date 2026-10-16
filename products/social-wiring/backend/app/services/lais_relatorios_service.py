@@ -10,8 +10,10 @@ Pure read-side aggregation over what Julia already stored -- nothing is written 
     `faixa_preco`, `quartos` -- migration 269; values are free text so they are parsed leniently);
   * a property CODE counts for a lead when Julia booked a visit for it (`lais_visitas.codigo_imovel`)
     or an applied action carried it (`lais_acoes_aplicadas.payload.codigo|codigo_imovel`) in the
-    month. Read tools (`buscar_imoveis` / `detalhes_imovel`) are stateless and carry no contato, so
-    they are NOT a source. Counted per DISTINCT (contato, codigo): the same lead asking twice, or
+    month, or the agent looked it up through a read tool (`buscar_imoveis` / `detalhes_imovel`) during one
+    of the lead's turns (`lais_eventos` tipo `imovel_consultado`, written by the ferramentas route with the
+    contato resolved from the turn's `interacao_id`; a lookup with no known contato is stored but is not a
+    lead, so it is not counted). Counted per DISTINCT (contato, codigo): the same lead asking twice, or
     two code spellings (`ap0123` / `AP0123`), is one lead -- the Lais UI shows duplicate rows, we do not;
   * the shelf = `imoveis` of the org published on the site with the operacao in `finalidades`;
   * visibility (A7): members only aggregate the contatos they own, admins/owners the whole org.
@@ -176,7 +178,7 @@ def _leads(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, ini: datetime
 
 
 def _mencoes(client: Any, org_id: UUID, leads: dict[str, dict[str, Any]], ini: datetime, fim: datetime) -> dict[str, set[str]]:
-    """`{codigo_norm: {contato_id}}` -- distinct leads per code (visits + applied actions)."""
+    """`{codigo_norm: {contato_id}}` -- distinct leads per code (visits + applied actions + tool lookups)."""
     out: dict[str, set[str]] = {}
 
     def somar(contato_id: Any, codigo: Any) -> None:
@@ -191,6 +193,14 @@ def _mencoes(client: Any, org_id: UUID, leads: dict[str, dict[str, Any]], ini: d
         if _no_mes(a.get("created_at"), ini, fim):
             p = a.get("payload") or {}
             somar(a.get("contato_id"), p.get("codigo") or p.get("codigo_imovel"))
+    def pagina(a: int, b: int) -> Any:
+        return (client.table("lais_eventos").select("id, contato_id, payload, created_at").eq("org_id", str(org_id))
+                .eq("tipo", "imovel_consultado").order("id").range(a, b).execute().data)
+
+    for e in iter_paged_rows(pagina, id_key="id", label="lais_eventos"):
+        if _no_mes(e.get("created_at"), ini, fim):
+            for cod in (e.get("payload") or {}).get("codigos") or []:
+                somar(e.get("contato_id"), cod)
     return out
 
 

@@ -214,7 +214,83 @@ class TestNeverReturnsOwnerData:
                            "caracteristicas_raw", "referencia"}
 
 
-class TestPendingWaves:
-    def test_horarios_and_empreendimento_answer_an_empty_list_until_their_wave(self, ok):
+class TestHorarios:
+    def test_horarios_answer_an_empty_list_without_a_visit_config(self, ok):
         assert ok.post("horarios_visita", {"codigo": "CA1", "dias": 3}).json() == {"data": []}
-        assert ok.post("consultar_empreendimento", {"nome": "Condomínio X"}).json() == {"data": []}
+
+
+class TestConsultarEmpreendimento:
+    @pytest.fixture
+    def predios(self, tools, catalogo):
+        catalogo.set_table_data("imoveis", [
+            _row("E1", empreendimento="Edifício Aurora", construtora="Construtora Alfa", categoria="Apartamento",
+                 dormitorios=2, valor_venda=500000, area_privativa=60),
+            _row("E2", empreendimento="edifício aurora", categoria="Apartamento", dormitorios=3, valor_venda=700000,
+                 area_privativa=90),
+            _row("E3", empreendimento="Edifício Aurora", exibir_no_site=False, valor_venda=1),
+            _row("E4", empreendimento="Edifício Aurora", org=_OTHER),
+            _row("E5", empreendimento="Outro Prédio", valor_venda=300000),
+            _row("E6", empreendimento=None),
+        ])
+        tools.as_ctx(_product())
+        return tools
+
+    def test_serves_the_development_from_the_vista_mirror(self, predios):
+        data = predios.post("consultar_empreendimento", {"nome": "aurora"}).json()["data"]
+        assert len(data) == 1
+        e = data[0]
+        assert e["nome"] == "Edifício Aurora" and e["construtora"] == "Construtora Alfa"
+        assert e["unidades"] == 2  # hidden + other org's + other building excluded
+        assert e["quartos"] == {"min": 2.0, "max": 3.0} and e["preco_venda"] == {"min": 500000.0, "max": 700000.0}
+        assert e["preco_locacao"] is None and e["tipos"] == ["Apartamento"]
+        assert {x["codigo"] for x in e["exemplos"]} == {"E1", "E2"}
+
+    def test_no_match_is_an_empty_list_and_leaks_no_owner_data(self, predios):
+        assert predios.post("consultar_empreendimento", {"nome": "inexistente"}).json() == {"data": []}
+        assert OWNER_SECRET not in predios.post("consultar_empreendimento", {"nome": "Outro"}).text
+
+    def test_the_allow_list_excludes_owner_columns(self):
+        from app.services.lais_ferramentas_service import COLUNAS_EMPREENDIMENTO
+
+        cols = {c.strip() for c in COLUNAS_EMPREENDIMENTO.split(",")}
+        assert not cols & {"corretores", "vista_raw", "observacoes", "chave", "matricula_vista"}
+
+
+class TestRegistroDeConsultas:
+    @staticmethod
+    def _eventos(catalogo):
+        return catalogo.table("lais_eventos").select("*").execute().data or []
+
+    @pytest.fixture
+    def mundo(self, catalogo):
+        catalogo.set_table_data("lais_eventos", [])
+        catalogo.set_table_data("lais_interacoes", [
+            {"id": "00000000-0000-4000-8000-000000000001", "org_id": str(_ORG), "contato_id": "c-1"},
+            {"id": "00000000-0000-4000-8000-000000000002", "org_id": str(_OTHER), "contato_id": "c-other"},
+        ])
+        return catalogo
+
+    def test_a_search_records_the_codes_returned_with_the_contato_of_the_turn(self, ok, mundo):
+        iid = "00000000-0000-4000-8000-000000000001"
+        assert ok.post("buscar_imoveis", {"operacao": "compra", "interacao_id": iid}).status_code == 200
+        (ev,) = self._eventos(mundo)
+        assert (ev["tipo"], ev["org_id"], ev["contato_id"]) == ("imovel_consultado", str(_ORG), "c-1")
+        assert sorted(ev["payload"]["codigos"]) == ["CA1", "CA2"] and ev["payload"]["ferramenta"] == "buscar_imoveis"
+
+    def test_a_detail_view_records_the_viewed_code_but_not_a_miss(self, ok, mundo):
+        iid = "00000000-0000-4000-8000-000000000001"
+        ok.post("detalhes_imovel", {"codigo": "ca1", "interacao_id": iid})
+        ok.post("detalhes_imovel", {"codigo": "NADA", "interacao_id": iid})
+        (ev,) = self._eventos(mundo)
+        assert ev["payload"]["codigos"] == ["CA1"]
+
+    def test_an_interacao_of_another_org_is_never_resolved(self, ok, mundo):
+        ok.post("buscar_imoveis", {"operacao": "compra", "interacao_id": "00000000-0000-4000-8000-000000000002"})
+        (ev,) = self._eventos(mundo)
+        assert ev["contato_id"] is None  # stored (the lookup happened) but tied to nobody
+
+    def test_without_an_interacao_the_lookup_is_stored_anonymous_and_empty_results_store_nothing(self, ok, mundo):
+        ok.post("buscar_imoveis", {"operacao": "compra"})
+        ok.post("buscar_imoveis", {"operacao": "compra", "bairro": "nenhum-bairro"})
+        (ev,) = self._eventos(mundo)
+        assert ev["contato_id"] is None

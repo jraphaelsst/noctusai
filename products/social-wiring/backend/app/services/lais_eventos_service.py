@@ -30,7 +30,12 @@ TIPOS_DIAGNOSTICO: frozenset[str] = frozenset({"acao_sem_handler", "acao_falhou"
 TIPOS_REENGAJAMENTO: frozenset[str] = frozenset({"reengajamento", "regua_sem_transporte"})
 #: Wave 13 (credito): `credito_analisado` (payload `{analise_id, status}` only -- never financial data).
 TIPOS_CREDITO: frozenset[str] = frozenset({"credito_analisado"})
-TIPOS: frozenset[str] = TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO
+#: Follow-up: `imovel_consultado` = Julia looked a listing up through a read tool (payload `{ferramenta, codigos,
+#: interacao_id}` -- codes only, no personal data). Not notifiable; Relatorios folds it into "top imoveis".
+TIPOS_CONSULTA: frozenset[str] = frozenset({"imovel_consultado"})
+TIPOS: frozenset[str] = (
+    TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
+)
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no
 #: emitting caller is edited; a failing sink is logged and never reaches the caller.
@@ -83,4 +88,4 @@ def emitir(
     return stored
 
 
-__all__ = ["TIPOS", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]
+__all__ = ["TIPOS", "TIPOS_CONSULTA", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]
