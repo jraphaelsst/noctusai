@@ -3,7 +3,9 @@
  *
  *   GET  /api/lais/notificacoes?tipo&operacao&de&ate&page → {data:{items,total,nao_lidas}}
  *   POST /api/lais/notificacoes/lidas {ids|todas}         → 204
- *   GET/PUT /api/lais/notificacoes/preferencias
+ *   GET /api/lais/notificacoes/preferencias → {data:{tipos:[{tipo,in_app}], lead_pronto}}
+ *   PUT /api/lais/notificacoes/preferencias {tipos:{<tipo>: bool}} → same as GET
+ *       (the "Notificar lead pronto para atendimento" toggle is the pseudo-tipo `lead_pronto`)
  *
  * Loading = two signals off `data` (never `isLoading`); the feed is keyed by
  * filters+page so it keeps `placeholderData: prev` while they change. The
@@ -46,6 +48,7 @@ export interface NotificacoesPage { items: LaisNotificacao[]; total: number; nao
 export interface NotificacoesFiltro { tipo: string; operacao: OperacaoFiltro; de: string; ate: string; page: number }
 export const FILTRO_VAZIO: NotificacoesFiltro = { tipo: "", operacao: "", de: "", ate: "", page: 1 };
 export interface PreferenciaNotificacao { tipo: string; in_app: boolean }
+export interface PreferenciasNotificacao { tipos: PreferenciaNotificacao[]; lead_pronto: boolean }
 
 export function metaTipo(tipo: string) {
   const m = TIPOS_NOTIFICACAO.find((t) => t.value === tipo);
@@ -85,7 +88,8 @@ export function useMarcarLidas() {
 export function usePreferenciasNotificacao() {
   return useQuery({
     queryKey: [...KEY, "preferencias"],
-    queryFn: async () => ((await api.get("/api/lais/notificacoes/preferencias")).data ?? []) as PreferenciaNotificacao[],
+    queryFn: async () =>
+      ((await api.get("/api/lais/notificacoes/preferencias")).data ?? { tipos: [], lead_pronto: true }) as PreferenciasNotificacao,
     placeholderData: keepPreviousData,
   });
 }
@@ -93,8 +97,8 @@ export function usePreferenciasNotificacao() {
 export function useSalvarPreferencias() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (prefs: PreferenciaNotificacao[]) =>
-      ((await api.put("/api/lais/notificacoes/preferencias", prefs)).data ?? prefs) as PreferenciaNotificacao[],
+    mutationFn: async (tipos: Record<string, boolean>) =>
+      (await api.put("/api/lais/notificacoes/preferencias", { tipos })).data as PreferenciasNotificacao,
     onSuccess: (data) => qc.setQueryData([...KEY, "preferencias"], data),
   });
 }

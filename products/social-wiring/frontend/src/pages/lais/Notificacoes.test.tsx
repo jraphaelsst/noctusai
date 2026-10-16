@@ -17,7 +17,7 @@ const N = (id: string, tipo: string, d: Date, is_read = false) =>
   ({ id, tipo, titulo: `texto ${id}`, is_read, created_at: d.toISOString() });
 const ITENS = [N("a", "novo_lead", agora), N("b", "captacao", ontem, true)];
 
-function setup(url = "/lais/notificacoes", items = ITENS, prefs: unknown[] = []) {
+function setup(url = "/lais/notificacoes", items = ITENS, prefs: unknown = { tipos: [], lead_pronto: true }) {
   api.get.mockImplementation((u: string) =>
     u.includes("/preferencias") ? Promise.resolve({ data: prefs })
       : Promise.resolve({ data: { items, total: items.length, nao_lidas: items.filter((i) => !i.is_read).length } }));
@@ -67,7 +67,7 @@ describe("Notificações page", () => {
     setup();
     await screen.findByText("Exibindo 2 notificações");
     fireEvent.click(screen.getByRole("switch", { name: "Notificar lead pronto para atendimento" }));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/notificacoes/preferencias", [{ tipo: "novo_atendimento", in_app: false }]));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/notificacoes/preferencias", { tipos: { lead_pronto: false } }));
   });
 
   it("marks one read on expand and all read", async () => {

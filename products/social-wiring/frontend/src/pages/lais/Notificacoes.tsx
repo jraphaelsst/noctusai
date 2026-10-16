@@ -22,8 +22,8 @@ import {
 } from "@/hooks/useLaisNotificacoes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-/** The "lead pronto" toggle maps to the `novo_atendimento` preference. */
-const TIPO_TOGGLE = "novo_atendimento";
+/** The "lead pronto" toggle is the backend pseudo-tipo `lead_pronto` (it gates `novo_atendimento`). */
+const TIPO_TOGGLE = "lead_pronto";
 
 export default function LaisNotificacoes() {
   const [params, setParams] = useSearchParams();
@@ -40,7 +40,7 @@ export default function LaisNotificacoes() {
   const itens = q.data?.items ?? [];
   const total = q.data?.total ?? 0;
   const grupos = useMemo(() => agruparPorDia(itens), [itens]);
-  const ligado = prefs.data?.find((p) => p.tipo === TIPO_TOGGLE)?.in_app ?? true;
+  const ligado = prefs.data?.lead_pronto ?? true;
   const paginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   function aplicar(f: NotificacoesFiltro) {
@@ -51,8 +51,7 @@ export default function LaisNotificacoes() {
     setDrawer(false);
   }
   function alternar(v: boolean) {
-    const base = (prefs.data ?? []).filter((p) => p.tipo !== TIPO_TOGGLE);
-    salvar.mutate([...base, { tipo: TIPO_TOGGLE, in_app: v }], {
+    salvar.mutate({ [TIPO_TOGGLE]: v }, {
       onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível salvar a preferência.")),
     });
   }
