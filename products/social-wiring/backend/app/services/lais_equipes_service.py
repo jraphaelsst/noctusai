@@ -302,17 +302,34 @@ def atribuir_responsavel(
 
 
 # ── Julia's next turn: `contexto.estado.atendente_nome` ──────────────────────
-def _prov_atendente(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+def _nome_do_responsavel(ctx: lais_contexto_service.ContextoCtx) -> Optional[str]:
     uid = ctx.contato.get("responsavel_user_id")
     if not uid:
-        return {}
+        return None
     from app.dependencies import get_core_client
 
     nome = ((_usuarios_da_org(get_core_client(), ctx.org_id, [str(uid)]).get(str(uid)) or {}).get("nome") or "").strip()
-    return {"estado": {"atendente_nome": nome}} if nome else {}
+    return nome or None
 
 
-lais_contexto_service.registrar_provider("atendente", _prov_atendente)
+def _estender_estado(base: lais_contexto_service.Provider) -> lais_contexto_service.Provider:
+    """The `estado` provider + `atendente_nome` (additive: every key `base` returns is kept)."""
+    def provider(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+        out = base(ctx)
+        try:
+            nome = _nome_do_responsavel(ctx)
+        except Exception:
+            logger.exception("lais: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
+            nome = None
+        if nome:
+            out = {**out, "estado": {**(out.get("estado") or {}), "atendente_nome": nome}}
+        return out
+
+    return provider
+
+
+# Replaces the `estado` provider IN PLACE (the registry order is a tested contract), wrapping the current one.
+lais_contexto_service.registrar_provider("estado", _estender_estado(dict(lais_contexto_service.PROVIDERS)["estado"]))
 
 
 # ── metrics ─────────────────────────────────────────────────────────────────
