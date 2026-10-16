@@ -209,7 +209,7 @@ page (frontend/src/pages/X.tsx)
 |---|---|---|---|
 | Google Calendar | `agenda_router.py` → `agenda_service.py` | Fake, no switch | settings flag + seed GCal Real adapter + per-org OAuth (`KB § INTEGRATIONS/`) |
 | Meta Ads | `meta_ads_service._make_default_client` | Fake, no switch | seed Meta Real client + insights pull into `campaign_metrics` |
-| WhatsApp | `automation_service.py` / `automation_engine.py` | Fake, no switch | seed WAHA sender + `whatsapp_connections` organ + inbound webhook to emit triggers |
+| WhatsApp | `services/whatsapp_sender.py` (`RealWhatsAppSender`) | **Real** since 018 — org's saved WAHA connection, else fleet `WAHA_*`; Fake only under `whatsapp_allow_fake`; sends via seed `send_text_to_phone_sync` (BR 9th-digit) | inbound webhook `/api/whatsapp/webhook/{token}` (known leads only); line `purpose` (billing vs general) column |
 
 ## 4 · Known debt (named destinations)
 
