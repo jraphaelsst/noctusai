@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Drawer } from "./Drawer";
+import { SideDrawer } from "@noctusai/lib/components";
 import { mensagemErroReengajamento, useCriarRegua, useReguas } from "@/hooks/useLaisReengajamento";
 import { LAIS_PAGES } from "@/nav/lais";
 
@@ -142,9 +142,9 @@ export function ReguasTab({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       )}
       {novo && (
-        <Drawer open onOpenChange={(o) => !o && setNovo(false)} title="Nova régua de reengajamento" testId="drawer-nova-regua">
+        <SideDrawer open onOpenChange={(o) => !o && setNovo(false)} title="Nova régua de reengajamento" testId="drawer-nova-regua">
           <NovaReguaDrawer onClose={() => setNovo(false)} />
-        </Drawer>
+        </SideDrawer>
       )}
     </div>
   );

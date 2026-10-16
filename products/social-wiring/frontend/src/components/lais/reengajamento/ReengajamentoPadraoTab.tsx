@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Drawer } from "./Drawer";
+import { SideDrawer } from "@noctusai/lib/components";
 import {
   HORAS_OPCOES,
   MINUTOS_OPCOES,
@@ -181,14 +181,14 @@ export function ReengajamentoPadraoTab({ isAdmin }: { isAdmin: boolean }) {
         </Card>
       ))}
       {aberto && (
-        <Drawer
+        <SideDrawer
           open
           onOpenChange={(o) => !o && setAberto(null)}
           title={aberto === "minutos" ? "Editar reengajamento em minutos" : "Editar reengajamento em horas"}
           testId={`drawer-${aberto}`}
         >
           <ConfigDrawer modo={aberto} config={c} isAdmin={isAdmin} onClose={() => setAberto(null)} />
-        </Drawer>
+        </SideDrawer>
       )}
     </div>
   );

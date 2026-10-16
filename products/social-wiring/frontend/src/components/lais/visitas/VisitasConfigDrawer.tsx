@@ -4,8 +4,9 @@
  * Admin-only writes (server-enforced; the UI just disables the form).
  */
 import { useState } from "react";
-import { X } from "lucide-react";
 import { toast } from "sonner";
+
+import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,20 +58,21 @@ export function VisitasConfigDrawer({ config, isAdmin, onClose }: Props) {
       onError: (e) => toast.error(mensagemErroVisitas(e, "Não foi possível salvar a configuração.")),
     });
 
-  return (
-    <aside role="dialog" aria-label="Configurar visitas" data-testid="visitas-drawer"
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto border-l bg-background p-6 shadow-xl">
-      <header className="mb-4 flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Configurar visitas</h2>
-          <span data-testid="visitas-status-chip"
-            className={`rounded-full px-2 py-0.5 text-xs ${op.ativo ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}`}>
-            {op.ativo ? "Ativo" : "Inativo"}
-          </span>
-        </div>
-        <Button variant="ghost" size="icon" aria-label="Fechar" onClick={onClose}><X className="h-4 w-4" /></Button>
-      </header>
+  const chip = (
+    <span data-testid="visitas-status-chip"
+      className={`rounded-full px-2 py-0.5 text-xs ${op.ativo ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}`}>
+      {op.ativo ? "Ativo" : "Inativo"}
+    </span>
+  );
 
+  return (
+    <SideDrawer open onOpenChange={(o) => !o && onClose()} title="Configurar visitas" statusChip={chip}
+      testId="visitas-drawer" width="md"
+      footer={
+        <Button className="w-full" disabled={ro || incompleta} onClick={onSalvar}>
+          {salvar.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+      }>
       {!isAdmin && <p className="mb-3 text-xs text-muted-foreground" data-testid="visitas-readonly">Somente owner/admin pode alterar.</p>}
 
       <div className="space-y-5">
@@ -133,9 +135,6 @@ export function VisitasConfigDrawer({ config, isAdmin, onClose }: Props) {
         </section>
       </div>
 
-      <Button className="mt-6" disabled={ro || incompleta} onClick={onSalvar}>
-        {salvar.isPending ? "Salvando…" : "Salvar"}
-      </Button>
-    </aside>
+    </SideDrawer>
   );
 }

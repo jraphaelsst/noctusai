@@ -130,6 +130,9 @@ export type {
   TeamInviteBody,
 } from './components/index';
 
+export { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from './components/index';
+export type { SideDrawerProps, SideDrawerWidth } from './components/index';
+
 // Audio recording (voice answers)
 export { useAudioRecorder, formatElapsed, pickAudioMime, AUDIO_MIME_CANDIDATES } from './hooks/useAudioRecorder';
 export type { AudioRecorderState, AudioRecorderError, UseAudioRecorderOptions, UseAudioRecorderResult } from './hooks/useAudioRecorder';

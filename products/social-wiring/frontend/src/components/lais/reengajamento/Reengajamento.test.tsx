@@ -8,7 +8,7 @@ const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), patch: vi.fn(), post
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
 vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
-vi.mock("@noctusai/lib/components", () => ({ useConfirm: () => async () => h.confirm }));
+vi.mock("@noctusai/lib/components", async (orig) => ({ ...(await orig<object>()), useConfirm: () => async () => h.confirm }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { ReengajamentoPadraoTab } from "./ReengajamentoPadraoTab";

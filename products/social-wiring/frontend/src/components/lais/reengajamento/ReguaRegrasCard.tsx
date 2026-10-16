@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { useConfirm } from "@noctusai/lib/components";
+import { SideDrawer, useConfirm } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Drawer } from "./Drawer";
 import { operacaoTexto } from "./ReguasTab";
 import {
   mensagemErroReengajamento,
@@ -143,9 +142,9 @@ export function ReguaRegrasCard({ regua, isAdmin }: { regua: Regua; isAdmin: boo
         </p>
       </CardContent>
       {aberto && (
-        <Drawer open onOpenChange={(o) => !o && setAberto(false)} title="Editar régua de reengajamento" testId="drawer-regra">
+        <SideDrawer open onOpenChange={(o) => !o && setAberto(false)} title="Editar régua de reengajamento" testId="drawer-regra">
           <EditarDrawer regua={regua} onClose={() => setAberto(false)} />
-        </Drawer>
+        </SideDrawer>
       )}
     </Card>
   );

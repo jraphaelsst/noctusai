@@ -13,6 +13,8 @@ export type {
   ResourceField,
   ResourceFieldType,
 } from './ResourceManager';
+export { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from './SideDrawer';
+export type { SideDrawerProps, SideDrawerWidth } from './SideDrawer';
 export { VoiceAnswerInput, VOICE_ANSWER_MESSAGES } from './VoiceAnswerInput';
 export type { VoiceAnswerInputProps } from './VoiceAnswerInput';
 export { StatusPaginaPanel, STATUS_PAGINAS_QUERY_KEY } from './StatusPaginaPanel';

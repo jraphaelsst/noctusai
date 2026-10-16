@@ -1,0 +1,26 @@
+name: SideDrawer
+kind: component
+path: seed/lib/frontend/src/components/SideDrawer.tsx
+phase: pilot-seed
+registered_at: "2026-10-15"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from '@noctusai/lib/components'. Props: open, onOpenChange, title, description?, statusChip?, onBack?/backLabel?, footer?, width? (sm|md|lg|xl), dirty?, confirmMessage?/confirmLabel?/cancelLabel?, testId?, ariaLabel?."
+  - "dirty=true gates EVERY close path (X, backdrop, Esc, Voltar) through the seed useConfirm() with tone danger; default copy 'Sair da edição? As modificações feitas não serão salvas.'."
+  - "Rendered inline (NO portal) at z-40 so the ConfirmProvider dialog (z-50, root-mounted) is always above and clickable; a portal appended later would cover it (modal-parent-makes-confirm-unclickable bug found by 5-FE). While a confirm is open the drawer ignores Esc/backdrop so confirms never stack."
+  - "Why: DRY N=3 — Lais Conhecimento SecaoDrawer, Reengajamento Drawer, Visitas config drawer each hand-built one."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Radix/shadcn Sheet in each product — rejected (N copies, product-local dependency, modal parent blocks seed confirm)."
+manual_validation_log: []
+integration_test_status: unit-tested (SideDrawer.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

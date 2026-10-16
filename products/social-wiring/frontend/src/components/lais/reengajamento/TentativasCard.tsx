@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { useConfirm } from "@noctusai/lib/components";
+import { SideDrawer, useConfirm } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Drawer } from "./Drawer";
 import {
   MAX_TENTATIVAS,
   TEXTO_MAX,
@@ -213,7 +212,7 @@ export function TentativasCard({ regua, isAdmin }: { regua: Regua; isAdmin: bool
         )}
       </CardContent>
       {editando && (
-        <Drawer
+        <SideDrawer
           open
           onOpenChange={(o) => !o && setEditando(null)}
           title={editando === "nova" ? "Nova tentativa de contato" : "Editar tentativa de contato"}
@@ -224,7 +223,7 @@ export function TentativasCard({ regua, isAdmin }: { regua: Regua; isAdmin: bool
             tentativa={editando === "nova" ? null : editando}
             onClose={() => setEditando(null)}
           />
-        </Drawer>
+        </SideDrawer>
       )}
     </Card>
   );

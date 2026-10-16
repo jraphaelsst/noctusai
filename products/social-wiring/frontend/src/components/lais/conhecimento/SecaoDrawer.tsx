@@ -2,13 +2,13 @@
  * One drawer for every Conhecimento section: Cancelar/Salvar, dirty-exit
  * confirm (Lais copy), optimistic-lock (409 versao_conflito) reload prompt.
  * Fields come from the registry (`secoes.ts`); chips use the design-system
- * `MultiSelectPopover`; the leave-confirm is the seed `useConfirm`.
+ * `MultiSelectPopover`; the shell + dirty leave-confirm is the seed `SideDrawer`.
  */
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { MultiSelectPopover } from "@noctusai/lib/design-system";
-import { useConfirm } from "@noctusai/lib/components";
+import { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,7 @@ import {
 import { PerfilMockup } from "./PerfilMockup";
 import { get, set, type Campo, type SecaoSpec } from "./secoes";
 
-export const MSG_SAIR = "Sair da edição? As modificações feitas não serão salvas.";
+export const MSG_SAIR = SIDE_DRAWER_LEAVE_MESSAGE;
 
 interface Telefone { setor: string; telefone: string; principal: boolean }
 const E164 = /^\+\d{10,15}$/;
@@ -130,25 +130,12 @@ export interface SecaoDrawerProps {
 }
 
 export function SecaoDrawer({ spec, saved, onReload, onClose }: SecaoDrawerProps) {
-  const confirm = useConfirm();
   const salvar = useSalvarSecao();
   const [base, setBase] = useState(() => ({ dados: saved?.dados ?? spec.defaults, versao: saved?.versao ?? 0 }));
   const [draft, setDraft] = useState<unknown>(base.dados);
   const [conflito, setConflito] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(base.dados);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-
-  const tentarFechar = async () => {
-    if (dirtyRef.current && !(await confirm({ title: MSG_SAIR, confirmLabel: "Sair", cancelLabel: "Continuar editando", tone: "danger" }))) return;
-    onClose();
-  };
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") void tentarFechar(); };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  });
 
   const onSalvar = async () => {
     const inv = validar(spec, draft);
@@ -174,37 +161,33 @@ export function SecaoDrawer({ spec, saved, onReload, onClose }: SecaoDrawerProps
   const onChange = (path: string, v: unknown) => setDraft((d: unknown) => set(d, path, v));
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={() => void tentarFechar()}>
-      <aside role="dialog" aria-modal="true" aria-label={`Editar ${spec.titulo}`} data-testid="secao-drawer"
-        className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <header className="flex items-start justify-between border-b p-4">
-          <div><h2 className="text-lg font-semibold">{spec.titulo}</h2><p className="text-sm text-muted-foreground">{spec.descricao}</p></div>
-          <Button variant="ghost" size="sm" aria-label="Fechar" onClick={() => void tentarFechar()}><X className="h-4 w-4" /></Button>
-        </header>
-        <div className="flex-1 space-y-4 p-4">
-          {conflito && (
-            <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid="conflito">
-              <p>{mensagemErroConhecimento({ body: { error: { code: "versao_conflito" } } }, "")}</p>
-              <Button size="sm" variant="outline" onClick={() => void recarregar()}>Recarregar</Button>
-            </div>
-          )}
-          {spec.key === "perfil_whatsapp" && <PerfilMockup dados={dadosObj} />}
-          {spec.custom === "telefones" ? (
-            <TelefonesEditor value={Array.isArray(draft) ? (draft as Telefone[]) : []} onChange={(v) => setDraft(v)} />
-          ) : (
-            spec.campos.filter((c) => !c.quando || c.quando(dadosObj)).map((c) => (
-              <CampoInput key={c.path} c={c} dados={dadosObj} onChange={onChange} />
-            ))
-          )}
-          {erro && <p role="alert" className="text-sm text-destructive" data-testid="erro-salvar">{erro}</p>}
-        </div>
-        <footer className="flex justify-end gap-2 border-t p-4">
-          <Button variant="outline" onClick={() => void tentarFechar()}>Cancelar</Button>
+    <SideDrawer open onOpenChange={(o) => !o && onClose()} title={spec.titulo} description={spec.descricao}
+      ariaLabel={`Editar ${spec.titulo}`} testId="secao-drawer" width="lg" dirty={dirty}
+      footer={({ requestClose }) => (
+        <>
+          <Button variant="outline" onClick={requestClose}>Cancelar</Button>
           <Button onClick={() => void onSalvar()} disabled={!dirty || salvar.isPending || conflito}>
             {salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar
           </Button>
-        </footer>
-      </aside>
-    </div>
+        </>
+      )}>
+      <div className="space-y-4">
+        {conflito && (
+          <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid="conflito">
+            <p>{mensagemErroConhecimento({ body: { error: { code: "versao_conflito" } } }, "")}</p>
+            <Button size="sm" variant="outline" onClick={() => void recarregar()}>Recarregar</Button>
+          </div>
+        )}
+        {spec.key === "perfil_whatsapp" && <PerfilMockup dados={dadosObj} />}
+        {spec.custom === "telefones" ? (
+          <TelefonesEditor value={Array.isArray(draft) ? (draft as Telefone[]) : []} onChange={(v) => setDraft(v)} />
+        ) : (
+          spec.campos.filter((c) => !c.quando || c.quando(dadosObj)).map((c) => (
+            <CampoInput key={c.path} c={c} dados={dadosObj} onChange={onChange} />
+          ))
+        )}
+        {erro && <p role="alert" className="text-sm text-destructive" data-testid="erro-salvar">{erro}</p>}
+      </div>
+    </SideDrawer>
   );
 }
