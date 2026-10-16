@@ -67,6 +67,8 @@ const LaisModelos = lazyWithReload(() => import("@/pages/lais/Modelos"));
 const LaisDisparos = lazyWithReload(() => import("@/pages/lais/Disparos"));
 const LaisCaptacao = lazyWithReload(() => import("@/pages/lais/Captacao"));
 const LaisProprietarios = lazyWithReload(() => import("@/pages/lais/Proprietarios"));
+const LaisAvaliacoes = lazyWithReload(() => import("@/pages/lais/Avaliacoes"));
+const LaisCredito = lazyWithReload(() => import("@/pages/lais/Credito"));
 const LaisRelatorios = lazyWithReload(() => import("@/pages/lais/Relatorios"));
 const LaisEquipes = lazyWithReload(() => import("@/pages/lais/Equipes"));
 const RedirectToLaisConversas = lazyWithReload(() => import("@/pages/RedirectToLaisConversas"));
@@ -252,6 +254,8 @@ export default createProductApp({
     { path: LAIS_PAGES.proprietarios.href, component: LaisProprietarios },
     { path: LAIS_PAGES.relatorios.href, component: LaisRelatorios },
     { path: LAIS_PAGES.captacao.href, component: LaisCaptacao },
+    { path: LAIS_PAGES.avaliacoes.href, component: LaisAvaliacoes },
+    { path: LAIS_PAGES.credito.href, component: LaisCredito },
     // Retired route — WhatsApp moved into the Lais group (2026-10-13)
     { path: "/whatsapp-chat", component: RedirectToLaisConversas },
     { path: "/equipe", component: Equipe },

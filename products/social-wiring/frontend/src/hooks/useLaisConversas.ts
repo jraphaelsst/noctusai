@@ -195,6 +195,8 @@ export interface Interacao {
   resumo?: string | null;
   /** Intent flags the model raised ("quer visitar", "pediu financiamento"…). */
   intencoes?: string[] | null;
+  /** Wave 13 (optional-safe): credit-analysis status when the backend carries it. */
+  credito?: { status: string } | string | null;
 }
 export interface HistoricoMensagem {
   id: string;

@@ -1,4 +1,5 @@
 /** Interações timeline (Cliente column + history page): tipo, "Iniciada em …", chips, slots, resumo, intent flags. */
+import { CreditoStatusChip } from "@/components/lais/credito/StatusChip";
 import type { Interacao } from "@/hooks/useLaisConversas";
 
 export function fmtData(iso?: string | null): string {
@@ -23,6 +24,7 @@ export function InteracoesLista({ interacoes }: { interacoes: Interacao[] }) {
               {[i.canal, i.operacao, i.status].filter(Boolean).map((c) => (
                 <span key={c} className="rounded-full bg-muted px-2 py-0.5">{c}</span>
               ))}
+              {i.credito && <CreditoStatusChip status={typeof i.credito === "string" ? i.credito : i.credito.status} />}
             </div>
             {slots.length > 0 && (
               <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2">

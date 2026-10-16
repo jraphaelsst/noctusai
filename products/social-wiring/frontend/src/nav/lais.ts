@@ -11,7 +11,7 @@
  * `LAIS_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, Sparkles, Users } from "lucide-react";
+import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, CreditCard, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, Sparkles, Star, Users } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -131,6 +131,18 @@ export const LAIS_PAGES = {
     href: "/lais/equipes",
     icon: Users,
     route: "lais_equipes",
+  },
+  avaliacoes: {
+    name: "Avaliações no Google",
+    href: "/lais/avaliacoes",
+    icon: Star,
+    route: "lais_avaliacoes",
+  },
+  credito: {
+    name: "Análise de crédito",
+    href: "/lais/credito",
+    icon: CreditCard,
+    route: "lais_credito",
   },
 } as const satisfies Record<string, LaisPage>;
 
