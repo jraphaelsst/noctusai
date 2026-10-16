@@ -11,6 +11,7 @@ per `KB § PATTERNS/seed-fake-real-adapter.md`.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from noctusai_lib.integrations.whatsapp.client import (
@@ -159,6 +160,15 @@ class FakeWahaClient:
         record = self._record_send(resolved.chat_id, text)
         return {**record, "resolvedChatId": resolved.chat_id,
                 "resolvedVariantUsed": resolved.variant_used, "resolutionMethod": resolved.method}
+
+    def check_exists_sync(self, phone: str) -> dict[str, Any]:
+        return asyncio.run(self.check_exists(phone))
+
+    def resolve_chat_id_sync(self, phone: str) -> ResolvedChat:
+        return asyncio.run(self.resolve_chat_id(phone))
+
+    def send_text_to_phone_sync(self, phone: str, text: str) -> dict[str, Any]:
+        return asyncio.run(self.send_text_to_phone(phone, text))
 
     def _record_send(self, chat_id: str, text: str) -> dict[str, Any]:
         message_id = f"fake-msg-{len(self.sent_messages) + 1}"

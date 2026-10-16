@@ -10,7 +10,7 @@ Resolution (community-style, `resolve_community_waha_client`):
      ONLY under `settings.whatsapp_allow_fake` (test harness / local dev):
      a Fake in a real deploy reports "sent" with nothing sent.
 
-`send` is SYNC (`WahaClient.send_text_sync`): the engine drain is sync code
+`send` is SYNC (`WahaClient.send_text_to_phone_sync`): the engine drain is sync code
 that the scheduler runs via `anyio.to_thread.run_sync` (igig pattern), so it
 never blocks the event loop and needs no loop of its own.
 
@@ -27,6 +27,7 @@ from typing import Any
 from noctusai_lib.integrations.fake_or_refuse import resolve_fake_or_refuse
 from noctusai_lib.integrations.whatsapp import (
     build_whatsapp_connection_store,
+    WahaNumberNotOnWhatsApp,
     get_whatsapp_client,
 )
 from noctusai_lib.primitives.phone import phone_digits
@@ -140,7 +141,14 @@ class RealWhatsAppSender:
         if client is None:
             raise WhatsAppNotConnected()
         try:
-            client.send_text_sync(chat_id, message)
+            # Resolves the BR 9th-digit variant before sending. The resolved
+            # number is deliberately NOT persisted over the contact's phone.
+            client.send_text_to_phone_sync(phone, message)
+        except WahaNumberNotOnWhatsApp as exc:
+            logger.warning("orbity whatsapp: número fora do WhatsApp org=%s tried=%s", org_id, exc.tried)
+            raise WhatsAppSendError(
+                "Este número não está no WhatsApp (tentamos com e sem o 9º dígito)."
+            ) from exc
         except Exception as exc:  # noqa: BLE001 — mapped to a user-facing pt-BR failure
             logger.exception("orbity whatsapp: envio falhou org=%s chat=%s", org_id, chat_id)
             raise WhatsAppSendError(f"Falha ao enviar pelo WhatsApp: {_reason(exc)}") from exc

@@ -112,3 +112,34 @@ def test_fake_mirrors_behaviour():
     f.registered_numbers = set()
     with pytest.raises(WahaNumberNotOnWhatsApp):
         asyncio.run(f.send_text_to_phone("5511994573387", "oi"))
+
+
+def test_sync_resolves_variant_and_caches():
+    w = _Waha({"551194573387"})
+    c = w.client()
+    r = c.send_text_to_phone_sync("5511994573387", "oi")
+    assert w.sends == ["551194573387@c.us"]
+    assert r["resolvedVariantUsed"] is True and r["resolutionMethod"] == "check-exists"
+    c.send_text_to_phone_sync("5511994573387", "again")
+    assert len(w.checks) == 2
+
+
+def test_sync_not_on_whatsapp_and_check_error_and_fallback():
+    with pytest.raises(WahaNumberNotOnWhatsApp):
+        _Waha(set()).client().send_text_to_phone_sync("5511994573387", "oi")
+    with pytest.raises(WahaNumberCheckError):
+        _Waha(set(), check_status=500).client().check_exists_sync("5511994573387")
+    w = _Waha({"551194573387"}, check_status=501)
+    r = w.client().send_text_to_phone_sync("5511994573387", "oi")
+    assert w.sends == ["5511994573387@c.us", "551194573387@c.us"]
+    assert r["resolutionMethod"] == "send-retry"
+
+
+def test_fake_sync_mirrors():
+    f = FakeWahaClient()
+    f.registered_numbers = {"551194573387"}
+    r = f.send_text_to_phone_sync("5511994573387", "oi")
+    assert r["resolvedChatId"] == "551194573387@c.us"
+    f.registered_numbers = set()
+    with pytest.raises(WahaNumberNotOnWhatsApp):
+        f.send_text_to_phone_sync("5511994573387", "oi")

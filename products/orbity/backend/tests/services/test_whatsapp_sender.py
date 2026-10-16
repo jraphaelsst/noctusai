@@ -127,7 +127,7 @@ class TestRealWhatsAppSender:
 
     def test_transport_failure_maps_to_ptbr_error_without_leaking_details(self):
         class Boom:
-            def send_text_sync(self, chat_id, text):
+            def send_text_to_phone_sync(self, phone, text):
                 err = RuntimeError("http://secret-host/api?apiKey=ZZZ")
                 err.response = SimpleNamespace(status_code=502)
                 raise err
@@ -135,3 +135,16 @@ class TestRealWhatsAppSender:
         with pytest.raises(WhatsAppSendError) as exc:
             self._sender(Boom()).send("5511999998888", "Oi", ORG)
         assert "HTTP 502" in str(exc.value) and "secret" not in str(exc.value)
+
+    def test_resolves_ninth_digit_variant_without_rewriting_input(self):
+        waha = FakeWahaClient()
+        waha.registered_numbers = {"551199998888"}
+        self._sender(waha).send("5511999998888", "Oi", ORG)
+        assert waha.sent_messages[0]["chatId"] == "551199998888@c.us"
+
+    def test_number_not_on_whatsapp_maps_to_ptbr_error(self):
+        waha = FakeWahaClient()
+        waha.registered_numbers = set()
+        with pytest.raises(WhatsAppSendError) as exc:
+            self._sender(waha).send("5511999998888", "Oi", ORG)
+        assert "não está no WhatsApp" in str(exc.value) and "9º dígito" in str(exc.value)
