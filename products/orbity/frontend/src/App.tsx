@@ -105,7 +105,7 @@ export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/equipe", component: Equipe },
-    { path: "/financeiro", component: Financeiro },
+    { path: "/financeiro/*", component: Financeiro }, // splat: the organ owns /financeiro/<section>
     { path: "/clientes", component: Clientes },
     { path: "/funil", component: Funil },
     { path: "/tarefas", component: Tarefas },

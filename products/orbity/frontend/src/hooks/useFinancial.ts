@@ -1,70 +1,28 @@
 /**
- * Financial hooks for Orbity — contracts, expenses, revenues, cash-flow.
+ * Financial hooks for Orbity -- the layer over the seed finance + contracts organs.
  *
- * All list endpoints return { items, total, page, page_size }.
- * Single-resource endpoints (GET/PATCH/DELETE /:id) return the resource directly.
- * Cash-flow returns MonthlyCashFlowOut flat (no wrapper).
+ * The money model (contracts, receivables, payables, settlements, DRE, cash flow) is the organs': their own hooks
+ * (`createFinanceHooks` / `createContractsHooks`, built in `pages/Financeiro.tsx`) talk to /api/finance and
+ * /api/contracts. What lives here is only what the organs do not know:
+ *   - the month summary that honours the "charge kept after the client was inactivated" rule;
+ *   - the gateway state of every charge (queued / generating / retrying / generated / failed / skipped + last error);
+ *   - re-queueing a skipped/failed charge, and an extra (one-off) charge for a client.
  *
- * Convention: one file per domain entity, TanStack Query throughout.
- * `api` is imported from `@/lib/api` (the local seam, not seed directly).
+ * Loading states: callers compute `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`
+ * (never `isLoading`: it is false mid-refetch, so an empty branch would lie over data that exists).
  */
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { financeKeys } from "@noctusai/lib";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
-// Domain types (mirrors backend schemas/financial.py)
+// Types (mirror backend schemas/financial.py)
 // ---------------------------------------------------------------------------
 
-export type ContractStatus = "active" | "paused" | "ended";
-export type ExpenseRecurrence = "none" | "monthly" | "installment";
-export type RevenueStatus = "pending" | "paid" | "overdue" | "canceled";
-
-export interface Contract {
-  id: string;
-  org_id: string;
-  client_id: string | null;
-  title: string;
-  monthly_value: number;
-  billing_day: number;
-  start_date: string;
-  end_date: string | null;
-  status: ContractStatus;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Expense {
-  id: string;
-  org_id: string;
-  category: string;
-  description: string;
-  amount: number;
-  due_date: string;
-  paid: boolean;
-  paid_at: string | null;
-  recurrence: ExpenseRecurrence;
-  installments_total: number | null;
-  installment_n: number | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Revenue {
-  id: string;
-  org_id: string;
-  client_id: string | null;
-  contract_id: string | null;
-  reference_month: string;
-  amount: number;
-  status: RevenueStatus;
-  due_date: string;
-  paid_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type GenerationStatus = "queued" | "generating" | "retrying" | "generated" | "failed" | "skipped";
+export type EntryStatus = "open" | "partial" | "paid" | "cancelled";
 
 export interface MonthlyCashFlow {
   reference_month: string;
@@ -75,375 +33,145 @@ export interface MonthlyCashFlow {
   overdue_revenues: number;
 }
 
-interface ListResponse<T> {
-  items: T[];
+export interface Charge {
+  entry_id: string;
+  client_id: string | null;
+  client_name: string | null;
+  contract_id: string | null;
+  description: string;
+  due_date: string;
+  amount_cents: number;
+  settled_cents: number;
+  entry_status: EntryStatus;
+  overdue: boolean;
+  generation_status: GenerationStatus;
+  generation_attempts: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  gateway: string | null;
+  billing_method: string | null;
+  external_id: string | null;
+  invoice_url: string | null;
+  pix_payload: string | null;
+  preserved_after_deactivation: boolean;
+  gateway_cancel_status: "pending" | "done" | "failed" | null;
+  gateway_cancel_error: string | null;
+}
+
+export interface ChargeList {
+  items: Charge[];
   total: number;
   page: number;
   page_size: number;
 }
 
-// ---------------------------------------------------------------------------
-// Contracts
-// ---------------------------------------------------------------------------
-
-export interface ContractFilters {
-  status?: ContractStatus;
+export interface ChargeFilters {
   client_id?: string;
+  generation_status?: GenerationStatus;
   page?: number;
   page_size?: number;
 }
 
-export interface ContractCreate {
-  title: string;
-  monthly_value: number;
-  billing_day?: number;
-  start_date: string;
-  end_date?: string;
-  status?: ContractStatus;
-  client_id?: string;
-  notes?: string;
-}
-
-export interface ContractUpdate {
-  id: string;
-  title?: string;
-  monthly_value?: number;
-  billing_day?: number;
-  start_date?: string;
-  end_date?: string;
-  status?: ContractStatus;
-  client_id?: string;
-  notes?: string;
-}
-
-export function useContracts(filters?: ContractFilters) {
-  const { user } = useAuthStore();
-
-  return useQuery({
-    queryKey: ["financial-contracts", filters],
-    queryFn: async () => {
-      const result = await api.get<ListResponse<Contract>>(
-        "/api/financial/contracts",
-        {
-          status: filters?.status,
-          client_id: filters?.client_id,
-          page: filters?.page ?? 1,
-          page_size: filters?.page_size ?? 50,
-        },
-      );
-      return result;
-    },
-    enabled: !!user,
-    staleTime: 3 * 60 * 1000,
-  });
-}
-
-export function useCreateContract() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: ContractCreate) => {
-      return api.post<Contract>("/api/financial/contracts", data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Contrato criado com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao criar contrato", { description: error.message });
-    },
-  });
-}
-
-export function useUpdateContract() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: ContractUpdate) => {
-      return api.patch<Contract>(`/api/financial/contracts/${id}`, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Contrato atualizado com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao atualizar contrato", { description: error.message });
-    },
-  });
-}
-
-export function useDeleteContract() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete<{ ok: boolean; id: string }>(
-        `/api/financial/contracts/${id}`,
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Contrato removido com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao remover contrato", { description: error.message });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Expenses
-// ---------------------------------------------------------------------------
-
-export interface ExpenseFilters {
-  paid?: boolean;
-  recurrence?: ExpenseRecurrence;
-  page?: number;
-  page_size?: number;
-}
-
-export interface ExpenseCreate {
+export interface ExtraChargeCreate {
+  client_id: string;
   description: string;
-  amount: number;
+  amount_cents: number;
   due_date: string;
-  category?: string;
-  paid?: boolean;
-  paid_at?: string;
-  recurrence?: ExpenseRecurrence;
-  installments_total?: number;
-  installment_n?: number;
-}
-
-export interface ExpenseUpdate {
-  id: string;
-  description?: string;
-  amount?: number;
-  due_date?: string;
-  category?: string;
-  paid?: boolean;
-  paid_at?: string;
-  recurrence?: ExpenseRecurrence;
-  installments_total?: number;
-  installment_n?: number;
-}
-
-export function useExpenses(filters?: ExpenseFilters) {
-  const { user } = useAuthStore();
-
-  return useQuery({
-    queryKey: ["financial-expenses", filters],
-    queryFn: async () => {
-      const result = await api.get<ListResponse<Expense>>(
-        "/api/financial/expenses",
-        {
-          paid: filters?.paid,
-          recurrence: filters?.recurrence,
-          page: filters?.page ?? 1,
-          page_size: filters?.page_size ?? 50,
-        },
-      );
-      return result;
-    },
-    enabled: !!user,
-    staleTime: 3 * 60 * 1000,
-  });
-}
-
-export function useCreateExpense() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: ExpenseCreate) => {
-      return api.post<Expense>("/api/financial/expenses", data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Despesa criada com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao criar despesa", { description: error.message });
-    },
-  });
-}
-
-export function useUpdateExpense() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: ExpenseUpdate) => {
-      return api.patch<Expense>(`/api/financial/expenses/${id}`, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Despesa atualizada com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao atualizar despesa", { description: error.message });
-    },
-  });
-}
-
-export function useDeleteExpense() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete<{ ok: boolean; id: string }>(
-        `/api/financial/expenses/${id}`,
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Despesa removida com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao remover despesa", { description: error.message });
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------
-// Revenues
-// ---------------------------------------------------------------------------
-
-export interface RevenueFilters {
-  status?: RevenueStatus;
-  client_id?: string;
-  reference_month?: string;
-  page?: number;
-  page_size?: number;
-}
-
-export interface RevenueCreate {
-  reference_month: string;
-  amount: number;
-  due_date: string;
-  client_id?: string;
-  contract_id?: string;
-  status?: RevenueStatus;
-  paid_at?: string;
-}
-
-export interface RevenueUpdate {
-  id: string;
-  reference_month?: string;
-  amount?: number;
-  due_date?: string;
-  client_id?: string;
-  contract_id?: string;
-  status?: RevenueStatus;
-  paid_at?: string;
-}
-
-export function useRevenues(filters?: RevenueFilters) {
-  const { user } = useAuthStore();
-
-  return useQuery({
-    queryKey: ["financial-revenues", filters],
-    queryFn: async () => {
-      const result = await api.get<ListResponse<Revenue>>(
-        "/api/financial/revenues",
-        {
-          status: filters?.status,
-          client_id: filters?.client_id,
-          reference_month: filters?.reference_month,
-          page: filters?.page ?? 1,
-          page_size: filters?.page_size ?? 50,
-        },
-      );
-      return result;
-    },
-    enabled: !!user,
-    staleTime: 3 * 60 * 1000,
-  });
-}
-
-export function useCreateRevenue() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: RevenueCreate) => {
-      return api.post<Revenue>("/api/financial/revenues", data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-revenues"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Receita criada com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao criar receita", { description: error.message });
-    },
-  });
-}
-
-export function useUpdateRevenue() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: RevenueUpdate) => {
-      return api.patch<Revenue>(`/api/financial/revenues/${id}`, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-revenues"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Receita atualizada com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao atualizar receita", { description: error.message });
-    },
-  });
-}
-
-export function useDeleteRevenue() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete<{ ok: boolean; id: string }>(
-        `/api/financial/revenues/${id}`,
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-revenues"] });
-      queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-      toast.success("Receita removida com sucesso!");
-    },
-    onError: (error: Error) => {
-      toast.error("Erro ao remover receita", { description: error.message });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Cash-flow summary
+// Queries
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch the monthly cash-flow summary.
- *
- * @param month - YYYY-MM string (e.g. "2026-06"). The hook converts it
- *   to YYYY-MM-01 (first day of month) as the backend expects.
+ * Month summary. `month` is YYYY-MM; the backend expects the first day (YYYY-MM-01).
+ * `placeholderData` keeps the previous month's totals on screen during a month change.
  */
 export function useCashFlow(month: string) {
   const { user } = useAuthStore();
-  // Backend expects YYYY-MM-DD (first day of month)
   const monthParam = month.length === 7 ? `${month}-01` : month;
 
   return useQuery({
     queryKey: ["financial-cash-flow", month],
-    queryFn: async () => {
-      return api.get<MonthlyCashFlow>(
-        `/api/financial/cash-flow/${monthParam}`,
-      );
-    },
+    queryFn: async () => api.get<MonthlyCashFlow>(`/api/financial/cash-flow/${monthParam}`),
     placeholderData: (prev) => prev,
     enabled: !!user && !!month,
     staleTime: 2 * 60 * 1000,
+  });
+}
+
+/** Is a payment gateway configured for this org? (false => charges stay plain receivables.) */
+export function useGatewayStatus() {
+  const { user } = useAuthStore();
+  return useQuery({
+    queryKey: ["financial-gateway"],
+    queryFn: async () => api.get<{ gateway: string; configured: boolean }>("/api/financial/gateway"),
+    enabled: !!user,
+    staleTime: 60 * 1000,
+  });
+}
+
+/**
+ * Charges with their gateway state. Polls every 15s while any charge on screen is still moving
+ * (queued / generating / retrying) so the status banner follows the worker without a manual refresh.
+ */
+export function useCharges(filters?: ChargeFilters) {
+  const { user } = useAuthStore();
+  return useQuery({
+    queryKey: ["financial-charges", filters],
+    queryFn: async () =>
+      api.get<ChargeList>("/api/financial/charges", {
+        client_id: filters?.client_id,
+        generation_status: filters?.generation_status,
+        page: filters?.page ?? 1,
+        page_size: filters?.page_size ?? 50,
+      }),
+    placeholderData: (prev) => prev,
+    enabled: !!user,
+    staleTime: 30 * 1000,
+    refetchInterval: (query) =>
+      query.state.data?.items.some((c) => ["queued", "generating", "retrying"].includes(c.generation_status)) ? 15_000 : false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+function useRefreshAfterChange() {
+  const queryClient = useQueryClient();
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ["financial-charges"] });
+    queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
+    queryClient.invalidateQueries({ queryKey: financeKeys.all });
+  };
+}
+
+/** Send a skipped/failed charge to the gateway (after the operator fixed what blocked it). */
+export function useRequeueCharge() {
+  const refresh = useRefreshAfterChange();
+  return useMutation({
+    mutationFn: async (entryId: string) => api.post<Charge>(`/api/financial/charges/${entryId}/generate`, {}),
+    onSuccess: () => {
+      refresh();
+      toast.success("Cobrança enviada para a fila do gateway");
+    },
+    onError: (error: Error) => {
+      toast.error("Não foi possível enviar a cobrança ao gateway", { description: error.message });
+    },
+  });
+}
+
+export function useCreateExtraCharge() {
+  const refresh = useRefreshAfterChange();
+  return useMutation({
+    mutationFn: async (data: ExtraChargeCreate) => api.post<Charge>("/api/financial/charges", data),
+    onSuccess: () => {
+      refresh();
+      toast.success("Cobrança criada");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao criar a cobrança", { description: error.message });
+    },
   });
 }

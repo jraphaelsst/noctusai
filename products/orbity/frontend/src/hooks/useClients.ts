@@ -8,7 +8,10 @@ import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export interface ClientOption {
   id: string;
+  /** Nome fantasia (falls back to the legal name server-side). */
   name: string;
+  /** Razão Social -- what contracts and the payment gateway use. */
+  legal_name?: string;
   company: string | null;
   active: boolean;
 }

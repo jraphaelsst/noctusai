@@ -42,7 +42,7 @@ page (frontend/src/pages/X.tsx)
 |---|---|---|---|
 | `/` | Dashboard | Dashboard (Principal) | yes |
 | `/equipe` | Equipe | Equipe (Principal) | yes |
-| `/financeiro` | Financeiro | Financeiro (Principal) | yes |
+| `/financeiro/*` | Financeiro (`/contratos`, `/cobrancas` + the finance organ's sections) | Financeiro (Principal) | yes |
 | `/clientes` | Clientes | Clientes (CRM) | yes |
 | `/funil` | Funil | Funil (CRM) | yes |
 | `/tarefas` · `/agenda` · `/rotinas` | Tarefas · Agenda · Rotinas | Operações | yes |
@@ -60,13 +60,21 @@ page (frontend/src/pages/X.tsx)
 - **CRUD:** none (navigation hub).
 
 ### Clientes — `orbity.clients`
-- **Dataflow:** seed `ResourceManager` → `GET/POST /api/clients`, `PATCH /api/clients/{id}`,
-  `POST /api/clients/{id}/archive` → `clients_router` → `ClientsService`.
-- **CRUD:** C ✅ · R ✅ · U ✅ (phone edit verified) · D = archive (soft) ✅ · "Mostrar arquivados"
-  + "Reativar" (`PATCH active=true`). Empty email / due day are omitted by `lib/clientPayload.ts`
-  (ResourceManager's `toPayload`) — the organ itself still sends `''`/`0`.
-- **Fields:** name*, company, email, phone, monthly_value, due_date (1–31), billing_type
-  (boleto/pix/cartão/transferência), billing_automation flag (no backend behaviour yet).
+- **Dataflow:** seed `ResourceManager` (list only) + `ClientForm` → `GET/POST /api/clients`, `PATCH /api/clients/{id}`,
+  `GET /api/clients/cnpj/{cnpj}` (Razão Social from the public CNPJ registry), `GET /api/clients/{id}/offboarding-preview`,
+  `POST /api/clients/{id}/archive` → `clients_router` → `ClientsService` / `services/offboarding.py`.
+- **Razão Social:** `legal_name` is REQUIRED (it is what contracts snapshot and what the payment gateway charges); `name` is
+  the optional **nome fantasia** and falls back to the legal name. "Buscar CNPJ" prefills an empty Razão Social (a typed one is
+  only replaced by an explicit "Usar"). `document` (CPF/CNPJ, validated check digits) is required by the gateway.
+- **Inativar (admin only):** never a flag flip. `ClientOffboardingDialog` lists the open charges (pending + overdue); per charge
+  **Cancelar** (default) or **Manter**. One server operation: atomic RPC `orbity.offboard_client` (charges + client row) →
+  contracts terminated through the seed contracts organ (a kept charge survives the termination) → cancelled charges cancelled at
+  the gateway too (failures recorded + retried, never swallowed). `PATCH active=false` is refused (409). Re-running the call finishes
+  a half-done offboarding. Reativar = `PATCH active=true` (ended contracts stay ended).
+- **CRUD:** C ✅ · R ✅ · U ✅ · D = inativar (soft, with the dialog above) ✅ · "Mostrar inativos" + "Reativar".
+- **Fields:** legal_name*, name, document, email, phone, monthly_value, due_date (1–31), billing_type
+  (boleto/pix → gateway · cartão/transferência → plain receivable), billing_automation flag (**now live**: with a gateway and a
+  boleto/pix client, the contract's monthly receivable is sent to the gateway).
 
 ### Funil — `leads`, `lead_stages`, `lead_activities`, `lead_scoring_rules`
 - **Dataflow:** `useCrm` → `GET /api/crm/funil` (stages + leads), `POST/PATCH/DELETE /api/crm/leads[/{id}]`,
@@ -94,14 +102,28 @@ page (frontend/src/pages/X.tsx)
 - **Dataflow:** `useRoutines` → `/api/routines` CRUD + `POST /api/routines/run-due`.
 - **CRUD:** C ✅ · R ✅ · run-due ✅ (created the task, next run +7d) · U · D; run-due is manual (no scheduler).
 
-### Financeiro — `contracts`, `expenses`, `revenues`
-- **Dataflow:** `useFinancial` → `/api/financial/{contracts,expenses,revenues}` CRUD +
-  `GET /cash-flow/{month}` (Visão Geral cards: receitas pagas, despesas pagas, resultado,
-  pendentes, em atraso).
-- **CRUD:** Contract C ✅ · R ✅ · D ✅ (delete verified live) · U. Expenses/Revenues full CRUD.
-  Contracts/revenues carry `client_id` via `ClientSelect`; dialogs remount per open (no stale prefill).
-- **Caveats:** contracts never generate revenues; no "mark paid" quick action;
-  `NOC-REMEDIATE[orbity-finance-fiscal]` in `financial_service.py`.
+### Financeiro — seed organs `fin_*` (finance) + `ctr_*` (contracts) + `billing_charges`
+- **Shape:** `/financeiro/*` (URL = tab). **Financeiro** = seed `FinanceRoutedPage` (visão geral · receber · pagar · fluxo de caixa ·
+  DRE · conciliação · cadastros) over `/api/finance`; **Contratos** = seed `ContractsTable` (editor, aditivos, reajuste, suspender,
+  encerrar, prévia das próximas cobranças) over `/api/contracts`, the customer picked from Clientes (`party_id` = client id);
+  **Cobranças** = `ChargesPanel` over `/api/financial/*`: month summary + every receivable with its gateway **status banner**
+  (queued / generating / retrying / generated / failed + last error / skipped + why).
+- **Billing:** the seed job `contracts_generate_billing` (daily) books each active contract's monthly receivable — idempotent per
+  contract + cycle (`source='contracts'`, `source_ref=<contract>:<due>`). It books through `OrbityContractsBilling` (the
+  `mount_contracts(get_billing=…)` seam), which records the receivable's gateway state in `billing_charges`.
+- **Gateway (Asaas, per-org credentials `asaas_api_key` / `asaas_environment` / `asaas_webhook_token`):** the job
+  `orbity_billing_process` (2 min) claims queued rows (`billing_reserve_charges`: SKIP LOCKED + recovery of rows a crashed worker
+  left in `generating`), creates the PIX/boleto charge with `externalReference=orbity:<entry_id>` on EVERY attempt and asks the gateway
+  to reuse a charge already carrying it (a timeout + retry never double-charges), backs off (0/2/10/30/120 min, 5 attempts), and
+  records the last error. **No gateway configured ⇒ the receivable stays a plain receivable (`skipped` + the reason) — never faked.**
+  Webhook: `POST /api/billing/webhook/asaas/{org_id}` (per-org token, fail-closed, durable inbox) settles the receivable.
+- **Cash flow rule** (`GET /api/financial/cash-flow/{month}`): paid always counts, cancelled never, an open charge counts when it was
+  **kept after the client's inactivation** or the client was active that month (unit-tested in `test_financial_rules.py`).
+- **Data placement:** the organs own their tables (`fin_*`, `ctr_*` — there is no organ-over-product-tables seam), so migration 023
+  MOVED `orbity.contracts/revenues/expenses` onto them (ids and cents preserved, SMOKE-TEST rows included); the old tables remain as
+  `*_legacy`, and read-only views `orbity.revenues/expenses` keep `reports_service` answering from the new ledger.
+- **Caveats:** Conexa has no seed adapter (`NOC-REMEDIATE[orbity-conexa-adapter]` in `app/billing.py`); billing reminders are a separate
+  organ; `NOC-REMEDIATE[orbity-reports-on-fin-entries]` (move `reports_service` onto `fin_entries`, drop the views).
 
 ### Tráfego — `ad_accounts`, `campaigns`, `campaign_metrics`
 - **Dataflow:** `useMetaAds` → `/api/meta-ads/ad-accounts` CRUD, `/campaigns` CRUD,
@@ -178,6 +200,6 @@ page (frontend/src/pages/X.tsx)
 
 ## 4 · Known debt (named destinations)
 
-`NOC-REMEDIATE[orbity-finance-fiscal]` · `[orbity-meta-ads-live]` · `[orbity-automation-scheduler]` ·
+`NOC-REMEDIATE[orbity-conexa-adapter]` · `[orbity-reports-on-fin-entries]` · `[orbity-meta-ads-live]` · `[orbity-automation-scheduler]` ·
 `[orbity-content-publish]` · `[orbity-agenda-gcal]` · `orbity.examples` scaffold table (drop in a
 future migration) · `MetaAdsService.get_spend_leads_aggregate` unbatched `.in_` + unpaged select.
