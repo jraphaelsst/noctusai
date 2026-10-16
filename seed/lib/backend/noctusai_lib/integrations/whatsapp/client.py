@@ -30,7 +30,9 @@ from noctusai_lib.integrations.whatsapp.types import (
     GroupInfo,
     GroupParticipant,
     ParticipantChangeResult,
+    ResolvedChat,
 )
+from noctusai_lib.primitives.phone import br_mobile_variants
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,9 @@ _WAHA_READ_TIMEOUT = 6.0
 # Callers MUST cache the result (the thread endpoint caches per chat) so this
 # slow call happens at most once per TTL — never once per 3s poll.
 _WAHA_HISTORY_TIMEOUT = 20.0
+
+
+_RESOLVE_TTL_SECONDS = 600.0
 
 
 class WahaSessionNotReady(RuntimeError):
@@ -155,6 +160,23 @@ def recovery_outcome(state: dict[str, Any], stage: str) -> dict[str, Any]:
         "paired": bool(me),
         "me": me,
     }
+
+
+class WahaNumberCheckError(RuntimeError):
+    """WAHA's check-exists endpoint was unavailable/unreadable (not "number
+    absent"). ``send_text_to_phone`` falls back to send-then-retry on this."""
+
+    def __init__(self, phone: str, status: int | None, detail: str = ""):
+        self.phone, self.status = phone, status
+        super().__init__(f"WAHA check-exists failed for {phone} (status={status}) {detail}".strip())
+
+
+class WahaNumberNotOnWhatsApp(RuntimeError):
+    """None of the number's candidate spellings is registered on WhatsApp."""
+
+    def __init__(self, tried: list[str]):
+        self.tried = tried
+        super().__init__(f"number not on WhatsApp; tried {tried}")
 
 
 class WahaWebhookError(RuntimeError):
@@ -301,6 +323,8 @@ class WahaClient:
         # default transport (real network / whatever the caller's own
         # test monkeypatch intercepts).
         self._transport = transport
+        # phone -> (expiry monotonic, ResolvedChat); see resolve_chat_id.
+        self._resolve_cache: dict[str, tuple[float, ResolvedChat]] = {}
 
     def _resolve_media_url(self, url: str) -> str:
         return rewrite_vendor_media_url(
@@ -395,6 +419,103 @@ class WahaClient:
         )
         response.raise_for_status()
         return response.json()
+
+    # ------------------------------------------------------------------
+    # BR 9th-digit aware sending (resolve BEFORE send; never rewrites
+    # stored data - the resolved chat id rides back in the result)
+    # ------------------------------------------------------------------
+
+    async def check_exists(self, phone: str) -> dict[str, Any]:
+        """GET /api/contacts/check-exists?phone=&session= ->
+        ``{"numberExists": bool, "chatId": str | None}``.
+
+        Raises ``WahaNumberCheckError`` when WAHA can't answer (transport
+        error, non-2xx, non-JSON) - distinct from ``numberExists: false``.
+        """
+        try:
+            response = await self._request(
+                "get",
+                "/api/contacts/check-exists",
+                timeout=_WAHA_READ_TIMEOUT,
+                params={"phone": phone, "session": self.session},
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise WahaNumberCheckError(phone, None, repr(exc)) from exc
+        if response.status_code >= 400:
+            raise WahaNumberCheckError(phone, response.status_code)
+        body = _safe_json(response)
+        if "numberExists" not in body:
+            raise WahaNumberCheckError(phone, response.status_code, "unexpected body")
+        return body
+
+    async def resolve_chat_id(self, phone: str) -> ResolvedChat:
+        """Resolve the real chat id for ``phone``, trying the given spelling
+        then the BR 9th-digit variant. Cached per process for
+        ``_RESOLVE_TTL_SECONDS``. Raises ``WahaNumberNotOnWhatsApp`` /
+        ``WahaNumberCheckError``."""
+        candidates = br_mobile_variants(phone)
+        if not candidates:
+            raise WahaNumberNotOnWhatsApp([str(phone)])
+        key = candidates[0]
+        hit = self._resolve_cache.get(key)
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+        for candidate in candidates:
+            body = await self.check_exists(candidate)
+            if body.get("numberExists"):
+                resolved = ResolvedChat(
+                    requested=str(phone),
+                    chat_id=body.get("chatId") or f"{candidate}@c.us",
+                    variant_used=candidate != key,
+                    method="check-exists",
+                )
+                self._resolve_cache[key] = (time.monotonic() + _RESOLVE_TTL_SECONDS, resolved)
+                return resolved
+        raise WahaNumberNotOnWhatsApp(candidates)
+
+    async def send_text_to_phone(self, phone: str, text: str) -> dict[str, Any]:
+        """Send to a phone number resolving the BR 9th-digit variant.
+
+        Returns the WAHA send result plus ``resolvedChatId``,
+        ``resolvedVariantUsed`` and ``resolutionMethod`` (``check-exists`` or
+        ``send-retry`` when the check endpoint was unavailable). Callers
+        decide whether to persist the resolved number - this never does.
+        """
+        try:
+            resolved = await self.resolve_chat_id(phone)
+        except WahaNumberCheckError as exc:
+            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", exc)
+            return await self._send_with_retry(phone, text)
+        result = await self.send_text(resolved.chat_id, text)
+        return {
+            **result,
+            "resolvedChatId": resolved.chat_id,
+            "resolvedVariantUsed": resolved.variant_used,
+            "resolutionMethod": resolved.method,
+        }
+
+    async def _send_with_retry(self, phone: str, text: str) -> dict[str, Any]:
+        candidates = br_mobile_variants(phone)
+        if not candidates:
+            raise WahaNumberNotOnWhatsApp([str(phone)])
+        last: httpx.HTTPStatusError | None = None
+        for index, candidate in enumerate(candidates):
+            chat_id = f"{candidate}@c.us"
+            try:
+                result = await self.send_text(chat_id, text)
+            except httpx.HTTPStatusError as exc:
+                logger.warning("WAHA send to %s failed (%s); trying next variant", chat_id, exc)
+                last = exc
+                continue
+            return {
+                **result,
+                "resolvedChatId": chat_id,
+                "resolvedVariantUsed": index > 0,
+                "resolutionMethod": "send-retry",
+            }
+        assert last is not None
+        raise last
 
     def send_text_sync(self, chat_id: str, text: str) -> dict[str, Any]:
         response = self._request_sync(

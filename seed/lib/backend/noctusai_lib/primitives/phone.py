@@ -186,6 +186,53 @@ def _validate_international(digits: str, default_country_code: str) -> str | Non
     return None
 
 
+_BR_MOBILE_9 = re.compile(r"^(?P<ddd>[1-9][0-9])9(?P<rest>[0-9]{8})$")
+_BR_MOBILE_8 = re.compile(r"^(?P<ddd>[1-9][0-9])(?P<rest>[6-9][0-9]{7})$")
+
+
+def br_mobile_variants(raw: str | None) -> list[str]:
+    """Ordered WhatsApp-identity candidates (bare digits) for a Brazilian number.
+
+    Brazilian mobiles exist on WhatsApp with OR without the 9th digit (older
+    accounts registered as ``55 DD`` + 8 digits). The number AS GIVEN is
+    always first; the alternate spelling follows::
+
+        "5511994573387" -> ["5511994573387", "551194573387"]
+        "551194573387"  -> ["551194573387", "5511994573387"]
+        "551132165498"  -> ["551132165498"]      (landline - untouched)
+        "+14155550123"  -> ["14155550123"]       (foreign - untouched)
+        "lixo" / None   -> []
+
+    This is a CANDIDATE list for a resolver (WAHA check-exists), never a
+    rewrite: callers must not persist the alternate over stored contact data.
+    """
+    if raw is None:
+        return []
+    digits = _NON_DIGITS.sub("", str(raw))
+    explicit_foreign = str(raw).strip().startswith("+") and not digits.startswith(
+        DEFAULT_COUNTRY_CODE
+    )
+    if explicit_foreign:
+        return [digits] if _E164_MIN_DIGITS <= len(digits) <= _E164_MAX_DIGITS else []
+    digits = digits.lstrip("0")
+    cc = DEFAULT_COUNTRY_CODE
+    if digits.startswith(cc) and len(digits) in (12, 13):
+        national = digits[len(cc):]
+    elif len(digits) in (10, 11):
+        national = digits
+    else:
+        canon = normalize_phone(raw)
+        return [canon[1:]] if canon else []
+    full = cc + national
+    if (m := _BR_MOBILE_9.match(national)):
+        return [full, f"{cc}{m['ddd']}{m['rest']}"]
+    if (m := _BR_MOBILE_8.match(national)):
+        return [full, f"{cc}{m['ddd']}9{m['rest']}"]
+    if _BR_NATIONAL.match(national):
+        return [full]
+    return []
+
+
 def phone_search_digits(raw: str | None) -> str | None:
     """The digit-run to COMPARE when searching for a phone.
 
@@ -238,6 +285,7 @@ def format_phone(raw: str | None, *, fallback: str | None = None) -> str | None:
 
 
 __all__ = [
+    "br_mobile_variants",
     "DEFAULT_COUNTRY_CODE",
     "format_phone",
     "is_valid_phone",

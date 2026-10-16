@@ -74,6 +74,8 @@ from noctusai_lib.integrations.whatsapp.connection_store import (
 from noctusai_lib.integrations.whatsapp.client import (
     WahaClient,
     WahaGroupError,
+    WahaNumberCheckError,
+    WahaNumberNotOnWhatsApp,
     WahaSessionNotReady,
     WahaWebhookError,
 )
@@ -145,6 +147,7 @@ from noctusai_lib.integrations.whatsapp.types import (
     WhatsAppInboundMessage,
     WhatsAppMedia,
     WhatsAppPayloadError,
+    ResolvedChat,
 )
 
 
@@ -220,6 +223,7 @@ __all__ = [
     "PersistentResponseRegistry",
     "RedisLidPhoneCache",
     "RedisWebhookDedup",
+    "ResolvedChat",
     "ResolvedIdentity",
     "ResponseRegistry",
     "ResponseSample",
@@ -227,6 +231,8 @@ __all__ = [
     "SetnxRedis",
     "WahaClient",
     "WahaGroupError",
+    "WahaNumberCheckError",
+    "WahaNumberNotOnWhatsApp",
     "WahaIgnoredEvent",
     "WahaSessionNotReady",
     "WahaWebhookError",

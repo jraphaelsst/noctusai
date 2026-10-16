@@ -340,6 +340,16 @@ product needing its own line (e.g. `community`, per its module-3 D4 decision)
 needs its own `waha-*` container + its own explicit `set_webhook` call — never
 assume the default session's webhook target is inherited.
 
+## 4c. Brazilian 9th-digit resolution (2026-10)
+
+BR mobiles exist on WhatsApp with or without the 9th digit (older accounts: `55 DD` + 8 digits). Built once in the seed:
+
+- `primitives.phone.br_mobile_variants(raw)` -> ordered bare-digit candidates (as-given first, then the with/without-9 variant; landlines and foreign numbers untouched; junk -> `[]`).
+- `WahaClient.check_exists(phone)` (GET `/api/contacts/check-exists?phone=&session=`), `resolve_chat_id(phone) -> ResolvedChat` (per-process 10-min cache), `send_text_to_phone(phone, text)`.
+- Result = WAHA send result + `resolvedChatId`, `resolvedVariantUsed`, `resolutionMethod` (`check-exists` | `send-retry`). The caller decides whether to persist; the seed NEVER rewrites stored contact data.
+- Errors: `WahaNumberNotOnWhatsApp(tried)` (no spelling registered), `WahaNumberCheckError` (check endpoint unavailable -> `send_text_to_phone` falls back to send-then-retry across variants).
+- `FakeWahaClient.registered_numbers` / `check_unavailable` mirror it. `send_text(chat_id, ...)` is unchanged (backward compatible).
+
 ## 5. Gaps / out-of-scope (with destinations)
 
 | Item | Status | Destination |

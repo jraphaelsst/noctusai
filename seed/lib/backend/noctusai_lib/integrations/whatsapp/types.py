@@ -14,6 +14,21 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
+class ResolvedChat:
+    """Outcome of resolving a phone to a real WhatsApp chat id (BR 9th digit).
+
+    ``requested`` is what the caller passed (never rewritten in storage);
+    ``variant_used`` is True when the chat id came from the alternate
+    spelling; ``method`` is ``check-exists`` or ``send-retry``.
+    """
+
+    requested: str
+    chat_id: str
+    variant_used: bool
+    method: str
+
+
+@dataclass(frozen=True)
 class WhatsAppMedia:
     """Media attachment on an inbound WhatsApp message."""
 

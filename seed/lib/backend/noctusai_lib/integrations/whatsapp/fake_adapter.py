@@ -16,6 +16,8 @@ from typing import Any
 from noctusai_lib.integrations.whatsapp.client import (
     RECOVER_READY_STATUSES,
     WahaGroupError,
+    WahaNumberCheckError,
+    WahaNumberNotOnWhatsApp,
     WahaSessionNotReady,
     WahaWebhookError,
     _default_owned_prefix,
@@ -26,8 +28,10 @@ from noctusai_lib.integrations.whatsapp.types import (
     GroupInfo,
     GroupParticipant,
     ParticipantChangeResult,
+    ResolvedChat,
     WhatsAppInboundMessage,
 )
+from noctusai_lib.primitives.phone import br_mobile_variants
 
 # 1x1 transparent PNG — deterministic stand-in for a real QR image so
 # frontend/route tests can assert "bytes were served" without a browser.
@@ -105,6 +109,12 @@ class FakeWahaClient:
         self.messages_admin_only: dict[str, bool] = {}
         self.deleted_messages: list[dict[str, str]] = []
         self.left_groups: list[str] = []
+        # BR 9th-digit resolution. None = every number is "registered"
+        # (legacy behaviour); a set of bare-digit numbers restricts which
+        # spellings exist on WhatsApp. Set check_unavailable=True to model
+        # WAHA's check-exists being down (send-then-retry path).
+        self.registered_numbers: set[str] | None = None
+        self.check_unavailable: bool = False
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -115,6 +125,40 @@ class FakeWahaClient:
 
     def send_text_sync(self, chat_id: str, text: str) -> dict[str, Any]:
         return self._record_send(chat_id, text)
+
+    async def check_exists(self, phone: str) -> dict[str, Any]:
+        if self.check_unavailable:
+            raise WahaNumberCheckError(phone, 503)
+        digits = "".join(c for c in phone if c.isdigit())
+        exists = self.registered_numbers is None or digits in self.registered_numbers
+        return {"numberExists": exists, "chatId": f"{digits}@c.us" if exists else None}
+
+    async def resolve_chat_id(self, phone: str) -> ResolvedChat:
+        candidates = br_mobile_variants(phone)
+        if not candidates:
+            raise WahaNumberNotOnWhatsApp([str(phone)])
+        for candidate in candidates:
+            body = await self.check_exists(candidate)
+            if body["numberExists"]:
+                return ResolvedChat(str(phone), body["chatId"], candidate != candidates[0], "check-exists")
+        raise WahaNumberNotOnWhatsApp(candidates)
+
+    async def send_text_to_phone(self, phone: str, text: str) -> dict[str, Any]:
+        try:
+            resolved = await self.resolve_chat_id(phone)
+        except WahaNumberCheckError:
+            candidates = br_mobile_variants(phone)
+            if not candidates:
+                raise WahaNumberNotOnWhatsApp([str(phone)])
+            for index, candidate in enumerate(candidates):
+                if self.registered_numbers is None or candidate in self.registered_numbers:
+                    record = self._record_send(f"{candidate}@c.us", text)
+                    return {**record, "resolvedChatId": record["chatId"],
+                            "resolvedVariantUsed": index > 0, "resolutionMethod": "send-retry"}
+            raise WahaNumberNotOnWhatsApp(candidates)
+        record = self._record_send(resolved.chat_id, text)
+        return {**record, "resolvedChatId": resolved.chat_id,
+                "resolvedVariantUsed": resolved.variant_used, "resolutionMethod": resolved.method}
 
     def _record_send(self, chat_id: str, text: str) -> dict[str, Any]:
         message_id = f"fake-msg-{len(self.sent_messages) + 1}"
