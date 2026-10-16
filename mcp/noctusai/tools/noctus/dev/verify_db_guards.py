@@ -6604,6 +6604,79 @@ _SW_LAIS_VISITAS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+def _lais_contato_etiqueta_ins() -> str:
+    return (
+        f"    INSERT INTO {_S}.lais_contato_etiquetas (org_id, contato_id, etiqueta_id)\n"
+        f"    SELECT v_org, c.id, e.id FROM {_S}.lais_contatos c, {_S}.lais_etiquetas e\n"
+        f"    WHERE c.org_id = v_org AND c.connection_id = {_LAIS_CONEXAO} AND c.chat_id = 'noc_probe'\n"
+        f"      AND e.org_id = v_org AND lower(e.nome) = 'noc_probe';"
+    )
+
+
+_M_LAIS_CONV = "274_lais_conversas_v2.sql"
+_T_LAIS_CONV = (
+    f"{_S}.lais_contatos", f"{_S}.lais_etiquetas", f"{_S}.lais_contato_etiquetas",
+    f"{_S}.lais_notas", f"{_S}.lais_feedback",
+)
+
+
+def _lais_conv_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_conv.{probe_id}", guard_name=guard, migration=_M_LAIS_CONV, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CONV,
+    )
+
+
+def _lais_etiqueta_ins(nome: str = "noc_probe", cor: str = "#112233") -> str:
+    return f"    INSERT INTO {_S}.lais_etiquetas (org_id, nome, cor) VALUES (v_org, '{nome}', '{cor}');"
+
+
+#: Migration 274 -- Lais wave 7 (Conversas v2). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_CONV_PROBES: tuple[GuardProbe, ...] = (
+    _lais_conv_probe(
+        "etiquetas.nome_valido", "lais_etiquetas_nome_valido",
+        "A blank tag name is an unselectable kanban column.",
+        _lais_etiqueta_ins(nome="   "), _CHECK, "a lais_etiqueta with a blank name",
+    ),
+    _lais_conv_probe(
+        "etiquetas.cor_valida", "lais_etiquetas_cor_valida",
+        "The tag colour is rendered straight into CSS; only #rrggbb is accepted.",
+        _lais_etiqueta_ins(cor="red"), _CHECK, "a lais_etiqueta whose cor is not #rrggbb",
+    ),
+    _lais_conv_probe(
+        "etiquetas.nome_unico", "lais_etiquetas_org_nome_uq",
+        "Two tags with the same name in an org would be two indistinguishable kanban columns.",
+        _lais_etiqueta_ins() + "\n" + _lais_etiqueta_ins(nome="NOC_PROBE"), _UNIQ,
+        "two lais_etiquetas with the same name (case-insensitive) in one org",
+    ),
+    _lais_conv_probe(
+        "contato_etiquetas.pk", "lais_contato_etiquetas_pk",
+        "A contato carries a given tag at most once; a duplicate would render the lead twice in the column.",
+        _lais_contato_ins() + "\n" + _lais_etiqueta_ins() + "\n"
+        + _lais_contato_etiqueta_ins() + "\n" + _lais_contato_etiqueta_ins(), _UNIQ,
+        "the same etiqueta attached twice to one lais_contato",
+    ),
+    _lais_conv_probe(
+        "notas.texto_valido", "lais_notas_texto_valido",
+        "A note is 1..4000 chars; an empty or unbounded note breaks the Notas internas card.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_notas", "texto", "'   '"), _CHECK,
+        "a lais_nota with a blank text",
+    ),
+    _lais_conv_probe(
+        "feedback.nota_valida", "lais_feedback_nota_valida",
+        "Feedback feeds the evals; only like|dislike is a defined signal.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_feedback", "nota", "'noc_probe_bogus'"), _CHECK,
+        "a lais_feedback with an unknown nota",
+    ),
+    _lais_conv_probe(
+        "feedback.comentario_tamanho", "lais_feedback_comentario_tamanho",
+        "The feedback comment is capped at 1000 chars so one row cannot bloat the eval export.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_feedback", "nota, comentario", "'like', repeat('x', 1001)"),
+        _CHECK, "a lais_feedback with a 1001-char comment",
+    ),
+)
+
+
 _M_LAIS_REENG = "271_lais_reengajamento.sql"
 _T_LAIS_REENG = (f"{_S}.lais_reengajamento_config", f"{_S}.lais_reguas", f"{_S}.lais_regua_tentativas")
 
@@ -8625,6 +8698,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_VISITAS_PROBES,
     *_SW_LAIS_NOTIF_PROBES,
     *_SW_LAIS_REENG_PROBES,
+    *_SW_LAIS_CONV_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

@@ -281,8 +281,14 @@ class TestContato:
         w.sw.table("lais_interacoes").insert({"org_id": org, "contato_id": c["id"], "operacao": "compra"}).execute()
         return c
 
+    def test_a_member_who_is_not_the_owner_of_the_contato_is_403(self, member):
+        self._seed(member.w)  # no responsavel, and no connection owned by the caller (A7)
+        r = member.get(CONTATO_URL)
+        assert r.status_code == 403 and r.json()["error"]["code"] == "sem_acesso"
+
     def test_shape_and_org_scoping(self, member):
-        self._seed(member.w)
+        c = self._seed(member.w)
+        member.w.sw.table("lais_contatos").update({"responsavel_user_id": TEST_USER_ID}).eq("id", c["id"]).execute()  # A7: owner
         d = member.get(CONTATO_URL).json()["data"]
         assert set(d) == {"contato", "slots", "interacao_atual"}
         assert d["contato"]["nome"] == "Ana" and d["interacao_atual"]["operacao"] == "compra"

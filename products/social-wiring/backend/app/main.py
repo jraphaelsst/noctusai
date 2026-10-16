@@ -128,6 +128,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.lais_ferramentas_router import router as lais_ferramentas_router
     from app.routers.lais_conhecimento_router import router as lais_conhecimento_router
     from app.routers.lais_perguntas_router import router as lais_perguntas_router
+    from app.routers.lais_conversas_router import router as lais_conversas_router
     from app.routers.lais_visitas_router import router as lais_visitas_router
     from app.routers.lais_notificacoes_router import router as lais_notificacoes_router
     from app.routers.lais_reengajamento_router import router as lais_reengajamento_router
@@ -241,6 +242,7 @@ def _register_media_wiring() -> ModuleRegistration:
             lais_agente_router,
             lais_ferramentas_router,
             lais_conhecimento_router,
+            lais_conversas_router,  # BEFORE lais_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`
             lais_perguntas_router,
             lais_visitas_router,
             lais_notificacoes_router,

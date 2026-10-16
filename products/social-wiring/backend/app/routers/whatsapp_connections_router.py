@@ -1049,8 +1049,15 @@ async def send_message(
     )
 
     client = _waha_client(record, waha_factory)
+    texto = body.text
+    if getattr(record, "agente_leads_ativo", False):
+        # Conversas v2: a human reply on a Julia line carries the attendant's name when Conhecimento
+        # `exibir_atendente` is on (`*{nome}*:\n{texto}`).
+        from app.services import lais_conversas_service
+
+        texto = lais_conversas_service.prefixar_atendente(get_scoped_admin_client("social_wiring"), org_id, user, texto)
     try:
-        result = await client.send_text(chat_id, body.text)
+        result = await client.send_text(chat_id, texto)
     except Exception as exc:
         logger.error(
             "WAHA send_text failed for connection %s chatId %s: %s",
@@ -1078,7 +1085,7 @@ async def send_message(
         session_id=session_id,
         raw_sender=chat_id,
         direction="outbound",
-        body=body.text,
+        body=texto,
         provider_message_id=provider_message_id,
         authorized=True,
         connection_id=connection_id,
@@ -1100,7 +1107,7 @@ async def send_message(
         connection_id=connection_id,
         chat_id=chat_id,
         direction="outbound",
-        body=body.text,
+        body=texto,
         created_at=sent_at,
     )
 
@@ -1126,7 +1133,7 @@ async def send_message(
         id=str(stored.id),
         chat_id=chat_id,
         direction="outbound",
-        body=body.text,
+        body=texto,
         created_at=sent_at,
         provider_message_id=stored.provider_message_id,
         structured_payload=None,

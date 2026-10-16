@@ -97,6 +97,7 @@ from app.rate_limit import limiter
 from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services import lais_agente_service as lais
+from app.services import lais_conversas_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
@@ -553,6 +554,17 @@ async def _handle_lead_message(
         return False
 
     deletion = lais.is_deletion_request(message_body)
+    if not deletion:
+        # Conversas v2: a BLOCKED number is dropped; an ARCHIVED contato goes back to Julia (un-paused).
+        politica = lais_conversas_service.aplicar_politica_inbound(
+            get_scoped_admin_client("social_wiring"), chat_store,
+            org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
+        )
+        if politica == "bloqueado":
+            logger.info("Julia: chat %s is blocked — inbound dropped", chat_id)
+            return True
+        if politica == "devolvido":
+            state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     if state and state.get("agente_pausado") and not deletion:
         logger.info("Julia: chat %s paused (human handling) — stored only", chat_id)
         return True

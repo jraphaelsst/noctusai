@@ -19,7 +19,7 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_contatos_service, lais_perguntas_service as svc
+from app.services import lais_acesso, lais_contatos_service, lais_perguntas_service as svc
 
 router = APIRouter(tags=["lais-perguntas"])
 
@@ -61,6 +61,7 @@ def put_perguntas(
 def get_contato(
     connection_id: UUID,
     chat_id: str,
+    request: Request = None,
     auth: tuple = Depends(get_current_user_org),
     client: Any = Depends(get_perguntas_client),
 ) -> dict[str, Any]:
@@ -68,6 +69,7 @@ def get_contato(
     contato = lais_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
     if contato is None:
         raise AppException("contato_nao_encontrado", "Contato não encontrado.", status_code=404)
+    lais_acesso.exigir_acesso(client, lais_acesso.contexto(auth, request), contato)  # A7: owner/admin only
     ativas = set(svc.selecao_org(client, org_id))
     interacao = lais_contatos_service.interacao_aberta(client, contato["id"])
     return {"data": {

@@ -44,7 +44,7 @@ from app.clients.agents import (
     TurnResult,
 )
 from app.config import settings as _default_settings
-from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service
+from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
 from app.services import lais_agente_service as lais
 from app.services import lais_aviso_service
 from app.services.message_store import DuplicateMessage, MessageStore
@@ -417,6 +417,19 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     # H3 re-check at routing time: fail closed, no reply.
     if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
         logger.error("lais: connection %s has Julia on with no authorized_numbers -- fail closed", connection.id)
+        close_run(deps.buffer, key, run)
+        return
+
+    # Conversas v2: a blocked number never gets a turn (defence in depth -- the webhook already drops it);
+    # an archived contato is handed back to Julia (un-archived + un-paused) before the pause check below.
+    try:
+        politica = lais_conversas_service.aplicar_politica_inbound(
+            deps.scoped, chat_store, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
+    except Exception:  # the foundation never stops Julia answering (page-0 contract); the webhook is the primary drop
+        logger.exception("lais: block/archive policy check failed conn=%s chat=%s -- turn proceeds", connection.id, chat_id)
+        politica = "ok"
+    if politica == "bloqueado":
+        logger.info("lais: chat %s is blocked -- batch dropped", chat_id)
         close_run(deps.buffer, key, run)
         return
 
