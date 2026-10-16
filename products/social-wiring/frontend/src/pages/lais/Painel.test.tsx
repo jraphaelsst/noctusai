@@ -24,7 +24,7 @@ const BASE = {
   por_hora: Array.from({ length: 24 }, (_, i) => i),
   fora_horario_pct: 35,
   por_dia_semana: [1, 2, 3, 4, 5, 6, 7],
-  melhor_dia: "Domingo",
+  melhor_dia: 6,
   seis_meses: [{ mes: "2026-10", enviado: 5, nao_enviado: 3 }],
 };
 

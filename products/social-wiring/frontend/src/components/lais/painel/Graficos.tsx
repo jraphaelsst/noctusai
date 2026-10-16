@@ -57,7 +57,7 @@ export function Graficos({ p }: { p: Painel }) {
         <Barras data={horas} x="hora" series={[{ key: "total", nome: "Leads", cor: "#6366f1" }]} />
         <Lista id="dados-por-hora" itens={horas.map((h) => `${h.hora}: ${h.total}`)} />
       </Card>
-      <Card titulo="Leads semanais" nota={p.melhor_dia ? `Melhor dia da semana: ${p.melhor_dia}` : undefined} testid="grafico-semana">
+      <Card titulo="Leads semanais" nota={p.melhor_dia != null && DIAS[p.melhor_dia] ? `Melhor dia da semana: ${DIAS[p.melhor_dia]}` : undefined} testid="grafico-semana">
         <Barras data={semana} x="dia" series={[{ key: "total", nome: "Leads", cor: "#6366f1" }]} />
         <Lista id="dados-semana" itens={semana.map((d) => `${d.dia}: ${d.total}`)} />
       </Card>

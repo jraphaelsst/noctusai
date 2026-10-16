@@ -16,7 +16,8 @@ export interface Painel {
   por_hora: number[];
   fora_horario_pct: number;
   por_dia_semana: number[];
-  melhor_dia: string | null;
+  /** Index into por_dia_semana (0 = segunda-feira); null when the month has no contatos. */
+  melhor_dia: number | null;
   seis_meses: { mes: string; enviado: number; nao_enviado: number }[];
 }
 
