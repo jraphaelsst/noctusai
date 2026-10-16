@@ -32,6 +32,8 @@ const mockUseSetAutoReply = vi.fn();
 const mockUseMarkChatRead = vi.fn();
 const mockUseWhatsAppRealtime = vi.fn();
 
+import { renderHook } from "@testing-library/react";
+
 vi.mock("@/hooks/useWhatsAppChats", () => ({
   useWhatsAppChats: mockUseWhatsAppChats,
   useWhatsAppChatMessages: mockUseWhatsAppChatMessages,
@@ -84,6 +86,19 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     expect(lastProps.className).toBe("mt-1");
   });
 
+  it("useThreads adapter: a ThreadsFeedContext (Lais Conversas v2) replaces the WAHA list and disables its query", async () => {
+    const { ThreadsFeedContext } = await import("./WhatsAppChatWindow");
+    const React = await import("react");
+    mockUseWhatsAppChats.mockReturnValue({ data: [], isLoading: false, isError: false });
+    await renderWindow();
+    const feed = { data: [{ id: "x@c.us", title: "Lead" }], isLoading: false, isError: false } as never;
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(ThreadsFeedContext.Provider, { value: feed }, children);
+    const out = renderHook(() => lastProps.adapter.useThreads("conn-1"), { wrapper }).result.current;
+    expect(out).toBe(feed);
+    expect(mockUseWhatsAppChats).toHaveBeenLastCalledWith(null);
+  });
+
   it("useThreads adapter maps ChatSummary → ChatThread (strips JID, keeps resolved name)", async () => {
     mockUseWhatsAppChats.mockReturnValue({
       data: [
@@ -103,7 +118,7 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
       isError: false,
     });
     await renderWindow();
-    const threads = lastProps.adapter.useThreads("conn-1").data;
+    const threads = renderHook(() => lastProps.adapter.useThreads("conn-1")).result.current.data;
     expect(threads).toEqual([
       {
         id: "5511999998888@c.us",
@@ -126,7 +141,7 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
       isError: false,
     });
     await renderWindow();
-    expect(lastProps.adapter.useThreads("conn-1").data[0].meta).toEqual({ agente_pausado: true });
+    expect(renderHook(() => lastProps.adapter.useThreads("conn-1")).result.current.data[0].meta).toEqual({ agente_pausado: true });
     const { JuliaThreadHeader } = await import("@/components/lais/JuliaThreadHeader");
     expect(lastProps.adapter.ThreadHeaderExtra).toBe(JuliaThreadHeader);
   });
@@ -210,7 +225,7 @@ describe("WhatsAppChatWindow — Cat A regression: isLoading during a background
       isError: false,
     });
     await renderWindow();
-    const threads = lastProps.adapter.useThreads("conn-1");
+    const threads = renderHook(() => lastProps.adapter.useThreads("conn-1")).result.current;
     expect(threads.isLoading).toBe(false);
     expect(threads.data).toHaveLength(1);
   });
@@ -223,7 +238,7 @@ describe("WhatsAppChatWindow — Cat A regression: isLoading during a background
       isError: false,
     });
     await renderWindow();
-    const threads = lastProps.adapter.useThreads("conn-1");
+    const threads = renderHook(() => lastProps.adapter.useThreads("conn-1")).result.current;
     expect(threads.isLoading).toBe(true);
   });
 
