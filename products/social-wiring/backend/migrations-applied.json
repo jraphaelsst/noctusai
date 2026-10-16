@@ -12,6 +12,7 @@
     "263_atendimento_motivo_perda_categoria.sql": "1968afeea0681caba179229bf80296ec11422976de667b03f47b81253d0cc1d5",
     "264_imovel_dados_avaliacao.sql": "4c4e6b05075c6c2d31a091c7adaa533008436190255d30c271038f2ef542300b",
     "265_condominios.sql": "b53f10ad31d05c28532213da58e4f1cb0dedfcbdba107060848ec9c488a7b3a6",
-    "266_imovel_transacoes.sql": "c35f5791818d4b621f5315419bab6ffe59c344a1a5867646376c8eeaaa4fc022"
+    "266_imovel_transacoes.sql": "c35f5791818d4b621f5315419bab6ffe59c344a1a5867646376c8eeaaa4fc022",
+    "267_lais_fundacao.sql": "8972beea9c8e34608f0a5ddd28ecbff28fee584d058f78e7fb97dfdbe02825c8"
   }
 }
