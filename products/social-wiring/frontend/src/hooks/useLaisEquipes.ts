@@ -3,8 +3,8 @@
  *
  *   GET/POST /api/lais/equipes · PATCH/DELETE /api/lais/equipes/{id}
  *   POST /api/lais/equipes/{id}/membros {user_id} · DELETE …/membros/{user_id}
- *   PUT  /api/lais/equipes/{id}/membros/ordem {user_ids}
- *   GET  /api/lais/equipes/{id}/metricas?mes=YYYY-MM
+ *   PUT  /api/lais/equipes/{id}/membros/ordem {ordem: [user_id…]} (exactly the current members)
+ *   GET  /api/lais/equipes/{id}/metricas?mes=YYYY-MM → {membros:[{…, tpr_medio_s, tpr_amostras, distribuicao_pct}], total_atribuicoes, fontes}
  *
  * Loading = two signals off `data` (never `isLoading`); reads are member-open,
  * writes admin-only (server enforces).
@@ -37,6 +37,11 @@ export interface MetricaMembro {
   tpr_segundos: number | null;
   conversas: number;
   distribuicao: number;
+}
+
+interface MetricaApi {
+  user_id: string; nome: string; ultimo_acesso: string | null; tpr_medio_s: number | null;
+  tpr_amostras: number; conversas: number; distribuicao: number; distribuicao_pct: number;
 }
 
 export const EQUIPES_KEY = ["sw", "lais", "equipes"] as const;
@@ -105,7 +110,7 @@ export function useRemoverMembro() {
 export function useOrdenarMembros() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, { id: string; user_ids: string[] }>({
-    mutationFn: ({ id, user_ids }) => api.put(`/api/lais/equipes/${id}/membros/ordem`, { user_ids }),
+    mutationFn: ({ id, user_ids }) => api.put(`/api/lais/equipes/${id}/membros/ordem`, { ordem: user_ids }),
     onSettled: inv,
   });
 }
@@ -115,8 +120,13 @@ export function useMetricasEquipe(id: string | null, mes: string) {
     queryKey: [...EQUIPES_KEY, id, "metricas", mes] as const,
     enabled: !!id,
     placeholderData: keepPreviousData,
-    queryFn: async () =>
-      (await api.get<{ data: MetricaMembro[] }>(`/api/lais/equipes/${id}/metricas?mes=${mes}`)).data ?? [],
+    queryFn: async (): Promise<MetricaMembro[]> => {
+      const d = (await api.get<{ data: { membros: MetricaApi[] } }>(`/api/lais/equipes/${id}/metricas?mes=${mes}`)).data;
+      return (d?.membros ?? []).map((m) => ({
+        user_id: m.user_id, nome: m.nome, ultimo_acesso: m.ultimo_acesso,
+        tpr_segundos: m.tpr_medio_s, conversas: m.conversas, distribuicao: m.distribuicao,
+      }));
+    },
   });
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }

@@ -21,7 +21,11 @@ const EQUIPE = {
   id: "e1", nome: "Comercial", atende_apos_julia: true, modo: "funil", manter_ultimo: false,
   membros: [{ user_id: "u1", nome: "Ana", ativo: true, ordem: 0 }],
 };
-const METRICAS = [{ user_id: "u1", nome: "Ana", ultimo_acesso: null, tpr_segundos: 125, conversas: 7, distribuicao: 4 }];
+const METRICAS = {
+  membros: [{ user_id: "u1", nome: "Ana", ultimo_acesso: null, tpr_medio_s: 125, tpr_amostras: 3, conversas: 7, distribuicao: 4, distribuicao_pct: 100 }],
+  total_atribuicoes: 4,
+  fontes: {},
+};
 
 function setup(lista: unknown[] = [EQUIPE]) {
   api.get.mockImplementation((url: string) =>
