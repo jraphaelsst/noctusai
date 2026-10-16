@@ -29,6 +29,15 @@ Rule (same as `../core-studio/DECISIONS.md`): nothing is guessed. Every line say
 - **Our own data collection — no Metricool / Make.** Collection runs on our own integrations (social-wiring's existing Meta/Instagram stack; TikTok to be added). The Metricool/Make architecture in `specs/simec.md` §7 stays as a requirements reference (what to collect, alerts, cadence), not as the implementation. (Closes open question 2.)
 - **Retrieve the kits** — OK to download the SIMEC 1.0 and Central Editorial 1.0 kits from the share pages. Done the same day: both kits are in `kits/`, and the AR3 sketch is in `assets/`. (Closes open questions 3 and 4.)
 
+## Decided by the owner — 2026-10-16 (after the Phase-0 audit, `specs/phase0-audit.md` §6)
+
+- **One org per person.** Mônica, Gilson and Isadora each get their own org; clients get their own org too. Isolation comes from the existing org-level RLS, so no per-marca grants are needed (closes audit risk 1).
+  - Consequence: Gilson's and Isa's marcas (and their Criação de Mídia rows, `integration_accounts`, Instagram snapshots) currently live in the shared org and must be **migrated to their new orgs**. That's a dedicated data-migration slice before P7.
+  - Isa works on all three, so she needs membership in all three orgs. Verify that SSO/org switching supports multi-org membership before the split.
+- **Comment bank: keep everything; only the owner and admins can see it.** No automatic deletion; raw comment text is readable only by the org's owner and admins (closes audit risk 2 as far as the owner is concerned).
+  - ⚠️ Note for the record: indefinite retention of sensitive data (LGPD art. 11) runs against the necessity and storage-limitation principles (art. 6 III, art. 15–16). Mitigations kept in the design regardless: authors pseudonymised by HMAC (no usernames), anonymised quotes in reports, a ROPA entry, and the `purge_at` column present (null = keep) so a retention period can be set later without a migration.
+- **Skip TikTok for now.** Phase P6 (seed TikTok adapter, `modules/tiktok`, SIMEC-TikTok) is removed from the current roadmap until the owner says otherwise. Everything is built for Instagram; the SIMEC calculator still keeps per-platform denominators so TikTok can be added later.
+
 ## Proposed by ChatGPT — not yet validated
 
 - SIMEC tooling: **Metricool Advanced** (US$67/mo, up to 15 brands, API, team permissions) + **Make Core** (US$12/mo) + Google Sheets + Looker Studio + OpenAI API ≈ **US$79/mo + AI usage**. Rollout: Metricool free → verify metrics → Advanced monthly → Make → AI routines.
