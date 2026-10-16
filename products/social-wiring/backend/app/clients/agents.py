@@ -152,6 +152,16 @@ class AgentStatus:
 
 
 @dataclass(frozen=True)
+class AgentUso:
+    """`GET /api/channels/uso?mes=YYYY-MM`: the org's channel turns + cost for the month and
+    its per-day cost cap (the Painel "Consumo do plano")."""
+
+    turnos: int
+    custo_usd: float
+    limite_diario_usd: float
+
+
+@dataclass(frozen=True)
 class DeletionRequest:
     agent_key: str
     connection_id: str
@@ -266,6 +276,8 @@ class AgentsClient(Protocol):
 
     async def put_ferramentas_token(self, token: str) -> None: ...
 
+    async def uso(self, mes: str) -> AgentUso: ...
+
 
 # ── Fake ────────────────────────────────────────────────────────────────────
 ScriptedReply = Union[TurnResult, AgentsClientError, Callable[[TurnRequest], TurnResult]]
@@ -294,7 +306,10 @@ class FakeAgentsClient:
         default_partes: Sequence[str] = DEFAULT_PARTES,
         resumo_script: Sequence[Union[ResumoResult, AgentsClientError]] = (),
         ferramentas_token_error: Optional[AgentsClientError] = None,
+        uso: Union[AgentUso, AgentsClientError, None] = None,
     ):
+        self._uso = uso
+        self.uso_calls: list[str] = []
         self._script = list(script)
         self._resumo_script = list(resumo_script)
         self._ferramentas_token_error = ferramentas_token_error
@@ -361,6 +376,12 @@ class FakeAgentsClient:
             return nxt
         return ResumoResult(resumo="Resumo de teste da conversa.", desfecho="em_andamento", custo_usd=0.0,
                             tokens_entrada=0, tokens_saida=0)
+
+    async def uso(self, mes: str) -> AgentUso:
+        self.uso_calls.append(mes)
+        if isinstance(self._uso, AgentsClientError):
+            raise self._uso
+        return self._uso or AgentUso(turnos=0, custo_usd=0.0, limite_diario_usd=5.0)
 
     async def put_ferramentas_token(self, token: str) -> None:
         if self._ferramentas_token_error is not None:
@@ -490,6 +511,13 @@ def parse_resumo_result(body: Any) -> ResumoResult:
     )
 
 
+def parse_uso(body: Any) -> AgentUso:
+    turnos = _need(body, "turnos", int)
+    custo = _need(body, "custo_usd", (int, float))
+    limite = _need(body, "limite_diario_usd", (int, float))
+    return AgentUso(turnos=int(turnos), custo_usd=float(custo), limite_diario_usd=float(limite))
+
+
 def parse_agent_status(body: Any) -> AgentStatus:
     return AgentStatus(
         agent_key=_need(body, "agent_key", str),
@@ -578,6 +606,10 @@ class HttpAgentsClient:
             return DeletionResult(deleted=bool(body["deleted"]))
         return DeletionResult(deleted=body is not None)
 
+    async def uso(self, mes: str) -> AgentUso:
+        """`GET /api/channels/uso?mes=YYYY-MM` (Lais w9 Painel)."""
+        return parse_uso(await self._send("GET", f"/api/channels/uso?mes={quote(mes, safe='')}"))
+
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
         """`POST /api/channels/conversations/{id}/resumo` (contract 2.1(e))."""
         body = await self._send(
@@ -612,11 +644,11 @@ def make_agents_client(
 
 
 __all__ = [
-    "AgentNotFound", "AgentStatus", "AgentUnavailable", "AgentsBadRequest", "AgentsClient",
+    "AgentNotFound", "AgentStatus", "AgentUso", "AgentUnavailable", "AgentsBadRequest", "AgentsClient",
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid",
     "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DeletionRequest",
     "DeletionResult", "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
     "LaisAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
     "ResumoResult", "TurnInProgress", "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client",
-    "parse_agent_status", "parse_resumo_result", "parse_turn_result",
+    "parse_agent_status", "parse_uso", "parse_resumo_result", "parse_turn_result",
 ]

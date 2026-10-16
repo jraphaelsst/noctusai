@@ -133,6 +133,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.lais_notificacoes_router import router as lais_notificacoes_router
     from app.routers.lais_reengajamento_router import router as lais_reengajamento_router
     from app.routers.lais_cloud_router import router as lais_cloud_router
+    from app.routers.lais_painel_router import router as lais_painel_router
     from app.routers.lais_envio_router import router as lais_envio_router
     from app.routers.lais_relatorios_router import router as lais_relatorios_router
     from app.routers.lais_captacao_router import router as lais_captacao_router
@@ -252,6 +253,7 @@ def _register_media_wiring() -> ModuleRegistration:
             lais_notificacoes_router,
             lais_reengajamento_router,
             lais_cloud_router,
+            lais_painel_router,
             lais_envio_router,
             lais_relatorios_router,
             lais_captacao_router,

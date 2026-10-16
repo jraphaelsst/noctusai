@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from noctusai_lib.api import StrictHttpModel
 
 __all__ = [
+    "ChannelUsoOut",
     "BATCH_MAX_CHARS",
     "BATCH_MAX_MESSAGES",
     "MESSAGE_MAX_CHARS",
@@ -255,6 +256,14 @@ class ChannelAgentStatusOut(BaseModel):
     provider: str | None
     model: str | None
     llm_configurado: bool
+
+
+class ChannelUsoOut(BaseModel):
+    """``GET /api/channels/uso`` — the org's channel usage for one month."""
+
+    turnos: int
+    custo_usd: float
+    limite_diario_usd: float
 
 
 class ChannelDeleteRequest(StrictHttpModel):

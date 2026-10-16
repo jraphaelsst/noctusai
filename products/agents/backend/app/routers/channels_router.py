@@ -38,10 +38,12 @@ import asyncio
 import hashlib
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
@@ -84,6 +86,7 @@ from app.schemas.channels import (
     ChannelResumoResponse,
     ChannelTurnRequest,
     ChannelTurnResponse,
+    ChannelUsoOut,
 )
 from app.stores.channel_inbound import ChannelInboundRecord
 from app.stores.errors import Conflict, NotFound
@@ -448,6 +451,38 @@ async def channel_agent_status(
         provider=active.provider if active else None,
         model=active.model if active else None,
         llm_configurado=configured,
+    )
+
+
+# ── GET /api/channels/uso (Lais Painel: month usage vs the daily cap) ───────
+
+_SP = ZoneInfo("America/Sao_Paulo")
+
+
+def _month_window_utc(mes: str) -> tuple[datetime, datetime]:
+    """``YYYY-MM`` -> ``[start, end)`` as UTC instants, month edges taken in
+    America/Sao_Paulo (a turn at 23:30 SP on the 31st is still that month)."""
+    try:
+        year, month = (int(p) for p in mes.split("-"))
+        start = datetime(year, month, 1, tzinfo=_SP)
+    except (ValueError, TypeError) as exc:
+        raise _err(422, "invalid_field", "Campo inválido: mes") from exc
+    end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=_SP)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+@router.get("/uso", response_model=ChannelUsoOut)
+async def channel_usage(
+    mes: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    ctx: AuthContext = Depends(require_channel_turn),
+    msg_store=Depends(get_message_store_dep),
+) -> ChannelUsoOut:
+    since, until = _month_window_utc(mes)
+    turnos, custo = msg_store.usage_between(ctx.org_id, since, until)
+    return ChannelUsoOut(
+        turnos=turnos,
+        custo_usd=round(custo, 6),
+        limite_diario_usd=float(settings.channel_daily_budget_usd),
     )
 
 

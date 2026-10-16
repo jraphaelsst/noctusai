@@ -128,6 +128,12 @@ class MessageStore(Protocol):
         (user/system rows, turns that reported none) count 0."""
         ...
 
+    def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
+        """Lais w9 (Painel): ``(turnos, custo_usd)`` for this org over
+        ``[since, until)`` — turns = assistant messages, cost = summed
+        ``custo_usd``."""
+        ...
+
 
 class FakeMessageStore:
     """In-memory :class:`MessageStore`."""
@@ -232,6 +238,17 @@ class FakeMessageStore:
                 float(r.get("custo_usd") or 0.0) for r in rows if r["created_at"] >= since
             )
         return total
+
+    def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
+        turns, total = 0, 0.0
+        for (row_org, _conv), rows in self._rows.items():
+            if row_org != org_id:
+                continue
+            for r in rows:
+                if r["role"] == "assistant" and since <= r["created_at"] < until:
+                    turns += 1
+                    total += float(r.get("custo_usd") or 0.0)
+        return turns, total
 
     def purge_conversation(self, org_id: UUID, conversation_id: UUID) -> int:
         """Test-double half of ``agents.delete_channel_conversation`` (the Real
@@ -381,6 +398,26 @@ class SupabaseMessageStore:
             )
 
         return sum(float(row["custo_usd"] or 0.0) for row in iter_paged_rows(_page))
+
+    def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        def _page(start: int, end: int):
+            return (
+                self._table()
+                .select("id, custo_usd")
+                .eq("org_id", str(org_id))
+                .eq("role", "assistant")
+                .gte("created_at", since.isoformat())
+                .lt("created_at", until.isoformat())
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        rows = list(iter_paged_rows(_page))
+        return len(rows), sum(float(r.get("custo_usd") or 0.0) for r in rows)
 
     @staticmethod
     def _record(row: dict[str, Any]) -> MessageRecord:

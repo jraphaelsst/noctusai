@@ -176,3 +176,39 @@ class TestFake:
         r = TurnResult(conversation_id=CONV, partes=(), status="respondido",
                        actions=(LaisAction("b", 2), HandoffAction("m"), LaisAction("a", 1)))
         assert [a.type for a in r.lais_actions] == ["a", "b"]
+
+
+# ── uso (Painel "Consumo do plano") ─────────────────────────────────────────
+class TestUso:
+    def test_http_sends_the_month_and_parses_the_body(self):
+        import asyncio
+
+        from app.clients.agents import AgentUso
+
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"], seen["auth"] = str(request.url), request.headers["authorization"]
+            return httpx.Response(200, json={"turnos": 7, "custo_usd": 0.42, "limite_diario_usd": 5.0})
+
+        out = asyncio.run(_client(handler).uso("2026-10"))
+        assert out == AgentUso(turnos=7, custo_usd=0.42, limite_diario_usd=5.0)
+        assert seen["url"].endswith("/api/channels/uso?mes=2026-10") and seen["auth"] == "Bearer pk_channel_token"
+
+    def test_http_malformed_body_is_an_upstream_error(self):
+        import asyncio
+
+        with pytest.raises(AgentsUpstreamError):
+            asyncio.run(_client(lambda r: httpx.Response(200, json={"turnos": "x"})).uso("2026-10"))
+
+    def test_http_401_is_token_invalid(self):
+        import asyncio
+
+        with pytest.raises(AgentsTokenInvalid):
+            asyncio.run(_client(lambda r: httpx.Response(401, json={"detail": "no", "code": "token_invalid"})).uso("2026-10"))
+
+    def test_fake_records_and_defaults(self):
+        import asyncio
+
+        fake = FakeAgentsClient()
+        assert asyncio.run(fake.uso("2026-10")).turnos == 0 and fake.uso_calls == ["2026-10"]
