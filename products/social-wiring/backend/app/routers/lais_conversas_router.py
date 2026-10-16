@@ -2,7 +2,7 @@
 
   GET    /api/lais/conversas?aba=todas|minhas|arquivadas&q&limit&offset
          list filters are COMMA-JOINED: operacao=a,b status_sw=a,b atendimento=julia,manual
-         responsavel=<uuid>,sem (sem = unassigned) etiqueta=<id>,<id> (repeating etiqueta also works) equipe (ignored)
+         responsavel=<uuid>,sem (sem = unassigned) etiqueta=<id>,<id> (repeating etiqueta also works) equipe=<id>,<id> (contatos whose responsavel is a member of the team)
          ?view=kanban         -> {data:{colunas:[todas, <one per etiqueta>, arquivadas]}}
   PATCH  /api/lais/contatos/{id}                {responsavel_user_id?, arquivado?, bloqueado?, etiquetas?}
   GET|POST /api/lais/contatos/{id}/notas        DELETE /api/lais/contatos/{id}/notas/{nota_id} (soft)
@@ -13,7 +13,7 @@
 Access (A7, `lais_acesso`): every per-contato route -- and the history link -- is 401 without a session,
 404 for a contato of another org, 403 `sem_acesso` for a same-org member who is neither its owner
 (responsavel, else connection owner) nor an org owner/admin. Lists silently contain only what the caller may see.
-`equipe` is accepted but ignored until the teams table lands (wave 11); `meta.equipe_ignorada` says so.
+`equipe` (wave 11) keeps the contatos whose responsavel belongs to one of the teams (`meta.equipe` echoes the ids).
 
 NB: registered BEFORE `lais_perguntas_router`, whose `GET /api/lais/contatos/{connection_id}/{chat_id}` would
 otherwise swallow `GET /api/lais/contatos/{id}/notas`.
@@ -114,13 +114,19 @@ def listar(
     ctx = _ctx(auth, request)
     tags = [t for e in (etiqueta or []) for t in _csv(e)]
     ops, sts = _csv(operacao), _csv(status_sw)
-    meta: dict[str, Any] = {"equipe_ignorada": equipe is not None}
+    eqs = _csv(equipe)
+    for e in eqs:
+        try:
+            UUID(e)
+        except ValueError:
+            raise AppException("equipe_invalida", "equipe deve ser um ou mais uuids separados por vírgula.", status_code=422)
+    meta: dict[str, Any] = {"equipe": eqs}
     if view == "kanban":
-        dados = svc.kanban(client, ctx, etiquetas=tags, operacao=ops, status_sw=sts, atendimento=atend, responsavel=resp)
+        dados = svc.kanban(client, ctx, etiquetas=tags, operacao=ops, status_sw=sts, atendimento=atend, responsavel=resp, equipe=eqs)
         return {"data": dados, "meta": meta}
     itens, total = svc.listar(
         client, ctx, aba=aba, operacao=ops, status_sw=sts, atendimento=atend, responsavel=resp,
-        etiquetas=tags, busca=q, limit=limit, offset=offset,
+        etiquetas=tags, busca=q, limit=limit, offset=offset, equipe=eqs,
     )
     return {"data": itens, "meta": {**meta, "aba": aba, "total": total, "limit": limit, "offset": offset}}
 

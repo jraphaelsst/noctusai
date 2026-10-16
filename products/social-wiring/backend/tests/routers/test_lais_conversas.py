@@ -327,10 +327,10 @@ class TestLista:
         assert ids(f"responsavel=sem,{MEMBER_ID}") == {a["id"], b["id"]}
         assert ids("responsavel=sem") == {a["id"]}
 
-    def test_equipe_is_accepted_but_ignored(self, admin):
+    def test_unknown_equipe_filters_everything_out(self, admin):
         r = admin.get(f"/api/lais/conversas?equipe={uuid4()}")
-        assert r.status_code == 200 and r.json()["meta"]["equipe_ignorada"] is True
-        assert len(r.json()["data"]) == 1
+        assert r.status_code == 200 and "equipe_ignorada" not in r.json()["meta"]
+        assert r.json()["data"] == []
 
     @pytest.mark.parametrize("q", ["aba=outra", "view=grid", "atendimento=robo", "atendimento=julia,robo", "limit=0", "responsavel=nao-uuid"])
     def test_bad_params_are_422(self, admin, q):

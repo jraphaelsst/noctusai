@@ -45,6 +45,7 @@ from app.clients.agents import (
 )
 from app.config import settings as _default_settings
 from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
+from app.services import lais_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import lais_agente_service as lais
 from app.services import lais_aviso_service
 from app.services.message_store import DuplicateMessage, MessageStore
@@ -694,11 +695,19 @@ async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord
     except Exception:
         logger.exception("lais: gen bump on handoff failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
     await publish_pause(deps, connection=connection, chat_id=chat_id, pausado=True)
+    responsavel: Optional[str] = None
+    try:  # wave 11: pick the attendant BEFORE notifying so the notification reaches them
+        contato = lais_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
+        if contato is not None:
+            atribuido = lais_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
+            responsavel = atribuido["user_id"] if atribuido else None
+    except Exception:
+        logger.exception("lais: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned)", connection.id, chat_id)
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
         lais.notificar_handoff(
             deps.core_client, connection=connection, chat_id=chat_id,
-            titulo_chat=summary.title if summary else None, motivo=motivo,
+            titulo_chat=summary.title if summary else None, motivo=motivo, responsavel_user_id=responsavel,
         )
     except Exception:
         logger.exception("lais: handoff notification failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)

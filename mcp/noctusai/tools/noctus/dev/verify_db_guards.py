@@ -6802,6 +6802,65 @@ _SW_LAIS_REENG_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_EQUIPES = "276_lais_equipes.sql"
+_T_LAIS_EQUIPES = (f"{_S}.lais_equipes", f"{_S}.lais_equipe_membros", f"{_S}.lais_atribuicoes", f"{_S}.lais_contatos")
+
+
+def _equipes_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_equipes.{probe_id}", guard_name=guard, migration=_M_LAIS_EQUIPES, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_EQUIPES,
+    )
+
+
+def _equipe_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return f"    INSERT INTO {_S}.lais_equipes (org_id, nome{extra_c})\n    VALUES (v_org, 'noc_probe'{extra_v});"
+
+
+#: Migration 276 -- Lais wave 11 (Equipes). Unapplied guards read `no_fixture` (tables absent), `refused` once applied.
+_SW_LAIS_EQUIPES_PROBES: tuple[GuardProbe, ...] = (
+    _equipes_probe(
+        "nome_valido", "lais_equipes_nome_valido",
+        "A team with a blank name is unselectable in the page and in the Conversas filter.",
+        _equipe_ins().replace("'noc_probe'", "'   '"), _CHECK, "a team with a blank name",
+    ),
+    _equipes_probe(
+        "modo_valido", "lais_equipes_modo_valido",
+        "The mode picks who assigns the attendant (SW funnel or Julia); an unknown value would assign nobody, silently.",
+        _equipe_ins("modo", "'bogus'"), _CHECK, "a team with an unknown assignment mode",
+    ),
+    _equipes_probe(
+        "nome_unico", "lais_equipes_org_nome_uq",
+        "Two teams with the same name in one org are indistinguishable in the picker.",
+        _equipe_ins() + "\n" + _equipe_ins().replace("'noc_probe'", "'NOC_PROBE'"), _UNIQ,
+        "two teams with the same name (case-insensitive) in one org",
+    ),
+    _equipes_probe(
+        "membro_ordem_nao_negativa", "lais_equipe_membros_ordem_nao_negativa",
+        "The order is the round-robin sequence; a negative position would sort ahead of every real member.",
+        _equipe_ins() + "\n"
+        f"    INSERT INTO {_S}.lais_equipe_membros (equipe_id, org_id, user_id, ordem)\n"
+        f"    SELECT id, v_org, gen_random_uuid(), -1 FROM {_S}.lais_equipes WHERE org_id = v_org AND nome = 'noc_probe';",
+        _CHECK, "a team member with a negative ordem",
+    ),
+    _equipes_probe(
+        "atribuicao_criterio_valido", "lais_atribuicoes_criterio_valido",
+        "The criterion says WHY the attendant was picked (keep-last vs round-robin); free text breaks the audit.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_atribuicoes", "user_id, criterio", "gen_random_uuid(), 'bogus'"),
+        _CHECK, "an attribution with an unknown criterio",
+    ),
+    _equipes_probe(
+        "atribuicao_motivo_valido", "lais_atribuicoes_motivo_valido",
+        "The motivo is the audit trail of why an attendant was picked; free text would break the metrics grouping.",
+        _lais_contato_ins() + "\n" + _lais_child_ins("lais_atribuicoes", "user_id, motivo", "gen_random_uuid(), 'bogus'"),
+        _CHECK,
+        "an attribution with an unknown motivo",
+    ),
+)
+
+
 _M_LAIS_CLOUD = "275_lais_cloud.sql"
 _T_LAIS_CLOUD = (
     f"{_S}.lais_contatos", f"{_S}.lais_modelos", f"{_S}.lais_disparos", f"{_S}.lais_disparo_alvos",
@@ -9014,6 +9073,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_REENG_PROBES,
     *_SW_LAIS_CONV_PROBES,
     *_SW_LAIS_CLOUD_PROBES,
+    *_SW_LAIS_EQUIPES_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

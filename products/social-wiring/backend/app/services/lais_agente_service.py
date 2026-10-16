@@ -345,11 +345,14 @@ def destinatario_do_handoff(core_client: Any, connection: Any) -> UUID:
 
 
 def notificar_handoff(
-    core_client: Any, *, connection: Any, chat_id: str, titulo_chat: str | None, motivo: str | None
+    core_client: Any, *, connection: Any, chat_id: str, titulo_chat: str | None, motivo: str | None,
+    responsavel_user_id: UUID | str | None = None,
 ) -> int:
     """In-app notification (`write_in_app`, kind `lais_handoff`) to the target: chat
     name + escaped motivo (<= 280) + deep link. Never to the lead, never broadcast."""
-    destinatario = destinatario_do_handoff(core_client, connection)
+    # Wave 11: when distribution already picked an attendant (BEFORE notifying), they get it -- same
+    # responsavel-first tier as the wave-6 sink; otherwise the configured handoff target (11.4).
+    destinatario = responsavel_user_id or destinatario_do_handoff(core_client, connection)
     nome = html.escape((titulo_chat or chat_id).strip() or chat_id)
     motivo_limpo = html.escape(sanitize_motivo(motivo))
     mensagem = f"A Julia passou a conversa com {nome} para atendimento humano."

@@ -191,10 +191,14 @@ def _contatos_visiveis(client: Any, ctx: AcessoCtx, **eq: Any) -> list[dict[str,
 
 
 def _filtros_de_coluna(itens: list[dict[str, Any]], *, operacao: list[str], status_sw: list[str],
-                       atendimento: list[str], responsavel: list[str]) -> list[dict[str, Any]]:
-    """The comma-joined list filters (OR within a filter, AND across). `sem` in `responsavel` = unassigned."""
+                       atendimento: list[str], responsavel: list[str],
+                       equipe_membros: Optional[set[str]] = None) -> list[dict[str, Any]]:
+    """The comma-joined list filters (OR within a filter, AND across). `sem` in `responsavel` = unassigned.
+    `equipe_membros` (wave 11): the user ids of the chosen team(s) -- keeps the contatos whose responsavel is one of them."""
     out = []
     for i in itens:
+        if equipe_membros is not None and str(i.get("responsavel_user_id")) not in equipe_membros:
+            continue
         if operacao and i.get("operacao") not in operacao:
             continue
         if status_sw and i.get("status_envio") not in status_sw:
@@ -214,6 +218,15 @@ def _enriquecer(client: Any, ctx: AcessoCtx, contatos: list[dict[str, Any]]) -> 
     chats = _chats_dos_contatos(client, ctx.org_id, contatos)
     tags = _etiquetas_dos_contatos(client, ctx.org_id, [str(c["id"]) for c in contatos])
     return [_item(c, chats.get((str(c["connection_id"]), str(c["chat_id"]))), tags.get(str(c["id"]), [])) for c in contatos]
+
+
+def _membros_do_filtro(client: Any, ctx: AcessoCtx, equipe: Optional[list[str]]) -> Optional[set[str]]:
+    """`None` = no team filter; else the members of the chosen team(s) of the caller's org (unknown team -> empty set)."""
+    if not equipe:
+        return None
+    from app.services import lais_equipes_service
+
+    return lais_equipes_service.membros_das_equipes(client, ctx.org_id, equipe)
 
 
 def _ordenar(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -239,7 +252,7 @@ def listar(
     client: Any, ctx: AcessoCtx, *, aba: str = "todas", operacao: Optional[list[str]] = None,
     status_sw: Optional[list[str]] = None, atendimento: Optional[list[str]] = None,
     responsavel: Optional[list[str]] = None, etiquetas: Optional[list[str]] = None,
-    busca: Optional[str] = None, limit: int = 50, offset: int = 0,
+    busca: Optional[str] = None, limit: int = 50, offset: int = 0, equipe: Optional[list[str]] = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """`(page, total)` of the conversations the caller may see, newest first. `aba`:
     todas / minhas (the caller OWNS them) / arquivadas. List filters are OR-within / AND-across."""
@@ -247,7 +260,7 @@ def listar(
     donos = lais_acesso.donos_das_conexoes(client, ctx.org_id, (c["connection_id"] for c in contatos))
     itens = _filtros_de_coluna(
         _ordenar(_enriquecer(client, ctx, contatos)), operacao=operacao or [], status_sw=status_sw or [],
-        atendimento=atendimento or [], responsavel=responsavel or [])
+        atendimento=atendimento or [], responsavel=responsavel or [], equipe_membros=_membros_do_filtro(client, ctx, equipe))
     itens = _filtrar(itens, ctx, donos, aba=aba, etiquetas=etiquetas or [], busca=busca)
     return itens[offset:offset + limit], len(itens)
 
@@ -255,14 +268,14 @@ def listar(
 def kanban(
     client: Any, ctx: AcessoCtx, *, etiquetas: Optional[list[str]] = None, operacao: Optional[list[str]] = None,
     status_sw: Optional[list[str]] = None, atendimento: Optional[list[str]] = None,
-    responsavel: Optional[list[str]] = None,
+    responsavel: Optional[list[str]] = None, equipe: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Columns: a fixed `todas` (every live conversation), one per etiqueta (the `etiquetas` ids pick which;
     default = every tag of the org) and a collapsed `arquivadas` (count only)."""
     contatos = _contatos_visiveis(client, ctx)
     itens = _filtros_de_coluna(
         _ordenar(_enriquecer(client, ctx, contatos)), operacao=operacao or [], status_sw=status_sw or [],
-        atendimento=atendimento or [], responsavel=responsavel or [])
+        atendimento=atendimento or [], responsavel=responsavel or [], equipe_membros=_membros_do_filtro(client, ctx, equipe))
     vivos = [i for i in itens if not i["arquivado"]]
     catalogo = listar_etiquetas(client, ctx.org_id)
     escolhidas = [e for e in catalogo if not etiquetas or str(e["id"]) in set(etiquetas)]
