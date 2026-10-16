@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({ admin: true }));
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
-vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
+vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => h.admin }));
 vi.mock("@noctusai/seed/infra", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("sonner", () => ({ toast }));
 
@@ -29,8 +29,11 @@ function setup(items: unknown[] = [L("a"), L("b")], total = items.length) {
     <MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><LaisLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>,
   );
 }
-async function confirmar() {
-  fireEvent.click(await screen.findByRole("button", { name: /^(Enviar ao SW|Enviar selecionados)$/, hidden: false }, { timeout: 2000 }).catch(() => { throw new Error("no confirm"); }));
+/** Clicks the ConfirmProvider's confirm button (the one outside the table / bulk bar). */
+async function confirmar(title: RegExp, label: string) {
+  await screen.findByText(title);
+  const btn = screen.getAllByRole("button", { name: label }).find((b) => !b.closest("table") && !b.closest("[data-testid=leads-bulk]"));
+  fireEvent.click(btn!);
 }
 
 beforeEach(() => { h.admin = true; Object.values(api).forEach((f) => f.mockReset()); Object.values(toast).forEach((f) => f.mockReset()); });
@@ -95,11 +98,51 @@ describe("Leads page", () => {
     expect(screen.queryByTestId("leads-skeleton")).toBeNull();
   });
 
-  it("sends one lead; 409 ja_enviado is informational, 422 explains the phone", async () => {
+  it("sends one lead: success, 409 ja_enviado (info) and 422 contato_sem_telefone (error)", async () => {
     setup();
     await screen.findByTestId("lead-a");
-    api.post.mockRejectedValueOnce(err(409, "ja_enviado"));
+    api.post.mockResolvedValueOnce({ data: { status_envio: "enviado", lead_id: "sw1" } });
     fireEvent.click(screen.getByTestId("enviar-a"));
-    fireEvent.click(await screen.findByRole("button", { name: "Enviar ao SW", hidden: false }, { timeout: 2000 }).then((b) => b));
+    await confirmar(/Enviar ao SW\?/, "Enviar ao SW");
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/leads/a/enviar", {}));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    api.post.mockRejectedValueOnce(err(409, "ja_enviado"));
+    fireEvent.click(screen.getByTestId("enviar-b"));
+    await confirmar(/Enviar ao SW\?/, "Enviar ao SW");
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith("Este lead já foi enviado ao SW."));
+
+    api.post.mockRejectedValueOnce(err(422, "contato_sem_telefone"));
+    fireEvent.click(screen.getByTestId("enviar-a"));
+    await confirmar(/Enviar ao SW\?/, "Enviar ao SW");
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("não tem telefone")));
+  });
+
+  it("bulk send posts ids and reports partial errors by code", async () => {
+    setup();
+    await screen.findByTestId("lead-a");
+    fireEvent.click(screen.getByLabelText("Selecionar todos"));
+    api.post.mockResolvedValueOnce({ data: { ok: ["a"], erro: [{ id: "b", code: "contato_sem_telefone" }] } });
+    fireEvent.click(within(screen.getByTestId("leads-bulk")).getByRole("button", { name: "Enviar selecionados" }));
+    await confirmar(/Enviar 2 lead\(s\) ao SW\?/, "Enviar selecionados");
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/leads/enviar-lote", { ids: ["a", "b"] }));
+    const r = await screen.findByTestId("leads-lote-resultado");
+    expect(r.textContent).toContain("1 enviado(s)");
+    expect(r.textContent).toContain("não tem telefone");
+    // failed rows stay selected for retry
+    expect(screen.getByTestId("leads-bulk").textContent).toContain("1 selecionado(s)");
+  });
+
+  it("'Baixar selecionados' is admin-only", async () => {
+    setup();
+    await screen.findByTestId("lead-a");
+    fireEvent.click(screen.getByLabelText("Selecionar Lead a"));
+    expect(within(screen.getByTestId("leads-bulk")).getByRole("button", { name: "Baixar selecionados" })).toBeTruthy();
+    cleanup();
+    h.admin = false;
+    setup();
+    await screen.findByTestId("lead-a");
+    fireEvent.click(screen.getByLabelText("Selecionar Lead a"));
+    expect(within(screen.getByTestId("leads-bulk")).queryByRole("button", { name: "Baixar selecionados" })).toBeNull();
   });
 });

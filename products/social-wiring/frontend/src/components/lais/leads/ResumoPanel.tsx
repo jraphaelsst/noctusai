@@ -1,13 +1,13 @@
 /** "Ver resumo" panel — the Julia summary + collected slots of one lead. */
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResumoLead, type LeadLais } from "@/hooks/useLaisLeads";
-import { SidePanel } from "../SidePanel";
+import { SideDrawer } from "@noctusai/lib/components";
 
 export function ResumoPanel({ lead, onClose }: { lead: LeadLais; onClose: () => void }) {
   const q = useResumoLead(lead.id);
   const slots = Object.entries(q.data?.slots ?? {}).filter(([, v]) => v !== null && v !== "");
   return (
-    <SidePanel title={`Resumo — ${lead.nome ?? "Lead"}`} testId="leads-resumo" onClose={onClose}>
+    <SideDrawer open onOpenChange={(o) => { if (!o) onClose(); }} title={`Resumo — ${lead.nome ?? "Lead"}`} testId="leads-resumo">
       {q.isPending && !q.data ? (
         <div data-testid="resumo-skeleton" className="space-y-2"><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-2/3" /></div>
       ) : q.isError && !q.data ? (
@@ -26,6 +26,6 @@ export function ResumoPanel({ lead, onClose }: { lead: LeadLais; onClose: () => 
           )}
         </>
       )}
-    </SidePanel>
+    </SideDrawer>
   );
 }

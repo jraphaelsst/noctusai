@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { useConfirm } from "@noctusai/lib";
+import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,6 @@ import {
   type CriterioRascunho,
   type GrupoRascunho,
 } from "./criterios";
-import { SidePanel } from "../SidePanel";
 
 type Chave = "ambas" | "compra" | "aluguel";
 type Rascunhos = Record<Chave, GrupoRascunho[]>;
@@ -184,7 +183,6 @@ export function EnvioWizard({
   isAdmin: boolean;
   onClose: () => void;
 }) {
-  const confirm = useConfirm();
   const salvar = useSalvarEnvioRegras();
   const [passo, setPasso] = useState<1 | 2>(1);
   const [separar, setSeparar] = useState(separaOperacao(regras));
@@ -208,10 +206,6 @@ export function EnvioWizard({
       v ? { ...d, compra: copiar(d.ambas), aluguel: copiar(d.ambas) } : d);
   };
 
-  const sair = async () => {
-    if (dirty && !(await confirm({ title: "Sair da edição?", description: "As alterações não salvas serão perdidas.", confirmLabel: "Sair", tone: "danger" }))) return;
-    onClose();
-  };
   const proximo = () => {
     for (const k of chaves) {
       const e = validarGrupos(draft[k]);
@@ -232,15 +226,17 @@ export function EnvioWizard({
   };
 
   return (
-    <SidePanel
-      wide
+    <SideDrawer
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      width="xl"
+      dirty={dirty}
       testId="envio-wizard"
       title={`Envio de leads qualificados — Passo ${passo} de 2`}
-      onClose={sair}
-      footer={
+      footer={({ requestClose }) =>
         passo === 1 ? (
           <>
-            <Button variant="outline" onClick={sair}>Cancelar</Button>
+            <Button variant="outline" onClick={requestClose}>Cancelar</Button>
             <Button onClick={proximo} data-testid="wizard-proximo">Próximo</Button>
           </>
         ) : (
@@ -284,6 +280,6 @@ export function EnvioWizard({
         </div>
       )}
       {erro && <p role="alert" className="text-sm text-destructive" data-testid="wizard-erro">{erro}</p>}
-    </SidePanel>
+    </SideDrawer>
   );
 }

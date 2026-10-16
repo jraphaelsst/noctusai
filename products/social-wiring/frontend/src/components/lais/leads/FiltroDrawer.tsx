@@ -1,11 +1,11 @@
 /** "Filtro de leads" drawer (live a8). One component file so the panel can be swapped for the seed SideDrawer. */
 import { useState } from "react";
+import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { filtrosVazios, type FiltrosLeads } from "@/hooks/useLaisLeads";
-import { SidePanel } from "../SidePanel";
 import { CANAIS } from "./canais";
 
 const OPERACOES = [["aluguel", "Aluguel"], ["compra", "Compra"], ["administracao", "Administração"]] as const;
@@ -43,10 +43,11 @@ export function FiltroDrawer({
     </div>
   );
   return (
-    <SidePanel
+    <SideDrawer
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
       title="Filtro de leads"
       testId="leads-filtro"
-      onClose={onClose}
       footer={
         <>
           <Button variant="outline" data-testid="filtro-limpar" onClick={() => { setF(filtrosVazios()); onAplicar(filtrosVazios()); }}>Limpar</Button>
@@ -75,6 +76,6 @@ export function FiltroDrawer({
       <Checks nome="Canal" opcoes={CANAIS.map((c) => [c, c] as const)} valor={f.canal} onChange={(v) => set("canal", v)} />
       {texto("campanha", "Campanha de origem")}
       {texto("anuncio", "Anúncio de origem")}
-    </SidePanel>
+    </SideDrawer>
   );
 }

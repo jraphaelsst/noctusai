@@ -7,7 +7,7 @@ import { ConfirmProvider } from "@noctusai/lib";
 const h = vi.hoisted(() => ({ admin: true }));
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
-vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
+vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => h.admin }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import LaisEnvio from "./Envio";
@@ -110,7 +110,7 @@ describe("Envio wizard", () => {
     w = await abrir();
     fireEvent.click(within(w).getByTestId("combinar-0"));
     fireEvent.click(within(w).getAllByLabelText("Fechar")[0]);
-    expect(await screen.findByText("Sair da edição?")).toBeTruthy();
+    expect(await screen.findByText(/Sair da edição\?/)).toBeTruthy();
   });
 
   it("is read-only for non-admins", async () => {
