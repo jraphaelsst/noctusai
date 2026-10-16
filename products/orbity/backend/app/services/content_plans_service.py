@@ -22,6 +22,7 @@ a single layer. No silent errors: every except logs and re-raises.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -33,6 +34,34 @@ _ITEM_COLUMNS = (
     "title", "description", "format", "platform", "post_date", "due_date",
     "caption", "reference_notes",
 )
+
+
+#: A claim ('task_pending' with no task yet) older than this was abandoned by a crashed request: the claim is held for
+#: the milliseconds between the compare-and-set and the task insert, so 15 minutes is far beyond any live holder.
+STALE_CLAIM_MINUTES = 15
+
+
+def release_stale_claims(db: Any, *, now: datetime | None = None, max_age_minutes: int = STALE_CLAIM_MINUTES) -> int:
+    """Release the items stuck in ``task_pending`` (no task linked, untouched for ``max_age_minutes``) back to 'planned'.
+
+    A crash between ``_claim_item`` and the task link leaves the item claimed forever (the claim filters it out of every
+    later "Criar tarefas"). Cross-org, one UPDATE: it re-states every predicate (status, ``task_id IS NULL``, age), so an
+    item a live request just linked (``task_created``) or touched is never reverted. Returns how many items were released.
+    """
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(minutes=max_age_minutes)).isoformat()
+    rows = (
+        db.table("content_plan_items")
+        .update({"status": "planned"})
+        .eq("status", "task_pending")
+        .is_("task_id", "null")
+        .lt("updated_at", cutoff)
+        .execute()
+        .data
+        or []
+    )
+    if rows:
+        logger.warning("content_plans: released %d stale task_pending claim(s)", len(rows))
+    return len(rows)
 
 
 class PlanReferenceError(ValueError):

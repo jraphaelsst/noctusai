@@ -23,6 +23,8 @@ Jobs:
     left mid-processing), creates the Asaas charge with its idempotency
     reference, retries transient failures with backoff, then cancels at the
     gateway the charges whose receivable was cancelled.
+  * ``orbity_content_claims_sweep`` — every 5 minutes. Releases the content-plan items a crashed "Criar tarefas"
+    left in ``task_pending`` (no task linked, untouched for 15 minutes) back to ``planned``.
   * ``finance_generate_recurrences`` — daily. Books the due recurring finance
     entries (the seed finance organ's ``generate_due_recurrences``).
 
@@ -42,6 +44,7 @@ from noctusai_lib.domain.finance.recurrences import generate_due_recurrences
 from app import billing
 from app.dependencies import get_admin_client
 from app.services import billing_charges
+from app.services.content_plans_service import release_stale_claims
 from app.services.automation_engine import orgs_with_due_work
 from app.services.automation_service import AutomationService
 from app.services.tasks_service import TasksService, orgs_with_due_routines
@@ -54,9 +57,11 @@ stop_scheduler = seed_scheduler.stop_scheduler
 
 BILLING_PROCESS_JOB = "orbity_billing_process"
 RECURRENCES_JOB = "finance_generate_recurrences"
+CONTENT_CLAIMS_JOB = "orbity_content_claims_sweep"
 
 __all__ = [
-    "configure", "job_automacao_run_due", "job_billing_process", "job_finance_recurrences", "job_rotinas_run_due",
+    "configure", "job_automacao_run_due", "job_billing_process", "job_content_claims_sweep", "job_finance_recurrences",
+    "job_rotinas_run_due",
     "start_scheduler", "stop_scheduler",
 ]
 
@@ -118,11 +123,22 @@ async def job_finance_recurrences() -> None:
         logger.exception("job %s falhou", RECURRENCES_JOB)
 
 
+async def job_content_claims_sweep() -> None:
+    try:
+        admin = get_admin_client()
+        released = await anyio.to_thread.run_sync(lambda: release_stale_claims(admin))
+        if released:
+            logger.info("job %s: %d item(ns) liberado(s)", CONTENT_CLAIMS_JOB, released)
+    except Exception:  # noqa: BLE001 — a job failure must be loud, not fatal to the loop
+        logger.exception("job %s falhou", CONTENT_CLAIMS_JOB)
+
+
 def configure() -> None:
     seed_scheduler.register("orbity_automacao_run_due", job_automacao_run_due, minutes=1)
     seed_scheduler.register("orbity_rotinas_run_due", job_rotinas_run_due, minutes=15)
     seed_scheduler.register(BILLING_PROCESS_JOB, job_billing_process, minutes=2)
     seed_scheduler.register(RECURRENCES_JOB, job_finance_recurrences, cron="10 3 * * *")
+    seed_scheduler.register(CONTENT_CLAIMS_JOB, job_content_claims_sweep, minutes=5)
     # The seed contracts organ's own daily job (registered through its mounted organ so it books through the host's billing).
     from app.routers.organs import contracts_organ
 

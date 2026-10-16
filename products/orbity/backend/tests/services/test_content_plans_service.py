@@ -4,6 +4,7 @@ asserted through inserted_payloads / updated_payloads. No patching.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -14,6 +15,7 @@ from app.services.content_plans_service import (
     ContentPlansService,
     PlanReferenceError,
     build_task_description,
+    release_stale_claims,
 )
 
 ORG = UUID("00000000-0000-0000-0000-000000000001")
@@ -205,3 +207,39 @@ class TestClaim:
         out = ContentPlansService(db, org_id=ORG).create_tasks(_plan(), ["item-0"])
         assert out["failed"] == 1 and out["created"] == 0
         assert {"status": "in_progress"} in db.table("content_plan_items").updated_payloads
+
+
+class TestStaleClaimSweeper:
+    """An item stuck in 'task_pending' with no task (a crash between claim and link) is released after 15 minutes."""
+
+    NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
+
+    def _ago(self, minutes: int) -> str:
+        return (self.NOW - timedelta(minutes=minutes)).isoformat()
+
+    def _status_of(self, db, item_id):
+        return next(r["status"] for r in db.table("content_plan_items")._data if r["id"] == item_id)
+
+    def test_only_old_unlinked_claims_go_back_to_planned(self):
+        db, _svc_ = _svc(content_plan_items=[
+            _item(0, status="task_pending", updated_at=self._ago(16)),                       # abandoned claim
+            _item(1, status="task_pending", updated_at=self._ago(5)),                        # a live request holds it
+            _item(2, status="task_pending", updated_at=self._ago(60), task_id="t-1"),        # linked: never reverted
+            _item(3, status="task_created", updated_at=self._ago(60), task_id="t-3"),
+            _item(4, status="discarded", updated_at=self._ago(60)),
+            _item(5, status="planned", updated_at=self._ago(60)),
+        ])
+        assert release_stale_claims(db, now=self.NOW) == 1
+        assert [self._status_of(db, f"item-{n}") for n in range(6)] == [
+            "planned", "task_pending", "task_pending", "task_created", "discarded", "planned"]
+
+    def test_a_released_item_can_get_its_task_again(self):
+        db, svc = _svc(content_plan_items=[_item(0, status="task_pending", updated_at=self._ago(30))])
+        assert svc.create_tasks(_plan(), ["item-0"])["skipped"] == 1  # stuck: not eligible
+        release_stale_claims(db, now=self.NOW)
+        out = svc.create_tasks(_plan(), ["item-0"])
+        assert out["created"] == 1 and out["skipped"] == 0
+
+    def test_nothing_to_release_is_zero(self):
+        db, _svc_ = _svc(content_plan_items=[_item(0)])
+        assert release_stale_claims(db, now=self.NOW) == 0

@@ -173,8 +173,9 @@ page (frontend/src/pages/X.tsx)
   approval history endpoints exist (`GET /approvals*`) without UI. "Criar tarefas" claims each
   item by compare-and-set (`status='task_pending'` WHERE `task_id IS NULL` and not
   discarded/pending) before creating its task, so concurrent calls never double-create; a failed
-  task insert releases the claim. A crash between claim and link leaves the item in `task_pending`
-  (needs a manual status reset).
+  task insert releases the claim. A crash between claim and link leaves the item in `task_pending`;
+  the job `orbity_content_claims_sweep` (every 5 min) releases items stuck there with `task_id IS NULL` and `updated_at` older than
+  15 minutes back to `planned` (one predicate-restating UPDATE, so an item a live request just linked is never reverted).
 
 ### Relatórios — `reports`, `report_snapshots` (+ reads leads/revenues/expenses/campaign_metrics)
 - **Dataflow:** `useRelatorios` → `/api/reports` CRUD, `GET /{id}/snapshots`, `POST /{id}/generate`;

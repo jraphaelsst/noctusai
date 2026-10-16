@@ -66,3 +66,26 @@ def test_routines_job_spawns_tasks_for_due_routines(client):
     tasks = mock.table("tasks").select("*").execute().data
     assert [t["title"] for t in tasks] == ["Relatório semanal"]
     assert tasks[0]["org_id"] == ORG_A
+
+
+def test_content_claims_sweep_job_is_registered_and_releases_stuck_items(client):
+    from datetime import datetime, timedelta, timezone
+
+    scheduler.configure()
+    assert "orbity_content_claims_sweep" in {j.id for j in seed_scheduler.scheduler.get_jobs()}
+    old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    mock = client.mock_supabase
+    mock.set_table_data("content_plan_items", [
+        {"id": "i1", "org_id": ORG_A, "status": "task_pending", "task_id": None, "updated_at": old},
+        {"id": "i2", "org_id": ORG_B, "status": "task_pending", "task_id": "t", "updated_at": old}])
+
+    asyncio.run(scheduler.job_content_claims_sweep())
+
+    status = {r["id"]: r["status"] for r in mock.table("content_plan_items").select("*").execute().data}
+    assert status == {"i1": "planned", "i2": "task_pending"}
+
+
+def test_content_claims_sweep_never_raises_when_the_database_is_down(client):
+    mock = client.mock_supabase
+    mock.table = lambda name: (_ for _ in ()).throw(RuntimeError("db down"))  # test double, not SUT
+    asyncio.run(scheduler.job_content_claims_sweep())
