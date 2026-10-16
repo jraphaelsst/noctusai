@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from .conftest import ORG_B, VALID_CPF, build_harness, line, seed_party, tomorrow
+from .conftest import ORG_B, VALID_CPF, build_harness, line, seed_party, today, tomorrow
 
 U0 = "11111111-1111-1111-1111-111111111111"
 P = "/api/quotes"
@@ -225,6 +225,6 @@ def test_expire_due_route(h, party):
     send_link(h, q["id"])
     from datetime import date, timedelta
 
-    h.db.table("quo_quotes").update({"valid_until": (date.today() - timedelta(days=3)).isoformat()}).eq("id", q["id"]).execute()
+    h.db.table("quo_quotes").update({"valid_until": (today() - timedelta(days=3)).isoformat()}).eq("id", q["id"]).execute()
     assert call(h, "POST", f"{P}/expire-due", h.admin).json()["data"] == {"expired": 1}
     assert call(h, "GET", f"{P}/{q['id']}", h.staff()).json()["data"]["status"] == "expired"

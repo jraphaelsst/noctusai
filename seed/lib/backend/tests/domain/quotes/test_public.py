@@ -11,7 +11,7 @@ from noctusai_lib.domain.quotes import links
 from noctusai_lib.domain.quotes.public import present_public
 from noctusai_lib.primitives.exceptions import AppException, app_exception_handler
 
-from .conftest import CFG, ORG_A, ORG_B, SECRET, build_harness, line, seed_party, tomorrow
+from .conftest import CFG, ORG_A, ORG_B, SECRET, build_harness, line, seed_party, today, tomorrow
 
 P = "/api/public/quotes"
 S = "/api/quotes"
@@ -182,7 +182,7 @@ def test_an_expired_offer_shows_expired_and_refuses(h, party):
     qid, token = sent(h, party)
     from datetime import date
 
-    h.db.table("quo_quotes").update({"valid_until": (date.today() - timedelta(days=2)).isoformat()}).eq("id", qid).execute()
+    h.db.table("quo_quotes").update({"valid_until": (today() - timedelta(days=2)).isoformat()}).eq("id", qid).execute()
     assert h.client.get(f"{P}/{token}").json()["data"]["status"] == "expired"
     r = post(h, token, "accept", name="Ana Souza", agree=True)
     assert (r.status_code, r.json()["error"]["code"]) == (409, "orcamento_expirado")

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from uuid import UUID
 
 from noctusai_lib.api.auth.session.scopes import ADMIN_ORG_ROLES
@@ -72,7 +72,18 @@ LINKS = {"captacao": "/lais/captacao", "pre_agendamento_visita": "/lais/visitas"
 INTENCOES_COBRANCA = frozenset({"cobranca_atendimento", "cobranca", "cobrar_atendimento"})
 
 
+_core_provider: Optional[Callable[[], Any]] = None
+
+
+def registrar_core_provider(fn: Optional[Callable[[], Any]]) -> None:
+    """Core client used to resolve recipients (org users); default `get_core_client()`. Tests inject here."""
+    global _core_provider
+    _core_provider = fn
+
+
 def _core() -> Any:
+    if _core_provider is not None:
+        return _core_provider()
     from app.dependencies import get_core_client
 
     return get_core_client()

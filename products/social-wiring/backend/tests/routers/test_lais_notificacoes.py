@@ -5,6 +5,7 @@ Seams: mock DB + the `lais_eventos_service` sink; nothing of ours is patched."""
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -24,6 +25,16 @@ from tests.support.lais_world import (
 
 BASE = "/api/lais/notificacoes"
 H = {"Authorization": "Bearer test-token"}
+
+
+@contextmanager
+def _core_injetado(w):
+    """Bind the world's core client through the service's own seam (never a patch of the module under test)."""
+    svc.registrar_core_provider(lambda: w.core)
+    try:
+        yield
+    finally:
+        svc.registrar_core_provider(None)
 
 
 def _mundo(**contato_over):
@@ -103,7 +114,7 @@ class TestSinkEHandoff:
     def test_emitir_fans_out_through_the_registered_sink(self):
         w, c = _mundo()
         svc.registrar()
-        with patch("app.services.lais_notificacoes_service._core", return_value=w.core):
+        with _core_injetado(w):
             _evento(w, c, "novo_lead")
         assert _para(w) == [OWNER_ID]
 
@@ -127,7 +138,7 @@ class TestSinkEHandoff:
         inter = contatos.abrir_interacao(w.sw, ORG_ID, c)
         w.agents.resumo_result = None
         svc.registrar()
-        with patch("app.services.lais_notificacoes_service._core", return_value=w.core):
+        with _core_injetado(w):
             svc.avisar_cobranca(w.sw, ORG_ID, c, inter, ["pergunta_preco", "cobranca_atendimento"])
             svc.avisar_cobranca(w.sw, ORG_ID, c, inter, ["pergunta_preco"])
         assert [n["metadata"]["tipo"] for n in w.notifications()] == ["lais_cobranca_atendimento"]
@@ -142,7 +153,7 @@ class TestSinkEHandoff:
                 return ResumoResult(resumo="r", slots={}, intencoes=("cobranca",), desfecho=None, custo_usd=0.0, operacao=None)
 
         svc.registrar()
-        with patch("app.services.lais_notificacoes_service._core", return_value=w.core):
+        with _core_injetado(w):
             asyncio.run(acoes.fechar_interacao(w.sw, org_id=ORG_ID, contato=c, interacao=inter, agents_client=Agents(), conversation_id="conv"))
         assert [n["metadata"]["tipo"] for n in w.notifications()] == ["lais_cobranca_atendimento"]
 

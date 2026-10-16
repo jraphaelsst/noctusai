@@ -91,14 +91,14 @@ def _utc(dt: datetime) -> str:
 
 
 def _varrer(client: Any, tabela: str, colunas: str, org_id: UUID | str, ini: datetime, fim: datetime,
-            label: str, extra: Optional[Callable[[Any], Any]] = None) -> list[dict[str, Any]]:
+            label: str, refinar: Optional[Callable[[Any], Any]] = None) -> list[dict[str, Any]]:
     def pagina(a: int, b: int) -> Any:
         q = (
             client.table(tabela).select(colunas).eq("org_id", str(org_id))
             .gte("created_at", _utc(ini)).lt("created_at", _utc(fim))
         )
-        if extra:
-            q = extra(q)
+        if refinar:
+            q = refinar(q)
         return q.order("id").range(a, b).execute().data
 
     return list(iter_paged_rows(pagina, label=label))
@@ -178,7 +178,7 @@ async def painel(client: Any, ctx: lais_acesso.AcessoCtx, *, mes: str, client_ag
     )
     contatos = lais_acesso.filtrar_contatos(client, ctx, contatos)
     cobrancas = _varrer(client, T_EVENTOS, "id,contato_id", org_id, ini, fim, "lais painel eventos",
-                        extra=lambda q: q.eq("tipo", TIPO_COBRANCA))
+                        refinar=lambda q: q.eq("tipo", TIPO_COBRANCA))
     visitas = _varrer(client, T_VISITAS, "id,contato_id", org_id, ini, fim, "lais painel visitas")
     cobrancas = lais_acesso.filtrar_por_contato(client, ctx, cobrancas)
     visitas = lais_acesso.filtrar_por_contato(client, ctx, visitas)

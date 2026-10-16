@@ -10,7 +10,7 @@ from noctusai_lib.domain.quotes._common import local_today
 from noctusai_lib.domain.quotes.errors import QuotesError
 from noctusai_lib.primitives.exceptions import NotFoundError
 
-from .conftest import CFG, ORG_B, line, seed_item, seed_party, tomorrow
+from .conftest import CFG, ORG_B, line, seed_item, seed_party, today, tomorrow
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_default_validity_and_past_validity_refused(s, party):
     q = svc.create_quote(s, {"party_id": party["id"], "lines": []})
     assert q["valid_until"] == (local_today(CFG) + timedelta(days=CFG.default_valid_days)).isoformat()
     with pytest.raises(QuotesError) as e:
-        mk(s, party, valid_until=date.today() - timedelta(days=3))
+        mk(s, party, valid_until=today() - timedelta(days=3))
     assert code(e) == "validade_invalida"
 
 
@@ -223,7 +223,7 @@ def _open(s, party, days_ahead):
     q = mk(s, party, valid_until=tomorrow())
     svc.transition(s, svc.get_row(s, q["id"]), "sent", expect=["draft"])
     # age the offer without touching the code under test: the validity column is a draft-time input.
-    s.tbl("quotes").update({"valid_until": (date.today() + timedelta(days=days_ahead)).isoformat()}).eq("id", q["id"]).execute()
+    s.tbl("quotes").update({"valid_until": (today() + timedelta(days=days_ahead)).isoformat()}).eq("id", q["id"]).execute()
     return q["id"]
 
 

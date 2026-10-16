@@ -10,7 +10,7 @@ from noctusai_lib.domain.quotes import (
 )
 from noctusai_lib.domain.quotes.errors import QuotesError
 
-from .conftest import ORG_A, QuotesDb, line, make_db, seed_party, tomorrow
+from .conftest import ORG_A, QuotesDb, line, make_db, seed_party, today, tomorrow
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def test_only_an_open_quote_can_be_decided(s, party, status, expected):
 
 def test_an_expired_offer_cannot_be_accepted(s, party):
     qid = sent(s, party)
-    s.tbl("quotes").update({"valid_until": (date.today() - timedelta(days=2)).isoformat()}).eq("id", qid).execute()
+    s.tbl("quotes").update({"valid_until": (today() - timedelta(days=2)).isoformat()}).eq("id", qid).execute()
     with pytest.raises(QuotesError) as e:
         public_accept(s, qid)
     assert code(e) == "orcamento_expirado" and svc.get_row(s, qid)["status"] == "expired"

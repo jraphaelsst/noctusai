@@ -31,7 +31,7 @@ from noctusai_lib.domain.quotes import (
     make_quotes_router,
     quotes_migration,
 )
-from noctusai_lib.domain.quotes._common import Scope
+from noctusai_lib.domain.quotes._common import Scope, local_today
 from noctusai_lib.integrations.docx_render import FakeDocxRenderAdapter
 from noctusai_lib.integrations.email.fake_adapter import FakeEmailSender
 from noctusai_lib.integrations.signature import FakeSignatureAdapter
@@ -147,8 +147,14 @@ def docx_template_bytes(body: str = "Orçamento {{ number }} - {{ party_name }} 
     return buf.getvalue()
 
 
+def today() -> date:
+    """The quotes organ's own clock (org-local date, CFG.tz) — never the runner's UTC `date.today()`, which
+    disagrees with it for the hours between UTC midnight and local midnight and flakes every expiry test."""
+    return local_today(CFG)
+
+
 def tomorrow() -> date:
-    return date.today() + timedelta(days=3)
+    return today() + timedelta(days=3)
 
 
 # ─── HTTP harness ────────────────────────────────────────────────────────────
