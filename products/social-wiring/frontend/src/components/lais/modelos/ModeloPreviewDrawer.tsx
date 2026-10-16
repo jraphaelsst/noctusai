@@ -18,7 +18,7 @@ export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null
 
   async function remover() {
     if (!modelo) return;
-    if (!(await confirmar({ title: "Excluir modelo", description: `Excluir "${modelo.nome}"?`, confirmLabel: "Excluir" } as never))) return;
+    if (!(await confirmar({ title: "Excluir modelo", description: `Excluir "${modelo.nome}"?`, confirmLabel: "Excluir", tone: "danger" }))) return;
     excluir.mutate(modelo.id, {
       onSuccess: () => {
         toast.success("Modelo excluído");
