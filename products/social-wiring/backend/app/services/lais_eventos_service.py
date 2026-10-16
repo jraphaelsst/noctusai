@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,17 @@ TIPOS_DIAGNOSTICO: frozenset[str] = frozenset({"acao_sem_handler", "acao_falhou"
 #: `regua_sem_transporte` records a template attempt skipped until wave 12's Cloud transport exists.
 TIPOS_REENGAJAMENTO: frozenset[str] = frozenset({"reengajamento", "regua_sem_transporte"})
 TIPOS: frozenset[str] = TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO
+
+#: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no
+#: emitting caller is edited; a failing sink is logged and never reaches the caller.
+_SINKS: list[Callable[[Any, dict[str, Any]], None]] = []
+
+
+def registrar_sink(fn: Callable[[Any, dict[str, Any]], None]) -> None:
+    """Idempotent: registering the same callable twice keeps one."""
+    if fn not in _SINKS:
+        _SINKS.append(fn)
+
 
 _TIPO_RE = re.compile(r"^[a-z][a-z0-9_]{2,39}$")  # mirrors `lais_eventos_tipo_valido`
 
@@ -61,7 +72,13 @@ def emitir(
         logger.exception("lais: could not write event %s (org=%s contato=%s)", tipo, org_id, contato_id)
         return None
     data = res.data or []
-    return data[0] if data else row
+    stored = data[0] if data else row
+    for sink in tuple(_SINKS):
+        try:
+            sink(client, stored)
+        except Exception:
+            logger.exception("lais: event sink %s failed for %s (org=%s)", getattr(sink, "__name__", sink), tipo, org_id)
+    return stored
 
 
-__all__ = ["TIPOS", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir"]
+__all__ = ["TIPOS", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]

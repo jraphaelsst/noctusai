@@ -41,6 +41,7 @@ from uuid import UUID
 from app.clients.agents import AgentsClient, AgentsClientError, ResumoRequest, TurnResult
 from app.services import lais_contatos_service as contatos
 from app.services import lais_eventos_service as eventos
+from app.services import lais_notificacoes_service as notificacoes
 from app.services import lais_slots_sensiveis as sensiveis
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,8 @@ async def fechar_interacao(
                 patch["operacao"] = res.operacao
     # `encerrada_at IS NULL` in the WHERE: a concurrent close wins, ours is a no-op.
     client.table(contatos.T_INTERACOES).update(patch).eq("id", str(interacao["id"])).is_("encerrada_at", "null").execute()
+    if patch.get("intencoes"):
+        notificacoes.avisar_cobranca(client, org_id, contato, interacao, patch["intencoes"])
     return {**interacao, **patch}
 
 

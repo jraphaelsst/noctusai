@@ -6531,6 +6531,22 @@ _SW_PERGUNTAS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_NOTIF = "273_lais_notificacoes.sql"
+
+#: Migration 273 -- Lais wave 6 (notificacoes prefs). Unapplied guard reads `no_fixture`, `refused` once applied.
+_SW_LAIS_NOTIF_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="lais_notif.prefs.tipo_valido", guard_name="lais_notificacao_prefs_tipo_valido",
+        migration=_M_LAIS_NOTIF,
+        rationale="The type is a token the service maps to a notification kind; a free-text value would be a preference no event can ever match.",
+        fixtures=("registry",),
+        ops_sql=f"    INSERT INTO {_S}.lais_notificacao_prefs (org_id, user_id, tipo)\n    VALUES (v_org, gen_random_uuid(), 'Noc Probe Bogus');",
+        sqlstate_condition=_CHECK, what="a notification preference with a malformed type token",
+        tabelas=(f"{_S}.lais_notificacao_prefs",),
+    ),
+)
+
+
 _M_LAIS_VIS = "272_lais_visitas.sql"
 _T_LAIS_VIS = (f"{_S}.lais_contatos", f"{_S}.lais_visitas", f"{_S}.lais_visitas_config")
 
@@ -8607,6 +8623,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_PROBES,
     *_SW_PERGUNTAS_PROBES,
     *_SW_LAIS_VISITAS_PROBES,
+    *_SW_LAIS_NOTIF_PROBES,
     *_SW_LAIS_REENG_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
