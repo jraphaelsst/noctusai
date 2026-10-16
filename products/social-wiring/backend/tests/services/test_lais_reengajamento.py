@@ -289,6 +289,23 @@ class TestNuncaRespondeu:
         assert turnos.chamadas == []
 
 
+@pytest.mark.asyncio
+class TestReguaHorario:
+    @pytest.mark.parametrize("quando", [NOITE, MADRUGADA])
+    async def test_a_regua_attempt_outside_08_20_reschedules_to_the_next_0800(self, world, quando):
+        _regua(world)
+        c = _contato(world)
+        r = svc.escolher_regua(world.sw, ORG, c)
+        repo = FakeJobRepository()
+        await svc._enfileirar_tentativa(repo, world.sw, ORG, c, r, r["tentativas"][0], base=quando)
+        turnos = Turnos()
+        with pytest.raises(RescheduleLater) as exc:
+            await _executar(world, repo, turnos, _jobs(repo)[0], quando)
+        local = (quando + timedelta(seconds=exc.value.delay_s)).astimezone(SP)
+        assert (local.hour, local.minute) == (8, 0)
+        assert turnos.chamadas == []
+
+
 @pytest.fixture
 def frio():
     chamadas: list[tuple[str, str]] = []

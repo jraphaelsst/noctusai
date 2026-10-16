@@ -7,7 +7,8 @@ moved (an inbound, `encerrar`, a pause or a handoff all bump it):
   lais_reengajar_minutos   any hour; only for a lead who interacted and then stopped
   lais_reengajar_horas     only 08:00-19:59 Sao Paulo (outside: RescheduleLater to 08:00); ALSO covers a
                            lead who never replied
-  lais_regua_tentativa     one attempt of a regua; the regua starts after the LAST enabled default tier
+  lais_regua_tentativa     one attempt of a regua, only 08:00-19:59 Sao Paulo like the hours tier (Lais' regua
+                           card: "Das 8h as 20h"); the regua starts after the LAST enabled default tier
                            (no default tier => straight after the outbound); the next attempt is enqueued
                            when this one fires; after the last attempt the cold-lead hook runs
 
@@ -456,6 +457,9 @@ async def executar_tentativa(
         return "regua_inativa"
     if not contato.get("ultimo_inbound_at"):
         return "sem_interacao"  # a regua only follows a lead who interacted and then stopped
+    if not dentro_do_horario(agora):
+        # Lais' regua card: "Periodo de execucao: Das 8h as 20h" (page-map-v2 59.0b) -- same window as the hours tier.
+        raise RescheduleLater(segundos_ate_abertura(agora), "regua fora do horario (08-20, Sao Paulo)")
     enviou = False
     if tentativa.get("template_id"):
         lais_eventos_service.emitir(
