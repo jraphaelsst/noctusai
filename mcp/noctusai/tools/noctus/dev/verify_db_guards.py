@@ -8901,6 +8901,41 @@ _SW_LAIS_ENVIO_PROBES: tuple[GuardProbe, ...] = (
 
 
 
+_M_LAIS_CAPT = "278_lais_captacoes.sql"
+_T_LAIS_CAPT = (f"{_S}.lais_contatos", f"{_S}.lais_captacoes")
+
+
+def _capt_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_captacao.{probe_id}", guard_name=guard, migration=_M_LAIS_CAPT, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CAPT,
+    )
+
+
+def _capt_ins(cols: str = "status", vals: str = "'nova'") -> str:
+    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_captacoes", cols, vals)
+
+
+#: Migration 278 -- Lais wave 8 (captacao). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_CAPTACAO_PROBES: tuple[GuardProbe, ...] = (
+    _capt_probe(
+        "status_valido", "lais_captacoes_status_valido",
+        "The status drives which feed actions exist (registrar/descartar only on `nova`); free text escapes it.",
+        _capt_ins("status", "'noc_probe_bogus'"), _CHECK, "a lais_captacao with an unknown status",
+    ),
+    _capt_probe(
+        "operacao_valida", "lais_captacoes_operacao_valida",
+        "The operacao prefills the imovel finalidades (venda|aluguel); any other token would fail the imovel write later.",
+        _capt_ins("operacao", "'noc_probe_bogus'"), _CHECK, "a lais_captacao with an unknown operacao",
+    ),
+    _capt_probe(
+        "registrada_exige_imovel", "lais_captacoes_registrada_exige_imovel",
+        "A registrada capture must name the imovel it produced; otherwise the feed links to nothing.",
+        _capt_ins("status", "'registrada'"), _CHECK, "a registrada lais_captacao with no imovel_id",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -8983,6 +9018,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_240_PROBES,
     *_SW_241_PROBES,
     *_SW_LAIS_ENVIO_PROBES,
+    *_SW_LAIS_CAPTACAO_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
