@@ -1,0 +1,100 @@
+/**
+ * Lais › Notificações (contract wave 6).
+ *
+ *   GET  /api/lais/notificacoes?tipo&operacao&de&ate&page → {data:{items,total,nao_lidas}}
+ *   POST /api/lais/notificacoes/lidas {ids|todas}         → 204
+ *   GET/PUT /api/lais/notificacoes/preferencias
+ *
+ * Loading = two signals off `data` (never `isLoading`); the feed is keyed by
+ * filters+page so it keeps `placeholderData: prev` while they change. The
+ * header bell (seed `notifications.ts`) counts the same `lais_*` rows, so
+ * marking read also invalidates its keys.
+ */
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { api } from "@/lib/api";
+
+export const TIPOS_NOTIFICACAO = [
+  { value: "pre_agendamento_visita", label: "Solicitação de pré-agendamento de visita", categoria: "VISITAS" },
+  { value: "cobranca_atendimento", label: "Cobrança de atendimento", categoria: "ATENDIMENTO" },
+  { value: "relatorio", label: "Relatórios da Julia", categoria: "RELATÓRIOS" },
+  { value: "remarketing", label: "Remarketing", categoria: "COMERCIAL" },
+  { value: "captacao", label: "Captação", categoria: "CAPTAÇÃO" },
+  { value: "atualizacao_base_imoveis", label: "Atualização de base de imóveis", categoria: "IMÓVEIS" },
+  { value: "novo_lead", label: "Novo lead gerado", categoria: "COMERCIAL" },
+  { value: "novo_atendimento", label: "Novo atendimento", categoria: "ATENDIMENTO" },
+  { value: "nova_mensagem", label: "Nova mensagem", categoria: "ATENDIMENTO" },
+  { value: "avaliacao_google", label: "Avaliações no Google", categoria: "REPUTAÇÃO" },
+  { value: "handoff", label: "Transferência para atendimento humano", categoria: "ATENDIMENTO" },
+] as const;
+
+export type TipoNotificacao = (typeof TIPOS_NOTIFICACAO)[number]["value"];
+export type OperacaoFiltro = "" | "aluguel" | "compra";
+
+export const PAGE_SIZE = 20;
+
+export interface LaisNotificacao {
+  id: string;
+  tipo: string;
+  titulo?: string | null;
+  mensagem?: string | null;
+  is_read: boolean;
+  link?: string | null;
+  created_at: string;
+}
+export interface NotificacoesPage { items: LaisNotificacao[]; total: number; nao_lidas: number }
+export interface NotificacoesFiltro { tipo: string; operacao: OperacaoFiltro; de: string; ate: string; page: number }
+export const FILTRO_VAZIO: NotificacoesFiltro = { tipo: "", operacao: "", de: "", ate: "", page: 1 };
+export interface PreferenciaNotificacao { tipo: string; in_app: boolean }
+
+export function metaTipo(tipo: string) {
+  const m = TIPOS_NOTIFICACAO.find((t) => t.value === tipo);
+  return { label: m?.label ?? tipo, categoria: m?.categoria ?? "GERAL" };
+}
+
+const KEY = ["lais", "notificacoes"] as const;
+
+export function useLaisNotificacoes(f: NotificacoesFiltro) {
+  return useQuery({
+    queryKey: [...KEY, f],
+    queryFn: async () => {
+      const p = new URLSearchParams({ page: String(f.page) });
+      if (f.tipo) p.set("tipo", f.tipo);
+      if (f.operacao) p.set("operacao", f.operacao);
+      if (f.de) p.set("de", f.de);
+      if (f.ate) p.set("ate", f.ate);
+      const r = await api.get(`/api/lais/notificacoes?${p}`);
+      return (r.data ?? { items: [], total: 0, nao_lidas: 0 }) as NotificacoesPage;
+    },
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useMarcarLidas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { ids: string[] } | { todas: true }) => api.post("/api/lais/notificacoes/lidas", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["notificacoes"] });
+      qc.invalidateQueries({ queryKey: ["notificacoes-contagem"] });
+    },
+  });
+}
+
+export function usePreferenciasNotificacao() {
+  return useQuery({
+    queryKey: [...KEY, "preferencias"],
+    queryFn: async () => ((await api.get("/api/lais/notificacoes/preferencias")).data ?? []) as PreferenciaNotificacao[],
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSalvarPreferencias() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (prefs: PreferenciaNotificacao[]) =>
+      ((await api.put("/api/lais/notificacoes/preferencias", prefs)).data ?? prefs) as PreferenciaNotificacao[],
+    onSuccess: (data) => qc.setQueryData([...KEY, "preferencias"], data),
+  });
+}
