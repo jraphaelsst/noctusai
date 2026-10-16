@@ -29,6 +29,8 @@ Accountant additions (E16/E21): budget vs actual (`budgets`), the Livro Caixa (`
 Domínio export (`dominio`, layout notes in `DOMINIO-LAYOUT.md`) and a READ-only accountant grant -- pass
 `accountant_dependency=` (org admin OR the PER-ORG permission `finance.accountant_read:<org_id>`) to both routers.
 
+Billing reminders (dunning, WhatsApp): see `reminders/__init__.py` (job `finance_billing_reminders`, organ `finance_reminders`).
+
 Contract: `projects/commerce-seed-p4/CONTRACT.md §3`. Jobs the host registers:
 `finance_generate_recurrences` (daily, `recurrences.generate_due_recurrences`).
 """
@@ -49,6 +51,7 @@ from . import (
     matching,
     mei,
     recurrences,
+    reminders,
     reports,
     settlements,
     simples_base,
@@ -144,6 +147,7 @@ __all__ = [
     "mei",
     "recurrences",
     "register_gateway_sync",
+    "reminders",
     "reports",
     "run_gateway_sync_all",
     "settlements",

@@ -24,6 +24,7 @@ from noctusai_lib.domain.finance import (
     make_finance_router,
 )
 from noctusai_lib.domain.finance._common import Scope
+from noctusai_lib.domain.finance.reminders import finance_reminders_migration
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.primitives.exceptions import (
     AppException,
@@ -58,6 +59,9 @@ def finance_schema_cache():
     (restored afterwards: a reset would re-parse every product's migrations)."""
     base = {t: set(c) for t, c in _schema_cache.get_schema_map().items()}
     generated = parse_sql(finance_migration(CFG, SCHEMA), source_label="finance_migration")
+    # the reminders organ is additive to finance (its own tables + `fin_entries.reminders_opt_out`)
+    for table, cols in parse_sql(finance_reminders_migration(CFG, SCHEMA), source_label="finance_reminders_migration").items():
+        generated[table] = generated.get(table, set()) | set(cols)
     _schema_cache.set_cache_for_tests({**base, **generated})
     prev_fns = _schema_cache.set_functions_for_tests(parse_function_sql(finance_migration(CFG, SCHEMA)))
     yield
