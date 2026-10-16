@@ -121,7 +121,7 @@ export default function LaisDisparos() {
       ) : (
         <div className="space-y-6">
           <Secao titulo="Rascunhos" itens={por("rascunho")} onOpen={setAberto} />
-          <Secao titulo="Agendados" itens={por("agendado")} onOpen={setAberto} />
+          <Secao titulo="Agendados" itens={por("agendado", "enviando")} onOpen={setAberto} />
           <Secao titulo="Histórico" itens={por("enviado", "cancelado", "erro")} onOpen={setAberto} />
         </div>
       )}

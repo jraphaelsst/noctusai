@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import type { Transporte } from "@/hooks/useLaisTransporte";
 
 export type DisparoTipo = "remarketing" | "atualizacao_anuncios";
-export type DisparoStatus = "rascunho" | "agendado" | "enviado" | "cancelado" | "erro";
+export type DisparoStatus = "rascunho" | "agendado" | "enviando" | "enviado" | "cancelado" | "erro";
 export type AlvoStatus = "pendente" | "enviado" | "respondido" | "enviado_sw" | "erro";
 
 export const TIPO_LABEL: Record<DisparoTipo, string> = {
@@ -15,6 +15,7 @@ export const TIPO_LABEL: Record<DisparoTipo, string> = {
 export const STATUS_LABEL: Record<DisparoStatus, string> = {
   rascunho: "Rascunho",
   agendado: "Agendado",
+  enviando: "Enviando",
   enviado: "Enviado",
   cancelado: "Cancelado",
   erro: "Erro",
@@ -22,6 +23,7 @@ export const STATUS_LABEL: Record<DisparoStatus, string> = {
 export const SEGMENTOS = [
   { value: "leads_3_15", label: "Leads de 3 a 15 dias sem resposta" },
   { value: "leads_7_30", label: "Leads de 7 a 30 dias sem resposta" },
+  { value: "proprietarios", label: "Proprietários de imóveis anunciados" },
 ] as const;
 
 export interface Disparo {
