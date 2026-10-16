@@ -9064,6 +9064,100 @@ _SW_LAIS_CREDITO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_AVAL = "280_lais_avaliacoes_capi.sql"
+_T_LAIS_AVAL = (
+    f"{_S}.lais_contatos", f"{_S}.lais_avaliacao_config", f"{_S}.lais_avaliacao_pedidos",
+    f"{_S}.lais_avaliacoes_cache", f"{_S}.lais_capi_eventos",
+)
+
+
+def _aval_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_avaliacoes.{probe_id}", guard_name=guard, migration=_M_LAIS_AVAL, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_AVAL,
+    )
+
+
+def _aval_cfg_ins(cols: str, vals: str) -> str:
+    return f"    INSERT INTO {_S}.lais_avaliacao_config (org_id, {cols})\n    VALUES (v_org, {vals});"
+
+
+def _aval_cache_ins(nota: str = "5", externo: str = "'noc_probe'") -> str:
+    return f"    INSERT INTO {_S}.lais_avaliacoes_cache (org_id, external_id, nota)\n    VALUES (v_org, {externo}, {nota});"
+
+
+def _aval_pedido_ins(cols: str, vals: str) -> str:
+    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_avaliacao_pedidos", cols, vals)
+
+
+def _capi_ins(cols: str = "evento, dedupe_key", vals: str = "'lead_qualificado', 'noc_probe'") -> str:
+    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_capi_eventos", cols, vals)
+
+
+#: Migration 280 -- Lais wave 13 (avaliacoes + CAPI). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_AVALIACOES_PROBES: tuple[GuardProbe, ...] = (
+    _aval_probe(
+        "config.review_url_https", "lais_avaliacao_config_review_url_https",
+        "The review link is sent to leads verbatim; a non-https (or whitespace-bearing) value would be a broken or unsafe link.",
+        _aval_cfg_ins("google_review_url", "'ftp://noc_probe'"), _CHECK, "a review link that is not https",
+    ),
+    _aval_probe(
+        "config.pixel_valido", "lais_avaliacao_config_pixel_valido",
+        "The pixel id is the CAPI endpoint path segment; a non-numeric value would be an injection into the Graph URL.",
+        _aval_cfg_ins("capi_pixel_id", "'noc_probe_bogus'"), _CHECK, "a CAPI pixel id that is not numeric",
+    ),
+    _aval_probe(
+        "pedidos.status_valido", "lais_avaliacao_pedidos_status_valido",
+        "The KPI 'pedidos enviados' counts status=enviado; free text would be counted as neither sent nor failed.",
+        _aval_pedido_ins("status", "'noc_probe_bogus'"), _CHECK, "a review ask with an unknown status",
+    ),
+    _aval_probe(
+        "pedidos.erro_exige_mensagem", "lais_avaliacao_pedidos_erro_exige_mensagem",
+        "A failed review ask without its error text cannot be diagnosed.",
+        _aval_pedido_ins("status", "'erro'"), _CHECK, "an erro review ask with no erro text",
+    ),
+    _aval_probe(
+        "cache.nota_valida", "lais_avaliacoes_cache_nota_valida",
+        "The distribution chart has five buckets (1-5 stars); any other value falls out of the average and the chart.",
+        _aval_cache_ins("9"), _CHECK, "a review with a rating outside 1..5",
+    ),
+    _aval_probe(
+        "cache.externo_unico", "lais_avaliacoes_cache_org_externo_uq",
+        "The sync is idempotent on the Google review id; a duplicate would double-count the review in total and average.",
+        _aval_cache_ins() + "\n" + _aval_cache_ins(), _UNIQ, "the same Google review cached twice for one org",
+    ),
+    _aval_probe(
+        "capi.evento_valido", "lais_capi_eventos_evento_valido",
+        "The event name maps 1:1 to a Meta event; an unknown one would be sent as an undefined signal.",
+        _capi_ins("evento, dedupe_key", "'noc_probe_bogus', 'noc_probe'"), _CHECK, "a CAPI signal with an unknown evento",
+    ),
+    _aval_probe(
+        "capi.status_valido", "lais_capi_eventos_status_valido",
+        "The status decides whether the sender retries or stops; free text is neither.",
+        _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'noc_probe_bogus'"), _CHECK,
+        "a CAPI signal with an unknown status",
+    ),
+    _aval_probe(
+        "capi.erro_exige_mensagem", "lais_capi_eventos_erro_exige_mensagem",
+        "A failed CAPI signal without its error text cannot be diagnosed.",
+        _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'erro'"), _CHECK,
+        "an erro CAPI signal with no erro text",
+    ),
+    _aval_probe(
+        "capi.enviado_exige_data", "lais_capi_eventos_enviado_exige_data",
+        "A signal marked enviado without its send time lies about when Meta received it.",
+        _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'enviado'"), _CHECK,
+        "an enviado CAPI signal with no enviado_at",
+    ),
+    _aval_probe(
+        "capi.dedupe_unico", "lais_capi_eventos_dedupe_uq",
+        "(org, dedupe_key) unique is what makes a replayed hook send one signal, not two (double-counted conversions).",
+        _capi_ins() + "\n" + _lais_child_ins("lais_capi_eventos", "evento, dedupe_key", "'lead_qualificado', 'noc_probe'"),
+        _UNIQ, "the same CAPI signal recorded twice",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9149,6 +9243,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_ENVIO_PROBES,
     *_SW_LAIS_CAPTACAO_PROBES,
     *_SW_LAIS_CREDITO_PROBES,
+    *_SW_LAIS_AVALIACOES_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
