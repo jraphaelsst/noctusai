@@ -63,8 +63,8 @@ vi.mock("@/components/ui/button", () => ({
 // ─── View-content stubs — capture props ───────────────────────────────────
 
 let lastChatWindowProps: any = null;
-vi.mock("@/components/WhatsAppChatWindow", () => ({
-  WhatsAppChatWindow: (props: any) => {
+vi.mock("@/components/lais/conversas/ConversasPanel", () => ({
+  ConversasPanel: (props: any) => {
     lastChatWindowProps = props;
     return <div data-testid="chat-window-stub">{`chat:${props.connectionId}`}</div>;
   },
