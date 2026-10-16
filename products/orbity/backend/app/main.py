@@ -36,6 +36,7 @@ from app.routers.agenda_router import router as agenda_router
 from app.routers.meta_ads_router import router as meta_ads_router
 from app.routers.automation_router import router as automation_router
 from app.routers.social_content_router import router as social_content_router, approve_router
+from app.routers.content_plans_router import router as content_plans_router
 from app.routers.reports_router import router as reports_router, public_reports_router
 from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
 from app.routers.whatsapp_webhook_router import router as whatsapp_webhook_router
@@ -69,6 +70,7 @@ app = create_product_app(
         # Social/Content Studio (Wave 3)
         social_content_router,   # /api/content/* — campaigns, posts, approvals (authed)
         approve_router,          # /api/content/approve/{token} — public client approval
+        content_plans_router,    # /api/content/plans/* — monthly plans, items, tasks, AI items
         # Reports organ (Wave 3)
         reports_router,          # /api/reports/* — authenticated CRUD + generate
         public_reports_router,   # /api/reports/public/{token} — unauthenticated token read

@@ -122,7 +122,7 @@ page (frontend/src/pages/X.tsx)
   (`LIVE_TRIGGERS` in `Automacao.tsx`: add a type there in the same commit as its emitter);
   `action` steps are no-ops; no scheduler (`NOC-REMEDIATE[orbity-automation-scheduler]`).
 
-### Conteúdo — `content_campaigns`, `content_posts`, `post_approvals`
+### Conteúdo — `content_campaigns`, `content_posts`, `post_approvals`, `content_plans`, `content_plan_items`
 - **Dataflow:** `useConteudo` → `/api/content/campaigns` CRUD, `/posts` CRUD,
   `POST /posts/{id}/approvals` (token link → `/aprovar/{token}`).
 - **Live:** post C ✅ (client-linked) → "Enviar para aprovação" ✅ → `/aprovar/{token}` ✅ → client
@@ -132,6 +132,24 @@ page (frontend/src/pages/X.tsx)
   the page claims "equipe notificada" only when `team_notified > 0`.
 - **Caveats:** "Publicado" is a manual status (`NOC-REMEDIATE[orbity-content-publish]`);
   approval history endpoints exist (`GET /approvals*`) without UI.
+- **Planejamento tab (migration 020):** `useContentPlans` → `/api/content/plans/*`. A plan
+  (client + month + `strategy_context`, `creation_mode` manual|ai) holds ordered
+  `content_plan_items` (`order_position`; `planned|task_created|in_progress|published|discarded`).
+  **Reuse, not duplication:** `plan.campaign_id` → `content_campaigns`; `item.task_id` → `tasks`
+  (via `TasksService`, due = `due_date ?? post_date`, caption + references in the description,
+  only items with no task and not discarded); `item.post_id` → a DRAFT `content_posts` row
+  (`POST /plans/{id}/items/{item}/post`) that then rides the unchanged approval flow — items never
+  carry approval state. Delete item: has task → `discarded` (task kept), else hard delete.
+  Card progress excludes discarded; Manual/IA badge from `creation_mode`; the sheet opens editable.
+- **AI items:** `POST /plans/{id}/ai-items` → `content_plan_ai_service` → seed
+  `chat_completion` (provider abstraction + budget/usage governance; key = org/platform
+  `openai_api_key` credential or env `OPENAI_API_KEY`). Strict validation (exact count, dates in
+  window + allowed weekdays, requested platforms, no repeated titles; one corrective retry);
+  returns a PREVIEW only — the UI appends the checked items. No key → honest **503**, invalid
+  output → 502; never fake output. Rate-limited 10/min.
+- **Caveats:** "Publicado" is a manual status (`NOC-REMEDIATE[orbity-content-publish]`);
+  approval history endpoints exist (`GET /approvals*`) without UI; two concurrent "Criar tarefas"
+  calls on the same item could create two tasks (no row claim; UI disables the button in flight).
 
 ### Relatórios — `reports`, `report_snapshots` (+ reads leads/revenues/expenses/campaign_metrics)
 - **Dataflow:** `useRelatorios` → `/api/reports` CRUD, `GET /{id}/snapshots`, `POST /{id}/generate`;

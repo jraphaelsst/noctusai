@@ -8,6 +8,8 @@
  *                  creates an approval link and surfaces the shareable token.
  *   3. Campanhas — campaign list with full CRUD; acts as a filter context for
  *                  Posts tab.
+ *   4. Planejamento — monthly content plans with ordered items (manual or AI),
+ *                  tasks from items, item -> post (components/content-plans/).
  *
  * Every section ships all four states: loading / empty / error / success.
  *
@@ -21,6 +23,7 @@ import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { approvalPublicUrl } from "@/lib/publicLinks";
 import { ClientSelect } from "@/components/ClientSelect";
+import { PlanejamentoTab } from "@/components/content-plans/PlanejamentoTab";
 import {
   LayoutGrid,
   List,
@@ -42,6 +45,7 @@ import {
   Facebook,
   Linkedin,
   Twitter,
+  ClipboardList,
 } from "lucide-react";
 import {
   useCampaigns,
@@ -81,7 +85,7 @@ function fmtDateTime(iso: string | null): string {
   }
 }
 
-type TabKey = "pipeline" | "posts" | "campanhas";
+type TabKey = "pipeline" | "posts" | "campanhas" | "planejamento";
 
 // ---------------------------------------------------------------------------
 // Platform icon + label maps
@@ -1196,6 +1200,7 @@ const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: "pipeline", label: "Pipeline", icon: LayoutGrid },
   { key: "posts", label: "Posts", icon: List },
   { key: "campanhas", label: "Campanhas", icon: Megaphone },
+  { key: "planejamento", label: "Planejamento", icon: ClipboardList },
 ];
 
 export default function Conteudo() {
@@ -1280,6 +1285,7 @@ export default function Conteudo() {
         {activeTab === "campanhas" && (
           <CampanhasTab onSelectCampaign={setCampaignFilter} />
         )}
+        {activeTab === "planejamento" && <PlanejamentoTab />}
       </div>
 
       {/* Post edit dialog (opened from Pipeline tab) */}
