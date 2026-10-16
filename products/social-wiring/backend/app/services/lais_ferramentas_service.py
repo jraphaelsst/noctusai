@@ -26,7 +26,7 @@ from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from app.services import lais_conhecimento_service, lais_eventos_service
+from app.services import lais_conhecimento_service, lais_eventos_service, lais_imovel_confirmado
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ OVERFETCH = 60
 COLUNAS = (
     "codigo, titulo, categoria, status, finalidades, bairro, cidade, uf, valor_venda, valor_locacao, "
     "valor_condominio, valor_iptu, dormitorios, suites, vagas, area_total, area_privativa, "
-    "descricao_web, caracteristicas, exibir_no_site, logradouro, numero"
+    "descricao_web, caracteristicas, exibir_no_site, logradouro, numero, data_atualizacao"
 )
 #: Allow-list for the empreendimento tool (a subset of `COLUNAS` + the two development columns).
 COLUNAS_EMPREENDIMENTO = (
@@ -100,6 +100,18 @@ def _preco(row: dict[str, Any], operacao: Optional[str]) -> Optional[float]:
     return _num(row.get("valor_venda") if row.get("valor_venda") is not None else row.get("valor_locacao"))
 
 
+def _sobrepor_confirmacao(item: dict[str, Any], confirmacoes: list[dict[str, Any]], row: dict[str, Any],
+                          preco_tipo: Optional[str]) -> None:
+    """Owner-confirmed status/price newer than Vista's value wins, ALWAYS with its provenance (additive key
+    `confirmacao_proprietario`, present only when a confirmation applies)."""
+    conf = lais_imovel_confirmado.aplicar(confirmacoes, data_atualizacao=row.get("data_atualizacao"), preco_tipo=preco_tipo)
+    if conf is None:
+        return
+    if "preco" in conf:
+        item["preco"] = conf["preco"]
+    item["confirmacao_proprietario"] = conf
+
+
 def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
     a = BuscarImoveisArgs(**args)
     q = client.table(TABLE).select(COLUNAS).eq("org_id", str(org_id))
@@ -116,15 +128,21 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict
         q = q.lte("valor_venda" if a.operacao == "compra" else "valor_locacao", a.preco_max)
     # Over-fetch: unpublished rows are dropped after the query, and the cap is on what Julia sees.
     rows = q.order("data_atualizacao", desc=True).limit(OVERFETCH).execute().data or []
-    return [
+    publicados = [r for r in rows if _publicado(r)][: a.limite]
+    confirmados = lais_imovel_confirmado.carregar(client, org_id, (r["codigo"] for r in publicados))
+    out = [
         {
             "codigo": r["codigo"], "titulo": _titulo(r), "tipo": r.get("categoria"), "bairro": r.get("bairro"),
             "cidade": r.get("cidade"), "preco": _preco(r, a.operacao), "quartos": r.get("dormitorios"),
             # NOC-REMEDIATE[lais-imovel-link]: OWNER QUESTION -- `imoveis` (Vista mirror, migrations 040/093) has NO per-listing URL column (only foto_destaque/fotos/video_destaque/tour_360) and Vista's `Imovel` payload the sync normalises carries no site URL, so the public listing path is not derivable from data. What is the public URL pattern of the imobiliaria site for a listing (e.g. `<site>/imovel/<codigo>`; per org or a single Vista site template)? Once answered: store the path template next to `site` in "Meu negócio" and build `link` from it here -- 2026-10-16
             "link": None,
         }
-        for r in rows if _publicado(r)
-    ][: a.limite]
+        for r in publicados
+    ]
+    for item, r in zip(out, publicados):
+        _sobrepor_confirmacao(item, confirmados.get(str(r["codigo"]).strip().upper(), []), r,
+                              "venda" if a.operacao == "compra" else "locacao")
+    return out
 
 
 def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str, Any]:
@@ -144,13 +162,16 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
     if mostrar_endereco_completo:
         rua = " ".join(p for p in (r.get("logradouro"), r.get("numero")) if p)
         endereco = ", ".join(p for p in (rua, endereco) if p)
-    return {
+    resultado = {
         "codigo": r["codigo"], "titulo": _titulo(r), "descricao": r.get("descricao_web"),
         "preco": _preco(r, None), "condominio": _num(r.get("valor_condominio")),
         "iptu": _num(r.get("valor_iptu")) if mostrar_iptu else None,
         "endereco": endereco, "caracteristicas": list(r.get("caracteristicas") or []),
         "encontrado": True,
     }
+    confirmacoes = lais_imovel_confirmado.carregar(client, org_id, [r["codigo"]]).get(str(r["codigo"]).strip().upper(), [])
+    _sobrepor_confirmacao(resultado, confirmacoes, r, "venda" if r.get("valor_venda") is not None else "locacao")
+    return resultado
 
 
 def horarios_visita(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:

@@ -294,3 +294,57 @@ class TestRegistroDeConsultas:
         ok.post("buscar_imoveis", {"operacao": "compra", "bairro": "nenhum-bairro"})
         (ev,) = self._eventos(mundo)
         assert ev["contato_id"] is None
+
+
+class TestConfirmacaoDoProprietario:
+    """Owner-confirmed status/price (Lais-owned storage) overlaid on the Vista value when newer, with provenance."""
+    VISTA_DIA = "2026-10-01"
+
+    @pytest.fixture
+    def conf(self, tools, catalogo):
+        catalogo.set_table_data("lais_proprietarios_contatos", [])
+        tools.as_ctx(_product())
+
+        def confirmar(codigo, *, quando, status=None, preco=None, tipo="venda", org=_ORG):
+            catalogo.table("lais_proprietarios_contatos").insert({
+                "id": str(uuid4()), "org_id": str(org), "imovel_codigo": codigo, "telefone": "5511999990000",
+                "nome": OWNER_SECRET, "status_confirmado": status, "preco_confirmado": preco,
+                "preco_tipo_confirmado": tipo if preco is not None else None, "confirmado_at": quando}).execute()
+
+        tools.confirmar = confirmar
+        return tools
+
+    def test_a_newer_confirmation_wins_with_provenance_in_search_and_details(self, conf):
+        conf.confirmar("CA1", quando="2026-10-10T15:00:00+00:00", status="Suspenso", preco=850000)
+        item = next(d for d in conf.post("buscar_imoveis", {"operacao": "compra"}).json()["data"] if d["codigo"] == "CA1")
+        assert item["preco"] == 850000.0
+        assert item["confirmacao_proprietario"] == {
+            "status": "Suspenso", "preco": 850000.0, "preco_tipo": "venda", "em": "2026-10-10",
+            "provenance": "confirmado pelo proprietário em 10/10/2026"}
+        d = conf.post("detalhes_imovel", {"codigo": "ca1"}).json()["data"]
+        assert d["preco"] == 850000.0 and d["confirmacao_proprietario"]["status"] == "Suspenso"
+        assert OWNER_SECRET not in str(d) and "5511999990000" not in str(d)
+
+    def test_a_confirmation_not_newer_than_the_vista_edit_loses_and_adds_nothing(self, conf):
+        conf.confirmar("CA1", quando="2026-10-01T12:00:00+00:00", preco=850000)   # same day as Vista's edit
+        conf.confirmar("CA2", quando="2026-09-20T12:00:00+00:00", status="Vendido")  # older
+        for item in conf.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]:
+            assert "confirmacao_proprietario" not in item
+        assert next(d for d in conf.post("buscar_imoveis", {"operacao": "compra"}).json()["data"] if d["codigo"] == "CA1")["preco"] == 900000.0
+
+    def test_status_and_price_come_from_the_newest_row_that_has_each(self, conf):
+        conf.confirmar("CA1", quando="2026-10-05T12:00:00+00:00", preco=800000)
+        conf.confirmar("CA1", quando="2026-10-12T12:00:00+00:00", status="Reservado")
+        c = conf.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]["confirmacao_proprietario"]
+        assert (c["status"], c["preco"], c["em"]) == ("Reservado", 800000.0, "2026-10-12")
+
+    def test_the_price_kind_must_match_the_operation_and_an_unknown_kind_never_overrides_a_price(self, conf):
+        conf.confirmar("CA1", quando="2026-10-10T12:00:00+00:00", preco=5000, tipo="locacao")
+        conf.confirmar("CA2", quando="2026-10-10T12:00:00+00:00", preco=1, tipo=None)
+        rows = {d["codigo"]: d for d in conf.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]}
+        assert rows["CA1"]["preco"] == 900000.0 and "confirmacao_proprietario" not in rows["CA1"]
+        assert rows["CA2"]["preco"] == 2000000.0
+
+    def test_another_orgs_confirmation_is_never_applied(self, conf):
+        conf.confirmar("CA1", quando="2026-10-10T12:00:00+00:00", status="Vendido", org=_OTHER)
+        assert "confirmacao_proprietario" not in conf.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]

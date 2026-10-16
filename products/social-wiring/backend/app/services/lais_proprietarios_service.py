@@ -4,8 +4,9 @@
 An owner is contacted ONLY through a Cloud template of an `atualizacao_anuncios` disparo. LGPD (contract 17):
 an owner who answers "parar" is opted out for good -- `opt_out` + `opt_out_at` on every row of that phone,
 his pending targets are dropped, and the dispatch skips him. When an owner replies and the page confirms the
-status / price, the SW `imoveis` row is updated through the existing `ImoveisService` and the target moves
-`respondido -> enviado_sw`.
+status / price, the confirmation is stored on the owner row (Lais-owned) and the target moves
+`respondido -> enviado_sw`. The Vista mirror `imoveis` is NEVER written (the Vista sync owns those columns and
+would overwrite it): readers overlay the confirmation through `lais_imovel_confirmado`.
 """
 from __future__ import annotations
 
@@ -172,8 +173,9 @@ def confirmar(
     db: Any, org_id: UUID | str, pid: UUID | str, imoveis: Any, *,
     status: Optional[str] = None, preco: Optional[float] = None, preco_tipo: str = "venda",
 ) -> dict[str, Any]:
-    """The owner confirmed status and/or price: update the SW `imoveis` row (existing `ImoveisService`) and
-    close his target `respondido -> enviado_sw`. 409 when he has not answered a Cloud template yet."""
+    """The owner confirmed status and/or price: store it on his row (Lais-owned storage, read back by
+    `lais_imovel_confirmado` with provenance) and close his target `respondido -> enviado_sw`. 409 when he has
+    not answered a Cloud template yet; 404 when the listing is not in the base. `imoveis` is read-only here."""
     if status is None and preco is None:
         raise AppException("nada_a_confirmar", "Informe o status e/ou o preço confirmado.", status_code=422)
     if preco_tipo not in PRECO_TIPOS:
@@ -190,15 +192,12 @@ def confirmar(
             "sem_resposta_do_proprietario", "O proprietário ainda não respondeu a um modelo enviado pela API oficial.",
             status_code=409,
         )
-    atualizado = imoveis.atualizar_status_preco(
-        UUID(str(org_id)), p["imovel_codigo"], status=status,
-        valor_venda=preco if preco_tipo == "venda" else None, valor_locacao=preco if preco_tipo == "locacao" else None,
-    )
-    if atualizado is None:
+    if imoveis.get(UUID(str(org_id)), p["imovel_codigo"]) is None:
         raise AppException("imovel_nao_encontrado", "Imóvel não encontrado na base.", status_code=404)
     agora = _agora()
     db.table(TABLE).update({
-        "status_confirmado": status, "preco_confirmado": preco, "confirmado_at": agora, "updated_at": agora,
+        "status_confirmado": status, "preco_confirmado": preco,
+        "preco_tipo_confirmado": preco_tipo if preco is not None else None, "confirmado_at": agora, "updated_at": agora,
     }).eq("org_id", str(org_id)).eq("id", str(pid)).execute()
     for a in alvos:
         db.table(T_ALVOS).update({"status": "enviado_sw"}).eq("org_id", str(org_id)).eq("id", a["id"]).execute()

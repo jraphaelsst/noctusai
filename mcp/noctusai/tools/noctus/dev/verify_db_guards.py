@@ -7043,6 +7043,21 @@ _SW_LAIS_CLOUD_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_PREC_TIPO = "283_lais_proprietarios_preco_tipo.sql"
+
+#: Migration 283 -- owner-confirmed price kind. Unapplied the guard reads `no_fixture` (column absent), `refused` once applied.
+_SW_LAIS_PROPRIETARIOS_TIPO_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="lais_proprietarios.preco_tipo_valido", guard_name="lais_proprietarios_preco_tipo_valido",
+        migration=_M_LAIS_PREC_TIPO,
+        rationale="The overlay picks valor_venda vs valor_locacao from this value; free text would apply the confirmed price to neither (or the wrong) column.",
+        fixtures=("registry",), ops_sql=_cloud_prop_ins("preco_confirmado, preco_tipo_confirmado", "1000, 'bogus'"),
+        sqlstate_condition=_CHECK, what="an owner confirmation whose price kind is neither venda nor locacao",
+        tabelas=_T_LAIS_CLOUD,
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -9236,6 +9251,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_REENG_PROBES,
     *_SW_LAIS_CONV_PROBES,
     *_SW_LAIS_CLOUD_PROBES,
+    *_SW_LAIS_PROPRIETARIOS_TIPO_PROBES,
     *_SW_LAIS_EQUIPES_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,

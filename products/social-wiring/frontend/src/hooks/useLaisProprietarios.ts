@@ -20,6 +20,25 @@ export interface Proprietario {
   nome: string;
   imovel_codigo: string | null;
   status: ProprietarioStatus;
+  /** Owner-confirmed values (Lais-owned storage; the Vista mirror is never written). All null until confirmed. */
+  status_confirmado?: string | null;
+  preco_confirmado?: number | string | null;
+  preco_tipo_confirmado?: "venda" | "locacao" | null;
+  confirmado_at?: string | null;
+}
+
+/** "Suspenso · R$ 450.000,00 (venda) — confirmado pelo proprietário em 10/10/2026", or null when nothing was confirmed. */
+export function textoConfirmacao(p: Proprietario): string | null {
+  if (!p.confirmado_at || (!p.status_confirmado && p.preco_confirmado == null)) return null;
+  const partes: string[] = [];
+  if (p.status_confirmado) partes.push(p.status_confirmado);
+  if (p.preco_confirmado != null) {
+    const brl = Number(p.preco_confirmado).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    partes.push(p.preco_tipo_confirmado ? `${brl} (${p.preco_tipo_confirmado === "venda" ? "venda" : "locação"})` : brl);
+  }
+  const d = new Date(p.confirmado_at);
+  const data = d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  return `${partes.join(" · ")} — confirmado pelo proprietário em ${data}`;
 }
 export interface ProprietariosList {
   items: Proprietario[];

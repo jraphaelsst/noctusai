@@ -13,6 +13,7 @@ import {
   PROPRIETARIOS_KEY,
   STATUS_LABEL,
   useProprietarios,
+  textoConfirmacao,
   useSolicitarAtualizacao,
   type ProprietarioStatus,
 } from "@/hooks/useLaisProprietarios";
@@ -84,6 +85,7 @@ export default function LaisProprietarios() {
               <th className="py-1">Proprietário</th>
               <th>Imóvel</th>
               <th>Status</th>
+              <th>Confirmado pelo proprietário</th>
               <th />
             </tr>
           </thead>
@@ -93,6 +95,7 @@ export default function LaisProprietarios() {
                 <td className="py-2">{p.nome}</td>
                 <td>{p.imovel_codigo ?? "—"}</td>
                 <td>{STATUS_LABEL[p.status]}</td>
+                <td data-testid="proprietario-confirmacao" className="text-xs text-muted-foreground">{textoConfirmacao(p) ?? "—"}</td>
                 <td className="text-right">
                   <Button size="sm" variant="outline" disabled={!liberado || p.status === "parar" || solicitar.isPending} onClick={() => pedir(p.id)}>
                     Solicitar atualização

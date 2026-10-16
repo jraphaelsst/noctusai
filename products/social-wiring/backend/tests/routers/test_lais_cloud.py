@@ -464,7 +464,7 @@ class TestProprietarios:
         r = admin.call("post", f"/disparos/{d['id']}/enviar")
         assert r.status_code == 200 and admin.meta.sent_templates == []
 
-    def test_confirm_updates_sw_imoveis_only_after_a_reply_to_a_cloud_template(self, admin):
+    def test_confirm_is_stored_lais_side_only_after_a_reply_and_never_writes_the_vista_mirror(self, admin):
         admin.cloud()
         admin.modelo(categoria="administrativo", conteudo="Olá {{nome_pessoa}}")
         admin.w.sw.table("imoveis").insert({
@@ -479,7 +479,10 @@ class TestProprietarios:
         assert r.status_code == 200, r.text
         assert r.json()["data"]["status"] == "atualizado"
         imovel = admin.w.sw.table("imoveis").select("*").eq("codigo", "AP10").execute().data[0]
-        assert imovel["status"] == "Suspenso" and float(imovel["valor_venda"]) == 450000.0
+        assert imovel["status"] == "Venda" and float(imovel["valor_venda"]) == 500000.0  # Vista-owned, untouched
+        linha = admin.call("get", "/proprietarios").json()["data"][0]
+        assert (linha["status_confirmado"], float(linha["preco_confirmado"]), linha["preco_tipo_confirmado"]) == ("Suspenso", 450000.0, "venda")
+        assert linha["confirmado_at"]
         assert admin.call("post", f"/proprietarios/{p['id']}/confirmar", {}).status_code == 422
 
     def test_confirm_unknown_imovel_404(self, admin):
