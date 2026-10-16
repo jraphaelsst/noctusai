@@ -25,6 +25,7 @@ constraint error.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
@@ -268,17 +269,20 @@ def lead_frio_padrao(client: Any, org_id: UUID | str, contato: dict[str, Any]) -
     logger.debug("lais: lead frio org=%s contato=%s -- no cold-lead policy registered yet", org_id, contato.get("id"))
 
 
-_lead_frio: Callable[[Any, UUID | str, dict[str, Any]], None] = lead_frio_padrao
+_lead_frio: Callable[[Any, UUID | str, dict[str, Any]], Any] = lead_frio_padrao
 
 
-def registrar_lead_frio(fn: Callable[[Any, UUID | str, dict[str, Any]], None]) -> None:
+def registrar_lead_frio(fn: Callable[[Any, UUID | str, dict[str, Any]], Any]) -> None:
     global _lead_frio
     _lead_frio = fn
 
 
-def _chamar_lead_frio(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> None:
+async def _chamar_lead_frio(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> None:
+    """Run the cold-lead hook (sync or async: wave 3's enqueues a timer). Never raises."""
     try:
-        _lead_frio(client, org_id, contato)
+        out = _lead_frio(client, org_id, contato)
+        if inspect.isawaitable(out):
+            await out
     except Exception:
         logger.exception("lais: cold-lead hook failed org=%s contato=%s", org_id, contato.get("id"))
 
@@ -332,7 +336,7 @@ async def _iniciar_regua_ou_esfriar(
     regua = escolher_regua(db, org_id, contato)
     primeira = _proxima_tentativa(regua, 0) if regua else None
     if regua is None or primeira is None:
-        _chamar_lead_frio(db, org_id, contato)
+        await _chamar_lead_frio(db, org_id, contato)
         return "frio"
     await _enfileirar_tentativa(repo, db, org_id, contato, regua, primeira, base=base)
     return "regua"
@@ -486,7 +490,7 @@ async def executar_tentativa(
     if proxima is not None:
         await _enfileirar_tentativa(repo, db, org_id, contato, regua, proxima, base=agora)
     else:
-        _chamar_lead_frio(db, org_id, contato)
+        await _chamar_lead_frio(db, org_id, contato)
     if sem_transporte:
         return "regua_sem_transporte"
     return "enviado" if enviou else "silencio"

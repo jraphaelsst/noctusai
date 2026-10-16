@@ -209,8 +209,25 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
             ctx.client, org_id=ctx.org_id, contato=ctx.contato, interacao=ctx.interacao,
             agents_client=ctx.agents_client, conversation_id=ctx.conversation_id, perguntas=ctx.perguntas, agora=agora,
         )
+    for hook in tuple(POS_ENCERRAR):
+        try:
+            hook(ctx, motivo)
+        except Exception:
+            # a policy hook (wave 3: WhatsApp invalido -> send to the SW) must never undo the close
+            logger.exception("lais: pos-encerrar hook %s failed (org=%s)", getattr(hook, "__name__", "?"), ctx.org_id)
     return {"motivo": motivo, "interacao_id": str(ctx.interacao["id"]) if ctx.interacao else None,
             "desfecho": (fechada or {}).get("desfecho")}
+
+
+#: Hooks run after an `encerrar` closed the episode: `hook(ctx, motivo)`. Wave 3 binds the
+#: "WhatsApp invalido" policy here (`registrar_pos_encerrar`); the list is the registry, nobody edits `_h_encerrar`.
+POS_ENCERRAR: list[Callable[[AcaoCtx, str], Any]] = []
+
+
+def registrar_pos_encerrar(fn: Callable[[AcaoCtx, str], Any]) -> None:
+    """Idempotent: binding the same function twice keeps one entry."""
+    if fn not in POS_ENCERRAR:
+        POS_ENCERRAR.append(fn)
 
 
 #: THE registry. Waves append `"<tipo>": <fn>` (or call `registrar_handler`).
@@ -321,5 +338,5 @@ async def _aplicar_uma(
 
 __all__ = [
     "AcaoCtx", "HANDLERS", "Handler", "MOTIVOS_ENCERRAR", "OPERACOES", "aplicar", "fechar_interacao",
-    "lote_hash_de", "registrar_handler", "sanitizar_payload",
+    "POS_ENCERRAR", "lote_hash_de", "registrar_handler", "registrar_pos_encerrar", "sanitizar_payload",
 ]

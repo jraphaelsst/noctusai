@@ -53,6 +53,12 @@ def _numero(valor: Any) -> Optional[float]:
         return None
 
 
+def numero(valor: Any) -> Optional[float]:
+    """The numeric reading of a typed value ("R$ 1.500,50", "2 mil", "350000") -- the ONE parser the
+    income buckets and the wave-3 send criteria share; None when it is not a number."""
+    return _numero(valor)
+
+
 def faixa_renda(valor: Any) -> Optional[str]:
     n = _numero(valor)
     if n is None or n < 0:

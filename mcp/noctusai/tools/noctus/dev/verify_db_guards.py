@@ -8832,6 +8832,75 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_ENVIO = "270_lais_envio.sql"
+_T_LAIS_ENVIO = (
+    f"{_S}.lais_contatos", f"{_S}.lais_envio_regras", f"{_S}.lais_envio_politicas", f"{_S}.lais_envio_entregas",
+)
+
+
+def _envio_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_envio.{probe_id}", guard_name=guard, migration=_M_LAIS_ENVIO, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_ENVIO,
+    )
+
+
+def _envio_regra_ins(cols: str = "operacao", vals: str = "'compra'") -> str:
+    return f"    INSERT INTO {_S}.lais_envio_regras (org_id, {cols})\n    VALUES (v_org, {vals});"
+
+
+def _envio_entrega_ins(gatilho: str = "'manual'", status: str = "'ok'", erro: str = "NULL") -> str:
+    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_envio_entregas", "gatilho, status, erro", f"{gatilho}, {status}, {erro}")
+
+
+#: Migration 270 -- Lais wave 3 (envio ao SW). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_ENVIO_PROBES: tuple[GuardProbe, ...] = (
+    _envio_probe(
+        "regras.operacao_valida", "lais_envio_regras_operacao_valida",
+        "The rule is looked up by the contato's operacao; an unknown value would never match any contato.",
+        _envio_regra_ins("operacao", "'noc_probe_bogus'"), _CHECK, "a send rule for an unknown operacao",
+    ),
+    _envio_probe(
+        "regras.grupos_array", "lais_envio_regras_grupos_array",
+        "The evaluator iterates groups of criteria; an object/scalar would crash every qualification.",
+        _envio_regra_ins("operacao, grupos", "'compra', '{}'::jsonb"), _CHECK, "a send rule whose grupos is not a JSON array",
+    ),
+    _envio_probe(
+        "regras.operacao_unica", "lais_envio_regras_operacao_uq",
+        "Two rules for the same (org, operacao) would make the send decision depend on row order.",
+        _envio_regra_ins() + "\n" + _envio_regra_ins(), _UNIQ, "two send rules for the same operacao",
+    ),
+    _envio_probe(
+        "politicas.frios_objeto", "lais_envio_politicas_frios_objeto",
+        "The cold-lead policy is read as a mapping (ativo / modo / intervalo); a scalar would crash the timer.",
+        f"    INSERT INTO {_S}.lais_envio_politicas (org_id, frios)\n    VALUES (v_org, '[]'::jsonb);",
+        _CHECK, "a cold-lead policy that is not a JSON object",
+    ),
+    _envio_probe(
+        "politicas.captacoes_valida", "lais_envio_politicas_captacoes_valida",
+        "The captacao policy is enviar|notificar; anything else would silently behave as one of the two.",
+        f"    INSERT INTO {_S}.lais_envio_politicas (org_id, captacoes)\n    VALUES (v_org, 'noc_probe_bogus');",
+        _CHECK, "a captacao policy outside enviar|notificar",
+    ),
+    _envio_probe(
+        "entregas.gatilho_valido", "lais_envio_entregas_gatilho_valido",
+        "The delivery ledger is grouped by trigger in the Leads list; a free-text trigger escapes the vocabulary.",
+        _envio_entrega_ins("'noc_probe_bogus'"), _CHECK, "a delivery with an unknown gatilho",
+    ),
+    _envio_probe(
+        "entregas.status_valido", "lais_envio_entregas_status_valido",
+        "A delivery is ok or erro; any other status is neither a success nor a retryable failure.",
+        _envio_entrega_ins(status="'noc_probe_bogus'", erro="'x'"), _CHECK, "a delivery with an unknown status",
+    ),
+    _envio_probe(
+        "entregas.erro_exige_mensagem", "lais_envio_entregas_erro_exige_mensagem",
+        "A failed delivery without its error text cannot be diagnosed from the Leads list.",
+        _envio_entrega_ins(status="'erro'"), _CHECK, "an erro delivery with no erro text",
+    ),
+)
+
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -8913,6 +8982,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
+    *_SW_LAIS_ENVIO_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
