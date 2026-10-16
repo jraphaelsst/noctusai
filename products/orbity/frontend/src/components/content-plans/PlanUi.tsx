@@ -29,6 +29,7 @@ export const FORMAT_OPTIONS = ["Reels", "Carrossel", "Feed", "Stories", "Vídeo"
 
 export const ITEM_STATUS_LABEL: Record<ItemStatus, string> = {
   planned: "Planejado",
+  task_pending: "Criando tarefa...",
   task_created: "Tarefa criada",
   in_progress: "Em produção",
   published: "Publicado",
@@ -37,6 +38,7 @@ export const ITEM_STATUS_LABEL: Record<ItemStatus, string> = {
 
 export const ITEM_STATUS_COLOR: Record<ItemStatus, string> = {
   planned: "bg-muted text-muted-foreground",
+  task_pending: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   task_created: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   in_progress: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
   published: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",

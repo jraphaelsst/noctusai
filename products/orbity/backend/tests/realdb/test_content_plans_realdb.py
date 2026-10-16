@@ -87,3 +87,22 @@ def test_rows_invisible_to_anon(orbity_db, anon_fin_db, test_org_a):
         assert anon_fin_db.table("content_plan_items").select("id").eq("id", item["id"]).execute().data == []
     finally:
         orbity_db.table("content_plans").delete().eq("id", plan["id"]).execute()
+
+
+def test_claim_compare_and_set_lets_exactly_one_winner(orbity_db, test_org_a):
+    from app.services.content_plans_service import ContentPlansService
+    from uuid import UUID
+
+    org = test_org_a["id"]
+    plan = _plan(orbity_db, org)
+    try:
+        item = orbity_db.table("content_plan_items").insert(
+            {"org_id": org, "plan_id": plan["id"], "title": "x"}).execute().data[0]
+        svc = ContentPlansService(orbity_db, UUID(org))
+        assert svc._claim_item(plan["id"], item["id"]) is True
+        assert svc._claim_item(plan["id"], item["id"]) is False
+        # a duplicate create_tasks call skips the claimed item and makes no task
+        out = svc.create_tasks(plan, [item["id"]])
+        assert out["created"] == 0 and out["skipped"] == 1
+    finally:
+        orbity_db.table("content_plans").delete().eq("id", plan["id"]).execute()

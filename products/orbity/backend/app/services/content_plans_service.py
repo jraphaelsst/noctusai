@@ -276,25 +276,67 @@ class ContentPlansService:
     # Tasks from items
     # ------------------------------------------------------------------
 
+    def _claim_item(self, plan_id: str, item_id: str) -> bool:
+        """Compare-and-set: flip the item to 'task_pending' iff it is still
+        unclaimed (task_id IS NULL, not discarded, not already pending).
+        True only for the single caller whose UPDATE matched the row."""
+        rows = self._rows(
+            self._t("content_plan_items")
+            .update({"status": "task_pending"})
+            .eq("org_id", self._org_id)
+            .eq("plan_id", plan_id)
+            .eq("id", item_id)
+            .is_("task_id", "null")
+            .neq("status", "discarded")
+            .neq("status", "task_pending"),
+            "claim_item",
+        )
+        return bool(rows)
+
+    def _release_claim(self, plan_id: str, item_id: str, prior_status: str) -> None:
+        try:
+            self._rows(
+                self._t("content_plan_items")
+                .update({"status": prior_status})
+                .eq("org_id", self._org_id)
+                .eq("plan_id", plan_id)
+                .eq("id", item_id)
+                .eq("status", "task_pending"),
+                "release_claim",
+            )
+        except Exception:
+            logger.error(
+                "content_plans.release_claim FAILED item=%s org=%s (stuck in task_pending)",
+                item_id, self._org_id,
+            )
+
     def create_tasks(
         self,
         plan: dict[str, Any],
         item_ids: list[str],
         assignee_user_id: str | None = None,
     ) -> dict[str, Any]:
-        """One task per ELIGIBLE selected item (no task_id, not discarded)."""
+        """One task per ELIGIBLE selected item (no task_id, not discarded), each
+        claimed by compare-and-set first so concurrent calls never double-create."""
         plan_id = str(plan["id"])
         wanted = {str(i) for i in item_ids}
         items = [
             r for r in self._items_of([plan_id]).get(plan_id, [])
             if str(r["id"]) in wanted
         ]
-        eligible = [r for r in items if not r.get("task_id") and r.get("status") != "discarded"]
+        eligible = [
+            r for r in items
+            if not r.get("task_id") and r.get("status") not in ("discarded", "task_pending")
+        ]
         skipped = len(wanted) - len(eligible)
         tasks = TasksService(self._db, UUID(self._org_id))
         task_ids: list[str] = []
         failed = 0
         for item in eligible:
+            prior_status = item.get("status") or "planned"
+            if not self._claim_item(plan_id, str(item["id"])):
+                skipped += 1  # a concurrent call won the compare-and-set
+                continue
             due = item.get("due_date") or item.get("post_date")
             payload: dict[str, Any] = {
                 "id": str(uuid4()),
@@ -318,6 +360,7 @@ class ContentPlansService:
                     "content_plans.create_tasks task insert failed org=%s item=%s",
                     self._org_id, item["id"],
                 )
+                self._release_claim(plan_id, str(item["id"]), prior_status)
                 failed += 1
                 continue
             try:

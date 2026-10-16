@@ -20,7 +20,7 @@ from app.schemas.social_content import PlatformLiteral
 
 PlanStatusLiteral = Literal["draft", "active"]
 CreationModeLiteral = Literal["ai", "manual"]
-ItemStatusLiteral = Literal["planned", "task_created", "in_progress", "published", "discarded"]
+ItemStatusLiteral = Literal["planned", "task_pending", "task_created", "in_progress", "published", "discarded"]
 
 MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 

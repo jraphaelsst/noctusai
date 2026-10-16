@@ -17,7 +17,10 @@
 --     approved/revision -> published + post_approvals/public-token flow.
 --   Items never carry approval state themselves.
 --
--- Item statuses: planned | task_created | in_progress | published | discarded.
+-- Item statuses: planned | task_pending | task_created | in_progress | published |
+--   discarded. 'task_pending' is the transient CLAIM held while a task is being
+--   created (compare-and-set in the service: only the caller that flips the row
+--   wins and creates the task, so concurrent calls can never double-create).
 --   Deleting an item that already has a task is a SOFT delete (-> discarded,
 --   task kept); otherwise the row is hard-deleted (enforced in the service).
 --
@@ -109,8 +112,8 @@ CREATE TABLE IF NOT EXISTS orbity.content_plan_items (
     caption         TEXT,
     reference_notes TEXT,
     status          TEXT NOT NULL DEFAULT 'planned'
-                        CHECK (status IN ('planned', 'task_created', 'in_progress',
-                                          'published', 'discarded')),
+                        CHECK (status IN ('planned', 'task_pending', 'task_created',
+                                          'in_progress', 'published', 'discarded')),
     task_id         UUID REFERENCES orbity.tasks(id) ON DELETE SET NULL,
     post_id         UUID REFERENCES orbity.content_posts(id) ON DELETE SET NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

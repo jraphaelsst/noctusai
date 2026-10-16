@@ -16,7 +16,7 @@ import type { Platform, Post } from "@/hooks/useConteudo";
 
 export type PlanStatus = "draft" | "active";
 export type CreationMode = "ai" | "manual";
-export type ItemStatus = "planned" | "task_created" | "in_progress" | "published" | "discarded";
+export type ItemStatus = "planned" | "task_pending" | "task_created" | "in_progress" | "published" | "discarded";
 
 export interface PlanItem {
   id: string;

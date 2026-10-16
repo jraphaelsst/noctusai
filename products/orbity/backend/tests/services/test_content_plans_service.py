@@ -122,7 +122,8 @@ class TestCreateTasks:
         assert tasks[0]["org_id"] == str(ORG)
         assert tasks[0]["client_id"] == CLIENT_ID
         links = db.table("content_plan_items").updated_payloads
-        assert links[0]["status"] == "task_created" and links[0]["task_id"]
+        assert links[0] == {"status": "task_pending"}
+        assert links[-1]["status"] == "task_created" and links[-1]["task_id"]
 
     def test_due_date_prefers_item_due_date_then_post_date(self):
         db, svc = _svc(content_plan_items=[
@@ -165,3 +166,42 @@ class TestPromoteToPost:
         _db, svc = _svc(content_plan_items=[_item(0, platform=None)])
         with pytest.raises(ValueError):
             svc.promote_to_post(_plan(), "item-0")
+
+
+class TestClaim:
+    def test_claim_precedes_task_creation_and_filters_unclaimed(self):
+        db, svc = _svc(content_plan_items=[_item(0)])
+        svc.create_tasks(_plan(), ["item-0"])
+        updates = db.table("content_plan_items").updated_payloads
+        assert updates[0] == {"status": "task_pending"}
+        assert updates[1]["status"] == "task_created"
+
+    def test_lost_claim_skips_item_and_creates_no_task(self):
+        from noctusai_lib.testing import MockSupabaseResponse
+
+        db = MockSupabaseClient(schema="orbity")
+        # 1st execute = items read, 2nd = the claim UPDATE matching 0 rows
+        # (another caller already flipped the row).
+        db.set_sequential_responses("content_plan_items", [
+            MockSupabaseResponse(data=[_item(0)]),
+            MockSupabaseResponse(data=[]),
+        ])
+        out = ContentPlansService(db, org_id=ORG).create_tasks(_plan(), ["item-0"])
+        assert out == {"created": 0, "skipped": 1, "failed": 0, "task_ids": []}
+        assert db.table("tasks").inserted_payloads == []
+
+    def test_pending_item_is_not_eligible(self):
+        db, svc = _svc(content_plan_items=[_item(0, status="task_pending")])
+        out = svc.create_tasks(_plan(), ["item-0"])
+        assert out["created"] == 0 and out["skipped"] == 1
+        assert db.table("tasks").inserted_payloads == []
+
+    def test_failed_task_insert_releases_claim(self):
+        from noctusai_lib.testing import MockSupabaseResponse
+
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("content_plan_items", [_item(0, status="in_progress")])
+        db.set_sequential_responses("tasks", [MockSupabaseResponse(data=[], error="boom")])
+        out = ContentPlansService(db, org_id=ORG).create_tasks(_plan(), ["item-0"])
+        assert out["failed"] == 1 and out["created"] == 0
+        assert {"status": "in_progress"} in db.table("content_plan_items").updated_payloads

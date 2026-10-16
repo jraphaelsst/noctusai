@@ -148,8 +148,11 @@ page (frontend/src/pages/X.tsx)
   returns a PREVIEW only — the UI appends the checked items. No key → honest **503**, invalid
   output → 502; never fake output. Rate-limited 10/min.
 - **Caveats:** "Publicado" is a manual status (`NOC-REMEDIATE[orbity-content-publish]`);
-  approval history endpoints exist (`GET /approvals*`) without UI; two concurrent "Criar tarefas"
-  calls on the same item could create two tasks (no row claim; UI disables the button in flight).
+  approval history endpoints exist (`GET /approvals*`) without UI. "Criar tarefas" claims each
+  item by compare-and-set (`status='task_pending'` WHERE `task_id IS NULL` and not
+  discarded/pending) before creating its task, so concurrent calls never double-create; a failed
+  task insert releases the claim. A crash between claim and link leaves the item in `task_pending`
+  (needs a manual status reset).
 
 ### Relatórios — `reports`, `report_snapshots` (+ reads leads/revenues/expenses/campaign_metrics)
 - **Dataflow:** `useRelatorios` → `/api/reports` CRUD, `GET /{id}/snapshots`, `POST /{id}/generate`;
