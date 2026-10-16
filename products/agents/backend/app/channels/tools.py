@@ -191,10 +191,21 @@ ACTION_SPECS: dict[str, ToolSpec] = {
     ),
 }
 
+#: SW overlays an owner-confirmed status/price on the Vista listing (`confirmacao_proprietario`, additive key).
+_CONFIRMACAO_HINT = (
+    "Se um imóvel trouxer `confirmacao_proprietario`, o status/preço dali é o mais recente: use-o e, ao citar, "
+    "diga a procedência com o texto de `provenance`."
+)
+
+#: Read tools whose lookup SW records for Relatórios (top imóveis); the turn's interação is attached
+#: SERVER-side from ``contexto.estado.interacao_id`` — never a model argument (it is not in their schema).
+_TOOLS_WITH_INTERACAO = frozenset({"buscar_imoveis", "detalhes_imovel"})
+
 READ_SPECS: dict[str, ToolSpec] = {
     "buscar_imoveis": ToolSpec(
         name="buscar_imoveis",
-        description="Busca imóveis do catálogo da imobiliária (máx. 5). Se retornar {\"erro\": \"indisponivel\"}, peça desculpas e siga o atendimento.",
+        description=("Busca imóveis do catálogo da imobiliária (máx. 5). Se retornar {\"erro\": \"indisponivel\"}, peça desculpas e siga o atendimento. "
+                     + _CONFIRMACAO_HINT),
         parameters={
             "type": "object",
             "properties": {
@@ -208,7 +219,7 @@ READ_SPECS: dict[str, ToolSpec] = {
     ),
     "detalhes_imovel": ToolSpec(
         name="detalhes_imovel",
-        description="Detalhes de um imóvel pelo código.",
+        description="Detalhes de um imóvel pelo código. " + _CONFIRMACAO_HINT,
         parameters={
             "type": "object", "properties": {"codigo": {"type": "string"}},
             "required": ["codigo"], "additionalProperties": False,
@@ -392,6 +403,12 @@ def make_channel_tools_factory(
                 else:
                     client = None
 
+        def _sw_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            body = dict(args)
+            if name in _TOOLS_WITH_INTERACAO and contexto is not None:
+                body["interacao_id"] = str(contexto.estado.interacao_id)
+            return body
+
         async def _read(call: ToolCall) -> ToolResult:
             assert client is not None
             args = call.arguments or {}
@@ -405,7 +422,7 @@ def make_channel_tools_factory(
                 ))
             try:
                 body = await asyncio.wait_for(
-                    client.lais_ferramenta(ctx.org_id, call.name, dict(args)), LAIS_TOOL_TIMEOUT_SECONDS
+                    client.lais_ferramenta(ctx.org_id, call.name, _sw_args(call.name, args)), LAIS_TOOL_TIMEOUT_SECONDS
                 )
             except Exception as exc:  # noqa: BLE001 — a tool failure is a result, never a crashed turn
                 logger.warning(

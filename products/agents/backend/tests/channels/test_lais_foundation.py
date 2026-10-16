@@ -294,8 +294,25 @@ class TestReadTools:
         chan.lais.lais_responses["buscar_imoveis"] = {"data": [{"codigo": "AP1", "titulo": "Apto"}]}
         self._run(chan)
         assert "buscar_imoveis" in tools_offered(chan.provider)
-        assert chan.lais.lais_calls == [(chan.org_id, "buscar_imoveis", self.ARGS)]
+        # The turn's interação rides along SERVER-side (Relatórios attributes the lookup to the lead).
+        assert chan.lais.lais_calls == [(chan.org_id, "buscar_imoveis", {**self.ARGS, "interacao_id": str(INTERACAO)})]
         assert json.loads(tool_results(chan.provider)[0]) == {"data": [{"codigo": "AP1", "titulo": "Apto"}]}
+
+    def test_the_model_cannot_supply_the_interacao(self, chan):
+        self._run(chan, call=ToolCall("1", "buscar_imoveis", {**self.ARGS, "interacao_id": "00000000-0000-0000-0000-000000000000"}))
+        assert tool_results(chan.provider)[0].startswith("Argumentos inválidos")
+        assert chan.lais.lais_calls == []
+
+    def test_horarios_visita_carries_no_interacao(self, chan):
+        self._run(chan, ferramentas=("horarios_visita",), call=ToolCall("1", "horarios_visita", {"dias": 3}))
+        assert chan.lais.lais_calls == [(chan.org_id, "horarios_visita", {"dias": 3})]
+
+    def test_specs_tell_julia_to_cite_the_owner_confirmation(self):
+        from app.channels.tools import READ_SPECS
+
+        for nome in ("buscar_imoveis", "detalhes_imovel"):
+            assert "confirmacao_proprietario" in READ_SPECS[nome].description
+            assert "interacao_id" not in READ_SPECS[nome].parameters["properties"]
 
     def test_only_tools_named_in_ferramentas_are_offered(self, chan):
         self._run(chan, ferramentas=("detalhes_imovel",), call=ToolCall("1", "detalhes_imovel", {"codigo": "AP1"}))
