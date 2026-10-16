@@ -100,7 +100,13 @@ class WhatsAppReminderChannel:
         self._resolve_client = resolve_client
 
     def send(self, *, org_id: str, to: str, text: str) -> SendReceipt:
-        client = self._resolve_client(org_id)
+        try:
+            client = self._resolve_client(org_id)
+        except ReminderSendError:
+            raise
+        except Exception as exc:  # a store/DB hiccup resolving the line: retriable, and the claimed log row must settle
+            logger.warning("finance reminders: line resolution failed org=%s: %s", org_id, type(exc).__name__)
+            raise ReminderSendError(f"linha de WhatsApp indisponível ({type(exc).__name__})", transient=True) from exc
         if client is None:
             raise ReminderSendError("sem linha de WhatsApp conectada", transient=False)
         phone = normalize_br_phone(to)

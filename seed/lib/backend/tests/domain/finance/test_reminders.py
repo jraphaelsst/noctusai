@@ -449,6 +449,15 @@ def test_real_channel_transport_error_is_transient_and_no_line_is_permanent():
     assert not e2.value.transient
 
 
+def test_line_resolution_failure_is_a_transient_send_error_not_a_stuck_pending_row():
+    def broken(org_id):
+        raise RuntimeError("connection store down")
+
+    with pytest.raises(ReminderSendError) as e:
+        WhatsAppReminderChannel(broken).send(org_id=ORG_A, to="11999998888", text="x")
+    assert e.value.transient and "RuntimeError" in str(e.value)
+
+
 def test_factory():
     assert isinstance(make_reminder_channel("fake"), FakeReminderChannel)
     with pytest.raises(ValueError):
