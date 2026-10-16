@@ -8995,6 +8995,75 @@ _SW_LAIS_CAPTACAO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_CRED = "281_lais_credito.sql"
+_T_LAIS_CRED = (
+    f"{_S}.lais_contatos", f"{_S}.lais_credito_config", f"{_S}.lais_credito_consentimentos", f"{_S}.lais_credito_analises",
+)
+_FK = "foreign_key_violation"
+
+
+def _cred_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_credito.{probe_id}", guard_name=guard, migration=_M_LAIS_CRED, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CRED,
+    )
+
+
+def _cred_consent_ins(aceito: str = "true", versao: str = "'v1'") -> str:
+    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_credito_consentimentos", "aceito, texto_versao", f"{aceito}, {versao}")
+
+
+def _cred_analise_ins(consent_aceito: str, cols: str = "", vals: str = "") -> str:
+    """A probe contato + a consent row (aceito per arg) + an analysis pointing at it (all rolled back)."""
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return (
+        _cred_consent_ins(consent_aceito)
+        + f"\n    INSERT INTO {_S}.lais_credito_analises (org_id, contato_id, consentimento_id, provider{extra_c})\n"
+        f"    SELECT org_id, contato_id, id, 'noc_probe'{extra_v} FROM {_S}.lais_credito_consentimentos\n"
+        "    WHERE org_id = v_org;"
+    )
+
+
+def _cred_config_ins(cols: str, vals: str) -> str:
+    return f"    INSERT INTO {_S}.lais_credito_config (org_id, {cols}) VALUES (v_org, {vals});"
+
+
+#: Migration 281 -- Lais wave 13 (analise de credito). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_LAIS_CREDITO_PROBES: tuple[GuardProbe, ...] = (
+    _cred_probe(
+        "config_provider_valido", "lais_credito_config_provider_valido",
+        "The provider names a factory entry; free text would silently select nothing.",
+        _cred_config_ins("provider", "'Not A Token!'"), _CHECK, "a lais_credito_config with a malformed provider",
+    ),
+    _cred_probe(
+        "config_ativo_exige_provider", "lais_credito_config_ativo_exige_provider",
+        "An org cannot switch the analysis on with no provider chosen: every run would die at the factory.",
+        _cred_config_ins("ativo", "true"), _CHECK, "an active lais_credito_config with no provider",
+    ),
+    _cred_probe(
+        "consent_texto_versao", "lais_credito_consentimentos_texto_versao_nao_vazia",
+        "A consent must name the wording the lead agreed to (LGPD evidence); a blank version proves nothing.",
+        _cred_consent_ins("true", "'  '"), _CHECK, "a credit consent with a blank texto_versao",
+    ),
+    _cred_probe(
+        "analise_status_valido", "lais_credito_analises_status_valido",
+        "The status drives the Interacoes badge and the reprocess rule; free text escapes both.",
+        _cred_analise_ins("true", "status", "'noc_probe_bogus'"), _CHECK, "a credit analysis with an unknown status",
+    ),
+    _cred_probe(
+        "analise_consentimento_aceito", "lais_credito_analises_consentimento_aceito",
+        "An analysis row asserts it rests on an ACCEPTED consent (contract 17); false is never a valid state.",
+        _cred_analise_ins("true", "consentimento_aceito", "false"), _CHECK, "a credit analysis flagged as resting on a refused consent",
+    ),
+    _cred_probe(
+        "analise_consentimento_fk", "lais_credito_analises_consentimento_fk",
+        "No financial query may exist behind a REFUSED consent: the composite FK only resolves to aceito = true rows.",
+        _cred_analise_ins("false"), _FK, "a credit analysis pointing at a refused consent",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9079,6 +9148,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_241_PROBES,
     *_SW_LAIS_ENVIO_PROBES,
     *_SW_LAIS_CAPTACAO_PROBES,
+    *_SW_LAIS_CREDITO_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
