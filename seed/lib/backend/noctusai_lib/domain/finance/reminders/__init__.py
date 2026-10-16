@@ -15,6 +15,8 @@ Host wiring:
         skip_reason=my_veto,                             # optional: preserved / cancelled clients
     )
     register_billing_reminders(cfg, get_db=get_admin_client, ports=ports, hour=12)   # job `finance_billing_reminders`
+    # HTTP: `mount_finance_reminders(...)` (noctusai_seed.organs) -> `make_finance_reminders_router`, /api/finance/reminders;
+    # FE: `<RemindersPage api={api} isAdmin={...} />` (@noctusai/lib finance).
 """
 from .channel import (
     FakeReminderChannel,
@@ -28,6 +30,7 @@ from .channel import (
 )
 from .guards import finance_reminders_guard_probes
 from .job import JOB_ID, register_billing_reminders
+from .router import make_finance_reminders_router
 from .service import (
     ReminderPorts,
     create_rule,
@@ -39,6 +42,7 @@ from .service import (
     preview_reminders,
     run_reminders_all,
     run_reminders_for_org,
+    save_settings,
     set_receivable_opt_out,
     update_rule,
     update_settings,
@@ -59,8 +63,8 @@ __all__ = [
     "ReminderChannel", "ReminderContact", "ReminderPlan", "ReminderPorts", "ReminderSendError", "SendReceipt",
     "SkippedReminder", "TEMPLATE_VARIABLES", "WhatsAppReminderChannel", "create_rule", "delete_rule",
     "ensure_default_rules", "finance_reminders_guard_probes", "finance_reminders_migration", "format_brl",
-    "get_settings", "list_log", "list_rules", "make_reminder_channel", "make_waha_client_resolver",
+    "get_settings", "list_log", "list_rules", "make_finance_reminders_router", "make_reminder_channel", "make_waha_client_resolver",
     "normalize_br_phone", "preview_reminders", "register_billing_reminders", "render", "run_reminders_all",
-    "run_reminders_for_org", "sample_values", "set_receivable_opt_out", "update_rule", "update_settings",
+    "run_reminders_for_org", "sample_values", "save_settings", "set_receivable_opt_out", "update_rule", "update_settings",
     "validate_template",
 ]

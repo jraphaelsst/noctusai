@@ -115,6 +115,16 @@ def update_settings(s: Scope, data: Mapping[str, Any]) -> dict:
     return {**current, **patch}
 
 
+def save_settings(s: Scope, data: Mapping[str, Any]) -> dict:
+    """`update_settings` + the first-enable convenience: turning reminders ON for an org that has NO rules yet seeds the
+    default pt-BR ladder (so "enable" never means "enabled, sends nothing"). Rules the org later deletes stay deleted."""
+    was_enabled = bool(get_settings(s).get("enabled"))
+    saved = update_settings(s, data)
+    if saved.get("enabled") and not was_enabled and not list_rules(s):
+        ensure_default_rules(s)
+    return saved
+
+
 def list_rules(s: Scope) -> list[dict]:
     rows = s.rows("reminder_rules")
     rows.sort(key=lambda r: (r["channel"], int(r["offset_days"])))
@@ -402,5 +412,5 @@ def run_reminders_all(db: Any, cfg: FinanceConfig, ports: ReminderPorts, *, now:
 __all__ = [
     "ContactResolver", "REGRA_COM_HISTORICO", "REGRA_DUPLICADA", "ReminderPorts", "SkipHook",
     "create_rule", "delete_rule", "ensure_default_rules", "get_settings", "list_log", "list_rules", "org_today",
-    "preview_reminders", "run_reminders_all", "run_reminders_for_org", "set_receivable_opt_out", "update_rule", "update_settings",
+    "preview_reminders", "run_reminders_all", "run_reminders_for_org", "save_settings", "set_receivable_opt_out", "update_rule", "update_settings",
 ]

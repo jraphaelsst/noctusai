@@ -1,0 +1,32 @@
+name: FinanceRemindersPage
+kind: component
+path: seed/lib/frontend/src/finance/RemindersPage.tsx
+phase: pilot-seed
+registered_at: "2026-10-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Billing reminders (dunning) screen of the finance organ: master switch, rules editor with variable chips, 'what goes out today' (the exact preview of the daily job, with per-receivable opt-out) and the paginated sent log. Backend: noctusai_lib.domain.finance.reminders (router at /api/finance/reminders, mounted by noctusai_seed.organs.mount_finance_reminders)."
+  - "OFF per org by default; the first enable seeds the default rule ladder server-side. isAdmin is a UX gate only; the server enforces every write. A template with an unknown {variable} is a 422 variavel_desconhecida whose pt-BR message is rendered next to the form."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching. The paged log keeps placeholderData."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client (or hooks from createFinanceReminderHooks) and mounts the page as a tab (Orbity: Financeiro > Lembretes)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A FinanceShell section was rejected: hosts that compose their own finance tabs (Orbity: Financeiro / Contratos / Cobranças) would have to carry a shell they do not render; a standalone page is mountable anywhere."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

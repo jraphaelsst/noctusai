@@ -404,6 +404,31 @@ def test_real_whatsapp_channel_sends_through_waha():
     assert "5511999998888@c.us" in seen["body"] and r.provider_ref == "true_5511@c.us_ABC"
 
 
+def test_real_channel_resolves_the_brazilian_ninth_digit():
+    """The number on file has the 9; WhatsApp has it registered WITHOUT -> the message must reach the real chat id."""
+    sent = []
+
+    def handler(request):
+        if request.url.path.endswith("/contacts/check-exists"):
+            phone = request.url.params["phone"]
+            exists = phone == "551188887777"
+            return httpx.Response(200, json={"numberExists": exists, "chatId": f"{phone}@c.us" if exists else None})
+        sent.append(request.read().decode())
+        return httpx.Response(201, json={"id": "m1"})
+
+    r = WhatsAppReminderChannel(lambda org: waha(handler)).send(org_id=ORG_A, to="11988887777", text="oi")
+    assert len(sent) == 1 and "551188887777@c.us" in sent[0] and r.provider_ref == "m1"
+
+
+def test_real_channel_number_not_on_whatsapp_is_permanent():
+    def handler(request):
+        return httpx.Response(200, json={"numberExists": False})
+
+    with pytest.raises(ReminderSendError) as e:
+        WhatsAppReminderChannel(lambda org: waha(handler)).send(org_id=ORG_A, to="11988887777", text="oi")
+    assert not e.value.transient
+
+
 @pytest.mark.parametrize("status, transient", [(500, True), (429, True), (400, False), (404, False)])
 def test_real_channel_classifies_http_errors(status, transient):
     ch = WhatsAppReminderChannel(lambda org: waha(lambda req: httpx.Response(status, json={})))

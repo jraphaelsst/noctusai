@@ -67,3 +67,10 @@ export { MeiMonthlyReport } from './MeiMonthlyReport';
 export type { MeiMonthlyReportProps } from './MeiMonthlyReport';
 export { DominioExport } from './DominioExport';
 export type { DominioExportProps } from './DominioExport';
+
+// Billing reminders (dunning) — rules, today's preview, sent log; backend `noctusai_lib.domain.finance.reminders`.
+export * from './reminderTypes';
+export { createFinanceReminderHooks, reminderKeys, REMINDERS_BASE } from './reminderHooks';
+export type { FinanceReminderHooks, ReminderLogParams } from './reminderHooks';
+export { RemindersPage, offsetLabel as reminderOffsetLabel } from './RemindersPage';
+export type { RemindersPageProps } from './RemindersPage';

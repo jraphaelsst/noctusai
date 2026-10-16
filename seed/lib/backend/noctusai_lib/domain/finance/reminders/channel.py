@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional, Protocol, Sequence, runtime_checkabl
 
 import httpx
 
-from noctusai_lib.integrations.whatsapp.mappers import chat_id_for_phone
+from noctusai_lib.integrations.whatsapp.client import WahaNumberNotOnWhatsApp
 
 from .types import CHANNEL_WHATSAPP
 
@@ -87,8 +87,11 @@ def _classify_http(exc: BaseException) -> ReminderSendError:
 class WhatsAppReminderChannel:
     """Real channel: sends through the WAHA client `resolve_client(org_id)` yields for that org.
 
-    `resolve_client` returns an object with `send_text_sync(chat_id, text)` (`WahaClient`) or None when the
-    org has no connected line -> a PERMANENT error (a loud `failed` log row, not a silent skip).
+    `resolve_client` returns an object with `send_text_to_phone_sync(phone, text)` (`WahaClient`) or None when the
+    org has no connected line -> a PERMANENT error (a loud `failed` log row, not a silent skip). The send goes
+    through the phone path, which resolves the BR 9th-digit variant (check-exists, send-retry fallback) -- never a
+    raw `<digits>@c.us` chat id, which silently misses numbers registered without the 9. A number that is on
+    neither spelling is a PERMANENT error.
     """
 
     name = CHANNEL_WHATSAPP
@@ -100,9 +103,11 @@ class WhatsAppReminderChannel:
         client = self._resolve_client(org_id)
         if client is None:
             raise ReminderSendError("sem linha de WhatsApp conectada", transient=False)
-        chat_id = chat_id_for_phone(normalize_br_phone(to))
+        phone = normalize_br_phone(to)
         try:
-            body = client.send_text_sync(chat_id, text)
+            body = client.send_text_to_phone_sync(phone, text)
+        except WahaNumberNotOnWhatsApp as exc:
+            raise ReminderSendError("número fora do WhatsApp", transient=False) from exc
         except (httpx.HTTPError, RuntimeError) as exc:
             # WahaSessionNotReady is a RuntimeError: the session is recovering -> worth another try.
             if isinstance(exc, httpx.HTTPError):

@@ -99,6 +99,55 @@ def test_create_product_app_organs_seam_mounts_routers_and_covers_upload_routes(
         assert client.get("/api/finance/entries").status_code == 401
 
 
+# -- finance reminders -----------------------------------------------------------------------------------
+
+
+def _reminders_client(*, role: str):
+    from noctusai_lib.domain.finance.reminders import FakeReminderChannel, ReminderContact, ReminderPorts
+    from noctusai_lib.testing import MockSupabaseClient
+    from noctusai_seed.organs import mount_finance_reminders
+
+    core = MockSupabaseClient()
+    core.set_table_data("noctus_users", [{"id": "u1", "org_id": "org-1", "org_role": role, "role": "user"}])
+    ports = ReminderPorts(channels={"whatsapp": FakeReminderChannel()}, resolve_contact=lambda s, e: ReminderContact(nome="x", phone="11999998888"))
+    organ = mount_finance_reminders(schema="erp", auth_dependency=_auth, get_admin_client=lambda: MockSupabaseClient(),
+                                    get_core_client=lambda: core, get_ports=lambda: ports)
+    return organ, TestClient(_app_of(organ))
+
+
+def test_mount_finance_reminders_strict_401_and_admin_gates_the_writes():
+    organ, client = _reminders_client(role="member")
+    P = "/api/finance/reminders"
+    rid = "55555555-5555-4555-8555-555555555555"
+    for method, path in (("GET", f"{P}/settings"), ("PUT", f"{P}/settings"), ("GET", f"{P}/rules"), ("POST", f"{P}/rules"),
+                         ("PATCH", f"{P}/rules/{rid}"), ("DELETE", f"{P}/rules/{rid}"), ("PUT", f"{P}/receivables/{rid}/opt-out"),
+                         ("GET", f"{P}/log"), ("GET", f"{P}/preview")):
+        assert client.request(method, path, json={} if method in ("POST", "PUT", "PATCH") else None).status_code == 401, path
+    assert client.put(f"{P}/settings", json={"enabled": True}, headers=H).status_code == 403  # member: not admin
+    assert client.post(f"{P}/rules", json={"offset_days": 1, "template": "x"}, headers=H).status_code == 403
+    assert client.get(f"{P}/rules", headers=H).status_code == 200
+
+
+def test_mount_finance_reminders_exposes_the_daily_job_and_refuses_a_foreign_cfg():
+    from noctusai_lib.domain.finance import FinanceConfig
+    from noctusai_seed.organs import mount_finance_reminders
+
+    organ, _ = _reminders_client(role="owner")
+
+    class Sched:
+        jobs: dict = {}
+
+        def register(self, job_id, fn, **kw):
+            self.jobs[job_id] = kw
+
+    sched = Sched()
+    assert organ.register_jobs(scheduler=sched) == "finance_billing_reminders"
+    assert sched.jobs["finance_billing_reminders"]["cron"] == "0 12 * * *"
+    with pytest.raises(ValueError):
+        mount_finance_reminders(schema="erp", cfg=FinanceConfig(schema="other"), auth_dependency=_auth, get_admin_client=lambda: object(),
+                                get_core_client=lambda: object(), get_ports=lambda: None)
+
+
 # -- items + the commerce money/fiscal/jobs registry entries + the finance tax-regime seam ------------------
 
 
