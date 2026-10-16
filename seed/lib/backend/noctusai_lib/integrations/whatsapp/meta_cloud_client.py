@@ -35,10 +35,13 @@ class MetaCloudClient:
         phone_number_id: str,
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
+        waba_id: str = "",
     ):
         self.phone_number_id = phone_number_id
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        # WhatsApp Business Account id: only the template-management calls address it.
+        self.waba_id = waba_id
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -74,6 +77,70 @@ class MetaCloudClient:
             response.raise_for_status()
             return response.json()
 
+    # -- template send / profile / template management (Cloud API only) ------------------------
+
+    @staticmethod
+    def build_template_body(
+        phone: str, template_name: str, language: str, body_params: list[str] | None
+    ) -> dict[str, Any]:
+        """Meta Cloud API `type=template` body; `body_params` fill {{1}}..{{n}} in order."""
+        template: dict[str, Any] = {"name": template_name, "language": {"code": language}}
+        if body_params:
+            template["components"] = [
+                {"type": "body", "parameters": [{"type": "text", "text": str(p)} for p in body_params]}
+            ]
+        return {"messaging_product": "whatsapp", "to": phone, "type": "template", "template": template}
+
+    @staticmethod
+    def build_profile_body(profile: dict[str, Any]) -> dict[str, Any]:
+        """Business-profile update body. Meta's fields: about (<=139), description (<=512), address,
+        email, websites (list). The display NAME is not editable through this endpoint (Business Manager)."""
+        body: dict[str, Any] = {"messaging_product": "whatsapp"}
+        for key in ("about", "description", "address", "email"):
+            if profile.get(key):
+                body[key] = profile[key]
+        if profile.get("websites"):
+            body["websites"] = list(profile["websites"])
+        return body
+
+    @staticmethod
+    def build_create_template_body(
+        name: str, category: str, language: str, body_text: str, example_params: list[str] | None
+    ) -> dict[str, Any]:
+        component: dict[str, Any] = {"type": "BODY", "text": body_text}
+        if example_params:
+            component["example"] = {"body_text": [list(example_params)]}
+        return {"name": name, "category": category, "language": language, "components": [component]}
+
+    async def _post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=self._headers(), json=body)
+            response.raise_for_status()
+            return response.json()
+
+    async def send_template(
+        self, phone: str, template_name: str, language: str = "pt_BR", body_params: list[str] | None = None
+    ) -> dict[str, Any]:
+        """POST an approved template message (the only way to open a conversation outside the 24 h window)."""
+        return await self._post(self.send_url, self.build_template_body(phone, template_name, language, body_params))
+
+    async def update_business_profile(self, profile: dict[str, Any]) -> dict[str, Any]:
+        """POST /{phone_number_id}/whatsapp_business_profile."""
+        return await self._post(
+            f"{self.base_url}/{self.phone_number_id}/whatsapp_business_profile", self.build_profile_body(profile)
+        )
+
+    async def create_template(
+        self, name: str, category: str, language: str, body_text: str, example_params: list[str] | None = None
+    ) -> dict[str, Any]:
+        """POST /{waba_id}/message_templates -- submit a template for Meta's review (returns id + status)."""
+        if not self.waba_id:
+            raise ValueError("create_template needs a waba_id")
+        return await self._post(
+            f"{self.base_url}/{self.waba_id}/message_templates",
+            self.build_create_template_body(name, category, language, body_text, example_params),
+        )
+
 
 class FakeMetaCloudClient:
     """Deterministic in-memory Meta Cloud API stand-in.
@@ -89,10 +156,15 @@ class FakeMetaCloudClient:
         self,
         phone_number_id: str | None = None,
         base_url: str = DEFAULT_BASE_URL,
+        waba_id: str = "",
     ):
         self.phone_number_id = phone_number_id
         self.base_url = base_url.rstrip("/")
+        self.waba_id = waba_id
         self.sent_messages: list[dict[str, Any]] = []
+        self.sent_templates: list[dict[str, Any]] = []
+        self.profile_updates: list[dict[str, Any]] = []
+        self.created_templates: list[dict[str, Any]] = []
 
     async def send_text(self, phone: str, text: str) -> dict[str, Any]:
         message_id = f"fake-meta-{len(self.sent_messages) + 1}"
@@ -108,6 +180,37 @@ class FakeMetaCloudClient:
             "messages": [{"id": message_id}],
         }
 
+    async def send_template(
+        self, phone: str, template_name: str, language: str = "pt_BR", body_params: list[str] | None = None
+    ) -> dict[str, Any]:
+        message_id = f"fake-meta-tpl-{len(self.sent_templates) + 1}"
+        self.sent_templates.append({
+            "phone": phone, "template_name": template_name, "language": language,
+            "body_params": list(body_params or []), "message_id": message_id,
+        })
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": phone, "wa_id": phone}],
+            "messages": [{"id": message_id}],
+        }
+
+    async def update_business_profile(self, profile: dict[str, Any]) -> dict[str, Any]:
+        self.profile_updates.append(MetaCloudClient.build_profile_body(profile))
+        return {"success": True}
+
+    async def create_template(
+        self, name: str, category: str, language: str, body_text: str, example_params: list[str] | None = None
+    ) -> dict[str, Any]:
+        template_id = f"fake-meta-template-{len(self.created_templates) + 1}"
+        self.created_templates.append({
+            "id": template_id, "name": name, "category": category, "language": language,
+            "body_text": body_text, "example_params": list(example_params or []),
+        })
+        return {"id": template_id, "status": "PENDING", "category": category}
+
     def clear(self) -> None:
         """Reset between test cases."""
         self.sent_messages.clear()
+        self.sent_templates.clear()
+        self.profile_updates.clear()
+        self.created_templates.clear()

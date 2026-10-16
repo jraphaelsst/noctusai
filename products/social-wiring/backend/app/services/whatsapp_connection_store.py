@@ -96,6 +96,10 @@ class WhatsAppConnectionRecord:
     agente_leads_key: Optional[str] = None
     agente_leads_ativado_em: Optional[str] = None
     agente_handoff_notificar_user_id: Optional[UUID] = None
+    # Migration 275 — transport per connection (waha | cloud). A defensive read: an un-migrated row is WAHA.
+    transporte: str = "waha"
+    cloud_phone_number_id: Optional[str] = None
+    cloud_waba_id: Optional[str] = None
 
 
 class WhatsAppConnectionStore:
@@ -155,6 +159,9 @@ class WhatsAppConnectionStore:
                 if row.get("agente_handoff_notificar_user_id")
                 else None
             ),
+            transporte=row.get("transporte") or "waha",
+            cloud_phone_number_id=row.get("cloud_phone_number_id"),
+            cloud_waba_id=row.get("cloud_waba_id"),
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -348,6 +355,33 @@ class WhatsAppConnectionStore:
         if unknown:
             raise ValueError(f"not a Julia column: {sorted(unknown)}")
         body = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
+        resp = (
+            self._table()
+            .update(body)
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        return self._record(rows[0]) if rows else None
+
+    def update_transporte(
+        self,
+        *,
+        connection_id: UUID,
+        org_id: UUID,
+        patch: dict[str, Any],
+        access_token: Optional[str] = None,
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """Write the transport columns (migration 275). ORG-scoped; for `cloud` the encrypted api_key
+        holds the Meta access token, so a supplied `access_token` replaces it."""
+        allowed = {"transporte", "cloud_phone_number_id", "cloud_waba_id"}
+        unknown = set(patch) - allowed
+        if unknown:
+            raise ValueError(f"not a transport column: {sorted(unknown)}")
+        body: dict[str, Any] = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
+        if access_token:
+            body["encrypted_api_key"] = self._encrypt(access_token)
         resp = (
             self._table()
             .update(body)

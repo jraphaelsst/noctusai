@@ -182,6 +182,7 @@ def get_meta_cloud_client(
     phone_number_id: str | None = None,
     api_key: str | None = None,
     base_url: str = META_CLOUD_DEFAULT_BASE_URL,
+    waba_id: str | None = None,
 ) -> MetaCloudClient | FakeMetaCloudClient:
     """Return a real `MetaCloudClient` when `api_key` is set; `FakeMetaCloudClient` otherwise.
 
@@ -193,12 +194,13 @@ def get_meta_cloud_client(
     """
     if not api_key:
         return FakeMetaCloudClient(
-            phone_number_id=phone_number_id, base_url=base_url
+            phone_number_id=phone_number_id, base_url=base_url, waba_id=waba_id or ""
         )
     return MetaCloudClient(
         phone_number_id=phone_number_id or "",
         api_key=api_key,
         base_url=base_url,
+        waba_id=waba_id or "",
     )
 
 

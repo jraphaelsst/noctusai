@@ -26,6 +26,8 @@ from app.services.lais_contexto_service import ContextoCtx, FUSO
 logger = logging.getLogger(__name__)
 
 TABLE = "lais_conhecimento_secoes"
+#: Fallback persona name, used ONLY when the agent's status name is unavailable (agents not configured / down).
+#: The live name is the agent's own status name (`AgentsClient.agent_status().nome`) -- per-org swappable.
 PERSONA_NOME = "Julia"
 
 SECOES: tuple[str, ...] = (
@@ -238,8 +240,9 @@ def _dump(model: BaseModel) -> Any:
     return model.model_dump(mode="json")
 
 
-def validar(secao: str, dados: Any) -> Any:
-    """Validate + normalise `dados` for `secao`. 422 `secao_invalida` / `invalid_field`."""
+def validar(secao: str, dados: Any, nome_agente: Optional[str] = None) -> Any:
+    """Validate + normalise `dados` for `secao`. 422 `secao_invalida` / `invalid_field`. The read-only
+    `perfil_whatsapp.nome_exibicao` is forced to `nome_agente` (the agent's status name; fallback persona)."""
     if secao not in MODELOS:
         raise AppException("secao_invalida", f"Seção desconhecida: {secao}", 422, {"secao": secao})
     try:
@@ -248,7 +251,7 @@ def validar(secao: str, dados: Any) -> Any:
         erros = [{"campo": ".".join(str(p) for p in e["loc"]), "motivo": e["msg"]} for e in exc.errors()]
         raise AppException("invalid_field", "Dados inválidos para a seção.", 422, {"secao": secao, "erros": erros}) from exc
     if isinstance(model, PerfilWhatsapp):
-        model = model.model_copy(update={"nome_exibicao": PERSONA_NOME})
+        model = model.model_copy(update={"nome_exibicao": nome_agente or PERSONA_NOME})
     return _dump(model)
 
 
@@ -257,8 +260,9 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def ler_secoes(client: Any, org_id: UUID | str) -> dict[str, dict[str, Any]]:
-    """Every section: saved row or default (`versao` 0 = never saved)."""
+def ler_secoes(client: Any, org_id: UUID | str, nome_agente: Optional[str] = None) -> dict[str, dict[str, Any]]:
+    """Every section: saved row or default (`versao` 0 = never saved). With `nome_agente`, the read-only
+    `perfil_whatsapp.nome_exibicao` always reflects the agent's current status name."""
     rows = client.table(TABLE).select("*").eq("org_id", str(org_id)).execute().data or []
     salvas = {r["secao"]: r for r in rows if r.get("secao") in MODELOS}
     out: dict[str, dict[str, Any]] = {}
@@ -268,6 +272,8 @@ def ler_secoes(client: Any, org_id: UUID | str) -> dict[str, dict[str, Any]]:
             out[s] = {"dados": padrao(s), "versao": 0, "updated_at": None}
         else:
             out[s] = {"dados": r.get("dados"), "versao": int(r.get("versao") or 1), "updated_at": r.get("updated_at")}
+    if nome_agente and isinstance(out["perfil_whatsapp"].get("dados"), dict):
+        out["perfil_whatsapp"]["dados"] = {**out["perfil_whatsapp"]["dados"], "nome_exibicao": nome_agente}
     return out
 
 
@@ -278,9 +284,12 @@ def _conflito(secao: str, atual: int) -> AppException:
     )
 
 
-def salvar_secao(client: Any, org_id: UUID | str, secao: str, dados: Any, versao: int, user_id: Any = None) -> dict[str, Any]:
+def salvar_secao(
+    client: Any, org_id: UUID | str, secao: str, dados: Any, versao: int, user_id: Any = None,
+    nome_agente: Optional[str] = None,
+) -> dict[str, Any]:
     """Save with compare-and-set on `versao` (0 = first save). 409 `versao_conflito` on a stale one."""
-    limpo = validar(secao, dados)
+    limpo = validar(secao, dados, nome_agente)
     atual_rows = (
         client.table(TABLE).select("versao").eq("org_id", str(org_id)).eq("secao", secao).limit(1).execute().data or []
     )

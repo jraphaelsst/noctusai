@@ -1354,6 +1354,33 @@ _LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE = GuardProbe(
 )
 
 
+_LAIS_CONEXAO_TRANSPORTE_PROBE = GuardProbe(
+    id="whatsapp_connections.transporte.valido",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="whatsapp_connections_transporte_valido",
+    kind="write_refusal",
+    migrations=("275_lais_cloud.sql",),
+    rationale=(
+        "The transport of a line is `waha` or `cloud`; it decides whether a template / mass send may leave "
+        "at all (contract A6). An unknown value would be read as neither and could fall through to the "
+        "wrong sender. CHECK fires before the unique indexes, so a throwaway row borrowing an existing "
+        "(org_id, user_id) is safe."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="whatsapp_connections",
+        columns_sql="org_id, user_id, label, base_url, encrypted_api_key, webhook_token, transporte",
+        values_sql="org_id, user_id, 'noc-probe', 'https://noc-probe.invalid', 'x', 'noc-probe-token', 'bogus'",
+        fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from"
+        ),
+        guard_fragment='constraint "whatsapp_connections_transporte_valido"',
+    ),
+)
+
+
 _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE = GuardProbe(
     id="org_memberships.ended_at.iff_removed",
     product="core",
@@ -6775,6 +6802,188 @@ _SW_LAIS_REENG_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_LAIS_CLOUD = "275_lais_cloud.sql"
+_T_LAIS_CLOUD = (
+    f"{_S}.lais_contatos", f"{_S}.lais_modelos", f"{_S}.lais_disparos", f"{_S}.lais_disparo_alvos",
+    f"{_S}.lais_proprietarios_contatos",
+)
+_CLOUD_TEL = "'5511999990000'"
+
+
+def _cloud_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"lais_cloud.{probe_id}", guard_name=guard, migration=_M_LAIS_CLOUD, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CLOUD,
+    )
+
+
+def _cloud_modelo_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return f"    INSERT INTO {_S}.lais_modelos (org_id, nome, corpo{extra_c})\n    VALUES (v_org, 'noc_probe', 'Oi'{extra_v});"
+
+
+def _cloud_disparo_ins(cols: str = "", vals: str = "") -> str:
+    """A probe modelo, then a disparo pointing at it (all rolled back)."""
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return (
+        _cloud_modelo_ins() + "\n"
+        f"    INSERT INTO {_S}.lais_disparos (org_id, nome, segmento, modelo_id{extra_c})\n"
+        f"    SELECT v_org, 'noc_probe', 'leads_3_15', id{extra_v} FROM {_S}.lais_modelos\n"
+        "    WHERE org_id = v_org AND nome = 'noc_probe';"
+    )
+
+
+def _cloud_alvo_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return (
+        f"    INSERT INTO {_S}.lais_disparo_alvos (org_id, disparo_id, telefone{extra_c})\n"
+        f"    SELECT v_org, id, {_CLOUD_TEL}{extra_v} FROM {_S}.lais_disparos\n"
+        "    WHERE org_id = v_org AND nome = 'noc_probe';"
+    )
+
+
+def _cloud_prop_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return (
+        f"    INSERT INTO {_S}.lais_proprietarios_contatos (org_id, telefone, imovel_codigo{extra_c})\n"
+        f"    VALUES (v_org, {_CLOUD_TEL}, 'NOC1'{extra_v});"
+    )
+
+
+#: Migration 275 -- Lais wave 12 (Cloud-API pages). Unapplied guards read `no_fixture` (tables absent) and must
+#: read `refused` once applied. (`whatsapp_connections_transporte_valido` is a column CHECK on a table other
+#: migrations own -- covered structurally by tests/test_migration_lais_cloud.py.)
+_SW_LAIS_CLOUD_PROBES: tuple[GuardProbe, ...] = (
+    _cloud_probe(
+        "modelos.nome_valido", "lais_modelos_nome_valido",
+        "A template with a blank name is unselectable in the UI and has no Meta template name.",
+        _cloud_modelo_ins().replace("'noc_probe'", "'   '"), _CHECK, "a modelo with a blank name",
+    ),
+    _cloud_probe(
+        "modelos.categoria_valida", "lais_modelos_categoria_valida",
+        "The 8 categories are the page's tabs and drive the Meta category mapping; anything else has no tab.",
+        _cloud_modelo_ins("categoria", "'bogus'"), _CHECK, "a modelo in an unknown categoria",
+    ),
+    _cloud_probe(
+        "modelos.corpo_valido", "lais_modelos_corpo_valido",
+        "Meta refuses a template body over 1024 characters (and an empty one has nothing to send).",
+        _cloud_modelo_ins().replace("'Oi'", "'   '"), _CHECK, "a modelo with an empty body",
+    ),
+    _cloud_probe(
+        "modelos.parametros_lista", "lais_modelos_parametros_lista",
+        "`parametros` is read as the ordered list of registry keys; an object would crash every send.",
+        _cloud_modelo_ins("parametros", "'{}'::jsonb"), _CHECK, "a modelo whose parametros is not a JSON array",
+    ),
+    _cloud_probe(
+        "modelos.status_valido", "lais_modelos_status_valido",
+        "The status drives whether a disparo may use the modelo; a free-text value would escape the Meta lifecycle.",
+        _cloud_modelo_ins("status", "'bogus'"), _CHECK, "a modelo with an unknown status",
+    ),
+    _cloud_probe(
+        "modelos.nome_unico", "lais_modelos_org_nome_uq",
+        "Two templates with the same name in one org would be indistinguishable in the picker.",
+        _cloud_modelo_ins() + "\n" + _cloud_modelo_ins().replace("'noc_probe'", "'NOC_PROBE'"), _UNIQ,
+        "two modelos with the same name (case-insensitive) in one org",
+    ),
+    _cloud_probe(
+        "disparos.nome_valido", "lais_disparos_nome_valido",
+        "A disparo with a blank name is unselectable in the list.",
+        _cloud_disparo_ins().replace("SELECT v_org, 'noc_probe', 'leads_3_15'", "SELECT v_org, '   ', 'leads_3_15'"),
+        _CHECK, "a disparo with a blank name",
+    ),
+    _cloud_probe(
+        "disparos.tipo_valido", "lais_disparos_tipo_valido",
+        "Only remarketing and atualizacao_anuncios have a send path.",
+        _cloud_disparo_ins("tipo", "'bogus'"), _CHECK, "a disparo of an unknown tipo",
+    ),
+    _cloud_probe(
+        "disparos.segmento_valido", "lais_disparos_segmento_valido",
+        "An unknown segment selects no targets and bypasses the day-window logic.",
+        _cloud_disparo_ins().replace("'leads_3_15'", "'bogus'"), _CHECK, "a disparo with an unknown segmento",
+    ),
+    _cloud_probe(
+        "disparos.status_valido", "lais_disparos_status_valido",
+        "The status drives the tabs and the dispatch preconditions; a free-text value would escape both.",
+        _cloud_disparo_ins("status", "'bogus'"), _CHECK, "a disparo with an unknown status",
+    ),
+    _cloud_probe(
+        "disparos.tipo_segmento", "lais_disparos_tipo_segmento",
+        "Owner updates (atualizacao_anuncios) only ever target owners, and remarketing only leads: a mismatched "
+        "pair would message a lead about a listing update or an owner about a remarketing offer.",
+        _cloud_disparo_ins("tipo", "'atualizacao_anuncios'"), _CHECK,
+        "an atualizacao_anuncios disparo aimed at a lead segment",
+    ),
+    _cloud_probe(
+        "disparos.agendado_exige_data", "lais_disparos_agendado_exige_data",
+        "A scheduled disparo with no instant would never fire and never be cancelled by the clock.",
+        _cloud_disparo_ins("status", "'agendado'"), _CHECK, "a scheduled disparo without agendado_para",
+    ),
+    _cloud_probe(
+        "disparos.total_nao_negativo", "lais_disparos_total_nao_negativo",
+        "A negative target count corrupts the cap arithmetic.",
+        _cloud_disparo_ins("total_alvos", "-1"), _CHECK, "a disparo with a negative total_alvos",
+    ),
+    _cloud_probe(
+        "alvos.status_valido", "lais_alvos_status_valido",
+        "The target flow pendente -> enviado -> respondido -> enviado_sw | erro is the audit trail of a send.",
+        _cloud_disparo_ins() + "\n" + _cloud_alvo_ins("status", "'bogus'"), _CHECK, "a disparo target with an unknown status",
+    ),
+    _cloud_probe(
+        "alvos.telefone_valido", "lais_alvos_telefone_valido",
+        "Meta addresses a recipient by 10..15 digits; a formatted number would be rejected per target.",
+        _cloud_disparo_ins() + "\n" + _cloud_alvo_ins().replace(_CLOUD_TEL, "'+55 (11) 9'"), _CHECK,
+        "a disparo target with a non-digit phone",
+    ),
+    _cloud_probe(
+        "alvos.um_destino", "lais_alvos_um_destino",
+        "A target is a lead XOR an owner; both would double-count and cross the opt-out rule.",
+        _lais_contato_ins() + "\n" + _cloud_prop_ins() + "\n" + _cloud_disparo_ins() + "\n"
+        f"    INSERT INTO {_S}.lais_disparo_alvos (org_id, disparo_id, contato_id, proprietario_id, telefone)\n"
+        f"    SELECT v_org, d.id, c.id, p.id, {_CLOUD_TEL}\n"
+        f"      FROM {_S}.lais_disparos d, {_S}.lais_contatos c, {_S}.lais_proprietarios_contatos p\n"
+        "     WHERE d.org_id = v_org AND d.nome = 'noc_probe'\n"
+        f"       AND c.org_id = v_org AND c.connection_id = {_LAIS_CONEXAO} AND c.chat_id = 'noc_probe'\n"
+        f"       AND p.org_id = v_org AND p.telefone = {_CLOUD_TEL};",
+        _CHECK, "a disparo target pointing at both a contato and a proprietario",
+    ),
+    _cloud_probe(
+        "alvos.unico_por_telefone", "lais_alvos_disparo_telefone_uq",
+        "One message per phone per disparo: a duplicate target double-sends and burns the per-chat template cap.",
+        _cloud_disparo_ins() + "\n" + _cloud_alvo_ins() + "\n" + _cloud_alvo_ins(), _UNIQ,
+        "two targets with the same phone in one disparo",
+    ),
+    _cloud_probe(
+        "proprietarios.telefone_valido", "lais_proprietarios_telefone_valido",
+        "An owner is contacted by digits only; a malformed phone can never be opted out by number.",
+        _cloud_prop_ins().replace(_CLOUD_TEL, "'abc'"), _CHECK, "an owner with a non-digit phone",
+    ),
+    _cloud_probe(
+        "proprietarios.codigo_valido", "lais_proprietarios_codigo_valido",
+        "Without an imovel codigo the confirmed status/price has no listing to update.",
+        _cloud_prop_ins().replace("'NOC1'", "'   '"), _CHECK, "an owner with a blank imovel codigo",
+    ),
+    _cloud_probe(
+        "proprietarios.opt_out_coerente", "lais_proprietarios_opt_out_coerente",
+        "LGPD (contract 17): an opt-out without its instant (or the reverse) cannot be audited or honoured.",
+        _cloud_prop_ins("opt_out", "true"), _CHECK, "an owner flagged opt_out without opt_out_at",
+    ),
+    _cloud_probe(
+        "proprietarios.preco_positivo", "lais_proprietarios_preco_positivo",
+        "A confirmed price of zero or less would blank the listing price on the next apply.",
+        _cloud_prop_ins("preco_confirmado", "0"), _CHECK, "an owner with a non-positive confirmed price",
+    ),
+    _cloud_probe(
+        "proprietarios.unico", "lais_proprietarios_org_tel_imovel_uq",
+        "One owner row per (phone, listing): a duplicate would double-message the owner about the same listing.",
+        _cloud_prop_ins() + "\n" + _cloud_prop_ins(), _UNIQ, "two owner rows for the same phone and imovel",
+    ),
+)
+
+
 _M_CONDOMINIOS = "265_condominios.sql"
 _T_COND = (f"{_S}.condominios", f"{_S}.condominio_aliases", f"{_S}.condominio_eventos")
 
@@ -8641,6 +8850,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE,
     _LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE,
+    _LAIS_CONEXAO_TRANSPORTE_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
@@ -8699,6 +8909,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_NOTIF_PROBES,
     *_SW_LAIS_REENG_PROBES,
     *_SW_LAIS_CONV_PROBES,
+    *_SW_LAIS_CLOUD_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,

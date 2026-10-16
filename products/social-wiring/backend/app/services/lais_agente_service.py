@@ -166,6 +166,19 @@ def resolve_agents_client(org_id: UUID | str, *, cfg: Any = None, store: Any = N
     )
 
 
+async def nome_do_agente(client: Optional[AgentsClient], agent_key: str = DEFAULT_AGENT_KEY) -> Optional[str]:
+    """The agent's own status name (the per-org swappable persona; page 0 shows it as `status_agente.nome`).
+    None when there is no client or the status call fails -- callers fall back to the default persona."""
+    if client is None:
+        return None
+    try:
+        nome = (await client.agent_status(agent_key)).nome
+    except Exception as exc:  # status is cosmetic here: never block a save / render on the agents link
+        logger.warning("lais: nome do agente indisponivel (%s)", type(exc).__name__)
+        return None
+    return (nome or "").strip() or None
+
+
 # ── link health memory (what Lais > Agente shows as `erro`) ─────────────────
 _LINK_ERROR_TTL_S = 7 * 24 * 3600
 LINK_ERROR_MESSAGES = {

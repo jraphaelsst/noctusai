@@ -106,6 +106,7 @@ class LeadDeps:
     core_client: Any = None
     agents_client_factory: Optional[Callable[[UUID], Optional[AgentsClient]]] = None
     waha_factory: Optional[Callable[..., Any]] = None
+    cloud_client_factory: Optional[Callable[..., Any]] = None  # seed `get_meta_cloud_client` by default (wave 12)
     connection_lookup: Optional[Callable[[UUID], Optional[WhatsAppConnectionRecord]]] = None
     chat_store_factory: Callable[[UUID], Any] = None  # type: ignore[assignment]
     message_store_factory: Callable[[UUID], Any] = None  # type: ignore[assignment]
@@ -269,6 +270,20 @@ class LaisTurn:
         return list(self.contexto.get("perguntas") or [])
 
 
+def _registrar_resposta_de_disparo(deps: LeadDeps, org_id: Any, contato: dict[str, Any], phone: Optional[str]) -> None:
+    """Wave 12: an inbound from a disparo target flips its target `enviado -> respondido`; the message then
+    runs through Julia's ordinary lead path (the remarketing re-entry). Best-effort: never blocks the turn."""
+    tel = "".join(ch for ch in str(contato.get("telefone_e164") or phone or "") if ch.isdigit())
+    if not tel:
+        return
+    try:
+        from app.services import lais_disparos_service
+
+        lais_disparos_service.registrar_resposta(deps.scoped, org_id, tel)
+    except Exception:
+        logger.exception("lais: disparo reply bookkeeping failed org=%s", org_id)
+
+
 async def _preparar_lais(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str],
     display_name: Optional[str], state: Optional[dict[str, Any]], agents_client: Optional[AgentsClient],
@@ -285,6 +300,7 @@ async def _preparar_lais(
             telefone_e164=phone, nome=display_name,
         )
         contato, anterior = lais_contatos_service.registrar_inbound(deps.scoped, contato)
+        _registrar_resposta_de_disparo(deps, org_id, contato, phone)
         interacao = lais_contatos_service.interacao_aberta(deps.scoped, contato["id"])
         if interacao is not None and lais_contatos_service.episodio_vencido(anterior):
             perguntas = lais_contexto_service.montar(

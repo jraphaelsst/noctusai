@@ -261,3 +261,79 @@ async def test_factory_fake_round_trip() -> None:
     response = await fake.send_text("5511912345678", "olá")
     assert response["messages"][0]["id"] == "fake-meta-1"
     assert fake.sent_messages[0]["text"] == "olá"
+
+
+# ---- template send / business profile / template creation -------------------
+
+
+@pytest.mark.asyncio
+async def test_send_template_body_and_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _install_fake_async_client(monkeypatch, _make_response(200))
+    client = MetaCloudClient(phone_number_id="999", api_key="k")
+    await client.send_template("5511912345678", "abordagem_comercial", "pt_BR", ["Ana", "Casa 12"])
+
+    assert captured["url"] == "https://graph.facebook.com/v18.0/999/messages"
+    assert captured["json"] == {
+        "messaging_product": "whatsapp",
+        "to": "5511912345678",
+        "type": "template",
+        "template": {
+            "name": "abordagem_comercial",
+            "language": {"code": "pt_BR"},
+            "components": [{"type": "body", "parameters": [
+                {"type": "text", "text": "Ana"}, {"type": "text", "text": "Casa 12"}]}],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_template_without_params_has_no_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _install_fake_async_client(monkeypatch, _make_response(200))
+    await MetaCloudClient(phone_number_id="999", api_key="k").send_template("5511912345678", "oi")
+    assert "components" not in captured["json"]["template"]
+
+
+@pytest.mark.asyncio
+async def test_update_business_profile_maps_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _install_fake_async_client(monkeypatch, _make_response(200, {"success": True}))
+    client = MetaCloudClient(phone_number_id="999", api_key="k")
+    await client.update_business_profile({"about": "Sobre", "description": "Desc", "address": "Rua A",
+                                          "email": "a@b.co", "websites": ["https://x.co"], "nome_exibicao": "Ignored"})
+    assert captured["url"] == "https://graph.facebook.com/v18.0/999/whatsapp_business_profile"
+    assert captured["json"] == {"messaging_product": "whatsapp", "about": "Sobre", "description": "Desc",
+                                "address": "Rua A", "email": "a@b.co", "websites": ["https://x.co"]}
+
+
+@pytest.mark.asyncio
+async def test_create_template_posts_to_waba(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _install_fake_async_client(monkeypatch, _make_response(200, {"id": "1", "status": "PENDING"}))
+    client = MetaCloudClient(phone_number_id="999", api_key="k", waba_id="W1")
+    out = await client.create_template("t1", "MARKETING", "pt_BR", "Oi {{1}}", ["Ana"])
+    assert out["status"] == "PENDING"
+    assert captured["url"] == "https://graph.facebook.com/v18.0/W1/message_templates"
+    assert captured["json"]["components"] == [{"type": "BODY", "text": "Oi {{1}}", "example": {"body_text": [["Ana"]]}}]
+
+
+@pytest.mark.asyncio
+async def test_create_template_requires_waba_id() -> None:
+    with pytest.raises(ValueError):
+        await MetaCloudClient(phone_number_id="999", api_key="k").create_template("t", "MARKETING", "pt_BR", "x")
+
+
+@pytest.mark.asyncio
+async def test_fake_records_template_profile_and_creation() -> None:
+    fake = FakeMetaCloudClient(phone_number_id="999")
+    sent = await fake.send_template("5511912345678", "t1", "pt_BR", ["a"])
+    await fake.update_business_profile({"about": "x"})
+    created = await fake.create_template("t1", "UTILITY", "pt_BR", "Oi {{1}}", ["a"])
+    assert sent["messages"][0]["id"] == "fake-meta-tpl-1"
+    assert fake.sent_templates[0]["body_params"] == ["a"]
+    assert fake.profile_updates == [{"messaging_product": "whatsapp", "about": "x"}]
+    assert created["status"] == "PENDING" and fake.created_templates[0]["name"] == "t1"
+    fake.clear()
+    assert not fake.sent_templates and not fake.profile_updates and not fake.created_templates
+
+
+def test_factory_passes_waba_id() -> None:
+    assert get_meta_cloud_client(api_key="k", phone_number_id="1", waba_id="W").waba_id == "W"
+    assert get_meta_cloud_client(phone_number_id="1", waba_id="W").waba_id == "W"

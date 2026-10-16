@@ -17,7 +17,8 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client, get_settings
+from app.services import lais_agente_service as agente
 from app.services import lais_conhecimento_service as svc
 
 logger = logging.getLogger(__name__)
@@ -35,10 +36,19 @@ def get_conhecimento_client() -> Any:
     return get_scoped_admin_client("social_wiring")
 
 
-@router.get("")
-def get_conhecimento(auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_conhecimento_client)) -> dict[str, Any]:
+async def get_nome_agente(auth: tuple = Depends(get_current_user_org), cfg: Any = Depends(get_settings)) -> Optional[str]:
+    """DI seam: the agent's status name (the per-org persona); None -> the default persona (tests override)."""
     org_id = coerce_org_uuid(auth[2])
-    secoes = svc.ler_secoes(client, org_id)
+    return await agente.nome_do_agente(agente.resolve_agents_client(org_id, cfg=cfg))
+
+
+@router.get("")
+def get_conhecimento(
+    auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_conhecimento_client),
+    nome_agente: Optional[str] = Depends(get_nome_agente),
+) -> dict[str, Any]:
+    org_id = coerce_org_uuid(auth[2])
+    secoes = svc.ler_secoes(client, org_id, nome_agente)
     md = svc.render_md_secoes(secoes, svc._hoje(None))
     return {"data": {"secoes": secoes, "preview_md": md, "hash": svc.hash_md(md)}}
 
@@ -56,10 +66,11 @@ def put_secao(
     payload: SecaoUpdate,
     auth: tuple = Depends(get_current_user_org),
     client: Any = Depends(get_conhecimento_client),
+    nome_agente: Optional[str] = Depends(get_nome_agente),
     request: Request = None,
 ) -> dict[str, Any]:
     user, _token, raw_org = auth
     require_org_admin_for(get_core_client(), auth, request, "O conhecimento da Lais")
     org_id = coerce_org_uuid(raw_org)
     user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
-    return {"data": svc.salvar_secao(client, org_id, secao, payload.dados, payload.versao, user_id)}
+    return {"data": svc.salvar_secao(client, org_id, secao, payload.dados, payload.versao, user_id, nome_agente)}

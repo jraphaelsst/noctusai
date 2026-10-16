@@ -16,7 +16,8 @@ Enqueued on each Julia outbound (`agendar_apos_outbound`, called from the lead t
 for an encerrado contato. A tier's dedupe key is `(tier, contato, gen)`, so the re-engagement message's
 own outbound never re-arms the same tier (no loop). A re-engagement turn is the ordinary lead turn with
 `contexto.estado.reengajamento` (+ `reescrever` / `texto_base` for a regua text); a template attempt is
-skipped with event `regua_sem_transporte` until wave 12's Cloud transport exists.
+sent through the Cloud transport (wave 12, `lais_transporte`) when the connection is a configured Cloud one with an
+approved modelo; otherwise skipped with event `regua_sem_transporte` (WAHA free text never stands in for a template).
 
 The CRUD half (config + reguas + tentativas) lives here too; the router is a thin shell over it. Every
 query is scoped by `org_id`; the 409s mirror the DB guards (migration 271) so the user gets a code, not a
@@ -461,11 +462,17 @@ async def executar_tentativa(
         # Lais' regua card: "Periodo de execucao: Das 8h as 20h" (page-map-v2 59.0b) -- same window as the hours tier.
         raise RescheduleLater(segundos_ate_abertura(agora), "regua fora do horario (08-20, Sao Paulo)")
     enviou = False
+    sem_transporte = False
     if tentativa.get("template_id"):
-        lais_eventos_service.emitir(
-            db, org_id, "regua_sem_transporte", contato["id"],
-            {"regua_id": str(regua["id"]), "ordem": int(tentativa["ordem"]), "template_id": str(tentativa["template_id"])},
-        )
+        enviou = await _enviar_template(deps, org_id, connection, contato, tentativa)
+        if enviou:
+            _evento_timeline(db, org_id, contato, regua_id=str(regua["id"]), ordem=int(tentativa["ordem"]))
+        else:
+            sem_transporte = True
+            lais_eventos_service.emitir(
+                db, org_id, "regua_sem_transporte", contato["id"],
+                {"regua_id": str(regua["id"]), "ordem": int(tentativa["ordem"]), "template_id": str(tentativa["template_id"])},
+            )
     else:
         enviou = await run_turn(
             deps, connection, contato["chat_id"], contato,
@@ -480,9 +487,46 @@ async def executar_tentativa(
         await _enfileirar_tentativa(repo, db, org_id, contato, regua, proxima, base=agora)
     else:
         _chamar_lead_frio(db, org_id, contato)
-    if tentativa.get("template_id"):
+    if sem_transporte:
         return "regua_sem_transporte"
     return "enviado" if enviou else "silencio"
+
+
+async def _enviar_template(deps: Any, org_id: Any, connection: Any, contato: dict[str, Any], tentativa: dict[str, Any]) -> bool:
+    """A regua attempt carrying a Cloud template (wave 12). True = sent. False = it could not go out: the
+    connection is not a configured Cloud one (WAHA free text is never a template stand-in), the modelo is not
+    approved / gone, or the send failed -- the caller records `regua_sem_transporte` and the regua moves on."""
+    from app.services import lais_modelos_service, lais_transporte
+
+    if not lais_transporte.cloud_configurada(connection):
+        return False
+    try:
+        modelo = lais_modelos_service.obter(deps.scoped, org_id, tentativa["template_id"])
+    except AppException:
+        return False
+    tel = "".join(ch for ch in str(contato.get("telefone_e164") or "") if ch.isdigit())
+    if modelo["status"] != "aprovado" or not tel:
+        return False
+    nome_lais = None
+    if deps.agents_client_factory is not None:
+        from app.services import lais_agente_service
+
+        nome_lais = await lais_agente_service.nome_do_agente(deps.agents_client_factory(UUID(str(org_id))))
+    valores = {"nome_pessoa": (contato.get("nome") or "").strip() or "tudo bem", "nome_lais": nome_lais or "Julia"}
+    chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
+    transporte = lais_transporte.transporte_da_conexao(
+        connection, waha_factory=deps.waha_factory, cloud_client_factory=getattr(deps, "cloud_client_factory", None),
+    )
+    try:
+        await transporte.enviar_template(
+            tel, lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],
+            modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
+        )
+    except Exception as exc:  # one failed attempt must not stop the regua
+        logger.error("lais regua: template send failed org=%s (%s)", org_id, type(exc).__name__)
+        return False
+    lais_contatos_service.registrar_outbound(deps.scoped, contato["id"])
+    return True
 
 
 def handlers(*, deps_factory: Callable[[], Any], repo: Any, run_turn: TurnRunner) -> dict[str, Callable[[Job], Any]]:

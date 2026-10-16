@@ -429,6 +429,34 @@ class ImoveisService:
         rows = result.data or []
         return _augment_row_derived(rows[0]) if rows else None
 
+    def atualizar_status_preco(
+        self,
+        org_id: UUID,
+        codigo: str,
+        *,
+        status: Optional[str] = None,
+        valor_venda: Optional[float] = None,
+        valor_locacao: Optional[float] = None,
+    ) -> Optional[dict]:
+        """Apply an owner-confirmed status / price to one imóvel (Lais wave 12, "Atualização de imóveis").
+
+        Resolves by `codigo_norm` like `get`, writes ONLY the fields supplied, and returns the updated row
+        (None when the código does not exist). The next Vista sync still owns these columns -- the owner's
+        confirmation is the interim truth until the listing is edited at the source."""
+        atual = self.get(org_id, codigo)
+        if atual is None:
+            return None
+        patch = {
+            k: v for k, v in (("status", status), ("valor_venda", valor_venda), ("valor_locacao", valor_locacao))
+            if v is not None
+        }
+        if not patch:
+            return atual
+        (
+            self._table().update(patch).eq("org_id", str(org_id)).eq("codigo", atual["codigo"]).execute()
+        )
+        return {**atual, **patch}
+
     def get_property_data(self, org_id: UUID, codigo: str) -> Optional[PropertyData]:
         """Resolve `codigo` against the local mirror, shaped as
         `PropertyData` — the YouTube-metadata carrier WhatsApp intake and
