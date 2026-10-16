@@ -21,6 +21,11 @@ __all__ = ["render_contexto_system"]
 
 _NO_QUESTIONS = "Nenhuma pergunta essencial configurada."
 _NO_SLOTS = "(nenhum dado coletado ainda)"
+_CREDITO_PEDIR = (
+    "A imobiliária faz análise de crédito para locação. Antes de agendar a visita, peça o consentimento "
+    "do cliente de forma clara (ele autoriza consultar seus dados financeiros). Só chame "
+    "`consentimento_credito` depois de uma resposta explícita: aceito=true se concordou, false se recusou."
+)
 
 
 def _line(text: str) -> str:
@@ -55,4 +60,14 @@ def render_contexto_system(contexto: ChannelContexto) -> str:
             out.append(f"- {chave}: {json.dumps(_line(contexto.estado.slots[chave]), ensure_ascii=False)}")
     else:
         out.append(_NO_SLOTS)
+    credito = contexto.estado.credito
+    if credito is not None and credito.ativo:
+        out.append("")
+        out.append("## Análise de crédito")
+        if credito.consentimento is None:
+            out.append(_CREDITO_PEDIR)
+        elif credito.consentimento:
+            out.append("O cliente consentiu com a análise de crédito. Não pergunte de novo.")
+        else:
+            out.append("O cliente NÃO consentiu com a análise de crédito. Não insista nem pergunte de novo.")
     return "\n".join(out) + "\n"

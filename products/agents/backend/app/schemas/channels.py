@@ -25,6 +25,7 @@ __all__ = [
     "FERRAMENTA_NAMES",
     "ActionArgs",
     "CaptacaoActionOut",
+    "ContextoCredito",
     "ConsentimentoCreditoActionOut",
     "ChannelActionOut",
     "ChannelAgentStatusOut",
@@ -118,11 +119,21 @@ class ContextoPergunta(StrictHttpModel):
     operacao: Operacao | None = None
 
 
+class ContextoCredito(StrictHttpModel):
+    """Wave 13: the credit-analysis state of an aluguel lead. ``consentimento`` is ``None`` until the
+    lead answered; the model asks ONCE (before the visit) and records the answer with
+    ``consentimento_credito``. Absent from ``estado`` when the org does not use the analysis."""
+
+    ativo: bool
+    consentimento: bool | None = None
+
+
 class ContextoEstado(StrictHttpModel):
     slots: dict[str, str] = Field(default_factory=dict)
     operacao: Literal["compra", "aluguel", "administracao"] | None = None
     interacao_id: UUID
     encerrado: bool
+    credito: ContextoCredito | None = None
 
 
 class ChannelContexto(StrictHttpModel):

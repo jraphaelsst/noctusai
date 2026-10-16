@@ -154,6 +154,21 @@ class TestGoldenRender:
         assert ra == render_contexto_system(ChannelContexto.model_validate(b))
         assert ra.index("- a:") < ra.index("- b:")
 
+    @pytest.mark.parametrize("consent,needle", [
+        (None, "peça o consentimento"), (True, "consentiu com a análise"), (False, "NÃO consentiu"),
+    ])
+    def test_credito_section_follows_the_consent_state(self, consent, needle):
+        estado = {"slots": {}, "operacao": "aluguel", "interacao_id": INTERACAO, "encerrado": False,
+                  "credito": {"ativo": True, "consentimento": consent}}
+        out = render_contexto_system(ChannelContexto.model_validate(contexto(estado=estado)))
+        assert "## Análise de crédito" in out and needle in out
+
+    def test_credito_section_absent_when_inactive_or_missing(self):
+        base = {"slots": {}, "operacao": "aluguel", "interacao_id": INTERACAO, "encerrado": False}
+        for estado in (base, {**base, "credito": {"ativo": False, "consentimento": None}}):
+            out = render_contexto_system(ChannelContexto.model_validate(contexto(estado=estado)))
+            assert "Análise de crédito" not in out
+
     def test_a_slot_value_cannot_forge_a_section(self):
         out = render_contexto_system(ChannelContexto.model_validate(contexto()))
         assert "\n## Novo" not in out
