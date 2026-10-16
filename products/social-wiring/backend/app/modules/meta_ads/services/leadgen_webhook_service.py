@@ -142,6 +142,7 @@ class LeadgenWebhookService:
         publisher: Any = None,
         sweep_fn: Any = None,
         sim_id_factory: Any = None,
+        lais_primeiro_contato: Any = None,
     ) -> None:
         self._admin = admin_supabase
         self._adapter_factory = adapter_factory
@@ -156,6 +157,9 @@ class LeadgenWebhookService:
         self._sweep_fn = sweep_fn
         # DI seam: the synthetic id of a simulated lead (default `sim-<uuid4>`).
         self._sim_id_factory = sim_id_factory
+        # DI seam: `async (org_id, lead_row) -> dict` -- takes a fresh lead into Lais (default: the production-wired
+        # `lais_primeiro_contato_service.iniciar_com_padroes`; it is a no-op for an org with Julia off).
+        self._lais_primeiro_contato = lais_primeiro_contato
 
     # ─── inbox ─────────────────────────────────────────────────────────
     def record_event(self, event: LeadgenEvent) -> bool:
@@ -648,6 +652,19 @@ class LeadgenWebhookService:
             logger.exception(
                 "meta-leadgen: realtime publish failed for lead=%s (org=%s) — "
                 "open clients will pick it up on their next reconnect/refetch",
+                lead.get("id"), org_id,
+            )
+
+        # Lais intake: the lead also enters Julia's pipeline (contato + interacao + first-contact template) when the
+        # org has Julia on. Its own guard: whatever happens here the lead is already stored and announced.
+        try:
+            intake = self._lais_primeiro_contato
+            if intake is None:
+                from app.services.lais_primeiro_contato_service import iniciar_com_padroes as intake
+            await intake(org_id, lead)
+        except Exception:  # noqa: BLE001 — degrade the Lais leg, never the lead
+            logger.exception(
+                "meta-leadgen: Lais intake failed for lead=%s (org=%s) — the lead is stored and announced",
                 lead.get("id"), org_id,
             )
         return outcome

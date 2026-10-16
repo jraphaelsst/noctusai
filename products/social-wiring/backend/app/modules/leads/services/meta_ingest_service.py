@@ -176,7 +176,7 @@ def _resolve_corretor_from_answers(
     return None, None
 
 
-def _codigo_do_meta_lead(meta_lead: dict[str, Any]) -> Optional[str]:
+def codigo_do_meta_lead(meta_lead: dict[str, Any]) -> Optional[str]:
     """The imóvel código a Meta lead is about: the 180 column when set, else
     the form answer `REF`. `None` (never a blank string) when absent — an
     unreferenced lead is accepted and surfaces as `imovel_pendente`."""
@@ -187,6 +187,9 @@ def _codigo_do_meta_lead(meta_lead: dict[str, Any]) -> Optional[str]:
         if isinstance(candidato, str) and candidato.strip():
             return candidato.strip()
     return None
+
+
+_codigo_do_meta_lead = codigo_do_meta_lead  # historical private name (same module + tests)
 
 
 #: Shown on the card's timeline (the touch's ``origem_rotulo`` is ``leads.origem_raw``)
