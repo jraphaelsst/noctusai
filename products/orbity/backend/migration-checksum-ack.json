@@ -1,0 +1,12 @@
+{
+  "_doc": "Acknowledged ledger-checksum drift: applied migrations whose committed file no longer hashes to the ledger. Each entry pins the EXACT state (file, ledger_checksum, file_checksum) — editing the file again re-refuses. Fix drift with a NEW migration, never by editing back or rewriting the ledger. Read by noctus.dev.ledger_checksums (migrate_product sha= / predeploy_check). KB § PATTERNS/backend/migrate-product-mcp-tool.md § Ledger checksum verification.",
+  "acknowledged": [
+    {
+      "file": "001_orbity.sql",
+      "ledger_checksum": "d462943d127700cd79313b81b5e57d4ea5bbe6821fcab5aac8ef1581adb09fab",
+      "file_checksum": "22a23df4350d2c9a4be6c09521bbdc7167afdb988c2803613b7a52ba2fa1810b",
+      "remediate": "migration-chain-rebaseline",
+      "note": "Rewritten in place by the 2026-09-28 customer-role sweep (516203777); prod got the intent via 016_anon_grant_lockdown + 017_customer_role_isolation (applied 2026-10-15) — catalog-verified 2026-10-16: anon holds 0 table grants in schema orbity, public.current_org_id() is customer-aware, public.is_customer() exists."
+    }
+  ]
+}
