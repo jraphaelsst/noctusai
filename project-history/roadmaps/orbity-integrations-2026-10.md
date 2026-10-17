@@ -64,7 +64,7 @@ The seed was verified on 2026-10-15 (`seed-ships-verified` at `e81be3cbe`):
 | P2.3 | Inbound triggers `whatsapp_message_received` / `keyword_received` (known leads only) | webhook handler + emitters | Reply from the owner's phone → the keyword flow runs |
 | P2.4 | FE: connections page (seed organ), state-driven banner, step-config forms | `frontend/src/pages/*` | Banner disappears once connected |
 
-## Phase 3 — promote to live (DEFERRED — fires on T1 + T2)
+## Phase 3 — promote to live (SHIPPED 2026-10-17 — P3.1 + P3.2 done; P3.3 prod smoke pending)
 
 | # | Title | Verify recipe |
 |---|---|---|
@@ -119,6 +119,8 @@ Asleep products (community, erp-imobiliario, …) are swept when they wake; the 
 ## Decision log
 
 - **2026-10-15**: Re-activation pass shipped (Phase 0). The owner chose integrations first, live only after P1+P2, keep demo data, and approved the fleet sweep. The seed was verified at `e81be3cbe`. P1+P2 and the fleet track were dispatched.
+- **2026-10-16**: The owner asked for parity with Senseys' upstream Orbity (`senseysmarketing/sistema-orbity`, 144 commits since baseline `4ddc60e8`) before go-live: "do all first, then deploy correctly everything together". Shipped on seed organs, not copied: billing on seed contracts/finance/payments (019/021/023), content plans + AI items (020), seed WhatsApp 9th-digit resolution, seed billing-reminders organ wired into orbity (024). Upstream bugs were deliberately left out (no-auth storage cleanup, no Asaas idempotency, caller-trusted agency_id). Also landed: the `001_orbity.sql` ledger acknowledgement (`migration-checksum-ack.json`).
+- **2026-10-17**: Release `f80895923` blessed + promoted; orbity 019–024 applied; first `compose up` of `noctus-orbity` healthy with 7 scheduler jobs. The owner flipped orbity DEV→LIVE in `/admin/products`; `build-scope.txt` refreshed to include orbity. Owner setup still open: Asaas per-org keys + webhook, OpenAI key, saving the WhatsApp connection, reminders opt-in.
 
 ## Retrospective (filled at first trigger fire)
 
