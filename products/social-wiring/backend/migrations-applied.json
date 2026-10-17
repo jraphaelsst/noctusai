@@ -13,6 +13,22 @@
     "264_imovel_dados_avaliacao.sql": "4c4e6b05075c6c2d31a091c7adaa533008436190255d30c271038f2ef542300b",
     "265_condominios.sql": "b53f10ad31d05c28532213da58e4f1cb0dedfcbdba107060848ec9c488a7b3a6",
     "266_imovel_transacoes.sql": "c35f5791818d4b621f5315419bab6ffe59c344a1a5867646376c8eeaaa4fc022",
-    "267_lais_fundacao.sql": "8972beea9c8e34608f0a5ddd28ecbff28fee584d058f78e7fb97dfdbe02825c8"
+    "267_lais_fundacao.sql": "8972beea9c8e34608f0a5ddd28ecbff28fee584d058f78e7fb97dfdbe02825c8",
+    "268_lais_conhecimento.sql": "fd53f61b94aa970204dd5017504dff19615b02bcc4570b688c3aadd05ca7ac9f",
+    "269_lais_perguntas.sql": "78907498c77b6cccb61705bb231db45840db1150f71d125c9bde3742452dbdd1",
+    "270_lais_envio.sql": "c839003c82abaeda76855316c195aba8509c9885239dee2b35d0549711a5b06c",
+    "271_lais_reengajamento.sql": "b6f3c6ff55c23acb10c474d0b87bfac1c92218389eb6d73a33972634f9434647",
+    "272_lais_visitas.sql": "c127875eca9ce383cd17411ea99060e46c2ebc39949e9413864686397e746daa",
+    "273_lais_notificacoes.sql": "17a512ba92d8530cdec3615c051b20b96bdd4964d82647e8a7c634810ea3b42e",
+    "274_lais_conversas_v2.sql": "adcbcdf4c185c3b67be59dc0be4d613959ba5c60a2368f4a49a945fe357d543e",
+    "275_lais_cloud.sql": "555af7c31df52d310abe27faf16964839687caff5871b0cd48262373b328f022",
+    "276_lais_equipes.sql": "d78fa2d11940cbffa4b1a54b065286c2dcbbfb83d1d68ec24a604ed5b3654cd3",
+    "277_lais_relatorios.sql": "888c5379c19ee4245adf875710d29f9d91f5c7a4bab5362d5ed6b1c7c322c2f6",
+    "278_lais_captacoes.sql": "709c7894c08a4039e1e797e3b39cf5641694d19fd7340fa28f26ecb6ccb34b6c",
+    "279_lais_painel.sql": "df50bc5e638685716e01025f7779937450f382b9e3199956c09366b321d9e673",
+    "280_lais_avaliacoes_capi.sql": "3c645fa9d0877c1767cd5321c9e3913bf96ab5de2a5ed885b9b2b7315e04e390",
+    "281_lais_credito.sql": "7a49e04c2aff91c987df74618abcb0b5ed48b4ca130d815809fd807297ffe935",
+    "282_imovel_transacoes_sw_venda_trigger.sql": "6f25e185723143954de512fd9bb67006286c89f72b0e3eea8d41fc77582e0656",
+    "283_lais_proprietarios_preco_tipo.sql": "2cc53a3e2af56db7258a225616f29797ed6b3aa9e4dd6db13f8790b6eb65d1ca"
   }
 }
