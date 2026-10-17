@@ -3,6 +3,11 @@
   "applied": {
     "016_anon_grant_lockdown.sql": "ea94c7b7b9085fea40e1000aa14138fb126e1ab22de99c5a42699657a1244469",
     "017_customer_role_isolation.sql": "f565e3ae2d1b4c0b0b84eca4373a90236b34a2295a0beb9620207b517d21e275",
-    "018_automation_live.sql": "632ecb6c090519eae0737cf8df68c930f8c74b9bac51207b044accc2ef16d921"
+    "018_automation_live.sql": "632ecb6c090519eae0737cf8df68c930f8c74b9bac51207b044accc2ef16d921",
+    "019_finance.sql": "8321ecb331ab5b9dd767681f23f7bf1677cca2a0b267c3b9aeca6afe4d691808",
+    "020_content_plans.sql": "b0bdf893daddf230b875bd6c3152a2c972be7265ae47d5870ca51fb3a2de991f",
+    "021_contracts.sql": "3ccdc906de0c566713ff4d4d6f0acc6f2a34768c23513531fc54896cd78f3901",
+    "023_billing_on_seed_organs.sql": "bc1313b49dacffc472613db9419ce152857d98adde7d2eb940a41017a5ed89da",
+    "024_finance_reminders.sql": "b97d19e26f72d4d330b73c562b41a09b8ee9b8754587ca54c24befbc07c41ae6"
   }
 }
