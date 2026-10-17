@@ -15,6 +15,7 @@ letters skipping c-). Here:
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Mapping, Optional
 
@@ -93,6 +94,44 @@ class Clausula:
     def ref(self) -> str:
         self._registro.referencias[self.chave] += 1
         return f"Cláusula {ordinal_por_extenso(self.n, feminino=True).title()}"
+
+
+#: Highest ordinal a citation is parsed up to — far above any contract here.
+_MAX_ORDINAL = 60
+_ORDINAL_CITADO = {ordinal_por_extenso(n, feminino=True): n for n in range(1, _MAX_ORDINAL)}
+_RE_CITACAO = re.compile(r"[Cc]láusula ([A-Za-zÀ-ÿ]+)(?: ([A-Za-zÀ-ÿ]+))?")
+
+#: A special condition (migration 207) cites another clause by its KEY —
+#: "[cláusula:mora]" — never by number: the text is typed once, the numbering
+#: moves with the switches. Resolved by `resolver_referencias` into a counted
+#: `Clausula.ref`, so the post-render lint checks it like any template ref.
+RE_REFERENCIA_POR_CHAVE = re.compile(r"\[\s*cl[áa]usula\s*:\s*([A-Za-z_]+)\s*\]", re.IGNORECASE)
+
+
+def citacoes_de_clausula(texto: str) -> list[tuple[int, int, int]]:
+    """Every "Cláusula <ordinal>" written out in `texto`, as (n, início, fim) —
+    the ONE parser both the lint and the special-condition gate read."""
+    achados: list[tuple[int, int, int]] = []
+    for m in _RE_CITACAO.finditer(texto):
+        if m.group(2):
+            n = _ORDINAL_CITADO.get(f"{m.group(1)} {m.group(2)}".lower())
+            if n is not None:
+                achados.append((n, m.start(), m.end()))
+                continue
+        n = _ORDINAL_CITADO.get(m.group(1).lower())
+        if n is not None:
+            achados.append((n, m.start(), m.end(1)))
+    return achados
+
+
+def chaves_referidas(texto: str) -> list[str]:
+    return [m.group(1).lower() for m in RE_REFERENCIA_POR_CHAVE.finditer(texto)]
+
+
+def resolver_referencias(texto: str, cl: "RegistroClausulas") -> str:
+    """Each "[cláusula:<chave>]" → that clause's counted `ref`. KeyError for a
+    key `cl` lacks — `derivacao` blocks such a text before any render."""
+    return RE_REFERENCIA_POR_CHAVE.sub(lambda m: cl[m.group(1).lower()].ref, texto)
 
 
 class RegistroClausulas(dict):
@@ -185,11 +224,15 @@ __all__ = [
     "ContadorParagrafos",
     "ORDEM_CLAUSULAS",
     "PARAGRAFO_PRIMEIRO_MESMO_SOZINHO",
+    "RE_REFERENCIA_POR_CHAVE",
     "RegistroClausulas",
     "TITULO_CLAUSULA",
+    "chaves_referidas",
+    "citacoes_de_clausula",
     "juntar",
     "letra",
     "num2",
     "numerar_clausulas",
+    "resolver_referencias",
     "rotulo_clausula",
 ]

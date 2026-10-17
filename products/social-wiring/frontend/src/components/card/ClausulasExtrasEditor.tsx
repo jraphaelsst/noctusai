@@ -42,7 +42,9 @@ export default function ClausulasExtrasEditor({ clausulas, value, onChange }: Pr
         <h4 className="text-sm font-medium">Condições especiais por cláusula</h4>
         <p className="text-xs text-muted-foreground">
           Texto próprio deste negócio, impresso como digitado (um parágrafo por linha) na cláusula
-          indicada. Todo texto digitado aqui vira item da revisão jurídica.
+          indicada. Todo texto digitado aqui vira item da revisão jurídica. Para citar outra
+          cláusula, use o marcador dela (ex.: [cláusula:mora]) — o número é preenchido na geração;
+          um número digitado (&ldquo;Cláusula Sétima&rdquo;) é recusado.
         </p>
       </div>
       <div className="space-y-2">
@@ -93,6 +95,12 @@ export default function ClausulasExtrasEditor({ clausulas, value, onChange }: Pr
                     value={atual.texto}
                     onChange={(e) => onChange(c.chave, { ...atual, texto: e.target.value })}
                   />
+                  <p
+                    className="text-xs text-muted-foreground"
+                    data-testid={`clausula-extra-${c.chave}-marcador`}
+                  >
+                    Para citar esta cláusula em outro texto: <code>[cláusula:{c.chave}]</code>
+                  </p>
                   {c.condicional && (
                     <p className="text-xs text-muted-foreground">
                       Esta cláusula só existe em alguns contratos; se o contrato deste negócio não a

@@ -502,6 +502,8 @@ describe("Condições especiais por cláusula (migration 207)", () => {
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("clausula-extra-posse-toggle"));
+    // Each clause shows the marker that cites it from another text.
+    expect(getByTestId("clausula-extra-posse-marcador").textContent).toContain("[cláusula:posse]");
     fireEvent.change(getByTestId("clausula-extra-posse-texto"), {
       target: { value: "  Prazo prorrogável uma vez.  " },
     });

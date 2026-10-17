@@ -21,8 +21,11 @@ from app.modules.card_hub.contrato_gerador.numeracao import (
     CLAUSULA_CONDICIONAL,
     ORDEM_CLAUSULAS,
     TITULO_CLAUSULA,
+    citacoes_de_clausula,
+    numerar_clausulas,
     rotulo_clausula,
 )
+from noctusai_lib.domain.texto_ptbr import ordinal_por_extenso
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
 
@@ -169,6 +172,57 @@ class TestAvisosERevisao:
         bloqueios = _codigos(_avaliar(1, d).bloqueios)
         assert {"CLAUSULA_EXTRA_DESCONHECIDA", "CLAUSULA_EXTRA_MODO_INVALIDO",
                 "TEXTO_LIVRE_COM_MARCACAO"} <= bloqueios
+
+
+class TestReferenciaPorChave:
+    """A special condition cites other clauses as "[cláusula:<chave>]" — the
+    generator numbers and counts it; a typed "Cláusula Sétima" (copied from a
+    signed contract) is refused before render, naming the marker to type."""
+
+    @staticmethod
+    def _ordinal(n, d, chave):
+        pol = fx.politica_variante(n)
+        sw = derivacao.derivar_switches(d, pol, fx.REFERENCIA)
+        return "Cláusula " + ordinal_por_extenso(numerar_clausulas(sw)[chave].n, feminino=True).title()
+
+    def test_a_key_marker_prints_the_current_number_and_passes_the_lint(self):
+        d = _com(1, mora=ClausulaExtra(texto="Juros conforme [cláusula:preco] e [Cláusula: foro].", modo="acrescentar"))
+        r = _render(1, d)
+        texto = "\n".join(_corpo(r.paragrafos, "mora"))
+        assert f"Juros conforme {self._ordinal(1, d, 'preco')} e {self._ordinal(1, d, 'foro')}." in texto
+        assert "[cláusula" not in "\n".join(r.paragrafos).lower()
+
+    def test_the_marker_follows_the_numbering_when_a_switch_moves_it(self):
+        digital = _com(1, mora="Foro na [cláusula:foro].")
+        fisica = replace(digital, modalidade_assinatura="fisica")
+        a, b = _render(1, digital), _render(1, fisica)
+        assert self._ordinal(1, digital, "foro") != self._ordinal(1, fisica, "foro")
+        assert f"Foro na {self._ordinal(1, digital, 'foro')}." in "\n".join(a.paragrafos)
+        assert f"Foro na {self._ordinal(1, fisica, 'foro')}." in "\n".join(b.paragrafos)
+
+    def test_a_typed_number_blocks_and_names_the_marker(self):
+        d = _com(1, mora="Multa do parágrafo segundo da cláusula sétima.")
+        av = _avaliar(1, d)
+        msgs = [b["mensagem"] for b in av.bloqueios if b["codigo"] == "CLAUSULA_EXTRA_REFERENCIA_POR_NUMERO"]
+        pol = fx.politica_variante(1)
+        sw = derivacao.derivar_switches(d, pol, fx.REFERENCIA)
+        setima = next(k for k, c in numerar_clausulas(sw).items() if c.n == 7)
+        assert msgs and f"[cláusula:{setima}]" in msgs[0] and "cláusula sétima" in msgs[0]
+        assert not av.pronto
+
+    def test_a_number_the_contract_lacks_blocks_too(self):
+        av = _avaliar(1, _com(1, mora="Conforme a Cláusula Quinquagésima."))
+        assert "CLAUSULA_EXTRA_REFERENCIA_POR_NUMERO" in _codigos(av.bloqueios)
+
+    def test_unknown_and_excluded_keys_block(self):
+        d = replace(_com(1, mora="Ver [cláusula:inexistente] e [cláusula:assinatura_digital]."), modalidade_assinatura="fisica")
+        assert {"CLAUSULA_EXTRA_REFERENCIA_DESCONHECIDA", "CLAUSULA_EXTRA_REFERENCIA_EXCLUIDA"} <= _codigos(_avaliar(1, d).bloqueios)
+
+    def test_the_citation_parser_reads_one_and_two_word_ordinals(self):
+        assert [n for n, _, _ in citacoes_de_clausula("a Cláusula Décima Segunda e a cláusula oitava")] == [12, 8]
+        texto = "pela Cláusula Sétima deste"
+        (n, ini, fim), = citacoes_de_clausula(texto)
+        assert (n, texto[ini:fim]) == (7, "Cláusula Sétima")
 
 
 class TestPosseMultaDiaria:

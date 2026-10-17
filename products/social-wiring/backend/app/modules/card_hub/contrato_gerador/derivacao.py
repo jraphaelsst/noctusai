@@ -84,7 +84,10 @@ from app.modules.card_hub.contrato_gerador.dados import (
 from app.modules.card_hub.contrato_gerador.numeracao import (
     CLAUSULA_CONDICIONAL,
     ORDEM_CLAUSULAS,
+    chaves_referidas,
+    citacoes_de_clausula,
     num2,
+    numerar_clausulas,
     rotulo_clausula,
 )
 from app.modules.card_hub.contrato_gerador.politica import (
@@ -3155,6 +3158,45 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
         av.bloqueia("PRAZO_PENDENCIAS_INVALIDO", "O prazo para apresentar as pendências precisa ser maior que zero.")
 
 
+def _referencias_da_condicao_especial(
+    titulo_clausula: str, paragrafos: list[str], sw: dict[str, bool], av: Avaliacao
+) -> None:
+    """A special condition cites other clauses by KEY ("[cláusula:mora]",
+    `numeracao.resolver_referencias`), never by a typed number: a number
+    copied from a signed contract is unverifiable and goes stale when a switch
+    moves the numbering. A typed "Cláusula Sétima" is refused HERE, naming the
+    marker to type — not left to the post-render lint, which can only say the
+    citations do not add up after the operator pressed "Gerar"."""
+    registro = numerar_clausulas(sw)
+    por_numero = {c.n: chave for chave, c in registro.items()}
+    for texto in paragrafos:
+        for chave in chaves_referidas(texto):
+            if chave not in ORDEM_CLAUSULAS:
+                av.bloqueia(
+                    "CLAUSULA_EXTRA_REFERENCIA_DESCONHECIDA",
+                    f"Condição especial de '{titulo_clausula}': [cláusula:{chave}] não é uma cláusula "
+                    f"do contrato (use uma de: {', '.join(ORDEM_CLAUSULAS)}).",
+                )
+            elif chave not in registro:
+                av.bloqueia(
+                    "CLAUSULA_EXTRA_REFERENCIA_EXCLUIDA",
+                    f"Condição especial de '{titulo_clausula}': cita [cláusula:{chave}] "
+                    f"({rotulo_clausula(chave)}), que este contrato não tem.",
+                )
+        for n, ini, fim in citacoes_de_clausula(texto):
+            alvo = por_numero.get(n)
+            troca = (
+                f"troque por [cláusula:{alvo}] ({rotulo_clausula(alvo)} — hoje a {n}ª), "
+                "que o gerador numera e confere"
+                if alvo
+                else f"este contrato não tem cláusula {n}; cite pela chave, ex.: [cláusula:mora]"
+            )
+            av.bloqueia(
+                "CLAUSULA_EXTRA_REFERENCIA_POR_NUMERO",
+                f"Condição especial de '{titulo_clausula}': cita “{texto[ini:fim]}” pelo número — {troca}.",
+            )
+
+
 def _clausulas_extras(d: DadosContrato, sw: dict[str, bool], av: Avaliacao) -> None:
     """[Migration 207] Per-clause special conditions the card holds
     (`termos.clausulas_extras`): printed VERBATIM in the clause they name and
@@ -3190,6 +3232,7 @@ def _clausulas_extras(d: DadosContrato, sw: dict[str, bool], av: Avaliacao) -> N
                 "cláusula — o texto não teria onde entrar. Apague-a ou ajuste o negócio.",
             )
             continue
+        _referencias_da_condicao_especial(titulo_clausula, paragrafos, sw, av)
         if any(has_raw_markup(t) for t in paragrafos):
             av.bloqueia(
                 "TEXTO_LIVRE_COM_MARCACAO",

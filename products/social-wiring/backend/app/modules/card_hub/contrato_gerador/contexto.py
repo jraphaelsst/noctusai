@@ -76,6 +76,7 @@ from app.modules.card_hub.contrato_gerador.numeracao import (
     juntar,
     letra,
     numerar_clausulas,
+    resolver_referencias,
 )
 from app.modules.card_hub.contrato_gerador.politica import (
     EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO,
@@ -233,6 +234,7 @@ def _clausulas_extras_contexto(
     standard ones. "substituir": the first paragraph is the clause's body
     (unlabelled, like every clause's opening), the rest are numbered
     paragraphs — the heading and the clause number are the template's, kept.
+    A "[cláusula:<chave>]" in the text becomes that clause's counted `ref`.
     A clause this contract does not include (conditional, switched off) gets
     nothing — `derivacao._clausulas_extras` already blocked the typed text."""
     ativas = clausulas_extras_ativas(d)
@@ -244,7 +246,7 @@ def _clausulas_extras_contexto(
         troca = modo == MODO_SUBSTITUIR
         substitui[chave] = troca
         extras[chave] = [
-            {"rotulado": not (troca and i == 0), "texto": texto}
+            {"rotulado": not (troca and i == 0), "texto": resolver_referencias(texto, cl)}
             for i, texto in enumerate(paragrafos)
         ]
     return extras, substitui
