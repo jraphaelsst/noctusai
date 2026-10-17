@@ -1,6 +1,6 @@
 /**
  * Editar Roteiro (contract §7.8): Nome + markdown + Copiar, Gostei/Não Gostei,
- * ⋯ Reprocessar ("Informação Adicional:"), footer Cancelar / Atualizar.
+ * ⋯ Reprocessar ("Informação Adicional:"), footer Cancelar / Salvar roteiro (💾).
  * Opened from Roteiros (👁 / `?open=`). Real status only: while the roteiro is
  * still being produced the body shows its `etapa`, not a fake progress bar.
  */
@@ -24,7 +24,7 @@ import { useReprocessarRoteiro, useRoteiro } from "@/hooks/geracao/useRoteiros";
 import type { Roteiro } from "@/types/geracao";
 import { StatusBadge } from "../StatusBadge";
 import { FeedbackRoteiro } from "./FeedbackRoteiro";
-import { RoteiroCorpo, useEdicaoRoteiro } from "./RoteiroEdicao";
+import { MODAL_ROTEIRO_GRANDE, RoteiroCorpo, SalvarRoteiroButton, useEdicaoRoteiro } from "./RoteiroEdicao";
 
 export const INFO_ADICIONAL_MAX = 2000;
 
@@ -67,7 +67,7 @@ export function EditarRoteiroModal({ open, onOpenChange, roteiroId, onReprocessa
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !edicao.salvando && onOpenChange(o)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogContent className={MODAL_ROTEIRO_GRANDE}>
           <DialogHeader>
             <div className="flex items-center justify-between gap-2 pr-6">
               <DialogTitle>Editar Roteiro</DialogTitle>
@@ -153,11 +153,7 @@ export function EditarRoteiroModal({ open, onOpenChange, roteiroId, onReprocessa
             <Button variant="outline" disabled={edicao.salvando} onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            {pronto && (
-              <Button disabled={!edicao.alterou || !edicao.valido || edicao.salvando} onClick={() => void edicao.salvar()}>
-                {edicao.salvando ? "Atualizando…" : "Atualizar"}
-              </Button>
-            )}
+            {pronto && <SalvarRoteiroButton edicao={edicao} />}
           </DialogFooter>
         </DialogContent>
       </Dialog>

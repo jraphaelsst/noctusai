@@ -53,7 +53,10 @@ vi.mock("@/hooks/geracao/useRoteiros", () => ({
   useExcluirRoteiros: () => ({ mutateAsync: m.excluir, isPending: false }),
 }));
 
+import { toast } from "sonner";
+
 import { EditarRoteiroModal } from "./EditarRoteiroModal";
+import { MSG_SALVO } from "./RoteiroEdicao";
 import { RoteiroAvancadoModal } from "./RoteiroAvancadoModal";
 import Roteiros from "@/pages/geracao/Roteiros";
 
@@ -212,7 +215,7 @@ describe("RoteiroAvancadoModal", () => {
     expect(await screen.findByLabelText("Headline")).toHaveValue("minha headline");
   });
 
-  it("criado: sucesso, edição, Atualizar Roteiro (#37) e bloco Gostei/Não Gostei", async () => {
+  it("criado: sucesso, edição, Salvar roteiro (#37) e bloco Gostei/Não Gostei", async () => {
     m.criar.mockResolvedValue({ ...base, status: "criando" });
     m.salvar.mockResolvedValue({ ...base, versao: 2 });
     abrir({ headlineInicial: { texto: "x" } });
@@ -221,10 +224,10 @@ describe("RoteiroAvancadoModal", () => {
     await screen.findByText("Roteiro criado com sucesso!");
     expect(screen.getByText("O que achou deste roteiro?")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /Fontes/ })).toBeNull();
-    const atualizar = screen.getByRole("button", { name: "Atualizar Roteiro" });
-    expect(atualizar).toBeDisabled();
+    expect(screen.getByText("Já está salvo em Headlines › Roteiros.")).toBeInTheDocument();
+    const salvarBtn = screen.getByRole("button", { name: "Salvar roteiro" });
     fireEvent.change(screen.getByLabelText("Roteiro"), { target: { value: "editado" } });
-    fireEvent.click(atualizar);
+    fireEvent.click(salvarBtn);
     await waitFor(() =>
       expect(m.salvar).toHaveBeenCalledWith({ id: "r1", nome: undefined, conteudo: "editado", expected_versao: 1 }),
     );
@@ -242,8 +245,9 @@ describe("RoteiroAvancadoModal", () => {
     await screen.findByText("Roteiro criado com sucesso!");
     expect(screen.getByLabelText("Roteiro")).toHaveValue(base.conteudo);
     expect(screen.getByText(`${base.conteudo.length}/30.000 caracteres`)).toBeInTheDocument();
-    // Nothing edited: "Atualizar Roteiro" cannot PATCH an empty text over the generated one.
-    expect(screen.getByRole("button", { name: "Atualizar Roteiro" })).toBeDisabled();
+    // Nothing edited: "Salvar roteiro" only confirms where it lives -- it never PATCHes (no empty text over the generated one).
+    fireEvent.click(screen.getByRole("button", { name: "Salvar roteiro" }));
+    expect(toast.success).toHaveBeenCalledWith(MSG_SALVO);
     expect(m.salvar).not.toHaveBeenCalled();
   });
 });
@@ -288,6 +292,12 @@ describe("EditarRoteiroModal", () => {
     expect(refetch).toHaveBeenCalled();
   });
 
+  it("abre no tamanho do card do funil (90vw × 90vh)", () => {
+    m.roteiro.mockReturnValue(q({ ...base }));
+    abrir();
+    expect(screen.getByRole("dialog")).toHaveClass("h-[90vh]", "w-[90vw]", "max-w-[90vw]");
+  });
+
   it("mostra a estrutura usada no roteiro", () => {
     m.roteiro.mockReturnValue(q({ ...base, estrutura: "cta_final" }));
     abrir();
@@ -300,12 +310,12 @@ describe("EditarRoteiroModal", () => {
     expect(screen.getByRole("tab", { name: "Fontes da Pesquisa" })).toBeInTheDocument();
   });
 
-  it("Atualizar com 409 mostra 'O roteiro mudou; recarregue'", async () => {
+  it("Salvar roteiro com 409 mostra 'O roteiro mudou; recarregue'", async () => {
     m.roteiro.mockReturnValue(q({ ...base }));
     m.salvar.mockRejectedValue(Object.assign(new Error("[409] conflito"), { status: 409 }));
     abrir();
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo nome" } });
-    fireEvent.click(screen.getByRole("button", { name: "Atualizar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar roteiro" }));
     await screen.findByText("O roteiro mudou; recarregue");
   });
 

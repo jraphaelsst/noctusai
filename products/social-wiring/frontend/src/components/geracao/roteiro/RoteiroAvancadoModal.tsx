@@ -40,7 +40,7 @@ import { cn } from "@/lib/utils";
 import type { Roteiro } from "@/types/geracao";
 import { ESTRUTURAS_ROTEIRO, HEADLINE_TEXTO_MAX } from "../labels";
 import { FeedbackRoteiro } from "./FeedbackRoteiro";
-import { RoteiroCorpo, useEdicaoRoteiro } from "./RoteiroEdicao";
+import { MODAL_ROTEIRO_GRANDE, RoteiroCorpo, SalvarRoteiroButton, useEdicaoRoteiro } from "./RoteiroEdicao";
 
 export const INSTRUCOES_MAX = 5000;
 export const RESPOSTA_MAX = 1000;
@@ -177,7 +177,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className={emForm ? "max-h-[90vh] max-w-3xl overflow-y-auto" : MODAL_ROTEIRO_GRANDE}>
         <DialogHeader>
           <DialogTitle>Roteiro Avançado</DialogTitle>
           <DialogDescription>Crie um roteiro avançado em 3 passos</DialogDescription>
@@ -415,6 +415,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
         {roteiro && status === "completo" && (
           <div className="space-y-4">
             <p className="font-medium text-emerald-700">Roteiro criado com sucesso!</p>
+            <p className="text-sm text-muted-foreground">Já está salvo em Headlines › Roteiros.</p>
             {(roteiro.post || postId) && (
               <p className="text-sm text-muted-foreground" data-testid="roteiro-vinculado">
                 {roteiro.post ? `Vinculado ao post ${roteiro.post.titulo}` : "Vinculado ao post."}
@@ -431,9 +432,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Fechar
               </Button>
-              <Button disabled={!edicao.alterou || !edicao.valido || edicao.salvando} onClick={() => void edicao.salvar()}>
-                {edicao.salvando ? "Atualizando…" : "Atualizar Roteiro"}
-              </Button>
+              <SalvarRoteiroButton edicao={edicao} />
             </DialogFooter>
           </div>
         )}

@@ -25,6 +25,13 @@ describe.each([
     expect(conexoes.items.map((i) => i.name)).toEqual(["Marcas", "Monitor", "YouTube", "Meta", "n8n"]);
   });
 
+  it("Roteiros sits under Core Studio › Headlines, and only there (owner request 2026-10-17)", () => {
+    const all = (gs: AnyGroup[]): AnyGroup[] => gs.flatMap((g) => [g, ...all(g.groups ?? [])]);
+    const headlines = all(groups).find((g) => g.key === "media-creation-headlines")!;
+    expect(headlines.items.map((i) => i.href)).toContain("/media-creation/roteiros");
+    expect(allItems(groups).filter((i) => i.href === "/media-creation/roteiros")).toHaveLength(1);
+  });
+
   it("nothing in the nav links to the retired /whatsapp-chat route", () => {
     expect(allItems(groups).some((i) => i.href === "/whatsapp-chat")).toBe(false);
   });

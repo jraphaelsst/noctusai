@@ -4,7 +4,7 @@
  * markdown textarea, Copiar Roteiro, and the optimistic-lock save (#37, 409).
  */
 import { useEffect, useRef, useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,11 @@ import { ESTRUTURA_ROTULO } from "../labels";
 export const NOME_MAX = 160;
 export const CONTEUDO_MAX = 30_000;
 export const MSG_CONFLITO = "O roteiro mudou; recarregue";
+/** Where a roteiro lives once generated — every roteiro is persisted server-side as it is created. */
+export const MSG_SALVO = "Roteiro salvo em Headlines › Roteiros.";
+/** Same footprint as the funil card (`CardHubDialog`): the roteiro is long-form text. */
+export const MODAL_ROTEIRO_GRANDE =
+  "h-[90vh] w-[90vw] max-w-[90vw] overflow-y-auto max-sm:h-[100dvh] max-sm:w-screen max-sm:max-w-none";
 
 function statusDe(e: unknown): number | null {
   const s = (e as { status?: unknown } | null)?.status;
@@ -123,7 +128,7 @@ export function useEdicaoRoteiro(roteiro: Roteiro | undefined, onSalvo?: (r: Rot
         conteudo: alterouConteudo ? conteudo : undefined,
         expected_versao: base.current?.id === roteiro.id ? base.current.versao : roteiro.versao,
       });
-      toast.success("Roteiro atualizado.");
+      toast.success(MSG_SALVO);
       onSalvo?.(r);
       return r;
     } catch (e) {
@@ -218,7 +223,7 @@ export function RoteiroCorpo({ roteiro, edicao, mostrarNome = true, onRecarregar
             <Textarea
               id={`roteiro-conteudo-${roteiro.id}`}
               rows={14}
-              className="font-mono text-sm"
+              className="min-h-[45vh] font-mono text-sm"
               value={edicao.conteudo}
               onChange={(e) => edicao.setConteudo(e.target.value)}
               aria-invalid={edicao.conteudo.length > CONTEUDO_MAX}
@@ -238,5 +243,23 @@ export function RoteiroCorpo({ roteiro, edicao, mostrarNome = true, onRecarregar
         )}
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * "Salvar roteiro" (💾). The roteiro is already persisted when generated, so with
+ * no local edit the click only confirms where it lives; with an edit it runs the
+ * optimistic-lock save (#37). It never PATCHes an unedited text.
+ */
+export function SalvarRoteiroButton({ edicao }: { edicao: ReturnType<typeof useEdicaoRoteiro> }) {
+  async function clicar() {
+    if (edicao.alterou) await edicao.salvar();
+    else toast.success(MSG_SALVO);
+  }
+  return (
+    <Button disabled={edicao.salvando || (edicao.alterou && !edicao.valido)} onClick={() => void clicar()}>
+      <Save className="mr-1 h-4 w-4" />
+      {edicao.salvando ? "Salvando…" : "Salvar roteiro"}
+    </Button>
   );
 }
