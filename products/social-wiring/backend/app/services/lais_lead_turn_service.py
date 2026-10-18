@@ -751,6 +751,8 @@ async def _handle_deletion(
         lais_envio_gate.exigir(deps.scoped, connection.org_id, connection.id, lais_envio_gate.Fluxo.RESPOSTA)
         waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
         await waha.send_text(chat_id, lais.MENSAGEM_APAGADO if res.agents_ok else lais.MENSAGEM_APAGADO_PARCIAL)
+    except lais_envio_gate.EnvioBloqueado:  # Julia switched off mid-batch: the gate logged it + left the event
+        return
     except Exception:
         logger.exception("lais: deletion confirmation could not be sent chat=%s", chat_id)
 

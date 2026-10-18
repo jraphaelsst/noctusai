@@ -154,6 +154,12 @@ class TestRefuseNotNull:
         with pytest.raises(gate.EnvioBloqueado, match="liberacao_de_outra_conexao"):
             gate.conferir(lib, "00000000-0000-4000-8000-0000000000ff")
 
+    def test_a_liberacao_cannot_be_built_outside_the_gate(self):
+        with pytest.raises(TypeError, match="exigir"):
+            gate.Liberacao(org_id=ORG_ID, connection_id=CONNECTION_ID, fluxo=Fluxo.RESPOSTA)
+        with pytest.raises(TypeError, match="exigir"):
+            gate.Liberacao(org_id=ORG_ID, connection_id=CONNECTION_ID, fluxo=Fluxo.RESPOSTA, selo=object())
+
 
 # ── the worker that sends on its own starts only in the deployed container ────────────────────────
 class TestWorkerNeedsTheDeployMarker:

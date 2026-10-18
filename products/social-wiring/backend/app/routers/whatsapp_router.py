@@ -1087,6 +1087,12 @@ async def _process_waha_body(
     canonical_session = intake.canonical_session_id(sender)
 
     # Process the message.
+    # NOC-REMEDIATE[sw-operator-bot-allow-all]: OWNER QUESTION -- with Julia OFF, an empty
+    # `authorized_numbers` makes EVERY sender "authorized" (migration 016), so on a line leads write
+    # to (prod "One Chat", 2026-10-18: Julia off, auto_reply_enabled=true, 0 authorized, 0 bound) this
+    # operator chatbot can answer LEADS automatically. Decide: fill authorized_numbers / turn
+    # auto_reply off on lead lines, or make empty = nobody for the bot. The Julia outbound gate
+    # (`lais_envio_gate`) does not cover this operator path by design -- 2026-10-18
     # When a per-connection record is present, the auto_reply_enabled toggle
     # gates the chatbot.  Default is OFF — operators can chat manually without
     # the bot interfering.  The legacy global route preserves the old gate

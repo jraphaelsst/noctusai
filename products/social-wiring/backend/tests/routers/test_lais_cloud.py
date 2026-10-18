@@ -502,7 +502,8 @@ class TestReguaTemplate:
         contato = admin.contatos(silenciosos=1, ativos=0)[0]
         deps = admin.w.deps(cloud_client_factory=lambda **kw: admin.meta)
         conn = admin.w.record(__import__("uuid").UUID(CONNECTION_ID))
-        liberacao = lais_envio_gate.Liberacao(org_id=ORG_ID, connection_id=CONNECTION_ID, fluxo=lais_envio_gate.Fluxo.REGUA)
+        regua = admin.w.sw.table(lais_envio_gate.T_REGUAS).insert({"org_id": ORG_ID, "nome": "R", "ativa": True}).execute().data[0]
+        liberacao = lais_envio_gate.exigir(admin.w.sw, ORG_ID, CONNECTION_ID, lais_envio_gate.Fluxo.REGUA, regua_id=regua["id"])
         ok = asyncio.run(reeng._enviar_template(deps, ORG_ID, conn, contato, {"template_id": m["id"]}, liberacao))
         return ok
 

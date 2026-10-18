@@ -20,14 +20,15 @@ Refuse-not-null: a blocked send raises `EnvioBloqueado` after logging the reason
 their own outcome label.
 
 `exigir` returns a `Liberacao`; a send helper that does not call `exigir` itself takes the `Liberacao` and calls
-`conferir` on it. Keeper: `tests/services/test_lais_envio_gate_keeper.py` fails when a Lais module calls a
-WhatsApp send outside a function that references this module (manual, operator-initiated sends are listed
-there one by one with their reason).
+`conferir` on it; a `Liberacao` is sealed (only `exigir` can build one). Keeper:
+`tests/services/test_lais_envio_gate_keeper.py` fails when a WhatsApp send in a Lais module -- or in any module that
+imports one -- sits in a function that does not CALL `exigir` / `conferir` (operator-initiated sends are listed there
+one by one with their reason).
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 from uuid import UUID
@@ -59,13 +60,22 @@ FLUXO_DO_TIER: dict[str, Fluxo] = {
 }
 
 
+#: Module-private seal: only `exigir` can build a `Liberacao` (a hand-built one raises), so a pass cannot be forged.
+_SELO = object()
+
+
 @dataclass(frozen=True)
 class Liberacao:
-    """Proof that `exigir` passed for this org + line + flow. Only `exigir` builds one."""
+    """Proof that `exigir` passed for this org + line + flow. Only `exigir` builds one (sealed)."""
 
     org_id: str
     connection_id: str
     fluxo: Fluxo
+    selo: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.selo is not _SELO:
+            raise TypeError("Liberacao is issued only by lais_envio_gate.exigir")
 
 
 class EnvioBloqueado(Exception):
@@ -123,7 +133,7 @@ def exigir(
     fluxo = Fluxo(fluxo)
     motivo = motivo_do_bloqueio(db, org_id, connection_id, fluxo, regua_id=regua_id)
     if motivo is None:
-        return Liberacao(org_id=str(org_id), connection_id=str(connection_id), fluxo=fluxo)
+        return Liberacao(org_id=str(org_id), connection_id=str(connection_id), fluxo=fluxo, selo=_SELO)
     logger.warning("lais: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s", fluxo.value, motivo, org_id, connection_id, contato_id)
     lais_eventos_service.emitir(
         db, org_id, EVENTO_BLOQUEADO, contato_id,
