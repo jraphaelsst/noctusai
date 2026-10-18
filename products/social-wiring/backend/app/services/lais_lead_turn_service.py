@@ -47,7 +47,7 @@ from app.config import settings as _default_settings
 from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
 from app.services import lais_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import lais_agente_service as lais
-from app.services import lais_aviso_service, lais_capi_service
+from app.services import lais_aviso_service, lais_capi_service, lais_envio_gate
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -201,14 +201,16 @@ class LeadSender:
     records the outbound, publishes realtime, and registers the message id as
     Julia's own so its `fromMe` echo is never mistaken for a human (L3)."""
 
-    def __init__(self, *, connection: WhatsAppConnectionRecord, waha: Any, deps: LeadDeps):
+    def __init__(self, *, connection: WhatsAppConnectionRecord, waha: Any, deps: LeadDeps, liberacao: lais_envio_gate.Liberacao):
         self._c = connection
         self._waha = waha
         self._d = deps
+        self._liberacao = liberacao
 
     async def send_reply(self, sender: str, text: str) -> None:
         from app.schemas.whatsapp import extract_waha_message_id
 
+        lais_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (two gates) passed for this line
         result = await self._waha.send_text(sender, text)
         provider_message_id = extract_waha_message_id(result) if isinstance(result, dict) else None
         lais.registrar_envio_proprio(self._d.redis, provider_message_id)
@@ -521,6 +523,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         deps, connection=connection, chat_id=chat_id, key=key, run=run, result=result, state=state, chat_store=chat_store,
         lais_turn=lais_turn, agents_client=client,
         lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [m.provider_message_id for m in req.messages]),
+        fluxo=lais_envio_gate.Fluxo.RESPOSTA,
     )
 
 
@@ -580,8 +583,10 @@ async def _deliver(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str,
     run: list[dict[str, Any]], result: TurnResult, state: Optional[dict[str, Any]], chat_store: Any,
     lais_turn: Optional[LaisTurn] = None, agents_client: Optional[AgentsClient] = None, lote_hash: Optional[str] = None,
+    fluxo: lais_envio_gate.Fluxo, regua_id: Optional[str] = None,
 ) -> bool:
-    """Send the reply; True when at least one bubble went out."""
+    """Send the reply; True when at least one bubble went out. Nothing leaves before `lais_envio_gate.exigir`
+    passes for `fluxo` (Julia on for the line + the org's opt-in for that flow)."""
     pos = dict(lais_turn=lais_turn, connection=connection, chat_id=chat_id, result=result, lote_hash=lote_hash,
                agents_client=agents_client)
     # L3: a human may have taken over WHILE the turn was running -- re-check the
@@ -605,8 +610,17 @@ async def _deliver(
         close_run(deps.buffer, key, run)  # status `silencio`: stay silent, nothing to disclose
         return False
 
+    try:
+        liberacao = lais_envio_gate.exigir(
+            deps.scoped, connection.org_id, connection.id, fluxo,
+            contato_id=lais_turn.contato.get("id") if lais_turn is not None else None, regua_id=regua_id,
+        )
+    except lais_envio_gate.EnvioBloqueado:  # already logged + `envio_bloqueado` event by the gate
+        await _pos_turno(deps, enviou=False, **pos)
+        close_run(deps.buffer, key, run)
+        return False
     waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
-    sender = LeadSender(connection=connection, waha=waha, deps=deps)
+    sender = LeadSender(connection=connection, waha=waha, deps=deps, liberacao=liberacao)
     delay = float(deps.cfg.whatsapp_paragraph_delay_seconds)
 
     if primeira:
@@ -652,7 +666,15 @@ async def run_reengajamento_turn(
     inbound from the lead. agents requires >= 1 message, so ONE system marker (never sent to the lead,
     unique per job through `marker_id`) stands in for it. Does NOT bump `gen` (nothing came in). Returns True
     when a message went out; an agents failure is logged and reads as False (the job still completes: a
-    re-engagement is best-effort, a retry storm against a down agents is worse)."""
+    re-engagement is best-effort, a retry storm against a down agents is worse).
+
+    `estado_extra["reengajamento"]` names the flow the outbound gate checks (`minutos` | `horas` | `regua`); a
+    regua turn also carries `regua_id`, which goes to the gate and NOT into the agents context."""
+    estado_extra = dict(estado_extra)
+    regua_id = estado_extra.pop("regua_id", None)
+    fluxo = lais_envio_gate.FLUXO_DO_TIER.get(str(estado_extra.get("reengajamento")))
+    if fluxo is None:
+        raise ValueError(f"re-engagement turn without a known tier: {estado_extra.get('reengajamento')!r}")
     org_id = connection.org_id
     client = deps.agents_client_factory(org_id)
     if client is None:
@@ -684,6 +706,7 @@ async def run_reengajamento_turn(
         deps, connection=connection, chat_id=chat_id, key=f"lead:{connection.id}:{chat_id}", run=[], result=result,
         state=state, chat_store=chat_store, lais_turn=LaisTurn(contato=contato, contexto=contexto),
         agents_client=client, lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [marker_id]),
+        fluxo=fluxo, regua_id=str(regua_id) if regua_id else None,
     )
 
 
@@ -725,6 +748,7 @@ async def _handle_deletion(
     # Confirm to the lead with the connection's own WAHA client -- NOT recorded
     # (the rows were just deleted; recording would re-create what was erased).
     try:
+        lais_envio_gate.exigir(deps.scoped, connection.org_id, connection.id, lais_envio_gate.Fluxo.RESPOSTA)
         waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
         await waha.send_text(chat_id, lais.MENSAGEM_APAGADO if res.agents_ok else lais.MENSAGEM_APAGADO_PARCIAL)
     except Exception:

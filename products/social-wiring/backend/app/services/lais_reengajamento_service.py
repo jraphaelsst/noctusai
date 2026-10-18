@@ -36,7 +36,7 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_contatos_service, lais_eventos_service
+from app.services import lais_contatos_service, lais_envio_gate, lais_eventos_service
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +434,11 @@ async def executar_default(
     if tier == "minutos" and not contato.get("ultimo_inbound_at"):
         return "sem_interacao"  # the hours tier owns the lead who never replied
     org_id = job.payload["org_id"]
+    fluxo = lais_envio_gate.FLUXO_DO_TIER[tier]
+    try:  # the outbound gate, before the agents call (the turn's own send re-checks it)
+        lais_envio_gate.exigir(deps.scoped, org_id, connection.id, fluxo, contato_id=contato["id"])
+    except lais_envio_gate.EnvioBloqueado as exc:
+        return f"bloqueado:{exc.motivo}"
     enviou = await run_turn(deps, connection, contato["chat_id"], contato, {"reengajamento": tier}, f"reeng:{job.id}")
     if enviou:
         _evento_timeline(deps.scoped, org_id, contato, tier=tier)
@@ -465,10 +470,15 @@ async def executar_tentativa(
     if not dentro_do_horario(agora):
         # Lais' regua card: "Periodo de execucao: Das 8h as 20h" (page-map-v2 59.0b) -- same window as the hours tier.
         raise RescheduleLater(segundos_ate_abertura(agora), "regua fora do horario (08-20, Sao Paulo)")
+    try:  # the outbound gate (Julia on + this regua active), before any send or agents call
+        liberacao = lais_envio_gate.exigir(db, org_id, connection.id, lais_envio_gate.Fluxo.REGUA,
+                                           contato_id=contato["id"], regua_id=regua["id"])
+    except lais_envio_gate.EnvioBloqueado as exc:
+        return f"bloqueado:{exc.motivo}"
     enviou = False
     sem_transporte = False
     if tentativa.get("template_id"):
-        enviou = await _enviar_template(deps, org_id, connection, contato, tentativa)
+        enviou = await _enviar_template(deps, org_id, connection, contato, tentativa, liberacao)
         if enviou:
             _evento_timeline(db, org_id, contato, regua_id=str(regua["id"]), ordem=int(tentativa["ordem"]))
         else:
@@ -481,7 +491,7 @@ async def executar_tentativa(
         enviou = await run_turn(
             deps, connection, contato["chat_id"], contato,
             {"reengajamento": "regua", "reescrever": True, "texto_base": tentativa.get("texto") or "",
-             "tentativa": int(tentativa["ordem"])},
+             "tentativa": int(tentativa["ordem"]), "regua_id": str(regua["id"])},
             f"regua:{job.id}",
         )
         if enviou:
@@ -496,7 +506,10 @@ async def executar_tentativa(
     return "enviado" if enviou else "silencio"
 
 
-async def _enviar_template(deps: Any, org_id: Any, connection: Any, contato: dict[str, Any], tentativa: dict[str, Any]) -> bool:
+async def _enviar_template(
+    deps: Any, org_id: Any, connection: Any, contato: dict[str, Any], tentativa: dict[str, Any],
+    liberacao: lais_envio_gate.Liberacao,
+) -> bool:
     """A regua attempt carrying a Cloud template (wave 12). True = sent. False = it could not go out: the
     connection is not a configured Cloud one (WAHA free text is never a template stand-in), the modelo is not
     approved / gone, or the send failed -- the caller records `regua_sem_transporte` and the regua moves on."""
@@ -521,6 +534,7 @@ async def _enviar_template(deps: Any, org_id: Any, connection: Any, contato: dic
     transporte = lais_transporte.transporte_da_conexao(
         connection, waha_factory=deps.waha_factory, cloud_client_factory=getattr(deps, "cloud_client_factory", None),
     )
+    lais_envio_gate.conferir(liberacao, connection.id)
     try:
         await transporte.enviar_template(
             tel, lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],

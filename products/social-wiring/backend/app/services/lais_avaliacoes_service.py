@@ -28,7 +28,7 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso
+from app.services import lais_acesso, lais_envio_gate
 from app.services import lais_contatos_service as contatos
 from app.services import lais_painel_service as painel_svc
 from app.services.lais_envio_service import telefone_do_contato
@@ -53,9 +53,10 @@ CONFIG_PADRAO: dict[str, Any] = {"google_review_url": None, "gbp_location_id": N
 _URL_RE = re.compile(r"^https://\S+$")
 _PIXEL_RE = re.compile(r"^[0-9]{5,20}$")
 
-#: Sends the review ask: `async (contato, texto) -> None`, raising when it could not leave. Production builds it
-#: from the contato's WhatsApp connection (`enviador_padrao`); tests inject a fake.
-Enviador = Callable[[dict[str, Any], str], Awaitable[None]]
+#: Sends the review ask: `async (contato, texto, liberacao) -> None`, raising when it could not leave. `liberacao` is
+#: the outbound gate's pass (`lais_envio_gate.exigir`, flow `avaliacao`). Production builds it from the contato's
+#: WhatsApp connection (`enviador_padrao`); tests inject a fake.
+Enviador = Callable[[dict[str, Any], str, Any], Awaitable[None]]
 
 # The job repository of the running Lais worker (set by `lais_reengajamento_worker.build_worker`).
 _repo: Any = None
@@ -241,9 +242,15 @@ async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Opt
     motivo = motivo_para_nao_pedir(client, org_id, contato, p.get("interacao_id"), agora)
     if motivo is not None:
         return f"ignorado:{motivo}"
+    try:  # the outbound gate: Julia still on for the contato's line + the org's review link (re-read at fire time)
+        liberacao = lais_envio_gate.exigir(
+            client, org_id, contato.get("connection_id"), lais_envio_gate.Fluxo.AVALIACAO, contato_id=contato_id,
+        )
+    except lais_envio_gate.EnvioBloqueado as exc:
+        return f"bloqueado:{exc.motivo}"
     texto = montar_texto(contato.get("nome"), obter_config(client, org_id)["google_review_url"])
     try:
-        await enviar(contato, texto)
+        await enviar(contato, texto, liberacao)
     except Exception as exc:
         logger.exception("lais avaliacoes: review ask failed (org=%s contato=%s)", org_id, contato_id)
         _registrar_pedido(client, org_id, contato_id, p.get("interacao_id"), "erro", type(exc).__name__, agora)
@@ -257,10 +264,11 @@ def enviador_padrao(connection_lookup: Callable[[UUID], Any], waha_factory: Call
     """The production sender: the contato's own connection; WAHA free text (1:1, A6) or a configured Cloud one."""
     from app.services import lais_transporte
 
-    async def enviar(contato: dict[str, Any], texto: str) -> None:
+    async def enviar(contato: dict[str, Any], texto: str, liberacao: Any) -> None:
         record = connection_lookup(UUID(str(contato["connection_id"])))
         if record is None:
             raise RuntimeError("conexao_nao_encontrada")
+        lais_envio_gate.conferir(liberacao, record.id)
         if getattr(record, "transporte", lais_transporte.TRANSPORTE_WAHA) == lais_transporte.TRANSPORTE_CLOUD:
             if not lais_transporte.cloud_configurada(record):
                 raise RuntimeError("transporte_indisponivel")

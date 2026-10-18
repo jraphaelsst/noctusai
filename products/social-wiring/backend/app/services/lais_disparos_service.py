@@ -28,7 +28,7 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_modelos_service, lais_transporte
+from app.services import lais_envio_gate, lais_modelos_service, lais_transporte
 from app.services.lais_transporte import Transporte
 
 logger = logging.getLogger(__name__)
@@ -444,12 +444,21 @@ ABORDAGENS = {"comercial": "abordagem comercial", "neutra": "abordagem neutra"}
 async def primeiro_contato_meta(
     db: Any, org_id: UUID | str, *, connection: Any, transporte: Optional[Transporte], telefone: str,
     nome: Optional[str], abordagem: str, contexto: Optional[dict[str, str]] = None,
+    contato_id: Optional[UUID | str] = None,
 ) -> dict[str, Any]:
     """Meta lead-form lead -> Julia's first contact as the approved "Abordagem comercial|neutra" template
     (category `primeiro_contato`). Cloud only: without it the hook returns `transporte_indisponivel` and the
-    lead keeps flowing through the ordinary (WAHA) path -- it never degrades into a free-text mass send."""
+    lead keeps flowing through the ordinary (WAHA) path -- it never degrades into a free-text mass send.
+    The outbound gate (`lais_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
+    first-contact modelo; a refusal returns its reason as `motivo`."""
     if abordagem not in ABORDAGENS:
         raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
+    try:
+        liberacao = lais_envio_gate.exigir(
+            db, org_id, getattr(connection, "id", None), lais_envio_gate.Fluxo.PRIMEIRO_CONTATO, contato_id=contato_id,
+        )
+    except lais_envio_gate.EnvioBloqueado as exc:
+        return {"enviado": False, "motivo": exc.motivo}
     if not lais_transporte.cloud_configurada(connection) or transporte is None:
         return {"enviado": False, "motivo": "transporte_indisponivel"}
     modelos = db.table("lais_modelos").select("*").eq("org_id", str(org_id)).eq("categoria", "primeiro_contato").eq(
@@ -460,6 +469,7 @@ async def primeiro_contato_meta(
     tel = "".join(ch for ch in telefone if ch.isdigit())
     chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
     valores = valores_do_alvo({"imovel_codigo": None}, nome, contexto or {})
+    lais_envio_gate.conferir(liberacao, connection.id)
     resp = await transporte.enviar_template(
         tel, lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves], modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
     )

@@ -18,6 +18,7 @@ from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_
 
 from app.services import lais_conhecimento_service as conhecimento
 from app.services import lais_disparos_service as disparos
+from app.services import lais_envio_gate
 from app.services import lais_modelos_service as modelos
 from app.services import lais_proprietarios_service as proprietarios
 from app.services import lais_reengajamento_service as reeng
@@ -501,7 +502,8 @@ class TestReguaTemplate:
         contato = admin.contatos(silenciosos=1, ativos=0)[0]
         deps = admin.w.deps(cloud_client_factory=lambda **kw: admin.meta)
         conn = admin.w.record(__import__("uuid").UUID(CONNECTION_ID))
-        ok = asyncio.run(reeng._enviar_template(deps, ORG_ID, conn, contato, {"template_id": m["id"]}))
+        liberacao = lais_envio_gate.Liberacao(org_id=ORG_ID, connection_id=CONNECTION_ID, fluxo=lais_envio_gate.Fluxo.REGUA)
+        ok = asyncio.run(reeng._enviar_template(deps, ORG_ID, conn, contato, {"template_id": m["id"]}, liberacao))
         return ok
 
     def test_not_cloud_keeps_regua_sem_transporte_and_never_texts(self, admin):

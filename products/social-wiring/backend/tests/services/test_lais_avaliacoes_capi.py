@@ -82,12 +82,14 @@ def config(w: World, **over):
 class Saida:
     def __init__(self, erro: Exception | None = None):
         self.enviados: list[tuple[dict, str]] = []
+        self.liberacoes: list = []
         self.erro = erro
 
-    async def __call__(self, c, texto):
+    async def __call__(self, c, texto, liberacao):
         if self.erro:
             raise self.erro
         self.enviados.append((c, texto))
+        self.liberacoes.append(liberacao)
 
 
 def job(c, inter, gen=None):

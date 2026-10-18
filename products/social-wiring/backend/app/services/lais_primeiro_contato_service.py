@@ -106,7 +106,7 @@ async def iniciar(
         resultado = await lais_disparos_service.primeiro_contato_meta(
             client, org_id, connection=conexao,
             transporte=transporte_factory(conexao) if lais_transporte.cloud_configurada(conexao) else None,
-            telefone=telefone, nome=nome, abordagem=escolher_abordagem(lead), contexto=contexto,
+            telefone=telefone, nome=nome, abordagem=escolher_abordagem(lead), contexto=contexto, contato_id=contato["id"],
         )
         if resultado.get("enviado"):
             contatos.registrar_outbound(client, contato["id"])

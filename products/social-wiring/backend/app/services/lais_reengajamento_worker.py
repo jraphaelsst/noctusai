@@ -8,6 +8,11 @@ precondition for serving. The queue row lease keeps several processes from runni
 
 The handler builds its `LeadDeps` at FIRE time from the conversation module (the Redis buffer lives
 there); until that module exists the job reschedules itself rather than failing.
+
+🔴 This worker SENDS WhatsApp messages to real leads (re-engagement, réguas, review asks), so it starts only where
+the seed's `schedulers_enabled()` holds -- `NOCTUS_SCHEDULERS_ENABLED`, which only the deployed container's compose
+block carries, never `.env`. A laptop that loaded the prod `.env` therefore never drains the prod queue.
+`LAIS_REENGAJAMENTO_WORKER_ENABLED=false` remains the per-deploy kill switch on top.
 """
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ import os
 import socket
 from typing import Any, Optional
 
+from noctusai_lib.api.scheduler import SCHEDULERS_ENABLED_ENV, schedulers_enabled
 from noctusai_lib.domain.jobs import JobRepository, RetryPolicy, Worker, make_job_repository
 from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 
@@ -107,6 +113,9 @@ async def start_worker(cfg: Any = None, *, db: Any = None, repo: Optional[JobRep
     global _handle
     if not cfg.lais_reengajamento_worker_enabled:
         logger.info("lais reengajamento: worker DESLIGADO (LAIS_REENGAJAMENTO_WORKER_ENABLED=false).")
+        return False
+    if not schedulers_enabled():
+        logger.info("lais reengajamento: worker DESLIGADO (%s ausente -- só o container implantado envia).", SCHEDULERS_ENABLED_ENV)
         return False
     if is_running():
         return True
