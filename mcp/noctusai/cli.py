@@ -536,6 +536,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcription-submit", metavar="PATH", dest="transcription_submit", help="Upload a local file to the platform transcription API; prints the 202 body. Needs NOCTUS_TRANSCRIPTION_TOKEN. MCP: noctus.transcription.submit.")
     parser.add_argument("--transcription-get", metavar="ID", dest="transcription_get", help="Fetch a transcription job by id. MCP: noctus.transcription.get.")
     parser.add_argument("--transcription-transcribe", metavar="PATH", dest="transcription_transcribe", help="Submit a file and poll until terminal/timeout. MCP: noctus.transcription.transcribe.")
+    parser.add_argument("--transcription-batch", nargs=2, metavar=("SRC_DIR", "OUT_DIR"), dest="transcription_batch", help="Transcribe every *.mp3 in SRC_DIR into OUT_DIR/<stem>.txt|.json (resumable, <=3 in flight, honours 429). MCP: noctus.transcription.batch.")
     parser.add_argument("--transcription-idioma", metavar="LANG", default="pt", dest="transcription_idioma", help="With --transcription-submit/-transcribe: language (default pt).")
     parser.add_argument("--transcription-rotulo", metavar="TEXT", dest="transcription_rotulo", help="With --transcription-submit/-transcribe: optional label (<=120 chars).")
     parser.add_argument("--transcription-segmentos", action="store_true", dest="transcription_segmentos", help="With --transcription-submit: also return timed segments.")
@@ -3583,9 +3584,14 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
-    elif args.transcription_submit or args.transcription_get or args.transcription_transcribe:
+    elif (args.transcription_submit or args.transcription_get or args.transcription_transcribe
+          or args.transcription_batch):
         from tools.noctus.transcription import client as _tx
-        if args.transcription_submit:
+        if args.transcription_batch:
+            _src, _out = args.transcription_batch
+            _r = _tx.batch(_src, _out, idioma=args.transcription_idioma,
+                           timeout_s=args.transcription_timeout)
+        elif args.transcription_submit:
             _r = _tx.submit(args.transcription_submit, idioma=args.transcription_idioma,
                             rotulo=args.transcription_rotulo, segmentos=args.transcription_segmentos)
         elif args.transcription_get:

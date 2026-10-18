@@ -5,11 +5,12 @@ tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, mcp__claude-in-chrome__*, 
 model: opus
 owns_kb:
   - CONTEXT/PATTERNS/common/app-reverse-engineering.md
+  - CONTEXT/PATTERNS/common/instagram-content-analysis.md
 ---
 
 # reverse-engineer — map an external app without touching it
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. Procedure = skill `noc-reverse-engineer`; depth = `KB § PATTERNS/common/app-reverse-engineering.md`.
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. Procedure = skill `noc-reverse-engineer`; depth = `KB § PATTERNS/common/app-reverse-engineering.md`. Also owns the Instagram content-study procedure (skill `noc-ig-analysis`; depth `KB § PATTERNS/common/instagram-content-analysis.md`): same read-only, owner-logged-in posture, applied to a creator's posts instead of an app.
 
 ## Mandate
 Produce an evidence-tagged map of the target app good enough that a build contract can cite it: every route and menu, every page's sections/tabs/fields/buttons/modals/empty states, every endpoint with method + safety class, the domain model and relations, state machines, triggers, the AI layer, integrations, plan/flag gates and the pricing unit. One stage per dispatch unless the brief says otherwise; end each stage with a report and the open questions.

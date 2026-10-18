@@ -7,6 +7,7 @@ never logged or placed in any returned value.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -174,8 +175,81 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
         _sleep(wait)
 
 
+def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt",
+          max_inflight: int = 3, timeout_s: float = 7200, segmentos: bool = False, *,
+          _transport: httpx.BaseTransport | None = None,
+          _sleep: Callable[[float], None] = time.sleep,
+          _clock: Callable[[], float] = time.monotonic) -> dict:
+    """Transcribe every ``pattern`` file in ``src_dir`` into ``out_dir/<stem>.txt|.json``.
+
+    Resumable: a stem whose ``.txt`` already exists is skipped. At most
+    ``max_inflight`` jobs are queued at once (the API rate-limits bursts with
+    429 + Retry-After, which is honoured on both submit and poll).
+    """
+    src, out = Path(src_dir).expanduser(), Path(out_dir).expanduser()
+    if not src.is_dir():
+        return _error("arquivo_invalido", f"Diretório não encontrado: {src_dir}")
+    out.mkdir(parents=True, exist_ok=True)
+    files = sorted(src.glob(pattern))
+    skipped = [f.stem for f in files if (out / f"{f.stem}.txt").exists()]
+    queue = [f for f in files if f.stem not in set(skipped)]
+    jobs: dict[str, str] = {}
+    done: list[str] = []
+    failed: list[dict[str, Any]] = []
+    start = _clock()
+
+    def wait_for(resp: dict) -> float | None:
+        if resp.get("status_code") in (429, 503):
+            return resp.get("retry_after") or _FAST_POLL_S
+        return None
+
+    while queue or jobs:
+        if _clock() - start > timeout_s:
+            return {"status": "timeout", "done": done, "failed": failed, "skipped": skipped,
+                    "pending": [f.stem for f in queue], "inflight": jobs,
+                    "mensagem": "Tempo esgotado no cliente; rode de novo para retomar "
+                                "(os .txt prontos são pulados)."}
+        while queue and len(jobs) < max_inflight:
+            f = queue[0]
+            job = submit(str(f), idioma=idioma, rotulo=f.stem, segmentos=segmentos,
+                         _transport=_transport)
+            wait = wait_for(job) if "codigo" in job else None
+            if wait is not None:
+                _sleep(wait)
+                break
+            queue.pop(0)
+            if "codigo" in job:
+                failed.append({"stem": f.stem, **job})
+            else:
+                jobs[job["id"]] = f.stem
+        if not jobs:
+            continue
+        _sleep(_FAST_POLL_S)
+        for job_id, stem in list(jobs.items()):
+            cur = get(job_id, _transport=_transport)
+            if "codigo" in cur:
+                wait = wait_for(cur)
+                if wait is not None:
+                    _sleep(wait)
+                    break
+                failed.append({"stem": stem, "id": job_id, **cur})
+                del jobs[job_id]
+            elif cur.get("status") in TERMINAL:
+                del jobs[job_id]
+                if cur["status"] == "concluida":
+                    (out / f"{stem}.txt").write_text(cur.get("texto") or "", encoding="utf-8")
+                    (out / f"{stem}.json").write_text(json.dumps(cur, ensure_ascii=False),
+                                                      encoding="utf-8")
+                    done.append(stem)
+                else:
+                    failed.append({"stem": stem, "id": job_id, "status": cur["status"],
+                                   "erro": cur.get("erro")})
+    return {"status": "concluida" if not failed else "parcial", "done": done,
+            "failed": failed, "skipped": skipped, "out_dir": str(out)}
+
+
 def register(server) -> None:
-    """Register the three ``noctus.transcription.*`` tools."""
+    """Register the four ``noctus.transcription.*`` tools."""
 
     @server.tool(
         name="noctus.transcription.submit",
@@ -201,3 +275,16 @@ def register(server) -> None:
     )
     def _transcribe(path: str, idioma: str = "pt", rotulo: str = "", timeout_s: float = 3600) -> dict:
         return transcribe(path, idioma=idioma, rotulo=rotulo or None, timeout_s=timeout_s)
+
+    @server.tool(
+        name="noctus.transcription.batch",
+        description=("Transcribe every file matching pattern (default *.mp3) in src_dir into "
+                     "out_dir/<stem>.txt + .json. Resumable (existing .txt skipped), at most "
+                     "max_inflight (default 3) jobs queued, honours 429 Retry-After. Returns "
+                     "{status, done, failed, skipped}. Convert DASH .m4a to mp3 first — the API "
+                     "rejects fragmented MP4 (formato_invalido)."),
+    )
+    def _batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt",
+               max_inflight: int = 3, timeout_s: float = 7200, segmentos: bool = False) -> dict:
+        return batch(src_dir, out_dir, pattern=pattern, idioma=idioma, max_inflight=max_inflight,
+                     timeout_s=timeout_s, segmentos=segmentos)

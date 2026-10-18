@@ -188,7 +188,7 @@ def test_transcribe_non_retryable_submit_error_returned(audio):
     assert out["codigo"] == "duracao_excedida" and out["status_code"] == 422
 
 
-def test_register_exposes_three_tools():
+def test_register_exposes_four_tools():
     names = []
 
     class S:
@@ -199,4 +199,65 @@ def test_register_exposes_three_tools():
     from tools.noctus import transcription
     transcription.register_all(S())
     assert names == ["noctus.transcription.submit", "noctus.transcription.get",
-                     "noctus.transcription.transcribe"]
+                     "noctus.transcription.transcribe", "noctus.transcription.batch"]
+
+
+def _dir(tmp_path, n):
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(n):
+        (src / f"r{i}.mp3").write_bytes(b"ID3" + b"\0" * 50)
+    return src, tmp_path / "out"
+
+
+def test_batch_caps_inflight_writes_outputs_and_skips_done(tmp_path):
+    src, out = _dir(tmp_path, 4)
+    out.mkdir()
+    (out / "r0.txt").write_text("ja feito")
+    clock = Clock()
+    state = {"inflight": 0, "max": 0, "next": 0}
+
+    def h(req):
+        if req.method == "POST":
+            state["inflight"] += 1
+            state["max"] = max(state["max"], state["inflight"])
+            state["next"] += 1
+            return httpx.Response(202, json={"id": f"j{state['next']}", "status": "na_fila"})
+        state["inflight"] -= 1
+        jid = req.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"id": jid, "status": "concluida", "texto": f"t-{jid}"})
+
+    res = client.batch(str(src), str(out), max_inflight=2, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["skipped"] == ["r0"]
+    assert sorted(res["done"]) == ["r1", "r2", "r3"] and state["max"] <= 2
+    assert (out / "r1.txt").read_text().startswith("t-j") and (out / "r1.json").exists()
+    assert (out / "r0.txt").read_text() == "ja feito"
+
+
+def test_batch_honours_submit_429_and_records_failures(tmp_path):
+    src, out = _dir(tmp_path, 2)
+    clock = Clock()
+    n = {"post": 0}
+
+    def h(req):
+        if req.method == "POST":
+            n["post"] += 1
+            if n["post"] == 1:
+                return httpx.Response(429, headers={"Retry-After": "41"},
+                                      json={"codigo": "limite_requisicoes", "mensagem": "x"})
+            if n["post"] == 3:
+                return httpx.Response(415, json={"codigo": "formato_invalido", "mensagem": "x"})
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), max_inflight=1, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert 41.0 in clock.sleeps
+    assert res["status"] == "parcial" and res["done"] == ["r0"]
+    assert res["failed"][0]["stem"] == "r1" and res["failed"][0]["codigo"] == "formato_invalido"
+
+
+def test_batch_missing_dir_is_an_error(tmp_path):
+    res = client.batch(str(tmp_path / "nope"), str(tmp_path / "out"))
+    assert res["codigo"] == "arquivo_invalido"

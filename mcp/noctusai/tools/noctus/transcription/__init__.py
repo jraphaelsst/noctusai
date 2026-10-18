@@ -9,6 +9,7 @@ Tools
 ``noctus.transcription.submit``      upload a local file -> 202 body (id, status, ...)
 ``noctus.transcription.get``         fetch one job
 ``noctus.transcription.transcribe``  submit + poll until terminal or timeout
+``noctus.transcription.batch``       a whole directory, resumable, rate-limit aware
 
 Config (env, loaded from the repo-root ``.env`` by the server/CLI bootstrap):
 ``NOCTUS_TRANSCRIPTION_URL`` (default https://core.noctusai.com) and
