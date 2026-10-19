@@ -5,7 +5,7 @@ import {
   type Criterio,
   type Grupo,
   type OperadorCriterio,
-} from "@/hooks/useLaisEnvio";
+} from "@/hooks/useJuliaEnvio";
 
 export interface CriterioRascunho {
   campo: string;

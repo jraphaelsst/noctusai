@@ -1,5 +1,5 @@
 /**
- * Lais › Painel (contract wave 9): GET /api/lais/painel?mes=YYYY-MM → {data}.
+ * Julia › Painel (contract wave 9): GET /api/julia/painel?mes=YYYY-MM → {data}.
  * Loading = two signals off `data` (never `isLoading`); month change keeps the
  * previous month on screen (`placeholderData: prev`) with a refreshing marker.
  */
@@ -25,10 +25,10 @@ export function mesAtual(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export function useLaisPainel(mes: string) {
+export function useJuliaPainel(mes: string) {
   const q = useQuery({
-    queryKey: ["lais", "painel", mes],
-    queryFn: async () => (await api.get<{ data: Painel }>(`/api/lais/painel?mes=${mes}`)).data,
+    queryKey: ["julia", "painel", mes],
+    queryFn: async () => (await api.get<{ data: Painel }>(`/api/julia/painel?mes=${mes}`)).data,
     placeholderData: keepPreviousData,
   });
   return {

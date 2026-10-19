@@ -1,10 +1,10 @@
 /**
- * Lais › Equipes (contract wave 11).
+ * Julia › Equipes (contract wave 11).
  *
- *   GET/POST /api/lais/equipes · PATCH/DELETE /api/lais/equipes/{id}
- *   POST /api/lais/equipes/{id}/membros {user_id} · DELETE …/membros/{user_id}
- *   PUT  /api/lais/equipes/{id}/membros/ordem {ordem: [user_id…]} (exactly the current members)
- *   GET  /api/lais/equipes/{id}/metricas?mes=YYYY-MM → {membros:[{…, tpr_medio_s, tpr_amostras, distribuicao_pct}], total_atribuicoes, fontes}
+ *   GET/POST /api/julia/equipes · PATCH/DELETE /api/julia/equipes/{id}
+ *   POST /api/julia/equipes/{id}/membros {user_id} · DELETE …/membros/{user_id}
+ *   PUT  /api/julia/equipes/{id}/membros/ordem {ordem: [user_id…]} (exactly the current members)
+ *   GET  /api/julia/equipes/{id}/metricas?mes=YYYY-MM → {membros:[{…, tpr_medio_s, tpr_amostras, distribuicao_pct}], total_atribuicoes, fontes}
  *
  * Loading = two signals off `data` (never `isLoading`); reads are member-open,
  * writes admin-only (server enforces).
@@ -44,13 +44,13 @@ interface MetricaApi {
   tpr_amostras: number; conversas: number; distribuicao: number; distribuicao_pct: number;
 }
 
-export const EQUIPES_KEY = ["sw", "lais", "equipes"] as const;
+export const EQUIPES_KEY = ["sw", "julia", "equipes"] as const;
 
-export function useLaisEquipes() {
+export function useJuliaEquipes() {
   const q = useQuery({
     queryKey: EQUIPES_KEY,
     placeholderData: keepPreviousData,
-    queryFn: async () => (await api.get<{ data: Equipe[] }>("/api/lais/equipes")).data ?? [],
+    queryFn: async () => (await api.get<{ data: Equipe[] }>("/api/julia/equipes")).data ?? [],
   });
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }
@@ -65,9 +65,9 @@ export function useCriarEquipe() {
   const inv = useInvalidar();
   return useMutation<Equipe, unknown, EquipeInput & { user_ids: string[] }>({
     mutationFn: async ({ user_ids, ...body }) => {
-      const eq = (await api.post<{ data: Equipe }>("/api/lais/equipes", body)).data;
+      const eq = (await api.post<{ data: Equipe }>("/api/julia/equipes", body)).data;
       for (const user_id of user_ids) {
-        await api.post(`/api/lais/equipes/${eq.id}/membros`, { user_id });
+        await api.post(`/api/julia/equipes/${eq.id}/membros`, { user_id });
       }
       return eq;
     },
@@ -78,7 +78,7 @@ export function useCriarEquipe() {
 export function useAtualizarEquipe() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, { id: string } & Partial<EquipeInput>>({
-    mutationFn: ({ id, ...body }) => api.patch(`/api/lais/equipes/${id}`, body),
+    mutationFn: ({ id, ...body }) => api.patch(`/api/julia/equipes/${id}`, body),
     onSettled: inv,
   });
 }
@@ -86,7 +86,7 @@ export function useAtualizarEquipe() {
 export function useExcluirEquipe() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, string>({
-    mutationFn: (id) => api.delete(`/api/lais/equipes/${id}`),
+    mutationFn: (id) => api.delete(`/api/julia/equipes/${id}`),
     onSettled: inv,
   });
 }
@@ -94,7 +94,7 @@ export function useExcluirEquipe() {
 export function useAdicionarMembro() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, { id: string; user_id: string }>({
-    mutationFn: ({ id, user_id }) => api.post(`/api/lais/equipes/${id}/membros`, { user_id }),
+    mutationFn: ({ id, user_id }) => api.post(`/api/julia/equipes/${id}/membros`, { user_id }),
     onSettled: inv,
   });
 }
@@ -102,7 +102,7 @@ export function useAdicionarMembro() {
 export function useRemoverMembro() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, { id: string; user_id: string }>({
-    mutationFn: ({ id, user_id }) => api.delete(`/api/lais/equipes/${id}/membros/${user_id}`),
+    mutationFn: ({ id, user_id }) => api.delete(`/api/julia/equipes/${id}/membros/${user_id}`),
     onSettled: inv,
   });
 }
@@ -110,7 +110,7 @@ export function useRemoverMembro() {
 export function useOrdenarMembros() {
   const inv = useInvalidar();
   return useMutation<unknown, unknown, { id: string; user_ids: string[] }>({
-    mutationFn: ({ id, user_ids }) => api.put(`/api/lais/equipes/${id}/membros/ordem`, { ordem: user_ids }),
+    mutationFn: ({ id, user_ids }) => api.put(`/api/julia/equipes/${id}/membros/ordem`, { ordem: user_ids }),
     onSettled: inv,
   });
 }
@@ -121,7 +121,7 @@ export function useMetricasEquipe(id: string | null, mes: string) {
     enabled: !!id,
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<MetricaMembro[]> => {
-      const d = (await api.get<{ data: { membros: MetricaApi[] } }>(`/api/lais/equipes/${id}/metricas?mes=${mes}`)).data;
+      const d = (await api.get<{ data: { membros: MetricaApi[] } }>(`/api/julia/equipes/${id}/metricas?mes=${mes}`)).data;
       return (d?.membros ?? []).map((m) => ({
         user_id: m.user_id, nome: m.nome, ultimo_acesso: m.ultimo_acesso,
         tpr_segundos: m.tpr_medio_s, conversas: m.conversas, distribuicao: m.distribuicao,

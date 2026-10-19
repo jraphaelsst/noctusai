@@ -16,7 +16,7 @@ import {
   useReengajamentoConfig,
   useSalvarReengajamentoConfig,
   type ReengajamentoConfig,
-} from "@/hooks/useLaisReengajamento";
+} from "@/hooks/useJuliaReengajamento";
 
 type Modo = "minutos" | "horas";
 

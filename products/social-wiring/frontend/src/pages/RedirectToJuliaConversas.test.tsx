@@ -1,12 +1,12 @@
 /**
- * `/whatsapp-chat` back-compat redirect → `/lais/conversas`, carrying the
+ * `/whatsapp-chat` back-compat redirect → `/julia/conversas`, carrying the
  * query string + hash.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
-import RedirectToLaisConversas from "./RedirectToLaisConversas";
+import RedirectToJuliaConversas from "./RedirectToJuliaConversas";
 
 afterEach(() => cleanup());
 
@@ -19,21 +19,21 @@ function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/whatsapp-chat" element={<RedirectToLaisConversas />} />
-        <Route path="/lais/conversas" element={<Landed />} />
+        <Route path="/whatsapp-chat" element={<RedirectToJuliaConversas />} />
+        <Route path="/julia/conversas" element={<Landed />} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
-describe("RedirectToLaisConversas", () => {
-  it("redirects /whatsapp-chat to /lais/conversas", () => {
-    expect(renderAt("/whatsapp-chat").getByTestId("landed").textContent).toBe("/lais/conversas");
+describe("RedirectToJuliaConversas", () => {
+  it("redirects /whatsapp-chat to /julia/conversas", () => {
+    expect(renderAt("/whatsapp-chat").getByTestId("landed").textContent).toBe("/julia/conversas");
   });
 
   it("preserves the query string and hash", () => {
     expect(renderAt("/whatsapp-chat?conn=c2#x").getByTestId("landed").textContent).toBe(
-      "/lais/conversas?conn=c2#x",
+      "/julia/conversas?conn=c2#x",
     );
   });
 });

@@ -9,9 +9,9 @@ vi.mock("@noctusai/seed/infra", () => ({ api }));
 vi.mock("@noctusai/lib/components", async (orig) => ({ ...(await orig<object>()), useConfirm: () => async () => true }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisModelos from "@/pages/lais/Modelos";
-import LaisDisparos from "@/pages/lais/Disparos";
-import LaisProprietarios from "@/pages/lais/Proprietarios";
+import JuliaModelos from "@/pages/julia/Modelos";
+import JuliaDisparos from "@/pages/julia/Disparos";
+import JuliaProprietarios from "@/pages/julia/Proprietarios";
 import { NovoModeloModal, inserirParametro } from "./modelos/NovoModeloModal";
 
 function wrap(ui: React.ReactNode) {
@@ -22,7 +22,7 @@ function wrap(ui: React.ReactNode) {
     </QueryClientProvider>,
   );
 }
-const M = { id: "m1", nome: "Boas-vindas", categoria: "Primeiro contato", conteudo: "Oi {{nome_pessoa}}, sou a {{nome_lais}}", status: "rascunho" };
+const M = { id: "m1", nome: "Boas-vindas", categoria: "Primeiro contato", conteudo: "Oi {{nome_pessoa}}, sou a {{nome_julia}}", status: "rascunho" };
 const D = (id: string, status: string, tipo = "remarketing") => ({ id, nome: `Disp ${id}`, status, tipo, contatos: 3 });
 
 const mockLista = (t: string) =>
@@ -47,22 +47,22 @@ describe("Modelo modal", () => {
     fireEvent.change(screen.getByLabelText("Conteúdo da mensagem"), { target: { value: "y".repeat(2000) } });
     expect(screen.getByTestId("modelo-contador").textContent).toBe("1024/1024");
     fireEvent.click(screen.getByText("Criar"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/modelos", expect.objectContaining({ nome: "Teste", categoria: "Outros" })));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/modelos", expect.objectContaining({ nome: "Teste", categoria: "Outros" })));
   });
 });
 
 describe("Modelos page", () => {
   it("lists with category counts and simulates in the preview", async () => {
     api.get.mockResolvedValue({ data: [M] });
-    wrap(<LaisModelos />);
+    wrap(<JuliaModelos />);
     fireEvent.click(await screen.findByTestId("modelo-card"));
     expect(screen.getByText("Primeiro contato (1)")).toBeTruthy();
     fireEvent.change(await screen.findByLabelText("Nome da pessoa"), { target: { value: "Ana" } });
-    expect(screen.getByTestId("preview-bolha").textContent).toBe("Oi Ana, sou a {{nome_lais}}");
+    expect(screen.getByTestId("preview-bolha").textContent).toBe("Oi Ana, sou a {{nome_julia}}");
   });
   it("shows empty state", async () => {
     api.get.mockResolvedValue({ data: [] });
-    wrap(<LaisModelos />);
+    wrap(<JuliaModelos />);
     expect(await screen.findByTestId("modelos-vazio")).toBeTruthy();
   });
 });
@@ -70,7 +70,7 @@ describe("Modelos page", () => {
 describe("Disparos", () => {
   it("tabs filter with counts and badge shows when not cloud", async () => {
     api.get.mockResolvedValue({ data: [D("1", "rascunho"), D("2", "enviado")], meta: { transporte: "waha" } });
-    wrap(<LaisDisparos />);
+    wrap(<JuliaDisparos />);
     expect(await screen.findByText("Disp 1")).toBeTruthy();
     expect(screen.getByTestId("transporte-badge").textContent).toBe("Aguardando verificação da Meta");
     expect(screen.getByText("Rascunhos (1)")).toBeTruthy();
@@ -82,7 +82,7 @@ describe("Disparos", () => {
   it("wizard creates a draft", async () => {
     api.get.mockImplementation(async (u: string) => (u.includes("modelos") ? { data: [M] } : { data: [], meta: {} }));
     api.post.mockResolvedValue({ data: D("9", "rascunho") });
-    wrap(<LaisDisparos />);
+    wrap(<JuliaDisparos />);
     fireEvent.click(await screen.findByText("Novo disparo"));
     fireEvent.change(await screen.findByLabelText("Nome do disparo"), { target: { value: "Campanha" } });
     fireEvent.click(screen.getByText("Avançar"));
@@ -92,12 +92,12 @@ describe("Disparos", () => {
     fireEvent.click(screen.getByText("Avançar"));
     fireEvent.click(screen.getByText("Salvar rascunho"));
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/lais/disparos", expect.objectContaining({ nome: "Campanha", tipo: "remarketing", template_id: "m1" })),
+      expect(api.post).toHaveBeenCalledWith("/api/julia/disparos", expect.objectContaining({ nome: "Campanha", tipo: "remarketing", template_id: "m1" })),
     );
   });
   it("send disabled with explanation when not cloud; 409 handled when cloud", async () => {
     mockLista("waha");
-    wrap(<LaisDisparos />);
+    wrap(<JuliaDisparos />);
     fireEvent.click(await screen.findByTestId("disparo-linha"));
     const btn = (await screen.findByText("Enviar agora")) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
@@ -105,7 +105,7 @@ describe("Disparos", () => {
     cleanup();
     mockLista("cloud");
     api.post.mockRejectedValue({ body: { error: { code: "transporte_indisponivel", message: "x" } } });
-    wrap(<LaisDisparos />);
+    wrap(<JuliaDisparos />);
     fireEvent.click(await screen.findByTestId("disparo-linha"));
     const b2 = (await screen.findByText("Enviar agora")) as HTMLButtonElement;
     expect(b2.disabled).toBe(false);
@@ -118,7 +118,7 @@ describe("Disparos", () => {
 describe("Proprietários", () => {
   it("lists owners with send disabled when not cloud", async () => {
     api.get.mockResolvedValue({ data: [{ id: "p1", nome: "Dono", imovel_codigo: "AP1", status: "pendente" }], meta: { transporte: "waha" } });
-    wrap(<LaisProprietarios />);
+    wrap(<JuliaProprietarios />);
     expect(await screen.findByText("Dono")).toBeTruthy();
     expect((screen.getByText("Solicitar atualização") as HTMLButtonElement).disabled).toBe(true);
   });

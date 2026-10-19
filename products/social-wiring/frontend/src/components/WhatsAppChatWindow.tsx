@@ -30,7 +30,7 @@ import {
   useWhatsAppRealtime,
 } from "@/hooks/useWhatsAppChats";
 import { ChatWindow, type ChatThread, type ChatWindowAdapter } from "@noctusai/lib/design-system";
-import { JuliaThreadHeader } from "@/components/lais/JuliaThreadHeader";
+import { JuliaThreadHeader } from "@/components/julia/JuliaThreadHeader";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -52,8 +52,8 @@ function displayContact(title: string | null | undefined, chatId: string): strin
 // ─── WhatsApp adapter ─────────────────────────────────────────────────────────
 
 /**
- * Optional thread-list override (Lais Conversas v2): the Lais page feeds the
- * organ the server-filtered `/api/lais/conversas` rows (tabs / filters / tags)
+ * Optional thread-list override (Julia Conversas v2): the Julia page feeds the
+ * organ the server-filtered `/api/julia/conversas` rows (tabs / filters / tags)
  * instead of the raw WAHA chat list. Delivered through context so the adapter
  * bag stays identity-stable and the hook order below never changes.
  */

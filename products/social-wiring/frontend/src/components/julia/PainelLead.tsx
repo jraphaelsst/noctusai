@@ -8,7 +8,7 @@ import { ClipboardList, Star } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useLaisContato, useLaisPerguntas } from "@/hooks/useLaisPerguntas";
+import { useJuliaContato, useJuliaPerguntas } from "@/hooks/useJuliaPerguntas";
 
 const OPERACAO: Record<string, string> = {
   compra: "Compra",
@@ -17,8 +17,8 @@ const OPERACAO: Record<string, string> = {
 };
 
 export function PainelLeadConteudo({ connectionId, chatId }: { connectionId: string; chatId: string }) {
-  const contato = useLaisContato(connectionId, chatId);
-  const perguntas = useLaisPerguntas();
+  const contato = useJuliaContato(connectionId, chatId);
+  const perguntas = useJuliaPerguntas();
   const showSkeleton = (contato.isPending && !contato.data) || (perguntas.isPending && !perguntas.data);
 
   if (showSkeleton) {

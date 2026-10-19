@@ -1,5 +1,5 @@
 /**
- * Lais › history of ONE contact (`/lais/conversas/h/:contatoId`, contract A7).
+ * Julia › history of ONE contact (`/julia/conversas/h/:contatoId`, contract A7).
  * Chrome-light, read-only, login required (mounted as an unwrapped route).
  * Access is decided by the server: 403 `sem_acesso` → "Você não tem acesso a
  * esta conversa", 404 → not found.
@@ -7,8 +7,8 @@
 import { useParams } from "react-router-dom";
 import { AlertCircle, Loader2, Lock, SearchX } from "lucide-react";
 
-import { InteracoesLista, fmtData } from "@/components/lais/conversas/InteracoesLista";
-import { codigoHttp, useHistorico } from "@/hooks/useLaisConversas";
+import { InteracoesLista, fmtData } from "@/components/julia/conversas/InteracoesLista";
+import { codigoHttp, useHistorico } from "@/hooks/useJuliaConversas";
 
 function Estado({ icon, titulo, texto }: { icon: React.ReactNode; titulo: string; texto?: string }) {
   return (
@@ -20,7 +20,7 @@ function Estado({ icon, titulo, texto }: { icon: React.ReactNode; titulo: string
   );
 }
 
-export default function LaisHistorico() {
+export default function JuliaHistorico() {
   const { contatoId = null } = useParams<{ contatoId: string }>();
   const { data, isPending, isError, error } = useHistorico(contatoId);
 
@@ -70,5 +70,5 @@ export default function LaisHistorico() {
       </div>
     );
   }
-  return <main className="mx-auto max-w-2xl p-4" data-testid="lais-historico">{corpo}</main>;
+  return <main className="mx-auto max-w-2xl p-4" data-testid="julia-historico">{corpo}</main>;
 }

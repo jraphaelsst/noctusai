@@ -1,5 +1,5 @@
 /** Interações timeline (Cliente column + history page): tipo, "Iniciada em …", chips, slots, resumo, intent flags. */
-import type { Interacao } from "@/hooks/useLaisConversas";
+import type { Interacao } from "@/hooks/useJuliaConversas";
 
 export function fmtData(iso?: string | null): string {
   if (!iso) return "—";

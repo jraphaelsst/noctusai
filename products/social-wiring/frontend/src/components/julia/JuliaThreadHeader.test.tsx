@@ -60,7 +60,7 @@ describe("JuliaThreadHeader", () => {
     expect(api.post).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByTestId("julia-confirmar-apagar"));
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/lais/agente/conexoes/c1/chats/5511%40c.us/apagar-dados", {}),
+      expect(api.post).toHaveBeenCalledWith("/api/julia/agente/conexoes/c1/chats/5511%40c.us/apagar-dados", {}),
     );
   });
 

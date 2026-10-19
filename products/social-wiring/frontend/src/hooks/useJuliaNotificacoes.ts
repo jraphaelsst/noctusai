@@ -1,15 +1,15 @@
 /**
- * Lais › Notificações (contract wave 6).
+ * Julia › Notificações (contract wave 6).
  *
- *   GET  /api/lais/notificacoes?tipo&operacao&de&ate&page → {data:{items,total,nao_lidas}}
- *   POST /api/lais/notificacoes/lidas {ids|todas}         → 204
- *   GET /api/lais/notificacoes/preferencias → {data:{tipos:[{tipo,in_app}], lead_pronto}}
- *   PUT /api/lais/notificacoes/preferencias {tipos:{<tipo>: bool}} → same as GET
+ *   GET  /api/julia/notificacoes?tipo&operacao&de&ate&page → {data:{items,total,nao_lidas}}
+ *   POST /api/julia/notificacoes/lidas {ids|todas}         → 204
+ *   GET /api/julia/notificacoes/preferencias → {data:{tipos:[{tipo,in_app}], lead_pronto}}
+ *   PUT /api/julia/notificacoes/preferencias {tipos:{<tipo>: bool}} → same as GET
  *       (the "Notificar lead pronto para atendimento" toggle is the pseudo-tipo `lead_pronto`)
  *
  * Loading = two signals off `data` (never `isLoading`); the feed is keyed by
  * filters+page so it keeps `placeholderData: prev` while they change. The
- * header bell (seed `notifications.ts`) counts the same `lais_*` rows, so
+ * header bell (seed `notifications.ts`) counts the same `julia_*` rows, so
  * marking read also invalidates its keys.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,7 +35,7 @@ export type OperacaoFiltro = "" | "aluguel" | "compra";
 
 export const PAGE_SIZE = 20;
 
-export interface LaisNotificacao {
+export interface JuliaNotificacao {
   id: string;
   tipo: string;
   titulo?: string | null;
@@ -44,7 +44,7 @@ export interface LaisNotificacao {
   link?: string | null;
   created_at: string;
 }
-export interface NotificacoesPage { items: LaisNotificacao[]; total: number; nao_lidas: number }
+export interface NotificacoesPage { items: JuliaNotificacao[]; total: number; nao_lidas: number }
 export interface NotificacoesFiltro { tipo: string; operacao: OperacaoFiltro; de: string; ate: string; page: number }
 export const FILTRO_VAZIO: NotificacoesFiltro = { tipo: "", operacao: "", de: "", ate: "", page: 1 };
 export interface PreferenciaNotificacao { tipo: string; in_app: boolean }
@@ -55,9 +55,9 @@ export function metaTipo(tipo: string) {
   return { label: m?.label ?? tipo, categoria: m?.categoria ?? "GERAL" };
 }
 
-const KEY = ["lais", "notificacoes"] as const;
+const KEY = ["julia", "notificacoes"] as const;
 
-export function useLaisNotificacoes(f: NotificacoesFiltro) {
+export function useJuliaNotificacoes(f: NotificacoesFiltro) {
   return useQuery({
     queryKey: [...KEY, f],
     queryFn: async () => {
@@ -66,7 +66,7 @@ export function useLaisNotificacoes(f: NotificacoesFiltro) {
       if (f.operacao) p.set("operacao", f.operacao);
       if (f.de) p.set("de", f.de);
       if (f.ate) p.set("ate", f.ate);
-      const r = await api.get(`/api/lais/notificacoes?${p}`);
+      const r = await api.get(`/api/julia/notificacoes?${p}`);
       return (r.data ?? { items: [], total: 0, nao_lidas: 0 }) as NotificacoesPage;
     },
     placeholderData: keepPreviousData,
@@ -76,7 +76,7 @@ export function useLaisNotificacoes(f: NotificacoesFiltro) {
 export function useMarcarLidas() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { ids: string[] } | { todas: true }) => api.post("/api/lais/notificacoes/lidas", body),
+    mutationFn: (body: { ids: string[] } | { todas: true }) => api.post("/api/julia/notificacoes/lidas", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["notificacoes"] });
@@ -89,7 +89,7 @@ export function usePreferenciasNotificacao() {
   return useQuery({
     queryKey: [...KEY, "preferencias"],
     queryFn: async () =>
-      ((await api.get("/api/lais/notificacoes/preferencias")).data ?? { tipos: [], lead_pronto: true }) as PreferenciasNotificacao,
+      ((await api.get("/api/julia/notificacoes/preferencias")).data ?? { tipos: [], lead_pronto: true }) as PreferenciasNotificacao,
     placeholderData: keepPreviousData,
   });
 }
@@ -98,7 +98,7 @@ export function useSalvarPreferencias() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (tipos: Record<string, boolean>) =>
-      (await api.put("/api/lais/notificacoes/preferencias", { tipos })).data as PreferenciasNotificacao,
+      (await api.put("/api/julia/notificacoes/preferencias", { tipos })).data as PreferenciasNotificacao,
     onSuccess: (data) => qc.setQueryData([...KEY, "preferencias"], data),
   });
 }

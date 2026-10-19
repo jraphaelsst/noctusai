@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 
-import { metaTipo, type LaisNotificacao } from "@/hooks/useLaisNotificacoes";
+import { metaTipo, type JuliaNotificacao } from "@/hooks/useJuliaNotificacoes";
 
-interface Props { notificacao: LaisNotificacao; onLer: (id: string) => void }
+interface Props { notificacao: JuliaNotificacao; onLer: (id: string) => void }
 
 export function NotificacaoCard({ notificacao: n, onLer }: Props) {
   const [aberto, setAberto] = useState(false);

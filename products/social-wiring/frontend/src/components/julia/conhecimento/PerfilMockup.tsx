@@ -1,4 +1,4 @@
-/** Phone mockup of the WhatsApp business profile (Lais › Conhecimento › Perfil). */
+/** Phone mockup of the WhatsApp business profile (Julia › Conhecimento › Perfil). */
 import { AlertCircle } from "lucide-react";
 
 export const BANNER_PERFIL = "Aplicado quando a API oficial estiver ativa";

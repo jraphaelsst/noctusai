@@ -1,10 +1,10 @@
-/** "Configurar nova equipe" — 3-step SideDrawer wizard (live Lais §59.0b). */
+/** "Configurar nova equipe" — 3-step SideDrawer wizard (live Julia §59.0b). */
 import { useState } from "react";
 import { SideDrawer } from "@noctusai/lib/components";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useCriarEquipe } from "@/hooks/useLaisEquipes";
+import { useCriarEquipe } from "@/hooks/useJuliaEquipes";
 import { useTeamMembers } from "@/hooks/useTeam";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { CAMPOS_PADRAO, Passo1Campos, Passo3Campos, type CamposValor } from "./CamposEquipe";

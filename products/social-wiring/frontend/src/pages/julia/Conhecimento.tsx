@@ -1,5 +1,5 @@
 /**
- * Lais › Conhecimento (`/lais/conhecimento`) — what Julia knows about the
+ * Julia › Conhecimento (`/julia/conhecimento`) — what Julia knows about the
  * business (contract section 3, wave 1). Tabs of section cards; [Editar] opens
  * a drawer (admin only — members read). Loading = two signals off `data`.
  */
@@ -9,16 +9,16 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PreviewModal } from "@/components/lais/conhecimento/PreviewModal";
-import { SecaoCard } from "@/components/lais/conhecimento/SecaoCard";
-import { SecaoDrawer } from "@/components/lais/conhecimento/SecaoDrawer";
-import { ABAS, SECOES } from "@/components/lais/conhecimento/secoes";
-import { useLaisConhecimento } from "@/hooks/useLaisConhecimento";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { PreviewModal } from "@/components/julia/conhecimento/PreviewModal";
+import { SecaoCard } from "@/components/julia/conhecimento/SecaoCard";
+import { SecaoDrawer } from "@/components/julia/conhecimento/SecaoDrawer";
+import { ABAS, SECOES } from "@/components/julia/conhecimento/secoes";
+import { useJuliaConhecimento } from "@/hooks/useJuliaConhecimento";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
-export default function LaisConhecimento() {
+export default function JuliaConhecimento() {
   const isAdmin = useIsOrgAdmin();
-  const q = useLaisConhecimento();
+  const q = useJuliaConhecimento();
   const [editando, setEditando] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
   const showSkeleton = q.isPending && !q.data;
@@ -28,7 +28,7 @@ export default function LaisConhecimento() {
     <div className="container max-w-4xl space-y-6 py-6">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{LAIS_LABEL} · {LAIS_PAGES.conhecimento.name}</h1>
+          <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.conhecimento.name}</h1>
           <p className="text-sm text-muted-foreground">
             O que a Julia sabe sobre o seu negócio. {!isAdmin && "Somente owner ou admin pode editar."}
           </p>

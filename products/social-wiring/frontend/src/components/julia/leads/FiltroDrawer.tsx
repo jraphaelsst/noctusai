@@ -5,7 +5,7 @@ import { SideDrawer } from "@noctusai/lib/components";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { filtrosVazios, useLaisCanais, type FiltrosLeads } from "@/hooks/useLaisLeads";
+import { filtrosVazios, useJuliaCanais, type FiltrosLeads } from "@/hooks/useJuliaLeads";
 
 const OPERACOES = [["aluguel", "Aluguel"], ["compra", "Compra"], ["administracao", "Administração"]] as const;
 const ATENDIMENTO = [["sem_atendimento", "Sem atendimento"], ["atendido", "Atendido pela Julia"]] as const;
@@ -34,7 +34,7 @@ export function FiltroDrawer({
   filtros, onAplicar, onClose,
 }: { filtros: FiltrosLeads; onAplicar: (f: FiltrosLeads) => void; onClose: () => void }) {
   const [f, setF] = useState<FiltrosLeads>(filtros);
-  const canais = useLaisCanais();
+  const canais = useJuliaCanais();
   const set = <K extends keyof FiltrosLeads>(k: K, v: FiltrosLeads[K]) => setF((x) => ({ ...x, [k]: v }));
   const texto = (k: "nome" | "email" | "telefone" | "imovel" | "link" | "campanha" | "anuncio", rotulo: string) => (
     <div className="space-y-1">

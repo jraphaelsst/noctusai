@@ -17,7 +17,7 @@ const bloco = (b: string, rotulo: string, ordem: number, pipeline: string | null
 });
 const CFG = {
   blocos: [
-    bloco("sdr", "SDR (Julia)", 1, null, [], "lead-imob"),
+    bloco("sdr", "SDR (Julia)", 1, null, [], "julia"),
     bloco("atendimento", "Atendimento (corretor)", 2, "funil", ["qualificacao", "visitas", "proposta_recebida"]),
     bloco("negociacao", "Negociação", 3, "funil", ["negociacao", "proposta_decisao"]),
     bloco("juridico", "Jurídico", 4, "processos_venda", ["elaboracao_contrato", "analise_partes", "revisao_contrato", "assinatura"]),
@@ -25,7 +25,7 @@ const CFG = {
     bloco("contador", "Contador", 6, "processos_venda", ["nota_fiscal"]),
   ],
   etapas_sem_bloco: [{ pipeline: "funil", slug: "pos_venda", label: "Pós-venda" }],
-  agentes_por_bloco: { sdr: ["lead-imob"] },
+  agentes_por_bloco: { sdr: ["julia"] },
   supervisao_ativa: false,
 };
 const stage = (slug: string, label: string) => ({ id: slug, slug, label, cor: "blue", posicao: 0, papel: null, ativo: true });
@@ -58,7 +58,7 @@ describe("Blocos do atendimento", () => {
     expect(screen.getByTestId("blocos-skeleton")).toBeTruthy();
     const tabela = await screen.findByTestId("blocos-tabela");
     expect(within(tabela).getAllByRole("row")).toHaveLength(7); // header + 6
-    expect(within(screen.getByTestId("bloco-sdr")).getByText("Julia (lead-imob)")).toBeTruthy();
+    expect(within(screen.getByTestId("bloco-sdr")).getByText("Julia (julia)")).toBeTruthy();
     expect(await within(screen.getByTestId("bloco-atendimento")).findByText("Qualificação")).toBeTruthy();
     expect(screen.getByTestId("etapas-sem-bloco").textContent).toContain("Pós-venda · Funil de Vendas");
     expect(screen.getByTestId("blocos-supervisao-off")).toBeTruthy();

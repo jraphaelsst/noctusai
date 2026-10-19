@@ -1,156 +1,156 @@
 /**
- * Lais — the chatbot module's nav group (owner decision 2026-10-13).
+ * Julia — the chatbot module's nav group (owner decision 2026-10-13).
  *
  * Modelled on the Lais product; the WhatsApp (WAHA) surface lives here (it
  * left "Conexões" entirely). The module WILL be renamed — that is why the
- * label lives in exactly ONE constant (`LAIS_LABEL`) that the sidebar group,
+ * label lives in exactly ONE constant (`JULIA_LABEL`) that the sidebar group,
  * the page headers and the tests all read. Rename = edit that one string.
  *
- * Adding a Lais page = add ONE entry to `LAIS_PAGES` (+ its status_pagina
+ * Adding a Julia page = add ONE entry to `JULIA_PAGES` (+ its status_pagina
  * row in a migration, + its route in App.tsx). The nav group is derived from
- * `LAIS_PAGES`, so no second list to keep in sync.
+ * `JULIA_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, CreditCard, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, Sparkles, Star, Users } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
-export const LAIS_LABEL = "Lais";
+export const JULIA_LABEL = "Julia";
 
 /** Stable nav-group key (not user-visible; survives a label rename). */
-export const LAIS_NAV_KEY = "lais";
+export const JULIA_NAV_KEY = "julia";
 
-export const LAIS_ICON: LucideIcon = Bot;
+export const JULIA_ICON: LucideIcon = Bot;
 
-interface LaisPage extends NavItemWithRoute {
+interface JuliaPage extends NavItemWithRoute {
   icon: LucideIcon;
   /** status_pagina key gating the nav item (migrations 252 / 259). */
   route: string;
 }
 
-/** Every Lais page, in nav order. */
-export const LAIS_PAGES = {
+/** Every Julia page, in nav order. */
+export const JULIA_PAGES = {
   painel: {
     name: "Painel",
-    href: "/lais/painel",
+    href: "/julia/painel",
     icon: LayoutDashboard,
-    route: "lais_painel",
+    route: "julia_painel",
   },
   conversas: {
     name: "Conversas",
-    href: "/lais/conversas",
+    href: "/julia/conversas",
     icon: MessagesSquare,
-    route: "lais_conversas",
+    route: "julia_conversas",
   },
   configuracoes: {
     name: "Configurações",
-    href: "/lais/configuracoes",
+    href: "/julia/configuracoes",
     icon: Settings2,
-    route: "lais_configuracoes",
+    route: "julia_configuracoes",
   },
   agente: {
     name: "Agente",
-    href: "/lais/agente",
+    href: "/julia/agente",
     icon: Sparkles,
-    route: "lais_agente",
+    route: "julia_agente",
   },
   conhecimento: {
     name: "Conhecimento",
-    href: "/lais/conhecimento",
+    href: "/julia/conhecimento",
     icon: BookOpen,
-    route: "lais_conhecimento",
+    route: "julia_conhecimento",
   },
   perguntas: {
     name: "Perguntas",
-    href: "/lais/perguntas",
+    href: "/julia/perguntas",
     icon: HelpCircle,
-    route: "lais_perguntas",
+    route: "julia_perguntas",
   },
   visitas: {
     name: "Visitas",
-    href: "/lais/visitas",
+    href: "/julia/visitas",
     icon: CalendarClock,
-    route: "lais_visitas",
+    route: "julia_visitas",
   },
   reengajamento: {
     name: "Reengajamento",
-    href: "/lais/reengajamento",
+    href: "/julia/reengajamento",
     icon: RefreshCw,
-    route: "lais_reengajamento",
+    route: "julia_reengajamento",
   },
   notificacoes: {
     name: "Notificações",
-    href: "/lais/notificacoes",
+    href: "/julia/notificacoes",
     icon: Bell,
-    route: "lais_notificacoes",
+    route: "julia_notificacoes",
   },
   modelos: {
     name: "Modelos",
-    href: "/lais/modelos",
+    href: "/julia/modelos",
     icon: FileText,
-    route: "lais_modelos",
+    route: "julia_modelos",
   },
   disparos: {
     name: "Disparos",
-    href: "/lais/disparos",
+    href: "/julia/disparos",
     icon: Send,
-    route: "lais_disparos",
+    route: "julia_disparos",
   },
   proprietarios: {
     name: "Atualização de imóveis",
-    href: "/lais/proprietarios",
+    href: "/julia/proprietarios",
     icon: Home,
-    route: "lais_proprietarios",
+    route: "julia_proprietarios",
   },
   envio: {
     name: "Envio",
-    href: "/lais/envio",
+    href: "/julia/envio",
     icon: Send,
-    route: "lais_envio",
+    route: "julia_envio",
   },
   leads: {
     name: "Leads",
-    href: "/lais/leads",
+    href: "/julia/leads",
     icon: Users,
-    route: "lais_leads",
+    route: "julia_leads",
   },
   relatorios: {
     name: "Relatórios",
-    href: "/lais/relatorios",
+    href: "/julia/relatorios",
     icon: BarChart3,
-    route: "lais_relatorios",
+    route: "julia_relatorios",
   },
   captacao: {
     name: "Captação",
-    href: "/lais/captacao",
+    href: "/julia/captacao",
     icon: Building2,
-    route: "lais_captacao",
+    route: "julia_captacao",
   },
   equipes: {
     name: "Equipes",
-    href: "/lais/equipes",
+    href: "/julia/equipes",
     icon: Users,
-    route: "lais_equipes",
+    route: "julia_equipes",
   },
   avaliacoes: {
     name: "Avaliações no Google",
-    href: "/lais/avaliacoes",
+    href: "/julia/avaliacoes",
     icon: Star,
-    route: "lais_avaliacoes",
+    route: "julia_avaliacoes",
   },
   credito: {
     name: "Análise de crédito",
-    href: "/lais/credito",
+    href: "/julia/credito",
     icon: CreditCard,
-    route: "lais_credito",
+    route: "julia_credito",
   },
-} as const satisfies Record<string, LaisPage>;
+} as const satisfies Record<string, JuliaPage>;
 
-export type LaisPageKey = keyof typeof LAIS_PAGES;
+export type JuliaPageKey = keyof typeof JULIA_PAGES;
 
-export const LAIS_NAV_GROUP: NavGroupWithRoute = {
-  key: LAIS_NAV_KEY,
-  label: LAIS_LABEL,
-  icon: LAIS_ICON,
-  items: Object.values(LAIS_PAGES).map((p) => ({ ...p })),
+export const JULIA_NAV_GROUP: NavGroupWithRoute = {
+  key: JULIA_NAV_KEY,
+  label: JULIA_LABEL,
+  icon: JULIA_ICON,
+  items: Object.values(JULIA_PAGES).map((p) => ({ ...p })),
 };

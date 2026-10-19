@@ -43,9 +43,9 @@ vi.mock("@/hooks/useWhatsAppChats", () => ({
   useWhatsAppRealtime: mockUseWhatsAppRealtime,
 }));
 
-// Julia's header slot has its own suite (lais/JuliaThreadHeader.test.tsx); here
+// Julia's header slot has its own suite (julia/JuliaThreadHeader.test.tsx); here
 // only the wiring is asserted, so a stub keeps this file free of @noctusai/lib.
-vi.mock("@/components/lais/JuliaThreadHeader", () => ({ JuliaThreadHeader: () => null }));
+vi.mock("@/components/julia/JuliaThreadHeader", () => ({ JuliaThreadHeader: () => null }));
 
 // ─── ChatWindow stub — captures props for adapter assertions ───────────────
 
@@ -86,7 +86,7 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     expect(lastProps.className).toBe("mt-1");
   });
 
-  it("useThreads adapter: a ThreadsFeedContext (Lais Conversas v2) replaces the WAHA list and disables its query", async () => {
+  it("useThreads adapter: a ThreadsFeedContext (Julia Conversas v2) replaces the WAHA list and disables its query", async () => {
     const { ThreadsFeedContext } = await import("./WhatsAppChatWindow");
     const React = await import("react");
     mockUseWhatsAppChats.mockReturnValue({ data: [], isLoading: false, isError: false });
@@ -142,7 +142,7 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     });
     await renderWindow();
     expect(renderHook(() => lastProps.adapter.useThreads("conn-1")).result.current.data[0].meta).toEqual({ agente_pausado: true });
-    const { JuliaThreadHeader } = await import("@/components/lais/JuliaThreadHeader");
+    const { JuliaThreadHeader } = await import("@/components/julia/JuliaThreadHeader");
     expect(lastProps.adapter.ThreadHeaderExtra).toBe(JuliaThreadHeader);
   });
 

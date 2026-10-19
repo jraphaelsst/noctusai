@@ -14,7 +14,7 @@ const P = (chave: string, over: Record<string, unknown> = {}) => ({
 
 function setup(contato: unknown) {
   api.get.mockImplementation((url: string) => {
-    if (url === "/api/lais/perguntas")
+    if (url === "/api/julia/perguntas")
       return Promise.resolve({ data: { catalogo: [P("nome", { qualificatoria: true }), P("renda"), P("off", { ativa: false })], limites: { max_ativas: 8, max_qualificatorias: 5 } } });
     return contato instanceof Error ? Promise.reject(contato) : Promise.resolve({ data: contato });
   });

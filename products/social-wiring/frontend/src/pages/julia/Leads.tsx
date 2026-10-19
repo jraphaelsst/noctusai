@@ -1,4 +1,4 @@
-/** Lais › Leads (`/lais/leads`) — contract §5 W3: contatos table, filters, send-to-SW, bulk, CSV (admin). */
+/** Julia › Leads (`/julia/leads`) — contract §5 W3: contatos table, filters, send-to-SW, bulk, CSV (admin). */
 import { useState } from "react";
 import { AlertCircle, Filter, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -8,27 +8,27 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FiltroDrawer } from "@/components/lais/leads/FiltroDrawer";
-import { LeadsTable } from "@/components/lais/leads/LeadsTable";
-import { ResumoPanel } from "@/components/lais/leads/ResumoPanel";
+import { FiltroDrawer } from "@/components/julia/leads/FiltroDrawer";
+import { LeadsTable } from "@/components/julia/leads/LeadsTable";
+import { ResumoPanel } from "@/components/julia/leads/ResumoPanel";
 import {
   PAGE_SIZE, baixarLeadsCsv, codigoErro, contarFiltros, filtrosVazios, mensagemCodigoLead, mensagemErroLeads,
-  useEnviarLead, useEnviarLote, useLeadsLais, type FiltrosLeads, type LeadLais,
-} from "@/hooks/useLaisLeads";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+  useEnviarLead, useEnviarLote, useLeadsJulia, type FiltrosLeads, type LeadJulia,
+} from "@/hooks/useJuliaLeads";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 const LIMITE_LOTE = 100;
 
-export default function LaisLeads() {
+export default function JuliaLeads() {
   const isAdmin = useIsOrgAdmin();
   const confirm = useConfirm();
   const [filtros, setFiltros] = useState<FiltrosLeads>(filtrosVazios);
   const [page, setPage] = useState(1);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [drawer, setDrawer] = useState(false);
-  const [resumo, setResumo] = useState<LeadLais | null>(null);
+  const [resumo, setResumo] = useState<LeadJulia | null>(null);
   const [lote, setLote] = useState<{ ok: number; erro: { id: string; code: string }[] } | null>(null);
-  const q = useLeadsLais(filtros, page);
+  const q = useLeadsJulia(filtros, page);
   const enviar = useEnviarLead();
   const enviarLote = useEnviarLote();
 
@@ -44,7 +44,7 @@ export default function LaisLeads() {
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleTodos = (marcar: boolean) => setSel((s) => { const n = new Set(s); items.forEach((l) => (marcar ? n.add(l.id) : n.delete(l.id))); return n; });
 
-  const onEnviar = async (l: LeadLais) => {
+  const onEnviar = async (l: LeadJulia) => {
     if (!(await confirm({ title: "Enviar ao SW?", description: "O lead será criado (ou atualizado) no SW com o resumo da Julia.", confirmLabel: "Enviar ao SW" }))) return;
     enviar.mutate(l.id, {
       onSuccess: () => toast.success("Lead enviado ao SW"),
@@ -75,7 +75,7 @@ export default function LaisLeads() {
     <div className="container max-w-6xl space-y-4 py-6">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold">{LAIS_LABEL} · {LAIS_PAGES.leads.name}</h1>
+          <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.leads.name}</h1>
           <p className="text-sm text-muted-foreground">Contatos atendidos pela Julia e o envio de cada um ao SW.</p>
         </div>
         <div className="flex items-center gap-2">

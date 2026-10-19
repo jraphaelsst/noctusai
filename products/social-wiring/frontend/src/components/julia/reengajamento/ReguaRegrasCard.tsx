@@ -19,8 +19,8 @@ import {
   useAtualizarRegua,
   useExcluirRegua,
   type Regua,
-} from "@/hooks/useLaisReengajamento";
-import { LAIS_PAGES } from "@/nav/lais";
+} from "@/hooks/useJuliaReengajamento";
+import { JULIA_PAGES } from "@/nav/julia";
 
 function EditarDrawer({ regua, onClose }: { regua: Regua; onClose: () => void }) {
   const confirm = useConfirm();
@@ -62,7 +62,7 @@ function EditarDrawer({ regua, onClose }: { regua: Regua; onClose: () => void })
       onSuccess: () => {
         toast.success("Régua excluída");
         onClose();
-        nav(`${LAIS_PAGES.reengajamento.href}?tab=reguas`);
+        nav(`${JULIA_PAGES.reengajamento.href}?tab=reguas`);
       },
       onError: (e) => setErro(mensagemErroReengajamento(e, "Não foi possível excluir a régua.")),
     });

@@ -1,7 +1,7 @@
 /**
- * Lais › Relatórios (contract wave 10).
+ * Julia › Relatórios (contract wave 10).
  *
- *   GET /api/lais/relatorios?operacao=&mes=YYYY-MM&aba=imoveis|bairros[&bairro=] → {data}
+ *   GET /api/julia/relatorios?operacao=&mes=YYYY-MM&aba=imoveis|bairros[&bairro=] → {data}
  *
  * Loading = two signals off `data` (never `isLoading`); the query is keyed by
  * every filter and keeps `placeholderData: prev` while the filters change.
@@ -29,7 +29,7 @@ export interface RelBairros {
   desempenho: Desempenho | null;
 }
 
-export const RELATORIOS_KEY = ["sw", "lais", "relatorios"] as const;
+export const RELATORIOS_KEY = ["sw", "julia", "relatorios"] as const;
 
 export function mesAtual(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -47,7 +47,7 @@ function useRelatorioGated<T>(aba: RelAba, op: RelOperacao, mes: string, enabled
     queryFn: async () => {
       const p = new URLSearchParams({ operacao: op, mes, aba });
       if (bairro) p.set("bairro", bairro);
-      return (await api.get<{ data: T }>(`/api/lais/relatorios?${p.toString()}`)).data;
+      return (await api.get<{ data: T }>(`/api/julia/relatorios?${p.toString()}`)).data;
     },
     placeholderData: keepPreviousData,
   });

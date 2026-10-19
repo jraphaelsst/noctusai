@@ -2,7 +2,7 @@
 import { Loader2 } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
-import { formatarTpr, useMetricasEquipe } from "@/hooks/useLaisEquipes";
+import { formatarTpr, useMetricasEquipe } from "@/hooks/useJuliaEquipes";
 
 function fmtAcesso(iso: string | null): string {
   if (!iso) return "—";

@@ -1,11 +1,11 @@
 /**
- * Sidebar nav — the Lais group (owner decision 2026-10-13) and the derived
+ * Sidebar nav — the Julia group (owner decision 2026-10-13) and the derived
  * ungated fallback.
  */
 import { describe, it, expect } from "vitest";
 
 import { NAV_FALLBACK, NAV_GROUPS } from "./navGroups";
-import { LAIS_LABEL, LAIS_NAV_KEY, LAIS_PAGES } from "./lais";
+import { JULIA_LABEL, JULIA_NAV_KEY, JULIA_PAGES } from "./julia";
 
 type AnyGroup = { key: string; label: string; items: any[]; groups?: AnyGroup[] };
 
@@ -36,28 +36,28 @@ describe.each([
     expect(allItems(groups).some((i) => i.href === "/whatsapp-chat")).toBe(false);
   });
 
-  it("has the Lais group directly after Principal, with Painel + Conversas + Configurações", () => {
+  it("has the Julia group directly after Principal, with Painel + Conversas + Configurações", () => {
     const keys = groups.map((g) => g.key);
-    expect(keys.indexOf(LAIS_NAV_KEY)).toBe(keys.indexOf("principal") + 1);
-    const lais = byKey(groups, LAIS_NAV_KEY)!;
-    expect(lais.label).toBe(LAIS_LABEL);
-    // The group IS LAIS_PAGES, in order (derived -- each Lais wave adds one LAIS_PAGES entry, never edits this test).
-    expect(lais.items.map((i) => [i.name, i.href])).toEqual(Object.values(LAIS_PAGES).map((p) => [p.name, p.href]));
+    expect(keys.indexOf(JULIA_NAV_KEY)).toBe(keys.indexOf("principal") + 1);
+    const julia = byKey(groups, JULIA_NAV_KEY)!;
+    expect(julia.label).toBe(JULIA_LABEL);
+    // The group IS JULIA_PAGES, in order (derived -- each Julia wave adds one JULIA_PAGES entry, never edits this test).
+    expect(julia.items.map((i) => [i.name, i.href])).toEqual(Object.values(JULIA_PAGES).map((p) => [p.name, p.href]));
     // The first three are fixed (page 0 + the original group).
-    expect(lais.items.slice(0, 3).map((i) => [i.name, i.href])).toEqual([
-      ["Painel", "/lais/painel"],
-      ["Conversas", "/lais/conversas"],
-      ["Configurações", "/lais/configuracoes"],
+    expect(julia.items.slice(0, 3).map((i) => [i.name, i.href])).toEqual([
+      ["Painel", "/julia/painel"],
+      ["Conversas", "/julia/conversas"],
+      ["Configurações", "/julia/configuracoes"],
     ]);
   });
 });
 
 describe("route keys", () => {
-  it("every Lais item is gated by its own lais_* status_pagina key (one migration row per page)", () => {
-    const lais = byKey(NAV_GROUPS as AnyGroup[], LAIS_NAV_KEY)!;
-    const routes = lais.items.map((i) => (i as { route?: string }).route);
-    expect(routes).toEqual(Object.values(LAIS_PAGES).map((p) => p.route));
-    expect(routes.every((r) => typeof r === "string" && r.startsWith("lais_"))).toBe(true);
+  it("every Julia item is gated by its own julia_* status_pagina key (one migration row per page)", () => {
+    const julia = byKey(NAV_GROUPS as AnyGroup[], JULIA_NAV_KEY)!;
+    const routes = julia.items.map((i) => (i as { route?: string }).route);
+    expect(routes).toEqual(Object.values(JULIA_PAGES).map((p) => p.route));
+    expect(routes.every((r) => typeof r === "string" && r.startsWith("julia_"))).toBe(true);
     expect(new Set(routes).size).toBe(routes.length);
   });
 
@@ -68,8 +68,8 @@ describe("route keys", () => {
     );
   });
 
-  it("the Lais group is built from LAIS_PAGES (one list to extend)", () => {
-    const lais = byKey(NAV_GROUPS as AnyGroup[], LAIS_NAV_KEY)!;
-    expect(lais.items.map((i) => i.href)).toEqual(Object.values(LAIS_PAGES).map((p) => p.href));
+  it("the Julia group is built from JULIA_PAGES (one list to extend)", () => {
+    const julia = byKey(NAV_GROUPS as AnyGroup[], JULIA_NAV_KEY)!;
+    expect(julia.items.map((i) => i.href)).toEqual(Object.values(JULIA_PAGES).map((p) => p.href));
   });
 });

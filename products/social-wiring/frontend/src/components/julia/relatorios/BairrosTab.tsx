@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import type { RelBairros } from "@/hooks/useLaisRelatorios";
+import type { RelBairros } from "@/hooks/useJuliaRelatorios";
 import { brl, opLabel, pct } from "./formato";
 
 const SELECT = "h-9 rounded-md border bg-background px-2 text-sm";

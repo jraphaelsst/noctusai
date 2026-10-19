@@ -1,5 +1,5 @@
 /**
- * Lais › Análise de crédito (`/lais/credito`, wave 13). Consent-first list of credit
+ * Julia › Análise de crédito (`/julia/credito`, wave 13). Consent-first list of credit
  * analyses per contato with status chips; admins can reprocess and configure.
  * Loading = two signals off `data` (never `isLoading`).
  */
@@ -10,11 +10,11 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { CreditoConfigDrawer } from "@/components/lais/credito/CreditoConfigDrawer";
-import { CreditoStatusChip } from "@/components/lais/credito/StatusChip";
+import { CreditoConfigDrawer } from "@/components/julia/credito/CreditoConfigDrawer";
+import { CreditoStatusChip } from "@/components/julia/credito/StatusChip";
 import {
-  CREDITO_PAGE_SIZE, useCreditoConfig, useLaisCredito, useReprocessarCredito, type CreditoStatus,
-} from "@/hooks/useLaisCredito";
+  CREDITO_PAGE_SIZE, useCreditoConfig, useJuliaCredito, useReprocessarCredito, type CreditoStatus,
+} from "@/hooks/useJuliaCredito";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
 const FILTROS: { value: "" | CreditoStatus; label: string }[] = [
@@ -30,14 +30,14 @@ function fmt(iso: string): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
-export default function LaisCredito() {
+export default function JuliaCredito() {
   const confirm = useConfirm();
   const isAdmin = useIsOrgAdmin();
   const [status, setStatus] = useState<"" | CreditoStatus>("");
   const [page, setPage] = useState(1);
   const [drawer, setDrawer] = useState(false);
 
-  const q = useLaisCredito(status, page);
+  const q = useJuliaCredito(status, page);
   const cfg = useCreditoConfig();
   const reprocessar = useReprocessarCredito();
 

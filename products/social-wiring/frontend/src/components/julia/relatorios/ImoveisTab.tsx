@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 
-import type { RelImoveis } from "@/hooks/useLaisRelatorios";
+import type { RelImoveis } from "@/hooks/useJuliaRelatorios";
 import { brl, opLabel, pct } from "./formato";
 
 export function ImoveisTab({ data, operacao }: { data: RelImoveis; operacao: string }) {

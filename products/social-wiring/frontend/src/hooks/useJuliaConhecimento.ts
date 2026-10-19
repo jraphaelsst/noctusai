@@ -1,9 +1,9 @@
 /**
- * Lais › Conhecimento — "o que a Julia sabe" (contract section 3, wave 1).
+ * Julia › Conhecimento — "o que a Julia sabe" (contract section 3, wave 1).
  *
- *   GET /api/lais/conhecimento            member: {data:{secoes:{secao:{dados,versao,updated_at}}, preview_md, hash}}
- *   PUT /api/lais/conhecimento/{secao}    admin:  {dados, versao} -> {data:{secao,dados,versao}}; 409 versao_conflito
- *   GET /api/lais/conhecimento/preview    member: {data:{markdown, hash}}
+ *   GET /api/julia/conhecimento            member: {data:{secoes:{secao:{dados,versao,updated_at}}, preview_md, hash}}
+ *   PUT /api/julia/conhecimento/{secao}    admin:  {dados, versao} -> {data:{secao,dados,versao}}; 409 versao_conflito
+ *   GET /api/julia/conhecimento/preview    member: {data:{markdown, hash}}
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -16,23 +16,23 @@ export interface SecaoSalva {
   updated_at: string | null;
 }
 
-export interface LaisConhecimento {
+export interface JuliaConhecimento {
   secoes: Record<string, SecaoSalva>;
   preview_md: string;
   hash: string;
 }
 
-export interface LaisPreview {
+export interface JuliaPreview {
   markdown: string;
   hash: string;
 }
 
-export const LAIS_CONHECIMENTO_KEY = ["sw", "lais", "conhecimento"] as const;
+export const JULIA_CONHECIMENTO_KEY = ["sw", "julia", "conhecimento"] as const;
 
-export function useLaisConhecimento() {
+export function useJuliaConhecimento() {
   return useQuery({
-    queryKey: LAIS_CONHECIMENTO_KEY,
-    queryFn: async () => (await api.get<{ data: LaisConhecimento }>("/api/lais/conhecimento")).data,
+    queryKey: JULIA_CONHECIMENTO_KEY,
+    queryFn: async () => (await api.get<{ data: JuliaConhecimento }>("/api/julia/conhecimento")).data,
   });
 }
 
@@ -43,16 +43,16 @@ export function useSalvarSecao() {
     unknown,
     { secao: string; dados: unknown; versao: number }
   >({
-    mutationFn: ({ secao, dados, versao }) => api.put(`/api/lais/conhecimento/${secao}`, { dados, versao }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: LAIS_CONHECIMENTO_KEY }),
+    mutationFn: ({ secao, dados, versao }) => api.put(`/api/julia/conhecimento/${secao}`, { dados, versao }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_CONHECIMENTO_KEY }),
   });
 }
 
 export function usePreviewConhecimento(enabled: boolean) {
   return useQuery({
-    queryKey: [...LAIS_CONHECIMENTO_KEY, "preview"],
+    queryKey: [...JULIA_CONHECIMENTO_KEY, "preview"],
     enabled,
-    queryFn: async () => (await api.get<{ data: LaisPreview }>("/api/lais/conhecimento/preview")).data,
+    queryFn: async () => (await api.get<{ data: JuliaPreview }>("/api/julia/conhecimento/preview")).data,
   });
 }
 

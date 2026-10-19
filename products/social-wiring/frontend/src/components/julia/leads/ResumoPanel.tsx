@@ -1,9 +1,9 @@
 /** "Ver resumo" panel — the Julia summary + collected slots of one lead. */
 import { Skeleton } from "@/components/ui/skeleton";
-import { useResumoLead, type LeadLais } from "@/hooks/useLaisLeads";
+import { useResumoLead, type LeadJulia } from "@/hooks/useJuliaLeads";
 import { SideDrawer } from "@noctusai/lib/components";
 
-export function ResumoPanel({ lead, onClose }: { lead: LeadLais; onClose: () => void }) {
+export function ResumoPanel({ lead, onClose }: { lead: LeadJulia; onClose: () => void }) {
   const q = useResumoLead(lead.id);
   const slots = Object.entries(q.data?.slots ?? {}).filter(([, v]) => v !== null && v !== "");
   return (

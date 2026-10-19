@@ -1,11 +1,11 @@
 /**
- * Shared Cloud-API transport state for the Lais wave-12 pages (contract §14).
+ * Shared Cloud-API transport state for the Julia wave-12 pages (contract §14).
  *
  * Dispatch/approval endpoints answer 409 `transporte_indisponivel` until the
  * connection uses the official API. List responses carry
  * `meta.transporte` ("waha" | "cloud"); anything but "cloud" disables send.
  */
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 export type Transporte = "waha" | "cloud";
 
@@ -25,7 +25,7 @@ export function transporteIndisponivel(err: unknown): boolean {
 
 export function mensagemErroTransporte(err: unknown, fallback: string): string {
   if (transporteIndisponivel(err)) return TRANSPORTE_EXPLICACAO;
-  return mensagemErroLais(err, fallback);
+  return mensagemErroJulia(err, fallback);
 }
 
 export function envioLiberado(transporte: Transporte | undefined): boolean {

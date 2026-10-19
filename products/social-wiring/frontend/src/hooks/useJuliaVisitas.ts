@@ -1,9 +1,9 @@
 /**
- * Lais › Visitas (contract wave 5).
+ * Julia › Visitas (contract wave 5).
  *
- *   GET/PUT /api/lais/visitas/config            member read / admin write
- *   GET     /api/lais/visitas?view=&data=       list for the visible window
- *   POST    /api/lais/visitas/{id}/confirmar | remarcar | cancelar → {data: visita}
+ *   GET/PUT /api/julia/visitas/config            member read / admin write
+ *   GET     /api/julia/visitas?view=&data=       list for the visible window
+ *   POST    /api/julia/visitas/{id}/confirmar | remarcar | cancelar → {data: visita}
  *
  * Loading = two signals off `data` (never `isLoading`); the window query is
  * keyed by view+date so it keeps `placeholderData: prev` while paging.
@@ -48,7 +48,7 @@ export interface Visita {
   responsavel_nome?: string | null;
 }
 
-export const VISITAS_KEY = ["sw", "lais", "visitas"] as const;
+export const VISITAS_KEY = ["sw", "julia", "visitas"] as const;
 export const configKey = [...VISITAS_KEY, "config"] as const;
 
 export function gradeVazia(): Record<Dia, Faixa[]> {
@@ -77,14 +77,14 @@ export const ehTransicaoInvalida = (err: unknown): boolean =>
 export function useVisitasConfig() {
   return useQuery({
     queryKey: configKey,
-    queryFn: async () => (await api.get<{ data: VisitasConfig }>("/api/lais/visitas/config")).data,
+    queryFn: async () => (await api.get<{ data: VisitasConfig }>("/api/julia/visitas/config")).data,
   });
 }
 
 export function useSalvarVisitasConfig() {
   const qc = useQueryClient();
   return useMutation<unknown, unknown, VisitasConfig>({
-    mutationFn: (body) => api.put("/api/lais/visitas/config", body),
+    mutationFn: (body) => api.put("/api/julia/visitas/config", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: VISITAS_KEY }),
   });
 }
@@ -95,7 +95,7 @@ export function useVisitas(view: VisitasView, data: string) {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await api.get<{ data: Visita[] | { items: Visita[] } }>(
-        `/api/lais/visitas?view=${view}&data=${data}`,
+        `/api/julia/visitas?view=${view}&data=${data}`,
       );
       return Array.isArray(res.data) ? res.data : (res.data?.items ?? []);
     },
@@ -112,7 +112,7 @@ export function useAcaoVisita() {
   return useMutation<Visita, unknown, VisitaAcao>({
     mutationFn: async (a) => {
       const { id, acao, ...body } = a;
-      return (await api.post<{ data: Visita }>(`/api/lais/visitas/${id}/${acao}`, body)).data;
+      return (await api.post<{ data: Visita }>(`/api/julia/visitas/${id}/${acao}`, body)).data;
     },
     // 409 transicao_invalida means someone else moved it: refresh either way.
     onSettled: () => qc.invalidateQueries({ queryKey: VISITAS_KEY }),

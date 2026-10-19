@@ -3,17 +3,17 @@ import { ChevronDown, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import type { LaisCaptacao } from "@/hooks/useLaisCaptacao";
-import { LAIS_PAGES } from "@/nav/lais";
+import type { JuliaCaptacao } from "@/hooks/useJuliaCaptacao";
+import { JULIA_PAGES } from "@/nav/julia";
 
 interface Props {
-  captacao: LaisCaptacao;
+  captacao: JuliaCaptacao;
   ocupado: boolean;
-  onRegistrar: (c: LaisCaptacao) => void;
-  onDescartar: (c: LaisCaptacao) => void;
+  onRegistrar: (c: JuliaCaptacao) => void;
+  onDescartar: (c: JuliaCaptacao) => void;
 }
 
-const STATUS_ROTULO: Record<LaisCaptacao["status"], string> = { nova: "Nova", registrada: "Registrada", descartada: "Descartada" };
+const STATUS_ROTULO: Record<JuliaCaptacao["status"], string> = { nova: "Nova", registrada: "Registrada", descartada: "Descartada" };
 const SEM = "Não informado";
 
 export function CaptacaoCard({ captacao: c, ocupado, onRegistrar, onDescartar }: Props) {
@@ -44,7 +44,7 @@ export function CaptacaoCard({ captacao: c, ocupado, onRegistrar, onDescartar }:
             <div><dt className="inline font-medium">Operação: </dt><dd className="inline">{c.operacao || SEM}</dd></div>
           </dl>
           <div className="flex flex-wrap items-center gap-2">
-            <Link to={`${LAIS_PAGES.conversas.href}?contato=${c.contato.id}`} className="text-primary underline">Abrir conversa</Link>
+            <Link to={`${JULIA_PAGES.conversas.href}?contato=${c.contato.id}`} className="text-primary underline">Abrir conversa</Link>
             {c.status === "registrada" && c.imovel_codigo && (
               <Link to={`/imoveis/${encodeURIComponent(c.imovel_codigo)}`} className="inline-flex items-center gap-1 text-primary underline">
                 Ver imóvel <ExternalLink className="h-3 w-3" />

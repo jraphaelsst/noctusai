@@ -1,5 +1,5 @@
 /**
- * Lais › Conhecimento — states, tabs, drawer, dirty-exit confirm, 409 path,
+ * Julia › Conhecimento — states, tabs, drawer, dirty-exit confirm, 409 path,
  * admin vs member, preview modal. `@/lib/api` is the seam (contract shapes).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,8 +16,8 @@ vi.mock("@noctusai/lib/design-system", async (orig) => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisConhecimento from "./Conhecimento";
-import { MSG_SAIR } from "@/components/lais/conhecimento/SecaoDrawer";
+import JuliaConhecimento from "./Conhecimento";
+import { MSG_SAIR } from "@/components/julia/conhecimento/SecaoDrawer";
 
 const CONHECIMENTO = {
   secoes: {
@@ -34,17 +34,17 @@ function conflict() {
 
 function setup(get?: (url: string) => Promise<unknown>) {
   api.get.mockImplementation(get ?? ((url: string) =>
-    url === "/api/lais/conhecimento" ? Promise.resolve({ data: CONHECIMENTO })
-      : url === "/api/lais/conhecimento/preview" ? Promise.resolve({ data: { markdown: "## Políticas\nAssinatura digital", hash: "h1" } })
+    url === "/api/julia/conhecimento" ? Promise.resolve({ data: CONHECIMENTO })
+      : url === "/api/julia/conhecimento/preview" ? Promise.resolve({ data: { markdown: "## Políticas\nAssinatura digital", hash: "h1" } })
         : Promise.reject(new Error(`unexpected ${url}`))));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><ConfirmProvider><LaisConhecimento /></ConfirmProvider></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><ConfirmProvider><JuliaConhecimento /></ConfirmProvider></QueryClientProvider>);
 }
 
 beforeEach(() => { Object.values(api).forEach((f) => f.mockReset()); h.admin = true; });
 afterEach(cleanup);
 
-describe("Lais Conhecimento", () => {
+describe("Julia Conhecimento", () => {
   it("shows the skeleton, then the Geral cards with saved + default data", async () => {
     setup();
     expect(screen.getByTestId("conhecimento-skeleton")).toBeTruthy();
@@ -74,7 +74,7 @@ describe("Lais Conhecimento", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Editar Políticas" }));
     fireEvent.click(screen.getByLabelText("Físico"));
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/conhecimento/politicas", {
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/conhecimento/politicas", {
       dados: { assinatura: "fisico", chaves: "acompanhado", chaves_outro: "" }, versao: 3 }));
     await waitFor(() => expect(screen.queryByTestId("secao-drawer")).toBeNull());
   });
@@ -108,7 +108,7 @@ describe("Lais Conhecimento", () => {
     fireEvent.click(screen.getByLabelText("Físico"));
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     expect(await screen.findByTestId("conflito")).toBeTruthy();
-    api.get.mockImplementation((u: string) => Promise.resolve({ data: u === "/api/lais/conhecimento"
+    api.get.mockImplementation((u: string) => Promise.resolve({ data: u === "/api/julia/conhecimento"
       ? { ...CONHECIMENTO, secoes: { ...CONHECIMENTO.secoes, politicas: { dados: { assinatura: "digital_fisico", chaves: "acompanhado", chaves_outro: "" }, versao: 4, updated_at: null } } }
       : { markdown: "", hash: "" } }));
     fireEvent.click(screen.getByRole("button", { name: "Recarregar" }));
@@ -116,7 +116,7 @@ describe("Lais Conhecimento", () => {
     api.put.mockResolvedValue({ data: { secao: "politicas", dados: {}, versao: 5 } });
     fireEvent.click(screen.getByLabelText("Físico"));
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    await waitFor(() => expect(api.put).toHaveBeenLastCalledWith("/api/lais/conhecimento/politicas", expect.objectContaining({ versao: 4 })));
+    await waitFor(() => expect(api.put).toHaveBeenLastCalledWith("/api/julia/conhecimento/politicas", expect.objectContaining({ versao: 4 })));
   });
 
   it("telefones: requires exactly one valid principal before PUT", async () => {

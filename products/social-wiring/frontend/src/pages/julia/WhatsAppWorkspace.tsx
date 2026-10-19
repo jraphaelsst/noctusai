@@ -1,14 +1,14 @@
 /**
- * WhatsAppWorkspace — the shared layout behind the "Lais" WhatsApp (WAHA)
+ * WhatsAppWorkspace — the shared layout behind the "Julia" WhatsApp (WAHA)
  * pages (owner decision 2026-10-13; formerly the single `/whatsapp-chat` page
  * with Chat + Configurações subtabs):
  *
- *   /lais/conversas     — `view="conversas"`: the connection's live
+ *   /julia/conversas     — `view="conversas"`: the connection's live
  *                          conversations via the existing `WhatsAppChatWindow`
  *                          adapter over the seed `<ChatWindow>` organ (reused
  *                          verbatim; this file never talks to
  *                          `useWhatsAppChats`/`useSendWhatsAppMessage` directly).
- *   /lais/configuracoes — `view="configuracoes"`: QR pairing / session actions /
+ *   /julia/configuracoes — `view="configuracoes"`: QR pairing / session actions /
  *                          auto-reply / fields / authorized numbers / bound chats
  *                          via `ConnectionSettingsPanel`
  *                          (`components/ConnectionDetailDialog.tsx` — the same
@@ -28,7 +28,7 @@
  *
  * Rendered through the canonical `SocialDashboardShell` (`@noctusai/lib`) with
  * a single "WhatsApp" channel subtab — navigation between the views is the
- * sidebar's job (Lais group), not a second tab bar.
+ * sidebar's job (Julia group), not a second tab bar.
  */
 import { useState } from "react";
 import { toast } from "sonner";
@@ -47,7 +47,7 @@ import {
 } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 
-import { ConversasPanel } from "@/components/lais/conversas/ConversasPanel";
+import { ConversasPanel } from "@/components/julia/conversas/ConversasPanel";
 import { ConnectionSettingsPanel } from "@/components/ConnectionDetailDialog";
 import {
   useWhatsAppConnections,
@@ -58,7 +58,7 @@ import {
   useActiveAccountId,
   useActiveAccountStore,
 } from "@/state/useActiveAccount";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 // ─── Connection selector (accountSwitcher header slot) ───────────────────────
 /**
@@ -177,7 +177,7 @@ export function WhatsAppWorkspace({ view }: { view: WhatsAppWorkspaceView }) {
   const { data: connections = [], isPending, isError } = useWhatsAppConnections();
   const { remove } = useWhatsAppConnectionMutations();
 
-  // The selection IS the store entry — shared by both Lais routes and by the
+  // The selection IS the store entry — shared by both Julia routes and by the
   // IntegrationCard deep-link. A stale/foreign id falls back to the first
   // connection (derived, so there is no effect to race the first render).
   const activeAccountId = useActiveAccountId(WA_PROVIDER);
@@ -226,7 +226,7 @@ export function WhatsAppWorkspace({ view }: { view: WhatsAppWorkspaceView }) {
     );
   }
 
-  const page = LAIS_PAGES[view];
+  const page = JULIA_PAGES[view];
   const SUBTABS: SocialDashboardSubtab[] = [
     {
       key: "whatsapp",
@@ -247,7 +247,7 @@ export function WhatsAppWorkspace({ view }: { view: WhatsAppWorkspaceView }) {
   return (
     <>
       <SocialDashboardShell
-        title={`${LAIS_LABEL} · ${page.name}`}
+        title={`${JULIA_LABEL} · ${page.name}`}
         subtitle={VIEW_META[view].subtitle}
         accountSwitcher={
           <WhatsAppConnectionSelector

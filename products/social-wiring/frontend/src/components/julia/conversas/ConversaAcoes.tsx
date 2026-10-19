@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTeamMembers } from "@/hooks/useTeam";
 import {
   linkHistorico, mensagemErroConversas, useFeedbackJulia, usePatchContato,
-} from "@/hooks/useLaisConversas";
+} from "@/hooks/useJuliaConversas";
 
 export interface ContatoMeta {
   contatoId: string;

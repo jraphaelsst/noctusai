@@ -1,5 +1,5 @@
 /**
- * Lais › Captação (`/lais/captacao`, wave 8). Feed of potential property
+ * Julia › Captação (`/julia/captacao`, wave 8). Feed of potential property
  * acquisitions the agent identified, grouped by day; expandable cards with
  * Registrar captação / Descartar; filters in the seed SideDrawer; page sizes.
  *
@@ -12,21 +12,21 @@ import { useConfirm } from "@noctusai/lib";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { CaptacaoCard } from "@/components/lais/captacao/CaptacaoCard";
-import { FiltroDrawer } from "@/components/lais/captacao/FiltroDrawer";
-import { agruparPorDia } from "@/components/lais/captacao/agrupar";
+import { CaptacaoCard } from "@/components/julia/captacao/CaptacaoCard";
+import { FiltroDrawer } from "@/components/julia/captacao/FiltroDrawer";
+import { agruparPorDia } from "@/components/julia/captacao/agrupar";
 import {
-  FILTRO_VAZIO, PAGE_SIZES, useDescartarCaptacao, useLaisCaptacoes, useRegistrarCaptacao,
-  type CaptacaoFiltro, type LaisCaptacao,
-} from "@/hooks/useLaisCaptacao";
+  FILTRO_VAZIO, PAGE_SIZES, useDescartarCaptacao, useJuliaCaptacoes, useRegistrarCaptacao,
+  type CaptacaoFiltro, type JuliaCaptacao,
+} from "@/hooks/useJuliaCaptacao";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-export default function LaisCaptacao() {
+export default function JuliaCaptacao() {
   const confirm = useConfirm();
   const [filtro, setFiltro] = useState<CaptacaoFiltro>(FILTRO_VAZIO);
   const [drawer, setDrawer] = useState(false);
 
-  const q = useLaisCaptacoes(filtro);
+  const q = useJuliaCaptacoes(filtro);
   const registrar = useRegistrarCaptacao();
   const descartar = useDescartarCaptacao();
 
@@ -38,7 +38,7 @@ export default function LaisCaptacao() {
   const paginas = Math.max(1, Math.ceil(total / filtro.pageSize));
   const ocupado = registrar.isPending || descartar.isPending;
 
-  function aoRegistrar(c: LaisCaptacao) {
+  function aoRegistrar(c: JuliaCaptacao) {
     registrar.mutate(c.id, {
       onSuccess: ({ imovel_codigo }) =>
         toast.success(
@@ -50,7 +50,7 @@ export default function LaisCaptacao() {
       onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível registrar a captação.")),
     });
   }
-  async function aoDescartar(c: LaisCaptacao) {
+  async function aoDescartar(c: JuliaCaptacao) {
     const ok = await confirm({
       title: "Descartar captação?",
       description: "A notificação será marcada como descartada.",

@@ -11,24 +11,24 @@ import { KanbanBoard } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
 import {
-  mensagemErroConversas, useEtiquetas, useLaisConversas, usePatchContato,
+  mensagemErroConversas, useEtiquetas, useJuliaConversas, usePatchContato,
   type Conversa, type FiltrosConversas,
-} from "@/hooks/useLaisConversas";
+} from "@/hooks/useJuliaConversas";
 import { EtiquetaPicker, SEM_ETIQUETA } from "./EtiquetaPicker";
 import { COL_ARQUIVADAS, COL_TODAS, montarColunas, patchDoMovimento, type CartaoKanban } from "./kanbanColunas";
 
-const LS_KEY = "lais:conversas:kanban-colunas";
+const LS_KEY = "julia:conversas:kanban-colunas";
 
 function lerColunas(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]");
+    const v = JSON.parse(localStorage.getItem(LS_KEY) ?? localStorage.getItem("lais:conversas:kanban-colunas") ?? "[]");
     return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
   } catch { return []; }
 }
 
 export function ConversasKanban({ filtros, onAbrir }: { filtros: FiltrosConversas; onAbrir: (c: Conversa) => void }) {
-  const todas = useLaisConversas("todas", filtros);
-  const arq = useLaisConversas("arquivadas", filtros);
+  const todas = useJuliaConversas("todas", filtros);
+  const arq = useJuliaConversas("arquivadas", filtros);
   const { data: etiquetas = [] } = useEtiquetas();
   const patch = usePatchContato();
   const [colunas, setColunas] = useState<string[]>(lerColunas);

@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 
-import { mensagemErroPerguntas, useLaisContato, useLaisPerguntas, useSalvarPerguntas } from "./useLaisPerguntas";
+import { mensagemErroPerguntas, useJuliaContato, useJuliaPerguntas, useSalvarPerguntas } from "./useJuliaPerguntas";
 
 const wrap = () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -14,10 +14,10 @@ const wrap = () => {
 };
 beforeEach(() => { api.get.mockReset(); api.put.mockReset(); });
 
-describe("useLaisPerguntas", () => {
+describe("useJuliaPerguntas", () => {
   it("unwraps the envelope", async () => {
     api.get.mockResolvedValue({ data: { catalogo: [], limites: { max_ativas: 8, max_qualificatorias: 5 } } });
-    const { result } = renderHook(() => useLaisPerguntas(), { wrapper: wrap() });
+    const { result } = renderHook(() => useJuliaPerguntas(), { wrapper: wrap() });
     await waitFor(() => expect(result.current.data?.limites.max_ativas).toBe(8));
   });
 
@@ -27,15 +27,15 @@ describe("useLaisPerguntas", () => {
     const { result } = renderHook(() => useSalvarPerguntas(), { wrapper: wrap() });
     result.current.mutate([{ chave: "objetivo", qualificatoria: false }]);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.put).toHaveBeenCalledWith("/api/lais/perguntas", { selecao: [{ chave: "objetivo", qualificatoria: false }] });
+    expect(api.put).toHaveBeenCalledWith("/api/julia/perguntas", { selecao: [{ chave: "objetivo", qualificatoria: false }] });
   });
 
   it("contato is disabled without ids and encodes the chat id", async () => {
-    const off = renderHook(() => useLaisContato(null, null), { wrapper: wrap() });
+    const off = renderHook(() => useJuliaContato(null, null), { wrapper: wrap() });
     expect(off.result.current.fetchStatus).toBe("idle");
     api.get.mockResolvedValue({ data: { contato: null, slots: {}, interacao_atual: null } });
-    renderHook(() => useLaisContato("c1", "5511@c.us"), { wrapper: wrap() });
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/lais/contatos/c1/5511%40c.us"));
+    renderHook(() => useJuliaContato("c1", "5511@c.us"), { wrapper: wrap() });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/julia/contatos/c1/5511%40c.us"));
   });
 
   it("maps refusal codes", () => {

@@ -4,7 +4,7 @@ import { SideDrawer } from "@noctusai/lib/components";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useAtualizarEquipe, type Equipe } from "@/hooks/useLaisEquipes";
+import { useAtualizarEquipe, type Equipe } from "@/hooks/useJuliaEquipes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { Passo1Campos, Passo3Campos, type CamposValor } from "./CamposEquipe";
 

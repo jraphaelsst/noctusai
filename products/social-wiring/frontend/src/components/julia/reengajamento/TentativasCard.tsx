@@ -20,7 +20,7 @@ import {
   type EsperaUnidade,
   type Regua,
   type ReguaTentativa,
-} from "@/hooks/useLaisReengajamento";
+} from "@/hooks/useJuliaReengajamento";
 
 const UNIDADES: { v: EsperaUnidade; l: string }[] = [
   { v: "minutos", l: "minutos" },

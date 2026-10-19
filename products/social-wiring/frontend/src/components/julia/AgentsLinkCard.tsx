@@ -1,4 +1,4 @@
-/** Lais › Agente card (a): the link with the Agents product (token + link health). */
+/** Julia › Agente card (a): the link with the Agents product (token + link health). */
 import { useState } from "react";
 import { toast } from "sonner";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
@@ -7,12 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { mensagemErroLais, useSalvarTokenAgents, type LaisAgente } from "@/hooks/useLaisAgente";
+import { mensagemErroJulia, useSalvarTokenAgents, type JuliaAgente } from "@/hooks/useJuliaAgente";
 
-/** Where Julia-of-Lais (agent key `lead-imob`; `julia` is the academia agent) is edited, in agents' Agent Studio. */
-const LAIS_JULIA_STUDIO_PATH = "/studio/lead-imob";
+/** Where Julia (agent key `julia`) is edited, in agents' Agent Studio. */
+const JULIA_STUDIO_PATH = "/studio/julia";
 
-export function AgentsLinkCard({ data, isAdmin }: { data: LaisAgente; isAdmin: boolean }) {
+export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: boolean }) {
   const salvar = useSalvarTokenAgents();
   const [token, setToken] = useState("");
   const [erro, setErro] = useState<string | null>(null);
@@ -30,7 +30,7 @@ export function AgentsLinkCard({ data, isAdmin }: { data: LaisAgente; isAdmin: b
           setToken("");
           toast.success("Token do Agents salvo");
         },
-        onError: (e) => setErro(mensagemErroLais(e, "Não foi possível salvar o token.")),
+        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar o token.")),
       },
     );
   }
@@ -86,7 +86,7 @@ export function AgentsLinkCard({ data, isAdmin }: { data: LaisAgente; isAdmin: b
 
         {data.agents_url ? (
           <a
-            href={`${data.agents_url.replace(/\/$/, "")}${LAIS_JULIA_STUDIO_PATH}`}
+            href={`${data.agents_url.replace(/\/$/, "")}${JULIA_STUDIO_PATH}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-sm text-primary underline"

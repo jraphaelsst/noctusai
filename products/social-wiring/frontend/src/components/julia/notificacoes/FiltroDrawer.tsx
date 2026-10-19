@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FILTRO_VAZIO, TIPOS_NOTIFICACAO, type NotificacoesFiltro, type OperacaoFiltro } from "@/hooks/useLaisNotificacoes";
+import { FILTRO_VAZIO, TIPOS_NOTIFICACAO, type NotificacoesFiltro, type OperacaoFiltro } from "@/hooks/useJuliaNotificacoes";
 
 interface Props { aberto: boolean; filtro: NotificacoesFiltro; onClose: () => void; onAplicar: (f: NotificacoesFiltro) => void }
 

@@ -8,7 +8,7 @@
  *                     workflow to a client IS applying that client's tag).
  *   Configurações  — the client's n8n connection (base_url / api_key / tag).
  *
- * Same design spine as `pages/YouTube.tsx` / `pages/lais/WhatsAppWorkspace.tsx` — the
+ * Same design spine as `pages/YouTube.tsx` / `pages/julia/WhatsAppWorkspace.tsx` — the
  * container/header/Radix-Tabs shell is `SocialDashboardShell`
  * (`@noctusai/lib/design-system`); this file only supplies subtab content.
  */

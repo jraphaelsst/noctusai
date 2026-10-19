@@ -1,5 +1,5 @@
 /**
- * Lais › Equipes (`/lais/equipes`, wave 11 — Distribuição). Team list with a
+ * Julia › Equipes (`/julia/equipes`, wave 11 — Distribuição). Team list with a
  * 3-step "Configurar nova equipe" wizard, per-team Configurações / Usuários /
  * Excluir menu and an expandable per-member metrics table (month picker).
  * Writes are admin-only (server enforces; the UX hides the controls).
@@ -12,17 +12,17 @@ import { AlertCircle, ChevronDown, ChevronRight, Loader2, MoreVertical, Plus, Us
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { EquipeConfigDrawer } from "@/components/lais/equipes/EquipeConfigDrawer";
-import { EquipeMetricas } from "@/components/lais/equipes/EquipeMetricas";
-import { EquipeUsuariosDrawer } from "@/components/lais/equipes/EquipeUsuariosDrawer";
-import { EquipeWizard } from "@/components/lais/equipes/EquipeWizard";
-import { mesAtual, useExcluirEquipe, useLaisEquipes, type Equipe } from "@/hooks/useLaisEquipes";
+import { EquipeConfigDrawer } from "@/components/julia/equipes/EquipeConfigDrawer";
+import { EquipeMetricas } from "@/components/julia/equipes/EquipeMetricas";
+import { EquipeUsuariosDrawer } from "@/components/julia/equipes/EquipeUsuariosDrawer";
+import { EquipeWizard } from "@/components/julia/equipes/EquipeWizard";
+import { mesAtual, useExcluirEquipe, useJuliaEquipes, type Equipe } from "@/hooks/useJuliaEquipes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-export default function LaisEquipes() {
+export default function JuliaEquipes() {
   const isAdmin = useIsOrgAdmin();
   const confirm = useConfirm();
-  const q = useLaisEquipes();
+  const q = useJuliaEquipes();
   const excluir = useExcluirEquipe();
   const [wizard, setWizard] = useState(false);
   const [aberta, setAberta] = useState<string | null>(null);

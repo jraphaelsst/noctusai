@@ -9,13 +9,13 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirm } from "@noctusai/lib/components";
 
-import { CreditoStatusChip } from "@/components/lais/credito/StatusChip";
+import { CreditoStatusChip } from "@/components/julia/credito/StatusChip";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   codigoHttp, mensagemErroConversas, useHistorico, useNotaMutations, useNotas, usePatchContato,
   type Conversa, type Etiqueta,
-} from "@/hooks/useLaisConversas";
+} from "@/hooks/useJuliaConversas";
 import { EtiquetaPicker } from "./EtiquetaPicker";
 import { InteracoesLista, fmtData } from "./InteracoesLista";
 

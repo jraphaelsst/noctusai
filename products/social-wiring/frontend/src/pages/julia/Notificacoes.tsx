@@ -1,8 +1,8 @@
 /**
- * Lais › Notificações (`/lais/notificacoes`, wave 6). Feed grouped by day,
+ * Julia › Notificações (`/julia/notificacoes`, wave 6). Feed grouped by day,
  * filter drawer, mark read / all read, per-user toggle "Notificar lead pronto
  * para atendimento". `?tipo=captacao` is the Captação view (wave 8 reuses it).
- * The header bell is the seed NotificationBell (counts the same lais_* rows).
+ * The header bell is the seed NotificationBell (counts the same julia_* rows).
  *
  * Loading = two signals off `data` (never `isLoading`).
  */
@@ -13,24 +13,24 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { FiltroDrawer } from "@/components/lais/notificacoes/FiltroDrawer";
-import { NotificacaoCard } from "@/components/lais/notificacoes/NotificacaoCard";
-import { agruparPorDia } from "@/components/lais/notificacoes/agrupar";
+import { FiltroDrawer } from "@/components/julia/notificacoes/FiltroDrawer";
+import { NotificacaoCard } from "@/components/julia/notificacoes/NotificacaoCard";
+import { agruparPorDia } from "@/components/julia/notificacoes/agrupar";
 import {
-  FILTRO_VAZIO, PAGE_SIZE, useLaisNotificacoes, useMarcarLidas, usePreferenciasNotificacao,
+  FILTRO_VAZIO, PAGE_SIZE, useJuliaNotificacoes, useMarcarLidas, usePreferenciasNotificacao,
   useSalvarPreferencias, type NotificacoesFiltro,
-} from "@/hooks/useLaisNotificacoes";
+} from "@/hooks/useJuliaNotificacoes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
 /** The "lead pronto" toggle is the backend pseudo-tipo `lead_pronto` (it gates `novo_atendimento`). */
 const TIPO_TOGGLE = "lead_pronto";
 
-export default function LaisNotificacoes() {
+export default function JuliaNotificacoes() {
   const [params, setParams] = useSearchParams();
   const [filtro, setFiltro] = useState<NotificacoesFiltro>({ ...FILTRO_VAZIO, tipo: params.get("tipo") ?? "" });
   const [drawer, setDrawer] = useState(false);
 
-  const q = useLaisNotificacoes(filtro);
+  const q = useJuliaNotificacoes(filtro);
   const prefs = usePreferenciasNotificacao();
   const salvar = useSalvarPreferencias();
   const marcar = useMarcarLidas();

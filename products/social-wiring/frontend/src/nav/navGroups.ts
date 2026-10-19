@@ -6,14 +6,14 @@
  * DERIVED from it via the canonical `stripNavRoutes`, so the two can never
  * drift (they used to be two hand-maintained copies in App.tsx).
  *
- * Groups (regrouped 2026-10-05 per core-studio/MENUS.md; Lais added 2026-10-13):
- *   Principal · Lais · Imóveis · Leads · Clientes
+ * Groups (regrouped 2026-10-05 per core-studio/MENUS.md; Julia added 2026-10-13):
+ *   Principal · Julia · Imóveis · Leads · Clientes
  *   Edição de Fotos (Operação / Configuração) · CoreStudio
  *   Marketing (Email / Mailchimp) · Emissões
  *   Conexões (Marcas, Monitor, YouTube, Meta, n8n) · Configuração
  *
- * WhatsApp is NOT in Conexões any more — it lives in the Lais group
- * (`nav/lais.ts`, owner decision 2026-10-13). pt-BR copy preserved.
+ * WhatsApp is NOT in Conexões any more — it lives in the Julia group
+ * (`nav/julia.ts`, owner decision 2026-10-13). pt-BR copy preserved.
  */
 import { stripNavRoutes } from "@noctusai/lib";
 import type { NavGroupWithRoute } from "@noctusai/lib";
@@ -76,7 +76,7 @@ import {
   Eye,
 } from "lucide-react";
 
-import { LAIS_NAV_GROUP } from "@/nav/lais";
+import { JULIA_NAV_GROUP } from "@/nav/julia";
 
 export const NAV_GROUPS: NavGroupWithRoute[] = [
   {
@@ -89,8 +89,8 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock, route: "agendamentos" },
     ],
   },
-  // Lais (chatbot module) — directly after Principal; see nav/lais.ts.
-  LAIS_NAV_GROUP,
+  // Julia (chatbot module) — directly after Principal; see nav/julia.ts.
+  JULIA_NAV_GROUP,
   {
     key: "imoveis",
     label: "Imóveis",

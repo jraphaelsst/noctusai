@@ -1,4 +1,4 @@
-/** Lais Conversas v2 — tabs/filters, kanban by tag, header actions + confirms, Cliente column, history 403/404. */
+/** Julia Conversas v2 — tabs/filters, kanban by tag, header actions + confirms, Cliente column, history 403/404. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -26,9 +26,9 @@ vi.mock("@/components/WhatsAppChatWindow", async () => {
 
 import { ConversasPanel } from "./ConversasPanel";
 import { ConversaAcoes } from "./ConversaAcoes";
-import LaisHistorico from "@/pages/lais/Historico";
+import JuliaHistorico from "@/pages/julia/Historico";
 import { montarColunas, patchDoMovimento } from "./kanbanColunas";
-import { queryConversas, FILTROS_VAZIOS } from "@/hooks/useLaisConversas";
+import { queryConversas, FILTROS_VAZIOS } from "@/hooks/useJuliaConversas";
 
 const TAG = { id: "t1", nome: "Quente" };
 const C1 = { contato_id: "k1", chat_id: "a@c.us", nome: "Ana", etiquetas: [TAG] };
@@ -41,12 +41,12 @@ function wrap(ui: React.ReactNode, path = "/") {
 function routes(extra: Record<string, unknown> = {}) {
   api.get.mockImplementation((url: string) => {
     if (url in extra) return extra[url] instanceof Error ? Promise.reject(extra[url]) : Promise.resolve(extra[url]);
-    if (url.startsWith("/api/lais/conversas?aba=arquivadas")) return Promise.resolve({ data: [] });
-    if (url.startsWith("/api/lais/conversas")) return Promise.resolve({ data: [C1, C2] });
-    if (url === "/api/lais/etiquetas") return Promise.resolve({ data: [TAG, { id: "t2", nome: "Frio" }] });
+    if (url.startsWith("/api/julia/conversas?aba=arquivadas")) return Promise.resolve({ data: [] });
+    if (url.startsWith("/api/julia/conversas")) return Promise.resolve({ data: [C1, C2] });
+    if (url === "/api/julia/etiquetas") return Promise.resolve({ data: [TAG, { id: "t2", nome: "Frio" }] });
     if (url === "/api/team") return Promise.resolve({ data: [{ id: "u1", nome: "Ana Resp", email: "a@x", role: "", org_role: "", created_at: "" }] });
     if (url.endsWith("/notas")) return Promise.resolve({ data: [{ id: "n1", texto: "ligar amanhã", autor_nome: "Eu", created_at: "2026-10-15T10:00:00Z" }] });
-    if (url.startsWith("/api/lais/historico/")) return Promise.resolve({ data: { contato: { id: "k1", nome: "Ana", telefone: "5511" }, interacoes: [{ id: "i1", tipo: "Qualificação", iniciada_em: "2026-10-15T10:00:00Z", canal: "WhatsApp", resumo: "quer apto", intencoes: ["quer visitar"] }], mensagens: [{ id: "m1", direction: "inbound", body: "oi", created_at: "2026-10-15T10:00:00Z" }] } });
+    if (url.startsWith("/api/julia/historico/")) return Promise.resolve({ data: { contato: { id: "k1", nome: "Ana", telefone: "5511" }, interacoes: [{ id: "i1", tipo: "Qualificação", iniciada_em: "2026-10-15T10:00:00Z", canal: "WhatsApp", resumo: "quer apto", intencoes: ["quer visitar"] }], mensagens: [{ id: "m1", direction: "inbound", body: "oi", created_at: "2026-10-15T10:00:00Z" }] } });
     return Promise.resolve({ data: [] });
   });
 }
@@ -93,7 +93,7 @@ describe("ConversasPanel", () => {
     expect(await within(col).findByText("ligar amanhã")).toBeTruthy();
     expect(await within(col).findByText("quer visitar")).toBeTruthy();
     fireEvent.click(within(col).getByLabelText("Remover etiqueta Quente"));
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/lais/contatos/k1", { etiquetas: [] }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/julia/contatos/k1", { etiquetas: [] }));
   });
 
   it("kanban view renders Todas (n), tag column added through the picker, collapsed Arquivadas", async () => {
@@ -118,22 +118,22 @@ describe("ConversaAcoes", () => {
     expect(api.patch).not.toHaveBeenCalled();
     h.confirm = true;
     fireEvent.click(screen.getByTestId("acao-arquivar"));
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/lais/contatos/k1", { arquivado: true }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/julia/contatos/k1", { arquivado: true }));
     fireEvent.click(screen.getByTestId("acao-bloquear"));
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/lais/contatos/k1", { bloqueado: true }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/julia/contatos/k1", { bloqueado: true }));
   });
 
   it("assigns a responsável, sends like and written feedback", async () => {
     setup();
     fireEvent.click(screen.getByTestId("acao-atribuir"));
     fireEvent.click(await screen.findByText("Ana Resp"));
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/lais/contatos/k1", { responsavel_user_id: "u1" }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/api/julia/contatos/k1", { responsavel_user_id: "u1" }));
     fireEvent.click(screen.getByTestId("acao-like"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/contatos/k1/feedback", { nota: "like", comentario: undefined }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/contatos/k1/feedback", { nota: "like", comentario: undefined }));
     fireEvent.click(screen.getByTestId("acao-dislike"));
     fireEvent.change(await screen.findByLabelText("Comentário"), { target: { value: "errou o preço" } });
     fireEvent.click(screen.getByTestId("feedback-enviar"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/contatos/k1/feedback", { nota: "dislike", comentario: "errou o preço" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/contatos/k1/feedback", { nota: "dislike", comentario: "errou o preço" }));
   });
 
   it("copies the history link", async () => {
@@ -141,13 +141,13 @@ describe("ConversaAcoes", () => {
     Object.assign(navigator, { clipboard: { writeText } });
     setup();
     fireEvent.click(screen.getByTestId("acao-link"));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/lais\/conversas\/h\/k1$/)));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/julia\/conversas\/h\/k1$/)));
   });
 });
 
 describe("History page", () => {
   function page() {
-    return wrap(<Routes><Route path="/lais/conversas/h/:contatoId" element={<LaisHistorico />} /></Routes>, "/lais/conversas/h/k1");
+    return wrap(<Routes><Route path="/julia/conversas/h/:contatoId" element={<JuliaHistorico />} /></Routes>, "/julia/conversas/h/k1");
   }
   it("renders contact, interactions and messages", async () => {
     page();
@@ -155,12 +155,12 @@ describe("History page", () => {
     expect(screen.getByText("oi")).toBeTruthy();
   });
   it("403 → no access", async () => {
-    routes({ "/api/lais/historico/k1": err(403) });
+    routes({ "/api/julia/historico/k1": err(403) });
     page();
     expect(await screen.findByText("Você não tem acesso a esta conversa")).toBeTruthy();
   });
   it("404 → not found", async () => {
-    routes({ "/api/lais/historico/k1": err(404) });
+    routes({ "/api/julia/historico/k1": err(404) });
     page();
     expect(await screen.findByText("Conversa não encontrada")).toBeTruthy();
   });

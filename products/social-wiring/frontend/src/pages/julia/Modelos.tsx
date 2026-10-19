@@ -1,4 +1,4 @@
-/** Lais › Modelos de mensagem (`/lais/modelos`) — contract §14 W12. */
+/** Julia › Modelos de mensagem (`/julia/modelos`) — contract §14 W12. */
 import { useMemo, useState } from "react";
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, Plus, RefreshCw } from "lucide-react";
@@ -6,12 +6,12 @@ import { AlertCircle, Loader2, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ModeloCard } from "@/components/lais/modelos/ModeloCard";
-import { ModeloPreviewDrawer } from "@/components/lais/modelos/ModeloPreviewDrawer";
-import { NovoModeloModal } from "@/components/lais/modelos/NovoModeloModal";
-import { CATEGORIAS, MODELOS_KEY, useModelos, type Modelo } from "@/hooks/useLaisModelos";
+import { ModeloCard } from "@/components/julia/modelos/ModeloCard";
+import { ModeloPreviewDrawer } from "@/components/julia/modelos/ModeloPreviewDrawer";
+import { NovoModeloModal } from "@/components/julia/modelos/NovoModeloModal";
+import { CATEGORIAS, MODELOS_KEY, useModelos, type Modelo } from "@/hooks/useJuliaModelos";
 
-export default function LaisModelos() {
+export default function JuliaModelos() {
   const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useModelos();
   const refreshing = useIsFetching({ queryKey: MODELOS_KEY }) > 0 && !!data;

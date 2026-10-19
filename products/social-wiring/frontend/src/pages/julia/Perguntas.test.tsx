@@ -9,7 +9,7 @@ vi.mock("@/lib/api", () => ({ api }));
 vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
 vi.mock("sonner", () => ({ toast }));
 
-import LaisPerguntas from "./Perguntas";
+import JuliaPerguntas from "./Perguntas";
 
 const P = (chave: string, over: Record<string, unknown> = {}) => ({
   chave, label: `Pergunta ${chave}`, dica: null, categoria: "Informações do lead", operacao: null,
@@ -24,13 +24,13 @@ function erro(status: number, code: string, details?: unknown) {
 function setup(payload: unknown) {
   api.get.mockResolvedValue(payload);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><LaisPerguntas /></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><JuliaPerguntas /></QueryClientProvider>);
 }
 
 beforeEach(() => { Object.values(api).forEach((f) => f.mockReset()); toast.error.mockReset(); toast.success.mockReset(); h.admin = true; });
 afterEach(cleanup);
 
-describe("Lais Perguntas", () => {
+describe("Julia Perguntas", () => {
   it("shows skeleton then only active questions; 'Mostrar todas' reveals the rest", async () => {
     setup(dados([P("objetivo", { ativa: true, bloqueada: true }), P("nome", { ativa: true }), P("renda")]));
     expect(screen.getByTestId("perguntas-skeleton")).toBeTruthy();
@@ -77,7 +77,7 @@ describe("Lais Perguntas", () => {
     api.put.mockRejectedValueOnce(erro(409, "usada_em_criterio", { criterios: ["Grupo 1"] }));
     fireEvent.click(screen.getByTestId("perguntas-salvar"));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(api.put).toHaveBeenCalledWith("/api/lais/perguntas", {
+    expect(api.put).toHaveBeenCalledWith("/api/julia/perguntas", {
       selecao: [{ chave: "objetivo", qualificatoria: false }, { chave: "nome", qualificatoria: true }],
     });
     expect(String(toast.error.mock.calls[0][0])).toContain("primeiro desative os critérios de envio");
@@ -97,7 +97,7 @@ describe("Lais Perguntas", () => {
     cleanup();
     api.get.mockRejectedValue(erro(500, "x"));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={qc}><LaisPerguntas /></QueryClientProvider>);
+    render(<QueryClientProvider client={qc}><JuliaPerguntas /></QueryClientProvider>);
     expect(await screen.findByTestId("perguntas-erro")).toBeTruthy();
   });
 });

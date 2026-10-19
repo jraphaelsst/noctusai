@@ -1,9 +1,9 @@
 /**
- * Lais › Perguntas essenciais (contract wave 2).
+ * Julia › Perguntas essenciais (contract wave 2).
  *
- *   GET /api/lais/perguntas                          org member: catalogue + limits
- *   PUT /api/lais/perguntas  {selecao:[{chave,qualificatoria}]}   admin: full replace
- *   GET /api/lais/contatos/{connection_id}/{chat_id} per-chat slots (Conversas panel)
+ *   GET /api/julia/perguntas                          org member: catalogue + limits
+ *   PUT /api/julia/perguntas  {selecao:[{chave,qualificatoria}]}   admin: full replace
+ *   GET /api/julia/contatos/{connection_id}/{chat_id} per-chat slots (Conversas panel)
  *
  * Envelope `{data: …}`; typed refusals map to their own pt-BR sentence.
  */
@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-export interface LaisPergunta {
+export interface JuliaPergunta {
   chave: string;
   label: string;
   dica: string | null;
@@ -24,58 +24,58 @@ export interface LaisPergunta {
   usada_em_criterio: boolean;
 }
 
-export interface LaisPerguntas {
-  catalogo: LaisPergunta[];
+export interface JuliaPerguntas {
+  catalogo: JuliaPergunta[];
   limites: { max_ativas: number; max_qualificatorias: number };
 }
 
-export interface LaisSelecaoItem {
+export interface JuliaSelecaoItem {
   chave: string;
   qualificatoria: boolean;
 }
 
-export interface LaisContatoLead {
+export interface JuliaContatoLead {
   contato: { operacao?: string | null; [k: string]: unknown } | null;
   slots: Record<string, string | number | null> | null;
   interacao_atual: { operacao?: string | null; [k: string]: unknown } | null;
 }
 
-export const LAIS_PERGUNTAS_KEY = ["sw", "lais", "perguntas"] as const;
-export const laisContatoKey = (connectionId: string | null, chatId: string | null) =>
-  ["sw", "lais", "contato", connectionId, chatId] as const;
+export const JULIA_PERGUNTAS_KEY = ["sw", "julia", "perguntas"] as const;
+export const juliaContatoKey = (connectionId: string | null, chatId: string | null) =>
+  ["sw", "julia", "contato", connectionId, chatId] as const;
 
-export function useLaisPerguntas() {
+export function useJuliaPerguntas() {
   return useQuery({
-    queryKey: LAIS_PERGUNTAS_KEY,
-    queryFn: async () => (await api.get<{ data: LaisPerguntas }>("/api/lais/perguntas")).data,
+    queryKey: JULIA_PERGUNTAS_KEY,
+    queryFn: async () => (await api.get<{ data: JuliaPerguntas }>("/api/julia/perguntas")).data,
   });
 }
 
 export function useSalvarPerguntas() {
   const qc = useQueryClient();
-  return useMutation<{ data: LaisPerguntas }, unknown, LaisSelecaoItem[]>({
-    mutationFn: (selecao) => api.put<{ data: LaisPerguntas }>("/api/lais/perguntas", { selecao }),
-    onSuccess: (res) => qc.setQueryData(LAIS_PERGUNTAS_KEY, res.data),
+  return useMutation<{ data: JuliaPerguntas }, unknown, JuliaSelecaoItem[]>({
+    mutationFn: (selecao) => api.put<{ data: JuliaPerguntas }>("/api/julia/perguntas", { selecao }),
+    onSuccess: (res) => qc.setQueryData(JULIA_PERGUNTAS_KEY, res.data),
   });
 }
 
 /** Slots of one chat. Keeps the previous chat's data while the next loads. */
-export function useLaisContato(connectionId: string | null, chatId: string | null) {
+export function useJuliaContato(connectionId: string | null, chatId: string | null) {
   return useQuery({
-    queryKey: laisContatoKey(connectionId, chatId),
+    queryKey: juliaContatoKey(connectionId, chatId),
     enabled: !!connectionId && !!chatId,
     retry: false,
     queryFn: async () =>
       (
-        await api.get<{ data: LaisContatoLead }>(
-          `/api/lais/contatos/${encodeURIComponent(connectionId as string)}/${encodeURIComponent(chatId as string)}`,
+        await api.get<{ data: JuliaContatoLead }>(
+          `/api/julia/contatos/${encodeURIComponent(connectionId as string)}/${encodeURIComponent(chatId as string)}`,
         )
       ).data,
     placeholderData: (prev) => prev,
   });
 }
 
-interface ErroLais {
+interface ErroJulia {
   body?: { error?: { code?: unknown; details?: { criterios?: unknown } } };
 }
 
@@ -87,7 +87,7 @@ const MENSAGENS: Record<string, string> = {
 };
 
 export function mensagemErroPerguntas(err: unknown, fallback: string): string {
-  const e = (err as ErroLais | null)?.body?.error;
+  const e = (err as ErroJulia | null)?.body?.error;
   const code = typeof e?.code === "string" ? e.code : null;
   if (code === "usada_em_criterio") {
     const lista = Array.isArray(e?.details?.criterios) ? (e?.details?.criterios as unknown[]).map(String) : [];

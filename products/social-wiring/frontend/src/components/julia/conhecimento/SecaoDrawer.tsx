@@ -1,6 +1,6 @@
 /**
  * One drawer for every Conhecimento section: Cancelar/Salvar, dirty-exit
- * confirm (Lais copy), optimistic-lock (409 versao_conflito) reload prompt.
+ * confirm (Julia copy), optimistic-lock (409 versao_conflito) reload prompt.
  * Fields come from the registry (`secoes.ts`); chips use the design-system
  * `MultiSelectPopover`; the shell + dirty leave-confirm is the seed `SideDrawer`.
  */
@@ -17,7 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   codigoErroConhecimento, mensagemErroConhecimento, useSalvarSecao, type SecaoSalva,
-} from "@/hooks/useLaisConhecimento";
+} from "@/hooks/useJuliaConhecimento";
 import { PerfilMockup } from "./PerfilMockup";
 import { get, set, type Campo, type SecaoSpec } from "./secoes";
 

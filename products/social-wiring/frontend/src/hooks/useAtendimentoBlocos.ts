@@ -58,7 +58,7 @@ export const BLOCOS_KEY = ["sw", "atendimento-blocos"] as const;
 const PATH = "/api/atendimento-blocos";
 
 /** Display name for a block agent key; unknown keys show the key itself. */
-const AGENTES_ROTULO: Record<string, string> = { "lead-imob": "Julia" };
+const AGENTES_ROTULO: Record<string, string> = { "julia": "Julia" };
 export function rotuloAgente(agentKey: string | null): string {
   if (agentKey === null) return "Humanos (equipe)";
   const nome = AGENTES_ROTULO[agentKey];

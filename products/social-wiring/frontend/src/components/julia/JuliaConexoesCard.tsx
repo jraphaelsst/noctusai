@@ -1,4 +1,4 @@
-/** Lais › Agente cards (b)+(c): per-connection Julia switch and handoff target. */
+/** Julia › Agente cards (b)+(c): per-connection Julia switch and handoff target. */
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -6,11 +6,11 @@ import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
-  mensagemErroLais,
+  mensagemErroJulia,
   useAtualizarConexaoAgente,
-  type LaisAgente,
-  type LaisConexaoAgente,
-} from "@/hooks/useLaisAgente";
+  type JuliaAgente,
+  type JuliaConexaoAgente,
+} from "@/hooks/useJuliaAgente";
 import { useTeamMembers } from "@/hooks/useTeam";
 
 const SEM_NUMEROS =
@@ -22,7 +22,7 @@ function ConexaoRow({
   admins,
   membrosErro,
 }: {
-  conexao: LaisConexaoAgente;
+  conexao: JuliaConexaoAgente;
   isAdmin: boolean;
   admins: { id: string; nome: string }[];
   membrosErro: boolean;
@@ -41,7 +41,7 @@ function ConexaoRow({
       { connectionId: conexao.connection_id, body },
       {
         onSuccess: () => toast.success(ok),
-        onError: (e) => setErro(mensagemErroLais(e, "Não foi possível salvar a alteração.")),
+        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar a alteração.")),
       },
     );
   }
@@ -121,7 +121,7 @@ function ConexaoRow({
   );
 }
 
-export function JuliaConexoesCard({ data, isAdmin }: { data: LaisAgente; isAdmin: boolean }) {
+export function JuliaConexoesCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: boolean }) {
   const team = useTeamMembers();
   // Only owner/admin of the org can receive a handoff (server re-checks: 422 destinatario_invalido).
   const admins = (team.data ?? [])

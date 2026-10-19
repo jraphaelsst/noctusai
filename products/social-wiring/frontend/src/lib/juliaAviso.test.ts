@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { blocosParaTexto, contemLink, textoParaBlocos } from "@/lib/laisAviso";
+import { blocosParaTexto, contemLink, textoParaBlocos } from "@/lib/juliaAviso";
 
-describe("laisAviso block text codec", () => {
+describe("juliaAviso block text codec", () => {
   it("round-trips paragraphs and bullet lists", () => {
     const blocks = [{ p: "Tratamos seus dados." }, { ul: ["nome", "telefone"] }, { p: "Fim." }];
     expect(textoParaBlocos(blocosParaTexto(blocks))).toEqual(blocks);

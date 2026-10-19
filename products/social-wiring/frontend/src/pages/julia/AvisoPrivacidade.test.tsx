@@ -44,7 +44,7 @@ describe("AvisoPrivacidade (public)", () => {
     expect((await screen.findByTestId("consent-brand")).textContent).toBe("Empresa Exemplo");
     expect(screen.getByText("Quem é o controlador")).toBeTruthy();
     expect(screen.queryByText(/NoctusAI/)).toBeNull();
-    expect(get).toHaveBeenCalledWith("/api/public/lais/privacidade/empresa-exemplo");
+    expect(get).toHaveBeenCalledWith("/api/public/julia/privacidade/empresa-exemplo");
   });
 
   it("404 shows 'Aviso não encontrado'", async () => {

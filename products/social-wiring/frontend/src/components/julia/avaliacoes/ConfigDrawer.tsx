@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useAvaliacoesConfig, useSalvarAvaliacoesConfig, type AvaliacoesConfig } from "@/hooks/useLaisAvaliacoes";
+import { useAvaliacoesConfig, useSalvarAvaliacoesConfig, type AvaliacoesConfig } from "@/hooks/useJuliaAvaliacoes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
 export function AvaliacoesConfigDrawer({ onClose }: { onClose: () => void }) {

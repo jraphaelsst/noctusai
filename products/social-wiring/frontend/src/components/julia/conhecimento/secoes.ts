@@ -1,5 +1,5 @@
 /**
- * Lais › Conhecimento — section registry (contract section 3). One entry per
+ * Julia › Conhecimento — section registry (contract section 3). One entry per
  * `secao`: the fields the drawer renders, the defaults used when the section
  * was never saved, and the chip vocabulary (bubble-app-definition section 4).
  */

@@ -1,11 +1,11 @@
 /**
- * Lais › Leads (contract wave 3).
+ * Julia › Leads (contract wave 3).
  *
- *   GET  /api/lais/leads?…filters…&page&page_size → {data:{items,total}}
- *   POST /api/lais/leads/{id}/enviar   → {data:{status_envio,lead_id}} | 409 ja_enviado | 422 contato_sem_telefone
- *   POST /api/lais/leads/enviar-lote   {ids≤100} → {data:{ok:[],erro:[{id,code}]}}
- *   GET  /api/lais/leads/{id}/resumo
- *   GET  /api/lais/leads/export.csv    (admin) — blob download
+ *   GET  /api/julia/leads?…filters…&page&page_size → {data:{items,total}}
+ *   POST /api/julia/leads/{id}/enviar   → {data:{status_envio,lead_id}} | 409 ja_enviado | 422 contato_sem_telefone
+ *   POST /api/julia/leads/enviar-lote   {ids≤100} → {data:{ok:[],erro:[{id,code}]}}
+ *   GET  /api/julia/leads/{id}/resumo
+ *   GET  /api/julia/leads/export.csv    (admin) — blob download
  *
  * The list keeps `placeholderData: prev` across filter/page changes
  * (two-signal loading, never `isLoading`).
@@ -19,7 +19,7 @@ import { mensagemErroServidor } from "@/lib/erroServidor";
 
 export type StatusEnvio = "enviado" | "nao_pronto" | "erro";
 export type GatilhoEnvio = "qualificado" | "visita" | "frio" | "captacao" | "invalido" | "manual";
-export interface LeadLais {
+export interface LeadJulia {
   id: string;
   nome?: string | null;
   atendido_pela_julia?: boolean;
@@ -71,7 +71,7 @@ export function queryDeFiltros(f: FiltrosLeads, extra: Record<string, string | n
   return p.toString();
 }
 
-export const LEADS_KEY = ["sw", "lais", "leads"] as const;
+export const LEADS_KEY = ["sw", "julia", "leads"] as const;
 
 const MENSAGENS: Record<string, string> = {
   ja_enviado: "Este lead já foi enviado ao SW.",
@@ -89,13 +89,13 @@ export function mensagemErroLeads(err: unknown, fallback: string): string {
   return c && MENSAGENS[c] ? MENSAGENS[c] : mensagemErroServidor(err, fallback);
 }
 
-export function useLeadsLais(filtros: FiltrosLeads, page: number) {
+export function useLeadsJulia(filtros: FiltrosLeads, page: number) {
   return useQuery({
     queryKey: [...LEADS_KEY, "lista", filtros, page] as const,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const qs = queryDeFiltros(filtros, { page, page_size: PAGE_SIZE });
-      const res = await api.get<{ data: { items: LeadLais[]; total: number } }>(`/api/lais/leads?${qs}`);
+      const res = await api.get<{ data: { items: LeadJulia[]; total: number } }>(`/api/julia/leads?${qs}`);
       return { items: res.data?.items ?? [], total: res.data?.total ?? 0 };
     },
   });
@@ -105,7 +105,7 @@ export function useEnviarLead() {
   const qc = useQueryClient();
   return useMutation<{ status_envio: string; lead_id: string | null }, unknown, string>({
     mutationFn: async (id) =>
-      (await api.post<{ data: { status_envio: string; lead_id: string | null } }>(`/api/lais/leads/${id}/enviar`, {})).data,
+      (await api.post<{ data: { status_envio: string; lead_id: string | null } }>(`/api/julia/leads/${id}/enviar`, {})).data,
     // 409 means it was already sent elsewhere — refresh either way.
     onSettled: () => qc.invalidateQueries({ queryKey: LEADS_KEY }),
   });
@@ -116,7 +116,7 @@ export function useEnviarLote() {
   const qc = useQueryClient();
   return useMutation<ResultadoLote, unknown, string[]>({
     mutationFn: async (ids) =>
-      (await api.post<{ data: ResultadoLote }>("/api/lais/leads/enviar-lote", { ids })).data,
+      (await api.post<{ data: ResultadoLote }>("/api/julia/leads/enviar-lote", { ids })).data,
     onSettled: () => qc.invalidateQueries({ queryKey: LEADS_KEY }),
   });
 }
@@ -130,7 +130,7 @@ export function useResumoLead(id: string | null) {
   return useQuery({
     queryKey: [...LEADS_KEY, "resumo", id] as const,
     enabled: !!id,
-    queryFn: async () => (await api.get<{ data: ResumoLead }>(`/api/lais/leads/${id}/resumo`)).data,
+    queryFn: async () => (await api.get<{ data: ResumoLead }>(`/api/julia/leads/${id}/resumo`)).data,
   });
 }
 
@@ -139,7 +139,7 @@ export async function baixarLeadsCsv(filtros: FiltrosLeads, ids?: string[]): Pro
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   const qs = queryDeFiltros(filtros, ids?.length ? { ids: ids.join(",") } : {});
-  const resp = await fetch(apiUrl(`/api/lais/leads/export.csv${qs ? `?${qs}` : ""}`), {
+  const resp = await fetch(apiUrl(`/api/julia/leads/export.csv${qs ? `?${qs}` : ""}`), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`Falha ao exportar os leads (HTTP ${resp.status})`);
@@ -147,7 +147,7 @@ export async function baixarLeadsCsv(filtros: FiltrosLeads, ids?: string[]): Pro
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "leads-lais.csv";
+  a.download = "leads-julia.csv";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -157,11 +157,11 @@ export async function baixarLeadsCsv(filtros: FiltrosLeads, ids?: string[]): Pro
 
 export interface CanalOrigem { slug: string; label: string }
 
-/** The org's real lead origins (SW lead_sources + Lais origin codes + stored canais) — GET /api/lais/leads/canais. */
-export function useLaisCanais() {
+/** The org's real lead origins (SW lead_sources + Lais origin codes + stored canais) — GET /api/julia/leads/canais. */
+export function useJuliaCanais() {
   return useQuery({
-    queryKey: ["lais", "leads", "canais"],
-    queryFn: async () => ((await api.get("/api/lais/leads/canais")).data ?? []) as CanalOrigem[],
+    queryKey: ["julia", "leads", "canais"],
+    queryFn: async () => ((await api.get("/api/julia/leads/canais")).data ?? []) as CanalOrigem[],
     staleTime: 5 * 60_000,
   });
 }

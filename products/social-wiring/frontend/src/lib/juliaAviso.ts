@@ -8,9 +8,9 @@
  * text cannot express — it is read back as a list item, which is what the user
  * typing it means).
  */
-import type { LaisAvisoSecao } from "@/hooks/useLaisAviso";
+import type { JuliaAvisoSecao } from "@/hooks/useJuliaAviso";
 
-type Bloco = LaisAvisoSecao["blocks"][number];
+type Bloco = JuliaAvisoSecao["blocks"][number];
 
 export function blocosParaTexto(blocks: Bloco[]): string {
   return blocks

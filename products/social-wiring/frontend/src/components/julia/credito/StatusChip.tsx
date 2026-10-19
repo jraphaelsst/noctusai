@@ -1,5 +1,5 @@
 /** Crédito status chip — shared by the Crédito list and Conversas › Interações. */
-import type { CreditoStatus } from "@/hooks/useLaisCredito";
+import type { CreditoStatus } from "@/hooks/useJuliaCredito";
 
 const META: Record<CreditoStatus, { label: string; cls: string }> = {
   pendente: { label: "Pendente", cls: "bg-amber-100 text-amber-800" },

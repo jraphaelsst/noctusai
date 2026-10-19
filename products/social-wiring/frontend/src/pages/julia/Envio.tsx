@@ -1,4 +1,4 @@
-/** Lais › Envio (`/lais/envio`) — contract §5 W3: send rules wizard + policy cards. */
+/** Julia › Envio (`/julia/envio`) — contract §5 W3: send rules wizard + policy cards. */
 import { useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
@@ -6,11 +6,11 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EnvioWizard } from "@/components/lais/envio/EnvioWizard";
-import { PoliticasCards } from "@/components/lais/envio/PoliticasCards";
-import { rotuloCriterio, garantirBase, clonarGrupos } from "@/components/lais/envio/criterios";
-import { regraDe, useEnvioPoliticas, useEnvioRegras, type RegrasEnvio } from "@/hooks/useLaisEnvio";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { EnvioWizard } from "@/components/julia/envio/EnvioWizard";
+import { PoliticasCards } from "@/components/julia/envio/PoliticasCards";
+import { rotuloCriterio, garantirBase, clonarGrupos } from "@/components/julia/envio/criterios";
+import { regraDe, useEnvioPoliticas, useEnvioRegras, type RegrasEnvio } from "@/hooks/useJuliaEnvio";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 function ResumoRegras({ regras }: { regras: RegrasEnvio }) {
   const ops = regras.regras.length ? regras.regras.map((r) => r.operacao) : (["ambas"] as const);
@@ -32,7 +32,7 @@ function ResumoRegras({ regras }: { regras: RegrasEnvio }) {
   );
 }
 
-export default function LaisEnvio() {
+export default function JuliaEnvio() {
   const isAdmin = useIsOrgAdmin();
   const regras = useEnvioRegras();
   const politicas = useEnvioPoliticas();
@@ -47,7 +47,7 @@ export default function LaisEnvio() {
     <div className="container max-w-4xl space-y-6 py-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">{LAIS_LABEL} · {LAIS_PAGES.envio.name}</h1>
+          <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.envio.name}</h1>
           <p className="text-sm text-muted-foreground">Defina quando a Julia envia leads qualificados ao SW.</p>
         </div>
         {isRefreshing && (

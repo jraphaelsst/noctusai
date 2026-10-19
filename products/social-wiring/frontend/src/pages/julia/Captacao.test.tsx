@@ -1,4 +1,4 @@
-/** Lais › Captação — day grouping, expand, registrar/descartar, filters, page size. */
+/** Julia › Captação — day grouping, expand, registrar/descartar, filters, page size. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,9 +10,9 @@ vi.mock("@/lib/api", () => ({ api }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-import LaisCaptacao from "./Captacao";
-import { agruparPorDia } from "@/components/lais/captacao/agrupar";
-import type { LaisCaptacao as Captacao } from "@/hooks/useLaisCaptacao";
+import JuliaCaptacao from "./Captacao";
+import { agruparPorDia } from "@/components/julia/captacao/agrupar";
+import type { JuliaCaptacao as Captacao } from "@/hooks/useJuliaCaptacao";
 
 const agora = new Date();
 const ontem = new Date(agora.getTime() - 86400_000);
@@ -28,7 +28,7 @@ function setup(items: Captacao[] = ITENS, total = items.length) {
   api.get.mockResolvedValue({ data: { items, total } });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}><MemoryRouter><ConfirmProvider><LaisCaptacao /></ConfirmProvider></MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={qc}><MemoryRouter><ConfirmProvider><JuliaCaptacao /></ConfirmProvider></MemoryRouter></QueryClientProvider>,
   );
 }
 const urls = () => api.get.mock.calls.map(([u]) => String(u));
@@ -58,7 +58,7 @@ describe("Captação page", () => {
     cleanup();
     api.get.mockRejectedValue(new Error("boom"));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={qc}><MemoryRouter><ConfirmProvider><LaisCaptacao /></ConfirmProvider></MemoryRouter></QueryClientProvider>);
+    render(<QueryClientProvider client={qc}><MemoryRouter><ConfirmProvider><JuliaCaptacao /></ConfirmProvider></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByTestId("captacao-erro")).toBeTruthy();
   });
 
@@ -70,7 +70,7 @@ describe("Captação page", () => {
     expect(within(d).getByText("Casa a")).toBeTruthy();
     expect(within(d).getByText("Rua a, 10")).toBeTruthy();
     expect(within(d).getByText("venda")).toBeTruthy();
-    expect(within(d).getByRole("link", { name: "Abrir conversa" }).getAttribute("href")).toBe("/lais/conversas?contato=ct-a");
+    expect(within(d).getByRole("link", { name: "Abrir conversa" }).getAttribute("href")).toBe("/julia/conversas?contato=ct-a");
     expect(within(d).getByRole("button", { name: "Registrar captação" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Expandir" }));
     const d2 = screen.getAllByTestId("captacao-detalhe")[1];
@@ -84,7 +84,7 @@ describe("Captação page", () => {
     await screen.findByText("Exibindo 2 captações");
     fireEvent.click(screen.getAllByRole("button", { name: "Expandir" })[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Registrar captação" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/captacoes/a/registrar", {}));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/captacoes/a/registrar", {}));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(1));
   });
@@ -112,7 +112,7 @@ describe("Captação page", () => {
     api.post.mockResolvedValue(undefined);
     await abrirDescartar();
     confirmar();
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/captacoes/a/descartar", {}));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/captacoes/a/descartar", {}));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Captação descartada."));
   });
 

@@ -1,7 +1,7 @@
 /**
- * Lais › Perguntas essenciais (`/lais/perguntas`, status_pagina `lais_perguntas`).
+ * Julia › Perguntas essenciais (`/julia/perguntas`, status_pagina `julia_perguntas`).
  *
- * One query (`GET /api/lais/perguntas`) + one full-replace save. The local draft
+ * One query (`GET /api/julia/perguntas`) + one full-replace save. The local draft
  * lives in `edits` (chave → {ativa, qualificatoria}) over the server catalogue;
  * limits and locks are enforced in the UI for clarity but the server decides.
  * Loading = two signals off `data` (never `isLoading`).
@@ -12,21 +12,21 @@ import { toast } from "sonner";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { FaqQualificatoria } from "@/components/lais/perguntas/FaqQualificatoria";
-import { PerguntaRow } from "@/components/lais/perguntas/PerguntaRow";
+import { FaqQualificatoria } from "@/components/julia/perguntas/FaqQualificatoria";
+import { PerguntaRow } from "@/components/julia/perguntas/PerguntaRow";
 import {
   mensagemErroPerguntas,
-  useLaisPerguntas,
+  useJuliaPerguntas,
   useSalvarPerguntas,
-  type LaisPergunta,
-} from "@/hooks/useLaisPerguntas";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+  type JuliaPergunta,
+} from "@/hooks/useJuliaPerguntas";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 type Edit = { ativa: boolean; qualificatoria: boolean };
 
-export default function LaisPerguntas() {
+export default function JuliaPerguntas() {
   const isAdmin = useIsOrgAdmin();
-  const q = useLaisPerguntas();
+  const q = useJuliaPerguntas();
   const salvar = useSalvarPerguntas();
   const [edits, setEdits] = useState<Record<string, Edit>>({});
   const [categoria, setCategoria] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export default function LaisPerguntas() {
 
   const catalogo = useMemo(() => q.data?.catalogo ?? [], [q.data]);
   const limites = q.data?.limites ?? { max_ativas: 8, max_qualificatorias: 5 };
-  const estado = (p: LaisPergunta): Edit => edits[p.chave] ?? { ativa: p.ativa, qualificatoria: p.qualificatoria };
+  const estado = (p: JuliaPergunta): Edit => edits[p.chave] ?? { ativa: p.ativa, qualificatoria: p.qualificatoria };
 
   const ativas = catalogo.filter((p) => estado(p).ativa);
   const qualificatorias = ativas.filter((p) => estado(p).qualificatoria);
@@ -47,7 +47,7 @@ export default function LaisPerguntas() {
     (p) => (categoria === null || p.categoria === categoria) && (todas || estado(p).ativa),
   );
 
-  function set(p: LaisPergunta, patch: Partial<Edit>) {
+  function set(p: JuliaPergunta, patch: Partial<Edit>) {
     setEdits((prev) => ({ ...prev, [p.chave]: { ...estado(p), ...patch } }));
   }
 
@@ -69,7 +69,7 @@ export default function LaisPerguntas() {
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">
-            {LAIS_LABEL} · {LAIS_PAGES.perguntas.name}
+            {JULIA_LABEL} · {JULIA_PAGES.perguntas.name}
           </h1>
           <p className="text-sm text-muted-foreground">
             Personalize o que a Julia deve perguntar a cada lead.

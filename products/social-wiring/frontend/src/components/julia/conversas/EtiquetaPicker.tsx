@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { mensagemErroConversas, useEtiquetaMutations, useEtiquetas, type Etiqueta } from "@/hooks/useLaisConversas";
+import { mensagemErroConversas, useEtiquetaMutations, useEtiquetas, type Etiqueta } from "@/hooks/useJuliaConversas";
 
 export const SEM_ETIQUETA = "__sem";
 

@@ -1,5 +1,5 @@
 /**
- * Visit-request config drawer (live Lais a3). One config, or — with
+ * Visit-request config drawer (live Julia a3). One config, or — with
  * "Diferenciar configuração…" — one per operation (compra / aluguel).
  * Admin-only writes (server-enforced; the UI just disables the form).
  */
@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   DIAS, DIA_LABEL, mensagemErroVisitas, operacaoPadrao, useSalvarVisitasConfig,
   type Dia, type Operacao, type OperacaoConfig, type VisitasConfig,
-} from "@/hooks/useLaisVisitas";
+} from "@/hooks/useJuliaVisitas";
 
 const OPS: { key: Operacao; label: string }[] = [
   { key: "compra", label: "Compra" },

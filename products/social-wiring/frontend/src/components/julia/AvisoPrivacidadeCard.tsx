@@ -1,4 +1,4 @@
-/** Lais › Agente card (d): edit the org's public privacy notice (contract 11.2). */
+/** Julia › Agente card (d): edit the org's public privacy notice (contract 11.2). */
 import { useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, ExternalLink, Loader2, Plus, Trash2 } from "lucide-react";
@@ -8,9 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useLaisAviso, useSalvarLaisAviso, type LaisAvisoAdmin } from "@/hooks/useLaisAviso";
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
-import { blocosParaTexto, contemLink, textoParaBlocos } from "@/lib/laisAviso";
+import { useJuliaAviso, useSalvarJuliaAviso, type JuliaAvisoAdmin } from "@/hooks/useJuliaAviso";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { blocosParaTexto, contemLink, textoParaBlocos } from "@/lib/juliaAviso";
 
 interface SecaoForm {
   n: string;
@@ -18,8 +18,8 @@ interface SecaoForm {
   texto: string;
 }
 
-function AvisoForm({ aviso, isAdmin }: { aviso: LaisAvisoAdmin; isAdmin: boolean }) {
-  const salvar = useSalvarLaisAviso();
+function AvisoForm({ aviso, isAdmin }: { aviso: JuliaAvisoAdmin; isAdmin: boolean }) {
+  const salvar = useSalvarJuliaAviso();
   const [titulo, setTitulo] = useState(aviso.titulo ?? "");
   const [empresa, setEmpresa] = useState(aviso.empresa_nome ?? "");
   const [email, setEmail] = useState(aviso.contato_email ?? "");
@@ -50,7 +50,7 @@ function AvisoForm({ aviso, isAdmin }: { aviso: LaisAvisoAdmin; isAdmin: boolean
       },
       {
         onSuccess: () => toast.success("Aviso de privacidade salvo"),
-        onError: (e) => setErro(mensagemErroLais(e, "Não foi possível salvar o aviso.")),
+        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar o aviso.")),
       },
     );
   }
@@ -184,7 +184,7 @@ function AvisoForm({ aviso, isAdmin }: { aviso: LaisAvisoAdmin; isAdmin: boolean
 }
 
 export function AvisoPrivacidadeCard({ isAdmin }: { isAdmin: boolean }) {
-  const q = useLaisAviso();
+  const q = useJuliaAviso();
   const showSkeleton = q.isPending && !q.data;
 
   return (

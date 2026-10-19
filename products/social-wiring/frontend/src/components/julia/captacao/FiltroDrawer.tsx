@@ -1,9 +1,9 @@
-/** "Filtros" drawer (Lais Captação): status + date range. Draft applies only on Filtrar. */
+/** "Filtros" drawer (Julia Captação): status + date range. Draft applies only on Filtrar. */
 import { useState } from "react";
 import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
-import { FILTRO_VAZIO, type CaptacaoFiltro, type StatusFiltro } from "@/hooks/useLaisCaptacao";
+import { FILTRO_VAZIO, type CaptacaoFiltro, type StatusFiltro } from "@/hooks/useJuliaCaptacao";
 
 interface Props { filtro: CaptacaoFiltro; onClose: () => void; onAplicar: (f: CaptacaoFiltro) => void }
 

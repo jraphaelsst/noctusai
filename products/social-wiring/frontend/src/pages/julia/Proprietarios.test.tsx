@@ -1,4 +1,4 @@
-/** Lais › Atualização de imóveis — the owner-confirmed value is shown with its provenance. */
+/** Julia › Atualização de imóveis — the owner-confirmed value is shown with its provenance. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -7,15 +7,15 @@ const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisProprietarios from "./Proprietarios";
-import { textoConfirmacao, type Proprietario } from "@/hooks/useLaisProprietarios";
+import JuliaProprietarios from "./Proprietarios";
+import { textoConfirmacao, type Proprietario } from "@/hooks/useJuliaProprietarios";
 
 const BASE: Proprietario = { id: "p1", nome: "Dono Teste", imovel_codigo: "AP10", status: "atualizado" };
 
 function setup(items: Proprietario[]) {
   api.get.mockResolvedValue({ data: items });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><LaisProprietarios /></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><JuliaProprietarios /></QueryClientProvider>);
 }
 beforeEach(() => { api.get.mockReset(); });
 afterEach(cleanup);

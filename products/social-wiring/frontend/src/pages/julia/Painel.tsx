@@ -1,20 +1,20 @@
 /**
- * Lais › Painel (`/lais/painel`, wave 9): atividades, personalizações, funil
+ * Julia › Painel (`/julia/painel`, wave 9): atividades, personalizações, funil
  * and charts for one month. Loading = two signals off `data`.
  */
 import { useState } from "react";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Atividades, Personalizacoes } from "@/components/lais/painel/Atividades";
-import { Funil } from "@/components/lais/painel/Funil";
-import { Graficos } from "@/components/lais/painel/Graficos";
-import { mesAtual, useLaisPainel } from "@/hooks/useLaisPainel";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { Atividades, Personalizacoes } from "@/components/julia/painel/Atividades";
+import { Funil } from "@/components/julia/painel/Funil";
+import { Graficos } from "@/components/julia/painel/Graficos";
+import { mesAtual, useJuliaPainel } from "@/hooks/useJuliaPainel";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
-export default function LaisPainel() {
+export default function JuliaPainel() {
   const [mes, setMes] = useState(mesAtual());
-  const q = useLaisPainel(mes);
+  const q = useJuliaPainel(mes);
   const p = q.data;
   const vazio = !!p && p.funil.topo === 0;
 
@@ -22,7 +22,7 @@ export default function LaisPainel() {
     <div className="container max-w-6xl space-y-6 py-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{LAIS_LABEL} · {LAIS_PAGES.painel.name}</h1>
+          <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.painel.name}</h1>
           <p className="text-sm text-muted-foreground">Resumo do atendimento no mês.</p>
         </div>
         <div className="flex items-center gap-3">

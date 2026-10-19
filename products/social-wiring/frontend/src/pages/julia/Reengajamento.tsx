@@ -1,26 +1,26 @@
-/** Lais › Reengajamento (`/lais/reengajamento`, `?tab=reguas`) — contract §6 W4. */
+/** Julia › Reengajamento (`/julia/reengajamento`, `?tab=reguas`) — contract §6 W4. */
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { useIsFetching } from "@tanstack/react-query";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ReengajamentoPadraoTab } from "@/components/lais/reengajamento/ReengajamentoPadraoTab";
-import { ReguasTab } from "@/components/lais/reengajamento/ReguasTab";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { ReengajamentoPadraoTab } from "@/components/julia/reengajamento/ReengajamentoPadraoTab";
+import { ReguasTab } from "@/components/julia/reengajamento/ReguasTab";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
-export default function LaisReengajamento() {
+export default function JuliaReengajamento() {
   const isAdmin = useIsOrgAdmin();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") === "reguas" ? "reguas" : "padrao";
-  const refreshing = useIsFetching({ queryKey: ["sw", "lais", "reengajamento"] }) > 0;
+  const refreshing = useIsFetching({ queryKey: ["sw", "julia", "reengajamento"] }) > 0;
 
   return (
     <div className="container max-w-4xl space-y-6 py-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {LAIS_LABEL} · {LAIS_PAGES.reengajamento.name}
+            {JULIA_LABEL} · {JULIA_PAGES.reengajamento.name}
           </h1>
           <p className="text-sm text-muted-foreground">
             A Julia retoma a conversa com leads que pararam de responder.

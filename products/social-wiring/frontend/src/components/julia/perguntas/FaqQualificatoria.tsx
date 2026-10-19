@@ -1,4 +1,4 @@
-/** FAQ from the live Lais page: what "qualificatória" means. */
+/** FAQ from the live Julia page: what "qualificatória" means. */
 export function FaqQualificatoria() {
   return (
     <section className="rounded-lg border bg-muted/30 p-4 text-sm" data-testid="perguntas-faq">

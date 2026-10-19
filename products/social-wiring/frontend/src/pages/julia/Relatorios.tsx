@@ -1,20 +1,20 @@
 /**
- * Lais › Relatórios (`/lais/relatorios`, wave 10). Operação + month filters,
+ * Julia › Relatórios (`/julia/relatorios`, wave 10). Operação + month filters,
  * tabs Imóveis · Bairros. Loading = two signals off `data` (never `isLoading`).
  */
 import { useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { BairrosTab } from "@/components/lais/relatorios/BairrosTab";
-import { ImoveisTab } from "@/components/lais/relatorios/ImoveisTab";
+import { BairrosTab } from "@/components/julia/relatorios/BairrosTab";
+import { ImoveisTab } from "@/components/julia/relatorios/ImoveisTab";
 import {
   mesAtual, useRelatorioBairros, useRelatorioImoveis, type RelAba, type RelOperacao,
-} from "@/hooks/useLaisRelatorios";
+} from "@/hooks/useJuliaRelatorios";
 
 const SELECT = "h-9 rounded-md border bg-background px-2 text-sm";
 
-export default function LaisRelatorios() {
+export default function JuliaRelatorios() {
   const [operacao, setOperacao] = useState<RelOperacao>("aluguel");
   const [mes, setMes] = useState(mesAtual());
   const [aba, setAba] = useState<RelAba>("imoveis");

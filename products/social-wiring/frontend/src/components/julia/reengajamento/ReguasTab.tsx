@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SideDrawer } from "@noctusai/lib/components";
-import { mensagemErroReengajamento, useCriarRegua, useReguas } from "@/hooks/useLaisReengajamento";
-import { LAIS_PAGES } from "@/nav/lais";
+import { mensagemErroReengajamento, useCriarRegua, useReguas } from "@/hooks/useJuliaReengajamento";
+import { JULIA_PAGES } from "@/nav/julia";
 
 export function operacaoTexto(r: { aluguel: boolean; compra: boolean }): string {
   if (r.aluguel && r.compra) return "Aluguel e compra";
@@ -22,7 +22,7 @@ export function operacaoTexto(r: { aluguel: boolean; compra: boolean }): string 
 }
 
 export function reguaHref(id: string): string {
-  return `${LAIS_PAGES.reengajamento.href}/reguas/${id}`;
+  return `${JULIA_PAGES.reengajamento.href}/reguas/${id}`;
 }
 
 function NovaReguaDrawer({ onClose }: { onClose: () => void }) {

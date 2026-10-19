@@ -23,10 +23,10 @@ const METRICAS = {
   // handoffs_nao_assumidos deliberately absent → "sem dados"
 };
 const scorecards = (dia: string, lista: unknown[] = SC_PADRAO, ativa = true) => ({ dia, supervisao_ativa: ativa, scorecards: lista });
-const SC_PADRAO: unknown[] = [{ bloco: "sdr", agent_key: "lead-imob", rubrica_versao: "sdr.v1", calculado_at: "2026-10-19T06:00:12Z", metricas: METRICAS }];
+const SC_PADRAO: unknown[] = [{ bloco: "sdr", agent_key: "julia", rubrica_versao: "sdr.v1", calculado_at: "2026-10-19T06:00:12Z", metricas: METRICAS }];
 const handoff = (id: string, atrasado: boolean) => ({
   id, de_bloco: "sdr", para_bloco: "atendimento", gatilho: "novo_lead", status: "emitido", atrasado,
-  created_at: "2026-10-18T13:02:11Z", assumido_at: null, expirado_at: null, de_agent_key: "lead-imob", para_agent_key: null,
+  created_at: "2026-10-18T13:02:11Z", assumido_at: null, expirado_at: null, de_agent_key: "julia", para_agent_key: null,
   referencias: {}, card: { titulo: `Card ${id}`, link: `/funil?card=${id}` },
 });
 const BLOCOS = {
@@ -149,7 +149,7 @@ describe("Supervisão page", () => {
   it("renders Julia's sdr.v1 scorecard: values, ratio detail, definitions, and 'sem dados' for missing data", async () => {
     setup();
     const card = await screen.findByTestId("scorecard-sdr");
-    expect(card.textContent).toContain("SDR (Julia) · Julia (lead-imob)");
+    expect(card.textContent).toContain("SDR (Julia) · Julia (julia)");
     const m = (k: string) => within(card).getByTestId(`metrica-sdr-${k}`).textContent ?? "";
     expect(m("leads_entrada")).toContain("31");
     expect(m("qualificacao_taxa")).toContain("29%");

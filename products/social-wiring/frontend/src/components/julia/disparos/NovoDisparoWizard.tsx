@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SEGMENTOS, TIPO_LABEL, useCriarDisparo, type DisparoTipo } from "@/hooks/useLaisDisparos";
-import { useModelos } from "@/hooks/useLaisModelos";
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
+import { SEGMENTOS, TIPO_LABEL, useCriarDisparo, type DisparoTipo } from "@/hooks/useJuliaDisparos";
+import { useModelos } from "@/hooks/useJuliaModelos";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 const PASSOS = ["Tipo", "Segmento", "Modelo", "Agendamento"] as const;
 const SEL = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
@@ -39,7 +39,7 @@ export function NovoDisparoWizard({ open, onOpenChange }: { open: boolean; onOpe
           setQuando("");
           onOpenChange(false);
         },
-        onError: (e) => setErro(mensagemErroLais(e, "Não foi possível salvar o disparo.")),
+        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar o disparo.")),
       },
     );
   }

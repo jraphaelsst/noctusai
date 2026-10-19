@@ -1,4 +1,4 @@
-/** Lais › Leads — filters, paging keepPrevious, send (409/422), bulk, admin export. */
+/** Julia › Leads — filters, paging keepPrevious, send (409/422), bulk, admin export. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,7 +13,7 @@ vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>
 vi.mock("@noctusai/seed/infra", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("sonner", () => ({ toast }));
 
-import LaisLeads from "./Leads";
+import JuliaLeads from "./Leads";
 
 const L = (id: string, over: Record<string, unknown> = {}) => ({
   id, nome: `Lead ${id}`, atendido_pela_julia: true, telefone: "11999990000", operacao: "compra",
@@ -32,7 +32,7 @@ function setup(items: unknown[] = [L("a"), L("b")], total = items.length) {
   );
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><LaisLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>,
+    <MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><JuliaLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>,
   );
 }
 /** Clicks the ConfirmProvider's confirm button (the one outside the table / bulk bar). */
@@ -68,7 +68,7 @@ describe("Leads page", () => {
     cleanup();
     api.get.mockRejectedValue(err(500, "x"));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><LaisLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>);
+    render(<MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><JuliaLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>);
     expect(await screen.findByTestId("leads-erro")).toBeTruthy();
   });
 
@@ -96,7 +96,7 @@ describe("Leads page", () => {
     api.get.mockImplementation((url: string) =>
       url.includes("page=2") ? new Promise(() => {}) : Promise.resolve({ data: { items: [L("a")], total: 45 } }));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><LaisLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>);
+    render(<MemoryRouter><QueryClientProvider client={qc}><ConfirmProvider><JuliaLeads /></ConfirmProvider></QueryClientProvider></MemoryRouter>);
     await screen.findByTestId("lead-a");
     fireEvent.click(screen.getByText("Próxima"));
     expect(await screen.findByTestId("leads-refreshing")).toBeTruthy();
@@ -110,7 +110,7 @@ describe("Leads page", () => {
     api.post.mockResolvedValueOnce({ data: { status_envio: "enviado", lead_id: "sw1" } });
     fireEvent.click(screen.getByTestId("enviar-a"));
     await confirmar(/Enviar ao SW\?/, "Enviar ao SW");
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/leads/a/enviar", {}));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/leads/a/enviar", {}));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
 
     api.post.mockRejectedValueOnce(err(409, "ja_enviado"));
@@ -131,7 +131,7 @@ describe("Leads page", () => {
     api.post.mockResolvedValueOnce({ data: { ok: ["a"], erro: [{ id: "b", code: "contato_sem_telefone" }] } });
     fireEvent.click(within(screen.getByTestId("leads-bulk")).getByRole("button", { name: "Enviar selecionados" }));
     await confirmar(/Enviar 2 lead\(s\) ao SW\?/, "Enviar selecionados");
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/leads/enviar-lote", { ids: ["a", "b"] }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/leads/enviar-lote", { ids: ["a", "b"] }));
     const r = await screen.findByTestId("leads-lote-resultado");
     expect(r.textContent).toContain("1 enviado(s)");
     expect(r.textContent).toContain("não tem telefone");

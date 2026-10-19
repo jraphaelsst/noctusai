@@ -1,4 +1,4 @@
-/** Lais › Relatórios — tabs, operação/mês switching, bairro select, empty states. */
+/** Julia › Relatórios — tabs, operação/mês switching, bairro select, empty states. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 const api = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 
-import LaisRelatorios from "./Relatorios";
+import JuliaRelatorios from "./Relatorios";
 
 const IMOVEIS = {
   tipos: [{ tipo: "Apartamento", pct_leads: 60, pct_prateleira: 40 }],
@@ -27,7 +27,7 @@ function setup(resp: (url: string) => unknown) {
   api.get.mockImplementation((url: string) => Promise.resolve({ data: resp(url) }));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}><MemoryRouter><LaisRelatorios /></MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={qc}><MemoryRouter><JuliaRelatorios /></MemoryRouter></QueryClientProvider>,
   );
 }
 beforeEach(() => vi.clearAllMocks());
@@ -80,7 +80,7 @@ describe("Relatórios page", () => {
   it("shows an error with retry", async () => {
     api.get.mockRejectedValue(new Error("boom"));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={qc}><MemoryRouter><LaisRelatorios /></MemoryRouter></QueryClientProvider>);
+    render(<QueryClientProvider client={qc}><MemoryRouter><JuliaRelatorios /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByTestId("rel-erro")).toBeTruthy();
   });
 });

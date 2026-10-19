@@ -7,8 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CATEGORIAS, CONTEUDO_MAX, PARAMETROS, useCriarModelo, type Categoria } from "@/hooks/useLaisModelos";
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
+import { CATEGORIAS, CONTEUDO_MAX, PARAMETROS, useCriarModelo, type Categoria } from "@/hooks/useJuliaModelos";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 /** Insert `{{token}}` at the caret, respecting the cap (returns null if it would overflow). */
 export function inserirParametro(texto: string, token: string, pos: number): { texto: string; pos: number } | null {
@@ -44,7 +44,7 @@ export function NovoModeloModal({ open, onOpenChange }: { open: boolean; onOpenC
           setCategoria("Outros");
           onOpenChange(false);
         },
-        onError: (e) => setErro(mensagemErroLais(e, "Não foi possível criar o modelo.")),
+        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível criar o modelo.")),
       },
     );
   }

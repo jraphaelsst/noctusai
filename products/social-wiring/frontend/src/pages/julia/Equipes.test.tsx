@@ -1,4 +1,4 @@
-/** Lais › Equipes — wizard (3 steps), modes, keep-last, members, metrics, delete confirm, admin gate. */
+/** Julia › Equipes — wizard (3 steps), modes, keep-last, members, metrics, delete confirm, admin gate. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -15,7 +15,7 @@ vi.mock("@/hooks/useTeam", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisEquipes from "./Equipes";
+import JuliaEquipes from "./Equipes";
 
 const EQUIPE = {
   id: "e1", nome: "Comercial", atende_apos_julia: true, modo: "funil", manter_ultimo: false,
@@ -35,7 +35,7 @@ function setup(lista: unknown[] = [EQUIPE]) {
   api.delete.mockResolvedValue({});
   api.put.mockResolvedValue({});
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><ConfirmProvider><LaisEquipes /></ConfirmProvider></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><ConfirmProvider><JuliaEquipes /></ConfirmProvider></QueryClientProvider>);
 }
 
 beforeEach(() => { h.admin = true; vi.clearAllMocks(); });
@@ -69,9 +69,9 @@ describe("Equipes page", () => {
     fireEvent.click(screen.getByLabelText(/Via Julia/));
     fireEvent.click(screen.getByRole("switch", { name: /último responsável/ }));
     fireEvent.click(screen.getByText("Concluir"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/equipes",
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/equipes",
       { nome: "Vendas", atende_apos_julia: false, modo: "julia", manter_ultimo: true }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/equipes/e2/membros", { user_id: "u2" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/equipes/e2/membros", { user_id: "u2" }));
   });
 
   it("expanding a team shows the metrics table", async () => {
@@ -80,7 +80,7 @@ describe("Equipes page", () => {
     const linha = await screen.findByTestId("metrica-linha");
     expect(within(linha).getByText("2 min")).toBeTruthy();
     expect(within(linha).getByText("7")).toBeTruthy();
-    expect(api.get).toHaveBeenCalledWith(expect.stringMatching(/\/api\/lais\/equipes\/e1\/metricas\?mes=\d{4}-\d{2}/));
+    expect(api.get).toHaveBeenCalledWith(expect.stringMatching(/\/api\/julia\/equipes\/e1\/metricas\?mes=\d{4}-\d{2}/));
   });
 
   it("members drawer adds and removes", async () => {
@@ -88,9 +88,9 @@ describe("Equipes page", () => {
     fireEvent.click(await screen.findByLabelText("Editar Comercial"));
     fireEvent.click(screen.getByText("Usuários"));
     fireEvent.click(await screen.findByLabelText("Adicionar Beto"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/equipes/e1/membros", { user_id: "u2" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/equipes/e1/membros", { user_id: "u2" }));
     fireEvent.click(screen.getByLabelText("Remover Ana"));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/lais/equipes/e1/membros/u1"));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/julia/equipes/e1/membros/u1"));
   });
 
   it("delete asks for confirmation before calling DELETE", async () => {
@@ -100,7 +100,7 @@ describe("Equipes page", () => {
     expect(api.delete).not.toHaveBeenCalled();
     const dlg = await screen.findByRole("alertdialog");
     fireEvent.click(within(dlg).getByRole("button", { name: "Excluir equipe" }));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/lais/equipes/e1"));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/julia/equipes/e1"));
   });
 
   it("hides write controls for non-admins", async () => {

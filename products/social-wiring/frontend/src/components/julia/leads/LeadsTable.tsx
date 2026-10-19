@@ -2,7 +2,7 @@
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import type { GatilhoEnvio, LeadLais } from "@/hooks/useLaisLeads";
+import type { GatilhoEnvio, LeadJulia } from "@/hooks/useJuliaLeads";
 
 const OP: Record<string, string> = { compra: "Compra", aluguel: "Aluguel", administracao: "Administração" };
 const AUTOMATICOS: GatilhoEnvio[] = ["frio", "captacao", "invalido"];
@@ -12,7 +12,7 @@ export function origemEnvio(g: GatilhoEnvio | null | undefined): string {
   if (g === "manual") return "Enviado manualmente";
   return AUTOMATICOS.includes(g) ? "Enviado automaticamente" : "Enviado pela Julia";
 }
-export function StatusLead({ lead }: { lead: LeadLais }) {
+export function StatusLead({ lead }: { lead: LeadJulia }) {
   if (lead.status_envio === "enviado")
     return (
       <div>
@@ -34,12 +34,12 @@ export function StatusLead({ lead }: { lead: LeadLais }) {
 export function LeadsTable({
   items, selecionados, onToggle, onToggleTodos, onResumo, onEnviar, enviandoId,
 }: {
-  items: LeadLais[];
+  items: LeadJulia[];
   selecionados: Set<string>;
   onToggle: (id: string) => void;
   onToggleTodos: (marcar: boolean) => void;
-  onResumo: (l: LeadLais) => void;
-  onEnviar: (l: LeadLais) => void;
+  onResumo: (l: LeadJulia) => void;
+  onEnviar: (l: LeadJulia) => void;
   enviandoId: string | null;
 }) {
   const todos = items.length > 0 && items.every((l) => selecionados.has(l.id));
@@ -66,7 +66,7 @@ export function LeadsTable({
               <div className="text-xs text-muted-foreground">{l.primeiro_contato_em ? new Date(l.primeiro_contato_em).toLocaleString("pt-BR") : ""}</div></td>
             <td className="p-2"><StatusLead lead={l} /></td>
             <td className="space-x-1 whitespace-nowrap p-2 text-right">
-              <Button asChild variant="ghost" size="sm"><Link to={`/lais/conversas?contato=${l.id}`}>Abrir conversa</Link></Button>
+              <Button asChild variant="ghost" size="sm"><Link to={`/julia/conversas?contato=${l.id}`}>Abrir conversa</Link></Button>
               <Button variant="ghost" size="sm" onClick={() => onResumo(l)}>Ver resumo</Button>
               <Button variant="outline" size="sm" data-testid={`enviar-${l.id}`}
                 disabled={l.status_envio === "enviado" || enviandoId === l.id} onClick={() => onEnviar(l)}>

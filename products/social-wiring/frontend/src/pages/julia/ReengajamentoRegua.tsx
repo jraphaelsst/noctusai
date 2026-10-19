@@ -1,15 +1,15 @@
-/** Lais › Reengajamento › régua (`/lais/reengajamento/reguas/:id`). */
+/** Julia › Reengajamento › régua (`/julia/reengajamento/reguas/:id`). */
 import { Link, useParams } from "react-router-dom";
 import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { ReguaRegrasCard } from "@/components/lais/reengajamento/ReguaRegrasCard";
-import { TentativasCard } from "@/components/lais/reengajamento/TentativasCard";
-import { useRegua } from "@/hooks/useLaisReengajamento";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { ReguaRegrasCard } from "@/components/julia/reengajamento/ReguaRegrasCard";
+import { TentativasCard } from "@/components/julia/reengajamento/TentativasCard";
+import { useRegua } from "@/hooks/useJuliaReengajamento";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
-export default function LaisReengajamentoRegua() {
+export default function JuliaReengajamentoRegua() {
   const { id } = useParams<{ id: string }>();
   const isAdmin = useIsOrgAdmin();
   const q = useRegua(id);
@@ -20,14 +20,14 @@ export default function LaisReengajamentoRegua() {
     <div className="container max-w-4xl space-y-6 py-6">
       <header className="space-y-2">
         <Link
-          to={`${LAIS_PAGES.reengajamento.href}?tab=reguas`}
+          to={`${JULIA_PAGES.reengajamento.href}?tab=reguas`}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline"
         >
           <ArrowLeft className="h-4 w-4" /> Réguas de reengajamento
         </Link>
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">
-            {LAIS_LABEL} · {q.data?.nome ?? "Régua de reengajamento"}
+            {JULIA_LABEL} · {q.data?.nome ?? "Régua de reengajamento"}
           </h1>
           {isRefreshing && (
             <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="regua-refreshing">

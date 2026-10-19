@@ -10,13 +10,13 @@ import {
   useDisparo,
   useEnviarDisparo,
   type Disparo,
-} from "@/hooks/useLaisDisparos";
+} from "@/hooks/useJuliaDisparos";
 import {
   TRANSPORTE_EXPLICACAO,
   envioLiberado,
   mensagemErroTransporte,
   type Transporte,
-} from "@/hooks/useLaisTransporte";
+} from "@/hooks/useJuliaTransporte";
 
 export function DisparoDetalheDrawer({
   disparo,

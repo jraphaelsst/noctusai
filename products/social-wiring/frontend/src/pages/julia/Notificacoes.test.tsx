@@ -1,4 +1,4 @@
-/** Lais › Notificações — day grouping, filters, prefs toggle, mark read. */
+/** Julia › Notificações — day grouping, filters, prefs toggle, mark read. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,8 +8,8 @@ const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisNotificacoes from "./Notificacoes";
-import { agruparPorDia } from "@/components/lais/notificacoes/agrupar";
+import JuliaNotificacoes from "./Notificacoes";
+import { agruparPorDia } from "@/components/julia/notificacoes/agrupar";
 
 const agora = new Date();
 const ontem = new Date(agora.getTime() - 86400_000);
@@ -17,7 +17,7 @@ const N = (id: string, tipo: string, d: Date, is_read = false) =>
   ({ id, tipo, titulo: `texto ${id}`, is_read, created_at: d.toISOString() });
 const ITENS = [N("a", "novo_lead", agora), N("b", "captacao", ontem, true)];
 
-function setup(url = "/lais/notificacoes", items = ITENS, prefs: unknown = { tipos: [], lead_pronto: true }) {
+function setup(url = "/julia/notificacoes", items = ITENS, prefs: unknown = { tipos: [], lead_pronto: true }) {
   api.get.mockImplementation((u: string) =>
     u.includes("/preferencias") ? Promise.resolve({ data: prefs })
       : Promise.resolve({ data: { items, total: items.length, nao_lidas: items.filter((i) => !i.is_read).length } }));
@@ -25,7 +25,7 @@ function setup(url = "/lais/notificacoes", items = ITENS, prefs: unknown = { tip
   api.put.mockImplementation((_u: string, b: unknown) => Promise.resolve({ data: b }));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}><MemoryRouter initialEntries={[url]}><LaisNotificacoes /></MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={qc}><MemoryRouter initialEntries={[url]}><JuliaNotificacoes /></MemoryRouter></QueryClientProvider>,
   );
 }
 beforeEach(() => vi.clearAllMocks());
@@ -48,14 +48,14 @@ describe("Notificações page", () => {
   });
 
   it("empty state", async () => {
-    setup("/lais/notificacoes", []);
+    setup("/julia/notificacoes", []);
     expect(await screen.findByTestId("notif-vazio")).toBeTruthy();
   });
 
   it("applies tipo from the URL and via the filter drawer", async () => {
-    setup("/lais/notificacoes?tipo=captacao");
+    setup("/julia/notificacoes?tipo=captacao");
     await screen.findByText("Exibindo 2 notificações");
-    expect(api.get.mock.calls.some(([u]) => String(u).includes("/api/lais/notificacoes?") && String(u).includes("tipo=captacao"))).toBe(true);
+    expect(api.get.mock.calls.some(([u]) => String(u).includes("/api/julia/notificacoes?") && String(u).includes("tipo=captacao"))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Filtrar/ }));
     fireEvent.click(await screen.findByLabelText("Compra"));
     fireEvent.click(screen.getByLabelText("Novo lead gerado"));
@@ -67,15 +67,15 @@ describe("Notificações page", () => {
     setup();
     await screen.findByText("Exibindo 2 notificações");
     fireEvent.click(screen.getByRole("switch", { name: "Notificar lead pronto para atendimento" }));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/notificacoes/preferencias", { tipos: { lead_pronto: false } }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/notificacoes/preferencias", { tipos: { lead_pronto: false } }));
   });
 
   it("marks one read on expand and all read", async () => {
     setup();
     await screen.findByText("Exibindo 2 notificações");
     fireEvent.click(screen.getAllByRole("button", { name: "Expandir" })[0]);
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/notificacoes/lidas", { ids: ["a"] }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/notificacoes/lidas", { ids: ["a"] }));
     fireEvent.click(screen.getByRole("button", { name: /Marcar todas/ }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/notificacoes/lidas", { todas: true }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/notificacoes/lidas", { todas: true }));
   });
 });

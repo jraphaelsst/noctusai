@@ -1,5 +1,5 @@
 /**
- * Lais › Agente — states, the four cards, every refusal code's pt-BR message,
+ * Julia › Agente — states, the four cards, every refusal code's pt-BR message,
  * the disabled-switch reason, handoff options (owner/admin only) and the
  * write-only token. `@/lib/api` is the seam (real hooks + real components);
  * `useIsOrgAdmin` / the team list are the only other fakes.
@@ -15,7 +15,7 @@ vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }))
 vi.mock("@/hooks/useTeam", () => ({ useTeamMembers: () => h.team }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisAgente from "./Agente";
+import JuliaAgente from "./Agente";
 
 const CONEXAO = {
   connection_id: "c1",
@@ -46,12 +46,12 @@ function serverError(code: string, status = 409) {
 
 function setup(agente: unknown = AGENTE, aviso: unknown = AVISO) {
   api.get.mockImplementation((url: string) => {
-    if (url === "/api/lais/agente") return agente instanceof Error ? Promise.reject(agente) : Promise.resolve({ data: agente });
-    if (url === "/api/lais/agente/aviso") return Promise.resolve({ data: aviso });
+    if (url === "/api/julia/agente") return agente instanceof Error ? Promise.reject(agente) : Promise.resolve({ data: agente });
+    if (url === "/api/julia/agente/aviso") return Promise.resolve({ data: aviso });
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><LaisAgente /></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><JuliaAgente /></QueryClientProvider>);
 }
 
 beforeEach(() => {
@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("Lais › Agente — states", () => {
+describe("Julia › Agente — states", () => {
   it("shows a skeleton first, then the cards", async () => {
     setup();
     expect(screen.getByTestId("agente-skeleton")).toBeTruthy();
@@ -92,7 +92,7 @@ describe("Card (a) — Agents link", () => {
     expect(st).toContain("anthropic / claude-x");
     expect(st).toContain("Configurada");
     expect((screen.getByTestId("editar-julia-link") as HTMLAnchorElement).href).toBe(
-      "https://agents.example.test/studio/lead-imob",
+      "https://agents.example.test/studio/julia",
     );
   });
 
@@ -110,7 +110,7 @@ describe("Card (a) — Agents link", () => {
     expect(input.type).toBe("password");
     fireEvent.change(input, { target: { value: "pk_super_secreto_123" } });
     fireEvent.click(screen.getByTestId("salvar-token"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/agente/token", { token: "pk_super_secreto_123" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/agente/token", { token: "pk_super_secreto_123" }));
     await waitFor(() => expect(input.value).toBe(""));
     expect(document.body.textContent).not.toContain("pk_super_secreto_123");
   });
@@ -141,7 +141,7 @@ describe("Cards (b)/(c) — switch and handoff target", () => {
     const sw = await screen.findByRole("switch");
     fireEvent.click(sw);
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith("/api/lais/agente/conexoes/c1", { agente_leads_ativo: true }),
+      expect(api.put).toHaveBeenCalledWith("/api/julia/agente/conexoes/c1", { agente_leads_ativo: true }),
     );
   });
 
@@ -196,7 +196,7 @@ describe("Cards (b)/(c) — switch and handoff target", () => {
     expect(select.value).toBe("u2");
     fireEvent.change(select, { target: { value: "" } });
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith("/api/lais/agente/conexoes/c1", {
+      expect(api.put).toHaveBeenCalledWith("/api/julia/agente/conexoes/c1", {
         agente_leads_ativo: false,
         agente_handoff_notificar_user_id: null,
       }),
@@ -233,7 +233,7 @@ describe("Card (d) — privacy notice", () => {
     fireEvent.click(screen.getByTestId("salvar-aviso"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     const [url, body] = api.put.mock.calls[0];
-    expect(url).toBe("/api/lais/agente/aviso");
+    expect(url).toBe("/api/julia/agente/aviso");
     expect(body).toMatchObject({
       titulo: "Novo título",
       empresa_nome: "Empresa X",

@@ -1,5 +1,5 @@
 /**
- * Lais › Avaliações no Google (`/lais/avaliacoes`, wave 13). Monthly KPIs, star
+ * Julia › Avaliações no Google (`/julia/avaliacoes`, wave 13). Monthly KPIs, star
  * distribution, latest reviews; not-configured states; admin config drawer.
  * Loading = two signals off `data` (never `isLoading`).
  */
@@ -8,9 +8,9 @@ import { AlertCircle, ExternalLink, Loader2, Settings2, Star } from "lucide-reac
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { AvaliacoesConfigDrawer } from "@/components/lais/avaliacoes/ConfigDrawer";
-import { Distribuicao } from "@/components/lais/avaliacoes/Distribuicao";
-import { mesAtual, useLaisAvaliacoes } from "@/hooks/useLaisAvaliacoes";
+import { AvaliacoesConfigDrawer } from "@/components/julia/avaliacoes/ConfigDrawer";
+import { Distribuicao } from "@/components/julia/avaliacoes/Distribuicao";
+import { mesAtual, useJuliaAvaliacoes } from "@/hooks/useJuliaAvaliacoes";
 
 const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 
@@ -24,11 +24,11 @@ function fmt(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
-export default function LaisAvaliacoes() {
+export default function JuliaAvaliacoes() {
   const isAdmin = useIsOrgAdmin();
   const [mes, setMes] = useState(mesAtual());
   const [drawer, setDrawer] = useState(false);
-  const q = useLaisAvaliacoes(mes);
+  const q = useJuliaAvaliacoes(mes);
 
   const showSkeleton = q.isPending && !q.data;
   const isRefreshing = q.isFetching && !!q.data;

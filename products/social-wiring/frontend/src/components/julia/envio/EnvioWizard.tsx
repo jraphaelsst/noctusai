@@ -20,7 +20,7 @@ import {
   separaOperacao,
   useSalvarEnvioRegras,
   type RegrasEnvio,
-} from "@/hooks/useLaisEnvio";
+} from "@/hooks/useJuliaEnvio";
 import {
   OPERADORES,
   campoDe,

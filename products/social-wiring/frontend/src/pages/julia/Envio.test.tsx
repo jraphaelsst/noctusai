@@ -1,4 +1,4 @@
-/** Lais › Envio — wizard (OR/AND, locked base criterion, steps, exit), policy cards. */
+/** Julia › Envio — wizard (OR/AND, locked base criterion, steps, exit), policy cards. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ vi.mock("@/lib/api", () => ({ api }));
 vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => h.admin }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
-import LaisEnvio from "./Envio";
+import JuliaEnvio from "./Envio";
 
 const BASE = { campo: "comportamento", operador: "=", valor: "qualificado" };
 const REGRAS = { regras: [{ operacao: "ambas", grupos: [[BASE]] }] };
@@ -21,7 +21,7 @@ function setup(regras: unknown = REGRAS) {
     Promise.resolve({ data: url.endsWith("/regras") ? regras : POL }));
   api.put.mockResolvedValue({});
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><ConfirmProvider><LaisEnvio /></ConfirmProvider></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><ConfirmProvider><JuliaEnvio /></ConfirmProvider></QueryClientProvider>);
 }
 async function abrir() {
   fireEvent.click(await screen.findByTestId("envio-editar"));
@@ -77,7 +77,7 @@ describe("Envio wizard", () => {
 
     fireEvent.click(within(w).getByTestId("wizard-salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
-    expect(api.put).toHaveBeenCalledWith("/api/lais/envio/regras", {
+    expect(api.put).toHaveBeenCalledWith("/api/julia/envio/regras", {
       regras: [{ operacao: "ambas", grupos: [
         [BASE, { campo: "orcamento", operador: "entre", valor: [100000, 300000] }],
         [{ campo: "visita_solicitada", operador: "=", valor: true }],
@@ -127,10 +127,10 @@ describe("Envio policies", () => {
     setup();
     const card = await screen.findByTestId("card-captacoes");
     fireEvent.click(within(card).getByLabelText("Enviar ao SW"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/envio/politicas", { ...POL, captacoes: "enviar" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/envio/politicas", { ...POL, captacoes: "enviar" }));
 
     fireEvent.click(within(screen.getByTestId("card-invalido")).getByLabelText("Enviar ao SW"));
-    await waitFor(() => expect(api.put).toHaveBeenLastCalledWith("/api/lais/envio/politicas", { ...POL, whatsapp_invalido: true }));
+    await waitFor(() => expect(api.put).toHaveBeenLastCalledWith("/api/julia/envio/politicas", { ...POL, whatsapp_invalido: true }));
   });
 
   it("frios: enabling unlocks the interval (30 min … 10 h) and 'manhã seguinte'", async () => {
@@ -141,7 +141,7 @@ describe("Envio policies", () => {
     expect([...sel.options].map((o) => o.text)[0]).toBe("30 min");
     expect([...sel.options].map((o) => o.text).at(-1)).toBe("10 horas");
     fireEvent.click(within(card).getByRole("switch"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/envio/politicas", { ...POL, frios: { ...POL.frios, ativo: true } }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/envio/politicas", { ...POL, frios: { ...POL.frios, ativo: true } }));
   });
 
   it("pesquisa notes the official API requirement", async () => {

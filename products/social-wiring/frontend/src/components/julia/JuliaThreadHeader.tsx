@@ -28,9 +28,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useApagarDadosChat, useSetChatAgentePausado } from "@/hooks/useWhatsAppChats";
-import { PainelLead } from "@/components/lais/PainelLead";
-import { useLaisAgente, mensagemErroLais } from "@/hooks/useLaisAgente";
-import { ConversaAcoes, contatoMeta } from "@/components/lais/conversas/ConversaAcoes";
+import { PainelLead } from "@/components/julia/PainelLead";
+import { useJuliaAgente, mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { ConversaAcoes, contatoMeta } from "@/components/julia/conversas/ConversaAcoes";
 
 export function JuliaThreadHeader({
   scopeId,
@@ -40,13 +40,13 @@ export function JuliaThreadHeader({
   thread: ChatThread;
 }) {
   const isAdmin = useIsOrgAdmin();
-  const { data: agente } = useLaisAgente();
+  const { data: agente } = useJuliaAgente();
   const pausar = useSetChatAgentePausado(scopeId);
   const apagar = useApagarDadosChat(scopeId);
   const [confirmando, setConfirmando] = useState(false);
 
   const pausado = thread.meta?.agente_pausado === true;
-  // Present only when the thread comes from the Lais Conversas v2 feed.
+  // Present only when the thread comes from the Julia Conversas v2 feed.
   const contato = contatoMeta(thread.meta);
   // The chip only means something on a connection where Julia is switched on.
   const juliaLigada =
@@ -58,7 +58,7 @@ export function JuliaThreadHeader({
       {
         onSuccess: () =>
           toast.success(pausado ? "Julia voltou a atender esta conversa" : "Atendimento humano ativado"),
-        onError: (e) => toast.error(mensagemErroLais(e, "Não foi possível alterar o atendimento.")),
+        onError: (e) => toast.error(mensagemErroJulia(e, "Não foi possível alterar o atendimento.")),
       },
     );
   }
@@ -75,7 +75,7 @@ export function JuliaThreadHeader({
               : "Dados apagados aqui; a exclusão no Agents falhou — tente novamente.",
           );
         },
-        onError: (e) => toast.error(mensagemErroLais(e, "Não foi possível apagar os dados.")),
+        onError: (e) => toast.error(mensagemErroJulia(e, "Não foi possível apagar os dados.")),
       },
     );
   }

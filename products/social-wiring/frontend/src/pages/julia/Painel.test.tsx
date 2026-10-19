@@ -14,7 +14,7 @@ vi.mock("recharts", async () => {
   };
 });
 
-import LaisPainel from "./Painel";
+import JuliaPainel from "./Painel";
 
 const BASE = {
   atividades: { consumo: { turnos: 120, custo_usd: 1.5, limite_diario_usd: 5 }, cobrancas: 4, pre_agendamentos: 7 },
@@ -31,7 +31,7 @@ const BASE = {
 function setup(data: unknown = BASE) {
   api.get.mockResolvedValue({ data });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<MemoryRouter><QueryClientProvider client={qc}><LaisPainel /></QueryClientProvider></MemoryRouter>);
+  return render(<MemoryRouter><QueryClientProvider client={qc}><JuliaPainel /></QueryClientProvider></MemoryRouter>);
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -41,8 +41,8 @@ describe("Painel", () => {
   it("renders atividades with links and funnel percentages", async () => {
     setup();
     expect(await screen.findByText("120 turnos")).toBeTruthy();
-    expect(screen.getByTestId("atividade-cobrancas").getAttribute("href")).toBe("/lais/notificacoes?tipo=cobranca_atendimento");
-    expect(screen.getByTestId("atividade-pre-agendamentos").getAttribute("href")).toBe("/lais/visitas");
+    expect(screen.getByTestId("atividade-cobrancas").getAttribute("href")).toBe("/julia/notificacoes?tipo=cobranca_atendimento");
+    expect(screen.getByTestId("atividade-pre-agendamentos").getAttribute("href")).toBe("/julia/visitas");
     expect(screen.getByTestId("funil-topo-pct").textContent).toBe("100%");
     expect(screen.getByTestId("funil-atendidos-pct").textContent).toBe("75%");
     expect(screen.getByTestId("funil-enviados-pct").textContent).toBe("25%");
@@ -66,7 +66,7 @@ describe("Painel", () => {
     setup();
     await screen.findByText("120 turnos");
     fireEvent.change(screen.getByLabelText("Mês"), { target: { value: "2026-09" } });
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/lais/painel?mes=2026-09"));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/julia/painel?mes=2026-09"));
     expect(screen.queryByTestId("painel-skeleton")).toBeNull();
   });
 });

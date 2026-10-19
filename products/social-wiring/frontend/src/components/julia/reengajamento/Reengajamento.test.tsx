@@ -53,7 +53,7 @@ describe("Reengajamento padrão", () => {
     expect(screen.getByText("Funciona em qualquer horário")).toBeTruthy();
     fireEvent.change(sel, { target: { value: "20" } });
     fireEvent.click(screen.getByText("Salvar"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/lais/reengajamento/config", { ...CFG, minutos_intervalo: 20 }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/reengajamento/config", { ...CFG, minutos_intervalo: 20 }));
   });
 
   it("hours drawer offers 1..11 horas", async () => {
@@ -108,7 +108,7 @@ describe("TentativasCard", () => {
     api.delete.mockRejectedValue(erro409("ultima_tentativa_ativa"));
     wrap(<TentativasCard regua={REGUA(1)} isAdmin />);
     fireEvent.click(screen.getByLabelText("Excluir tentativa 1"));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/lais/reengajamento/reguas/r1/tentativas/t1"));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/julia/reengajamento/reguas/r1/tentativas/t1"));
     expect((await screen.findByRole("alert")).textContent).toContain("ao menos uma tentativa ativa");
   });
 
@@ -136,7 +136,7 @@ describe("ReguaRegrasCard", () => {
     fireEvent.click(await screen.findByLabelText("Ativar régua de reengajamento"));
     fireEvent.click(screen.getByText("Salvar"));
     expect((await screen.findByRole("alert")).textContent).toContain("tentativa de contato ativa");
-    expect(api.post).toHaveBeenCalledWith("/api/lais/reengajamento/reguas/r1/ativar", {});
+    expect(api.post).toHaveBeenCalledWith("/api/julia/reengajamento/reguas/r1/ativar", {});
   });
 
   it("Excluir régua asks for confirmation then DELETEs", async () => {
@@ -144,6 +144,6 @@ describe("ReguaRegrasCard", () => {
     wrap(<ReguaRegrasCard regua={REGUA(0)} isAdmin />);
     fireEvent.click(screen.getByText("Editar"));
     fireEvent.click(await screen.findByText("Excluir régua"));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/lais/reengajamento/reguas/r1"));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/julia/reengajamento/reguas/r1"));
   });
 });

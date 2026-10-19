@@ -3,7 +3,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { usePreviewConhecimento } from "@/hooks/useLaisConhecimento";
+import { usePreviewConhecimento } from "@/hooks/useJuliaConhecimento";
 
 export function PreviewModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const q = usePreviewConhecimento(open);

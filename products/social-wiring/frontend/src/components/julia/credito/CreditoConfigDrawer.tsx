@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useCreditoConfig, useSalvarCreditoConfig, type CreditoConfig } from "@/hooks/useLaisCredito";
+import { useCreditoConfig, useSalvarCreditoConfig, type CreditoConfig } from "@/hooks/useJuliaCredito";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
 export function CreditoConfigDrawer({ onClose }: { onClose: () => void }) {

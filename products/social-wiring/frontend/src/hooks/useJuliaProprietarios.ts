@@ -1,8 +1,8 @@
-/** Lais › Atualização de imóveis — owner conversations (contract §14 W12). */
+/** Julia › Atualização de imóveis — owner conversations (contract §14 W12). */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import type { Transporte } from "@/hooks/useLaisTransporte";
+import type { Transporte } from "@/hooks/useJuliaTransporte";
 
 export type ProprietarioStatus = "pendente" | "enviado" | "respondido" | "atualizado" | "erro" | "parar";
 
@@ -20,7 +20,7 @@ export interface Proprietario {
   nome: string;
   imovel_codigo: string | null;
   status: ProprietarioStatus;
-  /** Owner-confirmed values (Lais-owned storage; the Vista mirror is never written). All null until confirmed. */
+  /** Owner-confirmed values (Julia-owned storage; the Vista mirror is never written). All null until confirmed. */
   status_confirmado?: string | null;
   preco_confirmado?: number | string | null;
   preco_tipo_confirmado?: "venda" | "locacao" | null;
@@ -45,8 +45,8 @@ export interface ProprietariosList {
   transporte?: Transporte;
 }
 
-export const PROPRIETARIOS_KEY = ["sw", "lais", "proprietarios"] as const;
-const BASE = "/api/lais/proprietarios";
+export const PROPRIETARIOS_KEY = ["sw", "julia", "proprietarios"] as const;
+const BASE = "/api/julia/proprietarios";
 
 export function useProprietarios(status: string, q: string) {
   return useQuery<ProprietariosList>({

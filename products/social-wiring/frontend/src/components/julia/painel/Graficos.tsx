@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import type { Painel } from "@/hooks/useLaisPainel";
+import type { Painel } from "@/hooks/useJuliaPainel";
 
 const DIAS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 

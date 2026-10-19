@@ -1,8 +1,8 @@
 /**
- * Lais › Envio (contract wave 3).
+ * Julia › Envio (contract wave 3).
  *
- *   GET/PUT /api/lais/envio/regras      → {data:{regras:[{operacao, grupos}]}}
- *   GET/PUT /api/lais/envio/politicas   → {data: Politicas}
+ *   GET/PUT /api/julia/envio/regras      → {data:{regras:[{operacao, grupos}]}}
+ *   GET/PUT /api/julia/envio/politicas   → {data: Politicas}
  *
  * `grupos` = OR'd groups of AND'd criteria (`[[{campo, operador, valor}]]`).
  * Loading = two signals off `data` (never `isLoading`).
@@ -53,7 +53,7 @@ export const FRIOS_MINUTOS = [30, 60, 120, 180, 240, 300, 360, 420, 480, 540, 60
 export const rotuloMinutos = (m: number): string =>
   m < 60 ? `${m} min` : m % 60 === 0 ? `${m / 60} ${m === 60 ? "hora" : "horas"}` : `${m} min`;
 
-export const ENVIO_KEY = ["sw", "lais", "envio"] as const;
+export const ENVIO_KEY = ["sw", "julia", "envio"] as const;
 
 const MENSAGENS: Record<string, string> = {
   criterio_invalido: "Há um critério incompleto ou inválido. Revise os campos.",
@@ -68,13 +68,13 @@ export function mensagemErroEnvio(err: unknown, fallback: string): string {
 export function useEnvioRegras() {
   return useQuery({
     queryKey: [...ENVIO_KEY, "regras"] as const,
-    queryFn: async () => (await api.get<{ data: RegrasEnvio }>("/api/lais/envio/regras")).data,
+    queryFn: async () => (await api.get<{ data: RegrasEnvio }>("/api/julia/envio/regras")).data,
   });
 }
 export function useSalvarEnvioRegras() {
   const qc = useQueryClient();
   return useMutation<unknown, unknown, RegrasEnvio>({
-    mutationFn: (body) => api.put("/api/lais/envio/regras", body),
+    mutationFn: (body) => api.put("/api/julia/envio/regras", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ENVIO_KEY }),
   });
 }
@@ -82,13 +82,13 @@ export function useSalvarEnvioRegras() {
 export function useEnvioPoliticas() {
   return useQuery({
     queryKey: [...ENVIO_KEY, "politicas"] as const,
-    queryFn: async () => (await api.get<{ data: Politicas }>("/api/lais/envio/politicas")).data,
+    queryFn: async () => (await api.get<{ data: Politicas }>("/api/julia/envio/politicas")).data,
   });
 }
 export function useSalvarEnvioPoliticas() {
   const qc = useQueryClient();
   return useMutation<unknown, unknown, Politicas>({
-    mutationFn: (body) => api.put("/api/lais/envio/politicas", body),
+    mutationFn: (body) => api.put("/api/julia/envio/politicas", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ENVIO_KEY }),
   });
 }

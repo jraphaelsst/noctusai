@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
-import type { Painel } from "@/hooks/useLaisPainel";
-import { LAIS_PAGES } from "@/nav/lais";
+import type { Painel } from "@/hooks/useJuliaPainel";
+import { JULIA_PAGES } from "@/nav/julia";
 
 const CARD = "rounded-lg border bg-card p-4";
 
@@ -21,11 +21,11 @@ export function Atividades({ a }: { a: Painel["atividades"] }) {
             <p className="text-sm text-muted-foreground">Consumo indisponível</p>
           )}
         </div>
-        <Link to={`${LAIS_PAGES.notificacoes.href}?tipo=cobranca_atendimento`} className={`${CARD} hover:bg-accent`} data-testid="atividade-cobrancas">
+        <Link to={`${JULIA_PAGES.notificacoes.href}?tipo=cobranca_atendimento`} className={`${CARD} hover:bg-accent`} data-testid="atividade-cobrancas">
           <p className="text-sm text-muted-foreground">Cobranças de atendimento</p>
           <p className="text-2xl font-bold">{a.cobrancas}</p>
         </Link>
-        <Link to={LAIS_PAGES.visitas.href} className={`${CARD} hover:bg-accent`} data-testid="atividade-pre-agendamentos">
+        <Link to={JULIA_PAGES.visitas.href} className={`${CARD} hover:bg-accent`} data-testid="atividade-pre-agendamentos">
           <p className="text-sm text-muted-foreground">Pré-agendamento de visitas</p>
           <p className="text-2xl font-bold">{a.pre_agendamentos}</p>
         </Link>
@@ -35,9 +35,9 @@ export function Atividades({ a }: { a: Painel["atividades"] }) {
 }
 
 const PERSONALIZACOES = [
-  { nome: "Pré-agendamento de visita", href: LAIS_PAGES.visitas.href },
-  { nome: "Perguntas essenciais", href: LAIS_PAGES.perguntas.href },
-  { nome: "Reengajamento", href: LAIS_PAGES.reengajamento.href },
+  { nome: "Pré-agendamento de visita", href: JULIA_PAGES.visitas.href },
+  { nome: "Perguntas essenciais", href: JULIA_PAGES.perguntas.href },
+  { nome: "Reengajamento", href: JULIA_PAGES.reengajamento.href },
 ];
 
 export function Personalizacoes() {

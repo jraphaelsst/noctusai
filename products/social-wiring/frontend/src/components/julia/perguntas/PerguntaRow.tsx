@@ -3,7 +3,7 @@ import { Lock } from "lucide-react";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import type { LaisPergunta } from "@/hooks/useLaisPerguntas";
+import type { JuliaPergunta } from "@/hooks/useJuliaPerguntas";
 
 export const MSG_LIMITE = "Você atingiu o limite de perguntas adicionadas";
 export const MSG_LIMITE_QUALIF = "Você atingiu o limite de perguntas qualificatórias";
@@ -11,7 +11,7 @@ export const MSG_BLOQUEADA = "Esta pergunta é essencial para a identificação 
 export const MSG_CRITERIO = "Para desativar, primeiro desative os critérios de envio que usam esta pergunta";
 
 export interface PerguntaRowProps {
-  pergunta: LaisPergunta;
+  pergunta: JuliaPergunta;
   ativa: boolean;
   qualificatoria: boolean;
   limiteAtivas: boolean;

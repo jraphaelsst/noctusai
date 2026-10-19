@@ -98,8 +98,8 @@ each block is fixed by the table in §1 — the API never accepts it from the cl
 | `de_bloco`, `para_bloco` | blocks of the closed list, different (`blocos_distintos`) |
 | `de_agent_key`, `para_agent_key` | snapshot of who ran each block at emission (null = humans) |
 | `gatilho` | `novo_lead` \| `movimento_etapa` — says which table `origem_evento` points into |
-| `origem_evento` | `lais_eventos.id` (novo_lead) or `pipeline_movimentos.id` (movimento_etapa) |
-| `contato_id` → lais_contatos, `lead_id` → leads, `atendimento_id` → atendimentos, `atribuicao_id` → lais_atribuicoes, `entrega_id` → lais_envio_entregas | all nullable, `ON DELETE SET NULL` (an LGPD erasure of the contato never blocks on a handoff) |
+| `origem_evento` | `julia_eventos.id` (novo_lead) or `pipeline_movimentos.id` (movimento_etapa) |
+| `contato_id` → julia_contatos, `lead_id` → leads, `atendimento_id` → atendimentos, `atribuicao_id` → julia_atribuicoes, `entrega_id` → julia_envio_entregas | all nullable, `ON DELETE SET NULL` (an LGPD erasure of the contato never blocks on a handoff) |
 | `status` | `emitido` → `assumido` \| `expirado` (both terminal) |
 | `created_at`, `assumido_at`, `expirado_at` | the evidence behind the status (`status_coerente`) |
 
@@ -112,15 +112,15 @@ Master switch: a handoff row is written **only when `supervisao_config.supervisa
 true** for the org (absent row = false). With supervision off nothing is written, nothing is
 read, nothing changes. Recording never sends anything to anyone.
 
-**T1 — `novo_lead` sink** (S2). Registered with `lais_eventos_service.registrar_sink`. Fires on
-the `novo_lead` event `lais_envio_service.enviar` emits after a successful send
-(`{lead_id, gatilho, criado}`, `services/lais_envio_service.py` ~line 399). Writes:
+**T1 — `novo_lead` sink** (S2). Registered with `julia_eventos_service.registrar_sink`. Fires on
+the `novo_lead` event `julia_envio_service.enviar` emits after a successful send
+(`{lead_id, gatilho, criado}`, `services/julia_envio_service.py` ~line 399). Writes:
 `de_bloco='sdr'`, `para_bloco=bloco_atual(lead)` (usually `atendimento`: the spawn trigger
 placed the card in `qualificacao`; for an existing lead `criado=false` it is wherever that card
 already is), `contato_id=event.contato_id`, `lead_id=payload.lead_id`, `atendimento_id` = the
-lead's card, `atribuicao_id` = the latest `lais_atribuicoes` row of the contato (written just
+lead's card, `atribuicao_id` = the latest `julia_atribuicoes` row of the contato (written just
 before the event by `_atribuir_antes_de_notificar`), `entrega_id` = the latest
-`lais_envio_entregas` row of the contato with `status='ok'`, `origem_evento=event.id`.
+`julia_envio_entregas` row of the contato with `status='ok'`, `origem_evento=event.id`.
 `para_bloco` resolving to `null` or `sdr` ⇒ no row, logged at warning with the reason.
 A sink failure is logged by `emitir` and never reaches the send (existing seam behaviour).
 
@@ -179,19 +179,19 @@ Aggregating over a period sums numerators and denominators — never averages da
 
 | metric (`metricas` key) | formula | source |
 |---|---|---|
-| `leads_entrada` | count `lais_contatos` with `created_at` in the window | lais_contatos (267) |
-| `tpr_n` | count `lais_interacoes` with `iniciada_at` in window and `primeira_resposta_at IS NOT NULL` | lais_interacoes (267) + `primeira_resposta_at` (286) |
+| `leads_entrada` | count `julia_contatos` with `created_at` in the window | julia_contatos (267) |
+| `tpr_n` | count `julia_interacoes` with `iniciada_at` in window and `primeira_resposta_at IS NOT NULL` | julia_interacoes (267) + `primeira_resposta_at` (286) |
 | `tpr_p50_s`, `tpr_p90_s` | over those episodes, `extract(epoch from primeira_resposta_at - iniciada_at)`; nearest-rank percentile: sort ascending, take element `ceil(q·n)` (1-based), q = 0.5 / 0.9; `null` when `tpr_n = 0` | same |
 | `tpr_sem_resposta` | episodes started in window with `primeira_resposta_at IS NULL` at computation time | same |
-| `qualificados` | distinct `contato_id` in `lais_envio_entregas` with `status='ok'`, `gatilho IN ('qualificado','visita','captacao')`, `created_at` in window | lais_envio_entregas (270) |
+| `qualificados` | distinct `contato_id` in `julia_envio_entregas` with `status='ok'`, `gatilho IN ('qualificado','visita','captacao')`, `created_at` in window | julia_envio_entregas (270) |
 | `qualificacao_taxa` | `qualificados / leads_entrada` | — |
-| `frios`, `frio_taxa` | same as `qualificados` with `gatilho='frio'`; `/ leads_entrada` | lais_envio_entregas |
-| `invalidos`, `invalido_taxa` | `gatilho='invalido'`; `/ leads_entrada` | lais_envio_entregas |
-| `entregas_manuais` | `gatilho='manual'`, `status='ok'` (a human sent it — not credited to Julia) | lais_envio_entregas |
-| `envios_bloqueados` | count `lais_eventos` `tipo='envio_bloqueado'` in window | lais_eventos (`lais_envio_gate.exigir`) |
+| `frios`, `frio_taxa` | same as `qualificados` with `gatilho='frio'`; `/ leads_entrada` | julia_envio_entregas |
+| `invalidos`, `invalido_taxa` | `gatilho='invalido'`; `/ leads_entrada` | julia_envio_entregas |
+| `entregas_manuais` | `gatilho='manual'`, `status='ok'` (a human sent it — not credited to Julia) | julia_envio_entregas |
+| `envios_bloqueados` | count `julia_eventos` `tipo='envio_bloqueado'` in window | julia_eventos (`julia_envio_gate.exigir`) |
 | `envios_bloqueados_por_motivo` | the same rows grouped by `payload->>'motivo'` → `{motivo: n}` | same |
-| `handoffs_humanos` | count `lais_atribuicoes` with `motivo='handoff'` in window | lais_atribuicoes (276) |
-| `handoffs_humanos_por_motivo` | `{motivo_codigo: n}` from `lais_eventos` `tipo='handoff'`; `null` until S2 emits that event (below) | lais_eventos |
+| `handoffs_humanos` | count `julia_atribuicoes` with `motivo='handoff'` in window | julia_atribuicoes (276) |
+| `handoffs_humanos_por_motivo` | `{motivo_codigo: n}` from `julia_eventos` `tipo='handoff'`; `null` until S2 emits that event (below) | julia_eventos |
 | `handoffs_emitidos` | count `atendimento_handoffs` with `de_bloco='sdr'`, `created_at` in window | atendimento_handoffs (286) |
 | `handoffs_nao_assumidos` | of those: `status='expirado'`, or `status='emitido'` and `created_at + horas_para_assumir <= calculado_at` | same + supervisao_config |
 | `horas_para_assumir` | the threshold used (so the number is reproducible) | supervisao_config |
@@ -199,10 +199,10 @@ Aggregating over a period sums numerators and denominators — never averages da
 **Data gaps this contract closes (S2):**
 - `primeira_resposta_at` (added by 286) — written once, in the lead-turn deliver path, on the
   first outbound of the open episode (Julia or a human from the inbox):
-  `UPDATE lais_interacoes SET primeira_resposta_at = now() WHERE id = :episodio AND primeira_resposta_at IS NULL`.
+  `UPDATE julia_interacoes SET primeira_resposta_at = now() WHERE id = :episodio AND primeira_resposta_at IS NULL`.
   Episodes before S2 stay `null` and are reported as `tpr_sem_resposta`, never estimated.
 - Human-handoff motivo is not persisted today (only inside the in-app notification text written
-  by `lais_agente_service.notificar_handoff`). S2 makes `_apply_handoff` emit `lais_eventos`
+  by `julia_agente_service.notificar_handoff`). S2 makes `_apply_handoff` emit `julia_eventos`
   `tipo='handoff'` with payload `{motivo_codigo}` — a CLOSED code mapped from the free text
   (proposed: `pedido_do_lead`, `fora_do_escopo`, `reclamacao`, `outro`; owner-refinable), never the
   raw text. `handoff` is excluded from the notification fan-out (`TIPOS_FANOUT`), so emitting it
@@ -219,7 +219,7 @@ an `ativo` human block gets only the handoff metrics (`handoffs_recebidos`,
 
 ### 3.4 Report to the owner (S3) — read-only, owner only
 
-- **In-app:** once per day after the scorecards are computed, `lais_eventos_service.emitir(...,
+- **In-app:** once per day after the scorecards are computed, `julia_eventos_service.emitir(...,
   "relatorio", contato_id=None, payload={"origem": "supervisao", "dia": "YYYY-MM-DD"})`. The
   generic fan-out sends a contato-less event to owners **and admins**; S3 adds the rule
   `payload.origem == "supervisao"` ⇒ recipients = `noctus_users.org_role == 'owner'` only.
@@ -235,7 +235,7 @@ an `ativo` human block gets only the handoff metrics (`handoffs_recebidos`,
 Conventions (same as the product's other modules): every route needs a session — no session is
 a **strict 401**; the org is the session's selected org, never a parameter; bodies are
 `StrictHttpModel` (unknown field ⇒ 422); dates `YYYY-MM-DD` (SP calendar); timestamps ISO-8601
-UTC; ratios are fractions. **Success envelope `{"data": <body>}`** like every other Lais route —
+UTC; ratios are fractions. **Success envelope `{"data": <body>}`** like every other Julia route —
 every 200 body shown below (§4.1-§4.5) is the INNER object under `data`. Error envelope
 `{"error": {"code", "message", "details"?}}`. Roles via the trusted `noctus_users` row of the
 selected org (seed `require_org_admin_for` / `is_org_admin_for`; owner-only =
@@ -381,4 +381,4 @@ nightly job computes scorecards; turning it OFF stops both and keeps the history
 | S2 | backend (`app/modules/atendimento_blocos/`): `BLOCOS`/`ETAPAS_PADRAO`/`AGENTES_POR_BLOCO`, derivation, T1 sink, T2 hook + the aceite movimento, the status machine functions (`handoffs.varrer` for S3 to schedule), `primeira_resposta_at` write, `handoff` event emission, the §4.1/§4.2 routes, gate 0 | done (§4.3-4.5 belong to the supervisao slice) |
 | S3 | jobs: sweep (assumido/expirado), nightly scorecards, owner report (in-app recipient rule + digest), §4.3-4.5 routes | built on `feat/sw-maya-supervisao` |
 | S4 | FE pages `atendimento_blocos` + `supervisao` (built to §4) | parallel with S3 |
-| later | per-block agents (gate 0 of `lais_envio_gate.exigir(..., bloco=)` shipped in S2: a non-`sdr` block needs `ativo` + `agent_key`; `sdr` unchanged); Maya's LLM review | owner-paced |
+| later | per-block agents (gate 0 of `julia_envio_gate.exigir(..., bloco=)` shipped in S2: a non-`sdr` block needs `ativo` + `agent_key`; `sdr` unchanged); Maya's LLM review | owner-paced |

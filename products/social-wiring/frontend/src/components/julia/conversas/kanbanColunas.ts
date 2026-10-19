@@ -1,5 +1,5 @@
 /** Pure column model for the Conversas kanban (one column per etiqueta). */
-import type { Conversa, Etiqueta } from "@/hooks/useLaisConversas";
+import type { Conversa, Etiqueta } from "@/hooks/useJuliaConversas";
 import { SEM_ETIQUETA } from "./EtiquetaPicker";
 
 export const COL_TODAS = "__todas";

@@ -1,14 +1,14 @@
-/** "Filtro de conversas" drawer (live Lais a6). Draft is applied only on Filtrar. */
+/** "Filtro de conversas" drawer (live Julia a6). Draft is applied only on Filtrar. */
 import { useState } from "react";
 import { SideDrawer } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
-import { useLaisEquipes } from "@/hooks/useLaisEquipes";
+import { useJuliaEquipes } from "@/hooks/useJuliaEquipes";
 import { useTeamMembers } from "@/hooks/useTeam";
 import {
   FILTROS_VAZIOS, SEM_RESPONSAVEL, useEtiquetas,
   type FiltrosConversas, type OperacaoConversa, type StatusAtendimento, type StatusSw,
-} from "@/hooks/useLaisConversas";
+} from "@/hooks/useJuliaConversas";
 
 const OPERACOES: { key: OperacaoConversa; label: string }[] = [
   { key: "aluguel", label: "Aluguel" },
@@ -47,7 +47,7 @@ interface Props {
 export function FiltroConversasDrawer({ filtros, onAplicar, onClose }: Props) {
   const [d, setD] = useState<FiltrosConversas>(filtros);
   const { data: membros = [] } = useTeamMembers();
-  const { data: equipes = [] } = useLaisEquipes();
+  const { data: equipes = [] } = useJuliaEquipes();
   const { data: etiquetas = [] } = useEtiquetas();
   const set = (p: Partial<FiltrosConversas>) => setD((x) => ({ ...x, ...p }));
 

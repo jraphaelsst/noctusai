@@ -1,5 +1,5 @@
 /**
- * WhatsAppWorkspace.tsx + the two Lais route pages (`Conversas.tsx`,
+ * WhatsAppWorkspace.tsx + the two Julia route pages (`Conversas.tsx`,
  * `Configuracoes.tsx`) — unit tests. Successor of the former
  * `pages/WhatsAppChat.test.tsx` (single /whatsapp-chat page with Chat +
  * Configurações subtabs), split into two routes on 2026-10-13.
@@ -19,7 +19,7 @@
  *
  * Coverage:
  *   1. Loading / error / empty states.
- *   2. Shell wiring per route: Lais-labelled title, one "WhatsApp" subtab.
+ *   2. Shell wiring per route: Julia-labelled title, one "WhatsApp" subtab.
  *   3. Each route renders its view (Conversas → chat window, Configurações →
  *      settings panel) — both route modules default-export a working page.
  *   4. Connection selector — one button per connection; picking one writes the
@@ -63,7 +63,7 @@ vi.mock("@/components/ui/button", () => ({
 // ─── View-content stubs — capture props ───────────────────────────────────
 
 let lastChatWindowProps: any = null;
-vi.mock("@/components/lais/conversas/ConversasPanel", () => ({
+vi.mock("@/components/julia/conversas/ConversasPanel", () => ({
   ConversasPanel: (props: any) => {
     lastChatWindowProps = props;
     return <div data-testid="chat-window-stub">{`chat:${props.connectionId}`}</div>;
@@ -148,7 +148,7 @@ async function renderView() {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
-describe("Lais WhatsApp — connection states", () => {
+describe("Julia WhatsApp — connection states", () => {
   it("shows the loading state while connections load", async () => {
     mockUseWhatsAppConnections.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByText } = await renderRoute("conversas");
@@ -172,11 +172,11 @@ describe("Lais WhatsApp — connection states", () => {
   });
 });
 
-describe("Lais WhatsApp — /lais/conversas", () => {
-  it("renders the shell titled from the Lais label with one WhatsApp subtab", async () => {
-    const { LAIS_LABEL } = await import("@/nav/lais");
+describe("Julia WhatsApp — /julia/conversas", () => {
+  it("renders the shell titled from the Julia label with one WhatsApp subtab", async () => {
+    const { JULIA_LABEL } = await import("@/nav/julia");
     await renderRoute("conversas");
-    expect(lastShellProps.title).toBe(`${LAIS_LABEL} · Conversas`);
+    expect(lastShellProps.title).toBe(`${JULIA_LABEL} · Conversas`);
     expect(lastShellProps.subtabs.map((s: any) => s.key)).toEqual(["whatsapp"]);
     expect(lastShellProps.defaultSubtab).toBe("whatsapp");
   });
@@ -196,11 +196,11 @@ describe("Lais WhatsApp — /lais/conversas", () => {
   });
 });
 
-describe("Lais WhatsApp — /lais/configuracoes", () => {
-  it("renders the shell titled from the Lais label", async () => {
-    const { LAIS_LABEL } = await import("@/nav/lais");
+describe("Julia WhatsApp — /julia/configuracoes", () => {
+  it("renders the shell titled from the Julia label", async () => {
+    const { JULIA_LABEL } = await import("@/nav/julia");
     await renderRoute("configuracoes");
-    expect(lastShellProps.title).toBe(`${LAIS_LABEL} · Configurações`);
+    expect(lastShellProps.title).toBe(`${JULIA_LABEL} · Configurações`);
   });
 
   it("renders ConnectionSettingsPanel with the selected connection's full line", async () => {
@@ -232,7 +232,7 @@ describe("Lais WhatsApp — /lais/configuracoes", () => {
   });
 });
 
-describe("Lais WhatsApp — connection selector (shared across routes)", () => {
+describe("Julia WhatsApp — connection selector (shared across routes)", () => {
   it("renders one button per connection in the accountSwitcher slot", async () => {
     mockUseWhatsAppConnections.mockReturnValue(twoConns());
     const { rtl } = await renderRoute("conversas");
@@ -269,7 +269,7 @@ describe("Lais WhatsApp — connection selector (shared across routes)", () => {
   });
 });
 
-describe("Lais WhatsApp — deep-link pre-selection", () => {
+describe("Julia WhatsApp — deep-link pre-selection", () => {
   it("prefers the store's whatsapp connection over the first-in-list default", async () => {
     useActiveAccountStore.getState().setActiveAccount("whatsapp", "c2");
     mockUseWhatsAppConnections.mockReturnValue(twoConns());

@@ -1,10 +1,10 @@
-import { pct, type Painel } from "@/hooks/useLaisPainel";
-import { LAIS_LABEL } from "@/nav/lais";
+import { pct, type Painel } from "@/hooks/useJuliaPainel";
+import { JULIA_LABEL } from "@/nav/julia";
 
 export function Funil({ f }: { f: Painel["funil"] }) {
   const etapas = [
     { id: "topo", label: "Topo de funil", valor: f.topo, p: f.topo > 0 ? 100 : 0 },
-    { id: "atendidos", label: `Atendimentos (atendidos pela ${LAIS_LABEL})`, valor: f.atendidos, p: pct(f.atendidos, f.topo) },
+    { id: "atendidos", label: `Atendimentos (atendidos pela ${JULIA_LABEL})`, valor: f.atendidos, p: pct(f.atendidos, f.topo) },
     { id: "enviados", label: "Encaminhados (enviados ao SW)", valor: f.enviados, p: pct(f.enviados, f.topo) },
   ];
   return (

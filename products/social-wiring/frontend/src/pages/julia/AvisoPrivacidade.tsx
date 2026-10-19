@@ -1,7 +1,7 @@
 /**
- * Lais · Aviso de privacidade — PUBLIC per-org notice (contract 11.2).
+ * Julia · Aviso de privacidade — PUBLIC per-org notice (contract 11.2).
  *
- *   GET /api/public/lais/privacidade/{slug}
+ *   GET /api/public/julia/privacidade/{slug}
  *
  * Route: /privacidade/:slug — mounted via `publicRoutes` (no auth, no Layout,
  * no `status_pagina` gate). Rendered with the seed `ConsentDocLayout` through
@@ -11,7 +11,7 @@ import { useParams } from "react-router-dom";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { ConsentDocLayout } from "@noctusai/seed";
 
-import { useLaisAvisoPublico } from "@/hooks/useLaisAviso";
+import { useJuliaAvisoPublico } from "@/hooks/useJuliaAviso";
 
 function formatarData(iso: string | null): string {
   if (!iso) return "—";
@@ -21,7 +21,7 @@ function formatarData(iso: string | null): string {
 
 export default function AvisoPrivacidade() {
   const { slug } = useParams<{ slug: string }>();
-  const q = useLaisAvisoPublico(slug);
+  const q = useJuliaAvisoPublico(slug);
 
   const showSkeleton = q.isPending && !q.data && !!slug;
   const aviso = q.data?.data;

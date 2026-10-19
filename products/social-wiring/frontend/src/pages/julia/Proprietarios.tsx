@@ -1,4 +1,4 @@
-/** Lais › Atualização de imóveis (`/lais/proprietarios`) — contract §14 W12. */
+/** Julia › Atualização de imóveis (`/julia/proprietarios`) — contract §14 W12. */
 import { useState } from "react";
 import { toast } from "sonner";
 import { useIsFetching } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TransporteBadge } from "@/components/lais/TransporteBadge";
+import { TransporteBadge } from "@/components/julia/TransporteBadge";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   PROPRIETARIOS_KEY,
@@ -16,10 +16,10 @@ import {
   textoConfirmacao,
   useSolicitarAtualizacao,
   type ProprietarioStatus,
-} from "@/hooks/useLaisProprietarios";
-import { TRANSPORTE_EXPLICACAO, envioLiberado, mensagemErroTransporte } from "@/hooks/useLaisTransporte";
+} from "@/hooks/useJuliaProprietarios";
+import { TRANSPORTE_EXPLICACAO, envioLiberado, mensagemErroTransporte } from "@/hooks/useJuliaTransporte";
 
-export default function LaisProprietarios() {
+export default function JuliaProprietarios() {
   const [status, setStatus] = useState("");
   const [busca, setBusca] = useState("");
   const q = useDebouncedValue(busca, 300);

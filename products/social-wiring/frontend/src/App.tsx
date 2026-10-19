@@ -5,13 +5,13 @@
  * call). Structure comes from createProductApp + createProductLayout.
  * This file only defines pages and nav — zero boilerplate.
  *
- * Nav lives in `nav/navGroups.ts` (gated + derived fallback); the "Lais"
- * chatbot group (WhatsApp Conversas + Configurações) in `nav/lais.ts`.
+ * Nav lives in `nav/navGroups.ts` (gated + derived fallback); the "Julia"
+ * chatbot group (WhatsApp Conversas + Configurações) in `nav/julia.ts`.
  *
- * WhatsApp moved out of "Conexões" into the Lais group (owner decision
- * 2026-10-13): `/lais/conversas` + `/lais/configuracoes` (status_pagina keys
- * `lais_conversas` / `lais_configuracoes`, migration 252). The old
- * `/whatsapp-chat` is a back-compat redirect to `/lais/conversas` — it is
+ * WhatsApp moved out of "Conexões" into the Julia group (owner decision
+ * 2026-10-13): `/julia/conversas` + `/julia/configuracoes` (status_pagina keys
+ * `julia_conversas` / `julia_configuracoes`, migration 252). The old
+ * `/whatsapp-chat` is a back-compat redirect to `/julia/conversas` — it is
  * still the seed `whatsapp` provider card's `dashboardRoute` deep-link.
  * pt-BR copy preserved.
  */
@@ -19,7 +19,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import { useSocialWiringLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
 import { NAV_GROUPS, NAV_FALLBACK } from "@/nav/navGroups";
-import { LAIS_PAGES } from "@/nav/lais";
+import { JULIA_PAGES } from "@/nav/julia";
 import { Share2 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -50,28 +50,29 @@ const EmailCampanhas = lazyWithReload(() => import("@/pages/EmailCampanhas"));
 const EmailMarketingConfig = lazyWithReload(() => import("@/pages/EmailMarketingConfig"));
 const EmailMembros = lazyWithReload(() => import("@/pages/EmailMembros"));
 const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
-const LaisPainel = lazyWithReload(() => import("@/pages/lais/Painel"));
-const LaisConversas = lazyWithReload(() => import("@/pages/lais/Conversas"));
-const LaisConfiguracoes = lazyWithReload(() => import("@/pages/lais/Configuracoes"));
-const LaisAgente = lazyWithReload(() => import("@/pages/lais/Agente"));
-const LaisConhecimento = lazyWithReload(() => import("@/pages/lais/Conhecimento"));
-const LaisPerguntas = lazyWithReload(() => import("@/pages/lais/Perguntas"));
-const LaisHistorico = lazyWithReload(() => import("@/pages/lais/Historico"));
-const LaisVisitas = lazyWithReload(() => import("@/pages/lais/Visitas"));
-const LaisReengajamento = lazyWithReload(() => import("@/pages/lais/Reengajamento"));
-const LaisNotificacoes = lazyWithReload(() => import("@/pages/lais/Notificacoes"));
-const LaisEnvio = lazyWithReload(() => import("@/pages/lais/Envio"));
-const LaisLeads = lazyWithReload(() => import("@/pages/lais/Leads"));
-const LaisReengajamentoRegua = lazyWithReload(() => import("@/pages/lais/ReengajamentoRegua"));
-const LaisModelos = lazyWithReload(() => import("@/pages/lais/Modelos"));
-const LaisDisparos = lazyWithReload(() => import("@/pages/lais/Disparos"));
-const LaisCaptacao = lazyWithReload(() => import("@/pages/lais/Captacao"));
-const LaisProprietarios = lazyWithReload(() => import("@/pages/lais/Proprietarios"));
-const LaisAvaliacoes = lazyWithReload(() => import("@/pages/lais/Avaliacoes"));
-const LaisCredito = lazyWithReload(() => import("@/pages/lais/Credito"));
-const LaisRelatorios = lazyWithReload(() => import("@/pages/lais/Relatorios"));
-const LaisEquipes = lazyWithReload(() => import("@/pages/lais/Equipes"));
-const RedirectToLaisConversas = lazyWithReload(() => import("@/pages/RedirectToLaisConversas"));
+const JuliaPainel = lazyWithReload(() => import("@/pages/julia/Painel"));
+const JuliaConversas = lazyWithReload(() => import("@/pages/julia/Conversas"));
+const JuliaConfiguracoes = lazyWithReload(() => import("@/pages/julia/Configuracoes"));
+const JuliaAgente = lazyWithReload(() => import("@/pages/julia/Agente"));
+const JuliaConhecimento = lazyWithReload(() => import("@/pages/julia/Conhecimento"));
+const JuliaPerguntas = lazyWithReload(() => import("@/pages/julia/Perguntas"));
+const JuliaHistorico = lazyWithReload(() => import("@/pages/julia/Historico"));
+const JuliaVisitas = lazyWithReload(() => import("@/pages/julia/Visitas"));
+const JuliaReengajamento = lazyWithReload(() => import("@/pages/julia/Reengajamento"));
+const JuliaNotificacoes = lazyWithReload(() => import("@/pages/julia/Notificacoes"));
+const JuliaEnvio = lazyWithReload(() => import("@/pages/julia/Envio"));
+const JuliaLeads = lazyWithReload(() => import("@/pages/julia/Leads"));
+const JuliaReengajamentoRegua = lazyWithReload(() => import("@/pages/julia/ReengajamentoRegua"));
+const JuliaModelos = lazyWithReload(() => import("@/pages/julia/Modelos"));
+const JuliaDisparos = lazyWithReload(() => import("@/pages/julia/Disparos"));
+const JuliaCaptacao = lazyWithReload(() => import("@/pages/julia/Captacao"));
+const JuliaProprietarios = lazyWithReload(() => import("@/pages/julia/Proprietarios"));
+const JuliaAvaliacoes = lazyWithReload(() => import("@/pages/julia/Avaliacoes"));
+const JuliaCredito = lazyWithReload(() => import("@/pages/julia/Credito"));
+const JuliaRelatorios = lazyWithReload(() => import("@/pages/julia/Relatorios"));
+const JuliaEquipes = lazyWithReload(() => import("@/pages/julia/Equipes"));
+const RedirectToJuliaConversas = lazyWithReload(() => import("@/pages/RedirectToJuliaConversas"));
+const RedirectLegacyLais = lazyWithReload(() => import("@/pages/RedirectLegacyLais"));
 const Marcas = lazyWithReload(() => import("@/pages/Marcas"));
 const Imoveis = lazyWithReload(() => import("@/pages/Imoveis"));
 const ImovelDetalhes = lazyWithReload(() => import("@/pages/ImovelDetalhes"));
@@ -93,7 +94,7 @@ const EmailListasNoc = lazyWithReload(() => import("@/pages/email/Listas"));
 const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates"));
 const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
-const LaisAvisoPrivacidade = lazyWithReload(() => import("@/pages/lais/AvisoPrivacidade"));
+const JuliaAvisoPrivacidade = lazyWithReload(() => import("@/pages/julia/AvisoPrivacidade"));
 const EmailDescadastro = lazyWithReload(() => import("@/pages/email/Descadastro"));
 const EmailConfirmarEmail = lazyWithReload(() => import("@/pages/email/ConfirmarEmail"));
 const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
@@ -243,29 +244,32 @@ export default createProductApp({
     { path: "/email/automacoes", component: EmailAutomacoes },
     { path: "/email/dominios", component: EmailDominios },
     { path: "/monitor", component: Monitor },
-    // Lais (chatbot module) — WhatsApp conversations + connection settings
-    { path: LAIS_PAGES.painel.href, component: LaisPainel },
-    { path: LAIS_PAGES.conversas.href, component: LaisConversas },
-    { path: LAIS_PAGES.configuracoes.href, component: LaisConfiguracoes },
-    { path: LAIS_PAGES.agente.href, component: LaisAgente },
-    { path: LAIS_PAGES.conhecimento.href, component: LaisConhecimento },
-    { path: LAIS_PAGES.perguntas.href, component: LaisPerguntas },
-    { path: LAIS_PAGES.visitas.href, component: LaisVisitas },
-    { path: LAIS_PAGES.reengajamento.href, component: LaisReengajamento },
-    { path: LAIS_PAGES.notificacoes.href, component: LaisNotificacoes },
-    { path: LAIS_PAGES.envio.href, component: LaisEnvio },
-    { path: LAIS_PAGES.leads.href, component: LaisLeads },
-    { path: LAIS_PAGES.equipes.href, component: LaisEquipes },
-    { path: `${LAIS_PAGES.reengajamento.href}/reguas/:id`, component: LaisReengajamentoRegua },
-    { path: LAIS_PAGES.modelos.href, component: LaisModelos },
-    { path: LAIS_PAGES.disparos.href, component: LaisDisparos },
-    { path: LAIS_PAGES.proprietarios.href, component: LaisProprietarios },
-    { path: LAIS_PAGES.relatorios.href, component: LaisRelatorios },
-    { path: LAIS_PAGES.captacao.href, component: LaisCaptacao },
-    { path: LAIS_PAGES.avaliacoes.href, component: LaisAvaliacoes },
-    { path: LAIS_PAGES.credito.href, component: LaisCredito },
-    // Retired route — WhatsApp moved into the Lais group (2026-10-13)
-    { path: "/whatsapp-chat", component: RedirectToLaisConversas },
+    // Julia (chatbot module) — WhatsApp conversations + connection settings
+    { path: JULIA_PAGES.painel.href, component: JuliaPainel },
+    { path: JULIA_PAGES.conversas.href, component: JuliaConversas },
+    { path: JULIA_PAGES.configuracoes.href, component: JuliaConfiguracoes },
+    { path: JULIA_PAGES.agente.href, component: JuliaAgente },
+    { path: JULIA_PAGES.conhecimento.href, component: JuliaConhecimento },
+    { path: JULIA_PAGES.perguntas.href, component: JuliaPerguntas },
+    { path: JULIA_PAGES.visitas.href, component: JuliaVisitas },
+    { path: JULIA_PAGES.reengajamento.href, component: JuliaReengajamento },
+    { path: JULIA_PAGES.notificacoes.href, component: JuliaNotificacoes },
+    { path: JULIA_PAGES.envio.href, component: JuliaEnvio },
+    { path: JULIA_PAGES.leads.href, component: JuliaLeads },
+    { path: JULIA_PAGES.equipes.href, component: JuliaEquipes },
+    { path: `${JULIA_PAGES.reengajamento.href}/reguas/:id`, component: JuliaReengajamentoRegua },
+    { path: JULIA_PAGES.modelos.href, component: JuliaModelos },
+    { path: JULIA_PAGES.disparos.href, component: JuliaDisparos },
+    { path: JULIA_PAGES.proprietarios.href, component: JuliaProprietarios },
+    { path: JULIA_PAGES.relatorios.href, component: JuliaRelatorios },
+    { path: JULIA_PAGES.captacao.href, component: JuliaCaptacao },
+    { path: JULIA_PAGES.avaliacoes.href, component: JuliaAvaliacoes },
+    { path: JULIA_PAGES.credito.href, component: JuliaCredito },
+    // Retired route — WhatsApp moved into the Julia group (2026-10-13)
+    { path: "/whatsapp-chat", component: RedirectToJuliaConversas },
+    // Pre-rename URLs (Lais -> Julia, 2026-10-19). NOC-REMEDIATE[drop-lais-route-alias]
+    { path: "/lais", component: RedirectLegacyLais },
+    { path: "/lais/*", component: RedirectLegacyLais },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
     { path: "/custos", component: Custos },
@@ -280,12 +284,12 @@ export default createProductApp({
     { path: "/descadastro/:token", component: EmailDescadastro },
     // Public double opt-in confirmation link target (token-authenticated, no login).
     { path: "/confirmar-email/:token", component: EmailConfirmarEmail },
-    // Public per-org Lais/Julia privacy notice (LGPD; linked in the first WhatsApp message).
-    { path: "/privacidade/:slug", component: LaisAvisoPrivacidade },
+    // Public per-org Julia privacy notice (LGPD; linked in the first WhatsApp message).
+    { path: "/privacidade/:slug", component: JuliaAvisoPrivacidade },
   ],
   Layout,
-  // Lais history link (A7): authenticated, chrome-light (no Layout).
-  unwrappedRoutes: [{ path: `${LAIS_PAGES.conversas.href}/h/:contatoId`, component: LaisHistorico }],
+  // Julia history link (A7): authenticated, chrome-light (no Layout).
+  unwrappedRoutes: [{ path: `${JULIA_PAGES.conversas.href}/h/:contatoId`, component: JuliaHistorico }],
   ...infra.appConfig,
   Landing,
   Login,

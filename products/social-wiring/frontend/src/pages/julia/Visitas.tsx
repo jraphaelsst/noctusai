@@ -1,5 +1,5 @@
 /**
- * Lais › Visitas (`/lais/visitas`, wave 5). Empty state until a visit config is
+ * Julia › Visitas (`/julia/visitas`, wave 5). Empty state until a visit config is
  * active; then list + week/day calendar (no month view), filters
  * operação/status/responsável, and the visit dialog. Config drawer is opened
  * from the page; writes are owner/admin (server-enforced).
@@ -11,16 +11,16 @@ import { AlertCircle, CalendarClock, Loader2, Settings2 } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { VisitaDialog } from "@/components/lais/visitas/VisitaDialog";
-import { VisitasConfigDrawer } from "@/components/lais/visitas/VisitasConfigDrawer";
-import { VisitasCalendario, STATUS_CLASSE, STATUS_LABEL } from "@/components/lais/visitas/VisitasCalendario";
-import { chaveData } from "@/components/lais/visitas/calendario";
-import { useVisitas, useVisitasConfig, visitasAtivas, type Visita, type VisitasView } from "@/hooks/useLaisVisitas";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { VisitaDialog } from "@/components/julia/visitas/VisitaDialog";
+import { VisitasConfigDrawer } from "@/components/julia/visitas/VisitasConfigDrawer";
+import { VisitasCalendario, STATUS_CLASSE, STATUS_LABEL } from "@/components/julia/visitas/VisitasCalendario";
+import { chaveData } from "@/components/julia/visitas/calendario";
+import { useVisitas, useVisitasConfig, visitasAtivas, type Visita, type VisitasView } from "@/hooks/useJuliaVisitas";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 const SELECT = "h-9 rounded-md border bg-background px-2 text-sm";
 
-export default function LaisVisitas() {
+export default function JuliaVisitas() {
   const isAdmin = useIsOrgAdmin();
   const [view, setView] = useState<VisitasView>("semana");
   const [data, setData] = useState(() => chaveData(new Date()));
@@ -51,7 +51,7 @@ export default function LaisVisitas() {
     <div className="container max-w-5xl space-y-6 py-6">
       <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{LAIS_LABEL} · {LAIS_PAGES.visitas.name}</h1>
+          <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.visitas.name}</h1>
           <p className="text-sm text-muted-foreground">Pedidos de visita recebidos no pré-atendimento.</p>
         </div>
         <div className="flex items-center gap-3">

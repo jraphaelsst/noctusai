@@ -1,4 +1,4 @@
-/** Lais › Modelos de mensagem — templates (contract §14 W12). Envelope `{data}`. */
+/** Julia › Modelos de mensagem — templates (contract §14 W12). Envelope `{data}`. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
@@ -29,7 +29,7 @@ export const STATUS_LABEL: Record<ModeloStatus, string> = {
 /** The 10 insertable parameters: label, `{{token}}` and a simulation example. */
 export const PARAMETROS = [
   { label: "Nome da pessoa", token: "nome_pessoa", exemplo: "Maria" },
-  { label: "Nome da Julia", token: "nome_lais", exemplo: "Julia" },
+  { label: "Nome da Julia", token: "nome_julia", exemplo: "Julia" },
   { label: "Nome da imobiliária", token: "nome_imobiliaria", exemplo: "Imobiliária Exemplo" },
   { label: "Mensagem", token: "mensagem", exemplo: "Olá, tudo bem?" },
   { label: "Data da visita", token: "data_visita", exemplo: "20/10/2026" },
@@ -53,8 +53,8 @@ export interface ModeloInput {
   conteudo: string;
 }
 
-export const MODELOS_KEY = ["sw", "lais", "modelos"] as const;
-const BASE = "/api/lais/modelos";
+export const MODELOS_KEY = ["sw", "julia", "modelos"] as const;
+const BASE = "/api/julia/modelos";
 
 /** `{{token}}` placeholders found in a body, in order, de-duplicated. */
 export function parametrosDoTexto(texto: string): string[] {

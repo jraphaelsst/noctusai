@@ -58,7 +58,7 @@ export interface ChatSummary {
   last_read_at: string | null;
   archived: boolean;
   pinned: boolean;
-  /** Julia (lais contract 11.4): true while a human has taken the chat over. */
+  /** Julia (julia contract 11.4): true while a human has taken the chat over. */
   agente_pausado?: boolean;
 }
 
@@ -238,7 +238,7 @@ export function useSetAutoReply(connId: string | null) {
   });
 }
 
-// ─── Julia (lais contract 11.4 + LGPD deletion) ──────────────────────────────
+// ─── Julia (julia contract 11.4 + LGPD deletion) ──────────────────────────────
 
 export interface ChatAgentePausadoResult {
   chat_id: string;
@@ -286,7 +286,7 @@ export function useApagarDadosChat(connId: string | null) {
   return useMutation<ApagarDadosResult, unknown, { chatId: string }>({
     mutationFn: async ({ chatId }) => {
       const res = await api.post<{ data: ApagarDadosResult }>(
-        `/api/lais/agente/conexoes/${connId}/chats/${encodeURIComponent(chatId)}/apagar-dados`,
+        `/api/julia/agente/conexoes/${connId}/chats/${encodeURIComponent(chatId)}/apagar-dados`,
         {},
       );
       return res.data;

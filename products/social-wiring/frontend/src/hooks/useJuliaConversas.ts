@@ -1,13 +1,13 @@
 /**
- * Lais › Conversas v2 (contract wave 7).
+ * Julia › Conversas v2 (contract wave 7).
  *
- *   GET    /api/lais/conversas?aba=todas|minhas|arquivadas&q&operacao&status_sw
+ *   GET    /api/julia/conversas?aba=todas|minhas|arquivadas&q&operacao&status_sw
  *            &atendimento&responsavel&equipe&etiqueta     (lists are comma-joined)
- *   PATCH  /api/lais/contatos/{id}   {responsavel_user_id?, arquivado?, bloqueado?, etiquetas?}
- *   GET/POST /api/lais/contatos/{id}/notas · PATCH/DELETE …/notas/{notaId}
- *   POST   /api/lais/contatos/{id}/feedback  {nota: like|dislike, comentario}
- *   GET/POST /api/lais/etiquetas · PATCH/DELETE /api/lais/etiquetas/{id}
- *   GET    /api/lais/historico/{contato_id} → {data:{contato, interacoes, mensagens}}
+ *   PATCH  /api/julia/contatos/{id}   {responsavel_user_id?, arquivado?, bloqueado?, etiquetas?}
+ *   GET/POST /api/julia/contatos/{id}/notas · PATCH/DELETE …/notas/{notaId}
+ *   POST   /api/julia/contatos/{id}/feedback  {nota: like|dislike, comentario}
+ *   GET/POST /api/julia/etiquetas · PATCH/DELETE /api/julia/etiquetas/{id}
+ *   GET    /api/julia/historico/{contato_id} → {data:{contato, interacoes, mensagens}}
  *            403 sem_acesso · 404 not found
  *
  * Envelope `{data: …}`. Loading = two signals off `data`; every filter-keyed
@@ -17,7 +17,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 export type Aba = "todas" | "minhas" | "arquivadas";
 export type OperacaoConversa = "aluguel" | "compra" | "administracao" | "atualizacao";
@@ -27,7 +27,7 @@ export const SEM_RESPONSAVEL = "sem";
 
 export interface Etiqueta { id: string; nome: string; cor?: string | null }
 
-/** One row of the Conversas list (`GET /api/lais/conversas`). */
+/** One row of the Conversas list (`GET /api/julia/conversas`). */
 export interface Conversa {
   contato_id: string;
   /** WhatsApp JID — also the thread id the seed ChatWindow messages hooks read. */
@@ -67,10 +67,10 @@ export function contarFiltros(f: FiltrosConversas): number {
     + f.equipes.length + f.etiquetas.length;
 }
 
-export const CONVERSAS_KEY = ["sw", "lais", "conversas"] as const;
-export const ETIQUETAS_KEY = ["sw", "lais", "etiquetas"] as const;
-export const NOTAS_KEY = ["sw", "lais", "notas"] as const;
-export const HISTORICO_KEY = ["sw", "lais", "historico"] as const;
+export const CONVERSAS_KEY = ["sw", "julia", "conversas"] as const;
+export const ETIQUETAS_KEY = ["sw", "julia", "etiquetas"] as const;
+export const NOTAS_KEY = ["sw", "julia", "notas"] as const;
+export const HISTORICO_KEY = ["sw", "julia", "historico"] as const;
 
 export function queryConversas(aba: Aba, f: FiltrosConversas): string {
   const p = new URLSearchParams({ aba });
@@ -88,14 +88,14 @@ function itens<T>(d: T[] | { items: T[] } | undefined | null): T[] {
   return Array.isArray(d) ? d : (d?.items ?? []);
 }
 
-export function useLaisConversas(aba: Aba, filtros: FiltrosConversas, enabled = true) {
+export function useJuliaConversas(aba: Aba, filtros: FiltrosConversas, enabled = true) {
   return useQuery({
     queryKey: [...CONVERSAS_KEY, aba, filtros] as const,
     enabled,
     placeholderData: keepPreviousData,
     queryFn: async () =>
       itens((await api.get<{ data: Conversa[] | { items: Conversa[] } }>(
-        `/api/lais/conversas?${queryConversas(aba, filtros)}`)).data),
+        `/api/julia/conversas?${queryConversas(aba, filtros)}`)).data),
   });
 }
 
@@ -108,7 +108,7 @@ export interface PatchContato {
 export function usePatchContato() {
   const qc = useQueryClient();
   return useMutation<unknown, unknown, { id: string } & PatchContato>({
-    mutationFn: ({ id, ...body }) => api.patch(`/api/lais/contatos/${id}`, body),
+    mutationFn: ({ id, ...body }) => api.patch(`/api/julia/contatos/${id}`, body),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: CONVERSAS_KEY });
       void qc.invalidateQueries({ queryKey: HISTORICO_KEY });
@@ -121,7 +121,7 @@ export function useEtiquetas() {
     queryKey: ETIQUETAS_KEY,
     placeholderData: keepPreviousData,
     queryFn: async () =>
-      itens((await api.get<{ data: Etiqueta[] | { items: Etiqueta[] } }>("/api/lais/etiquetas")).data),
+      itens((await api.get<{ data: Etiqueta[] | { items: Etiqueta[] } }>("/api/julia/etiquetas")).data),
   });
 }
 export function useEtiquetaMutations() {
@@ -132,15 +132,15 @@ export function useEtiquetaMutations() {
   };
   return {
     criar: useMutation<Etiqueta, unknown, { nome: string; cor?: string }>({
-      mutationFn: async (b) => (await api.post<{ data: Etiqueta }>("/api/lais/etiquetas", b)).data,
+      mutationFn: async (b) => (await api.post<{ data: Etiqueta }>("/api/julia/etiquetas", b)).data,
       onSuccess: refresh,
     }),
     atualizar: useMutation<unknown, unknown, { id: string; nome?: string; cor?: string }>({
-      mutationFn: ({ id, ...b }) => api.patch(`/api/lais/etiquetas/${id}`, b),
+      mutationFn: ({ id, ...b }) => api.patch(`/api/julia/etiquetas/${id}`, b),
       onSuccess: refresh,
     }),
     remover: useMutation<unknown, unknown, string>({
-      mutationFn: (id) => api.delete(`/api/lais/etiquetas/${id}`),
+      mutationFn: (id) => api.delete(`/api/julia/etiquetas/${id}`),
       onSuccess: refresh,
     }),
   };
@@ -159,13 +159,13 @@ export function useNotas(contatoId: string | null) {
     enabled: !!contatoId,
     placeholderData: keepPreviousData,
     queryFn: async () =>
-      itens((await api.get<{ data: Nota[] | { items: Nota[] } }>(`/api/lais/contatos/${contatoId}/notas`)).data),
+      itens((await api.get<{ data: Nota[] | { items: Nota[] } }>(`/api/julia/contatos/${contatoId}/notas`)).data),
   });
 }
 export function useNotaMutations(contatoId: string | null) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: [...NOTAS_KEY, contatoId] });
-  const base = `/api/lais/contatos/${contatoId}/notas`;
+  const base = `/api/julia/contatos/${contatoId}/notas`;
   return {
     criar: useMutation<unknown, unknown, { texto: string }>({
       mutationFn: (b) => api.post(base, b), onSuccess: refresh,
@@ -181,7 +181,7 @@ export function useNotaMutations(contatoId: string | null) {
 
 export function useFeedbackJulia(contatoId: string | null) {
   return useMutation<unknown, unknown, { nota: "like" | "dislike"; comentario?: string; interacao_id?: string }>({
-    mutationFn: (b) => api.post(`/api/lais/contatos/${contatoId}/feedback`, b),
+    mutationFn: (b) => api.post(`/api/julia/contatos/${contatoId}/feedback`, b),
   });
 }
 
@@ -230,7 +230,7 @@ export function useHistorico(contatoId: string | null) {
     retry: false,
     placeholderData: keepPreviousData,
     queryFn: async () =>
-      (await api.get<{ data: Historico }>(`/api/lais/historico/${contatoId}`)).data,
+      (await api.get<{ data: Historico }>(`/api/julia/historico/${contatoId}`)).data,
   });
 }
 export function codigoHttp(err: unknown): number | null {
@@ -239,6 +239,6 @@ export function codigoHttp(err: unknown): number | null {
 }
 
 export function linkHistorico(contatoId: string): string {
-  return `${window.location.origin}/lais/conversas/h/${contatoId}`;
+  return `${window.location.origin}/julia/conversas/h/${contatoId}`;
 }
-export const mensagemErroConversas = mensagemErroLais;
+export const mensagemErroConversas = mensagemErroJulia;

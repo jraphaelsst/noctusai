@@ -1,7 +1,7 @@
 /**
- * Lais › Agente (`/lais/agente`) — the Julia control page (contract 6 + 11).
+ * Julia › Agente (`/julia/agente`) — the Julia control page (contract 6 + 11).
  *
- * Four cards over ONE query (`GET /api/lais/agente`): the Agents link (token +
+ * Four cards over ONE query (`GET /api/julia/agente`): the Agents link (token +
  * health), the per-connection switch, the handoff target (both in
  * `JuliaConexoesCard`) and the privacy notice editor. Reads are for any org
  * member; every write is core owner/admin (server-enforced — `useIsOrgAdmin`
@@ -14,15 +14,15 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";
-import { AgentsLinkCard } from "@/components/lais/AgentsLinkCard";
-import { AvisoPrivacidadeCard } from "@/components/lais/AvisoPrivacidadeCard";
-import { JuliaConexoesCard } from "@/components/lais/JuliaConexoesCard";
-import { useLaisAgente } from "@/hooks/useLaisAgente";
-import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
+import { AgentsLinkCard } from "@/components/julia/AgentsLinkCard";
+import { AvisoPrivacidadeCard } from "@/components/julia/AvisoPrivacidadeCard";
+import { JuliaConexoesCard } from "@/components/julia/JuliaConexoesCard";
+import { useJuliaAgente } from "@/hooks/useJuliaAgente";
+import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
-export default function LaisAgente() {
+export default function JuliaAgente() {
   const isAdmin = useIsOrgAdmin();
-  const q = useLaisAgente();
+  const q = useJuliaAgente();
   const showSkeleton = q.isPending && !q.data;
   const isRefreshing = q.isFetching && !!q.data;
 
@@ -31,7 +31,7 @@ export default function LaisAgente() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {LAIS_LABEL} · {LAIS_PAGES.agente.name}
+            {JULIA_LABEL} · {JULIA_PAGES.agente.name}
           </h1>
           <p className="text-sm text-muted-foreground">
             A Julia atende os leads novos no WhatsApp. Aqui você liga, desliga e acompanha o agente.

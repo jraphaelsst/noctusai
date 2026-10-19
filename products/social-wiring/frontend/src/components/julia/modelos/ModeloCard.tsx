@@ -1,7 +1,7 @@
 /** Template card: category, name, status chip, body with highlighted {{params}}. */
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { STATUS_LABEL, type Modelo } from "@/hooks/useLaisModelos";
+import { STATUS_LABEL, type Modelo } from "@/hooks/useJuliaModelos";
 
 export function CorpoComParametros({ texto }: { texto: string }) {
   const partes = texto.split(/(\{\{\s*[a-z_]+\s*\}\})/g);

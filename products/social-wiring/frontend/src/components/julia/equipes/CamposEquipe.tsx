@@ -1,7 +1,7 @@
 /** Shared form sections of a team (wizard steps 1 and 3, and the "Configurações" drawer). */
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { EquipeInput, ModoDistribuicao } from "@/hooks/useLaisEquipes";
+import type { EquipeInput, ModoDistribuicao } from "@/hooks/useJuliaEquipes";
 
 export type CamposValor = EquipeInput;
 

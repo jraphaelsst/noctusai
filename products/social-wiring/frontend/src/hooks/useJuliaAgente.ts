@@ -1,12 +1,12 @@
 /**
- * Lais › Agente — the Julia surface (contract section 5 + 11).
+ * Julia › Agente — the Julia surface (contract section 5 + 11).
  *
- *   GET /api/lais/agente                       org member: connections, token flag, link health
- *   PUT /api/lais/agente/conexoes/{id}         admin: the Julia switch + handoff target
- *   PUT /api/lais/agente/token                 admin: paste the org's agents channel token (204)
+ *   GET /api/julia/agente                       org member: connections, token flag, link health
+ *   PUT /api/julia/agente/conexoes/{id}         admin: the Julia switch + handoff target
+ *   PUT /api/julia/agente/token                 admin: paste the org's agents channel token (204)
  *
  * Envelope `{data: …}`; typed server refusals are `AppException`s
- * (`{error: {code, message}}`) — `mensagemErroLais` maps every code the Agente
+ * (`{error: {code, message}}`) — `mensagemErroJulia` maps every code the Agente
  * page can provoke to its own pt-BR sentence so the UI never depends on the
  * wording the server happens to ship.
  */
@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-export interface LaisConexaoAgente {
+export interface JuliaConexaoAgente {
   connection_id: string;
   label: string;
   agente_leads_ativo: boolean;
@@ -25,7 +25,7 @@ export interface LaisConexaoAgente {
   agente_handoff_notificar_user_id: string | null;
 }
 
-export interface LaisStatusAgente {
+export interface JuliaStatusAgente {
   agent_key: string;
   nome: string;
   ativo: boolean;
@@ -35,23 +35,23 @@ export interface LaisStatusAgente {
   llm_configurado: boolean;
 }
 
-export interface LaisAgente {
-  conexoes: LaisConexaoAgente[];
+export interface JuliaAgente {
+  conexoes: JuliaConexaoAgente[];
   token_configurado: boolean;
-  status_agente: LaisStatusAgente | null;
+  status_agente: JuliaStatusAgente | null;
   erro: string | null;
   /** Base URL of the agents product (resolved server-side). Null = unresolvable. */
   agents_url?: string | null;
 }
 
-export interface LaisConexaoUpdate {
+export interface JuliaConexaoUpdate {
   agente_leads_ativo: boolean;
   agente_leads_key?: string;
   /** Omit = keep; explicit null = back to "the connection owner". */
   agente_handoff_notificar_user_id?: string | null;
 }
 
-export const LAIS_AGENTE_KEY = ["sw", "lais", "agente"] as const;
+export const JULIA_AGENTE_KEY = ["sw", "julia", "agente"] as const;
 
 /** pt-BR sentence per refusal code the Agente page can provoke. */
 const MENSAGENS_POR_CODIGO: Record<string, string> = {
@@ -77,25 +77,25 @@ function codigoDoErro(err: unknown): string | null {
   return typeof code === "string" ? code : null;
 }
 
-export function mensagemErroLais(err: unknown, fallback: string): string {
+export function mensagemErroJulia(err: unknown, fallback: string): string {
   const code = codigoDoErro(err);
   if (code && MENSAGENS_POR_CODIGO[code]) return MENSAGENS_POR_CODIGO[code];
   return mensagemErroServidor(err, fallback);
 }
 
-export function useLaisAgente() {
+export function useJuliaAgente() {
   return useQuery({
-    queryKey: LAIS_AGENTE_KEY,
-    queryFn: async () => (await api.get<{ data: LaisAgente }>("/api/lais/agente")).data,
+    queryKey: JULIA_AGENTE_KEY,
+    queryFn: async () => (await api.get<{ data: JuliaAgente }>("/api/julia/agente")).data,
   });
 }
 
 export function useAtualizarConexaoAgente() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, { connectionId: string; body: LaisConexaoUpdate }>({
+  return useMutation<unknown, unknown, { connectionId: string; body: JuliaConexaoUpdate }>({
     mutationFn: ({ connectionId, body }) =>
-      api.put(`/api/lais/agente/conexoes/${connectionId}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: LAIS_AGENTE_KEY }),
+      api.put(`/api/julia/agente/conexoes/${connectionId}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_AGENTE_KEY }),
   });
 }
 
@@ -103,7 +103,7 @@ export function useAtualizarConexaoAgente() {
 export function useSalvarTokenAgents() {
   const qc = useQueryClient();
   return useMutation<unknown, unknown, { token: string }>({
-    mutationFn: ({ token }) => api.put("/api/lais/agente/token", { token }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: LAIS_AGENTE_KEY }),
+    mutationFn: ({ token }) => api.put("/api/julia/agente/token", { token }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_AGENTE_KEY }),
   });
 }

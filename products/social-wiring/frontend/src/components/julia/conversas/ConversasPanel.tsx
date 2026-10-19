@@ -1,5 +1,5 @@
 /**
- * Lais › Conversas v2 body for one connection: tabs (Todas · Minhas ·
+ * Julia › Conversas v2 body for one connection: tabs (Todas · Minhas ·
  * Arquivadas), search, "Filtro de conversas" drawer, list | kanban toggle
  * (`?view=kanban`), the seed ChatWindow fed with the server-filtered rows, and
  * the "Cliente" column for the open conversation.
@@ -14,9 +14,9 @@ import { Input } from "@/components/ui/input";
 import { WhatsAppChatWindow, ThreadsFeedContext, type ThreadsFeed } from "@/components/WhatsAppChatWindow";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
-  CONVERSAS_KEY, FILTROS_VAZIOS, contarFiltros, useLaisConversas,
+  CONVERSAS_KEY, FILTROS_VAZIOS, contarFiltros, useJuliaConversas,
   type Aba, type Conversa, type FiltrosConversas,
-} from "@/hooks/useLaisConversas";
+} from "@/hooks/useJuliaConversas";
 import { useWhatsAppChats } from "@/hooks/useWhatsAppChats";
 import { useQueryClient } from "@tanstack/react-query";
 import { ClienteColumn } from "./ClienteColumn";
@@ -61,7 +61,7 @@ export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
 
   const q = useDebouncedValue(busca, 300);
   const efetivos = useMemo(() => ({ ...filtros, q }), [filtros, q]);
-  const lista = useLaisConversas(aba, efetivos, view === "lista");
+  const lista = useJuliaConversas(aba, efetivos, view === "lista");
 
   // The WAHA chat cache is patched in place by the realtime stream; a bump there
   // means a new message / read-state, so the server-filtered list is stale.

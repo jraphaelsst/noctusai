@@ -1,10 +1,10 @@
 /**
- * Week / day calendar. There is deliberately NO month view (Lais rejects it).
+ * Week / day calendar. There is deliberately NO month view (Julia rejects it).
  */
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { Visita, VisitasView } from "@/hooks/useLaisVisitas";
+import type { Visita, VisitasView } from "@/hooks/useJuliaVisitas";
 import { chaveData, dataDe, diasDaJanela, hhmm, paraData, somarDias } from "./calendario";
 
 export const STATUS_LABEL: Record<Visita["status"], string> = {

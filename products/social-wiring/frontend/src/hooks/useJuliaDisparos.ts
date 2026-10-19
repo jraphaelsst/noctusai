@@ -1,8 +1,8 @@
-/** Lais › Disparos em massa (contract §14 W12). Envelope `{data, meta?}`. */
+/** Julia › Disparos em massa (contract §14 W12). Envelope `{data, meta?}`. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import type { Transporte } from "@/hooks/useLaisTransporte";
+import type { Transporte } from "@/hooks/useJuliaTransporte";
 
 export type DisparoTipo = "remarketing" | "atualizacao_anuncios";
 export type DisparoStatus = "rascunho" | "agendado" | "enviando" | "enviado" | "cancelado" | "erro";
@@ -56,8 +56,8 @@ export interface DisparosList {
   transporte?: Transporte;
 }
 
-export const DISPAROS_KEY = ["sw", "lais", "disparos"] as const;
-const BASE = "/api/lais/disparos";
+export const DISPAROS_KEY = ["sw", "julia", "disparos"] as const;
+const BASE = "/api/julia/disparos";
 
 export function useDisparos() {
   return useQuery<DisparosList>({

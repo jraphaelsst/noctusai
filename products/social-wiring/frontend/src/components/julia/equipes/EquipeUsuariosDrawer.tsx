@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useAdicionarMembro, useOrdenarMembros, useRemoverMembro, type Equipe } from "@/hooks/useLaisEquipes";
+import { useAdicionarMembro, useOrdenarMembros, useRemoverMembro, type Equipe } from "@/hooks/useJuliaEquipes";
 import { useTeamMembers } from "@/hooks/useTeam";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 

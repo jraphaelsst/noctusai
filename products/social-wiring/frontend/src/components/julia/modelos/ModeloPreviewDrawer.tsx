@@ -6,8 +6,8 @@ import { SideDrawer, useConfirm } from "@noctusai/lib/components";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PARAMETROS, parametrosDoTexto, simular, useExcluirModelo, type Modelo } from "@/hooks/useLaisModelos";
-import { mensagemErroLais } from "@/hooks/useLaisAgente";
+import { PARAMETROS, parametrosDoTexto, simular, useExcluirModelo, type Modelo } from "@/hooks/useJuliaModelos";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null; onClose: () => void }) {
   const confirmar = useConfirm();
@@ -23,7 +23,7 @@ export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null
         toast.success("Modelo excluído");
         onClose();
       },
-      onError: (e) => toast.error(mensagemErroLais(e, "Não foi possível excluir o modelo.")),
+      onError: (e) => toast.error(mensagemErroJulia(e, "Não foi possível excluir o modelo.")),
     });
   }
 

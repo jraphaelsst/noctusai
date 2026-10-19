@@ -1,4 +1,4 @@
-/** Lais › Disparos em massa (`/lais/disparos`) — contract §14 W12. */
+/** Julia › Disparos em massa (`/julia/disparos`) — contract §14 W12. */
 import { useState } from "react";
 import { useIsFetching } from "@tanstack/react-query";
 import { AlertCircle, Loader2, Plus } from "lucide-react";
@@ -6,10 +6,10 @@ import { AlertCircle, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DisparoDetalheDrawer } from "@/components/lais/disparos/DisparoDetalheDrawer";
-import { NovoDisparoWizard } from "@/components/lais/disparos/NovoDisparoWizard";
-import { TransporteBadge } from "@/components/lais/TransporteBadge";
-import { DISPAROS_KEY, STATUS_LABEL, TIPO_LABEL, useDisparos, type Disparo, type DisparoStatus, type DisparoTipo } from "@/hooks/useLaisDisparos";
+import { DisparoDetalheDrawer } from "@/components/julia/disparos/DisparoDetalheDrawer";
+import { NovoDisparoWizard } from "@/components/julia/disparos/NovoDisparoWizard";
+import { TransporteBadge } from "@/components/julia/TransporteBadge";
+import { DISPAROS_KEY, STATUS_LABEL, TIPO_LABEL, useDisparos, type Disparo, type DisparoStatus, type DisparoTipo } from "@/hooks/useJuliaDisparos";
 
 type Aba = "todos" | DisparoStatus;
 const ABAS: { v: Aba; label: string; status?: DisparoStatus }[] = [
@@ -50,7 +50,7 @@ function Secao({ titulo, itens, onOpen }: { titulo: string; itens: Disparo[]; on
   );
 }
 
-export default function LaisDisparos() {
+export default function JuliaDisparos() {
   const { data, isPending, isError, refetch } = useDisparos();
   const refreshing = useIsFetching({ queryKey: DISPAROS_KEY }) > 0 && !!data;
   const [aba, setAba] = useState<Aba>("todos");

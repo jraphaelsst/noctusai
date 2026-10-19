@@ -1,5 +1,5 @@
 /**
- * Lais › Visitas — empty/active states, config drawer (per-operation split,
+ * Julia › Visitas — empty/active states, config drawer (per-operation split,
  * grade, admin gate), week/day calendar (no month), dialog transitions + 409.
  * `@/lib/api` is the seam; real hooks + components.
  */
@@ -14,8 +14,8 @@ vi.mock("@/lib/api", () => ({ api }));
 vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import LaisVisitas from "./Visitas";
-import { chaveData } from "@/components/lais/visitas/calendario";
+import JuliaVisitas from "./Visitas";
+import { chaveData } from "@/components/julia/visitas/calendario";
 
 const grade = { seg: [], ter: [], qua: [], qui: [], sex: [], sab: [], dom: [] };
 const op = (ativo: boolean) => ({ ativo, cpf_obrigatorio: false, min_dias: 1, min_horas: 2, max_dias: 30, grade });
@@ -36,10 +36,10 @@ function err(code: string, status = 409) {
 }
 function setup(cfg: unknown = CFG_ON, visitas: unknown[] = [VISITA]) {
   api.get.mockImplementation((url: string) =>
-    url === "/api/lais/visitas/config" ? Promise.resolve({ data: cfg }) : Promise.resolve({ data: visitas }));
+    url === "/api/julia/visitas/config" ? Promise.resolve({ data: cfg }) : Promise.resolve({ data: visitas }));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}><ConfirmProvider><LaisVisitas /></ConfirmProvider></QueryClientProvider>,
+    <QueryClientProvider client={qc}><ConfirmProvider><JuliaVisitas /></ConfirmProvider></QueryClientProvider>,
   );
 }
 
@@ -64,7 +64,7 @@ describe("Visitas page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dia" }));
     await waitFor(() => expect(screen.getByTestId("visitas-calendario").getAttribute("data-view")).toBe("dia"));
     expect(within(screen.getByTestId("visitas-calendario")).getAllByTestId(/^dia-/)).toHaveLength(1);
-    expect(api.get).toHaveBeenCalledWith(`/api/lais/visitas?view=dia&data=${chaveData(new Date())}`);
+    expect(api.get).toHaveBeenCalledWith(`/api/julia/visitas?view=dia&data=${chaveData(new Date())}`);
   });
 
   it("filters by status", async () => {
@@ -93,7 +93,7 @@ describe("config drawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     const [url, body] = api.put.mock.calls[0];
-    expect(url).toBe("/api/lais/visitas/config");
+    expect(url).toBe("/api/julia/visitas/config");
     expect(body.config.geral.grade.seg).toEqual([{ inicio: "09:00", fim: "12:00" }]);
     expect(body.separar_operacao).toBe(false);
   });
@@ -139,7 +139,7 @@ describe("visit dialog", () => {
     fireEvent.click(within(d).getByRole("button", { name: "Confirmar" }));
     expect(await screen.findByText(/receberá uma mensagem/)).toBeTruthy();
     await aceitar("Confirmar visita");
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/lais/visitas/v1/confirmar", {}));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/visitas/v1/confirmar", {}));
   });
 
   it("remarca with the new window", async () => {
@@ -152,7 +152,7 @@ describe("visit dialog", () => {
     await aceitar("Remarcar");
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     const [url, body] = api.post.mock.calls[0];
-    expect(url).toBe("/api/lais/visitas/v1/remarcar");
+    expect(url).toBe("/api/julia/visitas/v1/remarcar");
     expect(new Date(body.inicio).getTime()).toBe(new Date("2030-01-02T09:00").getTime());
   });
 
@@ -165,6 +165,6 @@ describe("visit dialog", () => {
     await aceitar("Cancelar visita");
     expect(await screen.findByTestId("visita-erro")).toBeTruthy();
     expect(screen.getByTestId("visita-erro").textContent).toMatch(/não pode mais mudar/);
-    expect(api.post.mock.calls[0]).toEqual(["/api/lais/visitas/v1/cancelar", { motivo: "lead desistiu" }]);
+    expect(api.post.mock.calls[0]).toEqual(["/api/julia/visitas/v1/cancelar", { motivo: "lead desistiu" }]);
   });
 });

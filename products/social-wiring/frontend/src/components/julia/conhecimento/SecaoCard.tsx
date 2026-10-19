@@ -1,7 +1,7 @@
 /** Summary card for one Conhecimento section; [Editar] opens its drawer (admin only). */
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SecaoSalva } from "@/hooks/useLaisConhecimento";
+import type { SecaoSalva } from "@/hooks/useJuliaConhecimento";
 import { formatar, get, type SecaoSpec } from "./secoes";
 
 interface Tel { setor: string; telefone: string; principal: boolean }

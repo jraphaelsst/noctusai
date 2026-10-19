@@ -11,7 +11,7 @@ import {
   rotuloMinutos,
   useSalvarEnvioPoliticas,
   type Politicas,
-} from "@/hooks/useLaisEnvio";
+} from "@/hooks/useJuliaEnvio";
 
 function Radio({
   name, value, atual, label, ro, onPick,

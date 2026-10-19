@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ehTransicaoInvalida, mensagemErroVisitas, useAcaoVisita, type Visita } from "@/hooks/useLaisVisitas";
+import { ehTransicaoInvalida, mensagemErroVisitas, useAcaoVisita, type Visita } from "@/hooks/useJuliaVisitas";
 import { deInputLocal, paraInputLocal } from "./calendario";
 import { STATUS_CLASSE, STATUS_LABEL } from "./VisitasCalendario";
 
