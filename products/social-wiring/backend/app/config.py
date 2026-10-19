@@ -5,7 +5,16 @@ Extends the framework's `ProductSettings` with the fields the YouTube /
 SMTP / WAHA / Redis integrations need. Every value reads from `.env` so
 keys never enter the repository.
 """
+from pydantic import AliasChoices, Field
+
 from noctusai_seed import ProductSettings
+
+
+def _com_legado(nome: str) -> AliasChoices:
+    """The field's own name plus its pre-rename `lais_*` spelling: a deploy `.env` that still sets
+    `LAIS_REENGAJAMENTO_WORKER_ENABLED=false` (a kill switch) or a `LAIS_AGENTE_*` limit keeps meaning what it meant.
+    NOC-REMEDIATE[drop-lais-env-alias]: drop the legacy spelling one release after the rename (2026-10-19)."""
+    return AliasChoices(nome, nome.replace("julia_", "lais_", 1))
 
 
 class SocialWiringSettings(ProductSettings):
@@ -205,17 +214,17 @@ class SocialWiringSettings(ProductSettings):
     # which uses 8s — keep aligned so the seed-buffer test suite stays
     # representative.
     message_debounce_seconds: int = 8
-    # Julia (Lais lead agent, contract 10.1 M4): limits applied by SW BEFORE a
+    # Julia (lead agent, contract 10.1 M4): limits applied by SW BEFORE a
     # turn is sent to agents. A flood on one chat, or on one number, must not
     # become LLM spend. Over a limit the turn is dropped (logged), never queued.
-    lais_agente_max_turns_per_chat_hour: int = 10
-    lais_agente_max_turns_per_connection_minute: int = 30
+    julia_agente_max_turns_per_chat_hour: int = Field(10, validation_alias=_com_legado('julia_agente_max_turns_per_chat_hour'))
+    julia_agente_max_turns_per_connection_minute: int = Field(30, validation_alias=_com_legado('julia_agente_max_turns_per_connection_minute'))
     # One debounced batch is capped at this many characters in total (oldest
     # messages dropped first) -- agents also caps each message at 8000.
-    lais_agente_batch_max_chars: int = 16000
+    julia_agente_batch_max_chars: int = Field(16000, validation_alias=_com_legado('julia_agente_batch_max_chars'))
     # Concurrent lead turns across ALL chats (one per chat key always). Lead turns run
     # off the single conversation-worker thread so they never delay operator batches.
-    lais_agente_max_concurrent_turns: int = 4
+    julia_agente_max_concurrent_turns: int = Field(4, validation_alias=_com_legado('julia_agente_max_concurrent_turns'))
     # How long a conversation's memory list lives in Redis after the last
     # touch. 1h is the seed default and matches the operator's expected
     # session duration (one property → 5-10 min conversation; idle past
@@ -392,10 +401,10 @@ class SocialWiringSettings(ProductSettings):
     geracao_worker_enabled: bool = True
     geracao_poll_seconds: float = 2.0
     geracao_lease_seconds: float = 600.0
-    # Lais wave 4 (reengajamento): worker over the `lais_reengajar_*` / `lais_regua_tentativa` job types.
-    lais_reengajamento_worker_enabled: bool = True
-    lais_reengajamento_poll_seconds: float = 5.0
-    lais_reengajamento_lease_seconds: float = 600.0
+    # Julia wave 4 (reengajamento): worker over the `julia_reengajar_*` / `julia_regua_tentativa` job types.
+    julia_reengajamento_worker_enabled: bool = Field(True, validation_alias=_com_legado('julia_reengajamento_worker_enabled'))
+    julia_reengajamento_poll_seconds: float = Field(5.0, validation_alias=_com_legado('julia_reengajamento_poll_seconds'))
+    julia_reengajamento_lease_seconds: float = Field(600.0, validation_alias=_com_legado('julia_reengajamento_lease_seconds'))
     biblioteca_poll_seconds: float = 5.0
     biblioteca_lease_seconds: float = 600.0
     # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.

@@ -1,4 +1,4 @@
-"""Who may see a Lais contato (lais-build-contract A7 + DECISIONS 2026-10-15 #3) -- ONE rule, every route.
+"""Who may see a Julia contato (lais-build-contract A7 + DECISIONS 2026-10-15 #3) -- ONE rule, every route.
 
 The OWNER of a contato is its `responsavel_user_id` (the attendant), else the `user_id` of the
 whatsapp connection the contato arrived on. A contato is visible to:
@@ -10,7 +10,7 @@ Any other member of the SAME org gets `403 sem_acesso`. A contato of ANOTHER org
 `404 contato_nao_encontrado` -- never 403 across orgs, so ids cannot be probed. There is no shared /
 public variant of this check anywhere: the history link needs a login too.
 
-Every per-contato Lais route calls `exigir_contato` (single contato) or `filtrar_contatos` /
+Every per-contato Julia route calls `exigir_contato` (single contato) or `filtrar_contatos` /
 `filtrar_por_contato` (lists); nothing re-implements the predicate.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import AppException
 
-T_CONTATOS = "lais_contatos"
+T_CONTATOS = "julia_contatos"
 T_CONEXOES = "whatsapp_connections"
 _IN_LOTE = 200
 

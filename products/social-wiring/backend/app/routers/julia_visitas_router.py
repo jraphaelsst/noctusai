@@ -1,12 +1,12 @@
-"""Lais > Visitas (wave 5, contract section 7).
+"""Julia > Visitas (wave 5, contract section 7).
 
-  GET  /api/lais/visitas/config                  org member
-  PUT  /api/lais/visitas/config                  org admin (the drawer's Salvar)
-  GET  /api/lais/visitas?view=semana|dia&data=YYYY-MM-DD[&operacao&status&responsavel]
+  GET  /api/julia/visitas/config                  org member
+  PUT  /api/julia/visitas/config                  org admin (the drawer's Salvar)
+  GET  /api/julia/visitas?view=semana|dia&data=YYYY-MM-DD[&operacao&status&responsavel]
                                                  org member; any other view -> 422 `view_invalida`
-  POST /api/lais/visitas/{id}/confirmar          -> 200 {data: visita}
-  POST /api/lais/visitas/{id}/remarcar {inicio, fim}
-  POST /api/lais/visitas/{id}/cancelar {motivo?}
+  POST /api/julia/visitas/{id}/confirmar          -> 200 {data: visita}
+  POST /api/julia/visitas/{id}/remarcar {inicio, fim}
+  POST /api/julia/visitas/{id}/cancelar {motivo?}
                                                  an illegal transition -> 409 `transicao_invalida`
 
 Confirm / reschedule / cancel send the lead a WAHA text over the contato's own line; `data` carries
@@ -28,11 +28,11 @@ from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
 from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
-from app.services import lais_acesso, lais_capi_service, lais_visitas_service as svc
+from app.services import julia_acesso, julia_capi_service, julia_visitas_service as svc
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/visitas", tags=["lais-visitas"])
+router = APIRouter(prefix="/api/julia/visitas", tags=["julia-visitas"])
 
 svc.registrar()  # binds the `pedido_visita` action handler
 
@@ -99,13 +99,13 @@ def listar(
     itens = svc.listar(client, _org(auth), view=view, data=dia, operacao=operacao, status=status,
                        responsavel_user_id=str(responsavel) if responsavel else None)
     # A7: members only see the visits of the contatos they own; admins/owners see all
-    return {"data": lais_acesso.filtrar_por_contato(client, lais_acesso.contexto(auth, request), itens)}
+    return {"data": julia_acesso.filtrar_por_contato(client, julia_acesso.contexto(auth, request), itens)}
 
 
 def _guardar(client: Any, auth: tuple, request: Any, org: UUID, visita_id: UUID) -> None:
     """A7: a visit hangs off a contato -- only that contato's owner or an org admin may act on it."""
     v = svc.obter(client, org, visita_id)  # 404 when missing / another org
-    lais_acesso.exigir_contato(client, lais_acesso.contexto(auth, request), v["contato_id"])
+    julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), v["contato_id"])
 
 
 async def _responder(client: Any, org_id: UUID, visita: dict[str, Any], acao: str, store: Any, waha_factory: Any) -> dict[str, Any]:
@@ -126,7 +126,7 @@ async def confirmar(
     _guardar(client, auth, request, org, visita_id)
     visita = svc.confirmar(client, org, visita_id)
     # wave 13: the CAPI `visita_agendada` signal (Meta-ads leads only; best-effort, never raises)
-    await lais_capi_service.registrar_evento(client, org, visita["contato_id"], "visita_agendada", referencia=str(visita_id))
+    await julia_capi_service.registrar_evento(client, org, visita["contato_id"], "visita_agendada", referencia=str(visita_id))
     return await _responder(client, org, visita, "confirmar", store, waha_factory)
 
 

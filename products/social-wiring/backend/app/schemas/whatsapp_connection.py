@@ -270,7 +270,7 @@ class ChatDTO(BaseModel):
     last_read_at: Optional[str] = None
     archived: bool = False
     pinned: bool = False
-    #: Julia (lais contract 11.4): True while a human has taken the chat over.
+    #: Julia (julia contract 11.4): True while a human has taken the chat over.
     agente_pausado: bool = False
 
 

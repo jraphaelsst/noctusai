@@ -14,21 +14,21 @@ lead-form first contact, the Google review ask) passes `exigir` BEFORE it reache
   gate 2  the org opted in to THIS flow (every default is off / NULL, nothing is seeded):
             resposta              -- none beyond gate 1: the lead wrote first (also covers the recesso notice,
                                      the privacy disclosure and the deletion confirmation of that turn)
-            reengajamento_minutos -- `lais_reengajamento_config.minutos_ativo`   (default false)
-            reengajamento_horas   -- `lais_reengajamento_config.horas_ativo`     (default false)
-            regua                 -- the `lais_reguas` row is `ativa`            (default false)
+            reengajamento_minutos -- `julia_reengajamento_config.minutos_ativo`   (default false)
+            reengajamento_horas   -- `julia_reengajamento_config.horas_ativo`     (default false)
+            regua                 -- the `julia_reguas` row is `ativa`            (default false)
             primeiro_contato      -- an APPROVED `primeiro_contato` modelo exists (none until the org submits one
                                      and Meta approves it)
-            avaliacao             -- `lais_avaliacao_config.google_review_url` is set (default NULL)
+            avaliacao             -- `julia_avaliacao_config.google_review_url` is set (default NULL)
 
 Refuse-not-null: a blocked send raises `EnvioBloqueado` after logging the reason and emitting the
-`envio_bloqueado` Lais event (`{fluxo, motivo, connection_id}`, plus `bloco` for a non-`sdr` block) -- never a
+`envio_bloqueado` Julia event (`{fluxo, motivo, connection_id}`, plus `bloco` for a non-`sdr` block) -- never a
 silent skip. Callers turn it into
 their own outcome label.
 
 `exigir` returns a `Liberacao`; a send helper that does not call `exigir` itself takes the `Liberacao` and calls
 `conferir` on it; a `Liberacao` is sealed (only `exigir` can build one). Keeper:
-`tests/services/test_lais_envio_gate_keeper.py` fails when a WhatsApp send in a Lais module -- or in any module that
+`tests/services/test_julia_envio_gate_keeper.py` fails when a WhatsApp send in a Julia module -- or in any module that
 imports one -- sits in a function that does not CALL `exigir` / `conferir` (operator-initiated sends are listed there
 one by one with their reason).
 """
@@ -40,15 +40,15 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import UUID
 
-from app.services import lais_eventos_service
+from app.services import julia_eventos_service
 
 logger = logging.getLogger(__name__)
 
 T_CONEXOES = "whatsapp_connections"
-T_REENGAJAMENTO_CONFIG = "lais_reengajamento_config"
-T_REGUAS = "lais_reguas"
-T_MODELOS = "lais_modelos"
-T_AVALIACOES_CONFIG = "lais_avaliacao_config"
+T_REENGAJAMENTO_CONFIG = "julia_reengajamento_config"
+T_REGUAS = "julia_reguas"
+T_MODELOS = "julia_modelos"
+T_AVALIACOES_CONFIG = "julia_avaliacao_config"
 EVENTO_BLOQUEADO = "envio_bloqueado"
 
 
@@ -84,7 +84,7 @@ class Liberacao:
 
     def __post_init__(self) -> None:
         if self.selo is not _SELO:
-            raise TypeError("Liberacao is issued only by lais_envio_gate.exigir")
+            raise TypeError("Liberacao is issued only by julia_envio_gate.exigir")
 
 
 class EnvioBloqueado(Exception):
@@ -167,12 +167,12 @@ def exigir(
     if motivo is None:
         return Liberacao(org_id=str(org_id), connection_id=str(connection_id), fluxo=fluxo, selo=_SELO, bloco=bloco)
     logger.warning(
-        "lais: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s bloco=%s", fluxo.value, motivo, org_id, connection_id, contato_id, bloco,
+        "julia: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s bloco=%s", fluxo.value, motivo, org_id, connection_id, contato_id, bloco,
     )
     payload = {"fluxo": fluxo.value, "motivo": motivo, "connection_id": str(connection_id) if connection_id else None}
     if bloco != BLOCO_SDR:
         payload["bloco"] = bloco
-    lais_eventos_service.emitir(db, org_id, EVENTO_BLOQUEADO, contato_id, payload)
+    julia_eventos_service.emitir(db, org_id, EVENTO_BLOQUEADO, contato_id, payload)
     raise EnvioBloqueado(fluxo, motivo)
 
 

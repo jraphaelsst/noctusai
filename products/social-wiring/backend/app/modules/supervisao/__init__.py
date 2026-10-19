@@ -2,7 +2,7 @@
 
 - `metricas`  — deterministic scorecard engine (rubric `sdr.v1` for Julia, `<bloco>.v1` for human blocks).
 - `service`   — config, nightly scorecard upsert, handoff sweep (assumido/expirado), read models.
-- `relatorio` — the owner-only daily report: `relatorio` lais_evento + `SupervisaoDigestService` email.
+- `relatorio` — the owner-only daily report: `relatorio` julia_evento + `SupervisaoDigestService` email.
 - `scheduler` — 07:00 America/Sao_Paulo nightly job + 15-min handoff sweep (seed scheduler).
 - `router`    — GET /api/supervisao/scorecards · GET /api/supervisao/handoffs · GET/PUT /api/supervisao/config.
 

@@ -1,11 +1,11 @@
-"""Lais contatos + interacoes (episodes) + the `gen` stale guard (contract 0.2 / 2.2).
+"""Julia contatos + interacoes (episodes) + the `gen` stale guard (contract 0.2 / 2.2).
 
-One `lais_contatos` row per person Julia talks to; one open `lais_interacoes` row per
-contato at a time (DB-enforced by `lais_interacoes_uma_aberta_uq`). Pure table logic over
+One `julia_contatos` row per person Julia talks to; one open `julia_interacoes` row per
+contato at a time (DB-enforced by `julia_interacoes_uma_aberta_uq`). Pure table logic over
 the schema-scoped service client; the async parts (closing an episode calls agents'
-`/resumo`) live in `lais_acoes_service.fechar_interacao`.
+`/resumo`) live in `julia_acoes_service.fechar_interacao`.
 
-The stale guard: every Lais job payload carries `{org_id, chat_key, gen}` built by
+The stale guard: every Julia job payload carries `{org_id, chat_key, gen}` built by
 `payload_job` from the contato's CURRENT `gen`; at fire time `job_obsoleto` re-reads it and a
 mismatch means "complete as `obsoleto`, no side effects". `gen` is bumped by every inbound
 (`registrar_inbound`), every `encerrar` and every pause/handoff (`bump_gen`) -- that is how
@@ -20,10 +20,10 @@ from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-T_CONTATOS = "lais_contatos"
-T_INTERACOES = "lais_interacoes"
-T_ACOES = "lais_acoes_aplicadas"
-T_EVENTOS = "lais_eventos"
+T_CONTATOS = "julia_contatos"
+T_INTERACOES = "julia_interacoes"
+T_ACOES = "julia_acoes_aplicadas"
+T_EVENTOS = "julia_eventos"
 
 #: An inbound after this much silence opens a NEW episode (contract 2.2).
 SILENCIO_NOVO_EPISODIO = timedelta(hours=24)
@@ -82,7 +82,7 @@ def obter_ou_criar_contato(
         ).execute()
         row = buscar_contato(client, org_id, connection_id, chat_id)
         if row is None:
-            raise RuntimeError("lais: contato not readable right after its insert")
+            raise RuntimeError("julia: contato not readable right after its insert")
         return row
     patch: dict[str, Any] = {}
     if telefone_e164 and not row.get("telefone_e164"):
@@ -106,7 +106,7 @@ def _cas_gen(client: Any, contato_id: UUID | str, extra: dict[str, Any]) -> tupl
     for _ in range(_CAS_TENTATIVAS):
         cur_rows = client.table(T_CONTATOS).select("*").eq("id", str(contato_id)).limit(1).execute().data or []
         if not cur_rows:
-            raise LookupError(f"lais contato {contato_id} not found")
+            raise LookupError(f"julia contato {contato_id} not found")
         cur = cur_rows[0]
         novo = int(cur.get("gen") or 0) + 1
         patch = {**extra, "gen": novo, "updated_at": _now(None).isoformat()}
@@ -116,7 +116,7 @@ def _cas_gen(client: Any, contato_id: UUID | str, extra: dict[str, Any]) -> tupl
         )
         if done:
             return novo, {**cur, **patch}
-    raise GenConflito(f"lais contato {contato_id}: gen compare-and-set lost {_CAS_TENTATIVAS} races")
+    raise GenConflito(f"julia contato {contato_id}: gen compare-and-set lost {_CAS_TENTATIVAS} races")
 
 
 def bump_gen(client: Any, contato_id: UUID | str, **extra: Any) -> int:
@@ -202,11 +202,11 @@ def abrir_interacao(client: Any, org_id: UUID | str, contato: dict[str, Any], *,
         ganhador = interacao_aberta(client, contato["id"])
         if ganhador is None:
             raise
-        logger.info("lais: interacao open raced for contato=%s -- using the winner", contato["id"])
+        logger.info("julia: interacao open raced for contato=%s -- using the winner", contato["id"])
         return ganhador
     row = interacao_aberta(client, contato["id"])
     if row is None:
-        raise RuntimeError("lais: no open interacao right after opening one")
+        raise RuntimeError("julia: no open interacao right after opening one")
     return row
 
 
@@ -219,7 +219,7 @@ def episodio_vencido(ultima_atividade: Optional[datetime], *, agora: Optional[da
 
 # ── the stale guard (contract 0.2) ──────────────────────────────────────────
 def payload_job(contato: dict[str, Any], chat_key: str) -> dict[str, Any]:
-    """The `{org_id, chat_key, gen}` every Lais job payload carries (gen = the contato's CURRENT one)."""
+    """The `{org_id, chat_key, gen}` every Julia job payload carries (gen = the contato's CURRENT one)."""
     return {"org_id": str(contato["org_id"]), "chat_key": chat_key, "gen": int(contato.get("gen") or 0)}
 
 
@@ -247,7 +247,7 @@ def apagar_do_chat(client: Any, org_id: UUID | str, connection_id: UUID | str, c
     if not ids:
         return 0
     # wave 13: the credit-analysis rows (consent log + analyses) are personal/financial data -- erased explicitly too
-    for tabela in (T_EVENTOS, T_ACOES, "lais_credito_analises", "lais_credito_consentimentos", T_INTERACOES):
+    for tabela in (T_EVENTOS, T_ACOES, "julia_credito_analises", "julia_credito_consentimentos", T_INTERACOES):
         client.table(tabela).delete().eq("org_id", str(org_id)).in_("contato_id", ids).execute()
     client.table(T_CONTATOS).delete().eq("org_id", str(org_id)).in_("id", ids).execute()
     return len(ids)

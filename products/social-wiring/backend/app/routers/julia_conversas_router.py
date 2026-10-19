@@ -1,22 +1,22 @@
-"""Lais > Conversas v2 (wave 7, contract section 9 + A7).
+"""Julia > Conversas v2 (wave 7, contract section 9 + A7).
 
-  GET    /api/lais/conversas?aba=todas|minhas|arquivadas&q&limit&offset
+  GET    /api/julia/conversas?aba=todas|minhas|arquivadas&q&limit&offset
          list filters are COMMA-JOINED: operacao=a,b status_sw=a,b atendimento=julia,manual
          responsavel=<uuid>,sem (sem = unassigned) etiqueta=<id>,<id> (repeating etiqueta also works) equipe=<id>,<id> (contatos whose responsavel is a member of the team)
          ?view=kanban         -> {data:{colunas:[todas, <one per etiqueta>, arquivadas]}}
-  PATCH  /api/lais/contatos/{id}                {responsavel_user_id?, arquivado?, bloqueado?, etiquetas?}
-  GET|POST /api/lais/contatos/{id}/notas        DELETE /api/lais/contatos/{id}/notas/{nota_id} (soft)
-  POST   /api/lais/contatos/{id}/feedback       {nota: like|dislike, comentario?, interacao_id?}
-  GET|POST /api/lais/etiquetas   PATCH|DELETE /api/lais/etiquetas/{id} (admin)
-  GET    /api/lais/historico/{contato_id}       -> {data:{contato, interacoes, mensagens}}
+  PATCH  /api/julia/contatos/{id}                {responsavel_user_id?, arquivado?, bloqueado?, etiquetas?}
+  GET|POST /api/julia/contatos/{id}/notas        DELETE /api/julia/contatos/{id}/notas/{nota_id} (soft)
+  POST   /api/julia/contatos/{id}/feedback       {nota: like|dislike, comentario?, interacao_id?}
+  GET|POST /api/julia/etiquetas   PATCH|DELETE /api/julia/etiquetas/{id} (admin)
+  GET    /api/julia/historico/{contato_id}       -> {data:{contato, interacoes, mensagens}}
 
-Access (A7, `lais_acesso`): every per-contato route -- and the history link -- is 401 without a session,
+Access (A7, `julia_acesso`): every per-contato route -- and the history link -- is 401 without a session,
 404 for a contato of another org, 403 `sem_acesso` for a same-org member who is neither its owner
 (responsavel, else connection owner) nor an org owner/admin. Lists silently contain only what the caller may see.
 `equipe` (wave 11) keeps the contatos whose responsavel belongs to one of the teams (`meta.equipe` echoes the ids).
 
-NB: registered BEFORE `lais_perguntas_router`, whose `GET /api/lais/contatos/{connection_id}/{chat_id}` would
-otherwise swallow `GET /api/lais/contatos/{id}/notas`.
+NB: registered BEFORE `julia_perguntas_router`, whose `GET /api/julia/contatos/{connection_id}/{chat_id}` would
+otherwise swallow `GET /api/julia/contatos/{id}/notas`.
 """
 # No `from __future__ import annotations`: FastAPI body/param models are resolved from the signature.
 import logging
@@ -31,11 +31,11 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_acesso, lais_conversas_service as svc
+from app.services import julia_acesso, julia_conversas_service as svc
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais", tags=["lais-conversas"])
+router = APIRouter(prefix="/api/julia", tags=["julia-conversas"])
 
 
 def get_conversas_client() -> Any:
@@ -75,8 +75,8 @@ def _csv(valor: Optional[str]) -> list[str]:
     return [p.strip() for p in (valor or "").split(",") if p.strip()]
 
 
-def _ctx(auth: tuple, request: Optional[Request]) -> lais_acesso.AcessoCtx:
-    return lais_acesso.contexto(auth, request)
+def _ctx(auth: tuple, request: Optional[Request]) -> julia_acesso.AcessoCtx:
+    return julia_acesso.contexto(auth, request)
 
 
 # ── list / kanban ───────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ def patch_contato(
     client: Any = Depends(get_conversas_client),
 ) -> dict[str, Any]:
     ctx = _ctx(auth, request)
-    contato = lais_acesso.exigir_contato(client, ctx, contato_id)
+    contato = julia_acesso.exigir_contato(client, ctx, contato_id)
     campos = {k: getattr(corpo, k) for k in corpo.model_fields_set}
     return {"data": svc.atualizar_contato(client, get_core_client(), ctx, contato, campos)}
 
@@ -155,7 +155,7 @@ def get_notas(
     client: Any = Depends(get_conversas_client),
 ) -> dict[str, Any]:
     ctx = _ctx(auth, request)
-    lais_acesso.exigir_contato(client, ctx, contato_id)
+    julia_acesso.exigir_contato(client, ctx, contato_id)
     return {"data": svc.listar_notas(client, ctx.org_id, contato_id)}
 
 
@@ -168,7 +168,7 @@ def post_nota(
     client: Any = Depends(get_conversas_client),
 ) -> dict[str, Any]:
     ctx = _ctx(auth, request)
-    lais_acesso.exigir_contato(client, ctx, contato_id)
+    julia_acesso.exigir_contato(client, ctx, contato_id)
     return {"data": svc.criar_nota(client, ctx, contato_id, corpo.texto)}
 
 
@@ -181,7 +181,7 @@ def delete_nota(
     client: Any = Depends(get_conversas_client),
 ) -> Response:
     ctx = _ctx(auth, request)
-    lais_acesso.exigir_contato(client, ctx, contato_id)
+    julia_acesso.exigir_contato(client, ctx, contato_id)
     svc.excluir_nota(client, ctx, contato_id, nota_id)
     return Response(status_code=204)
 
@@ -196,7 +196,7 @@ def post_feedback(
     client: Any = Depends(get_conversas_client),
 ) -> dict[str, Any]:
     ctx = _ctx(auth, request)
-    contato = lais_acesso.exigir_contato(client, ctx, contato_id)
+    contato = julia_acesso.exigir_contato(client, ctx, contato_id)
     return {"data": svc.registrar_feedback(
         client, ctx, contato, nota=corpo.nota, comentario=corpo.comentario,
         interacao_id=str(corpo.interacao_id) if corpo.interacao_id else None)}
@@ -255,5 +255,5 @@ def get_historico(
     client: Any = Depends(get_conversas_client),
 ) -> dict[str, Any]:
     ctx = _ctx(auth, request)
-    contato = lais_acesso.exigir_contato(client, ctx, contato_id)
+    contato = julia_acesso.exigir_contato(client, ctx, contato_id)
     return {"data": svc.historico(client, ctx, contato)}

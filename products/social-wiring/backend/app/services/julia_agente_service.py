@@ -1,5 +1,5 @@
-"""Julia (Lais lead agent) -- connection/chat policy, shared by the webhook
-router, the lead worker and the `/api/lais/agente` routes.
+"""Julia (lead agent) -- connection/chat policy, shared by the webhook
+router, the lead worker and the `/api/julia/agente` routes.
 
 Contract: products/social-wiring/projects/lais/specs/julia-agent-contract.md
 (precedence section 11 > 10 > 1-9). Everything here is either pure or takes its
@@ -38,17 +38,17 @@ from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentsClient, make_agents_client
-from app.services import lais_aviso_service, lais_contatos_service
+from app.services import julia_aviso_service, julia_contatos_service
 
 logger = logging.getLogger(__name__)
 
 SCHEMA = "social_wiring"
-DEFAULT_AGENT_KEY = "lead-imob"
+DEFAULT_AGENT_KEY = "julia"
 AGENTS_KEY_NAME = "agents"  # `api_key:agents` in the per-org credentials store
-HANDOFF_KIND = "lais_handoff"
+HANDOFF_KIND = "julia_handoff"
 MOTIVO_MAX = 280
 
-SNAPSHOT_TABLE = "lais_agente_chats_preexistentes"
+SNAPSHOT_TABLE = "julia_agente_chats_preexistentes"
 SNAPSHOT_PAGE = 100
 SNAPSHOT_MAX_PAGES = 500
 _INSERT_BATCH = 500
@@ -129,7 +129,7 @@ def sanitize_motivo(motivo: str | None) -> str:
     return " ".join(cleaned.split())[:MOTIVO_MAX]
 
 
-#: The CLOSED vocabulary of a human handoff's reason (maya-blocks CONTRACT §3.2): the `handoff` Lais event carries
+#: The CLOSED vocabulary of a human handoff's reason (maya-blocks CONTRACT §3.2): the `handoff` Julia event carries
 #: one of these, never the model's free text. Owner-refinable; a new code is a new entry here.
 MOTIVOS_HANDOFF: tuple[str, ...] = ("pedido_do_lead", "fora_do_escopo", "reclamacao", "outro")
 #: First match wins, in this order (a complaint that also asks for a person is a complaint).
@@ -163,7 +163,7 @@ def agents_token_for_org(org_id: UUID | str, *, cfg: Any = None, store: Any = No
                 encryption_key=getattr(cfg, "encryption_key", None) if cfg is not None else None
             )
         except EncryptionNotConfigured:
-            logger.warning("lais: ENCRYPTION_KEY unusable -- cannot read the agents token")
+            logger.warning("julia: ENCRYPTION_KEY unusable -- cannot read the agents token")
             return None
     stored = api_keys_store.read_local_api_key(store, str(org_id), AGENTS_KEY_NAME)
     return ((stored.tokens or {}).get("value") if stored else None) or None
@@ -173,7 +173,7 @@ def agents_base_url() -> Optional[str]:
     try:
         return resolve_product_url("agents")
     except ValueError:
-        logger.warning("lais: cannot resolve the agents base URL (PRODUCT_URL_AGENTS unset)")
+        logger.warning("julia: cannot resolve the agents base URL (PRODUCT_URL_AGENTS unset)")
         return None
 
 
@@ -195,12 +195,12 @@ async def nome_do_agente(client: Optional[AgentsClient], agent_key: str = DEFAUL
     try:
         nome = (await client.agent_status(agent_key)).nome
     except Exception as exc:  # status is cosmetic here: never block a save / render on the agents link
-        logger.warning("lais: nome do agente indisponivel (%s)", type(exc).__name__)
+        logger.warning("julia: nome do agente indisponivel (%s)", type(exc).__name__)
         return None
     return (nome or "").strip() or None
 
 
-# ── link health memory (what Lais > Agente shows as `erro`) ─────────────────
+# ── link health memory (what Julia > Agente shows as `erro`) ─────────────────
 _LINK_ERROR_TTL_S = 7 * 24 * 3600
 LINK_ERROR_MESSAGES = {
     "token_invalido": "Token do agente inválido ou expirado. Gere um novo no produto agents e cole aqui.",
@@ -218,28 +218,28 @@ def _redis(cfg: Any):
 
 
 def _link_key(org_id: UUID | str) -> str:
-    return f"lais:agente:link_erro:{org_id}"
+    return f"julia:agente:link_erro:{org_id}"
 
 
 def registrar_erro_link(org_id: UUID | str, codigo: str, *, cfg: Any) -> None:
     try:
         _redis(cfg).set(_link_key(org_id), codigo, ex=_LINK_ERROR_TTL_S)
     except Exception:
-        logger.exception("lais: could not record the link error for org=%s", org_id)
+        logger.exception("julia: could not record the link error for org=%s", org_id)
 
 
 def limpar_erro_link(org_id: UUID | str, *, cfg: Any) -> None:
     try:
         _redis(cfg).delete(_link_key(org_id))
     except Exception:
-        logger.exception("lais: could not clear the link error for org=%s", org_id)
+        logger.exception("julia: could not clear the link error for org=%s", org_id)
 
 
 def ler_erro_link(org_id: UUID | str, *, cfg: Any) -> Optional[str]:
     try:
         codigo = _redis(cfg).get(_link_key(org_id))
     except Exception:
-        logger.exception("lais: could not read the link error for org=%s", org_id)
+        logger.exception("julia: could not read the link error for org=%s", org_id)
         return None
     return LINK_ERROR_MESSAGES.get(codigo or "") if codigo else None
 
@@ -254,7 +254,7 @@ def julia_ativa_em_alguma_conexao(client: Any) -> bool:
             .eq("agente_leads_ativo", True).limit(1).execute().data
         )
     except Exception:
-        logger.exception("lais: cannot tell whether Julia is on anywhere — failing closed")
+        logger.exception("julia: cannot tell whether Julia is on anywhere — failing closed")
         return True
     return bool(rows)
 
@@ -289,7 +289,7 @@ def exigir_aviso_completo(aviso_row: dict[str, Any]) -> None:
             "Preencha o nome da empresa no aviso de privacidade antes de ligar a Julia.",
             status_code=409,
         )
-    if not lais_aviso_service.contem_link(aviso_row.get("mensagem_inicial") or ""):
+    if not julia_aviso_service.contem_link(aviso_row.get("mensagem_inicial") or ""):
         raise AppException(
             "aviso_incompleto",
             "A mensagem inicial precisa conter {link}.",
@@ -315,7 +315,7 @@ def mensagem_inicial_pronta(aviso_row: dict[str, Any]) -> str:
     """11.3: the deterministic disclosure bubble, placeholders filled by SW."""
     empresa = (aviso_row.get("empresa_nome") or "").strip()
     return (
-        (aviso_row.get("mensagem_inicial") or lais_aviso_service.MENSAGEM_INICIAL_PADRAO)
+        (aviso_row.get("mensagem_inicial") or julia_aviso_service.MENSAGEM_INICIAL_PADRAO)
         .replace("{empresa}", empresa)
         .replace("{link}", public_privacy_link(aviso_row))
     )
@@ -328,7 +328,7 @@ def usuario_e_admin_da_org(core_client: Any, org_id: UUID | str, user_id: UUID |
     try:
         membership = resolve_org_membership(core_client, str(user_id))
     except Exception:
-        logger.exception("lais: org membership lookup failed for user=%s", user_id)
+        logger.exception("julia: org membership lookup failed for user=%s", user_id)
         return False
     return bool(
         membership
@@ -358,7 +358,7 @@ def destinatario_do_handoff(core_client: Any, connection: Any) -> UUID:
     if usuario_e_admin_da_org(core_client, connection.org_id, configurado):
         return configurado
     logger.error(
-        "lais: handoff target %s is no longer owner/admin of org %s (connection %s) -- "
+        "julia: handoff target %s is no longer owner/admin of org %s (connection %s) -- "
         "notifying the connection owner instead",
         configurado, connection.org_id, connection.id,
     )
@@ -369,7 +369,7 @@ def notificar_handoff(
     core_client: Any, *, connection: Any, chat_id: str, titulo_chat: str | None, motivo: str | None,
     responsavel_user_id: UUID | str | None = None,
 ) -> int:
-    """In-app notification (`write_in_app`, kind `lais_handoff`) to the target: chat
+    """In-app notification (`write_in_app`, kind `julia_handoff`) to the target: chat
     name + escaped motivo (<= 280) + deep link. Never to the lead, never broadcast."""
     # Wave 11: when distribution already picked an attendant (BEFORE notifying), they get it -- same
     # responsavel-first tier as the wave-6 sink; otherwise the configured handoff target (11.4).
@@ -388,7 +388,7 @@ def notificar_handoff(
         title="Atendimento humano solicitado",
         message=mensagem,
         metadata={
-            "link": f"/lais/conversas?chat={quote(chat_id, safe='')}",
+            "link": f"/julia/conversas?chat={quote(chat_id, safe='')}",
             "connection_id": str(connection.id),
             "chat_id": chat_id,
         },
@@ -471,7 +471,7 @@ def gravar_snapshot(client: Any, *, org_id: UUID, connection_id: UUID, chat_ids:
         for r in iter_paged_rows(
             lambda a, b: client.table(SNAPSHOT_TABLE).select("chat_id")
             .eq("connection_id", str(connection_id)).order("chat_id").range(a, b).execute().data,
-            id_key="chat_id", label="lais snapshot",
+            id_key="chat_id", label="julia snapshot",
         )
     }
     novos = [c for c in chat_ids if c not in existing]
@@ -577,14 +577,14 @@ def permitir_turno(redis: Any, *, connection_id: UUID, chat_id: str, cfg: Any) -
     """Per-chat (about 10/hour) and per-connection (N/minute) limits, BEFORE agents."""
     limiter = SlidingWindowLimiter(redis)
     por_chat = limiter.allow(
-        f"lais:rl:chat:{connection_id}:{chat_id}",
-        limit=cfg.lais_agente_max_turns_per_chat_hour, window_s=3600,
+        f"julia:rl:chat:{connection_id}:{chat_id}",
+        limit=cfg.julia_agente_max_turns_per_chat_hour, window_s=3600,
     )
     if not por_chat:
         return False
     return limiter.allow(
-        f"lais:rl:conn:{connection_id}",
-        limit=cfg.lais_agente_max_turns_per_connection_minute, window_s=60,
+        f"julia:rl:conn:{connection_id}",
+        limit=cfg.julia_agente_max_turns_per_connection_minute, window_s=60,
     )
 
 
@@ -595,7 +595,7 @@ _OWN_ID_TTL_S = 3600
 
 
 def _sending_key(connection_id: UUID | str, chat_id: str) -> str:
-    return f"lais:julia_sending:{connection_id}:{chat_id}"
+    return f"julia:julia_sending:{connection_id}:{chat_id}"
 
 
 def marcar_envio_em_curso(r: Any, connection_id: UUID | str, chat_id: str) -> None:
@@ -609,11 +609,11 @@ def encerrar_envio(r: Any, connection_id: UUID | str, chat_id: str) -> None:
 
 def registrar_envio_proprio(r: Any, provider_message_id: str | None) -> None:
     if provider_message_id:
-        r.set(f"lais:julia_out:{provider_message_id}", "1", ex=_OWN_ID_TTL_S)
+        r.set(f"julia:julia_out:{provider_message_id}", "1", ex=_OWN_ID_TTL_S)
 
 
 def eh_eco_proprio(r: Any, *, connection_id: UUID | str, chat_id: str, provider_message_id: str | None) -> bool:
-    if provider_message_id and r.get(f"lais:julia_out:{provider_message_id}"):
+    if provider_message_id and r.get(f"julia:julia_out:{provider_message_id}"):
         return True
     return bool(r.get(_sending_key(connection_id, chat_id)))
 
@@ -625,7 +625,7 @@ class ResultadoApagar:
     sw_contatos: int
     agents_ok: bool
     agents_apagou: bool
-    lais_contatos: int = 0  # `lais_contatos` rows (+ interacoes/acoes/eventos) of the chat, contract 17
+    julia_contatos: int = 0  # `julia_contatos` rows (+ interacoes/acoes/eventos) of the chat, contract 17
 
 
 async def apagar_dados_do_chat(
@@ -648,7 +648,7 @@ async def apagar_dados_do_chat(
     agents_ok, agents_apagou = True, False
     if agents_client is None:
         agents_ok = False
-        logger.error("lais: deletion for chat=%s -- no agents client; agents half NOT done", chat_id)
+        logger.error("julia: deletion for chat=%s -- no agents client; agents half NOT done", chat_id)
     else:
         try:
             res = await agents_client.delete_conversation_data(
@@ -657,7 +657,7 @@ async def apagar_dados_do_chat(
             agents_apagou = res.deleted
         except AgentsClientError:
             agents_ok = False
-            logger.exception("lais: agents deletion failed for chat=%s", chat_id)
+            logger.exception("julia: agents deletion failed for chat=%s", chat_id)
 
     alias = sorted(chat_aliases(chat_id))
     removed = 0
@@ -682,19 +682,19 @@ async def apagar_dados_do_chat(
         "org_id", str(connection.org_id)
     ).in_("chat_id", alias).execute()
 
-    # Lais foundation rows (contato + episodes + applied actions + events): the data subject's
+    # Julia foundation rows (contato + episodes + applied actions + events): the data subject's
     # right covers them too. Not swallowed -- a failure here must be loud, the request is not done.
-    lais_contatos = lais_contatos_service.apagar_do_chat(client, connection.org_id, connection.id, alias)
+    julia_contatos = julia_contatos_service.apagar_do_chat(client, connection.org_id, connection.id, alias)
 
     if buffer is not None:
         for a in alias:
             buffer.clear_conversation(lead_key(connection.id, a))
 
     logger.info(
-        "lais: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s lais_contatos=%s agents_ok=%s",
-        connection.id, chat_id, removed, contatos, lais_contatos, agents_ok,
+        "julia: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s julia_contatos=%s agents_ok=%s",
+        connection.id, chat_id, removed, contatos, julia_contatos, agents_ok,
     )
-    return ResultadoApagar(removed, contatos, agents_ok, agents_apagou, lais_contatos)
+    return ResultadoApagar(removed, contatos, agents_ok, agents_apagou, julia_contatos)
 
 
 MENSAGEM_APAGADO = (

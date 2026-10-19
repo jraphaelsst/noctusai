@@ -113,9 +113,9 @@ def calcular_sdr(client: Any, org_id: Any, dia: date, *, horas_para_assumir: int
     """Rubric `sdr.v1` (CONTRACT §3.2) for one org and one SP day."""
     inicio, fim = janela(dia)
 
-    leads_entrada = len(_linhas(client, "lais_contatos", "id,created_at", org_id, inicio, fim))
+    leads_entrada = len(_linhas(client, "julia_contatos", "id,created_at", org_id, inicio, fim))
 
-    episodios = _linhas(client, "lais_interacoes", "id,iniciada_at,primeira_resposta_at", org_id, inicio, fim,
+    episodios = _linhas(client, "julia_interacoes", "id,iniciada_at,primeira_resposta_at", org_id, inicio, fim,
                         coluna_tempo="iniciada_at")
     tempos: list[float] = []
     sem_resposta = 0
@@ -126,7 +126,7 @@ def calcular_sdr(client: Any, org_id: Any, dia: date, *, horas_para_assumir: int
             continue
         tempos.append((resposta - parse_ts(e["iniciada_at"])).total_seconds())
 
-    entregas = _linhas(client, "lais_envio_entregas", "id,contato_id,gatilho,status,created_at", org_id, inicio, fim)
+    entregas = _linhas(client, "julia_envio_entregas", "id,contato_id,gatilho,status,created_at", org_id, inicio, fim)
     ok = [r for r in entregas if r.get("status") == "ok"]
 
     def distintos(gatilhos: tuple[str, ...]) -> int:
@@ -137,16 +137,16 @@ def calcular_sdr(client: Any, org_id: Any, dia: date, *, horas_para_assumir: int
     invalidos = distintos(("invalido",))
     entregas_manuais = sum(1 for r in ok if r.get("gatilho") == "manual")
 
-    bloqueados = _linhas(client, "lais_eventos", "id,payload,created_at", org_id, inicio, fim,
+    bloqueados = _linhas(client, "julia_eventos", "id,payload,created_at", org_id, inicio, fim,
                          filtros=lambda q: q.eq("tipo", "envio_bloqueado"))
     por_motivo: dict[str, int] = {}
     for r in bloqueados:
         motivo = str((r.get("payload") or {}).get("motivo") or "sem_motivo")
         por_motivo[motivo] = por_motivo.get(motivo, 0) + 1
 
-    handoffs_humanos = len(_linhas(client, "lais_atribuicoes", "id,created_at", org_id, inicio, fim,
+    handoffs_humanos = len(_linhas(client, "julia_atribuicoes", "id,created_at", org_id, inicio, fim,
                                    filtros=lambda q: q.eq("motivo", "handoff")))
-    eventos_handoff = _linhas(client, "lais_eventos", "id,payload,created_at", org_id, inicio, fim,
+    eventos_handoff = _linhas(client, "julia_eventos", "id,payload,created_at", org_id, inicio, fim,
                               filtros=lambda q: q.eq("tipo", "handoff"))
     humanos_por_motivo: Optional[dict[str, int]]
     if handoffs_humanos > 0 and not eventos_handoff:

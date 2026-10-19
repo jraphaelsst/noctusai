@@ -1,4 +1,4 @@
-"""Meta lead-form lead -> Lais intake (`lais_primeiro_contato_service`) and its leadgen webhook leg.
+"""Meta lead-form lead -> Julia intake (`julia_primeiro_contato_service`) and its leadgen webhook leg.
 
 Seams only: the mock DB, the seed `FakeWahaClient` / `FakeMetaCloudClient` behind the REAL transport factory, the real
 connection store over the mock, and `LeadgenWebhookService`'s own DI seam. Fixtures carry no personal data."""
@@ -18,10 +18,10 @@ from app.modules.meta_ads.services.leadgen_webhook_service import (
     LeadgenWebhookService,
     ProcessResult,
 )
-from app.services import lais_primeiro_contato_service as svc
-from app.services import lais_transporte as tr
+from app.services import julia_primeiro_contato_service as svc
+from app.services import julia_transporte as tr
 from app.services.whatsapp_connection_store import build_whatsapp_connection_store
-from tests.support.lais_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, World
+from tests.support.julia_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, World
 
 TEL = "+5511988887777"
 LEAD = {"id": "lead-1", "full_name": "Ana Teste", "phone": TEL, "answers": {}}
@@ -39,9 +39,9 @@ class Cena:
         self.w.sw.set_table_data("whatsapp_connections", self.w._connections)
 
     def modelo(self, nome="Abordagem neutra"):
-        self.w.sw.table("lais_modelos").insert({
+        self.w.sw.table("julia_modelos").insert({
             "id": str(uuid4()), "org_id": ORG_ID, "nome": nome, "categoria": "primeiro_contato", "status": "aprovado",
-            "corpo": "Oi {{nome_pessoa}}, é a {{nome_lais}}.", "idioma": "pt_BR"}).execute()
+            "corpo": "Oi {{nome_pessoa}}, é a {{nome_julia}}.", "idioma": "pt_BR"}).execute()
 
     def factory(self, conn):
         return tr.transporte_da_conexao(conn, waha_factory=lambda **kw: self.w.waha, cloud_client_factory=lambda **kw: self.meta)
@@ -49,20 +49,20 @@ class Cena:
     def rodar(self, lead=LEAD, agents=None):
         return asyncio.run(svc.iniciar(
             self.w.sw, ORG_ID, lead, store=self.store, transporte_factory=self.factory,
-            contexto={"nome_lais": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents))
+            contexto={"nome_julia": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents))
 
     def eventos(self):
-        return self.w.sw.table("lais_eventos").select("*").execute().data or []
+        return self.w.sw.table("julia_eventos").select("*").execute().data or []
 
     def contatos(self):
-        return self.w.sw.table("lais_contatos").select("*").execute().data or []
+        return self.w.sw.table("julia_contatos").select("*").execute().data or []
 
 
 @pytest.fixture
 def cena():
     w = World()
     w.seed_connection()
-    w.sw.set_table_data("lais_modelos", [])
+    w.sw.set_table_data("julia_modelos", [])
     yield Cena(w, FakeMetaCloudClient(phone_number_id="999"))
 
 
@@ -70,7 +70,7 @@ class TestIniciar:
     def test_an_org_with_julia_off_takes_nothing_in(self, cena):
         cena.w._connections = [{**c, "agente_leads_ativo": False} for c in cena.w._connections]
         cena.w.sw.set_table_data("whatsapp_connections", cena.w._connections)
-        assert cena.rodar() == {"status": "lais_desligada"}
+        assert cena.rodar() == {"status": "julia_desligada"}
         assert cena.contatos() == [] and cena.eventos() == [] and cena.meta.sent_templates == []
 
     def test_cloud_ready_sends_the_approved_template_and_creates_contato_and_interacao(self, cena):
@@ -82,7 +82,7 @@ class TestIniciar:
         assert cena.meta.sent_templates[0]["body_params"] == ["Ana Teste", "Aurora"]
         (c,) = cena.contatos()
         assert c["telefone_e164"] == TEL and c["chat_id"] == "5511988887777@c.us" and c["ultimo_outbound_at"]
-        assert len(cena.w.sw.table("lais_interacoes").select("*").eq("contato_id", c["id"]).execute().data) == 1
+        assert len(cena.w.sw.table("julia_interacoes").select("*").eq("contato_id", c["id"]).execute().data) == 1
         (ev,) = cena.eventos()
         assert ev["tipo"] == "primeiro_contato_meta" and ev["payload"]["status"] == "enviado" and ev["contato_id"] == c["id"]
         assert cena.w.waha.sent_messages == []  # never WAHA free text
@@ -94,7 +94,7 @@ class TestIniciar:
         cena.modelo("Abordagem comercial")
         assert cena.rodar({**LEAD, "answers": {"REF": "AP10"}})["status"] == "enviado"
 
-    def test_while_waiting_for_meta_verification_nothing_is_sent_but_the_lead_enters_lais(self, cena):
+    def test_while_waiting_for_meta_verification_nothing_is_sent_but_the_lead_enters_julia(self, cena):
         cena.modelo()
         r = cena.rodar()  # the seeded line is WAHA
         assert r["status"] == "transporte_indisponivel"
@@ -117,7 +117,7 @@ class TestIniciar:
     def test_a_phone_already_talking_to_julia_is_not_contacted(self, cena):
         cena.cloud()
         cena.modelo()
-        cena.w.sw.table("lais_contatos").insert({
+        cena.w.sw.table("julia_contatos").insert({
             "id": str(uuid4()), "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": "5511988887777@c.us",
             "gen": 0, "slots": {}, "status_envio": "nao_pronto", "ultimo_inbound_at": "2026-10-16T10:00:00+00:00"}).execute()
         assert cena.rodar()["status"] == "ja_em_atendimento" and cena.meta.sent_templates == []
@@ -152,7 +152,7 @@ class TestAbordagem:
         lead = {**LEAD, "campaign_name": "Lançamento Granja", "form_name": "Form 1"}
         assert cena.rodar(lead, agents=agents)["status"] == "enviado"  # no listing code, yet the owner's rule said comercial
         ((chave_agente, chave, req),) = agents.decisoes
-        assert (chave_agente, chave) == ("lead-imob", "abordagem-meta")
+        assert (chave_agente, chave) == ("julia", "abordagem-meta")
         assert req.opcoes == ("comercial", "neutra") and req.regra_padrao == svc.REGRA_PADRAO
         assert req.dados == {"codigo_imovel": None, "campanha": "Lançamento Granja", "formulario": "Form 1", "anuncio": None}
         assert "Ana" not in str(req.dados) and "98888" not in str(req.dados)  # never the lead's name or phone
@@ -180,7 +180,7 @@ class TestLeadgenLeg:
     def _processado(self):
         return ProcessResult(STATUS_PROCESSED, org_id=ORG_ID, lead_row=dict(LEAD))
 
-    def test_a_processed_lead_is_handed_to_lais_after_the_announcement(self):
+    def test_a_processed_lead_is_handed_to_julia_after_the_announcement(self):
         chamadas = []
 
         async def intake(org_id, lead):
@@ -188,25 +188,25 @@ class TestLeadgenLeg:
             return {"status": "enviado"}
 
         s = LeadgenWebhookService(admin_supabase=MockSupabaseClient(), notifier_factory=lambda **kw: None,
-                                  publisher=_noop_publisher, lais_primeiro_contato=intake)
+                                  publisher=_noop_publisher, julia_primeiro_contato=intake)
         asyncio.run(s.fan_out(self._processado()))
         assert chamadas == [(str(ORG_ID), "lead-1")]
 
-    def test_a_failing_lais_leg_never_breaks_the_fan_out(self):
+    def test_a_failing_julia_leg_never_breaks_the_fan_out(self):
         async def intake(org_id, lead):
             raise RuntimeError("boom")
 
         s = LeadgenWebhookService(admin_supabase=MockSupabaseClient(), notifier_factory=lambda **kw: None,
-                                  publisher=_noop_publisher, lais_primeiro_contato=intake)
+                                  publisher=_noop_publisher, julia_primeiro_contato=intake)
         assert asyncio.run(s.fan_out(self._processado())) == {"notified": False, "published": True}
 
-    def test_a_non_announceable_result_does_not_reach_lais(self):
+    def test_a_non_announceable_result_does_not_reach_julia(self):
         chamadas = []
 
         async def intake(org_id, lead):
             chamadas.append(1)
 
-        s = LeadgenWebhookService(admin_supabase=MockSupabaseClient(), lais_primeiro_contato=intake)
+        s = LeadgenWebhookService(admin_supabase=MockSupabaseClient(), julia_primeiro_contato=intake)
         asyncio.run(s.fan_out(ProcessResult("error", org_id=ORG_ID)))
         assert chamadas == []
 

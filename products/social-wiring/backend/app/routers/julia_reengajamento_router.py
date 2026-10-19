@@ -1,13 +1,13 @@
-"""Lais wave 4 -- Reengajamento routes (contract 6, page-map 59.0 a2 / 59.0b b2).
+"""Julia wave 4 -- Reengajamento routes (contract 6, page-map 59.0 a2 / 59.0b b2).
 
-  GET  /api/lais/reengajamento/config                       org member
-  PUT  /api/lais/reengajamento/config                       org admin
-  GET  /api/lais/reengajamento/reguas                       org member
-  POST /api/lais/reengajamento/reguas                       org admin
-  GET  /api/lais/reengajamento/reguas/{id}                  org member
-  PATCH/DELETE /api/lais/reengajamento/reguas/{id}          org admin
-  POST /api/lais/reengajamento/reguas/{id}/ativar|desativar org admin   (409 regua_sem_tentativa)
-  POST /api/lais/reengajamento/reguas/{id}/tentativas       org admin   (409 limite_tentativas)
+  GET  /api/julia/reengajamento/config                       org member
+  PUT  /api/julia/reengajamento/config                       org admin
+  GET  /api/julia/reengajamento/reguas                       org member
+  POST /api/julia/reengajamento/reguas                       org admin
+  GET  /api/julia/reengajamento/reguas/{id}                  org member
+  PATCH/DELETE /api/julia/reengajamento/reguas/{id}          org admin
+  POST /api/julia/reengajamento/reguas/{id}/ativar|desativar org admin   (409 regua_sem_tentativa)
+  POST /api/julia/reengajamento/reguas/{id}/tentativas       org admin   (409 limite_tentativas)
   PATCH/DELETE .../reguas/{id}/tentativas/{tid}             org admin   (409 ultima_tentativa_ativa)
 
 Envelope `{"data": ...}` (errors: `AppException` -> `{"error": {...}}`); request models are strict
@@ -24,9 +24,9 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_reengajamento_service as svc
+from app.services import julia_reengajamento_service as svc
 
-router = APIRouter(prefix="/api/lais/reengajamento", tags=["lais-reengajamento"])
+router = APIRouter(prefix="/api/julia/reengajamento", tags=["julia-reengajamento"])
 
 
 def get_reengajamento_db() -> Any:
@@ -123,7 +123,7 @@ def put_config(
     body: ConfigUpdate, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    org_id = _admin(auth, request, "lais reengajamento config")
+    org_id = _admin(auth, request, "julia reengajamento config")
     valores = {k: v for k, v in _dump(body).items() if v is not None}
     return {"data": svc.salvar_config(db, org_id, valores)}
 
@@ -139,7 +139,7 @@ def create_regua(
     body: ReguaCreate, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    org_id = _admin(auth, request, "lais reengajamento regua")
+    org_id = _admin(auth, request, "julia reengajamento regua")
     return {"data": svc.criar_regua(db, org_id, nome=body.nome, compra=body.compra, aluguel=body.aluguel)}
 
 
@@ -153,7 +153,7 @@ def patch_regua(
     regua_id: UUID, body: ReguaPatch, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    org_id = _admin(auth, request, "lais reengajamento regua")
+    org_id = _admin(auth, request, "julia reengajamento regua")
     return {"data": svc.atualizar_regua(db, org_id, regua_id, {k: v for k, v in _dump(body).items() if v is not None})}
 
 
@@ -162,7 +162,7 @@ def delete_regua(
     regua_id: UUID, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> Response:
-    svc.apagar_regua(db, _admin(auth, request, "lais reengajamento regua"), regua_id)
+    svc.apagar_regua(db, _admin(auth, request, "julia reengajamento regua"), regua_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -171,7 +171,7 @@ def ativar(
     regua_id: UUID, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    return {"data": svc.ativar_regua(db, _admin(auth, request, "lais reengajamento regua"), regua_id)}
+    return {"data": svc.ativar_regua(db, _admin(auth, request, "julia reengajamento regua"), regua_id)}
 
 
 @router.post("/reguas/{regua_id}/desativar")
@@ -179,7 +179,7 @@ def desativar(
     regua_id: UUID, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    return {"data": svc.desativar_regua(db, _admin(auth, request, "lais reengajamento regua"), regua_id)}
+    return {"data": svc.desativar_regua(db, _admin(auth, request, "julia reengajamento regua"), regua_id)}
 
 
 # ── tentativas ──────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ def create_tentativa(
     regua_id: UUID, body: TentativaCreate, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    org_id = _admin(auth, request, "lais reengajamento tentativa")
+    org_id = _admin(auth, request, "julia reengajamento tentativa")
     return {"data": svc.criar_tentativa(db, org_id, regua_id, _dump(body))}
 
 
@@ -197,7 +197,7 @@ def patch_tentativa(
     regua_id: UUID, tid: UUID, body: TentativaPatch, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> dict[str, Any]:
-    org_id = _admin(auth, request, "lais reengajamento tentativa")
+    org_id = _admin(auth, request, "julia reengajamento tentativa")
     return {"data": svc.atualizar_tentativa(db, org_id, regua_id, tid, {k: v for k, v in _dump(body).items() if v is not None})}
 
 
@@ -206,7 +206,7 @@ def delete_tentativa(
     regua_id: UUID, tid: UUID, request: Request, auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_reengajamento_db),
 ) -> Response:
-    svc.apagar_tentativa(db, _admin(auth, request, "lais reengajamento tentativa"), regua_id, tid)
+    svc.apagar_tentativa(db, _admin(auth, request, "julia reengajamento tentativa"), regua_id, tid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

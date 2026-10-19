@@ -1,9 +1,9 @@
-"""The Lais outbound gate (`lais_envio_gate`): two gates per flow, refuse-not-null, defaults off.
+"""The Julia outbound gate (`julia_envio_gate`): two gates per flow, refuse-not-null, defaults off.
 
 Gate 1 = `whatsapp_connections.agente_leads_ativo`, read from the DB at send time; gate 2 = the org's opt-in for
 the flow. Every opt-in defaults off (Python defaults AND the migration DEFAULTs) and no migration seeds an org row.
 A refusal raises `EnvioBloqueado` and leaves an `envio_bloqueado` event -- it is never a silent skip.
-Seams: the mock DB of `tests.support.lais_world`; nothing of ours is patched."""
+Seams: the mock DB of `tests.support.julia_world`; nothing of ours is patched."""
 from __future__ import annotations
 
 import asyncio
@@ -17,12 +17,12 @@ import pytest
 from noctusai_lib.api.scheduler import SCHEDULERS_ENABLED_ENV
 from noctusai_lib.testing.migrations import migration_sql
 
-from app.services import lais_avaliacoes_service as av
-from app.services import lais_envio_gate as gate
-from app.services import lais_reengajamento_service as reeng
-from app.services import lais_reengajamento_worker as worker
+from app.services import julia_avaliacoes_service as av
+from app.services import julia_envio_gate as gate
+from app.services import julia_reengajamento_service as reeng
+from app.services import julia_reengajamento_worker as worker
 
-from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
+from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
 
 Fluxo = gate.Fluxo
 MIGRATIONS = Path(__file__).resolve().parents[2] / "migrations"
@@ -59,7 +59,7 @@ def opt_in_everything(world: World) -> str:
 
 
 def eventos(world: World) -> list[dict]:
-    return [e for e in world.rows("lais_eventos") if e["tipo"] == gate.EVENTO_BLOQUEADO]
+    return [e for e in world.rows("julia_eventos") if e["tipo"] == gate.EVENTO_BLOQUEADO]
 
 
 # ── gate 2 defaults: a fresh org with Julia on is still blocked on every automatic flow ──────────
@@ -98,7 +98,7 @@ class TestDefaultsOff:
         avaliacao = migration_sql(MIGRATIONS, "lais_avaliacoes_capi")
         assert re.search(r"google_review_url\s+text\s*,", avaliacao)
 
-    def test_no_lais_migration_seeds_an_opt_in_row(self):
+    def test_no_julia_migration_seeds_an_opt_in_row(self):
         alvos = ("whatsapp_connections", gate.T_REENGAJAMENTO_CONFIG, gate.T_REGUAS, gate.T_MODELOS, gate.T_AVALIACOES_CONFIG)
         for path in sorted(MIGRATIONS.glob("*.sql")):
             sql = path.read_text()
@@ -165,13 +165,13 @@ class TestRefuseNotNull:
 class TestWorkerNeedsTheDeployMarker:
     def test_without_the_marker_the_worker_does_not_start(self, monkeypatch):
         monkeypatch.delenv(SCHEDULERS_ENABLED_ENV, raising=False)
-        cfg = SimpleNamespace(lais_reengajamento_worker_enabled=True)
+        cfg = SimpleNamespace(julia_reengajamento_worker_enabled=True)
         assert asyncio.run(worker.start_worker(cfg, repo=object())) is False
         assert not worker.is_running()
 
     def test_the_kill_switch_still_wins_with_the_marker(self, monkeypatch):
         monkeypatch.setenv(SCHEDULERS_ENABLED_ENV, "1")
-        cfg = SimpleNamespace(lais_reengajamento_worker_enabled=False)
+        cfg = SimpleNamespace(julia_reengajamento_worker_enabled=False)
         assert asyncio.run(worker.start_worker(cfg, repo=object())) is False
         assert not worker.is_running()
 
@@ -201,7 +201,7 @@ class _Turnos:
 
 
 def _contato_que_interagiu(world: World) -> dict:
-    from app.services import lais_contatos_service as contatos
+    from app.services import julia_contatos_service as contatos
 
     c = contatos.obter_ou_criar_contato(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT)
     contatos.registrar_inbound(world.sw, c)
@@ -234,7 +234,7 @@ class TestEveryFlowGoesThroughTheGate:
         assert eventos(w)[0]["payload"]["fluxo"] == "reengajamento_minutos"
 
     def test_the_turn_itself_refuses_to_send_when_the_tier_is_off(self, lead_world):
-        from app.services.lais_lead_turn_service import run_reengajamento_turn
+        from app.services.julia_lead_turn_service import run_reengajamento_turn
 
         w = lead_world
         c = _contato_que_interagiu(w)
@@ -245,7 +245,7 @@ class TestEveryFlowGoesThroughTheGate:
         assert e["payload"] == {"fluxo": "reengajamento_horas", "motivo": "reengajamento_desativado", "connection_id": CONNECTION_ID}
 
     def test_a_regua_turn_is_gated_on_its_own_regua_and_the_id_never_reaches_agents(self, lead_world):
-        from app.services.lais_lead_turn_service import run_reengajamento_turn
+        from app.services.julia_lead_turn_service import run_reengajamento_turn
 
         w = lead_world
         c = _contato_que_interagiu(w)
@@ -259,7 +259,7 @@ class TestEveryFlowGoesThroughTheGate:
         assert w.sent_texts()
 
     def test_an_unknown_tier_is_a_loud_error(self, lead_world):
-        from app.services.lais_lead_turn_service import run_reengajamento_turn
+        from app.services.julia_lead_turn_service import run_reengajamento_turn
 
         w = lead_world
         with pytest.raises(ValueError, match="tier"):
@@ -267,14 +267,14 @@ class TestEveryFlowGoesThroughTheGate:
 
     def test_the_review_ask_stops_when_julia_is_switched_off_after_it_was_queued(self, lead_world):
         """The gap the gate closed: the review-ask job re-checked the review rule at fire time, never Julia."""
-        from app.services import lais_contatos_service as contatos
+        from app.services import julia_contatos_service as contatos
 
         w = lead_world
         w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review"}).execute()
         c = _contato_que_interagiu(w)
         contatos.atualizar_contato(w.sw, c["id"], {"ultimo_inbound_at": (MANHA - timedelta(hours=1)).isoformat(), "telefone_e164": "+5511988887777"})
         c = w.contato()
-        inter = w.sw.table("lais_interacoes").insert({
+        inter = w.sw.table("julia_interacoes").insert({
             "id": str(uuid4()), "org_id": ORG_ID, "contato_id": c["id"], "iniciada_at": MANHA.isoformat(),
             "encerrada_at": MANHA.isoformat(), "desfecho": "qualificado", "tipo": "comercial", "slots": {}, "intencoes": [],
         }).execute().data[0]
@@ -300,7 +300,7 @@ class TestEveryFlowGoesThroughTheGate:
         assert w.sent_texts() == []
 
     def test_the_meta_first_contact_is_gated(self, lead_world):
-        from app.services import lais_disparos_service as disparos
+        from app.services import julia_disparos_service as disparos
 
         w = lead_world
         conn = SimpleNamespace(id=CONNECTION_ID)

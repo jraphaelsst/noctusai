@@ -1,15 +1,15 @@
-"""Lais wave 13 -- Analise de credito (contract section 15, LGPD section 17).
+"""Julia wave 13 -- Analise de credito (contract section 15, LGPD section 17).
 
 Flow (aluguel only, at the visit step -- composes wave 5, never forks it):
 
   contexto        `estado.credito = {ativo, consentimento: null|true|false}` while the analysis applies to the
                   contato (org config ativo + aluguel), and `consentimento_credito` joins `acoes` unless the lead
                   already consented (an additive `ACOES_EXTRAS` entry).
-  action          `consentimento_credito{aceito}` -> `lais_credito_consentimentos` (append-only; latest wins).
+  action          `consentimento_credito{aceito}` -> `julia_credito_consentimentos` (append-only; latest wins).
                   aceito=true with a live visit -> start the analysis.
   pedido_visita   a POS_ACAO hook on the wave-5 handler: visit stored + consent already true -> start the analysis;
                   no consent yet -> nothing (the contexto makes Julia ask; the consent action then starts it).
-  analysis        a `lais_credito_analises` row (pendente) + a seed job; at fire time the job re-checks the LATEST
+  analysis        a `julia_credito_analises` row (pendente) + a seed job; at fire time the job re-checks the LATEST
                   consent is the same row and still aceito=true (stale guard -- NOT `gen`, which every inbound bumps),
                   then calls the provider and stores `status` + a one-sentence `resumo`. Emits `credito_analisado`.
 
@@ -17,7 +17,7 @@ THE invariant: the provider is NEVER called without a stored consent aceito=true
 starter refuses, the job re-checks, and the table can only hold an analysis behind an accepted consent (composite
 FK, migration 281). A refused consent is stored and nothing else happens.
 
-Routes live in `lais_credito_router`. Visibility (A7) follows the contato (`lais_acesso`).
+Routes live in `julia_credito_router`. Visibility (A7) follows the contato (`julia_acesso`).
 """
 from __future__ import annotations
 
@@ -30,26 +30,26 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso, lais_acoes_service, lais_contexto_service
-from app.services import lais_eventos_service as eventos
-from app.services.lais_credito_provider import (
+from app.services import julia_acesso, julia_acoes_service, julia_contexto_service
+from app.services import julia_eventos_service as eventos
+from app.services.julia_credito_provider import (
     PROVIDERS_CONHECIDOS, RESUMO_MAX, ConsultaCredito, CreditoNaoConfigurado, CreditoProvider, CreditoProviderErro,
     credencial_da_org, make_credito_provider,
 )
 
 logger = logging.getLogger(__name__)
 
-T_CONFIG = "lais_credito_config"
-T_CONSENT = "lais_credito_consentimentos"
-T_ANALISES = "lais_credito_analises"
-T_CONTATOS = "lais_contatos"
-T_VISITAS = "lais_visitas"
+T_CONFIG = "julia_credito_config"
+T_CONSENT = "julia_credito_consentimentos"
+T_ANALISES = "julia_credito_analises"
+T_CONTATOS = "julia_contatos"
+T_VISITAS = "julia_visitas"
 STATUS = ("pendente", "aprovado", "reprovado", "erro")
 PAGE_SIZES = (5, 10, 15, 20)
 ACAO_CONSENTIMENTO = "consentimento_credito"
 #: the wording version the prompt asks consent with; bump it whenever the asked text changes materially
 TEXTO_VERSAO = "2026-10-v1"
-JOB_ANALISE = "lais_credito_analise"
+JOB_ANALISE = "julia_credito_analise"
 JOB_MAX_RETRIES = 1
 VISITAS_VIVAS = ("solicitada", "confirmada", "remarcada")
 CONFIG_PADRAO: dict[str, Any] = {"ativo": False, "provider": None, "apenas_aluguel": True}
@@ -150,14 +150,14 @@ def registrar_consentimento(client: Any, org_id: UUID | str, contato_id: UUID | 
 
 
 # -- contexto -------------------------------------------------------------------------
-def _estado_extra(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+def _estado_extra(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
     """`estado.credito` while the analysis applies to the contato (absent otherwise: the agent sees nothing)."""
     if not aplica(ler_config(ctx.client, ctx.org_id), ctx.contato):
         return {}
     return {"credito": {"ativo": True, "consentimento": consentimento_estado(ctx.client, ctx.contato["id"])}}
 
 
-def _acoes_extra(ctx: lais_contexto_service.ContextoCtx) -> list[str]:
+def _acoes_extra(ctx: julia_contexto_service.ContextoCtx) -> list[str]:
     """`consentimento_credito` is offered while the analysis applies and the lead has not already consented."""
     if not aplica(ler_config(ctx.client, ctx.org_id), ctx.contato):
         return []
@@ -186,10 +186,10 @@ def _nova_analise(client: Any, org_id: UUID | str, contato_id: Any, consentiment
 
 
 async def _enfileirar(client: Any, org_id: UUID | str, contato: dict[str, Any], analise: dict[str, Any]) -> str:
-    """Queue the run on the Lais worker's repository; with no repository (worker off) run it inline -- the
+    """Queue the run on the Julia worker's repository; with no repository (worker off) run it inline -- the
     analysis must not rot in `pendente`. Returns how it went: `enfileirada` | `executada`."""
     if _repo is None:
-        logger.warning("lais credito: no job repository (worker off) -- running analise=%s inline", analise["id"])
+        logger.warning("julia credito: no job repository (worker off) -- running analise=%s inline", analise["id"])
         await executar_analise(client, org_id, analise["id"])
         return "executada"
     await _repo.enqueue(
@@ -197,7 +197,7 @@ async def _enfileirar(client: Any, org_id: UUID | str, contato: dict[str, Any], 
         payload={"org_id": str(org_id), "contato_id": str(contato["id"]), "analise_id": str(analise["id"]),
                  "consentimento_id": str(analise["consentimento_id"])},
         max_retries=JOB_MAX_RETRIES, scheduled_for=datetime.now(timezone.utc),
-        dedupe_key=f"lais:credito:{analise['id']}",
+        dedupe_key=f"julia:credito:{analise['id']}",
     )
     return "enfileirada"
 
@@ -266,33 +266,33 @@ async def executar_analise(client: Any, org_id: UUID | str, analise_id: UUID | s
         provider = resolver_provider(org_id, config)
         resultado = await provider.analisar(consulta)
     except CreditoNaoConfigurado as exc:
-        logger.warning("lais credito: provider not configured (org=%s): %s", org_id, exc.motivo)
+        logger.warning("julia credito: provider not configured (org=%s): %s", org_id, exc.motivo)
         return _finalizar(client, org_id, analise, "erro", exc.motivo)
     except CreditoProviderErro:
-        logger.exception("lais credito: provider failed (org=%s analise=%s)", org_id, analise["id"])
+        logger.exception("julia credito: provider failed (org=%s analise=%s)", org_id, analise["id"])
         return _finalizar(client, org_id, analise, "erro", "falha na consulta ao provedor")
     except Exception:
-        logger.exception("lais credito: unexpected provider failure (org=%s analise=%s)", org_id, analise["id"])
+        logger.exception("julia credito: unexpected provider failure (org=%s analise=%s)", org_id, analise["id"])
         return _finalizar(client, org_id, analise, "erro", "falha na consulta ao provedor")
     return _finalizar(client, org_id, analise, resultado.status, resultado.resumo)
 
 
 def handlers(*, client_provider: Optional[Callable[[], Any]] = None) -> dict[str, Callable[[Job], Any]]:
-    """`{job type: handler}` merged into the Lais worker. The client is built at FIRE time."""
+    """`{job type: handler}` merged into the Julia worker. The client is built at FIRE time."""
 
     async def _analise(job: Job) -> None:
         p = job.payload or {}
         if not (p.get("org_id") and p.get("analise_id")):
-            logger.error("lais credito: job %s has no org/analise -- dropped", job.id)
+            logger.error("julia credito: job %s has no org/analise -- dropped", job.id)
             return
         outcome = await executar_analise((client_provider or _client)(), p["org_id"], p["analise_id"])
-        logger.info("lais credito %s job=%s -> %s", JOB_ANALISE, job.id, outcome)
+        logger.info("julia credito %s job=%s -> %s", JOB_ANALISE, job.id, outcome)
 
     return {JOB_ANALISE: _analise}
 
 
 # -- action handler + hook ------------------------------------------------------------
-async def _h_consentimento(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+async def _h_consentimento(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     aceito = (payload or {}).get("aceito")
     if not isinstance(aceito, bool):
         return {"erro": "aceito_invalido"}
@@ -304,7 +304,7 @@ async def _h_consentimento(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, A
     return {"aceito": True, **(await iniciar(ctx.client, ctx.org_id, ctx.contato))}
 
 
-async def _pos_pedido_visita(ctx: lais_acoes_service.AcaoCtx, _payload: dict[str, Any], resultado: Optional[dict[str, Any]]) -> None:
+async def _pos_pedido_visita(ctx: julia_acoes_service.AcaoCtx, _payload: dict[str, Any], resultado: Optional[dict[str, Any]]) -> None:
     """After the wave-5 `pedido_visita` handler stored a visit: start the analysis if the lead already consented."""
     if not (resultado or {}).get("visita_id"):
         return
@@ -313,10 +313,10 @@ async def _pos_pedido_visita(ctx: lais_acoes_service.AcaoCtx, _payload: dict[str
 
 def registrar() -> None:
     """Bind every registry slot wave 13 owns (idempotent); called once at import of the router."""
-    lais_acoes_service.registrar_handler(ACAO_CONSENTIMENTO, _h_consentimento)
-    lais_acoes_service.registrar_pos_acao("pedido_visita", _pos_pedido_visita)
-    lais_contexto_service.registrar_estado_extra(_estado_extra)
-    lais_contexto_service.registrar_acoes_extra(_acoes_extra)
+    julia_acoes_service.registrar_handler(ACAO_CONSENTIMENTO, _h_consentimento)
+    julia_acoes_service.registrar_pos_acao("pedido_visita", _pos_pedido_visita)
+    julia_contexto_service.registrar_estado_extra(_estado_extra)
+    julia_contexto_service.registrar_acoes_extra(_acoes_extra)
 
 
 # -- reads ----------------------------------------------------------------------------
@@ -343,7 +343,7 @@ def _serializar(a: dict[str, Any], contato: Optional[dict[str, Any]]) -> dict[st
     }
 
 
-def listar(client: Any, org_id: UUID | str, ctx: lais_acesso.AcessoCtx, *, status: Optional[str], page: int, page_size: int) -> dict[str, Any]:
+def listar(client: Any, org_id: UUID | str, ctx: julia_acesso.AcessoCtx, *, status: Optional[str], page: int, page_size: int) -> dict[str, Any]:
     """`{items, total}`, newest first, A7-filtered (a member sees the analyses of their contatos only)."""
     def pagina(a: int, b: int) -> Any:
         q = client.table(T_ANALISES).select("*").eq("org_id", str(org_id))
@@ -351,8 +351,8 @@ def listar(client: Any, org_id: UUID | str, ctx: lais_acesso.AcessoCtx, *, statu
             q = q.eq("status", status)
         return q.order("id").range(a, b).execute().data
 
-    todas = sorted(iter_paged_rows(pagina, label="lais credito"), key=lambda r: r["created_at"], reverse=True)
-    linhas = lais_acesso.filtrar_por_contato(client, ctx, todas)
+    todas = sorted(iter_paged_rows(pagina, label="julia credito"), key=lambda r: r["created_at"], reverse=True)
+    linhas = julia_acesso.filtrar_por_contato(client, ctx, todas)
     fatia = linhas[(page - 1) * page_size: page * page_size]
     ids = sorted({str(r["contato_id"]) for r in fatia})
     contatos_por_id: dict[str, dict[str, Any]] = {}

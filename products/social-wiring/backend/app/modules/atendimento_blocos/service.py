@@ -17,6 +17,7 @@ from noctusai_lib.primitives.exceptions import AppException
 from app.modules.atendimento_blocos import repository as repo
 from app.modules.atendimento_blocos.blocos import (
     AGENTES_POR_BLOCO,
+    normalizar_agent_key,
     BLOCOS,
     BLOCO_POR_NOME,
     BLOCO_SDR,
@@ -68,7 +69,7 @@ def validar(
     for item in itens:
         bloco = item["bloco"]
         etapas = tuple(item.get("etapas") or ())
-        agent_key = item.get("agent_key")
+        agent_key = normalizar_agent_key(item.get("agent_key"))
         if bloco == BLOCO_SDR and etapas:
             raise _erro("sdr_sem_etapas", "O bloco SDR (Julia) não possui etapas do funil.", bloco=bloco)
         if agent_key is not None and agent_key not in agentes_permitidos(bloco):

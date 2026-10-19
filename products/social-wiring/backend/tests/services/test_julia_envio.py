@@ -1,4 +1,4 @@
-"""Lais wave 3 -- Envio ao SW (contract 5): the idempotent send, the rule table, the policies, the cold timer's
+"""Julia wave 3 -- Envio ao SW (contract 5): the idempotent send, the rule table, the policies, the cold timer's
 stale guard, and the foundation registries it binds. Seams are the Fakes the seed/product ship (mock DB,
 `FakeJobRepository`); the one DB double that misbehaves on purpose (`FaultyClient`) is a thin delegating wrapper,
 nothing of ours is patched. The mock has no triggers, so the funil card the real `spawn_funil_card` trigger creates
@@ -12,15 +12,15 @@ import pytest
 from noctusai_lib.domain.jobs import FakeJobRepository
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.clients.agents import LaisAction, TurnResult
-from app.services import lais_acoes_service as acoes
-from app.services import lais_contatos_service as contatos
-from app.services import lais_contexto_service as contexto
-from app.services import lais_envio_criterios as crit
-from app.services import lais_envio_service as envio
-from app.services import lais_perguntas_service as perguntas
+from app.clients.agents import JuliaAction, TurnResult
+from app.services import julia_acoes_service as acoes
+from app.services import julia_contatos_service as contatos
+from app.services import julia_contexto_service as contexto
+from app.services import julia_envio_criterios as crit
+from app.services import julia_envio_service as envio
+from app.services import julia_perguntas_service as perguntas
 
-from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, World
+from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, World
 
 SP = envio.FUSO
 MANHA = datetime(2026, 10, 15, 10, 0, tzinfo=SP).astimezone(timezone.utc)
@@ -37,9 +37,9 @@ def world() -> World:
     w.seed_chat()
     for t in (envio.T_REGRAS, envio.T_POLITICAS, envio.T_ENTREGAS, "leads", "lead_sources", "lead_source_aliases",
               "cliente_notas", "clientes", "cliente_touches", "atendimentos",
-              "lais_equipes", "lais_equipe_membros", "lais_distribuicao_cursor", "lais_atribuicoes"):
+              "julia_equipes", "julia_equipe_membros", "julia_distribuicao_cursor", "julia_atribuicoes"):
         w.sw.set_table_data(t, [])
-    w.sw.set_table_data("lais_perguntas_catalogo", [
+    w.sw.set_table_data("julia_perguntas_catalogo", [
         {"chave": k, "label": k, "categoria": "lead", "ordem": i, "sensivel": None, "operacao": None}
         for i, k in enumerate(("objetivo", "orcamento", "quartos", "renda_familiar", "cpf", "codigo_imovel"))
     ])
@@ -109,7 +109,7 @@ class TestIdempotencia:
         assert len(world.rows("leads")) == 1
         assert len(world.rows("cliente_notas")) == 1
         assert [e["status"] for e in world.rows(envio.T_ENTREGAS)] == ["ok"]
-        assert [e["tipo"] for e in world.rows("lais_eventos")] == ["novo_lead"]
+        assert [e["tipo"] for e in world.rows("julia_eventos")] == ["novo_lead"]
         assert world.contato()["lead_id"] == a["lead_id"]
 
     def test_the_lead_carries_the_julia_source_phone_and_the_slots_as_its_first_note(self, world):
@@ -327,7 +327,7 @@ class TestRegras:
     def test_perguntas_is_told_which_slot_keys_the_rules_use_and_locks_them(self, world):
         _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 1)]])
         assert envio.criterios_que_usam(world.sw, ORG) == {"orcamento": ["Compra e aluguel · grupo 1"]}
-        world.sw.set_table_data("lais_perguntas_org", [
+        world.sw.set_table_data("julia_perguntas_org", [
             {"org_id": ORG, "chave": "objetivo", "ativa": True, "qualificatoria": True},
             {"org_id": ORG, "chave": "orcamento", "ativa": True, "qualificatoria": True},
         ])
@@ -394,20 +394,20 @@ class TestGatilhos:
     async def test_qualificar_lead_sends_when_the_rule_matches(self, world):
         _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 300000)]])
         c = _contato(world, operacao="compra", slots={"orcamento": "500000"})
-        out = await _aplicar(world, c, LaisAction("qualificar_lead", 1, {}))
+        out = await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
         assert out == [{"seq": 1, "tipo": "qualificar_lead", "estado": "aplicada"}]
         assert world.contato()["status_envio"] == "enviado" and len(world.rows("leads")) == 1
-        assert world.rows("lais_acoes_aplicadas")[0]["resultado"]["enviado"] is True
+        assert world.rows("julia_acoes_aplicadas")[0]["resultado"]["enviado"] is True
 
     async def test_no_match_stays_nao_pronto(self, world):
         _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 900000)]])
         c = _contato(world, operacao="compra", slots={"orcamento": "500000"})
-        await _aplicar(world, c, LaisAction("qualificar_lead", 1, {}))
+        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
         assert world.contato()["status_envio"] == "nao_pronto" and world.rows("leads") == []
-        assert world.rows("lais_acoes_aplicadas")[0]["resultado"] == {"enviado": False, "motivo": "criterios_nao_atendidos"}
+        assert world.rows("julia_acoes_aplicadas")[0]["resultado"] == {"enviado": False, "motivo": "criterios_nao_atendidos"}
 
     async def test_no_rule_at_all_never_sends(self, world):
-        await _aplicar(world, _contato(world), LaisAction("qualificar_lead", 1, {}))
+        await _aplicar(world, _contato(world), JuliaAction("qualificar_lead", 1, {}))
         assert world.rows("leads") == []
 
     async def test_the_split_rule_of_the_contatos_operation_is_the_one_applied(self, world):
@@ -415,22 +415,22 @@ class TestGatilhos:
             {"operacao": "compra", "grupos": [[*GRUPO_BASE, _c("orcamento", ">=", 900000)]]},
             {"operacao": "aluguel", "grupos": REGRA_BASE},
         ])
-        await _aplicar(world, _contato(world, operacao="compra", slots={"orcamento": "1"}), LaisAction("qualificar_lead", 1, {}))
+        await _aplicar(world, _contato(world, operacao="compra", slots={"orcamento": "1"}), JuliaAction("qualificar_lead", 1, {}))
         assert world.rows("leads") == []
-        await _aplicar(world, _contato(world, operacao="aluguel"), LaisAction("qualificar_lead", 1, {}), lote="L2")
+        await _aplicar(world, _contato(world, operacao="aluguel"), JuliaAction("qualificar_lead", 1, {}), lote="L2")
         assert len(world.rows("leads")) == 1
 
     async def test_a_replayed_batch_does_not_send_twice(self, world):
         _regras(world)
         c = _contato(world, operacao="compra")
-        await _aplicar(world, c, LaisAction("qualificar_lead", 1, {}))
-        again = await _aplicar(world, c, LaisAction("qualificar_lead", 1, {}))
+        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
+        again = await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
         assert again[0]["estado"] == "repetida" and len(world.rows("leads")) == 1
 
     async def test_qualification_then_visit_hook_is_still_one_lead(self, world, client_provider):
         _regras(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}]])
         c = _contato(world, operacao="compra")
-        await _aplicar(world, c, LaisAction("qualificar_lead", 1, {}))
+        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
         envio._hook_on_visita(ORG, world.contato(), {"id": "v1"})
         envio._hook_forcar_envio(ORG, world.contato(), {"id": "v1"})
         assert len(world.rows("leads")) == 1 and len(world.rows("cliente_notas")) == 1
@@ -454,22 +454,22 @@ class TestGatilhos:
         assert len(world.rows("leads")) == 1 and world.contato()["status_envio"] == "enviado_auto"
 
     async def test_captacao_notify_policy_records_the_event_only(self, world):
-        out = await _aplicar(world, _contato(world), LaisAction("captacao", 1, {}))
+        out = await _aplicar(world, _contato(world), JuliaAction("captacao", 1, {}))
         assert out[0]["estado"] == "aplicada" and world.rows("leads") == []
-        assert [e["tipo"] for e in world.rows("lais_eventos")] == ["captacao"]
+        assert [e["tipo"] for e in world.rows("julia_eventos")] == ["captacao"]
 
     async def test_captacao_send_policy_sends(self, world):
         envio.salvar_politicas(world.sw, ORG, {"captacoes": "enviar"})
-        await _aplicar(world, _contato(world), LaisAction("captacao", 1, {}))
+        await _aplicar(world, _contato(world), JuliaAction("captacao", 1, {}))
         assert len(world.rows("leads")) == 1 and world.rows(envio.T_ENTREGAS)[0]["gatilho"] == "captacao"
-        assert {e["tipo"] for e in world.rows("lais_eventos")} == {"captacao", "novo_lead"}
+        assert {e["tipo"] for e in world.rows("julia_eventos")} == {"captacao", "novo_lead"}
 
     @pytest.mark.parametrize("policy,motivo,enviado", [(True, "invalido", True), (False, "invalido", False), (True, "sem_interesse", False)])
     async def test_encerrar_invalido_follows_the_whatsapp_invalido_policy(self, world, policy, motivo, enviado):
         envio.salvar_politicas(world.sw, ORG, {"whatsapp_invalido": policy})
         acoes.registrar_pos_encerrar(envio._pos_encerrar)
         try:
-            await _aplicar(world, _contato(world), LaisAction("encerrar", 1, {"motivo": motivo}))
+            await _aplicar(world, _contato(world), JuliaAction("encerrar", 1, {"motivo": motivo}))
         finally:
             acoes.POS_ENCERRAR.remove(envio._pos_encerrar)
         assert bool(world.rows("leads")) is enviado
@@ -482,7 +482,7 @@ class TestGatilhos:
 
         acoes.registrar_pos_encerrar(boom)
         try:
-            out = await _aplicar(world, _contato(world), LaisAction("encerrar", 1, {"motivo": "invalido"}))
+            out = await _aplicar(world, _contato(world), JuliaAction("encerrar", 1, {"motivo": "invalido"}))
         finally:
             acoes.POS_ENCERRAR.remove(boom)
         assert out[0]["estado"] == "aplicada" and world.contato()["encerrado_at"]
@@ -495,11 +495,11 @@ class TestContextoAcoes:
     def test_qualificar_lead_is_dropped_when_the_org_has_no_rule(self, world):
         acoes_ = envio._prov_acoes(self._ctx(world))["acoes"]
         assert "qualificar_lead" not in acoes_
-        assert acoes_ == [a for a in contexto.ACOES_LAIS if a != "qualificar_lead"]
+        assert acoes_ == [a for a in contexto.ACOES_JULIA if a != "qualificar_lead"]
 
     def test_it_is_back_once_a_rule_exists(self, world):
         _regras(world)
-        assert envio._prov_acoes(self._ctx(world))["acoes"] == list(contexto.ACOES_LAIS)
+        assert envio._prov_acoes(self._ctx(world))["acoes"] == list(contexto.ACOES_JULIA)
 
     def test_registered_provider_replaces_only_the_acoes_slot(self, world):
         registro = list(contexto.PROVIDERS)
@@ -606,8 +606,8 @@ class TestFrios:
 
 
 class TestCanais:
-    def test_union_of_sw_sources_lais_origins_and_stored_channels(self, world):
-        from app.services import lais_leads_service as leads
+    def test_union_of_sw_sources_julia_origins_and_stored_channels(self, world):
+        from app.services import julia_leads_service as leads
 
         world.sw.table("lead_sources").insert({"id": "00000000-0000-4000-8000-0000000000b1", "org_id": ORG, "slug": "indicacao",
                                                "label": "Indicação", "categoria": "direto", "ativo": True, "ordem": 0}).execute()
@@ -622,9 +622,9 @@ class TestDistribuicaoNoEnvio:
     def test_a_sent_lead_gets_the_next_attendant_of_a_team_that_takes_over_after_julia(self, world):
         uid = "00000000-0000-0000-0000-0000000000a1"
         world.core.set_table_data("noctus_users", [{"id": uid, "org_id": ORG, "org_role": "corretor", "nome": "Carla"}])
-        world.sw.set_table_data("lais_equipes", [{"id": "eq-1", "org_id": ORG, "nome": "Vendas", "atende_apos_julia": True,
+        world.sw.set_table_data("julia_equipes", [{"id": "eq-1", "org_id": ORG, "nome": "Vendas", "atende_apos_julia": True,
                                                   "modo": "julia", "manter_ultimo": False}])
-        world.sw.set_table_data("lais_equipe_membros", [{"equipe_id": "eq-1", "org_id": ORG, "user_id": uid, "ativo": True, "ordem": 1}])
+        world.sw.set_table_data("julia_equipe_membros", [{"equipe_id": "eq-1", "org_id": ORG, "user_id": uid, "ativo": True, "ordem": 1}])
         c = _contato(world, operacao="compra")
         envio.enviar(world.sw, ORG, c, "qualificado")
         assert str(world.contato()["responsavel_user_id"]) == uid

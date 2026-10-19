@@ -1,4 +1,4 @@
-"""Lais wave 1: the deterministic recesso message on the first turn of an interacao inside the period
+"""Julia wave 1: the deterministic recesso message on the first turn of an interacao inside the period
 (through the real lead worker; every seam is a Fake)."""
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from datetime import date, timedelta
 import pytest
 
 from app.clients.agents import FakeAgentsClient, TurnResult
-from app.services import lais_conhecimento_service as conhecimento
-from app.services.lais_lead_turn_service import process_lead_batch
+from app.services import julia_conhecimento_service as conhecimento
+from app.services.julia_lead_turn_service import process_lead_batch
 
-from tests.support.lais_world import LEAD_CHAT, ORG_ID, World, buffer_lead
+from tests.support.julia_world import LEAD_CHAT, ORG_ID, World, buffer_lead
 
 pytestmark = pytest.mark.asyncio
 

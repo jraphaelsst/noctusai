@@ -119,7 +119,7 @@ from app.services.whatsapp_realtime import (
 )
 
 from app.services import chat_cliente_link
-from app.services import lais_agente_service as lais
+from app.services import julia_agente_service as julia
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +473,7 @@ async def update_connection(
         and "authorized_numbers" in body.model_fields_set
         and body.authorized_numbers is not None
     ):
-        lais.exigir_autorizados(body.authorized_numbers)
+        julia.exigir_autorizados(body.authorized_numbers)
 
     # Use model_fields_set to distinguish "field absent from request" (keep
     # current value) from "field supplied as []" (clear → means allow-all /
@@ -1053,9 +1053,9 @@ async def send_message(
     if getattr(record, "agente_leads_ativo", False):
         # Conversas v2: a human reply on a Julia line carries the attendant's name when Conhecimento
         # `exibir_atendente` is on (`*{nome}*:\n{texto}`).
-        from app.services import lais_conversas_service
+        from app.services import julia_conversas_service
 
-        texto = lais_conversas_service.prefixar_atendente(get_scoped_admin_client("social_wiring"), org_id, user, texto)
+        texto = julia_conversas_service.prefixar_atendente(get_scoped_admin_client("social_wiring"), org_id, user, texto)
     try:
         result = await client.send_text(chat_id, texto)
     except Exception as exc:
@@ -1113,11 +1113,11 @@ async def send_message(
 
     if getattr(record, "agente_leads_ativo", False):
         # maya-blocks: a human's reply from the inbox on a Julia line can be the episode's first response
-        # (`lais_interacoes.primeira_resposta_at`, written once). Bookkeeping: the message is already out.
-        from app.services import lais_contatos_service
+        # (`julia_interacoes.primeira_resposta_at`, written once). Bookkeeping: the message is already out.
+        from app.services import julia_contatos_service
 
         try:
-            lais_contatos_service.registrar_primeira_resposta_do_chat(
+            julia_contatos_service.registrar_primeira_resposta_do_chat(
                 get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id,
             )
         except Exception:

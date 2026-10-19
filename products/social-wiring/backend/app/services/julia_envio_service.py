@@ -1,22 +1,22 @@
-"""Lais wave 3 -- "Envio ao SW": rules, policies, the idempotent send and its triggers (contract 5).
+"""Julia wave 3 -- "Envio ao SW": rules, policies, the idempotent send and its triggers (contract 5).
 
-`enviar(client, org_id, contato, gatilho)` turns a `lais_contato` into a normal SW lead + funil card:
+`enviar(client, org_id, contato, gatilho)` turns a `julia_contato` into a normal SW lead + funil card:
 
   1. IDEMPOTENT per normalised phone per org: a contato already linked to a lead is a no-op; otherwise the
      org's existing SW lead with that phone is ATTACHED and topped up (never duplicated); only when there is
      none is `leads_service.create_lead` called (source slug `julia`, row created per org on first send)
      -- its DB trigger `spawn_funil_card` creates the card -- and `attach_lead_now` resolves the cliente.
   2. The interacao resumo + the collected slots become the card's first note (and the lead's `observacoes`).
-  3. `status_envio` on the contato, one `lais_envio_entregas` ledger row, event `novo_lead`.
+  3. `status_envio` on the contato, one `julia_envio_entregas` ledger row, event `novo_lead`.
 
 Triggers (every one goes through `enviar`, so two of them for one phone are one lead and one card):
   qualificado  action `qualificar_lead`, only when the org's rule matches (else the contato stays "Nao pronto")
   visita       the `on_visita_solicitada` hook (when a rule has the visit criterion) and `forcar_envio_sw`
-  frio         timer job `lais_envio_frio`, armed by the cold-lead hook after the last re-engagement attempt;
+  frio         timer job `julia_envio_frio`, armed by the cold-lead hook after the last re-engagement attempt;
                stale-guarded by `gen` (contract 0.2)
   captacao     action `captacao` + the org policy (enviar | notificar)
   invalido     `encerrar(invalido)` + the WhatsApp-invalido policy
-  manual       the Lais > Leads row action / bulk send
+  manual       the Julia > Leads row action / bulk send
 
 Everything binds through the foundation registries at `registrar()` (called once by the router import);
 nobody edits the foundation modules' internals.
@@ -36,34 +36,34 @@ from noctusai_lib.primitives.phone import normalize_phone
 from app.modules.leads.services import dimensions_service, leads_service
 from app.services import (
     clientes_service,
-    lais_acoes_service,
-    lais_contatos_service as contatos,
-    lais_contexto_service,
-    lais_envio_criterios as criterios,
-    lais_eventos_service as eventos,
-    lais_perguntas_service,
-    lais_reengajamento_service,
-    lais_slots_sensiveis as sensiveis,
-    lais_visitas_service,
+    julia_acoes_service,
+    julia_contatos_service as contatos,
+    julia_contexto_service,
+    julia_envio_criterios as criterios,
+    julia_eventos_service as eventos,
+    julia_perguntas_service,
+    julia_reengajamento_service,
+    julia_slots_sensiveis as sensiveis,
+    julia_visitas_service,
 )
 
 logger = logging.getLogger(__name__)
 
-T_REGRAS = "lais_envio_regras"
-T_POLITICAS = "lais_envio_politicas"
-T_ENTREGAS = "lais_envio_entregas"
+T_REGRAS = "julia_envio_regras"
+T_POLITICAS = "julia_envio_politicas"
+T_ENTREGAS = "julia_envio_entregas"
 T_LEADS = "leads"
 T_NOTAS = "cliente_notas"
 
-JOB_FRIO = "lais_envio_frio"
+JOB_FRIO = "julia_envio_frio"
 JOB_MAX_RETRIES = 2
-FUSO = lais_reengajamento_service.FUSO
+FUSO = julia_reengajamento_service.FUSO
 ORIGEM_SLUG = "julia"
-ORIGEM_LABEL = "Julia (Lais)"
+ORIGEM_LABEL = "Julia"
 
 GATILHOS = ("qualificado", "visita", "frio", "captacao", "invalido", "manual")
-#: `lais_contatos.status_envio`: "enviado" = sent on Julia's qualification or by a person, "enviado_auto" = any other
-#: automatic trigger (the Lais > Leads list shows "Enviado pela Julia" / "Enviado automaticamente").
+#: `julia_contatos.status_envio`: "enviado" = sent on Julia's qualification or by a person, "enviado_auto" = any other
+#: automatic trigger (the Julia > Leads list shows "Enviado pela Julia" / "Enviado automaticamente").
 STATUS_POR_GATILHO = {"qualificado": "enviado", "manual": "enviado"}
 STATUS_ENVIADOS = ("enviado", "enviado_auto")
 GATILHO_LABEL = {
@@ -82,7 +82,7 @@ ERRO_MAX = 300
 
 # DI seam: the schema-scoped service client for code that runs outside a request (visit hooks, the cold job).
 _client_provider: Optional[Callable[[], Any]] = None
-# The job repository of the running Lais worker (set by `lais_reengajamento_worker.build_worker`).
+# The job repository of the running Julia worker (set by `julia_reengajamento_worker.build_worker`).
 _repo: Any = None
 
 
@@ -142,7 +142,7 @@ def regra_do_contato(rows: list[dict[str, Any]], operacao: Optional[str]) -> Opt
 
 
 def _chaves_slot(client: Any) -> set[str]:
-    return {q["chave"] for q in lais_perguntas_service.listar_catalogo(client)}
+    return {q["chave"] for q in julia_perguntas_service.listar_catalogo(client)}
 
 
 def substituir_regras(client: Any, org_id: UUID | str, diferenciar: Optional[bool], regras: list[dict[str, Any]]) -> dict[str, Any]:
@@ -331,7 +331,7 @@ def _entrega(client: Any, org_id: UUID | str, contato_id: Any, gatilho: str, sta
             "erro": erro[:ERRO_MAX] if erro else None, "lead_id": lead_id,
         }).execute()
     except Exception:
-        logger.exception("lais envio: could not write the entrega ledger row (org=%s contato=%s)", org_id, contato_id)
+        logger.exception("julia envio: could not write the entrega ledger row (org=%s contato=%s)", org_id, contato_id)
 
 
 def _falhar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, erro: str) -> None:
@@ -343,7 +343,7 @@ def _atribuir_antes_de_notificar(client: Any, org_id: UUID | str, contato: dict[
     """Wave 11: pick the attendant (teams that take over after Julia) BEFORE `novo_lead` is emitted, so the
     notification reaches the chosen attendant. Distribution must never block a send: a failure is logged loudly
     and the lead stays with its current responsável (or none)."""
-    from app.services import lais_equipes_service
+    from app.services import julia_equipes_service
 
     try:
         if _core_provider is not None:
@@ -352,9 +352,9 @@ def _atribuir_antes_de_notificar(client: Any, org_id: UUID | str, contato: dict[
             from app.dependencies import get_core_client
 
             core = get_core_client()
-        lais_equipes_service.atribuir_responsavel(client, core, org_id, contato, "envio")
+        julia_equipes_service.atribuir_responsavel(client, core, org_id, contato, "envio")
     except Exception:
-        logger.exception("lais envio: attendant distribution failed (org=%s contato=%s) -- lead sent unassigned", org_id, contato.get("id"))
+        logger.exception("julia envio: attendant distribution failed (org=%s contato=%s) -- lead sent unassigned", org_id, contato.get("id"))
 
 
 def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, *, agora: Optional[datetime] = None) -> dict[str, Any]:
@@ -391,7 +391,7 @@ def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: st
         if cliente_id:
             client.table(T_NOTAS).insert({"org_id": org, "cliente_id": str(cliente_id), "autor_id": None, "tipo": "comentario", "corpo": nota}).execute()
         else:
-            logger.warning("lais envio: no cliente resolved for lead %s (org=%s) -- the note lives on leads.observacoes only", lead_id, org)
+            logger.warning("julia envio: no cliente resolved for lead %s (org=%s) -- the note lives on leads.observacoes only", lead_id, org)
         status = STATUS_POR_GATILHO.get(gatilho, "enviado_auto")
         contatos.atualizar_contato(client, contato["id"], {"lead_id": lead_id, "status_envio": status})
         _entrega(client, org_id, contato["id"], gatilho, "ok", lead_id=lead_id)
@@ -400,7 +400,7 @@ def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: st
     except AppException:
         raise
     except Exception as exc:
-        logger.exception("lais envio: send failed (org=%s contato=%s gatilho=%s)", org_id, contato.get("id"), gatilho)
+        logger.exception("julia envio: send failed (org=%s contato=%s gatilho=%s)", org_id, contato.get("id"), gatilho)
         _falhar(client, org_id, contato, gatilho, f"envio_falhou: {type(exc).__name__}")
         raise AppException("envio_falhou", "Não foi possível enviar ao SW. Tente novamente.", status_code=502) from exc
     return {"status_envio": status, "lead_id": lead_id, "ja_enviado": False, "criado": criado}
@@ -432,12 +432,12 @@ def avaliar_e_enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], g
 
 
 # ── action handlers + hooks ─────────────────────────────────────────────────
-async def _h_qualificar_lead(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+async def _h_qualificar_lead(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     res = avaliar_e_enviar(ctx.client, ctx.org_id, ctx.contato, "qualificado", qualificado=True, visita=False)
-    from app.services import lais_capi_service  # lazy: capi -> avaliacoes -> this module (wave 13 CAPI signal)
+    from app.services import julia_capi_service  # lazy: capi -> avaliacoes -> this module (wave 13 CAPI signal)
 
     # best-effort + only for Meta-ads leads (it never raises): the lead now exists/is linked after the send above
-    await lais_capi_service.registrar_evento(ctx.client, ctx.org_id, ctx.contato["id"], "lead_qualificado")
+    await julia_capi_service.registrar_evento(ctx.client, ctx.org_id, ctx.contato["id"], "lead_qualificado")
     return res
 
 
@@ -450,11 +450,11 @@ def aplicar_politica_captacao(client: Any, org_id: UUID | str, contato: dict[str
     return {"politica": politica, **_enviar_automatico(client, org_id, contato, "captacao")}
 
 
-def _h_captacao(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _h_captacao(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     return aplicar_politica_captacao(ctx.client, ctx.org_id, ctx.contato)
 
 
-def _pos_encerrar(ctx: lais_acoes_service.AcaoCtx, motivo: str) -> None:
+def _pos_encerrar(ctx: julia_acoes_service.AcaoCtx, motivo: str) -> None:
     if motivo != "invalido":
         return
     if ler_politicas(ctx.client, ctx.org_id)["whatsapp_invalido"]:
@@ -474,9 +474,9 @@ def _hook_forcar_envio(org_id: Any, contato: dict[str, Any], visita: dict[str, A
     _enviar_automatico(_client(), org_id, contato, "visita")
 
 
-def _prov_acoes(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+def _prov_acoes(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
     """`contexto.acoes`: every action, minus `qualificar_lead` when the org has no send rule (nothing to qualify against)."""
-    acoes = list(lais_contexto_service.ACOES_LAIS)
+    acoes = list(julia_contexto_service.ACOES_JULIA)
     if not org_tem_regra(ctx.client, ctx.org_id):
         acoes = [a for a in acoes if a != "qualificar_lead"]
     return {"acoes": acoes}
@@ -494,29 +494,29 @@ def instante_frio(frios: dict[str, Any], contato_id: Any, agora: datetime) -> da
 
 
 async def lead_frio(client: Any, org_id: UUID | str, contato: dict[str, Any], *, agora: Optional[datetime] = None) -> Optional[str]:
-    """The cold-lead hook (after the last re-engagement attempt): arm `lais_envio_frio` when the policy is on.
+    """The cold-lead hook (after the last re-engagement attempt): arm `julia_envio_frio` when the policy is on.
     Returns the job id, or None when nothing was armed."""
     frios = ler_politicas(client, org_id)["frios"]
     if not frios["ativo"] or contato.get("status_envio") in STATUS_ENVIADOS:
         return None
     if _repo is None:
-        raise RuntimeError("lais envio: no job repository registered -- the cold-lead timer cannot be armed")
+        raise RuntimeError("julia envio: no job repository registered -- the cold-lead timer cannot be armed")
     agora = _now(agora)
     gen = int(contato.get("gen") or 0)
     job = await _repo.enqueue(
         type=JOB_FRIO,
         payload={
-            **contatos.payload_job(contato, lais_reengajamento_service.chave_do_chat(contato["connection_id"], contato["chat_id"])),
+            **contatos.payload_job(contato, julia_reengajamento_service.chave_do_chat(contato["connection_id"], contato["chat_id"])),
             "contato_id": str(contato["id"]),
         },
         max_retries=JOB_MAX_RETRIES, scheduled_for=instante_frio(frios, contato["id"], agora),
-        dedupe_key=f"lais:envio:frio:{contato['id']}:{gen}",
+        dedupe_key=f"julia:envio:frio:{contato['id']}:{gen}",
     )
     return str(getattr(job, "id", "")) or None
 
 
 def executar_frio(job: Job, *, client: Any) -> str:
-    """`lais_envio_frio` at fire time: stale-guarded by `gen`, policy re-read, then the send. Returns the outcome."""
+    """`julia_envio_frio` at fire time: stale-guarded by `gen`, policy re-read, then the send. Returns the outcome."""
     p = job.payload or {}
     org_id, contato_id = p.get("org_id"), p.get("contato_id")
     if not (org_id and contato_id):
@@ -538,11 +538,11 @@ def executar_frio(job: Job, *, client: Any) -> str:
 
 
 def handlers(*, client_provider: Optional[Callable[[], Any]] = None) -> dict[str, Callable[[Job], Any]]:
-    """`{job type: handler}` merged into the Lais worker. The client is built at FIRE time."""
+    """`{job type: handler}` merged into the Julia worker. The client is built at FIRE time."""
 
     async def _frio(job: Job) -> None:
         outcome = executar_frio(job, client=(client_provider or _client)())
-        logger.info("lais envio %s job=%s -> %s", job.type, job.id, outcome)
+        logger.info("julia envio %s job=%s -> %s", job.type, job.id, outcome)
 
     return {JOB_FRIO: _frio}
 
@@ -550,15 +550,15 @@ def handlers(*, client_provider: Optional[Callable[[], Any]] = None) -> dict[str
 # ── wiring ──────────────────────────────────────────────────────────────────
 def registrar() -> None:
     """Bind every registry slot wave 3 owns (idempotent); called once at import of the router."""
-    lais_acoes_service.registrar_handler("qualificar_lead", _h_qualificar_lead)
-    if "captacao" not in lais_acoes_service.HANDLERS:  # wave 8 owns the real one and may already be bound
-        lais_acoes_service.registrar_handler("captacao", _h_captacao)
-    lais_acoes_service.registrar_pos_encerrar(_pos_encerrar)
-    lais_contexto_service.registrar_provider("acoes", _prov_acoes)
-    lais_perguntas_service.registrar_criterios(criterios_que_usam)
-    lais_reengajamento_service.registrar_lead_frio(lead_frio)
-    lais_visitas_service.registrar_hook("on_visita_solicitada", _hook_on_visita)
-    lais_visitas_service.registrar_hook("forcar_envio_sw", _hook_forcar_envio)
+    julia_acoes_service.registrar_handler("qualificar_lead", _h_qualificar_lead)
+    if "captacao" not in julia_acoes_service.HANDLERS:  # wave 8 owns the real one and may already be bound
+        julia_acoes_service.registrar_handler("captacao", _h_captacao)
+    julia_acoes_service.registrar_pos_encerrar(_pos_encerrar)
+    julia_contexto_service.registrar_provider("acoes", _prov_acoes)
+    julia_perguntas_service.registrar_criterios(criterios_que_usam)
+    julia_reengajamento_service.registrar_lead_frio(lead_frio)
+    julia_visitas_service.registrar_hook("on_visita_solicitada", _hook_on_visita)
+    julia_visitas_service.registrar_hook("forcar_envio_sw", _hook_forcar_envio)
 
 
 __all__ = [

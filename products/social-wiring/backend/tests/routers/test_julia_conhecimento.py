@@ -1,4 +1,4 @@
-"""Lais wave 1 -- Conhecimento (lais-build-contract section 3): routes, optimistic lock, golden
+"""Julia wave 1 -- Conhecimento (lais-build-contract section 3): routes, optimistic lock, golden
 render, contexto provider, recesso first-turn message, endereco_iptu switch on the tools route.
 
 Auth tests assert strict `== 401` / `== 403`. No personal data in fixtures."""
@@ -19,12 +19,12 @@ from noctusai_lib.testing import (
     bind_consent_module_to_mock,
 )
 
-from app.services import lais_conhecimento_service as svc
-from app.services import lais_contexto_service as ctxsvc
+from app.services import julia_conhecimento_service as svc
+from app.services import julia_contexto_service as ctxsvc
 
-URL = "/api/lais/conhecimento"
+URL = "/api/julia/conhecimento"
 ORG = "test-org-123"
-GOLDEN = Path(__file__).resolve().parent / "golden" / "lais_conhecimento.md"
+GOLDEN = Path(__file__).resolve().parent / "golden" / "julia_conhecimento.md"
 
 
 def _client_for(org_role):
@@ -295,7 +295,7 @@ class TestEnderecoIptuPolicy:
 
     def test_detalhes_imovel_honours_the_switch(self):
         from uuid import UUID
-        from app.services import lais_ferramentas_service as tools
+        from app.services import julia_ferramentas_service as tools
 
         org = UUID("00000000-0000-4000-8000-0000000000aa")
         db = MockSupabaseClient()

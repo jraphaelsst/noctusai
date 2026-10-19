@@ -1,8 +1,8 @@
-"""Lais wave 1 -- Conhecimento (lais-build-contract section 3).
+"""Julia wave 1 -- Conhecimento (lais-build-contract section 3).
 
-  GET /api/lais/conhecimento             org member   {secoes, preview_md, hash}
-  PUT /api/lais/conhecimento/{secao}     org admin    {dados, versao} -> optimistic lock (409 versao_conflito)
-  GET /api/lais/conhecimento/preview     org member   {markdown, hash}  ("Ver o que a Julia sabe")
+  GET /api/julia/conhecimento             org member   {secoes, preview_md, hash}
+  PUT /api/julia/conhecimento/{secao}     org admin    {dados, versao} -> optimistic lock (409 versao_conflito)
+  GET /api/julia/conhecimento/preview     org member   {markdown, hash}  ("Ver o que a Julia sabe")
 
 Success envelope `{"data": ...}`; errors are `AppException` (`{"error": {...}}`): 422 `secao_invalida` /
 `invalid_field`, 409 `versao_conflito`, 403 non-admin. The body is validated per section by the
@@ -18,12 +18,12 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client, get_settings
-from app.services import lais_agente_service as agente
-from app.services import lais_conhecimento_service as svc
+from app.services import julia_agente_service as agente
+from app.services import julia_conhecimento_service as svc
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/conhecimento", tags=["lais-conhecimento"])
+router = APIRouter(prefix="/api/julia/conhecimento", tags=["julia-conhecimento"])
 
 
 class SecaoUpdate(StrictHttpModel):
@@ -70,7 +70,7 @@ def put_secao(
     request: Request = None,
 ) -> dict[str, Any]:
     user, _token, raw_org = auth
-    require_org_admin_for(get_core_client(), auth, request, "O conhecimento da Lais")
+    require_org_admin_for(get_core_client(), auth, request, "O conhecimento da Julia")
     org_id = coerce_org_uuid(raw_org)
     user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
     return {"data": svc.salvar_secao(client, org_id, secao, payload.dados, payload.versao, user_id, nome_agente)}

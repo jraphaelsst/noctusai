@@ -1,4 +1,4 @@
-"""Lais wave 9 -- Inicio "Painel": the month math, Sao Paulo month/hour edges, agents-down, A7, strict 401.
+"""Julia wave 9 -- Inicio "Painel": the month math, Sao Paulo month/hour edges, agents-down, A7, strict 401.
 
 Seams: mock DB + the product's `FakeAgentsClient` through the `get_agents_client_factory` DI seam."""
 from __future__ import annotations
@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import AgentsTimeout, AgentUso, FakeAgentsClient
-from app.services import lais_painel_service as svc
+from app.services import julia_painel_service as svc
 
-from tests.support.lais_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
-URL = "/api/lais/painel"
+URL = "/api/julia/painel"
 H = {"Authorization": "Bearer test-token"}
 
 
@@ -107,16 +107,16 @@ def _scene(*, role, agents):
     w.core.set_table_data("noctus_users", [{"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role}])
     w.root.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(org_id=ORG_ID, org_role=role)))
     w.seed_connection()
-    w.sw.set_table_data("lais_contatos", FIXTURE + [_c("2026-10-05T13:00:00+00:00", org=OTHER_ORG_ID)])
-    w.sw.set_table_data("lais_eventos", [])
-    w.sw.set_table_data("lais_visitas", [])
+    w.sw.set_table_data("julia_contatos", FIXTURE + [_c("2026-10-05T13:00:00+00:00", org=OTHER_ORG_ID)])
+    w.sw.set_table_data("julia_eventos", [])
+    w.sw.set_table_data("julia_visitas", [])
     with (
         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=w.root),
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=w.root),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=w.admin),
     ):
         from app.main import app
-        from app.routers.lais_agente_router import get_agents_client_factory
+        from app.routers.julia_agente_router import get_agents_client_factory
 
         bind_consent_module_to_mock(w.root)
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: agents)
@@ -160,13 +160,13 @@ class TestRoute:
     def test_admin_gets_the_whole_org_shape(self, admin):
         w = admin.w
         c0 = FIXTURE[0]["id"]
-        w.sw.set_table_data("lais_eventos", [
+        w.sw.set_table_data("julia_eventos", [
             _ev("cobranca_atendimento", c0, "2026-10-10T12:00:00+00:00"),
             _ev("cobranca_atendimento", None, "2026-10-11T12:00:00+00:00"),
             _ev("cobranca_atendimento", c0, "2026-09-10T12:00:00+00:00"),   # other month
             _ev("novo_lead", c0, "2026-10-10T12:00:00+00:00"),              # other type
         ])
-        w.sw.set_table_data("lais_visitas", [_vis(c0, "2026-10-12T12:00:00+00:00"), _vis(c0, "2026-11-01T12:00:00+00:00")])
+        w.sw.set_table_data("julia_visitas", [_vis(c0, "2026-10-12T12:00:00+00:00"), _vis(c0, "2026-11-01T12:00:00+00:00")])
         r = admin.get(f"{URL}?mes=2026-10")
         assert r.status_code == 200
         d = r.json()["data"]
@@ -196,12 +196,12 @@ class TestRoute:
         mine = [dict(FIXTURE[0], responsavel_user_id=TEST_USER_ID), dict(FIXTURE[4], responsavel_user_id=TEST_USER_ID)]
         others = [dict(c, responsavel_user_id=OWNER_ID) for c in FIXTURE[1:4]]
         rest = FIXTURE[5:]  # no responsavel: owned by the connection owner, not this member
-        w.sw.set_table_data("lais_contatos", mine + others + rest)
-        w.sw.set_table_data("lais_eventos", [
+        w.sw.set_table_data("julia_contatos", mine + others + rest)
+        w.sw.set_table_data("julia_eventos", [
             _ev("cobranca_atendimento", mine[0]["id"], "2026-10-10T12:00:00+00:00"),
             _ev("cobranca_atendimento", others[0]["id"], "2026-10-10T12:00:00+00:00"),
         ])
-        w.sw.set_table_data("lais_visitas", [_vis(others[1]["id"], "2026-10-12T12:00:00+00:00")])
+        w.sw.set_table_data("julia_visitas", [_vis(others[1]["id"], "2026-10-12T12:00:00+00:00")])
         d = member.get(f"{URL}?mes=2026-10").json()["data"]
         assert d["funil"] == {"topo": 2, "atendidos": 1, "enviados": 1}
         assert d["atividades"] == {"consumo": None, "cobrancas": 1, "pre_agendamentos": 0}

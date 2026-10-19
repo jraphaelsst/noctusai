@@ -1,8 +1,8 @@
-"""Lais wave 5 -- Visitas (pre-scheduling), contract section 7.
+"""Julia wave 5 -- Visitas (pre-scheduling), contract section 7.
 
 Pieces (one module, three layers):
 
-  config      `lais_visitas_config`: separar_operacao + per-profile rules (geral | compra | aluguel):
+  config      `julia_visitas_config`: separar_operacao + per-profile rules (geral | compra | aluguel):
               ativo, cpf_obrigatorio, min_dias/min_horas, max_dias, weekday grade. Validated by
               `ConfigVisitas` (StrictHttpModel): HH:MM on the 30-min grid, inicio < fim, no overlap.
   slots       `slots_livres` feeds the seed `SchedulingEngine` (via `app.modules.scheduling.engine`)
@@ -39,13 +39,13 @@ from noctusai_lib.domain.scheduling import BlockedInterval, WorkingWindow
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.modules.scheduling.engine import SchedulingRuleDefaults, build_engine, build_rules
-from app.services import lais_eventos_service as eventos
+from app.services import julia_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
 
-T_CONFIG = "lais_visitas_config"
-T_VISITAS = "lais_visitas"
-T_CONTATOS = "lais_contatos"
+T_CONFIG = "julia_visitas_config"
+T_VISITAS = "julia_visitas"
+T_CONTATOS = "julia_contatos"
 T_AGENDAMENTOS = "atendimento_agendamentos"
 T_ATENDIMENTOS = "atendimentos"
 
@@ -132,7 +132,7 @@ def _hhmm(v: str) -> time:
 
 
 def _grade_padrao() -> dict[str, list[dict[str, str]]]:
-    """The live Lais default: 09-17 weekdays, 09-18 weekend."""
+    """The live Julia default: 09-17 weekdays, 09-18 weekend."""
     return {d: [{"inicio": "09:00", "fim": "17:00" if i < 5 else "18:00"}] for i, d in enumerate(DIAS)}
 
 
@@ -283,7 +283,7 @@ def _chamar_hook(fn: Callable[..., Any], org_id: Any, contato: dict[str, Any], v
         fn(org_id, contato, visita)
     except Exception:
         # a wave-3 hook must never undo a visit that is already stored
-        logger.exception("lais visitas: hook %s failed (org=%s visita=%s)", getattr(fn, "__name__", "?"), org_id, visita.get("id"))
+        logger.exception("julia visitas: hook %s failed (org=%s visita=%s)", getattr(fn, "__name__", "?"), org_id, visita.get("id"))
 
 
 # ── action handler: pedido_visita ───────────────────────────────────────────
@@ -320,9 +320,9 @@ def _h_pedido_visita(ctx: Any, payload: dict[str, Any]) -> Optional[dict[str, An
 
 def registrar() -> None:
     """Bind the handler + the tool (idempotent); called once at import of the router."""
-    from app.services import lais_acoes_service
+    from app.services import julia_acoes_service
 
-    lais_acoes_service.registrar_handler("pedido_visita", _h_pedido_visita)
+    julia_acoes_service.registrar_handler("pedido_visita", _h_pedido_visita)
 
 
 # ── tool: horarios_visita ───────────────────────────────────────────────────
@@ -482,17 +482,17 @@ async def avisar_lead(client: Any, org_id: UUID | str, visita: dict[str, Any], t
     the state change stands, the response says the message did not leave."""
     contato = _contato(client, org_id, visita["contato_id"])
     if not contato.get("connection_id") or not contato.get("chat_id"):
-        logger.warning("lais visitas: contato %s has no chat to message", visita.get("contato_id"))
+        logger.warning("julia visitas: contato %s has no chat to message", visita.get("contato_id"))
         return False
     try:
         record = store.get_connection(connection_id=UUID(str(contato["connection_id"])), org_id=UUID(str(org_id)), decrypt=True)
         if record is None:
-            logger.warning("lais visitas: connection %s not found", contato["connection_id"])
+            logger.warning("julia visitas: connection %s not found", contato["connection_id"])
             return False
         waha = waha_factory(base_url=record.base_url or None, api_key=record.api_key, session=record.session_name)
         await waha.send_text(contato["chat_id"], texto)
     except Exception:
-        logger.exception("lais visitas: could not message the lead (visita=%s)", visita.get("id"))
+        logger.exception("julia visitas: could not message the lead (visita=%s)", visita.get("id"))
         return False
     return True
 

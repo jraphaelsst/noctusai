@@ -1,4 +1,4 @@
-"""`/api/lais/reengajamento/*` (lais-build-contract 6): auth boundary (strict `== 401`), the member-read /
+"""`/api/julia/reengajamento/*` (lais-build-contract 6): auth boundary (strict `== 401`), the member-read /
 admin-write split, org isolation, strict bodies, and the three 409 codes. The DB is the schema-scoped mock
 injected through the router's own `get_reengajamento_db` seam; auth is the REAL chain over a mocked session."""
 from __future__ import annotations
@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from tests.support.lais_world import ADMIN_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
-BASE = "/api/lais/reengajamento"
+BASE = "/api/julia/reengajamento"
 H = {"Authorization": "Bearer test-token"}
 OTHER_REGUA = "00000000-0000-4000-8000-0000000000ee"
 SEM_REGUA = "00000000-0000-4000-8000-0000000000ff"
@@ -38,7 +38,7 @@ class Scene:
 
 def _scene(role):
     world = World()
-    for t in ("lais_reengajamento_config", "lais_reguas", "lais_regua_tentativas"):
+    for t in ("julia_reengajamento_config", "julia_reguas", "julia_regua_tentativas"):
         world.sw.set_table_data(t, [])
     world.core.set_table_data("noctus_users", [
         {"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role},
@@ -54,7 +54,7 @@ def _scene(role):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_reengajamento_router import get_reengajamento_db
+        from app.routers.julia_reengajamento_router import get_reengajamento_db
 
         bind_consent_module_to_mock(world.root)
         app.dependency_overrides[get_reengajamento_db] = lambda: world.sw
@@ -118,7 +118,7 @@ class TestConfig:
 
     def test_one_org_never_sees_anothers_config(self, admin):
         admin.call("put", "/config", {"horas_ativo": True})
-        admin.w.sw.table("lais_reengajamento_config").insert({
+        admin.w.sw.table("julia_reengajamento_config").insert({
             "org_id": OTHER_ORG_ID, "minutos_ativo": True, "minutos_intervalo": 60, "horas_ativo": False, "horas_intervalo": 1}).execute()
         assert admin.call("get", "/config").json()["data"]["minutos_intervalo"] == 5
 
@@ -150,7 +150,7 @@ class TestReguas:
         assert admin.call("post", f"/reguas/{r['id']}/desativar").json()["data"]["ativa"] is False
 
     def test_another_orgs_regua_is_404_for_every_verb(self, admin):
-        admin.w.sw.table("lais_reguas").insert({
+        admin.w.sw.table("julia_reguas").insert({
             "id": OTHER_REGUA, "org_id": OTHER_ORG_ID, "nome": "Alheia", "ativa": False, "compra": True, "aluguel": False}).execute()
         for method, url, body in [
             ("get", f"/reguas/{OTHER_REGUA}", None), ("patch", f"/reguas/{OTHER_REGUA}", {"nome": "x"}),

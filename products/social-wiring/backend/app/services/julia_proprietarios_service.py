@@ -1,12 +1,12 @@
-"""Lais wave 12 -- Atualizacao de imoveis: the owners (proprietarios) contacted to refresh a listing
+"""Julia wave 12 -- Atualizacao de imoveis: the owners (proprietarios) contacted to refresh a listing
 (contract 14 / 17).
 
 An owner is contacted ONLY through a Cloud template of an `atualizacao_anuncios` disparo. LGPD (contract 17):
 an owner who answers "parar" is opted out for good -- `opt_out` + `opt_out_at` on every row of that phone,
 his pending targets are dropped, and the dispatch skips him. When an owner replies and the page confirms the
-status / price, the confirmation is stored on the owner row (Lais-owned) and the target moves
+status / price, the confirmation is stored on the owner row (Julia-owned) and the target moves
 `respondido -> enviado_sw`. The Vista mirror `imoveis` is NEVER written (the Vista sync owns those columns and
-would overwrite it): readers overlay the confirmation through `lais_imovel_confirmado`.
+would overwrite it): readers overlay the confirmation through `julia_imovel_confirmado`.
 """
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ from noctusai_lib.primitives.exceptions import AppException
 
 logger = logging.getLogger(__name__)
 
-TABLE = "lais_proprietarios_contatos"
-T_ALVOS = "lais_disparo_alvos"
+TABLE = "julia_proprietarios_contatos"
+T_ALVOS = "julia_disparo_alvos"
 PRECO_TIPOS = ("venda", "locacao")
 _PARAR = re.compile(r"^\s*(parar|pare|sair)[\s.!]*$", re.IGNORECASE)
 
@@ -67,7 +67,7 @@ def listar(
             q = q.eq("opt_out", opt_out)
         return q.order("id").range(start, end).execute().data
 
-    rows = list(iter_paged_rows(page, id_key="id", label="lais proprietarios"))
+    rows = list(iter_paged_rows(page, id_key="id", label="julia proprietarios"))
     if busca:
         b = busca.strip().lower()
         rows = [r for r in rows if b in str(r.get("nome") or "").lower() or b in str(r["imovel_codigo"]).lower() or b in r["telefone"]]
@@ -122,7 +122,7 @@ def criar(db: Any, org_id: UUID | str, *, telefone: str, imovel_codigo: str, nom
     }
     created = db.table(TABLE).insert(row).execute().data or []
     if not created:
-        raise RuntimeError("lais: proprietario insert returned no row")
+        raise RuntimeError("julia: proprietario insert returned no row")
     return _com_ultimo_alvo(db, org_id, [created[0]])[0]
 
 
@@ -164,17 +164,17 @@ def registrar_resposta(db: Any, org_id: UUID | str, telefone: str, texto: Option
     if eh_parar(texto):
         registrar_opt_out(db, org_id, tel)
         return "opt_out"
-    from app.services import lais_disparos_service
+    from app.services import julia_disparos_service
 
-    return "respondido" if lais_disparos_service.registrar_resposta(db, org_id, tel) else "ignorado"
+    return "respondido" if julia_disparos_service.registrar_resposta(db, org_id, tel) else "ignorado"
 
 
 def confirmar(
     db: Any, org_id: UUID | str, pid: UUID | str, imoveis: Any, *,
     status: Optional[str] = None, preco: Optional[float] = None, preco_tipo: str = "venda",
 ) -> dict[str, Any]:
-    """The owner confirmed status and/or price: store it on his row (Lais-owned storage, read back by
-    `lais_imovel_confirmado` with provenance) and close his target `respondido -> enviado_sw`. 409 when he has
+    """The owner confirmed status and/or price: store it on his row (Julia-owned storage, read back by
+    `julia_imovel_confirmado` with provenance) and close his target `respondido -> enviado_sw`. 409 when he has
     not answered a Cloud template yet; 404 when the listing is not in the base. `imoveis` is read-only here."""
     if status is None and preco is None:
         raise AppException("nada_a_confirmar", "Informe o status e/ou o preço confirmado.", status_code=422)

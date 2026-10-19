@@ -22,6 +22,7 @@ from app.modules.atendimento_blocos.blocos import (
     PIPELINES_ATENDIMENTO,
     ConfigBloco,
     config_padrao,
+    normalizar_agent_key,
     dono,
 )
 
@@ -45,7 +46,7 @@ def linhas_salvas(client: Any, org_id: UUID | str) -> dict[str, dict[str, Any]]:
 
 def _de_linha(row: dict[str, Any]) -> ConfigBloco:
     return ConfigBloco(
-        bloco=row["bloco"], agent_key=row.get("agent_key"), ativo=row.get("ativo") is True,
+        bloco=row["bloco"], agent_key=normalizar_agent_key(row.get("agent_key")), ativo=row.get("ativo") is True,
         etapas=tuple(row.get("etapas") or ()), origem="org",
         updated_at=row.get("updated_at"), updated_by=str(row["updated_by"]) if row.get("updated_by") else None,
     )

@@ -1,4 +1,4 @@
-"""Lais wave 13 -- Analise de credito flow (contract 15 / 17): the consent gate, the seam, the job.
+"""Julia wave 13 -- Analise de credito flow (contract 15 / 17): the consent gate, the seam, the job.
 
 THE invariant under test: the provider is NEVER called without a stored consent aceito=true. Seams: mock DB,
 `FakeCreditoProvider` injected through `registrar_provider_factory`, `FakeJobRepository` through `registrar_repo`
@@ -11,17 +11,17 @@ from uuid import uuid4
 import pytest
 from noctusai_lib.domain.jobs import FakeJobRepository
 
-from app.clients.agents import LaisAction, TurnResult
-from app.routers import lais_credito_router  # noqa: F401  (import binds the handler / hook / contexto extras)
-from app.services import lais_acoes_service as acoes
-from app.services import lais_contatos_service as contatos
-from app.services import lais_contexto_service as contexto
-from app.services import lais_credito_provider as prov
-from app.services import lais_credito_service as svc
-from app.services import lais_eventos_service as eventos
+from app.clients.agents import JuliaAction, TurnResult
+from app.routers import julia_credito_router  # noqa: F401  (import binds the handler / hook / contexto extras)
+from app.services import julia_acoes_service as acoes
+from app.services import julia_contatos_service as contatos
+from app.services import julia_contexto_service as contexto
+from app.services import julia_credito_provider as prov
+from app.services import julia_credito_service as svc
+from app.services import julia_eventos_service as eventos
 
-from tests.routers.test_lais_visitas import _mundo, _pedir, _primeiro_slot
-from tests.support.lais_world import ORG_ID
+from tests.routers.test_julia_visitas import _mundo, _pedir, _primeiro_slot
+from tests.support.julia_world import ORG_ID
 
 
 def _run(coro):
@@ -55,7 +55,7 @@ def _mundo_credito(*, ativo=True, provider="fake", operacao="aluguel", apenas_al
 
 
 def _acao(w, contato, tipo, payload, *, seq=1, lote="l-credito"):
-    res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(LaisAction(tipo, seq, payload),))
+    res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction(tipo, seq, payload),))
     return _run(acoes.aplicar(w.sw, org_id=ORG_ID, contato=contato, result=res, lote_hash=lote))
 
 
@@ -90,7 +90,7 @@ class TestConsentGate:
     def test_visit_without_consent_never_calls_the_provider(self, fake, repo):
         w, c = _mundo_credito()
         (r,) = _pedir_visita(w, c)
-        assert r["estado"] == "aplicada" and w.rows("lais_visitas")
+        assert r["estado"] == "aplicada" and w.rows("julia_visitas")
         assert fake.chamadas == [] and _analises(w) == [] and _jobs(repo) == []
 
     def test_refused_consent_is_stored_and_nothing_runs(self, fake, repo):
@@ -167,7 +167,7 @@ class TestJob:
         (linha,) = _analises(w)
         assert linha["status"] == "aprovado" and linha["resumo"] == "Análise aprovado (fake)."
         assert len(fake.chamadas) == 1 and fake.chamadas[0].codigo_imovel == "AL1"
-        (ev,) = [e for e in w.rows("lais_eventos") if e["tipo"] == "credito_analisado"]
+        (ev,) = [e for e in w.rows("julia_eventos") if e["tipo"] == "credito_analisado"]
         assert ev["payload"] == {"analise_id": a["id"], "status": "aprovado"}
 
     def test_reject_path(self, fake, repo):
@@ -280,4 +280,4 @@ class TestContexto:
     def test_extras_never_remove_what_the_acoes_provider_returned(self):
         w, c = _mundo_credito()
         out = self._montar(w, c)
-        assert set(contexto.ACOES_LAIS) - {"qualificar_lead"} <= set(out["acoes"])
+        assert set(contexto.ACOES_JULIA) - {"qualificar_lead"} <= set(out["acoes"])

@@ -39,7 +39,7 @@ AT = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
 
 def _req(*ids: str) -> TurnRequest:
     return TurnRequest(
-        agent_key="lead-imob", connection_id=CONN, chat_id="5511999990000@c.us",
+        agent_key="julia", connection_id=CONN, chat_id="5511999990000@c.us",
         phone_e164="+5511999990000", display_name="Ana",
         messages=tuple(TurnMessage(texto=f"oi {i}", provider_message_id=i, at=AT) for i in (ids or ("m1",))),
     )
@@ -77,7 +77,7 @@ class TestWireShapes:
         assert (seen["method"], seen["path"]) == ("POST", "/api/channels/turns")
         assert seen["auth"] == "Bearer pk_secret_token"
         assert seen["body"] == {
-            "agent_key": "lead-imob",
+            "agent_key": "julia",
             "channel": "whatsapp",
             "channel_ref": {"connection_id": CONN, "chat_id": "5511999990000@c.us"},
             "contact": {"phone_e164": "+5511999990000", "display_name": "Ana"},
@@ -93,13 +93,13 @@ class TestWireShapes:
 
     async def test_agent_status_hits_the_3_2_route(self):
         def handler(request: httpx.Request) -> httpx.Response:
-            assert (request.method, request.url.path) == ("GET", "/api/channels/agents/lead-imob/status")
+            assert (request.method, request.url.path) == ("GET", "/api/channels/agents/julia/status")
             return httpx.Response(200, json={
-                "agent_key": "lead-imob", "nome": "Julia", "ativo": True, "versao_ativa": 3,
+                "agent_key": "julia", "nome": "Julia", "ativo": True, "versao_ativa": 3,
                 "provider": "openai", "model": "gpt-5-mini", "llm_configurado": True,
             })
 
-        st = await _client(handler).agent_status("lead-imob")
+        st = await _client(handler).agent_status("julia")
         assert (st.nome, st.ativo, st.versao_ativa, st.provider, st.model, st.llm_configurado) == (
             "Julia", True, 3, "openai", "gpt-5-mini", True)
 
@@ -122,13 +122,13 @@ class TestWireShapes:
         with pytest.raises(AgentsUpstreamError):
             await _client(lambda r: httpx.Response(200, content=b"<html>")).run_turn(_req())
 
-    async def test_an_unknown_action_type_is_kept_as_a_lais_action_never_a_handoff(self):
-        # Lais contract 2.1(d): unknown != dropped -- the apply service answers it with an
+    async def test_an_unknown_action_type_is_kept_as_a_julia_action_never_a_handoff(self):
+        # Julia contract 2.1(d): unknown != dropped -- the apply service answers it with an
         # `acao_sem_handler` event. It must never be mistaken for the page-0 handoff.
         client = _client(lambda r: httpx.Response(200, json=_ok_body(actions=[{"type": "salvar_slot", "x": 1}])))
         result = await client.run_turn(_req())
         assert result.handoff is None
-        assert [(a.type, a.payload) for a in result.lais_actions] == [("salvar_slot", {"x": 1})]
+        assert [(a.type, a.payload) for a in result.julia_actions] == [("salvar_slot", {"x": 1})]
 
     async def test_motivo_is_capped_at_280(self):
         client = _client(lambda r: httpx.Response(200, json=_ok_body(
@@ -214,7 +214,7 @@ class TestErrorTable:
 
     async def test_the_status_route_maps_the_same_errors(self):
         with pytest.raises(AgentsTokenInvalid):
-            await _client(_err(401)).agent_status("lead-imob")
+            await _client(_err(401)).agent_status("julia")
         with pytest.raises(AgentNotFound):
             await _client(_err(404, "agent_not_found")).agent_status("nope")
 
@@ -234,10 +234,10 @@ class TestDeletion:
             return httpx.Response(204)
 
         res = await _client(handler).delete_conversation_data(
-            DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="5511999990000@c.us"))
+            DeletionRequest(agent_key="julia", connection_id=CONN, chat_id="5511999990000@c.us"))
         assert (seen["method"], seen["path"]) == ("DELETE", "/api/channels/conversations")
         assert seen["body"] == {
-            "agent_key": "lead-imob", "channel": "whatsapp",
+            "agent_key": "julia", "channel": "whatsapp",
             "channel_ref": {"connection_id": CONN, "chat_id": "5511999990000@c.us"},
         }
         assert res.deleted is True
@@ -245,12 +245,12 @@ class TestDeletion:
     async def test_409_turn_in_progress_is_raised_so_the_caller_can_retry(self):
         with pytest.raises(TurnInProgress):
             await _client(_err(409, "turn_in_progress")).delete_conversation_data(
-                DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="x@c.us"))
+                DeletionRequest(agent_key="julia", connection_id=CONN, chat_id="x@c.us"))
 
     async def test_other_errors_propagate(self):
         with pytest.raises(AgentsTokenInvalid):
             await _client(_err(401)).delete_conversation_data(
-                DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="x@c.us"))
+                DeletionRequest(agent_key="julia", connection_id=CONN, chat_id="x@c.us"))
 
     async def test_403_agent_not_allowed_is_a_token_problem(self):
         with pytest.raises(AgentsTokenInvalid) as ei:
@@ -295,8 +295,8 @@ class TestFake:
     async def test_status_and_deletion_are_recorded(self):
         fake = FakeAgentsClient()
         await fake.run_turn(_req("a"))
-        assert (await fake.agent_status("lead-imob")).nome == "Julia"
-        res = await fake.delete_conversation_data(DeletionRequest("lead-imob", CONN, "5511999990000@c.us"))
+        assert (await fake.agent_status("julia")).nome == "Julia"
+        res = await fake.delete_conversation_data(DeletionRequest("julia", CONN, "5511999990000@c.us"))
         assert res.deleted is True and fake.deletions
 
 

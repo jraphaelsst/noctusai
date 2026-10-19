@@ -1,4 +1,4 @@
-"""Lais wave 4 -- Reengajamento (contract 6): the stale guard, the business-hours reschedule, the
+"""Julia wave 4 -- Reengajamento (contract 6): the stale guard, the business-hours reschedule, the
 <= 3 / active-needs-attempt rules, the never-replied path, the regua chain + cold-lead hook, and the
 whole thing through the real lead turn (`process_lead_batch` arms the timers, `run_reengajamento_turn`
 sends the message).
@@ -16,11 +16,11 @@ from noctusai_lib.domain.jobs import FakeJobRepository
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_contatos_service as contatos
-from app.services import lais_reengajamento_service as svc
-from app.services.lais_lead_turn_service import process_lead_batch, run_reengajamento_turn
+from app.services import julia_contatos_service as contatos
+from app.services import julia_reengajamento_service as svc
+from app.services.julia_lead_turn_service import process_lead_batch, run_reengajamento_turn
 
-from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, OTHER_ORG_ID, World, buffer_lead
+from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, OTHER_ORG_ID, World, buffer_lead
 
 SP = svc.FUSO
 # 2026-10-15 is a Thursday; every instant below is explicit so no test depends on the clock.
@@ -201,7 +201,7 @@ class TestStaleGuard:
         turnos = Turnos()
         assert await _executar(world, repo, turnos, _jobs(repo)[0], MANHA) == "enviado"
         assert turnos.chamadas[0][1] == {"reengajamento": "minutos"}
-        ev = world.rows("lais_eventos", tipo="reengajamento")
+        ev = world.rows("julia_eventos", tipo="reengajamento")
         assert len(ev) == 1 and ev[0]["payload"]["texto"] == "Lead não respondeu mais. Julia reativou a conversa"
         assert ev[0]["contato_id"] == c["id"]
 
@@ -211,7 +211,7 @@ class TestStaleGuard:
         repo = FakeJobRepository()
         await _armar(world, repo, c)
         assert await _executar(world, repo, Turnos(enviou=False), _jobs(repo)[0], MANHA) == "silencio"
-        assert world.rows("lais_eventos", tipo="reengajamento") == []
+        assert world.rows("julia_eventos", tipo="reengajamento") == []
 
 
 async def _executar(world: World, repo, turnos, job, agora) -> str:
@@ -379,7 +379,7 @@ class TestReguaChain:
         turnos = Turnos()
         assert await _executar(world, repo, turnos, _jobs(repo, svc.JOB_REGUA)[0], MANHA) == "regua_sem_transporte"
         assert turnos.chamadas == []
-        ev = world.rows("lais_eventos", tipo="regua_sem_transporte")
+        ev = world.rows("julia_eventos", tipo="regua_sem_transporte")
         assert len(ev) == 1 and ev[0]["payload"]["template_id"] == t1["template_id"]
         assert [j.payload["ordem"] for j in _jobs(repo, svc.JOB_REGUA)] == [1, 2]
 
@@ -521,12 +521,12 @@ class TestPeloTurnoReal:
         assert {j.payload["gen"] for j in _jobs(repo)} == {c["gen"]}
 
     async def test_an_encerrar_in_the_same_turn_arms_nothing(self, world):
-        from app.clients.agents import FakeAgentsClient, LaisAction, TurnResult
+        from app.clients.agents import FakeAgentsClient, JuliaAction, TurnResult
 
         _cfg(world, minutos_ativo=True)
         world.agents = FakeAgentsClient([TurnResult(
             conversation_id="11111111-1111-4111-8111-111111111111", partes=("Tudo bem, até mais!",),
-            status="respondido", actions=(LaisAction("encerrar", 1, {"motivo": "sem_interesse"}),))])
+            status="respondido", actions=(JuliaAction("encerrar", 1, {"motivo": "sem_interesse"}),))])
         repo = FakeJobRepository()
         k = buffer_lead(world, LEAD_CHAT, ["não tenho interesse"])
         await process_lead_batch(k, world.buffer.memory_for(k), deps=world.deps(jobs=repo))

@@ -1,4 +1,4 @@
-"""Lais privacy notice (contract 11.2/11.3): public read, admin read/write.
+"""Julia privacy notice (contract 11.2/11.3): public read, admin read/write.
 
 Strict `== 401` / `== 403` per KB § PATTERNS/compliance/auth-boundary-false-green.md.
 Seeds through `get_scoped_admin_client` (the cached instance the route reads).
@@ -18,8 +18,8 @@ from noctusai_lib.testing import (
     bind_consent_module_to_mock,
 )
 
-PUBLIC = "/api/public/lais/privacidade"
-ADMIN = "/api/lais/agente/aviso"
+PUBLIC = "/api/public/julia/privacidade"
+ADMIN = "/api/julia/agente/aviso"
 ORG = "test-org-123"
 
 
@@ -116,7 +116,7 @@ class TestLazyDefault:
         a = admin_client.get(ADMIN, headers=_h()).json()["data"]
         b = admin_client.get(ADMIN, headers=_h()).json()["data"]
         assert a["slug"] == b["slug"]
-        assert len(admin_client.sw.table("lais_aviso_privacidade").select("*").execute().data) == 1
+        assert len(admin_client.sw.table("julia_aviso_privacidade").select("*").execute().data) == 1
 
 
 class TestPut:
@@ -143,7 +143,7 @@ class TestPut:
 
 class TestSlug:
     def test_slug_is_url_safe_and_unique(self):
-        from app.services import lais_aviso_service as svc
+        from app.services import julia_aviso_service as svc
 
         assert svc.slugify("One Consultoria Imobiliária Ltda.") == "one-consultoria-imobiliaria-ltda"
         client = MockSupabaseClient()
@@ -154,7 +154,7 @@ class TestSlug:
 class TestPublic:
     def test_public_returns_only_notice_fields(self, admin_client):
         admin_client.get(ADMIN, headers=_h())
-        slug = admin_client.sw.table("lais_aviso_privacidade").select("*").execute().data[0]["slug"]
+        slug = admin_client.sw.table("julia_aviso_privacidade").select("*").execute().data[0]["slug"]
         r = admin_client.get(f"{PUBLIC}/{slug}")  # no Authorization header
         assert r.status_code == 200
         data = r.json()["data"]

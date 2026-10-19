@@ -1,12 +1,12 @@
 """Fixtures for maya-blocks S2: the org's real default stages (migration 060 slugs), the 286 tables, and a few
-builders. Mock DB of `tests.support.lais_world` -- nothing of ours is patched."""
+builders. Mock DB of `tests.support.julia_world` -- nothing of ours is patched."""
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from tests.support.lais_world import ORG_ID, OTHER_ORG_ID, World
+from tests.support.julia_world import ORG_ID, OTHER_ORG_ID, World
 
 FUNIL = ["qualificacao", "visitas", "proposta_recebida", "negociacao", "proposta_decisao"]
 PROCESSOS = [
@@ -38,7 +38,7 @@ def world() -> World:
     w = World()
     w.sw.set_table_data("pipeline_stages", _stages(ORG_ID) + _stages(OTHER_ORG_ID))
     for t in ("atendimento_blocos", "supervisao_config", "atendimento_handoffs", "pipeline_movimentos", "atendimentos",
-              "processos_venda", "lais_atribuicoes", "lais_envio_entregas", "cliente_notas", "lais_eventos"):
+              "processos_venda", "julia_atribuicoes", "julia_envio_entregas", "cliente_notas", "julia_eventos"):
         w.sw.set_table_data(t, [])
     return w
 

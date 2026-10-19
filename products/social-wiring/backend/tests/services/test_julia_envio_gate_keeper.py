@@ -1,17 +1,17 @@
-"""Keeper: every WhatsApp send in Lais code goes through `lais_envio_gate` (compliance by construction).
+"""Keeper: every WhatsApp send in Julia code goes through `julia_envio_gate` (compliance by construction).
 
-What it scans (derived, not listed): every `app/**/lais_*.py` PLUS every app module that imports a `lais_*` service
-(the Julia dispatch lives in `conversation_module` / `whatsapp_router`, outside the `lais_` names) PLUS every file of
+What it scans (derived, not listed): every `app/**/julia_*.py` PLUS every app module that imports a `julia_*` service
+(the Julia dispatch lives in `conversation_module` / `whatsapp_router`, outside the `julia_` names) PLUS every file of
 the block-agent modules (`AGENT_MODULES`: maya-blocks `atendimento_blocos` + `supervisao`) -- a block agent added
-there is in scope from its first line, whether or not it imports a Lais service.
+there is in scope from its first line, whether or not it imports a Julia service.
 
 What counts as a send (derived, not listed): every `send*` method of the seed WhatsApp clients (`WahaClient`,
 `MetaCloudClient`), every `enviar*` member of the `Transporte` Protocol, every `send*` method of the intake seam
 (`WhatsAppIntakeService`) and every `send*` function of `whatsapp_outbound` -- minus `NAO_ENVIOS` (read receipts),
 each of which must still exist. A new client method named `send_media` is covered the day it lands.
 
-The rule: the innermost function around a send must CALL `lais_envio_gate.exigir` or `lais_envio_gate.conferir`
--- merely naming the module (`lais_envio_gate.Fluxo`, `except lais_envio_gate.EnvioBloqueado`) does not count.
+The rule: the innermost function around a send must CALL `julia_envio_gate.exigir` or `julia_envio_gate.conferir`
+-- merely naming the module (`julia_envio_gate.Fluxo`, `except julia_envio_gate.EnvioBloqueado`) does not count.
 The only exceptions are `FORA_DO_PORTAO`, one by one with the reason; a stale exception fails too.
 A `Liberacao` is sealed by the gate module (`_SELO`): nothing outside it may reference the seal.
 """
@@ -24,14 +24,14 @@ from pathlib import Path
 from noctusai_lib.integrations.whatsapp.client import WahaClient
 from noctusai_lib.integrations.whatsapp.meta_cloud_client import MetaCloudClient
 
-from app.services import lais_transporte, whatsapp_outbound
+from app.services import julia_transporte, whatsapp_outbound
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
 
 APP = Path(__file__).resolve().parents[2] / "app"
 #: Packages whose every file is scanned (block agents live here, maya-blocks CONTRACT §1).
 AGENT_MODULES: tuple[str, ...] = ("modules/atendimento_blocos/", "modules/supervisao/")
-GATE = "lais_envio_gate"
-GATE_FILE = "services/lais_envio_gate.py"
+GATE = "julia_envio_gate"
+GATE_FILE = "services/julia_envio_gate.py"
 CHAMADAS_DO_PORTAO = frozenset({"exigir", "conferir"})
 
 #: Client methods that are NOT a message to a person (a read receipt). Each must exist on a client.
@@ -40,7 +40,7 @@ NAO_ENVIOS = frozenset({"send_seen"})
 
 def _envios() -> frozenset[str]:
     nomes = {m for c in (WahaClient, MetaCloudClient, WhatsAppIntakeService) for m in dir(c) if m.startswith("send")}
-    nomes |= {m for m in dir(lais_transporte.Transporte) if m.startswith("enviar")}
+    nomes |= {m for m in dir(julia_transporte.Transporte) if m.startswith("enviar")}
     nomes |= {n for n, f in inspect.getmembers(whatsapp_outbound, inspect.isfunction) if n.startswith("send")}
     return frozenset(nomes - NAO_ENVIOS)
 
@@ -50,12 +50,12 @@ ENVIOS = _envios()
 #: `(file relative to app/, function qualname) -> why it is not an automatic Julia send`.
 FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     # the transport implementations -- every caller is gated
-    ("services/lais_transporte.py", "WahaTransporte.enviar_texto"): "transport implementation -- callers are gated",
-    ("services/lais_transporte.py", "CloudApiTransporte.enviar_texto"): "transport implementation -- callers are gated",
-    ("services/lais_transporte.py", "CloudApiTransporte.enviar_template"): "transport implementation -- callers are gated",
+    ("services/julia_transporte.py", "WahaTransporte.enviar_texto"): "transport implementation -- callers are gated",
+    ("services/julia_transporte.py", "CloudApiTransporte.enviar_texto"): "transport implementation -- callers are gated",
+    ("services/julia_transporte.py", "CloudApiTransporte.enviar_template"): "transport implementation -- callers are gated",
     # operator-initiated (a person clicks in the UI)
-    ("services/lais_disparos_service.py", "_enviar_um"): "operator-initiated disparo / owner request (POST endpoints), Cloud-only, opt-out + caps",
-    ("services/lais_visitas_service.py", "avisar_lead"): "operator confirms / reschedules / cancels a visit in the UI",
+    ("services/julia_disparos_service.py", "_enviar_um"): "operator-initiated disparo / owner request (POST endpoints), Cloud-only, opt-out + caps",
+    ("services/julia_visitas_service.py", "avisar_lead"): "operator confirms / reschedules / cancels a visit in the UI",
     ("routers/whatsapp_connections_router.py", "send_message"): "operator types a message in Conversas (POST endpoint)",
     # the OPERATOR bot (pre-Julia intake + chatbot). Not a Julia send: reached only after the Julia split
     # (`agente_leads_ativo` on -> leads go to Julia and return). It answers `authorized_numbers` -- but an EMPTY list
@@ -65,20 +65,20 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
 }
 
 
-def _imports_lais(arvore: ast.AST) -> bool:
+def _imports_julia(arvore: ast.AST) -> bool:
     for n in ast.walk(arvore):
         if isinstance(n, ast.ImportFrom) and n.module:
-            if n.module.startswith("app.services.lais_") or (
-                n.module == "app.services" and any(a.name.startswith("lais_") for a in n.names)
+            if n.module.startswith("app.services.julia_") or (
+                n.module == "app.services" and any(a.name.startswith("julia_") for a in n.names)
             ):
                 return True
-        if isinstance(n, ast.Import) and any(a.name.startswith("app.services.lais_") for a in n.names):
+        if isinstance(n, ast.Import) and any(a.name.startswith("app.services.julia_") for a in n.names):
             return True
     return False
 
 
 def _chama_o_portao(fn: ast.AST) -> bool:
-    """`lais_envio_gate.exigir(...)` / `lais_envio_gate.conferir(...)` called inside `fn` (its own body only)."""
+    """`julia_envio_gate.exigir(...)` / `julia_envio_gate.conferir(...)` called inside `fn` (its own body only)."""
     for n in _corpo_proprio(fn):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in CHAMADAS_DO_PORTAO:
             alvo = n.func.value
@@ -125,7 +125,7 @@ def _arquivos() -> list[tuple[str, ast.AST]]:
     for path in sorted(APP.rglob("*.py")):
         rel = path.relative_to(APP).as_posix()
         arvore = ast.parse(path.read_text(), filename=rel)
-        if path.name.startswith("lais_") or rel.startswith(AGENT_MODULES) or _imports_lais(arvore):
+        if path.name.startswith("julia_") or rel.startswith(AGENT_MODULES) or _imports_julia(arvore):
             out.append((rel, arvore))
     return out
 
@@ -143,11 +143,11 @@ def _varrer() -> tuple[list[str], set[tuple[str, str]]]:
     return violacoes, usados
 
 
-def test_every_lais_send_goes_through_the_gate():
+def test_every_julia_send_goes_through_the_gate():
     violacoes, _ = _varrer()
     assert violacoes == [], (
-        "A WhatsApp send in Lais code does not call the outbound gate. Call lais_envio_gate.exigir(...) in that "
-        "function (or take the Liberacao and call lais_envio_gate.conferir on it); an operator-initiated send goes "
+        "A WhatsApp send in Julia code does not call the outbound gate. Call julia_envio_gate.exigir(...) in that "
+        "function (or take the Liberacao and call julia_envio_gate.conferir on it); an operator-initiated send goes "
         "into FORA_DO_PORTAO with its reason:\n" + "\n".join(violacoes)
     )
 
@@ -164,7 +164,7 @@ def test_the_send_vocabulary_is_derived_and_its_exclusions_are_real():
     assert NAO_ENVIOS <= clientes, "stale NAO_ENVIOS entry"
 
 
-def test_the_scan_reaches_the_julia_dispatch_outside_the_lais_names():
+def test_the_scan_reaches_the_julia_dispatch_outside_the_julia_names():
     arquivos = {rel for rel, _ in _arquivos()}
     assert {"services/conversation_module.py", "routers/whatsapp_router.py"} <= arquivos
 
@@ -183,12 +183,12 @@ def test_the_scan_sees_the_gated_senders():
     """Non-vacuous: the scan reaches every automatic sender (a refactor that moves one must keep it scanned)."""
     vistos = {(rel, q) for rel, a in _arquivos() for q, _, ok in _chamadas_de_envio(a) if ok}
     for esperado in [
-        ("services/lais_lead_turn_service.py", "LeadSender.send_reply"),
-        ("services/lais_lead_turn_service.py", "_deliver"),
-        ("services/lais_lead_turn_service.py", "_handle_deletion"),
-        ("services/lais_reengajamento_service.py", "_enviar_template"),
-        ("services/lais_disparos_service.py", "primeiro_contato_meta"),
-        ("services/lais_avaliacoes_service.py", "enviador_padrao.enviar"),
+        ("services/julia_lead_turn_service.py", "LeadSender.send_reply"),
+        ("services/julia_lead_turn_service.py", "_deliver"),
+        ("services/julia_lead_turn_service.py", "_handle_deletion"),
+        ("services/julia_reengajamento_service.py", "_enviar_template"),
+        ("services/julia_disparos_service.py", "primeiro_contato_meta"),
+        ("services/julia_avaliacoes_service.py", "enviador_padrao.enviar"),
     ]:
         assert esperado in vistos, esperado
 
@@ -210,27 +210,27 @@ class TestTheDetectorItself:
 
     def test_only_naming_the_gate_module_is_not_a_gate(self):
         src = (
-            "async def f(w, c):\n    fluxo = lais_envio_gate.Fluxo.RESPOSTA\n"
-            "    try:\n        await w.send_text(c, 'oi')\n    except lais_envio_gate.EnvioBloqueado:\n        pass\n"
+            "async def f(w, c):\n    fluxo = julia_envio_gate.Fluxo.RESPOSTA\n"
+            "    try:\n        await w.send_text(c, 'oi')\n    except julia_envio_gate.EnvioBloqueado:\n        pass\n"
         )
         assert _chamadas_de_envio(ast.parse(src)) == [("f", 4, False)]
 
     def test_a_gate_in_an_outer_function_does_not_cover_a_nested_sender(self):
         src = (
-            "def fabrica():\n    lais_envio_gate.exigir(1, 2, 3, 4)\n"
+            "def fabrica():\n    julia_envio_gate.exigir(1, 2, 3, 4)\n"
             "    async def enviar(w, c):\n        await w.send_text(c, 'oi')\n    return enviar\n"
         )
         assert _chamadas_de_envio(ast.parse(src)) == [("fabrica.enviar", 4, False)]
 
     def test_a_gate_call_inside_a_nested_function_does_not_cover_the_outer_send(self):
         src = (
-            "async def f(w, c):\n    def g():\n        lais_envio_gate.exigir(1, 2, 3, 4)\n"
+            "async def f(w, c):\n    def g():\n        julia_envio_gate.exigir(1, 2, 3, 4)\n"
             "    await w.send_text(c, 'oi')\n"
         )
         assert _chamadas_de_envio(ast.parse(src)) == [("f", 4, False)]
 
     def test_a_gated_send_passes(self):
-        src = "async def f(w, lib, c):\n    lais_envio_gate.conferir(lib, c)\n    await w.send_text(c, 'oi')\n"
+        src = "async def f(w, lib, c):\n    julia_envio_gate.conferir(lib, c)\n    await w.send_text(c, 'oi')\n"
         assert _chamadas_de_envio(ast.parse(src)) == [("f", 3, True)]
 
     def test_a_bare_function_call_counts_too(self):
@@ -241,7 +241,7 @@ class TestTheDetectorItself:
         src = "async def f(w, c):\n    await w.send_media(c, b'x')\n"
         assert _chamadas_de_envio(ast.parse(src), ENVIOS | {"send_media"}) == [("f", 2, False)]
 
-    def test_a_module_that_imports_a_lais_service_is_in_scope(self):
-        assert _imports_lais(ast.parse("from app.services import lais_agente_service as lais\n"))
-        assert _imports_lais(ast.parse("def f():\n    from app.services.lais_lead_turn_service import LeadDeps\n"))
-        assert not _imports_lais(ast.parse("from app.services import whatsapp_outbound\n"))
+    def test_a_module_that_imports_a_julia_service_is_in_scope(self):
+        assert _imports_julia(ast.parse("from app.services import julia_agente_service as julia\n"))
+        assert _imports_julia(ast.parse("def f():\n    from app.services.julia_lead_turn_service import LeadDeps\n"))
+        assert not _imports_julia(ast.parse("from app.services import whatsapp_outbound\n"))

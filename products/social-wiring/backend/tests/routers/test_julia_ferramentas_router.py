@@ -1,4 +1,4 @@
-"""`POST /api/lais/ferramentas/{nome}` (lais-build-contract A3 / 2.2): the four read tools agents
+"""`POST /api/julia/ferramentas/{nome}` (lais-build-contract A3 / 2.2): the four read tools agents
 calls back with its org's tools token.
 
 Auth is the agents-bridge pattern; every 401 is strict `== 401`. The auth context is the honest DI
@@ -16,7 +16,7 @@ from noctusai_lib.testing import MockSupabaseClient
 _ORG = UUID("00000000-0000-4000-8000-0000000000aa")
 _OTHER = UUID("00000000-0000-4000-8000-0000000000bb")
 _SCOPE = "social-wiring:lais-tools"
-URL = "/api/lais/ferramentas"
+URL = "/api/julia/ferramentas"
 OWNER_SECRET = "PLANTED-OWNER-NAME"
 
 
@@ -53,7 +53,7 @@ def catalogo():
 def tools(client, catalogo):
     from app.dependencies import get_auth_context
     from app.main import app
-    from app.routers.lais_ferramentas_router import get_ferramentas_client
+    from app.routers.julia_ferramentas_router import get_ferramentas_client
 
     app.dependency_overrides[get_ferramentas_client] = lambda: catalogo
     prev = app.dependency_overrides.get(get_auth_context)
@@ -186,7 +186,7 @@ class TestLinkDoImovel:
         assert {d["link"] for d in ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
 
     def test_the_default_template_builds_site_imovel_codigo(self, tools, catalogo):
-        catalogo.set_table_data("lais_conhecimento_secoes", [
+        catalogo.set_table_data("julia_conhecimento_secoes", [
             {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "imobiliaria.example/"}},
         ])
         tools.as_ctx(_product())
@@ -198,18 +198,18 @@ class TestLinkDoImovel:
 
     def test_a_custom_template_and_an_empty_one(self, tools, catalogo):
         dados = {"site": "https://imobiliaria.example", "link_imovel": "{site}/anuncio?ref={codigo}"}
-        catalogo.set_table_data("lais_conhecimento_secoes", [
+        catalogo.set_table_data("julia_conhecimento_secoes", [
             {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": dados},
         ])
         tools.as_ctx(_product())
         assert tools.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]["link"] == "https://imobiliaria.example/anuncio?ref=CA1"
-        catalogo.set_table_data("lais_conhecimento_secoes", [
+        catalogo.set_table_data("julia_conhecimento_secoes", [
             {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": {**dados, "link_imovel": ""}},
         ])
         assert tools.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]["link"] is None
 
     def test_another_orgs_site_never_builds_this_orgs_links(self, tools, catalogo):
-        catalogo.set_table_data("lais_conhecimento_secoes", [
+        catalogo.set_table_data("julia_conhecimento_secoes", [
             {"org_id": str(_OTHER), "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "outra.example"}},
         ])
         tools.as_ctx(_product())
@@ -243,7 +243,7 @@ class TestNeverReturnsOwnerData:
         assert all(OWNER_SECRET not in b for b in bodies)
 
     def test_the_column_allow_list_excludes_every_owner_and_internal_column(self):
-        from app.services.lais_ferramentas_service import COLUNAS
+        from app.services.julia_ferramentas_service import COLUNAS
 
         cols = {c.strip() for c in COLUNAS.split(",")}
         assert not cols & {"corretores", "vista_raw", "observacoes", "chave", "matricula_vista", "inscricao_municipal",
@@ -286,7 +286,7 @@ class TestConsultarEmpreendimento:
         assert OWNER_SECRET not in predios.post("consultar_empreendimento", {"nome": "Outro"}).text
 
     def test_the_allow_list_excludes_owner_columns(self):
-        from app.services.lais_ferramentas_service import COLUNAS_EMPREENDIMENTO
+        from app.services.julia_ferramentas_service import COLUNAS_EMPREENDIMENTO
 
         cols = {c.strip() for c in COLUNAS_EMPREENDIMENTO.split(",")}
         assert not cols & {"corretores", "vista_raw", "observacoes", "chave", "matricula_vista"}
@@ -295,12 +295,12 @@ class TestConsultarEmpreendimento:
 class TestRegistroDeConsultas:
     @staticmethod
     def _eventos(catalogo):
-        return catalogo.table("lais_eventos").select("*").execute().data or []
+        return catalogo.table("julia_eventos").select("*").execute().data or []
 
     @pytest.fixture
     def mundo(self, catalogo):
-        catalogo.set_table_data("lais_eventos", [])
-        catalogo.set_table_data("lais_interacoes", [
+        catalogo.set_table_data("julia_eventos", [])
+        catalogo.set_table_data("julia_interacoes", [
             {"id": "00000000-0000-4000-8000-000000000001", "org_id": str(_ORG), "contato_id": "c-1"},
             {"id": "00000000-0000-4000-8000-000000000002", "org_id": str(_OTHER), "contato_id": "c-other"},
         ])
@@ -333,16 +333,16 @@ class TestRegistroDeConsultas:
 
 
 class TestConfirmacaoDoProprietario:
-    """Owner-confirmed status/price (Lais-owned storage) overlaid on the Vista value when newer, with provenance."""
+    """Owner-confirmed status/price (Julia-owned storage) overlaid on the Vista value when newer, with provenance."""
     VISTA_DIA = "2026-10-01"
 
     @pytest.fixture
     def conf(self, tools, catalogo):
-        catalogo.set_table_data("lais_proprietarios_contatos", [])
+        catalogo.set_table_data("julia_proprietarios_contatos", [])
         tools.as_ctx(_product())
 
         def confirmar(codigo, *, quando, status=None, preco=None, tipo="venda", org=_ORG):
-            catalogo.table("lais_proprietarios_contatos").insert({
+            catalogo.table("julia_proprietarios_contatos").insert({
                 "id": str(uuid4()), "org_id": str(org), "imovel_codigo": codigo, "telefone": "5511999990000",
                 "nome": OWNER_SECRET, "status_confirmado": status, "preco_confirmado": preco,
                 "preco_tipo_confirmado": tipo if preco is not None else None, "confirmado_at": quando}).execute()

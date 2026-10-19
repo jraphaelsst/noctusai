@@ -1,12 +1,12 @@
-"""Lais > Início "Painel" (wave 9): the live numbers of the landing page, for one month.
+"""Julia > Início "Painel" (wave 9): the live numbers of the landing page, for one month.
 
 Everything is computed in America/Sao_Paulo (month edges AND the hour/weekday buckets), from
-`lais_contatos` (the funnel and every chart: one row per person Julia talks to, bucketed by
-`created_at` = first contact), `lais_eventos` (Cobranças de atendimento) and `lais_visitas`
+`julia_contatos` (the funnel and every chart: one row per person Julia talks to, bucketed by
+`created_at` = first contact), `julia_eventos` (Cobranças de atendimento) and `julia_visitas`
 (Pré-agendamentos). The agents side ("Consumo do plano") is a live call that may fail: it then
 reads `null`, never an error.
 
-A7: a member only sees the numbers of the contatos they own (`lais_acesso`); admins see the whole org.
+A7: a member only sees the numbers of the contatos they own (`julia_acesso`); admins see the whole org.
 """
 from __future__ import annotations
 
@@ -21,15 +21,15 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentsClient, AgentsClientError
-from app.services import lais_acesso
-from app.services.lais_envio_service import STATUS_ENVIADOS
+from app.services import julia_acesso
+from app.services.julia_envio_service import STATUS_ENVIADOS
 
 logger = logging.getLogger(__name__)
 
 TZ = ZoneInfo("America/Sao_Paulo")
-T_CONTATOS = "lais_contatos"
-T_EVENTOS = "lais_eventos"
-T_VISITAS = "lais_visitas"
+T_CONTATOS = "julia_contatos"
+T_EVENTOS = "julia_eventos"
+T_VISITAS = "julia_visitas"
 TIPO_COBRANCA = "cobranca_atendimento"
 HORA_INICIO, HORA_FIM = 8, 20  # business hours [08:00, 20:00); anything else is "fora do horário"
 MESES_HISTORICO = 6
@@ -162,26 +162,26 @@ async def consumo(client_agents: Optional[AgentsClient], mes: str) -> Optional[d
     try:
         uso = await client_agents.uso(mes)
     except AgentsClientError as exc:
-        logger.warning("lais painel: agents uso unavailable (%s)", type(exc).__name__)
+        logger.warning("julia painel: agents uso unavailable (%s)", type(exc).__name__)
         return None
     return {"turnos": uso.turnos, "custo_usd": uso.custo_usd, "limite_diario_usd": uso.limite_diario_usd}
 
 
-async def painel(client: Any, ctx: lais_acesso.AcessoCtx, *, mes: str, client_agents: Optional[AgentsClient]) -> dict[str, Any]:
+async def painel(client: Any, ctx: julia_acesso.AcessoCtx, *, mes: str, client_agents: Optional[AgentsClient]) -> dict[str, Any]:
     org_id = ctx.org_id
     ini, fim = janela(mes)
     inicio_hist = janela(ultimos_meses(mes)[0])[0]
     contatos = _varrer(
         client, T_CONTATOS,
         "id,org_id,connection_id,responsavel_user_id,canal,status_envio,ultimo_outbound_at,created_at",
-        org_id, inicio_hist, fim, "lais painel contatos",
+        org_id, inicio_hist, fim, "julia painel contatos",
     )
-    contatos = lais_acesso.filtrar_contatos(client, ctx, contatos)
-    cobrancas = _varrer(client, T_EVENTOS, "id,contato_id", org_id, ini, fim, "lais painel eventos",
+    contatos = julia_acesso.filtrar_contatos(client, ctx, contatos)
+    cobrancas = _varrer(client, T_EVENTOS, "id,contato_id", org_id, ini, fim, "julia painel eventos",
                         refinar=lambda q: q.eq("tipo", TIPO_COBRANCA))
-    visitas = _varrer(client, T_VISITAS, "id,contato_id", org_id, ini, fim, "lais painel visitas")
-    cobrancas = lais_acesso.filtrar_por_contato(client, ctx, cobrancas)
-    visitas = lais_acesso.filtrar_por_contato(client, ctx, visitas)
+    visitas = _varrer(client, T_VISITAS, "id,contato_id", org_id, ini, fim, "julia painel visitas")
+    cobrancas = julia_acesso.filtrar_por_contato(client, ctx, cobrancas)
+    visitas = julia_acesso.filtrar_por_contato(client, ctx, visitas)
     dados = calcular(contatos, mes=mes)
     return {
         "atividades": {

@@ -1,12 +1,12 @@
-"""Lais wave 13 -- Meta Conversions API (CAPI) qualification signals (lais-build-contract 15/17).
+"""Julia wave 13 -- Meta Conversions API (CAPI) qualification signals (lais-build-contract 15/17).
 
 Three signals -- `lead_qualificado` (wave 3 send / `qualificar_lead`), `visita_agendada` (wave 5 confirm) and
 `resposta_cliente` (the first inbound after a reengajamento) -- go to Meta so the campaign optimises for QUALIFIED
 leads, not just form fills. Rules, all enforced here:
 
-  * ONLY for contatos whose lead came from Meta ads: `lais_contatos.lead_id -> leads.meta_lead_id ->
+  * ONLY for contatos whose lead came from Meta ads: `julia_contatos.lead_id -> leads.meta_lead_id ->
     meta_ads_leads.id` (migration 041/033). Anyone else records nothing and calls nothing.
-  * Gated by the org's `capi_ativo` + `capi_pixel_id` (lais_avaliacao_config) AND the workspace Meta token
+  * Gated by the org's `capi_ativo` + `capi_pixel_id` (julia_avaliacao_config) AND the workspace Meta token
     (`resolve_meta_ads_config`, the existing meta_ads seam). Missing any -> the row is stored as `nao_configurado`
     and Meta is NEVER called.
   * Identifiers are SHA-256 hashed per Meta's normalisation (email: trim + lowercase; phone: digits only with
@@ -15,8 +15,8 @@ leads, not just form fills. Rules, all enforced here:
   * One row per signal (`dedupe_key`, unique per org): a replayed hook records and sends once.
 
 The seam: `CapiProvider` Protocol + `FakeCapiProvider` + `RealMetaCapiProvider` (the seed Graph transport
-`graph_post`: pacing + retry + typed errors) + `make_capi_provider`. The send itself is a `lais_capi_enviar` job
-(the hooks are called inside request handlers; the Graph call is blocking HTTP) -- fired by the Lais worker.
+`graph_post`: pacing + retry + typed errors) + `make_capi_provider`. The send itself is a `julia_capi_enviar` job
+(the hooks are called inside request handlers; the Graph call is blocking HTTP) -- fired by the Julia worker.
 """
 from __future__ import annotations
 
@@ -32,22 +32,22 @@ from uuid import UUID
 
 from noctusai_lib.domain.jobs import Job
 
-from app.services import lais_avaliacoes_service as avaliacoes
-from app.services import lais_contatos_service as contatos
+from app.services import julia_avaliacoes_service as avaliacoes
+from app.services import julia_contatos_service as contatos
 
 logger = logging.getLogger(__name__)
 
-T_CAPI = "lais_capi_eventos"
+T_CAPI = "julia_capi_eventos"
 T_LEADS = "leads"
 T_META_LEADS = "meta_ads_leads"
-T_EVENTOS = "lais_eventos"
-JOB_ENVIAR = "lais_capi_enviar"
+T_EVENTOS = "julia_eventos"
+JOB_ENVIAR = "julia_capi_enviar"
 JOB_MAX_RETRIES = 2
 
 EVENTOS = ("lead_qualificado", "visita_agendada", "resposta_cliente")
 #: Meta event names: Schedule / Contact are Meta standard events; `QualifiedLead` is the custom stage event.
 EVENTO_META = {"lead_qualificado": "QualifiedLead", "visita_agendada": "Schedule", "resposta_cliente": "Contact"}
-LEAD_EVENT_SOURCE = "Lais"
+LEAD_EVENT_SOURCE = "Julia"
 JANELA_RESPOSTA = timedelta(days=7)  # Meta rejects events older than 7 days
 _NAO_DIGITO = re.compile(r"\D")
 
@@ -172,7 +172,7 @@ def montar_evento(evento: str, event_id: str, event_time: datetime, contato: dic
 
 
 # ── recording + job ────────────────────────────────────────────────────────────
-# The job repository of the running Lais worker (set by `lais_reengajamento_worker.build_worker`).
+# The job repository of the running Julia worker (set by `julia_reengajamento_worker.build_worker`).
 _repo: Any = None
 _token_resolver: Callable[[], Optional[str]] = token_padrao
 
@@ -191,7 +191,7 @@ def _token() -> Optional[str]:
     try:
         return _token_resolver()
     except Exception:
-        logger.exception("lais capi: could not resolve the Meta token")
+        logger.exception("julia capi: could not resolve the Meta token")
         return None
 
 
@@ -213,7 +213,7 @@ async def registrar_evento(
     try:
         return await _registrar(db, org_id, contato_id, evento, referencia, agora or datetime.now(timezone.utc))
     except Exception:
-        logger.exception("lais capi: could not record %s (org=%s contato=%s)", evento, org_id, contato_id)
+        logger.exception("julia capi: could not record %s (org=%s contato=%s)", evento, org_id, contato_id)
         return {"estado": "erro", "erro": "falha_interna"}
 
 
@@ -236,12 +236,12 @@ async def _registrar(db: Any, org_id: UUID | str, contato_id: UUID | str, evento
     if not ok:
         return {"estado": "nao_configurado", "id": str(row["id"])}
     if _repo is None:
-        logger.error("lais capi: no job repository registered -- signal %s stays unsent (org=%s)", row["id"], org_id)
+        logger.error("julia capi: no job repository registered -- signal %s stays unsent (org=%s)", row["id"], org_id)
         _atualizar(db, row["id"], {"status": "erro", "erro": "sem_fila"})
         return {"estado": "erro", "erro": "sem_fila", "id": str(row["id"])}
     await _repo.enqueue(
         type=JOB_ENVIAR, payload={"org_id": str(org_id), "evento_id": str(row["id"])},
-        max_retries=JOB_MAX_RETRIES, scheduled_for=agora, dedupe_key=f"lais:capi:{row['id']}",
+        max_retries=JOB_MAX_RETRIES, scheduled_for=agora, dedupe_key=f"julia:capi:{row['id']}",
     )
     return {"estado": "pendente", "id": str(row["id"])}
 
@@ -257,7 +257,7 @@ async def registrar_resposta(
             avaliacoes.linhas(db, T_EVENTOS, "id, created_at", org_id=org_id, contato_id=contato["id"], tipo="reengajamento"), "created_at",
         )
     except Exception:
-        logger.exception("lais capi: could not read the reengajamento events (org=%s)", org_id)
+        logger.exception("julia capi: could not read the reengajamento events (org=%s)", org_id)
         return {"estado": "erro", "erro": "falha_interna"}
     evs = [ultimo] if ultimo else []
     if not evs:
@@ -272,7 +272,7 @@ async def executar_envio(
     job: Job, *, client: Any, provider_factory: Callable[[Optional[str]], Optional[CapiProvider]] = lambda t: make_capi_provider(access_token=t),
     agora: Optional[datetime] = None,
 ) -> str:
-    """`lais_capi_enviar` at fire time: re-reads the row, the gate and the lead; sends; stores the outcome."""
+    """`julia_capi_enviar` at fire time: re-reads the row, the gate and the lead; sends; stores the outcome."""
     p = job.payload or {}
     org_id, evento_id = p.get("org_id"), p.get("evento_id")
     if not (org_id and evento_id):
@@ -299,7 +299,7 @@ async def executar_envio(
     try:
         await provider.enviar(cfg["capi_pixel_id"], evento)
     except Exception as exc:
-        logger.exception("lais capi: send failed (org=%s evento=%s)", org_id, evento_id)
+        logger.exception("julia capi: send failed (org=%s evento=%s)", org_id, evento_id)
         _atualizar(client, evento_id, {"status": "erro", "erro": type(exc).__name__})
         return f"erro:{type(exc).__name__}"
     _atualizar(client, evento_id, {"status": "enviado", "enviado_at": (agora or datetime.now(timezone.utc)).isoformat(), "erro": None})
@@ -312,7 +312,7 @@ def handlers(
 ) -> dict[str, Callable[[Job], Any]]:
     async def _enviar(job: Job) -> None:
         outcome = await executar_envio(job, client=client_provider(), provider_factory=provider_factory)
-        logger.info("lais capi %s job=%s -> %s", job.type, job.id, outcome)
+        logger.info("julia capi %s job=%s -> %s", job.type, job.id, outcome)
 
     return {JOB_ENVIAR: _enviar}
 

@@ -6,7 +6,7 @@ CPF and renda are never stored as typed:
                                                  from the row, the last 3 digits let a human recognise it)
   renda_familiar -> `faixa:<bucket>`           (ate_2k | 2k_5k | 5k_10k | 10k_20k | acima_20k)
 
-`SENSIVEIS` mirrors the `sensivel` column of `lais_perguntas_catalogo` (migration 269; a test pins the
+`SENSIVEIS` mirrors the `sensivel` column of `julia_perguntas_catalogo` (migration 269; a test pins the
 two together). Pure functions: no IO, so the actions ledger sanitiser and the `salvar_slots` handler
 share one implementation.
 """

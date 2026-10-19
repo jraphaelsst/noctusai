@@ -1,6 +1,6 @@
-"""Lais > Início "Painel" (wave 9).
+"""Julia > Início "Painel" (wave 9).
 
-  GET /api/lais/painel?mes=YYYY-MM     org member -> {data: {atividades, funil, por_canal, status_por_canal,
+  GET /api/julia/painel?mes=YYYY-MM     org member -> {data: {atividades, funil, por_canal, status_por_canal,
                                        por_hora, fora_horario_pct, por_dia_semana, melhor_dia, seis_meses}}
 
 `mes` defaults to the current month (America/Sao_Paulo); a malformed one is 422 `mes_invalido`. A member sees
@@ -12,10 +12,10 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Request
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_scoped_admin_client
-from app.routers.lais_agente_router import get_agents_client_factory
-from app.services import lais_acesso, lais_painel_service as svc
+from app.routers.julia_agente_router import get_agents_client_factory
+from app.services import julia_acesso, julia_painel_service as svc
 
-router = APIRouter(prefix="/api/lais/painel", tags=["lais-painel"])
+router = APIRouter(prefix="/api/julia/painel", tags=["julia-painel"])
 
 
 def get_painel_client() -> Any:
@@ -32,6 +32,6 @@ async def painel(
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     mes = svc.validar_mes(mes)
-    ctx = lais_acesso.contexto(auth, request)
+    ctx = julia_acesso.contexto(auth, request)
     agents = client_factory(coerce_org_uuid(auth[2])) if ctx.admin else None
     return {"data": await svc.painel(client, ctx, mes=mes, client_agents=agents)}

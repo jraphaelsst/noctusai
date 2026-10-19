@@ -1,8 +1,8 @@
-"""Lais wave 8 -- Captacao (potential property captures), contract section 10.
+"""Julia wave 8 -- Captacao (potential property captures), contract section 10.
 
   action `captacao`  the agent says the contato owns a property that could be captured. The handler
-                     (a) inserts the `lais_captacoes` row (status `nova`), then (b) runs the wave-3
-                     policy (`lais_envio_service.aplicar_politica_captacao`: records the `captacao`
+                     (a) inserts the `julia_captacoes` row (status `nova`), then (b) runs the wave-3
+                     policy (`julia_envio_service.aplicar_politica_captacao`: records the `captacao`
                      event -- wave 6 fans it out as a notification -- and sends to the SW when the org
                      policy says `enviar`). It COMPOSES wave 3; it never forks the policy.
   registrar          creates the manual imovel through the existing `imovel_captacao` flow (migration
@@ -10,7 +10,7 @@
                      codigo in `imovel_id`, status `registrada`.
   descartar          status `descartada`.
 
-Visibility (A7) is applied by the router via `lais_acesso`: a captacao hangs off a contato.
+Visibility (A7) is applied by the router via `julia_acesso`: a captacao hangs off a contato.
 """
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.modules.imovel_hub import captacao_service as imovel_captacao
-from app.services import lais_acesso, lais_acoes_service, lais_envio_service, lais_leads_service as leads
+from app.services import julia_acesso, julia_acoes_service, julia_envio_service, julia_leads_service as leads
 
 logger = logging.getLogger(__name__)
 
-T_CAPTACOES = "lais_captacoes"
-T_CONTATOS = "lais_contatos"
+T_CAPTACOES = "julia_captacoes"
+T_CONTATOS = "julia_contatos"
 STATUS = ("nova", "registrada", "descartada")
 OPERACOES = ("venda", "aluguel")
 PAGE_SIZES = (5, 10, 15, 20)
@@ -62,16 +62,16 @@ def criar(client: Any, org_id: UUID | str, contato_id: Any, payload: dict[str, A
     return client.table(T_CAPTACOES).insert(row).execute().data[0]
 
 
-def _h_captacao(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _h_captacao(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Row first (the feed must show it even if the policy leg fails), then the wave-3 policy."""
     captacao = criar(ctx.client, ctx.org_id, ctx.contato["id"], payload or {})
-    politica = lais_envio_service.aplicar_politica_captacao(ctx.client, ctx.org_id, ctx.contato)
+    politica = julia_envio_service.aplicar_politica_captacao(ctx.client, ctx.org_id, ctx.contato)
     return {"captacao_id": captacao["id"], **(politica or {})}
 
 
 def registrar() -> None:
     """Bind the real `captacao` handler (replaces wave 3's policy-only one by composing it)."""
-    lais_acoes_service.registrar_handler("captacao", _h_captacao)
+    julia_acoes_service.registrar_handler("captacao", _h_captacao)
 
 
 # -- reads ----------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def serializar(captacao: dict[str, Any], contato: Optional[dict[str, Any]]) -> d
 
 
 def listar(
-    client: Any, org_id: UUID | str, ctx: lais_acesso.AcessoCtx, *, status: Optional[str], de: Optional[date], ate: Optional[date],
+    client: Any, org_id: UUID | str, ctx: julia_acesso.AcessoCtx, *, status: Optional[str], de: Optional[date], ate: Optional[date],
     page: int, page_size: int,
 ) -> dict[str, Any]:
     """`{items, total}`: newest first, A7-filtered (a member sees the captacoes of their contatos only)."""
@@ -108,8 +108,8 @@ def listar(
             q = q.lt("created_at", leads._dia_fim(ate))
         return q.order("id").range(a, b).execute().data
 
-    todas = sorted(iter_paged_rows(pagina, label="lais captacoes"), key=lambda r: r["created_at"], reverse=True)  # paged by id, shown newest first
-    linhas = lais_acesso.filtrar_por_contato(client, ctx, todas)
+    todas = sorted(iter_paged_rows(pagina, label="julia captacoes"), key=lambda r: r["created_at"], reverse=True)  # paged by id, shown newest first
+    linhas = julia_acesso.filtrar_por_contato(client, ctx, todas)
     fatia = linhas[(page - 1) * page_size: page * page_size]
     contatos = _contatos_de(client, org_id, sorted({str(r["contato_id"]) for r in fatia}))
     return {"items": [serializar(r, contatos.get(str(r["contato_id"]))) for r in fatia], "total": len(linhas)}
@@ -132,7 +132,7 @@ def _exigir_nova(captacao: dict[str, Any]) -> None:
 def valores_do_imovel(captacao: dict[str, Any], corpo: dict[str, Any]) -> dict[str, Any]:
     """The prefill: titulo/endereco/finalidade/observacoes from the row; the operator's body wins."""
     texto_endereco = captacao.get("endereco")
-    valores: dict[str, Any] = {"titulo": _texto(texto_endereco or captacao.get("descricao") or "Captação da Lais", 200)}
+    valores: dict[str, Any] = {"titulo": _texto(texto_endereco or captacao.get("descricao") or "Captação da Julia", 200)}
     if captacao.get("operacao"):
         valores["finalidades"] = [captacao["operacao"]]
         valores["status"] = "Venda" if captacao["operacao"] == "venda" else "Aluguel"

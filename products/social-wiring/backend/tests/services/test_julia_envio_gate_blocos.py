@@ -1,13 +1,13 @@
-"""Gate 0 of `lais_envio_gate` (maya-blocks): a send for a block OTHER than `sdr` needs that block `ativo` with an
+"""Gate 0 of `julia_envio_gate` (maya-blocks): a send for a block OTHER than `sdr` needs that block `ativo` with an
 `agent_key`; `sdr` (the default) skips it -- Julia stays governed by gate 1 exactly as before.
-Seams: the mock DB of `tests.support.lais_world`; nothing of ours is patched."""
+Seams: the mock DB of `tests.support.julia_world`; nothing of ours is patched."""
 from __future__ import annotations
 
 import pytest
 
-from app.services import lais_envio_gate as gate
+from app.services import julia_envio_gate as gate
 
-from tests.support.lais_world import CONNECTION_ID, ORG_ID, World
+from tests.support.julia_world import CONNECTION_ID, ORG_ID, World
 
 Fluxo = gate.Fluxo
 
@@ -17,7 +17,7 @@ def world() -> World:
     w = World()
     w.seed_connection()
     for t in (gate.T_REENGAJAMENTO_CONFIG, gate.T_REGUAS, gate.T_MODELOS, gate.T_AVALIACOES_CONFIG,
-              "atendimento_blocos", "lais_eventos"):
+              "atendimento_blocos", "julia_eventos"):
         w.sw.set_table_data(t, [])
     return w
 
@@ -29,7 +29,7 @@ def _bloco(world: World, bloco: str, *, ativo: bool, agent_key: str | None) -> N
 
 
 def _eventos(world: World) -> list[dict]:
-    return [e for e in world.sw.table("lais_eventos").select("*").execute().data or [] if e["tipo"] == "envio_bloqueado"]
+    return [e for e in world.sw.table("julia_eventos").select("*").execute().data or [] if e["tipo"] == "envio_bloqueado"]
 
 
 def test_sdr_is_untouched_by_gate_0_even_with_no_block_row(world):

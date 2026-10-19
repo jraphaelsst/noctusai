@@ -1,4 +1,4 @@
-"""The four read tools agents calls back during a Lais turn (contract A3 / 2.2).
+"""The four read tools agents calls back during a Julia turn (contract A3 / 2.2).
 
 Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the router never changes):
 
@@ -7,8 +7,8 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
     ARGS[nome]  -> the StrictHttpModel the router validates the body with
 
   buscar_imoveis           F      Vista mirror `imoveis`, at most 5 results
-  detalhes_imovel          F      wave 1 switches (lais_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
-  horarios_visita          wave 5 (config + SchedulingEngine), `lais_visitas_service`
+  detalhes_imovel          F      wave 1 switches (julia_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
+  horarios_visita          wave 5 (config + SchedulingEngine), `julia_visitas_service`
   consultar_empreendimento development catalogue derived from `imoveis.empreendimento` / `construtora`
 
 PRIVACY (contract, binding): a tool NEVER returns owner/proprietario personal data. The row is read
@@ -26,7 +26,7 @@ from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from app.services import lais_conhecimento_service, lais_eventos_service, lais_imovel_confirmado
+from app.services import julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def _sobrepor_confirmacao(item: dict[str, Any], confirmacoes: list[dict[str, Any
                           preco_tipo: Optional[str]) -> None:
     """Owner-confirmed status/price newer than Vista's value wins, ALWAYS with its provenance (additive key
     `confirmacao_proprietario`, present only when a confirmation applies)."""
-    conf = lais_imovel_confirmado.aplicar(confirmacoes, data_atualizacao=row.get("data_atualizacao"), preco_tipo=preco_tipo)
+    conf = julia_imovel_confirmado.aplicar(confirmacoes, data_atualizacao=row.get("data_atualizacao"), preco_tipo=preco_tipo)
     if conf is None:
         return
     if "preco" in conf:
@@ -129,8 +129,8 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict
     # Over-fetch: unpublished rows are dropped after the query, and the cap is on what Julia sees.
     rows = q.order("data_atualizacao", desc=True).limit(OVERFETCH).execute().data or []
     publicados = [r for r in rows if _publicado(r)][: a.limite]
-    confirmados = lais_imovel_confirmado.carregar(client, org_id, (r["codigo"] for r in publicados))
-    link = lais_conhecimento_service.link_imovel_fn(client, org_id)
+    confirmados = julia_imovel_confirmado.carregar(client, org_id, (r["codigo"] for r in publicados))
+    link = julia_conhecimento_service.link_imovel_fn(client, org_id)
     out = [
         {
             "codigo": r["codigo"], "titulo": _titulo(r), "tipo": r.get("categoria"), "bairro": r.get("bairro"),
@@ -156,7 +156,7 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
         return {"codigo": a.codigo.strip(), "encontrado": False}
     r = rows[0]
     # Wave 1 ("Meu negócio › Endereço e IPTU"): both default to withheld until the org opts in.
-    politica = lais_conhecimento_service.politica_endereco_iptu(client, org_id)
+    politica = julia_conhecimento_service.politica_endereco_iptu(client, org_id)
     mostrar_iptu = politica["usar_iptu"]
     mostrar_endereco_completo = politica["endereco_completo"]
     endereco = ", ".join(p for p in (r.get("bairro"), r.get("cidade")) if p)
@@ -168,20 +168,20 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
         "preco": _preco(r, None), "condominio": _num(r.get("valor_condominio")),
         "iptu": _num(r.get("valor_iptu")) if mostrar_iptu else None,
         "endereco": endereco, "caracteristicas": list(r.get("caracteristicas") or []),
-        "link": lais_conhecimento_service.link_imovel_fn(client, org_id)(r["codigo"]),
+        "link": julia_conhecimento_service.link_imovel_fn(client, org_id)(r["codigo"]),
         "encontrado": True,
     }
-    confirmacoes = lais_imovel_confirmado.carregar(client, org_id, [r["codigo"]]).get(str(r["codigo"]).strip().upper(), [])
+    confirmacoes = julia_imovel_confirmado.carregar(client, org_id, [r["codigo"]]).get(str(r["codigo"]).strip().upper(), [])
     _sobrepor_confirmacao(resultado, confirmacoes, r, "venda" if r.get("valor_venda") is not None else "locacao")
     return resultado
 
 
 def horarios_visita(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
-    """Free 30-min slots from the wave-5 config + the seed SchedulingEngine (`lais_visitas_service`)."""
-    from app.services import lais_visitas_service
+    """Free 30-min slots from the wave-5 config + the seed SchedulingEngine (`julia_visitas_service`)."""
+    from app.services import julia_visitas_service
 
     parsed = HorariosVisitaArgs(**args)
-    return lais_visitas_service.horarios_para_ferramenta(client, org_id, parsed.dias)
+    return julia_visitas_service.horarios_para_ferramenta(client, org_id, parsed.dias)
 
 
 def _faixa(valores: list[float]) -> Optional[dict[str, float]]:
@@ -254,13 +254,13 @@ def registrar_consulta(client: Any, org_id: UUID, nome: str, args: dict[str, Any
     if interacao_id:
         try:
             rows = (
-                client.table("lais_interacoes").select("contato_id").eq("org_id", str(org_id))
+                client.table("julia_interacoes").select("contato_id").eq("org_id", str(org_id))
                 .eq("id", str(interacao_id)).limit(1).execute().data or []
             )
             contato_id = rows[0]["contato_id"] if rows else None
         except Exception:
-            logger.exception("lais: could not resolve the contato of interacao for a lookup event (org=%s)", org_id)
-    lais_eventos_service.emitir(
+            logger.exception("julia: could not resolve the contato of interacao for a lookup event (org=%s)", org_id)
+    julia_eventos_service.emitir(
         client, org_id, "imovel_consultado", contato_id,
         {"ferramenta": nome, "codigos": codigos, "interacao_id": str(interacao_id) if interacao_id else None},
     )

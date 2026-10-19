@@ -1,10 +1,10 @@
-"""Lais > Leads (wave 3, contract 5): the table of `lais_contatos` with the live "Filtro de leads" filters
+"""Julia > Leads (wave 3, contract 5): the table of `julia_contatos` with the live "Filtro de leads" filters
 (page-map-v2 59.0 a8), the per-contato resumo and the admin CSV export.
 
 For an owner/admin the filters are pushed to the DB (one `count="exact"` + one `.range()` page) except `imovel`
 (its code lives inside the `slots` jsonb). A member's visibility (A7: responsavel, else the connection owner) is
 a rule over two tables, so a member's list walks the filtered matches with `iter_paged_rows`, keeps what
-`lais_acesso.filtrar_contatos` allows and paginates in memory -- the SAME shared rule every Lais route uses.
+`julia_acesso.filtrar_contatos` allows and paginates in memory -- the SAME shared rule every Julia route uses.
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from uuid import UUID
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso, lais_slots_sensiveis as sensiveis
-from app.services import lais_contatos_service as contatos
-from app.services.lais_envio_service import FUSO, GATILHO_LABEL, STATUS_ENVIADOS, T_ENTREGAS
+from app.services import julia_acesso, julia_slots_sensiveis as sensiveis
+from app.services import julia_contatos_service as contatos
+from app.services.julia_envio_service import FUSO, GATILHO_LABEL, STATUS_ENVIADOS, T_ENTREGAS
 
 PAGE_SIZE_MAX = 100
 OPERACOES_FILTRO = ("compra", "aluguel", "administracao")
@@ -31,7 +31,7 @@ _FORMULA = ("=", "+", "-", "@", "\t", "\r")
 
 #: The channel origins the Lais "Filtro de leads" knows (page-map 59.0 a8 + mechanisms.md: 33 portal origin codes plus
 #: ads / direct / AI-assistant origins). The filter itself is open -- the stored `canal` is matched as typed -- and
-#: `GET /api/lais/leads/canais` returns this catalogue UNION the channels actually present in the org.
+#: `GET /api/julia/leads/canais` returns this catalogue UNION the channels actually present in the org.
 CANAIS_CONHECIDOS: tuple[str, ...] = (
     "GrupoZapLais", "SiteProprioLais", "NetImoveisLais", "FacebookAdsLais", "ChavesNaMaoLais", "ImovelWebLais",
     "RemarketingLais", "CasaMineiraLais", "WhatsAppLais", "RocketImobLais", "KenloLais", "PlacaLais", "DFImoveisLais",
@@ -53,13 +53,13 @@ def canais(client: Any, org_id: UUID | str) -> list[dict[str, str]]:
     out: dict[str, str] = {s: _label_canal(s) for s in CANAIS_CONHECIDOS}
     for r in iter_paged_rows(
         lambda a, b: client.table("lead_sources").select("id,slug,label").eq("org_id", org).order("id").range(a, b).execute().data,
-        label="lais canais lead_sources",
+        label="julia canais lead_sources",
     ):
         if r.get("slug"):
             out[r["slug"]] = r.get("label") or out.get(r["slug"]) or r["slug"]
     for r in iter_paged_rows(
         lambda a, b: client.table(contatos.T_CONTATOS).select("id,canal").eq("org_id", org).order("id").range(a, b).execute().data,
-        label="lais canais",
+        label="julia canais",
     ):
         if r.get("canal") and r["canal"] not in out:
             out[r["canal"]] = _label_canal(r["canal"])
@@ -144,7 +144,7 @@ def _varrer(client: Any, org_id: UUID | str, f: dict[str, Any]) -> Iterator[dict
         q = _aplicar(client.table(contatos.T_CONTATOS).select("*"), f, org_id)
         return q.order("created_at", desc=True).order("id").range(a, b).execute().data
 
-    return iter_paged_rows(pagina, label="lais leads")
+    return iter_paged_rows(pagina, label="julia leads")
 
 
 def _entregas_de(client: Any, org_id: UUID | str, ids: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -187,7 +187,7 @@ def _item(c: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def listar(client: Any, org_id: UUID | str, filtros: dict[str, Any], *, ctx: lais_acesso.AcessoCtx,
+def listar(client: Any, org_id: UUID | str, filtros: dict[str, Any], *, ctx: julia_acesso.AcessoCtx,
            page: int = 1, page_size: int = 25) -> dict[str, Any]:
     f = validar_filtros(filtros)
     page_size = max(1, min(int(page_size), PAGE_SIZE_MAX))
@@ -198,7 +198,7 @@ def listar(client: Any, org_id: UUID | str, filtros: dict[str, Any], *, ctx: lai
         if f.get("imovel"):
             todos = _por_imovel(todos, f["imovel"])
         if not ctx.admin:
-            todos = lais_acesso.filtrar_contatos(client, ctx, todos)
+            todos = julia_acesso.filtrar_contatos(client, ctx, todos)
         total, linhas = len(todos), todos[ini:ini + page_size]
     else:
         total = _aplicar(client.table(contatos.T_CONTATOS).select("id", count="exact"), f, org_id).execute().count or 0
@@ -210,13 +210,13 @@ def listar(client: Any, org_id: UUID | str, filtros: dict[str, Any], *, ctx: lai
     return {"items": [_item(r, entregas.get(str(r["id"]), [])) for r in linhas], "total": total}
 
 
-def obter_contato(client: Any, ctx: lais_acesso.AcessoCtx, contato_id: UUID | str) -> dict[str, Any]:
+def obter_contato(client: Any, ctx: julia_acesso.AcessoCtx, contato_id: UUID | str) -> dict[str, Any]:
     """The shared A7 guard: 404 for another org's / a missing contato, 403 `sem_acesso` for a same-org stranger."""
-    return lais_acesso.exigir_contato(client, ctx, contato_id)
+    return julia_acesso.exigir_contato(client, ctx, contato_id)
 
 
 def resumo(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> dict[str, Any]:
-    """`GET /api/lais/leads/{id}/resumo`: who, what was collected, the episodes' summaries and the send history."""
+    """`GET /api/julia/leads/{id}/resumo`: who, what was collected, the episodes' summaries and the send history."""
     inter = (
         client.table(contatos.T_INTERACOES).select("*").eq("org_id", str(org_id)).eq("contato_id", str(contato["id"]))
         .order("iniciada_at", desc=True).limit(20).execute().data or []

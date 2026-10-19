@@ -1,4 +1,4 @@
-"""Bounded, per-key-serial dispatch of Julia (Lais lead) turns.
+"""Bounded, per-key-serial dispatch of Julia (lead) turns.
 
 Why this exists: the seed `ConversationWorker` drains due conversations on ONE thread,
 and a lead turn is an HTTP call to agents (up to ~60 s). Run inline, it blocked every

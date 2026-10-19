@@ -1,4 +1,4 @@
-"""`/api/lais/agente` routes (contract section 5, 10.1 H1/H3, 11.1, 11.3, 11.4) + the per-chat
+"""`/api/julia/agente` routes (contract section 5, 10.1 H1/H3, 11.1, 11.3, 11.4) + the per-chat
 pause + the authorized-numbers PATCH invariant. Strict `== 401` on every auth boundary.
 
 Seams: mock DB, seed `FakeWahaClient`, `FakeAgentsClient` -- injected through the routes' own
@@ -23,10 +23,10 @@ from app.clients.agents import (
     AgentStatus,
     FakeAgentsClient,
 )
-from app.services import lais_agente_service as lais
+from app.services import julia_agente_service as julia
 from app.services.whatsapp_realtime import get_whatsapp_bus, reset_bus_cache, whatsapp_scope
 
-from tests.support.lais_world import (
+from tests.support.julia_world import (
     ADMIN_ID,
     CONNECTION_ID,
     CORRETOR_ID,
@@ -39,7 +39,7 @@ from tests.support.lais_world import (
     World,
 )
 
-BASE = "/api/lais/agente"
+BASE = "/api/julia/agente"
 CONN_URL = f"{BASE}/conexoes/{CONNECTION_ID}"
 H = {"Authorization": "Bearer test-token"}
 
@@ -58,7 +58,7 @@ class Scene:
         return self.tc.put(url, json=json, headers=H, **kw)
 
     def snapshot_ids(self) -> set[str]:
-        return {r["chat_id"] for r in self.w.sw.table("lais_agente_chats_preexistentes").select("*").execute().data}
+        return {r["chat_id"] for r in self.w.sw.table("julia_agente_chats_preexistentes").select("*").execute().data}
 
     def conn(self) -> dict:
         return next(r for r in self.w.sw.table("whatsapp_connections").select("*").execute().data if r["id"] == CONNECTION_ID)
@@ -84,8 +84,8 @@ def _scene(monkeypatch, override_settings_factory, *, role: str | None):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_agente_router import (
-            get_agents_client_factory, get_agents_token_client_builder, get_lais_token_admin,
+        from app.routers.julia_agente_router import (
+            get_agents_client_factory, get_agents_token_client_builder, get_julia_token_admin,
         )
         from app.routers.whatsapp_connections_router import get_waha_client_factory
 
@@ -103,12 +103,12 @@ def _scene(monkeypatch, override_settings_factory, *, role: str | None):
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: world.agents)
         app.dependency_overrides[get_agents_token_client_builder] = builder
         app.dependency_overrides[get_waha_client_factory] = lambda: (lambda **kw: world.waha)
-        app.dependency_overrides[get_lais_token_admin] = lambda: scene.token_admin
+        app.dependency_overrides[get_julia_token_admin] = lambda: scene.token_admin
         override_settings_factory(
             encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret="sekrit", redis_url="redis://fake:6379/0",
         )
         yield scene
-        for dep in (get_agents_client_factory, get_agents_token_client_builder, get_waha_client_factory, get_lais_token_admin):
+        for dep in (get_agents_client_factory, get_agents_token_client_builder, get_waha_client_factory, get_julia_token_admin):
             app.dependency_overrides.pop(dep, None)
     reset_bus_cache()
 
@@ -181,21 +181,21 @@ class TestAuth:
         assert admin.put(CONN_URL, {"agente_leads_ativo": False}).status_code == 404
 
 
-# ── GET /api/lais/agente ────────────────────────────────────────────────────
+# ── GET /api/julia/agente ────────────────────────────────────────────────────
 class TestGetAgente:
     def test_shape_and_per_connection_fields(self, admin):
         admin.w.seed_connection(authorized_numbers=["+5511999990000", "+5511999991111"])
         data = admin.get(BASE).json()["data"]
         (c,) = data["conexoes"]
         assert c["connection_id"] == CONNECTION_ID and c["label"] == "Linha da Julia"
-        assert (c["agente_leads_ativo"], c["agente_leads_key"], c["authorized_numbers_count"]) == (True, "lead-imob", 2)
+        assert (c["agente_leads_ativo"], c["agente_leads_key"], c["authorized_numbers_count"]) == (True, "julia", 2)
         assert set(data) == {"conexoes", "token_configurado", "status_agente", "erro", "agents_url"}
 
     def test_status_agente_is_the_3_2_shape(self, admin):
         admin.w.seed_connection()
-        admin.w.agents = FakeAgentsClient(status=AgentStatus("lead-imob", "Julia", True, 3, "openai", "gpt-5-mini", True))
+        admin.w.agents = FakeAgentsClient(status=AgentStatus("julia", "Julia", True, 3, "openai", "gpt-5-mini", True))
         st = admin.get(BASE).json()["data"]["status_agente"]
-        assert st == {"agent_key": "lead-imob", "nome": "Julia", "ativo": True, "versao_ativa": 3,
+        assert st == {"agent_key": "julia", "nome": "Julia", "ativo": True, "versao_ativa": 3,
                       "provider": "openai", "model": "gpt-5-mini", "llm_configurado": True}
 
     def test_an_org_without_connections_still_answers(self, admin):
@@ -216,13 +216,13 @@ class TestGetAgente:
     def test_a_refused_token_or_missing_agent_shows_as_erro(self, admin, error, expected):
         admin.w.agents = FakeAgentsClient(status_error=error)
         data = admin.get(BASE).json()["data"]
-        assert data["erro"] == lais.LINK_ERROR_MESSAGES[expected] and data["status_agente"] is None
+        assert data["erro"] == julia.LINK_ERROR_MESSAGES[expected] and data["status_agente"] is None
 
     def test_an_inactive_agent_and_a_missing_llm_key_show_as_erro(self, admin):
-        admin.w.agents = FakeAgentsClient(status=AgentStatus("lead-imob", "Julia", False, None, None, None, True))
-        assert admin.get(BASE).json()["data"]["erro"] == lais.LINK_ERROR_MESSAGES["agent_unavailable"]
-        admin.w.agents = FakeAgentsClient(status=AgentStatus("lead-imob", "Julia", True, 1, "openai", "gpt-5", False))
-        assert admin.get(BASE).json()["data"]["erro"] == lais.LINK_ERROR_MESSAGES["llm_not_configured"]
+        admin.w.agents = FakeAgentsClient(status=AgentStatus("julia", "Julia", False, None, None, None, True))
+        assert admin.get(BASE).json()["data"]["erro"] == julia.LINK_ERROR_MESSAGES["agent_unavailable"]
+        admin.w.agents = FakeAgentsClient(status=AgentStatus("julia", "Julia", True, 1, "openai", "gpt-5", False))
+        assert admin.get(BASE).json()["data"]["erro"] == julia.LINK_ERROR_MESSAGES["llm_not_configured"]
 
     def test_L2_an_upstream_failure_gives_a_generic_line_never_the_detail(self, admin):
         admin.w.agents = FakeAgentsClient(status_error=AgentsTimeout("connect to 10.0.0.7:8000 refused"))
@@ -230,15 +230,15 @@ class TestGetAgente:
         assert "10.0.0.7" not in erro and erro
 
     def test_the_last_turn_failure_is_surfaced_when_the_live_status_is_fine(self, admin):
-        lais.registrar_erro_link(ORG_ID, "llm_not_configured", cfg=admin.w.cfg)
-        assert admin.get(BASE).json()["data"]["erro"] == lais.LINK_ERROR_MESSAGES["llm_not_configured"]
+        julia.registrar_erro_link(ORG_ID, "llm_not_configured", cfg=admin.w.cfg)
+        assert admin.get(BASE).json()["data"]["erro"] == julia.LINK_ERROR_MESSAGES["llm_not_configured"]
 
     def test_no_client_in_prod_means_nao_configurado(self, admin):
         from app.main import app
-        from app.routers.lais_agente_router import get_agents_client_factory
+        from app.routers.julia_agente_router import get_agents_client_factory
 
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: None)
-        assert admin.get(BASE).json()["data"]["erro"] == lais.LINK_ERROR_MESSAGES["nao_configurado"]
+        assert admin.get(BASE).json()["data"]["erro"] == julia.LINK_ERROR_MESSAGES["nao_configurado"]
 
 
 # ── PUT /conexoes/{id}: the switch ──────────────────────────────────────────
@@ -252,12 +252,12 @@ class TestSwitchOn:
         r = self._on(admin)
         assert r.status_code == 200
         out = r.json()["data"]
-        assert out["agente_leads_ativo"] is True and out["agente_leads_key"] == "lead-imob"
+        assert out["agente_leads_ativo"] is True and out["agente_leads_key"] == "julia"
         assert out["agente_leads_ativado_em"]
         # 230 phone chats + their `@s.whatsapp.net` twins
         assert len(admin.snapshot_ids()) == 460
         row = admin.conn()
-        assert row["agente_leads_ativo"] is True and row["agente_leads_ativado_em"] and row["agente_leads_key"] == "lead-imob"
+        assert row["agente_leads_ativo"] is True and row["agente_leads_ativado_em"] and row["agente_leads_key"] == "julia"
 
     def test_both_the_phone_and_the_lid_form_are_stored_when_waha_exposes_both(self, admin):
         _off_connection(admin.w)
@@ -347,7 +347,7 @@ class TestSwitchOn:
     def test_putting_on_while_already_on_does_not_re_snapshot_nor_move_ativado_em(self, admin):
         admin.w.seed_connection()  # already on, ativado_em fixed
         admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}]
-        r = self._on(admin, agente_leads_key="lead-imob")
+        r = self._on(admin, agente_leads_key="julia")
         assert r.status_code == 200
         assert admin.snapshot_ids() == set()
         assert admin.conn()["agente_leads_ativado_em"] == "2026-10-01T00:00:00+00:00"
@@ -432,7 +432,7 @@ class TestAuthorizedNumbersPatch:
         row = {"id": "00000000-0000-4000-8000-0000000000e9", "org_id": ORG_ID, "user_id": OWNER_ID,
                "label": "x", "base_url": "https://w", "session_name": "default", "encrypted_api_key": "x",
                "authorized_numbers": ["+5511999990000"], "agente_leads_ativo": True,
-               "agente_leads_key": "lead-imob", "agente_leads_ativado_em": "2026-10-01T00:00:00+00:00"}
+               "agente_leads_key": "julia", "agente_leads_ativado_em": "2026-10-01T00:00:00+00:00"}
         row.update(over)
         return row
 
@@ -467,13 +467,13 @@ class TestToken:
         r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
         assert r.status_code == 204 and r.content == b""
         assert admin.token_builds == ["pk_live_abcdef"]
-        assert admin.token_builder_agents is None or admin.token_builder_agents.status_calls == ["lead-imob"]
+        assert admin.token_builder_agents is None or admin.token_builder_agents.status_calls == ["julia"]
         # production's admin client is schema-pinned to social_wiring; the mock's is not, so the
         # row sits on the root client's `credentials` table here.
         row = admin.w.admin.table("credentials").select("*").eq("provider", "api_key:agents").execute().data[0]
         assert row["org_id"] == ORG_ID
         assert "pk_live_abcdef" not in str(row), "stored encrypted, never plaintext"
-        assert lais.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"
 
     def test_a_token_agents_refuses_is_422_token_invalido_and_is_not_stored(self, admin):
         admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTokenInvalid(code="issuer_not_allowed"))
@@ -503,13 +503,13 @@ class TestToken:
         assert all("pk_super_secret_value" not in rec.getMessage() for rec in caplog.records)
 
     def test_replacing_a_token_clears_a_stale_link_error(self, admin):
-        lais.registrar_erro_link(ORG_ID, "token_invalido", cfg=admin.w.cfg)
+        julia.registrar_erro_link(ORG_ID, "token_invalido", cfg=admin.w.cfg)
         admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert lais.ler_erro_link(ORG_ID, cfg=admin.w.cfg) is None
+        assert julia.ler_erro_link(ORG_ID, cfg=admin.w.cfg) is None
 
     def test_a_token_is_per_org_org_B_does_not_see_org_As(self, admin):
         admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert lais.agents_token_for_org(OTHER_ORG_ID, cfg=admin.w.cfg) is None
+        assert julia.agents_token_for_org(OTHER_ORG_ID, cfg=admin.w.cfg) is None
 
 
 # ── PATCH chat pause ────────────────────────────────────────────────────────
@@ -579,7 +579,7 @@ class TestDeletionRoute:
         assert r.status_code == 404
 
 
-# ── PUT /token also mints + pushes the Lais tools token (lais-build-contract 2.2) ──
+# ── PUT /token also mints + pushes the Julia tools token (lais-build-contract 2.2) ──
 class TestToolsToken:
     ROWS = lambda self, admin: admin.token_admin.rows.get("social_wiring", [])  # noqa: E731
 
@@ -590,7 +590,7 @@ class TestToolsToken:
         rows = self.ROWS(admin)
         assert len(rows) == 1
         row = rows[0]
-        assert (row["org_id"], row["label"], row["issuer"]) == (ORG_ID, "agents · ferramentas lais", "agents")
+        assert (row["org_id"], row["label"], row["issuer"]) == (ORG_ID, "agents · ferramentas julia", "agents")
         assert row["scopes"] == ["social-wiring:lais-tools"] and row["revoked_at"] is None
         exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
         assert timedelta(days=89) < exp - datetime.now(timezone.utc) <= timedelta(days=90, minutes=1)
@@ -614,7 +614,7 @@ class TestToolsToken:
     def test_a_push_failure_is_still_204_records_the_new_erro_and_revokes_the_undelivered_token(self, admin):
         admin.token_builder_agents = FakeAgentsClient(ferramentas_token_error=AgentsUpstreamError(code="encryption_not_configured"))
         assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
-        assert lais.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"  # channel token IS stored
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"  # channel token IS stored
         assert admin.get(BASE).json()["data"]["erro"] == "Ferramentas da Julia indisponíveis — reenvie o token."
         assert [r["revoked_at"] is not None for r in self.ROWS(admin)] == [True]  # no orphan secret stays valid
 

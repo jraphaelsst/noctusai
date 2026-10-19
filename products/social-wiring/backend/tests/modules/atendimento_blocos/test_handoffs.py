@@ -1,6 +1,6 @@
 """Handoff ledger (maya-blocks CONTRACT §2): T1 `novo_lead` sink, T2 block-boundary hook (+ the aceite movement),
 the emitido -> assumido | expirado machine. Off = nothing written; replays are no-ops; failures never block.
-Mock DB of `tests.support.lais_world`; the sink runs through the real `lais_eventos_service.emitir`."""
+Mock DB of `tests.support.julia_world`; the sink runs through the real `julia_eventos_service.emitir`."""
 from __future__ import annotations
 
 import logging
@@ -11,9 +11,9 @@ import pytest
 from app.modules.atendimento_blocos import handoffs as h
 from app.modules.atendimento_blocos import repository as repo
 from app.modules.pipeline.aceite import aceitar_proposta
-from app.services import lais_eventos_service as eventos
+from app.services import julia_eventos_service as eventos
 
-from tests.support.lais_world import ORG_ID, OWNER_ID
+from tests.support.julia_world import ORG_ID, OWNER_ID
 from .conftest import atendimento, handoffs, movimento, processo, stage_id, supervisao_on
 
 CONTATO = "00000000-0000-4000-8000-00000000c0c0"
@@ -58,14 +58,14 @@ class TestSinkNovoLead:
     def test_writes_sdr_to_atendimento_with_references_only(self, world):
         supervisao_on(world)
         atendimento(world)
-        world.sw.table("lais_atribuicoes").insert({"id": "atr-1", "org_id": ORG_ID, "contato_id": CONTATO, "created_at": T0}).execute()
-        world.sw.table("lais_envio_entregas").insert({"id": "ent-err", "org_id": ORG_ID, "contato_id": CONTATO, "status": "erro", "erro": "x", "created_at": T0}).execute()
-        world.sw.table("lais_envio_entregas").insert({"id": "ent-ok", "org_id": ORG_ID, "contato_id": CONTATO, "status": "ok", "created_at": T0}).execute()
+        world.sw.table("julia_atribuicoes").insert({"id": "atr-1", "org_id": ORG_ID, "contato_id": CONTATO, "created_at": T0}).execute()
+        world.sw.table("julia_envio_entregas").insert({"id": "ent-err", "org_id": ORG_ID, "contato_id": CONTATO, "status": "erro", "erro": "x", "created_at": T0}).execute()
+        world.sw.table("julia_envio_entregas").insert({"id": "ent-ok", "org_id": ORG_ID, "contato_id": CONTATO, "status": "ok", "created_at": T0}).execute()
         h.sink_novo_lead(world.sw, _novo_lead(world))
         (row,) = handoffs(world)
         assert {k: row[k] for k in ("de_bloco", "para_bloco", "de_agent_key", "para_agent_key", "gatilho", "origem_evento",
                                     "contato_id", "lead_id", "atendimento_id", "atribuicao_id", "entrega_id", "status")} == {
-            "de_bloco": "sdr", "para_bloco": "atendimento", "de_agent_key": "lead-imob", "para_agent_key": None,
+            "de_bloco": "sdr", "para_bloco": "atendimento", "de_agent_key": "julia", "para_agent_key": None,
             "gatilho": "novo_lead", "origem_evento": "ev-1", "contato_id": CONTATO, "lead_id": "lead-1",
             "atendimento_id": "a1", "atribuicao_id": "atr-1", "entrega_id": "ent-ok", "status": "emitido",
         }

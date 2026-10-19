@@ -1,6 +1,6 @@
-"""Lais read tools -- agents calls these back during a turn (contract A3 / 2.2).
+"""Julia read tools -- agents calls these back during a turn (contract A3 / 2.2).
 
-  POST /api/lais/ferramentas/{nome}     product token, scope `social-wiring:lais-tools`, issuer `agents`
+  POST /api/julia/ferramentas/{nome}     product token, scope `social-wiring:lais-tools`, issuer `agents`
 
 Auth is the agents-bridge pattern (`agents_bridge_router`): `get_auth_context` composed with the
 seed's `require_scopes(..., restrict="product_only")`, then an ISSUER check in the body of the
@@ -16,7 +16,7 @@ dependency (a scope string says what a token may do, never who holds it):
 Success is the SW envelope `{"data": ...}`; errors are `AppException` (`{"error": {...}}`). The
 org is the TOKEN's org (`ctx.org_id`) -- never a body field -- so one org's token cannot read
 another org's catalogue. The response never contains owner/proprietario personal data
-(`lais_ferramentas_service` reads an explicit column allow-list).
+(`julia_ferramentas_service` reads an explicit column allow-list).
 """
 import logging
 from typing import Any
@@ -28,12 +28,12 @@ from noctusai_lib.api.auth.session import AuthContext, require_scopes
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_auth_context, get_scoped_admin_client
-from app.services import lais_ferramentas_service as svc
-from app.services.lais_contexto_service import TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_SCOPE
+from app.services import julia_ferramentas_service as svc
+from app.services.julia_contexto_service import TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_SCOPE
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/ferramentas", tags=["lais-ferramentas"])
+router = APIRouter(prefix="/api/julia/ferramentas", tags=["julia-ferramentas"])
 
 
 def _require_tools(

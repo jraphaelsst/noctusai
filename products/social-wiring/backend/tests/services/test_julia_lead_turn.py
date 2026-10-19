@@ -1,4 +1,4 @@
-"""The Julia lead worker (`lais_lead_turn_service.process_lead_batch`).
+"""The Julia lead worker (`julia_lead_turn_service.process_lead_batch`).
 
 Covers: contract 3.1's whole error table on the SW side, 11.3 (disclosure bubble first,
 only on the first turn), 11.4 (handoff target + notification), 10.1 L3 (post-turn
@@ -30,15 +30,15 @@ from app.clients.agents import (
     TurnInProgress,
     TurnResult,
 )
-from app.services import lais_agente_service as lais
-from app.services.lais_lead_turn_service import (
+from app.services import julia_agente_service as julia
+from app.services.julia_lead_turn_service import (
     close_run,
     process_lead_batch,
     trim_batch,
     unprocessed_run,
 )
 
-from tests.support.lais_world import (
+from tests.support.julia_world import (
     ADMIN_ID,
     CONNECTION_ID,
     CORRETOR_ID,
@@ -132,7 +132,7 @@ class TestDisclosure:
         assert [m["body"] for m in rows][-1] == "oi!"
         assert len(rows) == 2
         for msg in world.waha.sent_messages:
-            assert world.redis.get(f"lais:julia_out:{msg['id']}")  # her echo will be recognised (L3)
+            assert world.redis.get(f"julia:julia_out:{msg['id']}")  # her echo will be recognised (L3)
         assert [e for e, _ in world.bus_events()].count("message.new") == 2
 
 
@@ -148,10 +148,10 @@ class TestHandoff:
         upserts = [p for e, p in world.bus_events() if e == "chat.upsert"]
         assert upserts[-1]["agente_pausado"] is True and upserts[-1]["chat_id"] == LEAD_CHAT
         (n,) = world.notifications()
-        assert n["user_id"] == OWNER_ID and n["metadata"]["tipo"] == "lais_handoff"
+        assert n["user_id"] == OWNER_ID and n["metadata"]["tipo"] == "julia_handoff"
         assert n["type"] == "system"  # core's CHECK: a product event is type=system, kind in metadata.tipo
         assert "Ana" in n["message"] and "quer falar com um corretor" in n["message"]
-        assert n["metadata"]["link"] == f"/lais/conversas?chat={LEAD_CHAT.replace('@', '%40')}"
+        assert n["metadata"]["link"] == f"/julia/conversas?chat={LEAD_CHAT.replace('@', '%40')}"
 
     async def test_the_reply_bubbles_go_out_before_the_pause(self, world):
         world.agents = FakeAgentsClient([self._handoff()])
@@ -216,24 +216,24 @@ class TestErrorTable:
 
     async def test_401_marks_the_link_token_invalido_and_stays_silent(self, world):
         await self._lead_sees_nothing(world, AgentsTokenInvalid(code=None))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) == lais.LINK_ERROR_MESSAGES["token_invalido"]
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) == julia.LINK_ERROR_MESSAGES["token_invalido"]
 
     async def test_403_marks_the_link_token_invalido(self, world):
         await self._lead_sees_nothing(world, AgentsTokenInvalid(code="issuer_not_allowed"))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg)
+        assert julia.ler_erro_link(ORG, cfg=world.cfg)
 
     async def test_404_agent_not_found_is_surfaced(self, world):
         await self._lead_sees_nothing(world, AgentNotFound(code="agent_not_found"))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) == lais.LINK_ERROR_MESSAGES["agent_not_found"]
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) == julia.LINK_ERROR_MESSAGES["agent_not_found"]
 
     @pytest.mark.parametrize("code", ["agent_inactive", "no_active_version", "prompt_too_large"])
     async def test_409_unavailable_is_surfaced(self, world, code):
         await self._lead_sees_nothing(world, AgentUnavailable(code, code=code))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) == lais.LINK_ERROR_MESSAGES["agent_unavailable"]
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) == julia.LINK_ERROR_MESSAGES["agent_unavailable"]
 
     async def test_424_llm_not_configured_is_surfaced(self, world):
         await self._lead_sees_nothing(world, LlmNotConfigured(code="llm_not_configured"))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) == lais.LINK_ERROR_MESSAGES["llm_not_configured"]
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) == julia.LINK_ERROR_MESSAGES["llm_not_configured"]
 
     @pytest.mark.parametrize("error", [
         AgentsBadRequest(code="invalid_field"), IdempotencyConflict(code="x"),
@@ -245,10 +245,10 @@ class TestErrorTable:
         assert caplog.records, "bugs and upstream faults are error-logged"
 
     async def test_a_successful_turn_clears_a_stale_link_error(self, world):
-        lais.registrar_erro_link(ORG, "token_invalido", cfg=world.cfg)
+        julia.registrar_erro_link(ORG, "token_invalido", cfg=world.cfg)
         world.agents = FakeAgentsClient([_ok("oi")])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) is None
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) is None
 
     async def test_409_turn_in_progress_requeues_the_batch_ONCE_after_5s(self, world):
         world.agents = FakeAgentsClient([TurnInProgress(code="turn_in_progress"), TurnInProgress(code="turn_in_progress")])
@@ -285,7 +285,7 @@ class TestErrorTable:
         key = buffer_lead(world, LEAD_CHAT, ["oi"])
         await _run(world, key, agents_client_factory=lambda org: None)
         assert world.sent_texts() == []
-        assert lais.ler_erro_link(ORG, cfg=world.cfg) == lais.LINK_ERROR_MESSAGES["nao_configurado"]
+        assert julia.ler_erro_link(ORG, cfg=world.cfg) == julia.LINK_ERROR_MESSAGES["nao_configurado"]
 
     async def test_a_hung_agents_call_is_cut_at_the_outer_guard(self, world):
         import asyncio
@@ -333,7 +333,7 @@ class TestGuards:
         assert world.agents.turns == []
 
     async def test_an_unknown_connection_means_no_turn(self, world):
-        key = lais.lead_key("00000000-0000-4000-8000-0000000000ff", LEAD_CHAT)
+        key = julia.lead_key("00000000-0000-4000-8000-0000000000ff", LEAD_CHAT)
         from noctusai_lib.domain.chatbot import QueuedConversationMessage
 
         world.buffer.buffer_inbound(QueuedConversationMessage(conversation_id=key, text="oi", direction="inbound", provider_message_id="m1"))
@@ -348,7 +348,7 @@ class TestGuards:
 # ── M4: limits + batch cap ──────────────────────────────────────────────────
 class TestLimits:
     async def test_per_chat_limit_is_10_turns_an_hour_and_the_11th_is_dropped_before_agents(self, world):
-        key = lais.lead_key(CONNECTION_ID, LEAD_CHAT)
+        key = julia.lead_key(CONNECTION_ID, LEAD_CHAT)
         for i in range(10):
             buffer_lead(world, LEAD_CHAT, [f"msg {i}"], ids=[f"m{i}"])
             await _run(world, key)
@@ -358,7 +358,7 @@ class TestLimits:
         assert len(world.agents.turns) == 10, "the 11th never reached agents"
 
     async def test_per_connection_limit_applies_across_chats(self, world):
-        world.cfg = world.cfg.model_copy(update={"lais_agente_max_turns_per_connection_minute": 2})
+        world.cfg = world.cfg.model_copy(update={"julia_agente_max_turns_per_connection_minute": 2})
         for n in range(3):
             chat = f"55119888800{n:02d}@c.us"
             world.seed_chat(chat)
@@ -395,7 +395,7 @@ class TestRunSemantics:
     async def test_request_carries_the_channel_identity_phone_and_push_name(self, world):
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
         req = world.agents.turns[0]
-        assert (req.agent_key, req.channel, req.connection_id, req.chat_id) == ("lead-imob", "whatsapp", CONNECTION_ID, LEAD_CHAT)
+        assert (req.agent_key, req.channel, req.connection_id, req.chat_id) == ("julia", "whatsapp", CONNECTION_ID, LEAD_CHAT)
         assert (req.phone_e164, req.display_name) == ("+5511988887777", "Ana")
 
     async def test_the_agent_key_is_the_connections_not_a_constant(self, world):
@@ -454,7 +454,7 @@ class TestDeletion:
         assert world.messages() == []
         assert world.chat_row() is None
         assert world.sw.table("contacts").select("*").execute().data == []
-        assert world.sent_texts()[-1] == lais.MENSAGEM_APAGADO
+        assert world.sent_texts()[-1] == julia.MENSAGEM_APAGADO
         assert world.buffer.memory_for(k) == []
 
     async def test_the_confirmation_is_not_recorded_back_into_the_erased_history(self, world):
@@ -480,19 +480,19 @@ class TestDeletion:
         buffer_lead(world, LEAD_CHAT, ["apagar os dados"], ids=["m9"])
         await _run(world, k)
         assert world.messages() == []
-        assert world.sent_texts()[-1] == lais.MENSAGEM_APAGADO_PARCIAL
+        assert world.sent_texts()[-1] == julia.MENSAGEM_APAGADO_PARCIAL
 
     @pytest.mark.parametrize("text,expected", [
         ("apagar meus dados", True), ("Apagar Meus Dados!", True), ("quero APAGAR os dados", True),
         ("apagár meus dádos", True), ("vocês apagam meus dados?", False), ("quero comprar", False),
     ])
     def test_phrase_detection_is_accent_and_case_insensitive(self, text, expected):
-        assert lais.is_deletion_request(text) is expected
+        assert julia.is_deletion_request(text) is expected
 
 
 # ── static guard: the lead path never touches the operator stack ────────────
 class TestOperatorIsolation:
-    @pytest.mark.parametrize("module", ["lais_lead_turn_service", "lais_agente_service"])
+    @pytest.mark.parametrize("module", ["julia_lead_turn_service", "julia_agente_service"])
     def test_lead_modules_never_import_the_operator_stack(self, module):
         path = Path(__file__).resolve().parents[2] / "app" / "services" / f"{module}.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))

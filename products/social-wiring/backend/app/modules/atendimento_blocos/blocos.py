@@ -30,7 +30,7 @@ class Bloco:
 
 
 BLOCOS: tuple[Bloco, ...] = (
-    Bloco("sdr", 1, "SDR (Julia)", None, "lead-imob"),
+    Bloco("sdr", 1, "SDR (Julia)", None, "julia"),
     Bloco("atendimento", 2, "Atendimento (corretor)", PIPELINE_FUNIL, None),
     Bloco("negociacao", 3, "Negociação", PIPELINE_FUNIL, None),
     Bloco("juridico", 4, "Jurídico", PIPELINE_PROCESSOS, None),
@@ -50,8 +50,16 @@ ETAPAS_PADRAO: dict[str, tuple[str, ...]] = {
     "contador": ("nota_fiscal",),
 }
 
-#: The agent keys allowed to run each block (v1: only Julia, studio key `lead-imob`, on `sdr`).
-AGENTES_POR_BLOCO: dict[str, frozenset[str]] = {"sdr": frozenset({"lead-imob"})}
+#: The agent keys allowed to run each block (v1: only Julia, studio key `julia`, on `sdr`).
+AGENTES_POR_BLOCO: dict[str, frozenset[str]] = {"sdr": frozenset({"julia"})}
+
+#: The studio key Julia carried before the 2026-10 rename. A row / client written during the deploy window may still
+#: hold it; it is read and accepted as `julia`. NOC-REMEDIATE[drop-lead-imob-alias]: drop once no `lead-imob` row remains (migration 287 rewrote them).
+ALIAS_AGENT_KEY_LEGADO: dict[str, str] = {"lead-imob": "julia"}
+
+
+def normalizar_agent_key(agent_key: Optional[str]) -> Optional[str]:
+    return ALIAS_AGENT_KEY_LEGADO.get(agent_key, agent_key) if agent_key else agent_key
 
 
 @dataclass(frozen=True)
@@ -110,7 +118,7 @@ def sobreposicoes(config: Mapping[str, ConfigBloco]) -> list[tuple[str, str, str
 
 
 __all__ = [
-    "AGENTES_POR_BLOCO", "BLOCOS", "BLOCO_POR_NOME", "BLOCO_SDR", "Bloco", "ConfigBloco", "ETAPAS_PADRAO",
+    "AGENTES_POR_BLOCO", "ALIAS_AGENT_KEY_LEGADO", "normalizar_agent_key", "BLOCOS", "BLOCO_POR_NOME", "BLOCO_SDR", "Bloco", "ConfigBloco", "ETAPAS_PADRAO",
     "NOMES_BLOCOS", "PIPELINES_ATENDIMENTO", "PIPELINE_FUNIL", "PIPELINE_PROCESSOS", "agentes_permitidos",
     "config_padrao", "dono", "sobreposicoes",
 ]

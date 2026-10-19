@@ -124,23 +124,23 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.assinatura_webhook_router import (
         router as assinatura_webhook_router,
     )
-    from app.routers.lais_agente_router import router as lais_agente_router
-    from app.routers.lais_ferramentas_router import router as lais_ferramentas_router
-    from app.routers.lais_conhecimento_router import router as lais_conhecimento_router
-    from app.routers.lais_perguntas_router import router as lais_perguntas_router
-    from app.routers.lais_conversas_router import router as lais_conversas_router
-    from app.routers.lais_visitas_router import router as lais_visitas_router
-    from app.routers.lais_notificacoes_router import router as lais_notificacoes_router
-    from app.routers.lais_reengajamento_router import router as lais_reengajamento_router
-    from app.routers.lais_cloud_router import router as lais_cloud_router
-    from app.routers.lais_painel_router import router as lais_painel_router
-    from app.routers.lais_envio_router import router as lais_envio_router
-    from app.routers.lais_relatorios_router import router as lais_relatorios_router
-    from app.routers.lais_captacao_router import router as lais_captacao_router
-    from app.routers.lais_equipes_router import router as lais_equipes_router
-    from app.routers.lais_credito_router import router as lais_credito_router
-    from app.routers.lais_avaliacoes_router import router as lais_avaliacoes_router
-    from app.services import lais_reengajamento_worker
+    from app.routers.julia_agente_router import router as julia_agente_router
+    from app.routers.julia_ferramentas_router import router as julia_ferramentas_router
+    from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
+    from app.routers.julia_perguntas_router import router as julia_perguntas_router
+    from app.routers.julia_conversas_router import router as julia_conversas_router
+    from app.routers.julia_visitas_router import router as julia_visitas_router
+    from app.routers.julia_notificacoes_router import router as julia_notificacoes_router
+    from app.routers.julia_reengajamento_router import router as julia_reengajamento_router
+    from app.routers.julia_cloud_router import router as julia_cloud_router
+    from app.routers.julia_painel_router import router as julia_painel_router
+    from app.routers.julia_envio_router import router as julia_envio_router
+    from app.routers.julia_relatorios_router import router as julia_relatorios_router
+    from app.routers.julia_captacao_router import router as julia_captacao_router
+    from app.routers.julia_equipes_router import router as julia_equipes_router
+    from app.routers.julia_credito_router import router as julia_credito_router
+    from app.routers.julia_avaliacoes_router import router as julia_avaliacoes_router
+    from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
     from app.routers.whatsapp_connections_router import (
@@ -247,22 +247,22 @@ def _register_media_wiring() -> ModuleRegistration:
         routers=[
             auth_router,
             settings_router,
-            lais_agente_router,
-            lais_ferramentas_router,
-            lais_conhecimento_router,
-            lais_conversas_router,  # BEFORE lais_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`
-            lais_perguntas_router,
-            lais_visitas_router,
-            lais_notificacoes_router,
-            lais_reengajamento_router,
-            lais_cloud_router,
-            lais_painel_router,
-            lais_envio_router,
-            lais_relatorios_router,
-            lais_captacao_router,
-            lais_equipes_router,
-            lais_credito_router,
-            lais_avaliacoes_router,
+            julia_agente_router,
+            julia_ferramentas_router,
+            julia_conhecimento_router,
+            julia_conversas_router,  # BEFORE julia_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`
+            julia_perguntas_router,
+            julia_visitas_router,
+            julia_notificacoes_router,
+            julia_reengajamento_router,
+            julia_cloud_router,
+            julia_painel_router,
+            julia_envio_router,
+            julia_relatorios_router,
+            julia_captacao_router,
+            julia_equipes_router,
+            julia_credito_router,
+            julia_avaliacoes_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,
@@ -288,8 +288,8 @@ def _register_media_wiring() -> ModuleRegistration:
             custos_router,
         ],
         standard_routers=("health", "notificacoes", "team"),
-        startup=[lais_reengajamento_worker.startup_hook],
-        shutdown=[lais_reengajamento_worker.stop_worker],
+        startup=[julia_reengajamento_worker.startup_hook],
+        shutdown=[julia_reengajamento_worker.stop_worker],
     )
 
 
@@ -409,7 +409,7 @@ MODULES = [
     _simec,
     # maya-blocks S2. `/api/atendimento-blocos` is a unique literal prefix with no 1-segment dynamic path at
     # its root, so its position is free. No upload route, no scheduler job; importing its router binds the
-    # `novo_lead` -> sdr handoff sink on the Lais event bus.
+    # `novo_lead` -> sdr handoff sink on the Julia event bus.
     _atendimento_blocos,
     # Supervisão (Maya, maya-blocks S3). `/api/supervisao/...` is a unique literal
     # prefix with only literal 1st segments (`/scorecards`, `/handoffs`, `/config`),
@@ -765,3 +765,9 @@ app = create_product_app(
 # `create_product_app` so the middleware wraps the fully built app. The first
 # product-token surface here is the agents bridge (`agents_bridge_router`).
 app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyApiTokenAuditWriter())
+
+# Pre-rename Lais URLs keep working for one release (see the class docstring). Added LAST so it is the OUTERMOST
+# layer: the path is rewritten before body-size / audit / routing look at it.
+from app.middleware import LegacyLaisPathAlias  # noqa: E402
+
+app.add_middleware(LegacyLaisPathAlias)

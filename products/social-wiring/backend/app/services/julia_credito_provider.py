@@ -1,12 +1,12 @@
-"""Lais wave 13 -- the credit-analysis provider seam (contract 15 / 17).
+"""Julia wave 13 -- the credit-analysis provider seam (contract 15 / 17).
 
 `CreditoProvider` is the Protocol the flow depends on; `FakeCreditoProvider` (dev / tests, records every call so
 a test can assert "no consent -> no call"), `CredAlugaProvider` (the REAL stub: the owner has not chosen the
-production provider yet -- Lais uses CredAluga -- so it REFUSES, loudly, with "provedor nao configurado") and the
+production provider yet -- Julia uses CredAluga -- so it REFUSES, loudly, with "provedor nao configurado") and the
 per-org factory `make_credito_provider`.
 
 What a provider may see: `ConsultaCredito` -- the contato's name / phone / operacao / imovel codigo. The CPF is
-NOT in it: the platform stores only a salted hash + the last 3 digits (contract 17, `lais_slots_sensiveis`), so a
+NOT in it: the platform stores only a salted hash + the last 3 digits (contract 17, `julia_slots_sensiveis`), so a
 provider that needs the CPF in clear cannot be served until the owner decides how it is captured (see the marker
 on `CredAlugaProvider`).
 
@@ -86,8 +86,8 @@ class FakeCreditoProvider:
 
 
 class CredAlugaProvider:
-    """REAL stub -- always refuses. NOC-REMEDIATE[lais-credito-provider]: the production provider is not chosen
-    (Lais uses CredAluga). To build the Real the owner must provide: (1) the provider decision (CredAluga or
+    """REAL stub -- always refuses. NOC-REMEDIATE[julia-credito-provider]: the production provider is not chosen
+    (Julia uses CredAluga). To build the Real the owner must provide: (1) the provider decision (CredAluga or
     another) and its API documentation / sandbox; (2) one credential PER ORG stored in the per-org credentials
     store under `api_key:credito_provider` (token/contract id issued to each imobiliaria); (3) how the lead's CPF
     reaches the provider -- the platform keeps only a hash + last 3 digits, so either the CPF is captured in clear
@@ -137,7 +137,7 @@ def credencial_da_org(org_id: Any, *, cfg: Any = None, store: Any = None) -> Opt
                 encryption_key=getattr(cfg, "encryption_key", None) if cfg is not None else None
             )
         except EncryptionNotConfigured:
-            logger.warning("lais credito: ENCRYPTION_KEY unusable -- cannot read the provider credential")
+            logger.warning("julia credito: ENCRYPTION_KEY unusable -- cannot read the provider credential")
             return None
     stored = api_keys_store.read_local_api_key(store, str(org_id), CREDENCIAL_KEY_NAME)
     return ((stored.tokens or {}).get("value") if stored else None) or None

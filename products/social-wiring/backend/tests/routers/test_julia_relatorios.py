@@ -1,4 +1,4 @@
-"""Lais wave 10 -- Relatorios: dedup, % math, month boundaries in Sao Paulo time, A7 + org isolation,
+"""Julia wave 10 -- Relatorios: dedup, % math, month boundaries in Sao Paulo time, A7 + org isolation,
 strict == 401. Mock DB seams only; fixtures carry no personal data."""
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.services import lais_relatorios_service as svc
+from app.services import julia_relatorios_service as svc
 
-from tests.support.lais_world import CONNECTION_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import CONNECTION_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
-URL = "/api/lais/relatorios"
+URL = "/api/julia/relatorios"
 H = {"Authorization": "Bearer test-token"}
 MES = "2026-10"
 DENTRO = "2026-10-10T12:00:00+00:00"
@@ -24,23 +24,23 @@ OUTRO_USER = "00000000-0000-4000-8000-0000000000d9"
 def _mundo(*, org=ORG_ID):
     w = World()
     w.seed_connection()
-    for t in ("lais_visitas", "imoveis"):
+    for t in ("julia_visitas", "imoveis"):
         w.sw.set_table_data(t, [])
     return w
 
 
 def _lead(w, slots, *, op="compra", quando=DENTRO, org=ORG_ID, responsavel=None, conexao=CONNECTION_ID):
     cid = str(uuid4())
-    w.sw.table("lais_contatos").insert({
+    w.sw.table("julia_contatos").insert({
         "id": cid, "org_id": org, "connection_id": conexao, "chat_id": f"{cid}@c.us", "operacao": op,
         "slots": slots, "responsavel_user_id": responsavel}).execute()
-    w.sw.table("lais_interacoes").insert({
+    w.sw.table("julia_interacoes").insert({
         "id": str(uuid4()), "org_id": org, "contato_id": cid, "iniciada_at": quando, "operacao": op, "slots": {}}).execute()
     return cid
 
 
 def _visita(w, cid, codigo, quando=DENTRO, org=ORG_ID):
-    w.sw.table("lais_visitas").insert({"id": str(uuid4()), "org_id": org, "contato_id": cid, "codigo_imovel": codigo,
+    w.sw.table("julia_visitas").insert({"id": str(uuid4()), "org_id": org, "contato_id": cid, "codigo_imovel": codigo,
                                       "created_at": quando, "status": "solicitada"}).execute()
 
 
@@ -134,7 +134,7 @@ class TestImoveis:
         _visita(w, a, "AP0123 ")
         _visita(w, b, "AP0123")
         _visita(w, b, "ZZ9")           # unknown to the catalogue -> kept, no tipo/price
-        w.sw.table("lais_acoes_aplicadas").insert({"id": str(uuid4()), "org_id": ORG_ID, "contato_id": b, "lote_hash": "h",
+        w.sw.table("julia_acoes_aplicadas").insert({"id": str(uuid4()), "org_id": ORG_ID, "contato_id": b, "lote_hash": "h",
                                                    "seq": 1, "tipo": "pedido_visita", "payload": {"codigo": "AP0123"},
                                                    "created_at": DENTRO}).execute()
         d = admin(operacao="compra", mes=MES, aba="imoveis").json()["data"]
@@ -149,7 +149,7 @@ class TestImoveis:
         a, b = _lead(w, {}), _lead(w, {})
 
         def consulta(cid, codigos, quando=DENTRO):
-            w.sw.table("lais_eventos").insert({
+            w.sw.table("julia_eventos").insert({
                 "id": str(uuid4()), "org_id": ORG_ID, "tipo": "imovel_consultado", "contato_id": cid,
                 "payload": {"ferramenta": "buscar_imoveis", "codigos": codigos}, "created_at": quando}).execute()
 

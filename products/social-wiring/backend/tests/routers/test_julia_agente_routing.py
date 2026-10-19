@@ -20,12 +20,12 @@ from noctusai_lib.domain.chatbot import ConversationBufferService
 from noctusai_lib.integrations.redis import make_fake_redis_client
 from noctusai_lib.testing import bind_consent_module_to_mock
 
-from app.services import lais_agente_service as lais
+from app.services import julia_agente_service as julia
 from app.services.conversation_module import _reset_for_tests, configure_conversation_module
-from app.services.lais_lead_turn_service import process_lead_batch
+from app.services.julia_lead_turn_service import process_lead_batch
 from app.services.whatsapp_realtime import reset_bus_cache
 
-from tests.support.lais_world import (
+from tests.support.julia_world import (
     CONNECTION_ID,
     ENCRYPTION_KEY,
     LEAD_CHAT,
@@ -35,7 +35,7 @@ from tests.support.lais_world import (
     World,
 )
 
-LEAD_KEY = lais.lead_key(CONNECTION_ID, LEAD_CHAT)
+LEAD_KEY = julia.lead_key(CONNECTION_ID, LEAD_CHAT)
 GROUP = "120363000000000001@g.us"
 OPERATOR_CHAT = "5511999990000@c.us"
 SECRET = "sekrit"
@@ -84,7 +84,7 @@ class Rt:
         return self.tc.post("/api/whatsapp/webhook", content=raw, headers=headers)
 
     def lead_memory(self, chat: str = LEAD_CHAT):
-        return self.module.buffer.memory_for(lais.lead_key(CONNECTION_ID, chat))
+        return self.module.buffer.memory_for(julia.lead_key(CONNECTION_ID, chat))
 
     def operator_memory(self):
         return self.module.buffer.memory_for("+5511999990000")
@@ -273,14 +273,14 @@ class TestFromMe:
     def test_L3_Julias_own_echo_matched_by_provider_id_does_not_pause(self, rt):
         _julia_scene(rt)
         rt.w.seed_chat()
-        lais.registrar_envio_proprio(rt.w.redis, "wamid.julia")
+        julia.registrar_envio_proprio(rt.w.redis, "wamid.julia")
         self._human(rt, mid="wamid.julia")
         assert rt.w.chat_row()["agente_pausado"] is False
 
     def test_L3_an_echo_beating_our_bookkeeping_is_covered_by_the_in_flight_flag(self, rt):
         _julia_scene(rt)
         rt.w.seed_chat()
-        lais.marcar_envio_em_curso(rt.w.redis, CONNECTION_ID, LEAD_CHAT)
+        julia.marcar_envio_em_curso(rt.w.redis, CONNECTION_ID, LEAD_CHAT)
         self._human(rt, mid="wamid.too-early")
         assert rt.w.chat_row()["agente_pausado"] is False
 
@@ -469,14 +469,14 @@ class TestSignedWebhooksOnly:
             def table(self, *_a):
                 raise RuntimeError("db down")
 
-        assert lais.julia_ativa_em_alguma_conexao(Boom()) is True
+        assert julia.julia_ativa_em_alguma_conexao(Boom()) is True
 
 
 # ── 11.1 eligibility through the webhook ────────────────────────────────────
 class TestChatsThatStartAfterJulia:
     def test_a_chat_in_the_snapshot_never_reaches_julia_and_keeps_todays_behaviour(self, rt):
         _julia_scene(rt)
-        lais.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
+        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
         rt.post(_msg(), signed=True)
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
         assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") == "1", "falls through to today's denial path"
@@ -484,13 +484,13 @@ class TestChatsThatStartAfterJulia:
 
     def test_a_brand_new_chat_reaches_julia(self, rt):
         _julia_scene(rt)
-        lais.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=["5511900009999@c.us"])
+        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=["5511900009999@c.us"])
         rt.post(_msg(), signed=True)
         assert len(rt.lead_memory()) == 1
 
     def test_a_pre_existing_LID_alias_of_a_snapshotted_phone_chat_gets_no_turn(self, rt):
         _julia_scene(rt)
-        lais.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
+        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
         lid = "424242@lid"
         rt.w.waha.fake_lid_phones[lid] = LEAD_CHAT
         rt.post(_msg(chat=lid, mid="lid-9"), signed=True)
@@ -504,7 +504,7 @@ class TestChatsThatStartAfterJulia:
 
     def test_a_chat_Julia_already_owns_stays_hers(self, rt):
         _julia_scene(rt)
-        lais.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
+        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
         rt.w.seed_chat(created_at="2026-09-01T00:00:00+00:00", agente_conversation_id="11111111-1111-4111-8111-111111111111")
         rt.post(_msg(), signed=True)
         assert len(rt.lead_memory()) == 1
@@ -520,7 +520,7 @@ class TestChatsThatStartAfterJulia:
 
     def test_the_snapshot_only_excludes_ids_of_ITS_connection(self, rt):
         _julia_scene(rt)
-        lais.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id="00000000-0000-4000-8000-0000000000ff", chat_ids=[LEAD_CHAT])
+        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id="00000000-0000-4000-8000-0000000000ff", chat_ids=[LEAD_CHAT])
         rt.post(_msg(), signed=True)
         assert len(rt.lead_memory()) == 1
 

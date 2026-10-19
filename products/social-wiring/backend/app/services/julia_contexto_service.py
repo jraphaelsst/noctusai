@@ -16,7 +16,7 @@ Which keys a provider may return is closed: `conhecimento_md`, `perguntas`, `est
   acoes          F       -> all actions incl. handoff (wave 3 may drop `qualificar_lead`)
 
 A wave replaces its default by pointing the tuple at its own function (same name), e.g. wave 1:
-`("conhecimento", lais_conhecimento_service.contexto_provider)`. `registrar_provider(nome, fn)`
+`("conhecimento", julia_conhecimento_service.contexto_provider)`. `registrar_provider(nome, fn)`
 does the same at runtime (tests / late binding): it REPLACES an entry of that name in place,
 or appends a new one.
 
@@ -42,12 +42,14 @@ CONHECIMENTO_MAX = 60_000
 CONTEXTO_MAX = 80_000
 PERGUNTAS_MAX = 8
 
-FERRAMENTAS_LAIS: tuple[str, ...] = ("buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento")
-ACOES_LAIS: tuple[str, ...] = ("salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "handoff")
+FERRAMENTAS_JULIA: tuple[str, ...] = ("buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento")
+ACOES_JULIA: tuple[str, ...] = ("salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "handoff")
 #: `contexto.estado.operacao` accepts only these three (contract 2.1(a)); `atualizacao` is an action value only.
 _OPERACOES_ESTADO = frozenset({"compra", "aluguel", "administracao"})
 
-TOOLS_TOKEN_LABEL = "agents · ferramentas lais"
+TOOLS_TOKEN_LABEL = "agents · ferramentas julia"
+#: NOC-REMEDIATE[rename-lais-tools-scope]: the scope string is stored in agents' token table and checked by agents'
+#: `channel_tools_token_router`; it keeps its pre-rename spelling until both products rename it together (one-release dual accept).
 TOOLS_TOKEN_SCOPE = "social-wiring:lais-tools"
 TOOLS_TOKEN_ISSUER = "agents"
 
@@ -89,11 +91,11 @@ def _prov_estado(ctx: ContextoCtx) -> dict[str, Any]:
 
 
 def _prov_ferramentas(ctx: ContextoCtx) -> dict[str, Any]:
-    return {"ferramentas": list(FERRAMENTAS_LAIS) if ctx.ferramentas_habilitadas else []}
+    return {"ferramentas": list(FERRAMENTAS_JULIA) if ctx.ferramentas_habilitadas else []}
 
 
 def _prov_acoes(_ctx: ContextoCtx) -> dict[str, Any]:
-    return {"acoes": list(ACOES_LAIS)}
+    return {"acoes": list(ACOES_JULIA)}
 
 
 #: THE registry. One line per provider; waves swap their own line.
@@ -145,7 +147,7 @@ def registrar_provider(nome: str, fn: Provider, *, registro: Optional[list[tuple
 # ── the tools token ─────────────────────────────────────────────────────────
 def org_tem_token_ferramentas(client: Any, org_id: UUID | str, *, agora: Optional[datetime] = None) -> bool:
     """True when the org has an ACTIVE agents-issued `social-wiring:lais-tools` token (minted by
-    `PUT /api/lais/agente/token`). It does not prove the push to agents landed -- agents omits a
+    `PUT /api/julia/agente/token`). It does not prove the push to agents landed -- agents omits a
     read tool it has no token for, so a stale `true` degrades to "tool absent", never to a leak."""
     now = agora or datetime.now(timezone.utc)
     try:
@@ -154,7 +156,7 @@ def org_tem_token_ferramentas(client: Any, org_id: UUID | str, *, agora: Optiona
             .eq("org_id", str(org_id)).eq("label", TOOLS_TOKEN_LABEL).execute().data or []
         )
     except Exception:
-        logger.exception("lais: could not read the tools token state for org=%s", org_id)
+        logger.exception("julia: could not read the tools token state for org=%s", org_id)
         return False
     for r in rows:
         if r.get("revoked_at") or r.get("issuer") != TOOLS_TOKEN_ISSUER:
@@ -205,11 +207,11 @@ def montar(
         try:
             parcial = fn(ctx) or {}
         except Exception:
-            logger.exception("lais: contexto provider %r failed (org=%s) -- contributes nothing", nome, org_id)
+            logger.exception("julia: contexto provider %r failed (org=%s) -- contributes nothing", nome, org_id)
             continue
         for chave, valor in parcial.items():
             if chave not in out:
-                logger.error("lais: contexto provider %r returned unknown key %r -- ignored", nome, chave)
+                logger.error("julia: contexto provider %r returned unknown key %r -- ignored", nome, chave)
             elif chave == "estado" and isinstance(valor, dict):
                 out["estado"] = {**out["estado"], **valor}
             else:
@@ -219,24 +221,24 @@ def montar(
         try:
             out["estado"] = {**out["estado"], **(fn_estado(ctx) or {})}
         except Exception:
-            logger.exception("lais: contexto estado extra %r failed (org=%s) -- contributes nothing",
+            logger.exception("julia: contexto estado extra %r failed (org=%s) -- contributes nothing",
                              getattr(fn_estado, "__name__", "?"), org_id)
 
     for fn_extra in tuple(ACOES_EXTRAS):
         try:
             extras = [a for a in (fn_extra(ctx) or ()) if a not in out["acoes"]]
         except Exception:
-            logger.exception("lais: contexto acoes extra %r failed (org=%s) -- contributes nothing",
+            logger.exception("julia: contexto acoes extra %r failed (org=%s) -- contributes nothing",
                              getattr(fn_extra, "__name__", "?"), org_id)
             continue
         out["acoes"] = [*out["acoes"], *extras]
 
     if len(out["conhecimento_md"]) > CONHECIMENTO_MAX:
-        logger.warning("lais: conhecimento_md %d chars > %d -- truncated (org=%s)",
+        logger.warning("julia: conhecimento_md %d chars > %d -- truncated (org=%s)",
                        len(out["conhecimento_md"]), CONHECIMENTO_MAX, org_id)
         out["conhecimento_md"] = out["conhecimento_md"][:CONHECIMENTO_MAX]
     if len(out["perguntas"]) > PERGUNTAS_MAX:
-        logger.warning("lais: %d perguntas > %d -- trimmed (org=%s)", len(out["perguntas"]), PERGUNTAS_MAX, org_id)
+        logger.warning("julia: %d perguntas > %d -- trimmed (org=%s)", len(out["perguntas"]), PERGUNTAS_MAX, org_id)
         out["perguntas"] = out["perguntas"][:PERGUNTAS_MAX]
 
     out["agora"] = agora.isoformat()
@@ -244,14 +246,14 @@ def montar(
     out["hash"] = calcular_hash(out)
     if len(json.dumps(out, ensure_ascii=False, default=str)) > CONTEXTO_MAX:
         # agents answers a bigger one with 422 `contexto_grande`; a turn without knowledge beats no turn.
-        logger.error("lais: contexto > %d chars even after caps (org=%s) -- knowledge dropped", CONTEXTO_MAX, org_id)
+        logger.error("julia: contexto > %d chars even after caps (org=%s) -- knowledge dropped", CONTEXTO_MAX, org_id)
         out["conhecimento_md"] = ""
         out["hash"] = calcular_hash(out)
     return out
 
 
 __all__ = [
-    "ACOES_EXTRAS", "ACOES_LAIS", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_LAIS", "FUSO", "PROVIDERS", "Provider",
+    "ACOES_EXTRAS", "ACOES_JULIA", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_JULIA", "FUSO", "PROVIDERS", "Provider",
     "TOOLS_TOKEN_ISSUER", "TOOLS_TOKEN_LABEL", "TOOLS_TOKEN_SCOPE", "calcular_hash", "montar",
     "org_tem_token_ferramentas", "registrar_acoes_extra", "registrar_estado_extra", "registrar_provider",
 ]

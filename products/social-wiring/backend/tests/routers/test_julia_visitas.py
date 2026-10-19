@@ -1,4 +1,4 @@
-"""Lais wave 5 -- Visitas (contract section 7): slot computation, the `pedido_visita` action, the
+"""Julia wave 5 -- Visitas (contract section 7): slot computation, the `pedido_visita` action, the
 state machine + routes, CPF never in clear, strict `== 401`.
 
 Seams: mock DB, seed `FakeWahaClient`, hooks via `registrar_hook` -- nothing of ours is patched.
@@ -15,14 +15,14 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.clients.agents import LaisAction, TurnResult
-from app.services import lais_acoes_service as acoes
-from app.services import lais_contatos_service as contatos
-from app.services import lais_visitas_service as svc
+from app.clients.agents import JuliaAction, TurnResult
+from app.services import julia_acoes_service as acoes
+from app.services import julia_contatos_service as contatos
+from app.services import julia_visitas_service as svc
 
-from tests.support.lais_world import CONNECTION_ID, ENCRYPTION_KEY, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
+from tests.support.julia_world import CONNECTION_ID, ENCRYPTION_KEY, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
 
-BASE = "/api/lais/visitas"
+BASE = "/api/julia/visitas"
 H = {"Authorization": "Bearer test-token"}
 CPF = "52998224725"
 GRADE_TODA_SEMANA = {d: [{"inicio": "09:00", "fim": "17:00"}] for d in svc.DIAS}
@@ -39,7 +39,7 @@ def _perfil(**over):
 class TestSlots:
     def test_grade_per_weekday_30_min_slots(self):
         w = World()
-        w.sw.set_table_data("lais_visitas", [])
+        w.sw.set_table_data("julia_visitas", [])
         perfil = _perfil(grade={"seg": [{"inicio": "09:00", "fim": "10:30"}], "ter": [{"inicio": "14:00", "fim": "15:00"}]}, max_dias=2)
         slots = svc.slots_livres(w.sw, ORG_ID, perfil, agora=SEG)
         horas = [(svc._dt(s["inicio"]).astimezone(svc.TZ).strftime("%a %H:%M")) for s in slots]
@@ -48,14 +48,14 @@ class TestSlots:
 
     def test_minimum_window_cuts_the_start(self):
         w = World()
-        w.sw.set_table_data("lais_visitas", [])
+        w.sw.set_table_data("julia_visitas", [])
         perfil = _perfil(grade={"seg": [{"inicio": "09:00", "fim": "11:00"}]}, min_horas=2, max_dias=1)
         slots = svc.slots_livres(w.sw, ORG_ID, perfil, agora=SEG)  # 08:00 + 2h => from 10:00
         assert [svc._dt(s["inicio"]).astimezone(svc.TZ).strftime("%H:%M") for s in slots] == ["10:00", "10:30"]
 
     def test_maximum_window_cuts_the_end(self):
         w = World()
-        w.sw.set_table_data("lais_visitas", [])
+        w.sw.set_table_data("julia_visitas", [])
         perfil = _perfil(grade=GRADE_TODA_SEMANA, max_dias=1)
         slots = svc.slots_livres(w.sw, ORG_ID, perfil, agora=SEG)
         assert slots and max(svc._dt(s["fim"]) for s in slots) <= SEG + timedelta(days=1)
@@ -63,7 +63,7 @@ class TestSlots:
     def test_a_booked_visit_is_not_offered_again_but_a_cancelled_one_is(self):
         w = World()
         ini = SEG.replace(hour=9)
-        w.sw.set_table_data("lais_visitas", [
+        w.sw.set_table_data("julia_visitas", [
             {"id": str(uuid4()), "org_id": ORG_ID, "inicio": ini.isoformat(), "fim": (ini + timedelta(minutes=30)).isoformat(), "status": "confirmada"},
             {"id": str(uuid4()), "org_id": ORG_ID, "inicio": (ini + timedelta(minutes=30)).isoformat(),
              "fim": (ini + timedelta(hours=1)).isoformat(), "status": "cancelada"},
@@ -75,7 +75,7 @@ class TestSlots:
     def test_another_orgs_visit_does_not_block(self):
         w = World()
         ini = SEG.replace(hour=9)
-        w.sw.set_table_data("lais_visitas", [
+        w.sw.set_table_data("julia_visitas", [
             {"id": str(uuid4()), "org_id": OTHER_ORG_ID, "inicio": ini.isoformat(), "fim": (ini + timedelta(minutes=30)).isoformat(), "status": "confirmada"}])
         perfil = _perfil(grade={"seg": [{"inicio": "09:00", "fim": "09:30"}]}, max_dias=1)
         assert len(svc.slots_livres(w.sw, ORG_ID, perfil, agora=SEG)) == 1
@@ -98,12 +98,12 @@ class TestSlots:
 
     def test_per_operation_grade(self):
         w = World()
-        w.sw.set_table_data("lais_visitas", [])
+        w.sw.set_table_data("julia_visitas", [])
         cfg = {"separar_operacao": True, "config": {
             "compra": _perfil(grade={"seg": [{"inicio": "09:00", "fim": "09:30"}]}, max_dias=1),
             "aluguel": _perfil(grade={"seg": [{"inicio": "15:00", "fim": "15:30"}]}, max_dias=1),
         }}
-        w.sw.set_table_data("lais_visitas_config", [{"org_id": ORG_ID, **cfg}])
+        w.sw.set_table_data("julia_visitas_config", [{"org_id": ORG_ID, **cfg}])
         compra = svc.horarios_para_ferramenta(w.sw, ORG_ID, 7, "compra", agora=SEG)
         aluguel = svc.horarios_para_ferramenta(w.sw, ORG_ID, 7, "aluguel", agora=SEG)
         assert svc._dt(compra[0]["inicio"]).astimezone(svc.TZ).hour == 9
@@ -114,10 +114,10 @@ class TestSlots:
 # ── the `pedido_visita` action ──────────────────────────────────────────────
 def _mundo(*, perfil=None, lead=False):
     w = World()
-    w.sw.set_table_data("lais_visitas", [])
+    w.sw.set_table_data("julia_visitas", [])
     w.sw.set_table_data("atendimento_agendamentos", [])
     w.sw.set_table_data("atendimentos", [])
-    w.sw.set_table_data("lais_visitas_config", [{"org_id": ORG_ID, "separar_operacao": False, "config": {"geral": perfil or _perfil()}}])
+    w.sw.set_table_data("julia_visitas_config", [{"org_id": ORG_ID, "separar_operacao": False, "config": {"geral": perfil or _perfil()}}])
     w.seed_connection()
     contato = contatos.obter_ou_criar_contato(w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, telefone_e164="+5511988887777")
     if lead:
@@ -134,13 +134,13 @@ def _primeiro_slot(w):
 
 
 def _pedir(w, contato, payload, *, seq=1, lote="lote-1"):
-    res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(LaisAction("pedido_visita", seq, payload),))
+    res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction("pedido_visita", seq, payload),))
     return asyncio.run(acoes.aplicar(w.sw, org_id=ORG_ID, contato=contato, result=res, lote_hash=lote))
 
 
 class TestPedidoVisita:
     def test_the_handler_is_registered(self):
-        from app.routers import lais_visitas_router  # noqa: F401  (import binds the handler)
+        from app.routers import julia_visitas_router  # noqa: F401  (import binds the handler)
 
         assert acoes.HANDLERS["pedido_visita"] is svc._h_pedido_visita
 
@@ -155,9 +155,9 @@ class TestPedidoVisita:
         finally:
             svc.registrar_hook("on_visita_solicitada", anterior)
         assert r["estado"] == "aplicada"
-        (v,) = w.rows("lais_visitas")
+        (v,) = w.rows("julia_visitas")
         assert v["status"] == "solicitada" and v["codigo_imovel"] == "CA1" and v.get("agendamento_id") is None
-        assert [e["tipo"] for e in w.rows("lais_eventos")] == ["pre_agendamento_visita"]
+        assert [e["tipo"] for e in w.rows("julia_eventos")] == ["pre_agendamento_visita"]
         assert visto == [(ORG_ID, contato["id"], "solicitada")]
 
     def test_a_failing_hook_never_loses_the_visit(self):
@@ -168,7 +168,7 @@ class TestPedidoVisita:
             _pedir(w, contato, {"inicio": _primeiro_slot(w)["inicio"]})
         finally:
             svc.registrar_hook("on_visita_solicitada", anterior)
-        assert len(w.rows("lais_visitas")) == 1
+        assert len(w.rows("julia_visitas")) == 1
 
     @pytest.mark.parametrize("payload,erro", [
         ({"inicio": "2020-01-01T10:00:00-03:00"}, "horario_indisponivel"),   # past
@@ -178,46 +178,46 @@ class TestPedidoVisita:
     def test_invalid_slots_are_refused(self, payload, erro):
         w, contato = _mundo()
         _pedir(w, contato, payload)
-        assert w.rows("lais_visitas") == []
-        assert w.rows("lais_acoes_aplicadas")[0]["resultado"] == {"erro": erro}
+        assert w.rows("julia_visitas") == []
+        assert w.rows("julia_acoes_aplicadas")[0]["resultado"] == {"erro": erro}
 
     def test_a_slot_off_the_30_min_grid_or_outside_the_grade_is_refused(self):
         w, contato = _mundo(perfil=_perfil(grade={d: [{"inicio": "09:00", "fim": "09:30"}] for d in svc.DIAS}))
         slot = svc._dt(svc.slots_livres(w.sw, ORG_ID, _perfil(grade={d: [{"inicio": "09:00", "fim": "09:30"}] for d in svc.DIAS}))[0]["inicio"])
         _pedir(w, contato, {"inicio": (slot + timedelta(minutes=10)).isoformat()}, lote="a")
         _pedir(w, contato, {"inicio": (slot + timedelta(hours=2)).isoformat()}, lote="b", seq=1)
-        assert w.rows("lais_visitas") == []
+        assert w.rows("julia_visitas") == []
 
     def test_double_booking_the_same_slot_is_refused(self):
         w, contato = _mundo()
         inicio = _primeiro_slot(w)["inicio"]
         _pedir(w, contato, {"inicio": inicio}, lote="a")
         _pedir(w, contato, {"inicio": inicio}, lote="b")
-        assert len(w.rows("lais_visitas")) == 1
+        assert len(w.rows("julia_visitas")) == 1
 
     def test_disabled_visits_are_refused(self):
         w, contato = _mundo(perfil=_perfil(ativo=False))
         _pedir(w, contato, {"inicio": _primeiro_slot(w)["inicio"]})
-        assert w.rows("lais_visitas") == []
+        assert w.rows("julia_visitas") == []
 
     def test_cpf_required_when_the_switch_is_on(self):
         w, contato = _mundo(perfil=_perfil(cpf_obrigatorio=True))
         inicio = _primeiro_slot(w)["inicio"]
         _pedir(w, contato, {"inicio": inicio}, lote="a")
         _pedir(w, contato, {"inicio": inicio, "cpf": "123"}, lote="b")
-        assert w.rows("lais_visitas") == []
+        assert w.rows("julia_visitas") == []
         _pedir(w, contato, {"inicio": inicio, "cpf": CPF}, lote="c")
-        assert len(w.rows("lais_visitas")) == 1
+        assert len(w.rows("julia_visitas")) == 1
 
     def test_cpf_is_never_stored_in_clear_anywhere(self):
         w, contato = _mundo(perfil=_perfil(cpf_obrigatorio=True))
         _pedir(w, contato, {"inicio": _primeiro_slot(w)["inicio"], "cpf": "529.982.247-25"})
-        (v,) = w.rows("lais_visitas")
+        (v,) = w.rows("julia_visitas")
         assert v["cpf_final"] == "725" and len(v["cpf_hash"]) == 64 and CPF not in v["cpf_hash"]
-        for tabela in ("lais_visitas", "lais_acoes_aplicadas", "lais_eventos", "lais_contatos"):
+        for tabela in ("julia_visitas", "julia_acoes_aplicadas", "julia_eventos", "julia_contatos"):
             blob = json.dumps(w.rows(tabela), default=str)
             assert CPF not in blob and "529.982.247-25" not in blob, tabela
-        assert "cpf" not in w.rows("lais_acoes_aplicadas")[0]["payload"]
+        assert "cpf" not in w.rows("julia_acoes_aplicadas")[0]["payload"]
         assert "cpf_hash" not in svc.saida(v)  # nor in the API shape
 
     def test_replaying_the_same_batch_books_once(self):
@@ -225,7 +225,7 @@ class TestPedidoVisita:
         inicio = _primeiro_slot(w)["inicio"]
         _pedir(w, contato, {"inicio": inicio})
         (r,) = _pedir(w, contato, {"inicio": inicio})
-        assert r["estado"] == "repetida" and len(w.rows("lais_visitas")) == 1
+        assert r["estado"] == "repetida" and len(w.rows("julia_visitas")) == 1
 
 
 # ── routes ──────────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ class Scene:
     def pedir(self, **payload):
         inicio = payload.pop("inicio", None) or _primeiro_slot(self.w)["inicio"]
         _pedir(self.w, self.contato, {"inicio": inicio, **payload}, lote=str(uuid4()))
-        return self.w.rows("lais_visitas")[-1]
+        return self.w.rows("julia_visitas")[-1]
 
 
 def _scene(override_settings_factory, *, role, lead=False):
@@ -325,7 +325,7 @@ class TestAuth:
 class TestConfigRoutes:
     def test_default_then_roundtrip(self, admin):
         d = admin.w.sw
-        d.set_table_data("lais_visitas_config", [])
+        d.set_table_data("julia_visitas_config", [])
         pad = admin.get(f"{BASE}/config").json()["data"]
         assert pad["separar_operacao"] is False and pad["config"]["geral"]["grade"]["sab"] == [{"inicio": "09:00", "fim": "18:00"}]
         corpo = {"separar_operacao": False, "config": {"geral": _perfil(cpf_obrigatorio=True)}}
@@ -360,7 +360,7 @@ class TestList:
 
     def test_another_orgs_visit_is_not_listed(self, admin):
         v = admin.pedir()
-        admin.w.sw.table("lais_visitas").update({"org_id": OTHER_ORG_ID}).eq("id", v["id"]).execute()
+        admin.w.sw.table("julia_visitas").update({"org_id": OTHER_ORG_ID}).eq("id", v["id"]).execute()
         dia = svc._dt(v["inicio"]).astimezone(svc.TZ).date().isoformat()
         assert admin.get(f"{BASE}?view=semana&data={dia}").json()["data"] == []
 
@@ -423,7 +423,7 @@ class TestTransitions:
         assert r.status_code == 200 and r.json()["data"]["status"] == "cancelada"
         (ag,) = s.w.rows("atendimento_agendamentos")
         assert ag["deleted_at"]
-        assert s.w.rows("lais_visitas")[0]["motivo_cancelamento"] == "lead desistiu"
+        assert s.w.rows("julia_visitas")[0]["motivo_cancelamento"] == "lead desistiu"
         assert any("cancelada" in t for t in s.w.sent_texts())
 
     @pytest.mark.parametrize("antes,acao", [
@@ -449,7 +449,7 @@ class TestTransitions:
     def test_unknown_visit_and_other_org_are_404(self, admin):
         assert admin.post(f"{BASE}/{uuid4()}/confirmar").status_code == 404
         v = admin.pedir()
-        admin.w.sw.table("lais_visitas").update({"org_id": OTHER_ORG_ID}).eq("id", v["id"]).execute()
+        admin.w.sw.table("julia_visitas").update({"org_id": OTHER_ORG_ID}).eq("id", v["id"]).execute()
         assert admin.post(f"{BASE}/{v['id']}/confirmar").status_code == 404
 
     def test_a_message_that_cannot_leave_does_not_undo_the_state_change(self, admin):
@@ -465,10 +465,10 @@ class TestTransitions:
 
 class TestFerramentaHorariosVisita:
     def test_the_tool_serves_slots_from_the_config(self):
-        from app.services.lais_ferramentas_service import FERRAMENTAS
+        from app.services.julia_ferramentas_service import FERRAMENTAS
 
         w, _ = _mundo()
         slots = FERRAMENTAS["horarios_visita"](w.sw, ORG_ID, {"dias": 3})
         assert slots and set(slots[0]) == {"inicio", "fim"}
-        w.sw.set_table_data("lais_visitas_config", [{"org_id": ORG_ID, "separar_operacao": False, "config": {"geral": _perfil(ativo=False)}}])
+        w.sw.set_table_data("julia_visitas_config", [{"org_id": ORG_ID, "separar_operacao": False, "config": {"geral": _perfil(ativo=False)}}])
         assert FERRAMENTAS["horarios_visita"](w.sw, ORG_ID, {"dias": 3}) == []

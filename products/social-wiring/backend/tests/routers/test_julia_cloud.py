@@ -1,4 +1,4 @@
-"""Lais wave 12 (contract 14 / A6 / 17): the transport seam, Modelos, Disparos, Atualizacao de imoveis.
+"""Julia wave 12 (contract 14 / A6 / 17): the transport seam, Modelos, Disparos, Atualizacao de imoveis.
 
 Seams only: the mock DB, the seed `FakeWahaClient` / `FakeMetaCloudClient` behind the real transport factory,
 the router's own DI seams -- nothing of ours is patched. The load-bearing assertions: WAHA NEVER mass-sends,
@@ -16,14 +16,14 @@ from fastapi.testclient import TestClient
 from noctusai_lib.integrations.whatsapp import FakeMetaCloudClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.services import lais_conhecimento_service as conhecimento
-from app.services import lais_disparos_service as disparos
-from app.services import lais_envio_gate
-from app.services import lais_modelos_service as modelos
-from app.services import lais_proprietarios_service as proprietarios
-from app.services import lais_reengajamento_service as reeng
-from app.services import lais_transporte as tr
-from tests.support.lais_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from app.services import julia_conhecimento_service as conhecimento
+from app.services import julia_disparos_service as disparos
+from app.services import julia_envio_gate
+from app.services import julia_modelos_service as modelos
+from app.services import julia_proprietarios_service as proprietarios
+from app.services import julia_reengajamento_service as reeng
+from app.services import julia_transporte as tr
+from tests.support.julia_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 H = {"Authorization": "Bearer test-token"}
 NOW = datetime.now(timezone.utc)
@@ -36,7 +36,7 @@ class Scene:
 
     def call(self, method, url, body=None, headers=H):
         kw = {"json": body} if body is not None else {}
-        return getattr(self.tc, method)(f"/api/lais{url}", headers=headers, **kw)
+        return getattr(self.tc, method)(f"/api/julia{url}", headers=headers, **kw)
 
     def cloud(self, **over):
         """Turn the seeded connection into a configured Cloud one (the encrypted key holds the Meta token)."""
@@ -48,12 +48,12 @@ class Scene:
 
     def modelo(self, aprovado=True, **over):
         body = {"nome": f"Modelo {uuid4().hex[:6]}", "categoria": "campanha",
-                "conteudo": "Oi {{nome_pessoa}}, aqui é a {{nome_lais}} da {{nome_imobiliaria}}.", **over}
+                "conteudo": "Oi {{nome_pessoa}}, aqui é a {{nome_julia}} da {{nome_imobiliaria}}.", **over}
         r = self.call("post", "/modelos", body)
         assert r.status_code == 201, r.text
         m = r.json()["data"]
         if aprovado:
-            self.w.sw.table("lais_modelos").update({"status": "aprovado"}).eq("id", m["id"]).execute()
+            self.w.sw.table("julia_modelos").update({"status": "aprovado"}).eq("id", m["id"]).execute()
         return m
 
     def contatos(self, silenciosos=2, ativos=18):
@@ -66,15 +66,15 @@ class Scene:
                 "ultimo_inbound_at": (NOW - timedelta(days=dias)).isoformat(), "encerrado_at": None,
                 "canal": "whatsapp", "created_at": NOW.isoformat(), "updated_at": NOW.isoformat(),
             })
-        self.w.sw.set_table_data("lais_contatos", rows)
+        self.w.sw.set_table_data("julia_contatos", rows)
         return rows
 
 
 def _scene(role="owner"):
     world = World()
     world.seed_connection()
-    for t in ("lais_modelos", "lais_disparos", "lais_disparo_alvos", "lais_proprietarios_contatos",
-              "lais_conhecimento_secoes", "imoveis", "imoveis_catalogo"):
+    for t in ("julia_modelos", "julia_disparos", "julia_disparo_alvos", "julia_proprietarios_contatos",
+              "julia_conhecimento_secoes", "imoveis", "imoveis_catalogo"):
         world.sw.set_table_data(t, [])
     world.core.set_table_data("noctus_users", [
         {"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role}, {"id": OWNER_ID, "org_id": ORG_ID, "org_role": "owner"},
@@ -87,8 +87,8 @@ def _scene(role="owner"):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers import lais_cloud_router as r
-        from app.routers.lais_conhecimento_router import get_conhecimento_client, get_nome_agente
+        from app.routers import julia_cloud_router as r
+        from app.routers.julia_conhecimento_router import get_conhecimento_client, get_nome_agente
         from app.routers.whatsapp_connections_router import get_connection_store
         from app.services.imoveis_service import build_imoveis_service
         from app.services.whatsapp_connection_store import build_whatsapp_connection_store
@@ -213,9 +213,9 @@ class TestCloudStatus:
 
     def test_conhecimento_perfil_name_follows_the_agent_status(self, admin):
         corpo = {"nome_exibicao": "Outro", "descricao": "d", "sobre": "s", "endereco": "", "email": "", "site": ""}
-        r = admin.tc.put("/api/lais/conhecimento/perfil_whatsapp", headers=H, json={"dados": corpo, "versao": 0})
+        r = admin.tc.put("/api/julia/conhecimento/perfil_whatsapp", headers=H, json={"dados": corpo, "versao": 0})
         assert r.status_code == 200 and r.json()["data"]["dados"]["nome_exibicao"] == "Aurora"
-        got = admin.tc.get("/api/lais/conhecimento", headers=H).json()["data"]["secoes"]["perfil_whatsapp"]["dados"]
+        got = admin.tc.get("/api/julia/conhecimento", headers=H).json()["data"]["secoes"]["perfil_whatsapp"]["dados"]
         assert got["nome_exibicao"] == "Aurora"
 
 
@@ -223,7 +223,7 @@ class TestCloudStatus:
 class TestModelos:
     def test_create_list_preview_delete(self, admin):
         m = admin.modelo(aprovado=False)
-        assert m["status"] == "rascunho" and m["parametros"] == ["nome_pessoa", "nome_lais", "nome_imobiliaria"]
+        assert m["status"] == "rascunho" and m["parametros"] == ["nome_pessoa", "nome_julia", "nome_imobiliaria"]
         assert m["conteudo"] == m["corpo"]
         listing = admin.call("get", "/modelos").json()
         assert [x["id"] for x in listing["data"]] == [m["id"]] and len(listing["meta"]["catalogo"]["parametros"]) == 10
@@ -264,7 +264,7 @@ class TestModelos:
 
     def test_org_isolation(self, admin):
         m = admin.modelo()
-        admin.w.sw.table("lais_modelos").update({"org_id": OTHER_ORG_ID}).eq("id", m["id"]).execute()
+        admin.w.sw.table("julia_modelos").update({"org_id": OTHER_ORG_ID}).eq("id", m["id"]).execute()
         assert admin.call("get", f"/modelos/{m['id']}").status_code == 404
         assert admin.call("get", "/modelos").json()["data"] == []
 
@@ -366,7 +366,7 @@ class TestDisparos:
         rows = admin.contatos()
         tel = "".join(c for c in rows[0]["telefone_e164"] if c.isdigit())
         for i in range(disparos.MAX_TEMPLATES_POR_CONTATO):
-            admin.w.sw.table("lais_disparo_alvos").insert({
+            admin.w.sw.table("julia_disparo_alvos").insert({
                 "id": str(uuid4()), "org_id": ORG_ID, "disparo_id": str(uuid4()), "telefone": tel, "status": "enviado",
                 "enviado_at": (NOW - timedelta(days=i + 1)).isoformat()}).execute()
         d = self._disparo(admin)
@@ -397,7 +397,7 @@ class TestDisparos:
         assert admin.w.waha.sent_messages == []
         admin.cloud()
         assert admin.call("post", "/disparos/primeiro-contato", body).json()["data"] == {"enviado": False, "motivo": "modelo_nao_aprovado"}
-        admin.modelo(nome="Abordagem comercial", categoria="primeiro_contato", conteudo="Oi {{nome_pessoa}}, é a {{nome_lais}}.")
+        admin.modelo(nome="Abordagem comercial", categoria="primeiro_contato", conteudo="Oi {{nome_pessoa}}, é a {{nome_julia}}.")
         r = admin.call("post", "/disparos/primeiro-contato", body)
         assert r.json()["data"]["enviado"] is True
         assert admin.meta.sent_templates[0]["phone"] == "5511988887777" and admin.meta.sent_templates[0]["body_params"] == ["Ana", "Aurora"]
@@ -465,7 +465,7 @@ class TestProprietarios:
         r = admin.call("post", f"/disparos/{d['id']}/enviar")
         assert r.status_code == 200 and admin.meta.sent_templates == []
 
-    def test_confirm_is_stored_lais_side_only_after_a_reply_and_never_writes_the_vista_mirror(self, admin):
+    def test_confirm_is_stored_julia_side_only_after_a_reply_and_never_writes_the_vista_mirror(self, admin):
         admin.cloud()
         admin.modelo(categoria="administrativo", conteudo="Olá {{nome_pessoa}}")
         admin.w.sw.table("imoveis").insert({
@@ -502,8 +502,8 @@ class TestReguaTemplate:
         contato = admin.contatos(silenciosos=1, ativos=0)[0]
         deps = admin.w.deps(cloud_client_factory=lambda **kw: admin.meta)
         conn = admin.w.record(__import__("uuid").UUID(CONNECTION_ID))
-        regua = admin.w.sw.table(lais_envio_gate.T_REGUAS).insert({"org_id": ORG_ID, "nome": "R", "ativa": True}).execute().data[0]
-        liberacao = lais_envio_gate.exigir(admin.w.sw, ORG_ID, CONNECTION_ID, lais_envio_gate.Fluxo.REGUA, regua_id=regua["id"])
+        regua = admin.w.sw.table(julia_envio_gate.T_REGUAS).insert({"org_id": ORG_ID, "nome": "R", "ativa": True}).execute().data[0]
+        liberacao = julia_envio_gate.exigir(admin.w.sw, ORG_ID, CONNECTION_ID, julia_envio_gate.Fluxo.REGUA, regua_id=regua["id"])
         ok = asyncio.run(reeng._enviar_template(deps, ORG_ID, conn, contato, {"template_id": m["id"]}, liberacao))
         return ok
 
@@ -525,10 +525,10 @@ class TestReguaTemplate:
 
 # ── pure bits ───────────────────────────────────────────────────────────────
 def test_positional_conversion_and_registry():
-    corpo, chaves = modelos.corpo_posicional("{{nome_lais}} e {{nome_pessoa}} e {{nome_lais}}")
-    assert corpo == "{{1}} e {{2}} e {{1}}" and chaves == ["nome_lais", "nome_pessoa"]
+    corpo, chaves = modelos.corpo_posicional("{{nome_julia}} e {{nome_pessoa}} e {{nome_julia}}")
+    assert corpo == "{{1}} e {{2}} e {{1}}" and chaves == ["nome_julia", "nome_pessoa"]
     assert set(modelos.PARAMETROS) == {
-        "nome_pessoa", "nome_lais", "nome_imobiliaria", "mensagem", "data_visita", "codigo_imovel", "link_imovel",
+        "nome_pessoa", "nome_julia", "nome_imobiliaria", "mensagem", "data_visita", "codigo_imovel", "link_imovel",
         "nome_atendente", "imovel_visita", "data_hora_visita"}
     assert list(modelos.CATEGORIAS) == [
         "administrativo", "campanha", "cobranca", "documentacao", "primeiro_contato", "reativacao", "visita", "outros"]

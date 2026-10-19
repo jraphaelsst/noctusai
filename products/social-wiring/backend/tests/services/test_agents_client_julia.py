@@ -1,4 +1,4 @@
-"""`AgentsClient` Lais extension (lais-build-contract 2.1 a/d/e/f, client side): the `contexto`
+"""`AgentsClient` Julia extension (lais-build-contract 2.1 a/d/e/f, client side): the `contexto`
 in the turn request, the action shapes of the response, `/resumo`, and the tools-token push.
 
 `HttpAgentsClient` is driven through an `httpx.MockTransport` (the HTTP seam is the external
@@ -18,7 +18,7 @@ from app.clients.agents import (
     FakeAgentsClient,
     HandoffAction,
     HttpAgentsClient,
-    LaisAction,
+    JuliaAction,
     ResumoRequest,
     ResumoResult,
     TurnMessage,
@@ -36,7 +36,7 @@ def _client(handler) -> HttpAgentsClient:
 
 def _req(contexto=None) -> TurnRequest:
     return TurnRequest(
-        agent_key="lead-imob", connection_id="c1", chat_id="5511900000000@c.us", contexto=contexto,
+        agent_key="julia", connection_id="c1", chat_id="5511900000000@c.us", contexto=contexto,
         messages=(TurnMessage(texto="oi", provider_message_id="m1", at=AT),),
     )
 
@@ -61,7 +61,7 @@ class TestTurn:
         assert "contexto" not in seen[0]
         assert seen[1]["contexto"] == {"hash": "a" * 64}
 
-    async def test_lais_actions_are_parsed_with_seq_and_payload_and_handoff_stays_a_handoff(self):
+    async def test_julia_actions_are_parsed_with_seq_and_payload_and_handoff_stays_a_handoff(self):
         actions = [
             {"type": "salvar_slots", "seq": 2, "slots": {"bairro": "Granja"}},
             {"type": "handoff", "motivo": "quer humano"},
@@ -71,7 +71,7 @@ class TestTurn:
         assert result.status == "encerrado"
         assert isinstance(result.handoff, HandoffAction) and result.handoff.motivo == "quer humano"
         # ordered by seq, payload = the object minus type/seq
-        assert [(a.type, a.seq, a.payload) for a in result.lais_actions] == [
+        assert [(a.type, a.seq, a.payload) for a in result.julia_actions] == [
             ("encerrar", 1, {"motivo": "sem_interesse"}),
             ("salvar_slots", 2, {"slots": {"bairro": "Granja"}}),
         ]
@@ -79,12 +79,12 @@ class TestTurn:
     async def test_a_malformed_action_is_skipped_with_the_rest_kept(self):
         result = await _client(lambda r: httpx.Response(200, json=_body(
             actions=["oops", {"seq": 1}, {"type": "encerrar", "seq": 1, "motivo": "outro"}]))).run_turn(_req())
-        assert [a.type for a in result.lais_actions] == ["encerrar"]
+        assert [a.type for a in result.julia_actions] == ["encerrar"]
 
     async def test_a_missing_seq_falls_back_to_arrival_order(self):
         result = await _client(lambda r: httpx.Response(200, json=_body(
             actions=[{"type": "salvar_slots", "slots": {}}, {"type": "encerrar", "motivo": "outro"}]))).run_turn(_req())
-        assert [(a.type, a.seq) for a in result.lais_actions] == [("salvar_slots", 0), ("encerrar", 1)]
+        assert [(a.type, a.seq) for a in result.julia_actions] == [("salvar_slots", 0), ("encerrar", 1)]
 
 
 @pytest.mark.asyncio
@@ -174,8 +174,8 @@ class TestFake:
 
     async def test_turn_actions_helper_orders_by_seq(self):
         r = TurnResult(conversation_id=CONV, partes=(), status="respondido",
-                       actions=(LaisAction("b", 2), HandoffAction("m"), LaisAction("a", 1)))
-        assert [a.type for a in r.lais_actions] == ["a", "b"]
+                       actions=(JuliaAction("b", 2), HandoffAction("m"), JuliaAction("a", 1)))
+        assert [a.type for a in r.julia_actions] == ["a", "b"]
 
 
 # ── uso (Painel "Consumo do plano") ─────────────────────────────────────────

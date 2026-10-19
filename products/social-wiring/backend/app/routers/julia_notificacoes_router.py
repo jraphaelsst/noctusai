@@ -1,9 +1,9 @@
-"""Lais > Notificações (wave 6, contract 8).
+"""Julia > Notificações (wave 6, contract 8).
 
-  GET  /api/lais/notificacoes?tipo&operacao&de&ate&page[&page_size]  -> {data:{items,total,nao_lidas}}
-  POST /api/lais/notificacoes/lidas {ids | todas}                    -> 204
-  GET  /api/lais/notificacoes/preferencias                           -> {data:{tipos:[{tipo,in_app}], lead_pronto}}
-  PUT  /api/lais/notificacoes/preferencias {tipos:{<tipo>: bool}}    -> same shape
+  GET  /api/julia/notificacoes?tipo&operacao&de&ate&page[&page_size]  -> {data:{items,total,nao_lidas}}
+  POST /api/julia/notificacoes/lidas {ids | todas}                    -> 204
+  GET  /api/julia/notificacoes/preferencias                           -> {data:{tipos:[{tipo,in_app}], lead_pronto}}
+  PUT  /api/julia/notificacoes/preferencias {tipos:{<tipo>: bool}}    -> same shape
 
 Every route is the caller's OWN notifications / preferences (any org member), scoped by org.
 """
@@ -19,11 +19,11 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_notificacoes_service as svc
+from app.services import julia_notificacoes_service as svc
 
-router = APIRouter(prefix="/api/lais/notificacoes", tags=["lais-notificacoes"])
+router = APIRouter(prefix="/api/julia/notificacoes", tags=["julia-notificacoes"])
 
-svc.registrar()  # binds the lais_eventos -> in-app fan-out sink
+svc.registrar()  # binds the julia_eventos -> in-app fan-out sink
 
 
 def get_notificacoes_client() -> Any:

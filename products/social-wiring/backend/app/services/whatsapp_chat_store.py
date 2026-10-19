@@ -81,7 +81,7 @@ class ChatSummary:
     last_read_at: str | None
     archived: bool
     pinned: bool
-    # Julia (lais contract 11.4): True while a human has taken the chat over.
+    # Julia (julia contract 11.4): True while a human has taken the chat over.
     agente_pausado: bool = False
 
     @classmethod
@@ -327,7 +327,7 @@ class WhatsAppChatStore:
             "chat_id", chat_id
         ).execute()
 
-    # ── Julia (Lais lead agent) state — migration 258 ──────────────────────
+    # ── Julia (lead agent) state — migration 258 ──────────────────────
     # Kept OUT of ChatSummary / the list SELECTs on purpose: those carry the
     # inbox wire contract and run against fixtures that predate the columns.
 

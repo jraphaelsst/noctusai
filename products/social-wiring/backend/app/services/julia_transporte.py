@@ -1,4 +1,4 @@
-"""Lais wave 12 -- the outbound transport seam (lais-build-contract 14 / A6).
+"""Julia wave 12 -- the outbound transport seam (lais-build-contract 14 / A6).
 
 One Protocol, two implementations, one factory per connection:
 

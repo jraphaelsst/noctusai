@@ -37,7 +37,7 @@ def test_the_constant_mirrors_every_db_check_of_286():
 def test_blocks_are_ordered_and_sdr_owns_no_pipeline():
     assert [b.ordem for b in BLOCOS] == list(range(1, 7))
     assert NOMES_BLOCOS[0] == "sdr" and BLOCOS[0].pipeline is None and ETAPAS_PADRAO["sdr"] == ()
-    assert BLOCOS[0].agent_key_padrao == "lead-imob"  # Julia = studio key lead-imob, never `julia`
+    assert BLOCOS[0].agent_key_padrao == "julia"  # Julia = studio key julia (formerly lead-imob)
     assert all(b.agent_key_padrao is None for b in BLOCOS[1:])
 
 

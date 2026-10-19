@@ -1,8 +1,8 @@
-"""Lais notifications (wave 6, contract 8).
+"""Julia notifications (wave 6, contract 8).
 
-Fan-out: every `lais_eventos` row of a notifiable type becomes one in-app notification per recipient
-(`noctusai_lib.domain.notifications.write_in_app`, kind `lais_<tipo>`, in core's `public.notifications`)
-unless that user switched the type off. It rides the `lais_eventos_service.registrar_sink` seam, so no
+Fan-out: every `julia_eventos` row of a notifiable type becomes one in-app notification per recipient
+(`noctusai_lib.domain.notifications.write_in_app`, kind `julia_<tipo>`, in core's `public.notifications`)
+unless that user switched the type off. It rides the `julia_eventos_service.registrar_sink` seam, so no
 emitting caller changes.
 
 Recipients (same target rule as the page-0 handoff, 11.4): the contato's `responsavel_user_id`, else the
@@ -13,7 +13,7 @@ Exception (maya-blocks CONTRACT §3.4, owner decision): a `relatorio` whose `pay
 (Maya's daily supervision report) goes to the org's OWNERS ONLY -- never admins -- and links to
 `/supervisao?dia=...`.
 
-`handoff` is NOT fanned out here: `lais_agente_service.notificar_handoff` already writes it (with the
+`handoff` is NOT fanned out here: `julia_agente_service.notificar_handoff` already writes it (with the
 configured target + link) and nothing emits a `handoff` event, so it can never double-fire; the sink also
 skips it explicitly so a future emitter cannot.
 
@@ -32,12 +32,12 @@ from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_eventos_service as eventos
+from app.services import julia_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
 
-T_PREFS = "lais_notificacao_prefs"
-KIND_PREFIX = "lais_"
+T_PREFS = "julia_notificacao_prefs"
+KIND_PREFIX = "julia_"
 #: Header toggle "Notificar lead pronto para atendimento": gates `novo_atendimento` (a lead ready to be attended).
 LEAD_PRONTO = "lead_pronto"
 GATE_POR_TIPO = {"novo_atendimento": LEAD_PRONTO}
@@ -49,7 +49,7 @@ PAGE_SIZE_MAX = 100
 TITULOS = {
     "pre_agendamento_visita": "Solicitação de pré-agendamento de visita",
     "cobranca_atendimento": "Cobrança de atendimento",
-    "relatorio": "Relatórios da Lais",
+    "relatorio": "Relatórios da Julia",
     "remarketing": "Remarketing",
     "captacao": "Captação",
     "atualizacao_base_imoveis": "Atualização de base de imóveis",
@@ -62,7 +62,7 @@ TITULOS = {
 CORPOS = {
     "pre_agendamento_visita": "A Julia registrou uma solicitação de pré-agendamento de visita.",
     "cobranca_atendimento": "Um lead cobrou atendimento: ninguém respondeu a ele.",
-    "relatorio": "Há um novo relatório da Lais disponível.",
+    "relatorio": "Há um novo relatório da Julia disponível.",
     "remarketing": "Houve movimento de remarketing.",
     "captacao": "A Julia identificou uma potencial captação de imóvel.",
     "atualizacao_base_imoveis": "A base de imóveis foi atualizada.",
@@ -71,7 +71,7 @@ CORPOS = {
     "nova_mensagem": "Você recebeu uma nova mensagem.",
     "avaliacao_google": "Há uma nova avaliação no Google.",
 }
-LINKS = {"captacao": "/lais/captacao", "pre_agendamento_visita": "/lais/visitas", "relatorio": "/lais/relatorios"}
+LINKS = {"captacao": "/julia/captacao", "pre_agendamento_visita": "/julia/visitas", "relatorio": "/julia/relatorios"}
 #: Maya's supervision report (`relatorio` + `payload.origem`): owners only, its own copy + link.
 ORIGEM_SUPERVISAO = "supervisao"
 TITULO_SUPERVISAO = "Relatório da supervisão (Maya)"
@@ -123,7 +123,7 @@ def resolver_destinatarios(client: Any, core: Any, org_id: Any, contato_id: Any 
     """responsável -> connection owner -> org owners/admins (first non-empty tier wins)."""
     contato: dict[str, Any] = {}
     if contato_id:
-        rows = (client.table("lais_contatos").select("*").eq("id", str(contato_id)).eq("org_id", str(org_id))
+        rows = (client.table("julia_contatos").select("*").eq("id", str(contato_id)).eq("org_id", str(org_id))
                 .limit(1).execute().data or [])
         contato = rows[0] if rows else {}
     ativos = _membros_da_org(core, org_id, [contato.get("responsavel_user_id")])
@@ -198,19 +198,19 @@ def notificar(client: Any, evento: dict[str, Any], core: Any = None) -> int:
             core, user_ids=alvo, kind=KIND_PREFIX + tipo, title=TITULO_SUPERVISAO,
             message=f"Os scorecards da supervisão de {dia} estão prontos.",
             metadata={"link": f"/supervisao?dia={dia}", "evento_id": evento.get("id"), "contato_id": None,
-                      "operacao": None, "lais": True, "origem": ORIGEM_SUPERVISAO},
+                      "operacao": None, "julia": True, "origem": ORIGEM_SUPERVISAO},
             org_id=org_id,
         )
     operacao = payload.get("operacao")
     if not operacao and contato_id:
-        rows = client.table("lais_contatos").select("operacao").eq("id", str(contato_id)).limit(1).execute().data or []
+        rows = client.table("julia_contatos").select("operacao").eq("id", str(contato_id)).limit(1).execute().data or []
         operacao = rows[0].get("operacao") if rows else None
-    link = LINKS.get(tipo) or (f"/lais/conversas?contato={contato_id}" if contato_id else "/lais/notificacoes")
+    link = LINKS.get(tipo) or (f"/julia/conversas?contato={contato_id}" if contato_id else "/julia/notificacoes")
     return write_in_app(
         core, user_ids=alvo, kind=KIND_PREFIX + tipo, title=TITULOS[tipo],
         message=str(payload.get("texto") or CORPOS[tipo])[:500],
         metadata={"link": link, "evento_id": evento.get("id"), "contato_id": str(contato_id) if contato_id else None,
-                  "operacao": operacao, "lais": True},
+                  "operacao": operacao, "julia": True},
         org_id=org_id,
     )
 
@@ -240,7 +240,7 @@ def _minhas(core: Any, org_id: Any, user_id: Any) -> list[dict[str, Any]]:
         return (core.table("notifications").select("*").eq("user_id", str(user_id)).eq("org_id", str(org_id))
                 .order("id").range(start, end).execute().data)
 
-    rows = [r for r in iter_paged_rows(fetch, label="lais notifications")
+    rows = [r for r in iter_paged_rows(fetch, label="julia notifications")
             if str((r.get("metadata") or {}).get("tipo", "")).startswith(KIND_PREFIX)]
     rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
     return rows
@@ -274,7 +274,7 @@ def listar(core: Any, org_id: Any, user_id: Any, *, tipo: Optional[str] = None, 
 
 
 def marcar_lidas(core: Any, org_id: Any, user_id: Any, *, ids: Optional[list[UUID]] = None, todas: bool = False) -> None:
-    """Only the caller's own Lais notifications; foreign / non-Lais ids are silently not touched."""
+    """Only the caller's own Julia notifications; foreign / non-Julia ids are silently not touched."""
     minhas = [r for r in _minhas(core, org_id, user_id) if not r.get("read")]
     alvo = [str(r["id"]) for r in minhas if todas or str(r["id"]) in {str(i) for i in (ids or [])}]
     for i in range(0, len(alvo), 100):

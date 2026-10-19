@@ -1,11 +1,11 @@
-"""Lais wave 12 -- Disparos (mass sends, contract 14 / A6).
+"""Julia wave 12 -- Disparos (mass sends, contract 14 / A6).
 
-A disparo = one approved modelo + one segment, fanned out to targets (`lais_disparo_alvos`, status flow
+A disparo = one approved modelo + one segment, fanned out to targets (`julia_disparo_alvos`, status flow
 `pendente -> enviado -> respondido -> enviado_sw | erro`). Types: `remarketing` (leads 3-15 / 7-30 days
 without reply) and `atualizacao_anuncios` (owners, wave "Atualizacao de imoveis").
 
 THE RULE (A6): everything can be created / edited / scheduled / cancelled on any transport; DISPATCH goes out
-only as a Cloud-API template. `disparar` gates on `lais_transporte.cloud_configurada` FIRST and answers 409
+only as a Cloud-API template. `disparar` gates on `julia_transporte.cloud_configurada` FIRST and answers 409
 `transporte_indisponivel` otherwise -- WAHA free text is never a mass send, and `WahaTransporte` itself
 refuses a template, so there is no fallback to degrade into.
 
@@ -28,15 +28,15 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_envio_gate, lais_modelos_service, lais_transporte
-from app.services.lais_transporte import Transporte
+from app.services import julia_envio_gate, julia_modelos_service, julia_transporte
+from app.services.julia_transporte import Transporte
 
 logger = logging.getLogger(__name__)
 
-T_DISPAROS = "lais_disparos"
-T_ALVOS = "lais_disparo_alvos"
-T_CONTATOS = "lais_contatos"
-T_PROPRIETARIOS = "lais_proprietarios_contatos"
+T_DISPAROS = "julia_disparos"
+T_ALVOS = "julia_disparo_alvos"
+T_CONTATOS = "julia_contatos"
+T_PROPRIETARIOS = "julia_proprietarios_contatos"
 
 TIPOS = ("remarketing", "atualizacao_anuncios")
 #: segment -> (min days without reply, max days without reply); owners have no day window.
@@ -121,7 +121,7 @@ def calcular_alvos(db: Any, org_id: UUID | str, segmento: str, agora: Optional[d
         def page_p(start: int, end: int) -> Any:
             return db.table(T_PROPRIETARIOS).select("*").eq("org_id", str(org_id)).eq("opt_out", False).order("id").range(start, end).execute().data
 
-        for p in iter_paged_rows(page_p, id_key="id", label="lais proprietarios alvos"):
+        for p in iter_paged_rows(page_p, id_key="id", label="julia proprietarios alvos"):
             if p["telefone"] in vistos:
                 continue
             vistos.add(p["telefone"])
@@ -139,7 +139,7 @@ def calcular_alvos(db: Any, org_id: UUID | str, segmento: str, agora: Optional[d
             .gte("ultimo_inbound_at", antigo).lte("ultimo_inbound_at", recente).order("id").range(start, end).execute().data
         )
 
-    for c in iter_paged_rows(page_c, id_key="id", label="lais disparo alvos"):
+    for c in iter_paged_rows(page_c, id_key="id", label="julia disparo alvos"):
         tel = _telefone_do_contato(c)
         if not tel or tel in vistos:
             continue
@@ -149,7 +149,7 @@ def calcular_alvos(db: Any, org_id: UUID | str, segmento: str, agora: Optional[d
 
 
 def _materializar(db: Any, org_id: UUID | str, disparo: dict[str, Any], agora: datetime) -> list[dict[str, Any]]:
-    """Snapshot the segment into `lais_disparo_alvos` (once: an existing snapshot is kept)."""
+    """Snapshot the segment into `julia_disparo_alvos` (once: an existing snapshot is kept)."""
     existentes = db.table(T_ALVOS).select("*").eq("org_id", str(org_id)).eq("disparo_id", disparo["id"]).limit(1000).execute().data or []
     if existentes:
         return existentes
@@ -228,7 +228,7 @@ def criar(
     if not (1 <= len(nome.strip()) <= 80):
         raise AppException("nome_invalido", "O nome deve ter de 1 a 80 caracteres.", status_code=422)
     _validar_segmento(tipo, segmento)
-    lais_modelos_service.obter(db, org_id, modelo_id)  # 404 for a modelo of another org / unknown
+    julia_modelos_service.obter(db, org_id, modelo_id)  # 404 for a modelo of another org / unknown
     row = {
         "id": str(uuid4()), "org_id": str(org_id), "nome": nome.strip(), "tipo": tipo, "segmento": segmento,
         "modelo_id": str(modelo_id), "connection_id": str(connection_id) if connection_id else None,
@@ -236,7 +236,7 @@ def criar(
     }
     created = db.table(T_DISPAROS).insert(row).execute().data or []
     if not created:
-        raise RuntimeError("lais: disparo insert returned no row")
+        raise RuntimeError("julia: disparo insert returned no row")
     return created[0]
 
 
@@ -248,7 +248,7 @@ def atualizar(db: Any, org_id: UUID | str, disparo_id: UUID | str, patch: dict[s
     if "segmento" in campos:
         _validar_segmento(d["tipo"], campos["segmento"])
     if "modelo_id" in campos:
-        lais_modelos_service.obter(db, org_id, campos["modelo_id"])
+        julia_modelos_service.obter(db, org_id, campos["modelo_id"])
         campos["modelo_id"] = str(campos["modelo_id"])
     if "connection_id" in campos:
         campos["connection_id"] = str(campos["connection_id"])
@@ -273,7 +273,7 @@ def apagar(db: Any, org_id: UUID | str, disparo_id: UUID | str) -> None:
 
 
 def _modelo_aprovado(db: Any, org_id: UUID | str, d: dict[str, Any]) -> dict[str, Any]:
-    modelo = lais_modelos_service.obter(db, org_id, d["modelo_id"])
+    modelo = julia_modelos_service.obter(db, org_id, d["modelo_id"])
     if modelo["status"] != "aprovado":
         raise AppException("modelo_nao_aprovado", "O modelo ainda não foi aprovado pela Meta.", status_code=409)
     return modelo
@@ -314,14 +314,14 @@ def alvos(db: Any, org_id: UUID | str, disparo_id: UUID | str) -> list[dict[str,
 # ── dispatch (Cloud only) ───────────────────────────────────────────────────
 def exigir_cloud(connection: Any) -> None:
     """THE gate: 409 `transporte_indisponivel` unless the connection is a configured Cloud one."""
-    if not lais_transporte.cloud_configurada(connection):
-        raise lais_transporte.transporte_indisponivel()
+    if not julia_transporte.cloud_configurada(connection):
+        raise julia_transporte.transporte_indisponivel()
 
 
 def valores_do_alvo(alvo: dict[str, Any], nome: Optional[str], contexto: dict[str, str]) -> dict[str, str]:
     return {
         "nome_pessoa": (nome or "").strip() or "tudo bem",
-        "nome_lais": contexto.get("nome_lais") or "",
+        "nome_julia": contexto.get("nome_julia") or contexto.get("nome_lais") or "",
         "nome_imobiliaria": contexto.get("nome_imobiliaria") or "",
         "codigo_imovel": alvo.get("imovel_codigo") or "",
     }
@@ -351,7 +351,7 @@ async def disparar(
     contexto = contexto or {}
     db.table(T_DISPAROS).update({"status": "enviando", "disparado_at": agora.isoformat(), "updated_at": agora.isoformat()}).eq(
         "org_id", str(org_id)).eq("id", d["id"]).execute()
-    chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
+    chaves = julia_modelos_service.corpo_posicional(modelo["corpo"])[1]
     enviados = 0
     for alvo in pendentes:
         patch = await _enviar_um(db, org_id, d, modelo, chaves, alvo, transporte, contexto, agora)
@@ -381,13 +381,13 @@ async def _enviar_um(
     valores = valores_do_alvo(alvo, nome, contexto)
     try:
         resp = await transporte.enviar_template(
-            alvo["telefone"], lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],
-            modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
+            alvo["telefone"], julia_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],
+            modelo.get("idioma") or julia_transporte.IDIOMA_PADRAO,
         )
-    except lais_transporte.OperacaoRequerApiOficial as exc:
-        raise lais_transporte.transporte_indisponivel() from exc
+    except julia_transporte.OperacaoRequerApiOficial as exc:
+        raise julia_transporte.transporte_indisponivel() from exc
     except Exception as exc:  # one failing target must not stop the fan-out
-        logger.error("lais disparo %s: envio falhou (%s)", disparo["id"], type(exc).__name__)
+        logger.error("julia disparo %s: envio falhou (%s)", disparo["id"], type(exc).__name__)
         return {"status": "erro", "erro": type(exc).__name__}
     return {"status": "enviado", "enviado_at": agora.isoformat(), "message_id": _id_da_mensagem(resp), "erro": None}
 
@@ -403,7 +403,7 @@ async def solicitar_proprietario(
     if proprietario.get("opt_out"):
         raise AppException("proprietario_opt_out", "O proprietário pediu para não ser contatado.", status_code=409)
     if modelo_id is None:
-        aprovados = [m for m in db.table("lais_modelos").select("*").eq("org_id", str(org_id)).eq("status", "aprovado").eq(
+        aprovados = [m for m in db.table("julia_modelos").select("*").eq("org_id", str(org_id)).eq("status", "aprovado").eq(
             "categoria", "administrativo").limit(100).execute().data or []]
         if not aprovados:
             raise AppException("modelo_nao_aprovado", "Nenhum modelo aprovado para solicitar a atualização.", status_code=409)
@@ -414,7 +414,7 @@ async def solicitar_proprietario(
     alvo = {"id": str(uuid4()), "org_id": str(org_id), "disparo_id": d["id"], "contato_id": None,
             "proprietario_id": proprietario["id"], "telefone": proprietario["telefone"], "status": "pendente"}
     db.table(T_ALVOS).insert(alvo).execute()
-    chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
+    chaves = julia_modelos_service.corpo_posicional(modelo["corpo"])[1]
     patch = await _enviar_um(db, org_id, d, modelo, chaves, alvo, transporte, contexto or {}, agora)
     db.table(T_ALVOS).update(patch).eq("org_id", str(org_id)).eq("id", alvo["id"]).execute()
     db.table(T_DISPAROS).update({
@@ -449,29 +449,29 @@ async def primeiro_contato_meta(
     """Meta lead-form lead -> Julia's first contact as the approved "Abordagem comercial|neutra" template
     (category `primeiro_contato`). Cloud only: without it the hook returns `transporte_indisponivel` and the
     lead keeps flowing through the ordinary (WAHA) path -- it never degrades into a free-text mass send.
-    The outbound gate (`lais_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
+    The outbound gate (`julia_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
     first-contact modelo; a refusal returns its reason as `motivo`."""
     if abordagem not in ABORDAGENS:
         raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
     try:
-        liberacao = lais_envio_gate.exigir(
-            db, org_id, getattr(connection, "id", None), lais_envio_gate.Fluxo.PRIMEIRO_CONTATO, contato_id=contato_id,
+        liberacao = julia_envio_gate.exigir(
+            db, org_id, getattr(connection, "id", None), julia_envio_gate.Fluxo.PRIMEIRO_CONTATO, contato_id=contato_id,
         )
-    except lais_envio_gate.EnvioBloqueado as exc:
+    except julia_envio_gate.EnvioBloqueado as exc:
         return {"enviado": False, "motivo": exc.motivo}
-    if not lais_transporte.cloud_configurada(connection) or transporte is None:
+    if not julia_transporte.cloud_configurada(connection) or transporte is None:
         return {"enviado": False, "motivo": "transporte_indisponivel"}
-    modelos = db.table("lais_modelos").select("*").eq("org_id", str(org_id)).eq("categoria", "primeiro_contato").eq(
+    modelos = db.table("julia_modelos").select("*").eq("org_id", str(org_id)).eq("categoria", "primeiro_contato").eq(
         "status", "aprovado").limit(100).execute().data or []
     modelo = next((m for m in modelos if str(m["nome"]).strip().lower() == ABORDAGENS[abordagem]), None)
     if modelo is None:
         return {"enviado": False, "motivo": "modelo_nao_aprovado"}
     tel = "".join(ch for ch in telefone if ch.isdigit())
-    chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
+    chaves = julia_modelos_service.corpo_posicional(modelo["corpo"])[1]
     valores = valores_do_alvo({"imovel_codigo": None}, nome, contexto or {})
-    lais_envio_gate.conferir(liberacao, connection.id)
+    julia_envio_gate.conferir(liberacao, connection.id)
     resp = await transporte.enviar_template(
-        tel, lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves], modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
+        tel, julia_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves], modelo.get("idioma") or julia_transporte.IDIOMA_PADRAO,
     )
     return {"enviado": True, "modelo_id": modelo["id"], "message_id": _id_da_mensagem(resp)}
 

@@ -24,7 +24,7 @@ from app.modules.atendimento_blocos import service as svc
 
 router = APIRouter(prefix="/api/atendimento-blocos", tags=["atendimento-blocos"])
 
-handoffs.registrar()  # binds the `novo_lead` -> sdr handoff sink (T1) on the Lais event bus
+handoffs.registrar()  # binds the `novo_lead` -> sdr handoff sink (T1) on the Julia event bus
 
 NomeBloco = Literal["sdr", "atendimento", "negociacao", "juridico", "financeiro", "contador"]
 

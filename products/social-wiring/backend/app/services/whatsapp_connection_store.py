@@ -90,7 +90,7 @@ class WhatsAppConnectionRecord:
     # Migration 017 — optional cliente ownership.
     # None = unassigned; UUID = the client this connection belongs to.
     marca_id: Optional[UUID] = None
-    # Migration 258 — Julia (Lais lead agent). Defensive reads: an un-migrated
+    # Migration 258 — Julia (lead agent). Defensive reads: an un-migrated
     # row is "Julia off", never a crash and never "on".
     agente_leads_ativo: bool = False
     agente_leads_key: Optional[str] = None

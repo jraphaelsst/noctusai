@@ -1,8 +1,8 @@
-"""Lais > Conversas v2 (wave 7, contract section 9): the conversation list + kanban, contato mutations
+"""Julia > Conversas v2 (wave 7, contract section 9): the conversation list + kanban, contato mutations
 (responsavel / arquivar / bloquear / etiquetas), internal notes, feedback, tags and the history read.
 
 Pure table logic over the schema-scoped service client. WHO may see a contato is NEVER decided here:
-callers pass contatos through `lais_acesso` first (single) or let `listar`/`kanban` filter through it.
+callers pass contatos through `julia_acesso` first (single) or let `listar`/`kanban` filter through it.
 
 Inbound policy (`aplicar_politica_inbound`): a BLOCKED number is dropped (Julia never answers it);
 an ARCHIVED contato is handed back to Julia on its next inbound (un-archived + un-paused).
@@ -18,15 +18,15 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso, lais_contatos_service, lais_conhecimento_service, lais_credito_service, lais_visitas_service
-from app.services.lais_acesso import AcessoCtx
+from app.services import julia_acesso, julia_contatos_service, julia_conhecimento_service, julia_credito_service, julia_visitas_service
+from app.services.julia_acesso import AcessoCtx
 
 logger = logging.getLogger(__name__)
 
-T_ETIQUETAS = "lais_etiquetas"
-T_CONTATO_ETIQUETAS = "lais_contato_etiquetas"
-T_NOTAS = "lais_notas"
-T_FEEDBACK = "lais_feedback"
+T_ETIQUETAS = "julia_etiquetas"
+T_CONTATO_ETIQUETAS = "julia_contato_etiquetas"
+T_NOTAS = "julia_notas"
+T_FEEDBACK = "julia_feedback"
 T_CHATS = "whatsapp_chats"
 T_MENSAGENS = "conversation_messages"
 
@@ -55,7 +55,7 @@ def _todas(fetch_page, label: str) -> list[dict[str, Any]]:
 def listar_etiquetas(client: Any, org_id: UUID | str) -> list[dict[str, Any]]:
     rows = _todas(
         lambda a, b: client.table(T_ETIQUETAS).select("id, nome, cor, created_at").eq("org_id", str(org_id))
-        .order("id").range(a, b).execute().data, "lais_etiquetas")
+        .order("id").range(a, b).execute().data, "julia_etiquetas")
     return sorted(rows, key=lambda r: (str(r.get("nome") or "").lower(), str(r["id"])))
 
 
@@ -185,12 +185,12 @@ def _item(c: dict[str, Any], chat: Optional[dict[str, Any]], etiquetas: list[dic
 
 def _contatos_visiveis(client: Any, ctx: AcessoCtx, **eq: Any) -> list[dict[str, Any]]:
     def page(a: int, b: int):
-        q = client.table(lais_acesso.T_CONTATOS).select("*").eq("org_id", str(ctx.org_id))
+        q = client.table(julia_acesso.T_CONTATOS).select("*").eq("org_id", str(ctx.org_id))
         for k, v in eq.items():
             q = q.eq(k, v)
         return q.order("id").range(a, b).execute().data
 
-    return lais_acesso.filtrar_contatos(client, ctx, _todas(page, "lais_contatos"))
+    return julia_acesso.filtrar_contatos(client, ctx, _todas(page, "julia_contatos"))
 
 
 def _filtros_de_coluna(itens: list[dict[str, Any]], *, operacao: list[str], status_sw: list[str],
@@ -220,7 +220,7 @@ def _filtros_de_coluna(itens: list[dict[str, Any]], *, operacao: list[str], stat
 def _enriquecer(client: Any, ctx: AcessoCtx, contatos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chats = _chats_dos_contatos(client, ctx.org_id, contatos)
     tags = _etiquetas_dos_contatos(client, ctx.org_id, [str(c["id"]) for c in contatos])
-    credito = lais_credito_service.credito_por_contato(client, ctx.org_id, [str(c["id"]) for c in contatos])
+    credito = julia_credito_service.credito_por_contato(client, ctx.org_id, [str(c["id"]) for c in contatos])
     return [_item(c, chats.get((str(c["connection_id"]), str(c["chat_id"]))), tags.get(str(c["id"]), []), credito.get(str(c["id"])))
             for c in contatos]
 
@@ -229,9 +229,9 @@ def _membros_do_filtro(client: Any, ctx: AcessoCtx, equipe: Optional[list[str]])
     """`None` = no team filter; else the members of the chosen team(s) of the caller's org (unknown team -> empty set)."""
     if not equipe:
         return None
-    from app.services import lais_equipes_service
+    from app.services import julia_equipes_service
 
-    return lais_equipes_service.membros_das_equipes(client, ctx.org_id, equipe)
+    return julia_equipes_service.membros_das_equipes(client, ctx.org_id, equipe)
 
 
 def _ordenar(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -243,7 +243,7 @@ def _filtrar(itens: list[dict[str, Any]], ctx: AcessoCtx, donos: dict[str, Optio
     out = []
     termo = (busca or "").strip().lower()
     for i in itens:
-        if aba == "minhas" and lais_acesso.dono_do_contato(i, donos) != ctx.user_id:
+        if aba == "minhas" and julia_acesso.dono_do_contato(i, donos) != ctx.user_id:
             continue
         if etiquetas and not ({e["id"] for e in i["etiquetas"]} & set(etiquetas)):
             continue
@@ -262,7 +262,7 @@ def listar(
     """`(page, total)` of the conversations the caller may see, newest first. `aba`:
     todas / minhas (the caller OWNS them) / arquivadas. List filters are OR-within / AND-across."""
     contatos = _contatos_visiveis(client, ctx, arquivado=(aba == "arquivadas"))
-    donos = lais_acesso.donos_das_conexoes(client, ctx.org_id, (c["connection_id"] for c in contatos))
+    donos = julia_acesso.donos_das_conexoes(client, ctx.org_id, (c["connection_id"] for c in contatos))
     itens = _filtros_de_coluna(
         _ordenar(_enriquecer(client, ctx, contatos)), operacao=operacao or [], status_sw=status_sw or [],
         atendimento=atendimento or [], responsavel=responsavel or [], equipe_membros=_membros_do_filtro(client, ctx, equipe))
@@ -322,10 +322,10 @@ def atualizar_contato(
         definir_etiquetas(client, ctx.org_id, contato["id"], [str(e) for e in campos["etiquetas"]])
     if patch:
         if patch.get("arquivado") or patch.get("bloqueado"):
-            lais_contatos_service.bump_gen(client, contato["id"], **patch)
+            julia_contatos_service.bump_gen(client, contato["id"], **patch)
         else:
-            lais_contatos_service.atualizar_contato(client, contato["id"], patch)
-    novo_contato = (client.table(lais_acesso.T_CONTATOS).select("*").eq("id", str(contato["id"])).limit(1).execute().data or [contato])[0]
+            julia_contatos_service.atualizar_contato(client, contato["id"], patch)
+    novo_contato = (client.table(julia_acesso.T_CONTATOS).select("*").eq("id", str(contato["id"])).limit(1).execute().data or [contato])[0]
     return _enriquecer(client, ctx, [novo_contato])[0]
 
 
@@ -337,7 +337,7 @@ def _nota_saida(r: dict[str, Any]) -> dict[str, Any]:
 def listar_notas(client: Any, org_id: UUID | str, contato_id: UUID | str) -> list[dict[str, Any]]:
     rows = _todas(
         lambda a, b: client.table(T_NOTAS).select("*").eq("org_id", str(org_id)).eq("contato_id", str(contato_id))
-        .is_("deleted_at", "null").order("id").range(a, b).execute().data, "lais_notas")
+        .is_("deleted_at", "null").order("id").range(a, b).execute().data, "julia_notas")
     return [_nota_saida(r) for r in sorted(rows, key=lambda r: (str(r.get("created_at") or ""), str(r["id"])), reverse=True)]
 
 
@@ -372,12 +372,12 @@ def registrar_feedback(
     if nota not in ("like", "dislike"):
         raise AppException("feedback_invalido", "A nota deve ser like ou dislike.", status_code=422)
     if interacao_id:
-        rows = (client.table(lais_contatos_service.T_INTERACOES).select("id").eq("org_id", str(ctx.org_id))
+        rows = (client.table(julia_contatos_service.T_INTERACOES).select("id").eq("org_id", str(ctx.org_id))
                 .eq("contato_id", str(contato["id"])).eq("id", str(interacao_id)).limit(1).execute().data or [])
         if not rows:
             raise AppException("interacao_invalida", "Interação desconhecida para este contato.", status_code=422)
     else:
-        aberta = lais_contatos_service.interacao_aberta(client, contato["id"])
+        aberta = julia_contatos_service.interacao_aberta(client, contato["id"])
         interacao_id = str(aberta["id"]) if aberta else None
     linha = {
         "id": str(uuid4()), "org_id": str(ctx.org_id), "contato_id": str(contato["id"]), "interacao_id": interacao_id,
@@ -390,7 +390,7 @@ def registrar_feedback(
 # ── history ─────────────────────────────────────────────────────────────────
 def historico(client: Any, ctx: AcessoCtx, contato: dict[str, Any]) -> dict[str, Any]:
     interacoes = (
-        client.table(lais_contatos_service.T_INTERACOES).select("*").eq("org_id", str(ctx.org_id))
+        client.table(julia_contatos_service.T_INTERACOES).select("*").eq("org_id", str(ctx.org_id))
         .eq("contato_id", str(contato["id"])).order("iniciada_at", desc=True).limit(100).execute().data or []
     )
     mensagens = (
@@ -400,11 +400,11 @@ def historico(client: Any, ctx: AcessoCtx, contato: dict[str, Any]) -> dict[str,
     )
     item = _enriquecer(client, ctx, [contato])[0]
     visitas = sorted(
-        client.table("lais_visitas").select("*").eq("org_id", str(ctx.org_id)).eq("contato_id", str(contato["id"]))
+        client.table("julia_visitas").select("*").eq("org_id", str(ctx.org_id)).eq("contato_id", str(contato["id"]))
         .execute().data or [], key=lambda v: str(v.get("inicio") or ""), reverse=True)
     return {
         "contato": {**item, "email": contato.get("email"), "slots": contato.get("slots") or {},
-                    "visitas": [lais_visitas_service.saida(v) for v in visitas]},
+                    "visitas": [julia_visitas_service.saida(v) for v in visitas]},
         "interacoes": interacoes,
         "mensagens": sorted(mensagens, key=lambda m: (str(m.get("created_at") or ""), str(m.get("id")))),
     }
@@ -415,13 +415,13 @@ def aplicar_politica_inbound(client: Any, chat_store: Any, *, org_id: UUID | str
     """Called for every Julia-lead inbound. `bloqueado` -> the caller drops the message (Julia never
     answers a blocked number); `devolvido` -> an archived contato goes back to Julia (un-archived and
     un-paused) and the turn proceeds; `ok` -> nothing to do."""
-    contato = lais_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
+    contato = julia_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
     if contato is None:
         return "ok"
     if contato.get("bloqueado"):
         return "bloqueado"
     if contato.get("arquivado"):
-        lais_contatos_service.atualizar_contato(client, contato["id"], {"arquivado": False})
+        julia_contatos_service.atualizar_contato(client, contato["id"], {"arquivado": False})
         chat_store.set_agente_pausado(connection_id=UUID(str(connection_id)), chat_id=chat_id, pausado=False)
         return "devolvido"
     return "ok"
@@ -441,9 +441,9 @@ def nome_do_atendente(user: Any) -> Optional[str]:
 def prefixar_atendente(client: Any, org_id: UUID | str, user: Any, texto: str) -> str:
     """`*{nome}*:\\n{texto}` when the org enabled Conhecimento `exibir_atendente` and the sender has a name."""
     try:
-        ativo = bool(lais_conhecimento_service.ler_secoes(client, org_id)["exibir_atendente"]["dados"].get("ativo"))
+        ativo = bool(julia_conhecimento_service.ler_secoes(client, org_id)["exibir_atendente"]["dados"].get("ativo"))
     except Exception:
-        logger.exception("lais: could not read exibir_atendente org=%s -- sending without the prefix", org_id)
+        logger.exception("julia: could not read exibir_atendente org=%s -- sending without the prefix", org_id)
         return texto
     nome = nome_do_atendente(user) if ativo else None
     return f"*{nome}*:\n{texto}" if nome else texto

@@ -1,13 +1,13 @@
-"""Lais wave 11 -- Equipes / Distribuicao (contract section 13, owner decision 2026-10-15 #5).
+"""Julia wave 11 -- Equipes / Distribuicao (contract section 13, owner decision 2026-10-15 #5).
 
 Distribution data and rules live in SW; Julia only consumes them.
 
-  * teams CRUD + members (add / remove / order / active) -- `lais_equipes`, `lais_equipe_membros`;
+  * teams CRUD + members (add / remove / order / active) -- `julia_equipes`, `julia_equipe_membros`;
   * `atribuir_responsavel(...)` -- picks the attendant BEFORE anyone is notified and sets
-    `lais_contatos.responsavel_user_id`:
+    `julia_contatos.responsavel_user_id`:
         1. keep-last-responsible: a team with `manter_ultimo` on whose ACTIVE member is the contato's current
            responsavel keeps it (a returning lead goes back to the same attendant);
-        2. else round-robin by the cursor (`lais_distribuicao_cursor`) among the ACTIVE members of the teams with
+        2. else round-robin by the cursor (`julia_distribuicao_cursor`) among the ACTIVE members of the teams with
            `atende_apos_julia = true AND modo = 'julia'` (several teams: the one whose cursor moved least recently);
     teams with `atende_apos_julia = false` (manual assignment only) or `modo = 'funil'` (the SW lead/card flow
     decides) never auto-assign;
@@ -27,15 +27,15 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_contatos_service, lais_contexto_service
+from app.services import julia_contatos_service, julia_contexto_service
 
 logger = logging.getLogger(__name__)
 
-T_EQUIPES = "lais_equipes"
-T_MEMBROS = "lais_equipe_membros"
-T_CURSOR = "lais_distribuicao_cursor"
-T_ATRIBUICOES = "lais_atribuicoes"
-T_CONTATOS = "lais_contatos"
+T_EQUIPES = "julia_equipes"
+T_MEMBROS = "julia_equipe_membros"
+T_CURSOR = "julia_distribuicao_cursor"
+T_ATRIBUICOES = "julia_atribuicoes"
+T_CONTATOS = "julia_contatos"
 T_MENSAGENS = "conversation_messages"
 
 MODOS = ("funil", "julia")
@@ -81,7 +81,7 @@ def _usuarios_da_org(core: Any, org_id: UUID | str, ids: list[str]) -> dict[str,
 def _membros_da_equipe(client: Any, org_id: UUID | str, equipe_id: UUID | str) -> list[dict[str, Any]]:
     rows = _todas(
         lambda a, b: client.table(T_MEMBROS).select("*").eq("org_id", str(org_id)).eq("equipe_id", str(equipe_id))
-        .order("user_id").range(a, b).execute().data, "lais_equipe_membros", id_key="user_id")
+        .order("user_id").range(a, b).execute().data, "julia_equipe_membros", id_key="user_id")
     return sorted(rows, key=lambda m: (int(m.get("ordem") or 0), str(m.get("created_at") or ""), str(m["user_id"])))
 
 
@@ -102,7 +102,7 @@ def _saida(equipe: dict[str, Any], membros: list[dict[str, Any]], nomes: dict[st
 def listar(client: Any, core: Any, org_id: UUID | str) -> list[dict[str, Any]]:
     equipes = sorted(
         _todas(lambda a, b: client.table(T_EQUIPES).select("*").eq("org_id", str(org_id)).order("id").range(a, b).execute().data,
-               "lais_equipes"),
+               "julia_equipes"),
         key=lambda e: (str(e.get("nome") or "").lower(), str(e["id"])))
     membros = {str(e["id"]): _membros_da_equipe(client, org_id, e["id"]) for e in equipes}
     nomes = _usuarios_da_org(core, org_id, [str(m["user_id"]) for ms in membros.values() for m in ms])
@@ -225,7 +225,7 @@ def membros_das_equipes(client: Any, org_id: UUID | str, equipe_ids: list[str]) 
 def _equipes_automaticas(client: Any, org_id: UUID | str) -> list[dict[str, Any]]:
     rows = _todas(
         lambda a, b: client.table(T_EQUIPES).select("*").eq("org_id", str(org_id)).order("id").range(a, b).execute().data,
-        "lais_equipes")
+        "julia_equipes")
     return sorted((e for e in rows if e.get("atende_apos_julia") and e.get("modo") == "julia"),
                   key=lambda e: (str(e.get("created_at") or ""), str(e["id"])))
 
@@ -261,7 +261,7 @@ def atribuir_responsavel(
     client: Any, core: Any, org_id: UUID | str, contato: dict[str, Any], motivo: str = "handoff",
     *, agora: Optional[datetime] = None,
 ) -> Optional[dict[str, Any]]:
-    """Pick the attendant for `contato` and persist `lais_contatos.responsavel_user_id` (+ the log row).
+    """Pick the attendant for `contato` and persist `julia_contatos.responsavel_user_id` (+ the log row).
 
     Returns `{user_id, nome, equipe_id, criterio}` or None when no team distributes (no auto team, no active
     member). Call it BEFORE notifying so the notification reaches the chosen attendant."""
@@ -293,7 +293,7 @@ def atribuir_responsavel(
         escolha = (user_id, eid, "round_robin")
 
     user_id, equipe_id, criterio = escolha
-    lais_contatos_service.atualizar_contato(client, contato["id"], {"responsavel_user_id": user_id})
+    julia_contatos_service.atualizar_contato(client, contato["id"], {"responsavel_user_id": user_id})
     client.table(T_ATRIBUICOES).insert({
         "id": str(uuid4()), "org_id": str(org_id), "contato_id": str(contato["id"]), "equipe_id": equipe_id,
         "user_id": user_id, "motivo": motivo, "criterio": criterio, "created_at": agora.isoformat()}).execute()
@@ -302,7 +302,7 @@ def atribuir_responsavel(
 
 
 # ── Julia's next turn: `contexto.estado.atendente_nome` ──────────────────────
-def _nome_do_responsavel(ctx: lais_contexto_service.ContextoCtx) -> Optional[str]:
+def _nome_do_responsavel(ctx: julia_contexto_service.ContextoCtx) -> Optional[str]:
     uid = ctx.contato.get("responsavel_user_id")
     if not uid:
         return None
@@ -312,14 +312,14 @@ def _nome_do_responsavel(ctx: lais_contexto_service.ContextoCtx) -> Optional[str
     return nome or None
 
 
-def _estender_estado(base: lais_contexto_service.Provider) -> lais_contexto_service.Provider:
+def _estender_estado(base: julia_contexto_service.Provider) -> julia_contexto_service.Provider:
     """The `estado` provider + `atendente_nome` (additive: every key `base` returns is kept)."""
-    def provider(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+    def provider(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
         out = base(ctx)
         try:
             nome = _nome_do_responsavel(ctx)
         except Exception:
-            logger.exception("lais: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
+            logger.exception("julia: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
             nome = None
         if nome:
             out = {**out, "estado": {**(out.get("estado") or {}), "atendente_nome": nome}}
@@ -329,7 +329,7 @@ def _estender_estado(base: lais_contexto_service.Provider) -> lais_contexto_serv
 
 
 # Replaces the `estado` provider IN PLACE (the registry order is a tested contract), wrapping the current one.
-lais_contexto_service.registrar_provider("estado", _estender_estado(dict(lais_contexto_service.PROVIDERS)["estado"]))
+julia_contexto_service.registrar_provider("estado", _estender_estado(dict(julia_contexto_service.PROVIDERS)["estado"]))
 
 
 # ── metrics ─────────────────────────────────────────────────────────────────
@@ -371,7 +371,7 @@ def metricas(client: Any, core: Any, org_id: UUID | str, equipe_id: UUID | str, 
     atrib = _todas(
         lambda a, b: client.table(T_ATRIBUICOES).select("*").eq("org_id", str(org_id)).eq("equipe_id", str(e["id"]))
         .gte("created_at", ini.isoformat()).lt("created_at", fim.isoformat()).order("id").range(a, b).execute().data,
-        "lais_atribuicoes")
+        "julia_atribuicoes")
     atrib = sorted(atrib, key=lambda r: str(r.get("created_at") or ""), reverse=True)[:_METRICAS_MAX_ATRIBUICOES]
     total = len(atrib)
     contatos = {}
@@ -392,7 +392,7 @@ def metricas(client: Any, core: Any, org_id: UUID | str, equipe_id: UUID | str, 
                 tprs.append((resp - t0).total_seconds())
         conversas = _todas(
             lambda a, b: client.table(T_CONTATOS).select("id").eq("org_id", str(org_id)).eq("responsavel_user_id", uid)
-            .order("id").range(a, b).execute().data, "lais_contatos")
+            .order("id").range(a, b).execute().data, "julia_contatos")
         ultimo = (usuarios.get(uid) or {}).get("last_active_at")
         saida.append({
             "user_id": uid, "nome": (usuarios.get(uid) or {}).get("nome"), "ativo": bool(m.get("ativo")),

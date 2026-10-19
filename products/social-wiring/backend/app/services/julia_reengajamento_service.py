@@ -1,13 +1,13 @@
-"""Lais wave 4 -- Reengajamento: default tiers (minutos / horas) + reguas (contract 6).
+"""Julia wave 4 -- Reengajamento: default tiers (minutos / horas) + reguas (contract 6).
 
-Three jobs on the seed queue, each stale-guarded by `lais_contatos.gen` (contract 0.2) -- there is no
+Three jobs on the seed queue, each stale-guarded by `julia_contatos.gen` (contract 0.2) -- there is no
 queue cancel, so every job re-reads the contato at fire time and completes as `obsoleto` when `gen`
 moved (an inbound, `encerrar`, a pause or a handoff all bump it):
 
-  lais_reengajar_minutos   any hour; only for a lead who interacted and then stopped
-  lais_reengajar_horas     only 08:00-19:59 Sao Paulo (outside: RescheduleLater to 08:00); ALSO covers a
+  julia_reengajar_minutos   any hour; only for a lead who interacted and then stopped
+  julia_reengajar_horas     only 08:00-19:59 Sao Paulo (outside: RescheduleLater to 08:00); ALSO covers a
                            lead who never replied
-  lais_regua_tentativa     one attempt of a regua, only 08:00-19:59 Sao Paulo like the hours tier (Lais' regua
+  julia_regua_tentativa     one attempt of a regua, only 08:00-19:59 Sao Paulo like the hours tier (Lais' regua
                            card: "Das 8h as 20h"); the regua starts after the LAST enabled default tier
                            (no default tier => straight after the outbound); the next attempt is enqueued
                            when this one fires; after the last attempt the cold-lead hook runs
@@ -16,7 +16,7 @@ Enqueued on each Julia outbound (`agendar_apos_outbound`, called from the lead t
 for an encerrado contato. A tier's dedupe key is `(tier, contato, gen)`, so the re-engagement message's
 own outbound never re-arms the same tier (no loop). A re-engagement turn is the ordinary lead turn with
 `contexto.estado.reengajamento` (+ `reescrever` / `texto_base` for a regua text); a template attempt is
-sent through the Cloud transport (wave 12, `lais_transporte`) when the connection is a configured Cloud one with an
+sent through the Cloud transport (wave 12, `julia_transporte`) when the connection is a configured Cloud one with an
 approved modelo; otherwise skipped with event `regua_sem_transporte` (WAHA free text never stands in for a template).
 
 The CRUD half (config + reguas + tentativas) lives here too; the router is a thin shell over it. Every
@@ -36,17 +36,17 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_contatos_service, lais_envio_gate, lais_eventos_service
+from app.services import julia_contatos_service, julia_envio_gate, julia_eventos_service
 
 logger = logging.getLogger(__name__)
 
-T_CONFIG = "lais_reengajamento_config"
-T_REGUAS = "lais_reguas"
-T_TENTATIVAS = "lais_regua_tentativas"
+T_CONFIG = "julia_reengajamento_config"
+T_REGUAS = "julia_reguas"
+T_TENTATIVAS = "julia_regua_tentativas"
 
-JOB_MINUTOS = "lais_reengajar_minutos"
-JOB_HORAS = "lais_reengajar_horas"
-JOB_REGUA = "lais_regua_tentativa"
+JOB_MINUTOS = "julia_reengajar_minutos"
+JOB_HORAS = "julia_reengajar_horas"
+JOB_REGUA = "julia_regua_tentativa"
 JOB_TYPES: tuple[str, ...] = (JOB_MINUTOS, JOB_HORAS, JOB_REGUA)
 
 FUSO = ZoneInfo("America/Sao_Paulo")
@@ -149,7 +149,7 @@ def criar_regua(db: Any, org_id: UUID | str, *, nome: str, compra: bool, aluguel
     }
     created = db.table(T_REGUAS).insert(row).execute().data or []
     if not created:
-        raise RuntimeError("lais: regua insert returned no row")
+        raise RuntimeError("julia: regua insert returned no row")
     return {**created[0], "tentativas": []}
 
 
@@ -229,7 +229,7 @@ def criar_tentativa(db: Any, org_id: UUID | str, regua_id: UUID | str, dados: di
     }
     created = db.table(T_TENTATIVAS).insert(row).execute().data or []
     if not created:
-        raise RuntimeError("lais: tentativa insert returned no row")
+        raise RuntimeError("julia: tentativa insert returned no row")
     return created[0]
 
 
@@ -266,7 +266,7 @@ def apagar_tentativa(db: Any, org_id: UUID | str, regua_id: UUID | str, tid: UUI
 # ── cold-lead hook (wave 3 replaces it) ─────────────────────────────────────
 def lead_frio_padrao(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> None:
     """Default cold-lead hook: a no-op. Wave 3 (envio ao SW) replaces it via `registrar_lead_frio`."""
-    logger.debug("lais: lead frio org=%s contato=%s -- no cold-lead policy registered yet", org_id, contato.get("id"))
+    logger.debug("julia: lead frio org=%s contato=%s -- no cold-lead policy registered yet", org_id, contato.get("id"))
 
 
 _lead_frio: Callable[[Any, UUID | str, dict[str, Any]], Any] = lead_frio_padrao
@@ -284,7 +284,7 @@ async def _chamar_lead_frio(client: Any, org_id: UUID | str, contato: dict[str, 
         if inspect.isawaitable(out):
             await out
     except Exception:
-        logger.exception("lais: cold-lead hook failed org=%s contato=%s", org_id, contato.get("id"))
+        logger.exception("julia: cold-lead hook failed org=%s contato=%s", org_id, contato.get("id"))
 
 
 # ── scheduling ──────────────────────────────────────────────────────────────
@@ -294,7 +294,7 @@ def chave_do_chat(connection_id: UUID | str, chat_id: str) -> str:
 
 def _payload(contato: dict[str, Any]) -> dict[str, Any]:
     return {
-        **lais_contatos_service.payload_job(contato, chave_do_chat(contato["connection_id"], contato["chat_id"])),
+        **julia_contatos_service.payload_job(contato, chave_do_chat(contato["connection_id"], contato["chat_id"])),
         "contato_id": str(contato["id"]), "connection_id": str(contato["connection_id"]), "chat_id": contato["chat_id"],
     }
 
@@ -325,7 +325,7 @@ async def _enfileirar_tentativa(
         type=JOB_REGUA,
         payload={**_payload(contato), "regua_id": str(regua["id"]), "ordem": int(tentativa["ordem"])},
         max_retries=JOB_MAX_RETRIES, scheduled_for=quando,
-        dedupe_key=f"lais:regua:{contato['id']}:{gen}:{regua['id']}:{tentativa['ordem']}",
+        dedupe_key=f"julia:regua:{contato['id']}:{gen}:{regua['id']}:{tentativa['ordem']}",
     )
 
 
@@ -358,14 +358,14 @@ async def agendar_apos_outbound(
         await repo.enqueue(
             type=JOB_MINUTOS, payload={**_payload(contato), "tier": "minutos"}, max_retries=JOB_MAX_RETRIES,
             scheduled_for=agora + timedelta(minutes=int(cfg["minutos_intervalo"])),
-            dedupe_key=f"lais:reeng:minutos:{contato['id']}:{gen}",
+            dedupe_key=f"julia:reeng:minutos:{contato['id']}:{gen}",
         )
         enfileirados.append(JOB_MINUTOS)
     if cfg["horas_ativo"]:
         await repo.enqueue(
             type=JOB_HORAS, payload={**_payload(contato), "tier": "horas"}, max_retries=JOB_MAX_RETRIES,
             scheduled_for=agora + timedelta(hours=int(cfg["horas_intervalo"])),
-            dedupe_key=f"lais:reeng:horas:{contato['id']}:{gen}",
+            dedupe_key=f"julia:reeng:horas:{contato['id']}:{gen}",
         )
         enfileirados.append(JOB_HORAS)
     if not enfileirados:
@@ -379,7 +379,7 @@ async def agendar_apos_outbound(
 
 # ── job handlers ────────────────────────────────────────────────────────────
 #: `(deps, connection, chat_id, contato, estado_extra, marker_id) -> bool` (True = a message went out).
-#: Bound to `lais_lead_turn_service.run_reengajamento_turn` by the worker module; tests inject a recorder.
+#: Bound to `julia_lead_turn_service.run_reengajamento_turn` by the worker module; tests inject a recorder.
 TurnRunner = Callable[..., Any]
 
 
@@ -398,9 +398,9 @@ async def _contexto_do_job(deps: Any, job: Job) -> tuple[str, Optional[dict[str,
     org_id = p.get("org_id")
     if not (org_id and p.get("contato_id") and p.get("connection_id") and p.get("chat_id")):
         return "payload_invalido", None, None
-    if lais_contatos_service.job_obsoleto(db, org_id, p["contato_id"], int(p.get("gen") or 0)):
+    if julia_contatos_service.job_obsoleto(db, org_id, p["contato_id"], int(p.get("gen") or 0)):
         return "obsoleto", None, None
-    rows = db.table("lais_contatos").select("*").eq("org_id", str(org_id)).eq("id", str(p["contato_id"])).limit(1).execute().data or []
+    rows = db.table("julia_contatos").select("*").eq("org_id", str(org_id)).eq("id", str(p["contato_id"])).limit(1).execute().data or []
     contato = rows[0] if rows else None
     if contato is None:
         return "obsoleto", None, None
@@ -416,13 +416,13 @@ async def _contexto_do_job(deps: Any, job: Job) -> tuple[str, Optional[dict[str,
 
 
 def _evento_timeline(db: Any, org_id: UUID | str, contato: dict[str, Any], **extra: Any) -> None:
-    lais_eventos_service.emitir(db, org_id, "reengajamento", contato["id"], {"texto": MSG_TIMELINE, **extra})
+    julia_eventos_service.emitir(db, org_id, "reengajamento", contato["id"], {"texto": MSG_TIMELINE, **extra})
 
 
 async def executar_default(
     job: Job, *, deps: Any, repo: Any, run_turn: TurnRunner, agora: Optional[datetime] = None,
 ) -> str:
-    """`lais_reengajar_minutos` / `lais_reengajar_horas`. Returns the outcome label."""
+    """`julia_reengajar_minutos` / `julia_reengajar_horas`. Returns the outcome label."""
     agora = _now(agora)
     tier = "horas" if job.type == JOB_HORAS else "minutos"
     estado, contato, connection = await _contexto_do_job(deps, job)
@@ -434,10 +434,10 @@ async def executar_default(
     if tier == "minutos" and not contato.get("ultimo_inbound_at"):
         return "sem_interacao"  # the hours tier owns the lead who never replied
     org_id = job.payload["org_id"]
-    fluxo = lais_envio_gate.FLUXO_DO_TIER[tier]
+    fluxo = julia_envio_gate.FLUXO_DO_TIER[tier]
     try:  # the outbound gate, before the agents call (the turn's own send re-checks it)
-        lais_envio_gate.exigir(deps.scoped, org_id, connection.id, fluxo, contato_id=contato["id"])
-    except lais_envio_gate.EnvioBloqueado as exc:
+        julia_envio_gate.exigir(deps.scoped, org_id, connection.id, fluxo, contato_id=contato["id"])
+    except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
     enviou = await run_turn(deps, connection, contato["chat_id"], contato, {"reengajamento": tier}, f"reeng:{job.id}")
     if enviou:
@@ -450,7 +450,7 @@ async def executar_default(
 async def executar_tentativa(
     job: Job, *, deps: Any, repo: Any, run_turn: TurnRunner, agora: Optional[datetime] = None,
 ) -> str:
-    """`lais_regua_tentativa`: one attempt of a regua, then arm the next (or the cold-lead hook)."""
+    """`julia_regua_tentativa`: one attempt of a regua, then arm the next (or the cold-lead hook)."""
     agora = _now(agora)
     estado, contato, connection = await _contexto_do_job(deps, job)
     if estado != "ok":
@@ -471,9 +471,9 @@ async def executar_tentativa(
         # Lais' regua card: "Periodo de execucao: Das 8h as 20h" (page-map-v2 59.0b) -- same window as the hours tier.
         raise RescheduleLater(segundos_ate_abertura(agora), "regua fora do horario (08-20, Sao Paulo)")
     try:  # the outbound gate (Julia on + this regua active), before any send or agents call
-        liberacao = lais_envio_gate.exigir(db, org_id, connection.id, lais_envio_gate.Fluxo.REGUA,
+        liberacao = julia_envio_gate.exigir(db, org_id, connection.id, julia_envio_gate.Fluxo.REGUA,
                                            contato_id=contato["id"], regua_id=regua["id"])
-    except lais_envio_gate.EnvioBloqueado as exc:
+    except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
     enviou = False
     sem_transporte = False
@@ -483,7 +483,7 @@ async def executar_tentativa(
             _evento_timeline(db, org_id, contato, regua_id=str(regua["id"]), ordem=int(tentativa["ordem"]))
         else:
             sem_transporte = True
-            lais_eventos_service.emitir(
+            julia_eventos_service.emitir(
                 db, org_id, "regua_sem_transporte", contato["id"],
                 {"regua_id": str(regua["id"]), "ordem": int(tentativa["ordem"]), "template_id": str(tentativa["template_id"])},
             )
@@ -508,42 +508,42 @@ async def executar_tentativa(
 
 async def _enviar_template(
     deps: Any, org_id: Any, connection: Any, contato: dict[str, Any], tentativa: dict[str, Any],
-    liberacao: lais_envio_gate.Liberacao,
+    liberacao: julia_envio_gate.Liberacao,
 ) -> bool:
     """A regua attempt carrying a Cloud template (wave 12). True = sent. False = it could not go out: the
     connection is not a configured Cloud one (WAHA free text is never a template stand-in), the modelo is not
     approved / gone, or the send failed -- the caller records `regua_sem_transporte` and the regua moves on."""
-    from app.services import lais_modelos_service, lais_transporte
+    from app.services import julia_modelos_service, julia_transporte
 
-    if not lais_transporte.cloud_configurada(connection):
+    if not julia_transporte.cloud_configurada(connection):
         return False
     try:
-        modelo = lais_modelos_service.obter(deps.scoped, org_id, tentativa["template_id"])
+        modelo = julia_modelos_service.obter(deps.scoped, org_id, tentativa["template_id"])
     except AppException:
         return False
     tel = "".join(ch for ch in str(contato.get("telefone_e164") or "") if ch.isdigit())
     if modelo["status"] != "aprovado" or not tel:
         return False
-    nome_lais = None
+    nome_julia = None
     if deps.agents_client_factory is not None:
-        from app.services import lais_agente_service
+        from app.services import julia_agente_service
 
-        nome_lais = await lais_agente_service.nome_do_agente(deps.agents_client_factory(UUID(str(org_id))))
-    valores = {"nome_pessoa": (contato.get("nome") or "").strip() or "tudo bem", "nome_lais": nome_lais or "Julia"}
-    chaves = lais_modelos_service.corpo_posicional(modelo["corpo"])[1]
-    transporte = lais_transporte.transporte_da_conexao(
+        nome_julia = await julia_agente_service.nome_do_agente(deps.agents_client_factory(UUID(str(org_id))))
+    valores = {"nome_pessoa": (contato.get("nome") or "").strip() or "tudo bem", "nome_julia": nome_julia or "Julia"}
+    chaves = julia_modelos_service.corpo_posicional(modelo["corpo"])[1]
+    transporte = julia_transporte.transporte_da_conexao(
         connection, waha_factory=deps.waha_factory, cloud_client_factory=getattr(deps, "cloud_client_factory", None),
     )
-    lais_envio_gate.conferir(liberacao, connection.id)
+    julia_envio_gate.conferir(liberacao, connection.id)
     try:
         await transporte.enviar_template(
-            tel, lais_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],
-            modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
+            tel, julia_modelos_service.nome_meta(modelo), [valores.get(c) or "-" for c in chaves],
+            modelo.get("idioma") or julia_transporte.IDIOMA_PADRAO,
         )
     except Exception as exc:  # one failed attempt must not stop the regua
-        logger.error("lais regua: template send failed org=%s (%s)", org_id, type(exc).__name__)
+        logger.error("julia regua: template send failed org=%s (%s)", org_id, type(exc).__name__)
         return False
-    lais_contatos_service.registrar_outbound(deps.scoped, contato["id"])
+    julia_contatos_service.registrar_outbound(deps.scoped, contato["id"])
     return True
 
 
@@ -556,14 +556,14 @@ def handlers(*, deps_factory: Callable[[], Any], repo: Any, run_turn: TurnRunner
         if deps is None:
             raise RescheduleLater(60.0, "lead deps not ready")
         outcome = await executar_default(job, deps=deps, repo=repo, run_turn=run_turn)
-        logger.info("lais reengajamento %s job=%s -> %s", job.type, job.id, outcome)
+        logger.info("julia reengajamento %s job=%s -> %s", job.type, job.id, outcome)
 
     async def _tentativa(job: Job) -> None:
         deps = deps_factory()
         if deps is None:
             raise RescheduleLater(60.0, "lead deps not ready")
         outcome = await executar_tentativa(job, deps=deps, repo=repo, run_turn=run_turn)
-        logger.info("lais reengajamento %s job=%s -> %s", job.type, job.id, outcome)
+        logger.info("julia reengajamento %s job=%s -> %s", job.type, job.id, outcome)
 
     return {JOB_MINUTOS: _default, JOB_HORAS: _default, JOB_REGUA: _tentativa}
 

@@ -1,8 +1,8 @@
-"""Lais > Captacao (wave 8, contract section 10).
+"""Julia > Captacao (wave 8, contract section 10).
 
-  GET  /api/lais/captacoes?status&de&ate&page&page_size(5|10|15|20)   member   {data: {items, total}}
-  POST /api/lais/captacoes/{id}/registrar  [{titulo?, endereco?}]      member   {data: {imovel_id, imovel_codigo}}
-  POST /api/lais/captacoes/{id}/descartar                              member   204
+  GET  /api/julia/captacoes?status&de&ate&page&page_size(5|10|15|20)   member   {data: {items, total}}
+  POST /api/julia/captacoes/{id}/registrar  [{titulo?, endereco?}]      member   {data: {imovel_id, imovel_codigo}}
+  POST /api/julia/captacoes/{id}/descartar                              member   204
 
 A7: a captacao hangs off a contato -- a member sees/acts on the captacoes of THEIR contatos, an org admin
 on all (403 `sem_acesso` for a same-org stranger, 404 for another org's id). 404 `captacao_nao_encontrada`;
@@ -24,11 +24,11 @@ from pydantic import Field
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_scoped_admin_client
 from app.modules.imovel_hub.schemas import EnderecoManualIn
-from app.services import lais_acesso, lais_captacao_service as svc
+from app.services import julia_acesso, julia_captacao_service as svc
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/captacoes", tags=["lais-captacao"])
+router = APIRouter(prefix="/api/julia/captacoes", tags=["julia-captacao"])
 
 svc.registrar()  # binds the real `captacao` action handler (composes the wave-3 policy)
 
@@ -49,7 +49,7 @@ def _org(auth: tuple) -> UUID:
 
 def _guardar(client: Any, auth: tuple, request: Any, captacao_id: UUID) -> dict[str, Any]:
     captacao = svc.obter(client, _org(auth), captacao_id)  # 404 when missing / another org
-    lais_acesso.exigir_contato(client, lais_acesso.contexto(auth, request), captacao["contato_id"])
+    julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), captacao["contato_id"])
     return captacao
 
 
@@ -70,7 +70,7 @@ def listar(
         raise AppException("status_invalido", "Status inválido.", status_code=422)
     if de and ate and de > ate:
         raise AppException("filtro_invalido", "O período está invertido.", status_code=422)
-    out = svc.listar(client, _org(auth), lais_acesso.contexto(auth, request), status=status, de=de, ate=ate, page=page, page_size=page_size)
+    out = svc.listar(client, _org(auth), julia_acesso.contexto(auth, request), status=status, de=de, ate=ate, page=page, page_size=page_size)
     return {"data": out}
 
 

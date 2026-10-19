@@ -1,9 +1,9 @@
-"""Lais > Analise de credito (wave 13, contract 15 / 17).
+"""Julia > Analise de credito (wave 13, contract 15 / 17).
 
-  GET  /api/lais/credito?status&page&page_size(5|10|15|20)   member   {data: {items, total}}
-  GET  /api/lais/credito/config                              admin    {data: {ativo, provider, apenas_aluguel, providers}}
-  PUT  /api/lais/credito/config   {ativo, provider, apenas_aluguel}    admin    {data: {...}}
-  POST /api/lais/credito/{contato_id}/reprocessar            admin    {data: {analise_id, como}}
+  GET  /api/julia/credito?status&page&page_size(5|10|15|20)   member   {data: {items, total}}
+  GET  /api/julia/credito/config                              admin    {data: {ativo, provider, apenas_aluguel, providers}}
+  PUT  /api/julia/credito/config   {ativo, provider, apenas_aluguel}    admin    {data: {...}}
+  POST /api/julia/credito/{contato_id}/reprocessar            admin    {data: {analise_id, como}}
 
 A7: the list is filtered to the contatos the caller owns (org admin: all). `reprocessar` needs a STORED consent
 aceito=true (409 `consentimento_ausente`) and the analysis switched on (409 `credito_desativado`); it never
@@ -22,12 +22,12 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_acesso, lais_credito_service as svc
-from app.services.lais_credito_provider import PROVIDERS_CONHECIDOS
+from app.services import julia_acesso, julia_credito_service as svc
+from app.services.julia_credito_provider import PROVIDERS_CONHECIDOS
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/credito", tags=["lais-credito"])
+router = APIRouter(prefix="/api/julia/credito", tags=["julia-credito"])
 
 svc.registrar()  # binds the `consentimento_credito` handler, the pedido_visita hook and the contexto providers
 
@@ -60,7 +60,7 @@ def listar(
         raise AppException("page_size_invalido", "Use page_size 5, 10, 15 ou 20.", status_code=422)
     if status is not None and status not in svc.STATUS:
         raise AppException("status_invalido", "Status inválido.", status_code=422)
-    return {"data": svc.listar(client, _org(auth), lais_acesso.contexto(auth, request), status=status, page=page, page_size=page_size)}
+    return {"data": svc.listar(client, _org(auth), julia_acesso.contexto(auth, request), status=status, page=page, page_size=page_size)}
 
 
 @router.get("/config")

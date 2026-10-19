@@ -1,14 +1,14 @@
-"""Lais / Julia agent surface (contract sections 5 and 11).
+"""Julia agent surface (contract sections 5 and 11).
 
-  GET   /api/public/lais/privacidade/{slug}   public, no auth, rate-limited      (slice P)
-  GET   /api/lais/agente/aviso                org member                          (slice P)
-  PUT   /api/lais/agente/aviso                core org role owner/admin           (slice P)
+  GET   /api/public/julia/privacidade/{slug}   public, no auth, rate-limited      (slice P)
+  GET   /api/julia/agente/aviso                org member                          (slice P)
+  PUT   /api/julia/agente/aviso                core org role owner/admin           (slice P)
 
-  GET   /api/lais/agente                      org member: connections, token, link health
-  PUT   /api/lais/agente/conexoes/{id}        admin: the Julia switch (11.1 snapshot) + handoff target
-  PUT   /api/lais/agente/token                admin: paste the org's agents channel token
+  GET   /api/julia/agente                      org member: connections, token, link health
+  PUT   /api/julia/agente/conexoes/{id}        admin: the Julia switch (11.1 snapshot) + handoff target
+  PUT   /api/julia/agente/token                admin: paste the org's agents channel token
   PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agente   admin: per-chat pause
-  POST  /api/lais/agente/conexoes/{id}/chats/{chat_id}/apagar-dados   admin: deletion on request (M5)
+  POST  /api/julia/agente/conexoes/{id}/chats/{chat_id}/apagar-dados   admin: deletion on request (M5)
 
 # NOC-REMEDIATE[seed-promotion]: per-org public privacy notice -- promote to the seed as `org_privacy_notice` (router + table + default template) when the 2nd consumer (store/igig) needs it — 2026-10-14
 """
@@ -34,8 +34,8 @@ from app.clients.agents import (
     AgentsTokenInvalid,
     HttpAgentsClient,
 )
-from app.services import lais_contatos_service
-from app.services.lais_contexto_service import (
+from app.services import julia_contatos_service
+from app.services.julia_contexto_service import (
     TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_LABEL, TOOLS_TOKEN_SCOPE,
 )
 from app.config import settings
@@ -50,8 +50,8 @@ from app.dependencies import (
 from app.rate_limit import limiter
 from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
 from app.services import api_keys_store
-from app.services import lais_agente_service as lais
-from app.services import lais_aviso_service as svc
+from app.services import julia_agente_service as julia
+from app.services import julia_aviso_service as svc
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.whatsapp_chat_store import WhatsAppChatStore
@@ -60,7 +60,7 @@ from app.services.whatsapp_realtime import EVENT_CHAT_UPSERT, get_whatsapp_bus, 
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["lais-agente"])
+router = APIRouter(tags=["julia-agente"])
 
 
 class _Secao(StrictHttpModel):
@@ -106,7 +106,7 @@ def _saida_admin(row: dict[str, Any]) -> dict[str, Any]:
     return {**row, "incompleto": svc.incompleto(row)}
 
 
-@router.get("/api/public/lais/privacidade/{slug}")
+@router.get("/api/public/julia/privacidade/{slug}")
 @limiter.limit(settings.webhook_rate_limit)
 def get_aviso_publico(slug: str, request: Request) -> dict[str, Any]:
     """Public notice by slug. Returns ONLY the notice fields (never org ids,
@@ -117,13 +117,13 @@ def get_aviso_publico(slug: str, request: Request) -> dict[str, Any]:
     return {"data": svc.somente_publico(row)}
 
 
-@router.get("/api/lais/agente/aviso")
+@router.get("/api/julia/agente/aviso")
 def get_aviso(auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
     row, _client, _ctx = _admin_row(auth)
     return {"data": _saida_admin(row)}
 
 
-@router.put("/api/lais/agente/aviso")
+@router.put("/api/julia/agente/aviso")
 def put_aviso(
     payload: AvisoUpdate, auth: tuple = Depends(get_current_user_org), request: Request = None,
 ) -> dict[str, Any]:
@@ -150,7 +150,7 @@ _AGENT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 def get_agents_client_factory(cfg=Depends(get_settings)) -> Callable[[UUID], Optional[AgentsClient]]:
     """DI seam: ``org_id -> AgentsClient | None`` (token from ``api_key:agents``).
     Tests override this with a ``FakeAgentsClient`` factory."""
-    return lambda org_id: lais.resolve_agents_client(org_id, cfg=cfg)
+    return lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg)
 
 
 def get_agents_token_client_builder() -> Callable[[str], AgentsClient]:
@@ -158,7 +158,7 @@ def get_agents_token_client_builder() -> Callable[[str], AgentsClient]:
     the real agents status route before it is stored."""
 
     def build(token: str) -> AgentsClient:
-        base = lais.agents_base_url()
+        base = julia.agents_base_url()
         if not base:
             raise AppException(
                 "agents_url_indisponivel",
@@ -170,8 +170,8 @@ def get_agents_token_client_builder() -> Callable[[str], AgentsClient]:
     return build
 
 
-def get_lais_token_admin() -> ProductTokenAdmin:
-    """DI seam: the service-side `api_tokens` writer used to mint the Lais tools token
+def get_julia_token_admin() -> ProductTokenAdmin:
+    """DI seam: the service-side `api_tokens` writer used to mint the Julia tools token
     (the seed `ProductTokenAdmin`; the in-memory Fake when no service-role key is set)."""
     return make_product_token_admin(get_admin_client() if settings.supabase_service_role_key else None)
 
@@ -220,14 +220,14 @@ def _record_or_404(store: WhatsAppConnectionStore, connection_id: UUID, org_id: 
     try:
         record = store.get_connection(connection_id=connection_id, org_id=org_id, decrypt=decrypt)
     except Exception as exc:  # CredentialStoreError => ENCRYPTION_KEY mismatch
-        logger.exception("lais: connection read failed")
+        logger.exception("julia: connection read failed")
         raise HTTPException(status_code=503, detail="connection credentials unreadable") from exc
     if record is None:
         raise HTTPException(status_code=404, detail="connection not found")
     return record
 
 
-@router.get("/api/lais/agente")
+@router.get("/api/julia/agente")
 async def get_agente(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
@@ -239,41 +239,41 @@ async def get_agente(
     raw_org = auth[2]
     org_id = coerce_org_uuid(raw_org)
     conexoes = [_conexao_out(c) for c in store.list_connections(org_id=org_id)]
-    token_configurado = lais.agents_token_for_org(org_id, cfg=cfg) is not None
+    token_configurado = julia.agents_token_for_org(org_id, cfg=cfg) is not None
 
     status_agente: Optional[dict[str, Any]] = None
     erro: Optional[str] = None
     client = client_factory(org_id)
     if client is None:
-        erro = lais.LINK_ERROR_MESSAGES["nao_configurado"]
+        erro = julia.LINK_ERROR_MESSAGES["nao_configurado"]
     else:
         try:
-            st = await client.agent_status(lais.DEFAULT_AGENT_KEY)
+            st = await client.agent_status(julia.DEFAULT_AGENT_KEY)
             status_agente = st.as_dict()
             if not st.ativo:
-                erro = lais.LINK_ERROR_MESSAGES["agent_unavailable"]
+                erro = julia.LINK_ERROR_MESSAGES["agent_unavailable"]
             elif not st.llm_configurado:
-                erro = lais.LINK_ERROR_MESSAGES["llm_not_configured"]
+                erro = julia.LINK_ERROR_MESSAGES["llm_not_configured"]
         except AgentsTokenInvalid:
-            erro = lais.LINK_ERROR_MESSAGES["token_invalido"]
+            erro = julia.LINK_ERROR_MESSAGES["token_invalido"]
         except AgentNotFound:
-            erro = lais.LINK_ERROR_MESSAGES["agent_not_found"]
+            erro = julia.LINK_ERROR_MESSAGES["agent_not_found"]
         except AgentsClientError as exc:
             # L2: the UI gets a generic line, never the upstream detail.
-            logger.warning("lais: agents status failed (%s)", type(exc).__name__)
+            logger.warning("julia: agents status failed (%s)", type(exc).__name__)
             erro = "Não foi possível consultar o produto agents agora."
     if erro is None:
-        erro = lais.ler_erro_link(org_id, cfg=cfg)
+        erro = julia.ler_erro_link(org_id, cfg=cfg)
     return {"data": {
         "conexoes": conexoes, "token_configurado": token_configurado,
         "status_agente": status_agente, "erro": erro,
         # Where "Editar Julia no Agents" points (resolved server-side from the
         # product-URL registry, never hard-coded in the FE). Null = unresolvable.
-        "agents_url": lais.agents_base_url(),
+        "agents_url": julia.agents_base_url(),
     }}
 
 
-@router.put("/api/lais/agente/conexoes/{connection_id}")
+@router.put("/api/julia/agente/conexoes/{connection_id}")
 async def put_conexao(
     connection_id: UUID,
     payload: ConexaoAgenteUpdate,
@@ -294,26 +294,26 @@ async def put_conexao(
     if "agente_handoff_notificar_user_id" in payload.model_fields_set:
         alvo = payload.agente_handoff_notificar_user_id
         if alvo is not None:
-            lais.exigir_destinatario_valido(core, org_id, alvo, dono_id=record.user_id)
+            julia.exigir_destinatario_valido(core, org_id, alvo, dono_id=record.user_id)
         patch["agente_handoff_notificar_user_id"] = str(alvo) if alvo else None
 
-    key = payload.agente_leads_key or record.agente_leads_key or lais.DEFAULT_AGENT_KEY
+    key = payload.agente_leads_key or record.agente_leads_key or julia.DEFAULT_AGENT_KEY
     if not _AGENT_KEY_RE.match(key):
         raise AppException("agente_key_invalida", "Chave de agente inválida.", status_code=422)
 
     if payload.agente_leads_ativo and not record.agente_leads_ativo:
         # H3 / H1 / 11.3 preconditions first (cheap, no network), THEN the snapshot.
-        lais.exigir_autorizados(record.authorized_numbers)
-        lais.exigir_hmac_configurado(cfg)
+        julia.exigir_autorizados(record.authorized_numbers)
+        julia.exigir_hmac_configurado(cfg)
         aviso = svc.obter_ou_criar(get_scoped_admin_client("social_wiring"), core, org_id)
-        lais.exigir_aviso_completo(aviso)
-        lais.public_privacy_link(aviso)
+        julia.exigir_aviso_completo(aviso)
+        julia.public_privacy_link(aviso)
 
         waha = waha_factory(base_url=record.base_url or None, api_key=record.api_key, session=record.session_name)
         try:
-            chat_ids = await lais.listar_todos_os_chats(waha)
-        except lais.SnapshotFalhou as exc:
-            logger.error("lais: snapshot failed conn=%s: %s — switch stays OFF", connection_id, exc)
+            chat_ids = await julia.listar_todos_os_chats(waha)
+        except julia.SnapshotFalhou as exc:
+            logger.error("julia: snapshot failed conn=%s: %s — switch stays OFF", connection_id, exc)
             raise AppException(
                 "snapshot_falhou",
                 "Não foi possível listar as conversas existentes do número. A Julia continua desligada.",
@@ -322,14 +322,14 @@ async def put_conexao(
         try:
             lids = await waha.list_lids()
         except Exception:
-            logger.warning("lais: list_lids failed — snapshot keeps phone forms only", exc_info=True)
+            logger.warning("julia: list_lids failed — snapshot keeps phone forms only", exc_info=True)
             lids = []
         # Snapshot rows first, flag last: the switch is never on without a complete
         # snapshot (PostgREST has no multi-statement transaction; this ordering is
         # the fail-closed equivalent — an orphaned snapshot only EXCLUDES chats).
-        lais.gravar_snapshot(
+        julia.gravar_snapshot(
             get_scoped_admin_client("social_wiring"), org_id=org_id, connection_id=connection_id,
-            chat_ids=lais.expandir_aliases(chat_ids, lids),
+            chat_ids=julia.expandir_aliases(chat_ids, lids),
         )
         patch.update(
             agente_leads_ativo=True, agente_leads_key=key,
@@ -348,20 +348,20 @@ async def put_conexao(
     return {"data": _conexao_out(updated)}
 
 
-@router.put("/api/lais/agente/token", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/api/julia/agente/token", status_code=status.HTTP_204_NO_CONTENT)
 async def put_token(
     payload: TokenUpdate,
     auth: tuple = Depends(get_current_user_org),
     cfg=Depends(get_settings),
     build_client=Depends(get_agents_token_client_builder),
-    token_admin: ProductTokenAdmin = Depends(get_lais_token_admin),
+    token_admin: ProductTokenAdmin = Depends(get_julia_token_admin),
     request: Request = None,
 ) -> Response:
     """Paste the org's agents channel token. It is VALIDATED against agents' status
     route first (``token_invalido`` if refused) and stored Fernet-encrypted; it is
     never returned or logged.
 
-    Then (Lais contract 2.2) SW mints the tools token agents calls back with
+    Then (Julia contract 2.2) SW mints the tools token agents calls back with
     (``social-wiring:lais-tools``, issuer ``agents``, 90 days) and pushes it to agents'
     ``PUT /api/channels/ferramentas-token`` -- so the owner never pastes a second token.
     A failure there still answers 204 (the channel token IS stored and Julia answers):
@@ -370,14 +370,14 @@ async def put_token(
     token = payload.token.strip()
     agents_client = build_client(token)
     try:
-        await agents_client.agent_status(lais.DEFAULT_AGENT_KEY)
+        await agents_client.agent_status(julia.DEFAULT_AGENT_KEY)
     except AgentsTokenInvalid as exc:
         raise AppException("token_invalido", "O produto agents recusou este token.", status_code=422) from exc
     except AgentNotFound:
         # The token was ACCEPTED; the agent just is not seeded yet. Storing it is right.
-        logger.info("lais: token accepted by agents but the agent does not exist yet (org=%s)", org_id)
+        logger.info("julia: token accepted by agents but the agent does not exist yet (org=%s)", org_id)
     except AgentsClientError as exc:
-        logger.error("lais: could not validate the agents token (%s)", type(exc).__name__)
+        logger.error("julia: could not validate the agents token (%s)", type(exc).__name__)
         raise AppException(
             "agents_indisponivel", "Não foi possível validar o token com o produto agents agora.", status_code=502
         ) from exc
@@ -385,10 +385,10 @@ async def put_token(
         store = api_keys_store.build_api_key_store(encryption_key=cfg.encryption_key)
     except EncryptionNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    api_keys_store.put_api_key(store, str(org_id), lais.AGENTS_KEY_NAME, token)
-    lais.limpar_erro_link(org_id, cfg=cfg)
+    api_keys_store.put_api_key(store, str(org_id), julia.AGENTS_KEY_NAME, token)
+    julia.limpar_erro_link(org_id, cfg=cfg)
     if not await _entregar_token_ferramentas(token_admin, agents_client, org_id, getattr(user, "id", None)):
-        lais.registrar_erro_link(org_id, "ferramentas_indisponiveis", cfg=cfg)
+        julia.registrar_erro_link(org_id, "ferramentas_indisponiveis", cfg=cfg)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -422,22 +422,22 @@ async def _entregar_token_ferramentas(
             minted_by=_uuid_ou_none(minted_by),
         )
     except Exception:
-        logger.exception("lais: could not mint the tools token for org=%s", org_id)
+        logger.exception("julia: could not mint the tools token for org=%s", org_id)
         return False
     try:
         await agents_client.put_ferramentas_token(minted.secret)
     except Exception as exc:  # AgentsClientError or anything the transport raises
-        logger.error("lais: agents refused the tools token org=%s (%s)", org_id, type(exc).__name__)
+        logger.error("julia: agents refused the tools token org=%s (%s)", org_id, type(exc).__name__)
         try:
             token_admin.revoke(_TOOLS_TOKEN_SCHEMA, minted.info.id, org_id=org_id)
         except Exception:
-            logger.exception("lais: could not revoke the undelivered tools token org=%s id=%s", org_id, minted.info.id)
+            logger.exception("julia: could not revoke the undelivered tools token org=%s id=%s", org_id, minted.info.id)
         return False
     for antigo in anteriores:
         try:
             token_admin.revoke(_TOOLS_TOKEN_SCHEMA, antigo, org_id=org_id)
         except Exception:
-            logger.exception("lais: could not retire the previous tools token org=%s id=%s", org_id, antigo)
+            logger.exception("julia: could not retire the previous tools token org=%s id=%s", org_id, antigo)
     return True
 
 
@@ -458,9 +458,9 @@ async def patch_chat_agente(
     if not chat_store.set_agente_pausado(connection_id=connection_id, chat_id=chat_id, pausado=payload.pausado):
         raise HTTPException(status_code=404, detail="chat not found")
     try:  # contract 0.2: a pause/resume invalidates every job queued for this contato
-        lais_contatos_service.bump_gen_do_chat(get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id)
+        julia_contatos_service.bump_gen_do_chat(get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id)
     except Exception:
-        logger.exception("lais: gen bump on pause failed conn=%s chat=%s (the flag IS set)", connection_id, chat_id)
+        logger.exception("julia: gen bump on pause failed conn=%s chat=%s (the flag IS set)", connection_id, chat_id)
     summary = chat_store.get_chat(connection_id=connection_id, chat_id=chat_id)
     event = {**summary.as_dict(), "agente_pausado": payload.pausado} if summary else {
         "chat_id": chat_id, "agente_pausado": payload.pausado,
@@ -471,7 +471,7 @@ async def patch_chat_agente(
     return {"chat_id": chat_id, "agente_pausado": payload.pausado}
 
 
-@router.post("/api/lais/agente/conexoes/{connection_id}/chats/{chat_id:path}/apagar-dados")
+@router.post("/api/julia/agente/conexoes/{connection_id}/chats/{chat_id:path}/apagar-dados")
 async def post_apagar_dados(
     connection_id: UUID,
     chat_id: str,
@@ -485,14 +485,14 @@ async def post_apagar_dados(
     _user, org_id = _require_admin(auth, request, "A exclusão de dados")
     record = _record_or_404(store, connection_id, org_id)
     module = get_conversation_module()
-    res = await lais.apagar_dados_do_chat(
+    res = await julia.apagar_dados_do_chat(
         client=get_scoped_admin_client("social_wiring"), connection=record, chat_id=chat_id,
-        agents_client=client_factory(org_id), agent_key=record.agente_leads_key or lais.DEFAULT_AGENT_KEY,
+        agents_client=client_factory(org_id), agent_key=record.agente_leads_key or julia.DEFAULT_AGENT_KEY,
         buffer=module.buffer if module else None,
     )
     return {"data": {
         "sw_mensagens": res.sw_mensagens, "sw_contatos": res.sw_contatos,
-        "agents_ok": res.agents_ok, "agents_apagou": res.agents_apagou, "lais_contatos": res.lais_contatos,
+        "agents_ok": res.agents_ok, "agents_apagou": res.agents_apagou, "julia_contatos": res.julia_contatos,
     }}
 
 

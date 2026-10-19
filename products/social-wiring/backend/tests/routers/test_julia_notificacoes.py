@@ -1,7 +1,7 @@
-"""Lais wave 6 -- Notificacoes (contract 8): recipient resolution (responsavel -> owner -> admins), per-user
+"""Julia wave 6 -- Notificacoes (contract 8): recipient resolution (responsavel -> owner -> admins), per-user
 prefs, org isolation, member-sees-only-own, strict `== 401`, no double handoff, cobranca from the episode resumo.
 
-Seams: mock DB + the `lais_eventos_service` sink; nothing of ours is patched."""
+Seams: mock DB + the `julia_eventos_service` sink; nothing of ours is patched."""
 from __future__ import annotations
 
 import asyncio
@@ -14,16 +14,16 @@ from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import ResumoResult
-from app.services import lais_acoes_service as acoes
-from app.services import lais_contatos_service as contatos
-from app.services import lais_eventos_service as eventos
-from app.services import lais_notificacoes_service as svc
+from app.services import julia_acoes_service as acoes
+from app.services import julia_contatos_service as contatos
+from app.services import julia_eventos_service as eventos
+from app.services import julia_notificacoes_service as svc
 
-from tests.support.lais_world import (
+from tests.support.julia_world import (
     ADMIN_ID, CONNECTION_ID, LEAD_CHAT, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, CORRETOR_ID, World,
 )
 
-BASE = "/api/lais/notificacoes"
+BASE = "/api/julia/notificacoes"
 H = {"Authorization": "Bearer test-token"}
 
 
@@ -39,7 +39,7 @@ def _core_injetado(w):
 
 def _mundo(**contato_over):
     w = World()
-    w.sw.set_table_data("lais_notificacao_prefs", [])
+    w.sw.set_table_data("julia_notificacao_prefs", [])
     w.seed_connection()
     contato = contatos.obter_ou_criar_contato(w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, telefone_e164="+5511988887777")
     if contato_over:
@@ -84,14 +84,14 @@ class TestDestinatarios:
         w, c = _mundo(operacao="aluguel")
         svc.notificar(w.sw, _evento(w, c, "captacao"), core=w.core)
         (n,) = w.notifications()
-        assert n["metadata"]["tipo"] == "lais_captacao" and n["metadata"]["operacao"] == "aluguel"
+        assert n["metadata"]["tipo"] == "julia_captacao" and n["metadata"]["operacao"] == "aluguel"
         assert n["org_id"] == ORG_ID and n["title"] == "Captação"
 
 
 class TestPreferencias:
     def test_pref_off_suppresses_only_that_user_and_type(self):
         w, c = _mundo()
-        w.sw.set_table_data("lais_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "novo_lead", "in_app": False}])
+        w.sw.set_table_data("julia_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "novo_lead", "in_app": False}])
         svc.notificar(w.sw, _evento(w, c, "novo_lead"), core=w.core)
         assert w.notifications() == []
         svc.notificar(w.sw, _evento(w, c, "nova_mensagem"), core=w.core)
@@ -99,13 +99,13 @@ class TestPreferencias:
 
     def test_lead_pronto_toggle_gates_novo_atendimento(self):
         w, c = _mundo()
-        w.sw.set_table_data("lais_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "lead_pronto", "in_app": False}])
+        w.sw.set_table_data("julia_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "lead_pronto", "in_app": False}])
         svc.notificar(w.sw, _evento(w, c, "novo_atendimento"), core=w.core)
         assert w.notifications() == []
 
     def test_prefs_of_another_org_do_not_apply(self):
         w, c = _mundo()
-        w.sw.set_table_data("lais_notificacao_prefs", [{"org_id": OTHER_ORG_ID, "user_id": OWNER_ID, "tipo": "novo_lead", "in_app": False}])
+        w.sw.set_table_data("julia_notificacao_prefs", [{"org_id": OTHER_ORG_ID, "user_id": OWNER_ID, "tipo": "novo_lead", "in_app": False}])
         svc.notificar(w.sw, _evento(w, c), core=w.core)
         assert len(w.notifications()) == 1
 
@@ -141,8 +141,8 @@ class TestSinkEHandoff:
         with _core_injetado(w):
             svc.avisar_cobranca(w.sw, ORG_ID, c, inter, ["pergunta_preco", "cobranca_atendimento"])
             svc.avisar_cobranca(w.sw, ORG_ID, c, inter, ["pergunta_preco"])
-        assert [n["metadata"]["tipo"] for n in w.notifications()] == ["lais_cobranca_atendimento"]
-        assert [e["tipo"] for e in w.rows("lais_eventos")] == ["cobranca_atendimento"]
+        assert [n["metadata"]["tipo"] for n in w.notifications()] == ["julia_cobranca_atendimento"]
+        assert [e["tipo"] for e in w.rows("julia_eventos")] == ["cobranca_atendimento"]
 
     def test_fechar_interacao_emits_cobranca_via_hook(self):
         w, c = _mundo()
@@ -155,7 +155,7 @@ class TestSinkEHandoff:
         svc.registrar()
         with _core_injetado(w):
             asyncio.run(acoes.fechar_interacao(w.sw, org_id=ORG_ID, contato=c, interacao=inter, agents_client=Agents(), conversation_id="conv"))
-        assert [n["metadata"]["tipo"] for n in w.notifications()] == ["lais_cobranca_atendimento"]
+        assert [n["metadata"]["tipo"] for n in w.notifications()] == ["julia_cobranca_atendimento"]
 
 
 # ── routes ──────────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ class Scene:
         return self.tc.post(url, json=json if json is not None else {}, headers=H, **kw)
 
 
-def _notif(user, tipo="lais_novo_lead", *, org=ORG_ID, read=False, created="2026-10-14T10:00:00+00:00", operacao=None):
+def _notif(user, tipo="julia_novo_lead", *, org=ORG_ID, read=False, created="2026-10-14T10:00:00+00:00", operacao=None):
     return {"id": str(uuid4()), "user_id": user, "org_id": org, "type": "system", "title": "t", "message": "m",
             "metadata": {"tipo": tipo, "operacao": operacao}, "read": read, "created_at": created}
 
@@ -209,7 +209,7 @@ class TestRotas:
         w = scene.w
         w.core.set_table_data("notifications", [
             _notif(TEST_USER_ID), _notif(OWNER_ID), _notif(TEST_USER_ID, org=OTHER_ORG_ID),
-            {**_notif(TEST_USER_ID), "metadata": {"tipo": "team_invite"}},  # not a Lais kind
+            {**_notif(TEST_USER_ID), "metadata": {"tipo": "team_invite"}},  # not a Julia kind
         ])
         d = scene.get(BASE).json()["data"]
         assert d["total"] == 1 and d["nao_lidas"] == 1 and len(d["items"]) == 1
@@ -217,9 +217,9 @@ class TestRotas:
 
     def test_filters_and_pagination(self, scene):
         scene.w.core.set_table_data("notifications", [
-            _notif(TEST_USER_ID, "lais_captacao", operacao="compra", created="2026-10-10T10:00:00+00:00"),
-            _notif(TEST_USER_ID, "lais_novo_lead", operacao="aluguel", created="2026-10-12T10:00:00+00:00"),
-            _notif(TEST_USER_ID, "lais_novo_lead", operacao="compra", created="2026-10-14T10:00:00+00:00"),
+            _notif(TEST_USER_ID, "julia_captacao", operacao="compra", created="2026-10-10T10:00:00+00:00"),
+            _notif(TEST_USER_ID, "julia_novo_lead", operacao="aluguel", created="2026-10-12T10:00:00+00:00"),
+            _notif(TEST_USER_ID, "julia_novo_lead", operacao="compra", created="2026-10-14T10:00:00+00:00"),
         ])
         g = lambda q: scene.get(f"{BASE}?{q}").json()["data"]
         assert [i["tipo"] for i in g("tipo=novo_lead")["items"]] == ["novo_lead", "novo_lead"]

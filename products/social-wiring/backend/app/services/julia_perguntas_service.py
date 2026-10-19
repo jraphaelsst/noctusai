@@ -1,8 +1,8 @@
-"""Lais "Perguntas essenciais" (lais-build-contract section 4, wave 2).
+"""Julia "Perguntas essenciais" (lais-build-contract section 4, wave 2).
 
-The org picks the questions Julia asks from a global catalogue (`lais_perguntas_catalogo`):
+The org picks the questions Julia asks from a global catalogue (`julia_perguntas_catalogo`):
 <= 8 active, <= 5 qualifying, `objetivo` always on. The API validates first (typed 422/409), the
-trigger on `lais_perguntas_org` (migration 269) is the DB backstop.
+trigger on `julia_perguntas_org` (migration 269) is the DB backstop.
 
 Wiring (at import, by registry -- nobody edits the foundation builders):
   * contexto provider `perguntas`  -> the org's active questions (filtered by the contato's operacao)
@@ -20,13 +20,13 @@ from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acoes_service, lais_contexto_service
-from app.services import lais_slots_sensiveis as sensiveis
+from app.services import julia_acoes_service, julia_contexto_service
+from app.services import julia_slots_sensiveis as sensiveis
 
 logger = logging.getLogger(__name__)
 
-T_CATALOGO = "lais_perguntas_catalogo"
-T_ORG = "lais_perguntas_org"
+T_CATALOGO = "julia_perguntas_catalogo"
+T_ORG = "julia_perguntas_org"
 OBJETIVO = "objetivo"
 MAX_ATIVAS = 8
 MAX_QUALIFICATORIAS = 5
@@ -55,7 +55,7 @@ def _sem_criterios(_client: Any, _org_id: UUID | str) -> dict[str, list[str]]:
     return {}
 
 
-#: Wave 3 (`lais_envio_criterios`) binds its reader here with `registrar_criterios`; until that table
+#: Wave 3 (`julia_envio_criterios`) binds its reader here with `registrar_criterios`; until that table
 #: exists no question is referenced by a send criterion.
 _criterios_fn: Callable[[Any, UUID | str], dict[str, list[str]]] = _sem_criterios
 
@@ -141,7 +141,7 @@ def substituir_selecao(client: Any, org_id: UUID | str, selecao: list[dict[str, 
 
 
 # ── contexto provider ───────────────────────────────────────────────────────
-def contexto_provider(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
+def contexto_provider(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
     sel = selecao_org(ctx.client, ctx.org_id)
     op = ctx.contato.get("operacao")
     perguntas: list[dict[str, Any]] = []
@@ -159,10 +159,10 @@ def contexto_provider(ctx: lais_contexto_service.ContextoCtx) -> dict[str, Any]:
 
 
 # ── salvar_slots handler: protect CPF / renda, then the foundation handler ──
-def _h_salvar_slots(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _h_salvar_slots(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     slots = payload.get("slots")
     if not isinstance(slots, dict):
-        return lais_acoes_service._h_salvar_slots(ctx, payload)  # noqa: SLF001 - same-package base handler
+        return julia_acoes_service._h_salvar_slots(ctx, payload)  # noqa: SLF001 - same-package base handler
     protegidos: dict[str, Any] = {}
     descartados: list[str] = []
     for chave, valor in slots.items():
@@ -177,15 +177,15 @@ def _h_salvar_slots(ctx: lais_acoes_service.AcaoCtx, payload: dict[str, Any]) ->
             protegidos[chave] = prot
         else:
             protegidos[chave] = valor
-    res = lais_acoes_service._h_salvar_slots(ctx, {**payload, "slots": protegidos}) or {}  # noqa: SLF001
+    res = julia_acoes_service._h_salvar_slots(ctx, {**payload, "slots": protegidos}) or {}  # noqa: SLF001
     if descartados:
         res = {**res, "ignorados": [*res.get("ignorados", []), *descartados]}
     return res
 
 
 def registrar() -> None:
-    lais_contexto_service.registrar_provider("perguntas", contexto_provider)
-    lais_acoes_service.registrar_handler("salvar_slots", _h_salvar_slots)
+    julia_contexto_service.registrar_provider("perguntas", contexto_provider)
+    julia_acoes_service.registrar_handler("salvar_slots", _h_salvar_slots)
 
 
 registrar()

@@ -1,16 +1,16 @@
-"""Meta lead-form lead -> Lais intake (reconstruction map #33 / wave 12 "Meta form leads first contact").
+"""Meta lead-form lead -> Julia intake (reconstruction map #33 / wave 12 "Meta form leads first contact").
 
 A lead that arrives from a Meta Lead Ads form is already a SW lead + funil card (the leadgen ingest owns that).
-This module makes it ALSO enter the Lais pipeline exactly like a WhatsApp first contact does, when -- and only
+This module makes it ALSO enter the Julia pipeline exactly like a WhatsApp first contact does, when -- and only
 when -- the org has Julia on (`whatsapp_connections.agente_leads_ativo` on at least one line):
 
-  1. the `lais_contato` for the lead's phone on the org's Julia line (created on first sight) and an open
-     `lais_interacao` -- the same rows a first inbound message creates, so the Lais > Leads list, the timeline and
+  1. the `julia_contato` for the lead's phone on the org's Julia line (created on first sight) and an open
+     `julia_interacao` -- the same rows a first inbound message creates, so the Julia > Leads list, the timeline and
      Julia's context all see the lead;
   2. Julia speaks first as the approved Cloud template "Abordagem comercial|neutra" (category `primeiro_contato`) --
      WHICH one is decided by the rule in Julia's prompt section `decisao-abordagem-meta` (agents studio; owner
      2026-10-19), see `escolher_abordagem` --
-     through `lais_disparos_service.primeiro_contato_meta` -- the ONE first-contact sender. Cloud API only: while
+     through `julia_disparos_service.primeiro_contato_meta` -- the ONE first-contact sender. Cloud API only: while
      the line is not a configured Cloud one (pending Meta verification) NOTHING is sent -- never WAHA free text,
      never a mass send -- and the lead simply keeps flowing through the ordinary path;
   3. `ultimo_outbound_at` on the contato (so the re-engagement clock and "already talking" see the message) and
@@ -18,7 +18,7 @@ when -- the org has Julia on (`whatsapp_connections.agente_leads_ativo` on at le
 
 Idempotent: a phone whose contato already has any activity (an inbound or an outbound) is never contacted again;
 a second delivery of the same lead is therefore a no-op. The lead -> SW lead link is NOT re-done here: the wave-3
-Envio (`lais_envio_service.enviar`) attaches the existing lead by phone when the conversation later qualifies, and
+Envio (`julia_envio_service.enviar`) attaches the existing lead by phone when the conversation later qualifies, and
 never duplicates it.
 
 NEVER raises (the caller is a background leg after Meta's 200); every outcome is a returned status.
@@ -34,12 +34,12 @@ from noctusai_lib.primitives.phone import normalize_phone
 
 from app.clients.agents import AgentsClient, AgentsClientError, DecisaoRequest
 from app.modules.leads.services.meta_ingest_service import codigo_do_meta_lead
-from app.services.lais_agente_service import DEFAULT_AGENT_KEY
+from app.services.julia_agente_service import DEFAULT_AGENT_KEY
 from app.services import (
-    lais_contatos_service as contatos,
-    lais_disparos_service,
-    lais_eventos_service as eventos,
-    lais_transporte,
+    julia_contatos_service as contatos,
+    julia_disparos_service,
+    julia_eventos_service as eventos,
+    julia_transporte,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def escolher_abordagem(lead: dict[str, Any], agents: Optional[AgentsClient
         r = await agents.decidir(DEFAULT_AGENT_KEY, DECISAO_ABORDAGEM, DecisaoRequest(
             opcoes=ABORDAGENS, regra_padrao=REGRA_PADRAO, dados=dados_da_decisao(lead)))
     except AgentsClientError as exc:
-        logger.warning("lais: abordagem decision unavailable (%s) -- local rule applied", type(exc).__name__)
+        logger.warning("julia: abordagem decision unavailable (%s) -- local rule applied", type(exc).__name__)
         return {"abordagem": regra_local(lead), "regra": "local", "motivo": type(exc).__name__}
     return {"abordagem": r.escolha, "regra": r.regra, "motivo": r.motivo}
 
@@ -97,12 +97,12 @@ def _linhas_julia(store: Any, org_id: UUID | str) -> list[Any]:
 
 def escolher_conexao(store: Any, org_id: UUID | str) -> Optional[Any]:
     """The org's Julia line: a configured Cloud one first (decrypted, ready to send), else the first Julia line.
-    None = the org has Lais off (no line with `agente_leads_ativo`) -> the lead is not taken into Lais at all."""
+    None = the org has Julia off (no line with `agente_leads_ativo`) -> the lead is not taken into Julia at all."""
     linhas = _linhas_julia(store, org_id)
     for c in linhas:
-        if getattr(c, "transporte", None) == lais_transporte.TRANSPORTE_CLOUD:
+        if getattr(c, "transporte", None) == julia_transporte.TRANSPORTE_CLOUD:
             full = store.get_connection(connection_id=c.id, org_id=org_id, decrypt=True)
-            if lais_transporte.cloud_configurada(full):
+            if julia_transporte.cloud_configurada(full):
                 return full
     return linhas[0] if linhas else None
 
@@ -118,17 +118,17 @@ def _registrar(client: Any, org_id: UUID | str, contato_id: Any, status: str, mo
 
 async def iniciar(
     client: Any, org_id: UUID | str, lead: dict[str, Any], *, store: Any,
-    transporte_factory: Callable[[Any], lais_transporte.Transporte],
+    transporte_factory: Callable[[Any], julia_transporte.Transporte],
     contexto: Optional[dict[str, str]] = None, agents: Optional[AgentsClient] = None,
 ) -> dict[str, Any]:
-    """Take one freshly ingested Meta lead (`meta_ads_leads` row: `full_name`, `phone`, `answers`...) into Lais.
+    """Take one freshly ingested Meta lead (`meta_ads_leads` row: `full_name`, `phone`, `answers`...) into Julia.
 
-    Returns `{status, ...}`: `lais_desligada` | `sem_telefone` | `ja_em_atendimento` | `enviado` |
+    Returns `{status, ...}`: `julia_desligada` | `sem_telefone` | `ja_em_atendimento` | `enviado` |
     `transporte_indisponivel` | `modelo_nao_aprovado` | `erro`."""
     try:
         conexao = escolher_conexao(store, org_id)
         if conexao is None:
-            return {"status": "lais_desligada"}
+            return {"status": "julia_desligada"}
         telefone = normalize_phone(lead.get("phone"))
         if not telefone:
             _registrar(client, org_id, None, "sem_telefone")
@@ -144,11 +144,11 @@ async def iniciar(
         )
         contatos.abrir_interacao(client, org_id, contato)
 
-        cloud = lais_transporte.cloud_configurada(conexao)
+        cloud = julia_transporte.cloud_configurada(conexao)
         # Ask the agent's rule only when a template can actually go out (no model spend while the line waits for Meta).
         decisao = (await escolher_abordagem(lead, agents) if cloud
                    else {"abordagem": regra_local(lead), "regra": "local", "motivo": "sem_cloud"})
-        resultado = await lais_disparos_service.primeiro_contato_meta(
+        resultado = await julia_disparos_service.primeiro_contato_meta(
             client, org_id, connection=conexao,
             transporte=transporte_factory(conexao) if cloud else None,
             telefone=telefone, nome=nome, abordagem=decisao["abordagem"], contexto=contexto, contato_id=contato["id"],
@@ -161,7 +161,7 @@ async def iniciar(
         _registrar(client, org_id, contato["id"], motivo, decisao=decisao)
         return {"status": motivo, "contato_id": contato["id"]}
     except Exception:
-        logger.exception("lais: meta lead intake failed (org=%s) -- the lead is stored; Julia did not take it", org_id)
+        logger.exception("julia: meta lead intake failed (org=%s) -- the lead is stored; Julia did not take it", org_id)
         return {"status": "erro"}
 
 
@@ -172,23 +172,23 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[
     try:
         from app.config import settings
         from app.dependencies import coerce_org_uuid, get_admin_client, get_core_client, get_scoped_admin_client
-        from app.services import lais_agente_service, lais_aviso_service, lais_conhecimento_service
+        from app.services import julia_agente_service, julia_aviso_service, julia_conhecimento_service
         from app.services.whatsapp_connection_store import build_whatsapp_connection_store
 
         org = coerce_org_uuid(org_id)
         store = build_whatsapp_connection_store(get_admin_client(), encryption_key=settings.encryption_key)
-        agents = lais_agente_service.resolve_agents_client(org, cfg=settings)
-        nome_agente = await lais_agente_service.nome_do_agente(agents)
+        agents = julia_agente_service.resolve_agents_client(org, cfg=settings)
+        nome_agente = await julia_agente_service.nome_do_agente(agents)
         contexto = {
-            "nome_lais": nome_agente or lais_conhecimento_service.PERSONA_NOME,
-            "nome_imobiliaria": lais_aviso_service.nome_da_org(get_core_client(), org) or "",
+            "nome_julia": nome_agente or julia_conhecimento_service.PERSONA_NOME,
+            "nome_imobiliaria": julia_aviso_service.nome_da_org(get_core_client(), org) or "",
         }
         return await iniciar(
             get_scoped_admin_client("social_wiring"), org, lead, store=store,
-            transporte_factory=lais_transporte.transporte_da_conexao, contexto=contexto, agents=agents,
+            transporte_factory=julia_transporte.transporte_da_conexao, contexto=contexto, agents=agents,
         )
     except Exception:
-        logger.exception("lais: could not wire the meta lead intake (org=%s)", org_id)
+        logger.exception("julia: could not wire the meta lead intake (org=%s)", org_id)
         return {"status": "erro"}
 
 

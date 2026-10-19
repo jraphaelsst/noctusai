@@ -1,4 +1,4 @@
-"""Lais wave 2 (lais-build-contract section 4): `/api/lais/perguntas`, the contato read route, the
+"""Julia wave 2 (lais-build-contract section 4): `/api/julia/perguntas`, the contato read route, the
 `perguntas` contexto provider, the protected CPF/renda slots. Strict `== 401` on the auth boundary.
 
 Seams: mock DB (the catalogue rows are PARSED from migration 269, so the seed itself is under test),
@@ -15,19 +15,19 @@ from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse
 from noctusai_lib.testing.migrations import migration_path
 
-from app.services import lais_acoes_service as acoes
-from app.services import lais_contexto_service as contexto
-from app.services import lais_perguntas_service as svc
-from app.services import lais_slots_sensiveis as sens
-from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
+from app.services import julia_acoes_service as acoes
+from app.services import julia_contexto_service as contexto
+from app.services import julia_perguntas_service as svc
+from app.services import julia_slots_sensiveis as sens
+from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OTHER_ORG_ID, World
 
 MIGRATION = migration_path(Path(__file__).resolve().parents[2], "lais_perguntas")
 _ROW = re.compile(
     r"^    \('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\w+)', (NULL|'\w+'), (true|false), (true|false), "
     r"(NULL|'\w+'), (\d+)\)", re.M)
 H = {"Authorization": "Bearer test-token"}
-URL = "/api/lais/perguntas"
-CONTATO_URL = f"/api/lais/contatos/{CONNECTION_ID}/{LEAD_CHAT}"
+URL = "/api/julia/perguntas"
+CONTATO_URL = f"/api/julia/contatos/{CONNECTION_ID}/{LEAD_CHAT}"
 CPF_DE_TESTE = "111.111.111-11"
 
 
@@ -52,7 +52,7 @@ class Scene:
         return self.tc.put(URL, json={"selecao": selecao}, headers=H)
 
     def rows(self, org=ORG_ID):
-        return {r["chave"]: r for r in self.w.sw.table("lais_perguntas_org").select("*").execute().data if r["org_id"] == org}
+        return {r["chave"]: r for r in self.w.sw.table("julia_perguntas_org").select("*").execute().data if r["org_id"] == org}
 
 
 def sel(*chaves, qual=()):
@@ -61,8 +61,8 @@ def sel(*chaves, qual=()):
 
 def _scene(role):
     world = World()
-    world.sw.set_table_data("lais_perguntas_catalogo", catalogo_do_seed())
-    world.sw.set_table_data("lais_perguntas_org", [])
+    world.sw.set_table_data("julia_perguntas_catalogo", catalogo_do_seed())
+    world.sw.set_table_data("julia_perguntas_org", [])
     world.core.set_table_data("noctus_users", [
         {"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role},
     ])
@@ -73,7 +73,7 @@ def _scene(role):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_perguntas_router import get_perguntas_client
+        from app.routers.julia_perguntas_router import get_perguntas_client
 
         app.dependency_overrides[get_perguntas_client] = lambda: world.sw
         yield Scene(TestClient(app), world)
@@ -132,7 +132,7 @@ class TestGet:
         assert not any(q["usada_em_criterio"] for q in por.values())
 
     def test_another_orgs_selection_is_invisible(self, admin):
-        admin.w.sw.set_table_data("lais_perguntas_org", [
+        admin.w.sw.set_table_data("julia_perguntas_org", [
             {"org_id": OTHER_ORG_ID, "chave": "nome", "ativa": True, "qualificatoria": True}])
         por = {q["chave"]: q for q in admin.get(URL).json()["data"]["catalogo"]}
         assert not por["nome"]["ativa"]
@@ -227,7 +227,7 @@ class TestProvider:
 # ── salvar_slots + sensitive slots ──────────────────────────────────────────
 class TestSalvarSlots:
     def _ctx(self, w, perguntas):
-        contato = w.sw.table("lais_contatos").insert({
+        contato = w.sw.table("julia_contatos").insert({
             "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "slots": {}}).execute().data[0]
         return acoes.AcaoCtx(client=w.sw, org_id=ORG_ID, contato=contato, interacao=None, lote_hash="h", seq=1,
                              tipo="salvar_slots", perguntas=perguntas)
@@ -241,7 +241,7 @@ class TestSalvarSlots:
             client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
         res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": CPF_DE_TESTE, "renda_familiar": "R$ 6.500,00", "nome": "Ana"}})
         assert set(res["salvos"]) == {"cpf", "renda_familiar", "nome"}
-        row = admin.w.sw.table("lais_contatos").select("*").execute().data[0]
+        row = admin.w.sw.table("julia_contatos").select("*").execute().data[0]
         assert row["slots"]["renda_familiar"] == "faixa:5k_10k"
         assert row["slots"]["cpf"].startswith("sha256:") and row["slots"]["cpf"].endswith("|final:111")
         assert "11111111111" not in str(row) and CPF_DE_TESTE not in str(row) and "6.500" not in str(row)
@@ -252,7 +252,7 @@ class TestSalvarSlots:
             client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
         res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": "123", "renda_familiar": "depende"}})
         assert res["salvos"] == [] and set(res["ignorados"]) == {"cpf", "renda_familiar"}
-        assert admin.w.sw.table("lais_contatos").select("*").execute().data[0]["slots"] == {}
+        assert admin.w.sw.table("julia_contatos").select("*").execute().data[0]["slots"] == {}
 
     def test_keys_outside_the_active_set_are_still_ignored(self, admin):
         admin.put(sel("objetivo", "nome"))
@@ -275,10 +275,10 @@ class TestSalvarSlots:
 # ── contato read route ──────────────────────────────────────────────────────
 class TestContato:
     def _seed(self, w, org=ORG_ID, slots=None):
-        c = w.sw.table("lais_contatos").insert({
+        c = w.sw.table("julia_contatos").insert({
             "org_id": org, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "nome": "Ana", "operacao": "compra",
             "slots": slots or {"faixa_preco": "900000", "quartos": "3"}}).execute().data[0]
-        w.sw.table("lais_interacoes").insert({"org_id": org, "contato_id": c["id"], "operacao": "compra"}).execute()
+        w.sw.table("julia_interacoes").insert({"org_id": org, "contato_id": c["id"], "operacao": "compra"}).execute()
         return c
 
     def test_a_member_who_is_not_the_owner_of_the_contato_is_403(self, member):
@@ -288,7 +288,7 @@ class TestContato:
 
     def test_shape_and_org_scoping(self, member):
         c = self._seed(member.w)
-        member.w.sw.table("lais_contatos").update({"responsavel_user_id": TEST_USER_ID}).eq("id", c["id"]).execute()  # A7: owner
+        member.w.sw.table("julia_contatos").update({"responsavel_user_id": TEST_USER_ID}).eq("id", c["id"]).execute()  # A7: owner
         d = member.get(CONTATO_URL).json()["data"]
         assert set(d) == {"contato", "slots", "interacao_atual"}
         assert d["contato"]["nome"] == "Ana" and d["interacao_atual"]["operacao"] == "compra"
@@ -306,6 +306,6 @@ class TestContato:
 
     def test_unknown_chat_is_404_and_no_open_episode_is_null(self, admin):
         assert admin.get(CONTATO_URL).status_code == 404
-        c = admin.w.sw.table("lais_contatos").insert({
+        c = admin.w.sw.table("julia_contatos").insert({
             "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT}).execute().data[0]
         assert c and admin.get(CONTATO_URL).json()["data"]["interacao_atual"] is None

@@ -1,16 +1,16 @@
-"""Lais > Equipes (wave 11, contract section 13). Distribution data lives in SW; Julia only consumes it.
+"""Julia > Equipes (wave 11, contract section 13). Distribution data lives in SW; Julia only consumes it.
 
-  GET    /api/lais/equipes                              -> {data:[{id, nome, atende_apos_julia, modo funil|julia,
+  GET    /api/julia/equipes                              -> {data:[{id, nome, atende_apos_julia, modo funil|julia,
                                                           manter_ultimo, membros:[{user_id, nome, ativo, ordem}]}]}
-  POST   /api/lais/equipes                              admin {nome, atende_apos_julia?, modo?, manter_ultimo?} -> 201
-  GET    /api/lais/equipes/{id}
-  PATCH  /api/lais/equipes/{id}                         admin (any of the POST fields)
-  DELETE /api/lais/equipes/{id}                         admin -> 204
-  POST   /api/lais/equipes/{id}/membros                 admin {user_id, ativo?} -> 201 (the team)
-  PATCH  /api/lais/equipes/{id}/membros/{user_id}       admin {ativo}
-  DELETE /api/lais/equipes/{id}/membros/{user_id}       admin -> 204
-  PUT    /api/lais/equipes/{id}/membros/ordem           admin {ordem:[user_id,...]} (exactly the current members)
-  GET    /api/lais/equipes/{id}/metricas?mes=YYYY-MM    -> {data:{membros:[{user_id, nome, ultimo_acesso, tpr_medio_s,
+  POST   /api/julia/equipes                              admin {nome, atende_apos_julia?, modo?, manter_ultimo?} -> 201
+  GET    /api/julia/equipes/{id}
+  PATCH  /api/julia/equipes/{id}                         admin (any of the POST fields)
+  DELETE /api/julia/equipes/{id}                         admin -> 204
+  POST   /api/julia/equipes/{id}/membros                 admin {user_id, ativo?} -> 201 (the team)
+  PATCH  /api/julia/equipes/{id}/membros/{user_id}       admin {ativo}
+  DELETE /api/julia/equipes/{id}/membros/{user_id}       admin -> 204
+  PUT    /api/julia/equipes/{id}/membros/ordem           admin {ordem:[user_id,...]} (exactly the current members)
+  GET    /api/julia/equipes/{id}/metricas?mes=YYYY-MM    -> {data:{membros:[{user_id, nome, ultimo_acesso, tpr_medio_s,
                                                           tpr_amostras, conversas, distribuicao, distribuicao_pct}], ...}}
 
 Writes are org owner/admin only (403); reads are any org member. Every route is 401 without a session.
@@ -28,11 +28,11 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_equipes_service as svc
+from app.services import julia_equipes_service as svc
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/lais/equipes", tags=["lais-equipes"])
+router = APIRouter(prefix="/api/julia/equipes", tags=["julia-equipes"])
 
 _QUEM = "As equipes"
 

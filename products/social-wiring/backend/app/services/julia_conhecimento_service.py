@@ -1,6 +1,6 @@
-"""Lais wave 1 -- "Conhecimento" (lais-build-contract section 3).
+"""Julia wave 1 -- "Conhecimento" (lais-build-contract section 3).
 
-Per-org knowledge sections (`lais_conhecimento_secoes`): validated per section by a pydantic
+Per-org knowledge sections (`julia_conhecimento_secoes`): validated per section by a pydantic
 model (`extra="forbid"`), saved with an optimistic lock (`versao`), rendered into deterministic
 pt-BR markdown that becomes the `conhecimento` contexto provider (agents appends it to the system
 prompt, so a save changes the next turn's `contexto.hash` with no agent republish).
@@ -21,12 +21,12 @@ from zoneinfo import ZoneInfo
 from noctusai_lib.primitives.exceptions import AppException
 from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, field_validator, model_validator
 
-from app.services import lais_contexto_service
-from app.services.lais_contexto_service import ContextoCtx, FUSO
+from app.services import julia_contexto_service
+from app.services.julia_contexto_service import ContextoCtx, FUSO
 
 logger = logging.getLogger(__name__)
 
-TABLE = "lais_conhecimento_secoes"
+TABLE = "julia_conhecimento_secoes"
 #: Fallback persona name, used ONLY when the agent's status name is unavailable (agents not configured / down).
 #: The live name is the agent's own status name (`AgentsClient.agent_status().nome`) -- per-org swappable.
 PERSONA_NOME = "Julia"
@@ -372,7 +372,7 @@ def mensagem_recesso_primeiro_turno(
             return None
         vigente = recesso_vigente(ler_secoes(client, org_id), _hoje(agora))
     except Exception:
-        logger.exception("lais: recesso check failed org=%s -- no recesso message", org_id)
+        logger.exception("julia: recesso check failed org=%s -- no recesso message", org_id)
         return None
     return texto_recesso(vigente) if vigente else None
 
@@ -521,7 +521,7 @@ def politica_endereco_iptu(client: Any, org_id: UUID | str) -> dict[str, bool]:
     try:
         d = ler_secoes(client, org_id)["endereco_iptu"]["dados"]
     except Exception:
-        logger.exception("lais: endereco_iptu read failed org=%s -- address/IPTU withheld", org_id)
+        logger.exception("julia: endereco_iptu read failed org=%s -- address/IPTU withheld", org_id)
         return {"endereco_completo": False, "usar_iptu": False}
     return {"endereco_completo": bool(d.get("endereco_completo")), "usar_iptu": bool(d.get("usar_iptu"))}
 
@@ -551,7 +551,7 @@ def link_imovel_fn(client: Any, org_id: UUID | str) -> Callable[[str], Optional[
     try:
         d = ler_secoes(client, org_id)["perfil_whatsapp"]["dados"] or {}
     except Exception:
-        logger.exception("lais: perfil_whatsapp read failed org=%s -- listings go out without a link", org_id)
+        logger.exception("julia: perfil_whatsapp read failed org=%s -- listings go out without a link", org_id)
         return lambda _codigo: None
     modelo = d.get("link_imovel", LINK_IMOVEL_PADRAO)
     site = d.get("site") or ""
@@ -563,7 +563,7 @@ def contexto_provider(ctx: ContextoCtx) -> dict[str, Any]:
     return {"conhecimento_md": render_md(ctx.client, ctx.org_id, agora=ctx.agora)}
 
 
-lais_contexto_service.registrar_provider("conhecimento", contexto_provider)
+julia_contexto_service.registrar_provider("conhecimento", contexto_provider)
 
 __all__ = [
     "MODELOS", "SECOES", "contexto_provider", "hash_md", "ler_secoes", "mensagem_recesso_primeiro_turno",

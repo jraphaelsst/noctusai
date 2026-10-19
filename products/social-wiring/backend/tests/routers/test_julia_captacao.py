@@ -1,4 +1,4 @@
-"""Lais wave 8 -- Captacao (contract section 10): the `captacao` handler COMPOSES the wave-3 policy, the feed
+"""Julia wave 8 -- Captacao (contract section 10): the `captacao` handler COMPOSES the wave-3 policy, the feed
 (filters, page sizes, A7), registrar (prefilled imovel via the migration-226 flow) / descartar, strict `== 401`.
 Seams: mock DB through the router's `get_captacao_client`, real auth chain over a mocked session."""
 from __future__ import annotations
@@ -11,15 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.clients.agents import LaisAction, TurnResult
-from app.services import lais_acoes_service as acoes
-from app.services import lais_captacao_service as svc
-from app.services import lais_envio_service as envio
+from app.clients.agents import JuliaAction, TurnResult
+from app.services import julia_acoes_service as acoes
+from app.services import julia_captacao_service as svc
+from app.services import julia_envio_service as envio
 
-from tests.support.lais_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 H = {"Authorization": "Bearer test-token"}
-BASE = "/api/lais/captacoes"
+BASE = "/api/julia/captacoes"
 SEM = "00000000-0000-4000-8000-0000000000ff"
 
 
@@ -36,14 +36,14 @@ class Scene:
                "chat_id": f"551190000{n:04d}@c.us", "telefone_e164": f"+551190000{n:04d}", "nome": f"Pessoa {n}",
                "operacao": "venda", "slots": {}, "gen": 0, "status_envio": "nao_pronto", "canal": "whatsapp",
                "responsavel_user_id": responsavel, "created_at": "2026-10-01T12:00:00+00:00"}
-        return self.w.sw.table("lais_contatos").insert(row).execute().data[0]
+        return self.w.sw.table("julia_contatos").insert(row).execute().data[0]
 
     def captacao(self, contato, n=1, **over):
         row = {"id": str(uuid4()), "org_id": contato["org_id"], "contato_id": contato["id"], "descricao": "Casa de 3 quartos",
                "endereco": "Rua das Flores, 10", "operacao": "venda", "status": "nova", "imovel_id": None, "imovel_codigo": None,
                "created_at": f"2026-10-{n:02d}T12:00:00+00:00", "updated_at": f"2026-10-{n:02d}T12:00:00+00:00"}
         row.update(over)
-        return self.w.sw.table("lais_captacoes").insert(row).execute().data[0]
+        return self.w.sw.table("julia_captacoes").insert(row).execute().data[0]
 
 
 def _scene(role):
@@ -64,7 +64,7 @@ def _scene(role):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_captacao_router import get_captacao_client
+        from app.routers.julia_captacao_router import get_captacao_client
 
         bind_consent_module_to_mock(world.root)
         app.dependency_overrides[get_captacao_client] = lambda: world.sw
@@ -90,7 +90,7 @@ class TestAuth:
 
 class TestHandler:
     def _aplicar(self, scene, contato, payload):
-        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(LaisAction("captacao", 1, payload),))
+        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction("captacao", 1, payload),))
         return asyncio.run(acoes.aplicar(scene.w.sw, org_id=ORG_ID, contato=contato, result=res, lote_hash="l1"))
 
     def test_registered_handler_is_ours_and_composes_the_wave3_policy(self, admin):
@@ -98,9 +98,9 @@ class TestHandler:
         c = admin.contato(1)
         (r,) = self._aplicar(admin, c, {"descricao": "Quer vender o apto", "endereco": "Av. Brasil 5", "operacao": "compra"})
         assert r["estado"] == "aplicada"
-        (row,) = admin.w.rows("lais_captacoes")
+        (row,) = admin.w.rows("julia_captacoes")
         assert row["status"] == "nova" and row["operacao"] == "venda" and row["contato_id"] == c["id"]
-        assert [e["tipo"] for e in admin.w.rows("lais_eventos")] == ["captacao"]  # the wave-3 policy leg ran
+        assert [e["tipo"] for e in admin.w.rows("julia_eventos")] == ["captacao"]  # the wave-3 policy leg ran
 
     def test_policy_enviar_still_sends_to_the_sw(self, admin):
         admin.w.sw.set_table_data(envio.T_POLITICAS, [{"org_id": ORG_ID, "frios": {"ativo": False}, "captacoes": "enviar",
@@ -108,7 +108,7 @@ class TestHandler:
         c = admin.contato(2)
         self._aplicar(admin, c, {"descricao": "x"})
         assert admin.w.rows(envio.T_ENTREGAS) and admin.w.rows(envio.T_ENTREGAS)[0]["gatilho"] == "captacao"
-        assert len(admin.w.rows("lais_captacoes")) == 1
+        assert len(admin.w.rows("julia_captacoes")) == 1
 
 
 class TestListar:
@@ -168,7 +168,7 @@ class TestAcoes:
         assert reg["codigo_canonical"] == d["imovel_id"] and reg["origem_descoberta"] == "manual"
         (ic,) = admin.w.rows("imovel_captacao")
         assert ic["titulo"] == "Rua das Flores, 10" and ic["finalidades"] == ["venda"] and ic["observacoes"] == "Casa de 3 quartos"
-        row = admin.w.rows("lais_captacoes")[0]
+        row = admin.w.rows("julia_captacoes")[0]
         assert row["status"] == "registrada" and row["imovel_id"] == d["imovel_id"] and row["imovel_codigo"] == d["imovel_codigo"]
         item = admin.call("get", f"{BASE}?status=registrada").json()["data"]["items"][0]
         assert item["imovel_codigo"] == d["imovel_codigo"]
@@ -191,7 +191,7 @@ class TestAcoes:
     def test_descartar_then_registrar_refused_and_descartar_is_idempotent(self, admin):
         cap = admin.captacao(admin.contato(1))
         assert admin.call("post", f"{BASE}/{cap['id']}/descartar").status_code == 204
-        assert admin.w.rows("lais_captacoes")[0]["status"] == "descartada"
+        assert admin.w.rows("julia_captacoes")[0]["status"] == "descartada"
         assert admin.call("post", f"{BASE}/{cap['id']}/descartar").status_code == 204
         assert admin.call("post", f"{BASE}/{cap['id']}/registrar").status_code == 409
         assert admin.w.rows("imovel_registry") == []

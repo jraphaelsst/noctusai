@@ -1,4 +1,4 @@
-"""Lais wave 3 -- the send-criteria vocabulary: validation + evaluation (contract 5). Pure functions, no IO.
+"""Julia wave 3 -- the send-criteria vocabulary: validation + evaluation (contract 5). Pure functions, no IO.
 
 `grupos` = `[[{campo, operador, valor}]]` -- groups are OR'd, the criteria inside one group AND'd:
 
@@ -8,7 +8,7 @@
   <slot key>         preenchido | >= | <= | entre   (numeric slots for the last three)
 
 `nome` / `email` count as slot keys (the foundation stores them in columns, not in `slots`).
-`validar_grupos` is the typed-422 gate of `PUT /api/lais/envio/regras`; `avaliar` is what the
+`validar_grupos` is the typed-422 gate of `PUT /api/julia/envio/regras`; `avaliar` is what the
 `qualificar_lead` action / the visit hook / the cold timer run against a contato.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any, Iterable, Optional
 
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_slots_sensiveis as sensiveis
+from app.services import julia_slots_sensiveis as sensiveis
 
 MAX_GRUPOS = 10
 MAX_CRITERIOS = 10
@@ -30,7 +30,7 @@ QUALIFICADO = "qualificado"
 VISITA = "visita_solicitada"
 OPERACAO = "operacao"
 CAMPOS_FIXOS = frozenset({COMPORTAMENTO, VISITA, OPERACAO})
-COLUNAS = ("nome", "email")  # slot-like keys stored as columns of lais_contatos
+COLUNAS = ("nome", "email")  # slot-like keys stored as columns of julia_contatos
 _CHAVE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 

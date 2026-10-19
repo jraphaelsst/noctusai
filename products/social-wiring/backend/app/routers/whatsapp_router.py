@@ -96,8 +96,8 @@ from app.dependencies import get_admin_client, get_settings
 from app.rate_limit import limiter
 from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
-from app.services import lais_agente_service as lais
-from app.services import lais_conversas_service
+from app.services import julia_agente_service as julia
+from app.services import julia_conversas_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
@@ -519,7 +519,7 @@ async def _lid_alias_phone(*, intake, connection, lid: str, cfg=None, waha_facto
     except Exception:
         logger.warning("WAHA LID→phone lookup failed for %s", lid, exc_info=True)
         return None
-    return lais.phone_digits(phone) if phone else None
+    return julia.phone_digits(phone) if phone else None
 
 
 async def _handle_lead_message(
@@ -531,13 +531,13 @@ async def _handle_lead_message(
     when the chat is NOT Julia's (11.1) so the caller keeps today's behaviour.
 
     Never calls ChatbotService or any operator tool — it only buffers; the worker
-    (`lais_lead_turn_service`) owns the turn."""
+    (`julia_lead_turn_service`) owns the turn."""
     from app.dependencies import get_scoped_admin_client
 
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
         state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
-        elegibilidade = await lais.avaliar_elegibilidade(
+        elegibilidade = await julia.avaliar_elegibilidade(
             client=get_scoped_admin_client("social_wiring"), connection=connection,
             chat_id=chat_id, chat_state=state,
             resolver_alias=lambda lid: _lid_alias_phone(
@@ -553,10 +553,10 @@ async def _handle_lead_message(
         logger.info("Julia: chat %s not eligible (%s) — unchanged behaviour", chat_id, elegibilidade.motivo)
         return False
 
-    deletion = lais.is_deletion_request(message_body)
+    deletion = julia.is_deletion_request(message_body)
     if not deletion:
         # Conversas v2: a BLOCKED number is dropped; an ARCHIVED contato goes back to Julia (un-paused).
-        politica = lais_conversas_service.aplicar_politica_inbound(
+        politica = julia_conversas_service.aplicar_politica_inbound(
             get_scoped_admin_client("social_wiring"), chat_store,
             org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
         )
@@ -575,7 +575,7 @@ async def _handle_lead_message(
         return True
     module.buffer.buffer_inbound(
         QueuedConversationMessage(
-            conversation_id=lais.lead_key(connection.id, chat_id),
+            conversation_id=julia.lead_key(connection.id, chat_id),
             text=message_body,
             direction="inbound",
             provider_message_id=provider_message_id or f"sw-{uuid4().hex}",
@@ -601,7 +601,7 @@ async def _apply_human_takeover(
         return
     try:
         redis = make_redis_client(cfg.redis_url, decode_responses=True)
-        if lais.eh_eco_proprio(
+        if julia.eh_eco_proprio(
             redis, connection_id=connection.id, chat_id=chat_id,
             provider_message_id=provider_message_id or None,
         ):
@@ -738,7 +738,7 @@ async def _process_waha_body(
     # 🔴 H2 (contract 10.1): the routing identity of a GROUP message is the
     # `participant`, never the group id. `sender` stays the chat (replies, session
     # and memory are per chat — unchanged); `auth_sender` is who is authorized.
-    is_group = lais.is_group_chat(payload.chat_id or sender)
+    is_group = julia.is_group_chat(payload.chat_id or sender)
     auth_sender = (payload.participant or "").strip() if is_group else sender
 
     # Fast dedup pre-filter — Redis SETNX on the provider_message_id
@@ -1092,7 +1092,7 @@ async def _process_waha_body(
     # to (prod "One Chat", 2026-10-18: Julia off, auto_reply_enabled=true, 0 authorized, 0 bound) this
     # operator chatbot can answer LEADS automatically. Decide: fill authorized_numbers / turn
     # auto_reply off on lead lines, or make empty = nobody for the bot. The Julia outbound gate
-    # (`lais_envio_gate`) does not cover this operator path by design -- 2026-10-18
+    # (`julia_envio_gate`) does not cover this operator path by design -- 2026-10-18
     # When a per-connection record is present, the auto_reply_enabled toggle
     # gates the chatbot.  Default is OFF — operators can chat manually without
     # the bot interfering.  The legacy global route preserves the old gate
@@ -1203,7 +1203,7 @@ async def whatsapp_webhook(
     if not (cfg.waha_webhook_hmac_secret or "").strip():
         from app.dependencies import get_scoped_admin_client
 
-        if lais.julia_ativa_em_alguma_conexao(get_scoped_admin_client("social_wiring")):
+        if julia.julia_ativa_em_alguma_conexao(get_scoped_admin_client("social_wiring")):
             logger.error("whatsapp-webhook: unsigned call refused — Julia is on and no HMAC secret is set")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
 

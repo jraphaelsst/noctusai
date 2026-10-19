@@ -1,8 +1,8 @@
-"""Lais "Perguntas essenciais" + the contato read route (lais-build-contract section 4, wave 2).
+"""Julia "Perguntas essenciais" + the contato read route (lais-build-contract section 4, wave 2).
 
-  GET /api/lais/perguntas                              member read    {data: {catalogo, limites}}
-  PUT /api/lais/perguntas                              org admin      full replace -> same shape
-  GET /api/lais/contatos/{connection_id}/{chat_id}     member read    {data: {contato, slots, interacao_atual}}
+  GET /api/julia/perguntas                              member read    {data: {catalogo, limites}}
+  PUT /api/julia/perguntas                              org admin      full replace -> same shape
+  GET /api/julia/contatos/{connection_id}/{chat_id}     member read    {data: {contato, slots, interacao_atual}}
 
 Errors (AppException envelope): 422 `limite_ativas` / `limite_qualificatorias` / `objetivo_obrigatorio` /
 `chave_desconhecida` / `selecao_invalida`; 409 `usada_em_criterio` (`details.criterios`); 404 `contato_nao_encontrado`.
@@ -19,9 +19,9 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_acesso, lais_contatos_service, lais_perguntas_service as svc
+from app.services import julia_acesso, julia_contatos_service, julia_perguntas_service as svc
 
-router = APIRouter(tags=["lais-perguntas"])
+router = APIRouter(tags=["julia-perguntas"])
 
 
 class PerguntaSelecionada(StrictHttpModel):
@@ -38,14 +38,14 @@ def get_perguntas_client() -> Any:
     return get_scoped_admin_client("social_wiring")
 
 
-@router.get("/api/lais/perguntas")
+@router.get("/api/julia/perguntas")
 def get_perguntas(
     auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_perguntas_client),
 ) -> dict[str, Any]:
     return {"data": svc.montar_saida(client, coerce_org_uuid(auth[2]))}
 
 
-@router.put("/api/lais/perguntas")
+@router.put("/api/julia/perguntas")
 def put_perguntas(
     payload: SelecaoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -57,7 +57,7 @@ def put_perguntas(
     return {"data": svc.substituir_selecao(client, org_id, [p.model_dump() for p in payload.selecao])}
 
 
-@router.get("/api/lais/contatos/{connection_id}/{chat_id}")
+@router.get("/api/julia/contatos/{connection_id}/{chat_id}")
 def get_contato(
     connection_id: UUID,
     chat_id: str,
@@ -66,12 +66,12 @@ def get_contato(
     client: Any = Depends(get_perguntas_client),
 ) -> dict[str, Any]:
     org_id = coerce_org_uuid(auth[2])
-    contato = lais_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
+    contato = julia_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
     if contato is None:
         raise AppException("contato_nao_encontrado", "Contato não encontrado.", status_code=404)
-    lais_acesso.exigir_acesso(client, lais_acesso.contexto(auth, request), contato)  # A7: owner/admin only
+    julia_acesso.exigir_acesso(client, julia_acesso.contexto(auth, request), contato)  # A7: owner/admin only
     ativas = set(svc.selecao_org(client, org_id))
-    interacao = lais_contatos_service.interacao_aberta(client, contato["id"])
+    interacao = julia_contatos_service.interacao_aberta(client, contato["id"])
     return {"data": {
         "contato": {k: contato.get(k) for k in (
             "id", "nome", "email", "operacao", "status_envio", "encerrado_at", "ultimo_inbound_at")},

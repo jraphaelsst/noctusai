@@ -1,4 +1,4 @@
-"""Lais wave 12 -- Modelos (message templates, contract 14 / page-map 59.0 a4).
+"""Julia wave 12 -- Modelos (message templates, contract 14 / page-map 59.0 a4).
 
 A modelo is a WhatsApp template the org drafts here and submits to Meta for approval. Body <= 1024 chars,
 8 categories, a closed registry of 10 `{{parametro}}` placeholders (the ONLY ones a body may use; the ordered
@@ -18,12 +18,12 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_transporte
-from app.services.lais_transporte import Transporte
+from app.services import julia_transporte
+from app.services.julia_transporte import Transporte
 
 logger = logging.getLogger(__name__)
 
-TABLE = "lais_modelos"
+TABLE = "julia_modelos"
 CORPO_MAX = 1024
 NOME_MAX = 80
 
@@ -42,7 +42,7 @@ CATEGORIAS: dict[str, tuple[str, str]] = {
 #: the 10-parameter registry: key -> (label, example value for "Simule com exemplos").
 PARAMETROS: dict[str, tuple[str, str]] = {
     "nome_pessoa": ("Nome da pessoa", "Maria"),
-    "nome_lais": ("Nome da Lais", "Julia"),
+    "nome_julia": ("Nome da Julia", "Julia"),
     "nome_imobiliaria": ("Nome da imobiliária", "Imobiliária Exemplo"),
     "mensagem": ("Mensagem", "Posso ajudar com mais alguma coisa?"),
     "data_visita": ("Data da visita", "20/10/2026"),
@@ -56,6 +56,13 @@ PARAMETROS: dict[str, tuple[str, str]] = {
 STATUS = ("rascunho", "enviado_meta", "aprovado", "rejeitado")
 EDITAVEIS = ("rascunho", "rejeitado")
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+#: Placeholder keys renamed with the module; bodies / callers written before still use the old key.
+#: NOC-REMEDIATE[drop-nome-lais-alias]: migration 287 rewrote the stored bodies; drop once no caller sends it.
+_ALIAS_LEGADO = {"nome_lais": "nome_julia"}
+
+
+def _chave(m: "re.Match[str]") -> str:
+    return _ALIAS_LEGADO.get(m.group(1), m.group(1))
 
 
 def _agora() -> str:
@@ -75,7 +82,7 @@ def extrair_parametros(corpo: str) -> list[str]:
     """Ordered, de-duplicated registry keys used by the body. An unknown placeholder is a 422."""
     chaves: list[str] = []
     for m in _PLACEHOLDER.finditer(corpo):
-        chave = m.group(1)
+        chave = _chave(m)
         if chave not in PARAMETROS:
             raise AppException(
                 "parametro_invalido", f"Parâmetro desconhecido: {{{{{chave}}}}}.", status_code=422,
@@ -89,18 +96,20 @@ def extrair_parametros(corpo: str) -> list[str]:
 def renderizar(corpo: str, valores: Optional[dict[str, str]] = None) -> str:
     """The body with every placeholder filled from `valores` (missing keys use the registry example)."""
     vals = {k: v[1] for k, v in PARAMETROS.items()}
-    vals.update({k: str(v) for k, v in (valores or {}).items() if k in PARAMETROS})
-    return _PLACEHOLDER.sub(lambda m: vals.get(m.group(1), m.group(0)), corpo)
+    vals.update({_ALIAS_LEGADO.get(k, k): str(v) for k, v in (valores or {}).items() if _ALIAS_LEGADO.get(k, k) in PARAMETROS})
+    return _PLACEHOLDER.sub(lambda m: vals.get(_chave(m), m.group(0)), corpo)
 
 
 def corpo_posicional(corpo: str) -> tuple[str, list[str]]:
     """Meta's positional form: `{{nome_pessoa}}` -> `{{1}}` by first appearance, plus that ordered key list."""
     chaves = extrair_parametros(corpo)
-    return _PLACEHOLDER.sub(lambda m: "{{%d}}" % (chaves.index(m.group(1)) + 1), corpo), chaves
+    return _PLACEHOLDER.sub(lambda m: "{{%d}}" % (chaves.index(_chave(m)) + 1), corpo), chaves
 
 
 def nome_meta(modelo: dict[str, Any]) -> str:
     """The template name on Meta's side: stable, lowercase, unique per modelo."""
+    # Deliberately still `lais_`: the name is the template's identity at Meta; templates approved before the rename
+    # (Lais -> Julia, 2026-10-19) keep resolving. NOC-REMEDIATE[rename-lais-meta-template-prefix].
     return f"lais_{str(modelo['id']).replace('-', '')[:16]}"
 
 
@@ -151,12 +160,12 @@ def criar(db: Any, org_id: UUID | str, *, nome: str, categoria: str, corpo: str,
     _nome_livre(db, org_id, nome)
     row = {
         "id": str(uuid4()), "org_id": str(org_id), "nome": nome.strip(), "categoria": categoria, "corpo": corpo.strip(),
-        "parametros": extrair_parametros(corpo), "idioma": lais_transporte.IDIOMA_PADRAO, "status": "rascunho",
+        "parametros": extrair_parametros(corpo), "idioma": julia_transporte.IDIOMA_PADRAO, "status": "rascunho",
         "created_by": str(user_id) if user_id else None,
     }
     created = db.table(TABLE).insert(row).execute().data or []
     if not created:
-        raise RuntimeError("lais: modelo insert returned no row")
+        raise RuntimeError("julia: modelo insert returned no row")
     return created[0]
 
 
@@ -183,7 +192,7 @@ def atualizar(db: Any, org_id: UUID | str, modelo_id: UUID | str, patch: dict[st
 
 def apagar(db: Any, org_id: UUID | str, modelo_id: UUID | str) -> None:
     obter(db, org_id, modelo_id)
-    em_uso = db.table("lais_disparos").select("id").eq("org_id", str(org_id)).eq("modelo_id", str(modelo_id)).limit(1).execute().data
+    em_uso = db.table("julia_disparos").select("id").eq("org_id", str(org_id)).eq("modelo_id", str(modelo_id)).limit(1).execute().data
     if em_uso:
         raise AppException("modelo_em_uso", "Este modelo é usado por um disparo.", status_code=409)
     db.table(TABLE).delete().eq("org_id", str(org_id)).eq("id", str(modelo_id)).execute()
@@ -210,10 +219,10 @@ async def enviar_para_aprovacao(
     exemplos = [PARAMETROS[c][1] for c in chaves]
     try:
         resp = await transporte.submeter_modelo(
-            nome_meta(modelo), CATEGORIAS[modelo["categoria"]][1], corpo, exemplos, modelo.get("idioma") or lais_transporte.IDIOMA_PADRAO,
+            nome_meta(modelo), CATEGORIAS[modelo["categoria"]][1], corpo, exemplos, modelo.get("idioma") or julia_transporte.IDIOMA_PADRAO,
         )
-    except lais_transporte.OperacaoRequerApiOficial as exc:
-        raise lais_transporte.transporte_indisponivel() from exc
+    except julia_transporte.OperacaoRequerApiOficial as exc:
+        raise julia_transporte.transporte_indisponivel() from exc
     db.table(TABLE).update({
         "status": "enviado_meta", "meta_template_id": str(resp.get("id") or ""), "motivo_rejeicao": None, "updated_at": _agora(),
     }).eq("org_id", str(org_id)).eq("id", str(modelo_id)).execute()

@@ -35,8 +35,8 @@ responsive for other requests in parallel.
 
 **Lead keys never block the worker thread.** A Julia lead turn is a slow HTTP
 call to agents, so ``lead:`` keys are handed to ``LeadTurnDispatcher``
-(``lais_lead_dispatcher``): bounded concurrency across chats
-(``lais_agente_max_concurrent_turns``), one in-flight turn per key.
+(``julia_lead_dispatcher``): bounded concurrency across chats
+(``julia_agente_max_concurrent_turns``), one in-flight turn per key.
 
 **Memory key unification.** The seed buffer uses the prefix
 ``conversation:memory:`` for its memory lists. ``chatbot_service.py``
@@ -66,7 +66,7 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.tasks import schedule_coro
 
 from app.config import settings
-from app.services.lais_agente_service import LEAD_PREFIX
+from app.services.julia_agente_service import LEAD_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ def configure_conversation_module(
             running loop at startup time.
         agents_client_factory: ``org_id -> AgentsClient | None`` for the Julia lead
             path (contract 10.2 B2). Default = the org's ``api_key:agents`` token
-            (``lais_agente_service.resolve_agents_client``). The DI seam tests use
+            (``julia_agente_service.resolve_agents_client``). The DI seam tests use
             to script agents' replies.
         waha_factory: ``(base_url=, api_key=, session=) -> WAHA client`` for the lead
             path's sends. Default = the seed ``get_whatsapp_client``.
@@ -314,13 +314,13 @@ def _build_processor(
     """
 
     def _process(conversation_id: str, memory: list[dict[str, Any]]) -> None:
-        # Julia (Lais lead agent, contract 10.2 B2): `lead:<connection_id>:<chat_id>`
+        # Julia (lead agent, contract 10.2 B2): `lead:<connection_id>:<chat_id>`
         # keys resolve their OWN org + connection from the key and carry every
         # provider_message_id -- they never enter the operator path below (no
         # intake, no ChatbotService, no operator tools).
         if conversation_id.startswith(LEAD_PREFIX):
             # Hand over, never block: a lead turn is a slow HTTP call to agents and
-            # must not hold this (single) worker thread -- see lais_lead_dispatcher.
+            # must not hold this (single) worker thread -- see julia_lead_dispatcher.
             lead_dispatcher.submit_threadsafe(main_loop, conversation_id, memory)
             return
 
@@ -353,7 +353,7 @@ def _build_lead_dispatcher(
     waha_factory: Optional[Callable[..., Any]],
     cfg: Any = None,
 ):
-    from app.services.lais_lead_dispatcher import LeadTurnDispatcher
+    from app.services.julia_lead_dispatcher import LeadTurnDispatcher
 
     effective = cfg if cfg is not None else settings
 
@@ -365,7 +365,7 @@ def _build_lead_dispatcher(
 
     return LeadTurnDispatcher(
         _run,
-        max_concurrent=getattr(effective, "lais_agente_max_concurrent_turns", 4),
+        max_concurrent=getattr(effective, "julia_agente_max_concurrent_turns", 4),
         timeout_s=PROCESSOR_TIMEOUT_S,
         reload_memory=buffer.memory_for,
     )
@@ -383,7 +383,7 @@ async def _dispatch_lead(
 ) -> None:
     """Run one Julia batch on the main loop (late import: the lead service pulls in
     the stores + agents client, none of which the operator path needs)."""
-    from app.services.lais_lead_turn_service import LeadDeps, process_lead_batch
+    from app.services.julia_lead_turn_service import LeadDeps, process_lead_batch
 
     deps = LeadDeps(
         buffer=buffer, admin=admin_supabase, cfg=cfg if cfg is not None else settings,

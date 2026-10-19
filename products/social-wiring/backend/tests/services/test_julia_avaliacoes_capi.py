@@ -1,4 +1,4 @@
-"""Lais wave 13 -- the Google review ask (90-day rule, negative-feedback skip, 24 h window, deterministic copy) and the
+"""Julia wave 13 -- the Google review ask (90-day rule, negative-feedback skip, 24 h window, deterministic copy) and the
 Meta CAPI signals (Meta-ads leads only, SHA-256 per Meta's normalisation, gated by config + token, not-configured
 paths, idempotent). Seams are the Fakes the product ships (mock DB, `FakeJobRepository`, `FakeCapiProvider`,
 `FakeReviewsProvider`); nothing of ours is patched. No personal data: synthetic phones / emails only."""
@@ -14,17 +14,17 @@ import pytest
 from noctusai_lib.domain.jobs import FakeJobRepository
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.clients.agents import FakeAgentsClient, LaisAction, ResumoResult, TurnResult
-from app.services import lais_acoes_service as acoes
-from app.services import lais_avaliacoes_service as av
-from app.services import lais_capi_service as capi
-from app.services import lais_contatos_service as contatos
-from app.services.lais_reviews_provider import (
+from app.clients.agents import FakeAgentsClient, JuliaAction, ResumoResult, TurnResult
+from app.services import julia_acoes_service as acoes
+from app.services import julia_avaliacoes_service as av
+from app.services import julia_capi_service as capi
+from app.services import julia_contatos_service as contatos
+from app.services.julia_reviews_provider import (
     FakeReviewsProvider, NaoConfiguradoReviews, RealGbpReviewsProvider, Review, ReviewsNaoConfigurado, make_reviews_provider,
     review_de_api,
 )
 
-from tests.support.lais_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, OTHER_ORG_ID, World
+from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID as ORG, OTHER_ORG_ID, World
 
 AGORA = datetime(2026, 10, 15, 15, 0, tzinfo=timezone.utc)
 LINK = "https://g.page/r/exemplo/review"
@@ -66,13 +66,13 @@ def contato(w: World, *, inbound_ago_h: float = 1, lead_id: str | None = None, *
     c = contatos.obter_ou_criar_contato(w.sw, org_id=ORG, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, telefone_e164=FONE, nome="Ana Maria")
     patch = {"ultimo_inbound_at": (AGORA - timedelta(hours=inbound_ago_h)).isoformat(), "lead_id": lead_id, **over}
     contatos.atualizar_contato(w.sw, c["id"], patch)
-    return w.rows("lais_contatos")[0]
+    return w.rows("julia_contatos")[0]
 
 
 def interacao(w: World, c: dict[str, Any], desfecho: str = "qualificado") -> dict[str, Any]:
     row = {"id": str(uuid4()), "org_id": ORG, "contato_id": c["id"], "iniciada_at": AGORA.isoformat(), "encerrada_at": AGORA.isoformat(),
            "desfecho": desfecho, "tipo": "comercial", "slots": {}, "intencoes": []}
-    return w.sw.table("lais_interacoes").insert(row).execute().data[0]
+    return w.sw.table("julia_interacoes").insert(row).execute().data[0]
 
 
 def config(w: World, **over):
@@ -111,7 +111,7 @@ class TestPedido:
         assert texto == av.montar_texto("Ana Maria", LINK) and LINK in texto and texto.startswith("Oi, Ana!")
         (p,) = world.rows(av.T_PEDIDOS)
         assert p["status"] == "enviado" and p["contato_id"] == c["id"] and p["interacao_id"] == i["id"]
-        assert world.rows("lais_contatos")[0]["ultimo_outbound_at"]
+        assert world.rows("julia_contatos")[0]["ultimo_outbound_at"]
 
     def test_text_without_a_name(self):
         assert av.montar_texto(None, LINK).startswith("Oi! ") and av.montar_texto("  ", LINK).startswith("Oi! ")
@@ -168,7 +168,7 @@ class TestPedido:
     def test_never_inbound_is_outside_the_window(self, world):
         config(world)
         c = contato(world, ultimo_inbound_at=None)
-        assert av.dentro_da_janela(world.rows("lais_contatos")[0], AGORA) is False
+        assert av.dentro_da_janela(world.rows("julia_contatos")[0], AGORA) is False
 
     @pytest.mark.parametrize("desfecho", ["em_andamento", "desqualificado", None])
     def test_only_a_qualificado_outcome_asks(self, world, desfecho):
@@ -208,7 +208,7 @@ class TestHookNosFechamentos:
         agents = FakeAgentsClient(resumo_script=[ResumoResult(resumo="ok", desfecho=desfecho)])
         i = contatos.abrir_interacao(world.sw, ORG, c)
         if via == "encerrar":
-            res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(LaisAction("encerrar", 1, {"motivo": "lead_encerrou"}),))
+            res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction("encerrar", 1, {"motivo": "lead_encerrou"}),))
             run(acoes.aplicar(world.sw, org_id=ORG, contato=c, result=res, lote_hash="l-" + via, agents_client=agents))
         else:
             run(acoes.fechar_interacao(world.sw, org_id=ORG, contato=c, interacao=i, agents_client=agents, conversation_id=str(uuid4())))
@@ -217,7 +217,7 @@ class TestHookNosFechamentos:
     def test_encerrar_with_qualificado_enqueues_the_ask(self, world, repo):
         self._fechar(world, repo, desfecho="qualificado", via="encerrar")
         jobs = [j for j in repo._jobs.values()] if hasattr(repo, "_jobs") else []
-        assert len(jobs) == 1 and jobs[0].type == av.JOB_PEDIR and jobs[0].payload["gen"] == world.rows("lais_contatos")[0]["gen"]
+        assert len(jobs) == 1 and jobs[0].type == av.JOB_PEDIR and jobs[0].payload["gen"] == world.rows("julia_contatos")[0]["gen"]
 
     def test_encerrar_without_qualificado_enqueues_nothing(self, world, repo):
         self._fechar(world, repo, desfecho="em_andamento", via="encerrar")
@@ -230,7 +230,7 @@ class TestHookNosFechamentos:
     def test_a_failing_hook_never_undoes_the_close(self, world, repo):
         av.registrar_repo(None)  # no repo: logged, not raised
         self._fechar(world, repo, desfecho="qualificado", via="encerrar")
-        assert world.rows("lais_interacoes")[0]["encerrada_at"]
+        assert world.rows("julia_interacoes")[0]["encerrada_at"]
 
 
 # ── config ────────────────────────────────────────────────────────────────────────
@@ -428,7 +428,7 @@ class TestCapi:
         config(world, capi_ativo=True, capi_pixel_id=PIXEL)
         c = contato(world, lead_id=lead_meta(world)["id"])
         assert run(capi.registrar_resposta(world.sw, ORG, c, agora=AGORA))["estado"] == "sem_reengajamento"
-        ev = world.sw.table("lais_eventos").insert({"id": str(uuid4()), "org_id": ORG, "tipo": "reengajamento", "contato_id": c["id"],
+        ev = world.sw.table("julia_eventos").insert({"id": str(uuid4()), "org_id": ORG, "tipo": "reengajamento", "contato_id": c["id"],
                                                     "created_at": (AGORA - timedelta(days=1)).isoformat()}).execute().data[0]
         assert run(capi.registrar_resposta(world.sw, ORG, c, agora=AGORA))["estado"] == "pendente"
         assert run(capi.registrar_resposta(world.sw, ORG, c, agora=AGORA))["estado"] == "repetido"
@@ -437,7 +437,7 @@ class TestCapi:
     def test_resposta_cliente_older_than_7_days_is_skipped(self, world, repo, token):
         config(world, capi_ativo=True, capi_pixel_id=PIXEL)
         c = contato(world, lead_id=lead_meta(world)["id"])
-        world.sw.table("lais_eventos").insert({"id": str(uuid4()), "org_id": ORG, "tipo": "reengajamento", "contato_id": c["id"],
+        world.sw.table("julia_eventos").insert({"id": str(uuid4()), "org_id": ORG, "tipo": "reengajamento", "contato_id": c["id"],
                                                "created_at": (AGORA - timedelta(days=8)).isoformat()}).execute()
         assert run(capi.registrar_resposta(world.sw, ORG, c, agora=AGORA))["estado"] == "sem_reengajamento"
 
@@ -462,11 +462,11 @@ class TestCapi:
 
 class TestQualificarLeadDispara:
     def test_qualificar_lead_handler_records_the_signal_for_a_meta_lead(self, world, repo, token):
-        from app.services import lais_envio_service as envio
+        from app.services import julia_envio_service as envio
 
         config(world, capi_ativo=True, capi_pixel_id=PIXEL)
         c = contato(world, lead_id=lead_meta(world)["id"], status_envio="enviado")
-        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(LaisAction("qualificar_lead", 1, {}),))
+        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction("qualificar_lead", 1, {}),))
         h = dict(acoes.HANDLERS)
         acoes.registrar_handler("qualificar_lead", envio._h_qualificar_lead, registro=h)  # noqa: SLF001
         run(acoes.aplicar(world.sw, org_id=ORG, contato=c, result=res, lote_hash="q1", handlers=h))

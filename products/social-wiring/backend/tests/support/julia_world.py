@@ -1,4 +1,4 @@
-"""Shared builders for the Julia (Lais lead agent) tests: a seeded mock DB, a Julia-on
+"""Shared builders for the Julia (lead agent) tests: a seeded mock DB, a Julia-on
 connection, the seed `FakeWahaClient`, the fake bus / redis / buffer, and a ready-made
 `LeadDeps`. The external seams (DB, WAHA, Redis, bus, agents) are the Fakes the seed
 and the product ship -- nothing of ours is patched.
@@ -20,7 +20,7 @@ from noctusai_lib.testing import MockSupabaseClient
 
 from app.clients.agents import FakeAgentsClient
 from app.config import SocialWiringSettings
-from app.services.lais_lead_turn_service import LeadDeps
+from app.services.julia_lead_turn_service import LeadDeps
 from app.services.message_store import MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -89,10 +89,10 @@ class World:
         self.sw.set_table_data("conversation_messages", [])
         self.sw.set_table_data("whatsapp_chats", [])
         self.sw.set_table_data("contacts", [])
-        self.sw.set_table_data("lais_agente_chats_preexistentes", [])
-        self.sw.set_table_data("lais_aviso_privacidade", [])
+        self.sw.set_table_data("julia_agente_chats_preexistentes", [])
+        self.sw.set_table_data("julia_aviso_privacidade", [])
         self.sw.set_table_data("whatsapp_connections", [])
-        for t in ("lais_contatos", "lais_interacoes", "lais_acoes_aplicadas", "lais_eventos"):
+        for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos"):
             self.sw.set_table_data(t, [])
 
     # ── seeding ────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ class World:
             "encrypted_api_key": fernet.encrypt(b"fake-waha-api-key").decode("ascii"),
             "webhook_url": None, "webhook_token": WEBHOOK_TOKEN, "auto_reply_enabled": False,
             "authorized_numbers": [OPERATOR], "bound_chats": [], "marca_id": None,
-            "agente_leads_ativo": True, "agente_leads_key": "lead-imob",
+            "agente_leads_ativo": True, "agente_leads_key": "julia",
             "agente_leads_ativado_em": ATIVADO_EM, "agente_handoff_notificar_user_id": None,
             "created_at": "2026-08-01T00:00:00Z", "updated_at": "2026-08-01T00:00:00Z",
         }
@@ -142,7 +142,7 @@ class World:
         return q.execute().data or []
 
     def contato(self, chat_id: str = LEAD_CHAT) -> dict[str, Any] | None:
-        rows = self.rows("lais_contatos", connection_id=CONNECTION_ID, chat_id=chat_id)
+        rows = self.rows("julia_contatos", connection_id=CONNECTION_ID, chat_id=chat_id)
         return rows[0] if rows else None
 
     def notifications(self) -> list[dict[str, Any]]:
@@ -185,9 +185,9 @@ def buffer_lead(world: World, chat_id: str, texts: list[str], *, ids: list[str] 
     """Put inbound messages on the lead buffer key exactly as the webhook does."""
     from noctusai_lib.domain.chatbot import QueuedConversationMessage
 
-    from app.services import lais_agente_service as lais
+    from app.services import julia_agente_service as julia
 
-    key = lais.lead_key(CONNECTION_ID, chat_id)
+    key = julia.lead_key(CONNECTION_ID, chat_id)
     for i, text in enumerate(texts):
         world.buffer.buffer_inbound(QueuedConversationMessage(
             conversation_id=key, text=text, direction="inbound",

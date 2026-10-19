@@ -13,7 +13,7 @@ from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_
 from app.modules.atendimento_blocos import repository as repo
 from app.modules.atendimento_blocos import service as svc
 
-from tests.support.lais_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 from .conftest import _stages, supervisao_on
 
 H = {"Authorization": "Bearer test-token"}
@@ -106,10 +106,10 @@ class TestGet:
         assert [b["bloco"] for b in d["blocos"]] == ["sdr", "atendimento", "negociacao", "juridico", "financeiro", "contador"]
         assert all(b["origem"] == "padrao" and b["ativo"] is False for b in d["blocos"])
         sdr = d["blocos"][0]
-        assert sdr == {"bloco": "sdr", "rotulo": "SDR (Julia)", "ordem": 1, "agent_key": "lead-imob", "ativo": False,
+        assert sdr == {"bloco": "sdr", "rotulo": "SDR (Julia)", "ordem": 1, "agent_key": "julia", "ativo": False,
                        "pipeline": None, "etapas": [], "origem": "padrao", "updated_at": None, "updated_by": None}
         assert d["blocos"][1]["etapas"] == ["qualificacao", "visitas", "proposta_recebida"]
-        assert d["agentes_por_bloco"] == {"sdr": ["lead-imob"]}
+        assert d["agentes_por_bloco"] == {"sdr": ["julia"]}
         assert d["supervisao_ativa"] is False
 
     def test_etapas_sem_bloco_lists_only_active_unowned_atendimento_stages(self, member):
@@ -142,13 +142,13 @@ class TestPut:
         assert row["org_id"] == ORG_ID and row["pipeline"] == "funil"  # the pipeline comes from the closed list
 
     def test_sdr_can_be_switched_on_with_julia(self, owner):
-        d = owner.put([_item("sdr", [], agent_key="lead-imob")]).json()["data"]
-        assert d["blocos"][0]["ativo"] is True and d["blocos"][0]["agent_key"] == "lead-imob"
+        d = owner.put([_item("sdr", [], agent_key="julia")]).json()["data"]
+        assert d["blocos"][0]["ativo"] is True and d["blocos"][0]["agent_key"] == "julia"
 
     @pytest.mark.parametrize("body,code", [
         ([_item("sdr", ["qualificacao"])], "sdr_sem_etapas"),
-        ([_item("atendimento", ["qualificacao"], agent_key="lead-imob")], "agente_indisponivel"),
-        ([_item("sdr", [], agent_key="julia")], "agente_indisponivel"),
+        ([_item("atendimento", ["qualificacao"], agent_key="julia")], "agente_indisponivel"),
+        ([_item("sdr", [], agent_key="one-chat")], "agente_indisponivel"),
         ([_item("atendimento", ["nao_existe"])], "etapa_desconhecida"),
         ([_item("atendimento", ["arquivada"])], "etapa_desconhecida"),  # inactive stage
         ([_item("atendimento", ["assinatura"])], "etapa_desconhecida"),  # a processos stage on a funil block

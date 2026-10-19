@@ -1,6 +1,6 @@
 """Handoff ledger `atendimento_handoffs` (maya-blocks CONTRACT §2): two triggers + the status machine.
 
-T1  `sink_novo_lead` -- a `lais_eventos` sink (registered by `registrar()`): on `novo_lead` (Julia's successful
+T1  `sink_novo_lead` -- a `julia_eventos` sink (registered by `registrar()`): on `novo_lead` (Julia's successful
     send to the SW) writes `sdr -> bloco_atual(lead)`.
 T2  `ao_movimento` / `apos_mover` -- the block-boundary hook, called right after every stage move that writes a
     `pipeline_movimentos` row: writes a `movimento_etapa` handoff iff the stage owner changes (both non-null).
@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 T_HANDOFFS = "atendimento_handoffs"
 T_MOVIMENTOS = "pipeline_movimentos"
-T_ATRIBUICOES = "lais_atribuicoes"
-T_ENTREGAS = "lais_envio_entregas"
+T_ATRIBUICOES = "julia_atribuicoes"
+T_ENTREGAS = "julia_envio_entregas"
 T_NOTAS = "cliente_notas"
 
 GATILHO_NOVO_LEAD = "novo_lead"
@@ -83,7 +83,7 @@ def _mais_recente(client: Any, tabela: str, org_id: str, **filtros: Any) -> Opti
 
 # ── T1: novo_lead sink ──────────────────────────────────────────────────────
 def sink_novo_lead(client: Any, evento: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """`lais_eventos` sink: `novo_lead` -> `sdr -> bloco_atual(lead)`. Other event types are ignored."""
+    """`julia_eventos` sink: `novo_lead` -> `sdr -> bloco_atual(lead)`. Other event types are ignored."""
     if evento.get("tipo") != GATILHO_NOVO_LEAD:
         return None
     org = str(evento.get("org_id") or "")
@@ -322,10 +322,10 @@ def varrer(client: Any, org_id: UUID | str, *, agora: Optional[datetime] = None)
 
 
 def registrar() -> None:
-    """Bind T1 to the Lais event bus (idempotent -- `registrar_sink` keeps one copy)."""
-    from app.services import lais_eventos_service
+    """Bind T1 to the Julia event bus (idempotent -- `registrar_sink` keeps one copy)."""
+    from app.services import julia_eventos_service
 
-    lais_eventos_service.registrar_sink(sink_novo_lead)
+    julia_eventos_service.registrar_sink(sink_novo_lead)
 
 
 __all__ = [

@@ -8,7 +8,7 @@ import pytest
 
 from app.modules.supervisao import metricas as m
 
-from tests.support.lais_world import ORG_ID, OTHER_ORG_ID, World
+from tests.support.julia_world import ORG_ID, OTHER_ORG_ID, World
 
 DIA = date(2026, 10, 18)
 INICIO = datetime(2026, 10, 18, 3, 0, tzinfo=timezone.utc)  # 00:00 America/Sao_Paulo (UTC-3)
@@ -21,7 +21,7 @@ def em(horas: float) -> str:
     return (INICIO + timedelta(hours=horas)).isoformat()
 
 
-TABELAS = ("lais_contatos", "lais_interacoes", "lais_envio_entregas", "lais_eventos", "lais_atribuicoes",
+TABELAS = ("julia_contatos", "julia_interacoes", "julia_envio_entregas", "julia_eventos", "julia_atribuicoes",
            "atendimento_handoffs")
 
 
@@ -64,16 +64,16 @@ class TestPrimitivos:
 
 class TestSdrV1:
     def _cenario(self, sw):
-        _put(sw, "lais_contatos", [{"created_at": em(h)} for h in (1, 2, 5, 23.9)]
+        _put(sw, "julia_contatos", [{"created_at": em(h)} for h in (1, 2, 5, 23.9)]
              + [{"created_at": em(-0.1)}, {"created_at": em(24)}, {"org_id": OTHER_ORG_ID, "created_at": em(1)}])
-        _put(sw, "lais_interacoes", [
+        _put(sw, "julia_interacoes", [
             {"iniciada_at": em(1), "primeira_resposta_at": em(1 + 10 / 3600)},
             {"iniciada_at": em(2), "primeira_resposta_at": em(2 + 20 / 3600)},
             {"iniciada_at": em(3), "primeira_resposta_at": em(3 + 600 / 3600)},
             {"iniciada_at": em(4), "primeira_resposta_at": None},
             {"iniciada_at": em(-1), "primeira_resposta_at": None},  # outside the window
         ])
-        _put(sw, "lais_envio_entregas", [
+        _put(sw, "julia_envio_entregas", [
             {"contato_id": "c1", "gatilho": "qualificado", "status": "ok", "created_at": em(1)},
             {"contato_id": "c1", "gatilho": "visita", "status": "ok", "created_at": em(2)},  # same contato: distinct
             {"contato_id": "c2", "gatilho": "captacao", "status": "ok", "created_at": em(3)},
@@ -84,7 +84,7 @@ class TestSdrV1:
             {"contato_id": "c2", "gatilho": "manual", "status": "ok", "created_at": em(6)},
             {"contato_id": "c5", "gatilho": "qualificado", "status": "ok", "created_at": em(25)},  # next day
         ])
-        _put(sw, "lais_eventos", [
+        _put(sw, "julia_eventos", [
             {"tipo": "envio_bloqueado", "payload": {"motivo": "fora_da_janela"}, "created_at": em(1)},
             {"tipo": "envio_bloqueado", "payload": {"motivo": "fora_da_janela"}, "created_at": em(2)},
             {"tipo": "envio_bloqueado", "payload": {}, "created_at": em(3)},
@@ -92,7 +92,7 @@ class TestSdrV1:
             {"tipo": "handoff", "payload": {"motivo_codigo": "reclamacao"}, "created_at": em(5)},
             {"tipo": "novo_lead", "payload": {}, "created_at": em(5)},
         ])
-        _put(sw, "lais_atribuicoes", [
+        _put(sw, "julia_atribuicoes", [
             {"motivo": "handoff", "created_at": em(4)}, {"motivo": "handoff", "created_at": em(5)},
             {"motivo": "qualificacao", "created_at": em(6)},
         ])
@@ -133,12 +133,12 @@ class TestSdrV1:
         assert out["handoffs_emitidos"] == 0 and out["handoffs_nao_assumidos"] == 0
 
     def test_episodes_without_primeira_resposta_are_sem_resposta_never_estimated(self, sw):
-        _put(sw, "lais_interacoes", [{"iniciada_at": em(h), "primeira_resposta_at": None} for h in (1, 2)])
+        _put(sw, "julia_interacoes", [{"iniciada_at": em(h), "primeira_resposta_at": None} for h in (1, 2)])
         out = _sdr(sw)
         assert out["tpr_n"] == 0 and out["tpr_sem_resposta"] == 2 and out["tpr_p50_s"] is None
 
     def test_handoff_motivo_is_missing_while_no_handoff_event_records_it(self, sw):
-        _put(sw, "lais_atribuicoes", [{"motivo": "handoff", "created_at": em(4)}])
+        _put(sw, "julia_atribuicoes", [{"motivo": "handoff", "created_at": em(4)}])
         out = _sdr(sw)
         assert out["handoffs_humanos"] == 1 and out["handoffs_humanos_por_motivo"] is None
 
@@ -147,7 +147,7 @@ class TestSdrV1:
         self._cenario(sw)
         out = _sdr(sw, desde=desde)
         assert out["handoffs_emitidos"] is None and out["handoffs_nao_assumidos"] is None
-        assert out["leads_entrada"] == 4  # the lais metrics do not depend on supervision
+        assert out["leads_entrada"] == 4  # the julia metrics do not depend on supervision
 
 
 class TestBlocoHumano:

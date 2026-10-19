@@ -44,10 +44,10 @@ from app.clients.agents import (
     TurnResult,
 )
 from app.config import settings as _default_settings
-from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
-from app.services import lais_equipes_service  # registers the `estado.atendente_nome` provider on import
-from app.services import lais_agente_service as lais
-from app.services import lais_aviso_service, lais_capi_service, lais_envio_gate, lais_eventos_service
+from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
+from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
+from app.services import julia_agente_service as julia
+from app.services import julia_aviso_service, julia_capi_service, julia_envio_gate, julia_eventos_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -89,12 +89,12 @@ def _default_job_repository() -> Any:
 
     admin = get_admin_client()
     if admin is None:
-        logger.warning("lais: no admin client -- re-engagement timers will not be armed")
+        logger.warning("julia: no admin client -- re-engagement timers will not be armed")
         return None
     try:
         return make_job_repository(supabase_client=admin, schema_name="social_wiring")
     except Exception:
-        logger.exception("lais: could not build the job repository -- re-engagement timers will not be armed")
+        logger.exception("julia: could not build the job repository -- re-engagement timers will not be armed")
         return None
 
 
@@ -126,7 +126,7 @@ class LeadDeps:
         if self.core_client is None:
             self.core_client = get_core_client()
         if self.agents_client_factory is None:
-            self.agents_client_factory = lambda org_id: lais.resolve_agents_client(org_id, cfg=self.cfg)
+            self.agents_client_factory = lambda org_id: julia.resolve_agents_client(org_id, cfg=self.cfg)
         if self.waha_factory is None:
             self.waha_factory = get_whatsapp_client
         if self.connection_lookup is None:
@@ -201,7 +201,7 @@ class LeadSender:
     records the outbound, publishes realtime, and registers the message id as
     Julia's own so its `fromMe` echo is never mistaken for a human (L3)."""
 
-    def __init__(self, *, connection: WhatsAppConnectionRecord, waha: Any, deps: LeadDeps, liberacao: lais_envio_gate.Liberacao):
+    def __init__(self, *, connection: WhatsAppConnectionRecord, waha: Any, deps: LeadDeps, liberacao: julia_envio_gate.Liberacao):
         self._c = connection
         self._waha = waha
         self._d = deps
@@ -210,10 +210,10 @@ class LeadSender:
     async def send_reply(self, sender: str, text: str) -> None:
         from app.schemas.whatsapp import extract_waha_message_id
 
-        lais_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (two gates) passed for this line
+        julia_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (two gates) passed for this line
         result = await self._waha.send_text(sender, text)
         provider_message_id = extract_waha_message_id(result) if isinstance(result, dict) else None
-        lais.registrar_envio_proprio(self._d.redis, provider_message_id)
+        julia.registrar_envio_proprio(self._d.redis, provider_message_id)
         now = datetime.now(timezone.utc).isoformat()
         stored = None
         try:
@@ -224,15 +224,15 @@ class LeadSender:
                 connection_id=self._c.id, chat_id=sender,
             )
         except DuplicateMessage:
-            logger.info("lais: outbound echo already recorded (id=%s)", provider_message_id)
+            logger.info("julia: outbound echo already recorded (id=%s)", provider_message_id)
         except Exception:
-            logger.exception("lais: outbound record failed conn=%s chat=%s", self._c.id, sender)
+            logger.exception("julia: outbound record failed conn=%s chat=%s", self._c.id, sender)
         try:
             summary = self._d.chat_store_factory(self._c.org_id).record_message(
                 connection_id=self._c.id, chat_id=sender, direction="outbound", body=text, created_at=now,
             )
         except Exception:
-            logger.exception("lais: chat row update failed conn=%s chat=%s", self._c.id, sender)
+            logger.exception("julia: chat row update failed conn=%s chat=%s", self._c.id, sender)
             summary = None
         if stored is not None:
             await publish_whatsapp_event(
@@ -251,15 +251,15 @@ async def publish_pause(deps: LeadDeps, *, connection: WhatsAppConnectionRecord,
     try:
         summary = deps.chat_store_factory(connection.org_id).get_chat(connection_id=connection.id, chat_id=chat_id)
     except Exception:
-        logger.exception("lais: chat read for pause event failed conn=%s chat=%s", connection.id, chat_id)
+        logger.exception("julia: chat read for pause event failed conn=%s chat=%s", connection.id, chat_id)
         summary = None
     payload = {**summary.as_dict(), "agente_pausado": pausado} if summary else {"chat_id": chat_id, "agente_pausado": pausado}
     await publish_whatsapp_event(deps.bus, connection_id=connection.id, event=EVENT_CHAT_UPSERT, payload=payload)
 
 
-# ── Lais foundation: contato / episode / contexto / actions (contract 2.2) ──
+# ── Julia foundation: contato / episode / contexto / actions (contract 2.2) ──
 @dataclass
-class LaisTurn:
+class JuliaTurn:
     """What the foundation prepared BEFORE the turn and needs again AFTER it."""
 
     contato: dict[str, Any]
@@ -280,17 +280,17 @@ def _registrar_resposta_de_disparo(deps: LeadDeps, org_id: Any, contato: dict[st
     if not tel:
         return
     try:
-        from app.services import lais_disparos_service
+        from app.services import julia_disparos_service
 
-        lais_disparos_service.registrar_resposta(deps.scoped, org_id, tel)
+        julia_disparos_service.registrar_resposta(deps.scoped, org_id, tel)
     except Exception:
-        logger.exception("lais: disparo reply bookkeeping failed org=%s", org_id)
+        logger.exception("julia: disparo reply bookkeeping failed org=%s", org_id)
 
 
-async def _preparar_lais(
+async def _preparar_julia(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str],
     display_name: Optional[str], state: Optional[dict[str, Any]], agents_client: Optional[AgentsClient],
-) -> Optional[LaisTurn]:
+) -> Optional[JuliaTurn]:
     """Upsert the contato, bump `gen` for this inbound, settle the episode (24 h of silence
     closes the old one with a summary, then a new one opens), render the `contexto`.
 
@@ -298,62 +298,62 @@ async def _preparar_lais(
     behaviour (no contexto) -- the foundation must never stop Julia answering a lead."""
     org_id = connection.org_id
     try:
-        contato = lais_contatos_service.obter_ou_criar_contato(
+        contato = julia_contatos_service.obter_ou_criar_contato(
             deps.scoped, org_id=org_id, connection_id=connection.id, chat_id=chat_id,
             telefone_e164=phone, nome=display_name,
         )
-        contato, anterior = lais_contatos_service.registrar_inbound(deps.scoped, contato)
+        contato, anterior = julia_contatos_service.registrar_inbound(deps.scoped, contato)
         _registrar_resposta_de_disparo(deps, org_id, contato, phone)
-        await lais_capi_service.registrar_resposta(deps.scoped, org_id, contato)  # wave 13 CAPI `resposta_cliente` (never raises)
-        interacao = lais_contatos_service.interacao_aberta(deps.scoped, contato["id"])
-        if interacao is not None and lais_contatos_service.episodio_vencido(anterior):
-            perguntas = lais_contexto_service.montar(
+        await julia_capi_service.registrar_resposta(deps.scoped, org_id, contato)  # wave 13 CAPI `resposta_cliente` (never raises)
+        interacao = julia_contatos_service.interacao_aberta(deps.scoped, contato["id"])
+        if interacao is not None and julia_contatos_service.episodio_vencido(anterior):
+            perguntas = julia_contexto_service.montar(
                 deps.scoped, org_id, contato, interacao=interacao, ferramentas_habilitadas=False,
             ).get("perguntas") or []
-            await lais_acoes_service.fechar_interacao(
+            await julia_acoes_service.fechar_interacao(
                 deps.scoped, org_id=org_id, contato=contato, interacao=interacao, agents_client=agents_client,
                 conversation_id=(state or {}).get("agente_conversation_id"), perguntas=perguntas,
             )
             interacao = None
         if interacao is None:
-            interacao = lais_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
-        contexto = lais_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao)
-        recesso = lais_conhecimento_service.mensagem_recesso_primeiro_turno(deps.scoped, org_id, contato, interacao)
-        return LaisTurn(contato=contato, contexto=contexto, avisos=[recesso] if recesso else [])
+            interacao = julia_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
+        contexto = julia_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao)
+        recesso = julia_conhecimento_service.mensagem_recesso_primeiro_turno(deps.scoped, org_id, contato, interacao)
+        return JuliaTurn(contato=contato, contexto=contexto, avisos=[recesso] if recesso else [])
     except Exception:
-        logger.exception("lais: foundation prep failed conn=%s chat=%s -- turn runs without contexto", connection.id, chat_id)
+        logger.exception("julia: foundation prep failed conn=%s chat=%s -- turn runs without contexto", connection.id, chat_id)
         return None
 
 
 def _registrar_inbound_pausado(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str]) -> None:
     """A human is handling the chat: no turn, but the inbound still counts (`gen + 1`, last inbound)."""
     try:
-        contato = lais_contatos_service.obter_ou_criar_contato(
+        contato = julia_contatos_service.obter_ou_criar_contato(
             deps.scoped, org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id, telefone_e164=phone,
         )
-        lais_contatos_service.registrar_inbound(deps.scoped, contato)
+        julia_contatos_service.registrar_inbound(deps.scoped, contato)
     except Exception:
-        logger.exception("lais: inbound bookkeeping failed for the paused chat conn=%s chat=%s", connection.id, chat_id)
+        logger.exception("julia: inbound bookkeeping failed for the paused chat conn=%s chat=%s", connection.id, chat_id)
 
 
 async def _pos_turno(
-    deps: LeadDeps, *, lais_turn: Optional[LaisTurn], connection: WhatsAppConnectionRecord, chat_id: str,
+    deps: LeadDeps, *, julia_turn: Optional[JuliaTurn], connection: WhatsAppConnectionRecord, chat_id: str,
     result: TurnResult, lote_hash: Optional[str], agents_client: Optional[AgentsClient], enviou: bool,
 ) -> None:
     """After the reply (or its deliberate silence): stamp the outbound, apply the actions.
     Never raises -- the reply is out and must not be undone by bookkeeping."""
-    if lais_turn is None or lote_hash is None:
+    if julia_turn is None or lote_hash is None:
         return
     try:
         if enviou:
-            lais_contatos_service.registrar_outbound(deps.scoped, lais_turn.contato["id"])
-        await lais_acoes_service.aplicar(
-            deps.scoped, org_id=connection.org_id, contato=lais_turn.contato, result=result, lote_hash=lote_hash,
+            julia_contatos_service.registrar_outbound(deps.scoped, julia_turn.contato["id"])
+        await julia_acoes_service.aplicar(
+            deps.scoped, org_id=connection.org_id, contato=julia_turn.contato, result=result, lote_hash=lote_hash,
             conversation_id=result.conversation_id, agents_client=agents_client, core_client=deps.core_client,
-            perguntas=lais_turn.perguntas, connection_id=connection.id, chat_id=chat_id,
+            perguntas=julia_turn.perguntas, connection_id=connection.id, chat_id=chat_id,
         )
     except Exception:
-        logger.exception("lais: post-turn bookkeeping failed conn=%s chat=%s", connection.id, chat_id)
+        logger.exception("julia: post-turn bookkeeping failed conn=%s chat=%s", connection.id, chat_id)
     if enviou:
         await _armar_reengajamento(deps, connection=connection, chat_id=chat_id)
 
@@ -364,13 +364,13 @@ async def _armar_reengajamento(deps: LeadDeps, *, connection: WhatsAppConnection
     if deps.jobs is None:
         return
     try:
-        from app.services import lais_reengajamento_service
+        from app.services import julia_reengajamento_service
 
-        fresh = lais_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
+        fresh = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
         if fresh is not None:
-            await lais_reengajamento_service.agendar_apos_outbound(deps.scoped, deps.jobs, connection.org_id, fresh)
+            await julia_reengajamento_service.agendar_apos_outbound(deps.scoped, deps.jobs, connection.org_id, fresh)
     except Exception:
-        logger.exception("lais: could not arm the re-engagement timers conn=%s chat=%s", connection.id, chat_id)
+        logger.exception("julia: could not arm the re-engagement timers conn=%s chat=%s", connection.id, chat_id)
 
 
 #: The system marker that stands in for the lead's message in a re-engagement turn (agents needs >= 1).
@@ -379,12 +379,12 @@ REENGAJAMENTO_MARCADOR = "[sistema] O lead não respondeu. Retome a conversa."
 
 # ── the worker entry point ──────────────────────────────────────────────────
 def _phone_e164(chat_id: str) -> Optional[str]:
-    d = lais.phone_digits(chat_id)
+    d = julia.phone_digits(chat_id)
     return f"+{d}" if d else None
 
 
 def _retry_key(key: str) -> str:
-    return f"lais:retry:{key}"
+    return f"julia:retry:{key}"
 
 
 def _attempts(deps: LeadDeps, key: str) -> int:
@@ -408,67 +408,67 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     """Run one lead batch. Never raises for an expected failure -- each row of the
     section 3.1 error table ends in a defined outcome (re-queue, link-health
     memory, or silence); the lead never sees an error (L2)."""
-    parsed = lais.parse_lead_key(key)
+    parsed = julia.parse_lead_key(key)
     if parsed is None:
-        logger.error("lais: not a lead key: %r", key)
+        logger.error("julia: not a lead key: %r", key)
         return
     connection_id, chat_id = parsed
 
     run = unprocessed_run(memory)
     if not run:
-        logger.debug("lais: key=%s nothing unprocessed", key)
+        logger.debug("julia: key=%s nothing unprocessed", key)
         return
 
     connection = deps.connection_lookup(connection_id)
     if connection is None or not connection.agente_leads_ativo:
-        logger.info("lais: connection %s missing or Julia off -- batch dropped", connection_id)
+        logger.info("julia: connection %s missing or Julia off -- batch dropped", connection_id)
         close_run(deps.buffer, key, run)
         return
     org_id = connection.org_id
     chat_store = deps.chat_store_factory(org_id)
-    agent_key = connection.agente_leads_key or lais.DEFAULT_AGENT_KEY
+    agent_key = connection.agente_leads_key or julia.DEFAULT_AGENT_KEY
 
     # Deletion on request (M5) is honoured before everything else -- even for a
     # paused chat: it is the data subject's right, not Julia's reply.
-    if any(lais.is_deletion_request(str(i.get("text") or "")) for i in run):
+    if any(julia.is_deletion_request(str(i.get("text") or "")) for i in run):
         await _handle_deletion(deps, connection=connection, chat_id=chat_id, key=key, agent_key=agent_key, run=run)
         return
 
     # H3 re-check at routing time: fail closed, no reply.
     if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
-        logger.error("lais: connection %s has Julia on with no authorized_numbers -- fail closed", connection.id)
+        logger.error("julia: connection %s has Julia on with no authorized_numbers -- fail closed", connection.id)
         close_run(deps.buffer, key, run)
         return
 
     # Conversas v2: a blocked number never gets a turn (defence in depth -- the webhook already drops it);
     # an archived contato is handed back to Julia (un-archived + un-paused) before the pause check below.
     try:
-        politica = lais_conversas_service.aplicar_politica_inbound(
+        politica = julia_conversas_service.aplicar_politica_inbound(
             deps.scoped, chat_store, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
     except Exception:  # the foundation never stops Julia answering (page-0 contract); the webhook is the primary drop
-        logger.exception("lais: block/archive policy check failed conn=%s chat=%s -- turn proceeds", connection.id, chat_id)
+        logger.exception("julia: block/archive policy check failed conn=%s chat=%s -- turn proceeds", connection.id, chat_id)
         politica = "ok"
     if politica == "bloqueado":
-        logger.info("lais: chat %s is blocked -- batch dropped", chat_id)
+        logger.info("julia: chat %s is blocked -- batch dropped", chat_id)
         close_run(deps.buffer, key, run)
         return
 
     state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     if state and state.get("agente_pausado"):
-        logger.info("lais: chat %s paused (human handling) -- no turn", chat_id)
+        logger.info("julia: chat %s paused (human handling) -- no turn", chat_id)
         _registrar_inbound_pausado(deps, connection=connection, chat_id=chat_id, phone=_phone_e164(chat_id))
         close_run(deps.buffer, key, run)
         return
 
-    if not lais.permitir_turno(deps.buffer.redis, connection_id=connection.id, chat_id=chat_id, cfg=deps.cfg):
-        logger.warning("lais: rate limit hit conn=%s chat=%s -- turn dropped (M4)", connection.id, chat_id)
+    if not julia.permitir_turno(deps.buffer.redis, connection_id=connection.id, chat_id=chat_id, cfg=deps.cfg):
+        logger.warning("julia: rate limit hit conn=%s chat=%s -- turn dropped (M4)", connection.id, chat_id)
         close_run(deps.buffer, key, run)
         return
 
     client = deps.agents_client_factory(org_id)
     if client is None:
-        lais.registrar_erro_link(org_id, "nao_configurado", cfg=deps.cfg)
-        logger.error("lais: agents not configured for org %s -- no reply sent", org_id)
+        julia.registrar_erro_link(org_id, "nao_configurado", cfg=deps.cfg)
+        logger.error("julia: agents not configured for org %s -- no reply sent", org_id)
         close_run(deps.buffer, key, run)
         return
 
@@ -480,12 +480,12 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         if pid and pid not in seen_ids:
             seen_ids.add(pid)
             unique_run.append({**item, "provider_message_id": pid})
-    batch = trim_batch(unique_run, max_chars=deps.cfg.lais_agente_batch_max_chars)
+    batch = trim_batch(unique_run, max_chars=deps.cfg.julia_agente_batch_max_chars)
     meta = next((i.get("metadata") or {} for i in reversed(run) if i.get("metadata")), {})
     phone = _phone_e164(chat_id)
-    if phone is None and lais.is_lid(chat_id):
+    if phone is None and julia.is_lid(chat_id):
         phone = await _resolve_lid_phone(deps, connection, chat_id)
-    lais_turn = await _preparar_lais(
+    julia_turn = await _preparar_julia(
         deps, connection=connection, chat_id=chat_id, phone=phone,
         display_name=(meta.get("push_name") or None), state=state, agents_client=client,
     )
@@ -495,21 +495,21 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         chat_id=chat_id,
         phone_e164=phone,
         display_name=(meta.get("push_name") or None),
-        contexto=lais_turn.contexto if lais_turn else None,
+        contexto=julia_turn.contexto if julia_turn else None,
         messages=tuple(
             TurnMessage(texto=m["text"], provider_message_id=str(m["provider_message_id"]), at=_as_datetime(m.get("timestamp")))
             for m in batch if m.get("provider_message_id")
         ),
     )
     if not req.messages:
-        logger.error("lais: batch for %s carries no provider_message_id -- dropped", chat_id)
+        logger.error("julia: batch for %s carries no provider_message_id -- dropped", chat_id)
         close_run(deps.buffer, key, run)
         return
 
     try:
         result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
     except asyncio.TimeoutError:
-        logger.error("lais: agents turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
+        logger.error("julia: agents turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
         _clear_attempts(deps, key)
         close_run(deps.buffer, key, run)
         return
@@ -517,13 +517,13 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         _handle_turn_error(deps, exc, key=key, run=run, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
         return
     _clear_attempts(deps, key)
-    lais.limpar_erro_link(org_id, cfg=deps.cfg)
+    julia.limpar_erro_link(org_id, cfg=deps.cfg)
 
     await _deliver(
         deps, connection=connection, chat_id=chat_id, key=key, run=run, result=result, state=state, chat_store=chat_store,
-        lais_turn=lais_turn, agents_client=client,
-        lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [m.provider_message_id for m in req.messages]),
-        fluxo=lais_envio_gate.Fluxo.RESPOSTA,
+        julia_turn=julia_turn, agents_client=client,
+        lote_hash=julia_acoes_service.lote_hash_de(result.conversation_id, [m.provider_message_id for m in req.messages]),
+        fluxo=julia_envio_gate.Fluxo.RESPOSTA,
     )
 
 
@@ -536,34 +536,34 @@ def _handle_turn_error(
         if _attempts(deps, key) < MAX_REQUEUE_IN_PROGRESS:
             _bump_attempts(deps, key)
             _requeue(deps, key, REQUEUE_IN_PROGRESS_S)
-            logger.info("lais: turn_in_progress -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, chat_id)
+            logger.info("julia: turn_in_progress -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, chat_id)
             return
-        logger.error("lais: turn_in_progress persisted after the re-queue -- batch dropped (chat=%s)", chat_id)
+        logger.error("julia: turn_in_progress persisted after the re-queue -- batch dropped (chat=%s)", chat_id)
     elif isinstance(exc, CapacityExceeded):
         if _attempts(deps, key) < MAX_REQUEUE_CAPACITY:
             _bump_attempts(deps, key)
             _requeue(deps, key, exc.retry_after)
-            logger.warning("lais: capacidade -- batch re-queued in %ss (chat=%s)", exc.retry_after, chat_id)
+            logger.warning("julia: capacidade -- batch re-queued in %ss (chat=%s)", exc.retry_after, chat_id)
             return
-        logger.error("lais: capacidade persisted after %s re-queues -- batch dropped (chat=%s)", MAX_REQUEUE_CAPACITY, chat_id)
+        logger.error("julia: capacidade persisted after %s re-queues -- batch dropped (chat=%s)", MAX_REQUEUE_CAPACITY, chat_id)
     elif isinstance(exc, (AgentsTokenInvalid, AgentsNotConfigured)):
-        lais.registrar_erro_link(org_id, "token_invalido" if isinstance(exc, AgentsTokenInvalid) else "nao_configurado", cfg=deps.cfg)
-        logger.error("lais: agents token rejected (code=%s) org=%s -- no reply", exc.code, org_id)
+        julia.registrar_erro_link(org_id, "token_invalido" if isinstance(exc, AgentsTokenInvalid) else "nao_configurado", cfg=deps.cfg)
+        logger.error("julia: agents token rejected (code=%s) org=%s -- no reply", exc.code, org_id)
     elif isinstance(exc, AgentNotFound):
-        lais.registrar_erro_link(org_id, "agent_not_found", cfg=deps.cfg)
-        logger.error("lais: agent not found org=%s -- no reply", org_id)
+        julia.registrar_erro_link(org_id, "agent_not_found", cfg=deps.cfg)
+        logger.error("julia: agent not found org=%s -- no reply", org_id)
     elif isinstance(exc, AgentUnavailable):
-        lais.registrar_erro_link(org_id, "agent_unavailable", cfg=deps.cfg)
-        logger.error("lais: agent unavailable (%s) org=%s -- no reply", exc.code, org_id)
+        julia.registrar_erro_link(org_id, "agent_unavailable", cfg=deps.cfg)
+        logger.error("julia: agent unavailable (%s) org=%s -- no reply", exc.code, org_id)
     elif isinstance(exc, LlmNotConfigured):
-        lais.registrar_erro_link(org_id, "llm_not_configured", cfg=deps.cfg)
-        logger.error("lais: LLM key missing in agents for org=%s -- no reply", org_id)
+        julia.registrar_erro_link(org_id, "llm_not_configured", cfg=deps.cfg)
+        logger.error("julia: LLM key missing in agents for org=%s -- no reply", org_id)
     elif isinstance(exc, (AgentsBadRequest, IdempotencyConflict)):
-        logger.error("lais: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s", type(exc).__name__, exc.code, connection_id, chat_id)
+        logger.error("julia: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s", type(exc).__name__, exc.code, connection_id, chat_id)
     elif isinstance(exc, (AgentsUpstreamError, AgentsTimeout)):
-        logger.error("lais: agents upstream failure (%s) conn=%s chat=%s -- no reply", type(exc).__name__, connection_id, chat_id)
+        logger.error("julia: agents upstream failure (%s) conn=%s chat=%s -- no reply", type(exc).__name__, connection_id, chat_id)
     else:  # an AgentsClientError subclass we do not know: never reply, never loop
-        logger.error("lais: unhandled agents error %s conn=%s chat=%s", type(exc).__name__, connection_id, chat_id)
+        logger.error("julia: unhandled agents error %s conn=%s chat=%s", type(exc).__name__, connection_id, chat_id)
     _clear_attempts(deps, key)
     close_run(deps.buffer, key, run)
 
@@ -573,27 +573,27 @@ async def _resolve_lid_phone(deps: LeadDeps, connection: WhatsAppConnectionRecor
         waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
         pn = await waha.get_lid_phone(lid)
     except Exception:
-        logger.warning("lais: LID->phone lookup failed for %s", lid, exc_info=True)
+        logger.warning("julia: LID->phone lookup failed for %s", lid, exc_info=True)
         return None
-    d = lais.phone_digits(pn) if pn else None
+    d = julia.phone_digits(pn) if pn else None
     return f"+{d}" if d else None
 
 
 async def _deliver(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str,
     run: list[dict[str, Any]], result: TurnResult, state: Optional[dict[str, Any]], chat_store: Any,
-    lais_turn: Optional[LaisTurn] = None, agents_client: Optional[AgentsClient] = None, lote_hash: Optional[str] = None,
-    fluxo: lais_envio_gate.Fluxo, regua_id: Optional[str] = None,
+    julia_turn: Optional[JuliaTurn] = None, agents_client: Optional[AgentsClient] = None, lote_hash: Optional[str] = None,
+    fluxo: julia_envio_gate.Fluxo, regua_id: Optional[str] = None,
 ) -> bool:
-    """Send the reply; True when at least one bubble went out. Nothing leaves before `lais_envio_gate.exigir`
+    """Send the reply; True when at least one bubble went out. Nothing leaves before `julia_envio_gate.exigir`
     passes for `fluxo` (Julia on for the line + the org's opt-in for that flow)."""
-    pos = dict(lais_turn=lais_turn, connection=connection, chat_id=chat_id, result=result, lote_hash=lote_hash,
+    pos = dict(julia_turn=julia_turn, connection=connection, chat_id=chat_id, result=result, lote_hash=lote_hash,
                agents_client=agents_client)
     # L3: a human may have taken over WHILE the turn was running -- re-check the
     # flag before sending anything.
     fresh = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     if fresh and fresh.get("agente_pausado"):
-        logger.info("lais: chat %s paused during the turn -- reply discarded", chat_id)
+        logger.info("julia: chat %s paused during the turn -- reply discarded", chat_id)
         # The reply is dropped, but what the model extracted (slots, operacao) is still the lead's data.
         await _pos_turno(deps, enviou=False, **pos)
         close_run(deps.buffer, key, run)
@@ -602,20 +602,20 @@ async def _deliver(
     handoff = result.handoff
     primeira = not ((state or {}).get("agente_conversation_id") or (fresh or {}).get("agente_conversation_id"))
     partes = list(result.partes)
-    if lais_turn is not None and lais_turn.avisos:
+    if julia_turn is not None and julia_turn.avisos:
         # Wave 1: the deterministic recesso notice goes first (after the privacy disclosure, inserted below).
-        partes[0:0] = lais_turn.avisos
+        partes[0:0] = julia_turn.avisos
     if not partes and handoff is None:
         await _pos_turno(deps, enviou=False, **pos)  # silence can still carry actions
         close_run(deps.buffer, key, run)  # status `silencio`: stay silent, nothing to disclose
         return False
 
     try:
-        liberacao = lais_envio_gate.exigir(
+        liberacao = julia_envio_gate.exigir(
             deps.scoped, connection.org_id, connection.id, fluxo,
-            contato_id=lais_turn.contato.get("id") if lais_turn is not None else None, regua_id=regua_id,
+            contato_id=julia_turn.contato.get("id") if julia_turn is not None else None, regua_id=regua_id,
         )
-    except lais_envio_gate.EnvioBloqueado:  # already logged + `envio_bloqueado` event by the gate
+    except julia_envio_gate.EnvioBloqueado:  # already logged + `envio_bloqueado` event by the gate
         await _pos_turno(deps, enviou=False, **pos)
         close_run(deps.buffer, key, run)
         return False
@@ -626,16 +626,16 @@ async def _deliver(
     if primeira:
         # 11.3: the disclosure is deterministic and goes BEFORE Julia's first reply.
         try:
-            disclosure = lais.mensagem_inicial_pronta(
-                lais_aviso_service.obter_ou_criar(deps.scoped, deps.core_client, connection.org_id)
+            disclosure = julia.mensagem_inicial_pronta(
+                julia_aviso_service.obter_ou_criar(deps.scoped, deps.core_client, connection.org_id)
             )
         except Exception:
-            logger.exception("lais: cannot build the privacy disclosure for org=%s -- reply NOT sent", connection.org_id)
+            logger.exception("julia: cannot build the privacy disclosure for org=%s -- reply NOT sent", connection.org_id)
             close_run(deps.buffer, key, run)
             return False
         partes.insert(0, disclosure)
 
-    lais.marcar_envio_em_curso(deps.redis, connection.id, chat_id)
+    julia.marcar_envio_em_curso(deps.redis, connection.id, chat_id)
     enviadas = 0
     try:
         for idx, parte in enumerate(partes):
@@ -644,14 +644,14 @@ async def _deliver(
             await send_paragraphs(intake=sender, sender=chat_id, text=parte, delay_seconds=0, split=False)
             enviadas += 1
     except Exception:
-        logger.exception("lais: WAHA send failed after %s/%s bubbles conn=%s chat=%s", enviadas, len(partes), connection.id, chat_id)
+        logger.exception("julia: WAHA send failed after %s/%s bubbles conn=%s chat=%s", enviadas, len(partes), connection.id, chat_id)
     finally:
-        lais.encerrar_envio(deps.redis, connection.id, chat_id)
+        julia.encerrar_envio(deps.redis, connection.id, chat_id)
 
     if primeira and enviadas and result.conversation_id:
         chat_store.set_agente_conversation(connection_id=connection.id, chat_id=chat_id, conversation_id=result.conversation_id)
-    if enviadas and fluxo is lais_envio_gate.Fluxo.RESPOSTA and lais_turn is not None:
-        _registrar_primeira_resposta(deps, connection.org_id, lais_turn.contato)
+    if enviadas and fluxo is julia_envio_gate.Fluxo.RESPOSTA and julia_turn is not None:
+        _registrar_primeira_resposta(deps, connection.org_id, julia_turn.contato)
 
     if handoff is not None:
         await _apply_handoff(deps, connection=connection, chat_id=chat_id, chat_store=chat_store, motivo=handoff.motivo)
@@ -664,9 +664,9 @@ def _registrar_primeira_resposta(deps: LeadDeps, org_id: Any, contato: dict[str,
     """maya-blocks: Julia's first reply of the open episode stamps `primeira_resposta_at` (once). Only a reply to
     the lead's own message counts (a re-engagement is not a response). Bookkeeping: never undoes the reply."""
     try:
-        lais_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"])
+        julia_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"])
     except Exception:
-        logger.exception("lais: primeira_resposta_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
+        logger.exception("julia: primeira_resposta_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
 
 
 async def run_reengajamento_turn(
@@ -683,22 +683,22 @@ async def run_reengajamento_turn(
     regua turn also carries `regua_id`, which goes to the gate and NOT into the agents context."""
     estado_extra = dict(estado_extra)
     regua_id = estado_extra.pop("regua_id", None)
-    fluxo = lais_envio_gate.FLUXO_DO_TIER.get(str(estado_extra.get("reengajamento")))
+    fluxo = julia_envio_gate.FLUXO_DO_TIER.get(str(estado_extra.get("reengajamento")))
     if fluxo is None:
         raise ValueError(f"re-engagement turn without a known tier: {estado_extra.get('reengajamento')!r}")
     org_id = connection.org_id
     client = deps.agents_client_factory(org_id)
     if client is None:
-        lais.registrar_erro_link(org_id, "nao_configurado", cfg=deps.cfg)
-        logger.error("lais: agents not configured for org %s -- re-engagement not sent", org_id)
+        julia.registrar_erro_link(org_id, "nao_configurado", cfg=deps.cfg)
+        logger.error("julia: agents not configured for org %s -- re-engagement not sent", org_id)
         return False
     chat_store = deps.chat_store_factory(org_id)
     state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
-    interacao = lais_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
-    contexto = lais_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao, estado_extra=estado_extra)
+    interacao = julia_contatos_service.abrir_interacao(deps.scoped, org_id, contato)
+    contexto = julia_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao, estado_extra=estado_extra)
     phone = contato.get("telefone_e164") or _phone_e164(chat_id)
     req = TurnRequest(
-        agent_key=connection.agente_leads_key or lais.DEFAULT_AGENT_KEY,
+        agent_key=connection.agente_leads_key or julia.DEFAULT_AGENT_KEY,
         connection_id=str(connection.id), chat_id=chat_id, phone_e164=phone, display_name=contato.get("nome"),
         contexto=contexto,
         messages=(TurnMessage(
@@ -708,15 +708,15 @@ async def run_reengajamento_turn(
     try:
         result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
     except asyncio.TimeoutError:
-        logger.error("lais: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
+        logger.error("julia: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
         return False
     except AgentsClientError as exc:
-        logger.error("lais: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
+        logger.error("julia: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
         return False
     return await _deliver(
         deps, connection=connection, chat_id=chat_id, key=f"lead:{connection.id}:{chat_id}", run=[], result=result,
-        state=state, chat_store=chat_store, lais_turn=LaisTurn(contato=contato, contexto=contexto),
-        agents_client=client, lote_hash=lais_acoes_service.lote_hash_de(result.conversation_id, [marker_id]),
+        state=state, chat_store=chat_store, julia_turn=JuliaTurn(contato=contato, contexto=contexto),
+        agents_client=client, lote_hash=julia_acoes_service.lote_hash_de(result.conversation_id, [marker_id]),
         fluxo=fluxo, regua_id=str(regua_id) if regua_id else None,
     )
 
@@ -726,53 +726,53 @@ async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord
     (contract 5 / 11.4). A notification failure is logged, never undoes the pause."""
     chat_store.set_agente_pausado(connection_id=connection.id, chat_id=chat_id, pausado=True)
     try:  # contract 0.2: a handoff invalidates every job queued for this contato
-        lais_contatos_service.bump_gen_do_chat(deps.scoped, connection.org_id, connection.id, chat_id)
+        julia_contatos_service.bump_gen_do_chat(deps.scoped, connection.org_id, connection.id, chat_id)
     except Exception:
-        logger.exception("lais: gen bump on handoff failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
+        logger.exception("julia: gen bump on handoff failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
     await publish_pause(deps, connection=connection, chat_id=chat_id, pausado=True)
     responsavel: Optional[str] = None
     contato: Optional[dict[str, Any]] = None
     try:  # wave 11: pick the attendant BEFORE notifying so the notification reaches them
-        contato = lais_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
+        contato = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
         if contato is not None:
-            atribuido = lais_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
+            atribuido = julia_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
             responsavel = atribuido["user_id"] if atribuido else None
     except Exception:
-        logger.exception("lais: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned)", connection.id, chat_id)
+        logger.exception("julia: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned)", connection.id, chat_id)
     # maya-blocks: the reason as a CLOSED code (never the model's free text) for Maya's sdr scorecard. `handoff` is
     # outside the notification fan-out, so this cannot double-notify; `emitir` never raises.
-    lais_eventos_service.emitir(
+    julia_eventos_service.emitir(
         deps.scoped, connection.org_id, "handoff", (contato or {}).get("id"),
-        {"motivo_codigo": lais.motivo_codigo_do_handoff(motivo)},
+        {"motivo_codigo": julia.motivo_codigo_do_handoff(motivo)},
     )
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
-        lais.notificar_handoff(
+        julia.notificar_handoff(
             deps.core_client, connection=connection, chat_id=chat_id,
             titulo_chat=summary.title if summary else None, motivo=motivo, responsavel_user_id=responsavel,
         )
     except Exception:
-        logger.exception("lais: handoff notification failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
+        logger.exception("julia: handoff notification failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
 
 
 async def _handle_deletion(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str, agent_key: str, run: list[dict[str, Any]],
 ) -> None:
     client = deps.agents_client_factory(connection.org_id)
-    res = await lais.apagar_dados_do_chat(
+    res = await julia.apagar_dados_do_chat(
         client=deps.scoped, connection=connection, chat_id=chat_id,
         agents_client=client, agent_key=agent_key, buffer=deps.buffer,
     )
     # Confirm to the lead with the connection's own WAHA client -- NOT recorded
     # (the rows were just deleted; recording would re-create what was erased).
     try:
-        lais_envio_gate.exigir(deps.scoped, connection.org_id, connection.id, lais_envio_gate.Fluxo.RESPOSTA)
+        julia_envio_gate.exigir(deps.scoped, connection.org_id, connection.id, julia_envio_gate.Fluxo.RESPOSTA)
         waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
-        await waha.send_text(chat_id, lais.MENSAGEM_APAGADO if res.agents_ok else lais.MENSAGEM_APAGADO_PARCIAL)
-    except lais_envio_gate.EnvioBloqueado:  # Julia switched off mid-batch: the gate logged it + left the event
+        await waha.send_text(chat_id, julia.MENSAGEM_APAGADO if res.agents_ok else julia.MENSAGEM_APAGADO_PARCIAL)
+    except julia_envio_gate.EnvioBloqueado:  # Julia switched off mid-batch: the gate logged it + left the event
         return
     except Exception:
-        logger.exception("lais: deletion confirmation could not be sent chat=%s", chat_id)
+        logger.exception("julia: deletion confirmation could not be sent chat=%s", chat_id)
 
 
 __all__ = [

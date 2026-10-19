@@ -12,7 +12,7 @@ from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_
 
 from app.modules.supervisao import metricas as m
 
-from tests.support.lais_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 H = {"Authorization": "Bearer test-token"}
 BASE = "/api/supervisao"
@@ -124,7 +124,7 @@ class TestScorecards:
         assert owner.call("get", f"{BASE}/scorecards").json()["data"] == {"dia": _ontem(), "supervisao_ativa": False, "scorecards": []}
 
     def test_off_still_returns_stored_history(self, owner):
-        owner.w.sw.set_table_data("agente_scorecards", [{"id": "s", "org_id": ORG_ID, "bloco": "sdr", "agent_key": "lead-imob",
+        owner.w.sw.set_table_data("agente_scorecards", [{"id": "s", "org_id": ORG_ID, "bloco": "sdr", "agent_key": "julia",
                                                          "dia": _ontem(), "metricas": {"leads_entrada": 3},
                                                          "rubrica_versao": "sdr.v1", "calculado_at": "2026-10-19T10:00:00+00:00"}])
         body = owner.call("get", f"{BASE}/scorecards").json()["data"]
@@ -142,14 +142,14 @@ class TestScorecards:
         owner.w.sw.set_table_data("agente_scorecards", [
             {"id": "1", "org_id": ORG_ID, "bloco": "atendimento", "agent_key": None, "rubrica_versao": "atendimento.v1",
              "metricas": {"handoffs_recebidos": 2}, **base},
-            {"id": "2", "org_id": ORG_ID, "bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
+            {"id": "2", "org_id": ORG_ID, "bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v1",
              "metricas": {"leads_entrada": 31, "qualificacao_taxa": None}, **base},
-            {"id": "3", "org_id": OTHER_ORG_ID, "bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
+            {"id": "3", "org_id": OTHER_ORG_ID, "bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v1",
              "metricas": {}, **base},
         ])
         body = owner.call("get", f"{BASE}/scorecards?dia={dia}").json()["data"]
         assert [s["bloco"] for s in body["scorecards"]] == ["sdr", "atendimento"]
-        assert body["scorecards"][0] == {"bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
+        assert body["scorecards"][0] == {"bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v1",
                                          "calculado_at": "2026-10-19T10:00:12+00:00",
                                          "metricas": {"leads_entrada": 31, "qualificacao_taxa": None}}
 
@@ -167,7 +167,7 @@ class TestHandoffs:
     def _h(self, scene, n, horas_atras, **over):
         criado = (datetime.now(timezone.utc) - timedelta(hours=horas_atras)).isoformat()
         row = {"id": f"00000000-0000-4000-8000-00000000{n:04d}", "org_id": ORG_ID, "de_bloco": "sdr",
-               "para_bloco": "atendimento", "de_agent_key": "lead-imob", "para_agent_key": None, "gatilho": "novo_lead",
+               "para_bloco": "atendimento", "de_agent_key": "julia", "para_agent_key": None, "gatilho": "novo_lead",
                "origem_evento": f"00000000-0000-4000-9000-00000000{n:04d}", "status": "emitido", "created_at": criado,
                "assumido_at": None, "expirado_at": None, "contato_id": None, "lead_id": None, "atendimento_id": None,
                "atribuicao_id": None, "entrega_id": None, **over}
@@ -190,7 +190,7 @@ class TestHandoffs:
         assert [i["id"][-1] for i in itens] == ["2", "3", "1"]
         velho = itens[2]
         assert velho["atrasado"] is True and velho["card"] == {"titulo": "Maria — Apto 12", "link": "/funil?card=a1"}
-        assert velho["referencias"]["atendimento_id"] == "a1" and velho["de_agent_key"] == "lead-imob"
+        assert velho["referencias"]["atendimento_id"] == "a1" and velho["de_agent_key"] == "julia"
         assert itens[0]["atrasado"] is False and itens[0]["card"] is None
         assert itens[1]["atrasado"] is False
 

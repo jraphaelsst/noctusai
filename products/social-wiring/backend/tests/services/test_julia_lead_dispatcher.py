@@ -9,7 +9,7 @@ import threading
 from noctusai_lib.domain.chatbot import ConversationBufferService, ConversationWorker
 from noctusai_lib.domain.chatbot.buffer import make_in_memory_buffer_client
 
-from app.services.lais_lead_dispatcher import LeadTurnDispatcher
+from app.services.julia_lead_dispatcher import LeadTurnDispatcher
 
 K1, K2, K3 = "lead:c1:chat1", "lead:c1:chat2", "lead:c1:chat3"
 

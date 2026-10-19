@@ -6,7 +6,7 @@ Contract: products/social-wiring/projects/lais/specs/julia-agent-contract.md
   section 10.1 M5  deletion on request                  -> `delete_conversation_data`
 Lais build contract (lais-build-contract.md) 2.1:
   (a) `contexto` rides in the turn request; (d) the response carries action objects
-  (`LaisAction`); (e) POST /api/channels/conversations/{id}/resumo -> `resumo`;
+  (`JuliaAction`); (e) POST /api/channels/conversations/{id}/resumo -> `resumo`;
   (f) PUT /api/channels/ferramentas-token -> `put_ferramentas_token`.
 Owner 2026-10-19: POST /api/channels/agents/{key}/decisoes/{chave} -> `decidir` (a choice decided by the rule the
   owner keeps in the agent's prompt section `decisao-<chave>`; `regra_padrao` applies while that section is absent).
@@ -63,7 +63,7 @@ class TurnRequest:
     display_name: Optional[str] = None
     channel: str = "whatsapp"
     #: Lais build contract 2.1(a): the per-turn dynamic context SW renders
-    #: (`lais_contexto_service.montar`). None = page-0 behaviour, key omitted.
+    #: (`julia_contexto_service.montar`). None = page-0 behaviour, key omitted.
     contexto: Optional[dict[str, Any]] = None
 
     def to_wire(self) -> dict[str, Any]:
@@ -96,8 +96,8 @@ class HandoffAction:
 
 
 @dataclass(frozen=True)
-class LaisAction:
-    """One of the Lais action shapes of contract 2.1(d) (`salvar_slots`, `definir_operacao`,
+class JuliaAction:
+    """One of the Julia action shapes of contract 2.1(d) (`salvar_slots`, `definir_operacao`,
     `qualificar_lead`, `pedido_visita`, `captacao`, `encerrar`). `payload` is the action
     object minus `type`/`seq`. An UNKNOWN type is kept (not dropped): the apply service
     answers it with an `acao_sem_handler` event so a newer agents build never loses data
@@ -108,7 +108,7 @@ class LaisAction:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
-Action = Union[HandoffAction, LaisAction]
+Action = Union[HandoffAction, JuliaAction]
 
 
 @dataclass(frozen=True)
@@ -126,9 +126,9 @@ class TurnResult:
         return next((a for a in self.actions if isinstance(a, HandoffAction)), None)
 
     @property
-    def lais_actions(self) -> tuple[LaisAction, ...]:
+    def julia_actions(self) -> tuple[JuliaAction, ...]:
         """The non-handoff actions, in `seq` order (ties keep arrival order)."""
-        return tuple(sorted((a for a in self.actions if isinstance(a, LaisAction)), key=lambda a: a.seq))
+        return tuple(sorted((a for a in self.actions if isinstance(a, JuliaAction)), key=lambda a: a.seq))
 
 
 @dataclass(frozen=True)
@@ -507,10 +507,10 @@ def parse_turn_result(body: Any) -> TurnResult:
         if a["type"] == "handoff":
             actions.append(HandoffAction(motivo=str(a.get("motivo") or "")[:280]))
             continue
-        # A Lais action (contract 2.1(d)); an unknown type is kept so the apply
+        # A Julia action (contract 2.1(d)); an unknown type is kept so the apply
         # service can report `acao_sem_handler` instead of losing it silently.
         seq = a.get("seq")
-        actions.append(LaisAction(
+        actions.append(JuliaAction(
             type=a["type"],
             seq=seq if isinstance(seq, int) and not isinstance(seq, bool) else idx,
             payload={k: v for k, v in a.items() if k not in ("type", "seq")},
@@ -658,7 +658,7 @@ class HttpAgentsClient:
         return DeletionResult(deleted=body is not None)
 
     async def uso(self, mes: str) -> AgentUso:
-        """`GET /api/channels/uso?mes=YYYY-MM` (Lais w9 Painel)."""
+        """`GET /api/channels/uso?mes=YYYY-MM` (Julia w9 Painel)."""
         return parse_uso(await self._send("GET", f"/api/channels/uso?mes={quote(mes, safe='')}"))
 
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
@@ -708,7 +708,7 @@ __all__ = [
     "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DecisaoRequest",
     "DecisaoResult", "DeletionRequest",
     "DeletionResult", "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
-    "LaisAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
+    "JuliaAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
     "ResumoResult", "TurnInProgress", "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client",
     "parse_agent_status", "parse_decisao_result", "parse_uso", "parse_resumo_result", "parse_turn_result",
 ]

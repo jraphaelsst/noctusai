@@ -1,8 +1,8 @@
 """Maya's daily report to the OWNER (maya-blocks CONTRACT §3.4) -- read-only, owner only.
 
 Two channels, both gated by `supervisao_ativa`, neither ever lead-facing:
-- in-app: one `relatorio` lais_evento, `contato_id=None`, payload `{"origem": "supervisao", "dia"}`. The
-  notification fan-out (`lais_notificacoes_service`) routes `origem == "supervisao"` to owners ONLY.
+- in-app: one `relatorio` julia_evento, `contato_id=None`, payload `{"origem": "supervisao", "dia"}`. The
+  notification fan-out (`julia_notificacoes_service`) routes `origem == "supervisao"` to owners ONLY.
 - email: `SupervisaoDigestService` (seed `BaseDigestService`) renders the same scorecards; it goes out through
   the seed `EmailSender` seam (Real Resend via `make_email_sender`, `FakeEmailSender` in tests) to the org's
   owners' emails.
@@ -24,7 +24,7 @@ from noctusai_lib.integrations.email import EmailSender, OutgoingEmail
 from app.modules.atendimento_blocos import repository as blocos_repo
 from app.modules.atendimento_blocos.blocos import BLOCOS
 from app.modules.supervisao import service as svc
-from app.services import lais_eventos_service as eventos
+from app.services import julia_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
 

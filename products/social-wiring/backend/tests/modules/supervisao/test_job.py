@@ -14,10 +14,10 @@ from noctusai_lib.integrations.email import FakeEmailSender
 from app.modules.supervisao import relatorio
 from app.modules.supervisao import scheduler as job
 from app.modules.supervisao import service as svc
-from app.services import lais_eventos_service as eventos
-from app.services import lais_notificacoes_service as notif
+from app.services import julia_eventos_service as eventos
+from app.services import julia_notificacoes_service as notif
 
-from tests.support.lais_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 AGORA = datetime(2026, 10, 19, 10, 0, tzinfo=timezone.utc)  # 07:00 in São Paulo
 ONTEM = date(2026, 10, 18)
@@ -34,10 +34,10 @@ def _core_injetado(w):
         notif.registrar_core_provider(None)
 
 
-def _mundo(*, ativa=True, blocos=(("sdr", "lead-imob", True), ("atendimento", None, True), ("juridico", None, False))):
+def _mundo(*, ativa=True, blocos=(("sdr", "julia", True), ("atendimento", None, True), ("juridico", None, False))):
     w = World()
-    for t in ("lais_envio_entregas", "lais_atribuicoes", "atendimento_handoffs", "agente_scorecards",
-              "lais_notificacao_prefs", "pipeline_movimentos", "cliente_notas", "atendimentos", "processos_venda"):
+    for t in ("julia_envio_entregas", "julia_atribuicoes", "atendimento_handoffs", "agente_scorecards",
+              "julia_notificacao_prefs", "pipeline_movimentos", "cliente_notas", "atendimentos", "processos_venda"):
         w.sw.set_table_data(t, [])
     w.core.set_table_data("noctus_users", [
         {"id": OWNER_ID, "org_id": ORG_ID, "org_role": "owner", "email": OWNER_EMAIL},
@@ -56,7 +56,7 @@ def _mundo(*, ativa=True, blocos=(("sdr", "lead-imob", True), ("atendimento", No
          "etapas": []}
         for i, (b, k, a) in enumerate(blocos)
     ])
-    w.sw.set_table_data("lais_contatos", [
+    w.sw.set_table_data("julia_contatos", [
         {"id": "c1", "org_id": ORG_ID, "created_at": "2026-10-18T13:00:00+00:00"},
     ])
     notif.registrar()
@@ -69,7 +69,7 @@ def _rodar(w, sender):
 
 
 def _relatorios(w):
-    return [e for e in w.sw.table("lais_eventos").select("*").execute().data if e["tipo"] == "relatorio"]
+    return [e for e in w.sw.table("julia_eventos").select("*").execute().data if e["tipo"] == "relatorio"]
 
 
 class TestScorecardsDiarios:
@@ -79,7 +79,7 @@ class TestScorecardsDiarios:
         primeira = w.sw.table("agente_scorecards").select("*").execute().data
         assert len(primeira) == 14  # sdr + atendimento (juridico is not ativo) x 7 days
         assert {(r["bloco"], r["agent_key"], r["rubrica_versao"]) for r in primeira} == {
-            ("sdr", "lead-imob", "sdr.v1"), ("atendimento", None, "atendimento.v1")}
+            ("sdr", "julia", "sdr.v1"), ("atendimento", None, "atendimento.v1")}
         assert sorted({r["dia"] for r in primeira}) == [(ONTEM - timedelta(days=k)).isoformat() for k in range(6, -1, -1)]
         _rodar(w, fake)
         segunda = w.sw.table("agente_scorecards").select("*").execute().data
@@ -103,7 +103,7 @@ class TestScorecardsDiarios:
         assert _relatorios(w) == [] and fake.sent == []
 
     def test_no_ativo_block_means_no_scorecard_and_no_report(self):
-        w, fake = _mundo(blocos=(("sdr", "lead-imob", False),)), FakeEmailSender()
+        w, fake = _mundo(blocos=(("sdr", "julia", False),)), FakeEmailSender()
         out = _rodar(w, fake)
         assert out[ORG_ID]["relatorio"] == {"status": "sem_scorecards"} and fake.sent == []
 
@@ -111,7 +111,7 @@ class TestScorecardsDiarios:
         w = _mundo()
         _rodar(w, FakeEmailSender())
         assert w.sent_texts() == []
-        assert w.sw.table("lais_contatos").select("*").execute().data == [
+        assert w.sw.table("julia_contatos").select("*").execute().data == [
             {"id": "c1", "org_id": ORG_ID, "created_at": "2026-10-18T13:00:00+00:00"}]
 
 
@@ -162,7 +162,7 @@ class TestRegraNotificacao:
 
     def test_owner_can_switch_the_relatorio_type_off(self):
         w = _mundo()
-        w.sw.set_table_data("lais_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "relatorio", "in_app": False}])
+        w.sw.set_table_data("julia_notificacao_prefs", [{"org_id": ORG_ID, "user_id": OWNER_ID, "tipo": "relatorio", "in_app": False}])
         with _core_injetado(w):
             eventos.emitir(w.sw, ORG_ID, "relatorio", None, {"origem": "supervisao", "dia": "2026-10-18"})
         assert w.notifications() == []

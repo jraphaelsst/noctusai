@@ -1,8 +1,8 @@
 """Owner-confirmed status / price of a listing, overlaid on the Vista mirror at READ time.
 
 `imoveis.status / valor_venda / valor_locacao` belong to the Vista sync (it overwrites them on every run), so an
-owner's confirmation ("still available" / "new price") is never written there. It lives in the Lais-owned
-`lais_proprietarios_contatos` row (`status_confirmado`, `preco_confirmado`, `preco_tipo_confirmado`,
+owner's confirmation ("still available" / "new price") is never written there. It lives in the Julia-owned
+`julia_proprietarios_contatos` row (`status_confirmado`, `preco_confirmado`, `preco_tipo_confirmado`,
 `confirmado_at`; migration 275 + 283), and every reader that shows a listing's status or price (Julia's tools,
 the Atualizacao page) asks this module whether a confirmation is newer than what Vista holds.
 
@@ -21,7 +21,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Sao_Paulo")
-TABLE = "lais_proprietarios_contatos"
+TABLE = "julia_proprietarios_contatos"
 _COLUNAS = "imovel_codigo, status_confirmado, preco_confirmado, preco_tipo_confirmado, confirmado_at"
 _LOTE = 100
 

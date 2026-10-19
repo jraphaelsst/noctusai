@@ -1,17 +1,17 @@
-"""Lais > Avaliacoes no Google (wave 13, lais-build-contract 15/17).
+"""Julia > Avaliacoes no Google (wave 13, lais-build-contract 15/17).
 
 THE RULE. When an interacao closes with desfecho `qualificado`, the contato's latest feedback is not a dislike
-(wave 7 `lais_feedback`) and the org configured `google_review_url`, Julia sends ONE review-ask message over the
+(wave 7 `julia_feedback`) and the org configured `google_review_url`, Julia sends ONE review-ask message over the
 contato's own 1:1 line -- inside the 24 h window only (A6: never a mass send, never a template through WAHA) --
 at most once per contato per 90 days. The text is deterministic (`montar_texto`; copy becomes configurable later).
 
-HOW. `agendar_apos_fechar` is bound (via `registrar`) to `lais_acoes_service.POS_FECHAR`, so BOTH close paths (the
-`encerrar` action and the 24 h-silence close at the next inbound) reach it. It only enqueues a `lais_avaliacao_pedir`
+HOW. `agendar_apos_fechar` is bound (via `registrar`) to `julia_acoes_service.POS_FECHAR`, so BOTH close paths (the
+`encerrar` action and the 24 h-silence close at the next inbound) reach it. It only enqueues a `julia_avaliacao_pedir`
 job (the stale guard of contract 0.2: `gen`); every condition is re-read at FIRE time by `executar_pedido`, so a
 reply that arrived meanwhile, a late dislike or a second close can never double-send. A skipped ask writes nothing;
 a send that fails writes a `status='erro'` row (it does not count toward the 90 days: the person was not asked).
 
-REVIEWS. `sincronizar` mirrors the Google Business Profile reviews into `lais_avaliacoes_cache` through the
+REVIEWS. `sincronizar` mirrors the Google Business Profile reviews into `julia_avaliacoes_cache` through the
 `ReviewsProvider` seam (Fake / Real / not-configured). `painel` renders the page: KPIs of the month, the 1..5
 distribution, mean, total and the latest reviews. A7: the asks (they hang off a contato) are filtered to the
 contatos the caller owns; reviews are public Google data of the org and are shown to every member.
@@ -28,21 +28,21 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso, lais_envio_gate
-from app.services import lais_contatos_service as contatos
-from app.services import lais_painel_service as painel_svc
-from app.services.lais_envio_service import telefone_do_contato
-from app.services.lais_reviews_provider import Review, ReviewsNaoConfigurado, ReviewsProvider
+from app.services import julia_acesso, julia_envio_gate
+from app.services import julia_contatos_service as contatos
+from app.services import julia_painel_service as painel_svc
+from app.services.julia_envio_service import telefone_do_contato
+from app.services.julia_reviews_provider import Review, ReviewsNaoConfigurado, ReviewsProvider
 
 logger = logging.getLogger(__name__)
 
-T_CONFIG = "lais_avaliacao_config"
-T_PEDIDOS = "lais_avaliacao_pedidos"
-T_CACHE = "lais_avaliacoes_cache"
-T_FEEDBACK = "lais_feedback"
+T_CONFIG = "julia_avaliacao_config"
+T_PEDIDOS = "julia_avaliacao_pedidos"
+T_CACHE = "julia_avaliacoes_cache"
+T_FEEDBACK = "julia_feedback"
 T_INTERACOES = contatos.T_INTERACOES
 
-JOB_PEDIR = "lais_avaliacao_pedir"
+JOB_PEDIR = "julia_avaliacao_pedir"
 JOB_MAX_RETRIES = 2
 DESFECHO_QUALIFICADO = "qualificado"
 INTERVALO_PEDIDO = timedelta(days=90)
@@ -54,11 +54,11 @@ _URL_RE = re.compile(r"^https://\S+$")
 _PIXEL_RE = re.compile(r"^[0-9]{5,20}$")
 
 #: Sends the review ask: `async (contato, texto, liberacao) -> None`, raising when it could not leave. `liberacao` is
-#: the outbound gate's pass (`lais_envio_gate.exigir`, flow `avaliacao`). Production builds it from the contato's
+#: the outbound gate's pass (`julia_envio_gate.exigir`, flow `avaliacao`). Production builds it from the contato's
 #: WhatsApp connection (`enviador_padrao`); tests inject a fake.
 Enviador = Callable[[dict[str, Any], str, Any], Awaitable[None]]
 
-# The job repository of the running Lais worker (set by `lais_reengajamento_worker.build_worker`).
+# The job repository of the running Julia worker (set by `julia_reengajamento_worker.build_worker`).
 _repo: Any = None
 
 
@@ -200,21 +200,21 @@ async def agendar_apos_fechar(
     if not obter_config(db, org_id)["google_review_url"]:
         return None
     if _repo is None:
-        logger.warning("lais avaliacoes: no job repository registered -- the review ask for contato=%s is not queued", contato.get("id"))
+        logger.warning("julia avaliacoes: no job repository registered -- the review ask for contato=%s is not queued", contato.get("id"))
         return None
     # re-read: `encerrar` bumped `gen` before the close, the handler's contato dict predates it
     rows = db.table(contatos.T_CONTATOS).select("*").eq("id", str(contato["id"])).limit(1).execute().data or []
     atual = rows[0] if rows else contato
-    from app.services import lais_reengajamento_service
+    from app.services import julia_reengajamento_service
 
     job = await _repo.enqueue(
         type=JOB_PEDIR,
         payload={
-            **contatos.payload_job(atual, lais_reengajamento_service.chave_do_chat(atual["connection_id"], atual["chat_id"])),
+            **contatos.payload_job(atual, julia_reengajamento_service.chave_do_chat(atual["connection_id"], atual["chat_id"])),
             "contato_id": str(atual["id"]), "interacao_id": str(interacao["id"]),
         },
         max_retries=JOB_MAX_RETRIES, scheduled_for=_agora(),
-        dedupe_key=f"lais:avaliacao:{interacao['id']}",
+        dedupe_key=f"julia:avaliacao:{interacao['id']}",
     )
     return str(getattr(job, "id", "")) or None
 
@@ -227,7 +227,7 @@ def _registrar_pedido(db: Any, org_id: UUID | str, contato_id: Any, interacao_id
 
 
 async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Optional[datetime] = None) -> str:
-    """`lais_avaliacao_pedir` at fire time. Returns the outcome (`enviado`, `obsoleto`, `ignorado:<motivo>`, `erro:<tipo>`)."""
+    """`julia_avaliacao_pedir` at fire time. Returns the outcome (`enviado`, `obsoleto`, `ignorado:<motivo>`, `erro:<tipo>`)."""
     p = job.payload or {}
     org_id, contato_id = p.get("org_id"), p.get("contato_id")
     if not (org_id and contato_id):
@@ -243,16 +243,16 @@ async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Opt
     if motivo is not None:
         return f"ignorado:{motivo}"
     try:  # the outbound gate: Julia still on for the contato's line + the org's review link (re-read at fire time)
-        liberacao = lais_envio_gate.exigir(
-            client, org_id, contato.get("connection_id"), lais_envio_gate.Fluxo.AVALIACAO, contato_id=contato_id,
+        liberacao = julia_envio_gate.exigir(
+            client, org_id, contato.get("connection_id"), julia_envio_gate.Fluxo.AVALIACAO, contato_id=contato_id,
         )
-    except lais_envio_gate.EnvioBloqueado as exc:
+    except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
     texto = montar_texto(contato.get("nome"), obter_config(client, org_id)["google_review_url"])
     try:
         await enviar(contato, texto, liberacao)
     except Exception as exc:
-        logger.exception("lais avaliacoes: review ask failed (org=%s contato=%s)", org_id, contato_id)
+        logger.exception("julia avaliacoes: review ask failed (org=%s contato=%s)", org_id, contato_id)
         _registrar_pedido(client, org_id, contato_id, p.get("interacao_id"), "erro", type(exc).__name__, agora)
         return f"erro:{type(exc).__name__}"
     _registrar_pedido(client, org_id, contato_id, p.get("interacao_id"), "enviado", None, agora)
@@ -262,17 +262,17 @@ async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Opt
 
 def enviador_padrao(connection_lookup: Callable[[UUID], Any], waha_factory: Callable[..., Any]) -> Enviador:
     """The production sender: the contato's own connection; WAHA free text (1:1, A6) or a configured Cloud one."""
-    from app.services import lais_transporte
+    from app.services import julia_transporte
 
     async def enviar(contato: dict[str, Any], texto: str, liberacao: Any) -> None:
         record = connection_lookup(UUID(str(contato["connection_id"])))
         if record is None:
             raise RuntimeError("conexao_nao_encontrada")
-        lais_envio_gate.conferir(liberacao, record.id)
-        if getattr(record, "transporte", lais_transporte.TRANSPORTE_WAHA) == lais_transporte.TRANSPORTE_CLOUD:
-            if not lais_transporte.cloud_configurada(record):
+        julia_envio_gate.conferir(liberacao, record.id)
+        if getattr(record, "transporte", julia_transporte.TRANSPORTE_WAHA) == julia_transporte.TRANSPORTE_CLOUD:
+            if not julia_transporte.cloud_configurada(record):
                 raise RuntimeError("transporte_indisponivel")
-            await lais_transporte.transporte_da_conexao(record).enviar_texto(telefone_do_contato(contato) or "", texto)
+            await julia_transporte.transporte_da_conexao(record).enviar_texto(telefone_do_contato(contato) or "", texto)
             return
         waha = waha_factory(base_url=record.base_url or None, api_key=record.api_key, session=record.session_name)
         await waha.send_text(contato["chat_id"], texto)
@@ -283,11 +283,11 @@ def enviador_padrao(connection_lookup: Callable[[UUID], Any], waha_factory: Call
 def handlers(
     *, client_provider: Callable[[], Any], enviar_factory: Callable[[], Enviador],
 ) -> dict[str, Callable[[Job], Any]]:
-    """`{job type: handler}` merged into the Lais worker; collaborators are built at FIRE time."""
+    """`{job type: handler}` merged into the Julia worker; collaborators are built at FIRE time."""
 
     async def _pedir(job: Job) -> None:
         outcome = await executar_pedido(job, client=client_provider(), enviar=enviar_factory())
-        logger.info("lais avaliacoes %s job=%s -> %s", job.type, job.id, outcome)
+        logger.info("julia avaliacoes %s job=%s -> %s", job.type, job.id, outcome)
 
     return {JOB_PEDIR: _pedir}
 
@@ -322,7 +322,7 @@ async def sincronizar(
     except ReviewsNaoConfigurado:
         return {"estado": "nao_configurado", "novas": 0}
     except Exception as exc:  # a provider failure (incl. ReviewsErro) must not break the page
-        logger.exception("lais avaliacoes: GBP sync failed (org=%s): %s", org_id, type(exc).__name__)
+        logger.exception("julia avaliacoes: GBP sync failed (org=%s): %s", org_id, type(exc).__name__)
         return {"estado": "erro", "novas": 0}
     existentes = {r["external_id"] for r in linhas(db, T_CACHE, "id, external_id", org_id=org_id)}
     novas = sum(1 for r in reviews if r.external_id not in existentes)
@@ -339,7 +339,7 @@ def _varrer_pedidos(db: Any, org_id: UUID | str, ini: datetime, fim: datetime) -
             .order("id").range(a, b).execute().data
         )
 
-    return list(iter_paged_rows(pagina, label="lais_avaliacao_pedidos"))
+    return list(iter_paged_rows(pagina, label="julia_avaliacao_pedidos"))
 
 
 def _mes_do(valor: Any) -> Optional[str]:
@@ -350,10 +350,10 @@ def _mes_do(valor: Any) -> Optional[str]:
     return f"{dt.year:04d}-{dt.month:02d}"
 
 
-def painel(db: Any, ctx: lais_acesso.AcessoCtx, *, mes: str, gbp_configurado: bool) -> dict[str, Any]:
+def painel(db: Any, ctx: julia_acesso.AcessoCtx, *, mes: str, gbp_configurado: bool) -> dict[str, Any]:
     ini, fim = painel_svc.janela(mes)
     cfg = obter_config(db, ctx.org_id)
-    pedidos = lais_acesso.filtrar_por_contato(db, ctx, _varrer_pedidos(db, ctx.org_id, ini, fim))  # A7
+    pedidos = julia_acesso.filtrar_por_contato(db, ctx, _varrer_pedidos(db, ctx.org_id, ini, fim))  # A7
     cache = linhas(db, T_CACHE, "*", org_id=ctx.org_id)
     distribuicao = {str(n): 0 for n in range(1, 6)}
     for r in cache:
@@ -379,9 +379,9 @@ def painel(db: Any, ctx: lais_acesso.AcessoCtx, *, mes: str, gbp_configurado: bo
 # ── wiring ─────────────────────────────────────────────────────────────────────
 def registrar() -> None:
     """Bind the `POS_FECHAR` hook (idempotent); called once at import of the router."""
-    from app.services import lais_acoes_service
+    from app.services import julia_acoes_service
 
-    lais_acoes_service.registrar_pos_fechar(_pos_fechar)
+    julia_acoes_service.registrar_pos_fechar(_pos_fechar)
 
 
 async def _pos_fechar(client: Any, org_id: UUID | str, contato: dict[str, Any], interacao: dict[str, Any], origem: str) -> None:

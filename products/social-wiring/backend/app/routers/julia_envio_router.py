@@ -1,15 +1,15 @@
-"""Lais > Envio + Lais > Leads (wave 3, contract 5).
+"""Julia > Envio + Julia > Leads (wave 3, contract 5).
 
-  GET  /api/lais/envio/regras                    member    {data: {diferenciar, regras: [{operacao, grupos, versao}]}}
-  PUT  /api/lais/envio/regras                    admin     {diferenciar, regras: [{operacao, grupos}]} -> same shape
-  GET  /api/lais/envio/politicas                 member    {data: {frios, captacoes, whatsapp_invalido, pesquisa}}
-  PUT  /api/lais/envio/politicas                 admin     partial body -> same shape
-  GET  /api/lais/leads?de&ate&nome&email&telefone&imovel&link&operacao[]&atendimento[]&status[]&canal[]&campanha&anuncio&page&page_size  member    {data: {items, total}}  (a member sees only their contatos, A7)
-  GET  /api/lais/leads/canais                    member    {data: [{slug, label}]}
-  POST /api/lais/leads/{contato_id}/enviar       member    200 {data: {status_envio, lead_id}} | 409 `ja_enviado` | 422 `contato_sem_telefone`
-  POST /api/lais/leads/enviar-lote  {ids<=100}   member    {data: {ok: [id], erro: [{id, code}]}}
-  GET  /api/lais/leads/{contato_id}/resumo       member    {data: {contato, slots, interacoes, entregas}}
-  GET  /api/lais/leads/export.csv?<filters>&ids=a,b  admin     text/csv
+  GET  /api/julia/envio/regras                    member    {data: {diferenciar, regras: [{operacao, grupos, versao}]}}
+  PUT  /api/julia/envio/regras                    admin     {diferenciar, regras: [{operacao, grupos}]} -> same shape
+  GET  /api/julia/envio/politicas                 member    {data: {frios, captacoes, whatsapp_invalido, pesquisa}}
+  PUT  /api/julia/envio/politicas                 admin     partial body -> same shape
+  GET  /api/julia/leads?de&ate&nome&email&telefone&imovel&link&operacao[]&atendimento[]&status[]&canal[]&campanha&anuncio&page&page_size  member    {data: {items, total}}  (a member sees only their contatos, A7)
+  GET  /api/julia/leads/canais                    member    {data: [{slug, label}]}
+  POST /api/julia/leads/{contato_id}/enviar       member    200 {data: {status_envio, lead_id}} | 409 `ja_enviado` | 422 `contato_sem_telefone`
+  POST /api/julia/leads/enviar-lote  {ids<=100}   member    {data: {ok: [id], erro: [{id, code}]}}
+  GET  /api/julia/leads/{contato_id}/resumo       member    {data: {contato, slots, interacoes, entregas}}
+  GET  /api/julia/leads/export.csv?<filters>&ids=a,b  admin     text/csv
 
 Errors use the AppException envelope: 422 `grupos_invalidos` / `criterio_invalido` / `campo_desconhecido` /
 `operador_invalido` / `valor_invalido` / `campo_sensivel` / `base_obrigatoria` / `operacoes_invalidas` /
@@ -31,11 +31,11 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import lais_acesso, lais_envio_service as envio, lais_leads_service as leads
+from app.services import julia_acesso, julia_envio_service as envio, julia_leads_service as leads
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["lais-envio"])
+router = APIRouter(tags=["julia-envio"])
 
 envio.registrar()  # binds the qualificar_lead/captacao handlers, the policy hooks and the contexto/perguntas links
 
@@ -78,17 +78,17 @@ def _org(auth: tuple) -> UUID:
     return coerce_org_uuid(auth[2])
 
 
-def _ctx(auth: tuple, request: Optional[Request]) -> lais_acesso.AcessoCtx:
-    return lais_acesso.contexto(auth, request)
+def _ctx(auth: tuple, request: Optional[Request]) -> julia_acesso.AcessoCtx:
+    return julia_acesso.contexto(auth, request)
 
 
 # ── rules + policies ────────────────────────────────────────────────────────
-@router.get("/api/lais/envio/regras")
+@router.get("/api/julia/envio/regras")
 def get_regras(auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_envio_client)) -> dict[str, Any]:
     return {"data": envio.montar_regras(client, _org(auth))}
 
 
-@router.put("/api/lais/envio/regras")
+@router.put("/api/julia/envio/regras")
 def put_regras(
     corpo: RegrasIn,
     request: Request = None,
@@ -99,12 +99,12 @@ def put_regras(
     return {"data": envio.substituir_regras(client, _org(auth), corpo.diferenciar, [r.model_dump() for r in corpo.regras])}
 
 
-@router.get("/api/lais/envio/politicas")
+@router.get("/api/julia/envio/politicas")
 def get_politicas(auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_envio_client)) -> dict[str, Any]:
     return {"data": envio.ler_politicas(client, _org(auth))}
 
 
-@router.put("/api/lais/envio/politicas")
+@router.put("/api/julia/envio/politicas")
 def put_politicas(
     corpo: PoliticasIn,
     request: Request = None,
@@ -131,7 +131,7 @@ def _ids_csv(ids: Optional[str]) -> list[str]:
     return lista
 
 
-# ── Lais > Leads ────────────────────────────────────────────────────────────
+# ── Julia > Leads ────────────────────────────────────────────────────────────
 def _filtros(
     de: Optional[date] = None, ate: Optional[date] = None,
     nome: Optional[str] = Query(default=None, max_length=120), email: Optional[str] = Query(default=None, max_length=120),
@@ -148,7 +148,7 @@ def _filtros(
     }
 
 
-@router.get("/api/lais/leads")
+@router.get("/api/julia/leads")
 def listar_leads(
     request: Request = None,
     page: int = Query(default=1, ge=1),
@@ -161,12 +161,12 @@ def listar_leads(
     return {"data": out}
 
 
-@router.get("/api/lais/leads/canais")
+@router.get("/api/julia/leads/canais")
 def listar_canais(auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_envio_client)) -> dict[str, Any]:
     return {"data": leads.canais(client, _org(auth))}
 
 
-@router.post("/api/lais/leads/enviar-lote")
+@router.post("/api/julia/leads/enviar-lote")
 def enviar_lote(
     corpo: LoteIn,
     request: Request = None,
@@ -190,7 +190,7 @@ def enviar_lote(
     return {"data": {"ok": ok, "erro": erro}}
 
 
-@router.get("/api/lais/leads/export.csv")
+@router.get("/api/julia/leads/export.csv")
 def exportar(
     request: Request = None,
     ids: Optional[str] = Query(default=None, max_length=LOTE_MAX * 40),
@@ -203,11 +203,11 @@ def exportar(
     corpo = leads.exportar_csv(client, _org(auth), {**filtros, "ids": lista})
     return Response(
         content=corpo, media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="lais-leads.csv"'},
+        headers={"Content-Disposition": 'attachment; filename="julia-leads.csv"'},
     )
 
 
-@router.post("/api/lais/leads/{contato_id}/enviar")
+@router.post("/api/julia/leads/{contato_id}/enviar")
 def enviar_contato(
     contato_id: UUID,
     request: Request = None,
@@ -222,7 +222,7 @@ def enviar_contato(
     return {"data": {"status_envio": res["status_envio"], "lead_id": res["lead_id"]}}
 
 
-@router.get("/api/lais/leads/{contato_id}/resumo")
+@router.get("/api/julia/leads/{contato_id}/resumo")
 def resumo_contato(
     contato_id: UUID,
     request: Request = None,

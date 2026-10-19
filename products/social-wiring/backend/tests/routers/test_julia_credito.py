@@ -1,4 +1,4 @@
-"""Lais wave 13 -- Analise de credito routes (contract 15 / 17): the A7 list `{data:{items,total}}`, admin-only config
+"""Julia wave 13 -- Analise de credito routes (contract 15 / 17): the A7 list `{data:{items,total}}`, admin-only config
 and reprocess (needs a STORED consent), the Interacoes `credito` line, strict `== 401`.
 Seams: mock DB through the router's `get_credito_client`, real auth chain over a mocked session."""
 from __future__ import annotations
@@ -10,13 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.services import lais_credito_provider as prov
-from app.services import lais_credito_service as svc
+from app.services import julia_credito_provider as prov
+from app.services import julia_credito_service as svc
 
-from tests.support.lais_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 H = {"Authorization": "Bearer test-token"}
-BASE = "/api/lais/credito"
+BASE = "/api/julia/credito"
 SEM = "00000000-0000-4000-8000-0000000000ff"
 
 
@@ -34,7 +34,7 @@ class Scene:
                "operacao": operacao, "slots": {}, "gen": 0, "status_envio": "nao_pronto", "canal": "whatsapp",
                "responsavel_user_id": responsavel, "arquivado": False, "bloqueado": False,
                "created_at": "2026-10-01T12:00:00+00:00"}
-        return self.w.sw.table("lais_contatos").insert(row).execute().data[0]
+        return self.w.sw.table("julia_contatos").insert(row).execute().data[0]
 
     def consent(self, contato, aceito=True):
         return self.w.sw.table(svc.T_CONSENT).insert({
@@ -54,7 +54,7 @@ class Scene:
 
 def _scene(role):
     world = World()
-    for t in (svc.T_CONFIG, svc.T_CONSENT, svc.T_ANALISES, "lais_visitas", "lais_etiquetas", "lais_contato_etiquetas"):
+    for t in (svc.T_CONFIG, svc.T_CONSENT, svc.T_ANALISES, "julia_visitas", "julia_etiquetas", "julia_contato_etiquetas"):
         world.sw.set_table_data(t, [])
     world.core.set_table_data("noctus_users", [
         {"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": role},
@@ -71,7 +71,7 @@ def _scene(role):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_credito_router import get_credito_client
+        from app.routers.julia_credito_router import get_credito_client
 
         bind_consent_module_to_mock(world.root)
         app.dependency_overrides[get_credito_client] = lambda: world.sw
@@ -198,13 +198,13 @@ class TestReprocessar:
 
 class TestInteracoesLine:
     def test_conversas_items_carry_the_latest_credito_or_null(self, admin):
-        from app.services import lais_acesso, lais_conversas_service
+        from app.services import julia_acesso, julia_conversas_service
 
         com, sem = admin.contato(1), admin.contato(2)
         admin.analise(com, 3, status="reprovado")
         admin.analise(com, 5, status="aprovado")
-        ctx = lais_acesso.AcessoCtx(org_id=ORG_ID, user_id=OWNER_ID, admin=True)
-        itens, total = lais_conversas_service.listar(admin.w.sw, ctx)
+        ctx = julia_acesso.AcessoCtx(org_id=ORG_ID, user_id=OWNER_ID, admin=True)
+        itens, total = julia_conversas_service.listar(admin.w.sw, ctx)
         por_id = {i["contato_id"]: i for i in itens}
         assert total == 2
         assert por_id[com["id"]]["credito"] == {"status": "aprovado", "atualizado_at": "2026-10-05T12:30:00+00:00"}

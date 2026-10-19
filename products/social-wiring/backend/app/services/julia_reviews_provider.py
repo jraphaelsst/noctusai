@@ -1,4 +1,4 @@
-"""Lais wave 13 -- the Google Business Profile reviews seam (lais-build-contract 15).
+"""Julia wave 13 -- the Google Business Profile reviews seam (lais-build-contract 15).
 
 `ReviewsProvider` Protocol + `FakeReviewsProvider` + `RealGbpReviewsProvider` + `make_reviews_provider`.
 
@@ -146,7 +146,7 @@ def make_reviews_provider(
 ) -> ReviewsProvider:
     """Fake when asked; Real when a token resolver exists; otherwise the explicit not-configured provider.
 
-    NOC-REMEDIATE[lais-gbp-real]: no seed/product token store holds a Google OAuth token with the
+    NOC-REMEDIATE[julia-gbp-real]: no seed/product token store holds a Google OAuth token with the
     `business.manage` scope, so production passes no `access_token_resolver` and gets `NaoConfiguradoReviews`.
     Missing piece: a per-org Google OAuth connection granting `business.manage` (consent + token store), then
     `make_reviews_provider(org_id, access_token_resolver=<that store's access-token getter>)` — the Real is done — 2026-10-15

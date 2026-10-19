@@ -1,4 +1,4 @@
-"""Lais wave 13 -- GET /api/lais/avaliacoes (+ /config): KPIs of the month, the 1..5 distribution, mean, total, latest
+"""Julia wave 13 -- GET /api/julia/avaliacoes (+ /config): KPIs of the month, the 1..5 distribution, mean, total, latest
 reviews, the `configurado` flags, A7 on the asks, admin-only config, strict `== 401`. Seams: mock DB through the
 router's DI getters + the product's `FakeReviewsProvider`; real auth chain over a mocked session."""
 from __future__ import annotations
@@ -11,13 +11,13 @@ import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
-from app.services import lais_avaliacoes_service as av
-from app.services.lais_reviews_provider import FakeReviewsProvider, NaoConfiguradoReviews, Review
+from app.services import julia_avaliacoes_service as av
+from app.services.julia_reviews_provider import FakeReviewsProvider, NaoConfiguradoReviews, Review
 
-from tests.support.lais_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
+from tests.support.julia_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World
 
 H = {"Authorization": "Bearer test-token"}
-BASE = "/api/lais/avaliacoes"
+BASE = "/api/julia/avaliacoes"
 MES = "2026-10"
 LINK = "https://g.page/r/exemplo/review"
 
@@ -35,7 +35,7 @@ class Scene:
                "chat_id": f"551190000{n:04d}@c.us", "telefone_e164": f"+551190000{n:04d}", "nome": f"Pessoa {n}",
                "operacao": "venda", "slots": {}, "gen": 0, "status_envio": "nao_pronto", "canal": "whatsapp",
                "responsavel_user_id": responsavel, "created_at": "2026-10-01T12:00:00+00:00"}
-        return self.w.sw.table("lais_contatos").insert(row).execute().data[0]
+        return self.w.sw.table("julia_contatos").insert(row).execute().data[0]
 
     def pedido(self, contato, dia=10, status="enviado"):
         self.w.sw.table(av.T_PEDIDOS).insert({
@@ -64,7 +64,7 @@ def _scene(role, provider=None):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.lais_avaliacoes_router import get_avaliacoes_client, get_reviews_provider_factory
+        from app.routers.julia_avaliacoes_router import get_avaliacoes_client, get_reviews_provider_factory
 
         bind_consent_module_to_mock(world.root)
         app.dependency_overrides[get_avaliacoes_client] = lambda: world.sw

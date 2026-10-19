@@ -1,4 +1,4 @@
-"""Lais > Relatorios (wave 10, contract section 12): tipo / imovel / bairro demand vs. the shelf.
+"""Julia > Relatorios (wave 10, contract section 12): tipo / imovel / bairro demand vs. the shelf.
 
 Pure read-side aggregation over what Julia already stored -- nothing is written here.
 
@@ -8,10 +8,10 @@ Pure read-side aggregation over what Julia already stored -- nothing is written 
   * lead slots = contato.slots overlaid by the slots of its interacoes in the month (catalogue keys
     `bairro_desejado`, `tipo_imovel`, `tipo_imovel_compra`, `tipo_imovel_apartamento_casa`,
     `faixa_preco`, `quartos` -- migration 269; values are free text so they are parsed leniently);
-  * a property CODE counts for a lead when Julia booked a visit for it (`lais_visitas.codigo_imovel`)
-    or an applied action carried it (`lais_acoes_aplicadas.payload.codigo|codigo_imovel`) in the
+  * a property CODE counts for a lead when Julia booked a visit for it (`julia_visitas.codigo_imovel`)
+    or an applied action carried it (`julia_acoes_aplicadas.payload.codigo|codigo_imovel`) in the
     month, or the agent looked it up through a read tool (`buscar_imoveis` / `detalhes_imovel`) during one
-    of the lead's turns (`lais_eventos` tipo `imovel_consultado`, written by the ferramentas route with the
+    of the lead's turns (`julia_eventos` tipo `imovel_consultado`, written by the ferramentas route with the
     contato resolved from the turn's `interacao_id`; a lookup with no known contato is stored but is not a
     lead, so it is not counted). Counted per DISTINCT (contato, codigo): the same lead asking twice, or
     two code spellings (`ap0123` / `AP0123`), is one lead -- the Lais UI shows duplicate rows, we do not;
@@ -33,7 +33,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.services import lais_acesso
+from app.services import julia_acesso
 
 TZ = ZoneInfo("America/Sao_Paulo")
 OPERACOES = ("compra", "aluguel")
@@ -158,15 +158,15 @@ def _lotes(valores: Iterable[Any]) -> Iterable[list[str]]:
         yield v[i:i + _IN_LOTE]
 
 
-def _leads(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, ini: datetime, fim: datetime) -> dict[str, dict[str, Any]]:
+def _leads(client: Any, ctx: julia_acesso.AcessoCtx, operacao: str, ini: datetime, fim: datetime) -> dict[str, dict[str, Any]]:
     """`{contato_id: {slots, ...}}` for the visible leads of the month and operacao."""
-    inter = [i for i in _todos(client, "lais_interacoes", ctx.org_id, "id, contato_id, iniciada_at, operacao, slots")
+    inter = [i for i in _todos(client, "julia_interacoes", ctx.org_id, "id, contato_id, iniciada_at, operacao, slots")
              if _no_mes(i.get("iniciada_at"), ini, fim)]
     ids = {str(i["contato_id"]) for i in inter}
     contatos: list[dict[str, Any]] = []
     for lote in _lotes(ids):
-        contatos += client.table(lais_acesso.T_CONTATOS).select("*").eq("org_id", str(ctx.org_id)).in_("id", lote).execute().data or []
-    visiveis = {str(c["id"]): c for c in lais_acesso.filtrar_contatos(client, ctx, contatos)}
+        contatos += client.table(julia_acesso.T_CONTATOS).select("*").eq("org_id", str(ctx.org_id)).in_("id", lote).execute().data or []
+    visiveis = {str(c["id"]): c for c in julia_acesso.filtrar_contatos(client, ctx, contatos)}
     out: dict[str, dict[str, Any]] = {}
     for i in sorted(inter, key=lambda r: str(r.get("iniciada_at"))):
         c = visiveis.get(str(i["contato_id"]))
@@ -186,18 +186,18 @@ def _mencoes(client: Any, org_id: UUID, leads: dict[str, dict[str, Any]], ini: d
         if cod and cid in leads:
             out.setdefault(cod[:40], set()).add(cid)
 
-    for v in _todos(client, "lais_visitas", org_id, "id, contato_id, codigo_imovel, created_at"):
+    for v in _todos(client, "julia_visitas", org_id, "id, contato_id, codigo_imovel, created_at"):
         if _no_mes(v.get("created_at"), ini, fim):
             somar(v.get("contato_id"), v.get("codigo_imovel"))
-    for a in _todos(client, "lais_acoes_aplicadas", org_id, "id, contato_id, payload, created_at"):
+    for a in _todos(client, "julia_acoes_aplicadas", org_id, "id, contato_id, payload, created_at"):
         if _no_mes(a.get("created_at"), ini, fim):
             p = a.get("payload") or {}
             somar(a.get("contato_id"), p.get("codigo") or p.get("codigo_imovel"))
     def pagina(a: int, b: int) -> Any:
-        return (client.table("lais_eventos").select("id, contato_id, payload, created_at").eq("org_id", str(org_id))
+        return (client.table("julia_eventos").select("id, contato_id, payload, created_at").eq("org_id", str(org_id))
                 .eq("tipo", "imovel_consultado").order("id").range(a, b).execute().data)
 
-    for e in iter_paged_rows(pagina, id_key="id", label="lais_eventos"):
+    for e in iter_paged_rows(pagina, id_key="id", label="julia_eventos"):
         if _no_mes(e.get("created_at"), ini, fim):
             for cod in (e.get("payload") or {}).get("codigos") or []:
                 somar(e.get("contato_id"), cod)
@@ -239,7 +239,7 @@ def _top_imoveis(mencoes: dict[str, set[str]], cadastro: dict[str, dict[str, Any
 
 # -- the report ------------------------------------------------------------------------------------------
 def relatorio(
-    client: Any, ctx: lais_acesso.AcessoCtx, *, operacao: str, mes: str, aba: str, bairro: Optional[str] = None,
+    client: Any, ctx: julia_acesso.AcessoCtx, *, operacao: str, mes: str, aba: str, bairro: Optional[str] = None,
 ) -> dict[str, Any]:
     if operacao not in OPERACOES:
         raise AppException("operacao_invalida", "Use operacao=compra ou operacao=aluguel.", status_code=422)
@@ -254,7 +254,7 @@ def relatorio(
     return {**base, **_aba_bairros(client, ctx, operacao, leads, mencoes, bairro)}
 
 
-def _aba_imoveis(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, leads: dict, mencoes: dict) -> dict[str, Any]:
+def _aba_imoveis(client: Any, ctx: julia_acesso.AcessoCtx, operacao: str, leads: dict, mencoes: dict) -> dict[str, Any]:
     pedidos = Counter()
     rotulos: dict[str, str] = {}
     for lead in leads.values():
@@ -278,7 +278,7 @@ def _aba_imoveis(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, leads: 
     return {"tipos": tipos[:TOP], "top_imoveis": _top_imoveis(mencoes, cadastro, operacao)}
 
 
-def _aba_bairros(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, leads: dict, mencoes: dict,
+def _aba_bairros(client: Any, ctx: julia_acesso.AcessoCtx, operacao: str, leads: dict, mencoes: dict,
                  bairro: Optional[str]) -> dict[str, Any]:
     por_bairro: dict[str, set[str]] = {}
     variantes: dict[str, dict[str, int]] = {}

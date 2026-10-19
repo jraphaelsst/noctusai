@@ -16,7 +16,7 @@ from noctusai_lib.primitives.accents import fold_accents_ascii
 
 logger = logging.getLogger(__name__)
 
-TABLE = "lais_aviso_privacidade"
+TABLE = "julia_aviso_privacidade"
 A_DEFINIR = "a definir"
 LINK_TOKEN = "{link}"
 MENSAGEM_INICIAL_PADRAO = (
@@ -118,7 +118,7 @@ def nome_da_org(core_client: Any, org_id: UUID) -> str | None:
             .select("nome").eq("id", str(org_id)).limit(1).execute()
         )
     except Exception:
-        logger.exception("lais_aviso: organization name lookup failed org=%s", org_id)
+        logger.exception("julia_aviso: organization name lookup failed org=%s", org_id)
         return None
     rows = resp.data or []
     return (rows[0].get("nome") or None) if rows else None
