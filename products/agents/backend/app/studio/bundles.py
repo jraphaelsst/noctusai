@@ -8,6 +8,7 @@ the eval runner and the importer all compile through
 """
 from __future__ import annotations
 
+from typing import Callable
 from uuid import UUID
 
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
@@ -29,8 +30,33 @@ from app.studio.models import (
     TextoData,
     VersionBundle,
 )
+from app.studio.skills_contract import SkillRef, SkillsRuntime
 
-__all__ = ["version_bundle", "conteudo_bundle", "client_bundle", "compile_version"]
+__all__ = [
+    "version_bundle", "conteudo_bundle", "client_bundle", "compile_version",
+    "configure_skill_refs_provider", "skill_refs_of",
+]
+
+# The shared skill library (Julia v2 D7/D8). Every compile site (publish hash, inspector, runtime,
+# evals) reaches the pins through THIS slot, so the hash can never differ by call site. A provider
+# (not an instance): the store is resolved at call time, never bound at import. ``None`` = no
+# library wired (every pre-v2 test/app path): no pins. ``install_studio_seams`` wires production.
+_skill_refs_provider: Callable[[], SkillsRuntime] | None = None
+
+
+def configure_skill_refs_provider(provider: Callable[[], SkillsRuntime] | None) -> Callable[[], SkillsRuntime] | None:
+    """Wire (or clear, with ``None``) the library reader; returns the previous provider so a test
+    can restore it."""
+    global _skill_refs_provider
+    previous, _skill_refs_provider = _skill_refs_provider, provider
+    return previous
+
+
+def skill_refs_of(version_id: UUID) -> tuple[SkillRef, ...]:
+    """The library pins of a version ("()" when no library is wired). A reader failure propagates."""
+    if _skill_refs_provider is None:
+        return ()
+    return tuple(_skill_refs_provider().skill_refs_for(version_id))
 
 
 def conteudo_bundle(store, org_id: UUID, version: VersionRecord) -> ConteudoBundle:
@@ -94,6 +120,9 @@ def version_bundle(store, org_id: UUID, version: VersionRecord, *, conteudo: boo
         versao=version.versao,
         conteudo=conteudo_bundle(store, org_id, version) if conteudo else None,
         provider=version.provider,
+        # Pins exist only on content-mode (platform-defined) versions; a legacy agent keeps the
+        # pre-v2 compiler and its hash byte for byte.
+        skill_refs=skill_refs_of(version.id) if conteudo else (),
     )
 
 

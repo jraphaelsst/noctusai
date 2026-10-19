@@ -57,6 +57,7 @@ from app.studio.models import (
     SkillData,
     VersionBundle,
 )
+from app.studio.skills_contract import SkillRef
 from app.studio.textos_registry import TEXTOS, chaves_exigidas, placeholders_de
 
 __all__ = [
@@ -347,13 +348,14 @@ def _textos_de_conteudo(v: VersionBundle, cont: ConteudoBundle):
 
 def _avisos_conteudo(
     inp: CompileInput, cont: ConteudoBundle, S: _Strings, skills: list[SkillData], com_cliente: bool,
+    refs: list[SkillRef] = (),
 ) -> list[CompileWarning]:
     """Completeness of a content-mode compile (blocking — CONTEUDO_CODIGOS)."""
     out: list[CompileWarning] = []
     v = inp.version
 
     exigidas = chaves_exigidas(
-        tool_policy=inp.tool_policy, tem_skills=bool(skills), com_cliente=com_cliente, canal=inp.canal,
+        tool_policy=inp.tool_policy, tem_skills=bool(skills) or bool(refs), com_cliente=com_cliente, canal=inp.canal,
         com_qualificacao=inp.qualificacao is not None,
     )
     preenchidas = {t.chave for t in cont.textos if t.conteudo.strip()}
@@ -376,7 +378,16 @@ def _avisos_conteudo(
                 True,
             ))
 
-    ativas = {sk.nome for sk in skills}
+    ativas = {sk.nome for sk in skills} | {r.skill_key for r in refs}
+    for r in refs:
+        # D7: a pinned skill gates tools; a gate on a tool the code does not know can never fire.
+        for nome_ferramenta in r.obrigatoria_para:
+            if not ferramenta_conhecida(nome_ferramenta):
+                out.append(CompileWarning(
+                    "ferramenta_desconhecida",
+                    f"A ferramenta '{nome_ferramenta}' (exigida pela skill '{r.skill_key}') não existe no registro do código.",
+                    True,
+                ))
     for f in cont.ferramentas:
         if not ferramenta_conhecida(f.ferramenta):
             out.append(CompileWarning(
@@ -462,6 +473,7 @@ def hash_payload(
             [sp.chave, sp.rotulo, sp.descricao, sp.tipo, sp.obrigatoria, sp.exemplo] for sp in cont.specs
         ),
         "extras": extras or {},
+        **_skill_refs_hash(version),
         "qualificacao": None if qualificacao is None else {
             "versao_id": str(qualificacao.versao_id) if qualificacao.versao_id else None,
             "criterios": sorted(
@@ -473,6 +485,17 @@ def hash_payload(
             "identidade": [list(i) for i in qualificacao.identidade],
         },
     }
+
+
+def _skill_refs_hash(version: VersionBundle) -> dict[str, Any]:
+    """The pinned library skills (key, version id, index text, gating tools) — present ONLY when the
+    version pins any, so a version without pins keeps the hash it always had. A pinned skill version is
+    immutable, so its id identifies its body."""
+    if not version.skill_refs:
+        return {}
+    return {"skill_refs": sorted(
+        [r.skill_key, str(r.skill_versao_id), r.descricao, sorted(r.obrigatoria_para)] for r in version.skill_refs
+    )}
 
 
 def _hash_of(payload: dict[str, Any]) -> str:
@@ -543,6 +566,13 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
                 "skill_duplicada", f"A skill '{sk.nome}' aparece mais de uma vez.", True,
             ))
         seen_nomes.add(sk.nome)
+    refs = sorted(inp.version.skill_refs, key=lambda r: (r.ordem, r.skill_key))
+    for r in refs:
+        if r.skill_key in seen_nomes:
+            avisos.append(CompileWarning(
+                "skill_duplicada", f"A skill '{r.skill_key}' aparece mais de uma vez.", True,
+            ))
+        seen_nomes.add(r.skill_key)
 
     skills_title = S.peek("compilador.titulo_skills", SKILLS_TITLE)
     knowledge_title = S.peek("compilador.titulo_conhecimento", KNOWLEDGE_TITLE)
@@ -593,8 +623,16 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             avisos.append(CompileWarning(
                 "skill_sem_corpo", f"A skill '{sk.nome}' está ativa e sem corpo.", True,
             ))
-    if skills:
-        lines = "\n".join(f"- `{sk.nome}` — {sk.descricao.strip()}" for sk in skills)
+    for r in refs:
+        if not r.descricao.strip():
+            avisos.append(CompileWarning(
+                "skill_sem_descricao", f"A skill '{r.skill_key}' fixada da biblioteca está sem descrição.", True,
+            ))
+    if skills or refs:
+        lines = "\n".join(
+            [f"- `{sk.nome}` — {sk.descricao.strip()}" for sk in skills]
+            + [f"- `{r.skill_key}` — {r.descricao.strip()}" for r in refs]
+        )
         blocks.append((
             "skills", skills_title, ManifestOrigin("auto", None, "skills"),
             f"# {S('compilador.titulo_skills', SKILLS_TITLE)}\n\n"
@@ -616,7 +654,7 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     blocks.append((
         "ferramentas", tools_title, ManifestOrigin("auto", None, "tool_policy"),
         _tools_block(
-            _policy_flag(inp.tool_policy, "web_search"), knowledge_on, bool(skills), S,
+            _policy_flag(inp.tool_policy, "web_search"), knowledge_on, bool(skills) or bool(refs), S,
             cont.ferramentas if cont is not None else (),
         ),
     ))
@@ -632,7 +670,7 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
 
     # ── content-mode completeness (blocking; CONTEUDO_CODIGOS)
     if cont is not None:
-        avisos += _avisos_conteudo(inp, cont, S, skills, com_cliente=inp.client is not None)
+        avisos += _avisos_conteudo(inp, cont, S, skills, com_cliente=inp.client is not None, refs=refs)
 
     # ── assemble with exact offsets
     manifest: list[ManifestSection] = []
@@ -675,6 +713,15 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             sob_demanda.append(OnDemandItem(
                 "arquivo_skill", sk.nome, f.caminho, f.chars, math.ceil(f.chars / 4),
                 f'ler_arquivo_skill("{sk.nome}", "{f.caminho}")',
+            ))
+    for r in refs:
+        sob_demanda.append(OnDemandItem(
+            "skill", r.skill_key, None, r.corpo_chars, math.ceil(r.corpo_chars / 4), f'abrir_skill("{r.skill_key}")',
+        ))
+        for caminho, chars in sorted(r.arquivos):
+            sob_demanda.append(OnDemandItem(
+                "arquivo_skill", r.skill_key, caminho, chars, math.ceil(chars / 4),
+                f'ler_arquivo_skill("{r.skill_key}", "{caminho}")',
             ))
     for c in colecoes:
         # The catalog carries counts, not sizes — chars/tokens are not

@@ -24,6 +24,7 @@ from app.dependencies import (
     require_channel_status,
     require_channel_turn,
     require_platform_admin,
+    require_platform_content_admin,
 )
 from app.qualificacao import engine
 from app.qualificacao.identificacao import EncryptionNotConfigured, IdentificacaoService, RevelarNegado
@@ -125,7 +126,7 @@ def _draft(store: PadraoStore, versao_id: UUID):
 
 @router.get("/api/qualificacao/padroes")
 async def listar_padroes(
-    ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
+    ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     return {"items": [
         {"id": str(p.id), "chave": p.chave, "nome": p.nome, "descricao": p.descricao}
@@ -135,7 +136,7 @@ async def listar_padroes(
 
 @router.get("/api/qualificacao/padroes/{chave}/versoes")
 async def listar_versoes(
-    chave: str, ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
+    chave: str, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
         padrao = store.obter_padrao(chave)
@@ -149,7 +150,7 @@ async def listar_versoes(
 
 @router.get("/api/qualificacao/versoes/{versao_id}")
 async def obter_versao(
-    versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
+    versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
         return versao_out(store.obter_versao(versao_id))
@@ -159,7 +160,7 @@ async def obter_versao(
 
 @router.post("/api/qualificacao/padroes", status_code=201)
 async def criar_padrao(
-    body: PadraoCreate, ctx: AuthContext = Depends(require_platform_admin),
+    body: PadraoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -169,7 +170,7 @@ async def criar_padrao(
 
 @router.post("/api/qualificacao/padroes/{chave}/versoes", status_code=201)
 async def criar_rascunho(
-    chave: str, body: RascunhoCreate, ctx: AuthContext = Depends(require_platform_admin),
+    chave: str, body: RascunhoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -180,7 +181,7 @@ async def criar_rascunho(
 
 @router.patch("/api/qualificacao/versoes/{versao_id}")
 async def atualizar_versao(
-    versao_id: UUID, body: VersaoPatch, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, body: VersaoPatch, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -191,7 +192,7 @@ async def atualizar_versao(
 
 @router.delete("/api/qualificacao/versoes/{versao_id}", status_code=204)
 async def descartar_rascunho(
-    versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> Response:
     with _Mapped():
@@ -202,7 +203,7 @@ async def descartar_rascunho(
 
 @router.put("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
 async def salvar_criterio(
-    versao_id: UUID, chave: str, body: CriterioIn, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, chave: str, body: CriterioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     import re
@@ -217,7 +218,7 @@ async def salvar_criterio(
 
 @router.delete("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
 async def remover_criterio(
-    versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -228,7 +229,7 @@ async def remover_criterio(
 
 @router.put("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
 async def salvar_estagio(
-    versao_id: UUID, chave: str, body: EstagioIn, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, chave: str, body: EstagioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     import re
@@ -243,7 +244,7 @@ async def salvar_estagio(
 
 @router.delete("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
 async def remover_estagio(
-    versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -254,7 +255,7 @@ async def remover_estagio(
 
 @router.put("/api/qualificacao/versoes/{versao_id}/parametros")
 async def salvar_parametros(
-    versao_id: UUID, body: ParametrosIn, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, body: ParametrosIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -273,7 +274,7 @@ def _erros_de_publicacao(store: PadraoStore, versao_id: UUID) -> list[dict[str, 
 
 @router.post("/api/qualificacao/versoes/{versao_id}/validar")
 async def validar_versao(
-    versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():

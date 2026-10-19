@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request, Response
 from noctusai_seed import (
     create_database_module,
     create_dependencies,
@@ -323,6 +323,62 @@ require_platform_admin = _require_platform_admin(
 )
 
 
+#: The product-token scope of the ``noctus.agents.content`` MCP path (Julia v2 CONTRACT 2.5) and
+#: the ONLY issuer a content-write token may carry. The token is minted server-side by
+#: ``POST /api/studio/plataforma/content-token`` (platform admin); the generic
+#: ``POST /api/settings/api-tokens`` never sets an issuer, so a token an org admin minted with this
+#: scope still answers 403 ``issuer_not_allowed``.
+SCOPE_STUDIO_CONTENT_WRITE = "studio:content-write"
+CONTENT_TOKEN_ISSUER = "noctus-platform"
+
+
+def _content_token_gate(ctx: AuthContext) -> AuthContext:
+    """A product caller must carry ``studio:content-write`` AND the platform issuer."""
+    if SCOPE_STUDIO_CONTENT_WRITE not in ctx.scopes:
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": f"Missing scope(s): {SCOPE_STUDIO_CONTENT_WRITE}", "code": "scope_missing"},
+        )
+    if ctx.issuer != CONTENT_TOKEN_ISSUER:
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "Token issuer not allowed for this API", "code": "issuer_not_allowed"},
+        )
+    return ctx
+
+
+async def require_platform_content_admin(
+    ctx: AuthContext = Depends(get_auth_context), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Platform-only definition content (the skill library, the qualification standard): a NoctusAI
+    platform admin (``noctus_users.role == 'admin'``, 403 ``platform_admin_required`` for anyone
+    else, 401 unauthenticated, the admin-MFA gate included) OR the platform-issued
+    ``studio:content-write`` product token (the ``noctus.agents.content`` MCP path)."""
+    if ctx.caller_kind == "product":
+        return _content_token_gate(ctx)
+    return await require_platform_admin(ctx=ctx, request=request, response=response)
+
+
+_admin_or_content_base = require_scopes(
+    SCOPE_STUDIO_CONTENT_WRITE,
+    user_roles=ADMIN_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+
+async def require_admin_or_content_token(ctx: AuthContext = Depends(_admin_or_content_base)) -> AuthContext:
+    """An org owner/admin (their own agents) OR the platform-issued ``studio:content-write`` token
+    (a platform definition's sections, written by the MCP tool)."""
+    if ctx.caller_kind == "product" and ctx.issuer != CONTENT_TOKEN_ISSUER:
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "Token issuer not allowed for this API", "code": "issuer_not_allowed"},
+        )
+    return ctx
+
+
 def get_credential_service_dep():
     """DI seam over ``app.credentials.build_credential_service`` — tests
     override it with a service over Fake store/admin/prober."""
@@ -576,5 +632,9 @@ __all__ = [
     "SCOPE_STUDIO_PUBLISH",
     "require_member",
     "require_platform_admin",
+    "require_platform_content_admin",
+    "require_admin_or_content_token",
+    "SCOPE_STUDIO_CONTENT_WRITE",
+    "CONTENT_TOKEN_ISSUER",
     "resolve_sso_role",
 ]

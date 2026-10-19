@@ -44,8 +44,10 @@ from app.channels.conformidade import garantir_impressao
 from app.dependencies import (
     get_conformidade_store_dep,
     require_admin,
+    require_admin_or_content_token,
     require_member,
     require_platform_admin,
+    require_platform_content_admin,
     require_publish_write,
 )
 from app.schemas.studio import (
@@ -514,6 +516,22 @@ async def get_version(
     return _version_detail(store, gate, ctx.org_id, version)
 
 
+@router.get("/agents/{key}/draft", response_model=VersionDetailOut)
+async def get_draft(
+    key: str,
+    ctx: AuthContext = Depends(require_platform_content_admin),
+    store=Depends(get_studio_definition_store_dep),
+    gate=Depends(get_eval_gate_dep),
+) -> VersionDetailOut:
+    """The agent's current draft (the definition being edited). Platform-only: a NoctusAI platform admin
+    or the ``studio:content-write`` token of the ``noctus.agents.content`` MCP tool (which needs the
+    draft's id and sections to show a diff before it writes). Audited like every definition read."""
+    agent = resolve_agent(store, ctx.org_id, key)
+    draft = resolve_draft(store, ctx.org_id, agent)
+    audit_definition_read(store, ctx, agent, "rascunho", draft.id)
+    return _version_detail(store, gate, ctx.org_id, draft)
+
+
 @router.post("/agents/{key}/draft", response_model=VersionDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_draft(
     key: str,
@@ -570,7 +588,7 @@ async def update_draft(
 async def replace_draft_sections(
     key: str,
     payload: SectionsReplaceRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_admin_or_content_token),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -584,8 +602,16 @@ async def replace_draft_sections(
         SectionInput(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
         for s in payload.secoes
     ]
+    antes = [s.chave for s in store.list_sections(ctx.org_id, draft.id)] if ctx.caller_kind == "product" else []
     with store_errors():
         store.replace_sections(ctx.org_id, draft.id, secoes)
+    if ctx.caller_kind == "product":
+        # The noctus.agents.content MCP path (studio:content-write): audited like every other content write.
+        store.append_audit(
+            agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
+            {"kind": "secao", "version_id": str(draft.id), "chaves": antes},
+            {"kind": "secao", "version_id": str(draft.id), "chaves": chaves},
+        )
     draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _version_detail(store, gate, ctx.org_id, draft)
 

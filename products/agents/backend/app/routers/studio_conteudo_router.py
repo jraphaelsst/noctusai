@@ -29,12 +29,15 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.dependencies import (
     ADMIN_ROLES,
+    CONTENT_TOKEN_ISSUER,
+    SCOPE_STUDIO_CONTENT_WRITE,
     get_auth_context,
     get_core_client,
     get_product_token_admin_dep,
     get_token_audit_dep,
     require_admin,
     require_platform_admin,
+    require_platform_content_admin,
 )
 from app.routers.studio_agents_router import (
     _refresh_draft_hash,
@@ -92,13 +95,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/studio", tags=["studio-conteudo"])
 
-#: The product-token scope of the ``noctus.agents.content`` MCP path: draft content routes only.
-SCOPE_STUDIO_CONTENT_WRITE = "studio:content-write"
-#: The ONLY issuer a content-write token may carry. It is stamped server-side by
-#: ``POST /plataforma/content-token`` (platform admin); the seed's generic ``POST /api/settings/api-tokens``
-#: (any org owner/admin, any scope string) never sets an issuer — so a token an org admin minted with this
-#: scope still answers 403 ``issuer_not_allowed``, and the scope is deliberately NOT in ``MINTABLE_TOKEN_SCOPES``.
-CONTENT_TOKEN_ISSUER = "noctus-platform"
+# SCOPE_STUDIO_CONTENT_WRITE / CONTENT_TOKEN_ISSUER live in app.dependencies (shared with the skill library
+# and the qualification standard, which the same MCP token writes).
 CONTENT_TOKEN_TTL_DAYS = 30
 
 _content_write_base = require_scopes(
@@ -180,7 +178,7 @@ def _definition_version(store, ctx: AuthContext, key: str, version_id: UUID):
 
 @router.get("/agents/{key}/versions/{version_id}/textos", response_model=TextosOut)
 async def list_textos(
-    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> TextosOut:
     agent, v = _definition_version(store, ctx, key, version_id)
@@ -190,7 +188,7 @@ async def list_textos(
 
 @router.get("/agents/{key}/versions/{version_id}/ferramentas", response_model=FerramentasOut)
 async def list_ferramentas(
-    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> FerramentasOut:
     agent, v = _definition_version(store, ctx, key, version_id)
@@ -200,7 +198,7 @@ async def list_ferramentas(
 
 @router.get("/agents/{key}/versions/{version_id}/decisoes", response_model=DecisoesOut)
 async def list_decisoes(
-    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> DecisoesOut:
     agent, v = _definition_version(store, ctx, key, version_id)
@@ -210,7 +208,7 @@ async def list_decisoes(
 
 @router.get("/agents/{key}/versions/{version_id}/specs", response_model=SpecsOut)
 async def list_spec_defs(
-    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> SpecsOut:
     agent, v = _definition_version(store, ctx, key, version_id)

@@ -20,6 +20,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from app.studio.eval_mecanismo import MecanismoRequisito
+from app.studio.skills_contract import SkillRef
 
 __all__ = [
     "SectionData",
@@ -206,6 +207,9 @@ class VersionBundle:
     conteudo: "ConteudoBundle | None" = None
     #: The version's provider (hash payload of a content-mode compile).
     provider: str = "anthropic"
+    #: Julia v2 shared skill library: the library versions this agent version PINS (migration 039).
+    #: They join the skills index and the on-demand layer; a content-mode hash covers them.
+    skill_refs: "tuple[SkillRef, ...]" = ()
 
 
 @dataclass(frozen=True)

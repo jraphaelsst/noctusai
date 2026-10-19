@@ -47,6 +47,7 @@ from app.routers.studio_evals_router import (
     get_eval_store_dep,
 )
 from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
+from app.studio.bundles import configure_skill_refs_provider
 from app.studio.catalog import StoreKnowledgeCatalog
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -163,5 +164,14 @@ def register_anthropic_credential_override() -> None:
     register_credential_override(_agents_credentials)
 
 
+def _skills_runtime():
+    """Per-call resolution of the shared skill library (Fake without a service key)."""
+    from app.stores.skills_biblioteca import get_skills_store
+
+    return get_skills_store(settings)
+
+
 def install_studio_seams(app: Any) -> None:
     app.dependency_overrides.update(studio_seam_bindings())
+    # Julia v2 D7/D8: every compile site reads the version's pinned library skills through one slot.
+    configure_skill_refs_provider(_skills_runtime)

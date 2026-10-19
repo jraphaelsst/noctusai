@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.routers.skills_biblioteca_router import router as skills_biblioteca_router
 from app.routers.studio_agents_router import (
     get_eval_gate_dep,
     get_knowledge_catalog_dep,
@@ -108,6 +109,7 @@ def _build_app() -> FastAPI:
     app.include_router(studio_agents_router)
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
+    app.include_router(skills_biblioteca_router)
     # mounted for the visibility-tier matrix only (their seams stay unbound: auth answers first)
     app.include_router(studio_knowledge_router)
     app.include_router(studio_evals_router)
