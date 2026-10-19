@@ -144,11 +144,14 @@ GRANT EXECUTE ON FUNCTION agents.audit_agent_modo_change() TO service_role;
 
 DROP TRIGGER IF EXISTS audit_agent_modo_change ON agents.agents;
 CREATE TRIGGER audit_agent_modo_change
-    AFTER UPDATE OF modo_operacao, dreno_inatividade_dias ON agents.agents
+    AFTER UPDATE ON agents.agents
     FOR EACH ROW
     WHEN (OLD.modo_operacao IS DISTINCT FROM NEW.modo_operacao
           OR OLD.dreno_inatividade_dias IS DISTINCT FROM NEW.dreno_inatividade_dias)
     EXECUTE FUNCTION agents.audit_agent_modo_change();
+
+-- (No `UPDATE OF <cols>` list on purpose: it fires only for columns named in the SET
+-- clause, and a legacy `SET ativo` reaches modo_operacao through the BEFORE sync trigger.)
 
 -- Change the mode (and optionally the drain idle days) with an attributed audit
 -- row, in one transaction. NULL `p_dreno_dias` keeps the current value. Raises
