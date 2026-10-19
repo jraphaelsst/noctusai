@@ -23,7 +23,7 @@ export interface SupervisaoConfig {
   updated_by: string | null;
 }
 
-export type ValorMetrica = number | Record<string, number> | null;
+export type ValorMetrica = number | boolean | Record<string, number> | null;
 
 export interface Scorecard {
   bloco: string;

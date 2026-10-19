@@ -1,8 +1,9 @@
 """Maya's deterministic metrics engine (maya-blocks CONTRACT §3).
 
 Pure, read-only: every function here only SELECTs, org-filtered, inside one São Paulo calendar
-day `[dia 00:00, dia+1 00:00)` converted to UTC. The formulas are EXACTLY §3.2 (rubric `sdr.v1`)
-and the §3.2 tail (human block rubric `<bloco>.v1`).
+day `[dia 00:00, dia+1 00:00)` converted to UTC. The formulas are EXACTLY §3.2 (rubric `sdr.v2`; `sdr.v1`
+differed only in the first-response metrics, which credited human replies to Julia) and the §3.2 tail (human block
+rubric `<bloco>.v1`).
 
 Missing data is reported as missing, never as 0:
 - a ratio with denominator 0 is `None` (numerator + denominator stored beside it);
@@ -24,7 +25,10 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 SP = ZoneInfo("America/Sao_Paulo")
 
-RUBRICA_SDR = "sdr.v1"
+RUBRICA_SDR = "sdr.v2"
+#: julia-v2 G4: supervision hooks that failed that day raised a `supervisao_falha` event; every scorecard of the org
+#: for the day carries their count and `dados_incompletos`, so a day with missing registrations never reads clean.
+TIPO_FALHA = "supervisao_falha"
 GATILHOS_QUALIFICADO = ("qualificado", "visita", "captacao")
 #: nearest-rank quantiles as exact fractions (num, den) -- float `0.9 * n` drifts (0.9 * 70 = 63.000...01).
 P50 = (1, 2)
@@ -115,16 +119,24 @@ def calcular_sdr(client: Any, org_id: Any, dia: date, *, horas_para_assumir: int
 
     leads_entrada = len(_linhas(client, "julia_contatos", "id,created_at", org_id, inicio, fim))
 
-    episodios = _linhas(client, "julia_interacoes", "id,iniciada_at,primeira_resposta_at", org_id, inicio, fim,
-                        coluna_tempo="iniciada_at")
+    episodios = _linhas(client, "julia_interacoes", "id,iniciada_at,primeira_resposta_agente_at,primeira_resposta_humana_at",
+                        org_id, inicio, fim, coluna_tempo="iniciada_at")
     tempos: list[float] = []
+    tempos_humano: list[float] = []
     sem_resposta = 0
+    humano_antes_do_agente = 0
     for e in episodios:
-        resposta = parse_ts(e.get("primeira_resposta_at"))
-        if resposta is None:
-            sem_resposta += 1
-            continue
-        tempos.append((resposta - parse_ts(e["iniciada_at"])).total_seconds())
+        iniciada = parse_ts(e["iniciada_at"])
+        agente = parse_ts(e.get("primeira_resposta_agente_at"))
+        humano = parse_ts(e.get("primeira_resposta_humana_at"))
+        if humano is not None:
+            tempos_humano.append((humano - iniciada).total_seconds())
+        if agente is None:
+            sem_resposta += 1  # answered only by a person (or not at all): Julia did not respond
+        else:
+            tempos.append((agente - iniciada).total_seconds())
+        if humano is not None and (agente is None or humano < agente):
+            humano_antes_do_agente += 1
 
     entregas = _linhas(client, "julia_envio_entregas", "id,contato_id,gatilho,status,created_at", org_id, inicio, fim)
     ok = [r for r in entregas if r.get("status") == "ok"]
@@ -163,6 +175,10 @@ def calcular_sdr(client: Any, org_id: Any, dia: date, *, horas_para_assumir: int
         "tpr_p50_s": percentil(tempos, P50),
         "tpr_p90_s": percentil(tempos, P90),
         "tpr_sem_resposta": sem_resposta,
+        "tpr_humano_n": len(tempos_humano),
+        "tpr_humano_p50_s": percentil(tempos_humano, P50),
+        "tpr_humano_p90_s": percentil(tempos_humano, P90),
+        "respondidos_por_humano_antes_do_agente": humano_antes_do_agente,
         "qualificados": qualificados,
         "qualificacao_taxa": razao(qualificados, leads_entrada),
         "frios": frios,
@@ -214,11 +230,22 @@ def rubrica(bloco: str) -> str:
     return RUBRICA_SDR if bloco == "sdr" else f"{bloco}.v1"
 
 
+def marcar_falhas(client: Any, org_id: Any, dia: date, metricas: dict[str, Any]) -> dict[str, Any]:
+    """G4: `falhas_registro` = the day's `supervisao_falha` events (a supervision hook failed and said so);
+    `dados_incompletos` is true when there is any. Applied to EVERY block's scorecard of the org for that day."""
+    inicio, fim = janela(dia)
+    falhas = len(_linhas(client, "julia_eventos", "id,created_at", org_id, inicio, fim,
+                         filtros=lambda q: q.eq("tipo", TIPO_FALHA)))
+    return {**metricas, "falhas_registro": falhas, "dados_incompletos": falhas > 0}
+
+
 def calcular(client: Any, org_id: Any, bloco: str, dia: date, **kw: Any) -> dict[str, Any]:
     if bloco == "sdr":
-        return calcular_sdr(client, org_id, dia, **kw)
-    return calcular_bloco_humano(client, org_id, bloco, dia, **kw)
+        metricas = calcular_sdr(client, org_id, dia, **kw)
+    else:
+        metricas = calcular_bloco_humano(client, org_id, bloco, dia, **kw)
+    return marcar_falhas(client, org_id, dia, metricas)
 
 
-__all__ = ["RUBRICA_SDR", "calcular", "calcular_bloco_humano", "calcular_sdr", "hoje_sp", "iso", "janela",
+__all__ = ["RUBRICA_SDR", "TIPO_FALHA", "calcular", "marcar_falhas", "calcular_bloco_humano", "calcular_sdr", "hoje_sp", "iso", "janela",
            "parse_ts", "percentil", "razao", "rubrica"]

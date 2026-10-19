@@ -228,11 +228,11 @@ class TestContexto:
         c, i = self._base(world)
         ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": f"# {ctx.org_id}"}, registro=reg)
         ctxsvc.registrar_provider("perguntas", lambda ctx: {"perguntas": [{"chave": f"q{n}"} for n in range(12)]}, registro=reg)
-        ctxsvc.registrar_provider("estado_extra", lambda ctx: {"estado": {"extra": 1}}, registro=reg)
+        ctxsvc.registrar_provider("estado_extra", lambda ctx: {"estado": {"operacao": "aluguel"}}, registro=reg)
         ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert ctx["conhecimento_md"] == f"# {ORG}"
         assert len(ctx["perguntas"]) == 8  # capped at the contract's 0..8
-        assert ctx["estado"]["extra"] == 1 and ctx["estado"]["interacao_id"] == i["id"]  # merged, not replaced
+        assert ctx["estado"]["operacao"] == "aluguel" and ctx["estado"]["interacao_id"] == i["id"]  # merged key-wise, not replaced
         assert [n for n, _ in reg][:2] == ["conhecimento", "perguntas"]  # position kept
 
     def test_a_provider_that_raises_is_contained_and_the_rest_still_render(self, world, monkeypatch, caplog):

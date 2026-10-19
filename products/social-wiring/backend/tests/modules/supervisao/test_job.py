@@ -79,7 +79,7 @@ class TestScorecardsDiarios:
         primeira = w.sw.table("agente_scorecards").select("*").execute().data
         assert len(primeira) == 14  # sdr + atendimento (juridico is not ativo) x 7 days
         assert {(r["bloco"], r["agent_key"], r["rubrica_versao"]) for r in primeira} == {
-            ("sdr", "julia", "sdr.v1"), ("atendimento", None, "atendimento.v1")}
+            ("sdr", "julia", "sdr.v2"), ("atendimento", None, "atendimento.v1")}
         assert sorted({r["dia"] for r in primeira}) == [(ONTEM - timedelta(days=k)).isoformat() for k in range(6, -1, -1)]
         _rodar(w, fake)
         segunda = w.sw.table("agente_scorecards").select("*").execute().data
@@ -122,7 +122,7 @@ class TestRelatorioDono:
         _rodar(w, fake)  # same day again: the stored event is the marker
         rels = _relatorios(w)
         assert len(rels) == 1 and rels[0]["contato_id"] is None
-        assert rels[0]["payload"] == {"origem": "supervisao", "dia": ONTEM.isoformat()}
+        assert rels[0]["payload"] == {"origem": "supervisao", "dia": ONTEM.isoformat(), "falhas_registro": 0}
         assert [n["user_id"] for n in w.notifications()] == [OWNER_ID]
         assert w.notifications()[0]["metadata"]["link"] == "/supervisao?dia=2026-10-18"
         assert [e.to for e in fake.sent] == [[OWNER_EMAIL]]
@@ -131,6 +131,24 @@ class TestRelatorioDono:
         assert "SDR (Julia)" in email.text and "Leads de entrada: 1" in email.text
         assert "Taxa de qualificação: sem dado" not in email.text  # 1 lead in: the ratio exists (0.0%)
         assert "Handoffs por motivo: nenhum" in email.text
+
+    def test_registration_failures_of_the_day_flag_every_scorecard_and_the_report(self):
+        """G4: `supervisao_falha` events of the day -> `falhas_registro` / `dados_incompletos` on each scorecard, and
+        the nightly report (event payload + email text) says so."""
+        w, fake = _mundo(), FakeEmailSender()
+        for codigo in ("handoff_movimento", "aceite_sem_ator"):
+            w.sw.table("julia_eventos").insert({
+                "org_id": ORG_ID, "tipo": "supervisao_falha", "contato_id": None, "lido_por": [],
+                "payload": {"codigo": codigo, "dia": ONTEM.isoformat(), "ids": {}}, "created_at": "2026-10-18T15:00:00+00:00"}).execute()
+        _rodar(w, fake)
+        ontem = [r for r in w.sw.table("agente_scorecards").select("*").execute().data if r["dia"] == ONTEM.isoformat()]
+        assert ontem and all(r["metricas"]["falhas_registro"] == 2 and r["metricas"]["dados_incompletos"] is True for r in ontem)
+        anteontem = [r for r in w.sw.table("agente_scorecards").select("*").execute().data
+                     if r["dia"] == (ONTEM - timedelta(days=1)).isoformat()]
+        assert anteontem and all(r["metricas"]["dados_incompletos"] is False for r in anteontem)
+        assert _relatorios(w)[0]["payload"]["falhas_registro"] == 2
+        assert "ATENÇÃO: 2 falha(s) de registro" in fake.sent[0].text
+        assert "Dados incompletos: sim" in fake.sent[0].text
 
     def test_email_not_configured_keeps_the_in_app_report(self):
         w = _mundo()
@@ -194,12 +212,12 @@ class TestSweep:
         self._handoff(w, 4, "2026-10-17T08:00:00+00:00", "a4")   # processo move after the deadline -> expirado
         self._handoff(w, 5, "2026-10-19T08:00:00+00:00", None)   # no card, not due -> stays emitido
         w.sw.set_table_data("pipeline_movimentos", [
-            {"id": "m0", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T07:00:00+00:00"},  # before
+            {"id": "m0", "org_id": ORG_ID, "responsavel_id": OWNER_ID, "entidade_id": "a1", "created_at": "2026-10-19T07:00:00+00:00"},  # before
             # stored oldest-first: `varrer` takes `.order("created_at").limit(1)`, and MockSupabaseClient's
             # `.order()` does not sort -- the real PostgREST does.
-            {"id": "m2", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:00:00+00:00"},
-            {"id": "m1", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:30:00+00:00"},
-            {"id": "m4", "org_id": ORG_ID, "entidade_id": "p4", "created_at": "2026-10-18T09:00:00+00:00"},
+            {"id": "m2", "org_id": ORG_ID, "responsavel_id": OWNER_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:00:00+00:00"},
+            {"id": "m1", "org_id": ORG_ID, "responsavel_id": OWNER_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:30:00+00:00"},
+            {"id": "m4", "org_id": ORG_ID, "responsavel_id": OWNER_ID, "entidade_id": "p4", "created_at": "2026-10-18T09:00:00+00:00"},
         ])
         w.sw.set_table_data("cliente_notas", [
             {"id": "n2", "org_id": ORG_ID, "cliente_id": "k2", "autor_id": OWNER_ID, "created_at": "2026-10-19T08:30:00+00:00"},
@@ -220,7 +238,7 @@ class TestSweep:
         w.sw.set_table_data("atendimentos", [{"id": "a1", "org_id": ORG_ID, "cliente_id": None}])
         self._handoff(w, 1, "2026-10-19T08:00:00+00:00", "a1", origem="m", gatilho="movimento_etapa")
         w.sw.set_table_data("pipeline_movimentos", [
-            {"id": "m1", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T08:00:01+00:00"}])
+            {"id": "m1", "org_id": ORG_ID, "responsavel_id": OWNER_ID, "entidade_id": "a1", "created_at": "2026-10-19T08:00:01+00:00"}])
         job.executar_sweep(client=w.sw, agora=AGORA)
         assert self._estado(w, 1)["status"] == "emitido"
 

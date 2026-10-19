@@ -607,10 +607,23 @@ class TestPrimeiraRespostaHumana:
         contatos.abrir_interacao(admin.w.sw, ORG_ID, admin.contato)
         assert admin.post(self.URL, {"text": "oi, sou a Carla"}).status_code == 201
         (ep,) = admin.w.rows("julia_interacoes", contato_id=admin.cid)
-        primeira = ep["primeira_resposta_at"]
-        assert primeira
+        primeira = ep["primeira_resposta_humana_at"]
+        assert primeira and not ep.get("primeira_resposta_agente_at")  # G1: a person's reply is never Julia's
         assert admin.post(self.URL, {"text": "tudo bem?"}).status_code == 201
-        assert admin.w.rows("julia_interacoes", contato_id=admin.cid)[0]["primeira_resposta_at"] == primeira
+        assert admin.w.rows("julia_interacoes", contato_id=admin.cid)[0]["primeira_resposta_humana_at"] == primeira
+
+    def test_a_failing_stamp_still_sends_and_raises_a_visible_alert(self, admin):
+        """G4: the message is out; the bookkeeping failure becomes a `supervisao_falha` event + an owner notification."""
+        from tests.support.falha_injetada import ClienteQueFalha
+
+        admin.w.notificar_via_sink()
+        contatos.abrir_interacao(admin.w.sw, ORG_ID, admin.contato)
+        admin.w.admin._scoped["social_wiring"] = ClienteQueFalha(admin.w.sw, {"julia_interacoes"})
+        assert admin.post(self.URL, {"text": "oi, sou a Carla"}).status_code == 201
+        (alerta,) = admin.w.rows("julia_eventos", tipo="supervisao_falha")
+        assert alerta["payload"]["codigo"] == "primeira_resposta_humana"
+        assert alerta["payload"]["ids"] == {"connection_id": CONNECTION_ID}  # no chat id: it is the lead's phone number
+        assert [n["user_id"] for n in admin.w.notifications()] == [TEST_USER_ID]  # the org's owner
 
     def test_no_open_episode_or_a_non_julia_line_stamps_nothing_and_still_sends(self, admin):
         assert admin.post(self.URL, {"text": "oi"}).status_code == 201
@@ -618,4 +631,4 @@ class TestPrimeiraRespostaHumana:
         contatos.abrir_interacao(admin.w.sw, ORG_ID, admin.contato)
         admin.w.sw.table("whatsapp_connections").update({"agente_leads_ativo": False, "authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
         assert admin.post(self.URL, {"text": "oi"}).status_code == 201
-        assert admin.w.rows("julia_interacoes", contato_id=admin.cid)[0].get("primeira_resposta_at") is None
+        assert admin.w.rows("julia_interacoes", contato_id=admin.cid)[0].get("primeira_resposta_humana_at") is None

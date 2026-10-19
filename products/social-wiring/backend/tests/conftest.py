@@ -162,6 +162,18 @@ def _hermetic_credential_tiers():
 
 
 @pytest.fixture(autouse=True)
+def _reset_core_client_seams():
+    """`julia_world.World` points the org-membership (handoffs) and notification-recipient seams at ITS core client;
+    a test must never inherit the previous test's."""
+    yield
+    from app.modules.atendimento_blocos import handoffs
+    from app.services import julia_notificacoes_service
+
+    handoffs.registrar_core_provider(None)
+    julia_notificacoes_service.registrar_core_provider(None)
+
+
+@pytest.fixture(autouse=True)
 def _simulate_product_rpcs(monkeypatch):
     """`MockSupabaseClient.rpc` cannot execute SQL; route the product RPCs the
     services call to their contract fakes (`tests/support/rpc_fakes.py`, each

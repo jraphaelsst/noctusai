@@ -52,9 +52,11 @@ class TestPrimeiraResposta:
         (ep,) = world.rows("julia_interacoes")
         primeira = ep["primeira_resposta_at"]
         assert primeira and primeira >= ep["iniciada_at"]
+        # G1: Julia's reply is stamped on the AGENT column (the sdr.v2 TPR input), never on the human one
+        assert ep["primeira_resposta_agente_at"] == primeira and not ep.get("primeira_resposta_humana_at")
         await _turno(world, "e ai", "m2")
         (ep,) = world.rows("julia_interacoes")
-        assert ep["primeira_resposta_at"] == primeira
+        assert ep["primeira_resposta_at"] == primeira and ep["primeira_resposta_agente_at"] == primeira
 
     @pytest.mark.asyncio
     async def test_a_silent_turn_stamps_nothing(self, world):
@@ -63,14 +65,48 @@ class TestPrimeiraResposta:
         (ep,) = world.rows("julia_interacoes")
         assert ep.get("primeira_resposta_at") is None
 
-    def test_the_service_writes_once_and_needs_an_open_episode(self, world):
+    def test_the_service_writes_once_per_kind_and_needs_an_open_episode(self, world):
         contato = contatos.obter_ou_criar_contato(world.sw, org_id=ORG_ID, connection_id=world.seed_connection()["id"], chat_id="x@c.us")
-        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"]) is False  # no episode yet
+        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], por="agente") is False  # no episode yet
         contatos.abrir_interacao(world.sw, ORG_ID, contato, agora=datetime(2026, 10, 19, 12, tzinfo=timezone.utc))
-        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], agora=datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc))
-        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"]) is False
+        # G1: a human reply is stamped on ITS column, never on Julia's
+        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], por="humano",
+                                                    agora=datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc))
         (ep,) = world.rows("julia_interacoes", contato_id=contato["id"])
-        assert ep["primeira_resposta_at"].startswith("2026-10-19T12:01")
+        assert ep["primeira_resposta_humana_at"].startswith("2026-10-19T12:01") and not ep.get("primeira_resposta_agente_at")
+        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], por="humano") is False
+        # ...and Julia's own reply, later, still stamps the agent column (the human one did not use it up)
+        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], por="agente",
+                                                    agora=datetime(2026, 10, 19, 12, 5, tzinfo=timezone.utc))
+        assert contatos.registrar_primeira_resposta(world.sw, ORG_ID, contato["id"], por="agente") is False
+        (ep,) = world.rows("julia_interacoes", contato_id=contato["id"])
+        assert ep["primeira_resposta_agente_at"].startswith("2026-10-19T12:05")
+        assert ep["primeira_resposta_at"].startswith("2026-10-19T12:01")  # legacy column: first of either kind
+
+    def test_an_unknown_kind_is_refused(self, world):
+        with pytest.raises(ValueError):
+            contatos.registrar_primeira_resposta(world.sw, ORG_ID, "c", por="bot")
+
+
+class TestFalhaDeRegistro:
+    """G4: a first-response stamp that fails does not undo the reply, and is no longer a quiet log line."""
+
+    def test_a_failing_agent_stamp_raises_a_visible_alert_and_never_raises(self, world, caplog):
+        import logging
+
+        from app.services import julia_lead_turn_service as lead
+        from tests.support.falha_injetada import ClienteQueFalha
+        from tests.support.julia_world import OWNER_ID
+
+        world.notificar_via_sink()
+        contato = contatos.obter_ou_criar_contato(world.sw, org_id=ORG_ID, connection_id=world.seed_connection()["id"], chat_id="x@c.us")
+        deps = world.deps(scoped=ClienteQueFalha(world.sw, {"julia_interacoes"}))
+        with caplog.at_level(logging.ERROR):
+            lead._registrar_primeira_resposta(deps, ORG_ID, contato)  # does not raise
+        (alerta,) = world.rows("julia_eventos", tipo="supervisao_falha")
+        assert alerta["payload"]["codigo"] == "primeira_resposta_agente" and alerta["payload"]["ids"] == {"contato_id": contato["id"]}
+        assert [n["user_id"] for n in world.notifications()] == [OWNER_ID]
+        assert "the reply IS out" in caplog.text
 
 
 class TestHandoffEvent:

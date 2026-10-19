@@ -158,30 +158,46 @@ def interacao_aberta(client: Any, contato_id: UUID | str) -> Optional[dict[str, 
     return rows[0] if rows else None
 
 
+#: `por` -> the column that kind of first reply is stamped on (migration 288, julia-v2 G1).
+COLUNA_PRIMEIRA_RESPOSTA = {"agente": "primeira_resposta_agente_at", "humano": "primeira_resposta_humana_at"}
+
+
 def registrar_primeira_resposta(
-    client: Any, org_id: UUID | str, contato_id: UUID | str, *, agora: Optional[datetime] = None,
+    client: Any, org_id: UUID | str, contato_id: UUID | str, *, por: str, agora: Optional[datetime] = None,
 ) -> bool:
-    """Stamp `primeira_resposta_at` on the OPEN episode, once (migration 286 -- the first-response-time input of
-    Maya's sdr scorecard). Called on the first outbound reply of the episode, by Julia's reply turn or a human from
-    the inbox. A conditional update (`primeira_resposta_at IS NULL`) keeps the first one even under a race; no open
-    episode or an already-stamped one -> False. Episodes before 286 stay NULL (reported, never estimated)."""
+    """Stamp the first outbound reply of the OPEN episode, once PER KIND (julia-v2 G1): `por="agente"` is Julia's
+    own reply (`primeira_resposta_agente_at`, the only input of the sdr.v2 first-response time); `por="humano"` is a
+    person's reply from the inbox (`primeira_resposta_humana_at`, reported separately). Each is a conditional update
+    (`... IS NULL`) so the first one wins even under a race. The legacy `primeira_resposta_at` (first of EITHER
+    kind) is still written for one release. NOC-REMEDIATE[drop-primeira-resposta-at]: drop with the column
+    (migration 288) — 2026-10-19. True = this kind's column was stamped now; no open episode / already stamped ->
+    False. Episodes before the split stay NULL where unprovable (reported, never estimated)."""
+    coluna = COLUNA_PRIMEIRA_RESPOSTA.get(por)
+    if coluna is None:
+        raise ValueError(f"registrar_primeira_resposta: por must be 'agente' or 'humano', got {por!r}")
     interacao = interacao_aberta(client, contato_id)
-    if interacao is None or interacao.get("primeira_resposta_at"):
+    if interacao is None:
+        return False
+    agora_iso = _now(agora).isoformat()
+    if not interacao.get("primeira_resposta_at"):
+        client.table(T_INTERACOES).update({"primeira_resposta_at": agora_iso}).eq("org_id", str(org_id)).eq(
+            "id", str(interacao["id"])).is_("primeira_resposta_at", "null").execute()
+    if interacao.get(coluna):
         return False
     rows = (
-        client.table(T_INTERACOES).update({"primeira_resposta_at": _now(agora).isoformat()})
-        .eq("org_id", str(org_id)).eq("id", str(interacao["id"])).is_("primeira_resposta_at", "null")
+        client.table(T_INTERACOES).update({coluna: agora_iso})
+        .eq("org_id", str(org_id)).eq("id", str(interacao["id"])).is_(coluna, "null")
         .execute().data or []
     )
     return bool(rows)
 
 
 def registrar_primeira_resposta_do_chat(
-    client: Any, org_id: UUID | str, connection_id: UUID | str, chat_id: str, *, agora: Optional[datetime] = None,
+    client: Any, org_id: UUID | str, connection_id: UUID | str, chat_id: str, *, por: str, agora: Optional[datetime] = None,
 ) -> bool:
     """`registrar_primeira_resposta` for the contato of `(org, connection, chat)`; no contato -> False."""
     contato = buscar_contato(client, org_id, connection_id, chat_id)
-    return registrar_primeira_resposta(client, org_id, contato["id"], agora=agora) if contato else False
+    return registrar_primeira_resposta(client, org_id, contato["id"], por=por, agora=agora) if contato else False
 
 
 def abrir_interacao(client: Any, org_id: UUID | str, contato: dict[str, Any], *, agora: Optional[datetime] = None) -> dict[str, Any]:

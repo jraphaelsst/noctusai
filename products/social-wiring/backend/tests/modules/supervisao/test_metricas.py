@@ -1,4 +1,4 @@
-"""Maya metrics engine (maya-blocks CONTRACT §3.2): every `sdr.v1` metric on fixtures, the human-block rubric,
+"""Maya metrics engine (maya-blocks CONTRACT §3.2): every `sdr.v2` metric on fixtures, the human-block rubric,
 and the missing-data cases (a missing value is `None`, never 0). Seam: the mock DB only."""
 from __future__ import annotations
 
@@ -62,16 +62,19 @@ class TestPrimitivos:
         assert m.razao(9, 31) == 0.2903
 
 
-class TestSdrV1:
+class TestSdrV2:
     def _cenario(self, sw):
         _put(sw, "julia_contatos", [{"created_at": em(h)} for h in (1, 2, 5, 23.9)]
              + [{"created_at": em(-0.1)}, {"created_at": em(24)}, {"org_id": OTHER_ORG_ID, "created_at": em(1)}])
         _put(sw, "julia_interacoes", [
-            {"iniciada_at": em(1), "primeira_resposta_at": em(1 + 10 / 3600)},
-            {"iniciada_at": em(2), "primeira_resposta_at": em(2 + 20 / 3600)},
-            {"iniciada_at": em(3), "primeira_resposta_at": em(3 + 600 / 3600)},
-            {"iniciada_at": em(4), "primeira_resposta_at": None},
-            {"iniciada_at": em(-1), "primeira_resposta_at": None},  # outside the window
+            # julia-v2 G1: the TPR reads ONLY the agent's reply; a person's reply is reported beside it
+            {"iniciada_at": em(1), "primeira_resposta_agente_at": em(1 + 10 / 3600), "primeira_resposta_humana_at": None},
+            {"iniciada_at": em(2), "primeira_resposta_agente_at": em(2 + 20 / 3600), "primeira_resposta_humana_at": None},
+            # a person answered first (+30 s), Julia only at +600 s
+            {"iniciada_at": em(3), "primeira_resposta_agente_at": em(3 + 600 / 3600), "primeira_resposta_humana_at": em(3 + 30 / 3600)},
+            # answered ONLY by a person: Julia did not respond
+            {"iniciada_at": em(4), "primeira_resposta_agente_at": None, "primeira_resposta_humana_at": em(4 + 120 / 3600)},
+            {"iniciada_at": em(-1), "primeira_resposta_agente_at": None, "primeira_resposta_humana_at": None},  # outside the window
         ])
         _put(sw, "julia_envio_entregas", [
             {"contato_id": "c1", "gatilho": "qualificado", "status": "ok", "created_at": em(1)},
@@ -109,6 +112,8 @@ class TestSdrV1:
         assert _sdr(sw) == {
             "leads_entrada": 4,
             "tpr_n": 3, "tpr_p50_s": pytest.approx(20.0), "tpr_p90_s": pytest.approx(600.0), "tpr_sem_resposta": 1,
+            "tpr_humano_n": 2, "tpr_humano_p50_s": pytest.approx(30.0), "tpr_humano_p90_s": pytest.approx(120.0),
+            "respondidos_por_humano_antes_do_agente": 2,
             "qualificados": 2, "qualificacao_taxa": 0.5,
             "frios": 1, "frio_taxa": 0.25,
             "invalidos": 1, "invalido_taxa": 0.25,
@@ -133,9 +138,41 @@ class TestSdrV1:
         assert out["handoffs_emitidos"] == 0 and out["handoffs_nao_assumidos"] == 0
 
     def test_episodes_without_primeira_resposta_are_sem_resposta_never_estimated(self, sw):
-        _put(sw, "julia_interacoes", [{"iniciada_at": em(h), "primeira_resposta_at": None} for h in (1, 2)])
+        _put(sw, "julia_interacoes", [{"iniciada_at": em(h), "primeira_resposta_agente_at": None} for h in (1, 2)])
         out = _sdr(sw)
         assert out["tpr_n"] == 0 and out["tpr_sem_resposta"] == 2 and out["tpr_p50_s"] is None
+        assert out["tpr_humano_n"] == 0 and out["tpr_humano_p50_s"] is None and out["respondidos_por_humano_antes_do_agente"] == 0
+
+    def test_a_human_reply_never_counts_as_julias_response_time(self, sw):
+        """G1: the legacy single stamp (first of EITHER kind) is ignored; only the agent column feeds the TPR."""
+        _put(sw, "julia_interacoes", [{"iniciada_at": em(1), "primeira_resposta_at": em(1.01),
+                                       "primeira_resposta_humana_at": em(1.01), "primeira_resposta_agente_at": None}])
+        out = _sdr(sw)
+        assert out["tpr_n"] == 0 and out["tpr_sem_resposta"] == 1 and out["tpr_p50_s"] is None
+        assert out["tpr_humano_n"] == 1 and out["respondidos_por_humano_antes_do_agente"] == 1
+
+    def test_agent_first_then_human_is_not_a_human_before_agent(self, sw):
+        _put(sw, "julia_interacoes", [{"iniciada_at": em(1), "primeira_resposta_agente_at": em(1.002),
+                                       "primeira_resposta_humana_at": em(1.5)}])
+        out = _sdr(sw)
+        assert out["tpr_n"] == 1 and out["respondidos_por_humano_antes_do_agente"] == 0 and out["tpr_humano_n"] == 1
+
+    def test_calcular_adds_the_days_registration_failures_to_every_block(self, sw):
+        """G4: `supervisao_falha` events of the SP day -> `falhas_registro` + `dados_incompletos` on every scorecard."""
+        _put(sw, "julia_eventos", [
+            {"tipo": "supervisao_falha", "payload": {"codigo": "handoff_movimento"}, "created_at": em(5)},
+            {"tipo": "supervisao_falha", "payload": {"codigo": "aceite_sem_ator"}, "created_at": em(6)},
+            {"tipo": "supervisao_falha", "payload": {"codigo": "x"}, "created_at": em(30)},  # another day
+        ])
+        kw = dict(horas_para_assumir=24, calculado_at=CALCULADO, supervisionado_desde=m.parse_ts(ANTES))
+        for bloco in ("sdr", "juridico"):
+            out = m.calcular(sw, ORG_ID, bloco, DIA, **kw)
+            assert out["falhas_registro"] == 2 and out["dados_incompletos"] is True, bloco
+
+    def test_a_clean_day_is_complete(self, sw):
+        out = m.calcular(sw, ORG_ID, "sdr", DIA, horas_para_assumir=24, calculado_at=CALCULADO,
+                         supervisionado_desde=m.parse_ts(ANTES))
+        assert out["falhas_registro"] == 0 and out["dados_incompletos"] is False
 
     def test_handoff_motivo_is_missing_while_no_handoff_event_records_it(self, sw):
         _put(sw, "julia_atribuicoes", [{"motivo": "handoff", "created_at": em(4)}])
@@ -173,4 +210,4 @@ class TestBlocoHumano:
         assert all(antes[k] is None for k in m.CHAVES_HUMANO)
 
     def test_rubric_names(self):
-        assert m.rubrica("sdr") == "sdr.v1" and m.rubrica("juridico") == "juridico.v1"
+        assert m.rubrica("sdr") == "sdr.v2" and m.rubrica("juridico") == "juridico.v1"

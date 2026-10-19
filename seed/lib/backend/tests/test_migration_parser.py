@@ -780,3 +780,32 @@ def test_drop_policy_or_function_does_not_drop_a_table():
     parse_sql("CREATE TABLE s.t (id uuid);", into=m)
     parse_sql('DROP POLICY IF EXISTS "p" ON s.t; DROP FUNCTION IF EXISTS s.f();', into=m)
     assert "s.t" in m
+
+
+# ── partial tables: known only through an ADD COLUMN (dynamic rename upstream) ──
+def test_a_table_first_seen_through_add_column_is_reported_partial():
+    sql = "ALTER TABLE social_wiring.julia_interacoes ADD COLUMN IF NOT EXISTS primeira_resposta_agente_at timestamptz;"
+    partial: set[str] = set()
+    schema = parse_sql(sql, partial=partial)
+    assert schema == {"social_wiring.julia_interacoes": {"primeira_resposta_agente_at"}}
+    assert partial == {"social_wiring.julia_interacoes"}
+
+
+def test_a_created_table_is_never_partial_even_if_altered_later_or_earlier():
+    partial: set[str] = set()
+    into: dict[str, set[str]] = {}
+    parse_sql("ALTER TABLE s.t ADD COLUMN a int;", into=into, partial=partial)
+    assert partial == {"s.t"}
+    parse_sql("CREATE TABLE s.t (id uuid PRIMARY KEY, b int);", into=into, partial=partial)
+    assert partial == set() and into["s.t"] == {"a", "id", "b"}
+    parse_sql("ALTER TABLE s.t ADD COLUMN c int;", into=into, partial=partial)
+    assert partial == set()
+
+
+def test_dropping_or_renaming_a_partial_table_moves_the_flag():
+    partial: set[str] = set()
+    into: dict[str, set[str]] = {}
+    parse_sql("ALTER TABLE s.t ADD COLUMN a int; ALTER TABLE s.t RENAME TO u;", into=into, partial=partial)
+    assert partial == {"s.u"}
+    parse_sql("DROP TABLE s.u;", into=into, partial=partial)
+    assert partial == set()

@@ -127,7 +127,7 @@ def mover_por_evento(
             card_id=aid,
             to_stage_id=str(alvo["id"]),
             user_id=_actor_id(actor),
-            motivo=f"etapa_auto:{evento}",
+            motivo=f"{atendimento_handoffs.PREFIXO_ETAPA_AUTO}{evento}",
             org_id=org,
         )
         atendimento_handoffs.apos_mover(client, org, PIPELINE_FUNIL, aid, str(alvo["id"]))  # maya-blocks T2, never raises

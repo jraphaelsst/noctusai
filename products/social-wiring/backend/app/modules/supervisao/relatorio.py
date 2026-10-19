@@ -41,6 +41,10 @@ ROTULOS_METRICA = {
     "handoffs_nao_assumidos": "Handoffs não assumidos", "horas_para_assumir": "Prazo para assumir (h)",
     "handoffs_recebidos": "Handoffs recebidos", "handoffs_assumidos": "Handoffs assumidos",
     "assumir_p50_s": "Tempo para assumir (p50)", "assumir_p90_s": "Tempo para assumir (p90)",
+    "tpr_humano_n": "Episódios respondidos por pessoa", "tpr_humano_p50_s": "Tempo de 1ª resposta humana (p50)",
+    "tpr_humano_p90_s": "Tempo de 1ª resposta humana (p90)",
+    "respondidos_por_humano_antes_do_agente": "Respondidos por pessoa antes da Julia",
+    "falhas_registro": "Falhas de registro da supervisão", "dados_incompletos": "Dados incompletos",
 }
 SEM_DADO = "sem dado"
 
@@ -54,6 +58,8 @@ def formatar(chave: str, valor: Any) -> str:
     if chave.endswith("_s"):
         segundos = float(valor)
         return f"{segundos:.0f}s" if segundos < 120 else f"{segundos / 60:.1f} min"
+    if isinstance(valor, bool):
+        return "sim" if valor else "não"
     if isinstance(valor, dict):
         return ", ".join(f"{k}: {v}" for k, v in sorted(valor.items())) or "nenhum"
     return str(valor)
@@ -71,7 +77,12 @@ class SupervisaoDigestService(BaseDigestService):
 
     async def _generate_narrative(self, agg: dict[str, Any], window: DigestWindow) -> str:
         blocos = ", ".join(ROTULOS_BLOCO.get(s["bloco"], s["bloco"]) for s in agg["scorecards"]) or "nenhum bloco"
-        return f"Scorecards de {agg['dia'].strftime('%d/%m/%Y')} — blocos supervisionados: {blocos}."
+        texto = f"Scorecards de {agg['dia'].strftime('%d/%m/%Y')} — blocos supervisionados: {blocos}."
+        falhas = falhas_do_dia(agg["scorecards"])
+        if falhas:
+            texto += (f" ATENÇÃO: {falhas} falha(s) de registro da supervisão no dia — os números podem estar incompletos "
+                      "(o atendimento em si não foi afetado).")
+        return texto
 
     def _render_bodies(self, agg: dict[str, Any], narrative: str) -> tuple[str, str]:
         texto = [narrative, ""]
@@ -94,6 +105,11 @@ class SupervisaoDigestService(BaseDigestService):
 
     def _build_subject(self, agg: dict[str, Any], window: DigestWindow) -> str:
         return f"[Supervisão] Relatório de {agg['dia'].strftime('%d/%m/%Y')}"
+
+
+def falhas_do_dia(scorecards: list[dict[str, Any]]) -> int:
+    """G4: the day's supervision-hook failures (every scorecard of the org carries the same org-wide count)."""
+    return max((int((s.get("metricas") or {}).get("falhas_registro") or 0) for s in scorecards), default=0)
 
 
 def emails_dos_donos(core: Any, org_id: Any) -> list[str]:
@@ -129,7 +145,9 @@ async def enviar_relatorio(client: Any, core: Any, org_id: Any, dia: date, *,
         return {"status": "sem_scorecards"}
     digest_svc = SupervisaoDigestService(client=client, org_id=str(org_id))
     resultado = await digest_svc.run(DigestWindow(org_id=str(org_id), extra={"dia": dia}))
-    evento = eventos.emitir(client, org_id, "relatorio", None, {"origem": ORIGEM, "dia": dia.isoformat()})
+    falhas = falhas_do_dia(svc.listar_scorecards(client, org_id, dia))
+    evento = eventos.emitir(client, org_id, "relatorio", None,
+                            {"origem": ORIGEM, "dia": dia.isoformat(), "falhas_registro": falhas})
     if evento is None:
         logger.error("supervisao: report event NOT written (org=%s dia=%s) -- email withheld to retry next run",
                      org_id, dia)
@@ -153,4 +171,4 @@ async def enviar_relatorio(client: Any, core: Any, org_id: Any, dia: date, *,
     return {"status": "enviado", "emails": enviados}
 
 
-__all__ = ["ORIGEM", "SupervisaoDigestService", "emails_dos_donos", "enviar_relatorio", "formatar"]
+__all__ = ["ORIGEM", "SupervisaoDigestService", "emails_dos_donos", "enviar_relatorio", "falhas_do_dia", "formatar"]

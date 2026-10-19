@@ -51,7 +51,7 @@ async def executar_diario(*, client: Any, core: Any, agora: datetime,
     ontem = m.hoje_sp(agora) - timedelta(days=1)
     for org_id in svc.orgs_supervisionadas(client):
         try:
-            handoffs.varrer(client, org_id, agora=agora)  # fresh statuses before scoring them
+            handoffs.varrer(client, org_id, agora=agora, core=core)  # fresh statuses before scoring them
             escritos = svc.computar_scorecards(client, org_id, agora=agora)
             kw = {"sender_factory": sender_factory} if sender_factory is not None else {}
             rel = await relatorio.enviar_relatorio(client, core, org_id, ontem, **kw)
@@ -62,11 +62,11 @@ async def executar_diario(*, client: Any, core: Any, agora: datetime,
     return out
 
 
-def executar_sweep(*, client: Any, agora: datetime) -> dict[str, Any]:
+def executar_sweep(*, client: Any, agora: datetime, core: Any = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for org_id in svc.orgs_supervisionadas(client):
         try:
-            out[org_id] = handoffs.varrer(client, org_id, agora=agora)
+            out[org_id] = handoffs.varrer(client, org_id, agora=agora, core=core)
         except Exception:
             logger.exception("supervisao: handoff sweep failed for org=%s", org_id)
             out[org_id] = {"erro": True}
@@ -82,9 +82,9 @@ async def run_diario(*, client: Optional[Callable[[], Any]] = None, core: Option
         logger.exception("supervisao: nightly run failed")
 
 
-async def run_sweep(*, client: Optional[Callable[[], Any]] = None) -> None:
+async def run_sweep(*, client: Optional[Callable[[], Any]] = None, core: Optional[Callable[[], Any]] = None) -> None:
     try:
-        resultado = executar_sweep(client=(client or _client)(), agora=svc.agora_utc())
+        resultado = executar_sweep(client=(client or _client)(), agora=svc.agora_utc(), core=(core or _core)())
         if any(any(v.values()) for v in resultado.values() if isinstance(v, dict)):
             logger.info("supervisao: handoff sweep %s", resultado)
     except Exception:  # noqa: BLE001 - a scheduler job must not die

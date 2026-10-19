@@ -27,6 +27,10 @@ from noctusai_lib.testing.sql_check import CompiledCheck, compile_checks
 logger = logging.getLogger(__name__)
 
 _CACHE: dict[str, set[str]] | None = None
+#: Tables the map knows only as an `ADD COLUMN` fragment (no `CREATE TABLE` seen: the table reached its name through
+#: dynamic DDL, e.g. social-wiring 287's `lais_*` -> `julia_*` rename). Validated as UNKNOWN, never as "these are all
+#: the columns" -- the fragment would reject every real column of the table.
+_PARTIAL_CACHE: set[str] | None = None
 #: `{qualified_table: [CompiledCheck, ...]}` — every migration-declared CHECK
 #: the mock enforces (cross-column since 2026-10-10, single-column too since
 #: the same day — the measurement found one, and it was a production bug). A
@@ -173,12 +177,14 @@ def _find_repo_root(start: Path | None = None, *, module_file: str | None = None
 
 def get_schema_map() -> dict[str, set[str]]:
     """Return the cached `{qualified_table: {columns}}` map. Builds on first call."""
-    global _CACHE
+    global _CACHE, _PARTIAL_CACHE
     if _CACHE is None:
         try:
             root = _find_repo_root()
             files = _discover_migration_files(root)
-            _CACHE = parse_files(files)
+            partial: set[str] = set()
+            _CACHE = parse_files(files, partial=partial)
+            _PARTIAL_CACHE = partial
             logger.debug(
                 "mock-schema: built cache from %d migration files → %d tables",
                 len(files),
@@ -188,6 +194,12 @@ def get_schema_map() -> dict[str, set[str]]:
             logger.warning("mock-schema: cache build failed (%s) — validation disabled", exc)
             _CACHE = {}
     return _CACHE
+
+
+def get_partial_tables() -> set[str]:
+    """Qualified names of the tables `get_schema_map()` knows only as an `ADD COLUMN` fragment."""
+    get_schema_map()
+    return _PARTIAL_CACHE or set()
 
 
 def get_default_map() -> dict[str, set[str]]:
@@ -247,9 +259,10 @@ def set_functions_for_tests(
 def reset_cache() -> None:
     """Force the next get_schema_map() / get_check_map() call to rebuild.
     Used by tests that assert parsing behavior."""
-    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE, _FUNCTION_CACHE
+    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE, _FUNCTION_CACHE, _PARTIAL_CACHE
     _FUNCTION_CACHE = None
     _CACHE = None
+    _PARTIAL_CACHE = None
     _CHECK_CACHE = None
     _DEFAULTS_CACHE = None
 
@@ -269,11 +282,12 @@ def set_checks_for_tests(
 def set_cache_for_tests(mapping: dict[str, set[str]] | dict[str, Iterable[str]]) -> None:
     """Inject a cache directly. Used by unit tests for MockSupabaseClient
     validation that don't want to parse the real migration corpus each run."""
-    global _CACHE
+    global _CACHE, _PARTIAL_CACHE
     _CACHE = {table: set(cols) for table, cols in mapping.items()}
+    _PARTIAL_CACHE = set()  # an injected map is complete by definition
 
 
 __all__ = [
-    "get_check_map", "get_default_map", "get_function_map", "get_schema_map",
+    "get_check_map", "get_default_map", "get_function_map", "get_partial_tables", "get_schema_map",
     "reset_cache", "set_cache_for_tests", "set_checks_for_tests", "set_functions_for_tests",
 ]

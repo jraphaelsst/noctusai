@@ -44,6 +44,7 @@ from app.clients.agents import (
     TurnResult,
 )
 from app.config import settings as _default_settings
+from app.modules.supervisao import alertas as supervisao_alertas
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_agente_service as julia
@@ -676,12 +677,14 @@ async def _deliver(
 
 
 def _registrar_primeira_resposta(deps: LeadDeps, org_id: Any, contato: dict[str, Any]) -> None:
-    """maya-blocks: Julia's first reply of the open episode stamps `primeira_resposta_at` (once). Only a reply to
-    the lead's own message counts (a re-engagement is not a response). Bookkeeping: never undoes the reply."""
+    """maya-blocks / julia-v2 G1: Julia's first reply of the open episode stamps `primeira_resposta_agente_at`
+    (once). Only a reply to the lead's own message counts (a re-engagement is not a response). Bookkeeping: never
+    undoes the reply -- a failure raises a visible `supervisao_falha` alert (G4), not just a log line."""
     try:
-        julia_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"])
+        julia_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"], por="agente")
     except Exception:
-        logger.exception("julia: primeira_resposta_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
+        logger.exception("julia: primeira_resposta_agente_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
+        supervisao_alertas.alertar(deps.scoped, org_id, "primeira_resposta_agente", {"contato_id": contato.get("id")})
 
 
 async def run_reengajamento_turn(

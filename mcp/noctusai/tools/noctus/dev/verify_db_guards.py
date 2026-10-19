@@ -9439,6 +9439,48 @@ _SW_MAYA_BLOCOS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_JULIA_V2_SUP = "288_julia_v2_supervisao.sql"
+
+
+def _julia_v2_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"julia_v2.{probe_id}", guard_name=guard, migration=_M_JULIA_V2_SUP, rationale=rationale,
+        fixtures=(), ops_sql=_MAYA_ORG + ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_MAYA,
+    )
+
+
+def _julia_v2_interacao(coluna: str) -> str:
+    return (
+        f"    INSERT INTO {_S}.julia_contatos (id, org_id, connection_id, chat_id)\n"
+        "    VALUES (v_org, v_org, gen_random_uuid(), 'noc_probe_julia_v2');\n"
+        f"    INSERT INTO {_S}.julia_interacoes (org_id, contato_id, iniciada_at, {coluna})\n"
+        "    VALUES (v_org, v_org, now(), now() - interval '1 minute');"
+    )
+
+
+#: Migration 288 -- julia-v2 SW-G (first-response agent/human split, the accept's handoff trigger). Unapplied guards
+#: read `no_fixture`, `refused` once applied. Contract: products/agents/projects/julia-v2/CONTRACT.md section 7.
+_SW_JULIA_V2_SUPERVISAO_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        "interacoes.primeira_resposta_agente_coerente", "julia_interacoes_primeira_resposta_agente_coerente",
+        "Julia's first-response time = primeira_resposta_agente_at - iniciada_at; a reply before the episode began is "
+        "a negative time that would drag the sdr.v2 p50/p90 below zero.",
+        _julia_v2_interacao("primeira_resposta_agente_at"), _CHECK, "an episode whose agent reply precedes its start",
+    ),
+    _julia_v2_probe(
+        "interacoes.primeira_resposta_humana_coerente", "julia_interacoes_primeira_resposta_humana_coerente",
+        "The human first-response time (tpr_humano_*) is reported beside Julia's; a negative one is as wrong.",
+        _julia_v2_interacao("primeira_resposta_humana_at"), _CHECK, "an episode whose human reply precedes its start",
+    ),
+    _julia_v2_probe(
+        "handoffs.gatilho_valido", "atendimento_handoffs_gatilho_valido",
+        "288 REPLACED this CHECK (adding aceite_proposta): the replacement must still refuse a free-text trigger, or a "
+        "typo'd hook writes handoffs no rubric counts.",
+        _maya_handoff_ins(gatilho="'noc_probe_bogus'"), _CHECK, "a handoff with an unknown trigger",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9528,6 +9570,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_JULIA_AVALIACOES_PROBES,
     *_SW_SIMEC_PROBES,
     *_SW_MAYA_BLOCOS_PROBES,
+    *_SW_JULIA_V2_SUPERVISAO_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,

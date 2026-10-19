@@ -486,8 +486,15 @@ def parse_sql(
     source_label: str = "<unknown>",
     into: dict[str, set[str]] | None = None,
     blind_spots: list[dict[str, str | None]] | None = None,
+    partial: set[str] | None = None,
 ) -> dict[str, set[str]]:
     """Parse a blob of SQL into a `{qualified_table: {columns}}` map.
+
+    `partial`, when passed, is the set of tables the map knows ONLY through an `ADD COLUMN` — no `CREATE TABLE`
+    was ever seen for them (the table reached its name through DDL no regex can follow, e.g. social-wiring 287's
+    dynamic `lais_*` -> `julia_*` rename, so a later `ALTER TABLE julia_x ADD COLUMN` is the first static
+    mention). Their entry lists the added columns, NOT the table's columns, so a validator must treat them as
+    unknown rather than reject every other column (`_schema_cache.get_partial_tables`).
 
     WARN + skip per-table on any shape that doesn't parse.
 
@@ -544,6 +551,8 @@ def parse_sql(
                         if cols:
                             existing = schema_map.setdefault(qualified, set())
                             existing.update(cols)
+                            if partial is not None:
+                                partial.discard(qualified)
                             continue
                 logger.warning(
                     "mock-schema: unparseable CREATE TABLE in %s — skipping table %s.%s",
@@ -562,7 +571,10 @@ def parse_sql(
                 for name in m.group("names").split(","):
                     qm = _QUALIFIED_NAME_RE.match(name.strip())
                     if qm:
-                        schema_map.pop(_qualify(qm.group("schema"), qm.group("table")), None)
+                        dropped = _qualify(qm.group("schema"), qm.group("table"))
+                        schema_map.pop(dropped, None)
+                        if partial is not None:
+                            partial.discard(dropped)
 
         # ALTER TABLE ADD COLUMN — may appear standalone OR inside DO block
         # body. Our statement walker treats DO as atomic, so scan for
@@ -571,6 +583,8 @@ def parse_sql(
             for schema, table, body in _alter_table_segments(stmt):
                 qualified = _qualify(schema, table)
                 for m in _ADD_COLUMN_CLAUSE_RE.finditer(body):
+                    if partial is not None and qualified not in schema_map:
+                        partial.add(qualified)  # first sight of this table is an ADD COLUMN: only a fragment
                     schema_map.setdefault(qualified, set()).add(m.group("column"))
                 for m in _DROP_COLUMN_CLAUSE_RE.finditer(body):
                     existing = schema_map.get(qualified)
@@ -600,6 +614,9 @@ def parse_sql(
                 for m in _RENAME_TABLE_CLAUSE_RE.finditer(body):
                     new_qualified = _qualify(schema, m.group("new_table"))
                     cols = schema_map.pop(qualified, None)
+                    if partial is not None and qualified in partial:
+                        partial.discard(qualified)
+                        partial.add(new_qualified)
                     if cols is not None:
                         # Carry the columns across; a later migration's
                         # ADD COLUMN on the new name merges into the same set.
@@ -612,8 +629,11 @@ def parse_files(
     paths: Iterable[Path],
     *,
     blind_spots: list[dict[str, str | None]] | None = None,
+    partial: set[str] | None = None,
 ) -> dict[str, set[str]]:
     """Parse multiple migration files in order, merging into one schema map.
+
+    `partial`, when passed, is filled with the tables known only through `ADD COLUMN` (see `parse_sql`).
 
     `blind_spots`, when passed, is appended to across every file — see
     `parse_sql`'s docstring for the shape.
@@ -631,7 +651,7 @@ def parse_files(
         except OSError as exc:
             logger.warning("mock-schema: could not read %s: %s — skipping", path, exc)
             continue
-        parse_sql(sql, source_label=str(path), into=merged, blind_spots=blind_spots)
+        parse_sql(sql, source_label=str(path), into=merged, blind_spots=blind_spots, partial=partial)
     return merged
 
 

@@ -141,6 +141,14 @@ movimento today** — `modules/pipeline/aceite.py` inserts the processos_venda c
 accept stage)`. `pipeline_movimentos.responsavel_id` is NOT NULL, so the accept path must carry
 an actor (the route has the user; the `proposta_aceita` funnel event must pass one).
 
+**T3 — `ao_aceite(processo)`** (julia-v2 G3, migration 288). Called by `aceitar_proposta` right after the
+processo insert, **independent of the movement row**: writes `gatilho='aceite_proposta'`, `de_bloco =
+dono(funil, accept stage)`, `para_bloco = dono(processos_venda, initial stage)`, `origem_evento = processo.id`
+(the idempotency key), `atendimento_id`/`lead_id` from the deal. The movement row is still written only with an
+actor (`responsavel_id` NOT NULL); an accept **with no actor** therefore no longer loses its handoff, and raises the
+`aceite_sem_ator` alert (§5.7). When T3 recorded, T2 skips the processos entry move (`de_etapa_id IS NULL`): one
+handoff per accept; if T3 did not record (it failed, alerted), the entry move's own T2 row is the fallback.
+
 ### 2.3 Status machine
 
 ```
@@ -149,11 +157,18 @@ emitido --(now >= created_at + horas_para_assumir, sweep)--> expirado  (expirado
 assumido, expirado: terminal (a late take-over after expiry is NOT back-filled)
 ```
 
-Take-over signals in v1 (human-run target block), first one wins:
+Take-over signals in v1 (human-run target block), first one wins — **only human acts count** (julia-v2 G2,
+owner: "only human moves count"); one predicate, `handoffs.sinal_humano`, applied inline (`ao_movimento`) and in the
+sweep, with org membership read from the trusted `public.noctus_users` row (cached per sweep, never
+`user_metadata`):
 1. a `pipeline_movimentos` row on the same card (`entidade_id` = atendimento/processo id), any
-   stage, created after the handoff;
-2. a `cliente_notas` row with `autor_id IS NOT NULL` on the card's cliente, created after the
-   handoff (Julia's notes have `autor_id NULL` and never count).
+   stage, created after the handoff, **made by a person**: `motivo` is not `etapa_auto:*` and is not the
+   accept's entry move (`aceite_proposta`), and `responsavel_id` is a human member of the org (a service principal,
+   a member of another org, or a missing actor is not a take-over);
+2. a `cliente_notas` row on the card's cliente, created after the handoff, whose `autor_id` is a human member of
+   the org (Julia's notes have `autor_id NULL`; a service principal's never count).
+A membership lookup that **fails** is not a "no": it logs, raises the `membership_lookup` alert and the act is not
+counted.
 
 Agent-run target blocks (none in v1 besides `sdr`, which is never a target) define their own
 signal in the slice that introduces the agent. The sweep (S3 job, every 15 min) both detects
@@ -175,14 +190,16 @@ to UTC for queries. Every count below is `org_id`-filtered. Ratios are **fractio
 the numerator and denominator stored beside them; a ratio with denominator 0 is `null`, never 0.
 Aggregating over a period sums numerators and denominators — never averages daily ratios.
 
-### 3.2 Rubric `sdr.v1` — Julia (`bloco='sdr'`, `agent_key='julia'`)
+### 3.2 Rubric `sdr.v2` — Julia (`bloco='sdr'`, `agent_key='julia'`)
 
 | metric (`metricas` key) | formula | source |
 |---|---|---|
 | `leads_entrada` | count `julia_contatos` with `created_at` in the window | julia_contatos (267) |
-| `tpr_n` | count `julia_interacoes` with `iniciada_at` in window and `primeira_resposta_at IS NOT NULL` | julia_interacoes (267) + `primeira_resposta_at` (286) |
-| `tpr_p50_s`, `tpr_p90_s` | over those episodes, `extract(epoch from primeira_resposta_at - iniciada_at)`; nearest-rank percentile: sort ascending, take element `ceil(q·n)` (1-based), q = 0.5 / 0.9; `null` when `tpr_n = 0` | same |
-| `tpr_sem_resposta` | episodes started in window with `primeira_resposta_at IS NULL` at computation time | same |
+| `tpr_n` | count `julia_interacoes` with `iniciada_at` in window and `primeira_resposta_agente_at IS NOT NULL` (**Julia's own reply only**; a person's reply never counts, julia-v2 G1) | julia_interacoes (267) + `primeira_resposta_agente_at` (288) |
+| `tpr_p50_s`, `tpr_p90_s` | over those episodes, `extract(epoch from primeira_resposta_agente_at - iniciada_at)`; nearest-rank percentile: sort ascending, take element `ceil(q·n)` (1-based), q = 0.5 / 0.9; `null` when `tpr_n = 0` | same |
+| `tpr_sem_resposta` | episodes started in window with `primeira_resposta_agente_at IS NULL` at computation time (answered only by a person, or not at all) | same |
+| `tpr_humano_n`, `tpr_humano_p50_s`, `tpr_humano_p90_s` | the same over `primeira_resposta_humana_at` (a person's first reply from the inbox) — **reported beside Julia's, never credited to her** | julia_interacoes + `primeira_resposta_humana_at` (288) |
+| `respondidos_por_humano_antes_do_agente` | episodes started in window with `primeira_resposta_humana_at` set and (`primeira_resposta_agente_at IS NULL` or the human reply earlier) | same |
 | `qualificados` | distinct `contato_id` in `julia_envio_entregas` with `status='ok'`, `gatilho IN ('qualificado','visita','captacao')`, `created_at` in window | julia_envio_entregas (270) |
 | `qualificacao_taxa` | `qualificados / leads_entrada` | — |
 | `frios`, `frio_taxa` | same as `qualificados` with `gatilho='frio'`; `/ leads_entrada` | julia_envio_entregas |
@@ -195,12 +212,22 @@ Aggregating over a period sums numerators and denominators — never averages da
 | `handoffs_emitidos` | count `atendimento_handoffs` with `de_bloco='sdr'`, `created_at` in window | atendimento_handoffs (286) |
 | `handoffs_nao_assumidos` | of those: `status='expirado'`, or `status='emitido'` and `created_at + horas_para_assumir <= calculado_at` | same + supervisao_config |
 | `horas_para_assumir` | the threshold used (so the number is reproducible) | supervisao_config |
+| `falhas_registro`, `dados_incompletos` | **every block's** scorecard (not only `sdr`): count of `julia_eventos` `tipo='supervisao_falha'` in the window (§5.7); `dados_incompletos = falhas_registro > 0`, so a day whose supervision hooks failed never reads clean | julia_eventos |
+
+`sdr.v1` (rubric before julia-v2) differed only in `tpr_*`, which read the single `primeira_resposta_at` stamp
+(Julia **or** a person) and so credited human replies to Julia. The version is stored with each scorecard: days
+already scored stay `sdr.v1`; the nightly recompute rewrites the last 7 days as `sdr.v2`.
 
 **Data gaps this contract closes (S2):**
-- `primeira_resposta_at` (added by 286) — written once, in the lead-turn deliver path, on the
-  first outbound of the open episode (Julia or a human from the inbox):
-  `UPDATE julia_interacoes SET primeira_resposta_at = now() WHERE id = :episodio AND primeira_resposta_at IS NULL`.
-  Episodes before S2 stay `null` and are reported as `tpr_sem_resposta`, never estimated.
+- First response, **split by who sent it** (286 added `primeira_resposta_at`; julia-v2 G1 / migration 288 split it):
+  `primeira_resposta_agente_at` is written once by Julia's own reply (`_deliver`, RESPONSE flow only — a
+  re-engagement is not a response) and `primeira_resposta_humana_at` once by a person's inbox send on a Julia line
+  (`whatsapp_connections_router`), each as `UPDATE ... SET <col> = now() WHERE id = :episodio AND <col> IS NULL`
+  (`julia_contatos_service.registrar_primeira_resposta(..., por='agente'|'humano')`). The legacy
+  `primeira_resposta_at` is still written (first of either) for one release —
+  `NOC-REMEDIATE[drop-primeira-resposta-at]`. Backfill (288): the old stamp is copied into a split column only where
+  provable — an outbound message of that kind (Julia's rows carry `structured_payload.origem='julia'`) within ±5 s;
+  otherwise it stays `null` and is reported as `tpr_sem_resposta`, never estimated.
 - Human-handoff motivo is not persisted today (only inside the in-app notification text written
   by `julia_agente_service.notificar_handoff`). S2 makes `_apply_handoff` emit `julia_eventos`
   `tipo='handoff'` with payload `{motivo_codigo}` — a CLOSED code mapped from the free text
@@ -220,13 +247,15 @@ an `ativo` human block gets only the handoff metrics (`handoffs_recebidos`,
 ### 3.4 Report to the owner (S3) — read-only, owner only
 
 - **In-app:** once per day after the scorecards are computed, `julia_eventos_service.emitir(...,
-  "relatorio", contato_id=None, payload={"origem": "supervisao", "dia": "YYYY-MM-DD"})`. The
+  "relatorio", contato_id=None, payload={"origem": "supervisao", "dia": "YYYY-MM-DD", "falhas_registro": N})`. The
   generic fan-out sends a contato-less event to owners **and admins**; S3 adds the rule
   `payload.origem == "supervisao"` ⇒ recipients = `noctus_users.org_role == 'owner'` only.
   Payload carries the day only — the notification links to `/supervisao?dia=…`.
 - **Email:** a `BaseDigestService` subclass (`SupervisaoDigestService`, seed
   `noctusai_lib.domain.digest`) — same scorecards, recipients = the org's owners' emails, daily.
 - Both are gated by `supervisao_ativa`. Neither ever goes to a lead or a lead-facing channel.
+- **Failures are counted (julia-v2 G4):** the report payload carries the day's `falhas_registro`, and the email
+  narrative adds "ATENÇÃO: N falha(s) de registro da supervisão no dia — os números podem estar incompletos".
 
 ---
 
@@ -295,10 +324,12 @@ resulting configuration before writing anything, then writes rows whose `etapas`
   "dia": "2026-10-18",
   "supervisao_ativa": true,
   "scorecards": [
-    {"bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v1",
+    {"bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v2",
      "calculado_at": "2026-10-19T06:00:12Z",
      "metricas": {"leads_entrada": 31, "tpr_n": 28, "tpr_p50_s": 42.0, "tpr_p90_s": 610.0,
-                  "tpr_sem_resposta": 3, "qualificados": 9, "qualificacao_taxa": 0.2903,
+                  "tpr_sem_resposta": 3, "tpr_humano_n": 2, "tpr_humano_p50_s": 45.0, "tpr_humano_p90_s": 130.0,
+                  "respondidos_por_humano_antes_do_agente": 1, "falhas_registro": 0, "dados_incompletos": false,
+                  "qualificados": 9, "qualificacao_taxa": 0.2903,
                   "frios": 4, "frio_taxa": 0.129, "invalidos": 2, "invalido_taxa": 0.0645,
                   "entregas_manuais": 1, "envios_bloqueados": 2,
                   "envios_bloqueados_por_motivo": {"fora_da_janela": 2},
@@ -371,6 +402,16 @@ nightly job computes scorecards; turning it OFF stops both and keeps the history
    `*_status_pagina_dev_visibility.sql`).
 6. **Recording never blocks the flow it observes**: a sink/hook/job failure is logged and never
    undoes a send, a stage move or an accept.
+7. **…but a swallowed failure is never silent** (julia-v2 G4). Every `except` in the supervision hooks — the
+   handoff sink (`handoff_novo_lead`), the block-boundary hook (`handoff_movimento`, `handoff_movimento_leitura`), the
+   accept path (`handoff_aceite`, `aceite_movimento`, and the missing actor `aceite_sem_ator`), the membership lookup
+   (`membership_lookup`) and the first-response stamps (`primeira_resposta_agente`, `primeira_resposta_humana`) —
+   keeps its ERROR log AND calls `supervisao.alertas.alertar(client, org_id, codigo, ids)`:
+   (a) writes a `julia_eventos` row `tipo='supervisao_falha'`, payload `{codigo, dia, ids}` (ids only, no PII — never
+   a chat id, which is a phone number); (b) the notification fan-out sends an in-app notification to the org's
+   **owners only**, deduped per `(org, codigo, SP day)` (the event row is written every time, the notification on the
+   first); (c) the day's scorecards count it (`falhas_registro`, `dados_incompletos`) and the nightly report says so.
+   `alertar` never raises (its own failure logs CRITICAL); the observed flow is never undone.
 
 ## 6. Slices
 

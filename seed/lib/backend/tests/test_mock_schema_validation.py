@@ -462,3 +462,17 @@ def test_filter_methods_still_chainable():
     )
     result = q.execute()
     assert result.data == []
+
+
+def test_a_partial_table_validates_as_unknown_not_as_its_fragment():
+    """A table the migration chain only knows through `ADD COLUMN` (its CREATE is behind dynamic DDL) lists the ADDED
+    columns, not the table's: rejecting every other real column was a false failure (social-wiring 287/288)."""
+    from noctusai_lib.testing import _schema_cache
+
+    set_cache_for_tests({"social_wiring.julia_interacoes": {"primeira_resposta_agente_at"}})
+    _schema_cache._PARTIAL_CACHE = {"social_wiring.julia_interacoes"}
+    client = MockSupabaseClient(validate_schema=True, schema="social_wiring")
+    client.table("julia_interacoes").select("id,contato_id").eq("org_id", "x").execute()  # no MockSchemaError
+    _schema_cache._PARTIAL_CACHE = set()
+    with pytest.raises(MockSchemaError):
+        client.table("julia_interacoes").select("id,contato_id").execute()

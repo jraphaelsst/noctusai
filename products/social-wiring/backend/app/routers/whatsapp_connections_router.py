@@ -1112,16 +1112,21 @@ async def send_message(
     )
 
     if getattr(record, "agente_leads_ativo", False):
-        # maya-blocks: a human's reply from the inbox on a Julia line can be the episode's first response
-        # (`julia_interacoes.primeira_resposta_at`, written once). Bookkeeping: the message is already out.
+        # maya-blocks / julia-v2 G1: a human's reply from the inbox on a Julia line can be the episode's first HUMAN
+        # response (`julia_interacoes.primeira_resposta_humana_at`, written once; never Julia's response time).
+        # Bookkeeping: the message is already out -- a failure raises a `supervisao_falha` alert (G4).
+        from app.modules.supervisao import alertas as supervisao_alertas
         from app.services import julia_contatos_service
 
+        scoped = get_scoped_admin_client("social_wiring")
         try:
             julia_contatos_service.registrar_primeira_resposta_do_chat(
-                get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id,
+                scoped, org_id, connection_id, chat_id, por="humano",
             )
         except Exception:
-            logger.exception("primeira_resposta_at not stamped conn=%s chat=%s (the message IS sent)", connection_id, chat_id)
+            logger.exception("primeira_resposta_humana_at not stamped conn=%s chat=%s (the message IS sent)", connection_id, chat_id)
+            # ids only: the chat id is the lead's phone number, so it is NOT in the alert
+            supervisao_alertas.alertar(scoped, org_id, "primeira_resposta_humana", {"connection_id": connection_id})
 
     bus = get_whatsapp_bus(settings.redis_url)
     await publish_whatsapp_event(

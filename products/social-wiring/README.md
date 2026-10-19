@@ -26,7 +26,8 @@ Julia is the WhatsApp SDR for a real-estate org (renamed from "Lais" on
 - **Tools for the agent**: agents calls back `POST /api/julia/ferramentas/{nome}` with a product token (scope `social-wiring:lais-tools` — kept under its old spelling until both products rename it).
 - **Pages** (`/julia/*`): Painel, Conversas, Configurações, Agente (link to the Agent Studio), Conhecimento, Perguntas, Visitas, Reengajamento (réguas), Notificações, Envio, Leads, Equipes, Modelos, Disparos, Proprietários, Relatórios, Captação, Avaliações, Crédito. Old `/lais/*` URLs redirect.
 - **Atendimento in blocks** (`app/modules/atendimento_blocos`, `/atendimento-blocos`): SDR (Julia) → atendimento → negociação → jurídico → financeiro → contador, with recorded handoffs.
-- **Maya supervision** (`app/modules/supervisao`, `/supervisao`): nightly scorecards per block, handoff sweep, owner-only daily report.
+- **Maya supervision** (`app/modules/supervisao`, `/supervisao`): nightly scorecards per block (Julia's rubric `sdr.v2`: first response is split agent vs human, only human acts take a handoff over, an accept with no actor still records its juridico handoff), handoff sweep, owner-only daily report; a supervision hook that fails raises a visible owner alert (`supervisao_falha`) and flags the day `dados_incompletos`.
+- **Julia ↔ agents contract**: the per-turn `contexto` SW renders carries only the keys agents' schema accepts (`julia_contexto_service.ESTADO_CHAVES_AGENTS`); a 422 from agents is an integration bug and raises an owner alert (`agents_contrato_invalido`).
 - **Data**: tables `social_wiring.julia_*` (migration 287 renamed them from `lais_*`). Temporary compatibility views `lais_*` remain for the previous image — `NOC-REMEDIATE[drop-lais-compat-views]`. Old `/api/lais/*` URLs are served by a path alias until the next release.
 
 ## Other modules

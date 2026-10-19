@@ -1,6 +1,6 @@
 /**
  * Maya scorecard metrics — labels, formats and the pt-BR definitions shown in
- * tooltips (maya-blocks CONTRACT §3.2 rubric `sdr.v1` + the human-block
+ * tooltips (maya-blocks CONTRACT §3.2 rubric `sdr.v2` + the human-block
  * handoff metrics of §3.2's last paragraph).
  *
  * Missing data: a metric that is `null` (e.g. a ratio with denominator 0, a
@@ -9,7 +9,7 @@
  */
 import type { ValorMetrica } from "@/hooks/useSupervisao";
 
-export type FormatoMetrica = "contagem" | "fracao" | "segundos" | "mapa" | "horas";
+export type FormatoMetrica = "contagem" | "fracao" | "segundos" | "mapa" | "horas" | "sim_nao";
 
 export interface DefinicaoMetrica {
   rotulo: string;
@@ -30,22 +30,42 @@ export const DEFINICOES: Record<string, DefinicaoMetrica> = {
   tpr_n: {
     rotulo: "Conversas respondidas",
     formato: "contagem",
-    definicao: "Conversas iniciadas no dia que já receberam a primeira resposta (da Julia ou de alguém da equipe).",
+    definicao: "Conversas iniciadas no dia que já receberam a primeira resposta da Julia (respostas de pessoas da equipe não entram aqui).",
   },
   tpr_p50_s: {
     rotulo: "Tempo de 1ª resposta (mediana)",
     formato: "segundos",
-    definicao: "Metade das conversas respondidas recebeu a primeira resposta em até este tempo.",
+    definicao: "Metade das conversas respondidas pela Julia recebeu a primeira resposta dela em até este tempo.",
   },
   tpr_p90_s: {
     rotulo: "Tempo de 1ª resposta (p90)",
     formato: "segundos",
-    definicao: "90% das conversas respondidas recebeu a primeira resposta em até este tempo.",
+    definicao: "90% das conversas respondidas pela Julia recebeu a primeira resposta dela em até este tempo.",
   },
   tpr_sem_resposta: {
     rotulo: "Conversas sem resposta",
     formato: "contagem",
-    definicao: "Conversas iniciadas no dia que ainda não tinham nenhuma resposta quando o scorecard foi calculado.",
+    definicao: "Conversas iniciadas no dia que ainda não tinham nenhuma resposta da Julia quando o scorecard foi calculado.",
+  },
+  tpr_humano_n: {
+    rotulo: "Conversas respondidas por pessoa",
+    formato: "contagem",
+    definicao: "Conversas iniciadas no dia em que alguém da equipe enviou a primeira resposta pela caixa de entrada.",
+  },
+  tpr_humano_p50_s: {
+    rotulo: "1ª resposta humana (mediana)",
+    formato: "segundos",
+    definicao: "Metade das conversas respondidas por uma pessoa recebeu a resposta dela em até este tempo. Não conta para a Julia.",
+  },
+  tpr_humano_p90_s: {
+    rotulo: "1ª resposta humana (p90)",
+    formato: "segundos",
+    definicao: "90% das conversas respondidas por uma pessoa recebeu a resposta dela em até este tempo. Não conta para a Julia.",
+  },
+  respondidos_por_humano_antes_do_agente: {
+    rotulo: "Respondidas por pessoa antes da Julia",
+    formato: "contagem",
+    definicao: "Conversas do dia em que uma pessoa respondeu antes da Julia (ou a Julia nem chegou a responder).",
   },
   qualificados: {
     rotulo: "Qualificados",
@@ -140,18 +160,30 @@ export const DEFINICOES: Record<string, DefinicaoMetrica> = {
     formato: "segundos",
     definicao: "90% dos handoffs assumidos foi assumida em até este tempo.",
   },
+  falhas_registro: {
+    rotulo: "Falhas de registro",
+    formato: "contagem",
+    definicao: "Vezes no dia em que um registro da supervisão falhou (handoff, aceite, primeira resposta). O atendimento não foi afetado; os números do dia podem estar incompletos.",
+  },
+  dados_incompletos: {
+    rotulo: "Dados incompletos",
+    formato: "sim_nao",
+    definicao: "“Sim” quando houve falha de registro no dia: não leia este scorecard como completo.",
+  },
 };
 
 /** Display order per rubric family (`sdr.v1`, or any human block `<bloco>.v1`). */
 const ORDEM_SDR = [
   "leads_entrada", "qualificados", "qualificacao_taxa", "frios", "frio_taxa", "invalidos",
-  "invalido_taxa", "tpr_n", "tpr_p50_s", "tpr_p90_s", "tpr_sem_resposta", "entregas_manuais",
+  "invalido_taxa", "tpr_n", "tpr_p50_s", "tpr_p90_s", "tpr_sem_resposta", "tpr_humano_n", "tpr_humano_p50_s",
+  "tpr_humano_p90_s", "respondidos_por_humano_antes_do_agente", "entregas_manuais",
   "envios_bloqueados", "envios_bloqueados_por_motivo", "handoffs_humanos",
   "handoffs_humanos_por_motivo", "handoffs_emitidos", "handoffs_nao_assumidos", "horas_para_assumir",
+  "falhas_registro", "dados_incompletos",
 ];
 const ORDEM_HUMANO = [
   "handoffs_recebidos", "handoffs_assumidos", "assumir_p50_s", "assumir_p90_s",
-  "handoffs_nao_assumidos", "horas_para_assumir",
+  "handoffs_nao_assumidos", "horas_para_assumir", "falhas_registro", "dados_incompletos",
 ];
 
 /** The keys to show for a scorecard: the rubric's expected keys (so a missing
@@ -174,6 +206,7 @@ function duracao(s: number): string {
 export function formatarMetrica(chave: string, valor: ValorMetrica | undefined): string {
   if (valor === null || valor === undefined) return SEM_DADOS;
   const formato = DEFINICOES[chave]?.formato ?? (typeof valor === "number" ? "contagem" : "mapa");
+  if (formato === "sim_nao") return typeof valor === "boolean" ? (valor ? "Sim" : "Não") : SEM_DADOS;
   if (formato === "mapa") {
     if (typeof valor !== "object") return SEM_DADOS;
     const itens = Object.entries(valor);

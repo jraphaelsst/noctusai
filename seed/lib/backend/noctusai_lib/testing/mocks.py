@@ -70,7 +70,13 @@ from unittest.mock import Base as _MockBase  # noqa: F401
 
 from postgrest.exceptions import APIError as _PostgrestAPIError
 
-from noctusai_lib.testing._schema_cache import get_check_map, get_default_map, get_function_map, get_schema_map
+from noctusai_lib.testing._schema_cache import (
+    get_check_map,
+    get_default_map,
+    get_function_map,
+    get_partial_tables,
+    get_schema_map,
+)
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
     MockRowCheckViolation,
@@ -170,6 +176,8 @@ def _resolve_table_entry(
     if not cache:
         return None, None
     qualified = f"{(schema or 'public').lower()}.{table.lower()}"
+    if qualified in get_partial_tables():
+        return qualified, None  # only an ADD COLUMN fragment is known: unknown table, not "these columns only"
     return qualified, cache.get(qualified)
 
 

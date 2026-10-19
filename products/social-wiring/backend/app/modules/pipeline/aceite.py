@@ -13,7 +13,10 @@ initial stage, `motivo='aceite_proposta'`), followed by the block-boundary
 hook. `responsavel_id` is NOT NULL, so `actor_id` -- the user from the route,
 or the actor the `proposta_aceita` funnel event carries -- is required for it;
 an accept without an actor is still an accept (recording never blocks the flow
-it observes) but the missing movement is logged at ERROR, never skipped silently.
+it observes) but the missing movement raises a visible `aceite_sem_ator` alert
+(julia-v2 G4), never a silent skip. The funil -> processos HANDOFF no longer
+depends on the actor: `handoffs.ao_aceite` (T3, julia-v2 G3) records it from the
+processo itself, so an actor-less accept keeps its juridico handoff.
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ from noctusai_lib.domain.pipeline import (
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.atendimento_blocos import handoffs as atendimento_handoffs
+from app.modules.supervisao.alertas import alertar
 from app.modules.pipeline.configs import (
     PIPELINE_FUNIL,
     PIPELINE_PROCESSOS,
@@ -39,7 +43,7 @@ from app.modules.pipeline.configs import (
 logger = logging.getLogger(__name__)
 
 STATUS_ABERTA = "aberta"
-MOTIVO_ACEITE = "aceite_proposta"
+MOTIVO_ACEITE = atendimento_handoffs.MOTIVO_ACEITE
 
 
 def _valor_negociado(client: Any, org_id: str, atendimento_id: str) -> Any:
@@ -178,12 +182,15 @@ def aceitar_proposta(
 def _registrar_movimento_do_aceite(
     client: Any, org_id: str, processo: dict, etapa_inicial: dict, actor_id: Optional[Any]
 ) -> None:
-    """The processo's entry movement + the block-boundary hook. Never raises: the accept already happened."""
+    """T3 (the accept's handoff, actor-independent) + the processo's entry movement + the block-boundary hook.
+    Never raises: the accept already happened."""
+    atendimento_handoffs.ao_aceite(client, org_id, processo)
     if not actor_id:
         logger.error(
             "aceite: processo %s opened without an actor -- its pipeline_movimentos row (responsavel_id NOT NULL) "
-            "is NOT written and no juridico handoff is recorded (org=%s)", processo.get("id"), org_id,
+            "is NOT written (the juridico handoff IS recorded by T3) (org=%s)", processo.get("id"), org_id,
         )
+        alertar(client, org_id, "aceite_sem_ator", {"processo_id": processo.get("id"), "atendimento_id": processo.get("atendimento_id")})
         return
     try:
         movimento = (
@@ -203,6 +210,7 @@ def _registrar_movimento_do_aceite(
         )
     except Exception:
         logger.exception("aceite: could not write the entry movement of processo %s (org=%s) -- the accept stands", processo.get("id"), org_id)
+        alertar(client, org_id, "aceite_movimento", {"processo_id": processo.get("id")})
         return
     if movimento:
         atendimento_handoffs.ao_movimento(client, org_id, movimento[0])

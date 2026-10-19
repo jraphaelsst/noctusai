@@ -86,6 +86,12 @@ class World:
             {"id": MEMBER_ID, "org_id": ORG_ID, "org_role": "member"},
         ])
         self.core.set_table_data("notifications", [])
+        # the org-membership seam of the handoff sweep reads THIS world's core (reset per test by the autouse fixture
+        # in tests/conftest.py). The notification-recipient seam is NOT bound here on purpose: a sink left registered by
+        # an earlier test would otherwise start fanning out in tests that call `notificar` directly.
+        from app.modules.atendimento_blocos import handoffs as _handoffs
+
+        _handoffs.registrar_core_provider(lambda: self.core)
         self.sw.set_table_data("conversation_messages", [])
         self.sw.set_table_data("whatsapp_chats", [])
         self.sw.set_table_data("contacts", [])
@@ -147,6 +153,14 @@ class World:
 
     def notifications(self) -> list[dict[str, Any]]:
         return self.core.table("notifications").select("*").execute().data or []
+
+    def notificar_via_sink(self) -> None:
+        """Bind the `julia_eventos -> in-app notification` sink and point its recipient lookup at THIS world's core
+        (undone by the autouse fixture in tests/conftest.py). For tests asserting an alert's notification."""
+        from app.services import julia_notificacoes_service as _notificacoes
+
+        _notificacoes.registrar()
+        _notificacoes.registrar_core_provider(lambda: self.core)
 
     def sent_texts(self) -> list[str]:
         return [m["text"] for m in self.waha.sent_messages]
