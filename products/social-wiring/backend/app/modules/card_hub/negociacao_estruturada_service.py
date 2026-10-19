@@ -151,7 +151,7 @@ ENDERECO_CAMPOS: tuple[str, ...] = (
 _INTERMEDIARIO_QUALIFICACAO: tuple[str, ...] = (
     "favorecido_id", "pessoa_tipo", "documento", "email", *ENDERECO_CAMPOS,
     "representante_nome", "representante_cpf",
-    # Migration 284 — the representative's own CRECI-F (+ printed region).
+    # Migration 285 — the representative's own CRECI-F (+ printed region).
     "representante_creci", "representante_creci_regiao",
 )
 _INTERMEDIARIO_CAMPOS_EDITAVEIS: tuple[str, ...] = (
@@ -570,7 +570,7 @@ def _normalizar_qualificacao(
         out["representante_cpf"] = rep
 
     if "representante_creci" in valores:
-        # Migration 284 — the representative is a PERSON: their CRECI must
+        # Migration 285 — the representative is a PERSON: their CRECI must
         # carry the printed F suffix (a J here is the company's, already on
         # `creci`). Stored in the seed's canonical form.
         creci = _texto(valores["representante_creci"])

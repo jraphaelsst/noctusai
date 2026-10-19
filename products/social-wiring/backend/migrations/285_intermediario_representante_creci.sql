@@ -26,8 +26,8 @@ ALTER TABLE social_wiring.atendimento_intermediarios
     ADD COLUMN IF NOT EXISTS representante_creci_regiao TEXT;
 
 COMMENT ON COLUMN social_wiring.atendimento_intermediarios.representante_creci IS
-    'CRECI-F of the representative signing for a PJ intermediary (284), '
+    'CRECI-F of the representative signing for a PJ intermediary (285), '
     'canonical "NNNNNN-F[/UF]" — validated by the service (F suffix required).';
 COMMENT ON COLUMN social_wiring.atendimento_intermediarios.representante_creci_regiao IS
     'Region the representative''s CRECI is printed with ("2ª região"), free '
-    'text, rendered beside it (284).';
+    'text, rendered beside it (285).';

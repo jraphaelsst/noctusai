@@ -663,7 +663,7 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     );
   });
 
-  it("o CRECI do representante (migração 284) aparece e é enviado ao salvar", async () => {
+  it("o CRECI do representante (migração 285) aparece e é enviado ao salvar", async () => {
     const COM_REP = {
       ...UM,
       representante_nome: "Sócia Exemplo",

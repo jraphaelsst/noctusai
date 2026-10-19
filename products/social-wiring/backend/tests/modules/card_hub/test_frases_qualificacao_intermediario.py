@@ -75,7 +75,7 @@ def test_pj_representative_is_qualified_by_their_own_creci():
     """Deal 876 cl.13 (signed contract): "COCCI IMÓVEIS LTDA ... CRECI
     040242-J, neste ato representada por sua sócia Ana Maria Cocci, ...,
     corretora de imóveis, Creci 145830-F 2ª região" — the partner's OWN
-    CRECI-F (migration 284), never the company's J. Fixture names/numbers."""
+    CRECI-F (migration 285), never the company's J. Fixture names/numbers."""
     it = _intermediario(
         nome="IMOBILIÁRIA EXEMPLO LTDA", pessoa_tipo="pj", documento="11222333000181",
         creci="040242-J", representante_nome="Fulana de Tal",

@@ -186,7 +186,7 @@ export interface IntermediarioQualificacao {
   endereco_uf: string | null;
   representante_nome: string | null;
   representante_cpf: string | null;
-  /** Migration 284 — the representative's own CRECI-F + printed region. */
+  /** Migration 285 — the representative's own CRECI-F + printed region. */
   representante_creci: string | null;
   representante_creci_regiao: string | null;
 }

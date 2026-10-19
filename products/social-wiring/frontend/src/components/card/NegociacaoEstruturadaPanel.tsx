@@ -164,7 +164,7 @@ const INTERMEDIARIO_COMPLEMENTO_MAX = 120;
 const INTERMEDIARIO_BAIRRO_MAX = 120;
 const INTERMEDIARIO_CIDADE_MAX = 120;
 const INTERMEDIARIO_REPRESENTANTE_NOME_MAX = 255;
-/** `schemas.py` `representante_creci` / `_regiao` (migration 284). */
+/** `schemas.py` `representante_creci` / `_regiao` (migration 285). */
 const INTERMEDIARIO_REPRESENTANTE_CRECI_MAX = 64;
 const INTERMEDIARIO_PAPEL_MAX = 160;
 

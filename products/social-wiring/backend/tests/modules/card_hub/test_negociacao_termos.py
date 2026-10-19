@@ -633,7 +633,7 @@ class TestIntermediarioQualificacao:
         assert item["representante_cpf"] == "529.982.247-25"
 
     def test_the_representantes_own_creci_is_stored_canonical(self, client, scoped):
-        """Migration 284 (deal 876 cl.13): the partner signing for a PJ
+        """Migration 285 (deal 876 cl.13): the partner signing for a PJ
         brokerage is qualified by HER OWN CRECI-F + printed region."""
         cid, _aid = _seed(scoped)
         r = _criar_intermediario(
