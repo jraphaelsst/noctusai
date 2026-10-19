@@ -136,7 +136,7 @@ model only records criterion values through tools; **score and stage are compute
 
 - **Library** (migration 032): `qualificacao_padroes/_versoes/_criterios/_estagios/_parametros`;
   a published version is immutable (triggers); `agent_versions.qualificacao_versao_id` pins one.
-  Reading, authoring and publish (rule validation, 422 with every problem) are platform-admin only (criteria, weights and rules are platform IP; orgs and SW only get the computed state):
+  Reading, authoring and publish (rule validation, 422 with every problem) are platform-admin only (criteria, weights and rules are platform IP; orgs and SW only get the computed state); the `studio:content-write` token (the `noctus.agents.content` MCP tool) may read and write DRAFTS, never publish:
   `/api/qualificacao/*`.
 - **Criteria** carry a score `eixo` (several named axes + the total), `escopo` (sdr / financeiro / ...:
   a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
@@ -153,6 +153,34 @@ model only records criterion values through tools; **score and stage are compute
 - **Lead identity** (`identificacao.py`): name/e-mail/CPF/RG apart from the records, CPF/RG Fernet-encrypted
   with the fleet `ENCRYPTION_KEY`, masked by default, clear text only for org owner/admin via an audited
   endpoint; 180-day retention and delete-by-lead cover it.
+
+## Shared skill library (Julia v2, `app/stores/skills_biblioteca.py`, migration 039)
+
+Agents use skills instead of their own judgement, from ONE standardised, versioned library used the same way by
+every agent (CONTRACT D7/D8). Skill text is DB data; code carries no skill content.
+
+- **Library** (platform-wide, no org): `skills_biblioteca` (key + admin label) -> `skill_versoes` (the one-line
+  index description the model sees + the body; draft / published / archived, a published version is immutable by
+  trigger) -> `skill_versao_arquivos` (reference files). Service-role only: no tenant grant on any of the four
+  tables (IP). Authoring is platform-only: `/api/skills-biblioteca/*` (platform admin, or the `studio:content-write`
+  token for DRAFTS; publishing a skill version stays a human act, 403 `user_required` for the token).
+- **Pins**: `agent_version_skill_refs(version_id, skill_versao_id, obrigatoria_para[], ordem)` pins a library
+  version to an agent version (`obrigatoria_para` = the tools that refuse until the skill was opened in the thread).
+  A new draft inherits the pins by an AFTER INSERT trigger; a pin change invalidates the draft's `compiled_hash`
+  and the pins are hash-covered (`compiler.hash_payload`, only when the version pins any). Pin / re-pin / unpin on
+  the draft: `PUT|DELETE /api/studio/agents/{key}/draft/skills-biblioteca/{skill}`; each pin carries the
+  "new version available" indicator (`nova_versao`).
+- **Compiler**: a pinned skill joins the `# Skills` index (key + description) and the on-demand layer
+  (`abrir_skill` / `ler_arquivo_skill`); a gate on a tool the code does not know is a blocking warning.
+- **Runtime interface** (`app/studio/skills_contract.py`, tiny, imported by the compiler and by the runtime):
+  `SkillsRuntime.skill_refs_for(version_id) -> [SkillRef(skill_key, skill_versao_id, obrigatoria_para, ...)]` and
+  `abrir(skill_key, skill_versao_id) -> SkillAberta(corpo, arquivos) | None` (the PINNED version, never "latest").
+  Every compile site reads the pins through one slot (`studio.bundles.configure_skill_refs_provider`, wired by
+  `install_studio_seams`), so a hash can never differ by call site.
+- **MCP**: `noctus.agents.content` (`mcp/noctusai/tools/noctus/agents/content.py`) writes any content kind
+  (sections, textos, ferramentas, decisoes, spec declarations, library skills + pins, standard criteria/stages/
+  parameters) into a target environment through these routes: drafts only, dry-run by default, payload from a
+  file outside git, token from `NOCTUS_AGENTS_CONTENT_TOKEN`.
 
 ## What the framework provides automatically
 

@@ -1,6 +1,7 @@
 """``noctus.*`` tool umbrella — Noctus-owned MCP tools.
 
 Sub-umbrellas:
+  - ``noctus.agents.*`` — agents Studio content tools (``content``: draft-only DB writes of an agent's definition).
   - ``noctus.dev.*`` — developer-experience tools (28 modules; ships today).
   - ``noctus.graph.*`` — queryable knowledge graph (build/query/neighbors/path/explain/report).
   - ``noctus.hound.*`` — code-hygiene orchestrator (runs the absorption
@@ -23,8 +24,9 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool under the ``noctus.*`` umbrella."""
-    from . import dev, graph, hound, photo_editing, seed, team, transcription, youtube
+    from . import agents, dev, graph, hound, photo_editing, seed, team, transcription, youtube
 
+    agents.register_all(server)
     dev.register_all(server)
     graph.register_all(server)
     hound.register_all(server)

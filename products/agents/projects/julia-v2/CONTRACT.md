@@ -769,7 +769,7 @@ Numbers are computed at scaffold time with `noctus.dev.scaffold_migration` / `ne
 | `julia_v2_threads_constraints` | M4 (NOT NULL/CHECK, uniqueness swap). Applied after M3 is verified. |
 | `julia_v2_controles` | `agents.modo_operacao`, `dreno_inatividade_dias`, `ativo` sync trigger |
 | `julia_v2_conformidade` | `conformidade_regras`, `conformidade_violacoes` |
-| `julia_v2_skills_compartilhadas` | `skills_biblioteca(id, org_id NULL, nome, …)`, `skill_versoes`, `agent_version_skill_refs(version_id, skill_versao_id, obrigatoria_para TEXT[])` |
+| `julia_v2_skills_compartilhadas` (039) | `skills_biblioteca(id, chave, nome, descricao)` (platform-wide: **no `org_id`**, Q2 — same as `qualificacao_padroes`), `skill_versoes` (index description + body, immutable once published), `skill_versao_arquivos`, `agent_version_skill_refs(version_id, skill_id, skill_versao_id, obrigatoria_para TEXT[], ordem)` (hash-covered; copied into new drafts by an AFTER INSERT trigger). Service-role only (IP). Runtime interface: `app/studio/skills_contract.py`. |
 | `julia_v2_evals_roteiro` | `eval_cases.roteiro JSONB NULL`, `asserts JSONB NULL`, `suite TEXT NULL` (`mecanismo|comportamento`) |
 
 **Content is not seeded in migrations** (D3). The only exception is the CHECK/enum structure.
