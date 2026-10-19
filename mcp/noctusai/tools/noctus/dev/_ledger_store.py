@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Protocol, runtime_checkable
 
+from ._pii_guard import assert_rows_clean
+
 logger = logging.getLogger(__name__)
 
 LEDGERS_BRANCH = "ledgers"
@@ -170,6 +172,7 @@ class FileLedger:
 
     def append(self, lines: Iterable[str], *, message: str, publish: bool = True) -> dict:
         rows = _norm_lines(lines)
+        assert_rows_clean(self.name, rows)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if rows:
             with self.path.open("a", encoding="utf-8") as fh:
@@ -303,6 +306,7 @@ class GitLedgerStore:
     def append(self, name: str, lines: Iterable[str], *, message: str, publish: bool = True) -> dict:
         self._check_name(name)
         rows = _norm_lines(lines)
+        assert_rows_clean(name, rows)
         with self._locked() as d:
             if rows:
                 with (d / name).open("a", encoding="utf-8") as fh:

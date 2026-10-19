@@ -16527,6 +16527,71 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
 }
 
 
+# `check_ledger_pii` — personal data in a permanent ledger / history file.
+# THE INCIDENT (2026-10-19, security audit): a live-extraction probe wrote a
+# real person's valid CPF + marriage date, and a customer phone number, into
+# `project-history/auto-improvement.ndjson`, which the append-only
+# `origin/ledgers` branch replicates forever. REFUSE, don't redact: the
+# runtime twin is `_pii_guard.assert_no_pii` on every ledger writer; this is
+# the commit-time backstop for hand-edits and writers that bypass the guard.
+# Detection (CPF/CNPJ check digit, BR phone shape, labelled RG/dates) lives in
+# `tools/noctus/dev/_pii_guard.py` — one definition, two enforcement points.
+# Findings name file:line + KIND, never the value.
+_LEDGER_PII_SKIP_SUFFIXES = (".patch", ".jpeg", ".jpg", ".png", ".gif", ".webp", ".pdf")
+
+
+def _is_ledger_pii_path(rel: str) -> bool:
+    if rel.endswith(_LEDGER_PII_SKIP_SUFFIXES):
+        return False
+    if rel.startswith("project-history/"):
+        return True
+    name = rel.rsplit("/", 1)[-1]
+    if name == "findings.md":
+        return True
+    return rel.endswith((".ndjson",)) and not rel.startswith(("mcp/", "node_modules/"))
+
+
+def check_ledger_pii(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag personal data (CPF/CNPJ with valid check digit, BR phone, non-team
+    email, labelled RG, labelled personal date) in ledger/history files.
+
+    `paths=None` audits every tracked `project-history/**` text file, every
+    `findings.md` and every `*.ndjson` outside `mcp/`. `paths=[...]`
+    (pre-commit mode) scopes to the staged files. Severity `critical`; no
+    suppression marker (a ledger row is permanent).
+    """
+    from tools.noctus.dev._pii_guard import find_pii
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    if paths is not None:
+        rels = [p for p in paths if _is_ledger_pii_path(p)]
+    else:
+        out = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+        rels = [p for p in out.stdout.splitlines() if _is_ledger_pii_path(p)]
+    for rel in sorted(set(rels)):
+        f = root / rel
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for kind, (start, _end) in find_pii(text):
+            line = text.count("\n", 0, start) + 1
+            findings.append({
+                "file": rel,
+                "line": line,
+                "kind": kind,
+                "severity": "critical",
+                "issue": (f"{rel}:{line} carries a {kind} (value withheld). Ledgers are "
+                          f"permanent - replace it with an id or `[REDACTED-{kind}]`."),
+            })
+    return findings
+
+
 def _detector_function_names() -> list[str]:
     """Parse this module and return every top-level `check_*` function name.
 

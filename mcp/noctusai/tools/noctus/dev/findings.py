@@ -12,6 +12,8 @@ from pathlib import Path
 
 from settings import REPO_ROOT
 
+from ._pii_guard import PiiLedgerError, assert_no_pii
+
 _CATEGORIES = ("Slips", "Errors", "Mistakes", "Lessons", "Interesting findings")
 
 
@@ -41,6 +43,11 @@ def findings_append(
             "error": f"no findings.md for project {project_slug!r} "
             f"(searched projects/ + products/*/projects/ + core/projects/)",
         }
+
+    try:
+        assert_no_pii({"entry": entry, "provenance": provenance or ""}, field="findings")
+    except PiiLedgerError as exc:
+        return {"ok": False, "error": str(exc), "pii_kind": exc.kind, "pii_field": exc.field}
 
     text = path.read_text()
     line = f"- **{provenance}** — {entry}" if provenance else f"- {entry}"

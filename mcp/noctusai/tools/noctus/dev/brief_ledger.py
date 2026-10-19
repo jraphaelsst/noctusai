@@ -34,6 +34,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
+from ._pii_guard import assert_no_pii
+
 
 def _ledger_path() -> Path:
     """Lazy REPO_ROOT lookup so test fixtures can monkeypatch."""
@@ -84,6 +86,7 @@ def append(
         }
         if full_brief:
             entry["full_brief_excerpt"] = full_brief[:1000]
+        assert_no_pii(entry, field="brief_ledger")
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         try:

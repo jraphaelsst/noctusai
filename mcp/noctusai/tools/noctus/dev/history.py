@@ -68,6 +68,7 @@ from pydantic import BaseModel, Field, ConfigDict
 # REPO_ROOT comes from settings per the centralization rule
 # (`feedback_mcp_path_constants_from_settings.md`).
 from settings import LEDGER_ROOT, REPO_ROOT
+from tools.noctus.dev._pii_guard import assert_no_pii
 from workspace import resolve_caller_root
 
 # Shared tokenizer cascade — N=2 absorption with cost_evaluation.
@@ -502,6 +503,9 @@ def history_record(
         ),
         outcome_signals=outcome_signals or [],
     )
+
+    # Ledgers are permanent: refuse personal data (raises PiiLedgerError).
+    assert_no_pii(record.model_dump(), field="history_record")
 
     # Append to NDJSON ledger. One JSON object per line. UTF-8.
     target = ledger_path or (root / "project-history" / "ledger.ndjson")

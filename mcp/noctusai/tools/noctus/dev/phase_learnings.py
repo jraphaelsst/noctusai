@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._pii_guard import assert_no_pii
+
 # Module is imported by both library callers and FastMCP tool registration.
 # Top-level import time stays cheap — only stdlib + Path.
 
@@ -114,6 +116,8 @@ def log_learning(
         raise ValueError("learning_text must be non-empty")
     if learning_kind not in _VALID_KINDS:
         raise ValueError(f"learning_kind must be one of {_VALID_KINDS}, got {learning_kind!r}")
+    assert_no_pii({"phase_title": phase_title or "", "learning_text": learning_text},
+                  field="phase_learning")
     by = created_by or os.environ.get("NOCTUS_AGENT_ID") or "unknown"
     conn = _connect(db_path)
     try:

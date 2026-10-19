@@ -584,6 +584,25 @@ if [[ -n "$STAGED_ANON_GRANT_SURFACE" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-septies-bis. Ledger PII gate (blocking, critical, NO suppression) ─
+# Keeper `check_ledger_pii`. THE INCIDENT (2026-10-19): a valid CPF + a
+# marriage date + a customer phone number were written into
+# project-history/auto-improvement.ndjson (replicated to the append-only
+# origin/ledgers branch). Ledgers are permanent, so the gate REFUSES instead
+# of redacting. Diff-scoped to staged ledger/history/findings files.
+STAGED_LEDGER_PII_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^project-history/|(^|/)findings\.md$|\.ndjson$' | grep -vE '^mcp/|\.(patch|jpe?g|png|gif|webp|pdf)$' || true)
+if [[ -n "$STAGED_LEDGER_PII_SURFACE" ]] && have_py; then
+    echo "[pre-commit] Ledger/history file staged — checking for personal data (LGPD)..."
+    STAGED_LEDGER_PII_SURFACE_CSV=$(echo "$STAGED_LEDGER_PII_SURFACE" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-ledger-pii --paths "$STAGED_LEDGER_PII_SURFACE_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ledger-pii check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A staged ledger/history file carries a CPF/CNPJ/phone/email/RG/personal date." >&2
+        echo "[pre-commit] Replace it with an id or [REDACTED-<kind>]; ledgers are permanent." >&2
+        echo "[pre-commit] KB § PATTERNS/security/lgpd.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-octies. Piped-exit-code-pattern gate (ADVISORY, non-blocking) ────
 # Keeper `check_piped_exit_code_pattern` (KB § PATTERNS/common/methodology-
 # execution-discipline.md § 6, "verdict-channel integrity"). Flags `$?` (or

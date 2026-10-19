@@ -347,3 +347,7 @@ minted at read time — never a persisted or public link. See
 for the canonical pattern.
 
 **Activation ships as data, never as code.** `119_cliente_identidade_ativacao.sql` is a single `UPDATE ... SET ativo = true WHERE tipo_documento IN ('rg', 'cpf')` — no `CREATE TABLE`, no `ALTER TABLE`, no new CHECK. The lesson generalizes: when a category is withheld pending an intake, wire everything downstream of the gate FIRST (extraction, retention, access log) and leave literally one boolean for the activation migration to flip once the register entry above exists — a withheld category with unfinished downstream wiring would make "flip the flag" the wrong migration to write.
+
+## Ledgers never hold personal data (2026-10-19)
+
+Append-only ledgers (`project-history/**`, `origin/ledgers`, findings) are permanent, so personal data is **refused at write time, never redacted afterwards**. Runtime: `tools/noctus/dev/_pii_guard.assert_no_pii` runs inside every `Ledger.append` (Fake + Real) and the findings / history_record / brief_ledger / phase_learning writers; it raises `PiiLedgerError` naming the kind and field, never the value. Commit time: keeper `check_ledger_pii` (`--check-ledger-pii`, pre-commit, staged ledger files). Detection: CPF/CNPJ need a valid check digit, phone needs the BR shape, RG and personal dates need their label. Incident: a live-extraction probe wrote a real CPF + marriage date and a customer phone into `auto-improvement.ndjson`. Reference ids, not values.
