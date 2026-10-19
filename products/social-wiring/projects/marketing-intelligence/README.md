@@ -38,6 +38,7 @@ The share pages render with JavaScript (a plain fetch returns only the title); t
 | `DECISIONS.md` | What the owners asked for (decided) vs what ChatGPT proposed (unvalidated), and the open questions. |
 | `specs/simec.md` | SIMEC: modules, reliability rules, cadence, v2 automation architecture, comments module, API limits, LGPD. |
 | `specs/central-editorial.md` | Central Editorial: EBAC syllabus mapping, environments, commands, loop with SIMEC, SIMEC-vs-Central matrix. |
+| `specs/simec-api-contract.md` | SIMEC P1 backend contract (`/api/simec/...`): config layers, readouts, cell statuses, error shapes, empty states. The FE SIMEC page (P1 S3) builds against it. |
 | `specs/phase0-audit.md` | Architect Phase-0 audit (2026-10-15): what already ships, metric feasibility on our own collection, module split, build order, owner questions. |
 | `specs/ar3-method.md` | AR3 rules, numbers, command, and its first application's skeleton. |
 | `content/ar3-01-maternidade-maturidade-vida-adulta.md` | AR3 application 01, the full tree (3 roots → 729 microthemes): a ready topic bank for Mônica's content. |
@@ -49,7 +50,8 @@ The kits are **ChatGPT-generated drafts**, kept verbatim as source material — 
 
 ## Status
 
-Reference only — **no code yet**. Nothing named SIMEC / Metricool / AR3 exists in the codebase (checked 2026-10-15). Before building, run seed-first discovery: social-wiring already has Instagram components, Segundo Cérebro, Pesquisa, geração, and Meta integrations that may cover parts of the data collection Metricool was proposed for.
+- **SIMEC P1 backend (S1 + S2) built 2026-10-19:** seed calculator `seed/lib/backend/noctusai_lib/domain/content_performance/` (pure, every number is config, golden-tested against the SIMEC 1.0 workbooks) + `products/social-wiring/backend/app/modules/simec/` (migration `284_simec.sql`, org/profile config layers, readouts over our Instagram snapshots, Fake demo source). Contract: `specs/simec-api-contract.md`. Next: P1 S3 (FE page); Mônica connects her Instagram (P0).
+- Central Editorial, AR3 and the comment bank: reference only, no code yet.
 
 ## Sensitivity
 
