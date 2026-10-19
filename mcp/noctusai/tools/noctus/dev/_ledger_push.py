@@ -49,6 +49,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from tools.noctus.dev._push_verdict import classify_push_failure, resolve_ref
 from tools.noctus.dev._benign_stash import (
     classify_dirty,
     commit_ledger_rows,
@@ -304,10 +305,23 @@ def _push_leg(
             }
 
         # 4. FF-push HEAD → dev.
-        rc_p, _, err_p = g("push", remote, f"HEAD:{dev_branch}")
+        before = resolve_ref(g, dev_ref)
+        rc_p, out_p, err_p = g("push", remote, f"HEAD:{dev_branch}")
         if rc_p == 0:
             return {"ok": True, "status": "pushed", "pushed": True}
         last_err = (err_p or "").strip()
+        pf = classify_push_failure(g, remote, dev_branch, before, out_p, err_p)
+        if pf["kind"] != "race":
+            # A hook (or other non-race failure) said no: retrying cannot help.
+            logger.warning("%s: push to %s rejected (%s); not retried: %s",
+                           _log_prefix, dev_branch, pf["kind"], pf["tail"])
+            return {
+                "ok": False, "committed_locally": True, "retryable": False,
+                "push_failure": pf["kind"], "hook_output": pf["tail"],
+                "error": (f"push to {dev_branch} rejected ({pf['kind']}); {remote}/{dev_branch} "
+                          f"did not move, so this is not a concurrent-push race. "
+                          f"Output tail:\n{pf['tail']}"),
+            }
         # push rejected (concurrent-push race) → loop re-fetches + re-rebases.
 
     logger.warning(

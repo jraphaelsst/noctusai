@@ -195,28 +195,7 @@ def _git(runner, *args, cwd: str | None = None, dev_branch: str = "dev") -> tupl
     return runner(["git", *args], cwd=cwd)
 
 
-_FF_REJECT_RE = re.compile(r"non-fast-forward|fetch first|stale info|tip of your current branch is behind",
-                           re.I)
-
-
-def _classify_push_failure(git, remote: str, dev_branch: str, before: str | None,
-                           out: str, err: str) -> dict[str, Any]:
-    """Classify a failed `git push` (verdict-channel integrity).
-
-    race          non-fast-forward rejection AND/OR the remote ref advanced -> retry
-    hook_rejected remote unchanged, rejection names a hook / hook exit != 0
-    push_failed   remote unchanged, any other failure
-    """
-    text = "\n".join(x for x in (out, err) if x and x.strip())
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    tail = "\n".join(lines[-40:])
-    git("fetch", remote, "--quiet")
-    after = _resolve(git, f"{remote}/{dev_branch}")
-    advanced = bool(before and after and before != after)
-    if advanced or _FF_REJECT_RE.search(text):
-        return {"kind": "race", "remote_advanced": advanced, "tail": tail}
-    kind = "hook_rejected" if re.search(r"hook|pre-push|UPDATE ", text) else "push_failed"
-    return {"kind": kind, "remote_advanced": False, "tail": tail}
+from tools.noctus.dev._push_verdict import classify_push_failure as _classify_push_failure  # noqa: E402
 
 
 def _resolve(git, ref: str) -> str | None:

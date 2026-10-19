@@ -507,3 +507,38 @@ class TestLedgerRowsAreCommittedNeverStashed:
         commits = [c for c in r.calls if _sub(c) == "commit"]
         assert len(commits) == 1
         assert commits[0][-1] == "project-history/worktree-salvage.ndjson"
+
+
+# ── push-failure verdict (hook rejection is not a race) ────────────────────────
+class _HookRunner(FakeRunner):
+    def __init__(self, *a, push_err="", **k):
+        super().__init__(*a, **k)
+        self.push_err = push_err
+
+    def __call__(self, cmd, cwd=None):
+        if _sub(cmd) == "push":
+            self.calls.append(list(cmd))
+            return 1, "", self.push_err
+        return super().__call__(cmd, cwd)
+
+
+class TestPushFailureVerdict:
+    def test_hook_rejection_is_not_retried_and_surfaces_output(self):
+        r = _HookRunner(push_err="UPDATE KNOWLEDGE-BASE/02-LANDSCAPE.md\nerror: failed to push some refs")
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/branch-tree.ndjson"],
+            commit_msg="chore: x", already_committed=False,
+        )
+        assert res["ok"] is False and res["push_failure"] == "hook_rejected"
+        assert res["retryable"] is False
+        assert "UPDATE KNOWLEDGE-BASE/02-LANDSCAPE.md" in res["hook_output"]
+        assert "concurrent" not in res["error"].replace("not a concurrent", "")
+        assert len(r.pushes()) == 1
+
+    def test_non_ff_rejection_still_retries_once(self):
+        r = _HookRunner(push_err="! [rejected] non-fast-forward")
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/branch-tree.ndjson"],
+            commit_msg="chore: x", already_committed=False,
+        )
+        assert res["ok"] is False and len(r.pushes()) == 2
