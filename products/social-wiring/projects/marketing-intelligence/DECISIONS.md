@@ -32,11 +32,39 @@ Rule (same as `../core-studio/DECISIONS.md`): nothing is guessed. Every line say
 ## Decided by the owner — 2026-10-16 (after the Phase-0 audit, `specs/phase0-audit.md` §6)
 
 - **One org per person.** Mônica, Gilson and Isadora each get their own org; clients get their own org too. Isolation comes from the existing org-level RLS, so no per-marca grants are needed (closes audit risk 1).
-  - Consequence: Gilson's and Isa's marcas (and their Criação de Mídia rows, `integration_accounts`, Instagram snapshots) currently live in the shared org and must be **migrated to their new orgs**. That's a dedicated data-migration slice before P7.
-  - Isa works on all three, so she needs membership in all three orgs. Verify that SSO/org switching supports multi-org membership before the split.
+  - ~~Consequence: a data migration out of a shared org.~~ Superseded 2026-10-19: the orgs already exist and hold no Instagram data (see below).
 - **Comment bank: keep everything; only the owner and admins can see it.** No automatic deletion; raw comment text is readable only by the org's owner and admins (closes audit risk 2 as far as the owner is concerned).
   - ⚠️ Note for the record: indefinite retention of sensitive data (LGPD art. 11) runs against the necessity and storage-limitation principles (art. 6 III, art. 15–16). Mitigations kept in the design regardless: authors pseudonymised by HMAC (no usernames), anonymised quotes in reports, a ROPA entry, and the `purge_at` column present (null = keep) so a retention period can be set later without a migration.
 - **Skip TikTok for now.** Phase P6 (seed TikTok adapter, `modules/tiktok`, SIMEC-TikTok) is removed from the current roadmap until the owner says otherwise. Everything is built for Instagram; the SIMEC calculator still keeps per-platform denominators so TikTok can be added later.
+
+## Decided by the owner — 2026-10-19
+
+- **Nothing hardcoded — every SIMEC number is configuration.** "Pure code" means only that the calculator has no I/O (it never touches the database or the network), so it can be tested against the workbooks. It does **not** mean fixed numbers. The split:
+  - **Code (the operations):** a ratio over reach, a sum of interactions, a check that a reading falls inside its window, deduplication, a comparison against the profile's own baseline. These are verbs, not values.
+  - **Configuration (stored per org and per profile, editable without a deploy):**
+    - reading windows and their tolerance. The workbook has `7d` = 7–10 days after posting and `30d` = 30–35 days fixed inside its formulas; the chat also asked for 72 h. All of these become config rows.
+    - which indicators are computed (numerator, denominator, label), so an indicator can be added or removed without code;
+    - the baseline lookback (the chat's first audit covers 60–90 days) and the minimum sample before a baseline counts;
+    - alert thresholds, defined as deviations from the profile's own baseline, never universal cut-offs (SIMEC rule);
+    - which metrics each platform actually provides, so a missing metric shows as "not available" and is never estimated;
+    - the review cadence (weekly, monthly) and the decision-validation period (the chat said 4 weeks).
+  - The workbook's 200-row limit is a spreadsheet artifact and goes away.
+  - Defaults ship as seed config, the values the methodology recommends. An org can override them, and every readout records which config version produced it, so numbers stay traceable (reliability rule 1).
+- **Org map: one org per person for their personal brand, separate from their companies.** Checked against the database on 2026-10-19:
+
+  | Org | Purpose | State today | Action |
+  |---|---|---|---|
+  | Mônica Tangerino (`indv_monica-tangerino`) | Mônica's personal brand | exists, Mônica owner, marca "Mônica Tangerino" | **SIMEC pilot lands here** |
+  | Nós no Limiar (`comp_nos-no-limiar`) | separate company, not Mônica's personal brand | exists, Mônica owner + Isa admin | untouched by the pilot |
+  | Isadora personal | Isa's personal brand | **missing** | create (P7) |
+  | TangerISA (`indv_tangerisa`) | Isa's company/brand | exists, Isa owner, **no marca yet** | add marca (P7) |
+  | Gilson Tangerino (`gilson-tangerino`) | Gilson's personal brand | exists with 2 marcas (one is a "— CoreStudio" duplicate), **no members** | add Gilson as owner; resolve duplicate marca (P7) |
+  | One Consultoria (`one-consultoria`) | Gilson's company | exists, Gilson admin | untouched |
+  | NoctusAI | the owner's company | exists | untouched; the owner's personal org is **not** created now |
+
+  - No shared-org data migration is needed: no org has any Instagram media or profile snapshots yet, and Criação de Mídia rows are almost empty (1 post in Nós no Limiar, brand kits per org).
+  - Isa already belongs to two orgs (TangerISA, Nós no Limiar), so multi-org membership already works.
+- **P0 finding: no Instagram account is connected in any org** (`integration_accounts` has only Meta-for-Gmail/YouTube/n8n rows, in One Consultoria and NoctusAI). Before the pilot shows real data, Mônica connects her personal Instagram in her own org through Instagram Login. If the comments scope (`instagram_business_manage_comments`) lands first, a single connection covers both SIMEC and the comment bank.
 
 ## Proposed by ChatGPT — not yet validated
 
