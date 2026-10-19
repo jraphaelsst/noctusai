@@ -129,6 +129,27 @@ def sanitize_motivo(motivo: str | None) -> str:
     return " ".join(cleaned.split())[:MOTIVO_MAX]
 
 
+#: The CLOSED vocabulary of a human handoff's reason (maya-blocks CONTRACT §3.2): the `handoff` Lais event carries
+#: one of these, never the model's free text. Owner-refinable; a new code is a new entry here.
+MOTIVOS_HANDOFF: tuple[str, ...] = ("pedido_do_lead", "fora_do_escopo", "reclamacao", "outro")
+#: First match wins, in this order (a complaint that also asks for a person is a complaint).
+_MOTIVO_HANDOFF_SINAIS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("reclamacao", ("reclam", "insatisf", "procon", "absurd", "pessimo", "descaso", "irritad", "revoltad")),
+    ("pedido_do_lead", ("pediu", "pedido do lead", "pede para", "quer falar", "falar com", "humano", "atendente",
+                        "corretor", "uma pessoa", "alguem")),
+    ("fora_do_escopo", ("escopo", "nao sei", "nao consigo", "nao posso", "fora d", "sem informac", "nao tenho")),
+)
+
+
+def motivo_codigo_do_handoff(motivo: str | None) -> str:
+    """Map the agent's free-text handoff reason onto `MOTIVOS_HANDOFF` (accent/case-insensitive); else `outro`."""
+    texto = fold_accents_ascii(motivo or "").lower()
+    for codigo, sinais in _MOTIVO_HANDOFF_SINAIS:
+        if any(s in texto for s in sinais):
+            return codigo
+    return "outro"
+
+
 # ── the org's `agents` token + agents client factory ────────────────────────
 def agents_token_for_org(org_id: UUID | str, *, cfg: Any = None, store: Any = None) -> Optional[str]:
     """The org's LOCAL `api_key:agents` token, or None. Local tier ONLY -- a
@@ -686,14 +707,14 @@ MENSAGEM_APAGADO_PARCIAL = (
 
 
 __all__ = [
-    "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MENSAGEM_APAGADO",
+    "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MENSAGEM_APAGADO", "MOTIVOS_HANDOFF",
     "MENSAGEM_APAGADO_PARCIAL", "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
     "agents_token_for_org", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
     "destinatario_do_handoff", "eh_eco_proprio", "encerrar_envio", "exigir_autorizados",
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
     "expandir_aliases", "gravar_snapshot", "is_deletion_request", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
-    "marcar_envio_em_curso", "mensagem_inicial_pronta", "notificar_handoff", "parse_lead_key",
+    "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "parse_lead_key",
     "permitir_turno", "phone_digits", "public_privacy_link", "registrar_envio_proprio",
     "registrar_erro_link", "resolve_agents_client", "sanitize_motivo", "snapshot_contem",
     "usuario_e_admin_da_org",

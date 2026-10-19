@@ -19,6 +19,9 @@ TABLE = "lais_eventos"
 #: The closed vocabulary (contract 8: 10 notification types + handoff of page 0), plus the
 #: engine's own diagnostics. A later wave appends here -- the DB CHECK only guards the
 #: token shape, so adding a type needs no migration.
+#: `handoff` (maya-blocks S2): emitted by the lead turn's `_apply_handoff` with payload `{motivo_codigo}` -- a CLOSED
+#: code (`lais_agente_service.MOTIVOS_HANDOFF`), never the model's free text. It is notifiable by vocabulary but kept
+#: OUT of the generic fan-out (`lais_notificacoes_service.TIPOS_FANOUT`): the handoff already notifies its target.
 TIPOS_NOTIFICAVEIS: frozenset[str] = frozenset({
     "pre_agendamento_visita", "cobranca_atendimento", "relatorio", "remarketing", "captacao",
     "atualizacao_base_imoveis", "novo_lead", "novo_atendimento", "nova_mensagem",

@@ -47,7 +47,7 @@ from app.config import settings as _default_settings
 from app.services import lais_acoes_service, lais_conhecimento_service, lais_contatos_service, lais_contexto_service, lais_conversas_service
 from app.services import lais_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import lais_agente_service as lais
-from app.services import lais_aviso_service, lais_capi_service, lais_envio_gate
+from app.services import lais_aviso_service, lais_capi_service, lais_envio_gate, lais_eventos_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -650,12 +650,23 @@ async def _deliver(
 
     if primeira and enviadas and result.conversation_id:
         chat_store.set_agente_conversation(connection_id=connection.id, chat_id=chat_id, conversation_id=result.conversation_id)
+    if enviadas and fluxo is lais_envio_gate.Fluxo.RESPOSTA and lais_turn is not None:
+        _registrar_primeira_resposta(deps, connection.org_id, lais_turn.contato)
 
     if handoff is not None:
         await _apply_handoff(deps, connection=connection, chat_id=chat_id, chat_store=chat_store, motivo=handoff.motivo)
     await _pos_turno(deps, enviou=bool(enviadas), **pos)
     close_run(deps.buffer, key, run)
     return bool(enviadas)
+
+
+def _registrar_primeira_resposta(deps: LeadDeps, org_id: Any, contato: dict[str, Any]) -> None:
+    """maya-blocks: Julia's first reply of the open episode stamps `primeira_resposta_at` (once). Only a reply to
+    the lead's own message counts (a re-engagement is not a response). Bookkeeping: never undoes the reply."""
+    try:
+        lais_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"])
+    except Exception:
+        logger.exception("lais: primeira_resposta_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
 
 
 async def run_reengajamento_turn(
@@ -720,6 +731,7 @@ async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord
         logger.exception("lais: gen bump on handoff failed conn=%s chat=%s (the chat IS paused)", connection.id, chat_id)
     await publish_pause(deps, connection=connection, chat_id=chat_id, pausado=True)
     responsavel: Optional[str] = None
+    contato: Optional[dict[str, Any]] = None
     try:  # wave 11: pick the attendant BEFORE notifying so the notification reaches them
         contato = lais_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
         if contato is not None:
@@ -727,6 +739,12 @@ async def _apply_handoff(deps: LeadDeps, *, connection: WhatsAppConnectionRecord
             responsavel = atribuido["user_id"] if atribuido else None
     except Exception:
         logger.exception("lais: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned)", connection.id, chat_id)
+    # maya-blocks: the reason as a CLOSED code (never the model's free text) for Maya's sdr scorecard. `handoff` is
+    # outside the notification fan-out, so this cannot double-notify; `emitir` never raises.
+    lais_eventos_service.emitir(
+        deps.scoped, connection.org_id, "handoff", (contato or {}).get("id"),
+        {"motivo_codigo": lais.motivo_codigo_do_handoff(motivo)},
+    )
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
         lais.notificar_handoff(

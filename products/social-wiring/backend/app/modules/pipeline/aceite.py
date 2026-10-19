@@ -5,11 +5,19 @@ the funnel event `proposta_aceita` (`pipeline/funil_eventos`) and the button
 share ONE implementation (CONTRACT §5.4). The route is a thin wrapper.
 
 Raises the same `NotFoundError` / `ValidationError_` the route always raised.
-`actor_id` is accepted for symmetry with the other callables (audit); the
-Processos insert has never recorded one.
+
+The accept is the funil -> processos boundary, and it now leaves a
+`pipeline_movimentos` row like every other stage entry (maya-blocks CONTRACT
+§2.2: `pipeline='processos_venda'`, `de_etapa_id=NULL`, `para_etapa_id` = the
+initial stage, `motivo='aceite_proposta'`), followed by the block-boundary
+hook. `responsavel_id` is NOT NULL, so `actor_id` -- the user from the route,
+or the actor the `proposta_aceita` funnel event carries -- is required for it;
+an accept without an actor is still an accept (recording never blocks the flow
+it observes) but the missing movement is logged at ERROR, never skipped silently.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from noctusai_lib.domain.pipeline import (
@@ -19,6 +27,7 @@ from noctusai_lib.domain.pipeline import (
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.modules.atendimento_blocos import handoffs as atendimento_handoffs
 from app.modules.pipeline.configs import (
     PIPELINE_FUNIL,
     PIPELINE_PROCESSOS,
@@ -27,7 +36,10 @@ from app.modules.pipeline.configs import (
     processo_to_dto,
 )
 
+logger = logging.getLogger(__name__)
+
 STATUS_ABERTA = "aberta"
+MOTIVO_ACEITE = "aceite_proposta"
 
 
 def _valor_negociado(client: Any, org_id: str, atendimento_id: str) -> Any:
@@ -154,8 +166,43 @@ def aceitar_proposta(
         or []
     )
 
+    _registrar_movimento_do_aceite(client, org_id, created[0], etapa_inicial, actor_id)
+
     return {
         "atendimento": atendimento_to_dto(fechada[0] if fechada else atendimento),
         "processo": processo_to_dto(created[0]),
         "already_accepted": False,
     }
+
+
+def _registrar_movimento_do_aceite(
+    client: Any, org_id: str, processo: dict, etapa_inicial: dict, actor_id: Optional[Any]
+) -> None:
+    """The processo's entry movement + the block-boundary hook. Never raises: the accept already happened."""
+    if not actor_id:
+        logger.error(
+            "aceite: processo %s opened without an actor -- its pipeline_movimentos row (responsavel_id NOT NULL) "
+            "is NOT written and no juridico handoff is recorded (org=%s)", processo.get("id"), org_id,
+        )
+        return
+    try:
+        movimento = (
+            client.table("pipeline_movimentos")
+            .insert({
+                "org_id": org_id,
+                "pipeline": PIPELINE_PROCESSOS.pipeline,
+                "entidade_id": str(processo["id"]),
+                "de_etapa_id": None,
+                "para_etapa_id": str(etapa_inicial["id"]),
+                "responsavel_id": str(actor_id),
+                "motivo": MOTIVO_ACEITE,
+            })
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        logger.exception("aceite: could not write the entry movement of processo %s (org=%s) -- the accept stands", processo.get("id"), org_id)
+        return
+    if movimento:
+        atendimento_handoffs.ao_movimento(client, org_id, movimento[0])

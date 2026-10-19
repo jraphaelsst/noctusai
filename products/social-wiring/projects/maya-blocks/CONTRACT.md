@@ -25,7 +25,7 @@ NOT the `julia` key (that is the academia agent).
 | 5 | `financeiro` | financing, deed, settlement, keys | `processos_venda` | `null` |
 | 6 | `contador` | invoice / accounting close | `processos_venda` | `null` |
 
-- The list lives in ONE backend constant (`BLOCOS`, S2: `app/services/atendimento_blocos_service.py`)
+- The list lives in ONE backend constant (`BLOCOS`, S2: `app/modules/atendimento_blocos/blocos.py`)
   and is mirrored by four DB CHECKs in 286 (`atendimento_blocos_bloco_valido`,
   `atendimento_handoffs_blocos_validos` ×2, `agente_scorecards_bloco_valido`). Adding a block =
   a migration widening the CHECKs + the constant, same commit.
@@ -365,7 +365,7 @@ nightly job computes scorecards; turning it OFF stops both and keeps the history
 |---|---|---|
 | S0 | this contract + README | done |
 | S1 | migration 286 + 18 DB guard probes (`_SW_MAYA_BLOCOS_PROBES`, `verify_db_guards.py`) + replay test + structural migration test | done (not applied) |
-| S2 | backend: `BLOCOS`/`ETAPAS_PADRAO`/`AGENTES_POR_BLOCO`, derivation, T1 sink, T2 hook + the aceite movimento, `primeira_resposta_at` write, `handoff` event emission, the §4 routes | next |
+| S2 | backend (`app/modules/atendimento_blocos/`): `BLOCOS`/`ETAPAS_PADRAO`/`AGENTES_POR_BLOCO`, derivation, T1 sink, T2 hook + the aceite movimento, the status machine functions (`handoffs.varrer` for S3 to schedule), `primeira_resposta_at` write, `handoff` event emission, the §4.1/§4.2 routes, gate 0 | done (§4.3-4.5 belong to the supervisao slice) |
 | S3 | jobs: sweep (assumido/expirado), nightly scorecards, owner report (in-app recipient rule + digest) | after S2 |
 | S4 | FE pages `atendimento_blocos` + `supervisao` (built to §4) | parallel with S3 |
-| later | `lais_envio_gate.exigir(..., bloco=)` generalization; per-block agents; Maya's LLM review | owner-paced |
+| later | per-block agents (gate 0 of `lais_envio_gate.exigir(..., bloco=)` shipped in S2: a non-`sdr` block needs `ativo` + `agent_key`; `sdr` unchanged); Maya's LLM review | owner-paced |

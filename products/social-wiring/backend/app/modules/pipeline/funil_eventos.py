@@ -31,6 +31,7 @@ from typing import Any, Optional
 from noctusai_lib.domain.pipeline import list_stages, move_card
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.modules.atendimento_blocos import handoffs as atendimento_handoffs
 from app.modules.pipeline import stage_gate
 from app.modules.pipeline.aceite import aceitar_proposta
 from app.modules.pipeline.configs import PIPELINE_FUNIL
@@ -129,6 +130,7 @@ def mover_por_evento(
             motivo=f"etapa_auto:{evento}",
             org_id=org,
         )
+        atendimento_handoffs.apos_mover(client, org, PIPELINE_FUNIL, aid, str(alvo["id"]))  # maya-blocks T2, never raises
         moveu = True
         motivo = None
 

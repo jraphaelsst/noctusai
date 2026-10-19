@@ -158,6 +158,32 @@ def interacao_aberta(client: Any, contato_id: UUID | str) -> Optional[dict[str, 
     return rows[0] if rows else None
 
 
+def registrar_primeira_resposta(
+    client: Any, org_id: UUID | str, contato_id: UUID | str, *, agora: Optional[datetime] = None,
+) -> bool:
+    """Stamp `primeira_resposta_at` on the OPEN episode, once (migration 286 -- the first-response-time input of
+    Maya's sdr scorecard). Called on the first outbound reply of the episode, by Julia's reply turn or a human from
+    the inbox. A conditional update (`primeira_resposta_at IS NULL`) keeps the first one even under a race; no open
+    episode or an already-stamped one -> False. Episodes before 286 stay NULL (reported, never estimated)."""
+    interacao = interacao_aberta(client, contato_id)
+    if interacao is None or interacao.get("primeira_resposta_at"):
+        return False
+    rows = (
+        client.table(T_INTERACOES).update({"primeira_resposta_at": _now(agora).isoformat()})
+        .eq("org_id", str(org_id)).eq("id", str(interacao["id"])).is_("primeira_resposta_at", "null")
+        .execute().data or []
+    )
+    return bool(rows)
+
+
+def registrar_primeira_resposta_do_chat(
+    client: Any, org_id: UUID | str, connection_id: UUID | str, chat_id: str, *, agora: Optional[datetime] = None,
+) -> bool:
+    """`registrar_primeira_resposta` for the contato of `(org, connection, chat)`; no contato -> False."""
+    contato = buscar_contato(client, org_id, connection_id, chat_id)
+    return registrar_primeira_resposta(client, org_id, contato["id"], agora=agora) if contato else False
+
+
 def abrir_interacao(client: Any, org_id: UUID | str, contato: dict[str, Any], *, agora: Optional[datetime] = None) -> dict[str, Any]:
     """Open an episode. The partial unique index keeps it at one: if a concurrent turn won the
     race our insert is refused (23505) and the winner's row is exactly what we want. Anything
@@ -231,4 +257,5 @@ __all__ = [
     "GenConflito", "SILENCIO_NOVO_EPISODIO", "abrir_interacao", "apagar_do_chat", "atualizar_contato",
     "bump_gen", "bump_gen_do_chat", "buscar_contato", "episodio_vencido", "interacao_aberta",
     "job_obsoleto", "obter_ou_criar_contato", "payload_job", "registrar_inbound", "registrar_outbound",
+    "registrar_primeira_resposta", "registrar_primeira_resposta_do_chat",
 ]

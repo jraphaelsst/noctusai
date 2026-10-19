@@ -1111,6 +1111,18 @@ async def send_message(
         created_at=sent_at,
     )
 
+    if getattr(record, "agente_leads_ativo", False):
+        # maya-blocks: a human's reply from the inbox on a Julia line can be the episode's first response
+        # (`lais_interacoes.primeira_resposta_at`, written once). Bookkeeping: the message is already out.
+        from app.services import lais_contatos_service
+
+        try:
+            lais_contatos_service.registrar_primeira_resposta_do_chat(
+                get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id,
+            )
+        except Exception:
+            logger.exception("primeira_resposta_at not stamped conn=%s chat=%s (the message IS sent)", connection_id, chat_id)
+
     bus = get_whatsapp_bus(settings.redis_url)
     await publish_whatsapp_event(
         bus,

@@ -1,7 +1,9 @@
 """Keeper: every WhatsApp send in Lais code goes through `lais_envio_gate` (compliance by construction).
 
 What it scans (derived, not listed): every `app/**/lais_*.py` PLUS every app module that imports a `lais_*` service
-(the Julia dispatch lives in `conversation_module` / `whatsapp_router`, outside the `lais_` names).
+(the Julia dispatch lives in `conversation_module` / `whatsapp_router`, outside the `lais_` names) PLUS every file of
+the block-agent modules (`AGENT_MODULES`: maya-blocks `atendimento_blocos` + `supervisao`) -- a block agent added
+there is in scope from its first line, whether or not it imports a Lais service.
 
 What counts as a send (derived, not listed): every `send*` method of the seed WhatsApp clients (`WahaClient`,
 `MetaCloudClient`), every `enviar*` member of the `Transporte` Protocol, every `send*` method of the intake seam
@@ -26,6 +28,8 @@ from app.services import lais_transporte, whatsapp_outbound
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
 
 APP = Path(__file__).resolve().parents[2] / "app"
+#: Packages whose every file is scanned (block agents live here, maya-blocks CONTRACT §1).
+AGENT_MODULES: tuple[str, ...] = ("modules/atendimento_blocos/", "modules/supervisao/")
 GATE = "lais_envio_gate"
 GATE_FILE = "services/lais_envio_gate.py"
 CHAMADAS_DO_PORTAO = frozenset({"exigir", "conferir"})
@@ -121,7 +125,7 @@ def _arquivos() -> list[tuple[str, ast.AST]]:
     for path in sorted(APP.rglob("*.py")):
         rel = path.relative_to(APP).as_posix()
         arvore = ast.parse(path.read_text(), filename=rel)
-        if path.name.startswith("lais_") or _imports_lais(arvore):
+        if path.name.startswith("lais_") or rel.startswith(AGENT_MODULES) or _imports_lais(arvore):
             out.append((rel, arvore))
     return out
 
@@ -163,6 +167,16 @@ def test_the_send_vocabulary_is_derived_and_its_exclusions_are_real():
 def test_the_scan_reaches_the_julia_dispatch_outside_the_lais_names():
     arquivos = {rel for rel, _ in _arquivos()}
     assert {"services/conversation_module.py", "routers/whatsapp_router.py"} <= arquivos
+
+
+def test_the_scan_reaches_every_block_agent_module_file():
+    """Non-vacuous: every file of `modules/atendimento_blocos/` is scanned (supervisao joins the day it exists)."""
+    arquivos = {rel for rel, _ in _arquivos()}
+    blocos = {p.relative_to(APP).as_posix() for p in (APP / "modules" / "atendimento_blocos").rglob("*.py")}
+    assert blocos and blocos <= arquivos
+    supervisao = APP / "modules" / "supervisao"
+    if supervisao.is_dir():
+        assert {p.relative_to(APP).as_posix() for p in supervisao.rglob("*.py")} <= arquivos
 
 
 def test_the_scan_sees_the_gated_senders():

@@ -315,6 +315,7 @@ from app.modules.simec import register as _simec
 from app.modules.edicao_fotos import register as _edicao_fotos
 from app.modules.empresas import register as _empresas
 from app.modules.transcricoes import register as _transcricoes
+from app.modules.atendimento_blocos import register as _atendimento_blocos
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
@@ -405,6 +406,10 @@ MODULES = [
     # `/config`, `/readouts/{id}` are all literal first segments), so its
     # position is free. No upload route, no scheduler job.
     _simec,
+    # maya-blocks S2. `/api/atendimento-blocos` is a unique literal prefix with no 1-segment dynamic path at
+    # its root, so its position is free. No upload route, no scheduler job; importing its router binds the
+    # `novo_lead` -> sdr handoff sink on the Lais event bus.
+    _atendimento_blocos,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

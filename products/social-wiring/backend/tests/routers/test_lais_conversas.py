@@ -597,3 +597,25 @@ class TestPrefixoDoAtendente:
 
         assert svc.nome_do_atendente(SimpleNamespace(email="joana@x.com", user_metadata={})) == "joana"
         assert svc.nome_do_atendente(SimpleNamespace(email=None, user_metadata={})) is None
+
+
+# ── maya-blocks: a human's inbox reply can be the episode's first response ──
+class TestPrimeiraRespostaHumana:
+    URL = f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/send"
+
+    def test_the_first_human_reply_stamps_the_open_episode_once(self, admin):
+        contatos.abrir_interacao(admin.w.sw, ORG_ID, admin.contato)
+        assert admin.post(self.URL, {"text": "oi, sou a Carla"}).status_code == 201
+        (ep,) = admin.w.rows("lais_interacoes", contato_id=admin.cid)
+        primeira = ep["primeira_resposta_at"]
+        assert primeira
+        assert admin.post(self.URL, {"text": "tudo bem?"}).status_code == 201
+        assert admin.w.rows("lais_interacoes", contato_id=admin.cid)[0]["primeira_resposta_at"] == primeira
+
+    def test_no_open_episode_or_a_non_julia_line_stamps_nothing_and_still_sends(self, admin):
+        assert admin.post(self.URL, {"text": "oi"}).status_code == 201
+        assert admin.w.rows("lais_interacoes", contato_id=admin.cid) == []
+        contatos.abrir_interacao(admin.w.sw, ORG_ID, admin.contato)
+        admin.w.sw.table("whatsapp_connections").update({"agente_leads_ativo": False, "authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
+        assert admin.post(self.URL, {"text": "oi"}).status_code == 201
+        assert admin.w.rows("lais_interacoes", contato_id=admin.cid)[0].get("primeira_resposta_at") is None

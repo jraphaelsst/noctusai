@@ -48,6 +48,7 @@ from app.modules.pipeline.configs import (
     search_atendimentos,
     search_processos,
 )
+from app.modules.atendimento_blocos import handoffs as atendimento_handoffs
 from app.modules.pipeline.aceite import aceitar_proposta as aceitar_proposta_pipeline
 from app.modules.pipeline.deps import pipeline_context
 
@@ -428,6 +429,9 @@ def mover_atendimento(
         motivo=body.motivo,
         org_id=ctx.org_id,
     )
+    if not reordenando:
+        # maya-blocks T2: a move across a block boundary is a handoff (never raises; the move stands).
+        atendimento_handoffs.apos_mover(ctx.db, ctx.org_id, PIPELINE_FUNIL, atendimento_id, body.para_etapa_id)
     return success_response(atendimento_to_dto(row))
 
 
@@ -559,6 +563,9 @@ def mover_processo(
         ),
         org_id=ctx.org_id,
     )
+    # maya-blocks T2 (never raises; the move stands). A within-column reorder writes no movement, and replaying
+    # an older one is a no-op (the handoff is unique per movement).
+    atendimento_handoffs.apos_mover(ctx.db, ctx.org_id, PIPELINE_PROCESSOS, processo_id, body.para_etapa_id)
     return success_response(processo_to_dto(row))
 
 

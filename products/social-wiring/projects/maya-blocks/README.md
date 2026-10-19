@@ -12,5 +12,5 @@ block, scores each specialist daily, and reports to the owner.
 - **Guards:** `_SW_MAYA_BLOCOS_PROBES` in `mcp/noctusai/tools/noctus/dev/verify_db_guards.py`,
   proven on the real chain by `mcp/noctusai/tests/test_sw_maya_blocos_probes_on_replay.py`.
 
-Status: S0 (contract) + S1 (schema) done. Next: S2 backend (CONTRACT §6). Everything is OFF by
+Status: S0 (contract) + S1 (schema) + S2 (backend: `backend/app/modules/atendimento_blocos/`) done. Next: S3 jobs + S4 pages (CONTRACT §6). Everything is OFF by
 default and nothing here sends anything to a lead.
