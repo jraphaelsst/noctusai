@@ -151,3 +151,23 @@ class TestOrgaoSemUf:
         _aplicar(scoped, cid, "rg", uuid4(), rg="19.131.047-5", rg_orgao_expedidor="IFP/RJ")
         assert _cliente(scoped, cid)["rg_orgao_expedidor"] == "SSP"
         assert [c["campo"] for c in _pendentes(scoped)] == ["rg_orgao_expedidor"]
+
+
+class TestCpfDoRgSobreAFicha:
+    """Deal 876 (2026-10-19): Cilene's CPF was stored from the ficha because
+    her SP RG prints it as `NNNNNNNNN/DD` and the seed never read that form.
+    With the seed reading it, the RG — the authority for `cpf` — states the
+    same CPF and takes the provenance over (value untouched, audited)."""
+
+    def test_the_rg_takes_the_cpf_over_from_the_ficha(self, client, scoped):
+        cid = _novo_cliente(scoped)
+        rg_doc = uuid4()
+        _aplicar(scoped, cid, "ficha_cadastral", uuid4(), cpf="529.982.247-25")
+
+        _, abertos = _aplicar(scoped, cid, "rg", rg_doc, cpf="529.982.247-25")
+
+        row = _cliente(scoped, cid)
+        assert abertos == []
+        assert row["cpf"] == "529.982.247-25"
+        assert row["cpf_origem"] == "rg"
+        assert row["cpf_documento_id"] == str(rg_doc)
