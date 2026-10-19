@@ -1095,9 +1095,22 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         # `None` means "as many as the row cap allows", not "unbounded".
         self._offset = 0
         self._limit_n: Optional[int] = None
+        #: `.order()` calls in call order: (column, desc, nulls_first). Earlier = more significant.
+        self._orders: list[tuple[str, bool, bool]] = []
 
     def order(self, col, *a, **k):
         self._check_col(col, "order")
+        # `.order(col, desc=False, nullsfirst=None, foreign_table=None)`. An order on a
+        # joined/referenced table sorts the EMBEDDED rows, not this table's -- not modelled.
+        if k.get("foreign_table") or k.get("referenced_table"):
+            return self
+        desc = bool(k.get("desc", a[0] if a else False))
+        nullsfirst = k.get("nullsfirst", k.get("nulls_first"))
+        if nullsfirst is None:
+            # PostgREST/Postgres default: NULLs sort as the LARGEST value
+            # (ASC -> nulls last, DESC -> nulls first).
+            nullsfirst = desc
+        self._orders.append((col, desc, bool(nullsfirst)))
         return self
 
     def limit(self, size=None, *a, **k):
@@ -1138,6 +1151,22 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         """
         if not isinstance(self._data, list):
             return self._data
+        return self._apply_order(self._match_rows())
+
+    def _apply_order(self, rows: list) -> list:
+        """Sort like PostgREST `.order()`: stable, NULLs placed per `nullsfirst`,
+        multiple `.order()` calls compose (first call = most significant key)."""
+        for col, desc, nulls_first in reversed(self._orders):
+            present = [r for r in rows if isinstance(r, dict) and r.get(col) is not None]
+            nulls = [r for r in rows if not (isinstance(r, dict) and r.get(col) is not None)]
+            try:
+                present.sort(key=lambda r: r[col], reverse=desc)  # stable, also when reverse
+            except TypeError:
+                present.sort(key=lambda r: (type(r[col]).__name__, str(r[col])), reverse=desc)
+            rows = nulls + present if nulls_first else present + nulls
+        return rows
+
+    def _match_rows(self) -> list:
         if not self._predicates:
             # Snapshot the list — callers shouldn't accidentally mutate the
             # shared store via response.data. Mirrors the empty-predicates

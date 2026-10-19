@@ -447,7 +447,8 @@ class TestReferencias:
         assert perfil["perfil"]["handle"] == "alvo1" and perfil["viral"] is None and perfil["posts_ate"] == "2026-05-01"
         video = next(x for x in d if x["modo"] == "video")
         assert video["viral"]["id"] == V1 and video["perfil"] is None and video["auto_atualizar"] is False
-        assert [x["modo"] for x in client.get(f"{BASE}/referencias?marca_id={MARCA}&q=alvo1").json()["data"]] == ["perfil", "video"]
+        # the repo lists by id (keyset pagination), so the order of the two refs is the order of two random uuids
+        assert sorted(x["modo"] for x in client.get(f"{BASE}/referencias?marca_id={MARCA}&q=alvo1").json()["data"]) == ["perfil", "video"]
         assert client.get(f"{BASE}/referencias?marca_id={MARCA}&q=zzz").json()["data"] == []
         assert client.get(f"{BASE}/referencias?marca_id={FOREIGN_MARCA}").status_code == 404
 

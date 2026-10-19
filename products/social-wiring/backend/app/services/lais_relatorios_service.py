@@ -281,11 +281,15 @@ def _aba_imoveis(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, leads: 
 def _aba_bairros(client: Any, ctx: lais_acesso.AcessoCtx, operacao: str, leads: dict, mencoes: dict,
                  bairro: Optional[str]) -> dict[str, Any]:
     por_bairro: dict[str, set[str]] = {}
-    rotulos: dict[str, str] = {}
+    variantes: dict[str, dict[str, int]] = {}
     for cid, lead in leads.items():
         for k, rot in _bairros_do_slot(lead["slots"].get("bairro_desejado")):
             por_bairro.setdefault(k, set()).add(cid)
-            rotulos.setdefault(k, rot)
+            variantes.setdefault(k, {}).setdefault(rot, 0)
+            variantes[k][rot] += 1
+    # the display label is the most-typed spelling (tie -> alphabetical): the leads arrive in id order, so
+    # "first seen" would make the label depend on a random uuid
+    rotulos = {k: min(v, key=lambda r: (-v[r], r)) for k, v in variantes.items()}
     ranking = sorted(por_bairro, key=lambda k: (-len(por_bairro[k]), k))
     top = [{"bairro": rotulos[k], "leads": len(por_bairro[k])} for k in ranking[:TOP]]
     disponiveis = sorted((rotulos[k] for k in ranking), key=_norm)

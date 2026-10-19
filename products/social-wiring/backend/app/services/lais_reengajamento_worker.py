@@ -142,6 +142,10 @@ async def stop_worker() -> None:
     handle, _handle = _handle, None
     if handle is not None:
         await handle.stop()
+        # `build_worker` bound this worker's repo into the services' module slots; a stopped worker must not
+        # keep receiving jobs (and a leaked slot silently flips every "no repo -> runs inline" path afterwards).
+        for servico in (lais_envio_service, lais_credito_service, lais_avaliacoes_service, lais_capi_service):
+            servico.registrar_repo(None)
 
 
 async def startup_hook() -> None:
