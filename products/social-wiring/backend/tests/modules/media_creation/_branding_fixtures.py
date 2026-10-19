@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 #: .../products/social-wiring/projects/core-studio-build/design-systems
-DESIGN_SYSTEMS = Path(__file__).resolve().parents[4] / "projects" / "core-studio" / "design-systems"
+DESIGN_SYSTEMS = Path(__file__).resolve().parents[4] / "projects" / "core-studio-build" / "design-systems"
 
 # 1x1 PNG
 PNG = base64.b64decode(

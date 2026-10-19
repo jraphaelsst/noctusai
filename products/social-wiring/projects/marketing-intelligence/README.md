@@ -12,8 +12,8 @@ How they fit: **AR3** fills the topic bank → **Central Editorial** plans and p
 
 ## Who
 
-- **Mônica ("Mô")** — psychoanalyst; brand **Nós no Limiar** (women, maturity, motherhood, adult life; books, community, courses, talks). Design system: `../core-studio/design-systems/nos-no-limiar-monica/`.
-- **Gilson** (@gilson_tangerino) — real-estate market. Design system: `../core-studio/design-systems/store-visual-identity-gilson/`.
+- **Mônica ("Mô")** — psychoanalyst; brand **Nós no Limiar** (women, maturity, motherhood, adult life; books, community, courses, talks). Design system: `../core-studio-build/design-systems/nos-no-limiar-monica/`.
+- **Gilson** (@gilson_tangerino) — real-estate market. Design system: `../core-studio-build/design-systems/store-visual-identity-gilson/`.
 - **Isadora ("Isa")** — art, architecture, authorial repertoire; works on everything with the other two.
 - Future: clients, each isolated.
 
