@@ -6,7 +6,7 @@
 
 ## Origin
 
-During the SW deal-876 walkthrough the owner logged out of core as `jraphaelsst@noctusai.com` and in as `joao@one.com`. social.noctusai.com kept A's Supabase session in its own-origin localStorage — through a reload and through re-opening SW from the core card — so SW acted as A and audit rows recorded the wrong actor. Root causes (security advisor: HIGH): `SSOCallback` kept any valid local session and threw the core token away unredeemed; core logout revoked nothing (`/api/auth/logout` signed out a fresh anon client); the seed BE auth dependency let a stale `nai_session` cookie win over the bearer; framework products never sent `product_slug`, so core's audience check was skipped.
+During the SW deal-876 walkthrough the owner logged out of core as `jraphaelsst@noctusai.com` and in as `[REDACTED-email]`. social.noctusai.com kept A's Supabase session in its own-origin localStorage — through a reload and through re-opening SW from the core card — so SW acted as A and audit rows recorded the wrong actor. Root causes (security advisor: HIGH): `SSOCallback` kept any valid local session and threw the core token away unredeemed; core logout revoked nothing (`/api/auth/logout` signed out a fresh anon client); the seed BE auth dependency let a stale `nai_session` cookie win over the bearer; framework products never sent `product_slug`, so core's audience check was skipped.
 
 ## Trigger conditions (the "when")
 

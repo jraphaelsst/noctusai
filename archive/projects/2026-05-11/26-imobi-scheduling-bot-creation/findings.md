@@ -10,7 +10,7 @@
 
 ### 1.1 Phone regex required `+55` country code prefix (initial pass)
 
-**Symptom**: 3 sanitization tests failed against `(11) 99999-9999` — the
+**Symptom**: 3 sanitization tests failed against `[REDACTED-phone]` — the
 regex pattern matched only when `55` appeared before the area code.
 
 **Root cause**: I wrote `\+?55[\s\-]?\(?\d{2}\)?...` — making `+`

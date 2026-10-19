@@ -115,9 +115,9 @@ Sampled, the repeats look like this:
 
 | phone | rows | names on those rows | origens |
 |---|---:|---|---|
-| `+5511996915253` | 23 | Ana Paula · Ana Paula Soares Franco · Paula · Paula Soares | SENSEYS form, SENSEYS |
-| `+5511983287182` | 18 | Marinaldo · MARINALDO · Marinaldo Fontes · MARIVALDO | Imóvel Web, ZAP |
-| `+5511943305562` | 13 | Dayane · DAY · Dayane e Sandra (mãe) · RETONO DAYANE | Instagram, SENSEYS, Site, Viva Real, ZAP |
+| `[REDACTED-phone]` | 23 | Ana Paula · Ana Paula Soares Franco · Paula · Paula Soares | SENSEYS form, SENSEYS |
+| `[REDACTED-phone]` | 18 | Marinaldo · MARINALDO · Marinaldo Fontes · MARIVALDO | Imóvel Web, ZAP |
+| `[REDACTED-phone]` | 13 | Dayane · DAY · Dayane e Sandra (mãe) · RETONO DAYANE | Instagram, SENSEYS, Site, Viva Real, ZAP |
 
 Ana Paula was not imported 23 times. She **inquired** 23 times — different portals,
 different months, probably different properties. Each row is a real, distinct event.
@@ -138,7 +138,7 @@ resolution is therefore the same for both:
 | names **conflicting** (no shared token) | 223 | review queue |
 | no name on any row | 7 | review queue |
 
-The 223 are not all typos. `+5511974781330` carries both `Carmen Real Dias` **and**
+The 223 are not all typos. `[REDACTED-phone]` carries both `Carmen Real Dias` **and**
 `Luana Batista` — a genuinely shared number, two real people. **Blind auto-merge on
 phone would fuse them**, which is why the review queue is not optional.
 
@@ -515,7 +515,7 @@ than guessed. All four were answered before any code was designed against them.
 |---|---|
 | 2026-08-07 | Roadmap authored. Two-shapes cause traced to `034`'s `exactly_one_origin` CHECK + the double-trigger path through `ingest_meta_lead`. Live DB measured: 125 duplicate pairs, 100 % forward rate. |
 | 2026-08-07 | **Design pivot:** lead base measured before choosing a merge strategy. 13 245 rows → ~9 270 people; 3 576 rows are repeat contact. Reframed from "de-duplicate" to "person + touches", which preserves every row. This reframe is the reason D1–D3 look the way they do. |
-| 2026-08-07 | Match-safety quantified (1 871 compatible / 223 conflicting / 7 nameless). A real shared-number case found (`+5511974781330` → two distinct people), which is why blind phone-merge was rejected. |
+| 2026-08-07 | Match-safety quantified (1 871 compatible / 223 conflicting / 7 nameless). A real shared-number case found (`[REDACTED-phone]` → two distinct people), which is why blind phone-merge was rejected. |
 | 2026-08-07 | Scope raised to shared organ on user instruction. Justified independently: erp already person-cards via `cliente_field`; social-wiring sets it to `None`. |
 | 2026-08-07 | Naming trap recorded — `social_wiring.clients` is the brand-profile-owner table (migration 007), not people. |
 | 2026-08-07 | **§7 closed — all four open questions answered.** Q1 naming, Q2 180d, Q3 multi-negotiation history, Q4 conversations. |

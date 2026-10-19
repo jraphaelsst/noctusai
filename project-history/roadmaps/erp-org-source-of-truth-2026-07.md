@@ -12,7 +12,7 @@ cross-org visibility, replacing the inconsistent `erp.user_roles` global bypass.
 
 ## Why (incident that opened this)
 
-`api/matriculas/extrair` 500'd on upload for `marina@one.com.br`, a freshly-provisioned
+`api/matriculas/extrair` 500'd on upload for `[REDACTED-email]`, a freshly-provisioned
 user. Root cause: the endpoint sourced `org_id` for the INSERT from the **JWT**
 (`user_metadata.org_id`), which was null/stale, while RLS derives org from the **DB**
 (`noctus_users`). Two sources of truth → drift → NOT NULL / RLS reject → 500. Recon found
