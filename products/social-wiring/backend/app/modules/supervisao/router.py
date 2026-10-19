@@ -1,10 +1,10 @@
 """Supervisão (Maya) routes -- maya-blocks CONTRACT §4.3 / §4.4 / §4.5.
 
-  GET /api/supervisao/scorecards?dia=YYYY-MM-DD    owner          {dia, supervisao_ativa, scorecards}
+  GET /api/supervisao/scorecards?dia=YYYY-MM-DD    owner          {data: {dia, supervisao_ativa, scorecards}}
   GET /api/supervisao/handoffs?status&de_bloco&para_bloco&desde&ate&limit&cursor
-                                                   owner/admin    {itens, proximo_cursor}
-  GET /api/supervisao/config                       owner          {supervisao_ativa, horas_para_assumir, updated_at, updated_by}
-  PUT /api/supervisao/config                       owner          same (state after)
+                                                   owner/admin    {data: {itens, proximo_cursor}}
+  GET /api/supervisao/config                       owner          {data: {supervisao_ativa, horas_para_assumir, updated_at, updated_by}}
+  PUT /api/supervisao/config                       owner          {data: ...} (state after)
 
 No session = strict 401; the org is the session's selected org; roles come from the trusted `noctus_users` row
 via the seed `is_org_admin_for` / `require_org_admin_for`;
@@ -22,6 +22,7 @@ from noctusai_lib.api.auth.session import ADMIN_ORG_ROLES, is_org_admin_for, req
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
+from app.modules.atendimento_blocos import repository as blocos_repo
 from app.modules.supervisao import service as svc
 
 router = APIRouter(prefix="/api/supervisao", tags=["supervisao"])
@@ -65,8 +66,8 @@ def scorecards(
     org = _org(auth)
     # History is kept (CONTRACT §4.5): "off" only stops the nightly job from computing new rows, it never hides
     # the stored ones.
-    return {"dia": d.isoformat(), "supervisao_ativa": svc.ler_config(client, org)["supervisao_ativa"],
-            "scorecards": svc.listar_scorecards(client, org, d)}
+    return {"data": {"dia": d.isoformat(), "supervisao_ativa": blocos_repo.ler_supervisao(client, org)["supervisao_ativa"],
+            "scorecards": svc.listar_scorecards(client, org, d)}}
 
 
 @router.get("/handoffs")
@@ -89,8 +90,8 @@ def handoffs(
             limite = int(limit)
         except ValueError:
             limite = 0  # rejected below as filtro_invalido, same envelope as every other bad filter
-    return svc.listar_handoffs(client, _org(auth), agora=svc.agora_utc(), status=status, de_bloco=de_bloco,
-                               para_bloco=para_bloco, desde=desde, ate=ate, limit=limite, cursor=cursor)
+    return {"data": svc.listar_handoffs(client, _org(auth), agora=svc.agora_utc(), status=status, de_bloco=de_bloco,
+                               para_bloco=para_bloco, desde=desde, ate=ate, limit=limite, cursor=cursor)}
 
 
 @router.get("/config")
@@ -100,7 +101,7 @@ def get_config(
     client: Any = Depends(get_supervisao_client),
 ) -> dict[str, Any]:
     exigir_dono(auth, request, "A configuração da supervisão")
-    return svc.ler_config(client, _org(auth))
+    return {"data": blocos_repo.ler_supervisao(client, _org(auth))}
 
 
 @router.put("/config")
@@ -111,5 +112,5 @@ def put_config(
     client: Any = Depends(get_supervisao_client),
 ) -> dict[str, Any]:
     exigir_dono(auth, request, "A configuração da supervisão")
-    return svc.salvar_config(client, _org(auth), supervisao_ativa=corpo.supervisao_ativa,
-                             horas_para_assumir=corpo.horas_para_assumir, por=getattr(auth[0], "id", None))
+    return {"data": svc.salvar_config(client, _org(auth), supervisao_ativa=corpo.supervisao_ativa,
+                                      horas_para_assumir=corpo.horas_para_assumir, por=getattr(auth[0], "id", None))}

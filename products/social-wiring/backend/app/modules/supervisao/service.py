@@ -1,7 +1,9 @@
-"""Maya supervision -- config, scorecard computation, handoff sweep, read models (maya-blocks CONTRACT §2.3/§3/§4).
+"""Maya supervision -- config writes, scorecard computation, read models (maya-blocks CONTRACT §3/§4).
 
-Writes ONLY to the supervision tables of migration 286 (`supervisao_config`, `agente_scorecards`,
-`atendimento_handoffs.status/assumido_at/expirado_at`). It never writes to leads, cards, chats, and never
+The block list, the effective block configuration, the ONE `supervisao_config` reader and the handoff status
+machine (`handoffs.varrer`, scheduled by `scheduler.py`) live in `app.modules.atendimento_blocos`; this module
+owns the config WRITE. Writes ONLY to `supervisao_config` and `agente_scorecards`. It never writes to leads,
+cards, chats, and never
 sends anything to a lead (CONTRACT §5). `client` is the schema-scoped service-role client; every query is
 org-filtered explicitly.
 """
@@ -17,22 +19,17 @@ from typing import Any, Iterable, Optional
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
+from app.modules.atendimento_blocos import repository as blocos_repo
+from app.modules.atendimento_blocos.blocos import NOMES_BLOCOS
 from app.modules.supervisao import metricas as m
 
 logger = logging.getLogger(__name__)
 
-T_CONFIG = "supervisao_config"
-T_BLOCOS = "atendimento_blocos"
+T_CONFIG = blocos_repo.T_SUPERVISAO
 T_SCORECARDS = "agente_scorecards"
 T_HANDOFFS = "atendimento_handoffs"
 
-#: The closed block list in `ordem` (CONTRACT §1) + the default agent of each block.
-# NOC-REMEDIATE[maya-blocos-constante]: import BLOCOS / AGENTES_POR_BLOCO from the S2 atendimento_blocos
-# module once both slices are on dev; mirrored here because S2 is not on this slice's base — 2026-10-19
-BLOCOS: tuple[str, ...] = ("sdr", "atendimento", "negociacao", "juridico", "financeiro", "contador")
-AGENTE_PADRAO: dict[str, Optional[str]] = {"sdr": "lead-imob"}
 STATUS_HANDOFF = ("emitido", "assumido", "expirado")
-HORAS_PADRAO = 24
 DIAS_RECALCULADOS = 7
 LIMITE_PADRAO = 50
 LOTE_IN = 100
@@ -56,18 +53,6 @@ def _lotes(valores: Iterable[str]) -> Iterable[list[str]]:
 
 
 # ── config ──────────────────────────────────────────────────────────────────
-def ler_config(client: Any, org_id: Any) -> dict[str, Any]:
-    """Absent row = supervision off with the defaults (CONTRACT §3.3 / §5.2)."""
-    rows = client.table(T_CONFIG).select("*").eq("org_id", str(org_id)).limit(1).execute().data or []
-    row = rows[0] if rows else {}
-    return {
-        "supervisao_ativa": bool(row.get("supervisao_ativa", False)),
-        "horas_para_assumir": int(row.get("horas_para_assumir") or HORAS_PADRAO),
-        "updated_at": row.get("updated_at"),
-        "updated_by": row.get("updated_by"),
-    }
-
-
 def salvar_config(client: Any, org_id: Any, *, supervisao_ativa: bool, horas_para_assumir: int, por: Any) -> dict[str, Any]:
     if not 1 <= int(horas_para_assumir) <= 168:
         raise AppException("VALIDATION_ERROR", "horas_para_assumir deve estar entre 1 e 168.", status_code=422)
@@ -75,7 +60,7 @@ def salvar_config(client: Any, org_id: Any, *, supervisao_ativa: bool, horas_par
         "org_id": str(org_id), "supervisao_ativa": bool(supervisao_ativa), "horas_para_assumir": int(horas_para_assumir),
         "updated_by": str(por) if por else None, "updated_at": m.iso(agora_utc()),
     }, on_conflict="org_id").execute()
-    return ler_config(client, org_id)
+    return blocos_repo.ler_supervisao(client, org_id)
 
 
 def supervisionado_desde(config: dict[str, Any]) -> Optional[datetime]:
@@ -94,17 +79,17 @@ def orgs_supervisionadas(client: Any) -> list[str]:
 
 
 def blocos_ativos(client: Any, org_id: Any) -> list[tuple[str, Optional[str]]]:
-    """`[(bloco, agent_key)]` of the org's `ativo` blocks, in `ordem`. Absent row = not supervised."""
-    rows = client.table(T_BLOCOS).select("bloco,agent_key,ativo").eq("org_id", str(org_id)).limit(len(BLOCOS)).execute().data or []
-    ativos = {r["bloco"]: r.get("agent_key") for r in rows if r.get("ativo") and r.get("bloco") in BLOCOS}
-    return [(b, ativos[b]) for b in BLOCOS if b in ativos]
+    """`[(bloco, agent_key)]` of the org's `ativo` blocks, in `ordem` -- over the effective configuration
+    (an absent row is the code default, which is never `ativo`)."""
+    efetiva = blocos_repo.configuracao_efetiva(client, org_id)
+    return [(b, efetiva[b].agent_key) for b in NOMES_BLOCOS if efetiva[b].ativo]
 
 
 # ── scorecards (nightly) ────────────────────────────────────────────────────
 def computar_scorecards(client: Any, org_id: Any, *, agora: datetime, dias: int = DIAS_RECALCULADOS) -> list[dict[str, Any]]:
     """Upsert one scorecard per (ativo block, day) for the last `dias` SP days up to yesterday. Idempotent:
     recomputing a day overwrites its row (UNIQUE NULLS NOT DISTINCT org/bloco/agent_key/dia)."""
-    config = ler_config(client, org_id)
+    config = blocos_repo.ler_supervisao(client, org_id)
     if not config["supervisao_ativa"]:
         return []
     desde = supervisionado_desde(config)
@@ -130,7 +115,7 @@ def computar_scorecards(client: Any, org_id: Any, *, agora: datetime, dias: int 
 def listar_scorecards(client: Any, org_id: Any, dia: date) -> list[dict[str, Any]]:
     rows = (client.table(T_SCORECARDS).select("bloco,agent_key,rubrica_versao,calculado_at,metricas,dia")
             .eq("org_id", str(org_id)).eq("dia", dia.isoformat()).limit(100).execute().data or [])
-    ordem = {b: i for i, b in enumerate(BLOCOS)}
+    ordem = {b: i for i, b in enumerate(NOMES_BLOCOS)}
     rows.sort(key=lambda r: (ordem.get(r.get("bloco"), 99), str(r.get("agent_key") or "")))
     return [{"bloco": r["bloco"], "agent_key": r.get("agent_key"), "rubrica_versao": r["rubrica_versao"],
              "calculado_at": r.get("calculado_at"), "metricas": r.get("metricas") or {}} for r in rows]
@@ -148,75 +133,6 @@ def parse_dia(valor: Optional[str], *, agora: datetime) -> date:
     if dia >= hoje:
         raise AppException("dia_futuro", "O dia ainda não terminou: escolha um dia anterior a hoje.", status_code=422)
     return dia
-
-
-# ── handoff sweep (every 15 min) ────────────────────────────────────────────
-def _cards_por_atendimento(client: Any, org_id: Any, atendimento_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """`{atendimento_id: {"entidades": {atendimento + its processos}, "cliente_id"}}`."""
-    out: dict[str, dict[str, Any]] = {}
-    for lote in _lotes(atendimento_ids):
-        for a in (client.table("atendimentos").select("id,cliente_id").eq("org_id", str(org_id))
-                  .in_("id", lote).execute().data or []):
-            out[str(a["id"])] = {"entidades": {str(a["id"])}, "cliente_id": a.get("cliente_id")}
-        for p in (client.table("processos_venda").select("id,atendimento_id").eq("org_id", str(org_id))
-                  .in_("atendimento_id", lote).execute().data or []):
-            if str(p.get("atendimento_id")) in out:
-                out[str(p["atendimento_id"])]["entidades"].add(str(p["id"]))
-    return out
-
-
-def _primeiro_sinal(client: Any, org_id: Any, h: dict[str, Any], card: Optional[dict[str, Any]]) -> Optional[datetime]:
-    """First take-over signal after the handoff (CONTRACT §2.3): a stage move on the card, or a human note
-    (`autor_id IS NOT NULL`) on the card's cliente. Julia's notes (`autor_id NULL`) never count."""
-    if not card:
-        return None
-    criado = m.parse_ts(h["created_at"])
-    candidatos: list[datetime] = []
-    movs = _paginado(lambda: client.table("pipeline_movimentos").select("id,entidade_id,created_at")
-                     .eq("org_id", str(org_id)).in_("entidade_id", sorted(card["entidades"]))
-                     .gt("created_at", m.iso(criado)), "supervisao movimentos")
-    for mv in movs:
-        t = m.parse_ts(mv.get("created_at"))
-        if str(mv.get("id")) != str(h.get("origem_evento")) and t is not None and t > criado:
-            candidatos.append(t)
-    if card.get("cliente_id"):
-        notas = _paginado(lambda: client.table("cliente_notas").select("id,autor_id,created_at")
-                          .eq("org_id", str(org_id)).eq("cliente_id", str(card["cliente_id"]))
-                          .gt("created_at", m.iso(criado)), "supervisao notas")
-        for n in notas:
-            t = m.parse_ts(n.get("created_at"))
-            if n.get("autor_id") and t is not None and t > criado:
-                candidatos.append(t)
-    return min(candidatos) if candidatos else None
-
-
-def varrer_handoffs(client: Any, org_id: Any, *, agora: datetime) -> dict[str, int]:
-    """emitido -> assumido (first signal, before the deadline) | expirado (deadline passed). Terminal states are
-    never touched; the conditional `status=emitido` update makes a concurrent sweep a no-op."""
-    config = ler_config(client, org_id)
-    out = {"assumidos": 0, "expirados": 0}
-    if not config["supervisao_ativa"]:
-        return out
-    horas = timedelta(hours=config["horas_para_assumir"])
-    abertos = _paginado(lambda: client.table(T_HANDOFFS).select("id,created_at,atendimento_id,origem_evento,status")
-                        .eq("org_id", str(org_id)).eq("status", "emitido"), "supervisao handoffs abertos")
-    cards = _cards_por_atendimento(client, org_id, [str(h["atendimento_id"]) for h in abertos if h.get("atendimento_id")])
-    for h in abertos:
-        prazo = m.parse_ts(h["created_at"]) + horas
-        sinal = _primeiro_sinal(client, org_id, h, cards.get(str(h.get("atendimento_id"))))
-        if sinal is not None and sinal < prazo:
-            mudanca = {"status": "assumido", "assumido_at": m.iso(sinal)}
-            chave = "assumidos"
-        elif agora >= prazo:
-            mudanca = {"status": "expirado", "expirado_at": m.iso(agora)}
-            chave = "expirados"
-        else:
-            continue
-        res = (client.table(T_HANDOFFS).update(mudanca).eq("id", str(h["id"])).eq("org_id", str(org_id))
-               .eq("status", "emitido").execute())
-        if res.data:
-            out[chave] += 1
-    return out
 
 
 # ── handoffs read model (GET /api/supervisao/handoffs) ──────────────────────
@@ -247,7 +163,7 @@ def listar_handoffs(client: Any, org_id: Any, *, agora: datetime, status: Option
     if status is not None and status not in STATUS_HANDOFF:
         raise _filtro_invalido("status inválido.")
     for b in (de_bloco, para_bloco):
-        if b is not None and b not in BLOCOS:
+        if b is not None and b not in NOMES_BLOCOS:
             raise _filtro_invalido("bloco inválido.")
     limite = LIMITE_PADRAO if limit is None else limit
     if not 1 <= limite <= 100:
@@ -262,7 +178,7 @@ def listar_handoffs(client: Any, org_id: Any, *, agora: datetime, status: Option
         raise _filtro_invalido("`desde` não pode ser depois de `ate`.")
     pos = _cursor_decode(cursor) if cursor else None
 
-    config = ler_config(client, org_id)
+    config = blocos_repo.ler_supervisao(client, org_id)
     if not config["supervisao_ativa"]:
         return {"itens": [], "proximo_cursor": None}
     inicio, _ = m.janela(d_desde)
@@ -308,5 +224,5 @@ def listar_handoffs(client: Any, org_id: Any, *, agora: datetime, status: Option
     return {"itens": itens, "proximo_cursor": _cursor_encode(pagina[-1]) if resto else None}
 
 
-__all__ = ["BLOCOS", "blocos_ativos", "computar_scorecards", "ler_config", "listar_handoffs", "listar_scorecards",
-           "orgs_supervisionadas", "parse_dia", "salvar_config", "varrer_handoffs"]
+__all__ = ["blocos_ativos", "computar_scorecards", "listar_handoffs", "listar_scorecards",
+           "orgs_supervisionadas", "parse_dia", "salvar_config"]

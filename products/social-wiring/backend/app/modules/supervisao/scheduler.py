@@ -3,7 +3,8 @@
 - `supervisao_scorecards_diario` -- 07:00 America/Sao_Paulo (the seed scheduler's timezone): for every org with
   `supervisao_ativa`, upsert the last 7 days of scorecards for each `ativo` block, then send yesterday's report
   to the owner (in-app + email, once per day).
-- `supervisao_handoffs_sweep` -- every 15 min: `emitido` handoffs -> `assumido` / `expirado`.
+- `supervisao_handoffs_sweep` -- every 15 min: the blocks slice's status machine `handoffs.varrer`
+  (`emitido` -> `assumido` / `expirado`) for every supervised org.
 
 Registered at IMPORT time via `configure()` (before `start_scheduler()` in app/lifespan.py); the seed scheduler
 only fires when `NOCTUS_SCHEDULERS_ENABLED` is on (deployed containers). Never raises: a job that throws can
@@ -17,6 +18,7 @@ from typing import Any, Callable, Optional
 
 from noctusai_lib.api import scheduler as seed_scheduler
 
+from app.modules.atendimento_blocos import handoffs
 from app.modules.supervisao import metricas as m
 from app.modules.supervisao import relatorio
 from app.modules.supervisao import service as svc
@@ -49,7 +51,7 @@ async def executar_diario(*, client: Any, core: Any, agora: datetime,
     ontem = m.hoje_sp(agora) - timedelta(days=1)
     for org_id in svc.orgs_supervisionadas(client):
         try:
-            svc.varrer_handoffs(client, org_id, agora=agora)  # fresh statuses before scoring them
+            handoffs.varrer(client, org_id, agora=agora)  # fresh statuses before scoring them
             escritos = svc.computar_scorecards(client, org_id, agora=agora)
             kw = {"sender_factory": sender_factory} if sender_factory is not None else {}
             rel = await relatorio.enviar_relatorio(client, core, org_id, ontem, **kw)
@@ -64,7 +66,7 @@ def executar_sweep(*, client: Any, agora: datetime) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for org_id in svc.orgs_supervisionadas(client):
         try:
-            out[org_id] = svc.varrer_handoffs(client, org_id, agora=agora)
+            out[org_id] = handoffs.varrer(client, org_id, agora=agora)
         except Exception:
             logger.exception("supervisao: handoff sweep failed for org=%s", org_id)
             out[org_id] = {"erro": True}

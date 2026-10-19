@@ -99,16 +99,16 @@ class TestAuth:
 
 class TestConfig:
     def test_default_then_roundtrip_and_org_isolation(self, owner):
-        assert owner.call("get", f"{BASE}/config").json() == {
+        assert owner.call("get", f"{BASE}/config").json()["data"] == {
             "supervisao_ativa": False, "horas_para_assumir": 24, "updated_at": None, "updated_by": None}
         r = owner.call("put", f"{BASE}/config", {"supervisao_ativa": True, "horas_para_assumir": 48})
         assert r.status_code == 200
-        body = r.json()
+        body = r.json()["data"]
         assert body["supervisao_ativa"] is True and body["horas_para_assumir"] == 48 and body["updated_at"]
         assert body["updated_by"] == TEST_USER_ID
         rows = owner.w.sw.table("supervisao_config").select("*").execute().data
         assert [r["org_id"] for r in rows] == [ORG_ID]
-        assert owner.call("get", f"{BASE}/config").json()["horas_para_assumir"] == 48
+        assert owner.call("get", f"{BASE}/config").json()["data"]["horas_para_assumir"] == 48
 
     @pytest.mark.parametrize("body", [
         {"supervisao_ativa": True}, {"supervisao_ativa": True, "horas_para_assumir": 0},
@@ -121,19 +121,19 @@ class TestConfig:
 
 class TestScorecards:
     def test_off_with_no_history_is_empty(self, owner):
-        assert owner.call("get", f"{BASE}/scorecards").json() == {"dia": _ontem(), "supervisao_ativa": False, "scorecards": []}
+        assert owner.call("get", f"{BASE}/scorecards").json()["data"] == {"dia": _ontem(), "supervisao_ativa": False, "scorecards": []}
 
     def test_off_still_returns_stored_history(self, owner):
         owner.w.sw.set_table_data("agente_scorecards", [{"id": "s", "org_id": ORG_ID, "bloco": "sdr", "agent_key": "lead-imob",
                                                          "dia": _ontem(), "metricas": {"leads_entrada": 3},
                                                          "rubrica_versao": "sdr.v1", "calculado_at": "2026-10-19T10:00:00+00:00"}])
-        body = owner.call("get", f"{BASE}/scorecards").json()
+        body = owner.call("get", f"{BASE}/scorecards").json()["data"]
         assert body["supervisao_ativa"] is False
         assert [(s["bloco"], s["metricas"]) for s in body["scorecards"]] == [("sdr", {"leads_entrada": 3})]
 
     def test_on_but_not_computed_is_empty(self, owner):
         owner.ativar()
-        assert owner.call("get", f"{BASE}/scorecards").json() == {"dia": _ontem(), "supervisao_ativa": True, "scorecards": []}
+        assert owner.call("get", f"{BASE}/scorecards").json()["data"] == {"dia": _ontem(), "supervisao_ativa": True, "scorecards": []}
 
     def test_lists_the_day_in_block_order_only_own_org(self, owner):
         owner.ativar()
@@ -147,7 +147,7 @@ class TestScorecards:
             {"id": "3", "org_id": OTHER_ORG_ID, "bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
              "metricas": {}, **base},
         ])
-        body = owner.call("get", f"{BASE}/scorecards?dia={dia}").json()
+        body = owner.call("get", f"{BASE}/scorecards?dia={dia}").json()["data"]
         assert [s["bloco"] for s in body["scorecards"]] == ["sdr", "atendimento"]
         assert body["scorecards"][0] == {"bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
                                          "calculado_at": "2026-10-19T10:00:12+00:00",
@@ -176,7 +176,7 @@ class TestHandoffs:
 
     def test_off_is_empty(self, admin):
         self._h(admin, 1, 1)
-        assert admin.call("get", f"{BASE}/handoffs").json() == {"itens": [], "proximo_cursor": None}
+        assert admin.call("get", f"{BASE}/handoffs").json()["data"] == {"itens": [], "proximo_cursor": None}
 
     def test_shape_card_join_atrasado_and_newest_first(self, admin):
         admin.ativar(horas=24)
@@ -186,7 +186,7 @@ class TestHandoffs:
         self._h(admin, 3, 2, status="assumido", assumido_at=datetime.now(timezone.utc).isoformat())
         self._h(admin, 4, 1, org_id=OTHER_ORG_ID)
         self._h(admin, 5, 24 * 30)  # outside the default 7-day window
-        itens = admin.call("get", f"{BASE}/handoffs").json()["itens"]
+        itens = admin.call("get", f"{BASE}/handoffs").json()["data"]["itens"]
         assert [i["id"][-1] for i in itens] == ["2", "3", "1"]
         velho = itens[2]
         assert velho["atrasado"] is True and velho["card"] == {"titulo": "Maria — Apto 12", "link": "/funil?card=a1"}
@@ -199,11 +199,11 @@ class TestHandoffs:
         for n in range(1, 6):
             self._h(owner, n, n)
         self._h(owner, 9, 1, status="expirado", expirado_at=datetime.now(timezone.utc).isoformat())
-        assert len(owner.call("get", f"{BASE}/handoffs?status=expirado").json()["itens"]) == 1
-        assert owner.call("get", f"{BASE}/handoffs?para_bloco=juridico").json()["itens"] == []
-        p1 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2").json()
-        p2 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2&cursor={p1['proximo_cursor']}").json()
-        p3 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2&cursor={p2['proximo_cursor']}").json()
+        assert len(owner.call("get", f"{BASE}/handoffs?status=expirado").json()["data"]["itens"]) == 1
+        assert owner.call("get", f"{BASE}/handoffs?para_bloco=juridico").json()["data"]["itens"] == []
+        p1 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2").json()["data"]
+        p2 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2&cursor={p1['proximo_cursor']}").json()["data"]
+        p3 = owner.call("get", f"{BASE}/handoffs?status=emitido&limit=2&cursor={p2['proximo_cursor']}").json()["data"]
         ids = [i["id"][-1] for p in (p1, p2, p3) for i in p["itens"]]
         assert ids == ["1", "2", "3", "4", "5"] and p3["proximo_cursor"] is None
 

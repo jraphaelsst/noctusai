@@ -84,13 +84,16 @@ def reduzir_etapas(client: Any, org_id: UUID | str, bloco: str, etapas: Iterable
 
 # ── supervisao (read-only here) ─────────────────────────────────────────────
 def ler_supervisao(client: Any, org_id: UUID | str) -> dict[str, Any]:
-    """`{supervisao_ativa, horas_para_assumir}`; an absent row is OFF with the default threshold."""
+    """`{supervisao_ativa, horas_para_assumir, updated_at, updated_by}`; an absent row is OFF with the default
+    threshold. The ONE `supervisao_config` reader -- writes live in `app.modules.supervisao.service.salvar_config`."""
     rows = client.table(T_SUPERVISAO).select("*").eq("org_id", str(org_id)).limit(1).execute().data or []
     row = rows[0] if rows else {}
     horas = row.get("horas_para_assumir")
     return {
         "supervisao_ativa": row.get("supervisao_ativa") is True,
         "horas_para_assumir": int(horas) if isinstance(horas, int) and 1 <= horas <= 168 else HORAS_PARA_ASSUMIR_PADRAO,
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
     }
 
 

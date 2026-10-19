@@ -169,12 +169,14 @@ class TestRegraNotificacao:
 
 
 class TestSweep:
+    """The scheduled 15-min job delegates to the blocks slice's `handoffs.varrer` (one status machine)."""
+
     H = "00000000-0000-4000-8000-0000000000{:02d}"
 
-    def _handoff(self, w, n, criado, atendimento_id=None, origem="o"):
+    def _handoff(self, w, n, criado, atendimento_id=None, origem="o", gatilho="novo_lead"):
         w.sw.table("atendimento_handoffs").insert({
             "id": self.H.format(n), "org_id": ORG_ID, "de_bloco": "sdr", "para_bloco": "atendimento",
-            "gatilho": "novo_lead", "origem_evento": f"{origem}{n}", "status": "emitido", "created_at": criado,
+            "gatilho": gatilho, "origem_evento": f"{origem}{n}", "status": "emitido", "created_at": criado,
             "atendimento_id": atendimento_id, "assumido_at": None, "expirado_at": None}).execute()
 
     def _estado(self, w, n):
@@ -193,8 +195,10 @@ class TestSweep:
         self._handoff(w, 5, "2026-10-19T08:00:00+00:00", None)   # no card, not due -> stays emitido
         w.sw.set_table_data("pipeline_movimentos", [
             {"id": "m0", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T07:00:00+00:00"},  # before
-            {"id": "m1", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:30:00+00:00"},
+            # stored oldest-first: `varrer` takes `.order("created_at").limit(1)`, and MockSupabaseClient's
+            # `.order()` does not sort -- the real PostgREST does.
             {"id": "m2", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:00:00+00:00"},
+            {"id": "m1", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T09:30:00+00:00"},
             {"id": "m4", "org_id": ORG_ID, "entidade_id": "p4", "created_at": "2026-10-18T09:00:00+00:00"},
         ])
         w.sw.set_table_data("cliente_notas", [
@@ -214,7 +218,7 @@ class TestSweep:
     def test_movimento_that_created_the_handoff_is_not_a_takeover(self):
         w = _mundo()
         w.sw.set_table_data("atendimentos", [{"id": "a1", "org_id": ORG_ID, "cliente_id": None}])
-        self._handoff(w, 1, "2026-10-19T08:00:00+00:00", "a1", origem="m")
+        self._handoff(w, 1, "2026-10-19T08:00:00+00:00", "a1", origem="m", gatilho="movimento_etapa")
         w.sw.set_table_data("pipeline_movimentos", [
             {"id": "m1", "org_id": ORG_ID, "entidade_id": "a1", "created_at": "2026-10-19T08:00:01+00:00"}])
         job.executar_sweep(client=w.sw, agora=AGORA)

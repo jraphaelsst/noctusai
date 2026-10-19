@@ -240,7 +240,7 @@ def _abertos(client: Any, org: str) -> list[dict[str, Any]]:
     from noctusai_lib.integrations.persistence import iter_paged_rows
 
     return list(iter_paged_rows(
-        lambda a, b: client.table(T_HANDOFFS).select("id, created_at, atendimento_id").eq("org_id", org)
+        lambda a, b: client.table(T_HANDOFFS).select("id, created_at, atendimento_id, gatilho, origem_evento").eq("org_id", org)
         .eq("status", EMITIDO).order("id").range(a, b).execute().data,
         label="atendimento_handoffs abertos",
     ))
@@ -260,11 +260,16 @@ def _primeiro_sinal(client: Any, org: str, handoff: dict[str, Any]) -> Optional[
     if processo is not None:
         cards.append(str(processo["id"]))
     candidatos: list[datetime] = []
-    movs = (
+    q = (
         client.table(T_MOVIMENTOS).select("id, created_at").eq("org_id", org).in_("entidade_id", cards)
-        .gt("created_at", criado.isoformat()).order("created_at").limit(1).execute().data or []
+        .gt("created_at", criado.isoformat())
     )
-    candidatos += [t for t in (_ts(m.get("created_at")) for m in movs) if t and t > criado]
+    origem = str(handoff.get("origem_evento") or "") if handoff.get("gatilho") == GATILHO_MOVIMENTO else ""
+    if origem:
+        # the move that EMITTED this handoff is its cause, never its take-over (same-instant clocks included)
+        q = q.neq("id", origem)
+    movs = q.order("created_at").limit(1).execute().data or []
+    candidatos += [t for t in (_ts(m.get("created_at")) for m in movs if str(m.get("id")) != origem) if t and t > criado]
     if atendimento.get("cliente_id"):
         notas = (
             client.table(T_NOTAS).select("id, created_at, autor_id").eq("org_id", org)

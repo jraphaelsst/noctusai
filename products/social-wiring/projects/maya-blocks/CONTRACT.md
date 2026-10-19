@@ -235,9 +235,12 @@ an `ativo` human block gets only the handoff metrics (`handoffs_recebidos`,
 Conventions (same as the product's other modules): every route needs a session — no session is
 a **strict 401**; the org is the session's selected org, never a parameter; bodies are
 `StrictHttpModel` (unknown field ⇒ 422); dates `YYYY-MM-DD` (SP calendar); timestamps ISO-8601
-UTC; ratios are fractions. Error envelope `{"error": {"code", "message", "details"?}}`.
-Roles via the seed `require_org_admin_for` on the trusted `noctus_users` row (owner-only =
-`admin_roles=frozenset({"owner"})`). Router mounted under the product (S2: `app/modules/supervisao/`).
+UTC; ratios are fractions. **Success envelope `{"data": <body>}`** like every other Lais route —
+every 200 body shown below (§4.1-§4.5) is the INNER object under `data`. Error envelope
+`{"error": {"code", "message", "details"?}}`. Roles via the trusted `noctus_users` row of the
+selected org (seed `require_org_admin_for` / `is_org_admin_for`; owner-only =
+`admin_roles=frozenset({"owner"})`, 403 `exclusivo_proprietario`, see §4.5). Routers: §4.1-4.2 in
+`app/modules/atendimento_blocos/`, §4.3-4.5 in `app/modules/supervisao/`.
 
 ### 4.1 `GET /api/atendimento-blocos` — any member of the org
 

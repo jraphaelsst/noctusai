@@ -21,16 +21,15 @@ from typing import Any, Callable, Optional
 from noctusai_lib.domain.digest import BaseDigestService, DigestWindow
 from noctusai_lib.integrations.email import EmailSender, OutgoingEmail
 
+from app.modules.atendimento_blocos import repository as blocos_repo
+from app.modules.atendimento_blocos.blocos import BLOCOS
 from app.modules.supervisao import service as svc
 from app.services import lais_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
 
 ORIGEM = "supervisao"
-ROTULOS_BLOCO = {
-    "sdr": "SDR (Julia)", "atendimento": "Atendimento (corretor)", "negociacao": "Negociação",
-    "juridico": "Jurídico", "financeiro": "Financeiro", "contador": "Contador",
-}
+ROTULOS_BLOCO = {b.bloco: b.rotulo for b in BLOCOS}
 ROTULOS_METRICA = {
     "leads_entrada": "Leads de entrada", "tpr_n": "Episódios respondidos", "tpr_p50_s": "Tempo de 1ª resposta (p50)",
     "tpr_p90_s": "Tempo de 1ª resposta (p90)", "tpr_sem_resposta": "Episódios sem resposta",
@@ -121,7 +120,7 @@ def sender_padrao() -> Optional[EmailSender]:
 async def enviar_relatorio(client: Any, core: Any, org_id: Any, dia: date, *,
                            sender_factory: Callable[[], Optional[EmailSender]] = sender_padrao) -> dict[str, Any]:
     """Emit the owner's in-app report + email for `dia`. Returns what happened (for logs / tests)."""
-    if not svc.ler_config(client, org_id)["supervisao_ativa"]:
+    if not blocos_repo.ler_supervisao(client, org_id)["supervisao_ativa"]:
         return {"status": "supervisao_desligada"}
     if _ja_enviado(client, org_id, dia):
         return {"status": "ja_enviado"}
