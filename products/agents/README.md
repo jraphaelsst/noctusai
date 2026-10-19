@@ -13,6 +13,17 @@ through their scoped APIs — never through their databases.
 > **Status:** scaffolded 2026-09-14. Domain code is planned, not built — see
 > `project-history/roadmaps/julia-agents-academia-2026-09.md` (milestones M1–M6).
 
+## Platform-defined agents (Julia v2)
+
+**Julia** (the real-estate SDR) is ONE definition for every org, specified per org. The definition
+— prompt sections, skills, system texts, tool descriptions, decisions, the qualification standard — is a
+set of DB rows owned by the platform org (`definition_scope='plataforma'`), edited and read **only by
+platform admins** (Studio / `noctus.agents.content`); each org has an *instance* row
+(`definition_scope='instancia'`: on/off, LLM key, budget) plus its **org specs** (`agent_org_specs`: agency
+name, regions, knowledge, ...) that the definition references as `{{org.chave}}`. An org admin sees and edits
+only its own specs and a readiness status — never the prompt, hashes, tool descriptions or rules. No prompt
+text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects/julia-v2/CONTRACT.md` §2.6.
+
 ## Stack
 
 - Backend: FastAPI via `create_product_app()` (`noctusai_seed`) + `noctusai_lib`

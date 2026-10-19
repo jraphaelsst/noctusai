@@ -72,6 +72,10 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "skill_exists": _conflict("skill_exists"),
     "client_entries_cap": _conflict("client_entries_cap"),
     "kind_immutable": _conflict("kind_immutable"),
+    # 031 guard_agent_definition_scope
+    "definition_not_platform": _conflict("definition_not_platform"),
+    "definition_invalid": _conflict("definition_invalid"),
+    "scope_immutable": _conflict("scope_immutable"),
     "learning_content_immutable": _conflict("learning_content_immutable"),
     "version_not_found": NotFound,
     "agent_not_found": NotFound,

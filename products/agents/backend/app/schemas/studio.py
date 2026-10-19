@@ -63,6 +63,11 @@ class AgentSummaryOut(BaseModel):
     tem_rascunho: bool
     #: Agent Packages (§D1): ``runtime`` | ``dev-advisor``.
     kind: str = "runtime"
+    #: Julia v2: ``org`` (owns its versions) | ``plataforma`` (THE definition, platform org) |
+    #: ``instancia`` (this org's instance of a platform definition).
+    definition_scope: str = "org"
+    #: ``linhas`` (every compiler string is a row) | ``legado`` (the pre-v2 strings).
+    conteudo_modo: str = "legado"
 
 
 class AgentListOut(BaseModel):

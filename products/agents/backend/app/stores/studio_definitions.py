@@ -52,6 +52,7 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
 from app.stores._util import utcnow
 from app.stores.errors import NotFound
+from app.stores.studio_definitions_conteudo import ConteudoStore, FakeConteudoMixin, SupabaseConteudoMixin
 from app.studio.models import LIMITS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
@@ -82,6 +83,8 @@ __all__ = [
     "SkillFileInput",
     "DraftBundleResult",
     "AUDIT_ACOES",
+    "DEFINITION_SCOPES",
+    "ConteudoStore",
     "StudioDefinitionStore",
     "FakeStudioDefinitionStore",
     "SupabaseStudioDefinitionStore",
@@ -144,7 +147,14 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: a draft's ``compiled_hash`` (012 ``guard_agent_version_immutable``).
 _COMPILED_SETTINGS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
 #: 012 ``agent_audit_log.acao`` CHECK.
-AUDIT_ACOES = ("limiar_alterado", "publicado", "publicado_override", "rascunho_descartado")
+#: Extended by 031 (this slice's actions + the Julia v2 contract §5.1 list).
+AUDIT_ACOES = (
+    "limiar_alterado", "publicado", "publicado_override", "rascunho_descartado",
+    "conteudo_editado_mcp", "specs_org_editadas", "definicao_lida",
+    "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
+)
+#: 031 ``agents.definition_scope`` CHECK.
+DEFINITION_SCOPES = ("org", "plataforma", "instancia")
 _SKILL_FIELDS = ("nome", "descricao", "corpo", "ordem", "ativo")
 _CLIENT_FIELDS = ("slug", "nome", "resumo", "ativo")
 _ENTRY_FIELDS = ("tipo", "titulo", "conteudo", "status")
@@ -178,6 +188,13 @@ class StudioAgentRecord:
     #: 006: the product that owns the agent's transport (``social-wiring`` for
     #: ``julia``); ``None`` for agents agents itself serves.
     owner_product: str | None = None
+    #: 031 (Julia v2): ``org`` = owns its versions (the default, every agent that predates v2) ·
+    #: ``plataforma`` = THE definition of the key, in the platform org · ``instancia`` = an org's
+    #: instance of a plataforma definition (no versions of its own; ``definition_agent_id``).
+    definition_scope: str = "org"
+    definition_agent_id: UUID | None = None
+    #: 031: ``linhas`` = every compiler string is a row; ``legado`` = the pre-v2 strings.
+    conteudo_modo: str = "legado"
 
 
 @dataclass(frozen=True)
@@ -465,16 +482,27 @@ def _check_fields(fields: dict[str, Any], allowed: tuple[str, ...], what: str) -
         raise ValueError(f"unknown {what} fields: {sorted(unknown)}")
 
 
+def _validate_scope(definition_scope: str, definition_agent_id: UUID | None) -> str:
+    """The 031 CHECKs: a known scope; ``definition_agent_id`` iff ``instancia``. Returns the
+    ``conteudo_modo`` the row gets (a platform-defined agent is always ``linhas``)."""
+    if definition_scope not in DEFINITION_SCOPES:
+        raise ValueError(f"definition_scope must be one of {DEFINITION_SCOPES}; got {definition_scope!r}")
+    if (definition_scope == "instancia") != (definition_agent_id is not None):
+        raise ValueError("definition_agent_id is required for (and only for) an 'instancia' agent")
+    return "legado" if definition_scope == "org" else "linhas"
+
+
 # ── Protocol ────────────────────────────────────────────────────────────────
 
 
-class StudioDefinitionStore(Protocol):
+class StudioDefinitionStore(ConteudoStore, Protocol):
     # agents (studio columns)
     def list_agents(self, org_id: UUID) -> list[StudioAgentRecord]: ...
     def get_agent(self, org_id: UUID, key: str) -> StudioAgentRecord: ...
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
+        definition_scope: str = "org", definition_agent_id: UUID | None = None,
     ) -> StudioAgentRecord:
         """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
         ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
@@ -618,7 +646,7 @@ class StudioDefinitionStore(Protocol):
 # ── Fake ────────────────────────────────────────────────────────────────────
 
 
-class FakeStudioDefinitionStore:
+class FakeStudioDefinitionStore(FakeConteudoMixin):
     """In-memory :class:`StudioDefinitionStore`.
 
     Emulates 012: the partial uniques (one rascunho / one ativa), the
@@ -652,6 +680,9 @@ class FakeStudioDefinitionStore:
         #: agent_id -> number of active eval cases (publish needs >= 1).
         self._active_cases: dict[UUID, int] = {}
         self._seq = 0
+        #: orgs flagged ``organizations.is_platform`` (031: a platform definition lives there).
+        self._platform_orgs: set[UUID] = set()
+        self._init_conteudo()
 
     def _now(self) -> datetime:
         # Strictly increasing timestamps keep "newest first"/"oldest first"
@@ -694,6 +725,10 @@ class FakeStudioDefinitionStore:
         if v is not None and v.status == "rascunho":
             self._versions[version_id] = replace(v, compiled_hash=None, updated_at=self._now())
 
+    def mark_platform_org(self, org_id: UUID) -> None:
+        """Test helper: flag ``org_id`` as the platform org (``organizations.is_platform``)."""
+        self._platform_orgs.add(org_id)
+
     def add_legacy_agent(self, org_id: UUID, key: str, nome: str) -> StudioAgentRecord:
         return self.seed_agent(org_id, key, nome=nome, definition_mode="legacy", ativo=False)
 
@@ -728,19 +763,32 @@ class FakeStudioDefinitionStore:
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
+        definition_scope: str = "org", definition_agent_id: UUID | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
+        modo = _validate_scope(definition_scope, definition_agent_id)
         if (org_id, key) in self._agents:
             raise StudioConflict("key_taken", f"agent key {key!r} already exists")
+        # 031 `guard_agent_definition_scope`
+        if definition_scope == "plataforma":
+            if org_id not in self._platform_orgs:
+                raise StudioConflict("definition_not_platform", "a platform definition lives in the platform org")
+            if self.get_platform_definition(key) is not None:
+                raise StudioConflict("key_taken", f"platform definition {key!r} already exists")
+        elif definition_scope == "instancia":
+            definition = self.get_agent_by_id(definition_agent_id)
+            if definition.definition_scope != "plataforma" or definition.key != key:
+                raise StudioConflict("definition_invalid", "the definition must be the platform row of the same key")
         now = self._now()
         rec = StudioAgentRecord(
             id=uuid4(), org_id=org_id, key=key, nome=nome, descricao=descricao,
             definition_mode="studio", runtime=runtime, ativo=False,
             publicacao_limiar=0.8, created_at=now, updated_at=now, kind=kind,
-            owner_product=owner_product,
+            owner_product=owner_product, definition_scope=definition_scope,
+            definition_agent_id=definition_agent_id, conteudo_modo=modo,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -840,6 +888,8 @@ class FakeStudioDefinitionStore:
                 for f in [f for f in self._files.values() if f.skill_id == sk.id]:
                     nf = uuid4()
                     self._files[nf] = replace(f, id=nf, skill_id=nsk, created_at=now, updated_at=now)
+            # 031 `copy_version_conteudo` trigger
+            self._copy_conteudo(src.id, draft.id, org_id)
         return draft
 
     def _require_draft(self, org_id: UUID, version_id: UUID) -> VersionRecord:
@@ -929,6 +979,7 @@ class FakeStudioDefinitionStore:
             del self._skills[sk.id]
         for s in self._sections_of(version_id):
             del self._sections[s.id]
+        self._drop_conteudo(version_id)
         # 013 `eval_runs.version_id ON DELETE CASCADE`.
         for rid in [r for r, row in self._eval_runs.items() if row["version_id"] == version_id]:
             del self._eval_runs[rid]
@@ -1263,7 +1314,7 @@ def _float(v: Any) -> float:
     return float(Decimal(str(v)))
 
 
-class SupabaseStudioDefinitionStore:
+class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
     """Real :class:`StudioDefinitionStore` — Postgres via the admin client.
 
     Bare table names through ``client.schema("agents").table(...)`` — never
@@ -1311,6 +1362,9 @@ class SupabaseStudioDefinitionStore:
             publicacao_limiar=_float(row.get("publicacao_limiar", 0.8)),
             created_at=row["created_at"], updated_at=row["updated_at"],
             kind=row.get("kind") or "runtime", owner_product=row.get("owner_product"),
+            definition_scope=row.get("definition_scope") or "org",
+            definition_agent_id=_uuid_or_none(row.get("definition_agent_id")),
+            conteudo_modo=row.get("conteudo_modo") or "legado",
         )
 
     @staticmethod
@@ -1401,15 +1455,19 @@ class SupabaseStudioDefinitionStore:
     def create_studio_agent(
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
+        definition_scope: str = "org", definition_agent_id: UUID | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
+        modo = _validate_scope(definition_scope, definition_agent_id)
         payload = {
             "org_id": str(org_id), "key": key, "nome": nome, "descricao": descricao,
             "runtime": runtime, "definition_mode": "studio", "ativo": False, "kind": kind,
-            "owner_product": owner_product,
+            "owner_product": owner_product, "definition_scope": definition_scope,
+            "definition_agent_id": str(definition_agent_id) if definition_agent_id else None,
+            "conteudo_modo": modo,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))

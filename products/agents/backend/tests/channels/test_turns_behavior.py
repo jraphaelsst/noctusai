@@ -320,10 +320,10 @@ class TestRefusalsBeforeAnythingIsPersisted:
         provider is never called with org A's key."""
         chan.seed_agent()
         from app.stores.studio_definitions import SectionInput
-        from app.studio.julia import ensure_julia
+        from tests.channels.julia_v1 import seed_julia_org_agent
 
         studio = chan.rt.studio
-        b_agent = ensure_julia(OTHER_ORG, studio_store=studio, created_by=OTHER_ORG)
+        b_agent = seed_julia_org_agent(OTHER_ORG, studio_store=studio, created_by=OTHER_ORG)
         draft = studio.get_draft(OTHER_ORG, b_agent.id)
         studio.replace_sections(OTHER_ORG, draft.id, [SectionInput(chave="p", titulo="P", ordem=1, conteudo="Persona B.")])
         from tests.studio.rt.fakes import publish

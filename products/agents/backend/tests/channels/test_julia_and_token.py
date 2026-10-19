@@ -15,55 +15,76 @@ from app.stores.studio_definitions import MODELS_BY_PROVIDER, SectionInput
 from app.studio.julia import (
     JULIA_MODEL,
     JULIA_PROVIDER,
-    JULIA_SECTIONS,
     ensure_julia,
 )
+from app.studio.plataforma import ensure_definicao
+from tests.channels.julia_v1 import JULIA_SECTIONS
 from tests.channels.conftest import OTHER_ORG
 from tests.routers.conftest import DEFAULT_USER_ID, seed_org_role
 
+PLATFORM_ORG = UUID(int=900001)
+
+
+def _platform_definition(rt):
+    """The one ``julia`` platform definition, in the (fake) platform org."""
+    rt.studio.mark_platform_org(PLATFORM_ORG)
+    return ensure_definicao(PLATFORM_ORG, "julia", studio_store=rt.studio, created_by=DEFAULT_USER_ID)
+
 
 class TestJuliaSeed:
-    def test_seeds_the_agent_and_a_draft_v1_without_publishing_or_activating(self, rt):
-        agent = ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID)
-        assert (agent.key, agent.nome, agent.runtime, agent.owner_product) == (
-            "julia", "Julia", "llm", "social-wiring",
-        )
-        assert agent.definition_mode == "studio" and agent.ativo is False and agent.kind == "runtime"
-        draft = rt.studio.get_draft(rt.org_id, agent.id)
+    """Julia v2: ONE platform definition + an instance per org. ``ensure_julia`` is structure only."""
+
+    def test_without_a_platform_definition_nothing_is_created(self, rt):
+        assert ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID) is None
+        assert rt.studio.list_agents(rt.org_id) == []
+
+    def test_the_definition_is_created_once_with_settings_only(self, rt):
+        d = _platform_definition(rt)
+        assert (d.key, d.nome, d.runtime, d.owner_product) == ("julia", "Julia", "llm", "social-wiring")
+        assert (d.definition_scope, d.conteudo_modo, d.ativo) == ("plataforma", "linhas", False)
+        draft = rt.studio.get_draft(PLATFORM_ORG, d.id)
         assert draft.versao == 1 and draft.status == "rascunho"
-        assert rt.studio.get_active_version(rt.org_id, agent.id) is None
         assert (draft.provider, draft.model) == (JULIA_PROVIDER, JULIA_MODEL) == ("openai", "gpt-5.6-terra")
         assert draft.model in MODELS_BY_PROVIDER["openai"]
         assert draft.tool_policy == {"web_search": False, "knowledge": False}
+        # STRUCTURE only: not one prompt row.
+        assert rt.studio.list_sections(PLATFORM_ORG, draft.id) == []
+        assert rt.studio.list_textos(PLATFORM_ORG, draft.id) == []
+        assert rt.studio.list_ferramentas(PLATFORM_ORG, draft.id) == []
+        assert _platform_definition(rt).id == d.id  # idempotent
 
-    def test_is_idempotent_and_never_overwrites_an_admins_edits(self, rt):
-        first = ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID)
-        draft = rt.studio.get_draft(rt.org_id, first.id)
-        rt.studio.replace_sections(rt.org_id, draft.id, [
-            SectionInput(chave="persona", titulo="Quem você é", ordem=1, conteudo="Editado pelo dono."),
-        ])
-        second = ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID)
-        assert second.id == first.id
-        assert [a.key for a in rt.studio.list_agents(rt.org_id)] == ["julia"]
-        sections = rt.studio.list_sections(rt.org_id, draft.id)
-        assert [s.conteudo for s in sections] == ["Editado pelo dono."]
-        assert len(rt.studio.list_versions(rt.org_id, first.id)) == 1
+    def test_an_org_gets_an_instance_without_versions_or_text(self, rt):
+        d = _platform_definition(rt)
+        agent = ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID)
+        assert (agent.definition_scope, agent.definition_agent_id, agent.conteudo_modo) == ("instancia", d.id, "linhas")
+        assert (agent.key, agent.runtime, agent.owner_product, agent.ativo) == ("julia", "llm", "social-wiring", False)
+        assert rt.studio.list_versions(rt.org_id, agent.id) == []
 
-    def test_is_per_org(self, rt):
+    def test_is_idempotent_and_per_org(self, rt):
+        _platform_definition(rt)
         a = ensure_julia(rt.org_id, studio_store=rt.studio)
+        assert ensure_julia(rt.org_id, studio_store=rt.studio).id == a.id
         b = ensure_julia(OTHER_ORG, studio_store=rt.studio)
-        assert a.id != b.id and a.org_id != b.org_id
+        assert a.id != b.id and a.org_id != b.org_id and a.definition_agent_id == b.definition_agent_id
+        assert [x.key for x in rt.studio.list_agents(rt.org_id)] == ["julia"]
 
-    def test_the_studio_list_seeds_it_on_first_use(self, rt):
+    def test_the_studio_list_gives_an_org_its_instance_on_first_use(self, rt):
+        assert rt.get("/api/studio/agents").json()["items"] == []  # no definition yet: nothing stranded
+        _platform_definition(rt)
         body = rt.get("/api/studio/agents").json()
         assert [a["key"] for a in body["items"]] == ["julia"]
+        assert body["items"][0]["definition_scope"] == "instancia"
         assert len(rt.get("/api/studio/agents").json()["items"]) == 1  # still one
 
     def test_the_key_is_reserved_against_squatting(self, rt):
         resp = rt.post("/api/studio/agents", json={"key": "julia", "nome": "Falso"})
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
 
-    def test_the_prompt_follows_the_brief(self, rt):
+
+class TestJulia_V1_Fixture:
+    """The v1 prompt kept as a TEST-ONLY fixture (the channel suites still run a per-org agent)."""
+
+    def test_the_prompt_follows_the_brief(self):
         text = "\n".join(s.conteudo for s in JULIA_SECTIONS).lower()
         titles = [s.titulo for s in JULIA_SECTIONS]
         assert "comprar ou alugar" in text  # the first question
@@ -77,7 +98,7 @@ class TestJuliaSeed:
         assert not {"Skills", "Base de conhecimento", "Ferramentas"} & set(titles)  # compiler-owned titles
         assert all(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", s.chave) for s in JULIA_SECTIONS)
 
-    def test_no_personal_data_or_study_text_in_the_prompt(self, rt):
+    def test_no_personal_data_or_study_text_in_the_prompt(self):
         text = "\n".join(s.conteudo for s in JULIA_SECTIONS)
         assert not re.search(r"\d{3}\.\d{3}\.\d{3}-\d{2}", text)  # CPF
         assert not re.search(r"\+?\d{2}\s?\(?\d{2}\)?\s?9?\d{4}-?\d{4}", text)  # phone
@@ -96,6 +117,11 @@ def _mint(chan, agent_key="julia", **body):
 
 
 class TestChannelTokenMint:
+    @pytest.fixture(autouse=True)
+    def _per_org_agent(self, chan):
+        """The pre-v2 per-org `julia` (v1 fixture content): the mint no longer seeds a row."""
+        chan.seed_agent(publish=False, ativo=False)
+
     def test_admin_mints_a_token_shown_once_with_the_contracted_row(self, chan):
         resp = _mint(chan)
         assert resp.status_code == 201, resp.text
@@ -107,7 +133,7 @@ class TestChannelTokenMint:
         assert abs((expires - (datetime.now(timezone.utc) + timedelta(days=30))).total_seconds()) < 120
         assert settings.channel_token_ttl_days == 30
 
-        agent = chan.rt.studio.get_agent(chan.org_id, "julia")  # the mint seeded it
+        agent = chan.rt.studio.get_agent(chan.org_id, "julia")  # the per-org agent the mint binds to
         row = chan.token_admin.rows["agents"][0]
         assert row["org_id"] == str(chan.org_id)
         assert row["issuer"] == "social-wiring"

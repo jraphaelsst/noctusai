@@ -8460,6 +8460,140 @@ def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_agent_prompt_text_in_code` — Julia v2 D3 (CONTRACT §0.1 D2/D3, §2.6).
+#
+# Every string that reaches a model lives in agents DB rows (versioned with the agent version,
+# covered by `compiled_hash`); code keeps structure only. This keeper blocks prompt text from
+# coming back into `products/agents/backend/app/{channels,studio,runtime}` (+ the two extraction
+# prompts that still sit in `routers/channels_router.py`). It is a RATCHET: the literals that
+# existed when it shipped are baselined PER FILE in
+# `products/agents/backend/prompt-text-baseline.json`; a file may carry fewer, never more, and
+# when it carries fewer the baseline must be lowered in the same change (so the allowance can
+# only shrink). Escape for a vetted non-prompt constant: `# noc-allow: prompt-text-in-code — why`
+# on the assignment/call line.
+# ---------------------------------------------------------------------------
+
+_PROMPT_TEXT_SCOPE_DIRS = (
+    "products/agents/backend/app/channels",
+    "products/agents/backend/app/studio",
+    "products/agents/backend/app/runtime",
+)
+_PROMPT_TEXT_SCOPE_FILES = ("products/agents/backend/app/routers/channels_router.py",)
+_PROMPT_TEXT_BASELINE = "products/agents/backend/prompt-text-baseline.json"
+#: an UPPER_CASE module constant at least this long is a prompt-shaped string, not an id/label.
+_PROMPT_TEXT_MIN_CONST = 60
+
+
+def _prompt_text_flat(node: ast.AST) -> str | None:
+    """The static text of a str Constant / f-string / `+` of those; None when not static text."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else "{}" for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _prompt_text_flat(node.left), _prompt_text_flat(node.right)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def _prompt_text_hits(source: str) -> list[tuple[int, str]]:
+    """``[(lineno, what)]`` — the prompt-text literals in one module."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    lines = source.splitlines()
+
+    def allowed(lineno: int) -> bool:
+        return "noc-allow: prompt-text-in-code" in (lines[lineno - 1] if 0 < lineno <= len(lines) else "")
+
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "id", getattr(node.func, "attr", ""))
+            for kw in node.keywords:
+                text = _prompt_text_flat(kw.value) if kw.arg in ("description", "conteudo") else None
+                if text is None or not text.strip():
+                    continue
+                if (name in ("ToolSpec", "StudioToolSpec") and kw.arg == "description") or (
+                    name == "SectionInput" and kw.arg == "conteudo"
+                ):
+                    if not allowed(node.lineno):
+                        hits.append((node.lineno, f"{name}({kw.arg}=...)"))
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            ident = node.targets[0].id
+            text = _prompt_text_flat(node.value)
+            if text is None or allowed(node.lineno):
+                continue
+            bare = ident.lstrip("_")
+            if ident.endswith("_SYSTEM") and text.strip():
+                hits.append((node.lineno, f"{ident} = ..."))
+            elif bare.isupper() and len(text) >= _PROMPT_TEXT_MIN_CONST:
+                hits.append((node.lineno, f"{ident} = ..."))
+    return hits
+
+
+def check_agent_prompt_text_in_code(repo_root: Path | None = None) -> list[dict]:
+    """Prompt text (`ToolSpec(description=...)`, `SectionInput(conteudo=...)`, `*_SYSTEM = ...`,
+    long UPPER_CASE string constants) must not live in `products/agents/backend/app/{channels,studio,
+    runtime}` (+ `routers/channels_router.py`): it belongs in agents DB rows. Ratchet against the
+    per-file baseline `products/agents/backend/prompt-text-baseline.json` — a file may carry fewer
+    literals than its baseline, never more, and a lowered count must lower the baseline too.
+    Severity `high`. See `KB § PATTERNS/backend/backend.md` (Agent prompt text lives in the DB)."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    agents_app = root / "products/agents/backend/app"
+    if not agents_app.is_dir():
+        return issues
+    try:
+        baseline: dict[str, int] = json.loads((root / _PROMPT_TEXT_BASELINE).read_text(encoding="utf-8")).get("arquivos", {})
+    except (OSError, ValueError):
+        baseline = {}
+
+    files: list[Path] = []
+    for d in _PROMPT_TEXT_SCOPE_DIRS:
+        files += sorted((root / d).rglob("*.py")) if (root / d).is_dir() else []
+    files += [root / f for f in _PROMPT_TEXT_SCOPE_FILES if (root / f).is_file()]
+
+    seen: set[str] = set()
+    for f in files:
+        rel = str(f.relative_to(root))
+        if "__pycache__" in rel or "/tests/" in rel:
+            continue
+        seen.add(rel)
+        try:
+            hits = _prompt_text_hits(f.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        allowed = int(baseline.get(rel, 0))
+        if len(hits) > allowed:
+            novos = ", ".join(f"{what} (line {ln})" for ln, what in hits)
+            issues.append({
+                "product": "agents", "file": rel, "severity": "high",
+                "issue": (
+                    f"{len(hits)} prompt-text literal(s), baseline allows {allowed}: {novos}. Every string a model "
+                    "reads is an agents DB row (textos / ferramentas / decisões / sections), never code — "
+                    "write it as data through the Studio API / noctus.agents.content, and keep only structure here."
+                ),
+            })
+        elif len(hits) < allowed:
+            issues.append({
+                "product": "agents", "file": rel, "severity": "high",
+                "issue": (
+                    f"{len(hits)} prompt-text literal(s) left but the baseline still allows {allowed}: lower "
+                    f"`{rel}` in {_PROMPT_TEXT_BASELINE} (the ratchet only shrinks)."
+                ),
+            })
+    for rel, allowed in baseline.items():
+        if rel not in seen and allowed:
+            issues.append({
+                "product": "agents", "file": rel, "severity": "high",
+                "issue": f"baseline names {rel!r} ({allowed}) but the file is gone: drop it from {_PROMPT_TEXT_BASELINE}.",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_stand_in_conformance` — thin delegating shim. The real
 # implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
 # separate file by design — this detector composes a per-product subprocess
@@ -14274,6 +14408,53 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Migration 031 (agents, Julia v2 A-CONT) is FILE-ONLY until the tech-lead applies it (the slice
+    # never applies migrations). `verify_db_guards` probes LIVE production, which has none of these
+    # columns/constraints yet. Remove these entries and register real `GuardProbe`s in
+    # `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies 031 (definition-scope CHECKs,
+    # the one-platform-definition-per-key unique index, the scope trigger, the widened audit-action CHECK).
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agents_definition_scope_check",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agents_conteudo_modo_check",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agents_definition_agent_scope",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agents_scope_conteudo",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agents_one_plataforma_per_key",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "guard_agent_definition_scope",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/031_julia_v2_conteudo.sql",
+        "agent_audit_log_acao_check",
+        "Migration 031 unapplied (Julia v2 A-CONT; the tech-lead applies it) - the guard has no live "
+        "column/constraint in production to probe against yet.",
+    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still

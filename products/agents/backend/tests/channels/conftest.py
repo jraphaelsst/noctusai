@@ -40,7 +40,8 @@ from app.dependencies import (
 )
 from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_guard
 from app.stores.channel_inbound import FakeChannelInboundStore
-from app.studio.julia import JULIA_KEY, ensure_julia
+from app.studio.julia import JULIA_KEY
+from tests.channels.julia_v1 import seed_julia_org_agent
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, agents_client  # noqa: F401 — fixture
 from tests.studio.rt.conftest import RtHarness, rt  # noqa: F401 — fixtures
 
@@ -88,9 +89,9 @@ class ChannelHarness:
 
     # ── seeding
     def seed_agent(self, *, ativo: bool = True, publish: bool = True) -> Any:
-        """`julia` through the production seed, optionally activated + published."""
+        """`julia` as the pre-v2 per-org agent (v1 fixture content), optionally activated + published."""
         studio = self.rt.studio
-        agent = ensure_julia(self.org_id, studio_store=studio, created_by=DEFAULT_USER_ID)
+        agent = seed_julia_org_agent(self.org_id, studio_store=studio, created_by=DEFAULT_USER_ID)
         if publish:
             draft = studio.get_draft(self.org_id, agent.id)
             self.version = self.rt.publish(agent, draft.id)

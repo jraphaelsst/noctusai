@@ -56,6 +56,26 @@ products/agents/backend/app/
 The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
+### Platform-defined agents and org specs (Julia v2 — `app/studio/`)
+
+- `definition_scope`: `org` (default — owns its versions) · `plataforma` (THE definition of a key, in the
+  platform org, one per key) · `instancia` (an org's instance: no versions). Opt-in per key through
+  `plataforma.py` (`julia` today). `conteudo_modo='linhas'` (always for plataforma/instancia): every
+  compiler string is a row of `agent_version_textos`, the tools block lists `agent_version_ferramentas`,
+  decisions are `agent_version_decisoes`, the `{{org.x}}` placeholders are declared in `agent_version_specs`;
+  the org's values live in `agent_org_specs`. The registry (`textos_registry.py`, `ferramentas_registry.py`)
+  holds KEYS only; a missing required text is a blocking warning and publish answers 409
+  `conteudo_incompleto` — never a default string.
+- `resolucao.resolve_agent_for_org(store, org_id, key)` → `(instancia, definicao, versao, specs)`;
+  `compile_for_org` compiles the definition with that org's values (the hash covers texto + every content
+  row + the pinned standard); `carimbo` = the version tuple stamped on messages; `ponto_cache` is the
+  prompt-cache breakpoint (static prefix before the client block).
+- Visibility tiers (server-side): definition reads (`versions`, `compiled`, `prompts/{hash}`, `diff`,
+  textos/ferramentas/decisoes/payload, compiled-per-org) are **platform-admin only**, audited as
+  `definicao_lida`; writes are platform admin or a `studio:content-write` token (audited
+  `conteudo_editado_mcp`); an org admin gets `GET/PUT /agents/{key}/specs` (its own values; text that
+  contradicts a platform-locked rule is refused 422) and `GET /agents/{key}/status` (booleans only).
+
 ## What the framework provides automatically
 
 - `/api/health`, `/api/team`, `/api/notificacoes`, `/api/llm/*`

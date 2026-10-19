@@ -39,7 +39,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.config import settings
-from app.dependencies import require_admin, require_member, require_publish_write
+from app.dependencies import require_admin, require_member, require_platform_admin, require_publish_write
 from app.schemas.studio import (
     AgentDetailOut,
     AgentListOut,
@@ -81,6 +81,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
+from app.studio.compiler import CONTEUDO_CODIGOS
 from app.studio.julia import ensure_julia
 from app.studio.models import (
     CompiledPrompt,
@@ -176,6 +177,16 @@ def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
         raise http_error(403, "user_required", "Restricted to human users")
 
 
+def audit_definition_read(store, ctx: AuthContext, agent, what: str, version_id: UUID | None = None) -> None:
+    """Visibility tier 1: the platform's prompts / definition are readable by platform admins ONLY,
+    and every read of them leaves an append-only audit row (who, what, which version) — never the
+    content. A failed audit write fails the read (no unaudited disclosure)."""
+    store.append_audit(
+        agent.org_id, agent.id, actor_id(ctx), "definicao_lida", None,
+        {"o_que": what, "version_id": str(version_id) if version_id else None},
+    )
+
+
 @contextmanager
 def store_errors() -> Iterator[None]:
     """Map typed store errors onto the §D HTTP codes."""
@@ -202,13 +213,21 @@ def patch_fields(payload, *, nullable: frozenset[str] = frozenset()) -> dict[str
 # ── resolution helpers (shared with studio_clients_router) ─────────────────
 
 
-def resolve_agent(store, org_id: UUID, key: str, *, studio_only: bool = True) -> StudioAgentRecord:
+def resolve_agent(
+    store, org_id: UUID, key: str, *, studio_only: bool = True, allow_instancia: bool = False,
+) -> StudioAgentRecord:
     try:
         agent = store.get_agent(org_id, key)
     except NotFound as exc:
         raise http_error(404, "agent_not_found", "Agente não encontrado.") from exc
     if studio_only and agent.definition_mode != "studio":
         raise http_error(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
+    if agent.definition_scope == "instancia" and not allow_instancia:
+        # An instance owns no versions: the definition is edited on the platform, the org edits its specs.
+        raise http_error(
+            409, "definicao_na_plataforma",
+            "A definição deste agente é da plataforma; a organização edita as suas especificações.",
+        )
     return agent
 
 
@@ -320,14 +339,20 @@ def _summary(store, org_id: UUID, agent: StudioAgentRecord) -> AgentSummaryOut:
     versao_ativa = None
     tem_rascunho = False
     if agent.definition_mode == "studio":
-        active = store.get_active_version(org_id, agent.id)
+        if agent.definition_scope == "instancia":
+            # The versions are the platform definition's; the org sees only which one is live.
+            definition = store.get_agent_by_id(agent.definition_agent_id)
+            active = store.get_active_version(definition.org_id, definition.id)
+        else:
+            active = store.get_active_version(org_id, agent.id)
+            tem_rascunho = store.get_draft(org_id, agent.id) is not None
         versao_ativa = active.versao if active else None
-        tem_rascunho = store.get_draft(org_id, agent.id) is not None
     return AgentSummaryOut(
         id=agent.id, key=agent.key, nome=agent.nome, descricao=agent.descricao,
         definition_mode=agent.definition_mode, ativo=agent.ativo,
         publicacao_limiar=agent.publicacao_limiar, versao_ativa=versao_ativa,
         tem_rascunho=tem_rascunho, kind=agent.kind,
+        definition_scope=agent.definition_scope, conteudo_modo=agent.conteudo_modo,
     )
 
 
@@ -395,8 +420,8 @@ async def list_studio_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentListOut:
-    # Lais A2 (§7): `julia` (Julia, the lead agent) is seeded per org on first
-    # use — an idempotent draft, never published or switched on here.
+    # Julia v2: the org's `julia` INSTANCE of the platform definition is created on first use
+    # (structure only; nothing when the platform definition does not exist yet).
     ensure_julia(ctx.org_id, studio_store=store, created_by=ctx.user_id)
     return AgentListOut(items=[_summary(store, ctx.org_id, a) for a in store.list_agents(ctx.org_id)])
 
@@ -426,12 +451,17 @@ async def get_studio_agent(
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
 ) -> AgentDetailOut:
-    agent = resolve_agent(store, ctx.org_id, key)
+    agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     summary = _summary(store, ctx.org_id, agent)
-    versoes = [
-        VersionSummaryOut(**_version_summary(v, _score_of(gate, ctx.org_id, v)))
-        for v in store.list_versions(ctx.org_id, agent.id)
-    ]
+    if agent.definition_scope == "instancia":
+        # Visibility tiers: an org sees no version of the platform's definition (no hash, no notes, no
+        # model, no history) — only the summary's live version number.
+        versoes = []
+    else:
+        versoes = [
+            VersionSummaryOut(**_version_summary(v, _score_of(gate, ctx.org_id, v)))
+            for v in store.list_versions(ctx.org_id, agent.id)
+        ]
     return AgentDetailOut(**summary.model_dump(), versoes=versoes)
 
 
@@ -456,12 +486,13 @@ async def update_studio_agent(
 async def get_version(
     key: str,
     version_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
 ) -> VersionDetailOut:
     agent = resolve_agent(store, ctx.org_id, key)
     version = resolve_version(store, ctx.org_id, agent, version_id)
+    audit_definition_read(store, ctx, agent, "versao", version.id)
     return _version_detail(store, gate, ctx.org_id, version)
 
 
@@ -671,11 +702,12 @@ async def get_skill_file(
     key: str,
     skill_id: UUID,
     file_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> SkillFileOut:
     agent = resolve_agent(store, ctx.org_id, key)
-    _resolve_skill(store, ctx.org_id, agent, skill_id)
+    _, skill_version = _resolve_skill(store, ctx.org_id, agent, skill_id)
+    audit_definition_read(store, ctx, agent, "arquivo_skill", skill_version.id)
     f = _resolve_file(store, ctx.org_id, skill_id, file_id)
     return SkillFileOut(id=f.id, caminho=f.caminho, titulo=f.titulo, conteudo=f.conteudo)
 
@@ -706,12 +738,13 @@ async def get_compiled(
     key: str,
     version_id: UUID,
     client_id: UUID | None = Query(default=None),
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> CompiledOut:
     agent = resolve_agent(store, ctx.org_id, key)
     version = resolve_version(store, ctx.org_id, agent, version_id)
+    audit_definition_read(store, ctx, agent, "compilado", version.id)
     client = None
     if client_id is not None:
         client = client_bundle(store, ctx.org_id, resolve_client(store, ctx.org_id, agent, client_id))
@@ -738,13 +771,14 @@ async def diff_versions(
     key: str,
     version_a: UUID,
     version_b: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> DiffOut:
     agent = resolve_agent(store, ctx.org_id, key)
     va = resolve_version(store, ctx.org_id, agent, version_a)
     vb = resolve_version(store, ctx.org_id, agent, version_b)
+    audit_definition_read(store, ctx, agent, "diff", va.id)
     ca = compile_version(store, catalog, ctx.org_id, agent, va)
     cb = compile_version(store, catalog, ctx.org_id, agent, vb)
 
@@ -807,8 +841,12 @@ async def publish_draft(
 
     draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
     if compiled.bloqueado:
+        # Missing content (a required text, a tool/decision/spec hole) is its own code: the author
+        # fills a row; nothing in code ever substitutes a default.
+        incompleto = any(w.bloqueante and w.codigo in CONTEUDO_CODIGOS for w in compiled.avisos)
         raise http_error(
-            409, "compile_blocked", "O prompt compilado tem avisos bloqueantes.",
+            409, "conteudo_incompleto" if incompleto else "compile_blocked",
+            "O conteúdo do agente está incompleto." if incompleto else "O prompt compilado tem avisos bloqueantes.",
             avisos=[w.to_dict() for w in compiled.avisos],
         )
 
@@ -856,13 +894,16 @@ async def publish_draft(
 @router.get("/prompts/{prompt_hash}", response_model=PromptByHashOut)
 async def get_prompt_by_hash(
     prompt_hash: str,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> PromptByHashOut:
     try:
         rec = store.get_compiled_prompt(ctx.org_id, prompt_hash)
+        version = store.get_version(ctx.org_id, rec.version_id)
+        owner = store.get_agent_by_id(version.agent_id)
     except NotFound as exc:
         raise http_error(404, "prompt_not_found", "Prompt não encontrado.") from exc
+    audit_definition_read(store, ctx, owner, "prompt_por_hash", version.id)
     return PromptByHashOut(
         hash=rec.hash, texto=rec.texto, manifest=rec.manifest, version_id=rec.version_id,
         client_id=rec.client_id, created_at=rec.created_at,

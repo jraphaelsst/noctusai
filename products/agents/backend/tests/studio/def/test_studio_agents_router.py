@@ -105,12 +105,12 @@ class TestAuthBoundary:
     def test_other_org_gets_404_never_403(self, studio):
         _create(studio)
         draft = _draft(studio)
-        studio.as_other_org(role="owner")
+        studio.as_other_org(role="owner", platform=True)
         resp = studio.get(f"{BASE}/isa")
         assert resp.status_code == 404
         assert resp.json()["code"] == "agent_not_found"
-        # The other org sees none of OUR agents (only its own seeded default, `julia`).
-        assert [a["key"] for a in studio.get(BASE).json()["items"]] == ["julia"]
+        # The other org sees none of OUR agents (and no `julia` either: there is no platform definition to instantiate).
+        assert [a["key"] for a in studio.get(BASE).json()["items"]] == []
         assert studio.patch(f"{BASE}/isa", json={"nome": "hijack"}).status_code == 404
         # Their own agent with the same key cannot reach our version id.
         _create(studio)
@@ -527,7 +527,7 @@ class TestDiffAndPrompts:
         v1 = studio.post(f"{BASE}/isa/draft/publish", json={"override_reason": "x" * 25}).json()
         resp = studio.get(f"/api/studio/prompts/sha256:{'f' * 64}")
         assert resp.status_code == 404 and resp.json()["code"] == "prompt_not_found"
-        studio.as_other_org()
+        studio.as_other_org(platform=True)
         assert studio.get(f"/api/studio/prompts/{v1['compiled_hash']}").status_code == 404
 
 

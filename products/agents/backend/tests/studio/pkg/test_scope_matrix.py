@@ -38,6 +38,16 @@ PUBLISH_ROUTES = {
     ("POST", "/api/studio/agents/{key}/draft/publish"),
 }
 
+#: Julia v2 content API (2026-10-19): token-reachable ONLY with the dedicated `studio:content-write`
+#: scope (the `noctus.agents.content` MCP path) — never with a package/publish scope. Pinned in
+#: `tests/studio/def/test_studio_conteudo_router.py` (a token without it is `scope_missing`).
+CONTENT_WRITE_ROUTES = {
+    ("PUT", "/api/studio/agents/{key}/draft/textos"),
+    ("PUT", "/api/studio/agents/{key}/draft/ferramentas"),
+    ("PUT", "/api/studio/agents/{key}/draft/decisoes"),
+    ("PUT", "/api/studio/agents/{key}/draft/specs"),
+}
+
 #: Prefixes of the product's business API. `/api/auth`, `/api/settings/api-tokens`
 #: (the seed's own auth surface, with its own human-only rules) and health are out.
 BUSINESS_PREFIXES = (
@@ -68,10 +78,10 @@ def _fill(path: str) -> str:
 def test_the_matrix_actually_covers_the_product(pkg):
     routes = _business_routes()
     assert len(routes) > 60, "route discovery found too few routes — the matrix would be vacuous"
-    assert set(TOKEN_ROUTES) | PUBLISH_ROUTES <= set(routes)
+    assert set(TOKEN_ROUTES) | PUBLISH_ROUTES | CONTENT_WRITE_ROUTES <= set(routes)
 
 
-@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES and r not in PUBLISH_ROUTES])
+@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES and r not in PUBLISH_ROUTES and r not in CONTENT_WRITE_ROUTES])
 def test_every_other_route_refuses_a_fully_scoped_token_with_user_required(pkg, method, path):
     with pkg.as_token(*ALL):
         resp = pkg.rt.client.raw().request(method, _fill(path), json={})

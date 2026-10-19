@@ -17,17 +17,55 @@ from app.studio.models import (
     ClientEntryData,
     CompiledPrompt,
     CompileInput,
+    ConteudoBundle,
+    DecisaoData,
+    FerramentaData,
     KnowledgeCatalog,
+    OpcaoDecisao,
     SectionData,
     SkillData,
     SkillFileRef,
+    SpecDefData,
+    TextoData,
     VersionBundle,
 )
 
-__all__ = ["version_bundle", "client_bundle", "compile_version"]
+__all__ = ["version_bundle", "conteudo_bundle", "client_bundle", "compile_version"]
 
 
-def version_bundle(store, org_id: UUID, version: VersionRecord) -> VersionBundle:
+def conteudo_bundle(store, org_id: UUID, version: VersionRecord) -> ConteudoBundle:
+    """The version's four content tables as the compiler's pure input (Julia v2)."""
+    return ConteudoBundle(
+        textos=tuple(
+            TextoData(chave=t.chave, conteudo=t.conteudo, id=t.id) for t in store.list_textos(org_id, version.id)
+        ),
+        ferramentas=tuple(
+            FerramentaData(
+                ferramenta=f.ferramenta, descricao=f.descricao, ativo=f.ativo, parametros=dict(f.parametros),
+                obrigatoria_skill=f.obrigatoria_skill, id=f.id,
+            )
+            for f in store.list_ferramentas(org_id, version.id)
+        ),
+        decisoes=tuple(
+            DecisaoData(
+                chave=d.chave, titulo=d.titulo, regra=d.regra, id=d.id,
+                opcoes=tuple(
+                    OpcaoDecisao(valor=o["valor"], rotulo=o["rotulo"], padrao=bool(o["padrao"])) for o in d.opcoes
+                ),
+            )
+            for d in store.list_decisoes(org_id, version.id)
+        ),
+        specs=tuple(
+            SpecDefData(
+                chave=sp.chave, rotulo=sp.rotulo, descricao=sp.descricao, tipo=sp.tipo,
+                obrigatoria=sp.obrigatoria, exemplo=sp.exemplo, id=sp.id,
+            )
+            for sp in store.list_spec_defs(org_id, version.id)
+        ),
+    )
+
+
+def version_bundle(store, org_id: UUID, version: VersionRecord, *, conteudo: bool = False) -> VersionBundle:
     secoes = store.list_sections(org_id, version.id)
     skills = store.list_skills(org_id, version.id)
     files_by_skill: dict[UUID, list[SkillFileRef]] = {}
@@ -54,6 +92,8 @@ def version_bundle(store, org_id: UUID, version: VersionRecord) -> VersionBundle
         ),
         version_id=version.id,
         versao=version.versao,
+        conteudo=conteudo_bundle(store, org_id, version) if conteudo else None,
+        provider=version.provider,
     )
 
 
@@ -72,9 +112,14 @@ def client_bundle(store, org_id: UUID, client) -> ClientBundle:
 
 def compile_version(
     store, catalog: KnowledgeCatalog, org_id: UUID, agent: StudioAgentRecord,
-    version: VersionRecord, client: ClientBundle | None = None,
+    version: VersionRecord, client: ClientBundle | None = None, *,
+    org_specs: dict[str, str] | None = None, extras: dict | None = None, qualificacao=None,
 ) -> CompiledPrompt:
-    bundle = version_bundle(store, org_id, version)
+    """THE one compile call site. ``org_id`` is the org that OWNS ``version``'s rows (the
+    definition's org for a platform-defined agent). ``agent.conteudo_modo == 'linhas'`` selects
+    content mode (every string a row, hash over every content table); ``org_specs`` compiles the
+    definition FOR an org (see ``app.studio.resolucao.compile_for_org``)."""
+    bundle = version_bundle(store, org_id, version, conteudo=agent.conteudo_modo == "linhas")
     knowledge = tuple(catalog.collection_summaries(org_id, agent.id))
     return compile_prompt(CompileInput(
         agent_nome=agent.nome,
@@ -82,4 +127,8 @@ def compile_version(
         knowledge=knowledge,
         client=client,
         tool_policy=bundle.tool_policy,
+        org_specs=org_specs,
+        extras=extras,
+        canal=agent.owner_product is not None,
+        qualificacao=qualificacao,
     ))

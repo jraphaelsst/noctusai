@@ -62,6 +62,7 @@ def wired(chan):  # noqa: F811
     """Mint a REAL channel token, resolve it through the seed resolver, return a SW client."""
     from app.main import app
 
+    chan.seed_agent(publish=False, ativo=False)  # the pre-v2 per-org agent (Julia v2: no auto-seeded row)
     minted = chan.client.post(
         "/api/agents/julia/channel-token", json={"product": "social-wiring", "label": "contract-x"}
     )

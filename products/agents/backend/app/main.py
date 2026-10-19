@@ -71,6 +71,7 @@ from app.routers.studio_agents_router import (
 )
 from app.routers.studio_agents_router import router as studio_agents_router
 from app.routers.studio_clients_router import router as studio_clients_router
+from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
 from app.routers.studio_import_router import router as studio_import_router
@@ -217,6 +218,7 @@ app = create_product_app(
         # Agent Studio (contract §D, §J2.3 — BE-RT registers every studio router).
         studio_agents_router,
         studio_clients_router,
+        studio_conteudo_router,
         studio_knowledge_router,
         # Seed editorial workflow (project seed-editorial-workflow, E5): governed knowledge review.
         editorial_router,

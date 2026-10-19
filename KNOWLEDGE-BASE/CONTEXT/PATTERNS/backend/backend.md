@@ -586,3 +586,19 @@ See also:
 - `notifications.md` — notification flow details
 - `webhook-signatures.md` — the four-shape catalog + universal rules
 - `accept-with-rationale.md` — durable register of legitimate divergences
+
+
+## Agent prompt text lives in the DB (agents, Julia v2)
+
+Every string a model reads — system prompt sections, skills, the compiler's titles/intros/tool lines, tool
+descriptions, decisions, runtime fallbacks, the qualification block — is a row of the agents DB (versioned with
+the agent version and covered by its `compiled_hash`), edited through the Studio API / the
+`noctus.agents.content` tool. Code keeps structure: JSON schemas, validation, order/layout, gates and
+registries of required KEYS (`app/studio/textos_registry.py`, `ferramentas_registry.py`) — no default string
+ever; missing content refuses publish (409 `conteudo_incompleto`). Keeper `check_agent_prompt_text_in_code`
+(`ToolSpec(description=)`, `SectionInput(conteudo=)`, `*_SYSTEM`, long UPPER_CASE constants under
+`products/agents/backend/app/{channels,studio,runtime}`) ratchets against
+`products/agents/backend/prompt-text-baseline.json`: a file may carry fewer literals, never more, and a lower
+count must lower the baseline in the same change. Platform-defined agents (one definition + per-org instance and
+org specs) and the visibility tiers (definition reads are platform-admin-only and audited) are designed in
+`products/agents/projects/julia-v2/CONTRACT.md` §2.6.

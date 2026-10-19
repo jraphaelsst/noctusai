@@ -22,32 +22,51 @@ stripped):
 
 The just-in-time layer (skill bodies, skill files, collections) is listed in
 ``sob_demanda`` and NEVER inside ``texto``.
+
+CONTENT MODE (Julia v2, CONTRACT §2.1 rows 4-5): when ``version.conteudo`` is a bundle the
+compiler keeps ORDER and LAYOUT only — every human-readable string (block titles, intros, the
+tools lines, the client labels) is a row of ``agent_version_textos`` and the ``# Ferramentas``
+block lists the version's ``agent_version_ferramentas`` rows (name + DB description). A
+required string that is missing is a BLOCKING warning, never a default. The hash then covers
+``texto`` AND every content row (``hash_payload``); ``conteudo is None`` (legacy agents) keeps
+the pre-v2 strings below and ``hash == prompt_hash(texto)`` byte for byte. Compiled FOR AN ORG
+(``org_specs`` given) every ``{{org.chave}}`` placeholder is replaced by that org's value
+first, so the text, the rows and the hash are exactly what the model receives.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+from dataclasses import replace
 from typing import Any
 
+from app.studio.especificacoes import placeholders_org, resolver_texto
+from app.studio.ferramentas_registry import ferramenta_conhecida
 from app.studio.models import (
     ClientBundle,
     CollectionSummary,
     CompiledPrompt,
     CompileInput,
     CompileWarning,
+    ConteudoBundle,
     ManifestOrigin,
     ManifestSection,
     OnDemandItem,
     SectionData,
     SkillData,
+    VersionBundle,
 )
+from app.studio.textos_registry import TEXTOS, chaves_exigidas, placeholders_de
 
 __all__ = [
     "AUTO_TITLES",
     "CLIENT_ENTRY_ORDER",
     "CLIENT_ENTRY_LABELS",
     "TOKEN_WARNING_THRESHOLD",
+    "CONTEUDO_CODIGOS",
     "compile_prompt",
+    "hash_payload",
     "estimate_tokens",
     "prompt_hash",
 ]
@@ -96,6 +115,15 @@ _KNOWLEDGE_INTRO = (
 )
 
 
+#: The blocking-warning codes that mean "the content is incomplete" — publish answers them with
+#: 409 ``conteudo_incompleto`` (every other blocking warning stays 409 ``compile_blocked``).
+CONTEUDO_CODIGOS = frozenset({
+    "texto_ausente", "placeholder_desconhecido", "ferramenta_desconhecida",
+    "skill_exigida_inexistente", "decisao_sem_opcao_padrao", "decisao_em_secao",
+    "spec_nao_declarada", "spec_org_faltando",
+})
+
+
 def estimate_tokens(text: str) -> int:
     """§C: ``ceil(len(texto) / 4)``."""
     return math.ceil(len(text) / 4)
@@ -113,12 +141,14 @@ def _policy_flag(policy: dict[str, Any], key: str) -> bool:
 #: Sections whose ``chave`` starts with this hold a RULE a channel transport asks the agent to apply
 #: (``POST /api/channels/agents/{key}/decisoes/{chave}``), not conversation instructions: they are
 #: edited in the studio like any section but never compiled into the conversation prompt.
+#: LEGACY MODE ONLY — in content mode a decision is a row of ``agent_version_decisoes`` and a
+#: ``decisao-*`` section is a blocking ``decisao_em_secao`` warning.
 DECISAO_PREFIX = "decisao-"
 
 
-def _active_sections(secoes) -> list[SectionData]:
+def _active_sections(secoes, *, conteudo: bool = False) -> list[SectionData]:
     return sorted(
-        (s for s in secoes if s.ativo and not s.chave.startswith(DECISAO_PREFIX)),
+        (s for s in secoes if s.ativo and (conteudo or not s.chave.startswith(DECISAO_PREFIX))),
         key=lambda s: (s.ordem, s.chave),
     )
 
@@ -131,29 +161,111 @@ def _sorted_collections(knowledge) -> list[CollectionSummary]:
     return sorted(knowledge, key=lambda c: (c.ordem, c.slug))
 
 
-def _collection_line(c: CollectionSummary) -> str:
+class _Strings:
+    """The compiler's human-readable strings. Legacy mode answers with the pre-v2 constant it is
+    handed; content mode answers ONLY from ``agent_version_textos`` and records a key that is
+    missing/blank (the caller turns the set into one blocking warning — never into a default)."""
+
+    def __init__(self, conteudo: ConteudoBundle | None) -> None:
+        self._c = conteudo
+        self.ausentes: set[str] = set()
+
+    @property
+    def conteudo(self) -> bool:
+        return self._c is not None
+
+    def peek(self, chave: str, legado: str) -> str:
+        """Like a call, but a missing key is NOT recorded (used only to know a reserved title)."""
+        return legado if self._c is None else self._c.texto(chave).strip()
+
+    def __call__(self, chave: str, legado: str) -> str:
+        if self._c is None:
+            return legado
+        texto = self._c.texto(chave).strip()
+        if not texto:
+            self.ausentes.add(chave)
+        return texto
+
+
+def _collection_line(c: CollectionSummary, S: _Strings) -> str:
     tag = f" [{c.tag}]" if c.tag else ""
     desc = f": {c.descricao.strip()}" if c.descricao and c.descricao.strip() else ""
-    noun = "documento" if c.doc_count == 1 else "documentos"
+    noun = (
+        S("compilador.unidade_documento", "documento")
+        if c.doc_count == 1
+        else S("compilador.unidade_documentos", "documentos")
+    )
     return f"- `{c.slug}`{tag} — {c.nome}{desc} ({c.doc_count} {noun})"
 
 
-def _tools_block(web: bool, knowledge: bool, has_skills: bool) -> str:
+def _tools_block(web: bool, knowledge: bool, has_skills: bool, S: _Strings, ferramentas) -> str:
+    title = S("compilador.titulo_ferramentas", TOOLS_TITLE)
+    if not S.conteudo:
+        lines = [
+            "- Pesquisa na web: ativada (`WebSearch`)."
+            if web
+            else "- Pesquisa na web: desativada — não há acesso à web nesta conversa.",
+            "- Base de conhecimento: ativada (`kb_buscar`, `kb_ler`)."
+            if knowledge
+            else "- Base de conhecimento: desativada.",
+        ]
+        if has_skills:
+            lines.append("- Skills: ativadas (`abrir_skill`, `ler_arquivo_skill`).")
+        return f"# {title}\n\n" + "\n".join(lines)
     lines = [
-        "- Pesquisa na web: ativada (`WebSearch`)."
-        if web
-        else "- Pesquisa na web: desativada — não há acesso à web nesta conversa.",
-        "- Base de conhecimento: ativada (`kb_buscar`, `kb_ler`)."
-        if knowledge
-        else "- Base de conhecimento: desativada.",
+        S("compilador.ferramenta_linha.web_ativada" if web else "compilador.ferramenta_linha.web_desativada", ""),
+        S(
+            "compilador.ferramenta_linha.conhecimento_ativada" if knowledge
+            else "compilador.ferramenta_linha.conhecimento_desativada", "",
+        ),
     ]
     if has_skills:
-        lines.append("- Skills: ativadas (`abrir_skill`, `ler_arquivo_skill`).")
-    return f"# {TOOLS_TITLE}\n\n" + "\n".join(lines)
+        lines.append(S("compilador.ferramenta_linha.skills_ativada", ""))
+    # The tools the version actually offers: name + the DB description (CONTRACT §2.1 row 5).
+    lines += [
+        f"- `{f.ferramenta}` — {f.descricao.strip()}"
+        for f in sorted((f for f in ferramentas if f.ativo), key=lambda f: f.ferramenta)
+    ]
+    return f"# {title}\n\n" + "\n".join(line for line in lines if line)
 
 
-def _client_block(client: ClientBundle) -> str:
-    parts = [f"# {CLIENT_TITLE_PREFIX}: {client.nome.strip()}"]
+def _qualificacao_block(q, S: _Strings) -> str:
+    """The pinned standard as readable text. Headings/connectives are textos rows; every criterion,
+    option, stage, minimum and identity timing is a data row — code only orders and lays out."""
+    titulo = S("compilador.titulo_qualificacao", "")
+    parts = [f"# {titulo}", S("compilador.qualificacao_intro", "")]
+    crit = sorted(q.criterios, key=lambda c: (c.ordem, c.chave))
+    rot = {c.chave: c.rotulo for c in crit}
+    lines = []
+    for c in crit:
+        lines.append(f"- **{c.rotulo}** (`{c.chave}`) — {c.descricao_modelo.strip()}")
+        if c.opcoes:
+            lines.append(f"  {S('compilador.qualificacao_rotulo_opcoes', '')} " + "; ".join(
+                f"`{v}` ({r})" + (f" — {d.strip()}" if d and d.strip() else "") for v, r, d in c.opcoes
+            ))
+    parts.append(f"## {S('compilador.qualificacao_rotulo_criterios', '')}\n" + "\n".join(lines))
+    if q.estagios:
+        est = sorted(q.estagios, key=lambda e: (e.ordem, e.chave))
+        parts.append(
+            f"## {S('compilador.qualificacao_rotulo_estagios', '')}\n"
+            + "\n".join(f"- **{e.rotulo}** (`{e.chave}`) — {e.descricao.strip()}" for e in est)
+        )
+    if q.minimo_para_ofertar:
+        parts.append(
+            f"## {S('compilador.qualificacao_rotulo_minimo', '')}\n"
+            + ", ".join(rot.get(k, k) for k in q.minimo_para_ofertar)
+        )
+    if q.identidade:
+        parts.append(
+            f"## {S('compilador.qualificacao_rotulo_identidade', '')}\n"
+            + "\n".join(f"- {rot.get(k, k)}: {m.strip()}" for k, m in q.identidade)
+        )
+    return "\n\n".join(parts)
+
+
+def _client_block(client: ClientBundle, S: _Strings) -> str:
+    prefix = S("compilador.titulo_cliente", CLIENT_TITLE_PREFIX)
+    parts = [f"# {prefix}: {client.nome.strip()}"]
     resumo = (client.resumo or "").strip()
     if resumo:
         parts.append(resumo)
@@ -167,14 +279,253 @@ def _client_block(client: ClientBundle) -> str:
             conteudo = (e.conteudo or "").strip()
             titulo = e.titulo.strip()
             lines.append(f"- **{titulo}** — {conteudo}" if conteudo else f"- **{titulo}**")
-        parts.append(f"## {CLIENT_ENTRY_LABELS[tipo]}\n" + "\n".join(lines))
+        rotulo = S(f"compilador.cliente_rotulo.{tipo}", CLIENT_ENTRY_LABELS[tipo])
+        parts.append(f"## {rotulo}\n" + "\n".join(lines))
     return "\n\n".join(parts)
+
+
+# ── org specs: compile the definition FOR an org ────────────────────────────
+
+
+def _resolver_conteudo(c: ConteudoBundle, valores: dict[str, str]) -> ConteudoBundle:
+    def r(t: str) -> str:
+        return resolver_texto(t, valores)
+
+    return ConteudoBundle(
+        textos=tuple(replace(t, conteudo=r(t.conteudo)) for t in c.textos),
+        ferramentas=tuple(
+            replace(
+                f, descricao=r(f.descricao),
+                parametros={k: (r(v) if isinstance(v, str) else v) for k, v in f.parametros.items()},
+            )
+            for f in c.ferramentas
+        ),
+        decisoes=tuple(
+            replace(
+                d, titulo=r(d.titulo), regra=r(d.regra),
+                opcoes=tuple(replace(o, rotulo=r(o.rotulo)) for o in d.opcoes),
+            )
+            for d in c.decisoes
+        ),
+        specs=c.specs,
+    )
+
+
+def _resolver_versao(v: VersionBundle, valores: dict[str, str]) -> VersionBundle:
+    def r(t: str) -> str:
+        return resolver_texto(t, valores)
+
+    return replace(
+        v,
+        secoes=tuple(replace(s, titulo=r(s.titulo), conteudo=r(s.conteudo)) for s in v.secoes),
+        skills=tuple(replace(sk, descricao=r(sk.descricao), corpo=r(sk.corpo)) for sk in v.skills),
+        conteudo=_resolver_conteudo(v.conteudo, valores) if v.conteudo is not None else None,
+    )
+
+
+def _textos_de_conteudo(v: VersionBundle, cont: ConteudoBundle):
+    """Every text the author wrote that may carry a ``{{org.x}}`` placeholder: (where, text)."""
+    for s in v.secoes:
+        yield f"seção '{s.chave}'", s.titulo
+        yield f"seção '{s.chave}'", s.conteudo
+    for sk in v.skills:
+        yield f"skill '{sk.nome}'", sk.descricao
+        yield f"skill '{sk.nome}'", sk.corpo
+    for t in cont.textos:
+        yield f"texto '{t.chave}'", t.conteudo
+    for f in cont.ferramentas:
+        yield f"ferramenta '{f.ferramenta}'", f.descricao
+        for val in f.parametros.values():
+            if isinstance(val, str):
+                yield f"ferramenta '{f.ferramenta}'", val
+    for d in cont.decisoes:
+        yield f"decisão '{d.chave}'", d.titulo
+        yield f"decisão '{d.chave}'", d.regra
+        for o in d.opcoes:
+            yield f"decisão '{d.chave}'", o.rotulo
+
+
+def _avisos_conteudo(
+    inp: CompileInput, cont: ConteudoBundle, S: _Strings, skills: list[SkillData], com_cliente: bool,
+) -> list[CompileWarning]:
+    """Completeness of a content-mode compile (blocking — CONTEUDO_CODIGOS)."""
+    out: list[CompileWarning] = []
+    v = inp.version
+
+    exigidas = chaves_exigidas(
+        tool_policy=inp.tool_policy, tem_skills=bool(skills), com_cliente=com_cliente, canal=inp.canal,
+        com_qualificacao=inp.qualificacao is not None,
+    )
+    preenchidas = {t.chave for t in cont.textos if t.conteudo.strip()}
+    faltam = sorted((exigidas - preenchidas) | S.ausentes)
+    if faltam:
+        out.append(CompileWarning(
+            "texto_ausente", "Textos do sistema obrigatórios sem conteúdo: " + ", ".join(faltam) + ".", True,
+        ))
+
+    # a runtime {placeholder} the registry does not allow for that key
+    for t in cont.textos:
+        spec = TEXTOS.get(t.chave)
+        permitidos = set(spec.placeholders_permitidos) if spec is not None else set()
+        desconhecidos = sorted(placeholders_de(t.conteudo) - permitidos)
+        if desconhecidos:
+            out.append(CompileWarning(
+                "placeholder_desconhecido",
+                f"O texto '{t.chave}' usa placeholders não permitidos: "
+                + ", ".join("{" + n + "}" for n in desconhecidos) + ".",
+                True,
+            ))
+
+    ativas = {sk.nome for sk in skills}
+    for f in cont.ferramentas:
+        if not ferramenta_conhecida(f.ferramenta):
+            out.append(CompileWarning(
+                "ferramenta_desconhecida", f"A ferramenta '{f.ferramenta}' não existe no registro do código.", True,
+            ))
+        if f.ativo and not f.descricao.strip():
+            out.append(CompileWarning(
+                "texto_ausente", f"A ferramenta '{f.ferramenta}' está ativa e sem descrição.", True,
+            ))
+        if f.obrigatoria_skill and f.obrigatoria_skill not in ativas:
+            out.append(CompileWarning(
+                "skill_exigida_inexistente",
+                f"A ferramenta '{f.ferramenta}' exige a skill '{f.obrigatoria_skill}', que não está ativa na versão.",
+                True,
+            ))
+
+    for d in cont.decisoes:
+        padroes = [o for o in d.opcoes if o.padrao]
+        if len(padroes) != 1 or len({o.valor for o in d.opcoes}) != len(d.opcoes):
+            out.append(CompileWarning(
+                "decisao_sem_opcao_padrao",
+                f"A decisão '{d.chave}' precisa de opções com valores únicos e exatamente uma marcada como padrão.",
+                True,
+            ))
+        if not d.regra.strip():
+            out.append(CompileWarning("texto_ausente", f"A decisão '{d.chave}' está sem regra.", True))
+
+    for s in v.secoes:
+        if s.ativo and s.chave.startswith(DECISAO_PREFIX):
+            out.append(CompileWarning(
+                "decisao_em_secao",
+                f"A seção '{s.chave}' é uma decisão: mova-a para Decisões (regra e opções tipadas).", True,
+            ))
+
+    # org-spec declarations ↔ placeholders used
+    declaradas = {sp.chave for sp in cont.specs}
+    usadas: set[str] = set()
+    for _, texto in _textos_de_conteudo(v, cont):
+        usadas |= placeholders_org(texto)
+    nao_declaradas = sorted(usadas - declaradas)
+    if nao_declaradas:
+        out.append(CompileWarning(
+            "spec_nao_declarada",
+            "Placeholders {{org.…}} sem declaração em Especificações da organização: "
+            + ", ".join(nao_declaradas) + ".",
+            True,
+        ))
+    sobra = sorted(declaradas - usadas)
+    if sobra:
+        out.append(CompileWarning(
+            "spec_nao_usada", "Especificações declaradas e não usadas em nenhum texto: " + ", ".join(sobra) + ".", False,
+        ))
+    return out
+
+
+# ── hash ────────────────────────────────────────────────────────────────────
+
+
+def hash_payload(
+    texto: str, cont: ConteudoBundle, version: VersionBundle, extras: dict[str, Any] | None,
+    qualificacao: Any = None,
+) -> dict[str, Any]:
+    """The canonical, row-id-free payload a content-mode hash is taken over: the prompt text, the
+    version settings and EVERY content row. Changing any one of them changes the hash."""
+    return {
+        "v": 1,
+        "texto": texto,
+        "config": {
+            "provider": version.provider, "model": version.model, "effort": version.effort,
+            "max_turns": version.max_turns, "idioma": version.idioma,
+            "tool_policy": dict(version.tool_policy),
+        },
+        "textos": sorted([t.chave, t.conteudo] for t in cont.textos),
+        "ferramentas": sorted(
+            [f.ferramenta, f.ativo, f.descricao, sorted(f.parametros.items()), f.obrigatoria_skill]
+            for f in cont.ferramentas
+        ),
+        "decisoes": sorted(
+            [d.chave, d.titulo, d.regra, [[o.valor, o.rotulo, o.padrao] for o in d.opcoes]]
+            for d in cont.decisoes
+        ),
+        "specs": sorted(
+            [sp.chave, sp.rotulo, sp.descricao, sp.tipo, sp.obrigatoria, sp.exemplo] for sp in cont.specs
+        ),
+        "extras": extras or {},
+        "qualificacao": None if qualificacao is None else {
+            "versao_id": str(qualificacao.versao_id) if qualificacao.versao_id else None,
+            "criterios": sorted(
+                [c.chave, c.rotulo, c.descricao_modelo, c.grupo, c.ordem, [list(o) for o in c.opcoes]]
+                for c in qualificacao.criterios
+            ),
+            "estagios": sorted([e.chave, e.rotulo, e.descricao, e.ordem] for e in qualificacao.estagios),
+            "minimo": list(qualificacao.minimo_para_ofertar),
+            "identidade": [list(i) for i in qualificacao.identidade],
+        },
+    }
+
+
+def _hash_of(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _manifest_conteudo(cont: ConteudoBundle) -> list[ManifestSection]:
+    """Attribute the content that reaches the model OUTSIDE the system prompt to its row."""
+    out: list[ManifestSection] = []
+
+    def add(tipo: str, chave: str, titulo: str, id_, campo: str, texto: str) -> None:
+        out.append(ManifestSection(
+            chave=f"{tipo}:{chave}", titulo=titulo, origem=ManifestOrigin(tipo, id_, campo),
+            inicio=None, fim=None, chars=len(texto), tokens=estimate_tokens(texto),
+        ))
+
+    for t in sorted(cont.textos, key=lambda t: t.chave):
+        add("texto", t.chave, t.chave, t.id, "conteudo", t.conteudo)
+    for f in sorted(cont.ferramentas, key=lambda f: f.ferramenta):
+        add("ferramenta", f.ferramenta, f.ferramenta, f.id, "descricao", f.descricao)
+    for d in sorted(cont.decisoes, key=lambda d: d.chave):
+        add("decisao", d.chave, d.titulo, d.id, "regra", d.regra)
+    return out
 
 
 def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     """Compile a version (+ knowledge catalog, + optional client) into the
     master prompt. Pure, deterministic, no IO."""
     avisos: list[CompileWarning] = []
+    version = inp.version
+    faltando_specs: tuple[str, ...] = ()
+
+    # ── org specs: replace the {{org.x}} placeholders BEFORE composing, so the text, the rows
+    # and the hash are exactly what this org's model receives.
+    if inp.org_specs is not None and version.conteudo is not None:
+        valores = {k: v for k, v in inp.org_specs.items() if isinstance(v, str)}
+        faltam = sorted(
+            sp.chave for sp in version.conteudo.specs
+            if sp.obrigatoria and not valores.get(sp.chave, "").strip()
+        )
+        if faltam:
+            faltando_specs = tuple(faltam)
+            avisos.append(CompileWarning(
+                "spec_org_faltando",
+                "A organização não preencheu especificações obrigatórias: " + ", ".join(faltam) + ".",
+                True,
+            ))
+        version = _resolver_versao(version, valores)
+        inp = replace(inp, version=version)
+
+    cont = version.conteudo
+    S = _Strings(cont)
     blocks: list[tuple[str, str, ManifestOrigin, str]] = []  # (chave, titulo, origem, texto)
 
     # ── duplicate checks (impossible by DB unique constraints; still checked)
@@ -193,16 +544,23 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             ))
         seen_nomes.add(sk.nome)
 
+    skills_title = S.peek("compilador.titulo_skills", SKILLS_TITLE)
+    knowledge_title = S.peek("compilador.titulo_conhecimento", KNOWLEDGE_TITLE)
+    tools_title = S.peek("compilador.titulo_ferramentas", TOOLS_TITLE)
+    client_prefix = S.peek("compilador.titulo_cliente", CLIENT_TITLE_PREFIX)
+
     # ── 1. sections
-    secoes = _active_sections(inp.version.secoes)
+    secoes = _active_sections(inp.version.secoes, conteudo=cont is not None)
     if not secoes:
         avisos.append(CompileWarning(
             "sem_secoes", "A versão não tem nenhuma seção ativa.", True,
         ))
-    reserved = {t.casefold() for t in AUTO_TITLES}
+    reserved = {t.casefold() for t in (skills_title, knowledge_title, tools_title) if t}
     for s in secoes:
         titulo = s.titulo.strip()
-        if titulo.casefold() in reserved or titulo.casefold().startswith(CLIENT_TITLE_PREFIX.casefold()):
+        if titulo.casefold() in reserved or (
+            client_prefix and titulo.casefold().startswith(client_prefix.casefold())
+        ):
             avisos.append(CompileWarning(
                 "titulo_reservado",
                 f"O título da seção '{s.chave}' ('{titulo}') repete um título gerado automaticamente.",
@@ -220,6 +578,14 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             s.chave, titulo, ManifestOrigin("secao", s.id, "conteudo"), f"# {titulo}\n\n{conteudo}",
         ))
 
+    # ── 1b. qualification standard (static, data-generated; before skills)
+    if inp.qualificacao is not None and cont is not None:
+        blocks.append((
+            "qualificacao", S.peek("compilador.titulo_qualificacao", ""),
+            ManifestOrigin("auto", inp.qualificacao.versao_id, "qualificacao"),
+            _qualificacao_block(inp.qualificacao, S),
+        ))
+
     # ── 2. skills
     skills = _active_skills(inp.version.skills)
     for sk in skills:
@@ -230,34 +596,43 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     if skills:
         lines = "\n".join(f"- `{sk.nome}` — {sk.descricao.strip()}" for sk in skills)
         blocks.append((
-            "skills", SKILLS_TITLE, ManifestOrigin("auto", None, "skills"),
-            f"# {SKILLS_TITLE}\n\n{_SKILLS_INTRO}\n\n{lines}",
+            "skills", skills_title, ManifestOrigin("auto", None, "skills"),
+            f"# {S('compilador.titulo_skills', SKILLS_TITLE)}\n\n"
+            f"{S('compilador.skills_intro', _SKILLS_INTRO)}\n\n{lines}",
         ))
 
     # ── 3. knowledge
     knowledge_on = _policy_flag(inp.tool_policy, "knowledge")
     colecoes = _sorted_collections(inp.knowledge) if knowledge_on else []
     if colecoes:
-        lines = "\n".join(_collection_line(c) for c in colecoes)
+        lines = "\n".join(_collection_line(c, S) for c in colecoes)
         blocks.append((
-            "base-de-conhecimento", KNOWLEDGE_TITLE, ManifestOrigin("auto", None, "conhecimento"),
-            f"# {KNOWLEDGE_TITLE}\n\n{_KNOWLEDGE_INTRO}\n\n{lines}",
+            "base-de-conhecimento", knowledge_title, ManifestOrigin("auto", None, "conhecimento"),
+            f"# {S('compilador.titulo_conhecimento', KNOWLEDGE_TITLE)}\n\n"
+            f"{S('compilador.conhecimento_intro', _KNOWLEDGE_INTRO)}\n\n{lines}",
         ))
 
     # ── 4. tools
     blocks.append((
-        "ferramentas", TOOLS_TITLE, ManifestOrigin("auto", None, "tool_policy"),
-        _tools_block(_policy_flag(inp.tool_policy, "web_search"), knowledge_on, bool(skills)),
+        "ferramentas", tools_title, ManifestOrigin("auto", None, "tool_policy"),
+        _tools_block(
+            _policy_flag(inp.tool_policy, "web_search"), knowledge_on, bool(skills), S,
+            cont.ferramentas if cont is not None else (),
+        ),
     ))
 
     # ── 5. client
     if inp.client is not None:
         blocks.append((
             "cliente",
-            f"{CLIENT_TITLE_PREFIX}: {inp.client.nome.strip()}",
+            f"{S('compilador.titulo_cliente', CLIENT_TITLE_PREFIX)}: {inp.client.nome.strip()}",
             ManifestOrigin("auto", inp.client.id, "cliente"),
-            _client_block(inp.client),
+            _client_block(inp.client, S),
         ))
+
+    # ── content-mode completeness (blocking; CONTEUDO_CODIGOS)
+    if cont is not None:
+        avisos += _avisos_conteudo(inp, cont, S, skills, com_cliente=inp.client is not None)
 
     # ── assemble with exact offsets
     manifest: list[ManifestSection] = []
@@ -275,6 +650,11 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
         ))
         cursor += len(text)
     texto = "".join(pieces).rstrip("\n")
+    # The client block is the only dynamic layer here: the cache breakpoint sits right before it.
+    estatico = [m for m in manifest if m.origem.tipo != "auto" or m.origem.campo != "cliente"]
+    ponto_cache = estatico[-1].fim if estatico else 0
+    if cont is not None:
+        manifest += _manifest_conteudo(cont)
 
     tokens = estimate_tokens(texto)
     if tokens > TOKEN_WARNING_THRESHOLD:
@@ -303,11 +683,18 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             "colecao", c.slug, None, 0, 0, f'kb_buscar(colecao="{c.slug}")',
         ))
 
+    hash_ = (
+        prompt_hash(texto) if cont is None
+        else _hash_of(hash_payload(texto, cont, inp.version, inp.extras, inp.qualificacao))
+    )
     return CompiledPrompt(
         texto=texto,
-        hash=prompt_hash(texto),
+        hash=hash_,
         manifest=manifest,
         tokens_estimados=tokens,
         sob_demanda=sob_demanda,
         avisos=avisos,
+        conteudo=cont,
+        specs_faltando=faltando_specs,
+        ponto_cache=ponto_cache,
     )

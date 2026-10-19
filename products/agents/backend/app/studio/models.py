@@ -21,6 +21,16 @@ from uuid import UUID
 
 __all__ = [
     "SectionData",
+    "TextoData",
+    "FerramentaData",
+    "OpcaoDecisao",
+    "DecisaoData",
+    "SpecDefData",
+    "ConteudoBundle",
+    "SPEC_TIPOS",
+    "QualificacaoData",
+    "CriterioData",
+    "EstagioData",
     "SkillFileRef",
     "SkillData",
     "VersionBundle",
@@ -77,7 +87,18 @@ LIMITS: dict[str, int] = {
     "skill.corpo": 60_000,
     "skill_file.conteudo": 120_000,
     "document.conteudo": 2_000_000,
+    # Julia v2 content tables (migration 031 — the same numbers as its CHECKs).
+    "texto.conteudo": 8_000,
+    "ferramenta.descricao": 2_000,
+    "decisao.regra": 8_000,
+    "spec.descricao": 2_000,
+    "spec.exemplo": 2_000,
+    "org_spec.valor.texto": 1_000,
+    "org_spec.valor.texto_longo": 20_000,
 }
+
+#: `agent_version_specs.tipo` (031 CHECK) — the cap of the org's value follows it.
+SPEC_TIPOS = ("texto", "texto_longo")
 
 #: L1 — an override reason needs this many NON-whitespace characters.
 OVERRIDE_REASON_MIN_CHARS = 20
@@ -176,6 +197,109 @@ class VersionBundle:
     skills: tuple[SkillData, ...] = ()
     version_id: UUID | None = None
     versao: int | None = None
+    #: Julia v2: the version's content tables (textos / ferramentas / decisões /
+    #: org-spec declarations). ``None`` = a legacy agent (``conteudo_modo='legado'``)
+    #: whose compiler strings are still the pre-v2 ones; a bundle (even an empty one)
+    #: = every human-readable string comes from rows.
+    conteudo: "ConteudoBundle | None" = None
+    #: The version's provider (hash payload of a content-mode compile).
+    provider: str = "anthropic"
+
+
+@dataclass(frozen=True)
+class TextoData:
+    chave: str
+    conteudo: str
+    id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class FerramentaData:
+    ferramenta: str
+    descricao: str
+    ativo: bool = True
+    parametros: dict[str, Any] = field(default_factory=dict)
+    obrigatoria_skill: str | None = None
+    id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class OpcaoDecisao:
+    valor: str
+    rotulo: str
+    padrao: bool = False
+
+
+@dataclass(frozen=True)
+class DecisaoData:
+    chave: str
+    titulo: str
+    regra: str = ""
+    opcoes: tuple[OpcaoDecisao, ...] = ()
+    id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class SpecDefData:
+    """One org-spec declaration: the ``{{org.<chave>}}`` placeholder the definition
+    uses, how Studio asks the org for it, and whether an instance may run without it."""
+
+    chave: str
+    rotulo: str
+    descricao: str = ""
+    tipo: str = "texto"
+    obrigatoria: bool = True
+    exemplo: str | None = None
+    id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class CriterioData:
+    chave: str
+    rotulo: str
+    descricao_modelo: str
+    grupo: str = ""
+    ordem: int = 0
+    #: ``(valor, rotulo, descricao_modelo)`` triples.
+    opcoes: tuple[tuple[str, str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class EstagioData:
+    chave: str
+    rotulo: str
+    descricao: str
+    ordem: int = 0
+
+
+@dataclass(frozen=True)
+class QualificacaoData:
+    """The pinned qualification standard version as DATA for the prompt (A-QUAL's tables, loaded
+    by the caller). Every word is a row; the compiler only orders and lays it out."""
+
+    versao_id: UUID | None
+    criterios: tuple[CriterioData, ...] = ()
+    estagios: tuple[EstagioData, ...] = ()
+    #: Criteria chaves required before the agent may offer properties (data, not code).
+    minimo_para_ofertar: tuple[str, ...] = ()
+    #: ``(criterio chave, momento)`` — the identity requirement and WHEN it is asked (data).
+    identidade: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ConteudoBundle:
+    textos: tuple[TextoData, ...] = ()
+    ferramentas: tuple[FerramentaData, ...] = ()
+    decisoes: tuple[DecisaoData, ...] = ()
+    specs: tuple[SpecDefData, ...] = ()
+
+    def texto(self, chave: str) -> str:
+        """The row's text, ``""`` when the row is missing (the compiler turns a
+        missing/blank required key into a blocking warning — never into a default)."""
+        for t in self.textos:
+            if t.chave == chave:
+                return t.conteudo
+        return ""
 
 
 @dataclass(frozen=True)
@@ -214,6 +338,18 @@ class CompileInput:
     knowledge: tuple[CollectionSummary, ...]
     client: ClientBundle | None
     tool_policy: dict[str, Any]
+    #: ``None`` = compile the DEFINITION (``{{org.x}}`` placeholders stay visible in the
+    #: text; this is the draft/publish hash). A mapping (possibly empty) = compile it FOR
+    #: AN ORG: every placeholder is replaced by that org's value and the hash covers the
+    #: resolved content. Only meaningful in content mode.
+    org_specs: "dict[str, str] | None" = None
+    #: Other slices' hash-covered inputs (the pinned qualification-standard version, the
+    #: shared-skill pins, ...) — JSON-serialisable, merged into the hash payload verbatim.
+    extras: "dict[str, Any] | None" = None
+    #: Channel agent (``owner_product`` set) — selects the channel-applicable required texts.
+    canal: bool = False
+    #: The pinned qualification standard rendered as the "Qualificação" block (static layer).
+    qualificacao: "QualificacaoData | None" = None
 
 
 # ── Compiler output ─────────────────────────────────────────────────────────
@@ -231,8 +367,10 @@ class ManifestSection:
     chave: str
     titulo: str
     origem: ManifestOrigin
-    inicio: int
-    fim: int
+    #: ``None`` for content that reaches the model OUTSIDE the system prompt (tool
+    #: descriptions, runtime texts, decisions) — attributed to its row all the same.
+    inicio: int | None
+    fim: int | None
     chars: int
     tokens: int
 
@@ -292,6 +430,16 @@ class CompiledPrompt:
     #: Additive to §C's dataclass: the compile warnings the endpoint returns
     #: and publish blocks on (§C "Compile warnings").
     avisos: list[CompileWarning] = field(default_factory=list)
+    #: Content mode: the (org-resolved when compiled for an org) rows the model also receives
+    #: outside ``texto`` — the runtime reads tool descriptions / texts from HERE, never from
+    #: code. ``None`` for a legacy agent.
+    conteudo: ConteudoBundle | None = None
+    #: Required org specs the org has not filled (compile-for-org only).
+    specs_faltando: tuple[str, ...] = ()
+    #: Prompt-caching breakpoint: the offset in ``texto`` where the STATIC prefix (definition with
+    #: this org's specs resolved, skills, knowledge index, tools) ends and the dynamic layer (the
+    #: client in focus) begins. Everything before it is byte-stable across an org's turns.
+    ponto_cache: int = 0
 
     @property
     def bloqueado(self) -> bool:

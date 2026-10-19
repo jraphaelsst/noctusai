@@ -927,6 +927,20 @@ if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-ter. Agent prompt-text-in-code gate (blocking, ratchet) ──
+# Keeper `check_agent_prompt_text_in_code` (Julia v2 D3): every string a model reads is an agents DB
+# row, never code. Fires when agents backend app code under channels/studio/runtime (or the channels
+# router) is staged; baselined per file in products/agents/backend/prompt-text-baseline.json.
+STAGED_PROMPT_TEXT=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/agents/backend/(app/(channels|studio|runtime)/.*\.py|app/routers/channels_router\.py|prompt-text-baseline\.json)$' || true)
+if [[ -n "$STAGED_PROMPT_TEXT" ]] && have_py; then
+    echo "[pre-commit] agents prompt-bearing code staged — checking prompt text in code..."
+    if ! "$PY" "$CLI" --check-agent-prompt-text-in-code --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] AGENT-PROMPT-TEXT-IN-CODE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Prompt text is an agents DB row (Studio API / noctus.agents.content), not code. If you REMOVED literals, lower the file in products/agents/backend/prompt-text-baseline.json. See KB § PATTERNS/backend/backend.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-bis. Migration-by-number refs in tests (blocking, ratchet) ─
 # Keeper `check_migration_number_refs_in_tests` + `KB § PATTERNS/compliance/
 # testing.md`. A test naming a migration by NUMBER breaks when task_branch

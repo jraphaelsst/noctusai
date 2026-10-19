@@ -277,6 +277,47 @@ GET  /api/studio/agents/{key}/versions/{id}/payload?amostra=<contexto_exemplo>  
   - Every write lands in `agent_audit_log` with acao `conteudo_editado_mcp` (actor = token principal).
 - "Visible on refresh" holds because Studio reads the same rows. The behaviour changes at publish.
 
+### 2.6 Platform definition + org specs (A-CONT design)
+
+Owner Q2 ("the SDR is one thing in the general agents app, specified to each org's context") plus the IP
+mandate of 2026-10-19 (no org may read the platform's prompts/rules).
+
+- **Storage.** The DEFINITION of a platform-defined key is an ordinary studio agent row with
+  `definition_scope='plataforma'` living in the platform org (`organizations.is_platform`; a trigger enforces
+  it; one per key). Its versions/sections/skills/textos/ferramentas/decisoes/spec-declarations are the normal
+  rows with that org id, so immutability, hash invalidation, evals and audit are reused unchanged. Chosen over
+  `org_id NULL` because that would make `org_id` nullable in 20+ tables/RPCs/policies. Each org has an
+  INSTANCE row (`definition_scope='instancia'`, `definition_agent_id` -> the definition): activation, LLM key,
+  budget, tokens, conversations; it owns no versions. Every other agent stays `org` (default). Opt-in per key
+  in `app/studio/plataforma.py`. `conteudo_modo='linhas'` is forced for plataforma/instancia; `legado` keeps the
+  pre-v2 compiler strings (baselined by the keeper; they disappear with the last legacy agent).
+- **Content tables (migration 031).** `agent_version_textos`, `agent_version_ferramentas`,
+  `agent_version_decisoes` (+ `decisao-*` sections copied in), `agent_version_specs` (declares the
+  `{{org.chave}}` placeholders: label, help, type, required), `textos_plataforma`, and per-org values in
+  `agent_org_specs(org_id, agent_key, chave, valor)` (live org data, not versioned). A new draft copies the
+  content tables by a trigger (not a third `create_agent_draft`), so sibling slices extend drafts the same way.
+- **Resolution API** (`app/studio/resolucao.py`): `resolve_agent_for_org(store, org_id, key, versao='ativa'|
+  'rascunho'|id) -> AgenteResolvido(instancia, definicao, versao, specs_declaradas, specs_org; .valores,
+  .faltando)`; `compile_for_org(store, catalog, r, client=None, extras=None, qualificacao=None) ->
+  CompiledPrompt` (placeholders resolved; `.hash`, `.ponto_cache`, `.conteudo` = the resolved rows the runtime
+  reads tool descriptions/texts from); `conteudo_status(...)` -> `ConteudoStatus` (the 409 `conteudo_incompleto`
+  / `status.conteudo_completo` source); `carimbo(...)` -> `(definition_version_id, compiled_hash,
+  org_specs_hash, skill_version_ids)`. A legacy `org` agent resolves to itself.
+- **Compiler.** Layout/order only. Layer order: sections (platform) -> qualification block generated from the
+  pinned standard rows (`CompileInput.qualificacao`; headings are textos) -> skills -> knowledge index -> tools
+  (rows) -> client (dynamic). `ponto_cache` = end of the static prefix. Hash = sha256 over a canonical
+  payload (texto + version settings + every content row + qualificacao + `extras`); legacy agents keep
+  `prompt_hash(texto)`. Required textos are keys in `textos_registry.py` (`condicao` / `aplica_a` /
+  `fixo_plataforma`); org-spec text is linted against the platform-locked rules.
+- **API.** Draft-only replace-set `PUT /api/studio/agents/{key}/draft/{textos|ferramentas|decisoes|specs}`;
+  reads `GET .../versions/{id}/{textos|ferramentas|decisoes|specs|payload}`; org: `GET|PUT
+  /agents/{key}/specs`, `GET /agents/{key}/status`; platform admin: `GET /agents/{key}/compilado`, `GET|PUT
+  /plataforma/textos`, `POST /plataforma/agents`. The `?amostra=` second-system-message render is A-RT's.
+- **Visibility tiers.** Platform admin (`noctus_users.role='admin'`, never an org owner/admin) reads/edits the
+  definition, compiled prompts, tool descriptions, decisions; every such read is audited `definicao_lida`.
+  Org admin: own specs + readiness booleans only (no hashes, versions or text; the instance's `versoes` is
+  empty). Member: nothing. A `studio:content-write` token writes drafts (audited `conteudo_editado_mcp`).
+
 ---
 
 ## 3 · Qualification standard: data model, tools, enforcement (requirement C)

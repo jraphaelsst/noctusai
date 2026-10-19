@@ -154,9 +154,12 @@ def agents_client(client):
 
 def seed_org_role(client, *, user_id: UUID = DEFAULT_USER_ID, org_id: UUID = DEFAULT_ORG_ID, role: str = "owner") -> None:
     """Seed the ``noctus_users`` row ``resolve_org_role`` looks up."""
+    # Studio definition reads are PLATFORM-ADMIN only (visibility tiers): an org owner/admin seeded
+    # here is also a platform admin unless a test seeds `noctus_users` itself with role "user".
     client.mock_supabase.set_table_data(
         "noctus_users",
-        [{"id": str(user_id), "org_id": str(org_id), "org_role": role}],
+        [{"id": str(user_id), "org_id": str(org_id), "org_role": role,
+          "role": "admin" if role in ("owner", "admin") else "user"}],
     )
 
 

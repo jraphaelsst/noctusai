@@ -32,6 +32,7 @@ from app.routers.studio_agents_router import (
     router as studio_agents_router,
 )
 from app.routers.studio_clients_router import router as studio_clients_router
+from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.studio.models import FakeEvalGate, FakeKnowledgeCatalog
 from noctusai_lib.api.app_factory import configure_app
@@ -57,12 +58,27 @@ class StudioHarness:
         self.user_id = DEFAULT_USER_ID
 
     def as_role(self, role: str) -> "StudioHarness":
+        """The caller's org role. Owners/admins are ALSO platform admins here (the studio's definition
+        reads are platform-admin-only) — use :meth:`as_org_admin_only` for the plain org admin."""
         seed_org_role(self, role=role)
+        if role in ("owner", "admin"):
+            self.mock_supabase.set_table_data("noctus_users", [{
+                "id": str(self.user_id), "org_id": str(self.org_id), "org_role": role, "role": "admin",
+            }])
         return self
 
-    def as_other_org(self, role: str = "owner") -> "StudioHarness":
+    def as_org_admin_only(self, role: str = "owner") -> "StudioHarness":
+        """An org owner/admin that is NOT a platform admin (`noctus_users.role == 'user'`)."""
+        self.mock_supabase.set_table_data("noctus_users", [{
+            "id": str(self.user_id), "org_id": str(self.org_id), "org_role": role, "role": "user",
+        }])
+        return self
+
+    def as_other_org(self, role: str = "owner", *, platform: bool = False) -> "StudioHarness":
         bind_user(self, user_id=OTHER_USER_ID, org_id=OTHER_ORG_ID)
-        seed_org_role(self, user_id=OTHER_USER_ID, org_id=OTHER_ORG_ID, role=role)
+        self.mock_supabase.set_table_data("noctus_users", [{
+            "id": str(OTHER_USER_ID), "org_id": str(OTHER_ORG_ID), "org_role": role, "role": "admin" if platform else "user",
+        }])
         return self
 
     # `seed_org_role` / `bind_user` expect `.mock_supabase` on the object.
@@ -88,6 +104,7 @@ def _build_app() -> FastAPI:
     configure_app(app, settings)
     app.include_router(studio_agents_router)
     app.include_router(studio_clients_router)
+    app.include_router(studio_conteudo_router)
     return app
 
 
