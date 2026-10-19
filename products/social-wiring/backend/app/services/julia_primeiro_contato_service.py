@@ -8,8 +8,8 @@ when -- the org has Julia on (`whatsapp_connections.agente_leads_ativo` on at le
      `julia_interacao` -- the same rows a first inbound message creates, so the Julia > Leads list, the timeline and
      Julia's context all see the lead;
   2. Julia speaks first as the approved Cloud template "Abordagem comercial|neutra" (category `primeiro_contato`) --
-     WHICH one is decided by the rule in Julia's prompt section `decisao-abordagem-meta` (agents studio; owner
-     2026-10-19), see `escolher_abordagem` --
+     WHICH one is decided by the rule in agents' DB (`agent_version_decisoes`, key `abordagem-meta`, edited in the
+     agents app; julia-v2 D13) -- SW sends the options and the lead's data, NEVER the rule, and holds no local rule --
      through `julia_disparos_service.primeiro_contato_meta` -- the ONE first-contact sender. Cloud API only: while
      the line is not a configured Cloud one (pending Meta verification) NOTHING is sent -- never WAHA free text,
      never a mass send -- and the lead simply keeps flowing through the ordinary path;
@@ -47,22 +47,10 @@ logger = logging.getLogger(__name__)
 ORIGEM = "meta_lead_ads"
 
 
-#: The decision key in agents: the rule lives in Julia's prompt section `decisao-abordagem-meta` (agents studio),
-#: so the owner changes WHEN each template applies by editing that prompt (owner, 2026-10-19).
+#: The decision key in agents: the rule lives in agents' DB (`agent_version_decisoes`), so the owner changes WHEN each
+#: template applies by editing that decision in the agents app (julia-v2 D13). SW has NO local copy of the rule.
 DECISAO_ABORDAGEM = "abordagem-meta"
 ABORDAGENS = ("comercial", "neutra")
-#: Owner-confirmed rule (2026-10-19). Sent to agents as `regra_padrao` (used while the published Julia version has no
-#: `decisao-abordagem-meta` section) and applied locally by `regra_local` when agents cannot be asked.
-REGRA_PADRAO = (
-    "Use `comercial` quando o lead chegou por um imóvel específico: os dados trazem um código de imóvel "
-    "(`codigo_imovel`). Caso contrário, use `neutra`."
-)
-
-
-def regra_local(lead: dict[str, Any]) -> str:
-    """`REGRA_PADRAO` without a model: `comercial` when the lead names a listing (the code column / the form's REF
-    answer), else `neutra`."""
-    return "comercial" if codigo_do_meta_lead(lead) else "neutra"
 
 
 def dados_da_decisao(lead: dict[str, Any]) -> dict[str, Any]:
@@ -77,17 +65,17 @@ def dados_da_decisao(lead: dict[str, Any]) -> dict[str, Any]:
 
 
 async def escolher_abordagem(lead: dict[str, Any], agents: Optional[AgentsClient]) -> dict[str, Any]:
-    """`{abordagem, regra, motivo}`. `regra`: `secao` (the owner's prompt section decided) | `padrao` (agents applied
-    `REGRA_PADRAO`) | `local` (agents unreachable / not configured: `regra_local`, with the cause in `motivo`). The
-    lead is never left uncontacted for want of the decision; the event records which rule chose."""
+    """`{abordagem, regra, motivo}`. `regra`: `versao` (the published version's rule decided) | `padrao_da_versao` (the
+    option flagged `padrao` in agents' row) | `indisponivel` (agents cannot be asked: `abordagem` is None and NOTHING is
+    sent -- the rule is not in SW, so SW must not invent one; the cause rides in `motivo` and the event records it)."""
     if agents is None:
-        return {"abordagem": regra_local(lead), "regra": "local", "motivo": "agents_nao_configurado"}
+        return {"abordagem": None, "regra": "indisponivel", "motivo": "agents_nao_configurado"}
     try:
         r = await agents.decidir(DEFAULT_AGENT_KEY, DECISAO_ABORDAGEM, DecisaoRequest(
-            opcoes=ABORDAGENS, regra_padrao=REGRA_PADRAO, dados=dados_da_decisao(lead)))
+            opcoes=ABORDAGENS, dados=dados_da_decisao(lead)))
     except AgentsClientError as exc:
-        logger.warning("julia: abordagem decision unavailable (%s) -- local rule applied", type(exc).__name__)
-        return {"abordagem": regra_local(lead), "regra": "local", "motivo": type(exc).__name__}
+        logger.warning("julia: abordagem decision unavailable (%s) -- no first contact sent", type(exc).__name__)
+        return {"abordagem": None, "regra": "indisponivel", "motivo": type(exc).__name__}
     return {"abordagem": r.escolha, "regra": r.regra, "motivo": r.motivo}
 
 
@@ -107,6 +95,17 @@ def escolher_conexao(store: Any, org_id: UUID | str) -> Optional[Any]:
     return linhas[0] if linhas else None
 
 
+async def _registrar_opt_in(agents: Optional[AgentsClient], contato_id: Any) -> None:
+    """The lead gave their number in a Meta lead form: the messaging-policy opt-in agents records (`formulario_meta`).
+    Best-effort: a failure is logged and never stops the intake."""
+    if agents is None:
+        return
+    try:
+        await agents.opt_in(str(contato_id), origem="formulario_meta")
+    except AgentsClientError as exc:
+        logger.warning("julia: opt-in (formulario_meta) not recorded (%s) contato=%s", type(exc).__name__, contato_id)
+
+
 def _registrar(client: Any, org_id: UUID | str, contato_id: Any, status: str, motivo: Optional[str] = None,
                decisao: Optional[dict[str, Any]] = None) -> None:
     payload = {"status": status, "motivo": motivo, "origem": ORIGEM}
@@ -124,7 +123,7 @@ async def iniciar(
     """Take one freshly ingested Meta lead (`meta_ads_leads` row: `full_name`, `phone`, `answers`...) into Julia.
 
     Returns `{status, ...}`: `julia_desligada` | `sem_telefone` | `ja_em_atendimento` | `enviado` |
-    `transporte_indisponivel` | `modelo_nao_aprovado` | `erro`."""
+    `transporte_indisponivel` | `modelo_nao_aprovado` | `decisao_indisponivel` | `erro`."""
     try:
         conexao = escolher_conexao(store, org_id)
         if conexao is None:
@@ -142,12 +141,19 @@ async def iniciar(
         contato = contatos.obter_ou_criar_contato(
             client, org_id=org_id, connection_id=conexao.id, chat_id=chat_id, telefone_e164=telefone, nome=nome,
         )
+        codigo = codigo_do_meta_lead(lead)
+        if codigo:  # the campaign listing, as DATA for the agent (`contexto.operacional.origem.codigo_imovel_campanha`)
+            contatos.atualizar_contato(client, contato["id"], {"codigo_imovel_campanha": str(codigo)[:40]})
         contatos.abrir_interacao(client, org_id, contato)
+        await _registrar_opt_in(agents, contato["id"])
 
         cloud = julia_transporte.cloud_configurada(conexao)
         # Ask the agent's rule only when a template can actually go out (no model spend while the line waits for Meta).
         decisao = (await escolher_abordagem(lead, agents) if cloud
-                   else {"abordagem": regra_local(lead), "regra": "local", "motivo": "sem_cloud"})
+                   else {"abordagem": None, "regra": "indisponivel", "motivo": "sem_cloud"})
+        if cloud and decisao["abordagem"] is None:  # agents cannot decide and SW holds no rule: the lead is stored, not contacted
+            _registrar(client, org_id, contato["id"], "decisao_indisponivel", decisao["motivo"], decisao=decisao)
+            return {"status": "decisao_indisponivel", "contato_id": contato["id"]}
         resultado = await julia_disparos_service.primeiro_contato_meta(
             client, org_id, connection=conexao,
             transporte=transporte_factory(conexao) if cloud else None,
@@ -193,6 +199,6 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[
 
 
 __all__ = [
-    "ABORDAGENS", "DECISAO_ABORDAGEM", "ORIGEM", "REGRA_PADRAO", "dados_da_decisao", "escolher_abordagem",
-    "escolher_conexao", "iniciar", "iniciar_com_padroes", "regra_local",
+    "ABORDAGENS", "DECISAO_ABORDAGEM", "ORIGEM", "dados_da_decisao", "escolher_abordagem",
+    "escolher_conexao", "iniciar", "iniciar_com_padroes",
 ]

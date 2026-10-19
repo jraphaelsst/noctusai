@@ -228,21 +228,23 @@ class TestRender:
         assert d["markdown"] and d["markdown"] == svc.render_md(admin.sw, org) and d["hash"] == svc.hash_md(d["markdown"])
 
 
-class TestContextoProvider:
-    def test_registered_at_import_in_the_conhecimento_slot(self):
-        assert dict(ctxsvc.PROVIDERS)["conhecimento"] is svc.contexto_provider
-        assert [n for n, _ in ctxsvc.PROVIDERS].count("conhecimento") == 1
+class TestForaDoCaminhoDoModelo:
+    """Q1 (julia-v2): the knowledge lives in agents. SW no longer renders markdown into the turn."""
 
-    def test_montar_carries_the_markdown_and_a_save_changes_the_hash(self):
+    def test_there_is_no_conhecimento_provider_and_no_contexto_provider_function(self):
+        assert "conhecimento" not in dict(ctxsvc.PROVIDERS) and not hasattr(svc, "contexto_provider")
+
+    def test_the_contexto_carries_no_knowledge_even_when_the_org_has_sections(self):
         db = MockSupabaseClient()
-        contato = {"slots": {}, "operacao": None}
-        agora = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
-        antes = ctxsvc.montar(db, ORG, contato, agora=agora, ferramentas_habilitadas=False)
-        assert antes["conhecimento_md"] == ""
         _seed_all(db)
-        depois = ctxsvc.montar(db, ORG, contato, agora=agora, ferramentas_habilitadas=False)
-        assert "## Vendas" in depois["conhecimento_md"] and "## Locação" in depois["conhecimento_md"]
-        assert depois["hash"] != antes["hash"]
+        out = ctxsvc.montar(db, ORG, {"slots": {}, "operacao": None}, agora=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+                            ferramentas_habilitadas=False)
+        assert "conhecimento_md" not in out and "## Vendas" not in str(out)
+
+    def test_the_renderer_stays_only_as_the_backfill_input(self):
+        db = MockSupabaseClient()
+        _seed_all(db)
+        assert "## Vendas" in svc.render_md(db, ORG, agora=datetime(2026, 6, 1, 12, tzinfo=timezone.utc))
 
 
 class TestRecessoPrimeiroTurno:

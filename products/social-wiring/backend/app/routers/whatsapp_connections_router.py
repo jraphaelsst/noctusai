@@ -56,7 +56,7 @@ import base64
 import json
 import logging
 import secrets
-from typing import Any
+from typing import Any, Optional
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -152,6 +152,15 @@ def get_waha_client_factory():
     router logic without real HTTP and without patching the external
     integration. Per ``KB § PATTERNS/di-test-seam.md`` (Class-B)."""
     return get_whatsapp_client
+
+
+def get_agents_client_factory(cfg: SocialWiringSettings = Depends(get_settings)):
+    """DI seam: ``org_id -> AgentsClient | None`` (the org's `api_key:agents` token; the Fake in a dev process). Defined
+    HERE (and re-exported by `julia_agente_router`, which is the same object) so the inbox send can forward a human's
+    message to agents without a router import cycle; tests override it with a ``FakeAgentsClient`` factory."""
+    from app.services import julia_agente_service
+
+    return lambda org_id: julia_agente_service.resolve_agents_client(org_id, cfg=cfg)
 
 
 def get_chat_store_for_org(org_id: UUID) -> WhatsAppChatStore:
@@ -1014,6 +1023,31 @@ async def list_messages(
     return MessagesPage(items=items, next_before=next_before)
 
 
+
+async def _encaminhar_humano_ao_agente(
+    record: Any, *, user: Any, chat_id: str, texto: str, provider_message_id: Optional[str], chat_store: Any,
+    agents_client_factory: Any,
+) -> None:
+    """Forward a human attendant's outbound to the agents thread (julia-v2 Q5). Never raises, never blocks the send for long."""
+    import asyncio
+
+    from app.services import julia_thread_service
+
+    try:
+        client = agents_client_factory(record.org_id)
+        await asyncio.wait_for(
+            julia_thread_service.encaminhar_humano(
+                client, chat_store, connection_id=record.id, chat_id=chat_id, texto=texto,
+                provider_message_id=provider_message_id, autor_user_id=getattr(user, "id", None),
+            ),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("julia: human message not forwarded to agents in time conn=%s (it IS sent; the webhook echo retries it)", record.id)
+    except Exception:
+        logger.exception("julia: human message forward failed conn=%s (the message IS sent)", record.id)
+
+
 @router.post(
     "/{connection_id}/chats/{chat_id:path}/send",
     response_model=MessageOut,
@@ -1029,6 +1063,7 @@ async def send_message(
     msg_store_factory: Any = Depends(get_message_store_factory),
     chat_store_factory: Any = Depends(get_chat_store_factory),
     settings: SocialWiringSettings = Depends(get_settings),
+    agents_client_factory: Any = Depends(get_agents_client_factory),
 ) -> MessageOut:
     """Send a text message on this connection to the given chatId.
 
@@ -1127,6 +1162,14 @@ async def send_message(
             logger.exception("primeira_resposta_humana_at not stamped conn=%s chat=%s (the message IS sent)", connection_id, chat_id)
             # ids only: the chat id is the lead's phone number, so it is NOT in the alert
             supervisao_alertas.alertar(scoped, org_id, "primeira_resposta_humana", {"connection_id": connection_id})
+
+    if getattr(record, "agente_leads_ativo", False):
+        # julia-v2 Q5: a human attendant's reply on a Julia line joins the shared thread (no turn, no model), so the agent
+        # keeps one end-to-end context. Best-effort and bounded: the message is already out and must not wait on agents.
+        await _encaminhar_humano_ao_agente(
+            record, user=user, chat_id=chat_id, texto=texto, provider_message_id=provider_message_id,
+            chat_store=chat_store, agents_client_factory=agents_client_factory,
+        )
 
     bus = get_whatsapp_bus(settings.redis_url)
     await publish_whatsapp_event(

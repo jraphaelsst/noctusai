@@ -47,9 +47,14 @@ TIPOS_GATE: frozenset[str] = frozenset({"envio_bloqueado"})
 #: `agents_contrato_invalido` = agents answered 422 to a turn (SW sent a shape agents' schema rejects: a bug on our
 #: side); `supervisao_falha` = a supervision hook swallowed an error (`modules.supervisao.alertas.alertar`).
 TIPOS_ALERTA_DONO: frozenset[str] = frozenset({"agents_contrato_invalido", "supervisao_falha"})
+#: julia-v2 (agents hosts Julia): `lead_pronto` = the computed stage reached the CRM send (payload `{estagio, score,
+#: enviado}` -- no slot values); `intencao_visita` = the lead wants to visit a listing (`{codigo, preferencia_horario}`);
+#: `agente_nao_atendeu` = agents did not serve a turn (`{status}`: a control decision, never an error); `handoff_recebido`
+#: = the hand-off note reached its human target. None notifiable by vocabulary: each already has its own sink/page.
+TIPOS_JULIA_V2: frozenset[str] = frozenset({"lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido"})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
-    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO
+    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2
 )
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no

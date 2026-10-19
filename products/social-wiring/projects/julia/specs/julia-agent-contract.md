@@ -1,5 +1,7 @@
 # Contract — Page 0 "Agente": Julia, the lead-facing WhatsApp agent
 
+> **Superseded in part (2026-10-19):** Julia v2 hosts Julia in the agents app and SW consumes her through the API only -- see `products/agents/projects/julia-v2/CONTRACT.md` (§8 API, §5 controls). Where this document describes the `contexto` content, `salvar_slots` / `definir_operacao` / `qualificar_lead`, the slot-criteria send rules or `agente_pausado` as a gate, the v2 contract wins.
+
 Status: **v3 2026-10-14 — owner answered §9 (§11, binding). Precedence: §11 > §10 > §1–§9. Ready for dispatch.**
 Owner decisions: `../DECISIONS.md` (round 3). Reuse inventory and page plan: `../BUILD-ROADMAP.md`.
 Existing shapes quoted here were extracted from the tree on 2026-10-13 (file:line in brackets).

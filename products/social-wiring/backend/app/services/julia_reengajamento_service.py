@@ -14,8 +14,9 @@ moved (an inbound, `encerrar`, a pause or a handoff all bump it):
 
 Enqueued on each Julia outbound (`agendar_apos_outbound`, called from the lead turn's post-step), never
 for an encerrado contato. A tier's dedupe key is `(tier, contato, gen)`, so the re-engagement message's
-own outbound never re-arms the same tier (no loop). A re-engagement turn is the ordinary lead turn with
-`contexto.estado.reengajamento` (+ `reescrever` / `texto_base` for a regua text); a template attempt is
+own outbound never re-arms the same tier (no loop). A re-engagement turn is a turn with `gatilho="reengajamento"` and the
+tier as DATA (`reengajamento: {tier, texto_base?}` -- the regua text, never an instruction: agents renders its own from
+its DB); a template attempt is
 sent through the Cloud transport (wave 12, `julia_transporte`) when the connection is a configured Cloud one with an
 approved modelo; otherwise skipped with event `regua_sem_transporte` (WAHA free text never stands in for a template).
 
@@ -409,9 +410,8 @@ async def _contexto_do_job(deps: Any, job: Job) -> tuple[str, Optional[dict[str,
     connection = deps.connection_lookup(UUID(str(p["connection_id"])))
     if connection is None or not connection.agente_leads_ativo:
         return "sem_conexao", contato, None
-    state = deps.chat_store_factory(connection.org_id).get_agente_state(connection_id=connection.id, chat_id=p["chat_id"])
-    if state and state.get("agente_pausado"):
-        return "pausado", contato, None
+    # julia-v2: no local pause gate -- agents answers `reengajamento_ignorado` when the agent is off / paused / not the
+    # active participant, and the turn sends nothing (the mirror `agente_pausado` is display only).
     return "ok", contato, connection
 
 

@@ -96,14 +96,16 @@ def _scene(role, *, conn_owner=OWNER_ID, nome="Carla Souza"):
     ):
         from app.main import app
         from app.routers.julia_conversas_router import get_conversas_client
-        from app.routers.whatsapp_connections_router import get_waha_client_factory
+        from app.routers.whatsapp_connections_router import get_agents_client_factory, get_waha_client_factory
 
         bind_consent_module_to_mock(w.root)
         app.dependency_overrides[get_conversas_client] = lambda: w.sw
         app.dependency_overrides[get_waha_client_factory] = lambda: (lambda **kw: w.waha)
+        app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: w.agents)
         yield Scene(TestClient(app), w, contato)
         app.dependency_overrides.pop(get_conversas_client, None)
         app.dependency_overrides.pop(get_waha_client_factory, None)
+        app.dependency_overrides.pop(get_agents_client_factory, None)
 
 
 @pytest.fixture
@@ -632,3 +634,46 @@ class TestPrimeiraRespostaHumana:
         admin.w.sw.table("whatsapp_connections").update({"agente_leads_ativo": False, "authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
         assert admin.post(self.URL, {"text": "oi"}).status_code == 201
         assert admin.w.rows("julia_interacoes", contato_id=admin.cid)[0].get("primeira_resposta_humana_at") is None
+
+
+# ── julia-v2 Q5: a human's inbox reply joins the agents thread ──────────────
+class TestRespostaHumanaNaThread:
+    URL = f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/send"
+
+    @staticmethod
+    def _servida(s) -> str:
+        import asyncio
+        from datetime import datetime, timezone
+
+        from app.clients.agents import TurnMessage, TurnRequest
+
+        res = asyncio.new_event_loop().run_until_complete(s.w.agents.run_turn(TurnRequest(
+            agent_key="julia", connection_id=CONNECTION_ID, chat_id=LEAD_CHAT,
+            messages=(TurnMessage(texto="oi", provider_message_id="seed-1", at=datetime.now(timezone.utc)),))))
+        return res.thread
+
+    def test_the_reply_is_appended_to_the_thread_with_the_attendant_as_author(self, admin):
+        thread = self._servida(admin)
+        r = admin.post(self.URL, {"text": "Olá, aqui é do atendimento"})
+        assert r.status_code == 201
+        (msg,) = admin.w.agents.appended
+        assert (msg["thread_id"], msg["role"], msg["autor_user_id"]) == (thread, "humano", str(TEST_USER_ID))
+        assert msg["texto"] == "Olá, aqui é do atendimento" and msg["provider_message_id"]
+
+    def test_a_lead_agents_never_served_has_no_thread_so_nothing_is_stored(self, admin):
+        assert admin.post(self.URL, {"text": "oi"}).status_code == 201
+        assert admin.w.agents.appended == []
+
+    def test_agents_down_never_blocks_or_fails_the_send(self, admin):
+        from app.clients.agents import AgentsTimeout
+
+        self._servida(admin)
+        admin.w.agents.errors["anexar_mensagem"] = AgentsTimeout()
+        assert admin.post(self.URL, {"text": "oi"}).status_code == 201
+        assert admin.w.sent_texts() == ["oi"]
+
+    def test_a_non_julia_line_forwards_nothing(self, admin):
+        self._servida(admin)
+        admin.w.sw.table("whatsapp_connections").update({"agente_leads_ativo": False, "authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
+        assert admin.post(self.URL, {"text": "oi"}).status_code == 201
+        assert admin.w.agents.appended == []

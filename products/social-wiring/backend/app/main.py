@@ -125,6 +125,7 @@ def _register_media_wiring() -> ModuleRegistration:
         router as assinatura_webhook_router,
     )
     from app.routers.julia_agente_router import router as julia_agente_router
+    from app.routers.julia_roteamento_router import router as julia_roteamento_router
     from app.routers.julia_ferramentas_router import router as julia_ferramentas_router
     from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
     from app.routers.julia_perguntas_router import router as julia_perguntas_router
@@ -248,6 +249,7 @@ def _register_media_wiring() -> ModuleRegistration:
             auth_router,
             settings_router,
             julia_agente_router,
+            julia_roteamento_router,
             julia_ferramentas_router,
             julia_conhecimento_router,
             julia_conversas_router,  # BEFORE julia_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`

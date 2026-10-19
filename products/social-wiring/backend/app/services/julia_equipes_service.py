@@ -301,7 +301,7 @@ def atribuir_responsavel(
     return {"user_id": user_id, "nome": nome, "equipe_id": equipe_id, "criterio": criterio}
 
 
-# ── Julia's next turn: `contexto.estado.atendente_nome` ──────────────────────
+# ── Julia's next turn: `contexto.estado.atendente_nome` (a fact about the lead, never prompt text) ──────
 def _nome_do_responsavel(ctx: julia_contexto_service.ContextoCtx) -> Optional[str]:
     uid = ctx.contato.get("responsavel_user_id")
     if not uid:
@@ -312,24 +312,16 @@ def _nome_do_responsavel(ctx: julia_contexto_service.ContextoCtx) -> Optional[st
     return nome or None
 
 
-def _estender_estado(base: julia_contexto_service.Provider) -> julia_contexto_service.Provider:
-    """The `estado` provider + `atendente_nome` (additive: every key `base` returns is kept)."""
-    def provider(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
-        out = base(ctx)
-        try:
-            nome = _nome_do_responsavel(ctx)
-        except Exception:
-            logger.exception("julia: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
-            nome = None
-        if nome:
-            out = {**out, "estado": {**(out.get("estado") or {}), "atendente_nome": nome}}
-        return out
-
-    return provider
+def _estado_atendente(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
+    """`estado.atendente_nome` (None when there is no responsável): a failure is logged and the turn goes without it."""
+    try:
+        return {"atendente_nome": _nome_do_responsavel(ctx)}
+    except Exception:
+        logger.exception("julia: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
+        return {}
 
 
-# Replaces the `estado` provider IN PLACE (the registry order is a tested contract), wrapping the current one.
-julia_contexto_service.registrar_provider("estado", _estender_estado(dict(julia_contexto_service.PROVIDERS)["estado"]))
+julia_contexto_service.registrar_estado_extra(_estado_atendente)
 
 
 # ── metrics ─────────────────────────────────────────────────────────────────

@@ -1,11 +1,17 @@
-"""Julia wave 1 -- "Conhecimento" (lais-build-contract section 3).
+"""Julia wave 1 -- "Conhecimento" (lais-build-contract section 3), RETIRED FROM THE MODEL PATH by julia-v2 (Q1).
 
-Per-org knowledge sections (`julia_conhecimento_secoes`): validated per section by a pydantic
-model (`extra="forbid"`), saved with an optimistic lock (`versao`), rendered into deterministic
-pt-BR markdown that becomes the `conhecimento` contexto provider (agents appends it to the system
-prompt, so a save changes the next turn's `contexto.hash` with no agent republish).
+Per-org knowledge sections (`julia_conhecimento_secoes`): validated per section by a pydantic model (`extra="forbid"`),
+saved with an optimistic lock (`versao`). The imobiliaria's knowledge now lives in the agents app as org-level text
+shared by every agent (julia-v2 CONTRACT Q1 / 0.3), stored as the exact text the model sees. SW therefore NO LONGER
+renders markdown into the turn: the `conhecimento` contexto provider is gone and `contexto` carries no
+`conhecimento_md`.
 
-Registration happens at import: `registrar_provider("conhecimento", contexto_provider)`.
+What stays here is operational, not Julia's content: the recess notice (`mensagem_recesso_primeiro_turno`, a
+deterministic SW message), the property-link template and the address/IPTU policy that the SW tools use.
+`render_md_secoes` stays ONLY as the input of the one-time backfill job
+(`app/jobs/julia_conhecimento_backfill.py`) that copies the rendered text into agents.
+NOC-REMEDIATE[julia-v2-conhecimento-drop]: drop `julia_conhecimento_secoes`, the form and `render_md*` once the
+backfill ran in prod and the owner edits the knowledge in agents -- 2026-10-19
 """
 from __future__ import annotations
 
@@ -21,8 +27,7 @@ from zoneinfo import ZoneInfo
 from noctusai_lib.primitives.exceptions import AppException
 from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, field_validator, model_validator
 
-from app.services import julia_contexto_service
-from app.services.julia_contexto_service import ContextoCtx, FUSO
+from app.services.julia_contexto_service import FUSO
 
 logger = logging.getLogger(__name__)
 
@@ -558,15 +563,8 @@ def link_imovel_fn(client: Any, org_id: UUID | str) -> Callable[[str], Optional[
     return lambda codigo: montar_link_imovel(modelo, site, codigo)
 
 
-# ── contexto provider ───────────────────────────────────────────────────────
-def contexto_provider(ctx: ContextoCtx) -> dict[str, Any]:
-    return {"conhecimento_md": render_md(ctx.client, ctx.org_id, agora=ctx.agora)}
-
-
-julia_contexto_service.registrar_provider("conhecimento", contexto_provider)
-
 __all__ = [
-    "MODELOS", "SECOES", "contexto_provider", "hash_md", "ler_secoes", "mensagem_recesso_primeiro_turno",
+    "MODELOS", "SECOES", "hash_md", "ler_secoes", "mensagem_recesso_primeiro_turno",
     "padrao", "politica_endereco_iptu", "recesso_vigente", "render_md", "render_md_secoes", "salvar_secao",
     "texto_recesso", "validar",
 ]

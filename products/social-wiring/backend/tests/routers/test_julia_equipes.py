@@ -266,24 +266,20 @@ class TestDistribuicao:
         picks = [svc.atribuir_responsavel(w.sw, w.core, ORG_ID, _contato(w, n))["user_id"] for n in range(1, 5)]
         assert picks == [U1, U2, U1, U2]
 
-    def test_estado_provider_carries_atendente_nome_but_the_wire_contexto_does_not(self, admin):
-        """The provider still resolves the name (SW-side), but agents' `ContextoEstado` is extra=forbid, so the rendered
-        contexto strips it until agents has a place for it (NOC-REMEDIATE[julia-v2-reengajamento-contexto])."""
+    def test_the_attendants_name_reaches_agents_as_data_in_estado(self, admin):
+        """agents' `ContextoEstado` has a field for it now (A-RT): SW resolves the responsavel's name and SENDS it (it used to
+        strip it because agents forbade the key)."""
         w = admin.w
         c = _contato(w, 1)
 
-        def provider(contato):
-            return dict(ctxsvc.PROVIDERS)["estado"](ctxsvc.ContextoCtx(client=w.sw, org_id=ORG_ID, contato=contato))["estado"]
+        def estado(contato):
+            with patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=w.root):  # the DB seam
+                return ctxsvc.montar(w.sw, ORG_ID, contato, ferramentas_habilitadas=False)["estado"]
 
-        base = provider(c)
-        assert "atendente_nome" not in base
+        assert "atendente_nome" not in estado(c)
         w.sw.table("julia_contatos").update({"responsavel_user_id": U2}).eq("id", c["id"]).execute()
         c = w.contato("55119" + "00000001@c.us")
-        estado = provider(c)
-        assert estado["atendente_nome"] == "Marcos"
-        assert set(base) <= set(estado)
-        wire = ctxsvc.montar(w.sw, ORG_ID, c, ferramentas_habilitadas=False)["estado"]
-        assert "atendente_nome" not in wire
+        assert estado(c)["atendente_nome"] == "Marcos"
 
 
 # ── handoff wiring ──────────────────────────────────────────────────────────

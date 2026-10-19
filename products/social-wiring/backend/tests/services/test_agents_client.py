@@ -81,6 +81,7 @@ class TestWireShapes:
             "channel": "whatsapp",
             "channel_ref": {"connection_id": CONN, "chat_id": "5511999990000@c.us"},
             "contact": {"phone_e164": "+5511999990000", "display_name": "Ana"},
+            "gatilho": "mensagem",
             "messages": [
                 {"texto": "oi m1", "provider_message_id": "m1", "at": AT.isoformat()},
                 {"texto": "oi m2", "provider_message_id": "m2", "at": AT.isoformat()},

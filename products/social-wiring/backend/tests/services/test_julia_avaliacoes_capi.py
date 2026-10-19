@@ -460,14 +460,34 @@ class TestCapi:
         assert isinstance(capi.make_capi_provider(access_token=None, use_fake=True), capi.FakeCapiProvider)
 
 
-class TestQualificarLeadDispara:
-    def test_qualificar_lead_handler_records_the_signal_for_a_meta_lead(self, world, repo, token):
+class TestQualificadoDispara:
+    def test_lead_pronto_records_the_capi_signal_for_a_meta_lead(self, world, repo, token):
         from app.services import julia_envio_service as envio
 
         config(world, capi_ativo=True, capi_pixel_id=PIXEL)
         c = contato(world, lead_id=lead_meta(world)["id"], status_envio="enviado")
-        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="respondido", actions=(JuliaAction("qualificar_lead", 1, {}),))
+        res = TurnResult(conversation_id=str(uuid4()), partes=(), status="concluido",
+                         actions=(JuliaAction("lead_pronto", 1, {"estagio": "pronto_para_corretor", "score": 80, "valores": {}}),))
         h = dict(acoes.HANDLERS)
-        acoes.registrar_handler("qualificar_lead", envio._h_qualificar_lead, registro=h)  # noqa: SLF001
+        acoes.registrar_handler("lead_pronto", envio._h_lead_pronto, registro=h)  # noqa: SLF001
         run(acoes.aplicar(world.sw, org_id=ORG, contato=c, result=res, lote_hash="q1", handlers=h))
         assert [r["evento"] for r in world.rows(capi.T_CAPI)] == ["lead_qualificado"]
+
+    def test_the_computed_stage_at_the_orgs_minimum_records_it_once(self, world, repo, token):
+        from app.services import julia_envio_service as envio
+
+        config(world, capi_ativo=True, capi_pixel_id=PIXEL)
+        envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "estagio_minimo": "qualificado"}])
+        c = contato(world, lead_id=lead_meta(world)["id"], status_envio="enviado")
+        for _ in range(2):  # every served turn re-checks the stage; the signal is deduped per contato
+            run(envio.enviar_por_estagio(world.sw, ORG, c, estagio="qualificado", score=61))
+        assert [r["evento"] for r in world.rows(capi.T_CAPI)] == ["lead_qualificado"]
+
+    def test_a_stage_below_the_minimum_records_nothing(self, world, repo, token):
+        from app.services import julia_envio_service as envio
+
+        config(world, capi_ativo=True, capi_pixel_id=PIXEL)
+        envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "estagio_minimo": "qualificado"}])
+        c = contato(world, lead_id=lead_meta(world)["id"])
+        run(envio.enviar_por_estagio(world.sw, ORG, c, estagio="perfil_basico", score=30))
+        assert world.rows(capi.T_CAPI) == []

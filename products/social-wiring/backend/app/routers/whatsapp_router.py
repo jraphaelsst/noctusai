@@ -92,12 +92,13 @@ from noctusai_lib.security.webhook_signatures import (
 )
 
 from app.config import settings
-from app.dependencies import get_admin_client, get_settings
+from app.dependencies import get_admin_client, get_core_client, get_scoped_admin_client, get_settings
 from app.rate_limit import limiter
+from app.routers.julia_agente_router import get_agents_client_factory
 from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services import julia_agente_service as julia
-from app.services import julia_conversas_service
+from app.services import julia_conversas_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
@@ -532,7 +533,6 @@ async def _handle_lead_message(
 
     Never calls ChatbotService or any operator tool — it only buffers; the worker
     (`julia_lead_turn_service`) owns the turn."""
-    from app.dependencies import get_scoped_admin_client
 
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
@@ -565,9 +565,8 @@ async def _handle_lead_message(
             return True
         if politica == "devolvido":
             state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
-    if state and state.get("agente_pausado") and not deletion:
-        logger.info("Julia: chat %s paused (human handling) — stored only", chat_id)
-        return True
+    # julia-v2: NO local pause gate here. The per-conversation pause lives in AGENTS (the turn answers
+    # `conversa_pausada` and the lead worker sends nothing); `whatsapp_chats.agente_pausado` is only a display mirror.
 
     module = get_conversation_module()
     if module is None:
@@ -587,12 +586,14 @@ async def _handle_lead_message(
 
 
 async def _apply_human_takeover(
-    *, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg, intake=None
+    *, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg, intake=None, texto: str = "",
+    agents_client_factory=None,
 ) -> None:
-    """L3 (contract 10.1): a ``fromMe`` message that is NOT Julia's own echo means a
-    human is typing — set ``agente_pausado`` and tell Conversas. Julia's own sends are
-    recognised by the provider id we registered, or by the in-flight send flag (WAHA's
-    echo can beat our own bookkeeping)."""
+    """L3 (contract 10.1): a ``fromMe`` message that is NOT Julia's own echo means a human is typing. julia-v2: the
+    pause lives in AGENTS -- the human's message is appended to the shared thread (Q5) and the agent is paused in that
+    conversation through ``PATCH participantes`` (the attendant recorded as the actor); SW sets no local flag, then
+    mirrors agents' answer onto the chat and tells Conversas. Julia's own sends are recognised by the provider id we
+    registered, or by the in-flight send flag (WAHA's echo can beat our own bookkeeping)."""
     if connection is None or not connection.agente_leads_ativo or is_group:
         return
     if intake is not None and intake.is_authorized(chat_id):
@@ -609,21 +610,26 @@ async def _apply_human_takeover(
             return
     except Exception:
         # Cannot tell her echo from a human: do NOT pause (a wrongly-paused chat
-        # silences a lead; a missed pause is caught by the post-turn re-check).
+        # silences a lead; agents re-checks on every turn anyway).
         logger.exception("Julia: own-echo check failed — takeover skipped for chat=%s", chat_id)
         return
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
-        state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
-        if state is not None and state["agente_pausado"]:
-            return
-        if not chat_store.set_agente_pausado(connection_id=connection.id, chat_id=chat_id, pausado=True):
-            logger.warning("Julia: takeover on chat=%s but the chat row does not exist", chat_id)
-            return
+        client = (agents_client_factory or (lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg)))(connection.org_id)
+        autor = julia_thread_service.autor_humano(
+            get_scoped_admin_client("social_wiring"), get_core_client(), connection, chat_id)
+        resultado = await julia_thread_service.tomada_humana(
+            client, chat_store, connection_id=connection.id, chat_id=chat_id,
+            agent_key=connection.agente_leads_key or julia.DEFAULT_AGENT_KEY, texto=texto,
+            provider_message_id=provider_message_id or None, autor_user_id=autor,
+        )
     except Exception:
-        logger.exception("Julia: could not pause chat=%s on human takeover", chat_id)
+        logger.exception("Julia: could not record the human takeover of chat=%s", chat_id)
         return
-    logger.info("Julia: human takeover — chat %s paused (conn=%s)", chat_id, connection.id)
+    if resultado != "pausado":
+        logger.info("Julia: human message in chat %s — nothing to pause at agents (%s)", chat_id, resultado)
+        return
+    logger.info("Julia: human takeover — agent paused in chat %s at agents (conn=%s)", chat_id, connection.id)
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
         payload = {**summary.as_dict(), "agente_pausado": True} if summary else {"chat_id": chat_id, "agente_pausado": True}
@@ -643,6 +649,7 @@ async def _process_waha_body(
     connection=None,
     cfg=None,
     waha_factory=None,
+    agents_client_factory=None,
 ) -> Response:
     """Shared WAHA envelope processor.
 
@@ -862,7 +869,8 @@ async def _process_waha_body(
             # human typing — L3 still applies.
             await _apply_human_takeover(
                 connection=connection, chat_id=chat_id, is_group=is_group,
-                provider_message_id=provider_message_id, cfg=cfg, intake=intake,
+                provider_message_id=provider_message_id, cfg=cfg, intake=intake, texto=message_body,
+                agents_client_factory=agents_client_factory,
             )
         return Response(status_code=status.HTTP_200_OK)
     except Exception:
@@ -931,7 +939,8 @@ async def _process_waha_body(
     if from_me:
         await _apply_human_takeover(
             connection=connection, chat_id=chat_id, is_group=is_group,
-            provider_message_id=provider_message_id, cfg=cfg, intake=intake,
+            provider_message_id=provider_message_id, cfg=cfg, intake=intake, texto=message_body,
+            agents_client_factory=agents_client_factory,
         )
         return Response(status_code=status.HTTP_200_OK)
 
@@ -1253,6 +1262,7 @@ async def whatsapp_webhook_by_token(
     cfg=Depends(get_settings),
     store=Depends(get_token_webhook_store),
     waha_factory=Depends(get_waha_client_factory),
+    agents_client_factory=Depends(get_agents_client_factory),
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_waha_secret,
         scheme="sha256_hex",
@@ -1316,6 +1326,7 @@ async def whatsapp_webhook_by_token(
         event_source=f"webhook/{connection.id}",
         connection=connection,
         waha_factory=waha_factory,
+        agents_client_factory=agents_client_factory,
     )
 
 

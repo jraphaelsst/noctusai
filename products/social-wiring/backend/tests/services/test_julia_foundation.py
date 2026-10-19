@@ -37,6 +37,22 @@ from tests.support.julia_world import (
 CONV = "11111111-1111-4111-8111-111111111111"
 
 
+def _h_anotar(ctx, payload):
+    """A TEST-ONLY action: writes `payload["campos"]` (or `{"slots": payload["slots"]}`) on the contato. The real
+    `salvar_slots` / `definir_operacao` are retired (julia-v2 D4); the ledger / registry mechanics they used to exercise
+    are what these tests are about, so a neutral writer stands in."""
+    campos = payload.get("campos") or {"slots": payload.get("slots") or {}}
+    contatos.atualizar_contato(ctx.client, ctx.contato["id"], campos)
+    return {"anotado": sorted(campos)}
+
+
+@pytest.fixture(autouse=True)
+def _anotar():
+    acoes.registrar_handler("anotar", _h_anotar)
+    yield
+    acoes.HANDLERS.pop("anotar", None)
+
+
 @pytest.fixture(autouse=True)
 def _public_url(monkeypatch):
     monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", "https://sw.example.test")
@@ -176,15 +192,13 @@ class TestContexto:
         i = contatos.abrir_interacao(world.sw, ORG, c)
         return world.rows("julia_contatos")[0], i
 
-    def test_default_shape_matches_contract_2_1_a(self, world):
+    def test_default_shape_is_data_only_agents_estado_and_capacidades(self, world):
         c, i = self._base(world)
         now = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
         ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, agora=now, ferramentas_habilitadas=False)
-        assert set(ctx) == {"hash", "conhecimento_md", "perguntas", "estado", "ferramentas", "acoes", "agora", "fuso"}
-        assert (ctx["conhecimento_md"], ctx["perguntas"], ctx["ferramentas"]) == ("", [], [])
-        assert ctx["estado"] == {"slots": {}, "operacao": None, "interacao_id": i["id"], "encerrado": False}
-        # wave 3 drops `qualificar_lead` while the org has no send rule (nothing to qualify against)
-        assert ctx["acoes"] == ["salvar_slots", "definir_operacao", "pedido_visita", "captacao", "encerrar", "handoff"]
+        assert set(ctx) == {"hash", "estado", "capacidades", "agora", "fuso"}  # no knowledge, questions, tools or actions
+        assert ctx["estado"] == {"interacao_id": i["id"], "encerrado": False}
+        assert ctx["capacidades"] == {"ferramentas_sw": False}
         assert (ctx["agora"], ctx["fuso"]) == (now.isoformat(), "America/Sao_Paulo")
         assert len(ctx["hash"]) == 64 and int(ctx["hash"], 16) >= 0
 
@@ -194,8 +208,8 @@ class TestContexto:
         a = ctxsvc.montar(world.sw, ORG, c, interacao=i, agora=t1, ferramentas_habilitadas=True)
         b = ctxsvc.montar(world.sw, ORG, c, interacao=i, agora=t2, ferramentas_habilitadas=True)
         assert a["hash"] == b["hash"] and a["agora"] != b["agora"]
-        c_slots = {**c, "slots": {"bairro": "Granja"}}
-        assert ctxsvc.montar(world.sw, ORG, c_slots, interacao=i, agora=t1, ferramentas_habilitadas=True)["hash"] != a["hash"]
+        assert ctxsvc.montar(world.sw, ORG, {**c, "encerrado_at": "2026-10-15T00:00:00+00:00"}, interacao=i, agora=t1,
+                             ferramentas_habilitadas=True)["hash"] != a["hash"]
         assert ctxsvc.montar(world.sw, ORG, c, interacao=i, agora=t1, ferramentas_habilitadas=False)["hash"] != a["hash"]
 
     def test_hash_is_the_sha256_of_the_rest_of_the_contexto(self, world):
@@ -207,46 +221,59 @@ class TestContexto:
         expected = hashlib.sha256(json.dumps(rest, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         assert ctx["hash"] == expected
 
-    def test_estado_reflects_the_contato(self, world):
+    def test_estado_reflects_the_contato_but_never_the_qualification_it_mirrors(self, world):
         c, i = self._base(world)
-        c = {**c, "slots": {"bairro": "Granja", "n": 3}, "operacao": "aluguel", "encerrado_at": "2026-10-15T00:00:00+00:00"}
+        c = {**c, "slots": {"bairro": "Granja", "n": 3}, "operacao": "aluguel", "encerrado_at": "2026-10-15T00:00:00+00:00",
+             "origem_slug": "meta_ads", "codigo_imovel_campanha": "AP10"}
         est = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)["estado"]
-        assert est == {"slots": {"bairro": "Granja", "n": "3"}, "operacao": "aluguel", "interacao_id": i["id"], "encerrado": True}
+        # the slots / operacao are agents' own state (SW only mirrors it): never sent back
+        assert est == {"interacao_id": i["id"], "encerrado": True,
+                       "origem": {"canal_origem": "meta_ads", "codigo_imovel_campanha": "AP10"}}
 
-    def test_atualizacao_is_an_action_value_not_an_estado_value(self, world):
+    def test_the_campaign_origin_is_omitted_when_there_is_none(self, world):
         c, i = self._base(world)
-        est = ctxsvc.montar(world.sw, ORG, {**c, "operacao": "atualizacao"}, interacao=i, ferramentas_habilitadas=False)["estado"]
-        assert est["operacao"] is None
+        assert "origem" not in ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False)["estado"]
 
-    def test_ferramentas_follow_the_tools_token(self, world):
+    def test_the_re_engagement_flavour_rides_in_estado_as_data(self, world):
         c, i = self._base(world)
-        on = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=True)["ferramentas"]
-        assert on == ["buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento"]
+        est = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False,
+                            estado_extra={"reengajamento": "regua", "reescrever": True, "texto_base": "Oi?", "tentativa": 2,
+                                          "regua_id": "r-1"})["estado"]
+        assert (est["reengajamento"], est["reescrever"], est["texto_base"], est["tentativa"]) == ("regua", True, "Oi?", 2)
+        assert "regua_id" not in est  # SW-only: goes to the outbound gate, never to agents
+
+    def test_a_key_agents_does_not_declare_is_stripped_and_logged_at_error(self, world, caplog):
+        c, i = self._base(world)
+        with caplog.at_level("ERROR"):
+            est = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, estado_extra={"chave_nova": 1})["estado"]
+        assert "chave_nova" not in est and "chave_nova" in caplog.text
+
+    def test_ferramentas_sw_follows_the_tools_token(self, world):
+        c, i = self._base(world)
+        assert ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=True)["capacidades"] == {"ferramentas_sw": True}
 
     def test_the_provider_registry_is_the_extension_point_and_replaces_in_place(self, world, monkeypatch):
         reg = list(ctxsvc.PROVIDERS)
         c, i = self._base(world)
-        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": f"# {ctx.org_id}"}, registro=reg)
-        ctxsvc.registrar_provider("perguntas", lambda ctx: {"perguntas": [{"chave": f"q{n}"} for n in range(12)]}, registro=reg)
-        ctxsvc.registrar_provider("estado_extra", lambda ctx: {"estado": {"operacao": "aluguel"}}, registro=reg)
-        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
-        assert ctx["conhecimento_md"] == f"# {ORG}"
-        assert len(ctx["perguntas"]) == 8  # capped at the contract's 0..8
-        assert ctx["estado"]["operacao"] == "aluguel" and ctx["estado"]["interacao_id"] == i["id"]  # merged key-wise, not replaced
-        assert [n for n, _ in reg][:2] == ["conhecimento", "perguntas"]  # position kept
+        ctxsvc.registrar_provider("capacidades", lambda ctx: {"capacidades": {"ferramentas_sw": False, "extra": 1}}, registro=reg)
+        ctxsvc.registrar_provider("extra", lambda ctx: {"estado": {"origem": {"canal_origem": "portal"}}}, registro=reg)
+        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=True, providers=reg)
+        assert ctx["capacidades"]["extra"] == 1
+        assert ctx["estado"]["origem"] == {"canal_origem": "portal"} and ctx["estado"]["interacao_id"] == i["id"]  # merged key-wise
+        assert [n for n, _ in reg][:2] == ["estado", "capacidades"]  # position kept
 
     def test_a_provider_that_raises_is_contained_and_the_rest_still_render(self, world, monkeypatch, caplog):
         reg = list(ctxsvc.PROVIDERS)
 
         def boom(_ctx):
-            raise RuntimeError("wave 1 is broken")
+            raise RuntimeError("wave is broken")
 
-        ctxsvc.registrar_provider("conhecimento", boom, registro=reg)
+        ctxsvc.registrar_provider("capacidades", boom, registro=reg)
         c, i = self._base(world)
         with caplog.at_level("ERROR"):
             ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
-        assert ctx["conhecimento_md"] == "" and ctx["estado"]["interacao_id"] == i["id"]
-        assert "provider 'conhecimento' failed" in caplog.text
+        assert ctx["capacidades"] == {} and ctx["estado"]["interacao_id"] == i["id"]
+        assert "provider 'capacidades' failed" in caplog.text
 
     def test_an_unknown_key_from_a_provider_is_refused_loudly(self, world, monkeypatch, caplog):
         reg = list(ctxsvc.PROVIDERS)
@@ -256,15 +283,8 @@ class TestContexto:
             ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
         assert "segredo" not in ctx and "unknown key" in caplog.text
 
-    def test_oversized_knowledge_is_truncated_to_60000_and_the_whole_stays_under_80000(self, world, monkeypatch):
-        import json
-
-        reg = list(ctxsvc.PROVIDERS)
-        ctxsvc.registrar_provider("conhecimento", lambda ctx: {"conhecimento_md": "x" * 90_000}, registro=reg)
-        c, i = self._base(world)
-        ctx = ctxsvc.montar(world.sw, ORG, c, interacao=i, ferramentas_habilitadas=False, providers=reg)
-        assert len(ctx["conhecimento_md"]) == 60_000
-        assert len(json.dumps(ctx, ensure_ascii=False)) <= ctxsvc.CONTEXTO_MAX
+    def test_the_retired_providers_are_gone(self):
+        assert [n for n, _ in ctxsvc.PROVIDERS] == ["estado", "capacidades"]
 
     def test_tools_token_detection_needs_an_active_agents_issued_julia_token(self, world):
         now = datetime(2026, 10, 15, tzinfo=timezone.utc)
@@ -288,60 +308,28 @@ class TestContexto:
 
 
 # ── actions ─────────────────────────────────────────────────────────────────
-PERGUNTAS = [{"chave": "bairro"}, {"chave": "orcamento"}]
-
-
-async def _apply(world, contato, *actions, lote="L1", agents=None, perguntas=PERGUNTAS, conv=CONV, handlers=None):
+async def _apply(world, contato, *actions, lote="L1", agents=None, conv=CONV, handlers=None):
     return await acoes.aplicar(
         world.sw, org_id=ORG, contato=contato, result=_turn(*actions), lote_hash=lote,
-        conversation_id=conv, agents_client=agents or world.agents, core_client=world.core, perguntas=perguntas,
+        conversation_id=conv, agents_client=agents or world.agents, core_client=world.core,
         connection_id=CONNECTION_ID, chat_id="chat-1", handlers=handlers,
     )
 
 
 @pytest.mark.asyncio
 class TestAcoes:
-    async def test_salvar_slots_merges_slots_and_routes_nome_email_to_their_columns(self, world):
+    async def test_the_retired_model_actions_have_no_handler_and_write_nothing(self, world):
+        """julia-v2 D4: the qualification state is agents'; SW mirrors it and never writes slots / operacao from an action."""
         c = _mk_contato(world)
-        contatos.abrir_interacao(world.sw, ORG, c)
-        out = await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": {
-            "bairro": " Granja Viana ", "orcamento": "900 mil", "nome": "Ana Teste", "email": "ANA@Example.COM",
-            "desconhecida": "x", "BAD KEY": "x",
-        }}))
-        assert out == [{"seq": 1, "tipo": "salvar_slots", "estado": "aplicada"}]
+        out = await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": {"bairro": "A"}}),
+                           JuliaAction("definir_operacao", 2, {"operacao": "compra"}), handlers=dict(acoes.HANDLERS))
+        assert [o["estado"] for o in out] == ["sem_handler", "sem_handler"]
         row = world.rows("julia_contatos")[0]
-        assert row["slots"] == {"bairro": "Granja Viana", "orcamento": "900 mil"}
-        assert (row["nome"], row["email"]) == ("Ana Teste", "ana@example.com")
-        assert world.rows("julia_interacoes")[0]["slots"] == row["slots"]
-        ledger = world.rows("julia_acoes_aplicadas")[0]
-        assert sorted(ledger["resultado"]["salvos"]) == ["bairro", "email", "nome", "orcamento"]
-        assert sorted(ledger["resultado"]["ignorados"]) == ["BAD KEY", "desconhecida"]
-
-    async def test_salvar_slots_caps_values_and_rejects_an_invalid_email(self, world):
-        c = _mk_contato(world)
-        await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": {"bairro": "x" * 900, "email": "not-an-email"}}))
-        row = world.rows("julia_contatos")[0]
-        assert len(row["slots"]["bairro"]) == 500 and row["email"] is None
-
-    async def test_salvar_slots_with_a_bad_shape_stores_nothing(self, world):
-        c = _mk_contato(world)
-        await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": "bairro=Granja"}))
-        assert world.rows("julia_contatos")[0]["slots"] == {}
-        assert world.rows("julia_acoes_aplicadas")[0]["resultado"]["erro"] == "slots_invalido"
-
-    async def test_definir_operacao_sets_contato_and_episode_and_refuses_unknown_values(self, world):
-        c = _mk_contato(world)
-        contatos.abrir_interacao(world.sw, ORG, c)
-        await _apply(world, c, JuliaAction("definir_operacao", 1, {"operacao": "aluguel"}), lote="L1")
-        assert world.rows("julia_contatos")[0]["operacao"] == "aluguel"
-        assert world.rows("julia_interacoes")[0]["operacao"] == "aluguel"
-        await _apply(world, c, JuliaAction("definir_operacao", 1, {"operacao": "troca"}), lote="L2")
-        assert world.rows("julia_contatos")[0]["operacao"] == "aluguel"
-        assert world.rows("julia_acoes_aplicadas", lote_hash="L2")[0]["resultado"] == {"erro": "operacao_invalida"}
+        assert row["slots"] == {} and row["operacao"] is None
 
     async def test_the_same_lote_applied_twice_applies_once(self, world):
         c = _mk_contato(world)
-        acao = JuliaAction("salvar_slots", 1, {"slots": {"bairro": "A"}})
+        acao = JuliaAction("anotar", 1, {"slots": {"bairro": "A"}})
         first = await _apply(world, c, acao)
         # someone changes the slot meanwhile; a REPLAY of the batch must not clobber it
         contatos.atualizar_contato(world.sw, c["id"], {"slots": {"bairro": "B"}})
@@ -352,22 +340,22 @@ class TestAcoes:
 
     async def test_a_new_lote_with_the_same_seq_is_a_new_application(self, world):
         c = _mk_contato(world)
-        await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": {"bairro": "A"}}), lote="L1")
-        await _apply(world, c, JuliaAction("salvar_slots", 1, {"slots": {"bairro": "C"}}), lote="L2")
+        await _apply(world, c, JuliaAction("anotar", 1, {"slots": {"bairro": "A"}}), lote="L1")
+        await _apply(world, c, JuliaAction("anotar", 1, {"slots": {"bairro": "C"}}), lote="L2")
         assert world.rows("julia_contatos")[0]["slots"] == {"bairro": "C"}
         assert len(world.rows("julia_acoes_aplicadas")) == 2
 
     async def test_actions_run_in_seq_order_not_arrival_order(self, world):
         c = _mk_contato(world)
-        await _apply(world, c, JuliaAction("salvar_slots", 2, {"slots": {"bairro": "depois"}}),
-                     JuliaAction("salvar_slots", 1, {"slots": {"bairro": "antes"}}))
+        await _apply(world, c, JuliaAction("anotar", 2, {"slots": {"bairro": "depois"}}),
+                     JuliaAction("anotar", 1, {"slots": {"bairro": "antes"}}))
         assert world.rows("julia_contatos")[0]["slots"] == {"bairro": "depois"}
         assert [r["seq"] for r in world.rows("julia_acoes_aplicadas")] == [1, 2]
 
     async def test_an_unknown_handler_emits_an_event_and_never_drops_the_rest(self, world):
         c = _mk_contato(world)
         out = await _apply(world, c, JuliaAction("tipo_futuro", 1, {"codigo_imovel": "X1"}),
-                           JuliaAction("salvar_slots", 2, {"slots": {"bairro": "A"}}))
+                           JuliaAction("anotar", 2, {"slots": {"bairro": "A"}}))
         assert [o["estado"] for o in out] == ["sem_handler", "aplicada"]
         ev = world.rows("julia_eventos")
         assert [(e["tipo"], e["payload"]) for e in ev] == [("acao_sem_handler", {"tipo": "tipo_futuro", "seq": 1})]
@@ -412,7 +400,7 @@ class TestAcoes:
         c = _mk_contato(world)
         with caplog.at_level("ERROR"):
             out = await _apply(world, c, JuliaAction("qualificar_lead", 1, {"motivo": "m"}),
-                               JuliaAction("salvar_slots", 2, {"slots": {"bairro": "A"}}), handlers=reg)
+                               JuliaAction("anotar", 2, {"slots": {"bairro": "A"}}), handlers=reg)
         assert [o["estado"] for o in out] == ["falhou", "aplicada"]
         assert world.rows("julia_eventos")[0]["tipo"] == "acao_falhou"
         assert world.rows("julia_acoes_aplicadas", seq=1)[0]["resultado"] == {"erro": "RuntimeError"}
@@ -420,9 +408,11 @@ class TestAcoes:
 
     async def test_encerrar_closes_the_episode_with_the_summary_bumps_gen_and_marks_the_contato(self, world):
         c = _mk_contato(world)
+        contatos.atualizar_contato(world.sw, c["id"], {"slots": {"bairro": "Granja"}, "operacao": "compra"})  # agents' mirror
+        c = world.rows("julia_contatos")[0]
         i = contatos.abrir_interacao(world.sw, ORG, c)
         world.agents = FakeAgentsClient(resumo_script=[ResumoResult(
-            resumo="Quer comprar.", slots={"bairro": "Granja"}, operacao="compra", intencoes=("visita",),
+            resumo="Quer comprar.", slots={"bairro": "OUTRO"}, operacao="aluguel", intencoes=("visita",),
             desfecho="qualificado", custo_usd=0.02)])
         out = await _apply(world, c, JuliaAction("encerrar", 1, {"motivo": "sem_interesse"}), agents=world.agents)
         assert out[0]["estado"] == "aplicada"
@@ -430,11 +420,12 @@ class TestAcoes:
         assert contato["gen"] == 1 and contato["encerrado_at"]
         inter = world.rows("julia_interacoes")[0]
         assert inter["id"] == i["id"] and inter["encerrada_at"]
+        # the narrative + the display-only desfecho come from agents' resumo; slots / operacao are the MIRROR of its
+        # computed qualification already on the contato -- never what the summary says
         assert (inter["resumo"], inter["slots"], inter["intencoes"], inter["desfecho"], inter["operacao"]) == (
             "Quer comprar.", {"bairro": "Granja"}, ["visita"], "qualificado", "compra")
         conv, req = world.agents.resumos[0]
-        assert conv == CONV and [p["chave"] for p in req.perguntas] == ["bairro", "orcamento"]
-        assert req.desde is not None
+        assert conv == CONV and req.desde is not None and req.to_wire() == {"desde": req.desde.isoformat()}
         assert contatos.interacao_aberta(world.sw, c["id"]) is None
         assert world.rows("julia_acoes_aplicadas")[0]["resultado"]["motivo"] == "sem_interesse"
 
@@ -483,10 +474,10 @@ class TestAcoes:
 
         with caplog.at_level("ERROR"):
             out = await acoes.aplicar(
-                Boom(), org_id=ORG, contato=c, result=_turn(JuliaAction("salvar_slots", 1, {"slots": {}})),
+                Boom(), org_id=ORG, contato=c, result=_turn(JuliaAction("anotar", 1, {"slots": {}})),
                 lote_hash="L1", agents_client=None,
             )
-        assert out == [{"seq": 1, "tipo": "salvar_slots", "estado": "falhou"}]
+        assert out == [{"seq": 1, "tipo": "anotar", "estado": "falhou"}]
 
     def test_lote_hash_is_deterministic_and_batch_specific(self):
         assert acoes.lote_hash_de(CONV, ["a", "b"]) == acoes.lote_hash_de(CONV, ["a", "b"])
@@ -505,7 +496,7 @@ class TestWorkerIntegration:
         world.agents = FakeAgentsClient()
         await _run(world, buffer_lead(world, LEAD_CHAT, ["Oi"]))
         req = world.agents.turns[0]
-        assert req.contexto is not None and len(req.contexto["hash"]) == 64
+        assert req.contexto is not None and len(req.contexto["hash"]) == 64 and req.lead_ref == world.contato()["id"]
         contato = world.contato()
         assert contato["gen"] == 1 and contato["ultimo_inbound_at"] and contato["ultimo_outbound_at"]
         assert contato["org_id"] == ORG and contato["telefone_e164"] == "+5511988887777" and contato["nome"] == "Ana"
@@ -530,8 +521,8 @@ class TestWorkerIntegration:
         order: list[str] = []
         world.agents = FakeAgentsClient([TurnResult(
             conversation_id=CONV, partes=("Anotado!",), status="respondido",
-            actions=(JuliaAction("salvar_slots", 1, {"slots": {"nome": "Ana Teste"}}),
-                     JuliaAction("definir_operacao", 2, {"operacao": "compra"})),
+            actions=(JuliaAction("anotar", 1, {"campos": {"nome": "Ana Teste"}}),
+                     JuliaAction("anotar", 2, {"campos": {"operacao": "compra"}})),
         )])
         # the action ledger must not exist yet when the bubble is sent: capture it at send time
         original = world.waha.send_text
@@ -548,7 +539,7 @@ class TestWorkerIntegration:
         assert len(world.rows("julia_acoes_aplicadas")) == 2
 
     async def test_a_replayed_batch_does_not_apply_its_actions_twice(self, world):
-        acao = JuliaAction("salvar_slots", 1, {"slots": {"nome": "Ana Teste"}})
+        acao = JuliaAction("anotar", 1, {"campos": {"nome": "Ana Teste"}})
         r = TurnResult(conversation_id=CONV, partes=("ok",), status="respondido", actions=(acao,))
         world.agents = FakeAgentsClient([r, r])
         k = buffer_lead(world, LEAD_CHAT, ["oi"], ids=["m1"])
@@ -566,7 +557,7 @@ class TestWorkerIntegration:
     async def test_a_silent_turn_with_actions_still_applies_them(self, world):
         world.agents = FakeAgentsClient([TurnResult(
             conversation_id=CONV, partes=(), status="silencio",
-            actions=(JuliaAction("salvar_slots", 1, {"slots": {"nome": "Ana Teste"}}),))])
+            actions=(JuliaAction("anotar", 1, {"campos": {"nome": "Ana Teste"}}),))])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["..."]))
         assert world.sent_texts() == [] and world.contato()["nome"] == "Ana Teste"
 
@@ -610,7 +601,7 @@ class TestWorkerIntegration:
         assert len(world.agents.resumos) == 1 and world.agents.resumos[0][0] == world.chat_row()["agente_conversation_id"]
         assert world.agents.turns[1].contexto["estado"]["interacao_id"] == inter[1]["id"]
 
-    async def test_a_foundation_failure_runs_the_turn_with_page_0_behaviour(self, world, caplog):
+    async def test_a_foundation_failure_sends_no_turn_it_has_no_lead_identity(self, world, caplog):
         world.agents = FakeAgentsClient()
 
         class Boom:
@@ -619,7 +610,7 @@ class TestWorkerIntegration:
 
         with caplog.at_level("ERROR"):
             await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]), scoped=_Split(world, Boom()))
-        assert world.agents.turns[0].contexto is None and world.sent_texts()
+        assert world.agents.turns == [] and world.sent_texts() == []  # fail closed: agents keys the thread by `lead.ref`
         assert "foundation prep failed" in caplog.text
 
     async def test_handoff_bumps_gen_so_queued_jobs_go_stale(self, world):
@@ -628,13 +619,14 @@ class TestWorkerIntegration:
         await _run(world, buffer_lead(world, LEAD_CHAT, ["quero falar com gente"]))
         assert world.contato()["gen"] == 2  # +1 inbound, +1 handoff
 
-    async def test_a_paused_chat_gets_no_turn_but_the_inbound_still_counts(self, world):
-        world.agents = FakeAgentsClient()
+    async def test_a_chat_the_mirror_calls_paused_still_reaches_agents_and_the_inbound_counts(self, world):
+        """julia-v2: no local pause gate -- agents decides on every turn (it answers `conversa_pausada` when it is)."""
+        world.agents = FakeAgentsClient([TurnResult(conversation_id=CONV, thread_id=CONV, partes=(), status="conversa_pausada")])
         world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("connection_id", CONNECTION_ID).execute()
         await _run(world, buffer_lead(world, LEAD_CHAT, ["alguém aí?"]))
-        assert world.agents.turns == []
+        assert len(world.agents.turns) == 1 and world.sent_texts() == []
         c = world.contato()
-        assert c["gen"] == 1 and c["ultimo_inbound_at"] and world.rows("julia_interacoes") == []
+        assert c["gen"] == 1 and c["ultimo_inbound_at"]
 
     async def test_deletion_on_request_removes_the_julia_rows_of_the_chat_only(self, world):
         world.agents = FakeAgentsClient([TurnResult(

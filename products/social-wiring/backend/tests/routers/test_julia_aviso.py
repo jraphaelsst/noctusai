@@ -18,6 +18,8 @@ from noctusai_lib.testing import (
     bind_consent_module_to_mock,
 )
 
+from tests.support.julia_world import MENSAGEM_INICIAL_MIGRACAO
+
 PUBLIC = "/api/public/julia/privacidade"
 ADMIN = "/api/julia/agente/aviso"
 ORG = "test-org-123"
@@ -51,6 +53,8 @@ def _client_for(org_role, org_name="Empresa Exemplo"):
         c = TestClient(app, raise_server_exceptions=True)
         c.sw = get_scoped_admin_client("social_wiring")
         c.core = mock_sb
+        # the platform default opening message is a DATA row (migration julia_v2_espelhos), not a string in code
+        c.sw.set_table_data("julia_textos_padrao", [{"chave": "mensagem_inicial", "conteudo": MENSAGEM_INICIAL_MIGRACAO}])
         yield c
 
 
@@ -96,6 +100,15 @@ class TestAuth:
 
 
 class TestLazyDefault:
+    def test_the_default_opening_message_comes_from_the_data_row_and_names_the_agent_by_placeholder(self, admin_client):
+        data = admin_client.get(ADMIN, headers=_h()).json()["data"]
+        assert data["mensagem_inicial"] == MENSAGEM_INICIAL_MIGRACAO and "{agente}" in data["mensagem_inicial"]
+
+    def test_without_the_data_row_the_first_read_is_a_503_not_a_string_from_code(self, admin_client):
+        admin_client.sw.set_table_data("julia_textos_padrao", [])
+        r = admin_client.get(ADMIN, headers=_h())
+        assert r.status_code == 503 and "texto_padrao_ausente" in r.text
+
     def test_first_read_creates_default_template(self, admin_client):
         data = admin_client.get(ADMIN, headers=_h()).json()["data"]
         assert data["versao"] == 1

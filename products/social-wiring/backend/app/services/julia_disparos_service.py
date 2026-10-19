@@ -443,7 +443,7 @@ ABORDAGENS = {"comercial": "abordagem comercial", "neutra": "abordagem neutra"}
 
 async def primeiro_contato_meta(
     db: Any, org_id: UUID | str, *, connection: Any, transporte: Optional[Transporte], telefone: str,
-    nome: Optional[str], abordagem: str, contexto: Optional[dict[str, str]] = None,
+    nome: Optional[str], abordagem: Optional[str], contexto: Optional[dict[str, str]] = None,
     contato_id: Optional[UUID | str] = None,
 ) -> dict[str, Any]:
     """Meta lead-form lead -> Julia's first contact as the approved "Abordagem comercial|neutra" template
@@ -451,7 +451,7 @@ async def primeiro_contato_meta(
     lead keeps flowing through the ordinary (WAHA) path -- it never degrades into a free-text mass send.
     The outbound gate (`julia_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
     first-contact modelo; a refusal returns its reason as `motivo`."""
-    if abordagem not in ABORDAGENS:
+    if abordagem is not None and abordagem not in ABORDAGENS:
         raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
     try:
         liberacao = julia_envio_gate.exigir(
@@ -461,6 +461,8 @@ async def primeiro_contato_meta(
         return {"enviado": False, "motivo": exc.motivo}
     if not julia_transporte.cloud_configurada(connection) or transporte is None:
         return {"enviado": False, "motivo": "transporte_indisponivel"}
+    if abordagem is None:  # a template cannot go out without the decision (agents' rule picks it; SW holds no fallback)
+        raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
     modelos = db.table("julia_modelos").select("*").eq("org_id", str(org_id)).eq("categoria", "primeiro_contato").eq(
         "status", "aprovado").limit(100).execute().data or []
     modelo = next((m for m in modelos if str(m["nome"]).strip().lower() == ABORDAGENS[abordagem]), None)

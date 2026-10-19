@@ -89,7 +89,7 @@ class TestTurn:
 
 @pytest.mark.asyncio
 class TestResumo:
-    async def test_posts_to_the_conversation_route_and_parses_the_2_1_e_body(self):
+    async def test_posts_to_the_thread_route_and_parses_a_pre_v2_body_too(self):
         seen = {}
 
         def handler(request):
@@ -102,8 +102,8 @@ class TestResumo:
             })
 
         res = await _client(handler).resumo(CONV, ResumoRequest(perguntas=({"chave": "bairro"},), desde=AT))
-        assert (seen["method"], seen["path"], seen["auth"]) == ("POST", f"/api/channels/conversations/{CONV}/resumo", "Bearer pk_channel_token")
-        assert seen["body"] == {"perguntas": [{"chave": "bairro"}], "desde": AT.isoformat()}
+        assert (seen["method"], seen["path"], seen["auth"]) == ("POST", f"/api/channels/threads/{CONV}/resumo", "Bearer pk_channel_token")
+        assert seen["body"] == {"desde": AT.isoformat()}  # narrative only: the criteria come from agents' own records
         assert res == ResumoResult(
             resumo="Procura casa de 3 quartos.", slots={"bairro": "Granja"}, operacao="compra",
             intencoes=("visita", "encerrar"), desfecho="qualificado", custo_usd=0.02, tokens_entrada=100, tokens_saida=20,
@@ -117,7 +117,7 @@ class TestResumo:
             return httpx.Response(200, json={"resumo": "", "slots": {}, "intencoes": [], "desfecho": "frio"})
 
         await _client(handler).resumo(CONV, ResumoRequest())
-        assert seen == {"perguntas": [], "desde": None}
+        assert seen == {"desde": None}
 
     async def test_404_conversation_not_found_is_typed(self):
         h = lambda r: httpx.Response(404, json={"detail": {"detail": "x", "code": "conversation_not_found"}})  # noqa: E731
@@ -126,7 +126,7 @@ class TestResumo:
 
     async def test_a_malformed_200_is_an_upstream_fault(self):
         with pytest.raises(AgentsUpstreamError):
-            await _client(lambda r: httpx.Response(200, json={"resumo": "x"})).resumo(CONV, ResumoRequest())
+            await _client(lambda r: httpx.Response(200, json={"desfecho_sugerido": "frio"})).resumo(CONV, ResumoRequest())
 
 
 @pytest.mark.asyncio

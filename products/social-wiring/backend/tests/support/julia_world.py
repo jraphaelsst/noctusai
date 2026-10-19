@@ -39,6 +39,8 @@ LEAD_PHONE = "5511988887777"
 LEAD_CHAT = f"{LEAD_PHONE}@c.us"
 ENCRYPTION_KEY = Fernet.generate_key().decode()
 ATIVADO_EM = "2026-10-01T00:00:00+00:00"
+MENSAGEM_INICIAL_MIGRACAO = "Oi! Eu sou {agente}, assistente virtual da {empresa}. 😊 Como tratamos seus dados: {link}"
+THREAD_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class SchemaCachingClient:
@@ -100,6 +102,9 @@ class World:
         self.sw.set_table_data("whatsapp_connections", [])
         for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos"):
             self.sw.set_table_data(t, [])
+        # the platform default texts are DATA (migration julia_v2_espelhos): this is the migration's row, asserted equal to the SQL in
+        # tests/services/test_julia_v2_espelhos_migration.py
+        self.sw.set_table_data("julia_textos_padrao", [{"chave": "mensagem_inicial", "conteudo": MENSAGEM_INICIAL_MIGRACAO}])
 
     # ── seeding ────────────────────────────────────────────────────────────
     def seed_connection(self, **over: Any) -> dict[str, Any]:
@@ -128,7 +133,7 @@ class World:
             "last_direction": "inbound", "unread_count": 0, "archived": False, "pinned": False,
             "created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
             "updated_at": "2026-10-14T10:00:00+00:00",
-            "agente_pausado": False, "agente_conversation_id": None,
+            "agente_pausado": False, "agente_conversation_id": None, "agente_thread_id": None, "agente_estado": None,
         }
         row.update(over)
         self.sw.table("whatsapp_chats").insert(row).execute()

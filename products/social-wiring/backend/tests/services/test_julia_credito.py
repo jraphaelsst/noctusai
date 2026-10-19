@@ -79,7 +79,7 @@ class TestWiring:
     def test_handler_hook_and_contexto_extras_are_bound(self):
         assert acoes.HANDLERS["consentimento_credito"] is svc._h_consentimento
         assert svc._pos_pedido_visita in acoes.POS_ACAO["pedido_visita"]
-        assert svc._acoes_extra in contexto.ACOES_EXTRAS and svc._estado_extra in contexto.ESTADO_EXTRAS
+        assert svc._estado_credito in contexto.ESTADO_EXTRAS
         assert acoes.HANDLERS["pedido_visita"] is not None  # wave 5's handler is composed, not replaced
 
     def test_event_type_is_known(self):
@@ -254,30 +254,26 @@ class TestRealStubAndFactory:
 
 
 class TestContexto:
+    """The credit state rides in `contexto.estado.credito` as DATA; whether and how the agent asks is agents' (its DB)."""
+
     def _montar(self, w, c):
         return contexto.montar(w.sw, ORG_ID, c, ferramentas_habilitadas=False)
 
-    def test_ask_state_exposes_the_tool_and_estado(self):
+    def test_ask_state_exposes_the_estado(self):
         w, c = _mundo_credito()
         out = self._montar(w, c)
         assert out["estado"]["credito"] == {"ativo": True, "consentimento": None}
-        assert "consentimento_credito" in out["acoes"]
+        assert "acoes" not in out  # agents decides its tool list; SW no longer offers `consentimento_credito`
 
-    @pytest.mark.parametrize("aceito,expect_tool", [(True, False), (False, True)])
-    def test_after_the_answer(self, aceito, expect_tool):
+    @pytest.mark.parametrize("aceito", [True, False])
+    def test_after_the_answer(self, aceito):
         w, c = _mundo_credito()
         _consentir(w, c, aceito)
         out = self._montar(w, c)
         assert out["estado"]["credito"]["consentimento"] is aceito
-        assert ("consentimento_credito" in out["acoes"]) is expect_tool
 
     @pytest.mark.parametrize("cfg", [dict(ativo=False), dict(operacao="compra"), dict(operacao=None)])
     def test_absent_when_it_does_not_apply(self, cfg):
         w, c = _mundo_credito(**cfg)
         out = self._montar(w, c)
-        assert "credito" not in out["estado"] and "consentimento_credito" not in out["acoes"]
-
-    def test_extras_never_remove_what_the_acoes_provider_returned(self):
-        w, c = _mundo_credito()
-        out = self._montar(w, c)
-        assert set(contexto.ACOES_JULIA) - {"qualificar_lead"} <= set(out["acoes"])
+        assert "credito" not in out["estado"]

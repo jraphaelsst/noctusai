@@ -17,6 +17,7 @@ from tests.support.julia_world import ADMIN_ID, CONNECTION_ID, CORRETOR_ID, MEMB
 
 H = {"Authorization": "Bearer test-token"}
 SEM = "00000000-0000-4000-8000-0000000000ff"
+ESTAGIO = "qualificado"
 BASE = [[{"campo": "comportamento", "operador": "=", "valor": "qualificado"}]]
 
 
@@ -79,7 +80,7 @@ def member():
 
 
 ROTAS = [
-    ("get", "/api/julia/envio/regras", None), ("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "grupos": BASE}]}),
+    ("get", "/api/julia/envio/regras", None), ("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "estagio_minimo": ESTAGIO}]}),
     ("get", "/api/julia/envio/politicas", None), ("put", "/api/julia/envio/politicas", {"pesquisa": True}),
     ("get", "/api/julia/leads", None), ("get", "/api/julia/leads/canais", None),
     ("post", f"/api/julia/leads/{SEM}/enviar", None), ("post", "/api/julia/leads/enviar-lote", {"ids": [SEM]}),
@@ -103,18 +104,21 @@ class TestAuth:
 
 class TestRegrasPoliticas:
     def test_regras_roundtrip_without_the_diferenciar_flag(self, admin):
-        r = admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "grupos": BASE}]})
-        assert r.status_code == 200 and r.json()["data"]["regras"][0]["grupos"] == BASE
-        two = [{"operacao": "compra", "grupos": BASE}, {"operacao": "aluguel", "grupos": BASE}]
+        r = admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "estagio_minimo": ESTAGIO}]})
+        assert r.status_code == 200 and r.json()["data"]["regras"][0]["estagio_minimo"] == ESTAGIO
+        assert "grupos" not in r.json()["data"]["regras"][0]  # the slot-criteria rubric is retired (Q6)
+        two = [{"operacao": "compra", "estagio_minimo": ESTAGIO}, {"operacao": "aluguel", "estagio_minimo": "perfil_basico"}]
         d = admin.call("put", "/api/julia/envio/regras", {"regras": two}).json()["data"]
         assert d["diferenciar"] is True and sorted(x["operacao"] for x in d["regras"]) == ["aluguel", "compra"]
         assert admin.call("get", "/api/julia/envio/regras").json()["data"] == d
 
     def test_regras_typed_errors_and_strict_body(self, admin):
-        bad = admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "grupos": [[{"campo": "orcamento", "operador": "preenchido"}]]}]})
-        assert bad.status_code == 422 and bad.json()["error"]["code"] == "base_obrigatoria"
-        assert admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "grupos": BASE}], "x": 1}).status_code == 422
-        assert admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "venda", "grupos": BASE}]}).status_code == 422
+        bad = admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "estagio_minimo": "Qualificado Bom!"}]})
+        assert bad.status_code == 422 and bad.json()["error"]["code"] == "estagio_invalido"
+        assert admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "estagio_minimo": ESTAGIO}], "x": 1}).status_code == 422
+        assert admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "venda", "estagio_minimo": ESTAGIO}]}).status_code == 422
+        # the retired criteria are no longer accepted: strict body, never a silent drop
+        assert admin.call("put", "/api/julia/envio/regras", {"regras": [{"operacao": "ambas", "grupos": BASE}]}).status_code == 422
 
     def test_politicas_shape_roundtrip_and_validation(self, admin):
         assert admin.call("get", "/api/julia/envio/politicas").json()["data"]["frios"] == {"ativo": False, "modo": "intervalo", "minutos": 60}

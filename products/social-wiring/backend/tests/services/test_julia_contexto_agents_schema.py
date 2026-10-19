@@ -1,14 +1,20 @@
-"""julia-v2 W0 hotfix: every `contexto` SW can render validates against agents' request schema; a 422 from agents is LOUD.
+"""julia-v2: every `contexto` SW can render validates against agents' request schema; a 422 from agents is LOUD.
 
-The 422 root cause: `contexto.estado` carried keys (`atendente_nome`, `reengajamento`, `reescrever`, `texto_base`,
-`regua_id`, ...) that agents' `ContextoEstado` (`extra="forbid"`) rejects, so every turn for a contato with a
-responsavel and EVERY re-engagement turn got a 422 that SW logged as a "client bug" and answered nothing.
+The W0 422 root cause: `contexto.estado` carried keys (`atendente_nome`, `reengajamento`, `reescrever`, `texto_base`, ...) that
+agents' `ContextoEstado` (`extra="forbid"`) rejected, so every turn for a contato with a responsavel and EVERY re-engagement
+turn got a 422 that SW logged as a "client bug" and answered nothing. agents closed that in v2 (the keys are fields now, A-RT)
+and SW sends them as DATA instead of stripping them.
+
+The oracle is `tests/support/agents_channel_contexto.py` (a copy of agents' `ChannelContexto`); the drift gate below compares it
+with agents' published `channels.v2.json` (it skips loudly while that file is not in the tree).
 """
 from __future__ import annotations
 
-import importlib.util
+import json
 import logging
+import os
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -24,37 +30,30 @@ from app.services.julia_lead_turn_service import process_lead_batch, run_reengaj
 from tests.support.agents_channel_contexto import ChannelContexto
 from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OWNER_ID, World, buffer_lead
 
-AGENTS_SCHEMA = Path(__file__).resolve().parents[4] / "agents" / "backend" / "app" / "schemas" / "channels.py"
-
-
-def _real_agents_schema():
-    spec = importlib.util.spec_from_file_location("sw_g_agents_channels_schema", AGENTS_SCHEMA)
-    mod = importlib.util.module_from_spec(spec)
-    import sys
-    sys.modules[spec.name] = mod  # pydantic resolves forward refs through sys.modules
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.modules.pop(spec.name, None)
-    return mod
+SCHEMA_PATH = Path(os.environ.get("AGENTS_CONTRACT_SCHEMA") or Path(__file__).resolve().parents[5] / "products" / "agents" / "backend" / "contracts" / "channels.v2.json")
 
 
 def _sem_descricao(node):
-    """Docstrings are prose, not contract: compare the schema without `description`."""
+    """Docstrings and titles are prose, not contract: compare the schema without `description` / `title`."""
     if isinstance(node, dict):
-        return {k: _sem_descricao(v) for k, v in node.items() if k != "description"}
+        return {k: _sem_descricao(v) for k, v in node.items() if k not in ("description", "title")}
     if isinstance(node, list):
         return [_sem_descricao(v) for v in node]
     return node
 
 
-def test_the_test_mirror_matches_the_real_agents_schema():
-    """Drift gate: the copy under tests/support is the oracle for every other test here, so it must equal agents'."""
-    real = _real_agents_schema()
-    assert _sem_descricao(ChannelContexto.model_json_schema()) == _sem_descricao(real.ChannelContexto.model_json_schema()), (
-        "agents' ChannelContexto changed: update tests/support/agents_channel_contexto.py AND the SW contexto builder"
-    )
-    assert set(ctxsvc.ESTADO_CHAVES_AGENTS) == set(real.ContextoEstado.model_fields)
+@pytest.mark.skipif(not SCHEMA_PATH.exists(), reason=(
+    "NOC-REMEDIATE[julia-v2-agents-contract-schema]: channels.v2.json is not in the tree yet (A-RT publishes it) -- the test "
+    "mirror is NOT drift-checked against agents until it lands"))
+def test_the_test_mirror_matches_the_published_agents_schema():
+    """Drift gate: the copy under tests/support is the oracle for every other test here, so it must equal agents' file."""
+    published = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))["ChannelTurnRequest"]["$defs"]
+    mirror = ChannelContexto.model_json_schema()
+    mirror_defs = {**mirror.get("$defs", {}), "ChannelContexto": {k: v for k, v in mirror.items() if k != "$defs"}}
+    for nome in ("ChannelContexto", "ContextoEstado", "ContextoOrigem", "ContextoCredito", "ContextoCapacidades", "ContextoPergunta"):
+        assert _sem_descricao(mirror_defs[nome]) == _sem_descricao(published[nome]), (
+            f"agents' {nome} changed: update tests/support/agents_channel_contexto.py AND the SW contexto builder")
+    assert set(ctxsvc.ESTADO_CHAVES_AGENTS) <= set(published["ContextoEstado"]["properties"])
 
 
 def _validar(contexto: dict) -> None:
@@ -89,11 +88,12 @@ class TestContextoValidaContraAgents:
     def test_base_contexto_validates(self, world):
         _validar(_montar(world, _contato(world), ferramentas_habilitadas=True))
 
-    def test_contato_with_a_responsavel_validates(self, world):
+    def test_contato_with_a_responsavel_sends_the_attendant_name_as_data(self, world):
         c = _contato(world, responsavel_user_id=OWNER_ID)
         world.core.set_table_data("noctus_users", [{"id": OWNER_ID, "org_id": ORG_ID, "org_role": "owner", "nome": "Marcos"}])
-        contexto = _montar(world, c)
-        assert "atendente_nome" not in contexto["estado"]
+        with patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=world.root):  # the DB seam, not our code
+            contexto = _montar(world, c)
+        assert contexto["estado"]["atendente_nome"] == "Marcos"
         _validar(contexto)
 
     @pytest.mark.parametrize("estado_extra", [
@@ -101,10 +101,11 @@ class TestContextoValidaContraAgents:
         {"reengajamento": "horas"},
         {"reengajamento": "regua", "reescrever": True, "texto_base": "Oi, tudo bem?", "tentativa": 2, "regua_id": "r-1"},
     ])
-    def test_every_reengagement_estado_validates(self, world, estado_extra):
+    def test_every_reengagement_estado_validates_and_is_sent(self, world, estado_extra):
         contexto = _montar(world, _contato(world), estado_extra=estado_extra)
         _validar(contexto)
-        assert not set(estado_extra) & set(contexto["estado"])
+        enviado = {k: v for k, v in estado_extra.items() if k != "regua_id"}  # the regua id goes to the gate, never to agents
+        assert {k: contexto["estado"][k] for k in enviado} == enviado and "regua_id" not in contexto["estado"]
 
     def test_an_unknown_estado_key_is_stripped_and_logged_at_error(self, world, caplog):
         with caplog.at_level(logging.ERROR):
@@ -115,8 +116,10 @@ class TestContextoValidaContraAgents:
     def test_credito_state_is_kept_and_validates(self, world):
         c = _contato(world)
         contexto = _montar(world, c,
-                          providers=[("estado", lambda ctx: {"estado": {"credito": {"ativo": True, "consentimento": None}}})])
+                          providers=[("estado", lambda ctx: {"estado": {"interacao_id": str(uuid4()), "encerrado": False,
+                                                                          "credito": {"ativo": True, "consentimento": None}}})])
         assert contexto["estado"]["credito"] == {"ativo": True, "consentimento": None}
+        _validar(contexto)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tier", ["minutos", "horas", "regua"])

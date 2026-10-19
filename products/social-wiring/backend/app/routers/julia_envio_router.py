@@ -1,7 +1,7 @@
 """Julia > Envio + Julia > Leads (wave 3, contract 5).
 
-  GET  /api/julia/envio/regras                    member    {data: {diferenciar, regras: [{operacao, grupos, versao}]}}
-  PUT  /api/julia/envio/regras                    admin     {diferenciar, regras: [{operacao, grupos}]} -> same shape
+  GET  /api/julia/envio/regras                    member    {data: {diferenciar, regras: [{operacao, estagio_minimo, versao}]}}
+  PUT  /api/julia/envio/regras                    admin     {diferenciar, regras: [{operacao, estagio_minimo}]} -> same shape
   GET  /api/julia/envio/politicas                 member    {data: {frios, captacoes, whatsapp_invalido, pesquisa}}
   PUT  /api/julia/envio/politicas                 admin     partial body -> same shape
   GET  /api/julia/leads?de&ate&nome&email&telefone&imovel&link&operacao[]&atendimento[]&status[]&canal[]&campanha&anuncio&page&page_size  member    {data: {items, total}}  (a member sees only their contatos, A7)
@@ -11,8 +11,7 @@
   GET  /api/julia/leads/{contato_id}/resumo       member    {data: {contato, slots, interacoes, entregas}}
   GET  /api/julia/leads/export.csv?<filters>&ids=a,b  admin     text/csv
 
-Errors use the AppException envelope: 422 `grupos_invalidos` / `criterio_invalido` / `campo_desconhecido` /
-`operador_invalido` / `valor_invalido` / `campo_sensivel` / `base_obrigatoria` / `operacoes_invalidas` /
+Errors use the AppException envelope: 422 `estagio_invalido` / `operacoes_invalidas` /
 `politica_invalida` / `filtro_invalido`; 403 `sem_acesso`; 404 `contato_nao_encontrado`; 409 `ja_enviado`
 (`details.lead_id`); 502 `envio_falhou` (status stays `erro`, retry with the same call).
 """
@@ -49,7 +48,8 @@ def get_envio_client() -> Any:
 
 class RegraIn(StrictHttpModel):
     operacao: Literal["compra", "aluguel", "ambas"]
-    grupos: Any
+    #: Q6 (julia-v2): the stage agents computes at which the lead is sent to the CRM. Replaces the slot `grupos`.
+    estagio_minimo: str = Field(min_length=2, max_length=64)
 
 
 class RegrasIn(StrictHttpModel):

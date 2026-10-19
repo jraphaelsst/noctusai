@@ -196,71 +196,23 @@ class TestPut:
         assert admin.put(sel("objetivo", "faixa_preco")).status_code == 200  # keeping it is fine
 
 
-# ── contexto provider ───────────────────────────────────────────────────────
-class TestProvider:
-    def _ctx(self, w, operacao=None):
-        return contexto.ContextoCtx(client=w.sw, org_id=ORG_ID, contato={"operacao": operacao, "slots": {}})
+# ── retired from the model path (julia-v2: the standard lives in agents) ────
+class TestRetiradaDoCaminhoDoModelo:
+    def test_the_questions_are_no_longer_a_contexto_provider(self):
+        assert "perguntas" not in dict(contexto.PROVIDERS) and not hasattr(svc, "contexto_provider")
 
-    def test_registered_in_place_without_editing_the_provider_list(self):
-        assert dict(contexto.PROVIDERS)["perguntas"] is svc.contexto_provider
-        assert [n for n, _ in contexto.PROVIDERS] == ["conhecimento", "perguntas", "estado", "ferramentas", "acoes"]
-
-    def test_renders_the_active_questions_in_contract_shape(self, admin):
+    def test_the_contexto_carries_no_question_list_even_when_the_org_picked_some(self, admin):
         admin.put(sel("objetivo", "nome", "faixa_preco", qual=("objetivo", "faixa_preco")))
         out = contexto.montar(admin.w.sw, ORG_ID, {"operacao": None, "slots": {}}, ferramentas_habilitadas=False)
-        pergs = out["perguntas"]
-        assert {p["chave"] for p in pergs} == {"objetivo", "nome", "faixa_preco"}
-        assert set(pergs[0]) == {"chave", "label", "dica", "categoria", "qualificatoria", "operacao"}
-        assert {p["chave"]: p["qualificatoria"] for p in pergs} == {"objetivo": True, "nome": False, "faixa_preco": True}
+        assert "perguntas" not in out and "perguntas" not in str(out)
 
-    def test_a_fresh_org_is_asked_only_the_objetivo(self, admin):
-        assert [p["chave"] for p in svc.contexto_provider(self._ctx(admin.w))["perguntas"]] == ["objetivo"]
-
-    def test_operation_scoped_questions_follow_the_contato(self, admin):
-        admin.put(sel("objetivo", "recurso_entrada", "garantia_locacao"))
-        chaves = lambda op: {p["chave"] for p in svc.contexto_provider(self._ctx(admin.w, op))["perguntas"]}  # noqa: E731
-        assert chaves("compra") == {"objetivo", "recurso_entrada"}
-        assert chaves("aluguel") == {"objetivo", "garantia_locacao"}
-        assert chaves(None) == {"objetivo", "recurso_entrada", "garantia_locacao"}
+    def test_salvar_slots_is_no_longer_a_handler_the_model_cannot_write_slots(self):
+        assert "salvar_slots" not in acoes.HANDLERS and "definir_operacao" not in acoes.HANDLERS
+        assert not hasattr(svc, "_h_salvar_slots")
 
 
-# ── salvar_slots + sensitive slots ──────────────────────────────────────────
-class TestSalvarSlots:
-    def _ctx(self, w, perguntas):
-        contato = w.sw.table("julia_contatos").insert({
-            "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "slots": {}}).execute().data[0]
-        return acoes.AcaoCtx(client=w.sw, org_id=ORG_ID, contato=contato, interacao=None, lote_hash="h", seq=1,
-                             tipo="salvar_slots", perguntas=perguntas)
-
-    def test_the_handler_is_the_wrapping_one(self):
-        assert acoes.HANDLERS["salvar_slots"] is svc._h_salvar_slots  # noqa: SLF001
-
-    def test_cpf_and_renda_are_stored_protected_never_raw(self, admin):
-        admin.put(sel("objetivo", "cpf", "renda_familiar", "nome"))
-        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
-            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
-        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": CPF_DE_TESTE, "renda_familiar": "R$ 6.500,00", "nome": "Ana"}})
-        assert set(res["salvos"]) == {"cpf", "renda_familiar", "nome"}
-        row = admin.w.sw.table("julia_contatos").select("*").execute().data[0]
-        assert row["slots"]["renda_familiar"] == "faixa:5k_10k"
-        assert row["slots"]["cpf"].startswith("sha256:") and row["slots"]["cpf"].endswith("|final:111")
-        assert "11111111111" not in str(row) and CPF_DE_TESTE not in str(row) and "6.500" not in str(row)
-
-    def test_an_unprotectable_value_is_dropped_not_stored_raw(self, admin):
-        admin.put(sel("objetivo", "cpf", "renda_familiar"))
-        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
-            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
-        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"cpf": "123", "renda_familiar": "depende"}})
-        assert res["salvos"] == [] and set(res["ignorados"]) == {"cpf", "renda_familiar"}
-        assert admin.w.sw.table("julia_contatos").select("*").execute().data[0]["slots"] == {}
-
-    def test_keys_outside_the_active_set_are_still_ignored(self, admin):
-        admin.put(sel("objetivo", "nome"))
-        ctx = self._ctx(admin.w, svc.contexto_provider(contexto.ContextoCtx(
-            client=admin.w.sw, org_id=ORG_ID, contato={}))["perguntas"])
-        res = acoes.HANDLERS["salvar_slots"](ctx, {"slots": {"quartos": "3"}})
-        assert res == {"salvos": [], "ignorados": ["quartos"]}
-
+# ── sensitive slots stay protected wherever they are stored ─────────────────
+class TestSensiveis:
     def test_the_ledger_copy_is_sanitised_too(self):
         out = acoes.sanitizar_payload({"slots": {"cpf": CPF_DE_TESTE, "renda_familiar": "8000", "quartos": "3"}}, ORG_ID)
         assert CPF_DE_TESTE not in str(out) and "8000" not in str(out)

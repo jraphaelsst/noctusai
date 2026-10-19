@@ -9,8 +9,14 @@
   2. The interacao resumo + the collected slots become the card's first note (and the lead's `observacoes`).
   3. `status_envio` on the contato, one `julia_envio_entregas` ledger row, event `novo_lead`.
 
+julia-v2 (Q6, ONE rubric): the qualification stage is COMPUTED by agents (the model only records criteria); the org's
+rule is now a MINIMUM STAGE (`julia_envio_regras.estagio_minimo`) and the send fires when the computed stage reaches it.
+The slot-criteria `grupos` rubric is retired (legacy rows keep theirs, read only by the visit hook).
+
 Triggers (every one goes through `enviar`, so two of them for one phone are one lead and one card):
-  qualificado  action `qualificar_lead`, only when the org's rule matches (else the contato stays "Nao pronto")
+  qualificado  the computed stage reached the rule's `estagio_minimo` (checked after every served turn), or the action
+               `lead_pronto` (agents' `concluir_qualificacao`: the conclusive stage, which satisfies any minimum); else
+               the contato stays "Nao pronto"
   visita       the `on_visita_solicitada` hook (when a rule has the visit criterion) and `forcar_envio_sw`
   frio         timer job `julia_envio_frio`, armed by the cold-lead hook after the last re-engagement attempt;
                stale-guarded by `gen` (contract 0.2)
@@ -25,8 +31,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 from uuid import UUID
 
 from noctusai_lib.domain.jobs import Job
@@ -38,7 +45,6 @@ from app.services import (
     clientes_service,
     julia_acoes_service,
     julia_contatos_service as contatos,
-    julia_contexto_service,
     julia_envio_criterios as criterios,
     julia_eventos_service as eventos,
     julia_perguntas_service,
@@ -127,12 +133,15 @@ def montar_regras(client: Any, org_id: UUID | str) -> dict[str, Any]:
     rows = listar_regras(client, org_id)
     return {
         "diferenciar": any(r["operacao"] in ("compra", "aluguel") for r in rows),
-        "regras": [{"operacao": r["operacao"], "grupos": r.get("grupos") or [], "versao": int(r.get("versao") or 1)} for r in rows],
+        "regras": [
+            {"operacao": r["operacao"], "estagio_minimo": r.get("estagio_minimo"), "versao": int(r.get("versao") or 1)}
+            for r in rows
+        ],
     }
 
 
 def org_tem_regra(client: Any, org_id: UUID | str) -> bool:
-    return any(r.get("grupos") for r in listar_regras(client, org_id))
+    return any(r.get("estagio_minimo") for r in listar_regras(client, org_id))
 
 
 def regra_do_contato(rows: list[dict[str, Any]], operacao: Optional[str]) -> Optional[dict[str, Any]]:
@@ -141,13 +150,25 @@ def regra_do_contato(rows: list[dict[str, Any]], operacao: Optional[str]) -> Opt
     return por_op.get(operacao or "") or por_op.get("ambas")
 
 
-def _chaves_slot(client: Any) -> set[str]:
-    return {q["chave"] for q in julia_perguntas_service.listar_catalogo(client)}
+_ESTAGIO_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+
+
+def estagio_atende(estagio: Optional[str], minimo: Optional[str], ordem: Sequence[str] = ()) -> bool:
+    """Has the COMPUTED stage reached the rule's minimum? Equal always does; beyond the minimum needs agents' stage order
+    (`ordem`, the pinned standard's stage keys in order -- SW owns no copy of the standard). Without it only equality
+    counts, so a stage SW cannot place never sends by guesswork."""
+    if not estagio or not minimo:
+        return False
+    if estagio == minimo:
+        return True
+    if estagio in ordem and minimo in ordem:
+        return ordem.index(estagio) >= ordem.index(minimo)
+    return False
 
 
 def substituir_regras(client: Any, org_id: UUID | str, diferenciar: Optional[bool], regras: list[dict[str, Any]]) -> dict[str, Any]:
-    """Full replace of the org's rule set (the wizard's Salvar). Typed 422s: `operacoes_invalidas`, plus every
-    `criterios.validar_grupos` code."""
+    """Full replace of the org's rule set (the wizard's Salvar). Typed 422s: `operacoes_invalidas`,
+    `estagio_invalido`."""
     ops = [r["operacao"] for r in regras]
     if diferenciar is None:  # the wizard sends only the rules: two rows = "different for compra and aluguel"
         diferenciar = "ambas" not in ops
@@ -158,33 +179,33 @@ def substituir_regras(client: Any, org_id: UUID | str, diferenciar: Optional[boo
             "Informe uma regra para compra e outra para aluguel." if diferenciar else "Informe uma única regra para todas as operações.",
             status_code=422, details={"esperado": sorted(esperado)},
         )
-    chaves = _chaves_slot(client)
-    novas = {r["operacao"]: criterios.validar_grupos(r["grupos"], chaves) for r in regras}
+    novas: dict[str, str] = {}
+    for r in regras:
+        minimo = r.get("estagio_minimo")
+        if not isinstance(minimo, str) or not _ESTAGIO_RE.match(minimo):
+            raise AppException("estagio_invalido", "Informe o estágio mínimo para enviar o lead.", status_code=422,
+                               details={"operacao": r["operacao"]})
+        novas[r["operacao"]] = minimo
     org = str(org_id)
     atuais = {r["operacao"]: r for r in listar_regras(client, org_id)}
     for op in [o for o in atuais if o not in novas]:
         client.table(T_REGRAS).delete().eq("org_id", org).eq("operacao", op).execute()
     agora = datetime.now(timezone.utc).isoformat()
-    for op, grupos in novas.items():
+    for op, minimo in novas.items():
         atual = atuais.get(op)
         if atual is None:
-            client.table(T_REGRAS).insert({"org_id": org, "operacao": op, "grupos": grupos, "versao": 1}).execute()
-        elif (atual.get("grupos") or []) != grupos:
+            client.table(T_REGRAS).insert({"org_id": org, "operacao": op, "estagio_minimo": minimo, "versao": 1}).execute()
+        elif atual.get("estagio_minimo") != minimo:
             client.table(T_REGRAS).update(
-                {"grupos": grupos, "versao": int(atual.get("versao") or 1) + 1, "updated_at": agora}
+                {"estagio_minimo": minimo, "versao": int(atual.get("versao") or 1) + 1, "updated_at": agora}
             ).eq("org_id", org).eq("operacao", op).execute()
     return montar_regras(client, org_id)
 
 
 def criterios_que_usam(client: Any, org_id: UUID | str) -> dict[str, list[str]]:
-    """`{slot key: [criterion names]}` -- bound to Perguntas (`registrar_criterios`) for its 409 `usada_em_criterio`."""
-    nomes = {"compra": "Compra", "aluguel": "Aluguel", "ambas": "Compra e aluguel"}
-    out: dict[str, list[str]] = {}
-    for r in listar_regras(client, org_id):
-        for gi, g in enumerate(r.get("grupos") or [], start=1):
-            for chave in criterios.chaves_usadas([g]):
-                out.setdefault(chave, []).append(f"{nomes.get(r['operacao'], r['operacao'])} · grupo {gi}")
-    return out
+    """`{slot key: [criterion names]}` for Perguntas' 409 `usada_em_criterio`. Always empty since julia-v2: a rule is a
+    minimum STAGE, it no longer references slot keys (the hook stays so the retired page keeps working until it is dropped)."""
+    return {}
 
 
 # ── policies ────────────────────────────────────────────────────────────────
@@ -416,29 +437,78 @@ def _enviar_automatico(client: Any, org_id: UUID | str, contato: dict[str, Any],
 
 
 def ja_qualificado(client: Any, org_id: UUID | str, contato_id: Any) -> bool:
-    """Julia already ran `qualificar_lead` for this contato (ledger of applied actions)."""
+    """Agents already told us the lead is ready for this contato (ledger of applied actions: `lead_pronto`, or the pre-v2
+    `qualificar_lead`)."""
     rows = (
         client.table(contatos.T_ACOES).select("id").eq("org_id", str(org_id)).eq("contato_id", str(contato_id))
-        .eq("tipo", "qualificar_lead").limit(1).execute().data or []
+        .in_("tipo", ["lead_pronto", "qualificar_lead"]).limit(1).execute().data or []
     )
     return bool(rows)
 
 
 def avaliar_e_enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, *, qualificado: bool, visita: bool) -> dict[str, Any]:
+    """The LEGACY slot-criteria evaluation (`grupos`), kept for the visit hook of orgs that still have it. The
+    qualification send goes through `enviar_por_estagio`."""
     regra = regra_do_contato(listar_regras(client, org_id), contato.get("operacao"))
     if regra is None or not criterios.avaliar(regra.get("grupos"), contato, qualificado=qualificado, visita=visita):
         return {"enviado": False, "motivo": "criterios_nao_atendidos"}
     return _enviar_automatico(client, org_id, contato, gatilho)
 
 
-# ── action handlers + hooks ─────────────────────────────────────────────────
-async def _h_qualificar_lead(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    res = avaliar_e_enviar(ctx.client, ctx.org_id, ctx.contato, "qualificado", qualificado=True, visita=False)
+async def enviar_por_estagio(
+    client: Any, org_id: UUID | str, contato: dict[str, Any], *, estagio: Optional[str], score: Optional[int] = None,
+    ordem: Sequence[str] = (), concluido: bool = False,
+) -> dict[str, Any]:
+    """Q6: the lead is QUALIFIED when the stage agents COMPUTED reaches the org's `estagio_minimo`, or when agents emitted
+    `lead_pronto` (`concluido`: `concluir_qualificacao`, the conclusive stage, which satisfies any minimum). Qualified ->
+    the CAPI `lead_qualificado` signal (best-effort, Meta-ads leads only, deduped per contato) and, when the org has a rule,
+    the CRM send. Not qualified, no rule, or a lead already sent are plain `{enviado: False, motivo}` -- never an error. A
+    NEW send also records the `lead_pronto` event."""
+    regra = regra_do_contato(listar_regras(client, org_id), contato.get("operacao"))
+    minimo = (regra or {}).get("estagio_minimo")
+    qualificado = concluido or estagio_atende(estagio, minimo, ordem)
+    if not qualificado:
+        return {"enviado": False, "motivo": "sem_regra" if not minimo else "estagio_abaixo_do_minimo"}
     from app.services import julia_capi_service  # lazy: capi -> avaliacoes -> this module (wave 13 CAPI signal)
 
-    # best-effort + only for Meta-ads leads (it never raises): the lead now exists/is linked after the send above
-    await julia_capi_service.registrar_evento(ctx.client, ctx.org_id, ctx.contato["id"], "lead_qualificado")
+    # best-effort + only for Meta-ads leads (it never raises)
+    await julia_capi_service.registrar_evento(client, org_id, contato["id"], "lead_qualificado")
+    if not minimo:
+        if concluido:
+            eventos.emitir(client, org_id, "lead_pronto", contato["id"], {"estagio": estagio, "score": score, "enviado": False})
+        return {"enviado": False, "motivo": "sem_regra"}
+    res = _enviar_automatico(client, org_id, contato, "qualificado")
+    if res.get("enviado"):
+        eventos.emitir(client, org_id, "lead_pronto", contato["id"], {"estagio": estagio, "score": score, "enviado": True})
     return res
+
+
+async def reagir_ao_estagio(
+    client: Any, org_id: UUID | str, contato: dict[str, Any], resumo: Any, *, agents_client: Any = None,
+    ja_enviado_por_acao: bool = False,
+) -> Optional[dict[str, Any]]:
+    """After a SERVED turn: let the computed stage (`resumo`, agents' `qualificacao`) drive the send. Skipped when this
+    turn's `lead_pronto` action already did (the action handler is the ledger-idempotent path). Never raises."""
+    if ja_enviado_por_acao or resumo is None or not getattr(resumo, "estagio", None):
+        return None
+    try:
+        return await enviar_por_estagio(
+            client, org_id, contato, estagio=resumo.estagio, score=resumo.score, ordem=tuple(resumo.estagios or ()),
+        )
+    except Exception:
+        logger.exception("julia envio: stage trigger failed (org=%s contato=%s)", org_id, contato.get("id"))
+        return None
+
+
+# ── action handlers + hooks ─────────────────────────────────────────────────
+async def _h_lead_pronto(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """agents' `lead_pronto` (`concluir_qualificacao`): the lead reached a CONCLUSIVE stage. Fires the CRM send (trigger
+    `qualificado`) when the org has a rule; the values it carries feed the qualification mirror."""
+    score = payload.get("score")
+    return await enviar_por_estagio(
+        ctx.client, ctx.org_id, ctx.contato, estagio=str(payload.get("estagio") or "") or None,
+        score=score if isinstance(score, int) and not isinstance(score, bool) else None, concluido=True,
+    )
 
 
 def aplicar_politica_captacao(client: Any, org_id: UUID | str, contato: dict[str, Any]) -> dict[str, Any]:
@@ -472,14 +542,6 @@ def _hook_on_visita(org_id: Any, contato: dict[str, Any], visita: dict[str, Any]
 
 def _hook_forcar_envio(org_id: Any, contato: dict[str, Any], visita: dict[str, Any]) -> None:
     _enviar_automatico(_client(), org_id, contato, "visita")
-
-
-def _prov_acoes(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
-    """`contexto.acoes`: every action, minus `qualificar_lead` when the org has no send rule (nothing to qualify against)."""
-    acoes = list(julia_contexto_service.ACOES_JULIA)
-    if not org_tem_regra(ctx.client, ctx.org_id):
-        acoes = [a for a in acoes if a != "qualificar_lead"]
-    return {"acoes": acoes}
 
 
 # ── cold lead timer ─────────────────────────────────────────────────────────
@@ -550,11 +612,10 @@ def handlers(*, client_provider: Optional[Callable[[], Any]] = None) -> dict[str
 # ── wiring ──────────────────────────────────────────────────────────────────
 def registrar() -> None:
     """Bind every registry slot wave 3 owns (idempotent); called once at import of the router."""
-    julia_acoes_service.registrar_handler("qualificar_lead", _h_qualificar_lead)
+    julia_acoes_service.registrar_handler("lead_pronto", _h_lead_pronto)
     if "captacao" not in julia_acoes_service.HANDLERS:  # wave 8 owns the real one and may already be bound
         julia_acoes_service.registrar_handler("captacao", _h_captacao)
     julia_acoes_service.registrar_pos_encerrar(_pos_encerrar)
-    julia_contexto_service.registrar_provider("acoes", _prov_acoes)
     julia_perguntas_service.registrar_criterios(criterios_que_usam)
     julia_reengajamento_service.registrar_lead_frio(lead_frio)
     julia_visitas_service.registrar_hook("on_visita_solicitada", _hook_on_visita)
@@ -563,7 +624,8 @@ def registrar() -> None:
 
 __all__ = [
     "CAPTACOES", "FRIOS_PADRAO", "GATILHOS", "JOB_FRIO", "MODOS_FRIO", "POLITICAS_PADRAO", "STATUS_ENVIADOS",
-    "aplicar_politica_captacao", "avaliar_e_enviar", "criterios_que_usam", "enviar", "executar_frio", "handlers",
+    "aplicar_politica_captacao", "avaliar_e_enviar", "criterios_que_usam", "enviar", "enviar_por_estagio",
+    "estagio_atende", "executar_frio", "handlers", "reagir_ao_estagio",
     "instante_frio", "ja_qualificado", "ler_politicas", "lead_frio", "listar_regras", "montar_nota", "montar_regras",
     "org_tem_regra", "regra_do_contato", "registrar", "registrar_client_provider", "registrar_repo",
     "salvar_politicas", "substituir_regras", "telefone_do_contato",

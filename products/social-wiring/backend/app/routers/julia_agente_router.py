@@ -7,7 +7,8 @@
   GET   /api/julia/agente                      org member: connections, token, link health
   PUT   /api/julia/agente/conexoes/{id}        admin: the Julia switch (11.1 snapshot) + handoff target
   PUT   /api/julia/agente/token                admin: paste the org's agents channel token
-  PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agente   admin: per-chat pause
+  PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agente   admin: per-chat pause (calls AGENTS, mirrors its answer)
+  GET   /api/whatsapp/connections/{id}/chats/{chat_id}/agente   member: the per-chat state as AGENTS reports it
   POST  /api/julia/agente/conexoes/{id}/chats/{chat_id}/apagar-dados   admin: deletion on request (M5)
 
 # NOC-REMEDIATE[seed-promotion]: per-org public privacy notice -- promote to the seed as `org_privacy_notice` (router + table + default template) when the 2nd consumer (store/igig) needs it — 2026-10-14
@@ -33,8 +34,10 @@ from app.clients.agents import (
     AgentsClientError,
     AgentsTokenInvalid,
     HttpAgentsClient,
+    ParticipanteNotFound,
+    TransicaoInvalida,
 )
-from app.services import julia_contatos_service
+from app.services import julia_contatos_service, julia_thread_service
 from app.services.julia_contexto_service import (
     TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_LABEL, TOOLS_TOKEN_SCOPE,
 )
@@ -48,7 +51,11 @@ from app.dependencies import (
     get_settings,
 )
 from app.rate_limit import limiter
-from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
+from app.routers.whatsapp_connections_router import (  # noqa: F401  (get_agents_client_factory: re-exported, same object)
+    get_agents_client_factory,
+    get_connection_store,
+    get_waha_client_factory,
+)
 from app.services import api_keys_store
 from app.services import julia_agente_service as julia
 from app.services import julia_aviso_service as svc
@@ -145,12 +152,6 @@ def put_aviso(
 
 # ── Julia: the connection switch, the token, the pause (contract 5, 11.1, 11.4) ──
 _AGENT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-
-
-def get_agents_client_factory(cfg=Depends(get_settings)) -> Callable[[UUID], Optional[AgentsClient]]:
-    """DI seam: ``org_id -> AgentsClient | None`` (token from ``api_key:agents``).
-    Tests override this with a ``FakeAgentsClient`` factory."""
-    return lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg)
 
 
 def get_agents_token_client_builder() -> Callable[[str], AgentsClient]:
@@ -273,35 +274,29 @@ async def get_agente(
     }}
 
 
-@router.put("/api/julia/agente/conexoes/{connection_id}")
-async def put_conexao(
-    connection_id: UUID,
-    payload: ConexaoAgenteUpdate,
-    auth: tuple = Depends(get_current_user_org),
-    store: WhatsAppConnectionStore = Depends(get_connection_store),
-    cfg=Depends(get_settings),
-    waha_factory=Depends(get_waha_client_factory),
-    request: Request = None,
-) -> dict[str, Any]:
-    """The Julia switch. Turning it ON checks every precondition, then takes the 11.1
-    snapshot of the WAHA session's chats; if the snapshot cannot be proven complete
-    the switch stays OFF (502 ``snapshot_falhou``)."""
-    _user, org_id = _require_admin(auth, request, "A Julia")
-    record = _record_or_404(store, connection_id, org_id, decrypt=True)
+async def aplicar_conexao(
+    *, record: WhatsAppConnectionRecord, org_id: UUID, store: WhatsAppConnectionStore, cfg: Any, waha_factory: Any,
+    ativo: bool, key: Optional[str], handoff_definido: bool, handoff_alvo: Optional[UUID],
+) -> WhatsAppConnectionRecord:
+    """THE line-routing change (shared by the legacy `PUT /agente/conexoes/{id}` and the white-label
+    `PUT /roteamento/linhas/{id}`): the "this number feeds the agent" switch + the handoff notification target.
+    Turning it ON checks every precondition, then takes the 11.1 snapshot of the WAHA session's chats; if the snapshot
+    cannot be proven complete the switch stays OFF (502 ``snapshot_falhou``). This is TRANSPORT config (julia-v2 Q4):
+    it decides which numbers reach the agent, never how the agent behaves (that is agents' Controles)."""
+    connection_id = record.id
     core = get_core_client()
 
     patch: dict[str, Any] = {}
-    if "agente_handoff_notificar_user_id" in payload.model_fields_set:
-        alvo = payload.agente_handoff_notificar_user_id
-        if alvo is not None:
-            julia.exigir_destinatario_valido(core, org_id, alvo, dono_id=record.user_id)
-        patch["agente_handoff_notificar_user_id"] = str(alvo) if alvo else None
+    if handoff_definido:
+        if handoff_alvo is not None:
+            julia.exigir_destinatario_valido(core, org_id, handoff_alvo, dono_id=record.user_id)
+        patch["agente_handoff_notificar_user_id"] = str(handoff_alvo) if handoff_alvo else None
 
-    key = payload.agente_leads_key or record.agente_leads_key or julia.DEFAULT_AGENT_KEY
+    key = key or record.agente_leads_key or julia.DEFAULT_AGENT_KEY
     if not _AGENT_KEY_RE.match(key):
         raise AppException("agente_key_invalida", "Chave de agente inválida.", status_code=422)
 
-    if payload.agente_leads_ativo and not record.agente_leads_ativo:
+    if ativo and not record.agente_leads_ativo:
         # H3 / H1 / 11.3 preconditions first (cheap, no network), THEN the snapshot.
         julia.exigir_autorizados(record.authorized_numbers)
         julia.exigir_hmac_configurado(cfg)
@@ -335,16 +330,39 @@ async def put_conexao(
             agente_leads_ativo=True, agente_leads_key=key,
             agente_leads_ativado_em=datetime.now(timezone.utc).isoformat(),
         )
-    elif payload.agente_leads_ativo:
+    elif ativo:
         # Already on: key / handoff changes only; never re-snapshot (it would not
         # change who is excluded, and `ativado_em` must keep meaning "first on").
         patch["agente_leads_key"] = key
     else:
-        patch.update(agente_leads_ativo=False, agente_leads_key=payload.agente_leads_key or record.agente_leads_key)
+        patch.update(agente_leads_ativo=False, agente_leads_key=key)
 
     updated = store.update_agente(connection_id=connection_id, org_id=org_id, patch=patch)
     if updated is None:
         raise HTTPException(status_code=404, detail="connection not found")
+    return updated
+
+
+@router.put("/api/julia/agente/conexoes/{connection_id}")
+async def put_conexao(
+    connection_id: UUID,
+    payload: ConexaoAgenteUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    cfg=Depends(get_settings),
+    waha_factory=Depends(get_waha_client_factory),
+    request: Request = None,
+) -> dict[str, Any]:
+    """The line switch + handoff target (legacy surface; the white-label page uses `/api/julia/roteamento`)."""
+    _user, org_id = _require_admin(auth, request, "A Julia")
+    record = _record_or_404(store, connection_id, org_id, decrypt=True)
+    updated = await aplicar_conexao(
+        record=record, org_id=org_id, store=store, cfg=cfg, waha_factory=waha_factory,
+        ativo=payload.agente_leads_ativo,
+        key=payload.agente_leads_key,
+        handoff_definido="agente_handoff_notificar_user_id" in payload.model_fields_set,
+        handoff_alvo=payload.agente_handoff_notificar_user_id,
+    )
     return {"data": _conexao_out(updated)}
 
 
@@ -449,26 +467,67 @@ async def patch_chat_agente(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg=Depends(get_settings),
+    client_factory=Depends(get_agents_client_factory),
     request: Request = None,
 ) -> dict[str, Any]:
-    """Pause / resume Julia on ONE chat (a human is handling it)."""
-    _user, org_id = _require_admin(auth, request, "A Julia")
-    _record_or_404(store, connection_id, org_id)
+    """Pause / resume the agent on ONE conversation (a human is handling it). julia-v2: the control lives in AGENTS --
+    this calls `PATCH /threads/{id}/participantes/{agent}` with the SW user as the actor, then mirrors agents' answer
+    onto the chat row for the list chips. SW flips NO local flag on its own: when agents cannot be reached the toggle
+    fails (502) and the shown state does not change."""
+    user, org_id = _require_admin(auth, request, "A Julia")
+    record = _record_or_404(store, connection_id, org_id)
+    client = client_factory(org_id)
+    if client is None:
+        raise AppException("agents_nao_configurado", "O produto agents ainda não está configurado.", status_code=409)
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
-    if not chat_store.set_agente_pausado(connection_id=connection_id, chat_id=chat_id, pausado=payload.pausado):
-        raise HTTPException(status_code=404, detail="chat not found")
+    agent_key = record.agente_leads_key or julia.DEFAULT_AGENT_KEY
+    try:
+        parte = await julia_thread_service.alternar_conversa(
+            client, chat_store, connection_id=connection_id, chat_id=chat_id, agent_key=agent_key,
+            pausado=payload.pausado, user_id=getattr(user, "id", None) or "", motivo="toggle_sw",
+        )
+    except (julia_thread_service.ConversaSemThread, ParticipanteNotFound) as exc:
+        # agents has no thread / the agent does not take part in it: a lead it never served has nothing to pause
+        raise AppException("conversa_sem_agente", "O agente ainda não atendeu esta conversa.", status_code=404) from exc
+    except TransicaoInvalida as exc:
+        raise AppException("transicao_invalida", "A conversa não pode mudar para esse estado agora.", status_code=409) from exc
+    except AgentsClientError as exc:
+        logger.error("julia: pause toggle failed at agents (%s) conn=%s", type(exc).__name__, connection_id)
+        raise AppException("agents_indisponivel", "Não foi possível falar com o agente agora. Tente novamente.", status_code=502) from exc
     try:  # contract 0.2: a pause/resume invalidates every job queued for this contato
         julia_contatos_service.bump_gen_do_chat(get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id)
     except Exception:
-        logger.exception("julia: gen bump on pause failed conn=%s chat=%s (the flag IS set)", connection_id, chat_id)
+        logger.exception("julia: gen bump on pause failed conn=%s chat=%s (agents HAS the new state)", connection_id, chat_id)
+    pausado = parte.estado == "pausado"
     summary = chat_store.get_chat(connection_id=connection_id, chat_id=chat_id)
-    event = {**summary.as_dict(), "agente_pausado": payload.pausado} if summary else {
-        "chat_id": chat_id, "agente_pausado": payload.pausado,
+    event = {**summary.as_dict(), "agente_pausado": pausado, "agente_estado": parte.estado} if summary else {
+        "chat_id": chat_id, "agente_pausado": pausado, "agente_estado": parte.estado,
     }
     await publish_whatsapp_event(
         get_whatsapp_bus(cfg.redis_url), connection_id=connection_id, event=EVENT_CHAT_UPSERT, payload=event,
     )
-    return {"chat_id": chat_id, "agente_pausado": payload.pausado}
+    return {"chat_id": chat_id, "agente_pausado": pausado, "agente_estado": parte.estado}
+
+
+@router.get("/api/whatsapp/connections/{connection_id}/chats/{chat_id:path}/agente")
+async def get_chat_agente(
+    connection_id: UUID,
+    chat_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    client_factory=Depends(get_agents_client_factory),
+) -> dict[str, Any]:
+    """The state of the agent in ONE conversation as AGENTS reports it (`GET thread`): what the Conversas toggle shows.
+    `fonte` says where it came from: `agents` (live), `espelho` (agents unreachable: the last mirrored value, stale) or
+    `nenhuma` (agents has no thread for this chat)."""
+    org_id = coerce_org_uuid(auth[2])
+    record = _record_or_404(store, connection_id, org_id)
+    chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
+    estado = await julia_thread_service.estado_da_conversa(
+        client_factory(org_id), chat_store, connection_id=connection_id, chat_id=chat_id,
+        agent_key=record.agente_leads_key or julia.DEFAULT_AGENT_KEY,
+    )
+    return {"data": estado}
 
 
 @router.post("/api/julia/agente/conexoes/{connection_id}/chats/{chat_id:path}/apagar-dados")

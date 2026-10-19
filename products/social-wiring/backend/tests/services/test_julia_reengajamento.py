@@ -174,15 +174,17 @@ class TestStaleGuard:
         assert await _executar(world, repo, turnos, _jobs(repo)[0], MANHA) == "encerrado"
         assert turnos.chamadas == []
 
-    async def test_a_chat_paused_by_a_human_is_refused_even_with_the_same_gen(self, world):
+    async def test_a_chat_the_mirror_says_is_paused_is_NOT_refused_locally_agents_decides(self, world):
+        """julia-v2: `agente_pausado` is a display mirror. The job runs; agents answers `reengajamento_ignorado` when the
+        agent is paused in that conversation (asserted end to end in test_julia_lead_turn_v2)."""
         _cfg(world, minutos_ativo=True)
         c = _contato(world)
         repo = FakeJobRepository()
         await _armar(world, repo, c)
         world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("connection_id", CONNECTION_ID).execute()
         turnos = Turnos()
-        assert await _executar(world, repo, turnos, _jobs(repo)[0], MANHA) == "pausado"
-        assert turnos.chamadas == []
+        assert await _executar(world, repo, turnos, _jobs(repo)[0], MANHA) != "pausado"
+        assert len(turnos.chamadas) == 1
 
     async def test_julia_switched_off_for_the_connection_is_refused(self, world):
         _cfg(world, minutos_ativo=True)
@@ -549,9 +551,9 @@ class TestPeloTurnoReal:
         out = await svc.executar_default(job, deps=world.deps(jobs=repo), repo=repo, run_turn=run_reengajamento_turn, agora=MANHA)
         assert out == "enviado" and len(world.sent_texts()) == enviados + 1
         req = world.agents.turns[-1]
-        # agents' ContextoEstado is extra=forbid: the SW-only flag never goes on the wire (julia-v2 W0 hotfix)
-        assert "reengajamento" not in req.contexto["estado"]
-        assert req.messages[0].provider_message_id == f"reeng:{job.id}"
+        # the flavour is DATA in agents' `ContextoEstado` now; there is no fake lead message any more
+        assert req.contexto["estado"]["reengajamento"] == "minutos" and req.gatilho == "reengajamento"
+        assert req.messages == ()
         assert world.contato()["gen"] == gen
         # the re-engagement's own outbound does not re-arm the same tier (same gen => same dedupe key)
         assert len(_jobs(repo, svc.JOB_MINUTOS)) == 1
@@ -565,7 +567,8 @@ class TestPeloTurnoReal:
         out = await svc.executar_tentativa(job, deps=world.deps(jobs=repo), repo=repo, run_turn=run_reengajamento_turn, agora=MANHA)
         assert out == "enviado"
         estado = world.agents.turns[-1].contexto["estado"]
-        assert not {"reescrever", "texto_base", "reengajamento", "regua_id", "tentativa"} & set(estado)
+        assert estado["reengajamento"] == "regua" and estado["reescrever"] is True and estado["tentativa"] == 1
+        assert estado["texto_base"] and "regua_id" not in estado  # the regua id goes to the outbound gate, never to agents
         assert frio  # it was the last attempt
 
     async def test_an_agents_failure_is_a_silent_false_not_a_crash(self, world, caplog):

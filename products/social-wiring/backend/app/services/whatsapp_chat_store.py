@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -332,12 +332,14 @@ class WhatsAppChatStore:
     # inbox wire contract and run against fixtures that predate the columns.
 
     def get_agente_state(self, *, connection_id: UUID, chat_id: str) -> dict[str, Any] | None:
-        """``{"agente_pausado", "agente_conversation_id", "created_at"}`` of the
-        chat row, or ``None`` when SW has no row for it."""
+        """``{"agente_pausado", "agente_conversation_id", "agente_thread_id", "agente_estado", "created_at"}`` of
+        the chat row, or ``None`` when SW has no row for it. julia-v2: ``agente_thread_id`` / ``agente_estado`` /
+        ``agente_pausado`` are a DISPLAY MIRROR of agents' participant state (written only from agents' answers);
+        none of them is a gate -- agents decides on every turn."""
         response = (
             self._admin.schema(_SCHEMA)
             .table(_CHATS)
-            .select("chat_id, created_at, agente_pausado, agente_conversation_id")
+            .select("chat_id, created_at, agente_pausado, agente_conversation_id, agente_thread_id, agente_estado")
             .eq("connection_id", str(connection_id))
             .eq("org_id", str(self._org_id))
             .eq("chat_id", chat_id)
@@ -351,6 +353,8 @@ class WhatsAppChatStore:
         return {
             "agente_pausado": bool(row.get("agente_pausado")),
             "agente_conversation_id": row.get("agente_conversation_id"),
+            "agente_thread_id": row.get("agente_thread_id"),
+            "agente_estado": row.get("agente_estado"),
             "created_at": row.get("created_at"),
         }
 
@@ -363,6 +367,27 @@ class WhatsAppChatStore:
             .eq("connection_id", str(connection_id))
             .eq("org_id", str(self._org_id))
             .eq("chat_id", chat_id)
+            .execute()
+        )
+        return bool(response.data)
+
+    def set_agente_espelho(
+        self, *, connection_id: UUID, chat_id: str, thread_id: Optional[str] = None, estado: Optional[str] = None,
+    ) -> bool:
+        """Write the julia-v2 MIRROR of agents' answer: the shared thread id (also the "disclosure already sent"
+        marker, so ``agente_conversation_id`` follows it) and the participant state (``agente_pausado`` is
+        ``estado == 'pausado'``). ``False`` when the chat row does not exist. Display only -- never a gate."""
+        patch: dict[str, Any] = {"updated_at": _utc_now_iso()}
+        if thread_id:
+            patch["agente_thread_id"] = thread_id
+            patch["agente_conversation_id"] = thread_id
+        if estado:
+            patch["agente_estado"] = estado
+            patch["agente_estado_em"] = _utc_now_iso()
+            patch["agente_pausado"] = estado == "pausado"
+        response = (
+            self._admin.schema(_SCHEMA).table(_CHATS).update(patch)
+            .eq("connection_id", str(connection_id)).eq("org_id", str(self._org_id)).eq("chat_id", chat_id)
             .execute()
         )
         return bool(response.data)

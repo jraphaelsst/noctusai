@@ -4,10 +4,10 @@ The org picks the questions Julia asks from a global catalogue (`julia_perguntas
 <= 8 active, <= 5 qualifying, `objetivo` always on. The API validates first (typed 422/409), the
 trigger on `julia_perguntas_org` (migration 269) is the DB backstop.
 
-Wiring (at import, by registry -- nobody edits the foundation builders):
-  * contexto provider `perguntas`  -> the org's active questions (filtered by the contato's operacao)
-  * action handler  `salvar_slots` -> the foundation handler, with CPF/renda protected first
-    (contract 17). Key validation stays the foundation's: a key must be in `contexto.perguntas`.
+julia-v2: RETIRED from the model path. The qualification standard lives in agents (CONTRACT section 3), so the
+`perguntas` contexto provider and the `salvar_slots` action handler are gone; this catalogue + the org picks only SEED
+the standard (CONTRACT 3.7) and the page redirects to agents' "Qualificacao". Dropped one release after v2.
+NOC-REMEDIATE[julia-v2-perguntas-drop]: drop the tables, the router and this module once the standard is seeded -- 2026-10-19
 
 An org with no stored rows still has `objetivo` active (and qualifying): a virtual default, so a fresh
 org is never asked nothing and never asked 63 things.
@@ -19,9 +19,6 @@ from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import AppException
-
-from app.services import julia_acoes_service, julia_contexto_service
-from app.services import julia_slots_sensiveis as sensiveis
 
 logger = logging.getLogger(__name__)
 
@@ -140,52 +137,10 @@ def substituir_selecao(client: Any, org_id: UUID | str, selecao: list[dict[str, 
     return montar_saida(client, org_id)
 
 
-# ── contexto provider ───────────────────────────────────────────────────────
-def contexto_provider(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
-    sel = selecao_org(ctx.client, ctx.org_id)
-    op = ctx.contato.get("operacao")
-    perguntas: list[dict[str, Any]] = []
-    for q in listar_catalogo(ctx.client):
-        s = sel.get(q["chave"])
-        if s is None:
-            continue
-        if q.get("operacao") and op in ("compra", "aluguel") and q["operacao"] != op:
-            continue
-        perguntas.append({
-            "chave": q["chave"], "label": q["label"], "dica": q.get("dica"), "categoria": q["categoria"],
-            "qualificatoria": s["qualificatoria"], "operacao": q.get("operacao"),
-        })
-    return {"perguntas": perguntas}
-
-
-# ── salvar_slots handler: protect CPF / renda, then the foundation handler ──
-def _h_salvar_slots(ctx: julia_acoes_service.AcaoCtx, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    slots = payload.get("slots")
-    if not isinstance(slots, dict):
-        return julia_acoes_service._h_salvar_slots(ctx, payload)  # noqa: SLF001 - same-package base handler
-    protegidos: dict[str, Any] = {}
-    descartados: list[str] = []
-    for chave, valor in slots.items():
-        if str(chave) in sensiveis.SENSIVEIS:
-            if isinstance(valor, bool) or not isinstance(valor, (str, int, float)):
-                protegidos[chave] = valor  # base handler ignores it
-                continue
-            prot = sensiveis.proteger(str(chave), valor, str(ctx.org_id))
-            if prot is None:
-                descartados.append(str(chave))
-                continue
-            protegidos[chave] = prot
-        else:
-            protegidos[chave] = valor
-    res = julia_acoes_service._h_salvar_slots(ctx, {**payload, "slots": protegidos}) or {}  # noqa: SLF001
-    if descartados:
-        res = {**res, "ignorados": [*res.get("ignorados", []), *descartados]}
-    return res
-
-
 def registrar() -> None:
-    julia_contexto_service.registrar_provider("perguntas", contexto_provider)
-    julia_acoes_service.registrar_handler("salvar_slots", _h_salvar_slots)
+    """Nothing to bind since julia-v2: the questions live in agents' qualification standard, no longer in `contexto`,
+    and `salvar_slots` is no longer an action (the model records criteria through agents' tools). Kept as the
+    no-op the importers call; the catalogue stays only to seed the standard (CONTRACT 3.7)."""
 
 
 registrar()

@@ -46,7 +46,11 @@ class Cena:
     def factory(self, conn):
         return tr.transporte_da_conexao(conn, waha_factory=lambda **kw: self.w.waha, cloud_client_factory=lambda **kw: self.meta)
 
-    def rodar(self, lead=LEAD, agents=None):
+    def rodar(self, lead=LEAD, agents="padrao", escolha="neutra"):
+        """`agents="padrao"` = an agents whose decision (its DB rule, julia-v2 D13) is `escolha`; `None` = not configured."""
+        if agents == "padrao":
+            agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha=escolha, regra="versao")])
+        self.agents = agents
         return asyncio.run(svc.iniciar(
             self.w.sw, ORG_ID, lead, store=self.store, transporte_factory=self.factory,
             contexto={"nome_julia": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents))
@@ -90,9 +94,11 @@ class TestIniciar:
     def test_the_commercial_template_is_picked_when_the_lead_references_a_listing(self, cena):
         cena.cloud()
         cena.modelo("Abordagem neutra")
-        assert cena.rodar({**LEAD, "answers": {"REF": "AP10"}})["status"] == "modelo_nao_aprovado"  # wants comercial
+        assert cena.rodar({**LEAD, "answers": {"REF": "AP10"}}, escolha="comercial")["status"] == "modelo_nao_aprovado"  # wants comercial
         cena.modelo("Abordagem comercial")
-        assert cena.rodar({**LEAD, "answers": {"REF": "AP10"}})["status"] == "enviado"
+        r = cena.rodar({**LEAD, "answers": {"REF": "AP10"}}, escolha="comercial")
+        assert r["status"] == "enviado"
+        assert cena.agents.decisoes[0][2].dados["codigo_imovel"] == "AP10"  # the listing code is DATA for agents' rule
 
     def test_while_waiting_for_meta_verification_nothing_is_sent_but_the_lead_enters_julia(self, cena):
         cena.modelo()
@@ -137,35 +143,51 @@ class TestIniciar:
 
 
 class TestAbordagem:
-    @pytest.mark.parametrize("lead,esperado", [
-        ({"answers": {"REF": "AP10"}}, "comercial"), ({"codigo_imovel": "CA1", "answers": {}}, "comercial"),
-        ({"answers": {}}, "neutra"), ({"answers": {"REF": "  "}}, "neutra"), ({}, "neutra"),
-    ])
-    def test_local_rule(self, lead, esperado):
-        assert svc.regra_local(lead) == esperado
+    def test_sw_holds_no_local_rule_any_more(self):
+        """julia-v2 D13: the rule lives in agents' DB (`agent_version_decisoes`); SW keeps neither a default rule text nor a
+        local fallback decision."""
+        for gone in ("REGRA_PADRAO", "regra_local"):
+            assert not hasattr(svc, gone)
 
-    def test_the_agents_prompt_rule_decides_and_the_event_says_which_rule(self, cena):
+    def test_the_agents_rule_decides_and_the_event_says_which_rule(self, cena):
         cena.cloud()
         cena.modelo("Abordagem comercial")
-        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="comercial", motivo="campanha de lançamento",
-                                                                regra="secao")])
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="comercial", motivo="campanha de lançamento", regra="versao")])
         lead = {**LEAD, "campaign_name": "Lançamento Granja", "form_name": "Form 1"}
         assert cena.rodar(lead, agents=agents)["status"] == "enviado"  # no listing code, yet the owner's rule said comercial
         ((chave_agente, chave, req),) = agents.decisoes
         assert (chave_agente, chave) == ("julia", "abordagem-meta")
-        assert req.opcoes == ("comercial", "neutra") and req.regra_padrao == svc.REGRA_PADRAO
+        assert req.opcoes == ("comercial", "neutra")
+        assert not hasattr(req, "regra_padrao") and "regra" not in req.to_wire()  # SW sends options + data, never a rule
         assert req.dados == {"codigo_imovel": None, "campanha": "Lançamento Granja", "formulario": "Form 1", "anuncio": None}
         assert "Ana" not in str(req.dados) and "98888" not in str(req.dados)  # never the lead's name or phone
         (ev,) = cena.eventos()
-        assert ev["payload"]["abordagem"] == {"escolha": "comercial", "regra": "secao", "motivo": "campanha de lançamento"}
+        assert ev["payload"]["abordagem"] == {"escolha": "comercial", "regra": "versao", "motivo": "campanha de lançamento"}
 
-    def test_agents_unreachable_falls_back_to_the_local_rule_visibly(self, cena):
+    def test_the_flagged_default_of_the_version_is_reported_as_such(self, cena):
+        cena.cloud()
+        cena.modelo("Abordagem neutra")
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="neutra", regra="padrao_da_versao")])
+        assert cena.rodar(agents=agents)["status"] == "enviado"
+        (ev,) = cena.eventos()
+        assert ev["payload"]["abordagem"]["regra"] == "padrao_da_versao"
+
+    def test_agents_unreachable_sends_nothing_and_says_so(self, cena):
+        """No local rule to fall back on: the lead is stored (and the owner sees why), not contacted by a guess."""
         cena.cloud()
         cena.modelo("Abordagem neutra")
         agents = FakeAgentsClient(decisao_script=[AgentsTimeout("down")])
-        assert cena.rodar(agents=agents)["status"] == "enviado"
+        r = cena.rodar(agents=agents)
+        assert r["status"] == "decisao_indisponivel" and cena.meta.sent_templates == []
         (ev,) = cena.eventos()
-        assert ev["payload"]["abordagem"] == {"escolha": "neutra", "regra": "local", "motivo": "AgentsTimeout"}
+        assert ev["payload"]["status"] == "decisao_indisponivel"
+        assert ev["payload"]["abordagem"] == {"escolha": None, "regra": "indisponivel", "motivo": "AgentsTimeout"}
+        assert len(cena.contatos()) == 1
+
+    def test_agents_not_configured_sends_nothing_either(self, cena):
+        cena.cloud()
+        cena.modelo("Abordagem neutra")
+        assert cena.rodar(agents=None)["status"] == "decisao_indisponivel" and cena.meta.sent_templates == []
 
     def test_no_model_call_while_the_line_is_not_cloud(self, cena):
         cena.modelo()
@@ -173,7 +195,15 @@ class TestAbordagem:
         assert cena.rodar(agents=agents)["status"] == "transporte_indisponivel"
         assert agents.decisoes == []
         (ev,) = cena.eventos()
-        assert ev["payload"]["abordagem"]["regra"] == "local" and ev["payload"]["abordagem"]["motivo"] == "sem_cloud"
+        assert ev["payload"]["abordagem"]["regra"] == "indisponivel" and ev["payload"]["abordagem"]["motivo"] == "sem_cloud"
+
+    def test_the_lead_form_is_recorded_as_the_opt_in_and_the_campaign_listing_as_data(self, cena):
+        cena.cloud()
+        cena.modelo("Abordagem comercial")
+        cena.rodar({**LEAD, "answers": {"REF": "AP10"}}, escolha="comercial")
+        (c,) = cena.contatos()
+        assert cena.agents.opt_ins == [(c["id"], "formulario_meta")]
+        assert c["codigo_imovel_campanha"] == "AP10"
 
 
 class TestLeadgenLeg:

@@ -50,7 +50,7 @@ async def test_first_turn_sends_disclosure_then_recesso_then_the_reply(world):
     world.agents = FakeAgentsClient([_ok("Olá!")])
     await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"], ids=["m1"]))
     texts = world.sent_texts()
-    assert texts[0].startswith("Oi! Eu sou a Julia")
+    assert texts[0].startswith("Oi! Eu sou Julia,")  # `{agente}` resolved from agents' status name
     assert texts[1:] == ["Estamos em recesso, voltamos logo.", "Olá!"]
 
 

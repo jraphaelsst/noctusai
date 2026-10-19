@@ -1,29 +1,35 @@
-"""The per-turn `contexto` SW sends to agents (contract 2.1(a) / 2.2 / A2).
+"""The per-turn `contexto` SW sends to agents (julia-v2: agents' `ChannelContexto`, `channels.v2.json`).
 
-`montar` renders the whole object and its hash from a PROVIDER REGISTRY, so each wave appends
-ONE entry and never edits this builder:
+Julia is hosted in agents and everything that makes her Julia (prompt, knowledge, questions, tool list, action list,
+qualification) lives THERE. The `contexto` SW sends is DATA ONLY -- facts about the lead and the line that agents cannot
+know -- and its shape is the closed, typed schema agents owns (`ContextoEstado`, `extra="forbid"`):
+
+    {"hash", "agora", "fuso",
+     "estado": {"interacao_id", "encerrado", "atendente_nome"?, "origem"?: {"canal_origem", "codigo_imovel_campanha"},
+                "credito"?: {"ativo", "consentimento"},
+                # a re-engagement turn only (gatilho="reengajamento"):
+                "reengajamento"?: minutos|horas|regua, "reescrever"?, "texto_base"?, "tentativa"?},
+     "capacidades": {"ferramentas_sw"}}
+
+Removed in v2 (never sent again): `conhecimento_md` (org knowledge lives in agents, Q1), `perguntas` (the qualification
+standard lives in agents), `ferramentas` / `acoes` (agents decides its tools from the agent version), `estado.slots` /
+`estado.operacao` (the qualification state is agents', SW only mirrors it). The re-engagement flavour and the attendant's name
+(which agents used to forbid, so SW stripped them) are fields now: DATA agents renders with its own DB texts. No string in
+this module is prompt text.
+
+`montar` renders the object and its hash from a PROVIDER REGISTRY, so a wave appends ONE entry and never edits this builder:
 
     PROVIDERS: list[tuple[str, Provider]]       # ordered; later entries win a key clash
     Provider = Callable[[ContextoCtx], dict]    # returns a PARTIAL contexto
 
-Which keys a provider may return is closed: `conhecimento_md`, `perguntas`, `estado`
-(merged key-by-key into the base `estado`), `ferramentas`, `acoes`. Default entries below:
+Which keys a provider may return is closed: `estado` (merged key-by-key into the base) and `capacidades`.
+`registrar_provider(nome, fn)` REPLACES an entry of that name in place, or appends a new one;
+`registrar_estado_extra(fn)` adds keys on top of `estado` (credit, the attendant) without touching the list. A key outside
+agents' `ContextoEstado` is stripped with an ERROR (agents would answer 422 and the lead would get no reply).
 
-  conhecimento   wave 1  -> {"conhecimento_md": str}   (here: "")
-  perguntas      wave 2  -> {"perguntas": [..<=8]}     (here: [])
-  estado         F       -> {"estado": {...}}          slots / operacao / interacao_id / encerrado
-  ferramentas    F       -> the 4 read tools when the org has a tools token
-  acoes          F       -> all actions incl. handoff (wave 3 may drop `qualificar_lead`)
-
-A wave replaces its default by pointing the tuple at its own function (same name), e.g. wave 1:
-`("conhecimento", julia_conhecimento_service.contexto_provider)`. `registrar_provider(nome, fn)`
-does the same at runtime (tests / late binding): it REPLACES an entry of that name in place,
-or appends a new one.
-
-Hash: sha256 over the canonical JSON of the contexto minus `hash` and minus `agora` (the clock
-would otherwise make every turn's hash unique and defeat "same knowledge => same hash").
-Provider failures are contained: a provider that raises is logged at ERROR and contributes
-nothing -- one broken wave must never stop Julia answering.
+Hash: sha256 over the canonical JSON of the contexto minus `hash` and minus `agora` (the clock would otherwise make
+every turn's hash unique). Provider failures are contained: a provider that raises is logged at ERROR and contributes
+nothing -- one broken wave must never stop the lead path.
 """
 from __future__ import annotations
 
@@ -38,29 +44,21 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 FUSO = "America/Sao_Paulo"
-CONHECIMENTO_MAX = 60_000
 CONTEXTO_MAX = 80_000
-PERGUNTAS_MAX = 8
 
-FERRAMENTAS_JULIA: tuple[str, ...] = ("buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento")
-ACOES_JULIA: tuple[str, ...] = ("salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "handoff")
-#: `contexto.estado.operacao` accepts only these three (contract 2.1(a)); `atualizacao` is an action value only.
-_OPERACOES_ESTADO = frozenset({"compra", "aluguel", "administracao"})
-
-#: The `contexto.estado` keys agents' `ContextoEstado` accepts (`products/agents/backend/app/schemas/channels.py`,
-#: `extra="forbid"`): anything else is a 422 and the lead gets no reply (julia-v2 W0 hotfix). Drift-tested against a
-#: copy of the agents schema (`tests/services/test_julia_contexto_agents_schema.py`).
-ESTADO_CHAVES_AGENTS: frozenset[str] = frozenset({"slots", "operacao", "interacao_id", "encerrado", "credito"})
-#: Keys SW computes for its own use that agents' schema has NO place for today: stripped from the wire contexto.
-#: `atendente_nome` (julia_equipes_service) and the re-engagement flags (`reengajamento`, `reescrever`,
-#: `texto_base`, `tentativa`, `regua_id`; julia_reengajamento_service). Stripping is expected, so it logs at INFO;
-#: a key in NEITHER set is a new bug and logs at ERROR.
-#: NOC-REMEDIATE[julia-v2-reengajamento-contexto]: the model no longer sees that a turn is a re-engagement nor the regua
-#: base text -- agents' schema has no place for it; the A-RT slice adds one (or the A-RT turn endpoint carries it) and
-#: this set shrinks. Same for `atendente_nome`. — 2026-10-19
-ESTADO_CHAVES_SW_ONLY: frozenset[str] = frozenset({
-    "atendente_nome", "reengajamento", "reescrever", "texto_base", "tentativa", "regua_id",
+#: NOC-REMEDIATE[julia-v2-contexto-schema]: these key sets mirror agents' `channels.v2.json` (A-RT's `ChannelContexto` /
+#: `ContextoEstado`); `tests/services/test_agents_contract_v2.py` makes that file the arbiter (it skips loudly while the
+#: file is not in the tree) -- 2026-10-19
+#: The closed key set of the wire `contexto` that SW sends (the schema also tolerates the retired v1 keys; SW sends none).
+CONTEXTO_CHAVES: frozenset[str] = frozenset({"hash", "agora", "fuso", "estado", "capacidades"})
+#: The `contexto.estado` keys SW sends. agents' schema ALSO accepts v1 `slots` / `operacao` (ignored): SW sends neither.
+ESTADO_CHAVES_AGENTS: frozenset[str] = frozenset({
+    "interacao_id", "encerrado", "atendente_nome", "credito", "origem",
+    "reengajamento", "reescrever", "texto_base", "tentativa",
 })
+ORIGEM_CHAVES: frozenset[str] = frozenset({"canal_origem", "codigo_imovel_campanha"})
+#: Keys SW computes for its OWN bookkeeping and that must never reach agents (`regua_id` goes to the outbound gate).
+ESTADO_CHAVES_SW_ONLY: frozenset[str] = frozenset({"regua_id"})
 
 TOOLS_TOKEN_LABEL = "agents · ferramentas julia"
 #: NOC-REMEDIATE[rename-lais-tools-scope]: the scope string is stored in agents' token table and checked by agents'
@@ -77,66 +75,44 @@ class ContextoCtx:
     interacao: Optional[dict[str, Any]] = None
     agora: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     ferramentas_habilitadas: bool = False
-    #: Extra `contexto.estado` keys for THIS turn only (wave 4: `reengajamento`, `reescrever`, ...); merged
-    #: key-by-key by `_prov_estado`, additive to the base estado.
+    #: Extra `contexto.estado` keys for THIS turn only (the re-engagement flavour: `reengajamento`, `reescrever`,
+    #: `texto_base`, `tentativa`); merged key-by-key by `_prov_estado`, additive to the base estado.
     estado_extra: dict[str, Any] = field(default_factory=dict)
 
 
 Provider = Callable[[ContextoCtx], dict[str, Any]]
 
 
-# ── default providers (waves 1 / 2 replace the first two) ───────────────────
-def _prov_conhecimento(_ctx: ContextoCtx) -> dict[str, Any]:
-    return {"conhecimento_md": ""}
-
-
-def _prov_perguntas(_ctx: ContextoCtx) -> dict[str, Any]:
-    return {"perguntas": []}
-
-
+# ── default providers ───────────────────────────────────────────────────────
 def _prov_estado(ctx: ContextoCtx) -> dict[str, Any]:
-    op = ctx.contato.get("operacao")
-    return {"estado": {
-        "slots": {str(k): str(v) for k, v in (ctx.contato.get("slots") or {}).items() if v is not None},
-        "operacao": op if op in _OPERACOES_ESTADO else None,
+    """The facts SW owns about the lead and the line. Data only: ids, flags, source labels."""
+    estado: dict[str, Any] = {
         "interacao_id": str((ctx.interacao or {}).get("id") or ""),
         "encerrado": bool(ctx.contato.get("encerrado_at")),
-        **ctx.estado_extra,
-    }}
+    }
+    origem = {
+        "canal_origem": ctx.contato.get("origem_slug") or None,
+        "codigo_imovel_campanha": ctx.contato.get("codigo_imovel_campanha") or None,
+    }
+    if any(origem.values()):
+        estado["origem"] = origem
+    return {"estado": {**estado, **ctx.estado_extra}}
 
 
-def _prov_ferramentas(ctx: ContextoCtx) -> dict[str, Any]:
-    return {"ferramentas": list(FERRAMENTAS_JULIA) if ctx.ferramentas_habilitadas else []}
-
-
-def _prov_acoes(_ctx: ContextoCtx) -> dict[str, Any]:
-    return {"acoes": list(ACOES_JULIA)}
+def _prov_capacidades(ctx: ContextoCtx) -> dict[str, Any]:
+    """What SW can do FOR the agent right now (the tools token is the only capability SW owns)."""
+    return {"capacidades": {"ferramentas_sw": bool(ctx.ferramentas_habilitadas)}}
 
 
 #: THE registry. One line per provider; waves swap their own line.
 PROVIDERS: list[tuple[str, Provider]] = [
-    ("conhecimento", _prov_conhecimento),
-    ("perguntas", _prov_perguntas),
     ("estado", _prov_estado),
-    ("ferramentas", _prov_ferramentas),
-    ("acoes", _prov_acoes),
+    ("capacidades", _prov_capacidades),
 ]
 
 
-#: Extra action names a wave exposes ON TOP of whatever the `acoes` provider returned: `fn(ctx) -> list[str]`.
-#: Wave 13 adds `consentimento_credito` only while the credit analysis is relevant for the contato. Additive:
-#: the wave-3 `acoes` provider (which may DROP actions) stays untouched, and an extra can never remove one.
-ACOES_EXTRAS: list[Callable[[ContextoCtx], Sequence[str]]] = []
-
-
-def registrar_acoes_extra(fn: Callable[[ContextoCtx], Sequence[str]]) -> None:
-    """Idempotent: binding the same function twice keeps one entry."""
-    if fn not in ACOES_EXTRAS:
-        ACOES_EXTRAS.append(fn)
-
-
-#: Extra `contexto.estado` keys a wave adds on top of the base estado: `fn(ctx) -> dict` merged key-by-key (wave 13:
-#: `credito`). Same shape as `ACOES_EXTRAS`; it does NOT touch the ordered PROVIDERS list.
+#: Extra `contexto.estado` keys a wave adds on top of the base: `fn(ctx) -> dict` merged key-by-key (the credit analysis
+#: state, the attendant's name). It does NOT touch the ordered PROVIDERS list.
 ESTADO_EXTRAS: list[Callable[[ContextoCtx], dict[str, Any]]] = []
 
 
@@ -198,16 +174,17 @@ def calcular_hash(contexto: dict[str, Any]) -> str:
 
 
 def _estado_para_agents(estado: dict[str, Any], org_id: UUID | str) -> dict[str, Any]:
-    """Keep only the keys agents' contract accepts (see `ESTADO_CHAVES_AGENTS`)."""
+    """Keep only the keys agents' closed `ContextoEstado` accepts; a stray key is a bug (agents would answer 422).
+    Empty optional values are dropped (an absent key and a null mean the same to agents, and the hash stays stable)."""
     fora = sorted(set(estado) - ESTADO_CHAVES_AGENTS)
-    if not fora:
-        return estado
     desconhecidas = [k for k in fora if k not in ESTADO_CHAVES_SW_ONLY]
     if desconhecidas:
         logger.error("julia: contexto.estado keys %s are not in agents' contract -- stripped, else agents answers 422 "
                      "(org=%s)", desconhecidas, org_id)
-    logger.info("julia: contexto.estado keys %s kept SW-side, not sent to agents (org=%s)", fora, org_id)
-    return {k: v for k, v in estado.items() if k in ESTADO_CHAVES_AGENTS}
+    if fora:
+        logger.info("julia: contexto.estado keys %s kept SW-side, not sent to agents (org=%s)", fora, org_id)
+    obrigatorias = ("interacao_id", "encerrado")
+    return {k: v for k, v in estado.items() if k in ESTADO_CHAVES_AGENTS and (k in obrigatorias or v not in (None, "", {}, False))}
 
 
 def montar(
@@ -221,16 +198,15 @@ def montar(
     providers: Optional[Sequence[tuple[str, Provider]]] = None,
     estado_extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Render contract 2.1(a). `ferramentas_habilitadas=None` asks the DB (`org_tem_token_ferramentas`).
+    """Render the wire `contexto`. `ferramentas_habilitadas=None` asks the DB (`org_tem_token_ferramentas`).
     `providers=None` uses THE registry (`PROVIDERS`); pass an explicit sequence to render with another."""
     agora = agora or datetime.now(timezone.utc)
     if ferramentas_habilitadas is None:
         ferramentas_habilitadas = org_tem_token_ferramentas(client, org_id, agora=agora)
     ctx = ContextoCtx(client=client, org_id=org_id, contato=contato, interacao=interacao, agora=agora,
-                      ferramentas_habilitadas=ferramentas_habilitadas,
-                      estado_extra=dict(estado_extra or {}))
+                      ferramentas_habilitadas=ferramentas_habilitadas, estado_extra=dict(estado_extra or {}))
 
-    out: dict[str, Any] = {"conhecimento_md": "", "perguntas": [], "estado": {}, "ferramentas": [], "acoes": []}
+    out: dict[str, Any] = {"estado": {}, "capacidades": {}}
     for nome, fn in (PROVIDERS if providers is None else providers):
         try:
             parcial = fn(ctx) or {}
@@ -240,10 +216,10 @@ def montar(
         for chave, valor in parcial.items():
             if chave not in out:
                 logger.error("julia: contexto provider %r returned unknown key %r -- ignored", nome, chave)
-            elif chave == "estado" and isinstance(valor, dict):
-                out["estado"] = {**out["estado"], **valor}
+            elif isinstance(valor, dict):
+                out[chave] = {**out[chave], **valor}
             else:
-                out[chave] = valor
+                logger.error("julia: contexto provider %r returned a non-object %r -- ignored", nome, chave)
 
     for fn_estado in tuple(ESTADO_EXTRAS):
         try:
@@ -253,36 +229,17 @@ def montar(
                              getattr(fn_estado, "__name__", "?"), org_id)
     out["estado"] = _estado_para_agents(out["estado"], org_id)
 
-    for fn_extra in tuple(ACOES_EXTRAS):
-        try:
-            extras = [a for a in (fn_extra(ctx) or ()) if a not in out["acoes"]]
-        except Exception:
-            logger.exception("julia: contexto acoes extra %r failed (org=%s) -- contributes nothing",
-                             getattr(fn_extra, "__name__", "?"), org_id)
-            continue
-        out["acoes"] = [*out["acoes"], *extras]
-
-    if len(out["conhecimento_md"]) > CONHECIMENTO_MAX:
-        logger.warning("julia: conhecimento_md %d chars > %d -- truncated (org=%s)",
-                       len(out["conhecimento_md"]), CONHECIMENTO_MAX, org_id)
-        out["conhecimento_md"] = out["conhecimento_md"][:CONHECIMENTO_MAX]
-    if len(out["perguntas"]) > PERGUNTAS_MAX:
-        logger.warning("julia: %d perguntas > %d -- trimmed (org=%s)", len(out["perguntas"]), PERGUNTAS_MAX, org_id)
-        out["perguntas"] = out["perguntas"][:PERGUNTAS_MAX]
-
     out["agora"] = agora.isoformat()
     out["fuso"] = FUSO
     out["hash"] = calcular_hash(out)
     if len(json.dumps(out, ensure_ascii=False, default=str)) > CONTEXTO_MAX:
-        # agents answers a bigger one with 422 `contexto_grande`; a turn without knowledge beats no turn.
-        logger.error("julia: contexto > %d chars even after caps (org=%s) -- knowledge dropped", CONTEXTO_MAX, org_id)
-        out["conhecimento_md"] = ""
-        out["hash"] = calcular_hash(out)
+        # agents answers a bigger one with 422 `contexto_grande`; data-only contexto is tiny, so this is a bug.
+        logger.error("julia: contexto > %d chars (org=%s) -- a provider is returning prose or a blob", CONTEXTO_MAX, org_id)
     return out
 
 
 __all__ = [
-    "ESTADO_CHAVES_AGENTS", "ESTADO_CHAVES_SW_ONLY", "ACOES_EXTRAS", "ACOES_JULIA", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_JULIA", "FUSO", "PROVIDERS", "Provider",
-    "TOOLS_TOKEN_ISSUER", "TOOLS_TOKEN_LABEL", "TOOLS_TOKEN_SCOPE", "calcular_hash", "montar",
-    "org_tem_token_ferramentas", "registrar_acoes_extra", "registrar_estado_extra", "registrar_provider",
+    "CONTEXTO_CHAVES", "ContextoCtx", "ESTADO_CHAVES_AGENTS", "ESTADO_CHAVES_SW_ONLY", "ESTADO_EXTRAS", "FUSO", "ORIGEM_CHAVES",
+    "PROVIDERS", "Provider", "TOOLS_TOKEN_ISSUER", "TOOLS_TOKEN_LABEL", "TOOLS_TOKEN_SCOPE", "calcular_hash", "montar",
+    "org_tem_token_ferramentas", "registrar_estado_extra", "registrar_provider",
 ]

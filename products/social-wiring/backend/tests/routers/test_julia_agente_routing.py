@@ -30,6 +30,7 @@ from tests.support.julia_world import (
     ENCRYPTION_KEY,
     LEAD_CHAT,
     ORG_ID,
+    OWNER_ID,
     OPERATOR,
     WEBHOOK_TOKEN,
     World,
@@ -112,10 +113,12 @@ def rt(monkeypatch, override_settings_factory):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
+        from app.routers.julia_agente_router import get_agents_client_factory
         from app.routers.whatsapp_connections_router import get_waha_client_factory
 
         bind_consent_module_to_mock(world.root)
         app.dependency_overrides[get_waha_client_factory] = lambda: (lambda **kw: world.waha)
+        app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: world.agents)
         _reset_for_tests()
         module = configure_conversation_module(
             admin_supabase=world.admin, org_id=UUID(ORG_ID), redis_client=make_fake_redis_client(),
@@ -130,6 +133,7 @@ def rt(monkeypatch, override_settings_factory):
         )
         yield scene
         app.dependency_overrides.pop(get_waha_client_factory, None)
+        app.dependency_overrides.pop(get_agents_client_factory, None)
     _reset_for_tests()
     reset_bus_cache()
     loop.close()
@@ -159,6 +163,18 @@ def override_settings_factory():
 def _julia_scene(rt: Rt, **conn_over):
     rt.w.seed_connection(**conn_over)
     return rt
+
+
+def _servida(rt: Rt, chat: str = LEAD_CHAT) -> str:
+    """Agents has served this chat once (a thread exists with the agent active); returns the thread id."""
+    from datetime import datetime, timezone
+
+    from app.clients.agents import TurnMessage, TurnRequest
+
+    res = asyncio.new_event_loop().run_until_complete(rt.w.agents.run_turn(TurnRequest(
+        agent_key="julia", connection_id=CONNECTION_ID, chat_id=chat,
+        messages=(TurnMessage(texto="oi", provider_message_id="seed-1", at=datetime.now(timezone.utc)),))))
+    return res.thread
 
 
 # ── the routing table (section 5) ───────────────────────────────────────────
@@ -255,20 +271,57 @@ class TestFromMe:
         assert row["chat_id"] == LEAD_CHAT, "the chat is `to`, never our own number"
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
 
-    def test_L3_a_human_typing_from_the_phone_pauses_the_chat_and_tells_conversas(self, rt):
+    def test_L3_a_human_typing_from_the_phone_pauses_the_agent_AT_AGENTS_and_tells_conversas(self, rt):
         _julia_scene(rt)
         rt.w.seed_chat()
+        thread = _servida(rt)
         self._human(rt)
-        assert rt.w.chat_row()["agente_pausado"] is True
+        # the pause lives in agents: PATCH participantes with a real org user as the actor, the human message appended
+        (call,) = rt.w.agents.participante_calls
+        assert (call["thread_id"], call["agent_key"], call["estado"]) == (thread, "julia", "pausado")
+        assert call["ator_user_id"] == OWNER_ID  # no responsavel / configured target: the org owner
+        (msg,) = rt.w.agents.appended
+        assert (msg["role"], msg["texto"], msg["autor_user_id"]) == ("humano", "Oi, aqui é o corretor", OWNER_ID)
+        row = rt.w.chat_row()
+        assert (row["agente_estado"], row["agente_pausado"]) == ("pausado", True)  # the MIRROR of agents' answer
         upsert = [p for e, p in rt.bus() if e == "chat.upsert"][-1]
         assert upsert["chat_id"] == LEAD_CHAT and upsert["agente_pausado"] is True
 
-    def test_after_the_takeover_the_leads_next_message_gets_no_reply(self, rt):
+    def test_a_chat_agents_never_served_has_nothing_to_pause(self, rt):
+        """Known gap (see `julia_thread_service.tomada_humana`): a human who writes BEFORE the lead ever did cannot be pre-paused."""
         _julia_scene(rt)
         rt.w.seed_chat()
         self._human(rt)
+        assert rt.w.agents.participante_calls == [] and rt.w.agents.appended == []
+        assert rt.w.chat_row()["agente_pausado"] is False
+
+    def test_the_actor_is_the_contatos_responsavel_when_there_is_one(self, rt):
+        _julia_scene(rt)
+        rt.w.seed_chat()
+        _servida(rt)
+        rt.w.sw.table("julia_contatos").insert({
+            "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "slots": {},
+            "responsavel_user_id": "00000000-0000-4000-8000-0000000000a1"}).execute()
+        self._human(rt)
+        assert rt.w.agents.participante_calls[0]["ator_user_id"] == "00000000-0000-4000-8000-0000000000a1"
+
+    def test_agents_down_during_a_takeover_never_breaks_the_webhook(self, rt):
+        from app.clients.agents import AgentsTimeout
+
+        _julia_scene(rt)
+        rt.w.seed_chat()
+        _servida(rt)
+        rt.w.agents.errors["set_participante"] = AgentsTimeout()
+        assert self._human(rt).status_code == 200
+        assert rt.w.chat_row()["agente_pausado"] is False  # SW sets no local flag on its own
+
+    def test_after_the_takeover_the_leads_next_message_still_reaches_the_worker_agents_decides(self, rt):
+        _julia_scene(rt)
+        rt.w.seed_chat()
+        _servida(rt)
+        self._human(rt)
         rt.post(_msg(mid="wamid.2", body="e então?"), signed=True)
-        assert rt.lead_memory() == []
+        assert len(rt.lead_memory()) == 1  # buffered: SW holds no pause gate; agents answers `conversa_pausada`
 
     def test_L3_Julias_own_echo_matched_by_provider_id_does_not_pause(self, rt):
         _julia_scene(rt)
@@ -287,13 +340,14 @@ class TestFromMe:
     def test_the_echo_of_a_message_SW_already_recorded_from_the_UI_still_counts_as_a_human(self, rt):
         _julia_scene(rt)
         rt.w.seed_chat()
+        _servida(rt)
         rt.w.sw.table("conversation_messages").insert({
             "id": "00000000-0000-4000-8000-0000000000aa", "org_id": ORG_ID, "session_id": LEAD_CHAT,
             "raw_sender": LEAD_CHAT, "direction": "outbound", "body": "enviado pela tela de Conversas",
             "provider_message_id": "wamid.ui", "authorized": True, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT,
         }).execute()
         self._human(rt, mid="wamid.ui")  # DuplicateMessage branch
-        assert rt.w.chat_row()["agente_pausado"] is True
+        assert rt.w.chat_row()["agente_pausado"] is True and rt.w.agents.participante_calls
 
     def test_an_operators_own_chat_is_never_taken_over_the_bot_echoes_there(self, rt):
         _julia_scene(rt)
@@ -527,11 +581,12 @@ class TestChatsThatStartAfterJulia:
 
 # ── pause + deletion bypass ─────────────────────────────────────────────────
 class TestPauseAtTheDoor:
-    def test_a_paused_chat_stores_only_and_buffers_nothing(self, rt):
+    def test_a_chat_the_mirror_calls_paused_is_still_stored_AND_buffered_agents_decides(self, rt):
+        """julia-v2: no pause gate at the door -- `agente_pausado` is a display mirror."""
         _julia_scene(rt)
         rt.w.seed_chat(agente_pausado=True)
         rt.post(_msg(), signed=True)
-        assert rt.lead_memory() == [] and len(rt.w.messages()) == 1
+        assert len(rt.lead_memory()) == 1 and len(rt.w.messages()) == 1
 
     def test_the_deletion_phrase_is_enqueued_even_for_a_paused_chat(self, rt):
         _julia_scene(rt)
@@ -557,7 +612,7 @@ class TestEndToEnd:
         deps = rt.w.deps(buffer=rt.module.buffer)
         asyncio.run(process_lead_batch(LEAD_KEY, memory, deps=deps))
         texts = [m["text"] for m in rt.w.waha.sent_messages]
-        assert texts[0].startswith("Oi! Eu sou a Julia, assistente virtual da Empresa Exemplo.")
+        assert texts[0].startswith("Oi! Eu sou Julia, assistente virtual da Empresa Exemplo.")
         assert texts[1:] == list(rt.w.agents.DEFAULT_PARTES)
         assert [m.provider_message_id for m in rt.w.agents.turns[0].messages] == ["e2e-1"]
         assert rt.w.agents.turns[0].messages[0].texto == "Oi, vi o anúncio do apê"

@@ -1,5 +1,7 @@
 # Contract — Lais full rebuild ("go all the way"), waves F + 1–13
 
+> **Superseded in part (2026-10-19):** Julia v2 hosts Julia in the agents app and SW consumes her through the API only -- see `products/agents/projects/julia-v2/CONTRACT.md` (§8 API, §5 controls). Where this document describes the `contexto` content, `salvar_slots` / `definir_operacao` / `qualificar_lead`, the slot-criteria send rules or `agente_pausado` as a gate, the v2 contract wins.
+
 Status: **v1 2026-10-15 — owner: "i approve, go on and start the work all the way until done, fully copied".**
 Precedence: this file > `sw-reconstruction-map.md` > `BUILD-ROADMAP.md` for anything built after page 0.
 Page 0 (Julia, routing, privacy notice) stays governed by `julia-agent-contract.md` v3; this file only EXTENDS it additively.

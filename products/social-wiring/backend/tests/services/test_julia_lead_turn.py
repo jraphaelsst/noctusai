@@ -83,7 +83,7 @@ class TestDisclosure:
         await _run(world, key)
         texts = world.sent_texts()
         assert len(texts) == 3
-        assert texts[0].startswith("Oi! Eu sou a Julia, assistente virtual da Empresa Exemplo.")
+        assert texts[0].startswith("Oi! Eu sou Julia, assistente virtual da Empresa Exemplo.")
         assert "https://sw.example.test/privacidade/" in texts[0]
         assert "{link}" not in texts[0] and "{empresa}" not in texts[0]
         assert texts[1:] == ["Prazer, Ana!", "Comprar ou alugar?"]
@@ -158,13 +158,21 @@ class TestHandoff:
         await _run(world, buffer_lead(world, LEAD_CHAT, ["humano"]))
         assert "Vou chamar um corretor." in world.sent_texts()
 
-    async def test_a_paused_chat_gets_no_further_turn(self, world):
-        world.agents = FakeAgentsClient([self._handoff()])
+    async def test_the_next_message_after_a_handoff_still_reaches_agents_which_keeps_the_agent_silent(self, world):
+        """No local gate: SW asks agents again, and agents (the participant is paused server-side) answers
+        `conversa_pausada` -- so nothing is sent, and the message joins the thread."""
+        world.agents = FakeAgentsClient([
+            self._handoff(),
+            TurnResult(conversation_id="11111111-1111-4111-8111-111111111111", thread_id="11111111-1111-4111-8111-111111111111",
+                       partes=(), status="conversa_pausada", participante_estado="pausado"),
+        ])
         k = buffer_lead(world, LEAD_CHAT, ["humano"], ids=["m1"])
         await _run(world, k)
+        enviados = len(world.sent_texts())
         buffer_lead(world, LEAD_CHAT, ["alô?"], ids=["m2"])
         await _run(world, k)
-        assert len(world.agents.turns) == 1
+        assert len(world.agents.turns) == 2 and len(world.sent_texts()) == enviados
+        assert [m["texto"] for m in world.agents.appended] == ["alô?"]
 
     async def test_an_admin_target_is_notified_instead_of_the_owner(self, world):
         world.sw.table("whatsapp_connections").update({"agente_handoff_notificar_user_id": ADMIN_ID}).eq("id", CONNECTION_ID).execute()
@@ -308,19 +316,44 @@ def _one_fake_redis(world, monkeypatch):
 
 # ── L3 / pause / H3 / switch-off ────────────────────────────────────────────
 class TestGuards:
-    async def test_a_paused_chat_gets_no_turn(self, world):
+    async def test_the_mirror_saying_paused_is_not_a_gate_agents_decides(self, world):
         world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("chat_id", LEAD_CHAT).execute()
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
-        assert world.agents.turns == [] and world.sent_texts() == []
+        assert len(world.agents.turns) == 1 and world.sent_texts() != []
 
-    async def test_L3_a_human_taking_over_DURING_the_turn_discards_the_reply(self, world):
+    async def test_L3_a_human_pausing_the_agent_DURING_the_turn_discards_the_reply(self, world):
+        """The re-check is LIVE (`GET thread`, never the mirror): a pause that landed after the turn decided wins."""
+        cid = "11111111-1111-4111-8111-111111111111"
+
         def human_steps_in(req):
-            world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("chat_id", LEAD_CHAT).execute()
+            world.agents.participantes[(cid, "julia")] = "pausado"  # agents' pause, set by the human's PATCH
             return _ok("resposta tardia")
 
         world.agents = FakeAgentsClient([human_steps_in])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
-        assert world.sent_texts() == [], "the flag is re-checked after the turn returns and BEFORE sending"
+        assert world.sent_texts() == [], "agents' state is re-read after the turn returns and BEFORE sending"
+
+    async def test_a_timed_pause_that_already_ran_out_does_not_discard_the_reply(self, world):
+        from datetime import datetime, timedelta, timezone
+        from app.clients.agents import ParticipanteInfo, ThreadInfo
+
+        cid = "11111111-1111-4111-8111-111111111111"
+        world.agents = FakeAgentsClient([_ok("voltei")])
+        passado = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+
+        async def obter(thread_id):
+            return ThreadInfo(thread_id=thread_id, participantes=(ParticipanteInfo(agent_key="julia", estado="pausado", pausado_ate=passado),))
+
+        world.agents.obter_thread = obter
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
+        assert "voltei" in world.sent_texts() and cid
+
+    async def test_an_unreadable_thread_at_the_pre_send_check_sends_on_agents_decision(self, world):
+        from app.clients.agents import AgentsTimeout
+
+        world.agents = FakeAgentsClient([_ok("oi!")], errors={"obter_thread": AgentsTimeout()})
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
+        assert "oi!" in world.sent_texts()
 
     async def test_H3_empty_authorized_numbers_at_worker_time_fails_closed(self, world):
         world.sw.table("whatsapp_connections").update({"authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
@@ -447,10 +480,11 @@ class TestDeletion:
     async def test_apagar_meus_dados_deletes_sw_rows_and_calls_agents_instead_of_a_turn(self, world):
         k = await self._seed_conversation(world)
         assert world.messages()
+        contato_id = world.contato()["id"]
         buffer_lead(world, LEAD_CHAT, ["Por favor, APAGAR meus dados"], ids=["m9"])
         await _run(world, k)
         assert len(world.agents.turns) == 1, "the deletion request is not a turn"
-        assert [d.chat_id for d in world.agents.deletions] == [LEAD_CHAT]
+        assert world.agents.leads_apagados == [contato_id] and world.contato() is None  # agents erased the lead by its ref
         assert world.messages() == []
         assert world.chat_row() is None
         assert world.sw.table("contacts").select("*").execute().data == []
@@ -468,19 +502,41 @@ class TestDeletion:
         world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("chat_id", LEAD_CHAT).execute()
         buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
         await _run(world, k)
-        assert world.messages() == [] and world.agents.deletions
+        assert world.messages() == [] and world.agents.leads_apagados
 
     async def test_an_agents_failure_is_reported_never_swallowed_and_sw_rows_still_go(self, world):
         k = await self._seed_conversation(world)
 
-        async def boom(req):
+        async def boom(ref):
             raise AgentsUpstreamError("down")
 
-        world.agents.delete_conversation_data = boom
+        world.agents.apagar_lead = boom
         buffer_lead(world, LEAD_CHAT, ["apagar os dados"], ids=["m9"])
         await _run(world, k)
         assert world.messages() == []
         assert world.sent_texts()[-1] == julia.MENSAGEM_APAGADO_PARCIAL
+
+    async def test_agents_is_erased_FIRST_and_by_the_lead_ref_then_sw(self, world):
+        k = await self._seed_conversation(world)
+        ordem: list[str] = []
+        contato_id = world.contato()["id"]
+        original = world.agents.apagar_lead
+
+        async def apagar(ref):
+            ordem.append(f"agents:{ref}:{'sw_ainda_tem' if world.contato() else 'sw_ja_apagou'}")
+            await original(ref)
+
+        world.agents.apagar_lead = apagar
+        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
+        await _run(world, k)
+        assert ordem == [f"agents:{contato_id}:sw_ainda_tem"] and world.contato() is None
+
+    async def test_a_pre_v2_conversation_without_a_contato_uses_the_legacy_by_chat_erase(self, world):
+        k = await self._seed_conversation(world)
+        world.sw.table("julia_contatos").delete().eq("chat_id", LEAD_CHAT).execute()
+        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
+        await _run(world, k)
+        assert [d.chat_id for d in world.agents.deletions] == [LEAD_CHAT] and world.agents.leads_apagados == []
 
     @pytest.mark.parametrize("text,expected", [
         ("apagar meus dados", True), ("Apagar Meus Dados!", True), ("quero APAGAR os dados", True),

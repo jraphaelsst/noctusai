@@ -210,6 +210,8 @@ LINK_ERROR_MESSAGES = {
     "nao_configurado": "Token do agente ainda não configurado.",
     # PUT /token stored the channel token but could not hand agents its tools token (contract 2.2).
     "ferramentas_indisponiveis": "Ferramentas da Julia indisponíveis — reenvie o token.",
+    # agents could not read its own control: it answered nothing and SW sent nothing (fail closed).
+    "controle_indisponivel": "O produto agents não conseguiu ler o controle do agente. Nenhuma resposta foi enviada.",
 }
 
 
@@ -311,14 +313,22 @@ def public_privacy_link(aviso_row: dict[str, Any]) -> str:
     return f"{base.rstrip('/')}/privacidade/{aviso_row['slug']}"
 
 
-def mensagem_inicial_pronta(aviso_row: dict[str, Any]) -> str:
-    """11.3: the deterministic disclosure bubble, placeholders filled by SW."""
+def mensagem_inicial_pronta(aviso_row: dict[str, Any], agente_nome: Optional[str] = None) -> str:
+    """11.3: the deterministic disclosure bubble, placeholders filled by SW. `{agente}` is the agent's own status name
+    (the per-org swappable persona); a text that names `{agente}` while the name is unknown is NOT sent (raises) -- the
+    disclosure must never go out with a hole in it. The text itself is the org's `mensagem_inicial` row (seeded from
+    `julia_textos_padrao`); there is no default text in code."""
+    texto = aviso_row.get("mensagem_inicial") or ""
+    if not texto.strip():
+        raise AppException("aviso_incompleto", "A mensagem inicial do aviso está vazia.", status_code=409)
+    if julia_aviso_service.AGENTE_TOKEN in texto:
+        nome = (agente_nome or "").strip()
+        if not nome:
+            raise AppException("agente_sem_nome", "Não foi possível resolver o nome do agente para a mensagem inicial.",
+                               status_code=503)
+        texto = texto.replace(julia_aviso_service.AGENTE_TOKEN, nome)
     empresa = (aviso_row.get("empresa_nome") or "").strip()
-    return (
-        (aviso_row.get("mensagem_inicial") or julia_aviso_service.MENSAGEM_INICIAL_PADRAO)
-        .replace("{empresa}", empresa)
-        .replace("{link}", public_privacy_link(aviso_row))
-    )
+    return texto.replace("{empresa}", empresa).replace("{link}", public_privacy_link(aviso_row))
 
 
 # ── 11.4: handoff target ────────────────────────────────────────────────────
@@ -349,49 +359,118 @@ def exigir_destinatario_valido(core_client: Any, org_id: UUID | str, user_id: UU
         )
 
 
+def dono_da_org(core_client: Any, org_id: UUID | str) -> Optional[UUID]:
+    """The org OWNER (core role `owner`, trusted `noctus_users` row -- never `user_metadata`); the earliest-created one
+    when there are several. None when the org has none (or the read failed, logged)."""
+    try:
+        rows = (
+            core_client.table("noctus_users").select("id,org_role,created_at").eq("org_id", str(org_id))
+            .eq("org_role", "owner").execute().data or []
+        )
+    except Exception:
+        logger.exception("julia: org owner lookup failed org=%s", org_id)
+        return None
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("id"))))
+    return UUID(str(rows[0]["id"]))
+
+
 def destinatario_do_handoff(core_client: Any, connection: Any) -> UUID:
-    """Re-checked AT SEND TIME (11.4): a configured user who is no longer owner/admin
-    (or left the org) falls back to the connection owner, and it is logged."""
+    """Who receives the hand-off note, re-checked AT SEND TIME (11.4). Owner decision (julia-v2 0.4): the default is
+    the ORG OWNER, who redirects the lead to a broker. A target configured on the line wins while that user is still
+    owner/admin of the org; otherwise the org owner; the connection owner only when the org has no owner at all."""
     configurado = connection.agente_handoff_notificar_user_id
-    if configurado is None or str(configurado) == str(connection.user_id):
-        return connection.user_id
-    if usuario_e_admin_da_org(core_client, connection.org_id, configurado):
-        return configurado
-    logger.error(
-        "julia: handoff target %s is no longer owner/admin of org %s (connection %s) -- "
-        "notifying the connection owner instead",
-        configurado, connection.org_id, connection.id,
-    )
+    if configurado is not None:
+        if usuario_e_admin_da_org(core_client, connection.org_id, configurado):
+            return configurado
+        logger.error(
+            "julia: handoff target %s is no longer owner/admin of org %s (connection %s) -- notifying the org owner instead",
+            configurado, connection.org_id, connection.id,
+        )
+    dono = dono_da_org(core_client, connection.org_id)
+    if dono is not None:
+        return dono
+    logger.error("julia: org %s has no owner -- hand-off goes to the connection owner", connection.org_id)
     return connection.user_id
+
+
+_HANDOFF_RESUMO_MAX = 1200
+_HANDOFF_ITEM_MAX = 120
+_HANDOFF_ITENS_MAX = 14
+
+
+def _linha_valor(valor: Any) -> str:
+    if isinstance(valor, (list, tuple)):
+        valor = ", ".join(str(v) for v in valor if v is not None)
+    elif isinstance(valor, dict):
+        valor = ", ".join(f"{k}: {v}" for k, v in valor.items() if v is not None)
+    return html.escape(" ".join(str(valor).split())[:_HANDOFF_ITEM_MAX])
+
+
+def _linhas_do_registro(registro: Any) -> list[str]:
+    """The hand-off note of agents (`HandoffRecord`) as the notification body lines: the atendimento summary, the lead
+    profile and the MASKED identity. Agents already masks identity; nothing else is ever added from the raw documents."""
+    linhas: list[str] = []
+    resumo = (getattr(registro, "resumo", "") or "").strip()
+    if resumo:
+        linhas.append("Resumo do atendimento: " + html.escape(" ".join(resumo.split())[:_HANDOFF_RESUMO_MAX]))
+    perfil = getattr(registro, "perfil", None) or {}
+    itens = [f"{html.escape(str(k))}: {_linha_valor(v)}" for k, v in perfil.items() if v not in (None, "", [], {})]
+    if itens:
+        linhas.append("Perfil: " + "; ".join(itens[:_HANDOFF_ITENS_MAX]))
+    ident = getattr(registro, "identificacao_mascarada", None) or {}
+    ids = [f"{html.escape(str(k))}: {_linha_valor(v)}" for k, v in ident.items() if v not in (None, "")]
+    if ids:
+        linhas.append("Identificação (mascarada): " + "; ".join(ids[:_HANDOFF_ITENS_MAX]))
+    elif registro is not None and not getattr(registro, "identificacao_completa", True):
+        linhas.append("Identificação: ainda não coletada por completo.")
+    abertas = getattr(registro, "perguntas_abertas", None) or ()
+    if abertas:
+        linhas.append("Em aberto: " + "; ".join(_linha_valor(a) for a in list(abertas)[:6]))
+    comprom = getattr(registro, "compromissos", None) or ()
+    if comprom:
+        linhas.append("Combinado com o lead: " + "; ".join(_linha_valor(c) for c in list(comprom)[:6]))
+    return linhas
 
 
 def notificar_handoff(
     core_client: Any, *, connection: Any, chat_id: str, titulo_chat: str | None, motivo: str | None,
-    responsavel_user_id: UUID | str | None = None,
+    responsavel_user_id: UUID | str | None = None, registro: Any = None, agente_nome: str | None = None,
 ) -> int:
-    """In-app notification (`write_in_app`, kind `julia_handoff`) to the target: chat
-    name + escaped motivo (<= 280) + deep link. Never to the lead, never broadcast."""
+    """In-app notification (`write_in_app`, kind `julia_handoff`) to the target: chat name + the hand-off note agents
+    recorded (`registro`: profile + atendimento summary + MASKED identity, rendered here) + deep link. julia-v2 owner
+    decision: the target is the ORG OWNER by default (`destinatario_do_handoff`). Never to the lead, never broadcast.
+    Without a `registro` (an older agents build, or its read failed) the body keeps the escaped reason, as before."""
     # Wave 11: when distribution already picked an attendant (BEFORE notifying), they get it -- same
     # responsavel-first tier as the wave-6 sink; otherwise the configured handoff target (11.4).
     destinatario = responsavel_user_id or destinatario_do_handoff(core_client, connection)
     nome = html.escape((titulo_chat or chat_id).strip() or chat_id)
+    quem = html.escape((agente_nome or "").strip()) or "O agente"
+    mensagem = f"{quem} passou a conversa com {nome} para atendimento humano."
     motivo_limpo = html.escape(sanitize_motivo(motivo))
-    mensagem = f"A Julia passou a conversa com {nome} para atendimento humano."
     if motivo_limpo:
         mensagem += f" Motivo: {motivo_limpo}"
+    linhas = _linhas_do_registro(registro)
+    if linhas:
+        mensagem += "\n" + "\n".join(linhas)
     from urllib.parse import quote
 
+    metadata = {
+        "link": f"/julia/conversas?chat={quote(chat_id, safe='')}",
+        "connection_id": str(connection.id),
+        "chat_id": chat_id,
+    }
+    if registro is not None:
+        metadata["handoff_id"] = str(getattr(registro, "id", "") or "")
+        metadata["thread_id"] = str(getattr(registro, "thread_id", "") or "")
     return write_in_app(
         core_client,
         user_ids=[destinatario],
         kind=HANDOFF_KIND,
         title="Atendimento humano solicitado",
         message=mensagem,
-        metadata={
-            "link": f"/julia/conversas?chat={quote(chat_id, safe='')}",
-            "connection_id": str(connection.id),
-            "chat_id": chat_id,
-        },
+        metadata=metadata,
         org_id=connection.org_id,
     )
 
@@ -645,21 +724,36 @@ async def apagar_dados_do_chat(
     to be retried -- it is never swallowed."""
     from app.clients.agents import AgentsClientError, DeletionRequest
 
+    alias = sorted(chat_aliases(chat_id))
+    # agents FIRST, SW second (julia-v2 CONTRACT 6.4): the lead is erased in agents by its `ref` = `julia_contatos.id`
+    # (every thread, every agent, qualification and identity included) BEFORE SW deletes the rows that name it, so a
+    # retry still knows which lead to erase. Both halves are idempotent (204 whether or not it existed).
     agents_ok, agents_apagou = True, False
     if agents_client is None:
         agents_ok = False
         logger.error("julia: deletion for chat=%s -- no agents client; agents half NOT done", chat_id)
     else:
-        try:
-            res = await agents_client.delete_conversation_data(
-                DeletionRequest(agent_key=agent_key, connection_id=str(connection.id), chat_id=chat_id)
+        refs = [
+            str(c["id"]) for c in (
+                client.table("julia_contatos").select("id")
+                .eq("org_id", str(connection.org_id)).eq("connection_id", str(connection.id)).in_("chat_id", alias)
+                .execute().data or []
             )
-            agents_apagou = res.deleted
+        ]
+        try:
+            for ref in refs:
+                await agents_client.apagar_lead(ref)
+            agents_apagou = bool(refs)
+            if not refs:
+                # no SW contato (a pre-v2 conversation): the legacy by-chat erase, kept as an alias for one release
+                res = await agents_client.delete_conversation_data(
+                    DeletionRequest(agent_key=agent_key, connection_id=str(connection.id), chat_id=chat_id)
+                )
+                agents_apagou = res.deleted
         except AgentsClientError:
             agents_ok = False
             logger.exception("julia: agents deletion failed for chat=%s", chat_id)
 
-    alias = sorted(chat_aliases(chat_id))
     removed = 0
     for col in ("chat_id", "raw_sender"):
         rows = (

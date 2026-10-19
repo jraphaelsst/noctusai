@@ -1,13 +1,13 @@
-"""Apply the actions agents returned in a turn (contract A4 / 2.2).
+"""Apply the actions agents returned in a turn (contract A4 / julia-v2 section 8.1).
 
-agents never writes SW tables: the model's "action tools" only RECORD intent and the turn
-response carries it back; SW applies it HERE, after the reply was sent, idempotently:
+agents never writes SW tables: the model's tools only RECORD intent in agents and the turn response carries the
+operational actions back; SW applies them HERE, after the reply was sent, idempotently:
 
   for each action in `seq` order
     1. insert into `julia_acoes_aplicadas` ON CONFLICT (org_id, lote_hash, seq) DO NOTHING
        -> nothing inserted means "this batch already applied it" -> skip (replay-safe);
     2. dispatch to the HANDLER REGISTRY by `tipo`;
-    3. an UNKNOWN handler (its wave is not built yet) -> event `acao_sem_handler` + log;
+    3. an UNKNOWN handler -> event `acao_sem_handler` + log;
        a handler that raises -> event `acao_falhou` + log. NEVER an exception that
        propagates: applying actions runs after the reply and must not undo or hide it.
 
@@ -16,16 +16,20 @@ Handler registry (waves append ONE line each, nobody edits `aplicar`):
     HANDLERS: dict[str, Handler]
     Handler = Callable[[AcaoCtx, dict], dict | None | Awaitable[dict | None]]
 
-  here    salvar_slots · definir_operacao · encerrar
-  wave 3  qualificar_lead      wave 5  pedido_visita      wave 8  captacao
+  here    encerrar · intencao_visita (records the intent and STOPS: visit scheduling is out of Julia v2, D11)
+  envio   lead_pronto (the computed stage reached the CRM send, Q6) · captacao
+  other   consentimento_credito · (visitas module: pedido_visita, not offered to Julia v2)
 
-`handler(ctx, payload)` gets the RAW payload (so a wave-5 handler can read the CPF); the ledger
-stores a sanitised copy (CPF -> hash + last 3 digits, contract 17). The returned dict (or None)
-is stored as `resultado`. `registrar_handler(tipo, fn)` binds one at runtime (tests / late binding).
+`salvar_slots` / `definir_operacao` / `qualificar_lead` are RETIRED (julia-v2 D4): the qualification state is agents',
+SW mirrors it from the turn response (`julia_espelho_service`) and never writes `julia_contatos.slots/operacao` from a
+model action. An agents build that still sent one gets an `acao_sem_handler` event, never a silent write.
 
-Closing an episode (`fechar_interacao`) asks agents for the summary (`AgentsClient.resumo`, A5)
-and stores it on the `julia_interacoes` row; a failed `/resumo` still closes the episode (event
-`resumo_falhou`) -- the summary is enrichment, the close is the state change.
+`handler(ctx, payload)` gets the RAW payload; the ledger stores a sanitised copy. The returned dict (or None) is stored
+as `resultado`. `registrar_handler(tipo, fn)` binds one at runtime (tests / late binding).
+
+Closing an episode (`fechar_interacao`) asks agents for the narrative summary (`AgentsClient.resumo`) and stores it on the
+`julia_interacoes` row; a failed `/resumo` still closes the episode (event `resumo_falhou`) -- the summary is enrichment,
+the close is the state change.
 """
 from __future__ import annotations
 
@@ -46,10 +50,8 @@ from app.services import julia_slots_sensiveis as sensiveis
 
 logger = logging.getLogger(__name__)
 
-SLOT_VALOR_MAX = 500
-_SLOT_CHAVE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
-_EMAIL_RE = re.compile(r"^[^@\s]{1,100}@[^@\s]{1,100}\.[^@\s]{2,30}$")
-OPERACOES = frozenset({"compra", "aluguel", "administracao", "atualizacao"})
+PREFERENCIA_HORARIO_MAX = 120
+CODIGO_IMOVEL_MAX = 40
 MOTIVOS_ENCERRAR = frozenset({"lead_encerrou", "sem_interesse", "invalido", "outro"})
 
 
@@ -67,7 +69,6 @@ class AcaoCtx:
     conversation_id: Optional[str] = None
     agents_client: Optional[AgentsClient] = None
     core_client: Any = None
-    perguntas: Sequence[dict[str, Any]] = field(default_factory=tuple)
     connection_id: Optional[UUID | str] = None
     chat_id: Optional[str] = None
 
@@ -115,34 +116,29 @@ async def fechar_interacao(
     interacao: dict[str, Any],
     agents_client: Optional[AgentsClient],
     conversation_id: Optional[str],
-    perguntas: Sequence[dict[str, Any]] = (),
     agora: Optional[datetime] = None,
     origem: str = "silencio",
 ) -> dict[str, Any]:
-    """Close an open episode: ask agents for `/resumo` (when there is a conversation to summarise
-    and a client), then stamp `encerrada_at` + summary/slots/intencoes/desfecho/custo."""
+    """Close an open episode: ask agents for the narrative `/resumo` (when there is a thread to summarise and a
+    client), then stamp `encerrada_at` + summary/slots/desfecho/custo. The slots are the MIRROR of agents' computed
+    qualification already on the contato (never what the summary says); the desfecho is display-only."""
     if interacao.get("encerrada_at"):
         return interacao
     agora = agora or datetime.now(timezone.utc)
-    patch: dict[str, Any] = {"encerrada_at": agora.isoformat()}
+    patch: dict[str, Any] = {"encerrada_at": agora.isoformat(), "slots": dict(contato.get("slots") or {})}
     if agents_client is None or not conversation_id:
-        logger.info("julia: closing interacao=%s without a summary (no agents client / conversation)", interacao["id"])
+        logger.info("julia: closing interacao=%s without a summary (no agents client / thread)", interacao["id"])
     else:
         try:
-            res = await agents_client.resumo(
-                conversation_id, ResumoRequest(perguntas=tuple(perguntas), desde=_dt(interacao.get("iniciada_at")))
-            )
+            res = await agents_client.resumo(conversation_id, ResumoRequest(desde=_dt(interacao.get("iniciada_at"))))
         except AgentsClientError as exc:
             logger.error("julia: /resumo failed (%s) interacao=%s -- closing without a summary", type(exc).__name__, interacao["id"])
             eventos.emitir(client, org_id, "resumo_falhou", contato["id"],
                            {"interacao_id": str(interacao["id"]), "erro": type(exc).__name__, "codigo": exc.code})
         else:
-            patch.update(
-                resumo=res.resumo, slots=res.slots, intencoes=list(res.intencoes), desfecho=res.desfecho,
-                custo_usd=res.custo_usd,
-            )
-            if res.operacao:
-                patch["operacao"] = res.operacao
+            patch.update(resumo=res.resumo, intencoes=list(res.intencoes), desfecho=res.desfecho, custo_usd=res.custo_usd)
+            if contato.get("operacao"):
+                patch["operacao"] = contato["operacao"]
     # `encerrada_at IS NULL` in the WHERE: a concurrent close wins, ours is a no-op.
     client.table(contatos.T_INTERACOES).update(patch).eq("id", str(interacao["id"])).is_("encerrada_at", "null").execute()
     if patch.get("intencoes"):
@@ -160,54 +156,6 @@ async def fechar_interacao(
 
 
 # ── built-in handlers ───────────────────────────────────────────────────────
-def _h_salvar_slots(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
-    slots_in = payload.get("slots")
-    if not isinstance(slots_in, dict):
-        return {"salvos": [], "ignorados": [], "erro": "slots_invalido"}
-    permitidas = {str(p.get("chave")) for p in ctx.perguntas if p.get("chave")} | {"nome", "email"}
-    slots = dict(ctx.contato.get("slots") or {})
-    coluna: dict[str, Any] = {}
-    salvos: list[str] = []
-    ignorados: list[str] = []
-    for chave, valor in slots_in.items():
-        chave = str(chave)
-        if not _SLOT_CHAVE_RE.match(chave) or chave not in permitidas or not isinstance(valor, (str, int, float)) or isinstance(valor, bool):
-            ignorados.append(chave[:64])
-            continue
-        texto = str(valor).strip()[:SLOT_VALOR_MAX]
-        if not texto:
-            ignorados.append(chave)
-            continue
-        if chave == "nome":
-            coluna["nome"] = texto[:200]
-        elif chave == "email":
-            if _EMAIL_RE.match(texto):
-                coluna["email"] = texto.lower()
-            else:
-                ignorados.append(chave)
-                continue
-        else:
-            slots[chave] = texto
-        salvos.append(chave)
-    if slots != (ctx.contato.get("slots") or {}):
-        coluna["slots"] = slots
-    if coluna:
-        contatos.atualizar_contato(ctx.client, ctx.contato["id"], coluna)
-        if ctx.interacao is not None and "slots" in coluna:
-            ctx.client.table(contatos.T_INTERACOES).update({"slots": coluna["slots"]}).eq("id", str(ctx.interacao["id"])).execute()
-    return {"salvos": salvos, "ignorados": ignorados}
-
-
-def _h_definir_operacao(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
-    operacao = payload.get("operacao")
-    if operacao not in OPERACOES:
-        return {"erro": "operacao_invalida"}
-    contatos.atualizar_contato(ctx.client, ctx.contato["id"], {"operacao": operacao})
-    if ctx.interacao is not None:
-        ctx.client.table(contatos.T_INTERACOES).update({"operacao": operacao}).eq("id", str(ctx.interacao["id"])).execute()
-    return {"operacao": operacao}
-
-
 async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
     motivo = payload.get("motivo") if payload.get("motivo") in MOTIVOS_ENCERRAR else "outro"
     agora = datetime.now(timezone.utc)
@@ -217,7 +165,7 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
     if ctx.interacao is not None:
         fechada = await fechar_interacao(
             ctx.client, org_id=ctx.org_id, contato=ctx.contato, interacao=ctx.interacao,
-            agents_client=ctx.agents_client, conversation_id=ctx.conversation_id, perguntas=ctx.perguntas, agora=agora,
+            agents_client=ctx.agents_client, conversation_id=ctx.conversation_id, agora=agora,
             origem="encerrar",
         )
     for hook in tuple(POS_ENCERRAR):
@@ -266,11 +214,22 @@ def registrar_pos_acao(tipo: str, fn: Callable[..., Any]) -> None:
         hooks.append(fn)
 
 
+def _h_intencao_visita(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
+    """The lead wants to visit a listing: record the INTENT and stop (julia-v2 D11 -- Julia schedules nothing; the
+    Visitas module stays as it is and is not reachable from her). The event is what the team sees."""
+    codigo = str(payload.get("codigo") or "").strip()[:CODIGO_IMOVEL_MAX]
+    if not codigo:
+        return {"erro": "codigo_invalido"}
+    preferencia = str(payload.get("preferencia_horario") or "").strip()[:PREFERENCIA_HORARIO_MAX] or None
+    eventos.emitir(ctx.client, ctx.org_id, "intencao_visita", ctx.contato["id"],
+                   {"codigo": codigo, "preferencia_horario": preferencia})
+    return {"codigo": codigo, "registrada": True}
+
+
 #: THE registry. Waves append `"<tipo>": <fn>` (or call `registrar_handler`).
 HANDLERS: dict[str, Handler] = {
-    "salvar_slots": _h_salvar_slots,
-    "definir_operacao": _h_definir_operacao,
     "encerrar": _h_encerrar,
+    "intencao_visita": _h_intencao_visita,
 }
 
 
@@ -302,7 +261,6 @@ async def aplicar(
     conversation_id: Optional[str] = None,
     agents_client: Optional[AgentsClient] = None,
     core_client: Any = None,
-    perguntas: Sequence[dict[str, Any]] = (),
     connection_id: Optional[UUID | str] = None,
     chat_id: Optional[str] = None,
     handlers: Optional[Mapping[str, Handler]] = None,
@@ -316,7 +274,7 @@ async def aplicar(
             resumo.append(await _aplicar_uma(
                 client, org_id=org_id, contato_id=contato["id"], acao=acao, lote_hash=lote_hash,
                 conversation_id=conversation_id, agents_client=agents_client, core_client=core_client,
-                perguntas=perguntas, connection_id=connection_id, chat_id=chat_id,
+                connection_id=connection_id, chat_id=chat_id,
                 handlers=HANDLERS if handlers is None else handlers,
             ))
         except Exception:
@@ -328,7 +286,7 @@ async def aplicar(
 
 async def _aplicar_uma(
     client: Any, *, org_id: UUID | str, contato_id: Any, acao: Any, lote_hash: str, conversation_id: Optional[str],
-    agents_client: Optional[AgentsClient], core_client: Any, perguntas: Sequence[dict[str, Any]],
+    agents_client: Optional[AgentsClient], core_client: Any,
     connection_id: Optional[UUID | str], chat_id: Optional[str], handlers: Mapping[str, Handler],
 ) -> dict[str, Any]:
     inserted = _ledger(client).upsert(
@@ -356,7 +314,7 @@ async def _aplicar_uma(
     ctx = AcaoCtx(
         client=client, org_id=org_id, contato=cont, interacao=contatos.interacao_aberta(client, contato_id),
         lote_hash=lote_hash, seq=acao.seq, tipo=acao.type, conversation_id=conversation_id,
-        agents_client=agents_client, core_client=core_client, perguntas=perguntas,
+        agents_client=agents_client, core_client=core_client,
         connection_id=connection_id, chat_id=chat_id,
     )
     try:

@@ -76,11 +76,19 @@ def _contato(world: World, chat: str = LEAD_CHAT, fone: str | None = FONE, **ove
     return world.contato(chat)
 
 
-def _regras(world: World, grupos=None, *, diferenciar=False) -> dict:
-    grupos = grupos or REGRA_BASE
-    regras = ([{"operacao": "compra", "grupos": grupos}, {"operacao": "aluguel", "grupos": grupos}]
-              if diferenciar else [{"operacao": "ambas", "grupos": grupos}])
+ESTAGIO = "qualificado"
+
+
+def _regras(world: World, estagio: str = ESTAGIO, *, diferenciar=False) -> dict:
+    """Q6: the org's rule is a MINIMUM STAGE (the stage agents computes), not slot criteria."""
+    regras = ([{"operacao": "compra", "estagio_minimo": estagio}, {"operacao": "aluguel", "estagio_minimo": estagio}]
+              if diferenciar else [{"operacao": "ambas", "estagio_minimo": estagio}])
     return envio.substituir_regras(world.sw, ORG, diferenciar, regras)
+
+
+def _regra_legada(world: World, grupos) -> None:
+    """A pre-v2 row (slot criteria `grupos`, no stage): still read by the visit hook, no longer writable through the API."""
+    world.sw.table(envio.T_REGRAS).insert({"org_id": ORG, "operacao": "ambas", "grupos": grupos, "versao": 1}).execute()
 
 
 class FaultyClient:
@@ -288,32 +296,38 @@ class TestRegras:
         assert envio.org_tem_regra(world.sw, ORG) is False
 
     def test_one_shared_rule_then_split_replaces_ambas(self, world):
-        assert _regras(world)["regras"] == [{"operacao": "ambas", "grupos": REGRA_BASE, "versao": 1}]
-        out = _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 1)]], diferenciar=True)
+        assert _regras(world)["regras"] == [{"operacao": "ambas", "estagio_minimo": ESTAGIO, "versao": 1}]
+        out = _regras(world, "pronto_para_corretor", diferenciar=True)
         assert out["diferenciar"] is True and sorted(r["operacao"] for r in out["regras"]) == ["aluguel", "compra"]
         assert len(world.rows(envio.T_REGRAS)) == 2
 
-    def test_version_bumps_only_when_the_groups_change(self, world):
+    def test_version_bumps_only_when_the_stage_changes(self, world):
         _regras(world)
         assert _regras(world)["regras"][0]["versao"] == 1
-        assert _regras(world, [[*GRUPO_BASE, _c("quartos", "preenchido")]])["regras"][0]["versao"] == 2
+        assert _regras(world, "perfil_basico")["regras"][0]["versao"] == 2
 
     @pytest.mark.parametrize("diferenciar,regras", [
-        (True, [{"operacao": "compra", "grupos": REGRA_BASE}]),
-        (True, [{"operacao": "ambas", "grupos": REGRA_BASE}]),
-        (False, [{"operacao": "compra", "grupos": REGRA_BASE}]),
-        (False, [{"operacao": "ambas", "grupos": REGRA_BASE}, {"operacao": "ambas", "grupos": REGRA_BASE}]),
+        (True, [{"operacao": "compra", "estagio_minimo": ESTAGIO}]),
+        (True, [{"operacao": "ambas", "estagio_minimo": ESTAGIO}]),
+        (False, [{"operacao": "compra", "estagio_minimo": ESTAGIO}]),
+        (False, [{"operacao": "ambas", "estagio_minimo": ESTAGIO}, {"operacao": "ambas", "estagio_minimo": ESTAGIO}]),
     ])
     def test_the_operation_set_must_match_the_checkbox(self, world, diferenciar, regras):
         with pytest.raises(AppException) as e:
             envio.substituir_regras(world.sw, ORG, diferenciar, regras)
         assert e.value.code == "operacoes_invalidas" and world.rows(envio.T_REGRAS) == []
 
+    @pytest.mark.parametrize("minimo", [None, "", "Qualificado", "1abc", "a", "x" * 65, "com espaco", 7])
+    def test_a_stage_must_be_a_key(self, world, minimo):
+        with pytest.raises(AppException) as e:
+            envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "estagio_minimo": minimo}])
+        assert (e.value.code, e.value.status_code) == ("estagio_invalido", 422) and world.rows(envio.T_REGRAS) == []
+
     def test_an_invalid_rule_leaves_the_stored_one_untouched(self, world):
         _regras(world)
         with pytest.raises(AppException):
-            envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "grupos": [[_c("orcamento", "preenchido")]]}])
-        assert envio.montar_regras(world.sw, ORG)["regras"][0]["grupos"] == REGRA_BASE
+            envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "estagio_minimo": "Inválido!"}])
+        assert envio.montar_regras(world.sw, ORG)["regras"][0]["estagio_minimo"] == ESTAGIO
 
     def test_rule_lookup_prefers_the_operations_own_row_then_ambas(self, world):
         _regras(world, diferenciar=True)
@@ -324,21 +338,28 @@ class TestRegras:
         _regras(world)
         assert envio.regra_do_contato(envio.listar_regras(world.sw, ORG), "administracao")["operacao"] == "ambas"
 
-    def test_perguntas_is_told_which_slot_keys_the_rules_use_and_locks_them(self, world):
-        _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 1)]])
-        assert envio.criterios_que_usam(world.sw, ORG) == {"orcamento": ["Compra e aluguel · grupo 1"]}
-        world.sw.set_table_data("julia_perguntas_org", [
-            {"org_id": ORG, "chave": "objetivo", "ativa": True, "qualificatoria": True},
-            {"org_id": ORG, "chave": "orcamento", "ativa": True, "qualificatoria": True},
-        ])
-        perguntas.registrar_criterios(envio.criterios_que_usam)
-        try:
-            with pytest.raises(AppException) as e:
-                perguntas.substituir_selecao(world.sw, ORG, [{"chave": "objetivo", "qualificatoria": True}])
-            assert (e.value.code, e.value.status_code) == ("usada_em_criterio", 409)
-            assert e.value.details["chaves"] == ["orcamento"]
-        finally:
-            perguntas.registrar_criterios(perguntas._sem_criterios)
+    def test_a_legacy_row_without_a_stage_is_not_a_rule(self, world):
+        _regra_legada(world, REGRA_BASE)
+        assert envio.org_tem_regra(world.sw, ORG) is False
+        assert envio.montar_regras(world.sw, ORG)["regras"] == [{"operacao": "ambas", "estagio_minimo": None, "versao": 1}]
+
+    def test_the_rules_no_longer_lock_perguntas_slot_keys(self, world):
+        _regras(world)
+        assert envio.criterios_que_usam(world.sw, ORG) == {}
+
+
+@pytest.mark.parametrize("estagio,minimo,ordem,esperado", [
+    ("qualificado", "qualificado", (), True),                                                   # equal always counts
+    ("pronto_para_corretor", "qualificado", ("novo", "qualificado", "pronto_para_corretor"), True),
+    ("perfil_basico", "qualificado", ("novo", "perfil_basico", "qualificado"), False),
+    ("pronto_para_corretor", "qualificado", (), False),                                           # beyond needs agents' order
+    ("pronto_para_corretor", "qualificado", ("novo", "qualificado"), False),                      # a stage the order lacks
+    (None, "qualificado", ("qualificado",), False),
+    ("qualificado", None, (), False),
+    ("qualificado", "", (), False),
+])
+def test_estagio_atende(estagio, minimo, ordem, esperado):
+    assert envio.estagio_atende(estagio, minimo, ordem) is esperado
 
 
 # ── policies ────────────────────────────────────────────────────────────────
@@ -376,9 +397,13 @@ def _turno(*acts) -> TurnResult:
 
 def _handlers() -> dict:
     h = dict(acoes.HANDLERS)
-    acoes.registrar_handler("qualificar_lead", envio._h_qualificar_lead, registro=h)
+    acoes.registrar_handler("lead_pronto", envio._h_lead_pronto, registro=h)
     acoes.registrar_handler("captacao", envio._h_captacao, registro=h)
     return h
+
+
+def _pronto(**over) -> JuliaAction:
+    return JuliaAction("lead_pronto", 1, {"estagio": "pronto_para_corretor", "score": 80, "valores": {}, **over})
 
 
 async def _aplicar(world, contato, *acts, lote="L1", handlers=None):
@@ -391,61 +416,83 @@ async def _aplicar(world, contato, *acts, lote="L1", handlers=None):
 
 @pytest.mark.asyncio
 class TestGatilhos:
-    async def test_qualificar_lead_sends_when_the_rule_matches(self, world):
-        _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 300000)]])
-        c = _contato(world, operacao="compra", slots={"orcamento": "500000"})
-        out = await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
-        assert out == [{"seq": 1, "tipo": "qualificar_lead", "estado": "aplicada"}]
+    async def test_lead_pronto_sends_when_the_org_has_a_rule(self, world):
+        _regras(world, "pronto_para_corretor")
+        c = _contato(world, operacao="compra")
+        out = await _aplicar(world, c, _pronto())
+        assert out == [{"seq": 1, "tipo": "lead_pronto", "estado": "aplicada"}]
         assert world.contato()["status_envio"] == "enviado" and len(world.rows("leads")) == 1
         assert world.rows("julia_acoes_aplicadas")[0]["resultado"]["enviado"] is True
+        assert [e["gatilho"] for e in world.rows(envio.T_ENTREGAS)] == ["qualificado"]
 
-    async def test_no_match_stays_nao_pronto(self, world):
-        _regras(world, [[*GRUPO_BASE, _c("orcamento", ">=", 900000)]])
-        c = _contato(world, operacao="compra", slots={"orcamento": "500000"})
-        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
+    async def test_lead_pronto_is_the_conclusive_stage_so_it_satisfies_any_minimum(self, world):
+        _regras(world, "perfil_basico")
+        await _aplicar(world, _contato(world, operacao="compra"), _pronto())
+        assert len(world.rows("leads")) == 1
+
+    async def test_no_rule_at_all_never_sends_but_the_signal_is_still_recorded(self, world):
+        await _aplicar(world, _contato(world), _pronto())
+        assert world.rows("leads") == [] and world.contato()["status_envio"] == "nao_pronto"
+        assert world.rows("julia_acoes_aplicadas")[0]["resultado"] == {"enviado": False, "motivo": "sem_regra"}
+        assert [e["payload"] for e in world.rows("julia_eventos") if e["tipo"] == "lead_pronto"] == [
+            {"estagio": "pronto_para_corretor", "score": 80, "enviado": False}]
+
+    async def test_the_computed_stage_below_the_minimum_stays_nao_pronto(self, world):
+        _regras(world, "pronto_para_corretor")
+        c = _contato(world, operacao="compra")
+        res = await envio.enviar_por_estagio(world.sw, ORG, c, estagio="qualificado", score=61,
+                                             ordem=("novo", "qualificado", "pronto_para_corretor"))
+        assert res == {"enviado": False, "motivo": "estagio_abaixo_do_minimo"}
         assert world.contato()["status_envio"] == "nao_pronto" and world.rows("leads") == []
-        assert world.rows("julia_acoes_aplicadas")[0]["resultado"] == {"enviado": False, "motivo": "criterios_nao_atendidos"}
-
-    async def test_no_rule_at_all_never_sends(self, world):
-        await _aplicar(world, _contato(world), JuliaAction("qualificar_lead", 1, {}))
-        assert world.rows("leads") == []
 
     async def test_the_split_rule_of_the_contatos_operation_is_the_one_applied(self, world):
         envio.substituir_regras(world.sw, ORG, True, [
-            {"operacao": "compra", "grupos": [[*GRUPO_BASE, _c("orcamento", ">=", 900000)]]},
-            {"operacao": "aluguel", "grupos": REGRA_BASE},
+            {"operacao": "compra", "estagio_minimo": "pronto_para_corretor"},
+            {"operacao": "aluguel", "estagio_minimo": "perfil_basico"},
         ])
-        await _aplicar(world, _contato(world, operacao="compra", slots={"orcamento": "1"}), JuliaAction("qualificar_lead", 1, {}))
+        ordem = ("novo", "perfil_basico", "qualificado", "pronto_para_corretor")
+        compra = _contato(world, operacao="compra")
+        await envio.enviar_por_estagio(world.sw, ORG, compra, estagio="perfil_basico", ordem=ordem)
         assert world.rows("leads") == []
-        await _aplicar(world, _contato(world, operacao="aluguel"), JuliaAction("qualificar_lead", 1, {}), lote="L2")
+        aluguel = _contato(world, chat="5511977776666@c.us", fone="+5511977776666", operacao="aluguel")
+        await envio.enviar_por_estagio(world.sw, ORG, aluguel, estagio="perfil_basico", ordem=ordem)
         assert len(world.rows("leads")) == 1
 
     async def test_a_replayed_batch_does_not_send_twice(self, world):
         _regras(world)
         c = _contato(world, operacao="compra")
-        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
-        again = await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
+        await _aplicar(world, c, _pronto())
+        again = await _aplicar(world, c, _pronto())
         assert again[0]["estado"] == "repetida" and len(world.rows("leads")) == 1
 
-    async def test_qualification_then_visit_hook_is_still_one_lead(self, world, client_provider):
-        _regras(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}]])
+    async def test_the_stage_trigger_and_lead_pronto_are_one_lead(self, world):
+        _regras(world)
         c = _contato(world, operacao="compra")
-        await _aplicar(world, c, JuliaAction("qualificar_lead", 1, {}))
+        await envio.enviar_por_estagio(world.sw, ORG, c, estagio="qualificado")
+        await _aplicar(world, world.contato(), _pronto())
+        assert len(world.rows("leads")) == 1 and len(world.rows("cliente_notas")) == 1
+
+    async def test_qualification_then_visit_hook_is_still_one_lead(self, world, client_provider):
+        _regra_legada(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}]])
+        envio.substituir_regras(world.sw, ORG, False, [{"operacao": "ambas", "estagio_minimo": ESTAGIO}])  # keeps `grupos`
+        c = _contato(world, operacao="compra")
+        await _aplicar(world, c, _pronto())
         envio._hook_on_visita(ORG, world.contato(), {"id": "v1"})
         envio._hook_forcar_envio(ORG, world.contato(), {"id": "v1"})
         assert len(world.rows("leads")) == 1 and len(world.rows("cliente_notas")) == 1
         assert [e["gatilho"] for e in world.rows(envio.T_ENTREGAS)] == ["qualificado"]
 
-    async def test_the_visit_hook_sends_only_when_a_rule_has_the_visit_criterion(self, world, client_provider):
-        _regras(world)  # base only
+    async def test_the_visit_hook_sends_only_when_a_legacy_rule_has_the_visit_criterion(self, world, client_provider):
+        _regras(world)  # a stage rule: no visit criterion
         envio._hook_on_visita(ORG, _contato(world, operacao="compra"), {"id": "v1"})
         assert world.rows("leads") == []
-        _regras(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}]])
+        world.sw.set_table_data(envio.T_REGRAS, [])
+        _regra_legada(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}]])
         envio._hook_on_visita(ORG, world.contato(), {"id": "v1"})
         assert len(world.rows("leads")) == 1 and world.rows(envio.T_ENTREGAS)[0]["gatilho"] == "visita"
 
     async def test_a_visit_rule_with_extra_criteria_needs_them_too(self, world, client_provider):
-        _regras(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}, _c("quartos", "preenchido")]])
+        _regra_legada(world, [GRUPO_BASE, [{"campo": "visita_solicitada", "operador": "=", "valor": True}, _c("quartos", "preenchido")]])
         envio._hook_on_visita(ORG, _contato(world, operacao="compra"), {"id": "v1"})
         assert world.rows("leads") == []
 
@@ -488,24 +535,18 @@ class TestGatilhos:
         assert out[0]["estado"] == "aplicada" and world.contato()["encerrado_at"]
 
 
-class TestContextoAcoes:
-    def _ctx(self, world):
-        return contexto.ContextoCtx(client=world.sw, org_id=ORG, contato=_contato(world))
+@pytest.mark.asyncio
+class TestSemQualificarLead:
+    """`qualificar_lead` (the model's own judgement) is retired (D4): the stage is computed, `lead_pronto` is the action."""
 
-    def test_qualificar_lead_is_dropped_when_the_org_has_no_rule(self, world):
-        acoes_ = envio._prov_acoes(self._ctx(world))["acoes"]
-        assert "qualificar_lead" not in acoes_
-        assert acoes_ == [a for a in contexto.ACOES_JULIA if a != "qualificar_lead"]
+    async def test_the_old_action_has_no_handler_and_the_contexto_offers_no_actions(self, world):
+        assert "qualificar_lead" not in acoes.HANDLERS and "acoes" not in contexto.montar(world.sw, ORG, _contato(world))
 
-    def test_it_is_back_once_a_rule_exists(self, world):
+    async def test_an_agents_that_still_sends_it_gets_an_acao_sem_handler_event_not_a_send(self, world):
         _regras(world)
-        assert envio._prov_acoes(self._ctx(world))["acoes"] == list(contexto.ACOES_JULIA)
-
-    def test_registered_provider_replaces_only_the_acoes_slot(self, world):
-        registro = list(contexto.PROVIDERS)
-        contexto.registrar_provider("acoes", envio._prov_acoes, registro=registro)
-        assert [n for n, _ in registro] == [n for n, _ in contexto.PROVIDERS]
-        assert dict(registro)["acoes"] is envio._prov_acoes and dict(registro)["perguntas"] is dict(contexto.PROVIDERS)["perguntas"]
+        await _aplicar(world, _contato(world), JuliaAction("qualificar_lead", 1, {}))
+        assert world.rows("leads") == []
+        assert [e["payload"]["tipo"] for e in world.rows("julia_eventos") if e["tipo"] == "acao_sem_handler"] == ["qualificar_lead"]
 
 
 # ── cold leads ──────────────────────────────────────────────────────────────

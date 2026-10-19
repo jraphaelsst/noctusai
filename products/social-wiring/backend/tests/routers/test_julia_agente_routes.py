@@ -512,29 +512,72 @@ class TestToken:
         assert julia.agents_token_for_org(OTHER_ORG_ID, cfg=admin.w.cfg) is None
 
 
-# ── PATCH chat pause ────────────────────────────────────────────────────────
+# ── PATCH chat pause (julia-v2: the control lives in AGENTS) ────────────────
 class TestChatPause:
     URL = f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/agente"
 
-    def test_pause_and_resume(self, admin):
+    @staticmethod
+    async def _servir(scene):
+        """Agents has served the chat once: a thread exists with the agent as the active participant."""
+        from app.clients.agents import TurnMessage, TurnRequest
+        from datetime import datetime, timezone
+
+        await scene.w.agents.run_turn(TurnRequest(
+            agent_key="julia", connection_id=CONNECTION_ID, chat_id=LEAD_CHAT,
+            messages=(TurnMessage(texto="oi", provider_message_id="m1", at=datetime.now(timezone.utc)),)))
+
+    def _scene(self, admin):
+        import asyncio
+
         admin.w.seed_connection()
         admin.w.seed_chat()
-        r = admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
-        assert r.status_code == 200 and r.json() == {"chat_id": LEAD_CHAT, "agente_pausado": True}
-        assert admin.w.chat_row()["agente_pausado"] is True
-        r = admin.tc.patch(self.URL, json={"pausado": False}, headers=H)
-        assert r.json() == {"chat_id": LEAD_CHAT, "agente_pausado": False}
-        assert admin.w.chat_row()["agente_pausado"] is False
+        asyncio.new_event_loop().run_until_complete(self._servir(admin))
 
-    def test_it_publishes_chat_upsert_with_the_flag_so_conversas_flips_live(self, admin):
+    def test_pause_and_resume_call_agents_and_mirror_its_answer(self, admin):
+        self._scene(admin)
+        r = admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
+        assert r.status_code == 200 and r.json() == {"chat_id": LEAD_CHAT, "agente_pausado": True, "agente_estado": "pausado"}
+        call = admin.w.agents.participante_calls[-1]
+        assert (call["agent_key"], call["estado"], call["ator_user_id"]) == ("julia", "pausado", str(TEST_USER_ID))
+        assert call["thread_id"] == admin.w.agents.thread_id_for(CONNECTION_ID, LEAD_CHAT) or call["thread_id"]
+        row = admin.w.chat_row()
+        assert (row["agente_pausado"], row["agente_estado"]) == (True, "pausado")
+        r = admin.tc.patch(self.URL, json={"pausado": False}, headers=H)
+        assert r.json() == {"chat_id": LEAD_CHAT, "agente_pausado": False, "agente_estado": "ativo"}
+        assert admin.w.chat_row()["agente_estado"] == "ativo"
+
+    def test_it_publishes_chat_upsert_with_the_state_so_conversas_flips_live(self, admin):
         admin.override(redis_url="")  # in-process Fake bus (REDIS_URL env still feeds the Redis seam)
         reset_bus_cache()
-        admin.w.seed_connection()
-        admin.w.seed_chat()
+        self._scene(admin)
         admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
         stream = get_whatsapp_bus("")._streams[whatsapp_scope(CONNECTION_ID)]
         (event,) = [e for e in stream if e.event == "chat.upsert"]
         assert event.payload["chat_id"] == LEAD_CHAT and event.payload["agente_pausado"] is True
+        assert event.payload["agente_estado"] == "pausado"
+
+    def test_when_agents_is_unreachable_the_toggle_fails_and_nothing_changes_locally(self, admin):
+        from app.clients.agents import AgentsTimeout
+
+        self._scene(admin)
+        admin.w.agents.errors["set_participante"] = AgentsTimeout()
+        r = admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
+        assert r.status_code == 502
+        assert admin.w.chat_row()["agente_pausado"] is False  # SW flips no local flag on its own
+
+    def test_a_chat_agents_never_served_has_nothing_to_pause_404(self, admin):
+        admin.w.seed_connection()
+        admin.w.seed_chat()
+        r = admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
+        assert r.status_code == 404 and "conversa_sem_agente" in r.text
+        assert admin.w.agents.participante_calls == []
+
+    def test_a_concluded_participation_cannot_be_resumed_409(self, admin):
+        self._scene(admin)
+        key = (admin.w.agents.thread_id_for(CONNECTION_ID, LEAD_CHAT), "julia")
+        admin.w.agents.participantes = {k: "concluido" for k in admin.w.agents.participantes}
+        r = admin.tc.patch(self.URL, json={"pausado": False}, headers=H)
+        assert r.status_code == 409 and "transicao_invalida" in r.text
 
     def test_an_unknown_chat_is_404(self, admin):
         admin.w.seed_connection()
@@ -556,6 +599,47 @@ class TestChatPause:
         admin.w.seed_connection(org_id=OTHER_ORG_ID)
         admin.w.seed_chat()
         assert admin.tc.patch(self.URL, json={"pausado": True}, headers=H).status_code == 404
+
+
+# ── GET chat state: what the toggle shows comes from agents ─────────────────
+class TestChatState:
+    URL = f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/agente"
+
+    def test_the_state_is_the_one_agents_reports_and_it_is_mirrored(self, admin):
+        import asyncio
+
+        admin.w.seed_connection()
+        admin.w.seed_chat()
+        asyncio.new_event_loop().run_until_complete(TestChatPause._servir(admin))
+        admin.w.agents.participantes = {k: "pausado" for k in admin.w.agents.participantes}
+        r = admin.get(self.URL)
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert (data["estado"], data["pausado"], data["fonte"]) == ("pausado", True, "agents")
+        assert admin.w.chat_row()["agente_estado"] == "pausado"
+
+    def test_when_agents_is_down_it_shows_the_last_mirror_flagged_as_stale(self, admin):
+        from app.clients.agents import AgentsTimeout
+
+        admin.w.seed_connection()
+        admin.w.seed_chat(agente_thread_id="11111111-1111-4111-8111-111111111111", agente_estado="pausado", agente_pausado=True)
+        admin.w.agents.errors["obter_thread"] = AgentsTimeout()
+        data = admin.get(self.URL).json()["data"]
+        assert (data["estado"], data["fonte"]) == ("pausado", "espelho")
+
+    def test_a_chat_without_a_thread_says_so(self, admin):
+        admin.w.seed_connection()
+        admin.w.seed_chat()
+        data = admin.get(self.URL).json()["data"]
+        assert (data["estado"], data["fonte"], data["thread_id"]) == (None, "nenhuma", None)
+
+    def test_a_member_may_read_it(self, member):
+        member.w.seed_connection()
+        member.w.seed_chat()
+        assert member.get(self.URL).status_code == 200
+
+    def test_no_token_is_401(self, admin):
+        assert admin.tc.get(self.URL).status_code == 401
 
 
 # ── deletion on request (the hook through the admin route) ──────────────────

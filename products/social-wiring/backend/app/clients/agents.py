@@ -22,13 +22,21 @@ the lead path decides what to do from the TYPE, never from a status code or a
 message string. The lead never sees any of this (L2): errors end in "no reply".
 
 Deletion wire (shipped by A2): DELETE /api/channels/conversations, JSON body, 204.
+
+Julia v2 (products/agents/projects/julia-v2/CONTRACT.md section 8): Julia is HOSTED in agents and SW consumes her
+through this client ONLY. The turn request carries the lead identity + the closed `contexto.estado` data (never
+prompt text); the response carries the thread id, the participant state, the computed qualification and typed actions;
+the shared-thread API (append without a turn, per-conversation pause, hand-offs, consent, LGPD delete-by-lead, the
+controls read, the computed qualification) is here too. SW NEVER gates on a cached copy of any of it (fail closed).
+The wire is validated against `products/agents/backend/contracts/channels.v2.json` in
+`tests/services/test_agents_contract_v2.py` once agents publishes it.
 """
 from __future__ import annotations
 
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol, Sequence, Union, runtime_checkable
 
 import httpx
@@ -53,6 +61,12 @@ class TurnMessage:
     at: datetime
 
 
+#: `gatilho` of a turn: a lead message, or a re-engagement the SW timers fire (no lead message).
+GATILHO_MENSAGEM = "mensagem"
+GATILHO_REENGAJAMENTO = "reengajamento"
+GATILHOS = (GATILHO_MENSAGEM, GATILHO_REENGAJAMENTO)
+
+
 @dataclass(frozen=True)
 class TurnRequest:
     agent_key: str
@@ -62,22 +76,33 @@ class TurnRequest:
     phone_e164: Optional[str] = None
     display_name: Optional[str] = None
     channel: str = "whatsapp"
-    #: Lais build contract 2.1(a): the per-turn dynamic context SW renders
-    #: (`julia_contexto_service.montar`). None = page-0 behaviour, key omitted.
+    #: The per-turn DATA context SW renders (`julia_contexto_service.montar`): `hash`, `agora`, `fuso`, `estado`
+    #: (closed, typed -- agents owns the schema; the re-engagement flavour rides in it) and `capacidades`. NEVER prompt
+    #: text. None = key omitted.
     contexto: Optional[dict[str, Any]] = None
+    #: julia-v2: the lead identity. `lead_ref` = `julia_contatos.id` (SW is authoritative); `crm_lead_id` = `leads.id`
+    #: once the CRM lead exists.
+    lead_ref: Optional[str] = None
+    crm_lead_id: Optional[str] = None
+    #: `mensagem` (>= 1 message) or `reengajamento` (no lead message; needs a `contexto`, whose `estado.reengajamento`
+    #: names the flow).
+    gatilho: str = GATILHO_MENSAGEM
 
     def to_wire(self) -> dict[str, Any]:
         wire = self._base_wire()
+        if self.lead_ref:
+            wire["lead"] = {"ref": self.lead_ref, "crm_lead_id": self.crm_lead_id}
         if self.contexto is not None:
             wire["contexto"] = self.contexto
         return wire
 
     def _base_wire(self) -> dict[str, Any]:
-        return {
+        wire: dict[str, Any] = {
             "agent_key": self.agent_key,
             "channel": self.channel,
             "channel_ref": {"connection_id": self.connection_id, "chat_id": self.chat_id},
             "contact": {"phone_e164": self.phone_e164, "display_name": self.display_name},
+            "gatilho": self.gatilho,
             "messages": [
                 {
                     "texto": m.texto,
@@ -87,21 +112,24 @@ class TurnRequest:
                 for m in self.messages
             ],
         }
+        return wire
 
 
 @dataclass(frozen=True)
 class HandoffAction:
     motivo: str
     type: str = "handoff"
+    #: The typed reason code (agents enum, labels live in agents' DB). None from an older agents build.
+    motivo_codigo: Optional[str] = None
+    seq: int = 0
 
 
 @dataclass(frozen=True)
 class JuliaAction:
-    """One of the Julia action shapes of contract 2.1(d) (`salvar_slots`, `definir_operacao`,
-    `qualificar_lead`, `pedido_visita`, `captacao`, `encerrar`). `payload` is the action
-    object minus `type`/`seq`. An UNKNOWN type is kept (not dropped): the apply service
-    answers it with an `acao_sem_handler` event so a newer agents build never loses data
-    silently."""
+    """One of the non-handoff action shapes of the turn response (`lead_pronto`, `intencao_visita`, `captacao`,
+    `encerrar`, `consentimento_credito`, ...). `payload` is the action object minus `type`/`seq`. An UNKNOWN type is
+    kept (not dropped): the apply service answers it with an `acao_sem_handler` event so a newer agents build never
+    loses data silently."""
 
     type: str
     seq: int
@@ -110,16 +138,45 @@ class JuliaAction:
 
 Action = Union[HandoffAction, JuliaAction]
 
+#: The `status` values of a turn response (julia-v2 section 8.1 + the controls decision table, section 5.2).
+STATUS_RESPONDEU = ("respondido", "silencio", "handoff", "encerrado", "concluido")
+#: Nothing is sent to the lead and no action is applied: agents decided NOT to serve this message.
+STATUS_SEM_ATENDIMENTO = (
+    "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
+    "conversa_com_outro_agente", "controle_indisponivel", "lead_opt_out", "reengajamento_ignorado", "limite_atingido",
+)
+STATUS_TURNO = STATUS_RESPONDEU + STATUS_SEM_ATENDIMENTO
+
+
+@dataclass(frozen=True)
+class QualificacaoResumo:
+    """`qualificacao` of a turn response: the stage/score agents COMPUTED (never judged). `estagios` is the ordered
+    list of the pinned standard's stage keys when agents sends it (an older build does not)."""
+
+    versao: Optional[str] = None
+    estagio: Optional[str] = None
+    score: Optional[int] = None
+    faltando: tuple[str, ...] = ()
+    estagios: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class TurnResult:
     conversation_id: str
     partes: tuple[str, ...]
-    status: str  # respondido | silencio | handoff | encerrado
+    status: str  # one of `STATUS_TURNO`
     actions: tuple[Action, ...] = ()
     custo_usd: Optional[float] = None
     tokens_entrada: Optional[int] = None
     tokens_saida: Optional[int] = None
+    #: julia-v2: the shared lead thread (== `conversation_id`, an alias for one release); None when agents stored
+    #: nothing (a lead it refused to serve).
+    thread_id: Optional[str] = None
+    #: The Julia participant state after the turn: ativo | pausado | concluido | encerrado | transferido.
+    participante_estado: Optional[str] = None
+    qualificacao: Optional[QualificacaoResumo] = None
+    #: Conformance violations agents recorded for this turn (`{regra, politica}` only).
+    conformidade: tuple[dict[str, Any], ...] = ()
 
     @property
     def handoff(self) -> Optional[HandoffAction]:
@@ -129,6 +186,15 @@ class TurnResult:
     def julia_actions(self) -> tuple[JuliaAction, ...]:
         """The non-handoff actions, in `seq` order (ties keep arrival order)."""
         return tuple(sorted((a for a in self.actions if isinstance(a, JuliaAction)), key=lambda a: a.seq))
+
+    @property
+    def thread(self) -> Optional[str]:
+        return self.thread_id or self.conversation_id or None
+
+    @property
+    def atendeu(self) -> bool:
+        """True when agents served the turn (a reply, a deliberate silence, or a terminal action)."""
+        return self.status in STATUS_RESPONDEU
 
 
 @dataclass(frozen=True)
@@ -140,9 +206,14 @@ class AgentStatus:
     provider: Optional[str]
     model: Optional[str]
     llm_configurado: bool
+    #: julia-v2 section 8.2: the controls summary (None from an older agents build).
+    modo: Optional[str] = None
+    aceita_novos_leads: Optional[bool] = None
+    threads_abertas: Optional[int] = None
+    conteudo_completo: Optional[bool] = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "agent_key": self.agent_key,
             "nome": self.nome,
             "ativo": self.ativo,
@@ -151,6 +222,11 @@ class AgentStatus:
             "model": self.model,
             "llm_configurado": self.llm_configurado,
         }
+        # the controls summary is shown only when this agents build sends it (an older one does not)
+        for k in ("modo", "aceita_novos_leads", "threads_abertas", "conteudo_completo"):
+            if getattr(self, k) is not None:
+                out[k] = getattr(self, k)
+        return out
 
 
 @dataclass(frozen=True)
@@ -180,24 +256,22 @@ class DeletionResult:
 
 @dataclass(frozen=True)
 class ResumoRequest:
-    """Contract 2.1(e) body: the question catalogue + the window to summarise."""
+    """The window to summarise (julia-v2: the resumo is NARRATIVE only; the criteria come from agents' records)."""
 
-    perguntas: tuple[dict[str, Any], ...] = ()
+    perguntas: tuple[dict[str, Any], ...] = ()  # legacy, no longer sent
     desde: Optional[datetime] = None
 
     def to_wire(self) -> dict[str, Any]:
-        return {
-            "perguntas": [dict(p) for p in self.perguntas],
-            "desde": self.desde.isoformat() if self.desde else None,
-        }
+        return {"desde": self.desde.isoformat() if self.desde else None}
 
 
 @dataclass(frozen=True)
 class ResumoResult:
     resumo: str
-    slots: dict[str, str] = field(default_factory=dict)
+    slots: dict[str, str] = field(default_factory=dict)  # legacy: v2 resumo carries no slots
     operacao: Optional[str] = None
     intencoes: tuple[str, ...] = ()
+    #: DISPLAY-ONLY (`desfecho_sugerido`): SW never acts on it.
     desfecho: str = "em_andamento"
     custo_usd: Optional[float] = None
     tokens_entrada: Optional[int] = None
@@ -206,21 +280,133 @@ class ResumoResult:
 
 @dataclass(frozen=True)
 class DecisaoRequest:
+    """julia-v2 D13: the rule lives in agents' DB (`agent_version_decisoes`); SW sends the options and the data ONLY."""
+
     opcoes: tuple[str, ...]
-    regra_padrao: str
     dados: dict[str, Any] = field(default_factory=dict)
 
     def to_wire(self) -> dict[str, Any]:
-        return {"opcoes": list(self.opcoes), "dados": dict(self.dados), "regra_padrao": self.regra_padrao}
+        return {"opcoes": list(self.opcoes), "dados": dict(self.dados)}
 
 
 @dataclass(frozen=True)
 class DecisaoResult:
     escolha: str
     motivo: str = ""
-    #: `secao` = the owner's prompt section decided; `padrao` = our `regra_padrao`.
-    regra: str = "padrao"
+    #: `versao` = the published version's rule decided; `padrao_da_versao` = the option flagged `padrao` in the row.
+    regra: str = "versao"
     custo_usd: Optional[float] = None
+
+
+# ── the shared thread, hand-offs, consent, controls, qualification (julia-v2 section 8.2) ────────────────
+@dataclass(frozen=True)
+class ParticipanteInfo:
+    agent_key: str
+    estado: str
+    agent_nome: Optional[str] = None
+    pausado_ate: Optional[str] = None
+    motivo: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class HandoffRecord:
+    """The hand-off note agents recorded (profile + atendimento summary + MASKED identity). `identificacao_mascarada`
+    holds masked fields only -- the raw documents never leave agents' encrypted identity store."""
+
+    id: str
+    thread_id: str
+    de_agent_key: str
+    para: dict[str, Any]
+    motivo_codigo: str
+    resumo: str
+    perfil: dict[str, Any] = field(default_factory=dict)
+    identificacao_completa: bool = False
+    identificacao_mascarada: dict[str, Any] = field(default_factory=dict)
+    perguntas_abertas: tuple[Any, ...] = ()
+    compromissos: tuple[Any, ...] = ()
+    lead_ref: Optional[str] = None
+    aceito_em: Optional[str] = None
+    aceito_por: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ThreadInfo:
+    thread_id: str
+    channel: str = "whatsapp"
+    lead_ref: Optional[str] = None
+    participantes: tuple[ParticipanteInfo, ...] = ()
+    ultimo_turno_em: Optional[str] = None
+    ultima_mensagem_lead_em: Optional[str] = None
+    opt_out_em: Optional[str] = None
+    reengajamento_suprimido: bool = False
+    reengajamento_suprimido_motivo: Optional[str] = None
+    ultimo_handoff: Optional[HandoffRecord] = None
+
+    def estado_de(self, agent_key: str) -> Optional[str]:
+        return next((p.estado for p in self.participantes if p.agent_key == agent_key), None)
+
+    def pausado(self, agent_key: str, agora: Optional[datetime] = None) -> bool:
+        """Is `agent_key` paused RIGHT NOW? A timed pause (`pausado_ate`) that already ran out counts as active, exactly as
+        agents decides it."""
+        for p in self.participantes:
+            if p.agent_key != agent_key or p.estado != "pausado":
+                continue
+            if not p.pausado_ate:
+                return True
+            try:
+                ate = datetime.fromisoformat(p.pausado_ate.replace("Z", "+00:00"))
+            except ValueError:
+                return True
+            if ate.tzinfo is None:
+                ate = ate.replace(tzinfo=timezone.utc)
+            return (agora or datetime.now(timezone.utc)) < ate
+        return False
+
+
+@dataclass(frozen=True)
+class AppendResult:
+    message_id: Optional[str]
+    #: True when the `provider_message_id` was already in agents' ledger (a retry): nothing appended.
+    duplicado: bool = False
+
+
+@dataclass(frozen=True)
+class ConsentInfo:
+    lead_ref: str
+    opt_in_em: Optional[str] = None
+    opt_in_origem: Optional[str] = None
+    opt_out_em: Optional[str] = None
+    opt_out_ativo: bool = False
+    participantes_encerrados: int = 0
+
+
+@dataclass(frozen=True)
+class ControleInfo:
+    agent_key: str
+    modo: str  # ligado | drenando | desligado
+    aceita_novos_leads: bool
+    dreno_inatividade_dias: int = 7
+    threads_abertas: int = 0
+    drenagem: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class QualificacaoEstado:
+    """`GET /api/channels/leads/{ref}/qualificacao`: the full computed state (stage, score, recorded values). Never
+    weights, rule bodies or identity values."""
+
+    lead_ref: str
+    estagio: Optional[str]
+    score: Optional[int]
+    valores: dict[str, Any] = field(default_factory=dict)
+    faltando: tuple[str, ...] = ()
+    pode_ofertar: bool = False
+    pode_concluir: bool = False
+    scores: dict[str, int] = field(default_factory=dict)
+    eventos_imovel: tuple[dict[str, Any], ...] = ()
+    estagios: tuple[str, ...] = ()
+    versao_id: Optional[str] = None
+    hash: Optional[str] = None
 
 
 # ── typed errors (one per row of the section 3.1 error table) ───────────────
@@ -237,7 +423,7 @@ class AgentsNotConfigured(AgentsClientError, IntegrationNotConfigured):
 
 
 class AgentsTokenInvalid(AgentsClientError):
-    """401, or 403 product_required / scope_missing / issuer_not_allowed."""
+    """401, or 403 product_required / scope_missing / issuer_not_allowed / agent_not_allowed."""
 
 
 class AgentNotFound(AgentsClientError):
@@ -245,11 +431,35 @@ class AgentNotFound(AgentsClientError):
 
 
 class ConversationNotFound(AgentsClientError):
-    """404 conversation_not_found (the `resumo` route)."""
+    """404 conversation_not_found / thread_not_found (the `resumo` and thread routes)."""
+
+
+class ThreadNotFound(ConversationNotFound):
+    """404 thread_not_found: agents has no thread for that id / channel ref / lead (not an error to the caller)."""
+
+
+class HandoffNotFound(AgentsClientError):
+    """404 handoff_not_found."""
+
+
+class ParticipanteNotFound(AgentsClientError):
+    """404 participante_not_found: the agent does not take part in the thread."""
+
+
+class LeadSemQualificacao(AgentsClientError):
+    """404 lead_sem_qualificacao / lead_sem_identificacao: nothing recorded for the lead yet."""
+
+
+class TransicaoInvalida(AgentsClientError):
+    """409 transicao_invalida / outro_agente_ativo: the requested participant state is not reachable."""
 
 
 class AgentUnavailable(AgentsClientError):
-    """409 agent_inactive / no_active_version / prompt_too_large."""
+    """409 agent_inactive / no_active_version / prompt_too_large / conteudo_incompleto."""
+
+
+class ControleIndisponivel(AgentsClientError):
+    """503 controle_indisponivel: agents could not read its own control. FAIL CLOSED: nothing is sent."""
 
 
 class TurnInProgress(AgentsClientError):
@@ -293,6 +503,8 @@ class AgentsClient(Protocol):
 
     async def delete_conversation_data(self, req: DeletionRequest) -> DeletionResult: ...
 
+    async def apagar_lead(self, lead_ref: str) -> None: ...
+
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult: ...
 
     async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult: ...
@@ -301,22 +513,66 @@ class AgentsClient(Protocol):
 
     async def uso(self, mes: str) -> AgentUso: ...
 
+    # ── the shared thread (julia-v2 section 8.2) ──
+    async def buscar_thread(
+        self, *, connection_id: Optional[str] = None, chat_id: Optional[str] = None, lead_ref: Optional[str] = None,
+        channel: str = "whatsapp",
+    ) -> Optional[ThreadInfo]: ...
+
+    async def obter_thread(self, thread_id: str) -> ThreadInfo: ...
+
+    async def anexar_mensagem(
+        self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
+        autor_user_id: Optional[str] = None,
+    ) -> AppendResult: ...
+
+    async def set_participante(
+        self, thread_id: str, agent_key: str, *, estado: str, ator_user_id: str, motivo: Optional[str] = None,
+        ate: Optional[datetime] = None,
+    ) -> ParticipanteInfo: ...
+
+    async def listar_handoffs(self, thread_id: str) -> tuple[HandoffRecord, ...]: ...
+
+    async def obter_handoff(self, handoff_id: str) -> HandoffRecord: ...
+
+    async def aceitar_handoff(self, handoff_id: str, user_id: str) -> HandoffRecord: ...
+
+    async def opt_in(self, lead_ref: str, *, origem: str, em: Optional[datetime] = None) -> ConsentInfo: ...
+
+    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo: ...
+
+    async def controle(self, agent_key: str) -> ControleInfo: ...
+
+    async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]: ...
+
+    async def identificacao_mascarada(self, lead_ref: str) -> Optional[dict[str, Any]]: ...
+
+    async def feedback_mensagem(
+        self, message_id: str, *, nota: str, user_id: str, comentario: Optional[str] = None,
+    ) -> None: ...
+
 
 # ── Fake ────────────────────────────────────────────────────────────────────
 ScriptedReply = Union[TurnResult, AgentsClientError, Callable[[TurnRequest], TurnResult]]
 
 _NAMESPACE = uuid.UUID("5f0e3b0a-7c1d-4a52-9d55-3a0c1b5a8f10")
 
+#: The standard v1 stage order the Fake reports (julia-v2 CONTRACT 4.3) -- a TEST fixture of the agents side, not a rule
+#: SW applies: the real order comes from agents' response.
+FAKE_ESTAGIOS = ("novo", "em_conversa", "perfil_basico", "qualificado_frio", "qualificado", "pronto_para_corretor")
+
 
 class FakeAgentsClient:
-    """Scripted, deterministic, records every call.
+    """Scripted, deterministic, records every call. Follows julia-v2 CONTRACT section 8.
 
     `script` is consumed one entry per `run_turn`: a `TurnResult` is returned, an
     `AgentsClientError` is raised, a callable is called with the request. When the
     script is exhausted the default reply is returned. A replayed set of
     `provider_message_id`s returns the stored result without consuming the script
     (agents' idempotency, section 3.1 side effect 1).
-    """
+
+    It also keeps a small in-memory THREAD per chat (participant state, appended messages, hand-offs, consent), so the
+    per-conversation toggle / append-without-reply / consent paths can be asserted end to end."""
 
     DEFAULT_PARTES = ("Prazer! Você procura comprar ou alugar?",)
 
@@ -331,6 +587,10 @@ class FakeAgentsClient:
         decisao_script: Sequence[Union[DecisaoResult, AgentsClientError]] = (),
         ferramentas_token_error: Optional[AgentsClientError] = None,
         uso: Union[AgentUso, AgentsClientError, None] = None,
+        handoffs: Sequence[HandoffRecord] = (),
+        controle: Union[ControleInfo, AgentsClientError, None] = None,
+        qualificacoes: Optional[dict[str, QualificacaoEstado]] = None,
+        errors: Optional[dict[str, AgentsClientError]] = None,
     ):
         self._uso = uso
         self.uso_calls: list[str] = []
@@ -348,10 +608,34 @@ class FakeAgentsClient:
         self.deletions: list[DeletionRequest] = []
         self.resumos: list[tuple[str, ResumoRequest]] = []
         self.ferramentas_tokens: list[str] = []
+        # julia-v2 thread state
+        self.handoffs: list[HandoffRecord] = list(handoffs)
+        self._controle = controle
+        self.qualificacoes: dict[str, QualificacaoEstado] = dict(qualificacoes or {})
+        #: Method name -> an error raised on every call of it (e.g. `{"set_participante": AgentsTimeout()}`).
+        self.errors: dict[str, AgentsClientError] = dict(errors or {})
+        self.participantes: dict[tuple[str, str], str] = {}  # (thread_id, agent_key) -> estado
+        self.appended: list[dict[str, Any]] = []  # every accepted append (dedup by provider_message_id)
+        self._appended_ids: dict[str, str] = {}
+        self.participante_calls: list[dict[str, Any]] = []
+        self.handoff_aceites: list[tuple[str, str]] = []
+        self.opt_ins: list[tuple[str, str]] = []
+        self.opt_outs: list[str] = []
+        self.leads_apagados: list[str] = []
+        self.thread_reads: list[str] = []
+        self.feedbacks: list[dict[str, Any]] = []
+
+    def _maybe_fail(self, method: str) -> None:
+        if method in self.errors:
+            raise self.errors[method]
 
     @staticmethod
     def conversation_id_for(req: TurnRequest) -> str:
         return str(uuid.uuid5(_NAMESPACE, f"{req.agent_key}|{req.connection_id}|{req.chat_id}"))
+
+    @staticmethod
+    def thread_id_for(connection_id: str, chat_id: str) -> str:
+        return str(uuid.uuid5(_NAMESPACE, f"julia|{connection_id}|{chat_id}"))
 
     async def run_turn(self, req: TurnRequest) -> TurnResult:
         self.turns.append(req)
@@ -364,14 +648,19 @@ class FakeAgentsClient:
                 raise nxt
             result = nxt(req) if callable(nxt) and not isinstance(nxt, TurnResult) else nxt
         else:
+            tid = self.conversation_id_for(req)
             result = TurnResult(
-                conversation_id=self.conversation_id_for(req),
+                conversation_id=tid,
+                thread_id=tid,
                 partes=self._default_partes,
                 status="respondido",
+                participante_estado="ativo",
                 custo_usd=0.0,
                 tokens_entrada=0,
                 tokens_saida=0,
             )
+        if result.thread:
+            self.participantes.setdefault((result.thread, req.agent_key), result.participante_estado or "ativo")
         self._replays[ids] = result
         return result
 
@@ -382,6 +671,7 @@ class FakeAgentsClient:
         return self._status or AgentStatus(
             agent_key=agent_key, nome="Julia", ativo=True, versao_ativa=1,
             provider="openai", model="gpt-5-mini", llm_configurado=True,
+            modo="ligado", aceita_novos_leads=True, threads_abertas=0, conteudo_completo=True,
         )
 
     async def delete_conversation_data(self, req: DeletionRequest) -> DeletionResult:
@@ -392,6 +682,9 @@ class FakeAgentsClient:
         )
         return DeletionResult(deleted=had, messages_deleted=2 * len(self.turns) if had else 0)
 
+    async def apagar_lead(self, lead_ref: str) -> None:
+        self._maybe_fail("apagar_lead")
+        self.leads_apagados.append(lead_ref)  # idempotent by construction: 204 whether or not it existed
 
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
         self.resumos.append((conversation_id, req))
@@ -404,14 +697,14 @@ class FakeAgentsClient:
                             tokens_entrada=0, tokens_saida=0)
 
     async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult:
-        """Scripted; with no script, the FIRST option (deterministic) decided by `padrao`."""
+        """Scripted; with no script, the FIRST option (deterministic) as the version's flagged default."""
         self.decisoes.append((agent_key, chave, req))
         if self._decisao_script:
             nxt = self._decisao_script.pop(0)
             if isinstance(nxt, AgentsClientError):
                 raise nxt
             return nxt
-        return DecisaoResult(escolha=req.opcoes[0], motivo="decisão de teste", regra="padrao", custo_usd=0.0)
+        return DecisaoResult(escolha=req.opcoes[0], motivo="decisão de teste", regra="padrao_da_versao", custo_usd=0.0)
 
     async def uso(self, mes: str) -> AgentUso:
         self.uso_calls.append(mes)
@@ -423,6 +716,126 @@ class FakeAgentsClient:
         if self._ferramentas_token_error is not None:
             raise self._ferramentas_token_error
         self.ferramentas_tokens.append(token)
+
+    # ── the shared thread ──
+    def _info(self, thread_id: str, lead_ref: Optional[str] = None) -> ThreadInfo:
+        parts = tuple(
+            ParticipanteInfo(agent_key=k, estado=e) for (t, k), e in self.participantes.items() if t == thread_id
+        )
+        return ThreadInfo(
+            thread_id=thread_id, lead_ref=lead_ref, participantes=parts,
+            ultimo_handoff=next((h for h in reversed(self.handoffs) if h.thread_id == thread_id), None),
+        )
+
+    async def buscar_thread(
+        self, *, connection_id: Optional[str] = None, chat_id: Optional[str] = None, lead_ref: Optional[str] = None,
+        channel: str = "whatsapp",
+    ) -> Optional[ThreadInfo]:
+        self._maybe_fail("buscar_thread")
+        self.thread_reads.append(f"{connection_id}|{chat_id}|{lead_ref}")
+        if connection_id and chat_id:
+            tid = self.thread_id_for(connection_id, chat_id)
+            if any(t == tid for (t, _k) in self.participantes) or any(
+                (x.connection_id, x.chat_id) == (connection_id, chat_id) for x in self.turns
+            ):
+                return self._info(tid)
+            return None
+        if lead_ref:
+            for x in reversed(self.turns):
+                if x.lead_ref == lead_ref:
+                    return self._info(self.conversation_id_for(x), lead_ref)
+        return None
+
+    async def obter_thread(self, thread_id: str) -> ThreadInfo:
+        self._maybe_fail("obter_thread")
+        self.thread_reads.append(thread_id)
+        if not any(t == thread_id for (t, _k) in self.participantes):
+            raise ThreadNotFound("thread not found", code="thread_not_found")
+        return self._info(thread_id)
+
+    async def anexar_mensagem(
+        self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
+        autor_user_id: Optional[str] = None,
+    ) -> AppendResult:
+        self._maybe_fail("anexar_mensagem")
+        if role == "humano" and not autor_user_id:
+            raise AgentsBadRequest("autor_user_id required", code="invalid_field")
+        if provider_message_id in self._appended_ids:
+            return AppendResult(message_id=None, duplicado=True)
+        mid = str(uuid.uuid5(_NAMESPACE, f"msg|{thread_id}|{provider_message_id}"))
+        self._appended_ids[provider_message_id] = mid
+        self.appended.append({
+            "thread_id": thread_id, "role": role, "texto": texto, "provider_message_id": provider_message_id,
+            "autor_user_id": autor_user_id, "at": at,
+        })
+        return AppendResult(message_id=mid, duplicado=False)
+
+    async def set_participante(
+        self, thread_id: str, agent_key: str, *, estado: str, ator_user_id: str, motivo: Optional[str] = None,
+        ate: Optional[datetime] = None,
+    ) -> ParticipanteInfo:
+        self._maybe_fail("set_participante")
+        self.participante_calls.append({
+            "thread_id": thread_id, "agent_key": agent_key, "estado": estado, "ator_user_id": ator_user_id,
+            "motivo": motivo, "ate": ate,
+        })
+        atual = self.participantes.get((thread_id, agent_key))
+        if atual is None:
+            raise ParticipanteNotFound("not a participant", code="participante_not_found")
+        if atual in ("concluido", "encerrado", "transferido"):
+            raise TransicaoInvalida(f"{atual} -> {estado}", code="transicao_invalida")
+        self.participantes[(thread_id, agent_key)] = estado
+        return ParticipanteInfo(agent_key=agent_key, estado=estado, pausado_ate=ate.isoformat() if ate else None,
+                                motivo=motivo)
+
+    async def listar_handoffs(self, thread_id: str) -> tuple[HandoffRecord, ...]:
+        self._maybe_fail("listar_handoffs")
+        return tuple(h for h in self.handoffs if h.thread_id == thread_id)
+
+    async def obter_handoff(self, handoff_id: str) -> HandoffRecord:
+        self._maybe_fail("obter_handoff")
+        for h in self.handoffs:
+            if h.id == handoff_id:
+                return h
+        raise HandoffNotFound("handoff not found", code="handoff_not_found")
+
+    async def aceitar_handoff(self, handoff_id: str, user_id: str) -> HandoffRecord:
+        self._maybe_fail("aceitar_handoff")
+        h = await self.obter_handoff(handoff_id)
+        self.handoff_aceites.append((handoff_id, user_id))
+        return h
+
+    async def opt_in(self, lead_ref: str, *, origem: str, em: Optional[datetime] = None) -> ConsentInfo:
+        self._maybe_fail("opt_in")
+        self.opt_ins.append((lead_ref, origem))
+        return ConsentInfo(lead_ref=lead_ref, opt_in_origem=origem, opt_in_em=(em or datetime.now()).isoformat())
+
+    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo:
+        self._maybe_fail("opt_out")
+        self.opt_outs.append(lead_ref)
+        for k in list(self.participantes):
+            self.participantes[k] = "encerrado"
+        return ConsentInfo(lead_ref=lead_ref, opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True)
+
+    async def controle(self, agent_key: str) -> ControleInfo:
+        self._maybe_fail("controle")
+        if isinstance(self._controle, AgentsClientError):
+            raise self._controle
+        return self._controle or ControleInfo(agent_key=agent_key, modo="ligado", aceita_novos_leads=True)
+
+    async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]:
+        self._maybe_fail("qualificacao")
+        return self.qualificacoes.get(lead_ref)
+
+    async def identificacao_mascarada(self, lead_ref: str) -> Optional[dict[str, Any]]:
+        self._maybe_fail("identificacao_mascarada")
+        return None
+
+    async def feedback_mensagem(
+        self, message_id: str, *, nota: str, user_id: str, comentario: Optional[str] = None,
+    ) -> None:
+        self._maybe_fail("feedback_mensagem")
+        self.feedbacks.append({"message_id": message_id, "nota": nota, "user_id": user_id, "comentario": comentario})
 
 
 # ── Real ────────────────────────────────────────────────────────────────────
@@ -463,14 +876,24 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
     if status == 404:
         if code == "agent_not_found":
             raise AgentNotFound("agent not found", code=code)
+        if code == "thread_not_found":
+            raise ThreadNotFound("thread not found", code=code)
         if code == "conversation_not_found":
             raise ConversationNotFound("conversation not found", code=code)
+        if code == "handoff_not_found":
+            raise HandoffNotFound("handoff not found", code=code)
+        if code == "participante_not_found":
+            raise ParticipanteNotFound("participant not found", code=code)
+        if code in ("lead_sem_qualificacao", "lead_sem_identificacao"):
+            raise LeadSemQualificacao("nothing recorded for the lead", code=code)
         raise AgentsUpstreamError("agents answered 404", code=code)
     if status == 409:
         if code == "turn_in_progress":
             raise TurnInProgress("turn in progress", code=code)
-        if code in ("agent_inactive", "no_active_version", "prompt_too_large"):
+        if code in ("agent_inactive", "no_active_version", "prompt_too_large", "conteudo_incompleto"):
             raise AgentUnavailable(code, code=code)
+        if code in ("transicao_invalida", "outro_agente_ativo"):
+            raise TransicaoInvalida(code, code=code)
         raise IdempotencyConflict(f"agents answered 409 ({code})", code=code)
     if status == 422:
         raise AgentsBadRequest("agents rejected the request shape", code=code)
@@ -478,6 +901,8 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
         raise LlmNotConfigured("llm not configured for the org", code=code or "llm_not_configured")
     if status == 429:
         raise CapacityExceeded("agents at capacity", code=code or "capacidade", retry_after=_retry_after(response))
+    if status == 503 and code == "controle_indisponivel":
+        raise ControleIndisponivel("agents could not read its control", code=code)
     raise AgentsUpstreamError(f"agents answered {status}", code=code)
 
 
@@ -487,52 +912,93 @@ def _need(body: Any, key: str, kind: type | tuple) -> Any:
     return body[key]
 
 
+def _opt_str(body: Any, key: str) -> Optional[str]:
+    value = body.get(key) if isinstance(body, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def parse_qualificacao_resumo(raw: Any) -> Optional[QualificacaoResumo]:
+    if not isinstance(raw, dict):
+        return None
+    score = raw.get("score")
+    faltando = raw.get("faltando")
+    estagios = raw.get("estagios")
+    return QualificacaoResumo(
+        versao=_opt_str(raw, "versao"),
+        estagio=_opt_str(raw, "estagio"),
+        score=score if isinstance(score, int) and not isinstance(score, bool) else None,
+        faltando=tuple(str(f) for f in faltando if isinstance(f, str)) if isinstance(faltando, list) else (),
+        estagios=tuple(str(e) for e in estagios if isinstance(e, str)) if isinstance(estagios, list) else (),
+    )
+
+
 def parse_turn_result(body: Any) -> TurnResult:
-    """Strict parse of the section 3.1 200 body -- a malformed reply is an upstream
-    fault (no reply sent), never a half-trusted result."""
-    conversation_id = _need(body, "conversation_id", str)
-    reply = _need(body, "reply", dict)
-    partes = _need(reply, "partes", list)
-    if not all(isinstance(p, str) for p in partes):
-        raise AgentsUpstreamError("malformed agents response: reply.partes")
+    """Strict parse of the julia-v2 section 8.1 200 body -- a malformed reply is an upstream fault (no reply sent),
+    never a half-trusted result. A status that is not in the contract is a fault too: a newer agents build must not make
+    SW guess whether to send."""
+    if not isinstance(body, dict):
+        raise AgentsUpstreamError("malformed agents response: body")
     status = _need(body, "status", str)
-    if status not in ("respondido", "silencio", "handoff", "encerrado"):
+    if status not in STATUS_TURNO:
         raise AgentsUpstreamError("malformed agents response: status")
-    actions_raw = _need(body, "actions", list)
+    thread_id = _opt_str(body, "thread_id")
+    conversation_id = _opt_str(body, "conversation_id") or thread_id or ""
+    if status in STATUS_RESPONDEU and not conversation_id:
+        raise AgentsUpstreamError("malformed agents response: conversation_id")
+    reply = body.get("reply") if isinstance(body.get("reply"), dict) else {}
+    partes = reply.get("partes", [])
+    if not isinstance(partes, list) or not all(isinstance(p, str) for p in partes):
+        raise AgentsUpstreamError("malformed agents response: reply.partes")
+    if status in STATUS_RESPONDEU and "partes" not in reply:
+        raise AgentsUpstreamError("malformed agents response: reply")
+    actions_raw = body.get("actions", [])
+    if not isinstance(actions_raw, list):
+        raise AgentsUpstreamError("malformed agents response: actions")
     actions: list[Action] = []
     for idx, a in enumerate(actions_raw):
         if not isinstance(a, dict) or not isinstance(a.get("type"), str) or not a.get("type"):
-            logger.warning("agents returned a malformed action: %r", a)
+            # the TYPE only: an action carries lead slot values, which must never reach a log line
+            logger.warning("agents returned a malformed action (kind=%s)", type(a).__name__)
             continue
-        if a["type"] == "handoff":
-            actions.append(HandoffAction(motivo=str(a.get("motivo") or "")[:280]))
-            continue
-        # A Julia action (contract 2.1(d)); an unknown type is kept so the apply
-        # service can report `acao_sem_handler` instead of losing it silently.
         seq = a.get("seq")
+        seq = seq if isinstance(seq, int) and not isinstance(seq, bool) else idx
+        if a["type"] == "handoff":
+            actions.append(HandoffAction(
+                motivo=str(a.get("motivo") or "")[:280], motivo_codigo=_opt_str(a, "motivo_codigo"), seq=seq,
+            ))
+            continue
+        # A non-handoff action; an unknown type is kept so the apply service can report `acao_sem_handler`.
         actions.append(JuliaAction(
-            type=a["type"],
-            seq=seq if isinstance(seq, int) and not isinstance(seq, bool) else idx,
-            payload={k: v for k, v in a.items() if k not in ("type", "seq")},
+            type=a["type"], seq=seq, payload={k: v for k, v in a.items() if k not in ("type", "seq")},
         ))
     usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    participante = body.get("participante") if isinstance(body.get("participante"), dict) else {}
+    conformidade = body.get("conformidade") if isinstance(body.get("conformidade"), dict) else {}
+    violacoes = conformidade.get("violacoes") if isinstance(conformidade.get("violacoes"), list) else []
     return TurnResult(
         conversation_id=conversation_id,
+        thread_id=thread_id or conversation_id or None,
         partes=tuple(p for p in partes if p.strip()),
         status=status,
         actions=tuple(actions),
         custo_usd=usage.get("custo_usd"),
         tokens_entrada=usage.get("tokens_entrada"),
         tokens_saida=usage.get("tokens_saida"),
+        participante_estado=_opt_str(participante, "estado"),
+        qualificacao=parse_qualificacao_resumo(body.get("qualificacao")),
+        conformidade=tuple(
+            {"regra": str(v.get("regra")), "politica": str(v.get("politica"))} for v in violacoes if isinstance(v, dict)
+        ),
     )
 
 
 def parse_resumo_result(body: Any) -> ResumoResult:
-    """Strict parse of the contract 2.1(e) 200 body; a malformed one is an upstream fault."""
+    """Strict parse of the resumo 200 body (julia-v2: `{resumo, desfecho_sugerido}`, narrative only; a pre-v2 build also
+    sends slots/operacao/intencoes); a malformed one is an upstream fault."""
     resumo = _need(body, "resumo", str)
-    slots_raw = _need(body, "slots", dict)
-    intencoes = _need(body, "intencoes", list)
-    desfecho = _need(body, "desfecho", str)
+    slots_raw = body.get("slots") if isinstance(body.get("slots"), dict) else {}
+    intencoes = body.get("intencoes") if isinstance(body.get("intencoes"), list) else []
+    desfecho = _opt_str(body, "desfecho_sugerido") or _opt_str(body, "desfecho") or "em_andamento"
     operacao = body.get("operacao")
     usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
     return ResumoResult(
@@ -557,7 +1023,7 @@ def parse_decisao_result(body: Any, opcoes: Sequence[str]) -> DecisaoResult:
     return DecisaoResult(
         escolha=escolha,
         motivo=body.get("motivo") if isinstance(body.get("motivo"), str) else "",
-        regra=regra if regra in ("secao", "padrao") else "padrao",
+        regra=regra if regra in ("versao", "padrao_da_versao") else "versao",
         custo_usd=usage.get("custo_usd"),
     )
 
@@ -570,6 +1036,9 @@ def parse_uso(body: Any) -> AgentUso:
 
 
 def parse_agent_status(body: Any) -> AgentStatus:
+    aceita = body.get("aceita_novos_leads")
+    abertas = body.get("threads_abertas")
+    completo = body.get("conteudo_completo")
     return AgentStatus(
         agent_key=_need(body, "agent_key", str),
         nome=_need(body, "nome", str),
@@ -578,6 +1047,103 @@ def parse_agent_status(body: Any) -> AgentStatus:
         provider=body.get("provider") if isinstance(body.get("provider"), str) else None,
         model=body.get("model") if isinstance(body.get("model"), str) else None,
         llm_configurado=bool(_need(body, "llm_configurado", bool)),
+        modo=_opt_str(body, "modo"),
+        aceita_novos_leads=aceita if isinstance(aceita, bool) else None,
+        threads_abertas=abertas if isinstance(abertas, int) and not isinstance(abertas, bool) else None,
+        conteudo_completo=completo if isinstance(completo, bool) else None,
+    )
+
+
+def parse_participante(raw: Any) -> ParticipanteInfo:
+    return ParticipanteInfo(
+        agent_key=_need(raw, "agent_key", str),
+        estado=_need(raw, "estado", str),
+        agent_nome=_opt_str(raw, "agent_nome"),
+        pausado_ate=_opt_str(raw, "pausado_ate"),
+        motivo=_opt_str(raw, "motivo"),
+    )
+
+
+def parse_handoff(raw: Any) -> HandoffRecord:
+    return HandoffRecord(
+        id=_need(raw, "id", str),
+        thread_id=_need(raw, "thread_id", str),
+        lead_ref=_opt_str(raw, "lead_ref"),
+        de_agent_key=_opt_str(raw, "de_agent_key") or "",
+        para=dict(raw["para"]) if isinstance(raw.get("para"), dict) else {},
+        motivo_codigo=_opt_str(raw, "motivo_codigo") or "",
+        resumo=raw.get("resumo") if isinstance(raw.get("resumo"), str) else "",
+        perfil=dict(raw["perfil"]) if isinstance(raw.get("perfil"), dict) else {},
+        identificacao_completa=bool(raw.get("identificacao_completa")),
+        identificacao_mascarada=dict(raw["identificacao_mascarada"]) if isinstance(raw.get("identificacao_mascarada"), dict) else {},
+        perguntas_abertas=tuple(raw["perguntas_abertas"]) if isinstance(raw.get("perguntas_abertas"), list) else (),
+        compromissos=tuple(raw["compromissos"]) if isinstance(raw.get("compromissos"), list) else (),
+        aceito_em=_opt_str(raw, "aceito_em"),
+        aceito_por=_opt_str(raw, "aceito_por"),
+    )
+
+
+def parse_thread(body: Any) -> ThreadInfo:
+    partes = _need(body, "participantes", list)
+    ultimo = body.get("ultimo_handoff")
+    return ThreadInfo(
+        thread_id=_need(body, "thread_id", str),
+        channel=_opt_str(body, "channel") or "whatsapp",
+        lead_ref=_opt_str(body, "lead_ref"),
+        participantes=tuple(parse_participante(p) for p in partes),
+        ultimo_turno_em=_opt_str(body, "ultimo_turno_em"),
+        ultima_mensagem_lead_em=_opt_str(body, "ultima_mensagem_lead_em"),
+        opt_out_em=_opt_str(body, "opt_out_em"),
+        reengajamento_suprimido=bool(body.get("reengajamento_suprimido")),
+        reengajamento_suprimido_motivo=_opt_str(body, "reengajamento_suprimido_motivo"),
+        ultimo_handoff=parse_handoff(ultimo) if isinstance(ultimo, dict) else None,
+    )
+
+
+def parse_consent(body: Any) -> ConsentInfo:
+    encerrados = body.get("participantes_encerrados")
+    return ConsentInfo(
+        lead_ref=_need(body, "lead_ref", str),
+        opt_in_em=_opt_str(body, "opt_in_em"),
+        opt_in_origem=_opt_str(body, "opt_in_origem"),
+        opt_out_em=_opt_str(body, "opt_out_em"),
+        opt_out_ativo=bool(body.get("opt_out_ativo")),
+        participantes_encerrados=encerrados if isinstance(encerrados, int) and not isinstance(encerrados, bool) else 0,
+    )
+
+
+def parse_controle(body: Any) -> ControleInfo:
+    dias = body.get("dreno_inatividade_dias")
+    abertas = body.get("threads_abertas")
+    return ControleInfo(
+        agent_key=_need(body, "agent_key", str),
+        modo=_need(body, "modo", str),
+        aceita_novos_leads=bool(_need(body, "aceita_novos_leads", bool)),
+        dreno_inatividade_dias=dias if isinstance(dias, int) and not isinstance(dias, bool) else 7,
+        threads_abertas=abertas if isinstance(abertas, int) and not isinstance(abertas, bool) else 0,
+        drenagem=dict(body["drenagem"]) if isinstance(body.get("drenagem"), dict) else {},
+    )
+
+
+def parse_qualificacao_estado(body: Any) -> QualificacaoEstado:
+    score = body.get("score")
+    faltando = body.get("faltando")
+    eventos = body.get("eventos_imovel")
+    estagios = body.get("estagios")
+    scores = body.get("scores") if isinstance(body.get("scores"), dict) else {}
+    return QualificacaoEstado(
+        lead_ref=_need(body, "lead_ref", str),
+        estagio=_opt_str(body, "estagio"),
+        score=score if isinstance(score, int) and not isinstance(score, bool) else None,
+        valores=dict(body["valores"]) if isinstance(body.get("valores"), dict) else {},
+        faltando=tuple(str(f) for f in faltando if isinstance(f, str)) if isinstance(faltando, list) else (),
+        pode_ofertar=bool(body.get("pode_ofertar")),
+        pode_concluir=bool(body.get("pode_concluir")),
+        scores={str(k): int(v) for k, v in scores.items() if isinstance(v, int) and not isinstance(v, bool)},
+        eventos_imovel=tuple(e for e in eventos if isinstance(e, dict)) if isinstance(eventos, list) else (),
+        estagios=tuple(str(e) for e in estagios if isinstance(e, str)) if isinstance(estagios, list) else (),
+        versao_id=_opt_str(body, "versao_id"),
+        hash=_opt_str(body, "hash"),
     )
 
 
@@ -611,11 +1177,12 @@ class HttpAgentsClient:
         )
 
     async def _send(
-        self, method: str, path: str, *, json: Optional[dict] = None, ok_statuses: tuple[int, ...] = ()
+        self, method: str, path: str, *, json: Optional[dict] = None, params: Optional[dict] = None,
+        ok_statuses: tuple[int, ...] = (),
     ) -> Any:
         try:
             async with self._client() as client:
-                response = await client.request(method, path, json=json)
+                response = await client.request(method, path, json=json, params=params)
         except httpx.TimeoutException as exc:
             raise AgentsTimeout("agents did not answer in time") from exc
         except httpx.HTTPError as exc:
@@ -657,19 +1224,24 @@ class HttpAgentsClient:
             return DeletionResult(deleted=bool(body["deleted"]))
         return DeletionResult(deleted=body is not None)
 
+    async def apagar_lead(self, lead_ref: str) -> None:
+        """`DELETE /api/channels/leads/{ref}` (LGPD delete-by-lead across every agent): 204, idempotent; 409
+        `turn_in_progress` while a turn runs (raised as `TurnInProgress`)."""
+        await self._send("DELETE", f"/api/channels/leads/{quote(lead_ref, safe='')}")
+
     async def uso(self, mes: str) -> AgentUso:
         """`GET /api/channels/uso?mes=YYYY-MM` (Julia w9 Painel)."""
         return parse_uso(await self._send("GET", f"/api/channels/uso?mes={quote(mes, safe='')}"))
 
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult:
-        """`POST /api/channels/conversations/{id}/resumo` (contract 2.1(e))."""
+        """`POST /api/channels/threads/{id}/resumo` (julia-v2 section 8.2): narrative only."""
         body = await self._send(
-            "POST", f"/api/channels/conversations/{quote(conversation_id, safe='')}/resumo", json=req.to_wire()
+            "POST", f"/api/channels/threads/{quote(conversation_id, safe='')}/resumo", json=req.to_wire()
         )
         return parse_resumo_result(body)
 
     async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult:
-        """`POST /api/channels/agents/{key}/decisoes/{chave}` (owner 2026-10-19)."""
+        """`POST /api/channels/agents/{key}/decisoes/{chave}` (julia-v2 D13): the rule is agents' DB row."""
         body = await self._send(
             "POST", f"/api/channels/agents/{quote(agent_key, safe='')}/decisoes/{quote(chave, safe='')}",
             json=req.to_wire(),
@@ -682,6 +1254,120 @@ class HttpAgentsClient:
         if not token:
             raise ValueError("put_ferramentas_token needs a token")
         await self._send("PUT", "/api/channels/ferramentas-token", json={"token": token})
+
+    # ── the shared thread (julia-v2 section 8.2) ──
+    async def buscar_thread(
+        self, *, connection_id: Optional[str] = None, chat_id: Optional[str] = None, lead_ref: Optional[str] = None,
+        channel: str = "whatsapp",
+    ) -> Optional[ThreadInfo]:
+        """`GET /api/channels/threads?channel=&connection_id=&chat_id=` OR `?lead_ref=`. None when agents has no thread
+        (a lead it never served is never stored)."""
+        by_channel = bool(connection_id and chat_id)
+        if by_channel == bool(lead_ref):
+            raise ValueError("buscar_thread needs connection_id+chat_id OR lead_ref")
+        params = {"channel": channel, "connection_id": connection_id, "chat_id": chat_id} if by_channel else {"lead_ref": lead_ref}
+        try:
+            return parse_thread(await self._send("GET", "/api/channels/threads", params=params))
+        except ThreadNotFound:
+            return None
+
+    async def obter_thread(self, thread_id: str) -> ThreadInfo:
+        """`GET /api/channels/threads/{id}`: the participants + their states. This is the ONLY source of the
+        per-conversation toggle state SW shows."""
+        return parse_thread(await self._send("GET", f"/api/channels/threads/{quote(thread_id, safe='')}"))
+
+    async def anexar_mensagem(
+        self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
+        autor_user_id: Optional[str] = None,
+    ) -> AppendResult:
+        """`POST /api/channels/threads/{id}/mensagens`: append WITHOUT a turn (a human attendant's message, or a lead
+        message agents will not answer). Idempotent by `provider_message_id`."""
+        if role not in ("user", "humano"):
+            raise ValueError("role is 'user' or 'humano'")
+        body: dict[str, Any] = {"role": role, "texto": texto, "provider_message_id": provider_message_id}
+        if at is not None:
+            body["at"] = at.isoformat()
+        if autor_user_id is not None:
+            body["autor_user_id"] = str(autor_user_id)
+        out = await self._send("POST", f"/api/channels/threads/{quote(thread_id, safe='')}/mensagens", json=body)
+        return AppendResult(message_id=_opt_str(out, "message_id"), duplicado=bool(out.get("duplicado")))
+
+    async def set_participante(
+        self, thread_id: str, agent_key: str, *, estado: str, ator_user_id: str, motivo: Optional[str] = None,
+        ate: Optional[datetime] = None,
+    ) -> ParticipanteInfo:
+        """`PATCH /api/channels/threads/{id}/participantes/{agent_key}`: the per-conversation pause / resume. The actor
+        is recorded by agents (participant event + audit log)."""
+        if estado not in ("pausado", "ativo"):
+            raise ValueError("estado is 'pausado' or 'ativo'")
+        body: dict[str, Any] = {"estado": estado, "ator_user_id": str(ator_user_id)}
+        if motivo:
+            body["motivo"] = motivo[:300]
+        if ate is not None:
+            body["ate"] = ate.isoformat()
+        out = await self._send(
+            "PATCH", f"/api/channels/threads/{quote(thread_id, safe='')}/participantes/{quote(agent_key, safe='')}",
+            json=body,
+        )
+        return parse_participante(out)
+
+    async def listar_handoffs(self, thread_id: str) -> tuple[HandoffRecord, ...]:
+        out = await self._send("GET", f"/api/channels/threads/{quote(thread_id, safe='')}/handoffs")
+        if not isinstance(out, list):
+            raise AgentsUpstreamError("malformed agents response: handoffs")
+        return tuple(parse_handoff(h) for h in out if isinstance(h, dict))
+
+    async def obter_handoff(self, handoff_id: str) -> HandoffRecord:
+        return parse_handoff(await self._send("GET", f"/api/channels/handoffs/{quote(handoff_id, safe='')}"))
+
+    async def aceitar_handoff(self, handoff_id: str, user_id: str) -> HandoffRecord:
+        """`POST /api/channels/handoffs/{id}/aceite`: the human operator took it (the first acceptance wins)."""
+        return parse_handoff(await self._send(
+            "POST", f"/api/channels/handoffs/{quote(handoff_id, safe='')}/aceite", json={"user_id": str(user_id)},
+        ))
+
+    async def opt_in(self, lead_ref: str, *, origem: str, em: Optional[datetime] = None) -> ConsentInfo:
+        body: dict[str, Any] = {"origem": origem}
+        if em is not None:
+            body["em"] = em.isoformat()
+        return parse_consent(await self._send("PUT", f"/api/channels/leads/{quote(lead_ref, safe='')}/opt-in", json=body))
+
+    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo:
+        body: dict[str, Any] = {"em": em.isoformat()} if em is not None else {}
+        return parse_consent(await self._send("POST", f"/api/channels/leads/{quote(lead_ref, safe='')}/opt-out", json=body))
+
+    async def controle(self, agent_key: str) -> ControleInfo:
+        """`GET /api/channels/agents/{key}/controle`: read-only for SW (mode + drain progress). SW never decides the
+        mode and never gates on a cached copy of this -- the turn endpoint decides."""
+        return parse_controle(await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/controle"))
+
+    async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]:
+        """`GET /api/channels/leads/{ref}/qualificacao`: the full computed state. None = nothing recorded yet."""
+        try:
+            return parse_qualificacao_estado(
+                await self._send("GET", f"/api/channels/leads/{quote(lead_ref, safe='')}/qualificacao")
+            )
+        except LeadSemQualificacao:
+            return None
+
+    async def identificacao_mascarada(self, lead_ref: str) -> Optional[dict[str, Any]]:
+        """`GET /api/channels/leads/{ref}/identificacao`: MASKED identity fields only. None = nothing recorded."""
+        try:
+            out = await self._send("GET", f"/api/channels/leads/{quote(lead_ref, safe='')}/identificacao")
+        except LeadSemQualificacao:
+            return None
+        return out if isinstance(out, dict) else None
+
+    async def feedback_mensagem(
+        self, message_id: str, *, nota: str, user_id: str, comentario: Optional[str] = None,
+    ) -> None:
+        """`POST /api/channels/messages/{id}/feedback`: like / dislike forwarded from SW (the agent's learning signal)."""
+        if nota not in ("like", "dislike"):
+            raise ValueError("nota is 'like' or 'dislike'")
+        body: dict[str, Any] = {"nota": nota, "user_id": str(user_id), "origem": "sw"}
+        if comentario:
+            body["comentario"] = comentario[:1000]
+        await self._send("POST", f"/api/channels/messages/{quote(message_id, safe='')}/feedback", json=body)
 
 
 # ── factory ─────────────────────────────────────────────────────────────────
@@ -703,12 +1389,16 @@ def make_agents_client(
 
 
 __all__ = [
-    "AgentNotFound", "AgentStatus", "AgentUso", "AgentUnavailable", "AgentsBadRequest", "AgentsClient",
-    "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid",
-    "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DecisaoRequest",
-    "DecisaoResult", "DeletionRequest",
-    "DeletionResult", "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
-    "JuliaAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
-    "ResumoResult", "TurnInProgress", "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client",
-    "parse_agent_status", "parse_decisao_result", "parse_uso", "parse_resumo_result", "parse_turn_result",
+    "Action", "AgentNotFound", "AgentStatus", "AgentUnavailable", "AgentUso", "AgentsBadRequest", "AgentsClient",
+    "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid", "AgentsUpstreamError",
+    "AppendResult", "CapacityExceeded", "ConsentInfo", "ControleIndisponivel", "ControleInfo", "ConversationNotFound",
+    "DecisaoRequest", "DecisaoResult", "DeletionRequest", "DeletionResult", "FAKE_ESTAGIOS", "FakeAgentsClient",
+    "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
+    "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadSemQualificacao", "LlmNotConfigured",
+    "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",
+    "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO",
+    "STATUS_TURNO", "ThreadInfo", "ThreadNotFound", "TransicaoInvalida", "TurnInProgress",
+    "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status", "parse_consent",
+    "parse_controle", "parse_decisao_result", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
+    "parse_thread", "parse_turn_result", "parse_uso",
 ]

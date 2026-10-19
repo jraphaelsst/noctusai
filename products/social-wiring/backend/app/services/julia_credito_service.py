@@ -150,18 +150,12 @@ def registrar_consentimento(client: Any, org_id: UUID | str, contato_id: UUID | 
 
 
 # -- contexto -------------------------------------------------------------------------
-def _estado_extra(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
-    """`estado.credito` while the analysis applies to the contato (absent otherwise: the agent sees nothing)."""
+def _estado_credito(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]:
+    """`estado.credito` while the analysis applies to the contato (absent otherwise: the agent sees nothing).
+    `consentimento` is None until the lead answered. Data only -- how agents asks lives in agents' DB."""
     if not aplica(ler_config(ctx.client, ctx.org_id), ctx.contato):
         return {}
     return {"credito": {"ativo": True, "consentimento": consentimento_estado(ctx.client, ctx.contato["id"])}}
-
-
-def _acoes_extra(ctx: julia_contexto_service.ContextoCtx) -> list[str]:
-    """`consentimento_credito` is offered while the analysis applies and the lead has not already consented."""
-    if not aplica(ler_config(ctx.client, ctx.org_id), ctx.contato):
-        return []
-    return [] if consentimento_estado(ctx.client, ctx.contato["id"]) is True else [ACAO_CONSENTIMENTO]
 
 
 # -- the analysis ---------------------------------------------------------------------
@@ -315,8 +309,7 @@ def registrar() -> None:
     """Bind every registry slot wave 13 owns (idempotent); called once at import of the router."""
     julia_acoes_service.registrar_handler(ACAO_CONSENTIMENTO, _h_consentimento)
     julia_acoes_service.registrar_pos_acao("pedido_visita", _pos_pedido_visita)
-    julia_contexto_service.registrar_estado_extra(_estado_extra)
-    julia_contexto_service.registrar_acoes_extra(_acoes_extra)
+    julia_contexto_service.registrar_estado_extra(_estado_credito)
 
 
 # -- reads ----------------------------------------------------------------------------

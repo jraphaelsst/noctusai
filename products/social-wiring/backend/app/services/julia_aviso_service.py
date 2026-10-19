@@ -19,10 +19,12 @@ logger = logging.getLogger(__name__)
 TABLE = "julia_aviso_privacidade"
 A_DEFINIR = "a definir"
 LINK_TOKEN = "{link}"
-MENSAGEM_INICIAL_PADRAO = (
-    "Oi! Eu sou a Julia, assistente virtual da {empresa}. 😊 "
-    "Como tratamos seus dados: {link}"
-)
+#: The default opening message is a DATA row (`julia_textos_padrao`, migration 289), not a string in code: it names the
+#: agent through the `{agente}` placeholder (resolved from agents' status name at send time) and the controller through
+#: `{empresa}` / `{link}`.
+TABLE_TEXTOS = "julia_textos_padrao"
+TEXTO_MENSAGEM_INICIAL = "mensagem_inicial"
+AGENTE_TOKEN = "{agente}"
 RETENCAO_DIAS = 180
 
 # Fields the PUBLIC endpoint may expose -- nothing else, ever.
@@ -98,6 +100,18 @@ def _tabela(client: Any):
     return client.table(TABLE)
 
 
+def texto_padrao(client: Any, chave: str) -> str:
+    """A platform default text from `julia_textos_padrao`. There is NO fallback string in code: a missing row is a
+    503 (`texto_padrao_ausente`) -- the migration that seeds it was not applied."""
+    from noctusai_lib.primitives.exceptions import AppException
+
+    rows = client.table(TABLE_TEXTOS).select("conteudo").eq("chave", chave).limit(1).execute().data or []
+    texto = (rows[0].get("conteudo") or "").strip() if rows else ""
+    if not texto:
+        raise AppException("texto_padrao_ausente", f"O texto padrão '{chave}' não está cadastrado.", status_code=503)
+    return texto
+
+
 def buscar_por_org(client: Any, org_id: UUID) -> dict[str, Any] | None:
     resp = _tabela(client).select("*").eq("org_id", str(org_id)).limit(1).execute()
     rows = resp.data or []
@@ -148,7 +162,7 @@ def obter_ou_criar(client: Any, core_client: Any, org_id: UUID) -> dict[str, Any
         "contato_email": None,
         "contato_whatsapp": None,
         "secoes": secoes_padrao(empresa, None, None),
-        "mensagem_inicial": MENSAGEM_INICIAL_PADRAO,
+        "mensagem_inicial": texto_padrao(client, TEXTO_MENSAGEM_INICIAL),
         "versao": 1,
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
         "atualizado_por": None,
