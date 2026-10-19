@@ -5,7 +5,8 @@
  *   GET     /api/supervisao/scorecards?dia=…      → ScorecardsDia      (owner only)
  *   GET     /api/supervisao/handoffs?status=…     → HandoffsPagina     (owner/admin)
  *
- * Bodies are not wrapped in `{data}`. Ratios are FRACTIONS; a metric that is
+ * Success bodies arrive as `{data: …}` (contract §4); the seed `api` client does
+ * not unwrap them, so every fetcher here does. Ratios are FRACTIONS; a metric that is
  * `null` or absent means "no data" and is never coerced to 0 here.
  *
  * Loading = two signals off `data` (never `isLoading`), computed in the hook.
@@ -13,6 +14,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { codigoErro } from "@/hooks/useAtendimentoBlocos";
 
 export interface SupervisaoConfig {
   supervisao_ativa: boolean;
@@ -60,6 +62,13 @@ export interface HandoffsPagina {
   proximo_cursor: string | null;
 }
 
+/** A 4xx (403 not-owner, 422 bad day) is an answer, not a blip — only retry
+ * transport failures and 5xx. */
+function repetirSoFalhaTransitoria(tentativas: number, err: unknown): boolean {
+  const s = statusDe(err);
+  return (s === null || s >= 500) && tentativas < 2;
+}
+
 export const SUPERVISAO_KEY = ["sw", "supervisao"] as const;
 export const HORAS_MIN = 1;
 export const HORAS_MAX = 168;
@@ -67,9 +76,8 @@ export const HORAS_MAX = 168;
 export function useSupervisaoConfig() {
   const q = useQuery({
     queryKey: [...SUPERVISAO_KEY, "config"] as const,
-    queryFn: () => api.get<SupervisaoConfig>("/api/supervisao/config"),
-    // A 403 (not the owner) is an answer, not a blip — don't retry it.
-    retry: (n, err) => statusDe(err) !== 403 && n < 2,
+    queryFn: async () => (await api.get<{ data: SupervisaoConfig }>("/api/supervisao/config")).data,
+    retry: repetirSoFalhaTransitoria,
   });
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }
@@ -77,7 +85,7 @@ export function useSupervisaoConfig() {
 export function useSalvarSupervisaoConfig() {
   const qc = useQueryClient();
   return useMutation<SupervisaoConfig, unknown, { supervisao_ativa: boolean; horas_para_assumir: number }>({
-    mutationFn: (body) => api.put<SupervisaoConfig>("/api/supervisao/config", body),
+    mutationFn: async (body) => (await api.put<{ data: SupervisaoConfig }>("/api/supervisao/config", body)).data,
     onSuccess: (estado) => {
       qc.setQueryData([...SUPERVISAO_KEY, "config"], estado);
       // Scorecards / handoffs echo `supervisao_ativa` — refetch them.
@@ -96,7 +104,9 @@ export function useSalvarSupervisaoConfig() {
 export function useScorecards(dia: string, enabled = true) {
   const q = useQuery({
     queryKey: [...SUPERVISAO_KEY, "scorecards", dia] as const,
-    queryFn: () => api.get<ScorecardsDia>(`/api/supervisao/scorecards?dia=${encodeURIComponent(dia)}`),
+    queryFn: async () =>
+      (await api.get<{ data: ScorecardsDia }>(`/api/supervisao/scorecards?dia=${encodeURIComponent(dia)}`)).data,
+    retry: repetirSoFalhaTransitoria,
     placeholderData: (prev) => prev,
     enabled,
   });
@@ -108,13 +118,14 @@ export function useHandoffsPendentes(enabled = true) {
   const q = useInfiniteQuery({
     queryKey: [...SUPERVISAO_KEY, "handoffs", "emitido"] as const,
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => {
+    queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams({ status: "emitido", limit: "50" });
       if (pageParam) params.set("cursor", pageParam);
-      return api.get<HandoffsPagina>(`/api/supervisao/handoffs?${params.toString()}`);
+      return (await api.get<{ data: HandoffsPagina }>(`/api/supervisao/handoffs?${params.toString()}`)).data;
     },
     getNextPageParam: (ultima) => ultima.proximo_cursor,
     enabled,
+    retry: repetirSoFalhaTransitoria,
   });
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }
@@ -122,6 +133,13 @@ export function useHandoffsPendentes(enabled = true) {
 export function statusDe(err: unknown): number | null {
   const s = (err as { status?: unknown } | null)?.status;
   return typeof s === "number" ? s : null;
+}
+
+/** The owner-only routes' stable refusal (§4.5): 403 `exclusivo_proprietario`. */
+export const EXCLUSIVO_PROPRIETARIO = "exclusivo_proprietario";
+
+export function ehExclusivoProprietario(err: unknown): boolean {
+  return statusDe(err) === 403 && codigoErro(err) === EXCLUSIVO_PROPRIETARIO;
 }
 
 // ── SP calendar days (contract §3.1: `dia` is America/Sao_Paulo) ──────────

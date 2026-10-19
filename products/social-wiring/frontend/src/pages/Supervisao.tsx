@@ -1,6 +1,6 @@
 /**
  * Supervisão (`/supervisao`, status_pagina `supervisao`) — maya-blocks
- * CONTRACT §3 + §4.3/§4.4/§4.5. Owner only.
+ * CONTRACT §3 + §4.3/§4.4/§4.5.
  *
  *   1. the supervision switch + `horas_para_assumir` (§4.5);
  *   2. Maya's daily scorecard per block/agent for a chosen SP day (§4.3) —
@@ -8,10 +8,15 @@
  *   3. handoff aging (§4.4): handoffs still `emitido`, the `atrasado` ones
  *      (past `horas_para_assumir` with nobody taking over) highlighted.
  *
- * Owner-only is enforced by the SERVER (403). The page asks the config first
- * and, on 403, explains instead of rendering the rest — there is no seed
- * "is owner" UX predicate to mirror the backend's `admin_roles={"owner"}`
- * client-side, and inventing one would be a second hand-copied role check.
+ * Roles are enforced by the SERVER. Config + scorecards are owner-only: a 403
+ * with code `exclusivo_proprietario` renders "exclusiva do proprietário" (there
+ * is no seed "is owner" UX predicate; inventing one would be a second
+ * hand-copied role check). Handoffs are owner/admin (§4.4), so an admin still
+ * gets the handoff-aging section; a generic 403 there explains that one.
+ *
+ * Scorecard history is returned whatever the switch says (§4.3): with
+ * supervision off the page still shows past days, labelled "histórico
+ * preservado" — only new days stop being computed.
  *
  * Missing metric data renders "sem dados", never 0.
  */
@@ -41,6 +46,7 @@ import {
   HORAS_MIN,
   formatarDia,
   ontemSP,
+  ehExclusivoProprietario,
   statusDe,
   useHandoffsPendentes,
   useSalvarSupervisaoConfig,
@@ -229,6 +235,8 @@ function ScorecardsSecao({ rotuloBloco }: { rotuloBloco: (b: string) => string }
       </div>
       {q.showSkeleton ? (
         <div data-testid="scorecards-skeleton"><Skeleton className="h-40 w-full" /></div>
+      ) : q.isError && !q.data && ehExclusivoProprietario(q.error) ? (
+        <AvisoExclusivo />
       ) : q.isError && !q.data ? (
         <Alerta testId="scorecards-erro">
           {mensagemErroServidor(q.error, "Não foi possível carregar os scorecards.")}{" "}
@@ -236,21 +244,30 @@ function ScorecardsSecao({ rotuloBloco }: { rotuloBloco: (b: string) => string }
             Tentar de novo
           </button>
         </Alerta>
-      ) : q.data && !q.data.supervisao_ativa ? (
-        <Aviso testId="scorecards-off">Supervisão desligada — ative para a Maya começar a avaliar.</Aviso>
-      ) : q.data && q.data.scorecards.length === 0 ? (
-        <Aviso testId="scorecards-vazio">
-          Ainda não há scorecard para {formatarDia(q.data.dia)}. A Maya calcula os scorecards toda noite para os blocos
-          supervisionados — confira se algum bloco está marcado como supervisionado em “Blocos do atendimento”.
-        </Aviso>
       ) : q.data ? (
-        <TooltipProvider delayDuration={150}>
-          <div className="space-y-3" data-testid="scorecards-lista">
-            {q.data.scorecards.map((sc) => (
-              <ScorecardCard key={`${sc.bloco}:${sc.agent_key ?? "humanos"}`} sc={sc} rotuloBloco={rotuloBloco} />
-            ))}
-          </div>
-        </TooltipProvider>
+        <>
+          {!q.data.supervisao_ativa && (
+            <Aviso testId="scorecards-off">
+              Supervisão desligada — histórico preservado. Os dias anteriores continuam aqui; a Maya só volta a calcular
+              dias novos quando a supervisão for ligada.
+            </Aviso>
+          )}
+          {q.data.scorecards.length === 0 ? (
+            <Aviso testId="scorecards-vazio">
+              {q.data.supervisao_ativa
+                ? `Ainda não há scorecard para ${formatarDia(q.data.dia)}. A Maya calcula os scorecards toda noite para os blocos supervisionados — confira se algum bloco está marcado como supervisionado em “Blocos do atendimento”.`
+                : `Nenhum scorecard guardado para ${formatarDia(q.data.dia)}.`}
+            </Aviso>
+          ) : (
+            <TooltipProvider delayDuration={150}>
+              <div className="space-y-3" data-testid="scorecards-lista">
+                {q.data.scorecards.map((sc) => (
+                  <ScorecardCard key={`${sc.bloco}:${sc.agent_key ?? "humanos"}`} sc={sc} rotuloBloco={rotuloBloco} />
+                ))}
+              </div>
+            </TooltipProvider>
+          )}
+        </>
       ) : null}
     </section>
   );
@@ -262,7 +279,8 @@ function horasDesde(iso: string, agora: number): number {
   return Math.max(0, Math.floor((agora - new Date(iso).getTime()) / 3_600_000));
 }
 
-function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number; rotuloBloco: (b: string) => string }) {
+/** `horasPrazo` is null when the viewer cannot read the owner-only config (an admin). */
+function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number | null; rotuloBloco: (b: string) => string }) {
   const q = useHandoffsPendentes();
   const itens: Handoff[] = useMemo(() => q.data?.pages.flatMap((p) => p.itens) ?? [], [q.data]);
   const atrasados = itens.filter((h) => h.atrasado).length;
@@ -274,7 +292,8 @@ function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number; rotulo
         <div>
           <h2 className="text-lg font-semibold">Handoffs aguardando</h2>
           <p className="text-xs text-muted-foreground">
-            Passagens entre blocos que ninguém assumiu ainda. Em destaque, as que passaram de {horasPrazo} h.
+            Passagens entre blocos que ninguém assumiu ainda. Em destaque, as que passaram do prazo
+            {horasPrazo !== null ? ` de ${horasPrazo} h` : ""}.
           </p>
         </div>
         {q.isRefreshing && (
@@ -285,6 +304,10 @@ function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number; rotulo
       </div>
       {q.showSkeleton ? (
         <div data-testid="handoffs-skeleton"><Skeleton className="h-24 w-full" /></div>
+      ) : q.isError && !q.data && statusDe(q.error) === 403 ? (
+        <Aviso testId="handoffs-proibido">
+          Os handoffs são visíveis apenas para o proprietário e os administradores da organização.
+        </Aviso>
       ) : q.isError && !q.data ? (
         <Alerta testId="handoffs-erro">
           {mensagemErroServidor(q.error, "Não foi possível carregar os handoffs.")}{" "}
@@ -293,14 +316,16 @@ function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number; rotulo
           </button>
         </Alerta>
       ) : itens.length === 0 ? (
-        <Aviso testId="handoffs-vazio">Nenhum handoff aguardando — todas as passagens recentes foram assumidas.</Aviso>
+        <Aviso testId="handoffs-vazio">
+          Nenhum handoff aguardando nos últimos 7 dias — as passagens recentes foram assumidas.
+        </Aviso>
       ) : (
         <>
           {atrasados > 0 && (
             <p className="flex items-center gap-2 text-sm font-medium text-destructive" data-testid="handoffs-atrasados">
               <AlertTriangle className="h-4 w-4" />
-              {atrasados === 1 ? "1 handoff passou" : `${atrasados} handoffs passaram`} do prazo de {horasPrazo} h sem
-              ninguém assumir.
+              {atrasados === 1 ? "1 handoff passou" : `${atrasados} handoffs passaram`} do prazo
+              {horasPrazo !== null ? ` de ${horasPrazo} h` : ""} sem ninguém assumir.
             </p>
           )}
           <Card>
@@ -352,13 +377,22 @@ function HandoffsSecao({ horasPrazo, rotuloBloco }: { horasPrazo: number; rotulo
   );
 }
 
+function AvisoExclusivo() {
+  return (
+    <Aviso testId="supervisao-proibido">
+      A configuração e os scorecards da Supervisão são exclusivos do proprietário da organização. Peça ao proprietário
+      para consultar os relatórios da Maya.
+    </Aviso>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────
 
 export default function Supervisao() {
   const config = useSupervisaoConfig();
   const blocos = useAtendimentoBlocos();
   const rotuloBloco = (b: string) => blocos.data?.blocos.find((x) => x.bloco === b)?.rotulo ?? b;
-  const proibido = statusDe(config.error) === 403;
+  const exclusivo = ehExclusivoProprietario(config.error);
 
   return (
     <div className="container max-w-6xl space-y-6 py-6">
@@ -378,11 +412,9 @@ export default function Supervisao() {
 
       {config.showSkeleton ? (
         <div data-testid="supervisao-skeleton"><Skeleton className="h-28 w-full" /></div>
-      ) : proibido && !config.data ? (
-        <Aviso testId="supervisao-proibido">
-          A Supervisão é exclusiva do proprietário da organização. Peça ao proprietário para consultar os relatórios da
-          Maya.
-        </Aviso>
+      ) : exclusivo && !config.data ? (
+        // Admin/member: config + scorecards are owner-only; handoffs below still load (§4.4 owner/admin).
+        <AvisoExclusivo />
       ) : config.isError && !config.data ? (
         <Alerta testId="supervisao-erro">
           {mensagemErroServidor(config.error, "Não foi possível carregar a supervisão.")}{" "}
@@ -393,17 +425,17 @@ export default function Supervisao() {
       ) : config.data ? (
         <>
           <ConfigCard key={`${config.data.updated_at ?? "padrao"}:${String(config.data.supervisao_ativa)}`} config={config.data} />
-          {config.data.supervisao_ativa ? (
-            <>
-              <ScorecardsSecao rotuloBloco={rotuloBloco} />
-              <HandoffsSecao horasPrazo={config.data.horas_para_assumir} rotuloBloco={rotuloBloco} />
-            </>
-          ) : (
-            // Off ⇒ the API returns no scorecards and no handoffs (§4.3/§4.4): nothing to ask for.
-            <Aviso testId="supervisao-desligada">Supervisão desligada — ative para a Maya começar a avaliar.</Aviso>
+          {!config.data.supervisao_ativa && (
+            <Aviso testId="supervisao-desligada">
+              Supervisão desligada — ative para a Maya começar a avaliar os próximos dias. O histórico continua abaixo.
+            </Aviso>
           )}
+          <ScorecardsSecao rotuloBloco={rotuloBloco} />
         </>
       ) : null}
+      {!config.showSkeleton && (
+        <HandoffsSecao horasPrazo={config.data?.horas_para_assumir ?? null} rotuloBloco={rotuloBloco} />
+      )}
     </div>
   );
 }

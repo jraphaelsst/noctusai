@@ -1,4 +1,5 @@
-/** Blocos do atendimento — maya-blocks CONTRACT §4.1/§4.2 (fixtures shaped by the contract). */
+/** Blocos do atendimento — maya-blocks CONTRACT §4.1/§4.2. Fixtures use the real wire shape
+ * (`{data: …}` success envelope, `{error: {code, message}}` refusals — backend tests/modules/atendimento_blocos). */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -42,7 +43,7 @@ function setup(get: (url: string) => Promise<unknown> = defaultGet) {
   return render(<QueryClientProvider client={qc}><AtendimentoBlocos /></QueryClientProvider>);
 }
 function defaultGet(url: string): Promise<unknown> {
-  if (url === "/api/atendimento-blocos") return Promise.resolve(CFG);
+  if (url === "/api/atendimento-blocos") return Promise.resolve({ data: CFG });
   if (url === "/api/funil/etapas") return Promise.resolve({ data: FUNIL });
   if (url === "/api/processos-venda/etapas") return Promise.resolve({ data: [] });
   return Promise.reject(new Error(`unexpected GET ${url}`));
@@ -74,7 +75,7 @@ describe("Blocos do atendimento", () => {
 
   it("saves only the changed blocks (partial PUT, no pipeline) and leaves edit mode", async () => {
     const depois = { ...CFG, blocos: CFG.blocos.map((b) => (b.bloco === "atendimento" ? { ...b, ativo: true, origem: "org", etapas: ["qualificacao", "visitas", "proposta_recebida", "pos_venda"] } : b)) };
-    api.put.mockResolvedValue(depois);
+    api.put.mockResolvedValue({ data: depois });
     setup();
     fireEvent.click(await screen.findByTestId("blocos-editar"));
     expect((screen.getByTestId("blocos-salvar") as HTMLButtonElement).disabled).toBe(true);

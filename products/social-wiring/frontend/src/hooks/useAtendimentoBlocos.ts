@@ -4,7 +4,8 @@
  *   GET /api/atendimento-blocos   → BlocosConfig (any org member)
  *   PUT /api/atendimento-blocos   → BlocosConfig (owner/admin; partial body)
  *
- * The body is NOT wrapped in `{data}` (contract §4). The closed block list,
+ * Success bodies arrive as `{data: …}` (contract §4) and the seed `api` client
+ * does not unwrap them — the fetchers here do. The closed block list,
  * its order, labels, pipelines and the allowed agents all come FROM the
  * server — this file never re-declares them (the backend `BLOCOS` constant is
  * the one source).
@@ -67,7 +68,7 @@ export function rotuloAgente(agentKey: string | null): string {
 export function useAtendimentoBlocos() {
   const q = useQuery({
     queryKey: BLOCOS_KEY,
-    queryFn: () => api.get<BlocosConfig>(PATH),
+    queryFn: async () => (await api.get<{ data: BlocosConfig }>(PATH)).data,
   });
   return {
     ...q,
@@ -79,7 +80,7 @@ export function useAtendimentoBlocos() {
 export function useSalvarAtendimentoBlocos() {
   const qc = useQueryClient();
   return useMutation<BlocosConfig, unknown, BlocoAlteracao[]>({
-    mutationFn: (blocos) => api.put<BlocosConfig>(PATH, { blocos }),
+    mutationFn: async (blocos) => (await api.put<{ data: BlocosConfig }>(PATH, { blocos })).data,
     // 200 = the state after (§4.2) — seed the cache with it, no refetch needed.
     onSuccess: (estado) => qc.setQueryData(BLOCOS_KEY, estado),
     // A concurrent save means our copy is stale: re-GET (the contract's remedy).
