@@ -93,10 +93,19 @@ _VALOR_LABELS = (
     "MATRICULA",
 )
 
-#: `412.954.238-98` or `41295423898`. The lookarounds are load-bearing: without
-#: them the bare-digit alternative would match the first eleven digits of a
-#: longer run — a fourteen-digit CNPJ, or a matrícula.
-_CPF_RE = re.compile(r"(?<![\d.-])(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})(?![\d.-])")
+#: `412.954.238-98` or `41295423898` — or the SLASH form `412954238/98` (also
+#: `412.954.238/98`) that the São Paulo RG (2nd-via cédula, IIRGD) prints in
+#: its `CPF` box: the check digits after a `/`, not a `-`. Measured on a real
+#: deal-876 RG, two vision reads both transcribed `CPF: NNNNNNNNN/DD` — the
+#: holder's own CPF, DV-valid, never read because only the dash form
+#: matched. The DV gate below judges the slash form exactly like the others.
+#: The lookarounds are load-bearing: without them the bare-digit alternative
+#: would match the first eleven digits of a longer run — a fourteen-digit
+#: CNPJ, or a matrícula — and the slash alternative the tail of a `/`-joined
+#: run (`LV.B123/FLS.45/...` never has nine bare digits before its slash).
+_CPF_RE = re.compile(
+    r"(?<![\d./-])(\d{3}\.\d{3}\.\d{3}[-/]\d{2}|\d{9}/\d{2}|\d{11})(?![\d./-])"
+)
 
 
 def normalize(text: str) -> str:

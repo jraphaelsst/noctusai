@@ -95,6 +95,42 @@ class TestLabelled:
         assert (valor, conf) == (INVALIDO, "baixa")
 
 
+class TestSlashForm:
+    """The São Paulo RG (IIRGD cédula) prints its holder's CPF as
+    `NNNNNNNNN/DD` — check digits after a SLASH. Shape taken from a real
+    deal-876 RG transcription (two vision reads, both identical), digits
+    replaced by the fixture CPF: the line sits between the certidão
+    reference and the director's signature."""
+
+    TRANSCRICAO = (
+        "REGISTRO GERAL 19.131.047-5 DATA DE EXPEDIÇÃO 27/04/2017\n"
+        "NOME CILENE AFRA RAMOS NERY\n"
+        "DOC. ORIGEM OSASCO-SP PRIMEIRO SUBDISTRITO CC:LV.B176/FLS.187/Nº53069\n"
+        "CPF: {cpf}\n"
+        "ASSINATURA DO DIRETOR"
+    )
+
+    def test_the_slash_form_under_its_label_reads_high(self):
+        valor, conf, rotulo = find_cpf(self.TRANSCRICAO.format(cpf="412954238/98"))
+        assert (valor, conf, rotulo) == (VALIDO, "alta", "CPF")
+
+    def test_the_dotted_slash_form_reads_too(self):
+        valor, conf, _ = find_cpf("CPF 412.954.238/98")
+        assert (valor, conf) == (VALIDO, "alta")
+
+    def test_a_slash_form_whose_check_digits_fail_is_only_a_suggestion(self):
+        valor, conf, _ = find_cpf(self.TRANSCRICAO.format(cpf="412954238/99"))
+        assert (valor, conf) == (INVALIDO, "baixa")
+
+    def test_a_date_or_a_book_folio_is_never_a_slash_cpf(self):
+        """`27/04/2017` and `LV.B176/FLS.187` share the slash, never the shape."""
+        assert find_cpf(self.TRANSCRICAO.format(cpf="")) == (None, "nenhuma", None)
+
+    def test_the_tail_of_a_longer_slash_run_is_not_sliced(self):
+        assert find_cpf("PROCESSO 1412954238/98") == (None, "nenhuma", None)
+        assert find_cpf("PROCESSO 412954238/981") == (None, "nenhuma", None)
+
+
 class TestUnlabelled:
     def test_a_valid_cpf_with_no_label_is_a_low_confidence_suggestion(self):
         """The bare CPF printed under the photo on a modern RG.

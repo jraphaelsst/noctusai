@@ -18,8 +18,11 @@ import re
 
 from noctusai_lib.primitives import identificador as _idf
 
-_CPF_FORMATADO = re.compile(r"(?<!\d)\d{3}\.\d{3}\.\d{3}-\d{2}(?!\d)")
-_CPF_ROTULADO = re.compile(r"\bCPF\b\D{0,12}?(\d{11})(?!\d)", re.IGNORECASE)
+#: The dash form, and the SLASH form the São Paulo RG prints its CPF in
+#: (`NNN.NNN.NNN/DD`, `NNNNNNNNN/DD` — same shapes `cpf.find_cpf` reads, so a
+#: mis-copied slash CPF fails the anchor exactly like a mis-copied dash one).
+_CPF_FORMATADO = re.compile(r"(?<!\d)\d{3}\.\d{3}\.\d{3}[-/]\d{2}(?!\d)")
+_CPF_ROTULADO = re.compile(r"\bCPF\b\D{0,12}?(\d{11}|\d{9}/\d{2})(?![\d/])", re.IGNORECASE)
 _MATRICULA_32 = re.compile(r"(?<!\d)(?:\d[ .\-]?){31}\d(?!\d)")
 
 
