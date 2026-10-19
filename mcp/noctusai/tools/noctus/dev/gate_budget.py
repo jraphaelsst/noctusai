@@ -33,13 +33,21 @@ GATE_BUDGETS_S: dict[str, int] = {
     # toolkit: full suite is the long pole; scoped is test files the diff touched.
     "mcp_toolkit_tests": 300,
     "mcp_toolkit_tests:scoped": 240,
+    # non-suite gates gate_sweep can emit (declared, so none rides the default)
+    "keeper_meta": 180,
+    "keeper_delta": 120,
+    "migration_replay": 300,
+    "kb_sync_verify": 120,
+    "claude_md_router": 60,
     # generic product legs
     "pytest:": 300,
     "e2e:": 300,
     "vite_build:": 240,
 }
 
-# Anything not matched above (keepers, kb_sync, router checks) is cheap.
+# Fallback for a gate name with NO declared row. Never silent: it is reported
+# as a `budget_defaulted` warning on the integrate result, and a test asserts
+# every gate name gate_sweep can emit has a declared row.
 DEFAULT_BUDGET_S = 120
 
 # Upper bound on the whole merged-tip phase (parallel gates + any queued behind
@@ -47,9 +55,8 @@ DEFAULT_BUDGET_S = 120
 DEFAULT_OVERALL_CEILING_S = 900
 
 
-def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int:
-    """Budget in seconds for `gate`: caller overrides, then exact table row,
-    then the longest matching prefix, then DEFAULT_BUDGET_S."""
+def declared_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int | None:
+    """Declared budget (overrides, then exact row, then longest prefix) or None."""
     for table in (overrides or {}, GATE_BUDGETS_S):
         if gate in table:
             return int(table[gate])
@@ -60,7 +67,20 @@ def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> i
                     best = key
         if best is not None:
             return int(table[best])
-    return DEFAULT_BUDGET_S
+    return None
+
+
+def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int:
+    """Budget in seconds for `gate`; DEFAULT_BUDGET_S only when undeclared."""
+    declared = declared_gate_budget(gate, overrides)
+    return DEFAULT_BUDGET_S if declared is None else declared
+
+
+def budget_defaulted_warnings(gate_names: list[str]) -> list[dict[str, object]]:
+    """One `budget_defaulted` warning per gate that had no declared budget."""
+    return [{"warning": "budget_defaulted", "gate": g, "budget_s": DEFAULT_BUDGET_S,
+             "fix": "add a row to gate_budget.GATE_BUDGETS_S"}
+            for g in gate_names if declared_gate_budget(g) is None]
 
 
 def is_timeout_summary(summary: str | None) -> bool:

@@ -3675,3 +3675,52 @@ class TestMergedTipGateBudgets:
         import inspect
         sig = inspect.signature(T.task_branch)
         assert sig.parameters["merged_tip_timeout"].default >= 480
+
+
+class TestEveryEmittableGateHasADeclaredBudget:
+    """No silent fallback: every gate name gate_sweep can emit resolves to a
+    declared GATE_BUDGETS_S row (exact or prefix), derived from its builders."""
+
+    def _emitted_names(self, monkeypatch):
+        import tools.noctus.dev.gate_sweep as gs
+        root = Path(__file__).resolve().parents[3]
+        slugs = gs._all_product_slugs(root)
+        names = set()
+        files = (["seed/lib/backend/x.py", gs._COMPLIANCE_REL,
+                  "products/%s/backend/x.py" % slugs[0],
+                  "products/%s/backend/migrations/001_a.sql" % slugs[0]]
+                 + ["products/%s/backend/x.py" % s for s in slugs])
+        for scoped in (None, (["mcp/noctusai/tests/test_x.py"], [])):
+            monkeypatch.setattr(gs, "_mcp_scoped_test_files", lambda *a, _s=scoped, **k: _s)
+            scope = gs._derive_scope(files)
+            scope["base_ref"] = "origin/dev"
+            names |= {sp.gate for sp in gs._build_gate_specs(root, scope)}
+        # seed fan-out also covers the vitest roots
+        names |= {sp.gate for sp in gs._seed_gate_specs(root, "python")}
+        for docs in (["KNOWLEDGE-BASE/x.md"], ["CLAUDE.md"]):
+            scope = gs._derive_scope(docs)
+            names |= {sp.gate for sp in gs._build_gate_specs(root, scope)}
+        return names
+
+    def test_all_emittable_gates_have_declared_budget(self, monkeypatch):
+        from tools.noctus.dev import gate_budget as gb
+        names = self._emitted_names(monkeypatch)
+        assert {"keeper_meta", "migration_replay", "kb_sync_verify", "claude_md_router",
+                "mcp_toolkit_tests", "mcp_toolkit_tests:scoped"} <= names, names
+        assert any(n.startswith("pytest:seed/") for n in names)
+        undeclared = sorted(n for n in names if gb.declared_gate_budget(n) is None)
+        assert undeclared == [], f"gate(s) riding the silent default budget: {undeclared}"
+
+    def test_budget_defaulted_warning_on_integrate_result(self):
+        t = TestMergedTipVerificationMechanism()
+        fake = t._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "green", "gates": [
+                {"gate": "brand_new_gate", "ran": True, "exit_code": 0}],
+                "scope": {"products": [], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "integrated", res
+        assert [d["gate"] for d in res["budget_defaulted"]] == ["brand_new_gate"]

@@ -2639,6 +2639,15 @@ def task_branch(
                         + f" — reason: {accepted_unmeasured['reason']}.")
                 if merged_tip_result is not None:
                     result["merged_tip_check"] = merged_tip_result
+                    defaulted = _gate_budget.budget_defaulted_warnings(
+                        [str(g.get("gate", "")) for g in
+                         (merged_tip_result.get("gates") or []) if g.get("ran") or
+                         _gate_budget.is_timeout_summary(g.get("summary"))])
+                    if defaulted:
+                        result["budget_defaulted"] = defaulted
+                        result["message"] += (
+                            " budget_defaulted (no declared gate budget): "
+                            + ", ".join(d["gate"] for d in defaulted) + ".")
                     if baseline_note:
                         result["message"] += baseline_note
                     unmeasured = _unmeasured_gates(merged_tip_result)
