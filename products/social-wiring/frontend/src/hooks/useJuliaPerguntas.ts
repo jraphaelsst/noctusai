@@ -15,7 +15,6 @@ import { mensagemErroServidor } from "@/lib/erroServidor";
 export interface JuliaPergunta {
   chave: string;
   label: string;
-  dica: string | null;
   categoria: string;
   operacao: "compra" | "aluguel" | null;
   ativa: boolean;

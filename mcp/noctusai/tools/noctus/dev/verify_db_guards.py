@@ -9655,6 +9655,84 @@ _IGIG_BROWSER_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = _browser_lockdown_probes
 )
 
 
+#: Migration 289 -- julia_* / lais_* are backend-only (security audit 2026-10-19 H1/H2). Unapplied: `violation`
+#: (state) / `permitted` (write) -- exactly what the predeploy db_guards leg must block on until 289 is applied.
+_M_JULIA_LOCKDOWN = "289_julia_db_lockdown.sql"
+_JULIA_REL_PRED = r"c.relkind IN ('r', 'p', 'v', 'm') AND (c.relname LIKE 'julia\_%' OR c.relname LIKE 'lais\_%')"
+
+_SW_JULIA_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="julia_lockdown.no_caller_grants",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="julia_db_lockdown",
+        kind="state_assertion",
+        migrations=(_M_JULIA_LOCKDOWN,),
+        rationale=(
+            "Lead PII lives in julia_*; the API enforces the per-lead A7 rule, so any anon/authenticated/PUBLIC grant "
+            "on a julia_* table or lais_* compat view lets every org member read it over PostgREST, bypassing A7."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
+                "LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a "
+                f"WHERE n.nspname = 'social_wiring' AND {_JULIA_REL_PRED} "
+                "AND (a.grantee = 0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname IN ('anon', 'authenticated')));"
+            ),
+            clean_message="no julia_/lais_ relation grants to PUBLIC/anon/authenticated",
+            violation_message_prefix="julia_/lais_ grant(s) to a caller role --",
+        ),
+    ),
+    GuardProbe(
+        id="julia_lockdown.no_caller_policies",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="julia_db_lockdown",
+        kind="state_assertion",
+        migrations=(_M_JULIA_LOCKDOWN,),
+        rationale="A caller-facing RLS policy on a julia_* table is a read path that skips A7 the day a grant returns.",
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM pg_policies p WHERE p.schemaname = 'social_wiring' "
+                r"AND (p.tablename LIKE 'julia\_%' OR p.tablename LIKE 'lais\_%') "
+                "AND p.roles && ARRAY['public', 'anon', 'authenticated']::name[];"
+            ),
+            clean_message="no caller-facing julia_ policy",
+            violation_message_prefix="caller-facing julia_ RLS policy(ies) --",
+        ),
+    ),
+    GuardProbe(
+        id="julia_lockdown.authenticated_select_refused",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="julia_db_lockdown",
+        kind="write_refusal",
+        migrations=(_M_JULIA_LOCKDOWN,),
+        rationale="Behavioural proof: an authenticated caller selecting julia_contatos is refused by privilege (42501).",
+        sql=_do_block("""
+BEGIN
+  IF to_regclass('social_wiring.julia_contatos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.julia_contatos does not exist';
+  END IF;
+  BEGIN
+    SET LOCAL ROLE authenticated;
+    PERFORM 1 FROM social_wiring.julia_contatos LIMIT 1;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: authenticated SELECT on julia_contatos succeeded -- the lockdown did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLSTATE = '42501' AND SQLERRM LIKE 'permission denied%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: refused by something other than the missing grant: %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9745,6 +9823,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_SIMEC_PROBES,
     *_SW_MAYA_BLOCOS_PROBES,
     *_SW_JULIA_V2_SUPERVISAO_PROBES,
+    *_SW_JULIA_LOCKDOWN_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,

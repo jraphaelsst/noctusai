@@ -15,6 +15,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
+- [ ] **Lead PII in social_wiring julia_*/lais_* tables (contacts, interactions, events, credit analyses/consents, notes, feedback) was readable by ANY org member directly over PostgREST (SELECT TO authenticated), bypassing the per-lead A7 owner/admin rule enforced only in the API.** at `products/social-wiring/backend/migrations/289_julia_db_lockdown.sql` — Security audit 2026-10-19 H1. Fixed by migration 289 (REVOKE + policy drop, assertion probes). Pending: apply, then confirm via the live verification query; assess whether any member actually read lead data directly (PostgREST logs) for LGPD incident assessment.
+  - *Mitigation*: Migration 289 revokes anon/authenticated/PUBLIC on every julia_*/lais_* relation and drops caller-facing policies; predeploy db_guards probes keep it locked.
+  - *Flagged*: 2026-10-19
 - [ ] **core public.org_settings (per-org vendor credentials), webhook_endpoints (url + signing secret), webhook_deliveries (payloads) and api_keys were readable/writable from the browser by any non-customer org member until migration 086 is applied. org_settings is tier 1 of resolve_credential, so a write could inject credentials the backend uses.** at `products/core/backend/migrations/086_revoke_browser_secrets_tables.sql` — Critical browser-exposure sweep 2026-10-19 (findings #1/#2/#3). Remediated in migration 086 (pending apply).
   - *Mitigation*: Apply 086. Audit org_settings/webhook_endpoints for rows not written by the backend; rotate credentials and webhook secrets if anything looks injected.
   - *Flagged*: 2026-10-19

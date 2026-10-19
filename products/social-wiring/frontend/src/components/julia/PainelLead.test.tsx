@@ -8,7 +8,7 @@ vi.mock("@/lib/api", () => ({ api }));
 import { PainelLeadConteudo } from "./PainelLead";
 
 const P = (chave: string, over: Record<string, unknown> = {}) => ({
-  chave, label: `Q ${chave}`, dica: null, categoria: "x", operacao: null, ativa: true,
+  chave, label: `Q ${chave}`, categoria: "x", operacao: null, ativa: true,
   qualificatoria: false, bloqueada: false, usada_em_criterio: false, ...over,
 });
 

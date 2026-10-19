@@ -12,7 +12,7 @@ vi.mock("sonner", () => ({ toast }));
 import JuliaPerguntas from "./Perguntas";
 
 const P = (chave: string, over: Record<string, unknown> = {}) => ({
-  chave, label: `Pergunta ${chave}`, dica: null, categoria: "Informações do lead", operacao: null,
+  chave, label: `Pergunta ${chave}`, categoria: "Informações do lead", operacao: null,
   ativa: false, qualificatoria: false, bloqueada: false, usada_em_criterio: false, ...over,
 });
 function dados(catalogo: unknown[], limites = { max_ativas: 8, max_qualificatorias: 5 }) {

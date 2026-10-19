@@ -46,7 +46,6 @@ export function PerguntaRow({
           {p.bloqueada && <Lock className="h-3 w-3 text-muted-foreground" aria-hidden />}
           {p.bloqueada ? "Objetivo: comprar ou alugar" : p.label}
         </p>
-        {p.dica && <p className="text-xs text-muted-foreground">{p.dica}</p>}
         {motivo && (
           <p className="text-xs text-amber-700" data-testid={`motivo-${p.chave}`}>
             {motivo}

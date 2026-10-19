@@ -125,7 +125,7 @@ class TestGet:
         assert data["limites"] == {"max_ativas": 8, "max_qualificatorias": 5}
         por = {q["chave"]: q for q in data["catalogo"]}
         assert len(por) == len(catalogo_do_seed())
-        assert set(por["objetivo"]) == {"chave", "label", "dica", "categoria", "operacao", "ativa", "qualificatoria",
+        assert set(por["objetivo"]) == {"chave", "label", "categoria", "operacao", "ativa", "qualificatoria",
                                         "bloqueada", "usada_em_criterio"}
         assert por["objetivo"]["ativa"] and por["objetivo"]["bloqueada"]
         assert [c for c, q in por.items() if q["ativa"]] == ["objetivo"]

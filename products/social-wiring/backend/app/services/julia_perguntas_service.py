@@ -68,13 +68,14 @@ def criterios_que_usam(client: Any, org_id: UUID | str) -> dict[str, list[str]]:
 
 
 def montar_saida(client: Any, org_id: UUID | str) -> dict[str, Any]:
+    # `dica` is MODEL instruction text: it goes to the agent context (contexto_provider), never to a browser.
     sel = selecao_org(client, org_id)
     usadas = criterios_que_usam(client, org_id)
     catalogo = []
     for q in listar_catalogo(client):
         s = sel.get(q["chave"])
         catalogo.append({
-            "chave": q["chave"], "label": q["label"], "dica": q.get("dica"), "categoria": q["categoria"],
+            "chave": q["chave"], "label": q["label"], "categoria": q["categoria"],
             "operacao": q.get("operacao"), "ativa": s is not None,
             "qualificatoria": bool(s and s["qualificatoria"]),
             "bloqueada": q["chave"] == OBJETIVO, "usada_em_criterio": bool(usadas.get(q["chave"])),
