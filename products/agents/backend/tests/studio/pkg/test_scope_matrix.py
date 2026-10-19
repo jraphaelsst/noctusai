@@ -46,6 +46,19 @@ CONTENT_WRITE_ROUTES = {
     ("PUT", "/api/studio/agents/{key}/draft/ferramentas"),
     ("PUT", "/api/studio/agents/{key}/draft/decisoes"),
     ("PUT", "/api/studio/agents/{key}/draft/specs"),
+    # the same MCP tool also writes the sections and the library pins, and reads the draft + content rows
+    # to show a diff before it writes (A-SKILLS); the library itself (/api/skills-biblioteca) is outside
+    # BUSINESS_PREFIXES and pinned in tests/studio/def/test_skills_biblioteca_router.py.
+    ("PUT", "/api/studio/agents/{key}/draft/sections"),
+    ("GET", "/api/studio/agents/{key}/draft"),
+    ("GET", "/api/studio/agents/{key}/versions/{version_id}/textos"),
+    ("GET", "/api/studio/agents/{key}/versions/{version_id}/ferramentas"),
+    ("GET", "/api/studio/agents/{key}/versions/{version_id}/decisoes"),
+    ("GET", "/api/studio/agents/{key}/versions/{version_id}/specs"),
+    ("GET", "/api/studio/agents/{key}/draft/skills-biblioteca"),
+    ("PUT", "/api/studio/agents/{key}/draft/skills-biblioteca/{skill}"),
+    ("DELETE", "/api/studio/agents/{key}/draft/skills-biblioteca/{skill}"),
+    ("GET", "/api/studio/agents/{key}/versions/{version_id}/skills-biblioteca"),
 }
 
 #: Prefixes of the product's business API. `/api/auth`, `/api/settings/api-tokens`

@@ -10,17 +10,23 @@ from uuid import UUID
 import pytest
 from fastapi.routing import APIRoute
 
-from app.dependencies import require_platform_admin
+from app.dependencies import require_platform_admin, require_platform_content_admin
 from app.routers.studio_clients_router import router as clients
 from app.routers.studio_conteudo_router import router as conteudo
 from app.routers.studio_evals_router import router as evals
 from app.routers.studio_knowledge_router import router as knowledge
 from app.routers.studio_package_sync_router import router as package_sync
 from app.routers.studio_agents_router import router as agents
+from app.routers.skills_biblioteca_router import router as skills_biblioteca
 
 
 def _uses_platform_admin(dependant) -> bool:
-    return dependant.call is require_platform_admin or any(_uses_platform_admin(d) for d in dependant.dependencies)
+    # `require_platform_content_admin` = platform admin for a human, plus the platform-issued
+    # `studio:content-write` token (the noctus.agents.content MCP path): the human tier is identical.
+    return (
+        dependant.call in (require_platform_admin, require_platform_content_admin)
+        or any(_uses_platform_admin(d) for d in dependant.dependencies)
+    )
 
 
 def _fill(path: str) -> str:
@@ -29,7 +35,7 @@ def _fill(path: str) -> str:
 
 def _routes():
     out = []
-    for r in (clients, knowledge, evals, package_sync, agents, conteudo):
+    for r in (clients, knowledge, evals, package_sync, agents, conteudo, skills_biblioteca):
         for route in r.routes:
             if isinstance(route, APIRoute) and _uses_platform_admin(route.dependant):
                 for m in sorted(route.methods - {"HEAD", "OPTIONS"}):
@@ -45,6 +51,7 @@ def test_the_matrix_is_not_vacuous():
     paths = {p for _, p in ROUTES}
     assert any("/knowledge" in p for p in paths) and any("/evals" in p for p in paths)
     assert any("/clients" in p for p in paths) and any("/prompts/" in p for p in paths)
+    assert any("/skills-biblioteca" in p for p in paths) and ("GET", "/api/studio/agents/{key}/draft") in set(ROUTES)
 
 
 @pytest.mark.parametrize("method,path", ROUTES)
