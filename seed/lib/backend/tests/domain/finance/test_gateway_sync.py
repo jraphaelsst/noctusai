@@ -16,7 +16,9 @@ P = "/api/finance"
 
 
 def gw(s, name="asaas"):
-    return accounts.create_account(s, {"name": "Asaas", "kind": "gateway", "gateway": name})
+    # the fixture statement lines are fixed October-2026 days: the opening date anchors the sync window there,
+    # otherwise the default "last 30 days from today" lookback slides past them as the clock moves
+    return accounts.create_account(s, {"name": "Asaas", "kind": "gateway", "gateway": name, "opening_date": "2026-10-01"})
 
 
 def sync(rh, acc, **body):

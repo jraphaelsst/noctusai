@@ -8,6 +8,8 @@ FastAPI dependency pair (staff read / admin write).
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -159,7 +161,7 @@ def mk_entry(s: Scope, **over: Any) -> dict:
     data = {
         "direction": "receivable",
         "description": "Mensalidade",
-        "due_date": "2026-10-20",
+        "due_date": (date.today() + timedelta(days=30)).isoformat(),  # relative: a fixed day goes overdue / into windows as the clock moves
         "amount_cents": 10000,
         **over,
     }

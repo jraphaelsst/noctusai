@@ -1,6 +1,8 @@
 """Router contract: paths, statuses, envelopes, pt-BR error codes, authz (staff read / admin write), masking."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from .conftest import VALID_CNPJ, VALID_CPF
@@ -63,7 +65,8 @@ def mk_account(h, **over):
 
 def mk_entry(h, **over):
     r = call(h, "POST", f"{P}/entries", h.admin, json={
-        "direction": "receivable", "description": "Mensalidade", "due_date": "2026-10-20", "amount_cents": 10000, **over})
+        "direction": "receivable", "description": "Mensalidade",
+        "due_date": (date.today() + timedelta(days=30)).isoformat(), "amount_cents": 10000, **over})
     assert r.status_code == 201, r.text
     return r.json()["data"]
 
@@ -126,8 +129,8 @@ def test_lists_use_the_seed_envelopes(h):
 
 
 def test_entries_filters_via_query_string(h):
-    mk_entry(h, direction="payable", description="Conta de luz")
-    mk_entry(h, description="Venda")
+    mk_entry(h, direction="payable", description="Conta de luz", due_date="2026-10-20")  # data inside the queried window
+    mk_entry(h, description="Venda", due_date="2026-10-20")
     r = call(h, "GET", f"{P}/entries?direction=payable&from=2026-10-01&to=2026-10-31", h.staff()).json()
     assert [e["description"] for e in r["data"]] == ["Conta de luz"]
     assert call(h, "GET", f"{P}/entries?status=overdue", h.staff()).status_code == 422
