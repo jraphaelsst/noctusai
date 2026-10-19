@@ -139,6 +139,9 @@ const EdicaoFotosCuradores = lazyWithReload(() => import("@/pages/edicao-fotos/C
 const EdicaoFotosPainel = lazyWithReload(() => import("@/pages/edicao-fotos/Painel"));
 const EdicaoFotosModelos = lazyWithReload(() => import("@/pages/edicao-fotos/Modelos"));
 const EdicaoFotosProcessamento = lazyWithReload(() => import("@/pages/edicao-fotos/Processamento"));
+// Maya v1 (maya-blocks CONTRACT §4) — both seeded `desenvolvimento` in status_pagina (286).
+const AtendimentoBlocos = lazyWithReload(() => import("@/pages/AtendimentoBlocos"));
+const Supervisao = lazyWithReload(() => import("@/pages/Supervisao"));
 
 
 const Layout = createProductLayout({
@@ -183,6 +186,8 @@ export default createProductApp({
     { path: "/funil", component: FunilVendas },
     { path: "/processos-venda", component: ProcessosVenda },
     { path: "/portal-roi", component: PortalRoi },
+    { path: "/atendimento-blocos", component: AtendimentoBlocos },
+    { path: "/supervisao", component: Supervisao },
     { path: "/certidoes", component: Certidoes },
     { path: "/matriculas", component: Matriculas },
     { path: "/agentes-financeiros", component: AgentesFinanceiros },

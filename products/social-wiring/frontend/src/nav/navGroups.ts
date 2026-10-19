@@ -72,6 +72,8 @@ import {
   Bookmark,
   Palette,
   GalleryHorizontal,
+  Layers,
+  Eye,
 } from "lucide-react";
 
 import { LAIS_NAV_GROUP } from "@/nav/lais";
@@ -109,6 +111,8 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
       { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp, route: "portal_roi" },
+      { name: "Blocos do Atendimento", href: "/atendimento-blocos", icon: Layers, route: "atendimento_blocos" },
+      { name: "Supervisão", href: "/supervisao", icon: Eye, route: "supervisao" },
     ],
   },
   {
