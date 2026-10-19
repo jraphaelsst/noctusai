@@ -207,3 +207,12 @@ mcp/telegram/.exports/
 # loaded mod at every load — derived, never committed. KB § PATTERNS/common/harness-mods.md
 .claude/mods/*/.claude-plugin/types/
 .claude/mods/*/tsconfig.json
+
+# Raw media / scratch artifacts dropped into projects/ — never committed (a 184MB
+# meeting recording must not enter git history); transcripts (.txt) stay trackable.
+projects/**/*.mkv
+projects/**/*.mp4
+projects/**/*.mov
+projects/**/*.m4a
+/pglite-*.whl
+projects/store/WhatsApp Image *.jpeg
