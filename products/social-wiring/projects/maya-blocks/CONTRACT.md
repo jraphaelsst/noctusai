@@ -304,9 +304,11 @@ resulting configuration before writing anything, then writes rows whose `etapas`
   ]
 }
 ```
-Empty states: supervision off ⇒ `supervisao_ativa:false, scorecards:[]`; on but the day not
-computed yet ⇒ `supervisao_ativa:true, scorecards:[]`. Errors: 401 · 403 (not owner) · 422
-`dia_invalido` (malformed) · 422 `dia_futuro` (≥ today SP).
+Stored history is ALWAYS returned, whatever `supervisao_ativa` says (history is kept, §4.5):
+turning supervision off only stops the nightly job from computing new rows, it never hides old
+ones (S3 fix, 2026-10-19). Empty states: no row stored for that day ⇒ `scorecards:[]` (with
+`supervisao_ativa` reporting the current switch). Errors: 401 · 403 `exclusivo_proprietario`
+(not owner) · 422 `dia_invalido` (malformed) · 422 `dia_futuro` (≥ today SP).
 
 ### 4.4 `GET /api/supervisao/handoffs` — owner/admin
 
@@ -336,7 +338,15 @@ supervision is off). Errors: 401 · 403 · 422 `filtro_invalido` (bad status/blo
 
 GET 200 `{"supervisao_ativa": false, "horas_para_assumir": 24, "updated_at": null, "updated_by": null}`
 (absent row ⇒ these defaults). PUT body `{"supervisao_ativa": bool, "horas_para_assumir": int}`
-(both required, 1..168) → upsert, 200 = state after. Errors 401 · 403 · 422.
+(both required, 1..168) → upsert, 200 = state after. Errors 401 · 403 `exclusivo_proprietario`
+(admin/member) · 422.
+
+**Owner-only 403 (S3).** Every owner-only route (§4.3, §4.5) answers an authenticated non-owner with
+`403 {"error": {"code": "exclusivo_proprietario", "message": "...: exclusiva do proprietário da
+organização."}}` — a stable code the FE renders as "exclusiva do proprietário". The role comes from
+the trusted `noctus_users` row of the session's selected org (seed `is_org_admin_for`,
+`admin_roles={"owner"}`), never from a client parameter. Owner/admin routes (§4.4) keep the seed's
+generic `403 FORBIDDEN`.
 Turning supervision ON starts recording handoffs from that moment (no back-fill) and the next
 nightly job computes scorecards; turning it OFF stops both and keeps the history.
 
@@ -366,6 +376,6 @@ nightly job computes scorecards; turning it OFF stops both and keeps the history
 | S0 | this contract + README | done |
 | S1 | migration 286 + 18 DB guard probes (`_SW_MAYA_BLOCOS_PROBES`, `verify_db_guards.py`) + replay test + structural migration test | done (not applied) |
 | S2 | backend (`app/modules/atendimento_blocos/`): `BLOCOS`/`ETAPAS_PADRAO`/`AGENTES_POR_BLOCO`, derivation, T1 sink, T2 hook + the aceite movimento, the status machine functions (`handoffs.varrer` for S3 to schedule), `primeira_resposta_at` write, `handoff` event emission, the §4.1/§4.2 routes, gate 0 | done (§4.3-4.5 belong to the supervisao slice) |
-| S3 | jobs: sweep (assumido/expirado), nightly scorecards, owner report (in-app recipient rule + digest) | after S2 |
+| S3 | jobs: sweep (assumido/expirado), nightly scorecards, owner report (in-app recipient rule + digest), §4.3-4.5 routes | built on `feat/sw-maya-supervisao` |
 | S4 | FE pages `atendimento_blocos` + `supervisao` (built to §4) | parallel with S3 |
 | later | per-block agents (gate 0 of `lais_envio_gate.exigir(..., bloco=)` shipped in S2: a non-`sdr` block needs `ativo` + `agent_key`; `sdr` unchanged); Maya's LLM review | owner-paced |

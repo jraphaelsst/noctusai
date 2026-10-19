@@ -9,6 +9,10 @@ Recipients (same target rule as the page-0 handoff, 11.4): the contato's `respon
 connection owner (`whatsapp_connections.user_id`), else the org's owners/admins. Each candidate must still
 belong to the org (a stale id falls through to the next tier).
 
+Exception (maya-blocks CONTRACT §3.4, owner decision): a `relatorio` whose `payload.origem == "supervisao"`
+(Maya's daily supervision report) goes to the org's OWNERS ONLY -- never admins -- and links to
+`/supervisao?dia=...`.
+
 `handoff` is NOT fanned out here: `lais_agente_service.notificar_handoff` already writes it (with the
 configured target + link) and nothing emits a `handoff` event, so it can never double-fire; the sink also
 skips it explicitly so a future emitter cannot.
@@ -68,6 +72,9 @@ CORPOS = {
     "avaliacao_google": "Há uma nova avaliação no Google.",
 }
 LINKS = {"captacao": "/lais/captacao", "pre_agendamento_visita": "/lais/visitas", "relatorio": "/lais/relatorios"}
+#: Maya's supervision report (`relatorio` + `payload.origem`): owners only, its own copy + link.
+ORIGEM_SUPERVISAO = "supervisao"
+TITULO_SUPERVISAO = "Relatório da supervisão (Maya)"
 #: Intent tokens in the episode summary that mean "the lead complained nobody answered".
 INTENCOES_COBRANCA = frozenset({"cobranca_atendimento", "cobranca", "cobrar_atendimento"})
 
@@ -101,6 +108,15 @@ def _membros_da_org(core: Any, org_id: Any, ids: Iterable[Any]) -> set[str]:
 def admins_da_org(core: Any, org_id: Any) -> list[str]:
     rows = core.table("noctus_users").select("id,org_role").eq("org_id", str(org_id)).execute().data or []
     return sorted({str(r["id"]) for r in rows if r.get("org_role") in ADMIN_ORG_ROLES})
+
+
+def donos_da_org(core: Any, org_id: Any) -> list[str]:
+    rows = core.table("noctus_users").select("id,org_role").eq("org_id", str(org_id)).execute().data or []
+    return sorted({str(r["id"]) for r in rows if r.get("org_role") == "owner"})
+
+
+def e_relatorio_supervisao(evento: dict[str, Any]) -> bool:
+    return evento.get("tipo") == "relatorio" and (evento.get("payload") or {}).get("origem") == ORIGEM_SUPERVISAO
 
 
 def resolver_destinatarios(client: Any, core: Any, org_id: Any, contato_id: Any = None) -> list[str]:
@@ -169,12 +185,22 @@ def notificar(client: Any, evento: dict[str, Any], core: Any = None) -> int:
     core = core or _core()
     org_id = evento["org_id"]
     contato_id = evento.get("contato_id")
-    destinatarios = resolver_destinatarios(client, core, org_id, contato_id)
+    payload = evento.get("payload") or {}
+    supervisao = e_relatorio_supervisao(evento)
+    destinatarios = donos_da_org(core, org_id) if supervisao else resolver_destinatarios(client, core, org_id, contato_id)
     prefs = preferencias(client, org_id, destinatarios)
     alvo = [u for u in destinatarios if permite(prefs.get(u, {}), tipo)]
     if not alvo:
         return 0
-    payload = evento.get("payload") or {}
+    if supervisao:
+        dia = str(payload.get("dia") or "")
+        return write_in_app(
+            core, user_ids=alvo, kind=KIND_PREFIX + tipo, title=TITULO_SUPERVISAO,
+            message=f"Os scorecards da supervisão de {dia} estão prontos.",
+            metadata={"link": f"/supervisao?dia={dia}", "evento_id": evento.get("id"), "contato_id": None,
+                      "operacao": None, "lais": True, "origem": ORIGEM_SUPERVISAO},
+            org_id=org_id,
+        )
     operacao = payload.get("operacao")
     if not operacao and contato_id:
         rows = client.table("lais_contatos").select("operacao").eq("id", str(contato_id)).limit(1).execute().data or []

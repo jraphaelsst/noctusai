@@ -316,6 +316,7 @@ from app.modules.edicao_fotos import register as _edicao_fotos
 from app.modules.empresas import register as _empresas
 from app.modules.transcricoes import register as _transcricoes
 from app.modules.atendimento_blocos import register as _atendimento_blocos
+from app.modules.supervisao import register as _supervisao
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
@@ -410,6 +411,11 @@ MODULES = [
     # its root, so its position is free. No upload route, no scheduler job; importing its router binds the
     # `novo_lead` -> sdr handoff sink on the Lais event bus.
     _atendimento_blocos,
+    # Supervisão (Maya, maya-blocks S3). `/api/supervisao/...` is a unique literal
+    # prefix with only literal 1st segments (`/scorecards`, `/handoffs`, `/config`),
+    # so its position is free. No upload route. Registers its two seed-scheduler
+    # jobs (07:00 SP scorecards + report, 15-min handoff sweep) from `register()`.
+    _supervisao,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
