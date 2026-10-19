@@ -311,6 +311,7 @@ from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
 from app.modules.instagram import register as _instagram
+from app.modules.simec import register as _simec
 from app.modules.edicao_fotos import register as _edicao_fotos
 from app.modules.empresas import register as _empresas
 from app.modules.transcricoes import register as _transcricoes
@@ -399,6 +400,11 @@ MODULES = [
     # its position is free. Registers the `instagram_daily_snapshot` job from
     # `register()` (must precede `start_scheduler()` in app/lifespan.py).
     _instagram,
+    # SIMEC (marketing-intelligence P1). `/api/simec/...` is a unique literal
+    # prefix with no 1-segment dynamic path at its root (`/accounts`,
+    # `/config`, `/readouts/{id}` are all literal first segments), so its
+    # position is free. No upload route, no scheduler job.
+    _simec,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

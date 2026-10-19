@@ -9173,6 +9173,119 @@ _SW_LAIS_AVALIACOES_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_SIMEC = "284_simec.sql"
+_T_SIMEC = (
+    f"{_S}.simec_configs", f"{_S}.simec_config_historico", f"{_S}.simec_readouts", f"{_S}.simec_leituras",
+)
+#: A throwaway Instagram connection (rolled back with the probe) — readouts/profile
+#: layers hang off integration_accounts and prod has no Instagram row to borrow.
+_SIMEC_ACC_INS = (
+    f"    INSERT INTO {_S}.integration_accounts (org_id, provider, account_label, encrypted_credential)\n"
+    "    VALUES (v_org, 'instagram', 'noc_probe_simec', '\\x00'::bytea);"
+)
+_SIMEC_ACC = (
+    f"(SELECT id FROM {_S}.integration_accounts WHERE org_id = v_org AND account_label = 'noc_probe_simec')"
+)
+_SIMEC_FP = "'" + "0" * 64 + "'"
+
+
+def _simec_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"simec.{probe_id}", guard_name=guard, migration=_M_SIMEC, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_SIMEC,
+    )
+
+
+def _simec_cfg_ins(platform: str = "'instagram'", overrides: str = "'{}'::jsonb",
+                   version: str = "1", account: str = "NULL") -> str:
+    return (
+        f"    INSERT INTO {_S}.simec_configs (org_id, platform, account_id, overrides, version)\n"
+        f"    VALUES (v_org, {platform}, {account}, {overrides}, {version});"
+    )
+
+
+def _simec_readout_ins(platform: str = "'instagram'", start: str = "DATE '2026-10-01'",
+                       end: str = "DATE '2026-10-07'", fingerprint: str = _SIMEC_FP) -> str:
+    return (
+        _SIMEC_ACC_INS
+        + f"\n    INSERT INTO {_S}.simec_readouts (org_id, account_id, platform, source, period_start,"
+        " period_end, history_start, config_version, config_fingerprint, config)\n"
+        f"    VALUES (v_org, {_SIMEC_ACC}, {platform}, 'noc_probe', {start}, {end}, DATE '2026-07-03',"
+        f" 'noc_probe', {fingerprint}, '{{}}'::jsonb);"
+    )
+
+
+def _simec_leitura_ins(status: str) -> str:
+    return (
+        _simec_readout_ins()
+        + f"\n    INSERT INTO {_S}.simec_leituras (readout_id, org_id, account_id, status)\n"
+        f"    SELECT id, org_id, account_id, {status} FROM {_S}.simec_readouts\n"
+        "    WHERE org_id = v_org AND source = 'noc_probe';"
+    )
+
+
+#: Migration 284 -- SIMEC (marketing-intelligence P1). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_SIMEC_PROBES: tuple[GuardProbe, ...] = (
+    _simec_probe(
+        "configs.platform_valida", "simec_configs_platform_valida",
+        "Each platform has its own defaults and denominators (never compared across); an unknown platform has no defaults to layer on.",
+        _simec_cfg_ins(platform="'noc_probe_bogus'"), _CHECK, "a SIMEC config layer for an unknown platform",
+    ),
+    _simec_probe(
+        "configs.overrides_objeto", "simec_configs_overrides_objeto",
+        "Overrides are a partial config OBJECT deep-merged onto the defaults; an array or scalar cannot be merged.",
+        _simec_cfg_ins(overrides="'[]'::jsonb"), _CHECK, "a SIMEC config layer whose overrides is not an object",
+    ),
+    _simec_probe(
+        "configs.version_positiva", "simec_configs_version_positiva",
+        "The layer version is stamped on every readout's config label (org.vN); 0 or negative breaks traceability.",
+        _simec_cfg_ins(version="0"), _CHECK, "a SIMEC config layer with version 0",
+    ),
+    _simec_probe(
+        "configs.uma_camada_org", "uq_simec_configs_org",
+        "Exactly one org layer per platform, else which overrides apply is ambiguous.",
+        _simec_cfg_ins() + "\n" + _simec_cfg_ins(), _UNIQ, "two org-level SIMEC config layers for one platform",
+    ),
+    _simec_probe(
+        "configs.uma_camada_conta", "uq_simec_configs_conta",
+        "Exactly one profile layer per (platform, account), else which overrides apply is ambiguous.",
+        _SIMEC_ACC_INS + "\n" + _simec_cfg_ins(account=_SIMEC_ACC) + "\n" + _simec_cfg_ins(account=_SIMEC_ACC),
+        _UNIQ, "two profile-level SIMEC config layers for one account",
+    ),
+    _simec_probe(
+        "historico.versao_unica", "simec_config_historico_versao_uq",
+        "The history explains a readout's org.vN/perfil.vN label; two rows for one version make it ambiguous.",
+        _simec_cfg_ins()
+        + f"\n    INSERT INTO {_S}.simec_config_historico (config_id, org_id, platform, version, overrides)\n"
+        f"    SELECT id, org_id, platform, 1, '{{}}'::jsonb FROM {_S}.simec_configs WHERE org_id = v_org AND account_id IS NULL;"
+        + f"\n    INSERT INTO {_S}.simec_config_historico (config_id, org_id, platform, version, overrides)\n"
+        f"    SELECT id, org_id, platform, 1, '{{}}'::jsonb FROM {_S}.simec_configs WHERE org_id = v_org AND account_id IS NULL;",
+        _UNIQ, "two SIMEC config history rows for the same layer version",
+    ),
+    _simec_probe(
+        "readouts.platform_valida", "simec_readouts_platform_valida",
+        "A readout belongs to exactly one platform (Instagram and TikTok are never mixed).",
+        _simec_readout_ins(platform="'noc_probe_bogus'"), _CHECK, "a SIMEC readout for an unknown platform",
+    ),
+    _simec_probe(
+        "readouts.periodo_valido", "simec_readouts_periodo_valido",
+        "An inverted period would place every reading in neither the period nor the baseline history.",
+        _simec_readout_ins(start="DATE '2026-10-07'", end="DATE '2026-10-01'"), _CHECK,
+        "a SIMEC readout whose period ends before it starts",
+    ),
+    _simec_probe(
+        "readouts.fingerprint_sha256", "simec_readouts_fingerprint_sha256",
+        "The fingerprint is the unforgeable identity of the config that produced the numbers (reliability rule 1).",
+        _simec_readout_ins(fingerprint="'noc_probe'"), _CHECK, "a SIMEC readout with a non-sha256 config fingerprint",
+    ),
+    _simec_probe(
+        "leituras.status_valido", "simec_leituras_status_valido",
+        "The status is the seed calculator's validation verdict; the panel only counts 'ok' — free text escapes it.",
+        _simec_leitura_ins("'noc_probe_bogus'"), _CHECK, "a SIMEC reading with an unknown status",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9260,6 +9373,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_CAPTACAO_PROBES,
     *_SW_LAIS_CREDITO_PROBES,
     *_SW_LAIS_AVALIACOES_PROBES,
+    *_SW_SIMEC_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,

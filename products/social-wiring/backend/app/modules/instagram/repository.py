@@ -18,6 +18,9 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
+from noctusai_lib.integrations.persistence.table_reads import batched
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
@@ -145,6 +148,24 @@ class IgInsightsRepository:
         )
         rows = resp.data or []
         return rows[0] if rows else None
+
+    def list_org_accounts(self, org_id: UUID) -> list[dict[str, Any]]:
+        """Every Instagram-Login connection of ONE org (any status), oldest
+        first — the SIMEC account picker. An org has a handful of rows, far
+        below the PostgREST row cap."""
+        resp = (
+            self._t("integration_accounts")
+            .select(
+                "id, org_id, provider, status, marca_id, account_label, metadata, "
+                "channel_info, last_synced_at, created_at"
+            )
+            .eq("org_id", str(org_id))
+            .eq("provider", INSTAGRAM_PROVIDER)
+            .order("created_at")
+            .limit(200)
+            .execute()
+        )
+        return list(resp.data or [])
 
     def list_validated_accounts(self) -> list[dict[str, Any]]:
         """Every validated Instagram-Login connection across orgs (the daily
@@ -285,6 +306,64 @@ class IgInsightsRepository:
             .execute()
         )
         return list(resp.data or [])
+
+    def list_media_published_between(
+        self, account_id: UUID, org_id: UUID, *, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        """Every catalog row published in ``[since, until]`` (SIMEC's period +
+        baseline history). Paged past PostgREST's silent 1 000-row cap."""
+        cols = "id, " + _MEDIA_COLUMNS
+
+        def page(start: int, end: int):
+            return (
+                self._t("ig_media")
+                .select(cols)
+                .eq("account_id", str(account_id))
+                .eq("org_id", str(org_id))
+                .gte("published_at", utc_iso(since))
+                .lte("published_at", utc_iso(until))
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        return list(iter_paged_rows(page, label=f"ig_media account={account_id}"))
+
+    def media_snapshots_for(
+        self,
+        account_id: UUID,
+        org_id: UUID,
+        ig_media_ids: list[str],
+        *,
+        since: date,
+        until: date,
+    ) -> list[dict[str, Any]]:
+        """Daily snapshots of many posts in ``[since, until]`` — ids batched
+        (an ``in_`` list rides in the URL) and each batch paged."""
+        cols = (
+            "id, ig_media_id, snapshot_date, " + ", ".join(MEDIA_TYPED_METRICS)
+            + ", extra_metrics, unsupported_metrics"
+        )
+        out: list[dict[str, Any]] = []
+        for chunk in batched(sorted(set(ig_media_ids))):
+            def page(start: int, end: int, chunk=chunk):
+                return (
+                    self._t("ig_media_snapshots")
+                    .select(cols)
+                    .eq("account_id", str(account_id))
+                    .eq("org_id", str(org_id))
+                    .in_("ig_media_id", chunk)
+                    .gte("snapshot_date", since.isoformat())
+                    .lte("snapshot_date", until.isoformat())
+                    .order("id")
+                    .range(start, end)
+                    .execute()
+                    .data
+                )
+
+            out.extend(iter_paged_rows(page, label=f"ig_media_snapshots account={account_id}"))
+        return out
 
     def profile_trend(
         self, account_id: UUID, org_id: UUID, *, since: date

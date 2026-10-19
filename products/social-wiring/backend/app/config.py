@@ -306,6 +306,13 @@ class SocialWiringSettings(ProductSettings):
     # A finite default, never "unlimited by omission"; 0 blocks every edit.
     edicao_fotos_edicoes_por_dia: int = 300
 
+    # ─── SIMEC (app/modules/simec) ───────────────────────────────────────
+    # Where SIMEC readings come from. "instagram" (default) = our own daily
+    # Instagram snapshots (app/modules/instagram); "fake" = the in-memory demo
+    # catalog (dev/demo only — every readout records its source, so a fake
+    # readout can never pass as real data). Any other value fails loudly.
+    simec_metrics_source: str = "instagram"
+
     # ─── Minha Pesquisa — Extrair (app/modules/media_creation) ───────────
     # Async extraction job (LLM reads one of OUR posts, proposes research
     # items / viral topics). Contract: projects/core-studio/specs/

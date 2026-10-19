@@ -2,7 +2,8 @@
 
 Unlike the seed ``MockSupabaseClient`` (whose ``or_`` is match-all and whose
 ``order`` is a no-op), this double EVALUATES ordering, the keyset ``or_``
-expression the media grid uses, and ``on_conflict`` upserts — the exact
+expression the media grid uses, ``range`` paging, ``in_`` filters, plain
+inserts and ``on_conflict`` upserts — the exact
 behaviours the module's correctness rests on (ordering + cursor pagination +
 idempotent daily snapshots). Test-only; never imported by app code.
 """
@@ -80,6 +81,7 @@ class _Query:
         self._preds: list = []
         self._orders: list[tuple[str, bool]] = []
         self._limit: int | None = None
+        self._offset: int = 0
         self._payload: Any = None
         self._on_conflict: str | None = None
 
@@ -94,6 +96,10 @@ class _Query:
 
     def update(self, payload):
         self._mode, self._payload = "update", payload
+        return self
+
+    def insert(self, payload, **_k):
+        self._mode, self._payload = "insert", payload
         return self
 
     def _pred(self, op, col, val):
@@ -113,6 +119,16 @@ class _Query:
     def lte(self, col, val):
         return self._pred("lte", col, val)
 
+    def is_(self, col, val):
+        want = None if val in (None, "null") else val
+        self._preds.append(lambda row: row.get(col) is want if want is None else row.get(col) == want)
+        return self
+
+    def in_(self, col, values):
+        allowed = {str(v) for v in values}
+        self._preds.append(lambda row: str(row.get(col)) in allowed)
+        return self
+
     def or_(self, expr: str):
         self._preds.append(_compile(expr))
         return self
@@ -125,10 +141,24 @@ class _Query:
         self._limit = n
         return self
 
+    def range(self, start, end):
+        """PostgREST's inclusive ``range`` (offset + limit), honoured — a pager
+        over this double terminates the way it does against the real API."""
+        self._offset, self._limit = start, end - start + 1
+        return self
+
     # execution
     def execute(self):
         self._store.calls.append((self._table, self._mode))
         rows = self._store.tables.setdefault(self._table, [])
+        if self._mode == "insert":
+            payload = self._payload if isinstance(self._payload, list) else [self._payload]
+            written = []
+            for item in payload:
+                new = {"id": str(uuid.uuid4()), **copy.deepcopy(item)}
+                rows.append(new)
+                written.append(new)
+            return SimpleNamespace(data=copy.deepcopy(written), count=None)
         if self._mode == "upsert":
             payload = self._payload if isinstance(self._payload, list) else [self._payload]
             keys = [k.strip() for k in (self._on_conflict or "id").split(",")]
@@ -153,6 +183,7 @@ class _Query:
             return SimpleNamespace(data=copy.deepcopy(matched), count=None)
         for col, desc in reversed(self._orders):
             matched.sort(key=lambda r: _norm(r.get(col)), reverse=desc)
+        matched = matched[self._offset:]
         if self._limit is not None:
             matched = matched[: self._limit]
         return SimpleNamespace(data=copy.deepcopy(matched), count=len(matched))
