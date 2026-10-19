@@ -270,6 +270,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-every-test-file-is-gated", action="store_true", help="Keeper (OPEN-WORLD): every tracked test file must sit under an area some workflow actually runs. Sibling of --check-ci-test-matrix-coverage (products) and --check-seed-test-root-ci-coverage (seed), which are closed-world and can only police roots they already know — which is how every gap in this family was found by accident. This one asks the inverse: given every test file git tracks, is there anywhere it could hide? Found dev_team + 14 MCP connectors + codemods + the product-seed template (714 tests) and then seed/framework/frontend (55) that the seed keeper had wrongly written off. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-guide-cochange", action="store_true", help="Keeper (commit-time, over the STAGED diff): a commit that stages non-test behaviour files of a product with a help-chat knowledge guide (products/<slug>/backend/app/** or frontend/src/**) — or the seed help_chat domain — must also stage that guide (derived from create_help_chat_router(knowledge_path=...) consumers). Escape hatch: a `Guide-Unaffected: <reason>` commit-message trailer (pass the message via --commit-msg-file; wired in scripts/hooks/commit-msg). Severity high. KB § PATTERNS/common/live-state-alignment.md.")
     parser.add_argument("--guide-range", metavar="BASE..TIP", default=None, help="With --check-product-guide-cochange: check each non-merge commit of this range on its own diff + message (CI leg).")
+    parser.add_argument("--check-doc-staleness", action="store_true", help="Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over every living doc (cited paths exist; 'scaffold only / nothing implemented / NOT applied' vs the code) judged against the shrink-only ratchet mcp/noctusai/tests/doc_staleness_baseline.json, plus age warnings. Severity high. KB § PATTERNS/common/doc-staleness-gate.md.")
+    parser.add_argument("--doc-range", metavar="BASE..TIP", default=None, help="With --check-doc-staleness: run the change-coupling leg over this range.")
+    parser.add_argument("--doc-baseline", choices=["init", "shrink"], default=None, help="With --check-doc-staleness: rewrite the ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
+    parser.add_argument("--doc-suggest", action="store_true", help="With --check-doc-staleness: print the exact docs to update and the claims that are false.")
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
     parser.add_argument("--check-lgpd-entry-removal", action="store_true", help="Keeper (commit-msg stage, over the STAGED LGPD-WARNINGS.md vs HEAD; merge-aware): a commit must not REMOVE an unresolved `- [ ]` entry (identity = the concern+path pair; ticking `- [x]`, in-place edits and additions are fine; changing the concern/path text reads as remove+add). Override: a `LGPD-Entry-Removed: <concern or path prefix> \u2014 <reason>` trailer (read from --commit-msg-file; reason mandatory). With --lgpd-range BASE..TIP it runs the CI leg instead: every commit of the range vs its parent with its OWN message. Severity high. Born from the 2026-10-10 loss of an unresolved entry in a conflict resolution. KB § PATTERNS/common/lgpd-entry-keeper.md.")
     parser.add_argument("--lgpd-range", metavar="BASE..TIP", default=None, help="With --check-lgpd-entry-removal: check each commit of this range against its parent (CI leg).")
@@ -2163,6 +2167,38 @@ def main():
         for c in r["claims"]:
             print(f"    [{c['status']}] {c['file']}:{c['line']} {c['kind']} {c['claim']} -> {c['live'] or '-'} {c['note']}")
         sys.exit(0 if r["ok"] else 1)
+
+    elif args.check_doc_staleness:
+        from tools.noctus.dev import doc_staleness as _ds
+        _root = Path(args.worktree_path) if getattr(args, "worktree_path", None) else None
+        _root = _root or _ds.REPO_ROOT
+        if args.doc_baseline:
+            _r = _ds.write_baseline(_root, _ds.check_claims(_root), args.doc_baseline)
+            print(f"  doc-staleness baseline {args.doc_baseline}: {_r}")
+            sys.exit(0 if _r.get("ok") else 1)
+        if args.doc_range:
+            _issues = _ds.check_range(_root, args.doc_range)
+            _res = {"range": _issues, "new": []}
+        else:
+            _res = _ds.check_tree(_root)
+            _issues = _res["new"]
+            print(f"  doc-staleness: {_res['docs_scanned']} living docs, {len(_res['findings'])} stale claim(s) "
+                  f"({_res['baselined']} baselined, {len(_issues)} NEW).")
+            if _res["fixed_in_baseline"]:
+                print(f"  {len(_res['fixed_in_baseline'])} baseline entr(ies) now fixed -- shrink the ratchet: "
+                      f"python mcp/noctusai/cli.py --check-doc-staleness --doc-baseline shrink")
+            if _res["age_warnings"]:
+                print("  age warnings (covered code moved far past the doc's last touch):")
+                for _a in _res["age_warnings"][:15]:
+                    print(f"    - {_a['doc']}: {_a['code_commits_since']} code commits / {_a['days_behind']}d behind")
+        if args.doc_suggest or _issues:
+            print(_ds.suggest(_res))
+        if not _issues:
+            print(f"  {GREEN}\u2713 doc-staleness: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(_issues)} doc-staleness issue(s) -- update the docs (or, for coupling, add a "
+              f"`Docs-Reviewed: <doc> — <reason>` trailer){RESET}")
+        sys.exit(1)
 
     elif args.check_product_guide_cochange:
         from tools.noctus.dev.compliance import check_product_guide_cochange

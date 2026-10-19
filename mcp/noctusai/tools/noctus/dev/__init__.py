@@ -42,6 +42,7 @@ def register_all(server) -> None:
     from . import dispatch_budget
     from . import dispatch_token_log
     from . import dispatch_warmup
+    from . import doc_staleness
     from . import doc_to_code_drift
     from . import engineer_output_linter
     from . import context
@@ -207,6 +208,7 @@ def register_all(server) -> None:
     dispatch_preflight.register(server)
     dispatch_token_log.register(server)
     dispatch_warmup.register(server)
+    doc_staleness.register(server)
     doc_to_code_drift.register(server)
     engineer_brief_compose.register(server)
     engineer_output_linter.register(server)

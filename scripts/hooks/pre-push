@@ -419,6 +419,40 @@ else
     echo "[pre-push] migration-applied-ledger-drift: SKIPPED (no interpreter at $_ld_py)" >&2
 fi
 
+# ─── doc-staleness gate (BLOCKING on a push to dev; owner order 2026-10-19) ───
+# Keeper `check_doc_staleness` (`KB § PATTERNS/common/doc-staleness-gate.md`):
+# for the pushed range <remote_oid>..<local_oid>, code a doc is accountable for
+# (frontmatter `covers:` / derived coverage) must not change materially while
+# every covering doc is untouched. Ack a doc that is still accurate with a
+# `Docs-Reviewed: <doc> — <reason>` commit trailer. Tree-level claim staleness
+# (the shrink-only ratchet) is enforced by CI's commit-range-keepers job, not
+# here. Reuses `_ld_py` (worktree-safe interpreter) and THIS tree's cli.py.
+# Skips (loudly) when no interpreter, a new branch, or an unknown remote tip.
+if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]]; then
+    while read -r _ds_lref _ds_loid _ds_rref _ds_roid; do
+        [[ "${_ds_rref:-}" == "refs/heads/dev" ]] || continue
+        [[ "$_ds_loid" =~ $ZERO_RE || "$_ds_roid" =~ $ZERO_RE ]] && continue
+        if [[ ! -x "$_ld_py" || ! -f "$CLI_PP" ]]; then
+            echo "[pre-push] doc-staleness: SKIPPED (no interpreter at $_ld_py) — unmeasurable, not a pass." >&2
+            continue
+        fi
+        if ! git cat-file -e "${_ds_roid}^{commit}" 2>/dev/null; then
+            echo "[pre-push] doc-staleness: SKIPPED (remote tip ${_ds_roid:0:9} not fetched locally) — CI re-checks the range." >&2
+            continue
+        fi
+        echo "[pre-push] doc-staleness keeper (${_ds_roid:0:9}..${_ds_loid:0:9})..."
+        _ds_rc=0
+        _ds_out="$("$_ld_py" "$CLI_PP" --check-doc-staleness --doc-range "${_ds_roid}..${_ds_loid}" --worktree-path "$REPO_ROOT_PP" 2>&1)" || _ds_rc=$?
+        if [[ $_ds_rc -ne 0 ]]; then
+            echo "" >&2
+            echo "🔴 pre-push: DOC-STALENESS — code changed under docs that were not updated." >&2
+            echo "$_ds_out" | grep -v "env_bootstrap" >&2
+            echo "   Update the listed docs, or add the trailer(s) shown (amend/rebase) if they are still accurate." >&2
+            blocked=1
+        fi
+    done <<< "$PUSH_LINES"
+fi
+
 # ─── branch protection (reads the captured push lines) ──────────────────
 while read -r local_ref local_oid remote_ref remote_oid; do
     [[ -z "${remote_ref:-}" ]] && continue

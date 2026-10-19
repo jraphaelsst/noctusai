@@ -11920,6 +11920,22 @@ def check_product_guide_cochange_range(
 
 
 # ---------------------------------------------------------------------------
+# `check_doc_staleness` -- the deterministic doc-staleness gate (owner order
+# 2026-10-19). Logic lives in `doc_staleness.py`; this is the keeper entrypoint
+# (issue-dict shape) used by the full-tree sweep. rev_range -> change-coupling
+# (CI/pre-push); no range -> NEW claim staleness vs the shrink-only ratchet.
+# KB § PATTERNS/common/doc-staleness-gate.md.
+# ---------------------------------------------------------------------------
+
+def check_doc_staleness(repo_root: Path | None = None, rev_range: str | None = None) -> list[dict]:
+    from tools.noctus.dev import doc_staleness
+    return [
+        {"product": "<docs>", "file": i["doc"], "issue": i["issue"], "severity": i["severity"]}
+        for i in doc_staleness.check_doc_staleness(repo_root, rev_range)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Migration-SQL security keepers (2026-10-06 security sweep).
 #
 # `check_secdef_migration_revokes_execute` — STATIC twin of the runtime
@@ -17021,6 +17037,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-13 sibling (found while building the dependabot fix — same
     # class, second surface): test.yml's per-product CI matrices.
     all_issues.extend(check_ci_test_matrix_coverage())
+    # 2026-10-19 owner order: stale docs fail CI (claims vs ratchet; coupling is range-scoped).
+    all_issues.extend(check_doc_staleness())
     all_issues.extend(check_seed_test_root_ci_coverage())
     all_issues.extend(check_seed_declared_imports())
     all_issues.extend(check_product_declared_imports())
@@ -17775,6 +17793,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/orchestration-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/live-state-alignment.md",  # universal commons: org/product live state vs docs — spans backend (orgs), frontend/product guides, devops (prod SHA); no single specialist domain
+    "CONTEXT/PATTERNS/common/doc-staleness-gate.md",  # universal commons: a pre-push/CI gate on EVERY living doc (READMEs, contracts, KB) that every committing lens runs into; the `Docs-Reviewed:` trailer is read by all
     "CONTEXT/PATTERNS/common/lgpd-entry-keeper.md",  # universal commons: a commit-time/CI gate + merge driver on LGPD-WARNINGS.md that EVERY committing lens (any agent that flags a concern) runs into; the LGPD domain depth stays owned by security (security/lgpd.md)
     "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners

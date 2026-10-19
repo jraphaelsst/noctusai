@@ -1216,6 +1216,11 @@ jobs:
     #   - check_product_guide_cochange: a product behaviour change ships with its
     #     help-chat guide or a `Guide-Unaffected: <reason>` trailer.
     #     KB § PATTERNS/common/live-state-alignment.md
+    #   - check_doc_staleness: code a doc covers changed materially in the range with the doc
+    #     untouched (ack: `Docs-Reviewed: <doc> — <reason>` trailer), AND every living doc's claims
+    #     (cited paths exist; "scaffold only / nothing implemented / NOT applied" vs the code) judged
+    #     against the shrink-only ratchet; age warnings land in the step summary.
+    #     KB § PATTERNS/common/doc-staleness-gate.md
     #   - noctus.dev.migration_replay: every product whose migrations (or
     #     migration-replay.json) changed in the range replays its chain on a fresh
     #     PGlite, core first; the changed files apply twice. The pre-commit leg
@@ -1224,7 +1229,7 @@ jobs:
     #     KB § PATTERNS/backend/migration-chain-replay.md
     # The range is resolved ONCE (one step) and shared by every keeper below.
     # Cheap and scope-independent: runs on every push/PR (no `changes` dependency).
-    name: Commit-range keepers (LGPD entries, product guides, migration replay)
+    name: Commit-range keepers (LGPD entries, product guides, doc staleness, migration replay)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1270,6 +1275,17 @@ jobs:
       - name: Keeper check_product_guide_cochange (range)
         if: ${{ !cancelled() }} # report BOTH keepers even when the first is red
         run: python mcp/noctusai/cli.py --check-product-guide-cochange --guide-range "${{ steps.range.outputs.range }}"
+
+      - name: Keeper check_doc_staleness — change-coupling (range)
+        if: ${{ !cancelled() }}
+        run: python mcp/noctusai/cli.py --check-doc-staleness --doc-range "${{ steps.range.outputs.range }}"
+
+      - name: Keeper check_doc_staleness — claims vs ratchet (tree) + age warnings
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python mcp/noctusai/cli.py --check-doc-staleness | tee doc-staleness.txt
+          { echo '### Doc staleness'; echo '```'; sed 's/\x1b\[[0-9;]*m//g' doc-staleness.txt | grep -v env_bootstrap; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Node (migration replay — the toolkit's pinned PGlite)
         if: ${{ !cancelled() }}

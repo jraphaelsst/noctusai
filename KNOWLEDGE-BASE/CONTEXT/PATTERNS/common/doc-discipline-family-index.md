@@ -19,6 +19,8 @@ These eight are grouped because editing ANY of them is methodology surgery on a 
 
 Doc-propagation sync has a mechanical twin for **live org/product state**: a commit that changes a product's behaviour must stage its help-chat guide (keeper `check_product_guide_cochange`, `Guide-Unaffected: <reason>` trailer to override), and org/product facts in docs are verified against Supabase/prod by `noctus.dev.scan_live_state_claims` before a change counts as done. → `KB § PATTERNS/common/live-state-alignment.md`
 
+Staleness of ALL living docs is gated deterministically: code a doc covers changing materially without the doc (or a `Docs-Reviewed: <doc> — <reason>` trailer) fails pre-push/CI, and false status/path claims fail against a shrink-only ratchet (keeper `check_doc_staleness`, tool `noctus.dev.doc_staleness`). → `KB § PATTERNS/common/doc-staleness-gate.md`
+
 ## Why a family line
 
 These 8 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 7 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`
