@@ -171,11 +171,11 @@ H3. `noctus.dev.agent_learnings_promote key=` (run in noc): pulls `aceito` rows 
 | `GET /api/agent-packages/{key}/{versao}` | `packages:read` | the `dist/claude/` tree as `{files:[{path, conteudo}], package}` |
 | `PUT /api/studio/agents/{key}/projects/{slug}/sources` | `project-knowledge:write` | §G2 |
 | `POST /api/studio/agents/{key}/learnings` | `learnings:write` | §H2 |
-| `GET /api/studio/agents/{key}/learnings` | `learnings:read` / member | list (promote tool, UI) |
+| `GET /api/studio/agents/{key}/learnings` | `learnings:read` / platform admin (2026-10-19 tiering) | list (promote tool, UI) |
 | `PATCH /api/studio/agents/{key}/learnings/{id}` | admin user | review |
-| `GET /api/studio/agents/{key}/projects` | member | per-project sync info (UI) |
+| `GET /api/studio/agents/{key}/projects` | platform admin (2026-10-19 tiering) | per-project sync info (UI) |
 | `POST /api/studio/agents/{key}/import` | `studio:publish` / admin user | token: dev-advisor only (existing, or new with the bundle declaring it) |
-| `POST /api/studio/agents/{key}/evals/runs`, `GET …/evals/runs`, `GET …/evals/runs/{id}` | `studio:publish` / admin (write) · member (read) | token: dev-advisor only |
+| `POST /api/studio/agents/{key}/evals/runs`, `GET …/evals/runs`, `GET …/evals/runs/{id}` | `studio:publish` / platform admin (write and read, 2026-10-19 tiering) | token: dev-advisor only |
 | `POST /api/studio/agents/{key}/draft/publish` | `studio:publish` / admin user | token: dev-advisor only, must pass the eval gate; override → 403 `override_requires_user` |
 
 Tokens: Studio's `agents.api_tokens.scopes` (already present since migration 007); scopes are `packages:read`,
@@ -184,7 +184,7 @@ Mint via `POST /api/settings/api-tokens {label, scopes, expires_at ≤ 90 days}`
 **Amendment 2026-10-03 — `studio:publish`** (found by the HOOKS slice: import/eval/publish were user-only, so the
 pre-push pipeline's token got 403 `user_required`). Used by the noc pre-push publish leg ONLY; never given to consumer
 repos (they hold `packages:read`, `project-knowledge:write`, `learnings:*`). Accepted only on the five routes above and
-only when the target agent is `kind='dev-advisor'`; Bia/Julia/IsaIA stay user-only (403 `user_required`). A token never
+only when the target agent is `kind='dev-advisor'`; Bia/Julia/IsaIA stay user-only (403 `user_required`); human callers of studio content routes must be platform admins (403 `platform_admin_required`, julia-v2 CONTRACT §0.4 visibility tiers). A token never
 reaches the publish override (403 `override_requires_user`) — the eval gate always decides. Audit rows
 (`agent_audit_log.actor`, `published_by`, `created_by`, run `started_by`) carry the token row id. Mint like any other scope.
 Previously planned wording: a product-caller is accepted ONLY on
