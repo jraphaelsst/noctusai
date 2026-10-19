@@ -1,5 +1,6 @@
-"""The Lais wave-11 (migration 275, Cloud pages) GuardProbes executed against the REAL social-wiring chain
-on PGlite: every guard of that migration must read `refused` once applied (prod reads `no_fixture` until then)."""
+"""The Julia wave-13 (migration 281, credito) GuardProbes executed against the REAL social-wiring chain on
+PGlite: every guard of that migration must read `refused` once applied (prod reads `no_fixture` until then).
+The probe count is DERIVED from the registry -- adding a guard adds a probe here, never a hardcoded number."""
 from __future__ import annotations
 
 import re
@@ -16,11 +17,14 @@ _SEED = (
 )
 
 
+def _probes():
+    return [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_JULIA_CREDITO_PROBES]
+
+
 def _outcomes() -> dict[str, str]:
     root = Path(REPO_ROOT)
     steps = mr._steps_for(root, "social-wiring", set(), "worktree", {})
-    probes = [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_LAIS_EQUIPES_PROBES]
-    assert len(probes) == len(vdg._SW_LAIS_EQUIPES_PROBES) == 6
+    probes = _probes()
     steps.append({"product": "social-wiring", "file": "seed", "sql": _SEED, "mode": "file", "twice": False})
     for p in probes:
         steps.append({"product": "social-wiring", "file": p.id, "sql": vdg.wrap_rollback_only(p.sql),
@@ -37,7 +41,11 @@ def _outcomes() -> dict[str, str]:
     return out
 
 
-def test_every_lais_equipes_guard_refuses_on_the_real_chain(pglite):
+def test_the_registry_carries_every_credito_probe():
+    assert _probes() and len(_probes()) == len(vdg._SW_JULIA_CREDITO_PROBES)
+
+
+def test_every_julia_credito_guard_refuses_on_the_real_chain(pglite):
     out = _outcomes()
     assert set(out.values()) == {"refused"}, out
-    assert len(out) == 6
+    assert len(out) == len(vdg._SW_JULIA_CREDITO_PROBES)

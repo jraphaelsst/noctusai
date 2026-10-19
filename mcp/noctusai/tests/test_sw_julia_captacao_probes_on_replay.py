@@ -1,6 +1,6 @@
-"""The Lais wave-7 (migration 274, Conversas v2) GuardProbes executed against the REAL social-wiring chain on
+"""The Julia wave-8 (migration 278, captacao) GuardProbes executed against the REAL social-wiring chain on
 PGlite: every guard of that migration must read `refused` once applied (prod reads `no_fixture` until then).
-Counts are DERIVED -- from the registry and from the migration's own named guards -- never hard-coded."""
+The probe count is DERIVED from the registry -- adding a guard adds a probe here, never a hardcoded number."""
 from __future__ import annotations
 
 import re
@@ -15,21 +15,16 @@ _SEED = (
     "INSERT INTO social_wiring.imovel_registry (org_id, codigo_canonical) "
     "VALUES (gen_random_uuid(), 'NOC_SEED');"
 )
-_MIGRATION = Path(REPO_ROOT) / "products/social-wiring/backend/migrations/274_lais_conversas_v2.sql"
 
 
-def _declared_guards() -> set[str]:
-    sql = _MIGRATION.read_text(encoding="utf-8")
-    named = set(re.findall(r"CONSTRAINT\s+(\w+)\s+(?:CHECK|PRIMARY KEY|UNIQUE)", sql))
-    named |= set(re.findall(r"CREATE UNIQUE INDEX IF NOT EXISTS\s+(\w+)", sql))
-    return named
+def _probes():
+    return [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_JULIA_CAPTACAO_PROBES]
 
 
 def _outcomes() -> dict[str, str]:
     root = Path(REPO_ROOT)
     steps = mr._steps_for(root, "social-wiring", set(), "worktree", {})
-    probes = [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_LAIS_CONV_PROBES]
-    assert len(probes) == len(vdg._SW_LAIS_CONV_PROBES)
+    probes = _probes()
     steps.append({"product": "social-wiring", "file": "seed", "sql": _SEED, "mode": "file", "twice": False})
     for p in probes:
         steps.append({"product": "social-wiring", "file": p.id, "sql": vdg.wrap_rollback_only(p.sql),
@@ -46,12 +41,11 @@ def _outcomes() -> dict[str, str]:
     return out
 
 
-def test_every_declared_guard_has_a_probe():
-    probed = {p.guard_name for p in vdg._SW_LAIS_CONV_PROBES}
-    assert probed == _declared_guards()
+def test_the_registry_carries_every_captacao_probe():
+    assert _probes() and len(_probes()) == len(vdg._SW_JULIA_CAPTACAO_PROBES)
 
 
-def test_every_lais_conv_guard_refuses_on_the_real_chain(pglite):
+def test_every_julia_captacao_guard_refuses_on_the_real_chain(pglite):
     out = _outcomes()
     assert set(out.values()) == {"refused"}, out
-    assert len(out) == len(vdg._SW_LAIS_CONV_PROBES)
+    assert len(out) == len(vdg._SW_JULIA_CAPTACAO_PROBES)

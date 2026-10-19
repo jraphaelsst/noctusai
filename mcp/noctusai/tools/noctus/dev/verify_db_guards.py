@@ -1286,7 +1286,7 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 )
 
 
-_LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
+_JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
     id="whatsapp_connections.agente_leads_ativo.exige_autorizados",
     product="social-wiring",
     schema=_SW_SCHEMA,
@@ -1321,7 +1321,7 @@ _LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
 )
 
 
-_LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE = GuardProbe(
+_JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE = GuardProbe(
     id="whatsapp_connections.agente_leads_ativo.exige_ativado_em",
     product="social-wiring",
     schema=_SW_SCHEMA,
@@ -1354,7 +1354,7 @@ _LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE = GuardProbe(
 )
 
 
-_LAIS_CONEXAO_TRANSPORTE_PROBE = GuardProbe(
+_JULIA_CONEXAO_TRANSPORTE_PROBE = GuardProbe(
     id="whatsapp_connections.transporte.valido",
     product="social-wiring",
     schema=_SW_SCHEMA,
@@ -6404,90 +6404,90 @@ _SW_TRANSACOES_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
-_M_LAIS = "267_lais_fundacao.sql"
-_T_LAIS = (f"{_S}.lais_contatos", f"{_S}.lais_interacoes", f"{_S}.lais_acoes_aplicadas", f"{_S}.lais_eventos")
-_LAIS_CONEXAO = "'00000000-0000-4000-8000-000000000267'"
+_M_JULIA = "267_lais_fundacao.sql"
+_T_JULIA = (f"{_S}.julia_contatos", f"{_S}.julia_interacoes", f"{_S}.julia_acoes_aplicadas", f"{_S}.julia_eventos")
+_JULIA_CONEXAO = "'00000000-0000-4000-8000-000000000267'"
 
 
-def _lais_contato_ins(extra_cols: str = "", extra_vals: str = "") -> str:
+def _julia_contato_ins(extra_cols: str = "", extra_vals: str = "") -> str:
     cols = f", {extra_cols}" if extra_cols else ""
     vals = f", {extra_vals}" if extra_vals else ""
     return (
-        f"    INSERT INTO {_S}.lais_contatos (org_id, connection_id, chat_id{cols})\n"
-        f"    VALUES (v_org, {_LAIS_CONEXAO}, 'noc_probe'{vals});"
+        f"    INSERT INTO {_S}.julia_contatos (org_id, connection_id, chat_id{cols})\n"
+        f"    VALUES (v_org, {_JULIA_CONEXAO}, 'noc_probe'{vals});"
     )
 
 
-def _lais_child_ins(table: str, cols: str, vals: str) -> str:
+def _julia_child_ins(table: str, cols: str, vals: str) -> str:
     """Insert a probe contato, then a child row pointing at it (all rolled back)."""
     return (
         f"    INSERT INTO {_S}.{table} (org_id, contato_id, {cols})\n"
-        f"    SELECT v_org, id, {vals} FROM {_S}.lais_contatos\n"
-        f"    WHERE org_id = v_org AND connection_id = {_LAIS_CONEXAO} AND chat_id = 'noc_probe';"
+        f"    SELECT v_org, id, {vals} FROM {_S}.julia_contatos\n"
+        f"    WHERE org_id = v_org AND connection_id = {_JULIA_CONEXAO} AND chat_id = 'noc_probe';"
     )
 
 
-def _lais_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+def _julia_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais.{probe_id}", guard_name=guard, migration=_M_LAIS, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS,
+        probe_id=f"julia.{probe_id}", guard_name=guard, migration=_M_JULIA, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA,
     )
 
 
-#: Migration 267 -- the Lais foundation (contatos / interacoes / acoes aplicadas / eventos). Unapplied
+#: Migration 267 -- the Julia foundation (contatos / interacoes / acoes aplicadas / eventos). Unapplied
 #: guards read `no_fixture` (the tables do not exist yet) and must read `refused` once applied.
-_SW_LAIS_PROBES: tuple[GuardProbe, ...] = (
-    _lais_probe(
-        "contatos.status_envio_valido", "lais_contatos_status_envio_valido",
+_SW_JULIA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_probe(
+        "contatos.status_envio_valido", "julia_contatos_status_envio_valido",
         "status_envio drives the 'Enviado ao SW' column and the retry button; a free-text value would be "
         "neither shown nor retried.",
-        _lais_contato_ins("status_envio", "'noc_probe_bogus'"), _CHECK, "a lais_contato with an unknown status_envio",
+        _julia_contato_ins("status_envio", "'noc_probe_bogus'"), _CHECK, "a julia_contato with an unknown status_envio",
     ),
-    _lais_probe(
-        "contatos.um_por_chat", "lais_contatos_org_conexao_chat_uq",
+    _julia_probe(
+        "contatos.um_por_chat", "julia_contatos_org_conexao_chat_uq",
         "One contato per (org, connection, chat): a second row would fork the person's slots, gen and "
         "episodes, and the stale guard would read the wrong gen.",
-        _lais_contato_ins() + "\n" + _lais_contato_ins(), _UNIQ, "two lais_contatos for the same chat",
+        _julia_contato_ins() + "\n" + _julia_contato_ins(), _UNIQ, "two julia_contatos for the same chat",
     ),
-    _lais_probe(
-        "interacoes.uma_aberta", "lais_interacoes_uma_aberta_uq",
+    _julia_probe(
+        "interacoes.uma_aberta", "julia_interacoes_uma_aberta_uq",
         "At most one OPEN episode per contato: two concurrent inbound turns must not open two, or the "
         "summary would be written to an arbitrary one.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_interacoes", "iniciada_at", "now()") + "\n"
-        + _lais_child_ins("lais_interacoes", "iniciada_at", "now()"),
-        _UNIQ, "two open lais_interacoes for one contato",
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_interacoes", "iniciada_at", "now()") + "\n"
+        + _julia_child_ins("julia_interacoes", "iniciada_at", "now()"),
+        _UNIQ, "two open julia_interacoes for one contato",
     ),
-    _lais_probe(
-        "acoes.lote_seq_unico", "lais_acoes_aplicadas_lote_seq_uq",
+    _julia_probe(
+        "acoes.lote_seq_unico", "julia_acoes_aplicadas_lote_seq_uq",
         "The idempotency ledger: (org, lote_hash, seq) unique is what makes a replayed batch apply "
         "nothing twice (a duplicated qualificar_lead would create two leads).",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'")
-        + "\n" + _lais_child_ins("lais_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'"),
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'")
+        + "\n" + _julia_child_ins("julia_acoes_aplicadas", "lote_hash, seq, tipo", "'noc_probe', 1, 'salvar_slots'"),
         _UNIQ, "the same action applied twice for one (lote_hash, seq)",
     ),
-    _lais_probe(
-        "eventos.tipo_valido", "lais_eventos_tipo_valido",
-        "The event type becomes a notification kind ('lais_' || tipo); a malformed token would mint an "
+    _julia_probe(
+        "eventos.tipo_valido", "julia_eventos_tipo_valido",
+        "The event type becomes a notification kind ('julia_' || tipo); a malformed token would mint an "
         "unroutable category.",
-        f"    INSERT INTO {_S}.lais_eventos (org_id, tipo)\n    VALUES (v_org, 'NOC PROBE BOGUS');",
-        _CHECK, "a lais_evento with a malformed tipo",
+        f"    INSERT INTO {_S}.julia_eventos (org_id, tipo)\n    VALUES (v_org, 'NOC PROBE BOGUS');",
+        _CHECK, "a julia_evento with a malformed tipo",
     ),
     # Migration 268 -- wave 1 Conhecimento: the closed set of knowledge sections.
     _sw_junction_probe(
-        probe_id="lais.conhecimento.secao_valida", guard_name="lais_conhecimento_secao_valida",
+        probe_id="julia.conhecimento.secao_valida", guard_name="julia_conhecimento_secao_valida",
         migration="268_lais_conhecimento.sql",
         rationale="`secao` selects the pydantic model that validates `dados` and the render block; an unknown "
         "one would be stored unvalidated and never rendered.",
         fixtures=("registry",),
-        ops_sql=f"    INSERT INTO {_S}.lais_conhecimento_secoes (org_id, secao)\n    VALUES (v_org, 'noc_probe_bogus');",
-        sqlstate_condition=_CHECK, what="a lais_conhecimento_secoes row with an unknown secao",
-        tabelas=(f"{_S}.lais_conhecimento_secoes",),
+        ops_sql=f"    INSERT INTO {_S}.julia_conhecimento_secoes (org_id, secao)\n    VALUES (v_org, 'noc_probe_bogus');",
+        sqlstate_condition=_CHECK, what="a julia_conhecimento_secoes row with an unknown secao",
+        tabelas=(f"{_S}.julia_conhecimento_secoes",),
     ),
 )
 
 
 _M_PERGUNTAS = "269_lais_perguntas.sql"
-_T_PERGUNTAS = (f"{_S}.lais_perguntas_org", f"{_S}.lais_perguntas_catalogo")
+_T_PERGUNTAS = (f"{_S}.julia_perguntas_org", f"{_S}.julia_perguntas_catalogo")
 _PERGUNTAS_ORG = "'00000000-0000-4000-8000-000000000269'"
 
 
@@ -6495,44 +6495,44 @@ def _perguntas_ins(limit: int, offset: int, qualificatoria: bool) -> str:
     """Insert `limit` catalogue questions for the synthetic probe org, starting at catalogue position
     `offset` (all rolled back). `objetivo` sorts first, so it rides in the first batch."""
     return (
-        f"    INSERT INTO {_S}.lais_perguntas_org (org_id, chave, qualificatoria)\n"
+        f"    INSERT INTO {_S}.julia_perguntas_org (org_id, chave, qualificatoria)\n"
         f"    SELECT {_PERGUNTAS_ORG}, chave, {'true' if qualificatoria else 'false'}\n"
-        f"    FROM {_S}.lais_perguntas_catalogo ORDER BY ordem LIMIT {limit} OFFSET {offset};"
+        f"    FROM {_S}.julia_perguntas_catalogo ORDER BY ordem LIMIT {limit} OFFSET {offset};"
     )
 
 
 def _perguntas_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais.perguntas.{probe_id}", guard_name=guard, migration=_M_PERGUNTAS, rationale=rationale,
+        probe_id=f"julia.perguntas.{probe_id}", guard_name=guard, migration=_M_PERGUNTAS, rationale=rationale,
         fixtures=(), ops_sql=ops_sql, sqlstate_condition=_CHECK, what=what, tabelas=_T_PERGUNTAS,
     )
 
 
-#: Migration 269 -- the limits trigger on lais_perguntas_org (<= 8 active, <= 5 qualifying, `objetivo`
+#: Migration 269 -- the limits trigger on julia_perguntas_org (<= 8 active, <= 5 qualifying, `objetivo`
 #: locked). The probe org is synthetic (no FK on org_id), so nothing depends on a real tenant row.
 _SW_PERGUNTAS_PROBES: tuple[GuardProbe, ...] = (
     _perguntas_probe(
-        "limite_ativas", "lais_perguntas_org_limites",
+        "limite_ativas", "julia_perguntas_org_limites",
         "More than 8 active questions bloat every turn's prompt and break the 'max 8' contract the "
         "Perguntas page promises.",
         _perguntas_ins(8, 0, False) + "\n" + _perguntas_ins(1, 8, False), "a 9th active pergunta for one org",
     ),
     _perguntas_probe(
-        "limite_qualificatorias", "lais_perguntas_org_limites",
+        "limite_qualificatorias", "julia_perguntas_org_limites",
         "A 6th qualifying question would make 'ready to send' unreachable for most leads.",
         _perguntas_ins(5, 0, True) + "\n" + _perguntas_ins(1, 5, True), "a 6th qualifying pergunta for one org",
     ),
     _perguntas_probe(
-        "objetivo_obrigatorio", "lais_perguntas_org_objetivo_obrigatorio",
+        "objetivo_obrigatorio", "julia_perguntas_org_objetivo_obrigatorio",
         "`objetivo` decides compra vs aluguel; without it Julia cannot route the conversation.",
         _perguntas_ins(1, 0, False) + "\n"
-        + f"    DELETE FROM {_S}.lais_perguntas_org WHERE org_id = {_PERGUNTAS_ORG} AND chave = 'objetivo';",
+        + f"    DELETE FROM {_S}.julia_perguntas_org WHERE org_id = {_PERGUNTAS_ORG} AND chave = 'objetivo';",
         "removing the objetivo pergunta from an org",
     ),
     _perguntas_probe(
-        "qualificatoria_exige_ativa", "lais_perguntas_org_qualificatoria_ativa",
+        "qualificatoria_exige_ativa", "julia_perguntas_org_qualificatoria_ativa",
         "A qualifying question that is switched off would still gate 'ready to send' on a slot Julia never asks.",
-        f"    INSERT INTO {_S}.lais_perguntas_org (org_id, chave, ativa, qualificatoria)\n"
+        f"    INSERT INTO {_S}.julia_perguntas_org (org_id, chave, ativa, qualificatoria)\n"
         f"    VALUES ({_PERGUNTAS_ORG}, 'nome', false, true);",
         "a qualifying pergunta that is not active",
     ),
@@ -6540,245 +6540,245 @@ _SW_PERGUNTAS_PROBES: tuple[GuardProbe, ...] = (
         _perguntas_probe(
             f"catalogo.{pid}", guard,
             f"The catalogue drives the Perguntas page and the contexto sent to the model; {why}",
-            f"    INSERT INTO {_S}.lais_perguntas_catalogo (chave, label, categoria, ordem{extra_cols})\n"
+            f"    INSERT INTO {_S}.julia_perguntas_catalogo (chave, label, categoria, ordem{extra_cols})\n"
             f"    VALUES ('{chave}', 'x', '{cat}', 9999{extra_vals});",
             what,
         )
         for pid, guard, why, chave, cat, extra_cols, extra_vals, what in (
-            ("chave_valida", "lais_perguntas_catalogo_chave_valida", "a key that is not snake_case cannot be a slot key.",
+            ("chave_valida", "julia_perguntas_catalogo_chave_valida", "a key that is not snake_case cannot be a slot key.",
              "Noc Probe", "lead", "", "", "a catalogue question with a malformed chave"),
-            ("categoria_valida", "lais_perguntas_catalogo_categoria_valida", "an unknown category has no filter tab.",
+            ("categoria_valida", "julia_perguntas_catalogo_categoria_valida", "an unknown category has no filter tab.",
              "noc_probe", "bogus", "", "", "a catalogue question in an unknown categoria"),
-            ("operacao_valida", "lais_perguntas_catalogo_operacao_valida", "an unknown operation never matches a contato.",
+            ("operacao_valida", "julia_perguntas_catalogo_operacao_valida", "an unknown operation never matches a contato.",
              "noc_probe", "lead", ", operacao", ", 'bogus'", "a catalogue question scoped to an unknown operacao"),
-            ("sensivel_valido", "lais_perguntas_catalogo_sensivel_valido", "an unknown protection mode would store the value raw.",
+            ("sensivel_valido", "julia_perguntas_catalogo_sensivel_valido", "an unknown protection mode would store the value raw.",
              "noc_probe", "lead", ", sensivel", ", 'bogus'", "a catalogue question with an unknown sensivel mode"),
         )
     ),
 )
 
 
-_M_LAIS_NOTIF = "273_lais_notificacoes.sql"
+_M_JULIA_NOTIF = "273_lais_notificacoes.sql"
 
-#: Migration 273 -- Lais wave 6 (notificacoes prefs). Unapplied guard reads `no_fixture`, `refused` once applied.
-_SW_LAIS_NOTIF_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 273 -- Julia wave 6 (notificacoes prefs). Unapplied guard reads `no_fixture`, `refused` once applied.
+_SW_JULIA_NOTIF_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
-        probe_id="lais_notif.prefs.tipo_valido", guard_name="lais_notificacao_prefs_tipo_valido",
-        migration=_M_LAIS_NOTIF,
+        probe_id="julia_notif.prefs.tipo_valido", guard_name="julia_notificacao_prefs_tipo_valido",
+        migration=_M_JULIA_NOTIF,
         rationale="The type is a token the service maps to a notification kind; a free-text value would be a preference no event can ever match.",
         fixtures=("registry",),
-        ops_sql=f"    INSERT INTO {_S}.lais_notificacao_prefs (org_id, user_id, tipo)\n    VALUES (v_org, gen_random_uuid(), 'Noc Probe Bogus');",
+        ops_sql=f"    INSERT INTO {_S}.julia_notificacao_prefs (org_id, user_id, tipo)\n    VALUES (v_org, gen_random_uuid(), 'Noc Probe Bogus');",
         sqlstate_condition=_CHECK, what="a notification preference with a malformed type token",
-        tabelas=(f"{_S}.lais_notificacao_prefs",),
+        tabelas=(f"{_S}.julia_notificacao_prefs",),
     ),
 )
 
 
-_M_LAIS_VIS = "272_lais_visitas.sql"
-_T_LAIS_VIS = (f"{_S}.lais_contatos", f"{_S}.lais_visitas", f"{_S}.lais_visitas_config")
+_M_JULIA_VIS = "272_lais_visitas.sql"
+_T_JULIA_VIS = (f"{_S}.julia_contatos", f"{_S}.julia_visitas", f"{_S}.julia_visitas_config")
 
 
-def _lais_vis_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+def _julia_vis_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais.{probe_id}", guard_name=guard, migration=_M_LAIS_VIS, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_VIS,
+        probe_id=f"julia.{probe_id}", guard_name=guard, migration=_M_JULIA_VIS, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_VIS,
     )
 
 
-def _lais_visita_ins(cols: str = "", vals: str = "") -> str:
+def _julia_visita_ins(cols: str = "", vals: str = "") -> str:
     extra_c = f", {cols}" if cols else ""
     extra_v = f", {vals}" if vals else ""
-    return _lais_child_ins(
-        "lais_visitas", f"inicio, fim{extra_c}", f"'2099-01-01T12:00:00Z'::timestamptz, '2099-01-01T12:30:00Z'::timestamptz{extra_v}"
+    return _julia_child_ins(
+        "julia_visitas", f"inicio, fim{extra_c}", f"'2099-01-01T12:00:00Z'::timestamptz, '2099-01-01T12:30:00Z'::timestamptz{extra_v}"
     )
 
 
-#: Migration 272 -- Lais wave 5 (visitas). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_VISITAS_PROBES: tuple[GuardProbe, ...] = (
-    _lais_vis_probe(
-        "visitas.status_valido", "lais_visitas_status_valido",
+#: Migration 272 -- Julia wave 5 (visitas). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_VISITAS_PROBES: tuple[GuardProbe, ...] = (
+    _julia_vis_probe(
+        "visitas.status_valido", "julia_visitas_status_valido",
         "The visit status drives which transitions are legal; a free-text value would escape the state machine.",
-        _lais_contato_ins() + "\n" + _lais_visita_ins("status", "'noc_probe_bogus'"), _CHECK,
-        "a lais_visita with an unknown status",
+        _julia_contato_ins() + "\n" + _julia_visita_ins("status", "'noc_probe_bogus'"), _CHECK,
+        "a julia_visita with an unknown status",
     ),
-    _lais_vis_probe(
-        "visitas.fim_apos_inicio", "lais_visitas_fim_apos_inicio",
+    _julia_vis_probe(
+        "visitas.fim_apos_inicio", "julia_visitas_fim_apos_inicio",
         "A visit that ends before it starts would corrupt the calendar and the slot-conflict check.",
-        _lais_contato_ins() + "\n" + _lais_child_ins(
-            "lais_visitas", "inicio, fim",
+        _julia_contato_ins() + "\n" + _julia_child_ins(
+            "julia_visitas", "inicio, fim",
             "'2099-01-01T12:30:00Z'::timestamptz, '2099-01-01T12:00:00Z'::timestamptz"),
-        _CHECK, "a lais_visita whose fim is not after inicio",
+        _CHECK, "a julia_visita whose fim is not after inicio",
     ),
-    _lais_vis_probe(
-        "visitas.cpf_formato", "lais_visitas_cpf_formato",
+    _julia_vis_probe(
+        "visitas.cpf_formato", "julia_visitas_cpf_formato",
         "LGPD (contract 17): only a sha256 hash + last 3 digits may be stored; a clear CPF in cpf_hash "
         "would defeat the whole point.",
-        _lais_contato_ins() + "\n" + _lais_visita_ins("cpf_hash, cpf_final", "'noc_probe_clear', '123'"), _CHECK,
-        "a lais_visita whose cpf_hash is not a sha256 hex",
+        _julia_contato_ins() + "\n" + _julia_visita_ins("cpf_hash, cpf_final", "'noc_probe_clear', '123'"), _CHECK,
+        "a julia_visita whose cpf_hash is not a sha256 hex",
     ),
-    _lais_vis_probe(
-        "visitas.slot_vivo_unico", "lais_visitas_slot_vivo_uq",
+    _julia_vis_probe(
+        "visitas.slot_vivo_unico", "julia_visitas_slot_vivo_uq",
         "One live visit per (org, inicio): two concurrent requests must not book the same slot.",
-        _lais_contato_ins() + "\n" + _lais_visita_ins() + "\n" + _lais_visita_ins(), _UNIQ,
-        "two live lais_visitas at the same inicio",
+        _julia_contato_ins() + "\n" + _julia_visita_ins() + "\n" + _julia_visita_ins(), _UNIQ,
+        "two live julia_visitas at the same inicio",
     ),
-    _lais_vis_probe(
-        "visitas_config.objeto", "lais_visitas_config_objeto",
+    _julia_vis_probe(
+        "visitas_config.objeto", "julia_visitas_config_objeto",
         "The drawer config is read as a mapping profile->rules; an array/scalar would crash every slot computation.",
-        f"    INSERT INTO {_S}.lais_visitas_config (org_id, config)\n    VALUES (v_org, '[]'::jsonb);",
-        _CHECK, "a lais_visitas_config whose config is not a JSON object",
+        f"    INSERT INTO {_S}.julia_visitas_config (org_id, config)\n    VALUES (v_org, '[]'::jsonb);",
+        _CHECK, "a julia_visitas_config whose config is not a JSON object",
     ),
 )
 
 
-def _lais_contato_etiqueta_ins() -> str:
+def _julia_contato_etiqueta_ins() -> str:
     return (
-        f"    INSERT INTO {_S}.lais_contato_etiquetas (org_id, contato_id, etiqueta_id)\n"
-        f"    SELECT v_org, c.id, e.id FROM {_S}.lais_contatos c, {_S}.lais_etiquetas e\n"
-        f"    WHERE c.org_id = v_org AND c.connection_id = {_LAIS_CONEXAO} AND c.chat_id = 'noc_probe'\n"
+        f"    INSERT INTO {_S}.julia_contato_etiquetas (org_id, contato_id, etiqueta_id)\n"
+        f"    SELECT v_org, c.id, e.id FROM {_S}.julia_contatos c, {_S}.julia_etiquetas e\n"
+        f"    WHERE c.org_id = v_org AND c.connection_id = {_JULIA_CONEXAO} AND c.chat_id = 'noc_probe'\n"
         f"      AND e.org_id = v_org AND lower(e.nome) = 'noc_probe';"
     )
 
 
-_M_LAIS_CONV = "274_lais_conversas_v2.sql"
-_T_LAIS_CONV = (
-    f"{_S}.lais_contatos", f"{_S}.lais_etiquetas", f"{_S}.lais_contato_etiquetas",
-    f"{_S}.lais_notas", f"{_S}.lais_feedback",
+_M_JULIA_CONV = "274_lais_conversas_v2.sql"
+_T_JULIA_CONV = (
+    f"{_S}.julia_contatos", f"{_S}.julia_etiquetas", f"{_S}.julia_contato_etiquetas",
+    f"{_S}.julia_notas", f"{_S}.julia_feedback",
 )
 
 
-def _lais_conv_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+def _julia_conv_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_conv.{probe_id}", guard_name=guard, migration=_M_LAIS_CONV, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CONV,
+        probe_id=f"julia_conv.{probe_id}", guard_name=guard, migration=_M_JULIA_CONV, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_CONV,
     )
 
 
-def _lais_etiqueta_ins(nome: str = "noc_probe", cor: str = "#112233") -> str:
-    return f"    INSERT INTO {_S}.lais_etiquetas (org_id, nome, cor) VALUES (v_org, '{nome}', '{cor}');"
+def _julia_etiqueta_ins(nome: str = "noc_probe", cor: str = "#112233") -> str:
+    return f"    INSERT INTO {_S}.julia_etiquetas (org_id, nome, cor) VALUES (v_org, '{nome}', '{cor}');"
 
 
-#: Migration 274 -- Lais wave 7 (Conversas v2). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_CONV_PROBES: tuple[GuardProbe, ...] = (
-    _lais_conv_probe(
-        "etiquetas.nome_valido", "lais_etiquetas_nome_valido",
+#: Migration 274 -- Julia wave 7 (Conversas v2). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_CONV_PROBES: tuple[GuardProbe, ...] = (
+    _julia_conv_probe(
+        "etiquetas.nome_valido", "julia_etiquetas_nome_valido",
         "A blank tag name is an unselectable kanban column.",
-        _lais_etiqueta_ins(nome="   "), _CHECK, "a lais_etiqueta with a blank name",
+        _julia_etiqueta_ins(nome="   "), _CHECK, "a julia_etiqueta with a blank name",
     ),
-    _lais_conv_probe(
-        "etiquetas.cor_valida", "lais_etiquetas_cor_valida",
+    _julia_conv_probe(
+        "etiquetas.cor_valida", "julia_etiquetas_cor_valida",
         "The tag colour is rendered straight into CSS; only #rrggbb is accepted.",
-        _lais_etiqueta_ins(cor="red"), _CHECK, "a lais_etiqueta whose cor is not #rrggbb",
+        _julia_etiqueta_ins(cor="red"), _CHECK, "a julia_etiqueta whose cor is not #rrggbb",
     ),
-    _lais_conv_probe(
-        "etiquetas.nome_unico", "lais_etiquetas_org_nome_uq",
+    _julia_conv_probe(
+        "etiquetas.nome_unico", "julia_etiquetas_org_nome_uq",
         "Two tags with the same name in an org would be two indistinguishable kanban columns.",
-        _lais_etiqueta_ins() + "\n" + _lais_etiqueta_ins(nome="NOC_PROBE"), _UNIQ,
-        "two lais_etiquetas with the same name (case-insensitive) in one org",
+        _julia_etiqueta_ins() + "\n" + _julia_etiqueta_ins(nome="NOC_PROBE"), _UNIQ,
+        "two julia_etiquetas with the same name (case-insensitive) in one org",
     ),
-    _lais_conv_probe(
-        "contato_etiquetas.pk", "lais_contato_etiquetas_pk",
+    _julia_conv_probe(
+        "contato_etiquetas.pk", "julia_contato_etiquetas_pk",
         "A contato carries a given tag at most once; a duplicate would render the lead twice in the column.",
-        _lais_contato_ins() + "\n" + _lais_etiqueta_ins() + "\n"
-        + _lais_contato_etiqueta_ins() + "\n" + _lais_contato_etiqueta_ins(), _UNIQ,
-        "the same etiqueta attached twice to one lais_contato",
+        _julia_contato_ins() + "\n" + _julia_etiqueta_ins() + "\n"
+        + _julia_contato_etiqueta_ins() + "\n" + _julia_contato_etiqueta_ins(), _UNIQ,
+        "the same etiqueta attached twice to one julia_contato",
     ),
-    _lais_conv_probe(
-        "notas.texto_valido", "lais_notas_texto_valido",
+    _julia_conv_probe(
+        "notas.texto_valido", "julia_notas_texto_valido",
         "A note is 1..4000 chars; an empty or unbounded note breaks the Notas internas card.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_notas", "texto", "'   '"), _CHECK,
-        "a lais_nota with a blank text",
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_notas", "texto", "'   '"), _CHECK,
+        "a julia_nota with a blank text",
     ),
-    _lais_conv_probe(
-        "feedback.nota_valida", "lais_feedback_nota_valida",
+    _julia_conv_probe(
+        "feedback.nota_valida", "julia_feedback_nota_valida",
         "Feedback feeds the evals; only like|dislike is a defined signal.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_feedback", "nota", "'noc_probe_bogus'"), _CHECK,
-        "a lais_feedback with an unknown nota",
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_feedback", "nota", "'noc_probe_bogus'"), _CHECK,
+        "a julia_feedback with an unknown nota",
     ),
-    _lais_conv_probe(
-        "feedback.comentario_tamanho", "lais_feedback_comentario_tamanho",
+    _julia_conv_probe(
+        "feedback.comentario_tamanho", "julia_feedback_comentario_tamanho",
         "The feedback comment is capped at 1000 chars so one row cannot bloat the eval export.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_feedback", "nota, comentario", "'like', repeat('x', 1001)"),
-        _CHECK, "a lais_feedback with a 1001-char comment",
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_feedback", "nota, comentario", "'like', repeat('x', 1001)"),
+        _CHECK, "a julia_feedback with a 1001-char comment",
     ),
 )
 
 
-_M_LAIS_REENG = "271_lais_reengajamento.sql"
-_T_LAIS_REENG = (f"{_S}.lais_reengajamento_config", f"{_S}.lais_reguas", f"{_S}.lais_regua_tentativas")
+_M_JULIA_REENG = "271_lais_reengajamento.sql"
+_T_JULIA_REENG = (f"{_S}.julia_reengajamento_config", f"{_S}.julia_reguas", f"{_S}.julia_regua_tentativas")
 
 
 def _reeng_regua_ins(extra_cols: str = "", extra_vals: str = "") -> str:
     cols = f", {extra_cols}" if extra_cols else ""
     vals = f", {extra_vals}" if extra_vals else ""
-    return f"    INSERT INTO {_S}.lais_reguas (org_id, nome{cols})\n    VALUES (v_org, 'noc_probe'{vals});"
+    return f"    INSERT INTO {_S}.julia_reguas (org_id, nome{cols})\n    VALUES (v_org, 'noc_probe'{vals});"
 
 
 def _reeng_tent_ins(cols: str, vals: str) -> str:
     """A tentativa under the probe regua (the regua is inserted first in the same rolled-back block)."""
     return (
-        f"    INSERT INTO {_S}.lais_regua_tentativas (org_id, regua_id, {cols})\n"
-        f"    SELECT v_org, id, {vals} FROM {_S}.lais_reguas WHERE org_id = v_org AND nome = 'noc_probe';"
+        f"    INSERT INTO {_S}.julia_regua_tentativas (org_id, regua_id, {cols})\n"
+        f"    SELECT v_org, id, {vals} FROM {_S}.julia_reguas WHERE org_id = v_org AND nome = 'noc_probe';"
     )
 
 
 def _reeng_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_reeng.{probe_id}", guard_name=guard, migration=_M_LAIS_REENG, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_REENG,
+        probe_id=f"julia_reeng.{probe_id}", guard_name=guard, migration=_M_JULIA_REENG, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_REENG,
     )
 
 
 _REENG_TENT_OK = "1, 1, 'dias', 'noc probe', true"
 _REENG_TENT_COLS = "ordem, espera_valor, espera_unidade, texto, ativa"
 
-#: Migration 271 -- Lais wave 4 (reengajamento). Unapplied guards read `no_fixture` (tables absent) and
+#: Migration 271 -- Julia wave 4 (reengajamento). Unapplied guards read `no_fixture` (tables absent) and
 #: must read `refused` once applied.
-_SW_LAIS_REENG_PROBES: tuple[GuardProbe, ...] = (
+_SW_JULIA_REENG_PROBES: tuple[GuardProbe, ...] = (
     _reeng_probe(
-        "config.minutos_intervalo", "lais_reeng_minutos_intervalo_valido",
+        "config.minutos_intervalo", "julia_reeng_minutos_intervalo_valido",
         "The minutes tier is 5..60 in steps of 5; a 7-minute value would fire the default re-engagement off-grid.",
-        f"    INSERT INTO {_S}.lais_reengajamento_config (org_id, minutos_intervalo) VALUES (v_org, 7);",
+        f"    INSERT INTO {_S}.julia_reengajamento_config (org_id, minutos_intervalo) VALUES (v_org, 7);",
         _CHECK, "a re-engagement config with a 7-minute interval",
     ),
     _reeng_probe(
-        "config.horas_intervalo", "lais_reeng_horas_intervalo_valido",
+        "config.horas_intervalo", "julia_reeng_horas_intervalo_valido",
         "The hours tier is 1..11; 12 h or more would collide with the next business window.",
-        f"    INSERT INTO {_S}.lais_reengajamento_config (org_id, horas_intervalo) VALUES (v_org, 12);",
+        f"    INSERT INTO {_S}.julia_reengajamento_config (org_id, horas_intervalo) VALUES (v_org, 12);",
         _CHECK, "a re-engagement config with a 12-hour interval",
     ),
     _reeng_probe(
-        "reguas.nome_valido", "lais_reguas_nome_valido",
+        "reguas.nome_valido", "julia_reguas_nome_valido",
         "A regua with a blank name is unselectable in the UI.",
         _reeng_regua_ins().replace("'noc_probe'", "'   '"), _CHECK, "a regua with a blank name",
     ),
     _reeng_probe(
-        "tentativas.ordem_1_a_3", "lais_regua_tentativas_ordem_1_a_3",
+        "tentativas.ordem_1_a_3", "julia_regua_tentativas_ordem_1_a_3",
         "At most 3 attempts per regua is structural: ordem is 1..3 (and unique), so a 4th cannot exist.",
         _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "4, 1, 'dias', 'noc probe', true"),
         _CHECK, "a 4th regua tentativa (ordem 4)",
     ),
     _reeng_probe(
-        "tentativas.ordem_unica", "lais_regua_tentativas_ordem_uq",
+        "tentativas.ordem_unica", "julia_regua_tentativas_ordem_uq",
         "Two attempts with the same ordem would both fire at the same step of the regua.",
         _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK) + "\n"
         + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK),
         _UNIQ, "two tentativas with the same ordem in one regua",
     ),
     _reeng_probe(
-        "tentativas.espera_valida", "lais_regua_tentativas_espera_valida",
+        "tentativas.espera_valida", "julia_regua_tentativas_espera_valida",
         "A zero or negative wait would fire the attempt immediately, ignoring the lead's silence window.",
         _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "1, 0, 'dias', 'noc probe', true"),
         _CHECK, "a tentativa with a zero wait",
     ),
     _reeng_probe(
-        "tentativas.unidade_valida", "lais_regua_tentativas_unidade_valida",
+        "tentativas.unidade_valida", "julia_regua_tentativas_unidade_valida",
         "The wait unit is minutos|horas|dias; anything else cannot be turned into a schedule.",
         _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, "1, 1, 'semanas', 'noc probe', true"),
         _CHECK, "a tentativa with an unknown wait unit",
     ),
     _reeng_probe(
-        "tentativas.texto_ou_template", "lais_regua_tentativas_texto_ou_template",
+        "tentativas.texto_ou_template", "julia_regua_tentativas_texto_ou_template",
         "An attempt carries free text XOR a Cloud template: neither has nothing to send, both is ambiguous "
         "(a template needs the Cloud transport, free text must not go out as a mass send).",
         _reeng_regua_ins() + "\n"
@@ -6786,100 +6786,100 @@ _SW_LAIS_REENG_PROBES: tuple[GuardProbe, ...] = (
         _CHECK, "a tentativa with neither texto nor template_id",
     ),
     _reeng_probe(
-        "reguas.ativa_exige_tentativa", "lais_regua_ativa_exige_tentativa_fn",
+        "reguas.ativa_exige_tentativa", "julia_regua_ativa_exige_tentativa_fn",
         "An active regua with no active attempt would be 'on' and do nothing; the live UI refuses to turn it on.",
         _reeng_regua_ins("ativa", "true"), _CHECK, "an active regua with no active tentativa",
     ),
     _reeng_probe(
-        "tentativas.ultima_ativa", "lais_regua_ultima_tentativa_ativa_fn",
+        "tentativas.ultima_ativa", "julia_regua_ultima_tentativa_ativa_fn",
         "Removing the last active attempt of an active regua would silently turn it into a no-op.",
         _reeng_regua_ins() + "\n" + _reeng_tent_ins(_REENG_TENT_COLS, _REENG_TENT_OK) + "\n"
-        f"    UPDATE {_S}.lais_reguas SET ativa = true WHERE org_id = v_org AND nome = 'noc_probe';\n"
-        f"    DELETE FROM {_S}.lais_regua_tentativas WHERE org_id = v_org "
-        f"AND regua_id IN (SELECT id FROM {_S}.lais_reguas WHERE org_id = v_org AND nome = 'noc_probe');",
+        f"    UPDATE {_S}.julia_reguas SET ativa = true WHERE org_id = v_org AND nome = 'noc_probe';\n"
+        f"    DELETE FROM {_S}.julia_regua_tentativas WHERE org_id = v_org "
+        f"AND regua_id IN (SELECT id FROM {_S}.julia_reguas WHERE org_id = v_org AND nome = 'noc_probe');",
         _CHECK, "deleting the last active tentativa of an active regua",
     ),
 )
 
 
-_M_LAIS_EQUIPES = "276_lais_equipes.sql"
-_T_LAIS_EQUIPES = (f"{_S}.lais_equipes", f"{_S}.lais_equipe_membros", f"{_S}.lais_atribuicoes", f"{_S}.lais_contatos")
+_M_JULIA_EQUIPES = "276_lais_equipes.sql"
+_T_JULIA_EQUIPES = (f"{_S}.julia_equipes", f"{_S}.julia_equipe_membros", f"{_S}.julia_atribuicoes", f"{_S}.julia_contatos")
 
 
 def _equipes_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_equipes.{probe_id}", guard_name=guard, migration=_M_LAIS_EQUIPES, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_EQUIPES,
+        probe_id=f"julia_equipes.{probe_id}", guard_name=guard, migration=_M_JULIA_EQUIPES, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_EQUIPES,
     )
 
 
 def _equipe_ins(cols: str = "", vals: str = "") -> str:
     extra_c = f", {cols}" if cols else ""
     extra_v = f", {vals}" if vals else ""
-    return f"    INSERT INTO {_S}.lais_equipes (org_id, nome{extra_c})\n    VALUES (v_org, 'noc_probe'{extra_v});"
+    return f"    INSERT INTO {_S}.julia_equipes (org_id, nome{extra_c})\n    VALUES (v_org, 'noc_probe'{extra_v});"
 
 
-#: Migration 276 -- Lais wave 11 (Equipes). Unapplied guards read `no_fixture` (tables absent), `refused` once applied.
-_SW_LAIS_EQUIPES_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 276 -- Julia wave 11 (Equipes). Unapplied guards read `no_fixture` (tables absent), `refused` once applied.
+_SW_JULIA_EQUIPES_PROBES: tuple[GuardProbe, ...] = (
     _equipes_probe(
-        "nome_valido", "lais_equipes_nome_valido",
+        "nome_valido", "julia_equipes_nome_valido",
         "A team with a blank name is unselectable in the page and in the Conversas filter.",
         _equipe_ins().replace("'noc_probe'", "'   '"), _CHECK, "a team with a blank name",
     ),
     _equipes_probe(
-        "modo_valido", "lais_equipes_modo_valido",
+        "modo_valido", "julia_equipes_modo_valido",
         "The mode picks who assigns the attendant (SW funnel or Julia); an unknown value would assign nobody, silently.",
         _equipe_ins("modo", "'bogus'"), _CHECK, "a team with an unknown assignment mode",
     ),
     _equipes_probe(
-        "nome_unico", "lais_equipes_org_nome_uq",
+        "nome_unico", "julia_equipes_org_nome_uq",
         "Two teams with the same name in one org are indistinguishable in the picker.",
         _equipe_ins() + "\n" + _equipe_ins().replace("'noc_probe'", "'NOC_PROBE'"), _UNIQ,
         "two teams with the same name (case-insensitive) in one org",
     ),
     _equipes_probe(
-        "membro_ordem_nao_negativa", "lais_equipe_membros_ordem_nao_negativa",
+        "membro_ordem_nao_negativa", "julia_equipe_membros_ordem_nao_negativa",
         "The order is the round-robin sequence; a negative position would sort ahead of every real member.",
         _equipe_ins() + "\n"
-        f"    INSERT INTO {_S}.lais_equipe_membros (equipe_id, org_id, user_id, ordem)\n"
-        f"    SELECT id, v_org, gen_random_uuid(), -1 FROM {_S}.lais_equipes WHERE org_id = v_org AND nome = 'noc_probe';",
+        f"    INSERT INTO {_S}.julia_equipe_membros (equipe_id, org_id, user_id, ordem)\n"
+        f"    SELECT id, v_org, gen_random_uuid(), -1 FROM {_S}.julia_equipes WHERE org_id = v_org AND nome = 'noc_probe';",
         _CHECK, "a team member with a negative ordem",
     ),
     _equipes_probe(
-        "atribuicao_criterio_valido", "lais_atribuicoes_criterio_valido",
+        "atribuicao_criterio_valido", "julia_atribuicoes_criterio_valido",
         "The criterion says WHY the attendant was picked (keep-last vs round-robin); free text breaks the audit.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_atribuicoes", "user_id, criterio", "gen_random_uuid(), 'bogus'"),
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_atribuicoes", "user_id, criterio", "gen_random_uuid(), 'bogus'"),
         _CHECK, "an attribution with an unknown criterio",
     ),
     _equipes_probe(
-        "atribuicao_motivo_valido", "lais_atribuicoes_motivo_valido",
+        "atribuicao_motivo_valido", "julia_atribuicoes_motivo_valido",
         "The motivo is the audit trail of why an attendant was picked; free text would break the metrics grouping.",
-        _lais_contato_ins() + "\n" + _lais_child_ins("lais_atribuicoes", "user_id, motivo", "gen_random_uuid(), 'bogus'"),
+        _julia_contato_ins() + "\n" + _julia_child_ins("julia_atribuicoes", "user_id, motivo", "gen_random_uuid(), 'bogus'"),
         _CHECK,
         "an attribution with an unknown motivo",
     ),
 )
 
 
-_M_LAIS_CLOUD = "275_lais_cloud.sql"
-_T_LAIS_CLOUD = (
-    f"{_S}.lais_contatos", f"{_S}.lais_modelos", f"{_S}.lais_disparos", f"{_S}.lais_disparo_alvos",
-    f"{_S}.lais_proprietarios_contatos",
+_M_JULIA_CLOUD = "275_lais_cloud.sql"
+_T_JULIA_CLOUD = (
+    f"{_S}.julia_contatos", f"{_S}.julia_modelos", f"{_S}.julia_disparos", f"{_S}.julia_disparo_alvos",
+    f"{_S}.julia_proprietarios_contatos",
 )
 _CLOUD_TEL = "'5511999990000'"
 
 
 def _cloud_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_cloud.{probe_id}", guard_name=guard, migration=_M_LAIS_CLOUD, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CLOUD,
+        probe_id=f"julia_cloud.{probe_id}", guard_name=guard, migration=_M_JULIA_CLOUD, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_CLOUD,
     )
 
 
 def _cloud_modelo_ins(cols: str = "", vals: str = "") -> str:
     extra_c = f", {cols}" if cols else ""
     extra_v = f", {vals}" if vals else ""
-    return f"    INSERT INTO {_S}.lais_modelos (org_id, nome, corpo{extra_c})\n    VALUES (v_org, 'noc_probe', 'Oi'{extra_v});"
+    return f"    INSERT INTO {_S}.julia_modelos (org_id, nome, corpo{extra_c})\n    VALUES (v_org, 'noc_probe', 'Oi'{extra_v});"
 
 
 def _cloud_disparo_ins(cols: str = "", vals: str = "") -> str:
@@ -6888,8 +6888,8 @@ def _cloud_disparo_ins(cols: str = "", vals: str = "") -> str:
     extra_v = f", {vals}" if vals else ""
     return (
         _cloud_modelo_ins() + "\n"
-        f"    INSERT INTO {_S}.lais_disparos (org_id, nome, segmento, modelo_id{extra_c})\n"
-        f"    SELECT v_org, 'noc_probe', 'leads_3_15', id{extra_v} FROM {_S}.lais_modelos\n"
+        f"    INSERT INTO {_S}.julia_disparos (org_id, nome, segmento, modelo_id{extra_c})\n"
+        f"    SELECT v_org, 'noc_probe', 'leads_3_15', id{extra_v} FROM {_S}.julia_modelos\n"
         "    WHERE org_id = v_org AND nome = 'noc_probe';"
     )
 
@@ -6898,8 +6898,8 @@ def _cloud_alvo_ins(cols: str = "", vals: str = "") -> str:
     extra_c = f", {cols}" if cols else ""
     extra_v = f", {vals}" if vals else ""
     return (
-        f"    INSERT INTO {_S}.lais_disparo_alvos (org_id, disparo_id, telefone{extra_c})\n"
-        f"    SELECT v_org, id, {_CLOUD_TEL}{extra_v} FROM {_S}.lais_disparos\n"
+        f"    INSERT INTO {_S}.julia_disparo_alvos (org_id, disparo_id, telefone{extra_c})\n"
+        f"    SELECT v_org, id, {_CLOUD_TEL}{extra_v} FROM {_S}.julia_disparos\n"
         "    WHERE org_id = v_org AND nome = 'noc_probe';"
     )
 
@@ -6908,152 +6908,152 @@ def _cloud_prop_ins(cols: str = "", vals: str = "") -> str:
     extra_c = f", {cols}" if cols else ""
     extra_v = f", {vals}" if vals else ""
     return (
-        f"    INSERT INTO {_S}.lais_proprietarios_contatos (org_id, telefone, imovel_codigo{extra_c})\n"
+        f"    INSERT INTO {_S}.julia_proprietarios_contatos (org_id, telefone, imovel_codigo{extra_c})\n"
         f"    VALUES (v_org, {_CLOUD_TEL}, 'NOC1'{extra_v});"
     )
 
 
-#: Migration 275 -- Lais wave 12 (Cloud-API pages). Unapplied guards read `no_fixture` (tables absent) and must
+#: Migration 275 -- Julia wave 12 (Cloud-API pages). Unapplied guards read `no_fixture` (tables absent) and must
 #: read `refused` once applied. (`whatsapp_connections_transporte_valido` is a column CHECK on a table other
-#: migrations own -- covered structurally by tests/test_migration_lais_cloud.py.)
-_SW_LAIS_CLOUD_PROBES: tuple[GuardProbe, ...] = (
+#: migrations own -- covered structurally by tests/test_migration_julia_cloud.py.)
+_SW_JULIA_CLOUD_PROBES: tuple[GuardProbe, ...] = (
     _cloud_probe(
-        "modelos.nome_valido", "lais_modelos_nome_valido",
+        "modelos.nome_valido", "julia_modelos_nome_valido",
         "A template with a blank name is unselectable in the UI and has no Meta template name.",
         _cloud_modelo_ins().replace("'noc_probe'", "'   '"), _CHECK, "a modelo with a blank name",
     ),
     _cloud_probe(
-        "modelos.categoria_valida", "lais_modelos_categoria_valida",
+        "modelos.categoria_valida", "julia_modelos_categoria_valida",
         "The 8 categories are the page's tabs and drive the Meta category mapping; anything else has no tab.",
         _cloud_modelo_ins("categoria", "'bogus'"), _CHECK, "a modelo in an unknown categoria",
     ),
     _cloud_probe(
-        "modelos.corpo_valido", "lais_modelos_corpo_valido",
+        "modelos.corpo_valido", "julia_modelos_corpo_valido",
         "Meta refuses a template body over 1024 characters (and an empty one has nothing to send).",
         _cloud_modelo_ins().replace("'Oi'", "'   '"), _CHECK, "a modelo with an empty body",
     ),
     _cloud_probe(
-        "modelos.parametros_lista", "lais_modelos_parametros_lista",
+        "modelos.parametros_lista", "julia_modelos_parametros_lista",
         "`parametros` is read as the ordered list of registry keys; an object would crash every send.",
         _cloud_modelo_ins("parametros", "'{}'::jsonb"), _CHECK, "a modelo whose parametros is not a JSON array",
     ),
     _cloud_probe(
-        "modelos.status_valido", "lais_modelos_status_valido",
+        "modelos.status_valido", "julia_modelos_status_valido",
         "The status drives whether a disparo may use the modelo; a free-text value would escape the Meta lifecycle.",
         _cloud_modelo_ins("status", "'bogus'"), _CHECK, "a modelo with an unknown status",
     ),
     _cloud_probe(
-        "modelos.nome_unico", "lais_modelos_org_nome_uq",
+        "modelos.nome_unico", "julia_modelos_org_nome_uq",
         "Two templates with the same name in one org would be indistinguishable in the picker.",
         _cloud_modelo_ins() + "\n" + _cloud_modelo_ins().replace("'noc_probe'", "'NOC_PROBE'"), _UNIQ,
         "two modelos with the same name (case-insensitive) in one org",
     ),
     _cloud_probe(
-        "disparos.nome_valido", "lais_disparos_nome_valido",
+        "disparos.nome_valido", "julia_disparos_nome_valido",
         "A disparo with a blank name is unselectable in the list.",
         _cloud_disparo_ins().replace("SELECT v_org, 'noc_probe', 'leads_3_15'", "SELECT v_org, '   ', 'leads_3_15'"),
         _CHECK, "a disparo with a blank name",
     ),
     _cloud_probe(
-        "disparos.tipo_valido", "lais_disparos_tipo_valido",
+        "disparos.tipo_valido", "julia_disparos_tipo_valido",
         "Only remarketing and atualizacao_anuncios have a send path.",
         _cloud_disparo_ins("tipo", "'bogus'"), _CHECK, "a disparo of an unknown tipo",
     ),
     _cloud_probe(
-        "disparos.segmento_valido", "lais_disparos_segmento_valido",
+        "disparos.segmento_valido", "julia_disparos_segmento_valido",
         "An unknown segment selects no targets and bypasses the day-window logic.",
         _cloud_disparo_ins().replace("'leads_3_15'", "'bogus'"), _CHECK, "a disparo with an unknown segmento",
     ),
     _cloud_probe(
-        "disparos.status_valido", "lais_disparos_status_valido",
+        "disparos.status_valido", "julia_disparos_status_valido",
         "The status drives the tabs and the dispatch preconditions; a free-text value would escape both.",
         _cloud_disparo_ins("status", "'bogus'"), _CHECK, "a disparo with an unknown status",
     ),
     _cloud_probe(
-        "disparos.tipo_segmento", "lais_disparos_tipo_segmento",
+        "disparos.tipo_segmento", "julia_disparos_tipo_segmento",
         "Owner updates (atualizacao_anuncios) only ever target owners, and remarketing only leads: a mismatched "
         "pair would message a lead about a listing update or an owner about a remarketing offer.",
         _cloud_disparo_ins("tipo", "'atualizacao_anuncios'"), _CHECK,
         "an atualizacao_anuncios disparo aimed at a lead segment",
     ),
     _cloud_probe(
-        "disparos.agendado_exige_data", "lais_disparos_agendado_exige_data",
+        "disparos.agendado_exige_data", "julia_disparos_agendado_exige_data",
         "A scheduled disparo with no instant would never fire and never be cancelled by the clock.",
         _cloud_disparo_ins("status", "'agendado'"), _CHECK, "a scheduled disparo without agendado_para",
     ),
     _cloud_probe(
-        "disparos.total_nao_negativo", "lais_disparos_total_nao_negativo",
+        "disparos.total_nao_negativo", "julia_disparos_total_nao_negativo",
         "A negative target count corrupts the cap arithmetic.",
         _cloud_disparo_ins("total_alvos", "-1"), _CHECK, "a disparo with a negative total_alvos",
     ),
     _cloud_probe(
-        "alvos.status_valido", "lais_alvos_status_valido",
+        "alvos.status_valido", "julia_alvos_status_valido",
         "The target flow pendente -> enviado -> respondido -> enviado_sw | erro is the audit trail of a send.",
         _cloud_disparo_ins() + "\n" + _cloud_alvo_ins("status", "'bogus'"), _CHECK, "a disparo target with an unknown status",
     ),
     _cloud_probe(
-        "alvos.telefone_valido", "lais_alvos_telefone_valido",
+        "alvos.telefone_valido", "julia_alvos_telefone_valido",
         "Meta addresses a recipient by 10..15 digits; a formatted number would be rejected per target.",
         _cloud_disparo_ins() + "\n" + _cloud_alvo_ins().replace(_CLOUD_TEL, "'+55 (11) 9'"), _CHECK,
         "a disparo target with a non-digit phone",
     ),
     _cloud_probe(
-        "alvos.um_destino", "lais_alvos_um_destino",
+        "alvos.um_destino", "julia_alvos_um_destino",
         "A target is a lead XOR an owner; both would double-count and cross the opt-out rule.",
-        _lais_contato_ins() + "\n" + _cloud_prop_ins() + "\n" + _cloud_disparo_ins() + "\n"
-        f"    INSERT INTO {_S}.lais_disparo_alvos (org_id, disparo_id, contato_id, proprietario_id, telefone)\n"
+        _julia_contato_ins() + "\n" + _cloud_prop_ins() + "\n" + _cloud_disparo_ins() + "\n"
+        f"    INSERT INTO {_S}.julia_disparo_alvos (org_id, disparo_id, contato_id, proprietario_id, telefone)\n"
         f"    SELECT v_org, d.id, c.id, p.id, {_CLOUD_TEL}\n"
-        f"      FROM {_S}.lais_disparos d, {_S}.lais_contatos c, {_S}.lais_proprietarios_contatos p\n"
+        f"      FROM {_S}.julia_disparos d, {_S}.julia_contatos c, {_S}.julia_proprietarios_contatos p\n"
         "     WHERE d.org_id = v_org AND d.nome = 'noc_probe'\n"
-        f"       AND c.org_id = v_org AND c.connection_id = {_LAIS_CONEXAO} AND c.chat_id = 'noc_probe'\n"
+        f"       AND c.org_id = v_org AND c.connection_id = {_JULIA_CONEXAO} AND c.chat_id = 'noc_probe'\n"
         f"       AND p.org_id = v_org AND p.telefone = {_CLOUD_TEL};",
         _CHECK, "a disparo target pointing at both a contato and a proprietario",
     ),
     _cloud_probe(
-        "alvos.unico_por_telefone", "lais_alvos_disparo_telefone_uq",
+        "alvos.unico_por_telefone", "julia_alvos_disparo_telefone_uq",
         "One message per phone per disparo: a duplicate target double-sends and burns the per-chat template cap.",
         _cloud_disparo_ins() + "\n" + _cloud_alvo_ins() + "\n" + _cloud_alvo_ins(), _UNIQ,
         "two targets with the same phone in one disparo",
     ),
     _cloud_probe(
-        "proprietarios.telefone_valido", "lais_proprietarios_telefone_valido",
+        "proprietarios.telefone_valido", "julia_proprietarios_telefone_valido",
         "An owner is contacted by digits only; a malformed phone can never be opted out by number.",
         _cloud_prop_ins().replace(_CLOUD_TEL, "'abc'"), _CHECK, "an owner with a non-digit phone",
     ),
     _cloud_probe(
-        "proprietarios.codigo_valido", "lais_proprietarios_codigo_valido",
+        "proprietarios.codigo_valido", "julia_proprietarios_codigo_valido",
         "Without an imovel codigo the confirmed status/price has no listing to update.",
         _cloud_prop_ins().replace("'NOC1'", "'   '"), _CHECK, "an owner with a blank imovel codigo",
     ),
     _cloud_probe(
-        "proprietarios.opt_out_coerente", "lais_proprietarios_opt_out_coerente",
+        "proprietarios.opt_out_coerente", "julia_proprietarios_opt_out_coerente",
         "LGPD (contract 17): an opt-out without its instant (or the reverse) cannot be audited or honoured.",
         _cloud_prop_ins("opt_out", "true"), _CHECK, "an owner flagged opt_out without opt_out_at",
     ),
     _cloud_probe(
-        "proprietarios.preco_positivo", "lais_proprietarios_preco_positivo",
+        "proprietarios.preco_positivo", "julia_proprietarios_preco_positivo",
         "A confirmed price of zero or less would blank the listing price on the next apply.",
         _cloud_prop_ins("preco_confirmado", "0"), _CHECK, "an owner with a non-positive confirmed price",
     ),
     _cloud_probe(
-        "proprietarios.unico", "lais_proprietarios_org_tel_imovel_uq",
+        "proprietarios.unico", "julia_proprietarios_org_tel_imovel_uq",
         "One owner row per (phone, listing): a duplicate would double-message the owner about the same listing.",
         _cloud_prop_ins() + "\n" + _cloud_prop_ins(), _UNIQ, "two owner rows for the same phone and imovel",
     ),
 )
 
 
-_M_LAIS_PREC_TIPO = "283_lais_proprietarios_preco_tipo.sql"
+_M_JULIA_PREC_TIPO = "283_lais_proprietarios_preco_tipo.sql"
 
 #: Migration 283 -- owner-confirmed price kind. Unapplied the guard reads `no_fixture` (column absent), `refused` once applied.
-_SW_LAIS_PROPRIETARIOS_TIPO_PROBES: tuple[GuardProbe, ...] = (
+_SW_JULIA_PROPRIETARIOS_TIPO_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
-        probe_id="lais_proprietarios.preco_tipo_valido", guard_name="lais_proprietarios_preco_tipo_valido",
-        migration=_M_LAIS_PREC_TIPO,
+        probe_id="julia_proprietarios.preco_tipo_valido", guard_name="julia_proprietarios_preco_tipo_valido",
+        migration=_M_JULIA_PREC_TIPO,
         rationale="The overlay picks valor_venda vs valor_locacao from this value; free text would apply the confirmed price to neither (or the wrong) column.",
         fixtures=("registry",), ops_sql=_cloud_prop_ins("preco_confirmado, preco_tipo_confirmado", "1000, 'bogus'"),
         sqlstate_condition=_CHECK, what="an owner confirmation whose price kind is neither venda nor locacao",
-        tabelas=_T_LAIS_CLOUD,
+        tabelas=_T_JULIA_CLOUD,
     ),
 )
 
@@ -8906,68 +8906,68 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
-_M_LAIS_ENVIO = "270_lais_envio.sql"
-_T_LAIS_ENVIO = (
-    f"{_S}.lais_contatos", f"{_S}.lais_envio_regras", f"{_S}.lais_envio_politicas", f"{_S}.lais_envio_entregas",
+_M_JULIA_ENVIO = "270_lais_envio.sql"
+_T_JULIA_ENVIO = (
+    f"{_S}.julia_contatos", f"{_S}.julia_envio_regras", f"{_S}.julia_envio_politicas", f"{_S}.julia_envio_entregas",
 )
 
 
 def _envio_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_envio.{probe_id}", guard_name=guard, migration=_M_LAIS_ENVIO, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_ENVIO,
+        probe_id=f"julia_envio.{probe_id}", guard_name=guard, migration=_M_JULIA_ENVIO, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_ENVIO,
     )
 
 
 def _envio_regra_ins(cols: str = "operacao", vals: str = "'compra'") -> str:
-    return f"    INSERT INTO {_S}.lais_envio_regras (org_id, {cols})\n    VALUES (v_org, {vals});"
+    return f"    INSERT INTO {_S}.julia_envio_regras (org_id, {cols})\n    VALUES (v_org, {vals});"
 
 
 def _envio_entrega_ins(gatilho: str = "'manual'", status: str = "'ok'", erro: str = "NULL") -> str:
-    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_envio_entregas", "gatilho, status, erro", f"{gatilho}, {status}, {erro}")
+    return _julia_contato_ins() + "\n" + _julia_child_ins("julia_envio_entregas", "gatilho, status, erro", f"{gatilho}, {status}, {erro}")
 
 
-#: Migration 270 -- Lais wave 3 (envio ao SW). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_ENVIO_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 270 -- Julia wave 3 (envio ao SW). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_ENVIO_PROBES: tuple[GuardProbe, ...] = (
     _envio_probe(
-        "regras.operacao_valida", "lais_envio_regras_operacao_valida",
+        "regras.operacao_valida", "julia_envio_regras_operacao_valida",
         "The rule is looked up by the contato's operacao; an unknown value would never match any contato.",
         _envio_regra_ins("operacao", "'noc_probe_bogus'"), _CHECK, "a send rule for an unknown operacao",
     ),
     _envio_probe(
-        "regras.grupos_array", "lais_envio_regras_grupos_array",
+        "regras.grupos_array", "julia_envio_regras_grupos_array",
         "The evaluator iterates groups of criteria; an object/scalar would crash every qualification.",
         _envio_regra_ins("operacao, grupos", "'compra', '{}'::jsonb"), _CHECK, "a send rule whose grupos is not a JSON array",
     ),
     _envio_probe(
-        "regras.operacao_unica", "lais_envio_regras_operacao_uq",
+        "regras.operacao_unica", "julia_envio_regras_operacao_uq",
         "Two rules for the same (org, operacao) would make the send decision depend on row order.",
         _envio_regra_ins() + "\n" + _envio_regra_ins(), _UNIQ, "two send rules for the same operacao",
     ),
     _envio_probe(
-        "politicas.frios_objeto", "lais_envio_politicas_frios_objeto",
+        "politicas.frios_objeto", "julia_envio_politicas_frios_objeto",
         "The cold-lead policy is read as a mapping (ativo / modo / intervalo); a scalar would crash the timer.",
-        f"    INSERT INTO {_S}.lais_envio_politicas (org_id, frios)\n    VALUES (v_org, '[]'::jsonb);",
+        f"    INSERT INTO {_S}.julia_envio_politicas (org_id, frios)\n    VALUES (v_org, '[]'::jsonb);",
         _CHECK, "a cold-lead policy that is not a JSON object",
     ),
     _envio_probe(
-        "politicas.captacoes_valida", "lais_envio_politicas_captacoes_valida",
+        "politicas.captacoes_valida", "julia_envio_politicas_captacoes_valida",
         "The captacao policy is enviar|notificar; anything else would silently behave as one of the two.",
-        f"    INSERT INTO {_S}.lais_envio_politicas (org_id, captacoes)\n    VALUES (v_org, 'noc_probe_bogus');",
+        f"    INSERT INTO {_S}.julia_envio_politicas (org_id, captacoes)\n    VALUES (v_org, 'noc_probe_bogus');",
         _CHECK, "a captacao policy outside enviar|notificar",
     ),
     _envio_probe(
-        "entregas.gatilho_valido", "lais_envio_entregas_gatilho_valido",
+        "entregas.gatilho_valido", "julia_envio_entregas_gatilho_valido",
         "The delivery ledger is grouped by trigger in the Leads list; a free-text trigger escapes the vocabulary.",
         _envio_entrega_ins("'noc_probe_bogus'"), _CHECK, "a delivery with an unknown gatilho",
     ),
     _envio_probe(
-        "entregas.status_valido", "lais_envio_entregas_status_valido",
+        "entregas.status_valido", "julia_envio_entregas_status_valido",
         "A delivery is ok or erro; any other status is neither a success nor a retryable failure.",
         _envio_entrega_ins(status="'noc_probe_bogus'", erro="'x'"), _CHECK, "a delivery with an unknown status",
     ),
     _envio_probe(
-        "entregas.erro_exige_mensagem", "lais_envio_entregas_erro_exige_mensagem",
+        "entregas.erro_exige_mensagem", "julia_envio_entregas_erro_exige_mensagem",
         "A failed delivery without its error text cannot be diagnosed from the Leads list.",
         _envio_entrega_ins(status="'erro'"), _CHECK, "an erro delivery with no erro text",
     ),
@@ -8975,57 +8975,57 @@ _SW_LAIS_ENVIO_PROBES: tuple[GuardProbe, ...] = (
 
 
 
-_M_LAIS_CAPT = "278_lais_captacoes.sql"
-_T_LAIS_CAPT = (f"{_S}.lais_contatos", f"{_S}.lais_captacoes")
+_M_JULIA_CAPT = "278_lais_captacoes.sql"
+_T_JULIA_CAPT = (f"{_S}.julia_contatos", f"{_S}.julia_captacoes")
 
 
 def _capt_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_captacao.{probe_id}", guard_name=guard, migration=_M_LAIS_CAPT, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CAPT,
+        probe_id=f"julia_captacao.{probe_id}", guard_name=guard, migration=_M_JULIA_CAPT, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_CAPT,
     )
 
 
 def _capt_ins(cols: str = "status", vals: str = "'nova'") -> str:
-    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_captacoes", cols, vals)
+    return _julia_contato_ins() + "\n" + _julia_child_ins("julia_captacoes", cols, vals)
 
 
-#: Migration 278 -- Lais wave 8 (captacao). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_CAPTACAO_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 278 -- Julia wave 8 (captacao). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_CAPTACAO_PROBES: tuple[GuardProbe, ...] = (
     _capt_probe(
-        "status_valido", "lais_captacoes_status_valido",
+        "status_valido", "julia_captacoes_status_valido",
         "The status drives which feed actions exist (registrar/descartar only on `nova`); free text escapes it.",
-        _capt_ins("status", "'noc_probe_bogus'"), _CHECK, "a lais_captacao with an unknown status",
+        _capt_ins("status", "'noc_probe_bogus'"), _CHECK, "a julia_captacao with an unknown status",
     ),
     _capt_probe(
-        "operacao_valida", "lais_captacoes_operacao_valida",
+        "operacao_valida", "julia_captacoes_operacao_valida",
         "The operacao prefills the imovel finalidades (venda|aluguel); any other token would fail the imovel write later.",
-        _capt_ins("operacao", "'noc_probe_bogus'"), _CHECK, "a lais_captacao with an unknown operacao",
+        _capt_ins("operacao", "'noc_probe_bogus'"), _CHECK, "a julia_captacao with an unknown operacao",
     ),
     _capt_probe(
-        "registrada_exige_imovel", "lais_captacoes_registrada_exige_imovel",
+        "registrada_exige_imovel", "julia_captacoes_registrada_exige_imovel",
         "A registrada capture must name the imovel it produced; otherwise the feed links to nothing.",
-        _capt_ins("status", "'registrada'"), _CHECK, "a registrada lais_captacao with no imovel_id",
+        _capt_ins("status", "'registrada'"), _CHECK, "a registrada julia_captacao with no imovel_id",
     ),
 )
 
 
-_M_LAIS_CRED = "281_lais_credito.sql"
-_T_LAIS_CRED = (
-    f"{_S}.lais_contatos", f"{_S}.lais_credito_config", f"{_S}.lais_credito_consentimentos", f"{_S}.lais_credito_analises",
+_M_JULIA_CRED = "281_lais_credito.sql"
+_T_JULIA_CRED = (
+    f"{_S}.julia_contatos", f"{_S}.julia_credito_config", f"{_S}.julia_credito_consentimentos", f"{_S}.julia_credito_analises",
 )
 _FK = "foreign_key_violation"
 
 
 def _cred_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_credito.{probe_id}", guard_name=guard, migration=_M_LAIS_CRED, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_CRED,
+        probe_id=f"julia_credito.{probe_id}", guard_name=guard, migration=_M_JULIA_CRED, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_CRED,
     )
 
 
 def _cred_consent_ins(aceito: str = "true", versao: str = "'v1'") -> str:
-    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_credito_consentimentos", "aceito, texto_versao", f"{aceito}, {versao}")
+    return _julia_contato_ins() + "\n" + _julia_child_ins("julia_credito_consentimentos", "aceito, texto_versao", f"{aceito}, {versao}")
 
 
 def _cred_analise_ins(consent_aceito: str, cols: str = "", vals: str = "") -> str:
@@ -9034,140 +9034,140 @@ def _cred_analise_ins(consent_aceito: str, cols: str = "", vals: str = "") -> st
     extra_v = f", {vals}" if vals else ""
     return (
         _cred_consent_ins(consent_aceito)
-        + f"\n    INSERT INTO {_S}.lais_credito_analises (org_id, contato_id, consentimento_id, provider{extra_c})\n"
-        f"    SELECT org_id, contato_id, id, 'noc_probe'{extra_v} FROM {_S}.lais_credito_consentimentos\n"
+        + f"\n    INSERT INTO {_S}.julia_credito_analises (org_id, contato_id, consentimento_id, provider{extra_c})\n"
+        f"    SELECT org_id, contato_id, id, 'noc_probe'{extra_v} FROM {_S}.julia_credito_consentimentos\n"
         "    WHERE org_id = v_org;"
     )
 
 
 def _cred_config_ins(cols: str, vals: str) -> str:
-    return f"    INSERT INTO {_S}.lais_credito_config (org_id, {cols}) VALUES (v_org, {vals});"
+    return f"    INSERT INTO {_S}.julia_credito_config (org_id, {cols}) VALUES (v_org, {vals});"
 
 
-#: Migration 281 -- Lais wave 13 (analise de credito). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_CREDITO_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 281 -- Julia wave 13 (analise de credito). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_CREDITO_PROBES: tuple[GuardProbe, ...] = (
     _cred_probe(
-        "config_provider_valido", "lais_credito_config_provider_valido",
+        "config_provider_valido", "julia_credito_config_provider_valido",
         "The provider names a factory entry; free text would silently select nothing.",
-        _cred_config_ins("provider", "'Not A Token!'"), _CHECK, "a lais_credito_config with a malformed provider",
+        _cred_config_ins("provider", "'Not A Token!'"), _CHECK, "a julia_credito_config with a malformed provider",
     ),
     _cred_probe(
-        "config_ativo_exige_provider", "lais_credito_config_ativo_exige_provider",
+        "config_ativo_exige_provider", "julia_credito_config_ativo_exige_provider",
         "An org cannot switch the analysis on with no provider chosen: every run would die at the factory.",
-        _cred_config_ins("ativo", "true"), _CHECK, "an active lais_credito_config with no provider",
+        _cred_config_ins("ativo", "true"), _CHECK, "an active julia_credito_config with no provider",
     ),
     _cred_probe(
-        "consent_texto_versao", "lais_credito_consentimentos_texto_versao_nao_vazia",
+        "consent_texto_versao", "julia_credito_consentimentos_texto_versao_nao_vazia",
         "A consent must name the wording the lead agreed to (LGPD evidence); a blank version proves nothing.",
         _cred_consent_ins("true", "'  '"), _CHECK, "a credit consent with a blank texto_versao",
     ),
     _cred_probe(
-        "analise_status_valido", "lais_credito_analises_status_valido",
+        "analise_status_valido", "julia_credito_analises_status_valido",
         "The status drives the Interacoes badge and the reprocess rule; free text escapes both.",
         _cred_analise_ins("true", "status", "'noc_probe_bogus'"), _CHECK, "a credit analysis with an unknown status",
     ),
     _cred_probe(
-        "analise_consentimento_aceito", "lais_credito_analises_consentimento_aceito",
+        "analise_consentimento_aceito", "julia_credito_analises_consentimento_aceito",
         "An analysis row asserts it rests on an ACCEPTED consent (contract 17); false is never a valid state.",
         _cred_analise_ins("true", "consentimento_aceito", "false"), _CHECK, "a credit analysis flagged as resting on a refused consent",
     ),
     _cred_probe(
-        "analise_consentimento_fk", "lais_credito_analises_consentimento_fk",
+        "analise_consentimento_fk", "julia_credito_analises_consentimento_fk",
         "No financial query may exist behind a REFUSED consent: the composite FK only resolves to aceito = true rows.",
         _cred_analise_ins("false"), _FK, "a credit analysis pointing at a refused consent",
     ),
 )
 
 
-_M_LAIS_AVAL = "280_lais_avaliacoes_capi.sql"
-_T_LAIS_AVAL = (
-    f"{_S}.lais_contatos", f"{_S}.lais_avaliacao_config", f"{_S}.lais_avaliacao_pedidos",
-    f"{_S}.lais_avaliacoes_cache", f"{_S}.lais_capi_eventos",
+_M_JULIA_AVAL = "280_lais_avaliacoes_capi.sql"
+_T_JULIA_AVAL = (
+    f"{_S}.julia_contatos", f"{_S}.julia_avaliacao_config", f"{_S}.julia_avaliacao_pedidos",
+    f"{_S}.julia_avaliacoes_cache", f"{_S}.julia_capi_eventos",
 )
 
 
 def _aval_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
     return _sw_junction_probe(
-        probe_id=f"lais_avaliacoes.{probe_id}", guard_name=guard, migration=_M_LAIS_AVAL, rationale=rationale,
-        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_LAIS_AVAL,
+        probe_id=f"julia_avaliacoes.{probe_id}", guard_name=guard, migration=_M_JULIA_AVAL, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_AVAL,
     )
 
 
 def _aval_cfg_ins(cols: str, vals: str) -> str:
-    return f"    INSERT INTO {_S}.lais_avaliacao_config (org_id, {cols})\n    VALUES (v_org, {vals});"
+    return f"    INSERT INTO {_S}.julia_avaliacao_config (org_id, {cols})\n    VALUES (v_org, {vals});"
 
 
 def _aval_cache_ins(nota: str = "5", externo: str = "'noc_probe'") -> str:
-    return f"    INSERT INTO {_S}.lais_avaliacoes_cache (org_id, external_id, nota)\n    VALUES (v_org, {externo}, {nota});"
+    return f"    INSERT INTO {_S}.julia_avaliacoes_cache (org_id, external_id, nota)\n    VALUES (v_org, {externo}, {nota});"
 
 
 def _aval_pedido_ins(cols: str, vals: str) -> str:
-    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_avaliacao_pedidos", cols, vals)
+    return _julia_contato_ins() + "\n" + _julia_child_ins("julia_avaliacao_pedidos", cols, vals)
 
 
 def _capi_ins(cols: str = "evento, dedupe_key", vals: str = "'lead_qualificado', 'noc_probe'") -> str:
-    return _lais_contato_ins() + "\n" + _lais_child_ins("lais_capi_eventos", cols, vals)
+    return _julia_contato_ins() + "\n" + _julia_child_ins("julia_capi_eventos", cols, vals)
 
 
-#: Migration 280 -- Lais wave 13 (avaliacoes + CAPI). Unapplied guards read `no_fixture`, `refused` once applied.
-_SW_LAIS_AVALIACOES_PROBES: tuple[GuardProbe, ...] = (
+#: Migration 280 -- Julia wave 13 (avaliacoes + CAPI). Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_AVALIACOES_PROBES: tuple[GuardProbe, ...] = (
     _aval_probe(
-        "config.review_url_https", "lais_avaliacao_config_review_url_https",
+        "config.review_url_https", "julia_avaliacao_config_review_url_https",
         "The review link is sent to leads verbatim; a non-https (or whitespace-bearing) value would be a broken or unsafe link.",
         _aval_cfg_ins("google_review_url", "'ftp://noc_probe'"), _CHECK, "a review link that is not https",
     ),
     _aval_probe(
-        "config.pixel_valido", "lais_avaliacao_config_pixel_valido",
+        "config.pixel_valido", "julia_avaliacao_config_pixel_valido",
         "The pixel id is the CAPI endpoint path segment; a non-numeric value would be an injection into the Graph URL.",
         _aval_cfg_ins("capi_pixel_id", "'noc_probe_bogus'"), _CHECK, "a CAPI pixel id that is not numeric",
     ),
     _aval_probe(
-        "pedidos.status_valido", "lais_avaliacao_pedidos_status_valido",
+        "pedidos.status_valido", "julia_avaliacao_pedidos_status_valido",
         "The KPI 'pedidos enviados' counts status=enviado; free text would be counted as neither sent nor failed.",
         _aval_pedido_ins("status", "'noc_probe_bogus'"), _CHECK, "a review ask with an unknown status",
     ),
     _aval_probe(
-        "pedidos.erro_exige_mensagem", "lais_avaliacao_pedidos_erro_exige_mensagem",
+        "pedidos.erro_exige_mensagem", "julia_avaliacao_pedidos_erro_exige_mensagem",
         "A failed review ask without its error text cannot be diagnosed.",
         _aval_pedido_ins("status", "'erro'"), _CHECK, "an erro review ask with no erro text",
     ),
     _aval_probe(
-        "cache.nota_valida", "lais_avaliacoes_cache_nota_valida",
+        "cache.nota_valida", "julia_avaliacoes_cache_nota_valida",
         "The distribution chart has five buckets (1-5 stars); any other value falls out of the average and the chart.",
         _aval_cache_ins("9"), _CHECK, "a review with a rating outside 1..5",
     ),
     _aval_probe(
-        "cache.externo_unico", "lais_avaliacoes_cache_org_externo_uq",
+        "cache.externo_unico", "julia_avaliacoes_cache_org_externo_uq",
         "The sync is idempotent on the Google review id; a duplicate would double-count the review in total and average.",
         _aval_cache_ins() + "\n" + _aval_cache_ins(), _UNIQ, "the same Google review cached twice for one org",
     ),
     _aval_probe(
-        "capi.evento_valido", "lais_capi_eventos_evento_valido",
+        "capi.evento_valido", "julia_capi_eventos_evento_valido",
         "The event name maps 1:1 to a Meta event; an unknown one would be sent as an undefined signal.",
         _capi_ins("evento, dedupe_key", "'noc_probe_bogus', 'noc_probe'"), _CHECK, "a CAPI signal with an unknown evento",
     ),
     _aval_probe(
-        "capi.status_valido", "lais_capi_eventos_status_valido",
+        "capi.status_valido", "julia_capi_eventos_status_valido",
         "The status decides whether the sender retries or stops; free text is neither.",
         _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'noc_probe_bogus'"), _CHECK,
         "a CAPI signal with an unknown status",
     ),
     _aval_probe(
-        "capi.erro_exige_mensagem", "lais_capi_eventos_erro_exige_mensagem",
+        "capi.erro_exige_mensagem", "julia_capi_eventos_erro_exige_mensagem",
         "A failed CAPI signal without its error text cannot be diagnosed.",
         _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'erro'"), _CHECK,
         "an erro CAPI signal with no erro text",
     ),
     _aval_probe(
-        "capi.enviado_exige_data", "lais_capi_eventos_enviado_exige_data",
+        "capi.enviado_exige_data", "julia_capi_eventos_enviado_exige_data",
         "A signal marked enviado without its send time lies about when Meta received it.",
         _capi_ins("evento, dedupe_key, status", "'lead_qualificado', 'noc_probe', 'enviado'"), _CHECK,
         "an enviado CAPI signal with no enviado_at",
     ),
     _aval_probe(
-        "capi.dedupe_unico", "lais_capi_eventos_dedupe_uq",
+        "capi.dedupe_unico", "julia_capi_eventos_dedupe_uq",
         "(org, dedupe_key) unique is what makes a replayed hook send one signal, not two (double-counted conversions).",
-        _capi_ins() + "\n" + _lais_child_ins("lais_capi_eventos", "evento, dedupe_key", "'lead_qualificado', 'noc_probe'"),
+        _capi_ins() + "\n" + _julia_child_ins("julia_capi_eventos", "evento, dedupe_key", "'lead_qualificado', 'noc_probe'"),
         _UNIQ, "the same CAPI signal recorded twice",
     ),
 )
@@ -9376,7 +9376,7 @@ _SW_MAYA_BLOCOS_PROBES: tuple[GuardProbe, ...] = (
     ),
     _maya_probe(
         "handoffs.gatilho_valido", "atendimento_handoffs_gatilho_valido",
-        "gatilho says which table origem_evento points into (lais_eventos | pipeline_movimentos); a free-text "
+        "gatilho says which table origem_evento points into (julia_eventos | pipeline_movimentos); a free-text "
         "trigger makes the reference unresolvable.",
         _maya_handoff_ins(gatilho="'noc_probe_bogus'"), _CHECK, "a handoff with an unknown trigger",
     ),
@@ -9427,12 +9427,12 @@ _SW_MAYA_BLOCOS_PROBES: tuple[GuardProbe, ...] = (
         _CHECK, "a supervision config with a 0-hour threshold",
     ),
     _maya_probe(
-        "interacoes.primeira_resposta_coerente", "lais_interacoes_primeira_resposta_coerente",
+        "interacoes.primeira_resposta_coerente", "julia_interacoes_primeira_resposta_coerente",
         "First-response time = primeira_resposta_at - iniciada_at; a reply before the episode began is a negative "
         "time that would drag p50/p90 below zero.",
-        f"    INSERT INTO {_S}.lais_contatos (id, org_id, connection_id, chat_id)\n"
+        f"    INSERT INTO {_S}.julia_contatos (id, org_id, connection_id, chat_id)\n"
         "    VALUES (v_org, v_org, gen_random_uuid(), 'noc_probe_maya');\n"
-        f"    INSERT INTO {_S}.lais_interacoes (org_id, contato_id, iniciada_at, primeira_resposta_at)\n"
+        f"    INSERT INTO {_S}.julia_interacoes (org_id, contato_id, iniciada_at, primeira_resposta_at)\n"
         "    VALUES (v_org, v_org, now(), now() - interval '1 minute');",
         _CHECK, "an episode whose first reply precedes its start",
     ),
@@ -9455,9 +9455,9 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
-    _LAIS_AGENTE_EXIGE_AUTORIZADOS_PROBE,
-    _LAIS_AGENTE_EXIGE_ATIVADO_EM_PROBE,
-    _LAIS_CONEXAO_TRANSPORTE_PROBE,
+    _JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE,
+    _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
+    _JULIA_CONEXAO_TRANSPORTE_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
@@ -9510,22 +9510,22 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_TRANSACOES_PROBES,
     *_SW_CONDOMINIOS_PROBES,
-    *_SW_LAIS_PROBES,
+    *_SW_JULIA_PROBES,
     *_SW_PERGUNTAS_PROBES,
-    *_SW_LAIS_VISITAS_PROBES,
-    *_SW_LAIS_NOTIF_PROBES,
-    *_SW_LAIS_REENG_PROBES,
-    *_SW_LAIS_CONV_PROBES,
-    *_SW_LAIS_CLOUD_PROBES,
-    *_SW_LAIS_PROPRIETARIOS_TIPO_PROBES,
-    *_SW_LAIS_EQUIPES_PROBES,
+    *_SW_JULIA_VISITAS_PROBES,
+    *_SW_JULIA_NOTIF_PROBES,
+    *_SW_JULIA_REENG_PROBES,
+    *_SW_JULIA_CONV_PROBES,
+    *_SW_JULIA_CLOUD_PROBES,
+    *_SW_JULIA_PROPRIETARIOS_TIPO_PROBES,
+    *_SW_JULIA_EQUIPES_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
-    *_SW_LAIS_ENVIO_PROBES,
-    *_SW_LAIS_CAPTACAO_PROBES,
-    *_SW_LAIS_CREDITO_PROBES,
-    *_SW_LAIS_AVALIACOES_PROBES,
+    *_SW_JULIA_ENVIO_PROBES,
+    *_SW_JULIA_CAPTACAO_PROBES,
+    *_SW_JULIA_CREDITO_PROBES,
+    *_SW_JULIA_AVALIACOES_PROBES,
     *_SW_SIMEC_PROBES,
     *_SW_MAYA_BLOCOS_PROBES,
     *_EDITORIAL_PROBES,

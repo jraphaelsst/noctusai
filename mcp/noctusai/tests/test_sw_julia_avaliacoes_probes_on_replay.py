@@ -1,4 +1,4 @@
-"""The Lais wave-13 (migration 281, credito) GuardProbes executed against the REAL social-wiring chain on
+"""The Julia wave-13 (migration 280, avaliacoes) GuardProbes executed against the REAL social-wiring chain on
 PGlite: every guard of that migration must read `refused` once applied (prod reads `no_fixture` until then).
 The probe count is DERIVED from the registry -- adding a guard adds a probe here, never a hardcoded number."""
 from __future__ import annotations
@@ -18,7 +18,7 @@ _SEED = (
 
 
 def _probes():
-    return [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_LAIS_CREDITO_PROBES]
+    return [p for p in vdg.DEFAULT_REGISTRY if p in vdg._SW_JULIA_AVALIACOES_PROBES]
 
 
 def _outcomes() -> dict[str, str]:
@@ -41,11 +41,11 @@ def _outcomes() -> dict[str, str]:
     return out
 
 
-def test_the_registry_carries_every_credito_probe():
-    assert _probes() and len(_probes()) == len(vdg._SW_LAIS_CREDITO_PROBES)
+def test_the_registry_carries_every_avaliacoes_probe():
+    assert _probes() and len(_probes()) == len(vdg._SW_JULIA_AVALIACOES_PROBES)
 
 
-def test_every_lais_credito_guard_refuses_on_the_real_chain(pglite):
+def test_every_julia_avaliacoes_guard_refuses_on_the_real_chain(pglite):
     out = _outcomes()
     assert set(out.values()) == {"refused"}, out
-    assert len(out) == len(vdg._SW_LAIS_CREDITO_PROBES)
+    assert len(out) == len(vdg._SW_JULIA_AVALIACOES_PROBES)
