@@ -54,6 +54,8 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | Isolation suite (no platform secrets in Bia's env; cross-product token denials) | M4 |
 | Julia (SDR) shared lead thread: one thread per lead across all agents, per-agent participants, hand-off notes, consent (opt-in / opt-out), delete-by-lead | Julia v2 |
 | Julia controls: ligado / drenando / desligado per agent (decided by the agents app on every turn, fail closed) and a per-conversation pause / resume | Julia v2 |
+| Julia channel turn v2 (`POST /api/channels/turns`): resolves the platform definition + the org's specs, applies the controls under the turn lock, reads the dossier + thread context, runs a skill-gated toolset (schemas in code, descriptions in `agent_version_ferramentas`), stamps every reply with the version tuple; JSON Schema in `backend/contracts/channels.v2.json` | Julia v2 |
+| Julia conformance + IP protection: post-turn detectors (offered-property, ends-with-question, profile-cited-without-record, fallback, repeated-question) and the prompt-leak detector (per-org canary + 12-token shingles; blocks by default, also on the studio test chat and eval outputs for non-platform-admins); per-chat turn/day/spend limits and refusal/error budgets, all data (`conformidade_*`, `canal_limites`) | Julia v2 |
 
 ## Lead qualification standard (Julia v2, `app/qualificacao/`)
 

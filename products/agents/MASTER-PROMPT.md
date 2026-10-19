@@ -48,6 +48,33 @@ products/agents/backend/app/
   notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
 
+### Julia v2 — the channel runtime (A-RT)
+
+- `POST /api/channels/turns` (`routers/channels_router.py` -> `channels/turno.py`): `resolve_agent_for_org` (platform
+  definition + the org's specs) -> `aplicar_controles` under the turn lock (a non-`normal` status answers with no model
+  call; the inbound is stored per the decision) -> abuse limits (`canal_limites`, per chat) -> `JuliaTurno` (server-side
+  ids; the model never names an org or a lead) -> the provider-neutral runtime -> conformance -> one assistant row
+  stamped with the version tuple. `contexto.estado` is closed and typed (attendant, re-engagement flavour, campaign
+  origin, credit); the v1 request shape is still accepted for one release. The generated JSON Schema is
+  `backend/contracts/channels.v2.json` (drift-tested): SW validates against it.
+- `channels/tool_registry.py`: `TOOLS` = strict argument models (schema in code, no description); the description of a
+  tool and of each parameter / enum value is a row of `agent_version_ferramentas`. Gates: required skill opened in this
+  thread under the CURRENT compiled hash (`obrigatoria_skill` on the row, or the shared library's `obrigatoria_para`
+  through `SkillFonte`), `trecho` in the lead's own words, `pode_ofertar`, `pode_concluir`, offered-before-react,
+  identity only when the standard says so. Refusals are typed codes; the wording is `ferramenta.resultado.recusa.<codigo>`.
+  Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
+  ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
+- `channels/contexto.py`: the second system message (state + dossier + hand-off note + credit + re-engagement) rendered
+  from DB texts; lead-influenced values are JSON literals on one line. `channels/extracao.py`: the summary (narrative
+  only) and the transport decision (`agent_version_decisoes`; fallback = the row's `padrao` option).
+- `channels/conformidade.py` + migration 037: detectors, the prompt-leak fingerprint (hashes only, computed at
+  publish), policy per rule (`registrar` | `bloquear`; the leak rule blocks by default: suppress, ONE corrective re-run
+  with the DB text, else silence + hand-off + a flagged row), the deterministic escalations (rule data), the
+  extraction-attempt signal. Migration 037 also closes `qual-lead-ref-fk` (cascade erasure) and lets a hand-off end
+  `concluido`.
+- A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
+  seeded earlier gets 409 `conteudo_incompleto`, never a default string.
+
 ### Bia's hardened launch (non-negotiable)
 
 - `setting_sources=[]`: no project `CLAUDE.md`, `settings.json` or hooks get loaded.
