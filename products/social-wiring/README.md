@@ -1,34 +1,37 @@
 # Social Wiring
 
-A media-wiring-into-one-place CMS. Consolidates four previously-separate
-concerns into one seed-factory, single-container noc product: a
-surface-agnostic OpenAI chatbot (WhatsApp via WAHA **and** an in-app
-`/chat` page), multimodal media intake + YouTube upload/catalog,
-email-marketing (absorbed from the retired `mailing` product), and
-real-estate scheduling (absorbed from the retired `imobi-scheduling`
-product). The cross-product capabilities themselves (chatbot, Google
-Calendar/Maps/Drive, Meta FB/IG read, multimodal, credential vault)
-live in `noctusai_lib`/`noctusai_seed` so every other product can
-consume them — this product is the CMS that wires them together.
+The real-estate operations hub of noc: lead intake, the sales funnel and cards,
+properties and owners, contracts and certificates, marketing, and the WhatsApp
+transport for **Julia**, the SDR agent. One seed-factory, single-container
+product (backend 8011, frontend 8160, Supabase schema `social_wiring`).
+
+Social Wiring is the **transport + CRM + operations** side. The agent's brain
+(prompt, tools loop, LLM keys) is hosted in the `agents` product (Agent Studio)
+and consumed over `/api/channels/*`; SW never calls an LLM for Julia's turns.
 
 ## Stack
 
-- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port 8011)
-- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port 8160)
-- **Build**: `createViteConfig()` from the seed framework (3-line `vite.config.ts`)
-- **Database**: Supabase (schema: `social_wiring`)
-- **Auth**: SSO + direct login (seed factory). `/chat` is a public route by current product direction.
-- **Container**: ONE container — uvicorn serves the built SPA + API on one port via the seed `serve_spa` seam (noc house single-container model).
+- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed`; features are product modules assembled from the `MODULES` list in `app/main.py` (`app/modules/*`) plus the Julia routers in `app/routers/julia_*`.
+- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed`; nav in `src/nav/navGroups.ts` (Julia group in `src/nav/julia.ts`).
+- **Database**: Supabase, schema `social_wiring`; RLS own-org + service role.
+- **Auth**: SSO + direct login (seed factory); `/chat` and the Julia privacy notice (`/privacidade/:slug`) are public.
+- **Container**: ONE container — uvicorn serves the built SPA + API on one port (`serve_spa`).
 
-## Frontend scope (nav)
+## The Julia module
 
-| Group | Pages |
-|---|---|
-| **Principal** | Dashboard · Agente (`/chat`) · Vídeos · Upload |
-| **WhatsApp** | Conexão · Monitor |
-| **Configuração** | Configurações · Equipe |
+Julia is the WhatsApp SDR for a real-estate org (renamed from "Lais" on
+2026-10-19; Lais is Lastro's product, studied under `projects/lais/`).
 
-pt-BR copy preserved verbatim from the live-validated source.
+- **Turn flow**: WAHA webhook → `services/julia_lead_turn_service.py` → agents `POST /api/channels/turns` (studio key `julia`, formerly `lead-imob`) → Julia's actions are applied by `julia_acoes_service`; every outbound WhatsApp send passes the single gate `julia_envio_gate`.
+- **Tools for the agent**: agents calls back `POST /api/julia/ferramentas/{nome}` with a product token (scope `social-wiring:lais-tools` — kept under its old spelling until both products rename it).
+- **Pages** (`/julia/*`): Painel, Conversas, Configurações, Agente (link to the Agent Studio), Conhecimento, Perguntas, Visitas, Reengajamento (réguas), Notificações, Envio, Leads, Equipes, Modelos, Disparos, Proprietários, Relatórios, Captação, Avaliações, Crédito. Old `/lais/*` URLs redirect.
+- **Atendimento in blocks** (`app/modules/atendimento_blocos`, `/atendimento-blocos`): SDR (Julia) → atendimento → negociação → jurídico → financeiro → contador, with recorded handoffs.
+- **Maya supervision** (`app/modules/supervisao`, `/supervisao`): nightly scorecards per block, handoff sweep, owner-only daily report.
+- **Data**: tables `social_wiring.julia_*` (migration 287 renamed them from `lais_*`). Temporary compatibility views `lais_*` remain for the previous image — `NOC-REMEDIATE[drop-lais-compat-views]`. Old `/api/lais/*` URLs are served by a path alias until the next release.
+
+## Other modules
+
+`leads`, `pipeline` (funil + processos de venda), `card_hub`, `portal_leads` (portal ingestion + ROI), `imovel_hub`, `condominios`, `permutas`, `empresas`, `matriculas`, `certidoes`, `agentes_financeiros`, `meta_ads`, `instagram`, `simec`, `media_creation` (CoreStudio), `transcricoes`, `edicao_fotos`, `email_marketing`, `mailchimp`, `scheduling`, `youtube`, `n8n`.
 
 ## Running
 
@@ -40,26 +43,16 @@ uvicorn app.main:app --reload --port 8011 --app-dir products/social-wiring/backe
 cd products/social-wiring/frontend && npm run dev
 ```
 
-Under the house single-container model the SPA is served same-origin
-with the API — `VITE_BACKEND_API_URL` is runtime-detected (see
-`src/lib/apiBase.ts`) and intentionally **not baked** into the image.
-The two boot-critical `VITE_SUPABASE_*` vars **are** Vite-inlined at
-`vite build` and asserted in `main.tsx` via `assertSupabaseBuildEnv()`.
-
-## Modules
-
-- **media_wiring** — chatbot (OpenAI tool-calling, multichannel) · intake (audio→Whisper, image/video→vision, PDF→PyMuPDF) · YouTube upload/catalog · Vista CRM lookup.
-- **email_marketing** — campaigns / automations / segmentation / analytics / debrief (absorbed from `mailing`).
-- **scheduling** — SchedulingEngine / appointment lifecycle / LID-auth (absorbed from `imobi-scheduling`).
+Same-origin under the single-container model: `VITE_BACKEND_API_URL` is runtime-detected (`src/lib/apiBase.ts`) and not baked. The boot-critical `VITE_SUPABASE_*` vars are Vite-inlined at `vite build` and asserted in `main.tsx`.
 
 ## Tests
 
 ```bash
 cd products/social-wiring/backend && pytest
-cd products/social-wiring/frontend && npx tsc --noEmit
+cd products/social-wiring/frontend && npx vitest run && npx vite build
 ```
 
 ## Dependencies
 
-- Backend: `noctusai_lib` (code library) + `noctusai_seed` (framework)
-- Frontend: `@noctusai/lib` (code library) + `@noctusai/seed` (framework)
+- Backend: `noctusai_lib` + `noctusai_seed`; Frontend: `@noctusai/lib` + `@noctusai/seed`
+- Runtime peer: the `agents` product (Julia's brain)

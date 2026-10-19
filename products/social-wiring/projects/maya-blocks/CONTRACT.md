@@ -9,8 +9,8 @@ Owner model (memory `project_maya_julia_agent_architecture`): the real-estate at
 as a closed list of **blocks**, each with one accountable specialist (an agent or humans). A
 **handoff** is the explicit, recorded moment a lead/card leaves one block for the next. **Maya**
 watches every block, scores each block's specialist and **reports to the owner**. **Julia** is
-block `sdr` — the studio agent key `lead-imob` (`products/agents/backend/app/studio/lead_imob.py`),
-NOT the `julia` key (that is the academia agent).
+block `sdr` — the studio agent key `julia` (formerly `lead-imob`; `products/agents/backend/app/studio/lead_imob.py`),
+(The academia agent that used to hold the `julia` key was renamed Bia in the same change.)
 
 ---
 
@@ -18,7 +18,7 @@ NOT the `julia` key (that is the academia agent).
 
 | order | `bloco` | role | pipeline it owns | default `agent_key` |
 |---|---|---|---|---|
-| 1 | `sdr` | first contact + qualification (Julia) | none — the pre-card phase | `lead-imob` |
+| 1 | `sdr` | first contact + qualification (Julia) | none — the pre-card phase | `julia` |
 | 2 | `atendimento` | the broker: visits, proposals | `funil` | `null` (humans) |
 | 3 | `negociacao` | negotiation up to accept/reject | `funil` | `null` |
 | 4 | `juridico` | contract, parties, signature | `processos_venda` | `null` |
@@ -30,7 +30,7 @@ NOT the `julia` key (that is the academia agent).
   `atendimento_handoffs_blocos_validos` ×2, `agente_scorecards_bloco_valido`). Adding a block =
   a migration widening the CHECKs + the constant, same commit.
 - `agent_key = null` means humans run the block. A non-null key must be in the code allowlist
-  `AGENTES_POR_BLOCO` (v1: `{"sdr": {"lead-imob"}}`; every other block has no agent yet).
+  `AGENTES_POR_BLOCO` (v1: `{"sdr": {"julia"}}`; the legacy key `lead-imob` is read as `julia`; every other block has no agent yet).
 - `ativo` (DEFAULT `false`) means **Maya supervises and scores this block**. In v1 it switches
   nothing lead-facing — Julia's own on/off stays where it is today (the WhatsApp connection's
   agent config). A later slice that lets a block agent act will gate on `ativo` too.
@@ -175,7 +175,7 @@ to UTC for queries. Every count below is `org_id`-filtered. Ratios are **fractio
 the numerator and denominator stored beside them; a ratio with denominator 0 is `null`, never 0.
 Aggregating over a period sums numerators and denominators — never averages daily ratios.
 
-### 3.2 Rubric `sdr.v1` — Julia (`bloco='sdr'`, `agent_key='lead-imob'`)
+### 3.2 Rubric `sdr.v1` — Julia (`bloco='sdr'`, `agent_key='julia'`)
 
 | metric (`metricas` key) | formula | source |
 |---|---|---|
@@ -248,14 +248,14 @@ selected org (seed `require_org_admin_for` / `is_org_admin_for`; owner-only =
 ```json
 {
   "blocos": [
-    {"bloco": "sdr", "rotulo": "SDR (Julia)", "ordem": 1, "agent_key": "lead-imob", "ativo": false,
+    {"bloco": "sdr", "rotulo": "SDR (Julia)", "ordem": 1, "agent_key": "julia", "ativo": false,
      "pipeline": null, "etapas": [], "origem": "padrao", "updated_at": null, "updated_by": null},
     {"bloco": "atendimento", "rotulo": "Atendimento (corretor)", "ordem": 2, "agent_key": null, "ativo": false,
      "pipeline": "funil", "etapas": ["qualificacao", "visitas", "proposta_recebida"], "origem": "padrao",
      "updated_at": null, "updated_by": null}
   ],
   "etapas_sem_bloco": [{"pipeline": "funil", "slug": "pos_venda", "label": "Pós-venda"}],
-  "agentes_por_bloco": {"sdr": ["lead-imob"]},
+  "agentes_por_bloco": {"sdr": ["julia"]},
   "supervisao_ativa": false
 }
 ```
@@ -295,7 +295,7 @@ resulting configuration before writing anything, then writes rows whose `etapas`
   "dia": "2026-10-18",
   "supervisao_ativa": true,
   "scorecards": [
-    {"bloco": "sdr", "agent_key": "lead-imob", "rubrica_versao": "sdr.v1",
+    {"bloco": "sdr", "agent_key": "julia", "rubrica_versao": "sdr.v1",
      "calculado_at": "2026-10-19T06:00:12Z",
      "metricas": {"leads_entrada": 31, "tpr_n": 28, "tpr_p50_s": 42.0, "tpr_p90_s": 610.0,
                   "tpr_sem_resposta": 3, "qualificados": 9, "qualificacao_taxa": 0.2903,
@@ -324,7 +324,7 @@ closed list), `desde`, `ate` (`YYYY-MM-DD`, SP, inclusive; default last 7 days),
     {"id": "…", "de_bloco": "sdr", "para_bloco": "atendimento", "gatilho": "novo_lead",
      "status": "emitido", "atrasado": true,
      "created_at": "2026-10-18T13:02:11Z", "assumido_at": null, "expirado_at": null,
-     "de_agent_key": "lead-imob", "para_agent_key": null,
+     "de_agent_key": "julia", "para_agent_key": null,
      "referencias": {"contato_id": "…", "lead_id": "…", "atendimento_id": "…",
                      "atribuicao_id": "…", "entrega_id": "…"},
      "card": {"titulo": "…", "link": "/funil?card=<atendimento_id>"}}
