@@ -33,6 +33,8 @@ class CriterioIn(StrictHttpModel):
     pontuacao: dict[str, Any] | list[dict[str, Any]] = Field(default_factory=dict)
     ordem: int = 0
     ativo: bool = True
+    eixo: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    validade_dias: int | None = Field(default=None, ge=1, le=3650)
 
     def to_def(self, chave: str) -> CriterioDef:
         return CriterioDef(
@@ -40,7 +42,7 @@ class CriterioIn(StrictHttpModel):
             tipo=self.tipo,
             opcoes=tuple(Opcao(o.valor, o.rotulo, o.descricao_modelo, tuple(o.sinonimos)) for o in self.opcoes),
             unidade=self.unidade, sensivel=self.sensivel, pontuacao=self.pontuacao, ordem=self.ordem,
-            ativo=self.ativo,
+            ativo=self.ativo, eixo=self.eixo, validade_dias=self.validade_dias,
         )
 
 
@@ -111,7 +113,7 @@ def versao_out(v: VersaoPadrao) -> dict[str, Any]:
                      "sinonimos": list(o.sinonimos)} for o in c.opcoes
                 ],
                 "unidade": c.unidade, "sensivel": c.sensivel, "pontuacao": c.pontuacao, "ordem": c.ordem,
-                "ativo": c.ativo,
+                "ativo": c.ativo, "eixo": c.eixo, "validade_dias": c.validade_dias,
             }
             for c in v.criterios
         ],

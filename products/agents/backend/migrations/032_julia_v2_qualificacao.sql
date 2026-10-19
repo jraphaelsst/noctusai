@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS agents.qualificacao_criterios (
     pontuacao JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(pontuacao) IN ('object', 'array')),
     ordem INT NOT NULL DEFAULT 0,
     ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Named score axis (fit / intencao / urgencia ...); NULL = counts in the total only.
+    eixo TEXT NULL CHECK (eixo IS NULL OR eixo ~ '^[a-z][a-z0-9_]{1,31}$'),
+    -- A record older than this stops counting (the criterion is missing again).
+    validade_dias INT NULL CHECK (validade_dias IS NULL OR validade_dias >= 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_qualificacao_criterios_chave UNIQUE (versao_id, chave)
@@ -209,25 +213,40 @@ ALTER TABLE agents.qualificacao_criterios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents.qualificacao_estagios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents.qualificacao_parametros ENABLE ROW LEVEL SECURITY;
 
-DO $$
-DECLARE
-    t TEXT;
-BEGIN
-    FOREACH t IN ARRAY ARRAY['qualificacao_padroes', 'qualificacao_versoes', 'qualificacao_criterios',
-                             'qualificacao_estagios', 'qualificacao_parametros']
-    LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON agents.%I', t || '_select_authenticated', t);
-        EXECUTE format(
-            'CREATE POLICY %I ON agents.%I FOR SELECT TO authenticated USING (true)',
-            t || '_select_authenticated', t);
-        EXECUTE format('DROP POLICY IF EXISTS "service_role_bypass" ON agents.%I', t);
-        EXECUTE format(
-            'CREATE POLICY "service_role_bypass" ON agents.%I FOR ALL TO service_role USING (true) WITH CHECK (true)', t);
-        EXECUTE format('REVOKE ALL ON agents.%I FROM anon', t);
-        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.%I FROM authenticated', t);
-    END LOOP;
-END;
-$$;
+DROP POLICY IF EXISTS qualificacao_padroes_select_authenticated ON agents.qualificacao_padroes;
+CREATE POLICY qualificacao_padroes_select_authenticated ON agents.qualificacao_padroes FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.qualificacao_padroes;
+CREATE POLICY "service_role_bypass" ON agents.qualificacao_padroes FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON agents.qualificacao_padroes FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.qualificacao_padroes FROM authenticated;
+
+DROP POLICY IF EXISTS qualificacao_versoes_select_authenticated ON agents.qualificacao_versoes;
+CREATE POLICY qualificacao_versoes_select_authenticated ON agents.qualificacao_versoes FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.qualificacao_versoes;
+CREATE POLICY "service_role_bypass" ON agents.qualificacao_versoes FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON agents.qualificacao_versoes FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.qualificacao_versoes FROM authenticated;
+
+DROP POLICY IF EXISTS qualificacao_criterios_select_authenticated ON agents.qualificacao_criterios;
+CREATE POLICY qualificacao_criterios_select_authenticated ON agents.qualificacao_criterios FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.qualificacao_criterios;
+CREATE POLICY "service_role_bypass" ON agents.qualificacao_criterios FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON agents.qualificacao_criterios FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.qualificacao_criterios FROM authenticated;
+
+DROP POLICY IF EXISTS qualificacao_estagios_select_authenticated ON agents.qualificacao_estagios;
+CREATE POLICY qualificacao_estagios_select_authenticated ON agents.qualificacao_estagios FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.qualificacao_estagios;
+CREATE POLICY "service_role_bypass" ON agents.qualificacao_estagios FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON agents.qualificacao_estagios FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.qualificacao_estagios FROM authenticated;
+
+DROP POLICY IF EXISTS qualificacao_parametros_select_authenticated ON agents.qualificacao_parametros;
+CREATE POLICY qualificacao_parametros_select_authenticated ON agents.qualificacao_parametros FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.qualificacao_parametros;
+CREATE POLICY "service_role_bypass" ON agents.qualificacao_parametros FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON agents.qualificacao_parametros FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.qualificacao_parametros FROM authenticated;
 
 CREATE INDEX IF NOT EXISTS idx_qualificacao_criterios_versao ON agents.qualificacao_criterios (versao_id, ordem);
 CREATE INDEX IF NOT EXISTS idx_qualificacao_estagios_versao ON agents.qualificacao_estagios (versao_id, ordem);
@@ -267,8 +286,8 @@ BEGIN
 
     IF p_copiar_de IS NOT NULL THEN
         INSERT INTO agents.qualificacao_criterios
-            (versao_id, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo)
-        SELECT v_novo, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo
+            (versao_id, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, validade_dias)
+        SELECT v_novo, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, validade_dias
           FROM agents.qualificacao_criterios WHERE versao_id = p_copiar_de;
         INSERT INTO agents.qualificacao_estagios
             (versao_id, chave, rotulo, descricao, ordem, regra, conclusivo, terminal)
@@ -402,6 +421,7 @@ CREATE TABLE IF NOT EXISTS agents.lead_qualificacao_estado (
     versao_id UUID NOT NULL REFERENCES agents.qualificacao_versoes(id),
     valores JSONB NOT NULL DEFAULT '{}'::jsonb,
     score INT NOT NULL DEFAULT 0,
+    scores JSONB NOT NULL DEFAULT '{}'::jsonb,  -- per axis
     estagio TEXT NOT NULL,
     faltando TEXT[] NOT NULL DEFAULT '{}',
     calculado_em TIMESTAMPTZ NOT NULL DEFAULT now(),

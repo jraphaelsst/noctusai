@@ -249,7 +249,8 @@ def criterio_from_row(r: dict[str, Any]) -> CriterioDef:
         id=UUID(str(r["id"])) if r.get("id") else None, chave=r["chave"], grupo=r["grupo"], rotulo=r["rotulo"],
         descricao_modelo=r.get("descricao_modelo") or "", tipo=r["tipo"], opcoes=_opcoes_in(r.get("opcoes")),
         unidade=r.get("unidade"), sensivel=r.get("sensivel"), pontuacao=r.get("pontuacao") or {},
-        ordem=r.get("ordem", 0), ativo=r.get("ativo", True),
+        ordem=r.get("ordem", 0), ativo=r.get("ativo", True), eixo=r.get("eixo"),
+        validade_dias=r.get("validade_dias"),
     )
 
 
@@ -356,7 +357,7 @@ class SupabasePadraoStore:
             "versao_id": str(versao_id), "chave": c.chave, "grupo": c.grupo, "rotulo": c.rotulo,
             "descricao_modelo": c.descricao_modelo, "tipo": c.tipo, "opcoes": _opcoes_out(c.opcoes),
             "unidade": c.unidade, "sensivel": c.sensivel, "pontuacao": c.pontuacao, "ordem": c.ordem,
-            "ativo": c.ativo,
+            "ativo": c.ativo, "eixo": c.eixo, "validade_dias": c.validade_dias,
         }
         exec_query(self._t("qualificacao_criterios").upsert(row, on_conflict="versao_id,chave"))
 

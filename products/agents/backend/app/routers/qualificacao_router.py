@@ -284,7 +284,7 @@ async def obter_qualificacao_lead(
     e = q.estado
     return {
         "lead_ref": str(lead_ref), "versao_id": str(q.versao_id), "estagio": e.estagio, "score": e.score,
-        "valores": e.valores, "faltando": list(e.faltando), "pode_ofertar": e.pode_ofertar,
+        "scores": dict(e.scores), "valores": e.valores, "faltando": list(e.faltando), "pode_ofertar": e.pode_ofertar,
         "pode_concluir": e.pode_concluir, "hash": e.hash,
         "calculado_em": q.calculado_em.isoformat(),
         "eventos_imovel": [_evento_out(ev) for ev in q.eventos],

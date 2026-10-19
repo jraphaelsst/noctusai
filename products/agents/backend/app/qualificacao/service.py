@@ -138,7 +138,7 @@ class QualificacaoService:
     def _persistir(self, org_id: UUID, lead_ref_id: UUID, v: VersaoPadrao, e: EstadoQualificacao) -> None:
         self._leads.salvar_estado(EstadoCache(
             org_id=org_id, lead_ref_id=lead_ref_id, versao_id=v.id, valores=e.valores, score=e.score,
-            estagio=e.estagio, faltando=e.faltando, hash=e.hash, calculado_em=e.calculado_em or self._agora(),
+            estagio=e.estagio, faltando=e.faltando, hash=e.hash, scores=dict(e.scores), calculado_em=e.calculado_em or self._agora(),
         ))
 
     # ── reads ──────────────────────────────────────────────────────────────

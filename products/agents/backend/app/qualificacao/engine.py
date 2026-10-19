@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime
 from typing import Any, Sequence
 
@@ -183,9 +184,20 @@ def pontuar_criterio(criterio: CriterioDef, valor: Any) -> int:
 
 # ── the engine ──────────────────────────────────────────────────────────────
 
-def _ultimos_validos(versao: VersaoPadrao, registros: Sequence[Registro]) -> dict[str, Any]:
-    """Latest VALID record per active, non-derived criterion of the version.
-    Later in the sequence wins; a record the version no longer accepts is skipped."""
+def _expirado(c: CriterioDef, r: Registro, agora: datetime | None) -> bool:
+    """``validade_dias``: a record older than the criterion's validity stops counting.
+    Needs the clock (``agora``) and a record timestamp; without either nothing expires."""
+    if c.validade_dias is None or agora is None or r.created_at is None:
+        return False
+    return (agora - r.created_at).total_seconds() > c.validade_dias * 86400
+
+
+def _ultimos_validos(
+    versao: VersaoPadrao, registros: Sequence[Registro], agora: datetime | None = None,
+) -> dict[str, Any]:
+    """Latest VALID, unexpired record per active, non-derived criterion of the version.
+    Later in the sequence wins; a record the version no longer accepts is skipped, and an
+    expired latest record leaves the criterion unfilled (it is missing again)."""
     ativos = {c.chave: c for c in versao.criterios if c.ativo and c.chave not in DERIVADOS}
     out: dict[str, Any] = {}
     for r in registros:
@@ -195,6 +207,8 @@ def _ultimos_validos(versao: VersaoPadrao, registros: Sequence[Registro]) -> dic
         ok, norm, _ = validar_valor(c, r.valor)
         if ok:
             out[c.chave] = norm
+            if _expirado(c, r, agora):
+                out.pop(c.chave)
     return out
 
 
@@ -212,18 +226,26 @@ def calcular(
     eventos_imovel: Sequence[EventoImovel],
     agora: datetime | None = None,
 ) -> EstadoQualificacao:
-    valores = _ultimos_validos(versao, registros)
+    valores = _ultimos_validos(versao, registros, agora)
     valores.update(valores_derivados(eventos_imovel))
     ativos_ev = eventos_ativos(eventos_imovel)
 
     score_max = versao.parametros.score_max
-    total = sum(
-        pontuar_criterio(c, valores[c.chave])
-        for c in versao.criterios if c.ativo and c.chave in valores
-    )
+    total = 0
+    por_eixo: dict[str, int] = {}
+    for c in versao.criterios:
+        if c.ativo and c.chave in valores:
+            pts = pontuar_criterio(c, valores[c.chave])
+            total += pts
+            if c.eixo:
+                por_eixo[c.eixo] = por_eixo.get(c.eixo, 0) + pts
     score = max(0, min(total, score_max))
+    scores = {k: max(0, min(v, score_max)) for k, v in sorted(por_eixo.items())}
+    for c in versao.criterios:  # an axis with no point yet is 0, not absent
+        if c.eixo:
+            scores.setdefault(c.eixo, 0)
 
-    ctx = Contexto(valores=valores, score=score, eventos=ativos_ev)
+    ctx = Contexto(valores=valores, score=score, eventos=ativos_ev, scores=scores)
     ordenados = sorted(versao.estagios, key=lambda e: e.ordem)
     verdadeiros = [e for e in ordenados if avaliar_regra(e.regra, ctx)]
     if not verdadeiros:
@@ -261,6 +283,7 @@ def calcular(
         pode_concluir=atual.conclusivo,
         hash=_estado_hash(versao.id, valores, score, atual.chave),
         calculado_em=agora,
+        scores=scores,
     )
 
 
@@ -285,6 +308,10 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
             err("tipo_invalido", p, c.tipo)
         if c.sensivel not in SENSIVEL:
             err("sensivel_invalido", p, str(c.sensivel))
+        if c.validade_dias is not None and c.validade_dias < 1:
+            err("validade_invalida", p, "validade_dias >= 1")
+        if c.eixo is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,31}", c.eixo):
+            err("eixo_invalido", p, str(c.eixo))
         if c.sensivel == "faixa" and c.tipo not in ("faixa", "enum"):
             err("sensivel_invalido", p, "sensivel=faixa exige tipo faixa ou enum")
         if c.tipo == "enum" and not c.opcoes:
@@ -305,10 +332,11 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
     if len({e.ordem for e in estagios}) != len(estagios):
         err("ordem_duplicada", "estagios", "ordens repetidas")
     validos = [c.chave for c in versao.criterios if c.ativo]
+    eixos = sorted({c.eixo for c in versao.criterios if c.ativo and c.eixo})
     for e in estagios:
-        erros.extend(validar_regra(e.regra, validos, caminho=f"estagios.{e.chave}.regra"))
+        erros.extend(validar_regra(e.regra, validos, caminho=f"estagios.{e.chave}.regra", eixos=eixos))
     erros.extend(validar_regra(
-        versao.parametros.minimo_para_ofertar, validos, caminho="parametros.minimo_para_ofertar",
+        versao.parametros.minimo_para_ofertar, validos, caminho="parametros.minimo_para_ofertar", eixos=eixos,
     ))
     if estagios and not sempre_verdadeira(estagios[0].regra, versao.parametros.score_max):
         err("sem_estagio_base", f"estagios.{estagios[0].chave}.regra",

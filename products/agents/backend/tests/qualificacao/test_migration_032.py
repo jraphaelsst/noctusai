@@ -64,9 +64,13 @@ def test_agent_version_pin_is_nullable_fk_to_a_published_version_and_frozen():
 
 
 def test_library_rls_reads_for_authenticated_writes_service_role_only():
-    assert "FOR SELECT TO authenticated USING (true)" in SQL
-    assert "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.%I FROM authenticated" in SQL
-    assert '"service_role_bypass"' in SQL
+    for t in ("qualificacao_padroes", "qualificacao_versoes", "qualificacao_criterios",
+              "qualificacao_estagios", "qualificacao_parametros"):
+        assert f"ON agents.{t} FOR SELECT TO authenticated USING (true)" in SQL, t
+        assert f"REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.{t} FROM authenticated" in SQL, t
+        assert f"REVOKE ALL ON agents.{t} FROM anon" in SQL, t
+        assert f'"service_role_bypass" ON agents.{t} FOR ALL TO service_role' in SQL, t
+    assert "DO $$" not in SQL
 
 
 def test_per_lead_tables_have_no_fk_yet_but_carry_the_remediation_marker():
@@ -129,3 +133,11 @@ def test_publish_function_archives_the_previous_and_locks_the_row():
     body = SQL[SQL.index("FUNCTION agents.publicar_qualificacao_versao("):]
     body = body[: body.index("$$;", body.index("AS $$"))]
     assert "FOR UPDATE" in body and "SET status = 'arquivada'" in body and "SET status = 'publicada'" in body
+
+
+def test_axis_validity_and_scores_columns_exist():
+    crit = _table("qualificacao_criterios")
+    assert "eixo TEXT NULL CHECK" in crit and "validade_dias INT NULL CHECK" in crit
+    assert "scores JSONB NOT NULL DEFAULT '{}'::jsonb" in _table("lead_qualificacao_estado")
+    copy = SQL[SQL.index("INSERT INTO agents.qualificacao_criterios"):]
+    assert "eixo, validade_dias" in copy[: copy.index("FROM agents.qualificacao_criterios")]

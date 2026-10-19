@@ -38,6 +38,7 @@ class Contexto:
     valores: dict[str, Any]
     score: int
     eventos: frozenset[str]
+    scores: dict[str, int] | None = None  # per axis
 
 
 # ── value helpers ───────────────────────────────────────────────────────────
@@ -98,10 +99,14 @@ def avaliar_regra(regra: Any, ctx: Contexto) -> bool:
     if "nao" in regra:
         return not avaliar_regra(regra["nao"], ctx)
     if "score" in regra:
-        limite = regra["score"].get(">=") if isinstance(regra["score"], dict) else None
+        sc = regra["score"] if isinstance(regra["score"], dict) else {}
+        limite = sc.get(">=")
         if not isinstance(limite, (int, float)) or isinstance(limite, bool):
             raise RegraInvalida(f"score malformado: {regra['score']!r}")
-        return ctx.score >= limite
+        eixo = sc.get("eixo")
+        if eixo is None:
+            return ctx.score >= limite
+        return (ctx.scores or {}).get(eixo, 0) >= limite
     if "evento" in regra:
         return regra["evento"] in ctx.eventos
     if "criterio" in regra:
@@ -184,12 +189,14 @@ def sempre_falsa(regra: Any, score_max: int = 100) -> bool:
 
 def validar_regra(
     regra: Any, criterios_validos: Iterable[str], *, caminho: str = "regra", _prof: int = 0,
+    eixos: Iterable[str] = (),
 ) -> list[dict[str, str]]:
     """Every problem of ``regra`` as ``{code, path, detail}`` (empty = valid).
 
     ``criterios_validos`` = the version's criterion keys plus :data:`DERIVADOS`.
     """
     validos = set(criterios_validos) | set(DERIVADOS)
+    eixos_validos = set(eixos)
     erros: list[dict[str, str]] = []
 
     def err(code: str, path: str, detail: str) -> None:
@@ -218,9 +225,11 @@ def validar_regra(
             return
         if "score" in r:
             s = r["score"]
-            if set(r) != {"score"} or not isinstance(s, dict) or set(s) != {">="} \
-                    or not isinstance(s[">="], (int, float)) or isinstance(s[">="], bool):
-                err("regra_invalida", path, 'score exige {">=": numero}')
+            if set(r) != {"score"} or not isinstance(s, dict) or not set(s) <= {">=", "eixo"} \
+                    or not isinstance(s.get(">="), (int, float)) or isinstance(s.get(">="), bool):
+                err("regra_invalida", path, 'score exige {">=": numero} (e opcionalmente "eixo")')
+            elif "eixo" in s and s["eixo"] not in eixos_validos:
+                err("eixo_desconhecido", path, f"eixo {s['eixo']!r}")
             return
         if "evento" in r:
             if set(r) != {"evento"} or r["evento"] not in EVENTOS_IMOVEL:

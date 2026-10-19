@@ -9,7 +9,7 @@ only deleters are :meth:`apagar_por_lead` (LGPD, on request — the method A-THR
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
@@ -43,6 +43,7 @@ class EstadoCache:
     faltando: tuple[str, ...]
     hash: str
     calculado_em: datetime
+    scores: dict[str, int] = field(default_factory=dict)
 
 
 class LeadQualificacaoStore(Protocol):
@@ -213,6 +214,7 @@ class SupabaseLeadQualificacaoStore:
             org_id=UUID(str(r["org_id"])), lead_ref_id=UUID(str(r["lead_ref_id"])),
             versao_id=UUID(str(r["versao_id"])), valores=r.get("valores") or {}, score=r["score"],
             estagio=r["estagio"], faltando=tuple(r.get("faltando") or ()), hash=r["hash"],
+            scores=r.get("scores") or {},
             calculado_em=r["calculado_em"],
         )
 
@@ -220,7 +222,7 @@ class SupabaseLeadQualificacaoStore:
         row = {
             "lead_ref_id": str(e.lead_ref_id), "org_id": str(e.org_id), "versao_id": str(e.versao_id),
             "valores": e.valores, "score": e.score, "estagio": e.estagio, "faltando": list(e.faltando),
-            "hash": e.hash, "calculado_em": e.calculado_em.isoformat(),
+            "hash": e.hash, "scores": e.scores, "calculado_em": e.calculado_em.isoformat(),
         }
         exec_query(self._t("lead_qualificacao_estado").upsert(row, on_conflict="lead_ref_id"))
 

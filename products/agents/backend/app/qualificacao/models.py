@@ -41,6 +41,8 @@ class CriterioDef:
     pontuacao: Any = field(default_factory=dict)  # a dict, or a list of bands for numero/faixa
     ordem: int = 0
     ativo: bool = True
+    eixo: str | None = None  # named score axis (fit / intencao / urgencia ...); None = total only
+    validade_dias: int | None = None  # a record older than this stops counting (the criterion is missing again)
     id: UUID | None = None
 
 
@@ -137,6 +139,7 @@ class EstadoQualificacao:
     pode_concluir: bool
     hash: str
     calculado_em: datetime | None = None
+    scores: dict[str, int] = field(default_factory=dict)  # per axis, each clamped to [0, score_max]
 
     def avaliar_payload(self) -> dict[str, Any]:
         """The ``avaliar_lead`` tool payload (CONTRACT §3.4) — small by design
@@ -144,6 +147,7 @@ class EstadoQualificacao:
         return {
             "estagio": self.estagio,
             "score": self.score,
+            **({"scores": dict(self.scores)} if self.scores else {}),
             "faltando": list(self.faltando),
             "proximo_criterio": self.proximo_criterio.to_dict() if self.proximo_criterio else None,
             "pode_ofertar": self.pode_ofertar,
