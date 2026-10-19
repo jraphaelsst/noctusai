@@ -76,6 +76,7 @@ const Marcas = lazyWithReload(() => import("@/pages/Marcas"));
 const Imoveis = lazyWithReload(() => import("@/pages/Imoveis"));
 const ImovelDetalhes = lazyWithReload(() => import("@/pages/ImovelDetalhes"));
 const MetaDashboard = lazyWithReload(() => import("@/pages/MetaDashboard"));
+const Simec = lazyWithReload(() => import("@/pages/simec/Simec"));
 const Leads = lazyWithReload(() => import("@/pages/leads/Leads"));
 const Campanhas = lazyWithReload(() => import("@/pages/campanhas/Campanhas"));
 const FunilVendas = lazyWithReload(() => import("@/pages/funil/FunilVendas"));
@@ -215,6 +216,8 @@ export default createProductApp({
     { path: "/youtube", component: YouTube },
     { path: "/n8n", component: N8n },
     { path: "/meta", component: MetaDashboard },
+    // SIMEC — marketing intelligence (status_pagina `simec`, migration 284)
+    { path: "/simec", component: Simec },
     // Retired route — remodeled into the unified Meta dashboard (Wave 3)
     { path: "/instagram-insights", component: RedirectToMeta },
     // Retired routes — connection management now lives inside MarcaModal

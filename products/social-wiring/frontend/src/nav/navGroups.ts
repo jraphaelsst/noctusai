@@ -214,6 +214,8 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
     label: "Marketing",
     icon: Share2,
     items: [
+      // SIMEC (marketing intelligence, Instagram) — status_pagina `simec`, migration 284.
+      { name: "SIMEC", href: "/simec", icon: BarChart3, route: "simec" },
     ],
     groups: [
       {
