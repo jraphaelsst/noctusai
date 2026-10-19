@@ -29,6 +29,8 @@
     "280_lais_avaliacoes_capi.sql": "3c645fa9d0877c1767cd5321c9e3913bf96ab5de2a5ed885b9b2b7315e04e390",
     "281_lais_credito.sql": "7a49e04c2aff91c987df74618abcb0b5ed48b4ca130d815809fd807297ffe935",
     "282_imovel_transacoes_sw_venda_trigger.sql": "6f25e185723143954de512fd9bb67006286c89f72b0e3eea8d41fc77582e0656",
-    "283_lais_proprietarios_preco_tipo.sql": "2cc53a3e2af56db7258a225616f29797ed6b3aa9e4dd6db13f8790b6eb65d1ca"
+    "283_lais_proprietarios_preco_tipo.sql": "2cc53a3e2af56db7258a225616f29797ed6b3aa9e4dd6db13f8790b6eb65d1ca",
+    "284_simec.sql": "b2330fa8b9179e77a1443434690e90716dfb4ac31d24cfffe4007bb604d93aa5",
+    "285_intermediario_representante_creci.sql": "1905dcdf92657d6fdb340e68fb00c34dff0f956ad3708be07d1cc2e1e8e679c5"
   }
 }
