@@ -2492,15 +2492,91 @@ class TestMergedTipVerificationMechanism:
             return {"status": "incomplete", "gates": [
                 {"gate": "pytest:core", "ran": True, "exit_code": 0, "summary": "ok"},
                 {"gate": "pytest:social-wiring", "ran": False, "exit_code": None,
-                 "summary": "timeout after 86s"},
+                 "summary": "HARNESS INVALID - gate NOT run", "harness_invalid": [{"precondition": "venv"}]},
             ], "scope": {"products": ["social-wiring"], "seed_fleet_wide": False}}
 
         res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
                              merged_tip_check=check)
         assert res["status"] == "integrated", res
         assert res["merged_tip_unmeasured"] == [
-            {"gate": "pytest:social-wiring", "why": "timeout after 86s"}]
+            {"gate": "pytest:social-wiring", "why": "HARNESS INVALID - gate NOT run"}]
         assert "UNMEASURED on the merged tip (1): pytest:social-wiring" in res["message"]
+
+    @staticmethod
+    def _timeout_check(gate="pytest:social-wiring", scope=None):
+        def check(abs_wt_path, dev_ref):
+            return {"status": "incomplete", "gates": [
+                {"gate": gate, "ran": False, "exit_code": None,
+                 "summary": "timeout after 86s"},
+            ], "scope": scope or {"products": ["social-wiring"], "seed_fleet_wide": False}}
+        return check
+
+    def test_in_scope_timeout_blocks_gate_timeout(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check())
+        assert res["status"] == "gate_timeout", res
+        assert res["exit_code"] == 1
+        assert fake.pushes() == [], "silence is not a pass: must not push"
+        assert [t["gate"] for t in res["merged_tip_timed_out"]] == ["pytest:social-wiring"]
+
+    def test_accept_unmeasured_with_reason_integrates_and_records_it(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check(),
+                             accept_unmeasured=["pytest:social-wiring"],
+                             accept_unmeasured_reason="docs-only touch, CI is the verdict")
+        assert res["status"] == "integrated", res
+        assert res["merged_tip_accepted_unmeasured"] == {
+            "gates": ["pytest:social-wiring"],
+            "reason": "docs-only touch, CI is the verdict"}
+        assert "ACCEPTED-UNMEASURED" in res["message"]
+
+    def test_accept_unmeasured_without_reason_still_blocks(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check(),
+                             accept_unmeasured=["pytest:social-wiring"])
+        assert res["status"] == "gate_timeout", res
+        assert fake.pushes() == []
+
+    def test_accept_must_name_the_timed_out_gate(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check(),
+                             accept_unmeasured=["pytest:core"],
+                             accept_unmeasured_reason="a perfectly long reason")
+        assert res["status"] == "gate_timeout", res
+
+    def test_fanout_only_timeout_stays_unmeasured_not_blocking(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check(
+                                 gate="pytest:unrelated",
+                                 scope={"products": [], "seed_fleet_wide": True}))
+        assert res["status"] == "integrated", res
+        assert res["merged_tip_unmeasured"][0]["gate"] == "pytest:unrelated"
+
+    def test_seed_root_timeout_is_in_scope_even_with_fanout(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._timeout_check(
+                                 gate="pytest:seed/lib/backend",
+                                 scope={"products": [], "seed_fleet_wide": True}))
+        assert res["status"] == "gate_timeout", res
+
+    def test_ceiling_exceeded_before_start_blocks_too(self):
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "incomplete", "gates": [
+                {"gate": "mcp_toolkit_tests", "ran": False, "exit_code": None,
+                 "summary": "merged-tip verification time-box exceeded before this gate ran"},
+            ], "scope": {"products": [], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "gate_timeout", res
 
     def test_verify_merged_tip_false_opts_out_entirely(self):
         fake = self._fake()
@@ -3563,3 +3639,39 @@ def test_post_integrate_sweep_reports_a_missing_hook(tmp_path):
     from tools.noctus.dev.task_branch import _sweep_merged_worktrees
     res = _sweep_merged_worktrees(str(tmp_path))
     assert res["ok"] is False and res["skipped"] == "sweep hook not found"
+
+
+class TestMergedTipGateBudgets:
+    def test_budget_floors_from_the_brief(self):
+        from tools.noctus.dev import gate_budget as gb
+        assert gb.resolve_gate_budget("pytest:social-wiring") >= 420
+        assert gb.resolve_gate_budget("e2e:social-wiring") >= 420
+        assert gb.resolve_gate_budget("pytest:seed/lib/backend") >= 300
+        assert gb.resolve_gate_budget("mcp_toolkit_tests") >= 240
+
+    def test_resolution_order_exact_then_longest_prefix_then_default(self):
+        from tools.noctus.dev import gate_budget as gb
+        assert gb.resolve_gate_budget("pytest:core") == gb.GATE_BUDGETS_S["pytest:"]
+        assert gb.resolve_gate_budget("pytest:seed/lib/x") == gb.GATE_BUDGETS_S["pytest:seed/"]
+        assert gb.resolve_gate_budget("kb_sync_verify") == gb.DEFAULT_BUDGET_S
+        assert gb.resolve_gate_budget("pytest:core", {"pytest:core": 7}) == 7
+
+    def test_boxed_run_gate_uses_per_gate_budget_capped_by_ceiling(self, monkeypatch):
+        import tools.noctus.dev.gate_sweep as gs
+        seen = {}
+        monkeypatch.setattr(gs, "_default_run_gate",
+                            lambda spec, timeout=300: seen.setdefault(spec.gate, timeout) and (0, "ok", 0.1))
+        from types import SimpleNamespace as NS
+        run = T._deadline_boxed_run_gate(900)
+        run(NS(gate="pytest:social-wiring"))
+        run(NS(gate="kb_sync_verify"))
+        assert seen["pytest:social-wiring"] == 480 and seen["kb_sync_verify"] == 120
+        seen.clear()
+        capped = T._deadline_boxed_run_gate(60)
+        capped(NS(gate="pytest:social-wiring"))
+        assert 1 <= seen["pytest:social-wiring"] <= 60
+
+    def test_default_ceiling_is_not_the_old_flat_90s(self):
+        import inspect
+        sig = inspect.signature(T.task_branch)
+        assert sig.parameters["merged_tip_timeout"].default >= 480

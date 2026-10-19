@@ -454,6 +454,10 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--task-branch-verbose")
         if kwargs.get("keep_worktree"):
             argv.append("--task-branch-keep-worktree")
+        if kwargs.get("accept_unmeasured"):
+            argv.append(f"--task-branch-accept-unmeasured={','.join(str(g) for g in kwargs['accept_unmeasured'])}")
+        if kwargs.get("accept_unmeasured_reason"):
+            argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
         return argv
 
     return None
@@ -481,7 +485,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
-        "wire_products",
+        "wire_products", "accept_unmeasured", "accept_unmeasured_reason",
     }),
 }
 

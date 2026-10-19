@@ -97,6 +97,7 @@ from tools.noctus.dev._benign_stash import (
 )
 from node_env import is_transient_node_modules_entry as _is_transient_nm_entry
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
+from tools.noctus.dev import gate_budget as _gate_budget
 
 logger = logging.getLogger(__name__)
 
@@ -1396,29 +1397,32 @@ def _merged_tip_red_is_new(gate_name: str, scope: dict | None) -> bool:
     return True
 
 
-def _default_merged_tip_check(abs_wt_path: str, dev_ref: str, timeout: int = 90) -> dict[str, Any]:
+def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
+                              timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S) -> dict[str, Any]:
     """Production default for the `action='integrate'` merged-tip gate —
     the REAL, unmodified `noctus.dev.gate_sweep`, scoped to `dev_ref` (the
     ref THIS worktree just rebased onto) and run against the just-rebased
     worktree. Lazy import (mirrors `_default_migration_collision_check`).
 
-    `timeout` bounds the TOTAL wall-clock budget, not gate_sweep's own
-    per-gate one: `gate_sweep`'s injectable `run_gate` seam is wrapped with
-    a shared deadline so a `seed/`-triggered fleet-wide fan-out across many
-    products cannot silently blow past the time-box. A gate that would
-    start after the deadline is reported `ran=False` — which `gate_sweep`'s
-    own `_verdict` already classifies as `incomplete`, never `red` (never
-    a measured failure it never actually ran)."""
+    Each gate gets its OWN declared budget (`gate_budget.resolve_gate_budget`,
+    sized from observed durations: SW 480s, seed/lib 360s, mcp full 300s...),
+    and gates run in parallel, so wall-clock ~ the largest budget. `timeout`
+    is only the runaway CEILING over the whole phase (the pre-2026-10-19
+    flat 90s shared deadline timed out every big suite and integrated them
+    as "unmeasured"). A gate that would start after the ceiling is reported
+    `ran=False` ("time-box exceeded") and, if in scope, blocks like a timeout
+    (`_timed_out_in_scope_gates`)."""
     from .gate_sweep import gate_sweep  # lazy import
 
     return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
                       run_gate=_deadline_boxed_run_gate(timeout))
 
 
-def _deadline_boxed_run_gate(timeout: int):
-    """gate_sweep `run_gate` seam sharing ONE wall-clock deadline across all
-    gates it runs: a gate that would start after the deadline reports
-    `exit_code=None` (never ran) instead of silently blowing the time-box."""
+def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None):
+    """gate_sweep `run_gate` seam: per-gate budget (`resolve_gate_budget`,
+    capped by what is left of the overall ceiling `timeout`). A gate that
+    would start after the ceiling reports `exit_code=None` (never ran)
+    instead of silently blowing the time-box."""
     import time as _time
 
     from .gate_sweep import _default_run_gate  # lazy import
@@ -1429,7 +1433,8 @@ def _deadline_boxed_run_gate(timeout: int):
         remaining = deadline - _time.time()
         if remaining <= 0:
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
-        return _default_run_gate(spec, timeout=max(1, int(remaining)))
+        budget = _gate_budget.resolve_gate_budget(spec.gate, budgets)
+        return _default_run_gate(spec, timeout=max(1, int(min(budget, remaining))))
 
     return _boxed_run_gate
 
@@ -1441,6 +1446,32 @@ def _deadline_boxed_run_gate(timeout: int):
 # `page.goto` load timeouts at load 36-40. Before blocking, the red gates are
 # re-run ONCE against a detached origin/dev checkout. Gate-level granularity:
 # a gate is rerun whole (gate_sweep exposes no failing-test ids to narrow by).
+def _timed_out_in_scope_gates(merged_tip_result: dict[str, Any] | None) -> list[dict[str, str]]:
+    """In-scope merged-tip gates that produced NO verdict because time ran out
+    (own timeout, or the overall ceiling hit before they started). "Silence is
+    not a pass": these BLOCK the integrate unless explicitly accepted.
+
+    Out of scope (keep the old non-blocking UNMEASURED handling): harness-invalid
+    / harness-suspect gates, synthetic never-runnable entries (unmapped_diff,
+    mcp_untested_change), and a product gate pulled in ONLY by this branch's
+    own `seed/` fan-out (`_merged_tip_red_is_new` False). Seed test roots
+    (`pytest:seed/...`) are directly in scope of a seed diff."""
+    scope = (merged_tip_result or {}).get("scope")
+    out = []
+    for g in (merged_tip_result or {}).get("gates", []) or []:
+        if g.get("exit_code") is not None or g.get("harness_suspect") or g.get("harness_invalid"):
+            continue
+        if not _gate_budget.is_timeout_summary(g.get("summary")):
+            continue
+        name = str(g.get("gate", ""))
+        prefix, _, rest = name.partition(":")
+        seed_root = prefix in ("pytest", "vitest") and "/" in rest
+        if not seed_root and not _merged_tip_red_is_new(name, scope):
+            continue
+        out.append({"gate": name, "why": str(g.get("summary"))[:80]})
+    return out
+
+
 def _unmeasured_gates(merged_tip_result: dict[str, Any] | None) -> list[dict[str, str]]:
     """Merged-tip gates this integrate did NOT judge: never ran (time-box spent,
     harness preflight failed) or ran without a verdict (timeout) or on a suspect
@@ -1883,7 +1914,9 @@ def task_branch(
     verify_merged_tip: bool = True,
     keep_worktree: bool | None = None,
     merged_tip_check: Callable[[str, str], dict[str, Any]] | None = None,
-    merged_tip_timeout: int = 90,
+    merged_tip_timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S,
+    accept_unmeasured: list[str] | None = None,
+    accept_unmeasured_reason: str | None = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     regenerate_kb_counts_at_integrate: bool = True,
     kb_counts_regenerate: "Callable[[str], dict[str, Any]] | None" = None,
@@ -2516,6 +2549,37 @@ def task_branch(
                     logger.debug("task_branch.integrate: merged-tip check status=%s "
                                  "(pushing regardless — no NEW red found)",
                                  (merged_tip_result or {}).get("status"))
+            # ── Silence is not a pass (2026-10-19): an IN-SCOPE gate that timed
+            # out produced no verdict — block, unless the caller names it in
+            # `accept_unmeasured` WITH a reason (audited in result + pointer).
+            accepted_unmeasured = None
+            if verify_merged_tip and merged_tip_result is not None:
+                timed_out = _timed_out_in_scope_gates(merged_tip_result)
+                if timed_out:
+                    accepted = set(accept_unmeasured or [])
+                    reason_txt = (accept_unmeasured_reason or "").strip()
+                    unaccepted = [t for t in timed_out if t["gate"] not in accepted]
+                    if unaccepted or len(reason_txt) < 10:
+                        if benign_stashed:
+                            _pop_stash(runner, wt_path, benign_stashed, verbose)
+                            benign_stashed = False
+                        names_ = ", ".join(t["gate"] for t in (unaccepted or timed_out))
+                        return {**plan, "status": "gate_timeout", "exit_code": 1,
+                                "introduced_migrations": introduced_migrations,
+                                "merged_tip_check": merged_tip_result,
+                                "merged_tip_timed_out": timed_out,
+                                "reason": (
+                                    f"{branch} rebased onto {remote}/{dev_branch} cleanly, but "
+                                    f"{len(timed_out)} in-scope merged-tip gate(s) timed out with no "
+                                    f"verdict: {names_}. Silence is not a pass. Re-run integrate "
+                                    "(load may have starved them), run them by hand, or pass "
+                                    "accept_unmeasured=[gate...] WITH accept_unmeasured_reason "
+                                    "(>=10 chars; recorded in the result and the branch pointer)."),
+                                "message": (
+                                    f"integrate of {branch} blocked: gate_timeout on {names_}. "
+                                    "Not pushed.")}
+                    accepted_unmeasured = {
+                        "gates": [t["gate"] for t in timed_out], "reason": reason_txt}
             # ── KB-counts regeneration — ONCE, here, not per feature commit
             # (see the module comment above `_default_regenerate_kb_counts`
             # and `scripts/hooks/pre-commit` § 2). Best-effort: a failure is
@@ -2567,6 +2631,12 @@ def task_branch(
                     result["message"] += (
                         f" Auto-renumbered {len(all_renumbered)} migration(s) on rebase — "
                         "see migration_renumber.")
+                if accepted_unmeasured:
+                    result["merged_tip_accepted_unmeasured"] = accepted_unmeasured
+                    result["message"] += (
+                        " ACCEPTED-UNMEASURED (timed out, audited): "
+                        + ", ".join(accepted_unmeasured["gates"])
+                        + f" — reason: {accepted_unmeasured['reason']}.")
                 if merged_tip_result is not None:
                     result["merged_tip_check"] = merged_tip_result
                     if baseline_note:
@@ -2589,7 +2659,9 @@ def task_branch(
                 result["pointer"] = _pointer_transition(
                     pointer_fn, branch=branch, status="integrated-worktree-live",
                     commit=(new_head or "")[:9] or None,
-                    notes=f"task_branch integrate → {dev_branch}@{(new_dev or '')[:9]}")
+                    notes=f"task_branch integrate → {dev_branch}@{(new_dev or '')[:9]}"
+                          + (f" | accepted-unmeasured {accepted_unmeasured['gates']}: "
+                             f"{accepted_unmeasured['reason']}" if accepted_unmeasured else ""))
                 if post_integrate_fn is None:
                     # Inline tail (tests / injected runner): unchanged ordering.
                     if settle_fn is not None:
@@ -2881,9 +2953,14 @@ def register(server) -> None:
             "AUTO-CLEANUP (2026-10-09): a successful integrate also tears down "
             "its worktree + merged branch (result['auto_cleanup']; skipped if "
             "dirty) - the caller's cwd is gone afterwards; keep_worktree=True "
-            "opts out. "
+            "opts out. MERGED-TIP GATES (2026-10-19): each gate has its own "
+            "declared budget (gate_budget.py: SW 480s, seed/lib 360s, mcp full "
+            "300s), run in parallel; an IN-SCOPE gate that times out BLOCKS "
+            "(status 'gate_timeout') unless accept_unmeasured=[gate...] plus "
+            "accept_unmeasured_reason (>=10 chars) is passed - recorded in "
+            "result['merged_tip_accepted_unmeasured'] and the branch pointer. "
             "status: status|planned|started|integrated|conflict|up_to_date|"
-            "cleaned|partial|blocked|refused_stale_toolkit|error."
+            "cleaned|partial|blocked|gate_timeout|refused_stale_toolkit|error."
         ),
     )
     def _task_branch(
@@ -2901,8 +2978,11 @@ def register(server) -> None:
         role: str | None = None,
         parent: str | None = None,
         wire_products: list[str] | None = None,
+        accept_unmeasured: list[str] | None = None,
+        accept_unmeasured_reason: str | None = None,
     ) -> dict:
-        return task_branch(action=action, slug=slug, confirm=confirm,
+        return task_branch(accept_unmeasured=accept_unmeasured,
+                           accept_unmeasured_reason=accept_unmeasured_reason,action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,
                            wire_products=wire_products,

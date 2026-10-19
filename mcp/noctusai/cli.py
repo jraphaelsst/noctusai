@@ -434,6 +434,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
     parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
     parser.add_argument("--task-branch-post-remote", default="origin", help="With --task-branch-post-integrate: the remote.")
+    parser.add_argument("--task-branch-accept-unmeasured", default=None, help="With --task-branch integrate: comma-separated in-scope merged-tip gates that TIMED OUT and that you knowingly accept as unmeasured (requires --task-branch-accept-unmeasured-reason). Without it a timed-out in-scope gate blocks the integrate (status gate_timeout).")
+    parser.add_argument("--task-branch-accept-unmeasured-reason", default=None, help="With --task-branch-accept-unmeasured: the audited reason (recorded in the integrate result and the branch pointer).")
     parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
@@ -3398,8 +3400,12 @@ def main():
         paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths else None
         raw_wp = getattr(args, "task_branch_wire_products", None)
         wire_products = [p.strip() for p in raw_wp.split(",") if p.strip()] if raw_wp is not None else None
+        raw_au = getattr(args, "task_branch_accept_unmeasured", None)
+        accept_unmeasured = [g.strip() for g in raw_au.split(",") if g.strip()] if raw_au else None
         r = task_branch(
             action=args.task_branch,
+            accept_unmeasured=accept_unmeasured,
+            accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             slug=getattr(args, "task_branch_slug", None),
             confirm=bool(getattr(args, "task_branch_confirm", False)),
             wire_env=not bool(getattr(args, "task_branch_no_wire_env", False)),

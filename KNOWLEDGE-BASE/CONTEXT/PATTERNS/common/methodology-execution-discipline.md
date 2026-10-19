@@ -181,6 +181,32 @@ qualifying-green requirement remain the SW verdict.) Opt out with
 `mcp/noctusai/tools/noctus/dev/task_branch.py`'s module comment above
 `_merged_tip_red_is_new`.
 
+**2026-10-19 — a timed-out in-scope merged-tip gate BLOCKS (silence is not a
+pass).** The 90s "overall time-box" above was one shared deadline whose
+remainder became each gate's subprocess timeout, so the big suites
+(`pytest:social-wiring` ~5 min, `pytest:seed/lib/backend` ~3 min,
+`e2e:social-wiring`, sometimes `mcp_toolkit_tests`) died at ~80-90s on nearly
+every integrate and were waved through as "UNMEASURED - CI is their verdict".
+A red reached dev that way (eight SW branding tests, after a captures move).
+Root cause: `task_branch._deadline_boxed_run_gate` / `merged_tip_timeout=90`.
+Fix: (1) per-gate DECLARED budgets in `tools/noctus/dev/gate_budget.py`
+(`GATE_BUDGETS_S`, exact name > longest prefix > 120s default; SW 480s, seed/lib
+360s, mcp full 300s, scoped 240s, generic pytest/e2e 300s), sized from observed
+durations x ~1.5 - revise a row when a suite grows; the gates already run in
+parallel, so wall-clock ~ the largest budget, and `merged_tip_timeout` is now
+only a runaway CEILING (default 900s). (2) An IN-SCOPE gate with no verdict
+because it timed out (or the ceiling hit before it started) makes integrate
+return `status='gate_timeout'`, exit 1, nothing pushed, gates listed under
+`merged_tip_timed_out`. Out of scope keeps the old non-blocking
+`merged_tip_unmeasured` handling: harness-invalid / harness-suspect gates,
+synthetic never-runnable entries, and a product gate pulled in ONLY by this
+branch's own `seed/` fan-out (seed test roots `pytest:seed/...` are in scope of
+a seed diff). (3) The explicit, audited override is
+`accept_unmeasured=[gate...]` + `accept_unmeasured_reason` (>=10 chars, must name
+every timed-out gate); it is recorded in `merged_tip_accepted_unmeasured`, the
+message, and the branch pointer's notes. MCP integrate already moves to the
+background after 120s, so the longer gates do not stall the caller.
+
 **2026-10-09 — a red on a directly-touched product needs a DEV BASELINE, and
 a load-starved Playwright timeout is a harness fault.** `_merged_tip_red_is_new`
 has no baseline for a product the branch touched, so it always said "new":
