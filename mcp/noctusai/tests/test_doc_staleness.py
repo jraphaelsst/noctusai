@@ -185,16 +185,31 @@ def test_ratchet_only_new_staleness_fails_and_shrink_never_grows(repo):
     assert [f["doc"] for f in ds.check_tree(repo)["new"]] == ["products/acme/MASTER-PROMPT.md"]
 
 
-def test_keeper_wrapper_issue_shape(repo):
-    _write(repo, "products/acme/README.md", "`products/acme/old.py`\n")
-    _commit(repo, "d")
-    from tools.noctus.dev.compliance import check_doc_staleness
-    issues = check_doc_staleness(repo_root=repo)
-    assert issues and set(issues[0]) >= {"product", "file", "issue", "severity"}
+class TestCheckDocStaleness:
+    """Regression tests for the `check_doc_staleness` keeper (compliance wrapper)."""
 
+    def test_keeper_wrapper_issue_shape(self, repo):
+        _write(repo, "products/acme/README.md", "`products/acme/old.py`\n")
+        _commit(repo, "d")
+        from tools.noctus.dev.compliance import check_doc_staleness
+        issues = check_doc_staleness(repo_root=repo)
+        assert issues and set(issues[0]) >= {"product", "file", "issue", "severity"}
 
-def test_repo_is_clean_against_its_committed_baseline():
-    """The live tree must hold the ratchet: no NEW claim staleness on top of the baseline."""
-    from settings import REPO_ROOT
-    new = ds.check_tree(REPO_ROOT)["new"]
-    assert new == [], "new doc staleness (fix the doc, never grow the baseline):\n" + ds.suggest({"new": new})
+    def test_keeper_range_mode_is_coupling(self, repo):
+        base = _git(repo, "rev-parse", "HEAD")
+        _write(repo, "products/acme/backend/app/routers/b.py", "@router.post('/b')\ndef b(): ...\n")
+        tip = _commit(repo, "feat(acme): b")
+        from tools.noctus.dev.compliance import check_doc_staleness
+        files = {i["file"] for i in check_doc_staleness(repo_root=repo, rev_range=f"{base}..{tip}")}
+        assert "products/acme/README.md" in files
+
+    def test_committed_baseline_is_loaded_and_live_tree_holds_it(self):
+        """The REAL baseline file is read explicitly; the live tree may not exceed it."""
+        from settings import REPO_ROOT
+        baseline_path = REPO_ROOT / ds.BASELINE_REL
+        assert baseline_path.is_file()
+        entries = json.loads(baseline_path.read_text(encoding="utf-8"))["entries"]
+        assert entries == ds.load_baseline(REPO_ROOT)
+        findings = ds.check_claims(REPO_ROOT)  # claims only: no git-log age scan
+        new = [f for f in findings if f["id"] not in entries]
+        assert new == [], "new doc staleness (fix the doc, never grow the baseline):\n" + ds.suggest({"new": new})

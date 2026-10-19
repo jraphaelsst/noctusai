@@ -539,7 +539,7 @@ def write_baseline(root: Path, findings: list[dict], mode: str) -> dict:
     return {"ok": True, "entries": len(entries), "dropped": len(existing) - len(entries) if mode == "shrink" else 0}
 
 
-def check_tree(root: Path) -> dict[str, Any]:
+def check_tree(root: Path, with_age: bool = True) -> dict[str, Any]:
     """Legs 2+3+4: claims against the ratchet, plus the age warning list."""
     docs = load_docs(root)
     findings = check_claims(root, docs)
@@ -547,7 +547,7 @@ def check_tree(root: Path) -> dict[str, Any]:
     new = [f for f in findings if f["id"] not in base]
     fixed = sorted(set(base) - {f["id"] for f in findings})
     return {"findings": findings, "new": new, "baselined": len(findings) - len(new),
-            "fixed_in_baseline": fixed, "age_warnings": age_report(root, docs), "docs_scanned": len(docs)}
+            "fixed_in_baseline": fixed, "age_warnings": age_report(root, docs) if with_age else [], "docs_scanned": len(docs)}
 
 
 def suggest(result: dict[str, Any]) -> str:
@@ -568,7 +568,7 @@ def check_doc_staleness(repo_root: Path | None = None, rev_range: str | None = N
     root = repo_root or REPO_ROOT
     if rev_range:
         return check_range(root, rev_range)
-    return check_tree(root)["new"]
+    return check_tree(root, with_age=False)["new"]
 
 
 def register(server) -> None:
