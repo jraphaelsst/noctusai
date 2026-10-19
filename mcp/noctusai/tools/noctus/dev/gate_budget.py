@@ -30,6 +30,7 @@ GATE_BUDGETS_S: dict[str, int] = {
     # seed roots: seed/lib/backend ~180 s observed.
     "pytest:seed/lib/backend": 360,
     "pytest:seed/": 300,
+    "vitest:seed/": 240,
     # toolkit: full suite is the long pole; scoped is test files the diff touched.
     "mcp_toolkit_tests": 300,
     "mcp_toolkit_tests:scoped": 240,

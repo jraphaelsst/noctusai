@@ -204,7 +204,10 @@ branch's own `seed/` fan-out (seed test roots `pytest:seed/...` are in scope of
 a seed diff). (3) The explicit, audited override is
 `accept_unmeasured=[gate...]` + `accept_unmeasured_reason` (>=10 chars, must name
 every timed-out gate); it is recorded in `merged_tip_accepted_unmeasured`, the
-message, and the branch pointer's notes. MCP integrate already moves to the
+message, and the branch pointer's notes. No silent fallback: a test derives every gate name `gate_sweep`
+can emit from its builders and asserts each has a declared budget row; a name
+that still rides the 120s default is reported as `budget_defaulted` on the
+integrate result. MCP integrate already moves to the
 background after 120s, so the longer gates do not stall the caller.
 
 **2026-10-09 — a red on a directly-touched product needs a DEV BASELINE, and
