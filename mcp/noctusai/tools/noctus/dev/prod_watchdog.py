@@ -247,8 +247,12 @@ def make_ssh_runner(env: Mapping[str, str]) -> Optional[SshRunner]:
 # ── senders ──────────────────────────────────────────────────────────────────
 def _post_json(url: str, payload: dict, headers: dict, timeout: float = 20) -> tuple[bool, str]:
     data = json.dumps(payload).encode("utf-8")
+    # Resend sits behind Cloudflare, whose rule 1010 answers urllib's default
+    # "Python-urllib/3.x" User-Agent with a bare 403 — every email alert failed
+    # that way until 2026-10-19, indistinguishable from a bad key.
     req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json", **headers})
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": _edge.BROWSER_UA, **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300, f"HTTP {resp.status}"

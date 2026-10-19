@@ -276,6 +276,29 @@ def test_real_senders_only_exist_for_configured_channels():
     assert set(pw.make_senders({"RESEND_API_KEY": "x"})) == set()
 
 
+def test_alert_posts_send_the_browser_user_agent():
+    """Cloudflare rule 1010 (in front of Resend) 403s urllib's default UA."""
+    import http.server
+    import threading
+
+    seen: dict = {}
+
+    class _H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            seen["ua"] = self.headers.get("User-Agent")
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.handle_request, daemon=True).start()
+    ok, _ = pw._post_json(f"http://127.0.0.1:{srv.server_port}/", {}, {"X": "1"}, timeout=5)
+    srv.server_close()
+    assert ok and seen["ua"] == edge.BROWSER_UA
+
+
 def test_test_alert_goes_through_every_configured_channel(tmp_path):
     wa, email = Sender(), Sender()
     rep = _run(tmp_path, senders={"email": email, "whatsapp": wa}, test_alert=True)
