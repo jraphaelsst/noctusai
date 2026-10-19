@@ -34,6 +34,19 @@ products/agents/backend/app/
   clients/           → academia API client · social-wiring toggle client (seed token scheme)
 ```
 
+### Julia v2 — shared lead thread and controls (A-THREAD)
+
+- A lead's conversation is ONE `conversations` row (`tipo='thread_lead'`) shared by every agent; each agent is a
+  participant (`thread_participantes`, at most one `ativo`) and each message carries its author agent and the lead.
+  Stores: `stores/threads.py` (lead_refs, participants, hand-offs, consent, per-agent context),
+  `stores/agent_controles.py` (`modo_operacao`, `dreno_inatividade_dias`).
+- `channels/controles.py::decidir` is the pure decision table (ligado / drenando / desligado x thread x participant x
+  trigger); `aplicar_controles` reads the control fail closed (503 `controle_indisponivel`), creates the thread and
+  applies the implied transition. The turn route calls it before persisting anything or calling a model.
+- `routers/channel_threads_router.py`: thread read, append-without-a-turn, pause / resume (with optional until-when),
+  controls (SW reads, Studio admin writes), hand-off notes, opt-in / opt-out, delete-by-lead.
+- Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
+
 ### Bia's hardened launch (non-negotiable)
 
 - `setting_sources=[]`: no project `CLAUDE.md`, `settings.json` or hooks get loaded.
