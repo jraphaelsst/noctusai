@@ -308,6 +308,10 @@ class Intermediario:
     endereco: Endereco = field(default_factory=Endereco)
     representante_nome: Optional[str] = None
     representante_cpf: Optional[str] = None
+    #: Migration 284 — the representative's own CRECI-F and its printed
+    #: region ("2ª região"), qualified beside their name in the clause.
+    representante_creci: Optional[str] = None
+    representante_creci_regiao: Optional[str] = None
     #: Migration 162 — "intermediario" (default): a contracted party the
     #: clause header qualifies (CRECI required). "parceiro_split": a
     #: commission-split beneficiary never qualified in the header and never

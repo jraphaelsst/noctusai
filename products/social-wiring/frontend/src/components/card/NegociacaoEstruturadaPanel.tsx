@@ -164,6 +164,8 @@ const INTERMEDIARIO_COMPLEMENTO_MAX = 120;
 const INTERMEDIARIO_BAIRRO_MAX = 120;
 const INTERMEDIARIO_CIDADE_MAX = 120;
 const INTERMEDIARIO_REPRESENTANTE_NOME_MAX = 255;
+/** `schemas.py` `representante_creci` / `_regiao` (migration 284). */
+const INTERMEDIARIO_REPRESENTANTE_CRECI_MAX = 64;
 const INTERMEDIARIO_PAPEL_MAX = 160;
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -1356,6 +1358,8 @@ interface IntermediarioDraft {
   endereco_uf: string;
   representante_nome: string;
   representante_cpf: string;
+  representante_creci: string;
+  representante_creci_regiao: string;
 }
 
 function toIntermediarioDraft(
@@ -1382,6 +1386,8 @@ function toIntermediarioDraft(
     endereco_uf: i?.endereco_uf ?? "",
     representante_nome: i?.representante_nome ?? "",
     representante_cpf: i?.representante_cpf ?? "",
+    representante_creci: i?.representante_creci ?? "",
+    representante_creci_regiao: i?.representante_creci_regiao ?? "",
   };
 }
 
@@ -1443,6 +1449,8 @@ function IntermediarioFormDialog({
       endereco_uf: draft.endereco_uf.trim() || null,
       representante_nome: draft.representante_nome.trim() || null,
       representante_cpf: draft.representante_cpf.trim() || null,
+      representante_creci: draft.representante_creci.trim() || null,
+      representante_creci_regiao: draft.representante_creci_regiao.trim() || null,
     };
     if (draft.pessoaTipo) payload.pessoa_tipo = draft.pessoaTipo;
     onSubmit(payload);
@@ -1666,6 +1674,30 @@ function IntermediarioFormDialog({
                   value={formatarDocumento(draft.representante_cpf)}
                   onChange={(e) =>
                     setDraft((d) => ({ ...d, representante_cpf: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="int-rep-creci">CRECI do representante</Label>
+                <Input
+                  id="int-rep-creci"
+                  placeholder="145830-F"
+                  value={draft.representante_creci}
+                  maxLength={INTERMEDIARIO_REPRESENTANTE_CRECI_MAX}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, representante_creci: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="int-rep-creci-regiao">Região do CRECI</Label>
+                <Input
+                  id="int-rep-creci-regiao"
+                  placeholder="2ª região"
+                  value={draft.representante_creci_regiao}
+                  maxLength={INTERMEDIARIO_REPRESENTANTE_CRECI_MAX}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, representante_creci_regiao: e.target.value }))
                   }
                 />
               </div>

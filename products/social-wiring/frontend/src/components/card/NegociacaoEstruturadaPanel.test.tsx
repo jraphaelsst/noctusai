@@ -634,6 +634,8 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     endereco_uf: "SP",
     representante_nome: null,
     representante_cpf: null,
+    representante_creci: null,
+    representante_creci_regiao: null,
     created_at: null,
     updated_at: null,
   };
@@ -658,6 +660,38 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     expect((document.getElementById("int-email") as HTMLInputElement).value).toBe(UM.email);
     expect((document.getElementById("int-cidade") as HTMLInputElement).value).toBe(
       UM.endereco_cidade,
+    );
+  });
+
+  it("o CRECI do representante (migração 284) aparece e é enviado ao salvar", async () => {
+    const COM_REP = {
+      ...UM,
+      representante_nome: "Sócia Exemplo",
+      representante_creci: "145830-F",
+      representante_creci_regiao: "2ª região",
+    };
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ intermediarios: [COM_REP] }) }),
+    );
+    const { getByLabelText, getByTestId } = await render("intermediarios");
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar ONE/));
+    expect((document.getElementById("int-rep-creci") as HTMLInputElement).value).toBe(
+      "145830-F",
+    );
+    fireEvent.change(document.getElementById("int-rep-creci-regiao") as HTMLInputElement, {
+      target: { value: "2ª Região" },
+    });
+    fireEvent.click(getByTestId("negest-intermediario-salvar"));
+    expect(mockUpdateIntermediario).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({
+          representante_creci: "145830-F",
+          representante_creci_regiao: "2ª Região",
+        }),
+      }),
+      expect.anything(),
     );
   });
 
@@ -801,6 +835,8 @@ describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parcei
               endereco_uf: null,
               representante_nome: null,
               representante_cpf: null,
+              representante_creci: null,
+              representante_creci_regiao: null,
               created_at: null,
               updated_at: null,
             },

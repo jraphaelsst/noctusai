@@ -1340,6 +1340,13 @@ def qualificacao_intermediario(it: Intermediario) -> str:
         texto += f", neste ato representada por {it.representante_nome}"
         if it.representante_cpf:
             texto += f", CPF {documento(it.representante_cpf)[1]}"
+        if it.representante_creci:
+            # Migration 284 — the representative's OWN CRECI-F (deal 876's
+            # "corretora de imóveis, Creci 145830-F 2ª região"), the same
+            # shape `qualificacao_imobiliaria` gives the office's partner.
+            texto += f", corretor(a) de imóveis CRECI {it.representante_creci}"
+            if it.representante_creci_regiao:
+                texto += f" ({it.representante_creci_regiao})"
     if it.email:
         texto += f", endereço eletrônico: {it.email.strip().lower()}"
     if it.endereco.logradouro:

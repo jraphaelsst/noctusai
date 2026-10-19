@@ -894,6 +894,8 @@ def carregar(
                 endereco=_endereco(i),
                 representante_nome=i.get("representante_nome"),
                 representante_cpf=i.get("representante_cpf"),
+                representante_creci=i.get("representante_creci"),
+                representante_creci_regiao=i.get("representante_creci_regiao"),
                 # Migration 162 — old rows read as the table's original,
                 # only-ever meaning: a qualified, CRECI-required party.
                 natureza=i.get("natureza") or "intermediario",

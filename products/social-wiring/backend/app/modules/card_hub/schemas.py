@@ -601,6 +601,9 @@ class _IntermediarioQualificacao(StrictHttpModel):
     endereco_uf: Optional[str] = Field(default=None, max_length=8)
     representante_nome: Optional[str] = Field(default=None, max_length=255)
     representante_cpf: Optional[str] = Field(default=None, max_length=32)
+    #: Migration 284 — the representative's own CRECI-F + printed region.
+    representante_creci: Optional[str] = Field(default=None, max_length=64)
+    representante_creci_regiao: Optional[str] = Field(default=None, max_length=64)
 
 
 class IntermediarioCreateBody(_IntermediarioQualificacao):

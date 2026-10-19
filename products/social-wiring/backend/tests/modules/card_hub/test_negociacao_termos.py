@@ -632,6 +632,29 @@ class TestIntermediarioQualificacao:
         assert item["documento"] == "11.222.333/0001-81"  # canonical, punctuated
         assert item["representante_cpf"] == "529.982.247-25"
 
+    def test_the_representantes_own_creci_is_stored_canonical(self, client, scoped):
+        """Migration 284 (deal 876 cl.13): the partner signing for a PJ
+        brokerage is qualified by HER OWN CRECI-F + printed region."""
+        cid, _aid = _seed(scoped)
+        r = _criar_intermediario(
+            client, cid, pessoa_tipo="pj", documento=CNPJ,
+            representante_nome="Sócia Administradora", representante_cpf=CPF_REPRESENTANTE,
+            representante_creci="creci 145830 f", representante_creci_regiao="2ª região",
+        )
+        assert r.status_code == 201, r.text
+        item = r.json()["intermediarios"][0]
+        assert item["representante_creci"] == "145830-F"
+        assert item["representante_creci_regiao"] == "2ª região"
+
+    def test_a_representantes_creci_must_be_a_persons(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        assert "CRECI do representante" in _mensagem_400(
+            _criar_intermediario(client, cid, representante_creci="040242-J")
+        )
+        assert "CRECI do representante" in _mensagem_400(
+            _criar_intermediario(client, cid, representante_creci="145830")
+        )
+
     def test_an_alphanumeric_cnpj_is_accepted(self, client, scoped):
         cid, _aid = _seed(scoped)
         r = _criar_intermediario(client, cid, documento=CNPJ_ALFANUMERICO)

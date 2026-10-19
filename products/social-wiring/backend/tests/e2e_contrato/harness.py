@@ -195,7 +195,8 @@ CAMPOS_TEXTO_MARCAVEIS = frozenset(
         "nome", "nacionalidade", "profissao", "cpf", "rg", "rg_orgao", "email",
         "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
         "razao_social", "banco", "agencia", "conta", "pix", "cpf_cnpj", "creci",
-        "documento", "representante_nome", "representante_cpf", "endereco_registro_texto",
+        "documento", "representante_nome", "representante_cpf", "representante_creci",
+        "representante_creci_regiao", "endereco_registro_texto",
         "inscricao_municipal", "numero_registro_imoveis",
     }
 )

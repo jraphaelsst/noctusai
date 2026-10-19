@@ -69,3 +69,30 @@ def test_pj_intermediario_qualificacao_unaffected():
     texto = texto_plano(marcado)
     assert texto.startswith("ONE CONSULTORIA IMOBILIÁRIA LTDA, pessoa jurídica inscrita no CNPJ")
     assert "corretor" not in texto
+
+
+def test_pj_representative_is_qualified_by_their_own_creci():
+    """Deal 876 cl.13 (signed contract): "COCCI IMÓVEIS LTDA ... CRECI
+    040242-J, neste ato representada por sua sócia Ana Maria Cocci, ...,
+    corretora de imóveis, Creci 145830-F 2ª região" — the partner's OWN
+    CRECI-F (migration 284), never the company's J. Fixture names/numbers."""
+    it = _intermediario(
+        nome="IMOBILIÁRIA EXEMPLO LTDA", pessoa_tipo="pj", documento="11222333000181",
+        creci="040242-J", representante_nome="Fulana de Tal",
+        representante_creci="145830-F", representante_creci_regiao="2ª região",
+    )
+    texto = texto_plano(frases.qualificacao_intermediario(it))
+    assert (
+        "com inscrição no CRECI sob o nº 040242-J, neste ato representada por "
+        "Fulana de Tal, corretor(a) de imóveis CRECI 145830-F (2ª região)"
+    ) in texto
+
+
+def test_a_representative_without_creci_renders_as_before():
+    it = _intermediario(
+        nome="IMOBILIÁRIA EXEMPLO LTDA", pessoa_tipo="pj", documento="11222333000181",
+        representante_nome="Fulana de Tal",
+    )
+    texto = texto_plano(frases.qualificacao_intermediario(it))
+    assert "neste ato representada por Fulana de Tal." in texto
+    assert "corretor(a) de imóveis CRECI" not in texto
