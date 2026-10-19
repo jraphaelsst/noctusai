@@ -31,6 +31,7 @@
     "282_imovel_transacoes_sw_venda_trigger.sql": "6f25e185723143954de512fd9bb67006286c89f72b0e3eea8d41fc77582e0656",
     "283_lais_proprietarios_preco_tipo.sql": "2cc53a3e2af56db7258a225616f29797ed6b3aa9e4dd6db13f8790b6eb65d1ca",
     "284_simec.sql": "b2330fa8b9179e77a1443434690e90716dfb4ac31d24cfffe4007bb604d93aa5",
-    "285_intermediario_representante_creci.sql": "1905dcdf92657d6fdb340e68fb00c34dff0f956ad3708be07d1cc2e1e8e679c5"
+    "285_intermediario_representante_creci.sql": "1905dcdf92657d6fdb340e68fb00c34dff0f956ad3708be07d1cc2e1e8e679c5",
+    "286_atendimento_blocos_supervisao.sql": "a082e84c2cccc60e022206eb31eaf581dde9512ea9fde6c6788c6331570286df"
   }
 }
