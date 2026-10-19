@@ -246,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-private-accent-fold", action="store_true", help="Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.")
     parser.add_argument("--check-org-role-without-org-id", action="store_true", help="Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
+    parser.add_argument("--check-no-authenticated-grant-on-content-tables", action="store_true", help="Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
     parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
     parser.add_argument("--check-postgrest-unbounded-query", action="store_true", help="Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 000 leads instead of 13 255, a backfill silently repointed 1 000 of 1 365 negociações, a review queue dropped 177 of 1 177 rows. A second shape: `.in_(col, values)` rides in the URL query string, so an unbatched ~1 000-item collection is a bare 400 (\"JSON could not be generated\") with no hint about length. Flags a `.select(...).execute()` chain with no `.range()`/`.single()`/`.maybe_single()`/in-cap-`.limit()`/PK-`.eq(\"id\",...)` on it (severity `info` — risk is a function of a row count this keeper cannot see), and an `.in_()` fed a collection with no provable bound and no `_batched`-style loop (severity `warning` — structurally risky regardless of table cardinality, and the shape that actually took `/clientes/revisao` down). Deliberately heuristic (no table-cardinality knowledge) — non-blocking at either tier, observe-first (promote the `.in_()`-shape to blocking once a fleet sweep shows its false-positive rate is low). Escape hatch: `postgrest-unbounded-ok: <why>` comment (must state a reason, not just cite the keeper). KB § PATTERNS/backend/postgrest-row-cap.md.")
@@ -1879,6 +1880,17 @@ def main():
             print(f"  {GREEN}✓ no-metadata-authz: clean (no backend authorization reads user_metadata org/role).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} user_metadata org/role read(s) in backend authz/scoping paths — each is a cross-tenant hole:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_no_authenticated_grant_on_content_tables:
+        from tools.noctus.dev.compliance import check_no_authenticated_grant_on_content_tables
+        issues = check_no_authenticated_grant_on_content_tables()
+        if not issues:
+            print(f"  {GREEN}✓ no-authenticated-grant-on-content-tables: clean (agents tables stay service-role only).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} agents table grant(s)/policy(ies) readable from the browser:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)

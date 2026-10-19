@@ -12359,6 +12359,118 @@ def check_migration_untyped_empty_array(repo_root: Path | None = None) -> list[d
 
 
 # ---------------------------------------------------------------------------
+# `check_no_authenticated_grant_on_content_tables` — the agents schema is exposed
+# to PostgREST and the browser holds a user session, so ANY `GRANT SELECT ... TO
+# authenticated` or `CREATE POLICY ... TO authenticated` on an agents table lets
+# every logged-in member of ANY org read it directly (security finding C2,
+# 2026-10-19: Julia's prompt, transcripts, leads). The agents backend uses the
+# service-role client for everything; migration 036 revoked the lot. From 036 on,
+# a NEW agents migration may not hand a table back to anon/authenticated.
+# Allowlist = tables the frontend legitimately reads through supabase-js.
+# ---------------------------------------------------------------------------
+
+#: Tables a browser may read directly (agents frontend `usePageStatus`).
+AGENTS_BROWSER_READABLE_TABLES: frozenset[str] = frozenset({"status_pagina"})
+#: Migrations numbered below this predate the lockdown (036 revokes what they grant).
+_AGENTS_LOCKDOWN_MIGRATION = 36
+_AGENTS_MIGRATIONS_REL = ("products", "agents", "backend", "migrations")
+_BROWSER_ROLES = frozenset({"authenticated", "anon", "public"})
+_GRANT_TABLE_RE = re.compile(
+    r"\bGRANT\s+(?P<privs>.+?)\s+ON\s+(?P<target>.+?)\s+TO\s+(?P<roles>[^;]+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_POLICY_RE = re.compile(
+    r"\bCREATE\s+POLICY\s+(?:\"[^\"]+\"|\w+)\s+ON\s+(?P<table>[\w\".]+)(?P<rest>.*)",
+    re.IGNORECASE | re.DOTALL,
+)
+_POLICY_TO_RE = re.compile(r"\bTO\s+(?P<roles>[\w\s,\"]+?)(?:\s+(?:USING|WITH)\b|;|$)", re.IGNORECASE | re.DOTALL)
+_DEFAULT_PRIV_RE = re.compile(r"\bALTER\s+DEFAULT\s+PRIVILEGES\b.*?\bGRANT\b", re.IGNORECASE | re.DOTALL)
+
+
+def _agents_role_set(raw: str) -> set[str]:
+    return {r.strip().strip('"').lower() for r in raw.split(",") if r.strip()}
+
+
+def _agents_bare_table(raw: str) -> str:
+    return raw.strip().strip(";").split(".")[-1].strip('"').lower()
+
+
+def _agents_browser_grant_findings(statement: str) -> list[tuple[str, str]]:
+    """(table, why) for each way ONE statement hands a table to a browser role."""
+    out: list[tuple[str, str]] = []
+    st = " ".join(statement.split()).rstrip(";").strip()
+    if _DEFAULT_PRIV_RE.search(st):
+        m = re.search(r"\bTO\s+(?P<roles>[^;]+)$", st, re.IGNORECASE)
+        if m and _agents_role_set(m.group("roles")) & _BROWSER_ROLES and re.search(r"\bON\s+TABLES\b", st, re.IGNORECASE):
+            out.append(("*", "ALTER DEFAULT PRIVILEGES grants every future table to a browser role"))
+        return out
+    g = _GRANT_TABLE_RE.match(st) if st.upper().startswith("GRANT") else None
+    if g and _agents_role_set(g.group("roles")) & _BROWSER_ROLES:
+        privs = g.group("privs").upper()
+        target = re.sub(r"^TABLE\s+", "", g.group("target"), flags=re.IGNORECASE)
+        if re.search(r"\b(SELECT|ALL)\b", privs) and not re.match(r"(FUNCTION|SEQUENCE|SCHEMA)\b", target, re.IGNORECASE):
+            if re.match(r"ALL\s+TABLES\b", target, re.IGNORECASE):
+                out.append(("*", "GRANT ... ON ALL TABLES IN SCHEMA to a browser role"))
+            else:
+                out.extend((_agents_bare_table(t), "GRANT SELECT/ALL to a browser role") for t in target.split(","))
+    p = _POLICY_RE.match(st)
+    if p:
+        t = _POLICY_TO_RE.search(p.group("rest"))
+        if t and _agents_role_set(t.group("roles")) & _BROWSER_ROLES:
+            out.append((_agents_bare_table(p.group("table")), "CREATE POLICY ... TO a browser role"))
+    return out
+
+
+def check_no_authenticated_grant_on_content_tables(
+    repo_root: Path | None = None, paths: list[str] | None = None,
+) -> list[dict]:
+    """Flag agents migrations (>= 036) that grant SELECT / create a policy TO authenticated|anon on a table.
+
+    ``paths`` (repo-relative) scopes to those files (pre-commit delta); omitted = every
+    agents migration. Allowlist: ``AGENTS_BROWSER_READABLE_TABLES``. Per
+    ``KB § PATTERNS/backend/database-rls.md`` (agents browser-read lockdown, C2).
+    """
+    root = repo_root or REPO_ROOT
+    mig_dir = root.joinpath(*_AGENTS_MIGRATIONS_REL)
+    if not mig_dir.is_dir():
+        return []
+    wanted = {str(Path(p)) for p in paths} if paths else None
+    issues: list[dict] = []
+    for path in sorted(mig_dir.glob("*.sql")):
+        rel = str(path.relative_to(root))
+        num = re.match(r"(\d+)_", path.name)
+        if not num or int(num.group(1)) < _AGENTS_LOCKDOWN_MIGRATION:
+            continue
+        if wanted is not None and rel not in wanted:
+            continue
+        try:
+            text = _sql_strip_comments(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        # drop dollar-quoted bodies (DO blocks / functions): REVOKE/assert logic, not grants
+        text = re.sub(r"\$(\w*)\$.*?\$\1\$", " ", text, flags=re.DOTALL)
+        for stmt in text.split(";"):
+            for table, why in _agents_browser_grant_findings(stmt):
+                if table in AGENTS_BROWSER_READABLE_TABLES:
+                    continue
+                issues.append({
+                    "file": rel,
+                    "issue": (
+                        f"`{rel}` {why} on agents table `{table}`. The agents schema is exposed to "
+                        f"PostgREST and every logged-in member of ANY org holds a session, so this "
+                        f"makes the table directly readable from the browser (security finding C2). "
+                        f"The agents backend reads through the service-role client: leave the table "
+                        f"service-role only. A table the frontend reads via supabase-js must be added "
+                        f"to AGENTS_BROWSER_READABLE_TABLES with a rationale. Per "
+                        f"`KB § PATTERNS/backend/database-rls.md`."
+                    ),
+                    "severity": "critical",
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_postgrest_unbounded_query` — PostgREST silently caps ANY select at
 # `db-max-rows` (Supabase default 1 000) — no error, no warning,
 # `response.data` just comes back short. SEVEN instances of this shipped to
@@ -17453,6 +17565,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_org_role_without_org_id())
     all_issues.extend(check_secdef_migration_revokes_execute())
     all_issues.extend(check_migration_untyped_empty_array())
+    all_issues.extend(check_no_authenticated_grant_on_content_tables())
     # social-wiring-absorption W5.9-rest — numeric-axis twin of the
     # slug-set keeper (frozen fleet-size literals stale on consolidation).
     all_issues.extend(check_hardcoded_fleet_size_literal())

@@ -1139,6 +1139,20 @@ if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6g3b. Agents browser-read lockdown (blocking, only when an agents migration ─
+# is staged) ─ keeper `check_no_authenticated_grant_on_content_tables` (security
+# finding C2, 2026-10-19). The agents schema is PostgREST-exposed; a GRANT SELECT /
+# CREATE POLICY TO authenticated lets any logged-in member of ANY org read the table.
+STAGED_AGENTS_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/agents/backend/migrations/.*\.sql$' || true)
+if [[ -n "$STAGED_AGENTS_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] agents migration staged — checking no authenticated/anon grant on content tables..."
+    if ! "$PY" "$CLI" --check-no-authenticated-grant-on-content-tables --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] NO-AUTHENTICATED-GRANT-ON-CONTENT-TABLES check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Keep the table service-role only (backend uses the admin client). See KB § PATTERNS/backend/database-rls.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6h. PostgREST unbounded-query gate (advisory, only when backend Python ──
 # changed) ──────────────────────────────────────────────────────────────
 # Keeper `check_postgrest_unbounded_query` + `KB § PATTERNS/backend/

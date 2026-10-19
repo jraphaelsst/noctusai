@@ -653,6 +653,12 @@ Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-p
 
 ---
 
+## Service-role-only content tables — an org-scoped `SELECT TO authenticated` policy is a browser read (2026-10-19)
+
+An exposed schema + the browser's persisted session + the publishable key means `GET /rest/v1/<table>` with `Accept-Profile: <schema>` reaches every table that grants `authenticated` anything. An org-only `*_select_own_org` policy is no defence when the caller may be a member of ANY org (`current_org_id_for('agents')` even falls back to the home org with no license check): the agents studio exposed Julia's prompt, transcripts, leads and finance rows that way (finding C2).
+
+Rule: a table the backend reaches through the service-role client is **service-role only** — `REVOKE ALL ... FROM PUBLIC, anon, authenticated` and no policy naming those roles (service_role has BYPASSRLS, so nothing in the backend needs one). A table the FRONTEND reads through supabase-js (`usePageStatus` -> `status_pagina`) is the only exception, listed by name. Migration `products/agents/backend/migrations/036_revoke_authenticated_content.sql` applies it (explicit table list + a DO-block assertion over `pg_class`/`pg_policies` + `ALTER DEFAULT PRIVILEGES ... REVOKE` so a new table starts private). Do NOT "fix" this by un-exposing the schema: the product's own backend reaches the tables through PostgREST with the service key, so removing `agents` from `pgrst.db_schemas` takes the whole product down (and `predeploy_check`'s `schema_exposure` leg requires it). Gates: keeper `check_no_authenticated_grant_on_content_tables` (agents migrations >= 036; allowlist `AGENTS_BROWSER_READABLE_TABLES`; pre-commit) + `verify_db_guards` probes `agents.content_tables.no_browser_privileges` / `.no_browser_policies` / `agents.status_pagina.browser_read_only`.
+
 See also:
 - `../../CONTEXT/backend/04-DATABASE.md` — per-schema table inventory
 - `backend.md` — repository pattern, N+1 discipline

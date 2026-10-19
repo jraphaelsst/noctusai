@@ -618,6 +618,8 @@ class TestAgentsStudioProbes:
             p for p in DEFAULT_REGISTRY
             if p.product == "agents" and not p.id.startswith("agents_editorial.")
             and not p.id.endswith(".anon_holds_no_sequence_privilege")
+            # browser-read lockdown (036) = catalog state assertions, no fixture; own file asserts them
+            and not p.id.startswith(("agents.content_tables.", "agents.status_pagina."))
         ]
 
     def test_every_studio_guard_has_a_probe(self):

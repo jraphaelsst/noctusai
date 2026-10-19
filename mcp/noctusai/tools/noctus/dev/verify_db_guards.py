@@ -9481,6 +9481,95 @@ _SW_JULIA_V2_SUPERVISAO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — agents browser-read lockdown (agents migration 036, security
+# finding C2, 2026-10-19). The agents schema is exposed to PostgREST and every
+# logged-in member of ANY org holds a session, so an agents table granting
+# anything to anon/authenticated (or carrying a policy naming them) is readable
+# from the browser. Every agents table except the allowlist (`status_pagina`,
+# read by the frontend's `usePageStatus`) is service-role only. State
+# assertions over the catalog -- no fixture, no write; `has_table_privilege`
+# ignores RLS on purpose (a policy is not a grant, a grant is the exposure).
+# ---------------------------------------------------------------------------
+
+_AGENTS_BROWSER_LOCKDOWN_MIGRATIONS = ("036_revoke_authenticated_content.sql",)
+_AGENTS_BROWSER_READABLE = "ARRAY['status_pagina']"
+_AGENTS_BROWSER_TABLES_SQL = (
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'agents' AND c.relkind IN ('r', 'p') "
+    f"AND NOT (c.relname = ANY ({_AGENTS_BROWSER_READABLE}))"
+)
+
+_AGENTS_BROWSER_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="agents.content_tables.no_browser_privileges",
+        product="agents",
+        schema=_AGENTS_SCHEMA,
+        guard_name="agents_content_tables_no_browser_privileges",
+        kind="state_assertion",
+        migrations=_AGENTS_BROWSER_LOCKDOWN_MIGRATIONS,
+        rationale=(
+            "Julia's prompt, transcripts, leads and finance live in agents.* and the schema is exposed to "
+            "PostgREST: a table-level OR column-level privilege for anon/authenticated lets any logged-in "
+            "member of ANY org read it with the publishable key. Only the allowlist (status_pagina) may."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count " + _AGENTS_BROWSER_TABLES_SQL + " AND ("
+                "has_table_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') "
+                "OR has_any_column_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') "
+                "OR has_table_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') "
+                "OR has_any_column_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'));"
+            ),
+            clean_message="no agents table outside the allowlist grants anything to anon/authenticated",
+            violation_message_prefix="agents table(s) readable/writable by anon/authenticated outside the allowlist:",
+        ),
+    ),
+    GuardProbe(
+        id="agents.content_tables.no_browser_policies",
+        product="agents",
+        schema=_AGENTS_SCHEMA,
+        guard_name="agents_content_tables_no_browser_policies",
+        kind="state_assertion",
+        migrations=_AGENTS_BROWSER_LOCKDOWN_MIGRATIONS,
+        rationale=(
+            "A `*_select_own_org` policy TO authenticated is the second half of the exposure (the grant is the "
+            "first): drop both so a stray re-grant cannot silently reopen the table."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM pg_policies p WHERE p.schemaname = 'agents' "
+                f"AND NOT (p.tablename = ANY ({_AGENTS_BROWSER_READABLE})) "
+                "AND p.roles && ARRAY['public', 'anon', 'authenticated']::name[];"
+            ),
+            clean_message="no agents policy outside the allowlist names anon/authenticated/public",
+            violation_message_prefix="agents policy(ies) naming anon/authenticated/public outside the allowlist:",
+        ),
+    ),
+    GuardProbe(
+        id="agents.status_pagina.browser_read_only",
+        product="agents",
+        schema=_AGENTS_SCHEMA,
+        guard_name="agents_status_pagina_browser_read_only",
+        kind="state_assertion",
+        migrations=_AGENTS_BROWSER_LOCKDOWN_MIGRATIONS,
+        rationale=(
+            "status_pagina is the one browser-readable agents table (page-visibility flags). 001's GRANT ALL "
+            "left write privileges that only the missing write policy held back: they are revoked so the "
+            "table is read-only for the browser by grant, not by the absence of a policy."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM (VALUES ('authenticated'), ('anon')) r(role) "
+                "WHERE has_table_privilege(r.role, 'agents.status_pagina', 'INSERT, UPDATE, DELETE, TRUNCATE');"
+            ),
+            clean_message="anon/authenticated cannot write agents.status_pagina",
+            violation_message_prefix="browser role(s) can write agents.status_pagina:",
+        ),
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9580,6 +9669,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _COMMERCE_COUPON_PERCENT_PROBE,
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
     *_ORBITY_018_PROBES,
+    *_AGENTS_BROWSER_LOCKDOWN_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
