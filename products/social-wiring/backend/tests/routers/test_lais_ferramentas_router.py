@@ -181,10 +181,46 @@ class TestBuscarImoveis:
         assert [d["codigo"] for d in tools.post("buscar_imoveis", {"operacao": "compra", "limite": 1}).json()["data"]] == ["PUB"]
 
 
+class TestLinkDoImovel:
+    def test_no_site_saved_means_no_link(self, ok):
+        assert {d["link"] for d in ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
+
+    def test_the_default_template_builds_site_imovel_codigo(self, tools, catalogo):
+        catalogo.set_table_data("lais_conhecimento_secoes", [
+            {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "imobiliaria.example/"}},
+        ])
+        tools.as_ctx(_product())
+        data = tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]
+        assert {d["codigo"]: d["link"] for d in data} == {
+            "CA1": "https://imobiliaria.example/imovel/CA1", "CA2": "https://imobiliaria.example/imovel/CA2",
+        }
+        assert tools.post("detalhes_imovel", {"codigo": "ca1"}).json()["data"]["link"] == "https://imobiliaria.example/imovel/CA1"
+
+    def test_a_custom_template_and_an_empty_one(self, tools, catalogo):
+        dados = {"site": "https://imobiliaria.example", "link_imovel": "{site}/anuncio?ref={codigo}"}
+        catalogo.set_table_data("lais_conhecimento_secoes", [
+            {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": dados},
+        ])
+        tools.as_ctx(_product())
+        assert tools.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]["link"] == "https://imobiliaria.example/anuncio?ref=CA1"
+        catalogo.set_table_data("lais_conhecimento_secoes", [
+            {"org_id": str(_ORG), "secao": "perfil_whatsapp", "versao": 1, "dados": {**dados, "link_imovel": ""}},
+        ])
+        assert tools.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]["link"] is None
+
+    def test_another_orgs_site_never_builds_this_orgs_links(self, tools, catalogo):
+        catalogo.set_table_data("lais_conhecimento_secoes", [
+            {"org_id": str(_OTHER), "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "outra.example"}},
+        ])
+        tools.as_ctx(_product())
+        assert {d["link"] for d in tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
+
+
 class TestDetalhesImovel:
     def test_returns_the_contract_shape_with_iptu_and_street_withheld_until_wave_1(self, ok):
         d = ok.post("detalhes_imovel", {"codigo": "ca1"}).json()["data"]  # case-insensitive code
-        assert set(d) == {"codigo", "titulo", "descricao", "preco", "condominio", "iptu", "endereco", "caracteristicas", "encontrado"}
+        assert set(d) == {"codigo", "titulo", "descricao", "preco", "condominio", "iptu", "endereco", "caracteristicas", "link",
+                          "encontrado"}
         assert d["encontrado"] is True and d["preco"] == 900000.0 and d["condominio"] == 1200.0
         assert d["iptu"] is None
         assert d["endereco"] == "Granja Viana, Cotia"

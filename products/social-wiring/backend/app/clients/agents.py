@@ -8,6 +8,8 @@ Lais build contract (lais-build-contract.md) 2.1:
   (a) `contexto` rides in the turn request; (d) the response carries action objects
   (`LaisAction`); (e) POST /api/channels/conversations/{id}/resumo -> `resumo`;
   (f) PUT /api/channels/ferramentas-token -> `put_ferramentas_token`.
+Owner 2026-10-19: POST /api/channels/agents/{key}/decisoes/{chave} -> `decidir` (a choice decided by the rule the
+  owner keeps in the agent's prompt section `decisao-<chave>`; `regra_padrao` applies while that section is absent).
 
 Fake + Real + factory (KB § PATTERNS/backend/seed-fake-real-adapter.md):
   * `AgentsClient`      -- the Protocol the lead path depends on;
@@ -202,6 +204,25 @@ class ResumoResult:
     tokens_saida: Optional[int] = None
 
 
+@dataclass(frozen=True)
+class DecisaoRequest:
+    opcoes: tuple[str, ...]
+    regra_padrao: str
+    dados: dict[str, Any] = field(default_factory=dict)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"opcoes": list(self.opcoes), "dados": dict(self.dados), "regra_padrao": self.regra_padrao}
+
+
+@dataclass(frozen=True)
+class DecisaoResult:
+    escolha: str
+    motivo: str = ""
+    #: `secao` = the owner's prompt section decided; `padrao` = our `regra_padrao`.
+    regra: str = "padrao"
+    custo_usd: Optional[float] = None
+
+
 # ── typed errors (one per row of the section 3.1 error table) ───────────────
 class AgentsClientError(Exception):
     """Base of every failure of a call to agents. `code` is agents' own code."""
@@ -274,6 +295,8 @@ class AgentsClient(Protocol):
 
     async def resumo(self, conversation_id: str, req: ResumoRequest) -> ResumoResult: ...
 
+    async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult: ...
+
     async def put_ferramentas_token(self, token: str) -> None: ...
 
     async def uso(self, mes: str) -> AgentUso: ...
@@ -305,6 +328,7 @@ class FakeAgentsClient:
         status_error: Optional[AgentsClientError] = None,
         default_partes: Sequence[str] = DEFAULT_PARTES,
         resumo_script: Sequence[Union[ResumoResult, AgentsClientError]] = (),
+        decisao_script: Sequence[Union[DecisaoResult, AgentsClientError]] = (),
         ferramentas_token_error: Optional[AgentsClientError] = None,
         uso: Union[AgentUso, AgentsClientError, None] = None,
     ):
@@ -312,6 +336,8 @@ class FakeAgentsClient:
         self.uso_calls: list[str] = []
         self._script = list(script)
         self._resumo_script = list(resumo_script)
+        self._decisao_script = list(decisao_script)
+        self.decisoes: list[tuple[str, str, DecisaoRequest]] = []
         self._ferramentas_token_error = ferramentas_token_error
         self._status = status
         self._status_error = status_error
@@ -376,6 +402,16 @@ class FakeAgentsClient:
             return nxt
         return ResumoResult(resumo="Resumo de teste da conversa.", desfecho="em_andamento", custo_usd=0.0,
                             tokens_entrada=0, tokens_saida=0)
+
+    async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult:
+        """Scripted; with no script, the FIRST option (deterministic) decided by `padrao`."""
+        self.decisoes.append((agent_key, chave, req))
+        if self._decisao_script:
+            nxt = self._decisao_script.pop(0)
+            if isinstance(nxt, AgentsClientError):
+                raise nxt
+            return nxt
+        return DecisaoResult(escolha=req.opcoes[0], motivo="decisão de teste", regra="padrao", custo_usd=0.0)
 
     async def uso(self, mes: str) -> AgentUso:
         self.uso_calls.append(mes)
@@ -511,6 +547,21 @@ def parse_resumo_result(body: Any) -> ResumoResult:
     )
 
 
+def parse_decisao_result(body: Any, opcoes: Sequence[str]) -> DecisaoResult:
+    """Strict parse; an `escolha` outside what we offered is an upstream fault, never used."""
+    escolha = _need(body, "escolha", str)
+    if escolha not in opcoes:
+        raise AgentsUpstreamError("agents chose an option that was not offered")
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    regra = body.get("regra")
+    return DecisaoResult(
+        escolha=escolha,
+        motivo=body.get("motivo") if isinstance(body.get("motivo"), str) else "",
+        regra=regra if regra in ("secao", "padrao") else "padrao",
+        custo_usd=usage.get("custo_usd"),
+    )
+
+
 def parse_uso(body: Any) -> AgentUso:
     turnos = _need(body, "turnos", int)
     custo = _need(body, "custo_usd", (int, float))
@@ -617,6 +668,14 @@ class HttpAgentsClient:
         )
         return parse_resumo_result(body)
 
+    async def decidir(self, agent_key: str, chave: str, req: DecisaoRequest) -> DecisaoResult:
+        """`POST /api/channels/agents/{key}/decisoes/{chave}` (owner 2026-10-19)."""
+        body = await self._send(
+            "POST", f"/api/channels/agents/{quote(agent_key, safe='')}/decisoes/{quote(chave, safe='')}",
+            json=req.to_wire(),
+        )
+        return parse_decisao_result(body, req.opcoes)
+
     async def put_ferramentas_token(self, token: str) -> None:
         """`PUT /api/channels/ferramentas-token` (contract 2.1(f)); auth = the org's channel
         token (this client's own bearer). 204 on success."""
@@ -646,9 +705,10 @@ def make_agents_client(
 __all__ = [
     "AgentNotFound", "AgentStatus", "AgentUso", "AgentUnavailable", "AgentsBadRequest", "AgentsClient",
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid",
-    "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DeletionRequest",
+    "AgentsUpstreamError", "Action", "CapacityExceeded", "ConversationNotFound", "DecisaoRequest",
+    "DecisaoResult", "DeletionRequest",
     "DeletionResult", "FakeAgentsClient", "HandoffAction", "HttpAgentsClient", "IdempotencyConflict",
     "LaisAction", "LlmNotConfigured", "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ResumoRequest",
     "ResumoResult", "TurnInProgress", "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client",
-    "parse_agent_status", "parse_uso", "parse_resumo_result", "parse_turn_result",
+    "parse_agent_status", "parse_decisao_result", "parse_uso", "parse_resumo_result", "parse_turn_result",
 ]

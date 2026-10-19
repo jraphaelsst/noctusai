@@ -130,12 +130,13 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict
     rows = q.order("data_atualizacao", desc=True).limit(OVERFETCH).execute().data or []
     publicados = [r for r in rows if _publicado(r)][: a.limite]
     confirmados = lais_imovel_confirmado.carregar(client, org_id, (r["codigo"] for r in publicados))
+    link = lais_conhecimento_service.link_imovel_fn(client, org_id)
     out = [
         {
             "codigo": r["codigo"], "titulo": _titulo(r), "tipo": r.get("categoria"), "bairro": r.get("bairro"),
             "cidade": r.get("cidade"), "preco": _preco(r, a.operacao), "quartos": r.get("dormitorios"),
-            # NOC-REMEDIATE[lais-imovel-link]: OWNER QUESTION -- `imoveis` (Vista mirror, migrations 040/093) has NO per-listing URL column (only foto_destaque/fotos/video_destaque/tour_360) and Vista's `Imovel` payload the sync normalises carries no site URL, so the public listing path is not derivable from data. What is the public URL pattern of the imobiliaria site for a listing (e.g. `<site>/imovel/<codigo>`; per org or a single Vista site template)? Once answered: store the path template next to `site` in "Meu negócio" and build `link` from it here -- 2026-10-16
-            "link": None,
+            # Owner, 2026-10-19: "Meu negócio › Perfil do WhatsApp" `link_imovel` template (default `{site}/imovel/{codigo}`).
+            "link": link(r["codigo"]),
         }
         for r in publicados
     ]
@@ -167,6 +168,7 @@ def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str
         "preco": _preco(r, None), "condominio": _num(r.get("valor_condominio")),
         "iptu": _num(r.get("valor_iptu")) if mostrar_iptu else None,
         "endereco": endereco, "caracteristicas": list(r.get("caracteristicas") or []),
+        "link": lais_conhecimento_service.link_imovel_fn(client, org_id)(r["codigo"]),
         "encontrado": True,
     }
     confirmacoes = lais_imovel_confirmado.carregar(client, org_id, [r["codigo"]]).get(str(r["codigo"]).strip().upper(), [])

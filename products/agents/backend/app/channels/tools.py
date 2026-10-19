@@ -196,6 +196,9 @@ _CONFIRMACAO_HINT = (
     "Se um imóvel trouxer `confirmacao_proprietario`, o status/preço dali é o mais recente: use-o e, ao citar, "
     "diga a procedência com o texto de `provenance`."
 )
+_LINK_HINT = (
+    "Quando o imóvel trouxer `link`, envie esse link exatamente como veio; sem `link`, não invente nenhum."
+)
 
 #: Read tools whose lookup SW records for Relatórios (top imóveis); the turn's interação is attached
 #: SERVER-side from ``contexto.estado.interacao_id`` — never a model argument (it is not in their schema).
@@ -205,7 +208,7 @@ READ_SPECS: dict[str, ToolSpec] = {
     "buscar_imoveis": ToolSpec(
         name="buscar_imoveis",
         description=("Busca imóveis do catálogo da imobiliária (máx. 5). Se retornar {\"erro\": \"indisponivel\"}, peça desculpas e siga o atendimento. "
-                     + _CONFIRMACAO_HINT),
+                     + _CONFIRMACAO_HINT + " " + _LINK_HINT),
         parameters={
             "type": "object",
             "properties": {
@@ -219,7 +222,7 @@ READ_SPECS: dict[str, ToolSpec] = {
     ),
     "detalhes_imovel": ToolSpec(
         name="detalhes_imovel",
-        description="Detalhes de um imóvel pelo código. " + _CONFIRMACAO_HINT,
+        description="Detalhes de um imóvel pelo código. " + _CONFIRMACAO_HINT + " " + _LINK_HINT,
         parameters={
             "type": "object", "properties": {"codigo": {"type": "string"}},
             "required": ["codigo"], "additionalProperties": False,

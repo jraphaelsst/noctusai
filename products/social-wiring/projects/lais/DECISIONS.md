@@ -24,6 +24,8 @@
 | 2026-10-15 | Client-history link (Lais' 4-digit code) | **Never a shared code — login required.** Each conversation has its own id/thread link; it opens only for a logged-in user who OWNS that conversation (assigned attendant / connection owner) **or is an org admin/owner**. Other members of the same org cannot open it; users of another org never can (org isolation is absolute). |
 | 2026-10-15 | Credit analysis + Google reviews | **Build both** (later waves; credit analysis needs a provider decision + LGPD consent step). |
 | 2026-10-15 | Lead distribution (roleta / last attendant / teams) | **SW owns the data and rules** (teams, members, distribution mode, last-responsible); **Julia consumes it** via the agents API at handoff. |
+| 2026-10-19 | Listing link Julia sends | **`<site>/imovel/<codigo>`** (e.g. `…/imovel/ONE9551`; the Vista code as stored). Per org in "Meu negócio › Perfil do WhatsApp" → `link_imovel` (default `{site}/imovel/{codigo}`; empty = no link). |
+| 2026-10-19 | Meta first contact: "Abordagem comercial" vs "neutra" | **Confirmed for now:** comercial when the lead came by a specific listing (código / form REF), else neutra. **Editable by prompt:** the rule is Julia's prompt section `decisao-abordagem-meta` in the agents studio; SW asks `POST /api/channels/agents/lead-imob/decisoes/abordagem-meta`. Without that section the confirmed rule applies; agents unreachable ⇒ local rule, recorded on the event. |
 
 ## Open
 - Stage 3 (mechanisms): owner said YES (2026-10-15) but the session's PII classifier still refuses the read (re-tried 2026-10-15, denied). Unblock = a permission rule on the owner's side, or anonymised excerpts pasted into the chat.

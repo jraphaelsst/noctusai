@@ -13,7 +13,8 @@ import hashlib
 import logging
 import re
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
+from urllib.parse import quote
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -200,6 +201,9 @@ class LocacaoGarantias(_Base):
     outras: Outras = Field(default_factory=Outras)
 
 
+LINK_IMOVEL_PADRAO = "{site}/imovel/{codigo}"
+
+
 class PerfilWhatsapp(_Base):
     nome_exibicao: str = PERSONA_NOME  # read-only: forced to the persona on save
     descricao: str = Field(default="", max_length=512)
@@ -207,6 +211,16 @@ class PerfilWhatsapp(_Base):
     endereco: str = Field(default="", max_length=200)
     email: str = Field(default="", max_length=120)
     site: str = Field(default="", max_length=200)
+    #: Public listing URL template Julia sends (`link` of the tools). `{site}` = `site` above, `{codigo}` = the
+    #: Vista code as stored (e.g. ONE9551). Owner, 2026-10-19: `<site>/imovel/<codigo>`. Empty = no link.
+    link_imovel: str = Field(default=LINK_IMOVEL_PADRAO, max_length=300)
+
+    @field_validator("link_imovel")
+    @classmethod
+    def _link_ok(cls, v: str) -> str:
+        if v and "{codigo}" not in v:
+            raise ValueError("o modelo do link precisa conter {codigo}")
+        return v
 
     @field_validator("email")
     @classmethod
@@ -510,6 +524,38 @@ def politica_endereco_iptu(client: Any, org_id: UUID | str) -> dict[str, bool]:
         logger.exception("lais: endereco_iptu read failed org=%s -- address/IPTU withheld", org_id)
         return {"endereco_completo": False, "usar_iptu": False}
     return {"endereco_completo": bool(d.get("endereco_completo")), "usar_iptu": bool(d.get("usar_iptu"))}
+
+
+def _site_base(site: str) -> str:
+    site = (site or "").strip().rstrip("/")
+    if site and not re.match(r"^https?://", site, re.I):
+        site = f"https://{site}"
+    return site
+
+
+def montar_link_imovel(modelo: str, site: str, codigo: str) -> Optional[str]:
+    """The public listing URL from the org's template; None when the template is empty or needs a `site` the org
+    never filled in (Julia then sends no link rather than a broken one)."""
+    modelo, codigo = (modelo or "").strip(), (codigo or "").strip()
+    if not modelo or not codigo:
+        return None
+    base = _site_base(site)
+    if "{site}" in modelo and not base:
+        return None
+    return modelo.replace("{site}", base).replace("{codigo}", quote(codigo, safe=""))
+
+
+def link_imovel_fn(client: Any, org_id: UUID | str) -> Callable[[str], Optional[str]]:
+    """`codigo -> link` for one tool call (one read of "Meu negócio › Perfil do WhatsApp"). Unreadable => no links,
+    logged (a link is a convenience; the listing data still goes out)."""
+    try:
+        d = ler_secoes(client, org_id)["perfil_whatsapp"]["dados"] or {}
+    except Exception:
+        logger.exception("lais: perfil_whatsapp read failed org=%s -- listings go out without a link", org_id)
+        return lambda _codigo: None
+    modelo = d.get("link_imovel", LINK_IMOVEL_PADRAO)
+    site = d.get("site") or ""
+    return lambda codigo: montar_link_imovel(modelo, site, codigo)
 
 
 # ── contexto provider ───────────────────────────────────────────────────────

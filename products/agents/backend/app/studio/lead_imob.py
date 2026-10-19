@@ -144,6 +144,19 @@ LEAD_IMOB_SECTIONS: tuple[SectionInput, ...] = (
             "com as suas palavras, sem copiar trechos longos do cliente."
         ),
     ),
+    # A RULE, not a conversation instruction (``decisao-*`` never enters the chat prompt): social-wiring asks
+    # ``POST /api/channels/agents/lead-imob/decisoes/abordagem-meta`` which first-contact template a Meta
+    # lead-form lead gets. Owner-confirmed default, 2026-10-19; edit it here to change the rule.
+    SectionInput(
+        chave="decisao-abordagem-meta",
+        titulo="Regra: abordagem do primeiro contato (anúncios Meta)",
+        ordem=900,
+        conteudo=(
+            "Opções: `comercial` (modelo \"Abordagem comercial\") ou `neutra` (modelo \"Abordagem neutra\").\n\n"
+            "Use `comercial` quando o lead chegou por um imóvel específico: os dados trazem um código de imóvel "
+            "(`codigo_imovel`). Caso contrário, use `neutra`."
+        ),
+    ),
 )
 
 

@@ -83,7 +83,8 @@ VALIDOS = {
         "outras": {"aceita": True, "opcoes": ["Fiança bancária"], "sem_garantia": True},
     },
     "perfil_whatsapp": {"nome_exibicao": "Julia", "descricao": "Ajudo você a comprar ou alugar.", "sobre": "Disponível 24h",
-                        "endereco": "Rua Exemplo, 1", "email": "contato@exemplo.test", "site": "https://exemplo.test"},
+                        "endereco": "Rua Exemplo, 1", "email": "contato@exemplo.test", "site": "https://exemplo.test",
+                        "link_imovel": "{site}/imovel/{codigo}"},
     "endereco_iptu": {"endereco_completo": True, "usar_iptu": True},
 }
 
@@ -174,6 +175,7 @@ class TestValidation:
         ("locacao_garantias", {"fiador": {"localizacao": "mesmo_pais"}}),
         ("perfil_whatsapp", {"sobre": "x" * 140}),
         ("perfil_whatsapp", {"email": "sem-arroba"}),
+        ("perfil_whatsapp", {"link_imovel": "{site}/imovel/"}),
         ("endereco_iptu", {"endereco_completo": "talvez"}),
         ("endereco_iptu", []),
     ])

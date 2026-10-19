@@ -8,7 +8,7 @@ here, BEFORE any model call or write.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -326,6 +326,45 @@ class ChannelResumoResponse(BaseModel):
     operacao: str | None = None
     intencoes: list[Literal["encerrar", "captacao", "cobranca_atendimento", "parceria", "visita", "reclamacao"]]
     desfecho: Literal["qualificado", "frio", "captacao", "invalido", "em_andamento"]
+    usage: ChannelResumoUsageOut
+
+
+#: A decision key: the agent's prompt section ``decisao-<chave>`` holds its rule.
+DECISAO_CHAVE_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+_OPCAO_PATTERN = r"^[a-z0-9_]{1,40}$"
+DecisaoValor = Union[str, int, float, bool, None]
+
+
+class ChannelDecisaoRequest(StrictHttpModel):
+    """``POST /api/channels/agents/{agent_key}/decisoes/{chave}``: pick ONE of
+    ``opcoes`` for ``dados`` by the rule the owner wrote in the agent's prompt
+    section ``decisao-<chave>``; ``regra_padrao`` (the caller's built-in rule)
+    applies only while the published version has no such section."""
+
+    opcoes: list[Annotated[str, Field(pattern=_OPCAO_PATTERN)]] = Field(..., min_length=2, max_length=10)
+    dados: dict[Annotated[str, Field(max_length=60)], DecisaoValor] = Field(default_factory=dict, max_length=30)
+    regra_padrao: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("opcoes")
+    @classmethod
+    def _opcoes_unicas(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("opcoes repetidas")
+        return v
+
+    @field_validator("dados")
+    @classmethod
+    def _dados_curtos(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if any(isinstance(x, str) and len(x) > 500 for x in v.values()):
+            raise ValueError("valor de dados acima de 500 caracteres")
+        return v
+
+
+class ChannelDecisaoResponse(BaseModel):
+    escolha: str
+    motivo: str
+    #: ``secao`` = the owner's prompt section decided; ``padrao`` = the caller's ``regra_padrao``.
+    regra: Literal["secao", "padrao"]
     usage: ChannelResumoUsageOut
 
 

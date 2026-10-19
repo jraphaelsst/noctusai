@@ -180,7 +180,7 @@ export const SECOES: Record<string, SecaoSpec> = {
   perfil_whatsapp: {
     key: "perfil_whatsapp", titulo: "Perfil do WhatsApp",
     descricao: "Como a Julia aparece para o cliente no WhatsApp.",
-    defaults: { nome_exibicao: "", descricao: "", sobre: "", endereco: "", email: "", site: "" },
+    defaults: { nome_exibicao: "", descricao: "", sobre: "", endereco: "", email: "", site: "", link_imovel: "{site}/imovel/{codigo}" },
     campos: [
       { path: "nome_exibicao", label: "Nome de exibição", ajuda: "Definido pela persona da Julia.", kind: "readonly" },
       { path: "descricao", label: "Descrição", kind: "textarea", max: 512 },
@@ -188,6 +188,10 @@ export const SECOES: Record<string, SecaoSpec> = {
       { path: "endereco", label: "Endereço", kind: "text" },
       { path: "email", label: "E-mail de contato", kind: "text" },
       { path: "site", label: "Site", kind: "text" },
+      {
+        path: "link_imovel", label: "Link do imóvel no site", kind: "text", max: 300,
+        ajuda: "Modelo do link que a Julia envia. {site} = o site acima, {codigo} = o código do imóvel (ex.: ONE9551). Vazio = a Julia não envia link.",
+      },
     ],
   },
   endereco_iptu: {

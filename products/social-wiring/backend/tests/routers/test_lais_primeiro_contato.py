@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 from noctusai_lib.integrations.whatsapp import FakeMetaCloudClient
 from noctusai_lib.testing import MockSupabaseClient
 
+from app.clients.agents import AgentsTimeout, DecisaoResult, FakeAgentsClient
 from app.modules.meta_ads.services.leadgen_webhook_service import (
     STATUS_PROCESSED,
     LeadgenWebhookService,
@@ -45,10 +46,10 @@ class Cena:
     def factory(self, conn):
         return tr.transporte_da_conexao(conn, waha_factory=lambda **kw: self.w.waha, cloud_client_factory=lambda **kw: self.meta)
 
-    def rodar(self, lead=LEAD):
+    def rodar(self, lead=LEAD, agents=None):
         return asyncio.run(svc.iniciar(
             self.w.sw, ORG_ID, lead, store=self.store, transporte_factory=self.factory,
-            contexto={"nome_lais": "Aurora", "nome_imobiliaria": "Imob"}))
+            contexto={"nome_lais": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents))
 
     def eventos(self):
         return self.w.sw.table("lais_eventos").select("*").execute().data or []
@@ -140,8 +141,39 @@ class TestAbordagem:
         ({"answers": {"REF": "AP10"}}, "comercial"), ({"codigo_imovel": "CA1", "answers": {}}, "comercial"),
         ({"answers": {}}, "neutra"), ({"answers": {"REF": "  "}}, "neutra"), ({}, "neutra"),
     ])
-    def test_rule(self, lead, esperado):
-        assert svc.escolher_abordagem(lead) == esperado
+    def test_local_rule(self, lead, esperado):
+        assert svc.regra_local(lead) == esperado
+
+    def test_the_agents_prompt_rule_decides_and_the_event_says_which_rule(self, cena):
+        cena.cloud()
+        cena.modelo("Abordagem comercial")
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="comercial", motivo="campanha de lançamento",
+                                                                regra="secao")])
+        lead = {**LEAD, "campaign_name": "Lançamento Granja", "form_name": "Form 1"}
+        assert cena.rodar(lead, agents=agents)["status"] == "enviado"  # no listing code, yet the owner's rule said comercial
+        ((chave_agente, chave, req),) = agents.decisoes
+        assert (chave_agente, chave) == ("lead-imob", "abordagem-meta")
+        assert req.opcoes == ("comercial", "neutra") and req.regra_padrao == svc.REGRA_PADRAO
+        assert req.dados == {"codigo_imovel": None, "campanha": "Lançamento Granja", "formulario": "Form 1", "anuncio": None}
+        assert "Ana" not in str(req.dados) and "98888" not in str(req.dados)  # never the lead's name or phone
+        (ev,) = cena.eventos()
+        assert ev["payload"]["abordagem"] == {"escolha": "comercial", "regra": "secao", "motivo": "campanha de lançamento"}
+
+    def test_agents_unreachable_falls_back_to_the_local_rule_visibly(self, cena):
+        cena.cloud()
+        cena.modelo("Abordagem neutra")
+        agents = FakeAgentsClient(decisao_script=[AgentsTimeout("down")])
+        assert cena.rodar(agents=agents)["status"] == "enviado"
+        (ev,) = cena.eventos()
+        assert ev["payload"]["abordagem"] == {"escolha": "neutra", "regra": "local", "motivo": "AgentsTimeout"}
+
+    def test_no_model_call_while_the_line_is_not_cloud(self, cena):
+        cena.modelo()
+        agents = FakeAgentsClient()
+        assert cena.rodar(agents=agents)["status"] == "transporte_indisponivel"
+        assert agents.decisoes == []
+        (ev,) = cena.eventos()
+        assert ev["payload"]["abordagem"]["regra"] == "local" and ev["payload"]["abordagem"]["motivo"] == "sem_cloud"
 
 
 class TestLeadgenLeg:

@@ -110,8 +110,17 @@ def _policy_flag(policy: dict[str, Any], key: str) -> bool:
     return bool(policy.get(key, False))
 
 
+#: Sections whose ``chave`` starts with this hold a RULE a channel transport asks the agent to apply
+#: (``POST /api/channels/agents/{key}/decisoes/{chave}``), not conversation instructions: they are
+#: edited in the studio like any section but never compiled into the conversation prompt.
+DECISAO_PREFIX = "decisao-"
+
+
 def _active_sections(secoes) -> list[SectionData]:
-    return sorted((s for s in secoes if s.ativo), key=lambda s: (s.ordem, s.chave))
+    return sorted(
+        (s for s in secoes if s.ativo and not s.chave.startswith(DECISAO_PREFIX)),
+        key=lambda s: (s.ordem, s.chave),
+    )
 
 
 def _active_skills(skills) -> list[SkillData]:
