@@ -78,10 +78,6 @@ get_org_id = _deps.get_org_id
 
 
 # Late-binding wrappers so test patches on ``_db.get_*`` reach call sites.
-def get_user_client(token: str):
-    return _db.get_client(token)
-
-
 def get_admin_client():
     return _db.get_admin_client()
 

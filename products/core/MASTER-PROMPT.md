@@ -78,6 +78,7 @@ AcceptInvite, AccountSettings, BillingSettings, CheckoutCancel, CheckoutSuccess,
 - Router → Service → Schema pattern; routers thin, business logic in services
 - **Schemas live under `app/schemas/` as 21 per-domain modules** (5-wave extraction, commit `09ea826`, 2026-05-11). Add a new module rather than appending; one `BaseModel` cluster per file. `app/schemas/__init__.py` is the canonical re-export surface — keep it tidy.
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
+- `org_settings`, `webhook_endpoints`, `webhook_deliveries`, `api_keys` are **service-role only** (migration 086): never grant them to anon/authenticated or add a browser policy; the backend reaches them through `get_admin_client()` behind admin role checks. `noctus_users` and its subquery policies are a separate follow-up (SECURITY DEFINER refactor). DB probes `core.secret_tables.*`.
 - Portuguese for business domain names, English for technical/framework code
 - Use `get_current_admin()` for all admin-only routes
 - `audit_logs` service ⇒ log all sensitive operations (user changes, billing events)

@@ -9,17 +9,19 @@ genuine SQLite database instead of a mock.
 
 Two request scopes, deliberately distinct:
 
-* :func:`get_repositorios` — USER-scoped. Built from the caller's JWT, so
-  every query runs under RLS. This is what authenticated routers use.
-* :func:`get_repositorios_admin` — SERVICE-ROLE, RLS bypassed. ONLY for the
-  public approval portal, whose caller is the agency's client and has no noc
-  account (and therefore no org to scope by). Security there is the token
-  itself; see ``app/routers/esteira_router.py``. Mirrors the split Orbity
-  already uses for the same surface.
+* :func:`get_repositorios` — authenticated routers. The caller is
+  authenticated by ``get_current_user_org`` and the client is the SERVICE-ROLE
+  one: the ``igig`` schema is service-role only (migration 044 revokes every
+  browser grant and policy), so a user-token client could read nothing. The
+  tenant boundary is the explicit ``org_id`` on every repository call.
+* :func:`get_repositorios_admin` — same client, for the public approval portal,
+  whose caller is the agency's client and has no noc account (and therefore no
+  org to scope by). Security there is the token itself; see
+  ``app/routers/esteira_router.py``. Kept as its own dependency so a route
+  that opts out of the session says so in its signature.
 
-`org_id` is still passed explicitly on every repository call. On the Postgres
-path that is defence-in-depth behind RLS — it means a service-role client used
-by the portal still cannot read across tenants.
+`org_id` is passed explicitly on every repository call -- with the schema
+closed to the browser that is THE tenant boundary, not defence-in-depth.
 """
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ from pathlib import Path
 from fastapi import Depends
 from noctusai_lib.integrations.persistence import RecordStore, get_record_store
 
-from app.database import get_admin_client, get_supabase_client
+from app.database import get_admin_client
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 
@@ -46,30 +48,28 @@ __all__ = [
 _SQLITE_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "sqlite"
 
 
-def make_store(token: str | None = None, *, admin: bool = False) -> RecordStore:
-    """Build a Supabase-backed store.
+def make_store() -> RecordStore:
+    """Build a Supabase-backed store on the service-role client.
 
-    ``admin=True`` returns a service-role client (RLS bypassed) — reserved for
-    the public portal. Otherwise the client is bound to ``token`` so RLS
-    applies, which is the whole point of passing the user's JWT down.
+    The ``igig`` schema is closed to the browser (migration 044), so there is
+    no user-token variant: callers authenticate at the router and scope every
+    query by ``org_id``.
     """
-    client = get_admin_client() if admin else get_supabase_client(token)
-    return get_record_store(supabase_client=client)
+    return get_record_store(supabase_client=get_admin_client())
 
 
 def get_repositorios(auth: tuple = Depends(get_current_user_org)) -> Repositorios:
-    """Repository set bound to the caller's RLS-scoped client."""
-    _user, token, _raw_org = auth
-    return Repositorios(make_store(token))
+    """Repository set on the service-role client; ``auth`` gates the route."""
+    return Repositorios(make_store())
 
 
 def get_repositorios_admin() -> Repositorios:
-    """Repository set on the service-role client — public portal ONLY.
+    """Repository set for the public portal (no noc session).
 
     Kept as its own dependency rather than a flag so that a route opting out
-    of RLS has to say so explicitly in its signature, where a reviewer sees it.
+    of the session has to say so explicitly in its signature, where a reviewer sees it.
     """
-    return Repositorios(make_store(admin=True))
+    return Repositorios(make_store())
 
 
 # ── SQLite — tests only ─────────────────────────────────────────────

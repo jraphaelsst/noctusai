@@ -9569,6 +9569,91 @@ _AGENTS_BROWSER_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Registry -- core secrets tables (core 086) + igig schema (igig 044) browser
+# lockdown, security findings #1/#2/#3/#5 (2026-10-19). Same shape as the agents
+# probes above: catalog state assertions, no fixture, no write;
+# `has_table_privilege` ignores RLS on purpose (a policy is not a grant, a grant
+# is the exposure). core: org_settings / webhook_endpoints / webhook_deliveries /
+# api_keys (vendor credentials, webhook secrets, key hashes). igig: every
+# relation except the allowlisted `status_pagina`.
+# ---------------------------------------------------------------------------
+
+_CORE_BROWSER_LOCKDOWN_MIGRATIONS = ("086_revoke_browser_secrets_tables.sql",)
+_IGIG_BROWSER_LOCKDOWN_MIGRATIONS = ("044_revoke_authenticated_content.sql",)
+_CORE_SECRET_TABLES = "ARRAY['org_settings', 'webhook_endpoints', 'webhook_deliveries', 'api_keys']"
+
+
+def _browser_lockdown_probes(
+    *, product: str, schema: str, migrations: tuple[str, ...], scope_sql: str, policy_scope_sql: str, label: str,
+    what: str,
+) -> tuple[GuardProbe, GuardProbe]:
+    """Grant probe + policy probe for one browser-closed schema slice (scope_sql filters pg_class `c`/`n`;
+    policy_scope_sql filters pg_policies `p`)."""
+    grants = GuardProbe(
+        id=f"{product}.{label}.no_browser_privileges",
+        product=product,
+        schema=schema,
+        guard_name=f"{product}_{label}_no_browser_privileges",
+        kind="state_assertion",
+        migrations=migrations,
+        rationale=(
+            f"{what} The schema is exposed to PostgREST and every logged-in user holds a session: a table- or "
+            "column-level privilege for anon/authenticated is readable/writable from the browser with the "
+            "publishable key."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                f"WHERE {scope_sql} AND ("
+                "has_table_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') "
+                "OR has_any_column_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') "
+                "OR has_table_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') "
+                "OR has_any_column_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'));"
+            ),
+            clean_message=f"{product} {label}: nothing grants anything to anon/authenticated",
+            violation_message_prefix=f"{product} {label} relation(s) readable/writable by anon/authenticated:",
+        ),
+    )
+    policies = GuardProbe(
+        id=f"{product}.{label}.no_browser_policies",
+        product=product,
+        schema=schema,
+        guard_name=f"{product}_{label}_no_browser_policies",
+        kind="state_assertion",
+        migrations=migrations,
+        rationale=(
+            "An org-isolation policy TO authenticated is the second half of the exposure (the grant is the "
+            "first): drop both so a stray re-grant cannot silently reopen the table."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                f"SELECT count(*) INTO v_count FROM pg_policies p WHERE {policy_scope_sql} "
+                "AND p.roles && ARRAY['public', 'anon', 'authenticated']::name[];"
+            ),
+            clean_message=f"no {product} {label} policy names anon/authenticated/public",
+            violation_message_prefix=f"{product} {label} policy(ies) naming anon/authenticated/public:",
+        ),
+    )
+    return grants, policies
+
+
+_CORE_BROWSER_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = _browser_lockdown_probes(
+    product="core", schema="public", migrations=_CORE_BROWSER_LOCKDOWN_MIGRATIONS, label="secret_tables",
+    scope_sql=f"n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname = ANY ({_CORE_SECRET_TABLES})",
+    policy_scope_sql=f"p.schemaname = 'public' AND p.tablename = ANY ({_CORE_SECRET_TABLES})",
+    what="org_settings (vendor credentials, tier 1 of resolve_credential), webhook_endpoints/deliveries (url + "
+         "signing secret) and api_keys (key hashes) are service-role only.",
+)
+
+_IGIG_BROWSER_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = _browser_lockdown_probes(
+    product="igig", schema="igig", migrations=_IGIG_BROWSER_LOCKDOWN_MIGRATIONS, label="content_tables",
+    scope_sql="n.nspname = 'igig' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND c.relname <> 'status_pagina'",
+    policy_scope_sql="p.schemaname = 'igig' AND p.tablename <> 'status_pagina'",
+    what="igig clients, leads, contracts, invoices, quotes and the credential vault (acesso.senha_cifrada, "
+         "integracao.token_cifrado) are service-role only; only status_pagina is browser-readable.",
+)
+
 
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
@@ -9670,6 +9755,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
     *_ORBITY_018_PROBES,
     *_AGENTS_BROWSER_LOCKDOWN_PROBES,
+    *_CORE_BROWSER_LOCKDOWN_PROBES,
+    *_IGIG_BROWSER_LOCKDOWN_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

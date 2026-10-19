@@ -6,7 +6,7 @@ Central platform for authentication, organization management, billing, licensing
 
 - **Backend**: FastAPI (port 8000)
 - **Frontend**: React + TypeScript + Vite (port 5173)
-- **Database**: Supabase (schema: `public`)
+- **Database**: Supabase (schema: `public`). `org_settings` (vendor credentials), `webhook_endpoints`, `webhook_deliveries` and `api_keys` are **service-role only** (migration 086): no anon/authenticated grant or policy; every access goes through the API's admin-gated routes
 - **Tenant key**: `org_id`
 - **Auth**: Custom REST API
 

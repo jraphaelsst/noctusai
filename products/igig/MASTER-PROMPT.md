@@ -83,9 +83,14 @@ Seed-first. Backend is `create_product_app()` from `noctusai_seed`; frontend is
 
 - **Persistence** — `noctusai_lib.integrations.persistence` (Protocol + Fake +
   SQLite + Supabase + factory). Domain data goes through `app/store.py`; auth
-  stays on Supabase. `get_repositorios` is RLS-scoped from the caller's JWT;
-  `get_repositorios_admin` is service-role and is for the **public approval
-  portal only**.
+  stays on Supabase. Every igig table is **service-role only** (migration 044: no
+  anon/authenticated grant or policy, except read-only `status_pagina`), so the
+  browser's Supabase session cannot read it over PostgREST. `get_repositorios`,
+  `pipelines.get_db` and `get_repositorios_admin` therefore all use the service-role
+  client: the tenant boundary is the explicit `org_id` on EVERY query plus the
+  router's auth/role check. Never add a user-token client or a browser-facing
+  policy (keeper `check_no_authenticated_grant_on_content_tables`, DB probes
+  `igig.content_tables.*`).
 - **Schema** — `igig`, dual-dialect. Every `00N_igig_*.sql` needs a
   `migrations/sqlite/` mirror (`tests/test_schema_parity.py` enforces it).
   Framework-table migrations (`005`, `013`, `014`) deliberately omit the

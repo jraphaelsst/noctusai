@@ -17,7 +17,7 @@ Built on the NoctusAI seed (`noctusai_lib` + `noctusai_seed` backend,
 
 - **Backend**: FastAPI via `create_product_app()` (port 8013)
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` (port 8170)
-- **Database**: Supabase, schema `igig` — RLS on every table
+- **Database**: Supabase, schema `igig` — **service-role only** (migration 044): no browser grant or policy except read-only `status_pagina`; tenancy is the explicit `org_id` on every backend query
 - **Auth**: SSO + direct login
 - **Spec**: `IgIg Agency/PROJETO-IGIG-ERP.md`
 

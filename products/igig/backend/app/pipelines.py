@@ -15,11 +15,10 @@ WHY THE PIPELINE READS GO THROUGH POSTGREST, NOT THE RecordStore
 -----------------------------------------------------------------
 The seed pipeline + card hub are written against a PostgREST ``db`` (they need
 ``in_`` / ``is_`` / ordering shapes the persistence seam does not carry yet —
-``NOC-REMEDIATE[card-hub-recordstore]``). Authenticated routes use the caller's
-RLS-scoped client (``get_supabase_client(token)``); the public approval portal
-uses the igig-pinned service-role client, exactly as it already does for its
-repositories. ``org_id`` is passed explicitly on every call regardless — on the
-service-role path that is the tenant boundary.
+``NOC-REMEDIATE[card-hub-recordstore]``). Every route (authenticated or the
+public approval portal) uses the igig-pinned service-role client: the schema is
+closed to the browser (migration 044). ``org_id`` is passed explicitly on every
+call -- that is the tenant boundary.
 
 WHY DEFAULT STAGES ARE SEEDED ON READ
 -------------------------------------
@@ -150,13 +149,15 @@ _PADROES: dict[str, tuple[StagePadrao, ...]] = {
 
 # ── DI seam ──────────────────────────────────────────────────────────
 def get_db(auth: tuple = Depends(get_current_user_org)) -> Any:
-    """The caller's RLS-scoped PostgREST client (schema `igig`).
+    """The service-role PostgREST client (schema `igig`), gated by the caller's auth.
+
+    The schema is closed to the browser (migration 044), so a user-token client
+    could read nothing; every query filters `org_id` explicitly.
 
     A FastAPI dependency — not a module global — so tests override it with a
     `MockSupabaseClient` via `app.dependency_overrides` instead of patching.
     """
-    _user, token, _raw_org = auth
-    return database._db.get_client(token)
+    return database._db.get_admin_client()
 
 
 def get_admin_db() -> Any:
