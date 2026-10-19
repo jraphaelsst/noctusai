@@ -14660,6 +14660,48 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "lead_qualificacao_registros_trecho_lead_check",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the lead-own-words CHECK (fonte<>'lead_informou' OR trecho IS NOT NULL) has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "qualificacao_versoes_publicada_completa",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the published-needs-publicada_em/por CHECK has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "guard_agent_version_qualificacao_pin",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the agent_versions qualificacao pin trigger (published-only, frozen with the version) has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "guard_lead_qualificacao_append_only",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the append-only trigger of lead_qualificacao_registros has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "guard_qualificacao_filho_immutable",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the immutability trigger of a published standard's criteria/stages/parameters has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "guard_qualificacao_versao_immutable",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the published standard version immutability trigger has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "uq_qualificacao_versoes_um_rascunho",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the one-draft-per-standard partial unique index has no "
+        "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
+    ),
 )
 
 
