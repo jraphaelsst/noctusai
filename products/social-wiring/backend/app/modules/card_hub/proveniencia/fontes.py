@@ -274,7 +274,9 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # not this catalogue entry.
         campos=frozenset(
             {"nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",
-             "regime_bens", "nacionalidade", "profissao", "endereco", "email"}
+             "regime_bens", "nacionalidade", "profissao", "endereco", "email",
+             # The party's checked "Gênero" box (deal 876, 2026-10-19).
+             "genero"}
         ),
     ),
     # 🔴 `pacto_antenupcial` — the couple's escritura pública (or its Livro 3

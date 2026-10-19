@@ -250,6 +250,70 @@ class TestEmailDaFicha:
         assert _conflitos(scoped) == []
 
 
+class TestGeneroDaFicha:
+    """Deal 876 (2026-10-19): neither buyer's identity document prints a sex
+    (SP RG, CNH), so their gênero had been stored off the certidão de
+    casamento's GRAMMAR. The ficha's checked "Gênero" box is the party's
+    own declaration: it fills an empty gênero, takes over a certidão-derived
+    one (same value), and never beats a typed one."""
+
+    @pytest.mark.asyncio
+    async def test_empty_genero_fills_from_the_checked_box(self, client, scoped):
+        cid, did, storage = await _setup(scoped, cliente={"genero": None})
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(genero="Masculino", genero_confianca=BAIXA),),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        row = _cliente(scoped, cid)
+        assert (row["genero"], row["genero_origem"]) == ("Masculino", "ficha_cadastral")
+        assert row["genero_documento_id"] == did
+
+    @pytest.mark.asyncio
+    async def test_the_box_takes_over_a_certidao_grammar_genero(self, client, scoped):
+        certidao = str(uuid4())
+        cid, did, storage = await _setup(scoped, cliente={
+            "genero": "Masculino", "genero_origem": "certidao_casamento",
+            "genero_documento_id": certidao,
+        })
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(genero="Masculino", genero_confianca=BAIXA),),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        row = _cliente(scoped, cid)
+        assert row["genero"] == "Masculino"
+        assert row["genero_origem"] == "ficha_cadastral"
+        assert row["genero_documento_id"] == did
+        assert [c for c in _conflitos(scoped) if c["status"] == "pendente"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_different_box_never_overwrites_a_certidao_genero(self, client, scoped):
+        cid, did, storage = await _setup(scoped, cliente={
+            "genero": "Feminino", "genero_origem": "certidao_casamento",
+        })
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(genero="Masculino", genero_confianca=BAIXA),),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida, FakeNotificationService())
+        row = _cliente(scoped, cid)
+        assert row["genero"] == "Feminino"
+        assert [c["campo"] for c in _conflitos(scoped) if c["status"] == "pendente"] == ["genero"]
+
+    @pytest.mark.asyncio
+    async def test_a_typed_genero_is_never_touched(self, client, scoped):
+        cid, did, storage = await _setup(scoped, cliente={
+            "genero": "Feminino", "genero_origem": "manual",
+        })
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(genero="Feminino", genero_confianca=BAIXA),),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        assert _cliente(scoped, cid)["genero_origem"] == "manual"
+
+
 class TestEnderecoTier:
     @pytest.mark.asyncio
     async def test_overwrites_a_household_propagated_address_outright(self, client, scoped):

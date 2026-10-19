@@ -94,6 +94,10 @@ CAMPOS_FICHA: tuple = tuple(
     for chave in (
         "nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento",
         "estado_civil", "regime_bens", "nacionalidade", "profissao",
+        # Deal 876 (2026-10-19): the form's checked "Gênero" box — the party's
+        # declaration, ranked below a document that PRINTS the sex and above
+        # a certidão's grammar (seed `autoridade.PRECEDENCIA["genero"]`).
+        "genero",
     )
 ) + (
     # Migration 238 — `clientes.email` (+ quintet), exactly as printed.
@@ -127,6 +131,7 @@ def _lidos_pessoa(pessoa: PessoaFichaCadastral) -> dict[str, tuple]:
         "regime_bens": item(pessoa.regime_bens, pessoa.regime_bens_confianca),
         "nacionalidade": item(pessoa.nacionalidade, pessoa.nacionalidade_confianca),
         "profissao": item(pessoa.profissao, pessoa.profissao_confianca),
+        "genero": item(pessoa.genero, pessoa.genero_confianca),
         "email": item(_email_impresso(pessoa.email), getattr(pessoa, "email_confianca", None)),
     }
 
@@ -287,6 +292,7 @@ def _serializar_pessoa(pessoa: PessoaFichaCadastral, cliente_id: Optional[str]) 
         "regime_bens": pessoa.regime_bens,
         "nacionalidade": pessoa.nacionalidade,
         "profissao": pessoa.profissao,
+        "genero": pessoa.genero,
         "endereco": pessoa.endereco.partes() if pessoa.endereco else None,
         "telefone": pessoa.telefone,
         "email": pessoa.email,
@@ -454,6 +460,7 @@ def _lidos_armazenados(pessoa: dict) -> dict[str, tuple]:
         "regime_bens": item(pessoa.get("regime_bens")),
         "nacionalidade": item(pessoa.get("nacionalidade")),
         "profissao": item(pessoa.get("profissao")),
+        "genero": item(pessoa.get("genero")),
         "email": item(_email_impresso(pessoa.get("email"))),
     }
 

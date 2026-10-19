@@ -208,3 +208,33 @@ class TestVisionFallback:
         got = await extractor.extract(data, mimetype="application/pdf", filename="scan.pdf")
         assert got.error is None
         assert got.pessoas == ()
+
+
+class TestRotuloGeometricoDoGenero:
+    """`_rotulo_geometrico` over the gênero box as deal 876's Itaú forms
+    print it — "Gênero:   (  ) feminino" then "(  ) masculino" on the next
+    line, one radio button per line. The button's rect is placed where the
+    real form's sits (inside the parentheses); no radio GROUP is built (see
+    `_pdf_com_campos`' note), only the page text the decode reads."""
+
+    def _pagina(self):
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((40, 150), "Gênero:   (  ) feminino")
+        page.insert_text((80, 163), "(  ) masculino")
+        return doc, page
+
+    def test_each_button_reads_its_own_line(self):
+        from noctusai_lib.integrations.documents.ficha_cadastral import GENERO_OPCOES
+        from noctusai_lib.integrations.documents.ficha_cadastral_extractor import (
+            _rotulo_geometrico,
+        )
+
+        doc, page = self._pagina()
+        try:
+            feminino = fitz.Rect(88, 143, 95, 150)
+            masculino = fitz.Rect(84, 156, 91, 163)
+            assert _rotulo_geometrico(page, feminino, GENERO_OPCOES) == "FEMININO"
+            assert _rotulo_geometrico(page, masculino, GENERO_OPCOES) == "MASCULINO"
+        finally:
+            doc.close()

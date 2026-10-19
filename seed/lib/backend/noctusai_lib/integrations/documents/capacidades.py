@@ -213,6 +213,8 @@ CAPACIDADES: dict[str, frozenset[str]] = {
         {
             "nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",
             "regime_bens", "nacionalidade", "profissao", "endereco", "email",
+            # The checked "Gênero" box (deal 876, 2026-10-19).
+            "genero",
         }
     ),
 }

@@ -16,6 +16,7 @@ from typing import Optional, Protocol, runtime_checkable
 
 from noctusai_lib.integrations.documents.ficha_cadastral import (
     ESTADO_CIVIL_OPCOES,
+    GENERO_OPCOES,
     REGIME_BENS_OPCOES,
     CampoWidget,
     FichaCadastralLida,
@@ -183,7 +184,18 @@ class LadderFichaCadastralExtractor:
                     valor = _widget_valor_util(w.field_type_string, w.field_value)
                     if not valor:
                         continue
-                    if campo in ("estado_civil", "regime_bens"):
+                    if campo == "genero":
+                        # Deal 876: "( ) feminino / ( ) masculino", one
+                        # button per line — the checked button's OWN printed
+                        # label, never its export value (`"1"`/`"2"`).
+                        if w.field_type_string == "RadioButton":
+                            rotulo = _rotulo_geometrico(page, w.rect, GENERO_OPCOES)
+                            if rotulo is None:
+                                continue
+                            campo_final, valor = "genero_geo", rotulo
+                        else:
+                            campo_final = "genero_texto"
+                    elif campo in ("estado_civil", "regime_bens"):
                         if w.field_type_string == "RadioButton":
                             # The export VALUE (`"1"`..`"6"`) is never
                             # decoded by position — see `ficha_cadastral.py`'s

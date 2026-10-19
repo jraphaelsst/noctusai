@@ -161,6 +161,15 @@ PRECEDENCIA: dict[str, tuple[frozenset[str], ...]] = {
     ),
     "profissao": (frozenset({"FICHA_CADASTRAL"}),),
     "email": (frozenset({"FICHA_CADASTRAL"}),),
+    # Deal 876 (2026-10-19): a document that PRINTS the sex first (CIN, RNE,
+    # certidão de nascimento — `AUTORIDADE`), then the party's own checked
+    # box on the ficha. Never the certidão de casamento: its gender is
+    # grammar (`GENERO_SO_DERIVADO`) — a value stored from it is outranked
+    # by ANY ranked reading (`mais_autoritativo`).
+    "genero": (
+        frozenset({"CIN", "RNE", "CERTIDAO_NASCIMENTO"}),
+        frozenset({"FICHA_CADASTRAL"}),
+    ),
 }
 
 
@@ -201,10 +210,21 @@ def mais_autoritativo(
 ) -> bool:
     """Does a `tipo_proposto` reading of `campo` STRICTLY outrank the
     `tipo_atual` source behind the stored value? `False` whenever either side
-    is unranked (no rule ≠ "outranks") or both share a tier."""
+    is unranked (no rule ≠ "outranks") or both share a tier — save one case:
+    a stored value from a type that can only DERIVE the field
+    (`GENERO_SO_DERIVADO` for `genero`) is outranked by any ranked reading,
+    since that source never attested it."""
     novo = posto(campo, tipo_proposto)
     atual = posto(campo, tipo_atual)
+    if novo is not None and atual is None and so_derivado(campo, tipo_atual):
+        return True
     return novo is not None and atual is not None and novo < atual
+
+
+def so_derivado(campo: str, tipo_documento: Optional[str]) -> bool:
+    """Can `tipo_documento` only DERIVE `campo`, never read it as printed?
+    (`genero` off a certidão de casamento's grammatical agreement.)"""
+    return campo == "genero" and tipo_normalizado(tipo_documento) in GENERO_SO_DERIVADO
 
 
 __all__ = [
@@ -215,5 +235,6 @@ __all__ = [
     "campos_autorizados",
     "mais_autoritativo",
     "posto",
+    "so_derivado",
     "tipo_normalizado",
 ]

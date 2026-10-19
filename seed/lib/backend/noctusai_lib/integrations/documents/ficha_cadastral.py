@@ -90,6 +90,7 @@ from noctusai_lib.integrations.documents.address import (
 )
 from noctusai_lib.integrations.documents.birthdate import MAX_AGE, MIN_AGE
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as cpf_is_valid, only_digits
+from noctusai_lib.integrations.documents.gender import canonical_gender
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
@@ -100,7 +101,7 @@ from noctusai_lib.integrations.documents.types import ExtractionConfidence, Text
 #: that decision rather than re-deriving it).
 CAMPOS: tuple[str, ...] = (
     "nome", "cpf", "rg", "data_nascimento", "estado_civil",
-    "regime_bens", "nacionalidade", "profissao",
+    "regime_bens", "nacionalidade", "profissao", "genero",
 )
 
 ALTA = ExtractionConfidence.ALTA
@@ -158,6 +159,16 @@ class PessoaFichaCadastral:
     #: IdentityFields.profissao`'s own convention.
     profissao: Optional[str] = None
     profissao_confianca: ExtractionConfidence = NENHUMA
+
+    #: The form's own "Gênero: ( ) feminino ( ) masculino" box — the
+    #: party's DECLARATION, `Masculino`/`Feminino` (`gender.canonical_
+    #: gender`). Deal 876 (2026-10-19): neither buyer's identity document
+    #: prints a sex (an SP RG and a CNH do not — `autoridade.AUTORIDADE`),
+    #: so this box is the only document that states it for them; until it
+    #: was read, their gênero came from a certidão's GRAMMAR. Read off the
+    #: checked radio's printed label (`*_geo`, `BAIXA`) like `estado_civil`.
+    genero: Optional[str] = None
+    genero_confianca: ExtractionConfidence = NENHUMA
 
     #: A GROUP, like `IdentityFields.endereco` — written together or not at
     #: all. `None` when this person's block carried no usable address.
@@ -260,6 +271,10 @@ _REGIME_BENS_TEXTO: dict[str, str] = {
 #: `"Regime de Comunhão Parcial Bens"` heading could otherwise match a
 #: broader/shorter alternative first (there is none today, kept explicit
 #: for the next entry).
+#: The printed options of the gênero radio (deal 876's Itaú forms: "( )
+#: feminino ( ) masculino", one button per line).
+GENERO_OPCOES: tuple[str, ...] = ("FEMININO", "MASCULINO")
+
 ESTADO_CIVIL_OPCOES: tuple[str, ...] = (
     "SOLTEIRO", "CASADO", "VIUVO", "DIVORCIADO", "SEPARADO", "DESQUITADO",
 )
@@ -310,6 +325,7 @@ def _norm_campo(nome_campo: str) -> str:
 #: campo` below (procurador/bank-account/correspondence/parent sections,
 #: and birth city/UF, which share substrings with wanted fields).
 _CLASSIFICADORES: tuple[tuple[str, str], ...] = (
+    ("genero", "genero"),
     ("cep", "endereco_cep"),
     ("bairro", "endereco_bairro"),
     ("nasc", "data_nascimento"),
@@ -518,6 +534,18 @@ def _pessoa_de_campos(campos: dict[str, str], *, papel: Optional[str]) -> Option
         estado_civil = estado_civil_de_texto(campos["estado_civil_geo"])
         estado_civil_conf = BAIXA if estado_civil else NENHUMA
 
+    # Gênero — `genero_texto` (a field printing the word itself) is `ALTA`;
+    # `genero_geo` (the checked radio's printed label) is `BAIXA`, exactly
+    # the estado-civil split above.
+    genero = None
+    genero_conf = NENHUMA
+    if campos.get("genero_texto"):
+        genero = canonical_gender(campos["genero_texto"])
+        genero_conf = ALTA if genero else NENHUMA
+    elif campos.get("genero_geo"):
+        genero = canonical_gender(campos["genero_geo"])
+        genero_conf = BAIXA if genero else NENHUMA
+
     regime_bens = None
     regime_bens_conf = NENHUMA
     if campos.get("regime_bens_geo"):
@@ -539,6 +567,7 @@ def _pessoa_de_campos(campos: dict[str, str], *, papel: Optional[str]) -> Option
         regime_bens=regime_bens, regime_bens_confianca=regime_bens_conf,
         nacionalidade=nacionalidade, nacionalidade_confianca=nacionalidade_conf,
         profissao=profissao, profissao_confianca=profissao_conf,
+        genero=genero, genero_confianca=genero_conf,
         endereco=endereco,
         telefone=telefone, email=email,
     )
@@ -632,6 +661,7 @@ def montar_pessoas(
 __all__ = [
     "CAMPOS",
     "ESTADO_CIVIL_OPCOES",
+    "GENERO_OPCOES",
     "REGIME_BENS_OPCOES",
     "FichaCadastralLida",
     "PessoaFichaCadastral",

@@ -346,7 +346,24 @@ class TestPrecedencia:
         assert not autoridade.mais_autoritativo("cpf", "cin", "serasa_crednet")
         assert not autoridade.mais_autoritativo("cpf", "serasa_crednet", "ficha_cadastral")
         assert not autoridade.mais_autoritativo("cpf", "cin", None)
-        assert not autoridade.mais_autoritativo("genero", "cin", "ficha_cadastral")
+        assert not autoridade.mais_autoritativo("genero", "serasa_crednet", "ficha_cadastral")
+
+    def test_genero_a_printed_sex_then_the_fichas_declaration(self):
+        """Deal 876 (2026-10-19): `genero` gained a ladder — CIN/RNE/certidão
+        de nascimento print it, the ficha's checked box declares it."""
+        assert autoridade.mais_autoritativo("genero", "cin", "ficha_cadastral")
+        assert autoridade.mais_autoritativo("genero", "crnm", "ficha_cadastral")
+        assert not autoridade.mais_autoritativo("genero", "ficha_cadastral", "rne")
+
+    def test_a_derived_only_source_is_outranked_by_any_ranked_reading(self):
+        """A certidão de casamento's gênero is grammar, never printed
+        (`GENERO_SO_DERIVADO`): a value stored from it gives way to any
+        ranked reading — and never outranks anything itself."""
+        assert autoridade.so_derivado("genero", "certidao_casamento")
+        assert autoridade.mais_autoritativo("genero", "ficha_cadastral", "certidao_casamento")
+        assert not autoridade.mais_autoritativo("genero", "certidao_casamento", "ficha_cadastral")
+        assert not autoridade.mais_autoritativo("genero", "serasa_crednet", "certidao_casamento")
+        assert not autoridade.so_derivado("nome", "certidao_casamento")
 
     def test_every_ranked_identity_type_may_emit_the_field(self):
         # A precedence tier never names a type `AUTORIDADE` forbids from

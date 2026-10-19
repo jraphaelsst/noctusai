@@ -75,6 +75,10 @@ class TestClassificarCampo:
             ("Telcel#V1", "telefone"),
             ("e-mail 1", "email"),
             ("email#v2", "email"),
+            # Deal 876's Itaú forms (comprador / vendedor templates).
+            ("Gênero1#0", "genero"),
+            ("Genero#V1", "genero"),
+            ("genero#v2", "genero"),
         ],
     )
     def test_reconhece_toda_a_variedade_de_templates(self, nome_campo, campo_esperado):
@@ -186,6 +190,37 @@ class TestMontarPessoas:
         assert pessoa.endereco.logradouro == "RUA DAS FLORES"
         assert pessoa.telefone == "(11) 91234-5678"
         assert pessoa.email == "fulano@example.com"
+
+    def test_genero_do_radio_e_a_declaracao_da_pessoa_em_baixa(self):
+        """Deal 876: the checked "( ) masculino" button's printed label —
+        canonical `Masculino`, BAIXA (a geometric read, like estado civil)."""
+        campos = [
+            _campo("nome", "FULANO DE TAL"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "COMERCIANTE"),
+            _campo("genero_geo", "MASCULINO", tipo="RadioButton"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.genero == "Masculino"
+        assert pessoa.genero_confianca is BAIXA
+
+    def test_genero_impresso_como_texto_e_alta(self):
+        campos = [
+            _campo("nome", "FULANA DE TAL"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "MEDICA"),
+            _campo("genero_texto", "Feminino", tipo="ComboBox"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert (pessoa.genero, pessoa.genero_confianca) == ("Feminino", ALTA)
+
+    def test_sem_genero_marcado_nao_ha_genero(self):
+        campos = [
+            _campo("nome", "FULANA DE TAL"), _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "MEDICA"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert (pessoa.genero, pessoa.genero_confianca) == (None, NENHUMA)
 
     def test_estado_civil_texto_e_alta_nao_baixa(self):
         """FGTS's own `ComboBox` prints the option's text directly — the
