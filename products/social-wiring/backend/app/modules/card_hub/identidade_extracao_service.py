@@ -2395,6 +2395,26 @@ def _norm_bairro(valor: str) -> str:
     return " ".join(strip_accents_upper(valor).split())
 
 
+def _bairro_completado_pelo_cep(do_documento: Any, do_cep: Any) -> bool:
+    """Is the CEP's bairro the document's bairro with its tail RESTORED —
+    the document's words, in order, followed by more (`ALPHAVILLE
+    RESIDENCIAL` vs CEP `Alphaville Residencial Dois`)?
+
+    🔴 DEAL 876 (2026-10-19): the buyers' bank form (ficha) printed the
+    bairro truncated by its own field — the AcroForm value itself is
+    `ALPHAVILLE RESIDENCIAL` — while CEP 06470-000 and the signed contract
+    both name `Alphaville Residencial Dois`. Alphaville's residenciais are
+    numbered (Um, Dois, Três…): the truncated name is not merely shorter, it
+    names no single neighbourhood. A COMPLETION, never a substitution: at
+    least two printed words, all of them kept, in order — a CEP bairro that
+    disagrees with a printed word is still only logged."""
+    if _vazio(do_documento) or _vazio(do_cep):
+        return False
+    doc = _norm_bairro(str(do_documento)).split()
+    cep = _norm_bairro(str(do_cep)).split()
+    return len(doc) >= 2 and len(cep) > len(doc) and cep[: len(doc)] == doc
+
+
 def _enriquecer_endereco_via_cep(
     partes: dict[str, Any],
     cep_lookup: Optional[CepLookupAdapter],
@@ -2451,6 +2471,18 @@ def _enriquecer_endereco_via_cep(
         if _vazio(partes.get("bairro")):
             partes["bairro"] = resultado.bairro
             partes["bairro_origem"] = ORIGEM_BAIRRO_CEP
+        elif _bairro_completado_pelo_cep(partes["bairro"], resultado.bairro):
+            # The printed bairro is the CEP's with its tail cut off (a form
+            # field too short): the CEP restores it — `bairro_origem='cep'`
+            # says where the restored words came from.
+            logger.info(
+                "identidade_extracao: bairro truncado completado pelo CEP "
+                "(%d -> %d palavras), documento=%s",
+                len(str(partes["bairro"]).split()), len(resultado.bairro.split()),
+                documento_id,
+            )
+            partes["bairro"] = resultado.bairro
+            partes["bairro_origem"] = ORIGEM_BAIRRO_CEP
         elif _norm_bairro(str(partes["bairro"])) != _norm_bairro(resultado.bairro):
             logger.info(
                 "identidade_extracao: bairro do CEP diverge do documento — "
@@ -2500,7 +2532,11 @@ def _preencher_so_bairro(
 
     Never fires on a human-typed/cleared group (`endereco_origem='manual'`),
     never replaces a bairro a document printed, and never lets a CEP bairro
-    replace anything. Returns True when it wrote.
+    replace anything — save ONE case: a printed bairro the CEP's merely
+    COMPLETES (`_bairro_completado_pelo_cep`: every printed word kept, in
+    order, the cut-off tail restored — deal 876's `ALPHAVILLE RESIDENCIAL`
+    → `Alphaville Residencial Dois`), on a group no human confirmed.
+    Returns True when it wrote.
     """
     if atual.get("endereco_origem") == "manual":
         return False
@@ -2510,7 +2546,12 @@ def _preencher_so_bairro(
     velho = atual.get("endereco_bairro")
     novo_e_cep = partes.get("bairro_origem") == ORIGEM_BAIRRO_CEP
     if not _vazio(velho):
-        if atual.get(COLUNA_BAIRRO_ORIGEM) != ORIGEM_BAIRRO_CEP or novo_e_cep:
+        completa = (
+            novo_e_cep
+            and _vazio(atual.get("endereco_confirmado_em"))
+            and _bairro_completado_pelo_cep(velho, novo)
+        )
+        if not completa and (atual.get(COLUNA_BAIRRO_ORIGEM) != ORIGEM_BAIRRO_CEP or novo_e_cep):
             return False
         if _mesmo_nome(str(velho), str(novo)):
             return False
