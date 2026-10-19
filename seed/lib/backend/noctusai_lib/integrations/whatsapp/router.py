@@ -38,7 +38,10 @@ from noctusai_lib.integrations.whatsapp.types import (
     WhatsAppInboundMessage,
     WhatsAppPayloadError,
 )
-from noctusai_lib.security.webhook_signatures import verify_hmac_sha256_hex
+from noctusai_lib.security.webhook_signatures import (
+    handle_unsigned_webhook,
+    verify_hmac_sha256_hex,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,11 @@ def create_whatsapp_webhook_router(
       not trigger retries).
     """
     router = APIRouter()
+    if not settings.webhook_hmac_secret:
+        logger.critical(
+            "WhatsApp webhook router mounted WITHOUT webhook_hmac_secret — inbound "
+            "traffic is unauthenticated until the secret is set"
+        )
     _dedup: WebhookDedup = dedup if dedup is not None else InMemoryWebhookDedup()
 
     @router.post("")
@@ -86,6 +94,9 @@ def create_whatsapp_webhook_router(
         x_webhook_hmac_sha256: str | None = Header(default=None, alias=signature_header),
     ) -> dict[str, str]:
         body = await request.body()
+
+        if not settings.webhook_hmac_secret:
+            handle_unsigned_webhook("whatsapp-webhook")
 
         if settings.webhook_hmac_secret:
             if not x_webhook_hmac_sha256:

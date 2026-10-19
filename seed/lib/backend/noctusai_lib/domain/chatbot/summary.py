@@ -78,5 +78,7 @@ def summarize_conversation(
         model=model,
         input=input_blocks,
         text_format=output_schema,
+        # Responses API retains transcripts server-side unless store=False.
+        store=False,
     )
     return response.output_parsed

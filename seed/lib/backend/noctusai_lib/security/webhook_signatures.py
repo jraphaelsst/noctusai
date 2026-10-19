@@ -39,6 +39,7 @@ import hashlib
 import hmac
 import inspect
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal, Optional, Union
@@ -48,6 +49,43 @@ from fastapi import Depends, HTTPException, Request
 DEFAULT_MAX_AGE_SECONDS = 300
 
 logger = logging.getLogger(__name__)
+
+# Fail-closed switch for the "secret unset => accept unverified" bypass.
+# Default is OFF (log CRITICAL only) so flipping it is an explicit, owner-timed
+# step AFTER every webhook secret is provisioned in the prod env. When ON and
+# the app runs in a deploy/prod context (DEBUG not truthy), an unsigned webhook
+# is refused with 401 instead of accepted.
+REQUIRE_SIGNATURE_ENV = "WEBHOOK_REQUIRE_SIGNATURE"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def unsigned_webhook_refused() -> bool:
+    """True when an unset-secret webhook must be refused (flag on AND prod)."""
+    if os.environ.get(REQUIRE_SIGNATURE_ENV, "").strip().lower() not in _TRUTHY:
+        return False
+    return os.environ.get("DEBUG", "").strip().lower() not in _TRUTHY
+
+
+def handle_unsigned_webhook(log_prefix: str) -> None:
+    """Called when a webhook arrives and no secret is configured.
+
+    Raises 401 when the fail-closed flag is on in a prod context; otherwise
+    logs (CRITICAL in prod context, WARNING under DEBUG) and returns so the
+    caller keeps its legacy accept-unverified behaviour.
+    """
+    in_prod = os.environ.get("DEBUG", "").strip().lower() not in _TRUTHY
+    if unsigned_webhook_refused():
+        logger.critical(
+            "%s: secret unset in prod context — refusing unsigned webhook", log_prefix
+        )
+        raise HTTPException(status_code=401, detail="webhook secret not configured")
+    logger.log(
+        logging.CRITICAL if in_prod else logging.WARNING,
+        "%s: secret unset — accepting webhook without verification "
+        "(set the secret, then %s=1)",
+        log_prefix,
+        REQUIRE_SIGNATURE_ENV,
+    )
 
 WebhookScheme = Literal[
     "sha256_prefixed", "sha256_hex", "svix", "basic_shared_secret"
@@ -415,10 +453,7 @@ def webhook_endpoint(
 
         if not secret:
             if bypass_when_unset:
-                logger.warning(
-                    "%s: secret unset — accepting webhook without verification",
-                    log_prefix,
-                )
+                handle_unsigned_webhook(log_prefix)
                 return VerifiedWebhook(body=body, extras=extras)
             raise HTTPException(status_code=401, detail="webhook secret not configured")
 

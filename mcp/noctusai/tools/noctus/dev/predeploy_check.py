@@ -63,6 +63,7 @@ DEFAULT_CHECKS: list[str] = [
     "db_guards",  # a declared DB guard (trigger/CHECK/UNIQUE) actually REFUSES what it claims — structure-green is not behaviour-green (2026-09-18)
     "ledger_checksums",  # every applied migration still hashes to its schema_migrations checksum at HEAD's committed blobs (2026-10-10)
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
+    "webhook_secret_present",  # a product mounting a WhatsApp/webhook router has a *WEBHOOK_HMAC_SECRET in the prod snapshot (fail-closed prep, 2026-10-19)
 ]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
@@ -501,6 +502,36 @@ _ENV_FLEET_MANIFEST_REL = "deploy/fleet/env.fleet.keys"
 _ENV_FLEET_ENV_NAME = "NOCTUS_ENV_FLEET_FILE"
 
 
+_WEBHOOK_MOUNT_MARKERS = ("create_whatsapp_webhook_router", "bypass_when_unset=True")
+
+
+def product_mounts_unsigned_capable_webhook(root: pathlib.Path, product: str) -> bool:
+    """True when the product's backend mounts a webhook router that accepts
+    unsigned traffic while its secret is unset (seed WhatsApp router, or
+    ``webhook_endpoint(bypass_when_unset=True)``)."""
+    app_dir = root / "products" / product / "backend" / "app"
+    if not app_dir.is_dir():
+        return False
+    for f in app_dir.rglob("*.py"):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if any(m in text for m in _WEBHOOK_MOUNT_MARKERS):
+            return True
+    return False
+
+
+def audit_webhook_secret_present(env: dict[str, str] | None) -> dict[str, Any]:
+    """Pure: at least one non-empty ``*WEBHOOK_HMAC_SECRET`` key in the env."""
+    env = dict(env or {})
+    present = [k for k, v in env.items() if k.upper().endswith("WEBHOOK_HMAC_SECRET") and (v or "").strip()]
+    return {"present": present, "violations": [] if present else [
+        "no non-empty *WEBHOOK_HMAC_SECRET in the prod env snapshot — the webhook "
+        "router accepts UNSIGNED traffic (set it, then WEBHOOK_REQUIRE_SIGNATURE=1)"
+    ]}
+
+
 def audit_env_fleet_manifest_present(
     manifest_keys: list[str], env: dict[str, str] | None
 ) -> dict[str, Any]:
@@ -849,6 +880,16 @@ def _default_run_check(
             f"({len(product_keys)} declared by {product}) "
             f"in the prod snapshot ({env_path.name})"
         )
+    if check == "webhook_secret_present":
+        if not product_mounts_unsigned_capable_webhook(root, product):
+            return True, f"webhook_secret_present n/a — {product} mounts no unsigned-capable webhook"
+        env_path = _resolve_prod_env_path(root, prod_env_path)
+        if env_path is None:
+            return True, "webhook_secret_present SKIPPED — no prod env snapshot resolvable"
+        audit = audit_webhook_secret_present(_parse_env_file(env_path.read_text(encoding="utf-8")))
+        if audit["violations"]:
+            return False, "; ".join(audit["violations"])
+        return True, f"webhook_secret_present ok — {', '.join(audit['present'])}"
     if check == "cors_roster_complete":
         # Backstop: every registry slug must have a resolvable CORS origin for
         # core's allowlist. SKIPs loudly (ok=True) when no prod env snapshot is

@@ -26,6 +26,7 @@ from noctusai_lib.primitives.exceptions import (
     postgrest_exception_handler,
     generic_exception_handler,
 )
+from .security_headers import SecurityHeadersMiddleware
 from .audit import AuditMiddleware, AuditSink
 from .middleware import (
     CorrelationIdMiddleware,
@@ -162,6 +163,7 @@ def configure_app(
     if settings.sentry_dsn:
         try:
             import sentry_sdk
+            from noctusai_lib.api import sentry_scrub
             from sentry_sdk.integrations.fastapi import FastApiIntegration
             from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -175,6 +177,10 @@ def configure_app(
                 profiles_sample_rate=0.1 if settings.is_production else 1.0,
                 environment="production" if settings.is_production else "development",
                 send_default_pii=False,
+                max_request_body_size="never",
+                include_local_variables=False,
+                before_send=sentry_scrub.before_send,
+                before_send_transaction=sentry_scrub.before_send_transaction,
             )
             logging.info("Sentry SDK initialized successfully")
         except ImportError:
@@ -290,6 +296,8 @@ def configure_app(
         max_bytes=max_body_bytes,
         path_overrides=max_body_path_overrides,
     )
+    # Outermost: even 413s from MaxBodySizeMiddleware carry the security headers.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # -----------------------------------------------------------------------
     # Exception handlers

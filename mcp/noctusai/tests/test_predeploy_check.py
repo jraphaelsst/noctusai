@@ -1298,3 +1298,10 @@ def test_backend_test_env_scrubs_the_repo_dotenv_values(tmp_path, monkeypatch):
     assert live_supabase_env_keys(env) == []
     # and the leg actually uses it
     assert "env=backend_test_env(root)" in inspect.getsource(pc._default_run_check)
+
+
+def test_webhook_secret_present_audit():
+    assert "webhook_secret_present" in PC.DEFAULT_CHECKS
+    assert PC.audit_webhook_secret_present({"WAHA_WEBHOOK_HMAC_SECRET": "x"})["violations"] == []
+    assert PC.audit_webhook_secret_present({"WAHA_WEBHOOK_HMAC_SECRET": " "})["violations"]
+    assert PC.audit_webhook_secret_present({})["violations"]
