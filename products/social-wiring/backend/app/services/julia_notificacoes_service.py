@@ -13,6 +13,10 @@ Exception (maya-blocks CONTRACT §3.4, owner decision): a `relatorio` whose `pay
 (Maya's daily supervision report) goes to the org's OWNERS ONLY -- never admins -- and links to
 `/supervisao?dia=...`.
 
+Owner alerts (`eventos.TIPOS_ALERTA_DONO`: `agents_contrato_invalido`, `supervisao_falha`): an integration/supervision
+hook broke. OWNERS ONLY, one notification per `(org, codigo, day)` -- the event row is written every time (the
+audit), the notification only on the day's first occurrence of that `codigo`.
+
 `handoff` is NOT fanned out here: `julia_agente_service.notificar_handoff` already writes it (with the
 configured target + link) and nothing emits a `handoff` event, so it can never double-fire; the sink also
 skips it explicitly so a future emitter cannot.
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Callable, Iterable, Optional
 from uuid import UUID
 
@@ -35,6 +40,8 @@ from noctusai_lib.primitives.exceptions import AppException
 from app.services import julia_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
+
+SP = ZoneInfo("America/Sao_Paulo")
 
 T_PREFS = "julia_notificacao_prefs"
 KIND_PREFIX = "julia_"
@@ -177,9 +184,55 @@ def salvar_preferencias(client: Any, org_id: Any, user_id: Any, itens: dict[str,
 
 
 # ── fan-out ─────────────────────────────────────────────────────────────────
+TITULOS_ALERTA = {
+    "agents_contrato_invalido": "A Julia não respondeu: o agents rejeitou a mensagem",
+    "supervisao_falha": "Falha no registro da supervisão",
+}
+CORPOS_ALERTA = {
+    "agents_contrato_invalido": "O serviço de agentes recusou o formato de uma conversa; o lead ficou sem resposta. Um erro de integração foi registrado.",
+    "supervisao_falha": "Um registro da supervisão falhou e o relatório do dia pode estar incompleto. O atendimento não foi afetado.",
+}
+
+
+def dia_sp(agora: Optional[datetime] = None) -> str:
+    """The SP calendar day stamped into an owner alert's payload -- the dedupe key's day (a payload value, not the
+    row's `created_at`, so the rule needs no clock query)."""
+    return (agora or datetime.now(SP)).astimezone(SP).date().isoformat()
+
+
+def _primeira_do_dia(client: Any, evento: dict[str, Any]) -> bool:
+    """True when `evento` is the first alert with its `(codigo, dia)` for the org. The event is already stored when
+    the sink runs, so >1 matching row (itself included) means that day was already notified."""
+    payload = evento.get("payload") or {}
+    rows = (client.table(eventos.TABLE).select("id,payload").eq("org_id", str(evento["org_id"]))
+            .eq("tipo", evento["tipo"]).order("created_at", desc=True).limit(500).execute().data or [])
+    return sum(1 for r in rows if (r.get("payload") or {}).get("codigo") == payload.get("codigo")
+               and (r.get("payload") or {}).get("dia") == payload.get("dia")) <= 1
+
+
+def _notificar_alerta_dono(client: Any, evento: dict[str, Any], core: Any) -> int:
+    tipo, org_id = evento["tipo"], evento["org_id"]
+    if not _primeira_do_dia(client, evento):
+        return 0
+    donos = donos_da_org(core, org_id)
+    prefs = preferencias(client, org_id, donos)
+    alvo = [u for u in donos if permite(prefs.get(u, {}), tipo)]
+    if not alvo:
+        logger.error("julia: owner alert %s (org=%s) has no owner to notify", tipo, org_id)
+        return 0
+    return write_in_app(
+        core, user_ids=alvo, kind=KIND_PREFIX + tipo, title=TITULOS_ALERTA[tipo], message=CORPOS_ALERTA[tipo],
+        metadata={"link": "/julia/notificacoes", "evento_id": evento.get("id"), "contato_id": None, "operacao": None,
+                  "julia": True, "codigo": (evento.get("payload") or {}).get("codigo")},
+        org_id=org_id,
+    )
+
+
 def notificar(client: Any, evento: dict[str, Any], core: Any = None) -> int:
     """Fan one event out; returns notifications written. Raises on a failed insert (the sink wrapper logs it)."""
     tipo = evento.get("tipo")
+    if tipo in eventos.TIPOS_ALERTA_DONO:
+        return _notificar_alerta_dono(client, evento, core or _core())
     if tipo not in TIPOS_FANOUT:
         return 0
     core = core or _core()

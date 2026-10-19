@@ -266,16 +266,24 @@ class TestDistribuicao:
         picks = [svc.atribuir_responsavel(w.sw, w.core, ORG_ID, _contato(w, n))["user_id"] for n in range(1, 5)]
         assert picks == [U1, U2, U1, U2]
 
-    def test_estado_carries_atendente_nome_and_keeps_the_other_keys(self, admin):
+    def test_estado_provider_carries_atendente_nome_but_the_wire_contexto_does_not(self, admin):
+        """The provider still resolves the name (SW-side), but agents' `ContextoEstado` is extra=forbid, so the rendered
+        contexto strips it until agents has a place for it (NOC-REMEDIATE[julia-v2-reengajamento-contexto])."""
         w = admin.w
         c = _contato(w, 1)
-        base = ctxsvc.montar(w.sw, ORG_ID, c, ferramentas_habilitadas=False)["estado"]
+
+        def provider(contato):
+            return dict(ctxsvc.PROVIDERS)["estado"](ctxsvc.ContextoCtx(client=w.sw, org_id=ORG_ID, contato=contato))["estado"]
+
+        base = provider(c)
         assert "atendente_nome" not in base
         w.sw.table("julia_contatos").update({"responsavel_user_id": U2}).eq("id", c["id"]).execute()
         c = w.contato("55119" + "00000001@c.us")
-        estado = ctxsvc.montar(w.sw, ORG_ID, c, ferramentas_habilitadas=False)["estado"]
+        estado = provider(c)
         assert estado["atendente_nome"] == "Marcos"
         assert set(base) <= set(estado)
+        wire = ctxsvc.montar(w.sw, ORG_ID, c, ferramentas_habilitadas=False)["estado"]
+        assert "atendente_nome" not in wire
 
 
 # ── handoff wiring ──────────────────────────────────────────────────────────

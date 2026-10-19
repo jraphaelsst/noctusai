@@ -47,7 +47,7 @@ from app.config import settings as _default_settings
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_agente_service as julia
-from app.services import julia_aviso_service, julia_capi_service, julia_envio_gate, julia_eventos_service
+from app.services import julia_aviso_service, julia_capi_service, julia_envio_gate, julia_eventos_service, julia_notificacoes_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -527,6 +527,21 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     )
 
 
+def _alertar_contrato_invalido(
+    deps: LeadDeps, exc: AgentsClientError, *, org_id: UUID, connection_id: UUID, chat_id: str,
+) -> None:
+    """A 422 / replay-409 from agents is an integration bug on OUR side (we sent a shape its schema rejects), and
+    the lead gets no reply: never a quiet log line. ERROR + an owner-visible `julia_eventos`/notification
+    (`agents_contrato_invalido`, deduped per org/code/day). Ids only, no PII."""
+    logger.error("julia: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s -- the lead got NO reply",
+                 type(exc).__name__, exc.code, connection_id, chat_id)
+    julia_eventos_service.emitir(
+        deps.scoped, org_id, "agents_contrato_invalido", None,
+        {"codigo": str(exc.code or type(exc).__name__), "dia": julia_notificacoes_service.dia_sp(),
+         "ids": {"connection_id": str(connection_id)}},
+    )
+
+
 def _handle_turn_error(
     deps: LeadDeps, exc: AgentsClientError, *, key: str, run: list[dict[str, Any]],
     org_id: UUID, connection_id: UUID, chat_id: str,
@@ -559,7 +574,7 @@ def _handle_turn_error(
         julia.registrar_erro_link(org_id, "llm_not_configured", cfg=deps.cfg)
         logger.error("julia: LLM key missing in agents for org=%s -- no reply", org_id)
     elif isinstance(exc, (AgentsBadRequest, IdempotencyConflict)):
-        logger.error("julia: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s", type(exc).__name__, exc.code, connection_id, chat_id)
+        _alertar_contrato_invalido(deps, exc, org_id=org_id, connection_id=connection_id, chat_id=chat_id)
     elif isinstance(exc, (AgentsUpstreamError, AgentsTimeout)):
         logger.error("julia: agents upstream failure (%s) conn=%s chat=%s -- no reply", type(exc).__name__, connection_id, chat_id)
     else:  # an AgentsClientError subclass we do not know: never reply, never loop
@@ -711,7 +726,10 @@ async def run_reengajamento_turn(
         logger.error("julia: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
         return False
     except AgentsClientError as exc:
-        logger.error("julia: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
+        if isinstance(exc, (AgentsBadRequest, IdempotencyConflict)):
+            _alertar_contrato_invalido(deps, exc, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
+        else:
+            logger.error("julia: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
         return False
     return await _deliver(
         deps, connection=connection, chat_id=chat_id, key=f"lead:{connection.id}:{chat_id}", run=[], result=result,

@@ -47,6 +47,21 @@ ACOES_JULIA: tuple[str, ...] = ("salvar_slots", "definir_operacao", "qualificar_
 #: `contexto.estado.operacao` accepts only these three (contract 2.1(a)); `atualizacao` is an action value only.
 _OPERACOES_ESTADO = frozenset({"compra", "aluguel", "administracao"})
 
+#: The `contexto.estado` keys agents' `ContextoEstado` accepts (`products/agents/backend/app/schemas/channels.py`,
+#: `extra="forbid"`): anything else is a 422 and the lead gets no reply (julia-v2 W0 hotfix). Drift-tested against a
+#: copy of the agents schema (`tests/services/test_julia_contexto_agents_schema.py`).
+ESTADO_CHAVES_AGENTS: frozenset[str] = frozenset({"slots", "operacao", "interacao_id", "encerrado", "credito"})
+#: Keys SW computes for its own use that agents' schema has NO place for today: stripped from the wire contexto.
+#: `atendente_nome` (julia_equipes_service) and the re-engagement flags (`reengajamento`, `reescrever`,
+#: `texto_base`, `tentativa`, `regua_id`; julia_reengajamento_service). Stripping is expected, so it logs at INFO;
+#: a key in NEITHER set is a new bug and logs at ERROR.
+#: NOC-REMEDIATE[julia-v2-reengajamento-contexto]: the model no longer sees that a turn is a re-engagement nor the regua
+#: base text -- agents' schema has no place for it; the A-RT slice adds one (or the A-RT turn endpoint carries it) and
+#: this set shrinks. Same for `atendente_nome`. — 2026-10-19
+ESTADO_CHAVES_SW_ONLY: frozenset[str] = frozenset({
+    "atendente_nome", "reengajamento", "reescrever", "texto_base", "tentativa", "regua_id",
+})
+
 TOOLS_TOKEN_LABEL = "agents · ferramentas julia"
 #: NOC-REMEDIATE[rename-lais-tools-scope]: the scope string is stored in agents' token table and checked by agents'
 #: `channel_tools_token_router`; it keeps its pre-rename spelling until both products rename it together (one-release dual accept).
@@ -182,6 +197,19 @@ def calcular_hash(contexto: dict[str, Any]) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
+def _estado_para_agents(estado: dict[str, Any], org_id: UUID | str) -> dict[str, Any]:
+    """Keep only the keys agents' contract accepts (see `ESTADO_CHAVES_AGENTS`)."""
+    fora = sorted(set(estado) - ESTADO_CHAVES_AGENTS)
+    if not fora:
+        return estado
+    desconhecidas = [k for k in fora if k not in ESTADO_CHAVES_SW_ONLY]
+    if desconhecidas:
+        logger.error("julia: contexto.estado keys %s are not in agents' contract -- stripped, else agents answers 422 "
+                     "(org=%s)", desconhecidas, org_id)
+    logger.info("julia: contexto.estado keys %s kept SW-side, not sent to agents (org=%s)", fora, org_id)
+    return {k: v for k, v in estado.items() if k in ESTADO_CHAVES_AGENTS}
+
+
 def montar(
     client: Any,
     org_id: UUID | str,
@@ -223,6 +251,7 @@ def montar(
         except Exception:
             logger.exception("julia: contexto estado extra %r failed (org=%s) -- contributes nothing",
                              getattr(fn_estado, "__name__", "?"), org_id)
+    out["estado"] = _estado_para_agents(out["estado"], org_id)
 
     for fn_extra in tuple(ACOES_EXTRAS):
         try:
@@ -253,7 +282,7 @@ def montar(
 
 
 __all__ = [
-    "ACOES_EXTRAS", "ACOES_JULIA", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_JULIA", "FUSO", "PROVIDERS", "Provider",
+    "ESTADO_CHAVES_AGENTS", "ESTADO_CHAVES_SW_ONLY", "ACOES_EXTRAS", "ACOES_JULIA", "ESTADO_EXTRAS", "ContextoCtx", "FERRAMENTAS_JULIA", "FUSO", "PROVIDERS", "Provider",
     "TOOLS_TOKEN_ISSUER", "TOOLS_TOKEN_LABEL", "TOOLS_TOKEN_SCOPE", "calcular_hash", "montar",
     "org_tem_token_ferramentas", "registrar_acoes_extra", "registrar_estado_extra", "registrar_provider",
 ]

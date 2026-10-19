@@ -42,9 +42,14 @@ TIPOS_PRIMEIRO_CONTATO: frozenset[str] = frozenset({"primeiro_contato_meta"})
 #: The outbound gate (`julia_envio_gate`): `envio_bloqueado` = an automatic Julia send refused by a gate, payload
 #: `{fluxo, motivo, connection_id}` -- the refuse-not-null record (never a silent skip). Not notifiable.
 TIPOS_GATE: frozenset[str] = frozenset({"envio_bloqueado"})
+#: Owner alerts (julia-v2 W0 / SW-G4): an integration or supervision hook broke. Payload `{codigo, ids}` only (ids,
+#: no PII). Fanned out to the org's OWNERS ONLY, deduped per `(org, codigo, day)` -- `julia_notificacoes_service`.
+#: `agents_contrato_invalido` = agents answered 422 to a turn (SW sent a shape agents' schema rejects: a bug on our
+#: side); `supervisao_falha` = a supervision hook swallowed an error (`modules.supervisao.alertas.alertar`).
+TIPOS_ALERTA_DONO: frozenset[str] = frozenset({"agents_contrato_invalido", "supervisao_falha"})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
-    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE
+    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO
 )
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no
@@ -98,4 +103,4 @@ def emitir(
     return stored
 
 
-__all__ = ["TIPOS", "TIPOS_CONSULTA", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]
+__all__ = ["TIPOS", "TIPOS_ALERTA_DONO", "TIPOS_CONSULTA", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]

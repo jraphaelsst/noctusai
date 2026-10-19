@@ -549,7 +549,8 @@ class TestPeloTurnoReal:
         out = await svc.executar_default(job, deps=world.deps(jobs=repo), repo=repo, run_turn=run_reengajamento_turn, agora=MANHA)
         assert out == "enviado" and len(world.sent_texts()) == enviados + 1
         req = world.agents.turns[-1]
-        assert req.contexto["estado"]["reengajamento"] == "minutos"
+        # agents' ContextoEstado is extra=forbid: the SW-only flag never goes on the wire (julia-v2 W0 hotfix)
+        assert "reengajamento" not in req.contexto["estado"]
         assert req.messages[0].provider_message_id == f"reeng:{job.id}"
         assert world.contato()["gen"] == gen
         # the re-engagement's own outbound does not re-arm the same tier (same gen => same dedupe key)
@@ -564,7 +565,7 @@ class TestPeloTurnoReal:
         out = await svc.executar_tentativa(job, deps=world.deps(jobs=repo), repo=repo, run_turn=run_reengajamento_turn, agora=MANHA)
         assert out == "enviado"
         estado = world.agents.turns[-1].contexto["estado"]
-        assert estado["reescrever"] is True and estado["texto_base"].startswith("Oi, tudo bem?")
+        assert not {"reescrever", "texto_base", "reengajamento", "regua_id", "tentativa"} & set(estado)
         assert frio  # it was the last attempt
 
     async def test_an_agents_failure_is_a_silent_false_not_a_crash(self, world, caplog):
