@@ -9286,6 +9286,159 @@ _SW_SIMEC_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_MAYA = "286_atendimento_blocos_supervisao.sql"
+_T_MAYA = (
+    f"{_S}.atendimento_blocos", f"{_S}.atendimento_handoffs", f"{_S}.agente_scorecards", f"{_S}.supervisao_config",
+)
+#: Every maya-blocks probe writes under a throwaway org id (no table here has an org FK), so a real
+#: org's own block config can never make a probe ambiguous -- and the rollback removes it anyway.
+_MAYA_ORG = "    v_org := gen_random_uuid();\n"
+
+
+def _maya_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"maya.{probe_id}", guard_name=guard, migration=_M_MAYA, rationale=rationale,
+        fixtures=(), ops_sql=_MAYA_ORG + ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_MAYA,
+    )
+
+
+def _maya_bloco_ins(bloco: str = "'atendimento'", pipeline: str = "'funil'", etapas: str = "ARRAY['qualificacao']::text[]",
+                    agent_key: str = "NULL") -> str:
+    return (
+        f"    INSERT INTO {_S}.atendimento_blocos (org_id, bloco, agent_key, pipeline, etapas)\n"
+        f"    VALUES (v_org, {bloco}, {agent_key}, {pipeline}, {etapas});"
+    )
+
+
+def _maya_handoff_ins(de: str = "'sdr'", para: str = "'atendimento'", gatilho: str = "'novo_lead'",
+                      status: str = "'emitido'", assumido: str = "NULL", origem: str = "gen_random_uuid()") -> str:
+    return (
+        f"    INSERT INTO {_S}.atendimento_handoffs (org_id, de_bloco, para_bloco, gatilho, origem_evento, status, assumido_at)\n"
+        f"    VALUES (v_org, {de}, {para}, {gatilho}, {origem}, {status}, {assumido});"
+    )
+
+
+def _maya_scorecard_ins(bloco: str = "'sdr'", agent_key: str = "'lead-imob'", metricas: str = "'{}'::jsonb",
+                        rubrica: str = "'sdr.v1'") -> str:
+    return (
+        f"    INSERT INTO {_S}.agente_scorecards (org_id, bloco, agent_key, dia, metricas, rubrica_versao)\n"
+        f"    VALUES (v_org, {bloco}, {agent_key}, DATE '2026-10-19', {metricas}, {rubrica});"
+    )
+
+
+#: Migration 286 -- maya-blocks S1 (atendimento blocks, handoffs, Maya scorecards). Unapplied guards
+#: read `no_fixture`, `refused` once applied. Contract: products/social-wiring/projects/maya-blocks/CONTRACT.md.
+_SW_MAYA_BLOCOS_PROBES: tuple[GuardProbe, ...] = (
+    _maya_probe(
+        "blocos.bloco_valido", "atendimento_blocos_bloco_valido",
+        "The block list is closed (sdr, atendimento, negociacao, juridico, financeiro, contador); a free-text block "
+        "would own stages no supervisor rubric or handoff rule knows about.",
+        _maya_bloco_ins(bloco="'noc_probe_bogus'"), _CHECK, "a block outside the closed list",
+    ),
+    _maya_probe(
+        "blocos.pipeline_do_bloco", "atendimento_blocos_pipeline_do_bloco",
+        "sdr owns the pre-card phase and therefore no stage; giving it stages would make the derived current block "
+        "of a card ambiguous between sdr and the card-stage owner.",
+        _maya_bloco_ins(bloco="'sdr'"), _CHECK, "an sdr block that owns pipeline stages",
+    ),
+    _maya_probe(
+        "blocos.agent_key_formato", "atendimento_blocos_agent_key_formato",
+        "agent_key names a studio agent key (e.g. lead-imob); a malformed key can never resolve to an agent.",
+        _maya_bloco_ins(agent_key="'Noc Probe!'"), _CHECK, "a block whose agent_key is not a studio key",
+    ),
+    _maya_probe(
+        "blocos.um_por_bloco", "atendimento_blocos_um_por_bloco",
+        "One config row per (org, block), else which agent runs the block is ambiguous.",
+        _maya_bloco_ins() + "\n" + _maya_bloco_ins(etapas="ARRAY['visitas']::text[]"),
+        _UNIQ, "two config rows for one block in one org",
+    ),
+    _maya_probe(
+        "blocos.etapas_validas", "atendimento_blocos_etapas_validas",
+        "Stage slugs are matched against pipeline_stages.slug (^[a-z0-9_]+$); a malformed slug never matches a card.",
+        _maya_bloco_ins(etapas="ARRAY['Noc Probe']::text[]"), _CHECK, "a block owning a malformed stage slug",
+    ),
+    _maya_probe(
+        "blocos.etapas_disjuntas", "atendimento_blocos_etapas_disjuntas",
+        "The current block is DERIVED from the card's stage: one stage owned by two blocks makes it ambiguous "
+        "and every handoff on that boundary undefined.",
+        _maya_bloco_ins() + "\n" + _maya_bloco_ins(bloco="'negociacao'"),
+        _CHECK, "one stage owned by two blocks of the same pipeline",
+    ),
+    _maya_probe(
+        "handoffs.blocos_validos", "atendimento_handoffs_blocos_validos",
+        "A handoff names two blocks of the closed list; anything else cannot be scored by Maya.",
+        _maya_handoff_ins(para="'noc_probe_bogus'"), _CHECK, "a handoff to a block outside the closed list",
+    ),
+    _maya_probe(
+        "handoffs.blocos_distintos", "atendimento_handoffs_blocos_distintos",
+        "A handoff is a block BOUNDARY crossing; a block handing to itself is a stage move, not a handoff.",
+        _maya_handoff_ins(de="'atendimento'"), _CHECK, "a handoff from a block to itself",
+    ),
+    _maya_probe(
+        "handoffs.gatilho_valido", "atendimento_handoffs_gatilho_valido",
+        "gatilho says which table origem_evento points into (lais_eventos | pipeline_movimentos); a free-text "
+        "trigger makes the reference unresolvable.",
+        _maya_handoff_ins(gatilho="'noc_probe_bogus'"), _CHECK, "a handoff with an unknown trigger",
+    ),
+    _maya_probe(
+        "handoffs.status_valido", "atendimento_handoffs_status_valido",
+        "The status machine is emitido -> assumido | expirado; a free-text status escapes the not-assumido metric.",
+        _maya_handoff_ins(status="'noc_probe_bogus'"), _CHECK, "a handoff with an unknown status",
+    ),
+    _maya_probe(
+        "handoffs.status_coerente", "atendimento_handoffs_status_coerente",
+        "assumido without assumido_at would count as taken-over with no time-to-assume; the timestamps are the "
+        "evidence behind the status.",
+        _maya_handoff_ins(status="'assumido'"), _CHECK, "an assumido handoff without assumido_at",
+    ),
+    _maya_probe(
+        "handoffs.uma_por_origem", "atendimento_handoffs_uma_por_origem",
+        "Sinks and hooks replay: one event emits at most one handoff, else Maya double-counts the transfer.",
+        "    v_atendimento := gen_random_uuid();\n"
+        + _maya_handoff_ins(origem="v_atendimento") + "\n" + _maya_handoff_ins(origem="v_atendimento"),
+        _UNIQ, "two handoffs from one originating event",
+    ),
+    _maya_probe(
+        "scorecards.bloco_valido", "agente_scorecards_bloco_valido",
+        "A scorecard belongs to a block of the closed list.",
+        _maya_scorecard_ins(bloco="'noc_probe_bogus'"), _CHECK, "a scorecard for a block outside the closed list",
+    ),
+    _maya_probe(
+        "scorecards.metricas_objeto", "agente_scorecards_metricas_objeto",
+        "metricas is a name -> value object read by the contract's metric names; an array or scalar has no names.",
+        _maya_scorecard_ins(metricas="'[]'::jsonb"), _CHECK, "a scorecard whose metricas is not an object",
+    ),
+    _maya_probe(
+        "scorecards.rubrica_formato", "agente_scorecards_rubrica_formato",
+        "rubrica_versao (<bloco>.vN) names the formulas that produced the numbers; free text breaks comparability.",
+        _maya_scorecard_ins(rubrica="'noc probe'"), _CHECK, "a scorecard with a malformed rubric version",
+    ),
+    _maya_probe(
+        "scorecards.um_por_dia", "agente_scorecards_um_por_dia",
+        "One scorecard per (org, block, agent, day) -- including human blocks (agent_key NULL, NULLS NOT DISTINCT); "
+        "two rows for one day make the report ambiguous.",
+        _maya_scorecard_ins(agent_key="NULL") + "\n" + _maya_scorecard_ins(agent_key="NULL"),
+        _UNIQ, "two scorecards for one human block on one day",
+    ),
+    _maya_probe(
+        "supervisao.horas_validas", "supervisao_config_horas_validas",
+        "The not-assumido threshold is 1..168 hours; 0 would expire every handoff at birth.",
+        f"    INSERT INTO {_S}.supervisao_config (org_id, horas_para_assumir) VALUES (v_org, 0);",
+        _CHECK, "a supervision config with a 0-hour threshold",
+    ),
+    _maya_probe(
+        "interacoes.primeira_resposta_coerente", "lais_interacoes_primeira_resposta_coerente",
+        "First-response time = primeira_resposta_at - iniciada_at; a reply before the episode began is a negative "
+        "time that would drag p50/p90 below zero.",
+        f"    INSERT INTO {_S}.lais_contatos (id, org_id, connection_id, chat_id)\n"
+        "    VALUES (v_org, v_org, gen_random_uuid(), 'noc_probe_maya');\n"
+        f"    INSERT INTO {_S}.lais_interacoes (org_id, contato_id, iniciada_at, primeira_resposta_at)\n"
+        "    VALUES (v_org, v_org, now(), now() - interval '1 minute');",
+        _CHECK, "an episode whose first reply precedes its start",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -9374,6 +9527,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_LAIS_CREDITO_PROBES,
     *_SW_LAIS_AVALIACOES_PROBES,
     *_SW_SIMEC_PROBES,
+    *_SW_MAYA_BLOCOS_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
