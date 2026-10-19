@@ -1,7 +1,7 @@
 # Agent Packages — CONTRACT (v1, 2026-10-03)
 
 > The single shape every slice builds to. Builds ON Agent Studio (`../agent-studio-isaia/CONTRACT.md`,
-> referenced as **Studio §X**) and changes nothing about Julia or IsaIA. A slice that needs to deviate
+> referenced as **Studio §X**) and changes nothing about Bia (the academia agent, named Julia until 2026-10-19), the SDR Julia, or IsaIA. A slice that needs to deviate
 > STOPS and reports — it never "aligns at integration". Project plan: `PROJECT.md` (same folder).
 
 **What this is.** One agent, two surfaces, zero drift. An agent **package** is authored in git exactly the
@@ -23,7 +23,7 @@ for the Nós no Limiar app). First consumer: `jraphaelsst/limiar-app`.
 
 | # | Decision | Why |
 |---|---|---|
-| A1 | **Git is the source of truth for packages**, authored IsaIA-style under `products/agents/packages/<key>/`. **Amends Studio §A1** for `kind = dev-advisor` only: their content is safe to publish (no third-party corpus, no secrets). Runtime agents (IsaIA, Julia) keep Studio §A1 unchanged. | One source, two generated surfaces ⇒ they cannot drift. |
+| A1 | **Git is the source of truth for packages**, authored IsaIA-style under `products/agents/packages/<key>/`. **Amends Studio §A1** for `kind = dev-advisor` only: their content is safe to publish (no third-party corpus, no secrets). Runtime agents (IsaIA, Bia, the SDR Julia) keep Studio §A1 unchanged. | One source, two generated surfaces ⇒ they cannot drift. |
 | A2 | **Claude Code is the primary surface; Studio is secondary.** Both are generated from the same package by the same build; neither is hand-edited. | Owner's plan makes Claude Code the cheap path; Studio adds UI, evals, remote chat. |
 | A3 | **ONE compiler for both surfaces.** The Claude Code agent body is produced by Studio's `compile_prompt` (`app/studio/compiler.py`, a pure function over `CompileInput`) — never re-implemented. Surface differences are confined to a **surface adapter block** (§C2). | Studio §A4 "what you see is what runs", extended across surfaces. |
 | A4 | **Consumers pin.** A consumer commits `agents.lock.json` (key, version, sha) and the materialized files; upgrading is an explicit commit made by `agent_pull`. | Reproducible, offline, reviewable. |
@@ -184,7 +184,7 @@ Mint via `POST /api/settings/api-tokens {label, scopes, expires_at ≤ 90 days}`
 **Amendment 2026-10-03 — `studio:publish`** (found by the HOOKS slice: import/eval/publish were user-only, so the
 pre-push pipeline's token got 403 `user_required`). Used by the noc pre-push publish leg ONLY; never given to consumer
 repos (they hold `packages:read`, `project-knowledge:write`, `learnings:*`). Accepted only on the five routes above and
-only when the target agent is `kind='dev-advisor'`; Julia/IsaIA stay user-only (403 `user_required`). A token never
+only when the target agent is `kind='dev-advisor'`; Bia/Julia/IsaIA stay user-only (403 `user_required`). A token never
 reaches the publish override (403 `override_requires_user`) — the eval gate always decides. Audit rows
 (`agent_audit_log.actor`, `published_by`, `created_by`, run `started_by`) carry the token row id. Mint like any other scope.
 Previously planned wording: a product-caller is accepted ONLY on
@@ -208,4 +208,4 @@ routes whose scope it holds (all other routes keep 403 `user_required`). Token l
 | **CONTENT** (orchestrator) | `products/agents/packages/{mobile-dev,nos-no-limiar}/` |
 
 ## §L · Deliberately later
-Embedding search (Studio §K) · auto-promotion of learnings · write tools for advisors · Julia/IsaIA as packages.
+Embedding search (Studio §K) · auto-promotion of learnings · write tools for advisors · Bia/Julia/IsaIA as packages.
