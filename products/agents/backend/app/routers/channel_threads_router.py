@@ -63,7 +63,7 @@ from app.dependencies import (
 )
 from app.realtime import publish_event
 from app.routers.conversations_router import INSTANCE_ID, _message_payload
-from app.routers.studio_agents_router import get_studio_definition_store_dep
+from app.routers.studio_agents_router import get_knowledge_catalog_dep, get_studio_definition_store_dep
 from app.schemas.channel_threads import (
     ControleOut,
     ControleUpdateRequest,
@@ -72,6 +72,7 @@ from app.schemas.channel_threads import (
     HandoffDestinoOut,
     HandoffOut,
     LeadConsentOut,
+    MensagemThreadOut,
     OptInRequest,
     OptOutOut,
     OptOutRequest,
@@ -87,6 +88,7 @@ from app.stores._util import utcnow
 from app.stores.agent_controles import get_agent_controle_store
 from app.stores.errors import Conflict, NotFound, TurnInProgress
 from app.stores.threads import OutroAgenteAtivo, get_thread_store, mapa_agentes
+from app.studio.resolucao import conteudo_status, resolve_agent_for_org
 from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -460,19 +462,32 @@ async def studio_set_agent_controle(
     controles=Depends(get_agent_controle_store_dep),
     threads=Depends(get_thread_store_dep),
     key_resolver=Depends(get_org_llm_key_resolver_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
 ) -> ControleOut:
     """Switch the agent ligado / drenando / desligado (and set the drain idle days). Turning it ON
-    (``ligado`` / ``drenando``) needs a published version and a configured LLM key (409 otherwise);
+    (``ligado`` / ``drenando``) needs a published version, a configured LLM key and complete content (every
+    required org spec filled, no blocking compile warning) -- 409 otherwise;
     turning it OFF never needs anything. Audited with the actor (``modo_alterado``)."""
     agent = _agente_por_chave(studio_store, ctx.org_id, agent_key)
     if payload.modo != "desligado":
-        active = studio_store.get_active_version(ctx.org_id, agent.id)
-        if active is None:
+        # The agent resolves through its platform definition (A-CONT): the published version, the org's
+        # specs and the compiled content decide whether it may take leads.
+        try:
+            resolvido = resolve_agent_for_org(studio_store, ctx.org_id, agent_key)
+        except NotFound as exc:
+            raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
+        if resolvido.versao is None:
             raise _err(409, "no_active_version", "O agente não tem versão publicada.")
-        if not key_resolver(active.provider, ctx.org_id):
+        if not key_resolver(resolvido.versao.provider, ctx.org_id):
             raise _err(409, "llm_nao_configurado", "A chave do provedor de IA não está configurada.")
-        # NOC-REMEDIATE[julia-v2-conteudo-completo]: the "content is complete" precondition of ligado/drenando needs the
-        # textos registry of the content slice (A-CONT); add it here with the A-RT wiring, next to the two checks above — 2026-10-19
+        status_conteudo = conteudo_status(studio_store, catalog, resolvido)
+        if not status_conteudo.completo:
+            raise _err(
+                409, "conteudo_incompleto",
+                "O conteúdo do agente está incompleto: " + ", ".join(
+                    (*status_conteudo.specs_faltando, *status_conteudo.avisos_bloqueantes)
+                ),
+            )
     try:
         controles.set(
             ctx.org_id, agent.id, modo=payload.modo,
@@ -607,3 +622,37 @@ async def lead_opt_out(
 def _valida_ref(ref: str) -> None:
     if not ref.strip() or len(ref) > 256:
         raise _err(422, "invalid_field", "Campo inválido: ref")
+
+
+# ── Studio: reading a thread (org admin) ────────────────────────────────────
+
+
+@router.get("/api/studio/threads/{thread_id}/mensagens", response_model=list[MensagemThreadOut])
+async def studio_thread_messages(
+    thread_id: UUID,
+    limite: int = Query(default=50, ge=1, le=200),
+    ctx: AuthContext = Depends(require_admin),
+    studio_store=Depends(get_studio_definition_store_dep),
+    conv_store=Depends(get_conversation_store_dep),
+    msg_store=Depends(get_message_store_dep),
+) -> list[MensagemThreadOut]:
+    """The conversation of a lead thread for an org admin: lead, agent, human and event lines with the
+    author labelled. System notices, tool calls / results, token usage and version stamps are stripped
+    (they are prompt-side internals, not part of what an org sees)."""
+    try:
+        thread = conv_store.get(ctx.org_id, thread_id)
+    except NotFound as exc:
+        raise _err(404, "thread_not_found", "Conversa não encontrada.") from exc
+    if thread.tipo != "thread_lead":
+        raise _err(404, "thread_not_found", "Conversa não encontrada.")
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    out = []
+    for r in msg_store.list(ctx.org_id, thread.id, limite=limite):
+        if r.role == "system" or (r.role == "assistant" and not (r.texto or "").strip()):
+            continue
+        key, nome = agentes.get(r.agent_id, (None, None)) if r.agent_id else (None, None)
+        out.append(MensagemThreadOut(
+            id=r.id, role=r.role, texto=r.texto, agent_key=key, agent_nome=nome,
+            autor_user_id=r.autor_user_id, created_at=r.created_at,
+        ))
+    return out

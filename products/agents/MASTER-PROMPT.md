@@ -44,7 +44,8 @@ products/agents/backend/app/
   trigger); `aplicar_controles` reads the control fail closed (503 `controle_indisponivel`), creates the thread and
   applies the implied transition. The turn route calls it before persisting anything or calling a model.
 - `routers/channel_threads_router.py`: thread read, append-without-a-turn, pause / resume (with optional until-when),
-  controls (SW reads, Studio admin writes), hand-off notes, opt-in / opt-out, delete-by-lead.
+  controls (SW reads, Studio admin writes; turning ON also needs complete content via `conteudo_status`), hand-off
+  notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
 
 ### Bia's hardened launch (non-negotiable)

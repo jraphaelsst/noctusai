@@ -24,6 +24,7 @@ __all__ = [
     "OptInRequest",
     "OptOutOut",
     "OptOutRequest",
+    "MensagemThreadOut",
     "ParticipanteEstadoRequest",
     "ParticipanteOut",
     "StudioParticipanteEstadoRequest",
@@ -186,3 +187,16 @@ class ControleUpdateRequest(StrictHttpModel):
 
     modo: Literal["ligado", "drenando", "desligado"]
     dreno_inatividade_dias: int | None = Field(default=None, ge=1, le=365)
+
+
+class MensagemThreadOut(BaseModel):
+    """One message of a thread as an org ADMIN may read it: the conversation only. System notices, tool
+    calls / results, token usage and the version stamps (prompt-side internals) are never part of it."""
+
+    id: UUID
+    role: Literal["user", "assistant", "humano", "evento"]
+    texto: str
+    agent_key: str | None = None
+    agent_nome: str | None = None
+    autor_user_id: UUID | None = None
+    created_at: datetime

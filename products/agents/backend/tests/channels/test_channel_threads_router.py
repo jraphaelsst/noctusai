@@ -378,3 +378,86 @@ def test_delete_by_lead_during_a_running_turn_is_409_and_erases_nothing(thr):
     r = thr.call("DELETE", "/api/channels/leads/contato-1", *TURN_ONLY)
     assert r.status_code == 409 and _code(r) == "turn_in_progress"
     assert thr.store.get_lead_ref_by_externa(thr.chan.org_id, "contato-1") is not None
+
+
+# ── content readiness + IP tiering ─────────────────────────────────────────
+
+
+def test_turning_on_needs_complete_content_and_names_what_is_missing(thr):
+    from app.stores.studio_definitions_conteudo import FerramentaInput, SpecDefInput, TextoInput
+
+    studio = thr.chan.rt.studio
+    from dataclasses import replace
+
+    # A-CONT's line-based content mode (the shape Julia v2 runs in): the compile then checks the org specs.
+    studio._agents[(thr.chan.org_id, "julia")] = replace(studio.get_agent(thr.chan.org_id, "julia"), conteudo_modo="linhas")
+    draft = studio.create_draft(thr.chan.org_id, thr.chan.agent.id, thr.chan.version.id, thr.chan.rt.user_id)
+    from app.stores.studio_definitions import SectionInput
+
+    studio.replace_sections(thr.chan.org_id, draft.id, [  # decisions are rows in this mode, not prompt sections
+        SectionInput(chave=x.chave, titulo=x.titulo, ordem=x.ordem, conteudo=x.conteudo)
+        for x in studio.list_sections(thr.chan.org_id, draft.id) if not x.chave.startswith("decisao-")
+    ])
+    studio.replace_spec_defs(thr.chan.org_id, draft.id, [SpecDefInput("agencia", "Nome da imobiliária")])
+    studio.replace_textos(thr.chan.org_id, draft.id, [
+        TextoInput("compilador.titulo_ferramentas", "Ferramentas"),
+        TextoInput("compilador.ferramenta_linha.web_desativada", "- Web: desligada."),
+        TextoInput("compilador.ferramenta_linha.conhecimento_desativada", "- Conhecimento: desligado."),
+    ])
+    studio.replace_ferramentas(thr.chan.org_id, draft.id, [FerramentaInput("handoff", "Passa a conversa para uma pessoa.")])
+    thr.chan.rt.publish(thr.chan.agent, draft.id)  # v2 declares a required org spec nobody filled yet
+    c = thr.chan.client
+    resp = c.put("/api/studio/agents/julia/controle", json={"modo": "ligado"})
+    assert resp.status_code == 409 and _code(resp) == "conteudo_incompleto" and "agencia" in resp.text
+    assert c.put("/api/studio/agents/julia/controle", json={"modo": "drenando"}).status_code == 409
+    assert c.put("/api/studio/agents/julia/controle", json={"modo": "desligado"}).status_code == 200  # off never needs content
+    studio.upsert_org_specs(thr.chan.org_id, "julia", {"agencia": "Imobiliária Exemplo"})
+    final = c.put("/api/studio/agents/julia/controle", json={"modo": "ligado"})
+    assert final.status_code == 200, final.text
+
+
+def test_the_member_readable_controle_carries_mode_and_counters_only_no_prompt_or_version_content(thr):
+    thr.thread()
+    thr.controles.set(thr.chan.org_id, thr.chan.agent.id, modo="ligado")
+    body = thr.chan.client.get("/api/studio/agents/julia/controle").json()
+    assert set(body) == {"agent_key", "modo", "aceita_novos_leads", "dreno_inatividade_dias", "threads_abertas", "drenagem"}
+    assert set(body["drenagem"]) == {"abertas", "ociosas", "efetivas", "concluida", "idade_max_dias", "idades_dias"}
+    flat = str(body)
+    for forbidden in ("prompt", "compiled", "secao", "ferramenta", "versao", "hash"):
+        assert forbidden not in flat.lower()
+    sw = thr.call("GET", "/api/channels/agents/julia/controle", *STATUS_ONLY).json()
+    assert set(sw) == set(body)
+
+
+def test_an_org_admin_reads_a_thread_without_system_notices_tool_results_or_stamps(thr):
+    org = thr.chan.org_id
+    t = thr.thread()
+    msgs = thr.chan.rt.stores.messages
+    msgs.add(org, t.id, "user", "Quero um apartamento")
+    msgs.add(org, t.id, "assistant", "Compra ou aluguel?", agent_id=thr.chan.agent.id,
+             blocks=[{"type": "tool_result", "name": "buscar_imoveis", "content": "SEGREDO-DA-FERRAMENTA"}],
+             token_usage={"in": 1}, compiled_hash="sha256:prompt", version_id=uuid4())
+    msgs.add(org, t.id, "system", "O turno falhou: PROMPT-INTERNO")
+    msgs.add(org, t.id, "assistant", "", agent_id=thr.chan.agent.id)  # cost-booking row of a silent turn
+    msgs.add(org, t.id, "humano", "Sou o corretor", autor_user_id=ACTOR)
+    msgs.add(org, t.id, "evento", "transferido")
+    resp = thr.chan.client.get(f"/api/studio/threads/{t.id}/mensagens")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert [r["role"] for r in rows] == ["user", "assistant", "humano", "evento"]
+    assert rows[1]["agent_key"] == "julia" and rows[2]["autor_user_id"] == str(ACTOR)
+    raw = resp.text
+    for leak in ("SEGREDO-DA-FERRAMENTA", "PROMPT-INTERNO", "sha256:prompt", "blocks", "token_usage", "tool_result"):
+        assert leak not in raw
+    assert all(set(r) == {"id", "role", "texto", "agent_key", "agent_nome", "autor_user_id", "created_at"} for r in rows)
+
+
+def test_the_admin_thread_read_is_admin_only_org_scoped_and_threads_only(thr):
+    t = thr.thread()
+    conv = thr.chan.rt.stores.conversations.create(thr.chan.org_id, thr.chan.agent.id, DEFAULT_USER_ID, "chat")
+    assert thr.chan.client.get(f"/api/studio/threads/{conv.id}/mensagens").status_code == 404
+    assert thr.chan.client.get(f"/api/studio/threads/{uuid4()}/mensagens").status_code == 404
+    assert thr.chan.client.get(f"/api/studio/threads/{t.id}/mensagens").status_code == 200
+    # a channel token is not an admin session
+    assert thr.call("GET", f"/api/studio/threads/{t.id}/mensagens", *STATUS_ONLY).status_code == 403
+    assert thr.chan.rt.client.raw().get(f"/api/studio/threads/{t.id}/mensagens").status_code == 401
