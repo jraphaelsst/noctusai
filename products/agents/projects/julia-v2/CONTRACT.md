@@ -99,6 +99,27 @@
 
 Also binding from the owner (same day): Julia is hosted in the agents app and consumed by SW **via API only**; SW's agent page is kept but never consumed for Julia's behaviour. Maya is out of scope. Visit scheduling is out of scope (stop at visit intent). Agent content lives only in the DB — when the owner asks for an agent change, the change is a DB section write, visible on refresh.
 
+### 0.4 Owner decisions, round 2 (2026-10-19 evening): BINDING
+
+- **Fast first moment, basics only.** Julia collects the basics fast: readiness and timeline, main blocker, campaign-vs-similar interest, basic property and lifestyle profile, offering 3 at a time, likes and visit intent. Documentation, credit, financing detail, guarantees and legal depth belong to a **later stage** owned by other agents (financeiro/jurídico). Criteria carry an `escopo` (sdr | financeiro | juridico | …). Julia only works the `sdr` scope, but every record lives on the shared lead, so later agents never re-ask. The v1 criteria set is in `RESEARCH.md` §1.1, and the park list in §1.2.
+- **Deliverable at the handoff.** Julia delivers the **lead profile plus an atendimento summary** to the next operator. For now that is a **human: the org owner**, who redirects the lead to a broker. `thread_handoffs.para` therefore supports a human target, and the org owner is the default.
+- **Identity before the visit.** She must gather at least **nome, número, email, RG and CPF** before the visit happens. The number comes from the channel; she asks for the rest after visit intent, stating the purpose.
+  - Validation: CPF check digits, email syntax, RG shape.
+  - Storage: encrypted at rest using the existing agents encryption seam. Values never appear in `trecho`, the dossier or LLM context, and are never echoed back.
+  - Access: display is masked, and decrypted reads are restricted to the org owner/admin and audited.
+  - LGPD: legal basis art. 7 V; an lgpd_flag is filed.
+  - This overrides the earlier "never ask for CPF" rule (see RESEARCH §6).
+- **All specs live in the agents app, never as code rules.** Prompt sections, skills, the qualification standard (criteria, points, stages, identity requirement and its timing), org specs, textos, ferramentas and decisões are all DB rows edited in the app. The compiled prompt includes a block rendered from the pinned standard. Code is generic machinery plus registries of required keys only. Consumers get everything over the API and hold no copy of any rule.
+- **IP protection (top priority).** Prompts, specs, rules, weights, tool descriptions and org knowledge must never leak through the frontend, requests, backend responses, logs, realtime, exports or the model itself. We extracted CoreStudio's and Lais' internals from the outside; nobody does that to us. Visibility tiers, enforced server-side:
+  - **platform admin:** definition, standard and compiled prompt;
+  - **org admin:** own org specs plus results only (locked platform blocks shown as a label);
+  - **org member:** operational data only;
+  - **consumer API:** only what each call needs.
+
+  Every studio read is platform-admin-only and audited. Response models are explicit allowlists. Error bodies never echo content. Production builds ship no source maps and no prompt fixtures. An output-side prompt-leak detector is a conformance rule. A security audit (2026-10-19) feeds concrete fixes into the slices.
+- **Policy.** WhatsApp transcripts are never used to train or fine-tune models (Meta WhatsApp Business terms §4.7); eval fixtures are synthetic or anonymised. Julia stays real-estate-only (no general-purpose assistant). AI disclosure, opt-out and escalation are platform-locked blocks.
+- **Research appendix:** `RESEARCH.md` (qualification, architecture, real-estate content, KPIs, conflicts → owner wins).
+
 ---
 
 ## 1 · Page and table inventory, with classification (requirement A)
