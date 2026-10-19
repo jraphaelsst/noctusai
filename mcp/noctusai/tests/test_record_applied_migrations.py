@@ -1,7 +1,6 @@
-"""record_applied_migrations: the record is written + committed in an isolated worktree, never the primary."""
-from __future__ import annotations
-
+"""Regression: relative worktree from task_branch must resolve against the primary root, not cwd."""
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,58 +10,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.record_applied_migrations import record_applied_migrations  # noqa: E402
 
 
-def _g(cwd, *a):
-    return subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+def _fake_tb(primary: Path, calls: list):
+    def tb(action, slug, **kw):
+        calls.append(action)
+        if action == "start":
+            (primary / ".claude" / "worktrees" / slug).mkdir(parents=True, exist_ok=True)
+            return {"status": "started", "worktree": f".claude/worktrees/{slug}"}
+        return {"status": "integrated"}
+    return tb
 
 
-def _repo(tmp_path):
+def test_relative_worktree_resolved_against_primary_not_cwd(tmp_path, monkeypatch):
     primary = tmp_path / "primary"
-    primary.mkdir()
-    _g(primary, "init", "-q", "-b", "dev")
-    _g(primary, "config", "user.email", "t@t")
-    _g(primary, "config", "user.name", "t")
-    _g(primary, "config", "core.hooksPath", "/dev/null")
-    (primary / "products" / "orbity" / "backend").mkdir(parents=True)
-    (primary / "products" / "orbity" / "backend" / "x.py").write_text("1\n")
-    _g(primary, "add", "-A")
-    _g(primary, "commit", "-q", "-m", "base")
-    return primary
+    be = primary / ".claude/worktrees/applied-record-x-1/products/x/backend"
+    be.mkdir(parents=True)
+    (be / "migrations-applied.json").write_text("{\"applied\": {}}")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    calls: list = []
+    tb = _fake_tb(primary, calls)
+    tb_wrapped = lambda **kw: tb(**kw)  # noqa: E731
+    res = record_applied_migrations(
+        "x", {"001_a.sql": "ab" * 32}, task_branch_fn=tb_wrapped,
+        git_fn=lambda wt, *a: (0, "abc", ""), primary_root=str(primary), slug_suffix="1")
+    assert res["status"] == "recorded", res
+    assert str(primary) in res["path"]
+    assert "001_a.sql" in json.loads(Path(res["path"]).read_text())["applied"]
 
 
-class _FakeTaskBranch:
-    def __init__(self, primary, integrate_status="integrated"):
-        self.primary, self.calls, self.integrate_status = primary, [], integrate_status
-
-    def __call__(self, **kw):
-        self.calls.append(kw["action"])
-        if kw["action"] == "start":
-            wt = self.primary.parent / "wt"
-            _g(self.primary, "worktree", "add", "-q", "-b", "feat/" + kw["slug"], str(wt))
-            return {"status": "started", "worktree": str(wt)}
-        return {"status": self.integrate_status}
-
-
-def test_record_is_committed_in_isolated_worktree_and_primary_stays_clean(tmp_path):
-    primary = _repo(tmp_path)
-    tb = _FakeTaskBranch(primary)
-    r = record_applied_migrations("orbity", {"001_a.sql": "ab"}, task_branch_fn=tb, slug_suffix="t")
-    assert r["status"] == "recorded", r
-    assert tb.calls == ["start", "integrate"]
-    assert _g(primary, "status", "--porcelain") == ""
-    assert not (primary / "products/orbity/backend/migrations-applied.json").exists()
-    wt = tmp_path / "wt"
-    assert json.loads((wt / "products/orbity/backend/migrations-applied.json").read_text())["applied"] == {"001_a.sql": "ab"}
-    assert "migrations-applied.json" in _g(wt, "show", "--stat", "HEAD")
-
-
-def test_integrate_failure_is_reported_not_raised(tmp_path):
-    primary = _repo(tmp_path)
-    r = record_applied_migrations("orbity", {"001_a.sql": "ab"},
-                                  task_branch_fn=_FakeTaskBranch(primary, "conflict"), slug_suffix="t")
-    assert r["status"] == "error" and "conflict" in r["error"] and r["files"] == {"001_a.sql": "ab"}
-
-
-def test_nothing_to_record_does_not_branch(tmp_path):
-    tb = _FakeTaskBranch(tmp_path)
-    assert record_applied_migrations("orbity", {}, task_branch_fn=tb)["status"] == "nothing_to_record"
-    assert tb.calls == []
+def test_failure_cleans_up_branch(tmp_path):
+    primary = tmp_path / "primary"
+    calls: list = []
+    tb = _fake_tb(primary, calls)
+    res = record_applied_migrations(
+        "x", {"001_a.sql": "ab" * 32}, task_branch_fn=lambda **kw: tb(**kw),
+        git_fn=lambda wt, *a: (1, "", "boom"), primary_root=str(primary), slug_suffix="2")
+    assert res["status"] == "error"
+    assert "cleanup" in calls

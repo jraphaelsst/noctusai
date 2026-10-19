@@ -35,6 +35,22 @@ def _default_git(wt: str, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
+def _resolve_worktree(worktree: str, primary_root: str | None) -> str:
+    if Path(worktree).is_absolute():
+        return worktree
+    from .task_branch import _resolve_primary_root
+
+    return str(Path(_resolve_primary_root(primary_root)) / worktree)
+
+
+def _cleanup_failed(tb: Callable[..., dict[str, Any]], slug: str, root_kw: dict[str, Any]) -> None:
+    """Best-effort teardown of the branch/worktree a FAILED persist would otherwise leak."""
+    try:
+        tb(action="cleanup", slug=slug, confirm=True, **root_kw)
+    except Exception:  # noqa: BLE001 -- teardown must never mask the original error
+        pass
+
+
 def record_applied_migrations(
     product: str,
     files: Mapping[str, str],
@@ -66,8 +82,10 @@ def record_applied_migrations(
             return {**result, "status": "error", "error": f"task_branch start: {start.get('status')} "
                                                            f"{start.get('error') or start.get('message') or ''}"}
         started = True
-        wt = str(Path(primary_root or ".").joinpath(start["worktree"])) \
-            if not Path(start["worktree"]).is_absolute() else start["worktree"]
+        # task_branch returns the worktree RELATIVE to the primary root. Resolve against the
+        # PRIMARY root, never the process cwd: the fresh-subprocess fallback runs with an
+        # arbitrary cwd, which made record_applied see no file (2026-10-19 FileNotFoundError).
+        wt = _resolve_worktree(start["worktree"], primary_root)
         from noctusai_lib.testing.migrations_applied import record_applied
 
         path = record_applied(Path(wt) / "products" / product / "backend", files)
@@ -79,6 +97,7 @@ def record_applied_migrations(
                       f"(migrate_product never writes the primary).\n\n{_COMMIT_TRAILER}")):
             rc, _o, err = git(wt, *args)
             if rc != 0:
+                _cleanup_failed(tb, slug, root_kw)
                 return {**result, "status": "error", "error": f"git {args[0]} failed: {err[:300]}"}
         rc, sha, _e = git(wt, "rev-parse", "--short", "HEAD")
         result["commit"] = sha if rc == 0 else None
@@ -90,7 +109,9 @@ def record_applied_migrations(
                              f" -- branch feat/{slug} kept for manual integrate"}
         return {**result, "status": "recorded"}
     except Exception as exc:  # noqa: BLE001 -- DDL already ran: report, never raise
-        suffix = f" -- branch feat/{slug} may remain" if started else ""
+        if started:
+            _cleanup_failed(tb, slug, root_kw)
+        suffix = f" -- cleanup of feat/{slug} attempted" if started else ""
         return {**result, "status": "error", "error": f"{type(exc).__name__}: {exc}{suffix}"}
 
 
