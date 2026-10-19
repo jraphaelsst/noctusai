@@ -15,7 +15,7 @@ Procedure: skill `noc-reverse-engineer`. Specialist: agent `reverse-engineer`.
 | **S1 · Map** | Every route, menu, page, tab, field, button, modal, empty state; stack and hosts; every endpoint the frontend can call, with its safety class | `specs/page-map.md`, `ui/ui-notes.md` + screenshots, `analysis/{endpoints,routes,domain-model,mocks,flags-permissions,realtime-and-integrations}.md` |
 | **S2 · Data** | Real response shapes from **read-only GETs on the owner's own ids** (allowlist built from S1) | `captures/xhr-<date>/` (redacted) + `specs/xhr-to-fetch.md` status table |
 | **S3 · Mechanisms** | How it works behind the pages: entities + relations, state machines, triggers, AI layer (prompts, slots, classifiers), integrations, pricing unit | `specs/mechanisms.md`, `prompts/*-DRAFT.md` |
-| **S4 · Synthesis** | Study doc + mapping onto our platform (seed organs, existing products, gaps) + open questions for the owner | `docs/platform-study.md`, `DECISIONS.md` |
+| **S4 · Synthesis** | Study doc + mapping onto our platform (seed organs, existing products, gaps) + open questions for the owner | `docs/<target>-study.md` (private), `DECISIONS.md` (ours, in git) |
 | **Build** | Only on the owner's explicit go: contract-first slices | `products/<slug>/projects/<module>-build/specs/<module>-contract.md` (in git; skill `noc-contract-first`) |
 
 Interview, never assume (memory `feedback-interview-never-assume-specs`): what the target does is presented as **options**, never as our decision.
