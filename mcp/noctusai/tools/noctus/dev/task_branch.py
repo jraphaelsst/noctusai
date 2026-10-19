@@ -195,6 +195,30 @@ def _git(runner, *args, cwd: str | None = None, dev_branch: str = "dev") -> tupl
     return runner(["git", *args], cwd=cwd)
 
 
+_FF_REJECT_RE = re.compile(r"non-fast-forward|fetch first|stale info|tip of your current branch is behind",
+                           re.I)
+
+
+def _classify_push_failure(git, remote: str, dev_branch: str, before: str | None,
+                           out: str, err: str) -> dict[str, Any]:
+    """Classify a failed `git push` (verdict-channel integrity).
+
+    race          non-fast-forward rejection AND/OR the remote ref advanced -> retry
+    hook_rejected remote unchanged, rejection names a hook / hook exit != 0
+    push_failed   remote unchanged, any other failure
+    """
+    text = "\n".join(x for x in (out, err) if x and x.strip())
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    tail = "\n".join(lines[-40:])
+    git("fetch", remote, "--quiet")
+    after = _resolve(git, f"{remote}/{dev_branch}")
+    advanced = bool(before and after and before != after)
+    if advanced or _FF_REJECT_RE.search(text):
+        return {"kind": "race", "remote_advanced": advanced, "tail": tail}
+    kind = "hook_rejected" if re.search(r"hook|pre-push|UPDATE ", text) else "push_failed"
+    return {"kind": kind, "remote_advanced": False, "tail": tail}
+
+
 def _resolve(git, ref: str) -> str | None:
     rc, out, _e = git("rev-parse", ref)
     return out.strip() if rc == 0 and out.strip() else None
@@ -2270,6 +2294,7 @@ def task_branch(
                 logger.debug("task_branch.integrate: benign artifacts stashed; "
                              "proceeding with rebase")
 
+        push_failures: list[dict[str, Any]] = []
         all_renumbered: list[dict] = []  # accumulates across retry attempts (rare — see the loop body)
         kb_counts_result: dict[str, Any] | None = None  # last attempt's regen result
         for attempt in range(1, max_retries + 1):
@@ -2522,7 +2547,29 @@ def task_branch(
                 if kb_counts_result.get("committed") and verbose:
                     logger.debug("task_branch.integrate: KB-counts regen committed: %s",
                                  kb_counts_result.get("paths"))
+            remote_before_push = _resolve(git, f"{remote}/{dev_branch}")
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
+            if rc != 0:
+                push_failures.append(_classify_push_failure(
+                    git, remote, dev_branch, remote_before_push, out, err))
+                if push_failures[-1]["kind"] != "race":
+                    # NOT a lost race: a pre-push hook (or other non-FF failure)
+                    # said no. Retrying cannot help and relabelling the verdict
+                    # as "concurrent pushes" hides the actionable reason.
+                    if benign_stashed:
+                        _pop_stash(runner, wt_path, benign_stashed, verbose)
+                    pf = push_failures[-1]
+                    return {**plan, "status": "blocked", "exit_code": 1,
+                            "push_failure": pf["kind"],
+                            "hook_output": pf["tail"],
+                            "reason": (
+                                f"push of {branch} to {remote}/{dev_branch} was rejected "
+                                f"({'by the pre-push hook' if pf['kind'] == 'hook_rejected' else 'for a non-race reason'}); "
+                                f"{remote}/{dev_branch} did not move, so this is not a "
+                                f"concurrent-push race and was not retried. Output tail:\n{pf['tail']}"),
+                            "message": (
+                                f"push to {dev_branch} rejected ({pf['kind']}); not retried. "
+                                "Fix what the hook/remote names, then re-run integrate.")}
             if rc == 0:
                 # Pop stash AFTER the push so the worktree ends clean (the benign
                 # files reappear but that's fine — they're tracked + committed elsewhere).
@@ -2633,9 +2680,14 @@ def task_branch(
         # All attempts exhausted — restore stash so we don't leave the worktree stashed.
         if benign_stashed:
             _pop_stash(runner, wt_path, benign_stashed, verbose)
+        advanced = any(f.get("remote_advanced") for f in push_failures)
         return {**plan, "status": "error", "exit_code": 1,
-                "error": f"could not FF-push to {dev_branch} after {max_retries} attempts "
-                         "(persistent concurrent pushes). Retry integrate."}
+                "error": (f"could not FF-push to {dev_branch} after {max_retries} attempts "
+                          + ("(persistent concurrent pushes: the remote ref advanced). Retry integrate."
+                             if advanced else
+                             "(rejected as non-fast-forward but the remote ref never moved; "
+                             "not a concurrent-push race). Last output: "
+                             + (push_failures[-1]["tail"] if push_failures else "")))}
 
     # ── CLEANUP ── SALVAGE-before-delete → remove worktree (refuse-if-dirty) →
     #               prune → delete merged branch.

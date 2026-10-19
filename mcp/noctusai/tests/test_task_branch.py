@@ -314,6 +314,64 @@ def test_integrate_retries_on_concurrent_push_race():
     assert len(fake.pushes()) == 2
 
 
+class _PushFake(FakeGit):
+    """FakeGit whose failing push emits scripted stderr; optionally moves origin/dev."""
+
+    def __init__(self, *a, push_err="", advance_to=None, **k):
+        super().__init__(*a, **k)
+        self.push_err = push_err
+        self.advance_to = advance_to
+
+    def __call__(self, cmd, cwd=None):
+        sub = cmd[3] if len(cmd) > 1 and cmd[1] == "-C" else (cmd[1] if len(cmd) > 1 else "")
+        if sub == "push" and self.push_rcs and self.push_rcs[0] != 0:
+            self.calls.append((cmd, cwd))
+            self.push_rcs.pop(0)
+            if self.advance_to:
+                self.refs["origin/dev"] = self.advance_to
+            return (1, "", self.push_err)
+        return super().__call__(cmd, cwd)
+
+
+_HOOK_ERR = ("DOC STALENESS: stale docs\nUPDATE KNOWLEDGE-BASE/02-LANDSCAPE.md\n"
+             "error: failed to push some refs to 'origin'")
+
+
+def _push_fake(**kw):
+    return _PushFake(
+        refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""}, head_sha="b0", **kw)
+
+
+def test_integrate_hook_rejection_is_blocked_not_retried_or_mislabelled():
+    fake = _push_fake(push_rcs=[1, 1, 1, 1, 1], push_err=_HOOK_ERR)
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "blocked" and res["exit_code"] == 1
+    assert res["push_failure"] == "hook_rejected"
+    assert "UPDATE KNOWLEDGE-BASE/02-LANDSCAPE.md" in res["hook_output"]
+    assert "UPDATE KNOWLEDGE-BASE/02-LANDSCAPE.md" in res["reason"]
+    assert "concurrent" not in res.get("error", "")
+    assert len(fake.pushes()) == 1  # no retry
+
+
+def test_integrate_other_push_failure_is_not_a_race():
+    fake = _push_fake(push_rcs=[1, 1], push_err="fatal: unable to access remote")
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "blocked" and res["push_failure"] == "push_failed"
+    assert len(fake.pushes()) == 1
+
+
+def test_integrate_remote_advance_counts_as_race_and_only_then_says_concurrent():
+    fake = _push_fake(push_rcs=[1, 1], push_err="rejected (fetch first)", advance_to="d1")
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake, max_retries=2)
+    assert res["status"] == "error" and len(fake.pushes()) == 2
+    assert "concurrent" in res["error"]
+    # non-FF rejection but remote never moved: no 'concurrent' claim
+    fake2 = _push_fake(push_rcs=[1, 1], push_err="! [rejected] non-fast-forward")
+    res2 = T.task_branch(action="integrate", slug="x", confirm=True, run=fake2, max_retries=2)
+    assert res2["status"] == "error" and "concurrent" not in res2["error"].split("never moved")[0].replace("not a concurrent", "")
+
+
 def test_integrate_conflict_aborts_and_surfaces():
     fake = FakeGit(
         refs={"origin/dev": "d0", "feat/x": "b0"},
