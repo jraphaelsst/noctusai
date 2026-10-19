@@ -228,6 +228,10 @@ class SeedSettings(ProductSettings):
     # USD` env override; the request body can still set a higher (<= 50,
     # migration 014 CHECK) or lower per-run value.
     studio_eval_run_budget_usd: float = 2.00
+    # Cost cap for `POST .../draft/mecanismo-runs` (the multi-turn mechanism suite, LIVE model).
+    # `STUDIO_MECANISMO_RUN_BUDGET_USD` env override. A run that reaches it is cut short and never
+    # opens the publish gate.
+    studio_mecanismo_run_budget_usd: float = 5.00
 
     # ── Public ask (projects/limiar-open-question S3) ──────────────────
     # The anonymous `POST /api/public/ask/{app_slug}` surface. OFF by default:

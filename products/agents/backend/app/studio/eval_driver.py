@@ -32,6 +32,8 @@ __all__ = [
     "ScriptExhausted",
     "reiniciar",
     "com_custo",
+    "configure_eval_turn_driver",
+    "get_eval_turn_driver",
 ]
 
 
@@ -173,3 +175,21 @@ def reiniciar(driver: Any) -> None:
 
 def com_custo(outcome: TurnOutcome, custo_usd: float) -> TurnOutcome:
     return replace(outcome, custo_usd=custo_usd)
+
+
+# ── injectable factory (A-RT registers the live adapter here) ───────────────────────────────────────────────
+
+_driver_factory: Callable[[], EvalTurnDriver] | None = None
+
+
+def configure_eval_turn_driver(factory: Callable[[], EvalTurnDriver] | None) -> None:
+    """A-RT calls this at startup with a factory building the LIVE adapter over the real channel turn path.
+    ``None`` unregisters it (tests)."""
+    global _driver_factory
+    _driver_factory = factory
+
+
+def get_eval_turn_driver() -> EvalTurnDriver | None:
+    """FastAPI dependency: the registered driver, or ``None`` when no adapter is configured (the endpoint then
+    answers 409 ``driver_indisponivel``). Read at request time, never bound at import."""
+    return _driver_factory() if _driver_factory is not None else None

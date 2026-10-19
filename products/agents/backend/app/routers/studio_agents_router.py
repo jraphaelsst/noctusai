@@ -37,6 +37,7 @@ from typing import Any, Iterator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.channels.conformidade import garantir_impressao
@@ -89,7 +90,9 @@ from app.stores.studio_definitions import (
 )
 from app.studio.bundles import client_bundle, compile_version
 from app.studio.compiler import CONTEUDO_CODIGOS
+from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
+from app.studio.eval_mecanismo_service import DriverSemTipo, SuiteVazia, rodar_suite_mecanismo
 from app.studio.julia import ensure_julia
 from app.studio.models import (
     CompiledPrompt,
@@ -124,6 +127,13 @@ def get_studio_definition_store_dep():
     from app.stores.studio_definitions import get_studio_definition_store
 
     return get_studio_definition_store(settings)
+
+
+def get_mecanismo_store_dep():
+    """Seam over ``get_mecanismo_store`` (the mechanism-suite cases and run records) — tests override it."""
+    from app.stores.studio_eval_mecanismo import get_mecanismo_store
+
+    return get_mecanismo_store(settings)
 
 
 def get_eval_gate_dep() -> EvalGate:
@@ -918,6 +928,92 @@ async def publish_draft(
     except Exception:  # noqa: BLE001
         logger.exception("agents.studio.publish.impressao_nao_salva version_id=%s", published.id)
     return _version_detail(store, gate, ctx.org_id, published)
+
+
+# ── mechanism suite (Julia v2 A-EVAL) ───────────────────────────────────────
+
+
+class MecanismoFalhaOut(BaseModel):
+    """A failed assert as a CODE (assert name + tool/criterion key) -- never reply text."""
+
+    assert_: str = Field(alias="assert")
+    codigo: str
+
+    model_config = {"populate_by_name": True}
+
+
+class MecanismoExecucaoOut(BaseModel):
+    indice: int
+    status: str
+    falhas: list[MecanismoFalhaOut]
+
+
+class MecanismoCasoOut(BaseModel):
+    slug: str
+    passou: bool
+    taxa: float
+    execucoes: list[MecanismoExecucaoOut]
+
+
+class MecanismoRunOut(BaseModel):
+    run_id: UUID
+    compiled_hash: str
+    driver: str
+    aprovado: bool
+    completo: bool
+    orcamento_excedido: bool
+    custo_usd: float
+    casos: list[MecanismoCasoOut]
+
+
+@router.post("/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunOut, response_model_by_alias=True)
+async def run_mecanismo_suite(
+    key: str,
+    ctx: AuthContext = Depends(require_platform_admin),
+    store=Depends(get_studio_definition_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+    driver=Depends(get_eval_turn_driver),
+) -> MecanismoRunOut:
+    """Run the agent's mechanism suite against the CURRENT draft hash and record it. Platform admin only
+    (the suite is platform IP). The driver comes from the injectable ``get_eval_turn_driver``: until A-RT
+    registers the live adapter the answer is 409 ``driver_indisponivel``. The cost cap comes from settings.
+    The reply carries codes only (assert name + tool/criterion key), never reply text or prompt content."""
+    agent = resolve_agent(store, ctx.org_id, key)
+    draft = resolve_draft(store, ctx.org_id, agent)
+    draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
+    if compiled.bloqueado:
+        raise http_error(409, "compile_blocked", "O prompt compilado tem avisos bloqueantes.")
+    if driver is None:
+        raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.")
+    try:
+        with store_errors():
+            run_id, resultado = await rodar_suite_mecanismo(
+                mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
+                compiled_hash=compiled.hash, started_by=actor_id(ctx),
+                limite_usd=settings.studio_mecanismo_run_budget_usd,
+            )
+    except SuiteVazia as exc:
+        raise http_error(409, "sem_casos_mecanismo", "O agente não tem casos de mecanismo ativos.") from exc
+    except DriverSemTipo as exc:
+        raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.") from exc
+    return MecanismoRunOut(
+        run_id=run_id, compiled_hash=compiled.hash, driver=driver.tipo, aprovado=resultado.aprovado,
+        completo=resultado.completo, orcamento_excedido=resultado.orcamento_excedido, custo_usd=resultado.custo_usd,
+        casos=[
+            MecanismoCasoOut(
+                slug=c.caso.slug, passou=c.passou, taxa=round(c.taxa, 3),
+                execucoes=[
+                    MecanismoExecucaoOut(
+                        indice=e.indice, status=e.status,
+                        falhas=[MecanismoFalhaOut(assert_=f.assert_nome, codigo=f.codigo) for f in e.falhas],
+                    )
+                    for e in c.execucoes
+                ],
+            )
+            for c in resultado.casos
+        ],
+    )
 
 
 # ── prompts by hash ─────────────────────────────────────────────────────────

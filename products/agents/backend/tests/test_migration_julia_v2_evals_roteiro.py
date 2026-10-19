@@ -27,10 +27,22 @@ def test_new_tables_are_service_role_only():
     assert not re.search(r"GRANT\s+(ALL|INSERT|UPDATE|DELETE)[^;]*TO\s+authenticated", M38)
 
 
-def test_scripted_content_is_not_readable_by_org_members():
-    grant = M38[M38.index("GRANT SELECT ("):]
-    grant = grant[: grant.index("TO authenticated")]
-    assert "roteiro" not in grant and "asserts" not in grant and "suite" in grant
+def test_no_grant_or_policy_to_browser_roles_anywhere_in_038():
+    """Eval content is platform-admin-only via the API (IP): only REVOKEs and service_role policies."""
+    assert not re.search(r"\bGRANT\b(?![^;]*\bTO\s+service_role)[^;]*\bTO\b[^;]*(anon|authenticated|public)", M38, re.I)
+    for pol in re.findall(r"CREATE POLICY[^;]*;", M38):
+        assert "TO service_role" in pol and not re.search(r"anon|authenticated|public", pol)
+
+
+def test_the_db_publish_path_enforces_the_mechanism_gate():
+    fn = M38[M38.index("CREATE OR REPLACE FUNCTION agents.publish_agent_version"):]
+    assert "RAISE EXCEPTION 'mecanismo_required'" in fn
+    for needle in ("r.driver = 'live'", "r.status = 'concluida'", "v_mec.compiled_hash IS DISTINCT FROM p_expected_hash",
+                   "NOT v_mec.aprovado", "NOT v_mec.completa", "v_mec.orcamento_excedido", "exige_mecanismo"):
+        assert needle in fn, needle
+    flat = " ".join(fn.split())
+    assert "REVOKE ALL ON FUNCTION agents.publish_agent_version(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated" in flat
+    assert "TO service_role" in flat
 
 
 def test_only_a_finished_complete_under_budget_all_green_run_can_be_approved():

@@ -19,8 +19,9 @@
 --     otherwise).
 --  4. agents.create_eval_run only resolves comportamento cases (the judge runner
 --     must never be handed a scripted-assert case).
---  5. Eval content is platform IP (CONTRACT 0.4): roteiro and asserts are NOT in the
---     column grant of authenticated, and the new tables are service-role only.
+--  5. publish_agent_version enforces the mechanism requirement IN THE DATABASE (a direct DB publish
+--     cannot bypass the router gate).
+--  6. Eval content is platform IP (CONTRACT 0.4): service-role only, no grant or policy to browser roles.
 --
 -- Eval fixtures are synthetic (Meta WhatsApp Business terms 4.7: no training on
 -- WhatsApp data); the Python importer refuses phone / CPF / email.
@@ -56,21 +57,19 @@ ALTER TABLE agents.eval_cases ADD CONSTRAINT eval_cases_criterios_ou_mecanismo C
 ALTER TABLE agents.eval_cases DROP CONSTRAINT IF EXISTS eval_cases_mecanismo_conteudo;
 ALTER TABLE agents.eval_cases ADD CONSTRAINT eval_cases_mecanismo_conteudo CHECK (
     suite <> 'mecanismo'
-    OR (
+    -- COALESCE: a NULL roteiro/asserts makes the inner expression NULL, which a CHECK would ACCEPT.
+    OR COALESCE(
         jsonb_typeof(roteiro) = 'object'
         AND jsonb_typeof(roteiro -> 'turnos') = 'array'
         AND jsonb_array_length(roteiro -> 'turnos') >= 1
         AND jsonb_typeof(asserts) = 'object'
-        AND asserts <> '{}'::jsonb
+        AND asserts <> '{}'::jsonb,
+        false
     )
 );
 
--- IP: the scripted content never rides a PostgREST read of an org member.
-REVOKE SELECT ON agents.eval_cases FROM authenticated;
-GRANT SELECT (
-    id, org_id, agent_id, slug, titulo, entrada, contexto, criterios, rubrica, tags, ativo,
-    suite, k, created_at, updated_at
-) ON agents.eval_cases TO authenticated;
+-- IP: eval content is platform-admin-only, via the API. No role other than service_role is granted
+-- anything on it (the agents DB lockdown, migration 036, revokes the browser roles on every agents table).
 
 -- 3 · agents flags -----------------------------------------------------------
 ALTER TABLE agents.agents
@@ -214,3 +213,136 @@ $$;
 
 REVOKE ALL ON FUNCTION agents.create_eval_run(UUID, UUID, UUID, TEXT, NUMERIC, UUID[], UUID, TEXT, NUMERIC) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION agents.create_eval_run(UUID, UUID, UUID, TEXT, NUMERIC, UUID[], UUID, TEXT, NUMERIC) TO service_role;
+
+-- 5 · the DB publish path enforces the mechanism gate (012 body + the block above) -------------
+CREATE OR REPLACE FUNCTION agents.publish_agent_version(
+    p_org_id UUID,
+    p_version_id UUID,
+    p_published_by UUID,
+    p_eval_run_id UUID,
+    p_override_reason TEXT,
+    p_expected_hash TEXT,
+    p_texto TEXT,
+    p_manifest JSONB
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = agents, public
+AS $$
+DECLARE
+    v_row agents.agent_versions;
+    v_prev agents.agent_versions;
+    v_limiar NUMERIC(4,3);
+    v_score NUMERIC(4,3);
+    v_reason TEXT := NULLIF(btrim(p_override_reason, E' \t\r\n'), '');
+    v_mec agents.eval_mecanismo_runs;
+    v_mec_cases INT;
+    v_mec_exige BOOLEAN;
+BEGIN
+    SELECT * INTO v_row FROM agents.agent_versions
+    WHERE id = p_version_id AND org_id = p_org_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'version_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_row.status <> 'rascunho' THEN
+        RAISE EXCEPTION 'version_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    IF p_expected_hash IS NULL OR v_row.compiled_hash IS DISTINCT FROM p_expected_hash THEN
+        RAISE EXCEPTION 'draft_changed' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Julia v2 A-EVAL: the mechanism suite is a hard gate with no override, enforced here so a direct
+    -- DB publish cannot bypass the router. Required when the agent says so or has an active mecanismo
+    -- case; satisfied only by the newest LIVE-driver run of THIS version for THIS hash that finished,
+    -- was complete, stayed under budget and passed every case (an empty required suite is never green).
+    SELECT a.exige_mecanismo INTO v_mec_exige FROM agents.agents a
+    WHERE a.id = v_row.agent_id AND a.org_id = p_org_id;
+    SELECT count(*) INTO v_mec_cases FROM agents.eval_cases c
+    WHERE c.org_id = p_org_id AND c.agent_id = v_row.agent_id AND c.ativo AND c.suite = 'mecanismo';
+    IF COALESCE(v_mec_exige, false) OR v_mec_cases > 0 THEN
+        SELECT * INTO v_mec FROM agents.eval_mecanismo_runs r
+        WHERE r.org_id = p_org_id AND r.version_id = p_version_id AND r.driver = 'live' AND r.status = 'concluida'
+        ORDER BY r.finished_at DESC NULLS LAST, r.created_at DESC
+        LIMIT 1;
+        IF NOT FOUND
+           OR v_mec.compiled_hash IS DISTINCT FROM p_expected_hash
+           OR NOT v_mec.aprovado OR NOT v_mec.completa OR v_mec.orcamento_excedido
+           OR v_mec.total_casos < v_mec_cases
+           OR v_mec.casos_aprovados <> v_mec.total_casos THEN
+            RAISE EXCEPTION 'mecanismo_required' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- FOR SHARE: a concurrent threshold change waits for this publish, so
+    -- the snapshot is the threshold the gate was actually held to.
+    SELECT publicacao_limiar INTO v_limiar FROM agents.agents
+    WHERE id = v_row.agent_id AND org_id = p_org_id
+    FOR SHARE;
+
+    IF p_eval_run_id IS NOT NULL THEN
+        SELECT r.score INTO v_score FROM agents.eval_runs r
+        WHERE r.id = p_eval_run_id
+          AND r.org_id = p_org_id
+          AND r.version_id = p_version_id
+          AND r.status = 'concluida'
+          AND r.completa
+          AND r.total >= 1
+          AND r.compiled_hash = p_expected_hash
+          AND r.score IS NOT NULL
+          AND r.score >= v_limiar;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+        END IF;
+        PERFORM 1 FROM agents.eval_cases c
+        WHERE c.org_id = p_org_id AND c.agent_id = v_row.agent_id AND c.ativo;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+        END IF;
+        v_reason := NULL;
+    ELSIF v_reason IS NULL OR length(regexp_replace(v_reason, '\s', '', 'g')) < 20 THEN
+        RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_texto IS NULL OR p_manifest IS NULL THEN
+        RAISE EXCEPTION 'invalid_payload' USING ERRCODE = 'P0001';
+    END IF;
+    INSERT INTO agents.compiled_prompts (org_id, hash, version_id, client_id, texto, manifest)
+    VALUES (p_org_id, p_expected_hash, p_version_id, NULL, p_texto, p_manifest)
+    ON CONFLICT (org_id, hash) DO NOTHING;
+
+    SELECT * INTO v_prev FROM agents.agent_versions
+    WHERE org_id = p_org_id AND agent_id = v_row.agent_id AND status = 'ativa'
+    FOR UPDATE;
+
+    UPDATE agents.agent_versions
+    SET status = 'substituida'
+    WHERE org_id = p_org_id AND agent_id = v_row.agent_id AND status = 'ativa';
+
+    UPDATE agents.agent_versions
+    SET status = 'ativa',
+        published_by = p_published_by,
+        published_at = now(),
+        eval_run_id = p_eval_run_id,
+        publish_override_reason = v_reason,
+        limiar_aplicado = v_limiar,
+        eval_score = v_score
+    WHERE id = p_version_id AND org_id = p_org_id;
+
+    INSERT INTO agents.agent_audit_log (org_id, agent_id, actor, acao, antes, depois)
+    VALUES (
+        p_org_id, v_row.agent_id, p_published_by,
+        CASE WHEN p_eval_run_id IS NULL THEN 'publicado_override' ELSE 'publicado' END,
+        CASE WHEN v_prev.id IS NULL THEN NULL
+             ELSE jsonb_build_object('version_id', v_prev.id, 'versao', v_prev.versao) END,
+        jsonb_build_object(
+            'version_id', v_row.id, 'versao', v_row.versao, 'compiled_hash', v_row.compiled_hash,
+            'eval_run_id', p_eval_run_id, 'eval_score', v_score, 'limiar_aplicado', v_limiar,
+            'override_reason', v_reason
+        )
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION agents.publish_agent_version(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.publish_agent_version(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, JSONB) TO service_role;
