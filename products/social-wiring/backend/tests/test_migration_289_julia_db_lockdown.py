@@ -42,4 +42,10 @@ def test_drops_caller_policies_and_keeps_rls_enabled(sql):
 
 def test_in_migration_assertion_with_empty_allowlist(sql):
     assert "v_allow text[] := ARRAY[]::text[]" in sql
-    assert sql.count("RAISE EXCEPTION 'migration 289:") == 2
+    assert sql.count("RAISE EXCEPTION 'migration 289:") == 4
+
+
+def test_portal_roi_view_is_invoker_and_closed_and_defaults_are_revoked(sql):
+    assert "ALTER VIEW social_wiring.%I SET (security_invoker = true)" in sql
+    assert "REVOKE ALL ON TABLE social_wiring.vw_portal_roi FROM PUBLIC, anon, authenticated" in sql
+    assert "ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring REVOKE ALL ON TABLES FROM anon, authenticated" in sql

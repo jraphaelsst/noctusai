@@ -9702,6 +9702,31 @@ _SW_JULIA_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = (
         ),
     ),
     GuardProbe(
+        id="julia_lockdown.no_definer_view_readable",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="julia_db_lockdown",
+        kind="state_assertion",
+        migrations=(_M_JULIA_LOCKDOWN,),
+        rationale=(
+            "vw_portal_roi (081) was a definer-rights view with no org filter, SELECT-able by authenticated: any user of "
+            "any org read every org's investment/leads/sales. No social_wiring view may be readable by a browser role "
+            "unless it is security_invoker (the caller's RLS applies); vw_portal_roi is closed to them outright."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) INTO v_count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
+                "LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a "
+                "WHERE n.nspname = 'social_wiring' AND c.relkind = 'v' "
+                "AND (a.grantee = 0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname IN ('anon', 'authenticated'))) "
+                "AND (c.relname = 'vw_portal_roi' "
+                "OR NOT COALESCE('security_invoker=true' = ANY (c.reloptions), false));"
+            ),
+            clean_message="no definer-rights social_wiring view readable by a browser role; vw_portal_roi closed",
+            violation_message_prefix="definer-rights view(s) readable by a browser role --",
+        ),
+    ),
+    GuardProbe(
         id="julia_lockdown.authenticated_select_refused",
         product="social-wiring",
         schema=_SW_SCHEMA,

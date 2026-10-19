@@ -19,6 +19,16 @@
 --      service_role bypasses RLS and keeps its grants);
 --   3. assert, in the same transaction, that no such relation still grants anything to anon/authenticated outside the
 --      allowlist and no caller-facing policy is left.
+--   4. (fleet sweep) social_wiring.vw_portal_roi (081) is a DEFINER-rights view with no org filter, readable by
+--      `authenticated` through 001's default privileges: any logged-in user of ANY org saw every org's investment, leads
+--      and sales. It is set security_invoker=true AND revoked from PUBLIC/anon/authenticated (its only reader,
+--      portal_roi_service, uses the admin client). Any OTHER social_wiring view still lacking security_invoker is set
+--      to it too, and the assertion fails if a non-invoker view remains readable by a browser role;
+--   5. ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring REVOKE ALL ON TABLES FROM anon, authenticated, so a FUTURE
+--      table (or view) is never re-granted to browser roles by 001's defaults. A future table that a user-token
+--      (get_user_client) path must read needs an explicit GRANT SELECT in its own migration.
+--      Audit (grep): no get_user_client file reads julia_*/lais_* (settings, integration_accounts, certidoes,
+--      pipeline, permutas, scheduling, email_marketing, youtube, agentes_financeiros, n8n, matriculas: none touch them).
 -- FORWARD-ONLY, IDEMPOTENT. NO SECURITY DEFINER function. A future julia_* table must be locked the same way in its own
 -- migration (this migration's assertion probe, julia_db_lockdown, fails the predeploy gate if one is not).
 -- ============================================================================
@@ -31,6 +41,21 @@ DECLARE
   v_allow text[] := ARRAY[]::text[];  -- relations the FE legitimately reads directly: none (see WHY)
   v_n     int;
 BEGIN
+  ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring REVOKE ALL ON TABLES FROM anon, authenticated;
+
+  -- definer-rights views: make them invoker (the caller's RLS applies); idempotent
+  FOR r IN
+    SELECT c.relname
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'social_wiring' AND c.relkind = 'v'
+       AND NOT COALESCE('security_invoker=true' = ANY (c.reloptions), false)
+     ORDER BY c.relname
+  LOOP
+    EXECUTE format('ALTER VIEW social_wiring.%I SET (security_invoker = true)', r.relname);
+  END LOOP;
+
+  REVOKE ALL ON TABLE social_wiring.vw_portal_roi FROM PUBLIC, anon, authenticated;
+
   FOR r IN
     SELECT c.relname, c.relkind
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -74,6 +99,25 @@ BEGIN
      AND p.roles && ARRAY['public', 'anon', 'authenticated']::name[];
   IF v_n > 0 THEN
     RAISE EXCEPTION 'migration 289: % caller-facing julia_ RLS policy(ies) remain', v_n;
+  END IF;
+
+  -- assertion: no social_wiring view without security_invoker is readable by a browser role; vw_portal_roi is closed
+  SELECT count(*) INTO v_n
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+         LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+   WHERE n.nspname = 'social_wiring' AND c.relkind = 'v'
+     AND NOT COALESCE('security_invoker=true' = ANY (c.reloptions), false)
+     AND (a.grantee = 0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname IN ('anon', 'authenticated')));
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'migration 289: % non-security_invoker social_wiring view grant(s) readable by a browser role', v_n;
+  END IF;
+  SELECT count(*) INTO v_n
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+         LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+   WHERE n.nspname = 'social_wiring' AND c.relname = 'vw_portal_roi'
+     AND (a.grantee = 0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname IN ('anon', 'authenticated')));
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'migration 289: vw_portal_roi is still granted to a browser role';
   END IF;
 END
 $lockdown$;
