@@ -14933,6 +14933,34 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
         "change that applies the migration.",
     ),
+    (
+        "products/agents/backend/migrations/039_julia_v2_skills_compartilhadas.sql",
+        "guard_skill_versao_immutable",
+        "Migration 039 unapplied (Julia v2 A-SKILLS, applied only by the tech-lead via migrate_product) — the published skill-version immutability trigger has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/039_julia_v2_skills_compartilhadas.sql",
+        "guard_skill_arquivo_immutable",
+        "Migration 039 unapplied (Julia v2 A-SKILLS, applied only by the tech-lead via migrate_product) — the reference-file immutability trigger of a published skill version has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/039_julia_v2_skills_compartilhadas.sql",
+        "guard_agent_version_skill_ref",
+        "Migration 039 unapplied (Julia v2 A-SKILLS, applied only by the tech-lead via migrate_product) — the pin trigger (a draft skill version cannot be pinned; org must match) has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/039_julia_v2_skills_compartilhadas.sql",
+        "uq_skill_versoes_um_rascunho",
+        "Migration 039 unapplied (Julia v2 A-SKILLS, applied only by the tech-lead via migrate_product) — the one-draft-per-skill partial unique index has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
 )
 
 
