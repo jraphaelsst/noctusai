@@ -1969,6 +1969,42 @@ def _canonizar_identificadores(payload: dict, atual: Optional[dict]) -> dict:
     return saida
 
 
+#: Identifier columns compared by their characters alone when deciding
+#: "unchanged" — `W-573.678-Z` re-sent as `W573678Z` is the same value
+#: re-typed, never an edit. (Not `idf.iguais`: that proves the same
+#: IDENTIFIER, and an RG re-sent WITH its check digit is a real edit.)
+_COLUNAS_IDENTIFICADOR = frozenset({"cpf", "rg", "endereco_cep"})
+
+
+def _valor_inalterado(coluna: str, novo: Any, anterior: Any) -> bool:
+    """Does a PATCH value merely RE-SEND what the record already holds?
+
+    🔴 DEAL 876, 2026-10-12 02:39 (prod audit rows): saving the party form
+    with nothing changed re-sent all seven identity fields, and every one —
+    a CNH-read name/CPF/birthdate, a ficha-read RNE/órgão/profissão/e-mail —
+    was restamped `_origem='manual'` (and logged as an admin "edit" whose
+    `valor_anterior` equals `valor_proposto`). The values stayed right; their
+    SOURCE was erased, so the contract scorecard counted six document reads
+    as hand-typed and no later read could ever take the field over (a
+    `manual` value is never touched). An unchanged value is not an edit: it
+    keeps its provenance. Empty == empty; identifiers by their characters;
+    everything else by its exact text (a case or accent change IS an edit)."""
+    def vazio(v: Any) -> bool:
+        return v is None or (isinstance(v, str) and not v.strip())
+
+    if vazio(novo) or vazio(anterior):
+        return vazio(novo) and vazio(anterior)
+    if coluna in _COLUNAS_IDENTIFICADOR:
+        def chars(v: Any) -> str:
+            return "".join(ch for ch in str(v).upper() if ch.isalnum())
+
+        return chars(novo) == chars(anterior)
+    def texto(v: Any) -> str:
+        return (v.isoformat() if hasattr(v, "isoformat") else str(v)).strip()
+
+    return texto(novo) == texto(anterior)
+
+
 def update_cliente(
     client: Any,
     org_id: UUID,
@@ -2067,6 +2103,25 @@ def update_cliente(
     for _campo_id, _valor_id in canonizados.items():
         payload[_campo_id] = _valor_id
         updates[_campo_id] = _valor_id
+
+    # 🔴 A RE-SENT, UNCHANGED value is not an edit (`_valor_inalterado`):
+    # dropped before the provenance gate/stamp below, so a form saved as-is
+    # never turns a document's value into a `manual` one. A group is dropped
+    # only when EVERY member it carries is unchanged — one real change still
+    # stamps the whole group, as before.
+    if atual is not None:
+        for campo in _CAMPOS_COM_ORIGEM:
+            if campo in payload and _valor_inalterado(campo, payload[campo], atual.get(campo)):
+                del payload[campo]
+        for _campo, _prefixo, colunas in _GRUPOS_COM_ORIGEM:
+            tocadas = [c for c in colunas if c in payload]
+            if tocadas and all(
+                _valor_inalterado(c, payload[c], atual.get(c)) for c in tocadas
+            ):
+                for c in tocadas:
+                    del payload[c]
+        if not payload:
+            return {**atual, "pendente_confirmacao": []}
 
     pendentes: list[str] = []
     aprovados_admin: list[tuple[str, Any, Optional[str]]] = []

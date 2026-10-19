@@ -1306,6 +1306,128 @@ class TestEdicaoManualDeCampoDocumental:
 # The double below models the real ceiling: an unpaginated select truncates,
 # a `.range()`d one does not. Against the pre-fix code this test FAILS.
 
+class TestFormularioSalvoSemMudanca:
+    """Deal 876 (prod audit, 2026-10-12 02:39): an admin saved the seller's
+    form with NOTHING changed and every document-read identity field was
+    restamped `manual` — the values right, their source erased. A value the
+    PATCH merely re-sends is not an edit: it keeps its provenance, logs no
+    "edit", and a real change beside it still lands as before."""
+
+    DOC_CNH = "6671285f-0000-4000-8000-000000000001"
+    DOC_FICHA = "4a9491b4-0000-4000-8000-000000000002"
+
+    def _vendedora(self, cid) -> dict:
+        return {
+            "id": cid, "org_id": ORG, "nome": "Santa Maria Fracasso",
+            "nome_oficial": "SANTA MARIA FRACASSO", "nome_oficial_origem": "cnh",
+            "nome_oficial_documento_id": self.DOC_CNH,
+            "cpf": "529.982.247-25", "cpf_origem": "cnh", "cpf_documento_id": self.DOC_CNH,
+            "rg": "W-573.678-Z", "rg_origem": "ficha_cadastral",
+            "rg_documento_id": self.DOC_FICHA,
+            "rg_orgao_expedidor": "DIREX", "rg_orgao_expedidor_origem": "ficha_cadastral",
+            "data_nascimento": "1949-11-20", "data_nascimento_origem": "cnh",
+            "profissao": "corretora de imóveis", "profissao_origem": "ficha_cadastral",
+            "email": "vendedora@example.com", "email_origem": "ficha_cadastral",
+            "endereco_cep": "06711-020", "endereco_logradouro": "ALAMEDA LIVERPOOL",
+            "endereco_numero": "81", "endereco_bairro": "RESERVA DO VIANNA",
+            "endereco_cidade": "Cotia", "endereco_uf": "SP",
+            "endereco_origem": "ficha_cadastral",
+        }
+
+    def _reenvio(self) -> dict:
+        """What the form sends back: the same values, the RNE/CPF/CEP in
+        another punctuation."""
+        return dict(
+            nome_oficial="SANTA MARIA FRACASSO", cpf="52998224725", rg="W573678Z",
+            rg_orgao_expedidor="DIREX", data_nascimento="1949-11-20",
+            profissao="corretora de imóveis", email="vendedora@example.com",
+            endereco_cep="06711020", endereco_logradouro="ALAMEDA LIVERPOOL",
+            endereco_numero="81", endereco_bairro="RESERVA DO VIANNA",
+            endereco_cidade="Cotia", endereco_uf="SP",
+        )
+
+    def test_an_unchanged_save_keeps_every_document_provenance(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._vendedora(cid)])
+
+        out = svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=str(uuid4()), **self._reenvio(),
+        )
+
+        assert out["pendente_confirmacao"] == []
+        row = _clientes(client)[0]
+        for campo, origem in (
+            ("nome_oficial", "cnh"), ("cpf", "cnh"), ("rg", "ficha_cadastral"),
+            ("rg_orgao_expedidor", "ficha_cadastral"), ("data_nascimento", "cnh"),
+            ("profissao", "ficha_cadastral"), ("email", "ficha_cadastral"),
+            ("endereco", "ficha_cadastral"),
+        ):
+            assert row[f"{campo}_origem"] == origem, campo
+        assert row["rg_documento_id"] == self.DOC_FICHA
+        assert row["rg"] == "W-573.678-Z"
+        # No phantom "edit" in the history.
+        assert not client.table("cliente_campo_conflitos").select("*").execute().data
+
+    def test_a_real_change_beside_unchanged_values_is_the_only_manual_stamp(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._vendedora(cid)])
+        admin = str(uuid4())
+
+        svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=admin,
+            **{**self._reenvio(), "profissao": "corretora de imóveis aposentada"},
+        )
+
+        row = _clientes(client)[0]
+        assert row["profissao"] == "corretora de imóveis aposentada"
+        assert row["profissao_origem"] == "manual"
+        assert row["nome_oficial_origem"] == "cnh"
+        assert row["cpf_origem"] == "cnh"
+        conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
+        assert [c["campo"] for c in conflitos] == ["profissao"]
+        assert conflitos[0]["valor_anterior"] == "corretora de imóveis"
+
+    def test_a_case_change_is_an_edit_not_a_resend(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._vendedora(cid)])
+
+        svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=str(uuid4()),
+            nome_oficial="Santa Maria Fracasso",
+        )
+        row = _clientes(client)[0]
+        assert row["nome_oficial"] == "Santa Maria Fracasso"
+        assert row["nome_oficial_origem"] == "manual"
+
+    def test_one_changed_address_part_still_stamps_the_whole_group(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._vendedora(cid)])
+
+        svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=str(uuid4()),
+            **{**self._reenvio(), "endereco_numero": "83"},
+        )
+        row = _clientes(client)[0]
+        assert row["endereco_numero"] == "83"
+        assert row["endereco_origem"] == "manual"
+
+    def test_a_non_admin_resend_opens_no_pending_conflict(self):
+        """Before: a non-admin re-save queued one admin conflict PER field,
+        each proposing the value already on file."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._vendedora(cid)])
+
+        out = svc.update_cliente(client, ORG, cid, is_admin=False, **self._reenvio())
+
+        assert out["pendente_confirmacao"] == []
+        assert not client.table("cliente_campo_conflitos").select("*").execute().data
+
+
 class _CappingSelect:
     """Wraps a real mock select chain and enforces PostgREST's row cap
     unless the caller paginated with `.range()`."""

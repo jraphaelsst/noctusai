@@ -1191,6 +1191,81 @@ def _fonte_mais_autoritativa(
     return autoridade.mais_autoritativo(campo_seed, origem_proposto, row.get(campo.origem))
 
 
+#: `Decisao.regra` of the phantom-`manual` heal (`_origem_antes_do_reenvio`).
+REGRA_REENVIO_SEM_MUDANCA = "reenvio_sem_mudanca"
+
+
+def _origem_antes_do_reenvio(
+    client: Any, org_id: UUID, cliente_id: UUID, campo: CampoExtraido, atual: dict,
+) -> Optional[str]:
+    """The document source a `manual` stamp ERASED without changing the value,
+    or `None` when the stamp is a genuine human entry.
+
+    🔴 DEAL 876 (prod audit, 2026-10-12 02:39): a form saved with nothing
+    changed restamped every document-read field `manual` (fixed at the write,
+    `clientes_service._valor_inalterado`). The rows it left are self-proving:
+    an admin "edit" (`origem_proposto='manual'`, `status='aceito'`) whose
+    `valor_anterior` equals its `valor_proposto` equals what is still on
+    file, over a DOCUMENT origin. Such a `manual` is a phantom — no human
+    ever chose that value over the document's — and this returns the origin
+    it overwrote, so an extraction that reads the SAME value can hand the
+    provenance back (value untouched, audited). Anything else — a confirmed
+    value, a real edit, an un-logged typed value, a re-save whose value
+    moved since — is a human's and stays `manual`."""
+    if atual.get(campo.origem) != "manual" or not _vazio(atual.get(campo.confirmado_em)):
+        return None
+    presente = atual.get(campo.item_key)
+    if _vazio(presente):
+        return None
+    try:
+        rows = (
+            _t(client, CONFLITOS_TABLE)
+            .select("valor_anterior,valor_proposto,origem_anterior,origem_proposto,status,created_at")
+            .eq("org_id", str(org_id))
+            .eq("cliente_id", str(cliente_id))
+            .eq("campo", campo.item_key)
+            .eq("origem_proposto", "manual")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 — no proof read means no heal, never a guess
+        logger.warning(
+            "reenvio sem mudança: histórico de %s do cliente %s ilegível: %s",
+            campo.item_key, cliente_id, exc,
+        )
+        return None
+    if not rows or rows[0].get("status") != "aceito":
+        return None
+    linha = rows[0]
+    anterior = linha.get("origem_anterior")
+    if not anterior or anterior == "manual":
+        return None
+    if not (
+        _mesmo_valor(campo.item_key, linha.get("valor_anterior"), linha.get("valor_proposto"))
+        and _mesmo_valor(campo.item_key, linha.get("valor_proposto"), presente)
+    ):
+        return None
+    return str(anterior)
+
+
+def _pode_retomar_proveniencia(
+    campo: CampoExtraido, origem_proposto: Optional[str], origem_apagada: str,
+) -> bool:
+    """May a reading from `origem_proposto` take back the provenance a phantom
+    `manual` erased from `origem_apagada`? The same document type always may;
+    otherwise only a source at least as authoritative (seed `autoridade.
+    posto`, both ranked) — a lower one corroborates, never takes over."""
+    if not origem_proposto:
+        return False
+    if origem_proposto == origem_apagada:
+        return True
+    campo_seed = fontes.RENOMEADOS_CAMPO.get(campo.item_key, campo.item_key)
+    novo = autoridade.posto(campo_seed, origem_proposto)
+    antes = autoridade.posto(campo_seed, origem_apagada)
+    return novo is not None and antes is not None and novo <= antes
+
+
 def _completa_o_presente(item_key: str, presente: Any, proposto: Any) -> bool:
     """Is `proposto` the SAME issuing body as `presente`, plus the UF that
     `presente` lacks? (`SSP` → `SSP/SP`.) Only the issuer has this shape: a
@@ -1863,7 +1938,44 @@ def aplicar_campos_ao_cliente(
                 canonico_presente = _canonico_do_presente(tipo_id, presente, uf=uf_rg)
                 if canonico_presente is not None:
                     updates[campo.item_key] = canonico_presente
-                if _fonte_mais_autoritativa(campo, atual, origem, _rotulo):
+                origem_apagada = _origem_antes_do_reenvio(
+                    client, org_id, cliente_id, campo, atual
+                )
+                if origem_apagada is not None and _pode_retomar_proveniencia(
+                    campo, origem, origem_apagada
+                ):
+                    # 🔴 A PHANTOM `manual` (a form re-saved unchanged over a
+                    # document value, deal 876) — this reading states the
+                    # SAME value, so the provenance goes back to a document.
+                    # Value untouched, still machine-pending, audited.
+                    updates[campo.origem] = origem
+                    updates[campo.documento_id] = (
+                        str(documento_id) if documento_id else None
+                    )
+                    updates[campo.em] = now
+                    campo_conflitos.registrar_decisao_automatica(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key,
+                        valor_anterior=presente,
+                        origem_anterior="manual",
+                        valor_proposto=valor,
+                        origem_proposto=origem,
+                        confianca_proposta=confianca,
+                        fonte_tabela=fonte_tabela,
+                        fonte_id=fonte_id,
+                        decisao=divergencia_resolucao.Decisao(
+                            vencedor="proposto",
+                            regra=REGRA_REENVIO_SEM_MUDANCA,
+                            motivo=(
+                                f"Mesmo valor; o 'manual' em registro veio de um "
+                                f"formulário salvo sem mudança sobre {origem_apagada} — "
+                                f"a proveniência volta para {origem}."
+                            ),
+                            requer_humano=False,
+                        ),
+                        evidencia_ids=[i for i in (documento_id,) if i],
+                    )
+                elif _fonte_mais_autoritativa(campo, atual, origem, _rotulo):
                     # 🔴 SOURCE PRECEDENCE (owner rule 2026-10-14, prod deal
                     # 876): the authoritative document read the SAME fact a
                     # lower-authority one supplied first — it takes over the
