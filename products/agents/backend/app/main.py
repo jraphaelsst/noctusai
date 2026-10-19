@@ -57,6 +57,7 @@ from app.routers.agents_router import router as agents_router
 from app.routers.api_keys_router import router as api_keys_router
 from app.routers.channel_token_router import router as channel_token_router
 from app.routers.channel_tools_token_router import router as channel_tools_token_router
+from app.routers.channel_threads_router import router as channel_threads_router
 from app.routers.channels_router import router as channels_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
@@ -209,6 +210,7 @@ app = create_product_app(
         conversations_router,
         # Lais A2: the product-to-product channel turn API (+ its token mint).
         channels_router,
+        channel_threads_router,
         channel_token_router,
         channel_tools_token_router,
         approvals_router,

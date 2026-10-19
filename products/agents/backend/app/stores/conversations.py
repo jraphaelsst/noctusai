@@ -61,6 +61,14 @@ class ConversationRecord:
     channel: str | None = None
     channel_ref: dict[str, Any] | None = None
     contact: dict[str, Any] | None = None
+    #: Julia v2 (033): ``'thread_lead'`` for a channel conversation — the lead's
+    #: THREAD, shared by every agent that talks to the lead — ``'chat'`` for a
+    #: user conversation. ``lead_ref_id`` links the thread to its ``lead_refs``
+    #: row (``None`` until linked); ``ultima_mensagem_lead_em`` is the last LEAD
+    #: message (the drain-idle clock).
+    tipo: str = "chat"
+    lead_ref_id: UUID | None = None
+    ultima_mensagem_lead_em: datetime | None = None
 
 
 class ConversationStore(Protocol):
@@ -149,13 +157,39 @@ class ChannelConversationStore(Protocol):
         ``None`` (an explicit maybe-read, not an error)."""
         ...
 
+    def find_thread(
+        self, org_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        """Julia v2: the lead's THREAD for ``(org, channel, channel_ref)`` —
+        whichever agent opened it (the thread is shared, §6). ``None`` when the
+        lead was never served."""
+        ...
+
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
     ) -> ConversationRecord:
-        """Insert the channel conversation. A concurrent create of the same
-        identity (the 025 unique index) returns the EXISTING row — never a
-        second one, never an error."""
+        """Insert the channel conversation (a ``thread_lead``; ``agent_id`` is
+        the agent that OPENED it). A concurrent create of the same identity
+        (the 025 unique index) returns the EXISTING row — never a second one,
+        never an error."""
+        ...
+
+    def touch_lead_message(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        """A LEAD message arrived: stamp ``ultima_mensagem_lead_em`` and
+        ``last_message_at`` (the drain-idle clock + the 180-day retention
+        clock). Raises :class:`NotFound`."""
+        ...
+
+    def link_lead_ref(self, org_id: UUID, id: UUID, lead_ref_id: UUID) -> ConversationRecord:
+        """Link a thread to its ``lead_refs`` row (M3 / the lazy self-link on the
+        first v2 turn). Idempotent: an already-linked thread keeps its link and is
+        returned unchanged. Raises :class:`NotFound`."""
+        ...
+
+    def list_threads_for_lead(self, org_id: UUID, lead_ref_id: UUID) -> list[ConversationRecord]:
+        """Every thread of one lead (one per channel line)."""
         ...
 
     def list_channel(
@@ -205,6 +239,9 @@ class FakeConversationStore:
             "channel": None,
             "channel_ref": None,
             "contact": None,
+            "tipo": "chat",
+            "lead_ref_id": None,
+            "ultima_mensagem_lead_em": None,
         }
         self._rows[row["id"]] = row
         return self._to_record(row)
@@ -302,9 +339,21 @@ class FakeConversationStore:
                 return self._to_record(row)
         return None
 
+    def find_thread(
+        self, org_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        matches = [
+            r for r in self._rows.values()
+            if r["org_id"] == org_id and r["tipo"] == "thread_lead"
+            and r["channel"] == channel and r["channel_ref"] == channel_ref
+        ]
+        matches.sort(key=lambda r: r["created_at"])
+        return self._to_record(matches[0]) if matches else None
+
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
     ) -> ConversationRecord:
         existing = self.find_channel(org_id, agent_id, channel, channel_ref)
         if existing is not None:
@@ -317,9 +366,37 @@ class FakeConversationStore:
             "_turn_lock_instance_id": None, "version_id": version_id, "client_id": None,
             "channel": channel, "channel_ref": dict(channel_ref),
             "contact": dict(contact) if contact is not None else None,
+            "tipo": "thread_lead", "lead_ref_id": lead_ref_id, "ultima_mensagem_lead_em": None,
         }
         self._rows[row["id"]] = row
         return self._to_record(row)
+
+    def touch_lead_message(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        now = utcnow()
+        row["ultima_mensagem_lead_em"] = now
+        row["last_message_at"] = now
+        row["updated_at"] = now
+        return self._to_record(row)
+
+    def link_lead_ref(self, org_id: UUID, id: UUID, lead_ref_id: UUID) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        if row.get("lead_ref_id") is None:
+            row["lead_ref_id"] = lead_ref_id
+            row["updated_at"] = utcnow()
+        return self._to_record(row)
+
+    def list_threads_for_lead(self, org_id: UUID, lead_ref_id: UUID) -> list[ConversationRecord]:
+        rows = [
+            r for r in self._rows.values()
+            if r["org_id"] == org_id and r.get("lead_ref_id") == lead_ref_id
+        ]
+        rows.sort(key=lambda r: r["created_at"])
+        return [self._to_record(r) for r in rows]
 
     def list_channel(
         self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
@@ -389,6 +466,9 @@ class FakeConversationStore:
             channel=row.get("channel"),
             channel_ref=dict(row["channel_ref"]) if row.get("channel_ref") is not None else None,
             contact=dict(row["contact"]) if row.get("contact") is not None else None,
+            tipo=row.get("tipo", "chat"),
+            lead_ref_id=row.get("lead_ref_id"),
+            ultima_mensagem_lead_em=row.get("ultima_mensagem_lead_em"),
         )
 
 
@@ -571,17 +651,37 @@ class SupabaseConversationStore:
         rows = resp.data or []
         return self._record(rows[0]) if rows else None
 
+    def find_thread(
+        self, org_id: UUID, channel: str, channel_ref: dict[str, Any]
+    ) -> ConversationRecord | None:
+        resp = (
+            self._table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("tipo", "thread_lead")
+            .eq("channel", channel)
+            .eq("channel_ref", json.dumps(channel_ref, sort_keys=True))
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return self._record(rows[0]) if rows else None
+
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
     ) -> ConversationRecord:
         payload: dict[str, Any] = {
             "org_id": str(org_id), "agent_id": str(agent_id), "owner_user_id": None,
             "status": "ativa", "channel": channel, "channel_ref": channel_ref,
-            "contact": contact,
+            "contact": contact, "tipo": "thread_lead",
         }
         if version_id is not None:
             payload["version_id"] = str(version_id)
+        if lead_ref_id is not None:
+            payload["lead_ref_id"] = str(lead_ref_id)
         try:
             resp = exec_query(self._table().insert(payload), unique_code="channel_exists")
         except StudioConflict:
@@ -623,6 +723,33 @@ class SupabaseConversationStore:
             raise NotFound(f"conversation {id} not found for org {org_id}")
         return self._record(rows[0])
 
+    def touch_lead_message(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        now = utcnow_iso()
+        resp = (
+            self._table()
+            .update({"ultima_mensagem_lead_em": now, "last_message_at": now, "updated_at": now})
+            .eq("id", str(id)).eq("org_id", str(org_id)).execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._record(rows[0])
+
+    def link_lead_ref(self, org_id: UUID, id: UUID, lead_ref_id: UUID) -> ConversationRecord:
+        # Conditional on `lead_ref_id IS NULL` — a linked thread never moves.
+        self._table().update(
+            {"lead_ref_id": str(lead_ref_id), "updated_at": utcnow_iso()}
+        ).eq("id", str(id)).eq("org_id", str(org_id)).is_("lead_ref_id", "null").execute()
+        return self.get(org_id, id)
+
+    def list_threads_for_lead(self, org_id: UUID, lead_ref_id: UUID) -> list[ConversationRecord]:
+        resp = (
+            self._table().select("*")
+            .eq("org_id", str(org_id)).eq("lead_ref_id", str(lead_ref_id))
+            .order("created_at").limit(100).execute()
+        )
+        return [self._record(r) for r in (resp.data or [])]
+
     @staticmethod
     def _record(row: dict[str, Any]) -> ConversationRecord:
         owner = row.get("owner_user_id")
@@ -642,6 +769,9 @@ class SupabaseConversationStore:
             channel=row.get("channel"),
             channel_ref=row.get("channel_ref"),
             contact=row.get("contact"),
+            tipo=row.get("tipo") or "chat",
+            lead_ref_id=UUID(str(row["lead_ref_id"])) if row.get("lead_ref_id") else None,
+            ultima_mensagem_lead_em=row.get("ultima_mensagem_lead_em"),
         )
 
 

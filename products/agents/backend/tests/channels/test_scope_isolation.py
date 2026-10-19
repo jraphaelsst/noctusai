@@ -36,15 +36,26 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
     assert _routes((CHANNEL_PREFIX,)) == [
         ("DELETE", "/api/channels/conversations"),
         ("DELETE", "/api/channels/ferramentas-token"),
+        ("DELETE", "/api/channels/leads/{ref}"),
+        ("GET", "/api/channels/agents/{agent_key}/controle"),
         ("GET", "/api/channels/agents/{agent_key}/status"),
+        ("GET", "/api/channels/handoffs/{handoff_id}"),
         ("GET", "/api/channels/leads/{lead_ref}/identificacao"),
         ("GET", "/api/channels/leads/{lead_ref}/qualificacao"),
+        ("GET", "/api/channels/threads"),
+        ("GET", "/api/channels/threads/{thread_id}"),
+        ("GET", "/api/channels/threads/{thread_id}/handoffs"),
         ("GET", "/api/channels/uso"),
+        ("PATCH", "/api/channels/threads/{thread_id}/participantes/{agent_key}"),
         ("POST", "/api/channels/agents/{agent_key}/decisoes/{chave}"),
         ("POST", "/api/channels/conversations/{conversation_id}/resumo"),
+        ("POST", "/api/channels/handoffs/{handoff_id}/aceite"),
         ("POST", "/api/channels/leads/{lead_ref}/descarte/confirmar"),
+        ("POST", "/api/channels/leads/{ref}/opt-out"),
+        ("POST", "/api/channels/threads/{thread_id}/mensagens"),
         ("POST", "/api/channels/turns"),
         ("PUT", "/api/channels/ferramentas-token"),
+        ("PUT", "/api/channels/leads/{ref}/opt-in"),
     ]
 
 

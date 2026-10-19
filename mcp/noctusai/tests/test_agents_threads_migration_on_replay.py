@@ -44,7 +44,7 @@ def _step(name: str, sql: str) -> dict:
 
 
 def _expect_refused(sql: str, what: str) -> str:
-    """A DO block that RAISES when `sql` is NOT refused (any error from `sql` counts as the refusal)."""
+    """A DO block that RAISES when `sql` is NOT refused (a constraint / trigger / function refusal counts; a syntax or undefined-object error does not)."""
     return f"""
 DO $t$ BEGIN
   BEGIN
@@ -52,6 +52,8 @@ DO $t$ BEGIN
     RAISE EXCEPTION 'ASSERT not refused: {what}';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'ASSERT not refused%' THEN RAISE; END IF;
+    -- a typo in the attack (syntax / undefined object) is a broken test, not a refusal
+    IF SQLSTATE LIKE '42%' THEN RAISE; END IF;
   END;
 END $t$;"""
 
@@ -165,6 +167,67 @@ END $t$;"""),
           + _expect_refused(f"PERFORM agents.set_agent_modo('{_A}', '{_JULIA}', 'ligado', 0, NULL);", "0 idle days")
           + _expect_refused(f"PERFORM agents.set_agent_modo('{_A}', gen_random_uuid(), 'ligado', NULL, NULL);", "unknown agent")),
     # --- LGPD: delete-by-lead across agents ------------------------------------------------------------------------
+    # --- timed pause, hand-off, opt-out, version stamp ---------------------------------------------------------------
+    _step("timed_pause_stores_until_and_the_resume_clears_it", f"""
+DO $t$ BEGIN
+  PERFORM agents.set_participante_estado('{_A}', '{_C2}', '{_JULIA}', ARRAY['ativo'], 'pausado', 'usuario', '{_A}', 'ate amanha', now() + interval '1 day');
+  IF (SELECT pausado_ate IS NULL FROM agents.thread_participantes WHERE thread_id = '{_C2}') THEN RAISE EXCEPTION 'ASSERT pause must store pausado_ate'; END IF;
+  IF (SELECT ate IS NULL FROM agents.thread_participante_eventos WHERE thread_id = '{_C2}' AND para = 'pausado' ORDER BY created_at DESC LIMIT 1) THEN
+    RAISE EXCEPTION 'ASSERT the pause event must record until-when';
+  END IF;
+  PERFORM agents.set_participante_estado('{_A}', '{_C2}', '{_JULIA}', ARRAY['pausado'], 'ativo', 'usuario', '{_A}', 'voltou');
+  IF (SELECT pausado_ate IS NOT NULL FROM agents.thread_participantes WHERE thread_id = '{_C2}') THEN RAISE EXCEPTION 'ASSERT resume must clear pausado_ate'; END IF;
+END $t$;"""),
+    _step("handoff_is_written_with_the_move_and_a_refused_move_rolls_the_note_back", f"""
+DO $t$ DECLARE h uuid; n int; BEGIN
+  h := agents.transferir_thread('{_A}', '{_C2}', '{_JULIA}', ARRAY['ativo'], 'transferido', 'papel', NULL, NULL, 'dono_org',
+         'lead_qualificado', 'Quer comprar', '["financia?"]'::jsonb, '[{{"quem": "corretor", "o_que": "liga amanha"}}]'::jsonb, 'agente', NULL,
+         '{{"estagio": "quente"}}'::jsonb, true, '{{"cpf": "***.456.789-**"}}'::jsonb);
+  IF (SELECT estado FROM agents.thread_participantes WHERE thread_id = '{_C2}' AND agent_id = '{_JULIA}') <> 'transferido' THEN
+    RAISE EXCEPTION 'ASSERT the giver must be transferido';
+  END IF;
+  IF NOT (SELECT identificacao_completa AND perfil->>'estagio' = 'quente' AND identificacao_mascarada->>'cpf' = '***.456.789-**' AND para_papel = 'dono_org'
+            FROM agents.thread_handoffs WHERE id = h) THEN RAISE EXCEPTION 'ASSERT the note must carry profile and masked identity'; END IF;
+  SELECT count(*) INTO n FROM agents.thread_handoffs WHERE thread_id = '{_C2}';
+  BEGIN
+    PERFORM agents.transferir_thread('{_A}', '{_C2}', '{_JULIA}', ARRAY['ativo'], 'transferido', 'papel', NULL, NULL, 'dono_org', 'x', 'y', NULL, NULL, 'agente', NULL);
+    RAISE EXCEPTION 'ASSERT a hand-off from a non-active giver must be refused';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'ASSERT%' THEN RAISE; END IF;
+    IF SQLERRM <> 'participante_estado_mudou' THEN RAISE EXCEPTION 'ASSERT wrong refusal: %', SQLERRM; END IF;
+  END;
+  IF (SELECT count(*) FROM agents.thread_handoffs WHERE thread_id = '{_C2}') <> n THEN RAISE EXCEPTION 'ASSERT the refused move must roll the note back'; END IF;
+  PERFORM agents.set_participante_estado('{_A}', '{_C2}', '{_JULIA}', ARRAY['transferido'], 'ativo', 'sistema', NULL, 'reset');
+END $t$;"""),
+    _step("handoff_to_an_agent_makes_it_the_active_participant", f"""
+DO $t$ BEGIN
+  PERFORM agents.transferir_thread('{_A}', '{_C2}', '{_JULIA}', ARRAY['ativo'], 'transferido', 'agente', '{_BIA}', NULL, NULL, 'juridico', 'segue', NULL, NULL, 'agente', NULL);
+  IF (SELECT estado FROM agents.thread_participantes WHERE thread_id = '{_C2}' AND agent_id = '{_BIA}') <> 'ativo' THEN RAISE EXCEPTION 'ASSERT the receiving agent must be active'; END IF;
+  DELETE FROM agents.thread_participantes WHERE thread_id = '{_C2}' AND agent_id = '{_BIA}';
+  PERFORM agents.set_participante_estado('{_A}', '{_C2}', '{_JULIA}', ARRAY['transferido'], 'ativo', 'sistema', NULL, 'reset');
+END $t$;"""),
+    _step("handoff_destination_must_name_exactly_its_target", _expect_refused(
+        f"INSERT INTO agents.thread_handoffs (org_id, thread_id, de_agent_id, para_tipo, para_papel, para_user_id, motivo_codigo, resumo) "
+        f"VALUES ('{_A}', '{_C2}', '{_JULIA}', 'papel', 'dono_org', '{_A}', 'x', 'y');",
+        "a hand-off naming two targets")),
+    _step("opt_out_ends_every_agents_participation_and_is_idempotent", f"""
+DO $t$ DECLARE n int; BEGIN
+  n := agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now());
+  IF n <> 2 THEN RAISE EXCEPTION 'ASSERT opt-out should end both active threads, moved %', n; END IF;
+  IF EXISTS (SELECT 1 FROM agents.thread_participantes WHERE thread_id IN ('{_C1}', '{_C2}') AND estado <> 'encerrado') THEN RAISE EXCEPTION 'ASSERT every participant must be encerrado'; END IF;
+  IF (SELECT count(*) FROM agents.thread_participante_eventos WHERE motivo = 'opt_out') <> 2 THEN RAISE EXCEPTION 'ASSERT one opt_out event per move'; END IF;
+  IF agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now()) <> 0 THEN RAISE EXCEPTION 'ASSERT a second opt-out moves nobody'; END IF;
+  IF agents.registrar_opt_out('{_A}', 'social-wiring', 'nunca-existiu', now()) <> -1 THEN RAISE EXCEPTION 'ASSERT unknown lead is -1'; END IF;
+  IF (SELECT opt_out_em IS NULL FROM agents.lead_refs WHERE ref_externa = 'contato-1') THEN RAISE EXCEPTION 'ASSERT opt_out_em stamped'; END IF;
+  UPDATE agents.thread_participantes SET estado = 'ativo', saiu_em = NULL WHERE thread_id IN ('{_C1}', '{_C2}');
+END $t$;"""
+          + _expect_refused(f"UPDATE agents.lead_refs SET opt_in_origem = 'spam' WHERE ref_externa = 'contato-1';", "an unknown opt-in origin")),
+    _step("assistant_messages_take_the_version_stamp", f"""
+DO $t$ BEGIN
+  INSERT INTO agents.messages (id, org_id, conversation_id, role, texto, agent_id, compiled_hash, definition_version_id, org_specs_hash, skill_version_ids)
+  VALUES ('d9000000-0000-4000-8000-000000000009', '{_A}', '{_C1}', 'assistant', 'carimbada', '{_JULIA}', 'sha256:a', gen_random_uuid(), 'sha256:b', ARRAY[gen_random_uuid()]);
+  DELETE FROM agents.messages WHERE id = 'd9000000-0000-4000-8000-000000000009';
+END $t$;"""),
     _step("apagar_lead_erases_every_thread_of_the_lead_across_agents_and_is_idempotent", f"""
 DO $t$ DECLARE lead uuid; r jsonb; BEGIN
   SELECT id INTO lead FROM agents.lead_refs WHERE ref_externa = 'contato-1';

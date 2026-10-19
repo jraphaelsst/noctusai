@@ -79,6 +79,8 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "learning_content_immutable": _conflict("learning_content_immutable"),
     "version_not_found": NotFound,
     "agent_not_found": NotFound,
+    "participante_not_found": NotFound,
+    "participante_estado_mudou": _conflict("participante_estado_mudou"),
     "eval_case_not_found": NotFound,
     "no_eval_cases": ValueError,
     "too_many_cases": ValueError,

@@ -14711,6 +14711,13 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "products/agents/backend/migrations/033_julia_v2_threads.sql",
+        "thread_handoffs_para_check",
+        "Migration 033 unapplied (Julia v2 A-THREAD) — the hand-off destination CHECK (exactly one of agent / user / role) has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/033_julia_v2_threads.sql",
         "conversations_tipo_check",
         "Migration 033 unapplied (Julia v2 A-THREAD) — the tipo enum CHECK has no live object to probe against yet. "
         "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "

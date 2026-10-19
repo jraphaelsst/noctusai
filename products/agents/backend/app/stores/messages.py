@@ -25,8 +25,10 @@ __all__ = [
 _SCHEMA = "agents"
 _TABLE = "messages"
 
-#: Contract §E.1 `role` CHECK.
-ROLES = ("user", "assistant", "system")
+#: Contract §E.1 `role` CHECK, widened by 033 (Julia v2 §6.1): ``humano`` is a
+#: human attendant's message in a lead thread, ``evento`` a thread event (a
+#: hand-off, a pause, ...). Neither is model input of the pre-v2 history.
+ROLES = ("user", "assistant", "system", "humano", "evento")
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,18 @@ class MessageRecord:
     #: Lais F-AG (029): sha256 of the per-turn `contexto` an assistant message
     #: ran with (channel turns only; `None` everywhere else).
     contexto_hash: str | None = None
+    #: Julia v2 (033): the AUTHOR agent of an ``assistant`` row (``None`` for the
+    #: lead / a human), the lead the message belongs to (denormalised for
+    #: cross-agent reads + LGPD) and the human attendant of a ``humano`` row.
+    agent_id: UUID | None = None
+    lead_ref_id: UUID | None = None
+    autor_user_id: UUID | None = None
+    #: Version stamp of an assistant message (033; ``None`` on legacy rows): the platform definition
+    #: version, the org-specs hash and the shared skill versions the turn ran with. ``compiled_hash``
+    #: (012) is the fourth part of the tuple.
+    definition_version_id: UUID | None = None
+    org_specs_hash: str | None = None
+    skill_version_ids: list[UUID] | None = None
 
 
 class MessageStore(Protocol):
@@ -70,7 +84,18 @@ class MessageStore(Protocol):
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
         contexto_hash: str | None = None,
+        agent_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
+        autor_user_id: UUID | None = None,
+        definition_version_id: UUID | None = None,
+        org_specs_hash: str | None = None,
+        skill_version_ids: list[UUID] | None = None,
     ) -> MessageRecord:
+        ...
+
+    def link_thread_lead(self, org_id: UUID, conversation_id: UUID, lead_ref_id: UUID) -> int:
+        """Julia v2: stamp ``lead_ref_id`` on every message of the thread that
+        has none (the lazy self-link / M3). Idempotent. Returns how many."""
         ...
 
     def list(
@@ -154,6 +179,12 @@ class FakeMessageStore:
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
         contexto_hash: str | None = None,
+        agent_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
+        autor_user_id: UUID | None = None,
+        definition_version_id: UUID | None = None,
+        org_specs_hash: str | None = None,
+        skill_version_ids: list[UUID] | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -171,9 +202,23 @@ class FakeMessageStore:
             "version_id": version_id,
             "compiled_hash": compiled_hash,
             "contexto_hash": contexto_hash,
+            "agent_id": agent_id,
+            "lead_ref_id": lead_ref_id,
+            "autor_user_id": autor_user_id,
+            "definition_version_id": definition_version_id,
+            "org_specs_hash": org_specs_hash,
+            "skill_version_ids": list(skill_version_ids) if skill_version_ids is not None else None,
         }
         self._rows.setdefault((org_id, conversation_id), []).append(row)
         return self._to_record(row)
+
+    def link_thread_lead(self, org_id: UUID, conversation_id: UUID, lead_ref_id: UUID) -> int:
+        n = 0
+        for row in self._rows.get((org_id, conversation_id), []):
+            if row.get("lead_ref_id") is None:
+                row["lead_ref_id"] = lead_ref_id
+                n += 1
+        return n
 
     def list(
         self,
@@ -282,6 +327,12 @@ class SupabaseMessageStore:
         version_id: UUID | None = None,
         compiled_hash: str | None = None,
         contexto_hash: str | None = None,
+        agent_id: UUID | None = None,
+        lead_ref_id: UUID | None = None,
+        autor_user_id: UUID | None = None,
+        definition_version_id: UUID | None = None,
+        org_specs_hash: str | None = None,
+        skill_version_ids: list[UUID] | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -300,9 +351,32 @@ class SupabaseMessageStore:
             payload["compiled_hash"] = compiled_hash
         if contexto_hash is not None:
             payload["contexto_hash"] = contexto_hash
+        # Julia v2 (033) columns — omitted when unset, so a pre-v2 insert is unchanged.
+        if agent_id is not None:
+            payload["agent_id"] = str(agent_id)
+        if lead_ref_id is not None:
+            payload["lead_ref_id"] = str(lead_ref_id)
+        if autor_user_id is not None:
+            payload["autor_user_id"] = str(autor_user_id)
+        if definition_version_id is not None:
+            payload["definition_version_id"] = str(definition_version_id)
+        if org_specs_hash is not None:
+            payload["org_specs_hash"] = org_specs_hash
+        if skill_version_ids is not None:
+            payload["skill_version_ids"] = [str(v) for v in skill_version_ids]
         resp = self._table().insert(payload).execute()
         rows = resp.data or []
         return self._record(rows[0] if rows else payload)
+
+    def link_thread_lead(self, org_id: UUID, conversation_id: UUID, lead_ref_id: UUID) -> int:
+        resp = (
+            self._table()
+            .update({"lead_ref_id": str(lead_ref_id)})
+            .eq("org_id", str(org_id)).eq("conversation_id", str(conversation_id))
+            .is_("lead_ref_id", "null")
+            .execute()
+        )
+        return len(resp.data or [])
 
     def list(
         self,
@@ -437,6 +511,12 @@ class SupabaseMessageStore:
             custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
             tokens_entrada=row.get("tokens_entrada"),
             tokens_saida=row.get("tokens_saida"),
+            agent_id=UUID(str(row["agent_id"])) if row.get("agent_id") else None,
+            lead_ref_id=UUID(str(row["lead_ref_id"])) if row.get("lead_ref_id") else None,
+            autor_user_id=UUID(str(row["autor_user_id"])) if row.get("autor_user_id") else None,
+            definition_version_id=UUID(str(row["definition_version_id"])) if row.get("definition_version_id") else None,
+            org_specs_hash=row.get("org_specs_hash"),
+            skill_version_ids=[UUID(str(v)) for v in row["skill_version_ids"]] if row.get("skill_version_ids") else None,
         )
 
 
