@@ -140,7 +140,9 @@ def test_list_filters(s):
     sub = categories.create_category(s, {"name": "Folha", "direction": "income", "parent_id": cat["id"]})
     c = mk_entry(s, direction="receivable", description="Gamma", due_date=tomorrow, category_id=sub["id"])
     cc = categories.create_cost_center(s, {"code": "X", "name": "X"})
-    d = mk_entry(s, description="Delta", cost_center_id=cc["id"])
+    # explicit, far-future due date: the conftest default is a fixed calendar day that becomes
+    # "tomorrow" (and later "overdue") as the clock moves, which flaked the date filters below
+    d = mk_entry(s, description="Delta", cost_center_id=cc["id"], due_date=(date.today() + timedelta(days=30)).isoformat())
 
     def ids(**kw):
         rows, total, _, _ = entries.list_entries(s, **kw)
