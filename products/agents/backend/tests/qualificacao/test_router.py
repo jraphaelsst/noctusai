@@ -128,12 +128,42 @@ def test_reads_without_credential_are_401(qc, method, path):
     assert _call(qc.raw(), method, path).status_code == 401
 
 
-def test_a_plain_org_member_reads_the_same_standard(qc):
-    publicar_v1(qc.padroes)
-    _role(qc, "user", "viewer")
+@pytest.mark.parametrize("org_role", ["owner", "admin", "member", "viewer"])
+def test_standard_reads_are_platform_admin_only_even_for_an_org_owner(qc, org_role):
+    _, vid = publicar_v1(qc.padroes)
+    _role(qc, "user", org_role)
+    for path in (f"{BASE}/padroes", f"{BASE}/padroes/imob-lead/versoes", f"{BASE}/versoes/{vid}"):
+        r = qc.get(path)
+        assert r.status_code == 403 and r.json()["code"] == "platform_admin_required", (org_role, path)
+
+
+def test_platform_admin_reads_the_standard(qc):
+    _, vid = publicar_v1(qc.padroes)
     r = qc.get(f"{BASE}/padroes")
     assert r.status_code == 200 and [p["chave"] for p in r.json()["items"]] == ["imob-lead"]
     assert "org_id" not in r.json()["items"][0]
+    assert qc.get(f"{BASE}/versoes/{vid}").status_code == 200
+    assert qc.get(f"{BASE}/padroes/imob-lead/versoes").status_code == 200
+
+
+def test_product_token_cannot_read_the_standard(qc, chan_auth):
+    _, vid = publicar_v1(qc.padroes)
+    chan_auth(["agents:channel-status", "agents:channel-turn"])
+    for path in (f"{BASE}/padroes", f"{BASE}/versoes/{vid}", f"{BASE}/padroes/imob-lead/versoes"):
+        assert qc.raw().get(path).status_code == 403, path
+
+
+def test_channel_state_never_carries_weights_rules_or_model_text(qc, chan_auth):
+    vid = _seed_lead(qc)
+    chan_auth(["agents:channel-status"])
+    text = qc.raw().get(f"/api/channels/leads/{LEAD}/qualificacao").text
+    for banned in ("descricao_modelo", "como perguntar", "pontuacao", "detalhe", "regra\"", "pts", "minimo_para_ofertar",
+                   "multiplicador", "opcoes", "trecho"):
+        assert banned not in text, banned
+    b = qc.raw().get(f"/api/channels/leads/{LEAD}/qualificacao").json()
+    assert set(b) == {"lead_ref", "versao_id", "estagio", "regra_id", "score", "scores", "descartado_sugerido", "valores",
+                      "faltando", "identificacao_faltando", "pode_ofertar", "pode_concluir", "hash", "calculado_em",
+                      "eventos_imovel"}
 
 
 # ── CRUD + publish ──────────────────────────────────────────────────────────
@@ -278,13 +308,12 @@ def test_lead_qualificacao_auth_boundary(qc, chan_auth):
 
 # ── explainability + suggested discard + identity over HTTP ─────────────────
 
-def test_read_api_returns_regra_id_breakdown_and_never_the_quote(qc, chan_auth):
+def test_read_api_returns_regra_id_and_scores_but_no_breakdown(qc, chan_auth):
     _seed_lead(qc)
     chan_auth(["agents:channel-status"])
     b = qc.raw().get(f"/api/channels/leads/{LEAD}/qualificacao").json()
     assert b["regra_id"] == "em_conversa" and b["descartado_sugerido"] is None
-    assert b["detalhe"]["sem_eixo"] == {"operacao": 10}
-    assert b["identificacao_faltando"] == [] and "scores" in b
+    assert "detalhe" not in b and b["identificacao_faltando"] == [] and "scores" in b
 
 
 def test_confirm_discard_needs_a_suggestion_then_records_the_human(qc, chan_auth):

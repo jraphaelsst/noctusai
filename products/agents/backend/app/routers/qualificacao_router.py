@@ -1,9 +1,9 @@
 """Qualification standard API (Julia v2 CONTRACT §3, §8.2).
 
-* ``/api/qualificacao/...`` — the platform-wide standard. Reads: any org member
-  (the standard is the same for every org, owner decision Q2). Writes + publish:
-  NoctusAI platform admin only (``require_platform_admin``); there is no per-org
-  fork and no "Personalizar".
+* ``/api/qualificacao/...`` — the platform-wide standard (the same for every org, owner decision
+  Q2). Reads, writes and publish are NoctusAI platform admin only (``require_platform_admin``, 403
+  ``platform_admin_required``): criteria, ``descricao_modelo``, weights and rules are platform IP.
+  Org admins and SW only ever get the COMPUTED state (stage, score, faltando keys) via the channel route.
 * ``GET /api/channels/leads/{lead_ref}/qualificacao`` — the computed state of one
   lead (channel token, ``agents:channel-status``), org-scoped by the token.
 
@@ -23,7 +23,6 @@ from app.dependencies import (
     require_admin,
     require_channel_status,
     require_channel_turn,
-    require_member,
     require_platform_admin,
 )
 from app.qualificacao import engine
@@ -116,7 +115,7 @@ def _draft(store: PadraoStore, versao_id: UUID):
 
 @router.get("/api/qualificacao/padroes")
 async def listar_padroes(
-    ctx: AuthContext = Depends(require_member), store: PadraoStore = Depends(get_padrao_store_dep),
+    ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     return {"items": [
         {"id": str(p.id), "chave": p.chave, "nome": p.nome, "descricao": p.descricao}
@@ -126,7 +125,7 @@ async def listar_padroes(
 
 @router.get("/api/qualificacao/padroes/{chave}/versoes")
 async def listar_versoes(
-    chave: str, ctx: AuthContext = Depends(require_member), store: PadraoStore = Depends(get_padrao_store_dep),
+    chave: str, ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
         padrao = store.obter_padrao(chave)
@@ -140,7 +139,7 @@ async def listar_versoes(
 
 @router.get("/api/qualificacao/versoes/{versao_id}")
 async def obter_versao(
-    versao_id: UUID, ctx: AuthContext = Depends(require_member), store: PadraoStore = Depends(get_padrao_store_dep),
+    versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
         return versao_out(store.obter_versao(versao_id))
@@ -298,9 +297,9 @@ async def obter_qualificacao_lead(
     leads: LeadQualificacaoStore = Depends(get_lead_qualificacao_store_dep),
     ident: IdentificacaoService = Depends(get_identificacao_service_dep),
 ) -> dict[str, Any]:
-    """Full computed state: stage + the rule that fired, total and per-axis scores with the
-    criterion-by-criterion breakdown, a suggested (never applied) discard, property events. The
-    literal quotes and the identity values never leave through this route."""
+    """Computed state: stage + the rule ID that fired, total and per-axis scores, missing criterion KEYS, a
+    suggested (never applied) discard, property events. Never weights, rule bodies, ``descricao_modelo``,
+    literal quotes or identity values (platform IP / LGPD)."""
     service = _service(padroes, leads, ident)
     with _Mapped():
         q = service.obter_qualificacao(ctx.org_id, lead_ref)
@@ -309,7 +308,7 @@ async def obter_qualificacao_lead(
     e = q.estado
     return {
         "lead_ref": str(lead_ref), "versao_id": str(q.versao_id), "estagio": e.estagio, "regra_id": e.regra_id,
-        "score": e.score, "scores": dict(e.scores), "detalhe": e.detalhe,
+        "score": e.score, "scores": dict(e.scores),
         "descartado_sugerido": e.descartado_sugerido, "valores": e.valores, "faltando": list(e.faltando),
         "identificacao_faltando": list(e.identificacao_faltando) if e.pedir_identificacao else [],
         "pode_ofertar": e.pode_ofertar, "pode_concluir": e.pode_concluir, "hash": e.hash,

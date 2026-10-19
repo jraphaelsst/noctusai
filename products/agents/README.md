@@ -58,7 +58,7 @@ model only records criterion values through tools; **score and stage are compute
 
 - **Library** (migration 032): `qualificacao_padroes/_versoes/_criterios/_estagios/_parametros`;
   a published version is immutable (triggers); `agent_versions.qualificacao_versao_id` pins one.
-  Authoring + publish (rule validation, 422 with every problem) is platform-admin only:
+  Reading, authoring and publish (rule validation, 422 with every problem) are platform-admin only (criteria, weights and rules are platform IP; orgs and SW only get the computed state):
   `/api/qualificacao/*`.
 - **Criteria** carry a score `eixo` (several named axes + the total), `escopo` (sdr / financeiro / ...:
   a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
