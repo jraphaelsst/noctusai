@@ -1,7 +1,7 @@
 ---
 name: noc-refs-sheet
 description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + count + a pt-BR Observação. The link TARGET differs per sheet — getting that wrong means redoing every row.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-refs-sheet — ONExxxxx references into a midiasone spreadsheet
@@ -14,6 +14,41 @@ version: 1.0.0
 Shipping Priscila the Cindy way on 2026-09-17 meant rewriting all 10 rows. **Never infer
 the target from the last sheet you touched — look it up in §1, and if the sheet is not
 listed, ASK.**
+
+## 0 · Accounts & IDs — the ONE place to change
+
+Every identity and ID this skill depends on lives in this table. The rest of the skill
+names **roles** ("the Drive reader", "the sheet writer"), never an email — so moving to a
+different account, a service account, or a shared drive is an edit to these rows only.
+
+| Role / ID | Current value | Used for |
+|---|---|---|
+| **Drive reader** — the claude.ai Google Drive connector | `midiasone12@gmail.com` | search + list the `ONExxxxx` ref folders (§2 steps 3–4) |
+| **Sheet writer** — the Chrome profile driving the sheets | `joaoraphaelsst` | read the CSV export + type cells (§2 step 1, §4) |
+| **Probe folder** — any folder the Drive reader must be able to list | `2026` = `1360Sml33ieu8OO7V3vYaVKT3VAd1YFYC` | the preflight below |
+| **Cindy** sheet | `1PrOwuJVF6Tq-nENfb2KQBRIzU4TT1bi61tQOVwqYOV0`, `gid=0` | §1 |
+| **Priscila** sheet | `1pzE7h67ugyN0__iOsHTMdNFeHRlxBowjnM5uZX1JSFY`, `gid=0` | §1 |
+
+A sheet ID missing from this table ⇒ find it once (Drive search `<name> type:spreadsheet`
+in the sheet writer's Chrome) and **record it here in the same run** — re-searching every
+time is the friction this row exists to remove.
+
+### Preflight — prove the Drive reader is the right account, BEFORE resolving any ref
+
+Run `search_files` with `parentId = '<probe folder>'` (folders only, `excludeContentSnippets`).
+
+- **Children come back** ⇒ the connector can see the tree; proceed.
+- **Empty result** ⇒ the connector is on the wrong account. STOP and ask the user to
+  reconnect it as the Drive reader (claude.ai → Settings → Connectors → Google Drive, or
+  `/mcp` → reconnect). Do **not** fall back to Drive search in the sheet writer's Chrome:
+  it surfaces stray files (`REELS ONE8400.mp4`) but not the ref folders, so it yields
+  wrong answers rather than none.
+
+Why a probe, not an email check: on 2026-10-19 the connector had silently moved to a
+viewer-only account. `get_file_metadata` by ID still worked (owner shown as midiasone12,
+but `canAddChildren: false`), while **every** `search_files` — title or `parentId` — returned
+`{}` with no error. The probe tests the capability the skill actually needs, so it keeps
+working whatever account §0 names next.
 
 ## 1 · The per-sheet contract
 
@@ -31,13 +66,15 @@ registry and this skill points at it instead.
 
 ## 2 · Workflow
 
-1. **Read the sheet.** It is not visible to the claude.ai Drive connector (that connector
-   is authed as `midiasone12@gmail.com`, the sheets are owned by `joaoraphaelsst`). Open it
-   in Chrome and fetch:
-   `fetch('/spreadsheets/d/<id>/export?format=csv&gid=0')`.
+0. **Preflight** the Drive reader (§0). Empty ⇒ stop and ask for a reconnect.
+1. **Read the sheet.** The sheets belong to the sheet writer, not the Drive reader, so the
+   connector cannot see them. Open the sheet (ID from §0) in the sheet writer's Chrome and
+   fetch: `fetch('/spreadsheets/d/<id>/export?format=csv&gid=0')`.
 2. **Take only the rows that need work** — the ones with a `Código` and an empty link.
    Never enumerate every ref in the Drive.
-3. **Resolve each ref** via the connector:
+3. **Resolve each ref** via the connector (the Drive reader). The search term must be the
+   full `ONExxxxx` token — `title contains '8400'` returns nothing, because Drive matches
+   title words by prefix:
    `title contains 'ONExxxxx' and mimeType = 'application/vnd.google-apps.folder'`,
    then `parentId = '<ref id>'` for its children, and `parentId = '<VIDEOS id>'` to count.
    Add `excludeContentSnippets: true` and filter to folders — an unfiltered listing of a
@@ -66,6 +103,12 @@ registry and this skill points at it instead.
   property. Read folder titles, do not just match the number.
 - **Codes carry invisible characters.** Priscila's sheet has U+2060 word-joiners prefixing
   some codes (`⁠ONE8132`). Match on the digits.
+- **A link cell can hold a smart chip, not a URL.** The CSV export shows the chip's title
+  (`Vídeos - Google Drive`), so a naive `^https?:` test flags it as empty. A non-empty link
+  cell is the user's — leave it.
+- **The same code can appear on two rows** (Cindy `ONE10602`, rows 4 and 17). Fill it the
+  same way and say `código repetido (já está na linha N)` in the Observação; deleting the
+  duplicate is the user's call.
 - **Codes are sometimes lowercase** (`one10846`) — Drive search is case-insensitive, the
   Observação should still say `ONE10846`.
 
@@ -74,7 +117,11 @@ registry and this skill points at it instead.
 `update_file` takes only `title` + `parentId`; there is no cell-write path through the
 connector, and the calendar service account does not carry a `spreadsheets` scope.
 
-- Select the first cell by URL: `.../edit#gid=0&range=C2` (or `D2` for Cindy).
+- Select the first cell by URL, with the range in the **query string too**:
+  `.../edit?gid=0&range=C2#gid=0&range=C2` (or `D2` for Cindy). A hash-only change on an
+  already-open tab does not reload — the cell looks selected but the grid has no keyboard
+  focus and every keystroke is silently dropped. Screenshot to confirm the selection
+  before typing.
 - Then per row: `type` link → `Tab` → count → `Tab` → Observação → `Return`.
   **`Return` reliably returns to the starting column of the next row**, so rows chain.
 - Batch a whole row (or several) through `browser_batch` — it is markedly faster and the
@@ -106,6 +153,7 @@ edit — re-fetch before calling a cell missing.
 ## 6 · Depth
 
 `projects/one-ops-agents/PROJECT.md` (the productisation of this procedure; §5 has the
-service-account plan that will replace the browser route) · memory
+service-account plan that will replace the browser route — when it lands, it becomes the
+new Drive reader / sheet writer in §0) · memory
 `feedback_agent_drive_access_uses_claude_connector` (which Drive identity can see what,
 and why the connector cannot write).
