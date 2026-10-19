@@ -242,6 +242,9 @@ include = ["noctusai_lib*"]
 # package so ResvgRenderAdapter finds them via Path(__file__)/"fonts" in
 # any install layout (editable in dev; copied into the slim image).
 "noctusai_lib.integrations.svg_render" = ["fonts/*.ttf", "fonts/*.txt"]
+# The content-performance (SIMEC) recommended defaults are DATA, loaded via
+# importlib.resources — they must ship with the installed package.
+"noctusai_lib.domain.content_performance" = ["defaults/*.json"]
 
 # Pytest auto-loaded plugin — every test session that has `noctusai-lib`
 # installed gets `noctusai_lib.testing.pytest_plugin` registered. The

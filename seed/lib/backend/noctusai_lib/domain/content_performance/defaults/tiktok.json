@@ -1,0 +1,63 @@
+{
+  "platform": "tiktok",
+  "version": "tiktok-defaults-1.0.0",
+  "description": "SIMEC defaults for TikTok, mirroring the SIMEC_TikTok workbook (ratios divide by views). TikTok collection is not built (owner 2026-10-16: skip TikTok for now); kept so the per-platform denominators are already data when it is.",
+  "required_metrics": ["views"],
+  "metrics": {
+    "views": {"label": "Visualizações", "unit": "count"},
+    "likes": {"label": "Curtidas", "unit": "count"},
+    "comments": {"label": "Comentários", "unit": "count"},
+    "shares": {"label": "Compartilhamentos", "unit": "count"},
+    "favorites": {"label": "Favoritos", "unit": "count"},
+    "follows": {"label": "Seguidores atribuídos", "unit": "count"},
+    "duration_s": {"label": "Duração (s)", "unit": "seconds"},
+    "avg_watch_time_s": {"label": "Tempo médio (s)", "unit": "seconds"},
+    "completion_rate": {"label": "Assistiu até o fim", "unit": "fraction"},
+    "for_you_rate": {"label": "Origem Para Você", "unit": "fraction"}
+  },
+  "windows": {
+    "72h": {"label": "72 h", "min_days": 3, "max_days": 4},
+    "7d": {"label": "7 dias", "min_days": 7, "max_days": 10},
+    "30d": {"label": "30 dias", "min_days": 30, "max_days": 35},
+    "atual": {"label": "Atual", "min_days": null, "max_days": null}
+  },
+  "indicators": {
+    "total_interacoes": {"label": "Total de interações", "op": "sum_all", "inputs": ["likes", "comments", "shares", "favorites"], "unit": "count"},
+    "taxa_interacao": {"label": "Interação / views", "op": "ratio", "inputs": ["total_interacoes", "views"]},
+    "taxa_compartilhamento": {"label": "Compartilhamentos / views", "op": "ratio", "inputs": ["shares", "views"]},
+    "taxa_favoritos": {"label": "Favoritos / views", "op": "ratio", "inputs": ["favorites", "views"]},
+    "taxa_seguidores": {"label": "Seguidores / views", "op": "ratio", "inputs": ["follows", "views"]},
+    "tempo_medio_duracao": {"label": "Tempo médio / duração", "op": "ratio", "inputs": ["avg_watch_time_s", "duration_s"]}
+  },
+  "panel": {
+    "conteudos_validos": {"label": "Conteúdos válidos", "aggregate": "count"},
+    "visualizacoes_somadas": {"label": "Visualizações somadas", "aggregate": "sum", "source": "views"},
+    "media_visualizacoes": {"label": "Média de visualizações", "aggregate": "mean", "source": "views"},
+    "media_curtidas": {"label": "Média de curtidas", "aggregate": "mean", "source": "likes"},
+    "media_taxa_interacao": {"label": "Média da taxa de interação / views", "aggregate": "mean", "source": "taxa_interacao"},
+    "media_taxa_compartilhamento": {"label": "Média compartilhamentos / views", "aggregate": "mean", "source": "taxa_compartilhamento"},
+    "media_taxa_favoritos": {"label": "Média favoritos / views", "aggregate": "mean", "source": "taxa_favoritos"},
+    "media_taxa_seguidores": {"label": "Média seguidores / views", "aggregate": "mean", "source": "taxa_seguidores"},
+    "media_tempo_medio_duracao": {"label": "Média tempo médio / duração", "aggregate": "mean", "source": "tempo_medio_duracao"},
+    "media_assistiu_ate_o_fim": {"label": "Média assistiu até o fim", "aggregate": "mean", "source": "completion_rate"},
+    "media_origem_para_voce": {"label": "Média origem Para Você", "aggregate": "mean", "source": "for_you_rate"},
+    "amostra_taxa_interacao": {"label": "Amostra com taxa de interação", "aggregate": "sample", "source": "taxa_interacao"}
+  },
+  "baseline": {
+    "lookback_days": 90,
+    "min_posts": 5,
+    "group_by": ["format"],
+    "indicators": ["views", "taxa_interacao", "taxa_compartilhamento", "taxa_favoritos", "taxa_seguidores"]
+  },
+  "alerts": {
+    "interacao_fora_do_padrao": {"indicator": "taxa_interacao", "method": "pct_from_median", "threshold": 0.5, "direction": "both"},
+    "views_fora_do_padrao": {"indicator": "views", "method": "outside_iqr", "threshold": 1.5, "direction": "both"}
+  },
+  "cadence": {
+    "reviews": {
+      "semanal": {"label": "Estratégia semanal", "every_days": 7},
+      "mensal": {"label": "Revisão mensal", "every_days": 30}
+    },
+    "decision_validation_days": 28
+  }
+}

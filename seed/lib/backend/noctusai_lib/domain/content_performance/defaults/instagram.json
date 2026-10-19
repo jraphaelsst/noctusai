@@ -1,0 +1,67 @@
+{
+  "platform": "instagram",
+  "version": "instagram-defaults-1.0.0",
+  "description": "Recommended SIMEC defaults for Instagram (methodology values from the SIMEC 1.0 workbook + the 2026-10-12..14 conversations). Ratios divide by reach. Every value here is overridable per org and per profile; see DECISIONS.md 2026-10-19.",
+  "required_metrics": ["views"],
+  "metrics": {
+    "views": {"label": "Visualizações", "unit": "count"},
+    "reach": {"label": "Alcance", "unit": "count"},
+    "likes": {"label": "Curtidas", "unit": "count"},
+    "comments": {"label": "Comentários", "unit": "count"},
+    "shares": {"label": "Compartilhamentos", "unit": "count"},
+    "saves": {"label": "Salvamentos", "unit": "count"},
+    "follows": {"label": "Seguidores atribuídos", "unit": "count", "note": "Instagram attributes follows to FEED and STORY posts only; blank (never 0) for Reels."},
+    "avg_watch_time_s": {"label": "Tempo médio (s)", "unit": "seconds"},
+    "duration_s": {"label": "Duração (s)", "unit": "seconds", "available": false, "note": "The Instagram Graph API does not return video duration (phase0-audit §2); needs a file probe or the Criação de Mídia record."},
+    "skip_rate": {"label": "Taxa de pulo", "unit": "fraction", "note": "Reels only. Proxy for early drop-off; not the retention curve."},
+    "views_3s_rate": {"label": "Visualizações acima de 3 s", "unit": "fraction", "available": false, "note": "Not exposed by the Instagram Graph API (phase0-audit §2); skip rate is the labelled proxy."}
+  },
+  "windows": {
+    "72h": {"label": "72 h", "min_days": 3, "max_days": 4},
+    "7d": {"label": "7 dias", "min_days": 7, "max_days": 10},
+    "30d": {"label": "30 dias", "min_days": 30, "max_days": 35},
+    "atual": {"label": "Atual", "min_days": null, "max_days": null}
+  },
+  "indicators": {
+    "total_interacoes": {"label": "Total de interações", "op": "sum_all", "inputs": ["likes", "comments", "shares", "saves"], "unit": "count"},
+    "taxa_interacao": {"label": "Interação / alcance", "op": "ratio", "inputs": ["total_interacoes", "reach"]},
+    "taxa_compartilhamento": {"label": "Compartilhamentos / alcance", "op": "ratio", "inputs": ["shares", "reach"]},
+    "taxa_salvamento": {"label": "Salvamentos / alcance", "op": "ratio", "inputs": ["saves", "reach"]},
+    "taxa_seguidores": {"label": "Seguidores / alcance", "op": "ratio", "inputs": ["follows", "reach"]},
+    "tempo_medio_duracao": {"label": "Tempo médio / duração", "op": "ratio", "inputs": ["avg_watch_time_s", "duration_s"]}
+  },
+  "panel": {
+    "conteudos_validos": {"label": "Conteúdos válidos", "aggregate": "count"},
+    "visualizacoes_somadas": {"label": "Visualizações somadas", "aggregate": "sum", "source": "views"},
+    "media_visualizacoes": {"label": "Média de visualizações", "aggregate": "mean", "source": "views"},
+    "media_alcance": {"label": "Média de alcance", "aggregate": "mean", "source": "reach"},
+    "media_taxa_interacao": {"label": "Média da taxa de interação / alcance", "aggregate": "mean", "source": "taxa_interacao"},
+    "media_taxa_compartilhamento": {"label": "Média compartilhamentos / alcance", "aggregate": "mean", "source": "taxa_compartilhamento"},
+    "media_taxa_salvamento": {"label": "Média salvamentos / alcance", "aggregate": "mean", "source": "taxa_salvamento"},
+    "media_taxa_seguidores": {"label": "Média seguidores / alcance", "aggregate": "mean", "source": "taxa_seguidores"},
+    "media_tempo_medio_duracao": {"label": "Média tempo médio / duração", "aggregate": "mean", "source": "tempo_medio_duracao"},
+    "media_taxa_pulo": {"label": "Média taxa de pulo registrada", "aggregate": "mean", "source": "skip_rate"},
+    "media_views_3s": {"label": "Média de visualizações acima de 3 s", "aggregate": "mean", "source": "views_3s_rate"},
+    "amostra_taxa_interacao": {"label": "Amostra com taxa de interação", "aggregate": "sample", "source": "taxa_interacao"},
+    "amostra_taxa_seguidores": {"label": "Amostra com taxa de seguidores", "aggregate": "sample", "source": "taxa_seguidores"}
+  },
+  "baseline": {
+    "lookback_days": 90,
+    "min_posts": 5,
+    "group_by": ["format"],
+    "indicators": ["views", "reach", "taxa_interacao", "taxa_compartilhamento", "taxa_salvamento", "taxa_seguidores"]
+  },
+  "alerts": {
+    "interacao_fora_do_padrao": {"indicator": "taxa_interacao", "method": "pct_from_median", "threshold": 0.5, "direction": "both"},
+    "compartilhamento_fora_do_padrao": {"indicator": "taxa_compartilhamento", "method": "pct_from_median", "threshold": 0.5, "direction": "both"},
+    "salvamento_fora_do_padrao": {"indicator": "taxa_salvamento", "method": "pct_from_median", "threshold": 0.5, "direction": "both"},
+    "alcance_fora_do_padrao": {"indicator": "reach", "method": "outside_iqr", "threshold": 1.5, "direction": "both"}
+  },
+  "cadence": {
+    "reviews": {
+      "semanal": {"label": "Estratégia semanal", "every_days": 7},
+      "mensal": {"label": "Revisão mensal", "every_days": 30}
+    },
+    "decision_validation_days": 28
+  }
+}

@@ -1,0 +1,339 @@
+{
+ "platform": "tiktok",
+ "source_workbook": "products/social-wiring/projects/marketing-intelligence/kits/simec-1.0/SIMEC_TikTok.xlsx",
+ "generator": "pycel (see generate_golden.py)",
+ "cases": [
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-10",
+    "content_id": "T1",
+    "topic": "maternidade",
+    "format": "Vídeo",
+    "duration_s": 28,
+    "window": "7d",
+    "views": 5000,
+    "likes": 400,
+    "comments": 30,
+    "shares": 60,
+    "favorites": 45,
+    "follows": 12,
+    "avg_watch_time_s": 11.2,
+    "completion_rate": 0.18,
+    "for_you_rate": 0.81,
+    "source": "TikTok Studio",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 535,
+    "taxa_interacao": 0.107,
+    "taxa_compartilhamento": 0.012,
+    "taxa_favoritos": 0.009,
+    "taxa_seguidores": 0.0024,
+    "tempo_medio_duracao": 0.39999999999999997,
+    "age_days": 7,
+    "status": "ok"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-13",
+    "content_id": "T2",
+    "topic": "maturidade",
+    "format": "Vídeo",
+    "duration_s": 60,
+    "window": "7d",
+    "views": 1200,
+    "likes": 80,
+    "comments": 6,
+    "shares": 4,
+    "favorites": 9,
+    "follows": null,
+    "avg_watch_time_s": 21,
+    "completion_rate": 0.09,
+    "for_you_rate": 0.6,
+    "source": "TikTok Studio",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 99,
+    "taxa_interacao": 0.0825,
+    "taxa_compartilhamento": 0.0033333333333333335,
+    "taxa_favoritos": 0.0075,
+    "taxa_seguidores": null,
+    "tempo_medio_duracao": 0.35,
+    "age_days": 10,
+    "status": "ok"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-12",
+    "content_id": "T3",
+    "topic": "zero views",
+    "format": "Vídeo",
+    "duration_s": 15,
+    "window": "7d",
+    "views": 0,
+    "likes": 0,
+    "comments": 0,
+    "shares": 0,
+    "favorites": 0,
+    "follows": 0,
+    "avg_watch_time_s": 0,
+    "completion_rate": null,
+    "for_you_rate": null,
+    "source": "views zero",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 0,
+    "taxa_interacao": null,
+    "taxa_compartilhamento": null,
+    "taxa_favoritos": null,
+    "taxa_seguidores": null,
+    "tempo_medio_duracao": 0.0,
+    "age_days": 9,
+    "status": "ok"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-12",
+    "content_id": "T4",
+    "topic": "missing favs",
+    "format": "Vídeo",
+    "duration_s": 20,
+    "window": "7d",
+    "views": 900,
+    "likes": 50,
+    "comments": 3,
+    "shares": 2,
+    "favorites": null,
+    "follows": 1,
+    "avg_watch_time_s": 9,
+    "completion_rate": null,
+    "for_you_rate": 0.5,
+    "source": null,
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": null,
+    "taxa_interacao": null,
+    "taxa_compartilhamento": 0.0022222222222222222,
+    "taxa_favoritos": null,
+    "taxa_seguidores": 0.0011111111111111111,
+    "tempo_medio_duracao": 0.45,
+    "age_days": 9,
+    "status": "duplicado"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-12",
+    "content_id": "T4",
+    "topic": "missing favs",
+    "format": "Vídeo",
+    "duration_s": 20,
+    "window": "7d",
+    "views": 900,
+    "likes": 50,
+    "comments": 3,
+    "shares": 2,
+    "favorites": null,
+    "follows": 1,
+    "avg_watch_time_s": 9,
+    "completion_rate": null,
+    "for_you_rate": 0.5,
+    "source": "dup",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": null,
+    "taxa_interacao": null,
+    "taxa_compartilhamento": 0.0022222222222222222,
+    "taxa_favoritos": null,
+    "taxa_seguidores": 0.0011111111111111111,
+    "tempo_medio_duracao": 0.45,
+    "age_days": 9,
+    "status": "duplicado"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-09-04",
+    "content_id": "T1",
+    "topic": "maternidade",
+    "format": "Vídeo",
+    "duration_s": 28,
+    "window": "30d",
+    "views": 7400,
+    "likes": 520,
+    "comments": 41,
+    "shares": 77,
+    "favorites": 60,
+    "follows": 15,
+    "avg_watch_time_s": 10.9,
+    "completion_rate": 0.17,
+    "for_you_rate": 0.79,
+    "source": "TikTok Studio",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 698,
+    "taxa_interacao": 0.09432432432432432,
+    "taxa_compartilhamento": 0.010405405405405405,
+    "taxa_favoritos": 0.008108108108108109,
+    "taxa_seguidores": 0.002027027027027027,
+    "tempo_medio_duracao": 0.3892857142857143,
+    "age_days": 32,
+    "status": "ok"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-09-09",
+    "content_id": "T2",
+    "topic": "maturidade",
+    "format": "Vídeo",
+    "duration_s": 60,
+    "window": "30d",
+    "views": 1500,
+    "likes": 90,
+    "comments": 7,
+    "shares": 5,
+    "favorites": 10,
+    "follows": 2,
+    "avg_watch_time_s": 20,
+    "completion_rate": 0.08,
+    "for_you_rate": null,
+    "source": "age 37",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 112,
+    "taxa_interacao": 0.07466666666666667,
+    "taxa_compartilhamento": 0.0033333333333333335,
+    "taxa_favoritos": 0.006666666666666667,
+    "taxa_seguidores": 0.0013333333333333333,
+    "tempo_medio_duracao": 0.3333333333333333,
+    "age_days": 37,
+    "status": "fora_da_janela"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-10-05",
+    "content_id": "T1",
+    "topic": "maternidade",
+    "format": "Vídeo",
+    "duration_s": 28,
+    "window": "atual",
+    "views": 8000,
+    "likes": 560,
+    "comments": 44,
+    "shares": 80,
+    "favorites": 66,
+    "follows": 16,
+    "avg_watch_time_s": 10.5,
+    "completion_rate": 0.16,
+    "for_you_rate": 0.78,
+    "source": "TikTok Studio",
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 750,
+    "taxa_interacao": 0.09375,
+    "taxa_compartilhamento": 0.01,
+    "taxa_favoritos": 0.00825,
+    "taxa_seguidores": 0.002,
+    "tempo_medio_duracao": 0.375,
+    "age_days": 63,
+    "status": "ok"
+   }
+  },
+  {
+   "inputs": {
+    "published_at": "2026-08-03",
+    "collected_at": "2026-08-10",
+    "content_id": "T5",
+    "topic": "no views",
+    "format": "Vídeo",
+    "duration_s": 28,
+    "window": "atual",
+    "views": null,
+    "likes": 10,
+    "comments": 1,
+    "shares": 1,
+    "favorites": 1,
+    "follows": null,
+    "avg_watch_time_s": null,
+    "completion_rate": null,
+    "for_you_rate": null,
+    "source": null,
+    "note": null
+   },
+   "expected": {
+    "total_interacoes": 13,
+    "taxa_interacao": null,
+    "taxa_compartilhamento": null,
+    "taxa_favoritos": null,
+    "taxa_seguidores": null,
+    "tempo_medio_duracao": null,
+    "age_days": 7,
+    "status": "incompleto"
+   }
+  }
+ ],
+ "panel": {
+  "7d": {
+   "conteudos_validos": 3,
+   "visualizacoes_somadas": 6200,
+   "media_visualizacoes": 2066.6666666666665,
+   "media_curtidas": 160.0,
+   "media_taxa_interacao": 0.09475,
+   "media_taxa_compartilhamento": 0.007666666666666667,
+   "media_taxa_favoritos": 0.00825,
+   "media_taxa_seguidores": 0.0024,
+   "media_tempo_medio_duracao": 0.25,
+   "media_assistiu_ate_o_fim": 0.135,
+   "media_origem_para_voce": 0.7050000000000001,
+   "amostra_taxa_interacao": 2
+  },
+  "30d": {
+   "conteudos_validos": 1,
+   "visualizacoes_somadas": 7400,
+   "media_visualizacoes": 7400.0,
+   "media_curtidas": 520.0,
+   "media_taxa_interacao": 0.09432432432432432,
+   "media_taxa_compartilhamento": 0.010405405405405405,
+   "media_taxa_favoritos": 0.008108108108108109,
+   "media_taxa_seguidores": 0.002027027027027027,
+   "media_tempo_medio_duracao": 0.3892857142857143,
+   "media_assistiu_ate_o_fim": 0.17,
+   "media_origem_para_voce": 0.79,
+   "amostra_taxa_interacao": 1
+  },
+  "atual": {
+   "conteudos_validos": 1,
+   "visualizacoes_somadas": 8000,
+   "media_visualizacoes": 8000.0,
+   "media_curtidas": 560.0,
+   "media_taxa_interacao": 0.09375,
+   "media_taxa_compartilhamento": 0.01,
+   "media_taxa_favoritos": 0.00825,
+   "media_taxa_seguidores": 0.002,
+   "media_tempo_medio_duracao": 0.375,
+   "media_assistiu_ate_o_fim": 0.16,
+   "media_origem_para_voce": 0.78,
+   "amostra_taxa_interacao": 1
+  }
+ }
+}
