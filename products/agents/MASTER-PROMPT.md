@@ -84,6 +84,9 @@ seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat component
   `compile_for_org` compiles the definition with that org's values (the hash covers texto + every content
   row + the pinned standard); `carimbo` = the version tuple stamped on messages; `ponto_cache` is the
   prompt-cache breakpoint (static prefix before the client block).
+- DB lockdown (migration 036): every agents table is service-role only — no anon/authenticated grant or
+  policy (except read-only `status_pagina`), so a browser session cannot read content over PostgREST.
+  New migrations must keep it so (keeper `check_no_authenticated_grant_on_content_tables`).
 - Visibility tiers (server-side): definition reads (`versions`, `compiled`, `prompts/{hash}`, `diff`,
   textos/ferramentas/decisoes/payload, compiled-per-org) are **platform-admin only**, audited as
   `definicao_lida`; writes are platform admin or a `studio:content-write` token (audited

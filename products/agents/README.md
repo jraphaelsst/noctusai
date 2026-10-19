@@ -23,6 +23,9 @@ platform admins** (Studio / `noctus.agents.content`); each org has an *instance*
 name, regions, knowledge, ...) that the definition references as `{{org.chave}}`. An org admin sees and edits
 only its own specs and a readiness status — never the prompt, hashes, tool descriptions or rules. No prompt
 text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects/julia-v2/CONTRACT.md` §2.6.
+Every agents table is **service-role only** (migration 036): the browser's Supabase session cannot read
+any of them over PostgREST, except `status_pagina` (read-only). All reads go through the API tiers above
+(keeper `check_no_authenticated_grant_on_content_tables`, DB probes `agents.content_tables.*`).
 
 ## Stack
 
