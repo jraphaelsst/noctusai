@@ -14709,6 +14709,69 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "append-only trigger of the identity-access audit has no live object to probe against yet. Register a "
         "GuardProbe in the SAME change that applies it.",
     ),
+    (
+        "products/agents/backend/migrations/033_julia_v2_threads.sql",
+        "conversations_tipo_check",
+        "Migration 033 unapplied (Julia v2 A-THREAD) — the tipo enum CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/033_julia_v2_threads.sql",
+        "conversations_thread_channel_check",
+        "Migration 033 unapplied (Julia v2 A-THREAD) — the thread-is-a-channel-row CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/033_julia_v2_threads.sql",
+        "uq_agents_thread_participantes_one_active",
+        "Migration 033 unapplied (Julia v2 A-THREAD) — the one-ACTIVE-participant-per-thread partial unique index has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/033_julia_v2_threads.sql",
+        "messages_role_check",
+        "Migration 033 unapplied (Julia v2 A-THREAD) — the widened message role CHECK (+humano/evento) has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/034_julia_v2_controles.sql",
+        "agents_modo_operacao_check",
+        "Migration 034 unapplied (Julia v2 A-THREAD) — the modo_operacao enum CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/034_julia_v2_controles.sql",
+        "agents_dreno_inatividade_dias_check",
+        "Migration 034 unapplied (Julia v2 A-THREAD) — the drain idle-days range CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/034_julia_v2_controles.sql",
+        "agent_audit_log_acao_check",
+        "Migration 034 unapplied (Julia v2 A-THREAD) — the widened audit acao CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/035_julia_v2_threads_constraints.sql",
+        "uq_agents_threads_channel",
+        "Migration 035 unapplied (Julia v2 A-THREAD) — the (org, channel, channel_ref) thread unique index (M4, runs only after the backfill is verified) has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/035_julia_v2_threads_constraints.sql",
+        "conversations_thread_lead_check",
+        "Migration 035 unapplied (Julia v2 A-THREAD) — the thread-has-a-lead CHECK (M4, runs only after the backfill is verified) has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
 )
 
 
