@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from app.qualificacao.models import DERIVADOS, EVENTOS_IMOVEL
+from app.qualificacao.models import DERIVADOS, EVENTOS_REGRA
 
 MAX_PROFUNDIDADE = 10
 OPS = ("preenchido", "em", ">=")
@@ -39,6 +39,8 @@ class Contexto:
     score: int
     eventos: frozenset[str]
     scores: dict[str, int] | None = None  # per axis
+    contagens: dict[str, int] | None = None  # event name -> how many
+    identificacao_completa: bool = False
 
 
 # ── value helpers ───────────────────────────────────────────────────────────
@@ -92,6 +94,9 @@ def _em(valor: Any, candidatos: list[Any]) -> bool:
 def avaliar_regra(regra: Any, ctx: Contexto) -> bool:
     if not isinstance(regra, dict) or not regra:
         raise RegraInvalida(f"regra malformada: {regra!r}")
+    regra = {k: v for k, v in regra.items() if k != "id"}  # "id" is explainability metadata only
+    if not regra:
+        raise RegraInvalida("regra sem corpo")
     if "todos" in regra:
         return all(avaliar_regra(r, ctx) for r in _lista(regra["todos"]))
     if "algum" in regra:
@@ -109,6 +114,15 @@ def avaliar_regra(regra: Any, ctx: Contexto) -> bool:
         return (ctx.scores or {}).get(eixo, 0) >= limite
     if "evento" in regra:
         return regra["evento"] in ctx.eventos
+    if "identificacao" in regra:
+        if regra["identificacao"] != "completa":
+            raise RegraInvalida(f"identificacao malformada: {regra!r}")
+        return ctx.identificacao_completa
+    if "contagem" in regra:
+        c = regra["contagem"] if isinstance(regra["contagem"], dict) else {}
+        if not isinstance(c.get(">="), (int, float)) or isinstance(c.get(">="), bool) or "evento" not in c:
+            raise RegraInvalida(f"contagem malformada: {regra['contagem']!r}")
+        return (ctx.contagens or {}).get(c["evento"], 0) >= c[">="]
     if "criterio" in regra:
         valor = ctx.valores.get(regra["criterio"])
         op = regra.get("op")
@@ -132,6 +146,21 @@ def _lista(v: Any) -> list[Any]:
     return v
 
 
+def regra_disparada(regra: Any, ctx: Contexto) -> str | None:
+    """The explainability id of a TRUE rule: the "id" of the first true branch of an ``algum``
+    (descending), else the node's own "id", else None. Call only on a rule that evaluates true."""
+    if not isinstance(regra, dict):
+        return None
+    proprio = regra.get("id") if isinstance(regra.get("id"), str) else None
+    if "algum" in regra and isinstance(regra["algum"], list):
+        for sub in regra["algum"]:
+            if avaliar_regra(sub, ctx):
+                return regra_disparada(sub, ctx) or proprio
+    if "todos" in regra and isinstance(regra["todos"], list):
+        return proprio or next((i for i in (regra_disparada(s, ctx) for s in regra["todos"]) if i), None)
+    return proprio
+
+
 # ── references ──────────────────────────────────────────────────────────────
 
 def criterios_referenciados(regra: Any) -> list[str]:
@@ -152,6 +181,16 @@ def criterios_referenciados(regra: Any) -> list[str]:
 
     walk(regra)
     return out
+
+
+def usa_identificacao(regra: Any) -> bool:
+    """Whether the rule contains the ``{"identificacao": "completa"}`` atom."""
+    if isinstance(regra, dict):
+        if "identificacao" in regra:
+            return True
+        return any(usa_identificacao(v) for v in regra.values() if isinstance(v, (dict, list))) or any(
+            usa_identificacao(i) for v in regra.values() if isinstance(v, list) for i in v)
+    return False
 
 
 # ── static analysis (publish-time) ──────────────────────────────────────────
@@ -206,6 +245,10 @@ def validar_regra(
         if prof > MAX_PROFUNDIDADE:
             err("regra_profunda", path, f"mais de {MAX_PROFUNDIDADE} niveis")
             return
+        if isinstance(r, dict) and "id" in r:
+            if not isinstance(r["id"], str) or not 0 < len(r["id"]) <= 64:
+                err("regra_invalida", path, "id deve ser texto de 1..64")
+            r = {k: v for k, v in r.items() if k != "id"}
         if not isinstance(r, dict) or not r:
             err("regra_invalida", path, "objeto nao vazio esperado")
             return
@@ -232,8 +275,20 @@ def validar_regra(
                 err("eixo_desconhecido", path, f"eixo {s['eixo']!r}")
             return
         if "evento" in r:
-            if set(r) != {"evento"} or r["evento"] not in EVENTOS_IMOVEL:
+            if set(r) != {"evento"} or r["evento"] not in EVENTOS_REGRA:
                 err("evento_desconhecido", path, f"evento {r.get('evento')!r}")
+            return
+        if "identificacao" in r:
+            if set(r) != {"identificacao"} or r["identificacao"] != "completa":
+                err("regra_invalida", path, 'identificacao exige "completa"')
+            return
+        if "contagem" in r:
+            c = r["contagem"]
+            if set(r) != {"contagem"} or not isinstance(c, dict) or set(c) != {"evento", ">="} \
+                    or not isinstance(c[">="], (int, float)) or isinstance(c[">="], bool):
+                err("regra_invalida", path, 'contagem exige {"evento": e, ">=": n}')
+            elif c["evento"] not in EVENTOS_REGRA:
+                err("evento_desconhecido", path, f"evento {c['evento']!r}")
             return
         if "criterio" in r:
             chave = r["criterio"]

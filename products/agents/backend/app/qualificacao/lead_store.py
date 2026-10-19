@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
 
-from app.qualificacao.models import EventoImovel, Registro
+from app.qualificacao.models import Confirmacao, EventoImovel, Registro
 from app.stores._db_errors import exec_query, exec_rpc
 from app.stores._util import utcnow
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
@@ -44,6 +44,9 @@ class EstadoCache:
     hash: str
     calculado_em: datetime
     scores: dict[str, int] = field(default_factory=dict)
+    regra_id: str | None = None
+    detalhe: dict[str, Any] = field(default_factory=dict)
+    descartado_sugerido: dict[str, Any] | None = None
 
 
 class LeadQualificacaoStore(Protocol):
@@ -61,6 +64,10 @@ class LeadQualificacaoStore(Protocol):
     ) -> EventoImovel: ...
     def obter_estado(self, org_id: UUID, lead_ref_id: UUID) -> EstadoCache | None: ...
     def salvar_estado(self, estado: EstadoCache) -> None: ...
+    def listar_confirmacoes(self, org_id: UUID, lead_ref_id: UUID) -> list[Confirmacao]: ...
+    def adicionar_confirmacao(self, org_id: UUID, lead_ref_id: UUID, c: Confirmacao) -> Confirmacao:
+        """A human's confirmation of a terminal stage (append-only)."""
+        ...
     def apagar_por_lead(self, org_id: UUID, lead_ref_id: UUID) -> int:
         """Erase every qualification row of one lead. Idempotent; returns rows removed."""
         ...
@@ -74,6 +81,7 @@ class FakeLeadQualificacaoStore:
         self._reg: list[tuple[UUID, UUID, Registro]] = []
         self._ev: list[tuple[UUID, UUID, EventoImovel]] = []
         self._estado: dict[tuple[UUID, UUID], EstadoCache] = {}
+        self._conf: list[tuple[UUID, UUID, Confirmacao]] = []
 
     def listar_registros(self, org_id, lead_ref_id):
         return [r for o, l, r in self._reg if o == org_id and l == lead_ref_id]
@@ -107,12 +115,23 @@ class FakeLeadQualificacaoStore:
     def salvar_estado(self, estado):
         self._estado[(estado.org_id, estado.lead_ref_id)] = estado
 
+    def listar_confirmacoes(self, org_id, lead_ref_id):
+        return [c for o, l, c in self._conf if o == org_id and l == lead_ref_id]
+
+    def adicionar_confirmacao(self, org_id, lead_ref_id, c):
+        from dataclasses import replace
+
+        row = replace(c, created_at=utcnow(), id=uuid4())
+        self._conf.append((org_id, lead_ref_id, row))
+        return row
+
     def apagar_por_lead(self, org_id, lead_ref_id):
-        n0 = len(self._reg) + len(self._ev) + len(self._estado)
+        n0 = len(self._reg) + len(self._ev) + len(self._estado) + len(self._conf)
         self._reg = [t for t in self._reg if not (t[0] == org_id and t[1] == lead_ref_id)]
         self._ev = [t for t in self._ev if not (t[0] == org_id and t[1] == lead_ref_id)]
+        self._conf = [t for t in self._conf if not (t[0] == org_id and t[1] == lead_ref_id)]
         self._estado.pop((org_id, lead_ref_id), None)
-        return n0 - (len(self._reg) + len(self._ev) + len(self._estado))
+        return n0 - (len(self._reg) + len(self._ev) + len(self._estado) + len(self._conf))
 
     def purgar_inativos(self, cutoff):
         ultima: dict[tuple[UUID, UUID], datetime] = {}
@@ -120,6 +139,8 @@ class FakeLeadQualificacaoStore:
             ultima[(o, l)] = max(ultima.get((o, l), r.created_at), r.created_at)
         for o, l, e in self._ev:
             ultima[(o, l)] = max(ultima.get((o, l), e.created_at), e.created_at)
+        for o, l, c in self._conf:
+            ultima[(o, l)] = max(ultima.get((o, l), c.created_at), c.created_at)
         for k, s in self._estado.items():
             ultima[k] = max(ultima.get(k, s.calculado_em), s.calculado_em)
         removidos = 0
@@ -214,7 +235,8 @@ class SupabaseLeadQualificacaoStore:
             org_id=UUID(str(r["org_id"])), lead_ref_id=UUID(str(r["lead_ref_id"])),
             versao_id=UUID(str(r["versao_id"])), valores=r.get("valores") or {}, score=r["score"],
             estagio=r["estagio"], faltando=tuple(r.get("faltando") or ()), hash=r["hash"],
-            scores=r.get("scores") or {},
+            scores=r.get("scores") or {}, regra_id=r.get("regra_id"), detalhe=r.get("detalhe") or {},
+            descartado_sugerido=r.get("descartado_sugerido"),
             calculado_em=r["calculado_em"],
         )
 
@@ -222,9 +244,27 @@ class SupabaseLeadQualificacaoStore:
         row = {
             "lead_ref_id": str(e.lead_ref_id), "org_id": str(e.org_id), "versao_id": str(e.versao_id),
             "valores": e.valores, "score": e.score, "estagio": e.estagio, "faltando": list(e.faltando),
-            "hash": e.hash, "scores": e.scores, "calculado_em": e.calculado_em.isoformat(),
+            "hash": e.hash, "scores": e.scores, "regra_id": e.regra_id, "detalhe": e.detalhe,
+            "descartado_sugerido": e.descartado_sugerido, "calculado_em": e.calculado_em.isoformat(),
         }
         exec_query(self._t("lead_qualificacao_estado").upsert(row, on_conflict="lead_ref_id"))
+
+    def listar_confirmacoes(self, org_id, lead_ref_id):
+        resp = (
+            self._t("lead_qualificacao_confirmacoes").select("*").eq("org_id", str(org_id))
+            .eq("lead_ref_id", str(lead_ref_id)).order("created_at").limit(1000).execute()
+        )
+        return [self._confirmacao(r) for r in resp.data or []]
+
+    def adicionar_confirmacao(self, org_id, lead_ref_id, c):
+        row = {"org_id": str(org_id), "lead_ref_id": str(lead_ref_id), "estagio": c.estagio,
+               "ator_user_id": str(c.ator_user_id), "motivo": c.motivo}
+        return self._confirmacao(exec_query(self._t("lead_qualificacao_confirmacoes").insert(row)).data[0])
+
+    @staticmethod
+    def _confirmacao(r):
+        return Confirmacao(estagio=r["estagio"], ator_user_id=UUID(str(r["ator_user_id"])), motivo=r.get("motivo"),
+                           created_at=r.get("created_at"), id=UUID(str(r["id"])))
 
     def apagar_por_lead(self, org_id, lead_ref_id):
         resp = exec_rpc(

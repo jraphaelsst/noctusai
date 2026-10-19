@@ -11,7 +11,7 @@ import json
 import math
 import re
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 from app.qualificacao.models import (
     DERIVADOS,
@@ -24,6 +24,7 @@ from app.qualificacao.models import (
     CriterioDef,
     EstadoQualificacao,
     EventoImovel,
+    LeadSinais,
     ProximoCriterio,
     Registro,
     VersaoPadrao,
@@ -34,16 +35,20 @@ from app.qualificacao.regras import (
     criterios_referenciados,
     ponto_de_referencia,
     preenchido,
+    regra_disparada,
     sempre_verdadeira,
+    usa_identificacao,
     validar_regra,
 )
 
 __all__ = [
     "EngineError",
     "calcular",
+    "no_escopo",
     "validar_valor",
     "validar_versao",
     "eventos_ativos",
+    "contagens_de_eventos",
     "valores_derivados",
     "pontuar_criterio",
 ]
@@ -64,6 +69,8 @@ def validar_valor(criterio: CriterioDef, valor: Any) -> tuple[bool, Any, str | N
     (``valor_invalido`` / ``opcao_invalida``), never prose."""
     tipo = criterio.tipo
     opcoes = {o.valor for o in criterio.opcoes}
+    if tipo in ("derivado", "identificacao"):
+        return False, None, "criterio_derivado" if tipo == "derivado" else "usar_identificacao"
     if tipo == "enum":
         if not isinstance(valor, str):
             return False, None, "valor_invalido"
@@ -135,8 +142,36 @@ def eventos_ativos(eventos: Sequence[EventoImovel]) -> frozenset[str]:
     return frozenset(ativos)
 
 
-def valores_derivados(eventos: Sequence[EventoImovel]) -> dict[str, Any]:
-    """The derived criteria, present only when non-trivial (count > 0 / true)."""
+_REJEICAO = ("nao_gostou", "descartado")
+
+
+def contagens_de_eventos(eventos: Sequence[EventoImovel], sinais: LeadSinais | None = None) -> dict[str, int]:
+    """How many codes sit in each event state, plus ``lote_rejeitado`` (offer lotes whose every code
+    was rejected) and the caller's own signalled events (``pediu_humano`` ...)."""
+    oferecidos, ultima = _por_codigo(eventos)
+    out: dict[str, int] = {}
+    if oferecidos:
+        out["oferecido"] = len(oferecidos)
+    for ev in ultima.values():
+        out[ev] = out.get(ev, 0) + 1
+    lotes: dict[int, list[str]] = {}
+    for e in eventos:
+        if e.evento == "oferecido" and e.lote is not None:
+            lotes.setdefault(e.lote, []).append(e.codigo_imovel)
+    rejeitados = sum(1 for cods in lotes.values() if all(ultima.get(c) in _REJEICAO for c in cods))
+    if rejeitados:
+        out["lote_rejeitado"] = rejeitados
+    for k, n in (sinais.eventos if sinais else {}).items():
+        if n:
+            out[k] = out.get(k, 0) + int(n)
+    return out
+
+
+def valores_derivados(
+    eventos: Sequence[EventoImovel], sinais: LeadSinais | None = None, agora: datetime | None = None,
+) -> dict[str, Any]:
+    """System-derived criteria, present only when non-trivial (count > 0 / true). Never recordable
+    by the model (``registrar_perfil`` refuses them)."""
     oferecidos, ultima = _por_codigo(eventos)
     out: dict[str, Any] = {}
     gostou = sum(1 for ev in ultima.values() if ev in ("gostou", "quer_visitar"))
@@ -148,13 +183,28 @@ def valores_derivados(eventos: Sequence[EventoImovel]) -> dict[str, Any]:
         out["imoveis_oferecidos"] = len(oferecidos)
     if "quer_ver_mais" in ultima.values():
         out["quer_mais_opcoes"] = True
+    rejeitados = sum(1 for ev in ultima.values() if ev in _REJEICAO)
+    if rejeitados:
+        out["imoveis_rejeitados"] = rejeitados
+    if sinais is not None:
+        if sinais.respostas_count:
+            out["respostas_count"] = sinais.respostas_count
+        dias = _dias_sem_resposta(sinais, agora)
+        if dias is not None:
+            out["dias_sem_resposta"] = int(dias)
     return out
+
+
+def _dias_sem_resposta(sinais: LeadSinais | None, agora: datetime | None) -> float | None:
+    if sinais is None or sinais.ultima_resposta_em is None or agora is None:
+        return None
+    return max((agora - sinais.ultima_resposta_em).total_seconds() / 86400, 0.0)
 
 
 # ── scoring ─────────────────────────────────────────────────────────────────
 
 def pontuar_criterio(criterio: CriterioDef, valor: Any) -> int:
-    """Points of one criterion value (0 when the map has no entry)."""
+    """Points of one criterion value (0 when the map has no entry). May be negative."""
     p = criterio.pontuacao or {}
     if not p or not preenchido(valor):
         return 0
@@ -165,7 +215,7 @@ def pontuar_criterio(criterio: CriterioDef, valor: Any) -> int:
         if isinstance(valor, bool):
             return int(p.get("true" if valor else "false", 0))
         return 0
-    if tipo in ("numero", "faixa"):
+    if tipo in ("numero", "faixa", "derivado"):
         ref = ponto_de_referencia(valor)
         if ref is None:
             return 0
@@ -184,6 +234,11 @@ def pontuar_criterio(criterio: CriterioDef, valor: Any) -> int:
 
 # ── the engine ──────────────────────────────────────────────────────────────
 
+def no_escopo(c: CriterioDef, escopo: str | None) -> bool:
+    """Whether criterion ``c`` is askable in ``escopo`` (no scope asked = everything)."""
+    return escopo is None or c.escopo is None or c.escopo == escopo
+
+
 def _expirado(c: CriterioDef, r: Registro, agora: datetime | None) -> bool:
     """``validade_dias``: a record older than the criterion's validity stops counting.
     Needs the clock (``agora``) and a record timestamp; without either nothing expires."""
@@ -195,10 +250,14 @@ def _expirado(c: CriterioDef, r: Registro, agora: datetime | None) -> bool:
 def _ultimos_validos(
     versao: VersaoPadrao, registros: Sequence[Registro], agora: datetime | None = None,
 ) -> dict[str, Any]:
-    """Latest VALID, unexpired record per active, non-derived criterion of the version.
+    """Latest VALID, unexpired record per active, recordable criterion of the version.
     Later in the sequence wins; a record the version no longer accepts is skipped, and an
-    expired latest record leaves the criterion unfilled (it is missing again)."""
-    ativos = {c.chave: c for c in versao.criterios if c.ativo and c.chave not in DERIVADOS}
+    expired latest record leaves the criterion unfilled (it is missing again). System-derived
+    and identity criteria are never read from records."""
+    ativos = {
+        c.chave: c for c in versao.criterios
+        if c.ativo and c.chave not in DERIVADOS and c.tipo not in ("derivado", "identificacao")
+    }
     out: dict[str, Any] = {}
     for r in registros:
         c = ativos.get(r.criterio_chave)
@@ -212,12 +271,24 @@ def _ultimos_validos(
     return out
 
 
-def _estado_hash(versao_id: Any, valores: dict[str, Any], score: int, estagio: str) -> str:
+def _estado_hash(versao_id: Any, valores: dict[str, Any], scores: dict[str, int], score: int, estagio: str) -> str:
     raw = json.dumps(
-        {"v": str(versao_id), "valores": valores, "score": score, "estagio": estagio},
+        {"v": str(versao_id), "valores": valores, "scores": scores, "score": score, "estagio": estagio},
         sort_keys=True, ensure_ascii=False, default=str,
     )
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _fator_decaimento(cfg: dict[str, Any], dias: float | None) -> float:
+    """Factor of the decay step with the largest ``apos_dias`` <= days since the last reply."""
+    if dias is None:
+        return 1.0
+    fator = 1.0
+    melhor = -1
+    for passo in cfg.get("decaimento") or []:
+        if passo["apos_dias"] <= dias and passo["apos_dias"] > melhor:
+            melhor, fator = passo["apos_dias"], float(passo["fator"])
+    return fator
 
 
 def calcular(
@@ -225,42 +296,109 @@ def calcular(
     registros: Sequence[Registro],
     eventos_imovel: Sequence[EventoImovel],
     agora: datetime | None = None,
+    escopo: str | None = None,
+    sinais: LeadSinais | None = None,
+    confirmados: Iterable[str] = (),
 ) -> EstadoQualificacao:
-    valores = _ultimos_validos(versao, registros, agora)
-    valores.update(valores_derivados(eventos_imovel))
-    ativos_ev = eventos_ativos(eventos_imovel)
+    """Pure state computation.
 
+    * ``escopo``: the asking agent's scope. State (values, score, stage) is the lead's shared state
+      over the whole standard; ``faltando`` / ``proximo_criterio`` only offer criteria whose ``escopo``
+      is empty or equal to it, so one agent never asks another agent's questions.
+    * ``sinais``: system signals (last reply time, reply count, signalled events, identity fields
+      collected). With ``agora`` they drive ``dias_sem_resposta`` and per-axis decay.
+    * ``confirmados``: terminal stages a HUMAN confirmed. The engine only ever *suggests* a terminal
+      stage (LGPD art. 20) until it is confirmed.
+    """
+    sinais = sinais or LeadSinais()
+    valores = _ultimos_validos(versao, registros, agora)
+    valores.update(valores_derivados(eventos_imovel, sinais, agora))
+    ident_chaves = [c.chave for c in versao.criterios if c.ativo and c.tipo == "identificacao"]
+    for k in ident_chaves:  # the FLAG that it was collected, never the value
+        if k in sinais.identificacao:
+            valores[k] = True
+    ident_completa = bool(ident_chaves) and all(k in sinais.identificacao for k in ident_chaves)
+    contagens = contagens_de_eventos(eventos_imovel, sinais)
+    ativos_ev = frozenset(k for k, n in contagens.items() if n > 0)
+    dias = _dias_sem_resposta(sinais, agora)
+
+    # ── points -> per-axis score (multipliers, decay, clamp) -> total ──
     score_max = versao.parametros.score_max
-    total = 0
-    por_eixo: dict[str, int] = {}
+    cfg_eixos = versao.parametros.eixos or {}
+    pontos: dict[str, dict[str, int]] = {}
+    sem_eixo: dict[str, int] = {}
     for c in versao.criterios:
         if c.ativo and c.chave in valores:
             pts = pontuar_criterio(c, valores[c.chave])
-            total += pts
             if c.eixo:
-                por_eixo[c.eixo] = por_eixo.get(c.eixo, 0) + pts
-    score = max(0, min(total, score_max))
-    scores = {k: max(0, min(v, score_max)) for k, v in sorted(por_eixo.items())}
-    for c in versao.criterios:  # an axis with no point yet is 0, not absent
-        if c.eixo:
-            scores.setdefault(c.eixo, 0)
+                pontos.setdefault(c.eixo, {})[c.chave] = pts
+            elif pts:
+                sem_eixo[c.chave] = pts
+    nomes_eixos = sorted({c.eixo for c in versao.criterios if c.ativo and c.eixo} | set(cfg_eixos))
+    ctx_base = Contexto(valores=valores, score=0, eventos=ativos_ev, scores={}, contagens=contagens,
+                        identificacao_completa=ident_completa)
+    scores: dict[str, int] = {}
+    detalhe_eixos: dict[str, Any] = {}
+    for eixo in nomes_eixos:
+        cfg = cfg_eixos.get(eixo, {})
+        bruto = sum(pontos.get(eixo, {}).values())
+        mult = 1.0
+        for mu in cfg.get("multiplicadores") or []:
+            if avaliar_regra(mu["quando"], ctx_base):
+                mult *= float(mu["fator"])
+        decai = _fator_decaimento(cfg, dias)
+        teto = int(cfg.get("max", score_max))
+        scores[eixo] = max(0, min(round(bruto * mult * decai), teto))
+        detalhe_eixos[eixo] = {
+            "pontos": dict(pontos.get(eixo, {})), "bruto": bruto, "multiplicador": mult,
+            "decaimento": decai, "score": scores[eixo],
+        }
+    score = max(0, min(sum(scores.values()) + sum(sem_eixo.values()), score_max))
+    detalhe = {"eixos": detalhe_eixos, "sem_eixo": sem_eixo}
 
-    ctx = Contexto(valores=valores, score=score, eventos=ativos_ev, scores=scores)
+    ctx = Contexto(valores=valores, score=score, eventos=ativos_ev, scores=scores, contagens=contagens,
+                   identificacao_completa=ident_completa)
+
+    # ── stage: highest-ordem true NON-terminal; terminal ones are only suggested ──
     ordenados = sorted(versao.estagios, key=lambda e: e.ordem)
     verdadeiros = [e for e in ordenados if avaliar_regra(e.regra, ctx)]
-    if not verdadeiros:
+    normais = [e for e in verdadeiros if not e.terminal]
+    terminais = [e for e in verdadeiros if e.terminal]
+    if not normais and not terminais:
         raise EngineError("nenhum estagio satisfeito (versao sem estagio base)")
-    atual = verdadeiros[-1]
+    confirmados = set(confirmados)
+    confirmado = next((t for t in reversed(terminais) if t.chave in confirmados), None)
+    sugerido = None
+    if confirmado is not None:
+        atual = confirmado
+    else:
+        if not normais:
+            raise EngineError("nenhum estagio nao terminal satisfeito (versao sem estagio base)")
+        atual = normais[-1]
+        if terminais:
+            t = terminais[-1]
+            sugerido = {"estagio": t.chave, "regra_id": regra_disparada(t.regra, ctx) or t.chave}
+    regra_id = regra_disparada(atual.regra, ctx) or atual.chave
 
-    proximo = next((e for e in ordenados if e.ordem > atual.ordem and not e.terminal), None)
+    pedir = True
+    if versao.parametros.pedir_identificacao_quando is not None:
+        pedir = avaliar_regra(versao.parametros.pedir_identificacao_quando, ctx)
+    ident_faltando = [k for k in ident_chaves if k not in sinais.identificacao]
+
+    proximo = None if atual.terminal else next(
+        (e for e in ordenados if e.ordem > atual.ordem and not e.terminal), None)
     faltando: list[str] = []
     if proximo is not None:
-        ordem_crit = {c.chave: c for c in versao.criterios if c.ativo}
-        refs = [
-            k for k in criterios_referenciados(proximo.regra)
-            if k in ordem_crit and k not in DERIVADOS and not preenchido(valores.get(k))
-        ]
-        faltando = sorted(refs, key=lambda k: (ordem_crit[k].ordem, k))
+        ordem_crit = {c.chave: c for c in versao.criterios if c.ativo and no_escopo(c, escopo)}
+        refs = criterios_referenciados(proximo.regra)
+        if usa_identificacao(proximo.regra):
+            refs = [*refs, *[k for k in ident_chaves if k not in refs]]
+        faltando = sorted(
+            (k for k in refs if k in ordem_crit and k not in DERIVADOS and not preenchido(valores.get(k))
+             and ordem_crit[k].tipo != "derivado"
+             and (pedir or ordem_crit[k].tipo != "identificacao")),
+            key=lambda k: (ordem_crit[k].ordem, k),
+        )
 
     proximo_criterio = None
     if faltando:
@@ -280,10 +418,15 @@ def calcular(
         faltando=tuple(faltando),
         proximo_criterio=proximo_criterio,
         pode_ofertar=avaliar_regra(versao.parametros.minimo_para_ofertar, ctx),
-        pode_concluir=atual.conclusivo,
-        hash=_estado_hash(versao.id, valores, score, atual.chave),
+        pode_concluir=atual.conclusivo and not atual.terminal,
+        hash=_estado_hash(versao.id, valores, scores, score, atual.chave),
         calculado_em=agora,
         scores=scores,
+        regra_id=regra_id,
+        descartado_sugerido=sugerido,
+        detalhe=detalhe,
+        identificacao_faltando=tuple(ident_faltando),
+        pedir_identificacao=pedir,
     )
 
 
@@ -308,6 +451,12 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
             err("tipo_invalido", p, c.tipo)
         if c.sensivel not in SENSIVEL:
             err("sensivel_invalido", p, str(c.sensivel))
+        if c.tipo == "derivado" and c.chave not in DERIVADOS:
+            err("derivado_desconhecido", p, "sem fonte no sistema")
+        if c.tipo == "identificacao" and c.pontuacao:
+            err("pontuacao_invalida", p, "identificacao nao pontua")
+        if c.escopo is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,31}", c.escopo):
+            err("escopo_invalido", p, str(c.escopo))
         if c.validade_dias is not None and c.validade_dias < 1:
             err("validade_invalida", p, "validade_dias >= 1")
         if c.eixo is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,31}", c.eixo):
@@ -332,7 +481,12 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
     if len({e.ordem for e in estagios}) != len(estagios):
         err("ordem_duplicada", "estagios", "ordens repetidas")
     validos = [c.chave for c in versao.criterios if c.ativo]
-    eixos = sorted({c.eixo for c in versao.criterios if c.ativo and c.eixo})
+    eixos = sorted({c.eixo for c in versao.criterios if c.ativo and c.eixo} | set(versao.parametros.eixos or {}))
+    erros.extend(_validar_eixos(versao.parametros.eixos or {}, validos, eixos))
+    if versao.parametros.pedir_identificacao_quando is not None:
+        erros.extend(validar_regra(
+            versao.parametros.pedir_identificacao_quando, validos,
+            caminho="parametros.pedir_identificacao_quando", eixos=eixos))
     for e in estagios:
         erros.extend(validar_regra(e.regra, validos, caminho=f"estagios.{e.chave}.regra", eixos=eixos))
     erros.extend(validar_regra(
@@ -345,4 +499,41 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
         err("parametro_invalido", "parametros.lote_ofertas", "1..5")
     if versao.parametros.score_max < 1:
         err("parametro_invalido", "parametros.score_max", ">= 1")
+    return erros
+
+
+def _validar_eixos(cfg: dict[str, Any], validos: list[str], eixos: list[str]) -> list[dict[str, str]]:
+    erros: list[dict[str, str]] = []
+
+    def err(code: str, path: str, detail: str) -> None:
+        erros.append({"code": code, "path": path, "detail": detail})
+
+    for nome, c in cfg.items():
+        p = f"parametros.eixos.{nome}"
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,31}", nome) or not isinstance(c, dict):
+            err("eixo_invalido", p, "nome ou config invalida")
+            continue
+        if set(c) - {"max", "multiplicadores", "decaimento"}:
+            err("eixo_invalido", p, f"chaves {sorted(set(c) - {'max', 'multiplicadores', 'decaimento'})}")
+        if "max" in c and (not isinstance(c["max"], int) or isinstance(c["max"], bool) or c["max"] < 1):
+            err("eixo_invalido", f"{p}.max", ">= 1")
+        for i, mu in enumerate(c.get("multiplicadores") or []):
+            pm = f"{p}.multiplicadores[{i}]"
+            if not isinstance(mu, dict) or set(mu) != {"quando", "fator"} \
+                    or not isinstance(mu["fator"], (int, float)) or isinstance(mu["fator"], bool) or mu["fator"] < 0:
+                err("multiplicador_invalido", pm, 'exige {"quando": regra, "fator": numero >= 0}')
+                continue
+            if "score" in str(mu["quando"]):
+                err("multiplicador_invalido", pm, "o multiplicador nao pode depender de score")
+            erros.extend(validar_regra(mu["quando"], validos, caminho=f"{pm}.quando", eixos=eixos))
+        ultimo = 0
+        for i, d in enumerate(c.get("decaimento") or []):
+            pd = f"{p}.decaimento[{i}]"
+            if not isinstance(d, dict) or set(d) != {"apos_dias", "fator"} \
+                    or not isinstance(d["apos_dias"], int) or isinstance(d["apos_dias"], bool) or d["apos_dias"] < 1 \
+                    or not isinstance(d["fator"], (int, float)) or isinstance(d["fator"], bool) \
+                    or not 0 <= d["fator"] <= 1 or d["apos_dias"] <= ultimo:
+                err("decaimento_invalido", pd, "apos_dias crescente >= 1 e fator em [0,1]")
+                continue
+            ultimo = d["apos_dias"]
     return erros

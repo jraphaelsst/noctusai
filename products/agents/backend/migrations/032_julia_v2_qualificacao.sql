@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS agents.qualificacao_criterios (
         ('prontidao', 'bloqueios', 'interesse', 'perfil_imovel', 'perfil_vida', 'contato')),
     rotulo TEXT NOT NULL CHECK (btrim(rotulo) <> ''),
     descricao_modelo TEXT NOT NULL DEFAULT '',
-    tipo TEXT NOT NULL CHECK (tipo IN ('enum', 'multi', 'bool', 'numero', 'faixa', 'texto', 'imovel_ref')),
+    tipo TEXT NOT NULL CHECK (tipo IN ('enum', 'multi', 'bool', 'numero', 'faixa', 'texto', 'imovel_ref', 'derivado', 'identificacao')),
     opcoes JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(opcoes) = 'array'),
     unidade TEXT NULL,
     sensivel TEXT NULL CHECK (sensivel IS NULL OR sensivel IN ('faixa', 'nao_coletar')),
@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS agents.qualificacao_criterios (
     ativo BOOLEAN NOT NULL DEFAULT TRUE,
     -- Named score axis (fit / intencao / urgencia ...); NULL = counts in the total only.
     eixo TEXT NULL CHECK (eixo IS NULL OR eixo ~ '^[a-z][a-z0-9_]{1,31}$'),
+    -- The agent/block that asks it (sdr | financeiro | juridico ...); NULL = every scope. Records stay
+    -- on the shared lead; a scope only changes which criteria its tools ask for.
+    escopo TEXT NULL CHECK (escopo IS NULL OR escopo ~ '^[a-z][a-z0-9_]{1,31}$'),
     -- A record older than this stops counting (the criterion is missing again).
     validade_dias INT NULL CHECK (validade_dias IS NULL OR validade_dias >= 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -105,6 +108,10 @@ CREATE TABLE IF NOT EXISTS agents.qualificacao_parametros (
     minimo_para_ofertar JSONB NOT NULL CHECK (jsonb_typeof(minimo_para_ofertar) = 'object'),
     lote_ofertas INT NOT NULL DEFAULT 3 CHECK (lote_ofertas BETWEEN 1 AND 5),
     score_max INT NOT NULL DEFAULT 100 CHECK (score_max >= 1),
+    -- Per-axis config (max / multiplicadores / decaimento): data, validated by the engine at publish.
+    eixos JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(eixos) = 'object'),
+    -- Ask for the identity fields only when this rule is true (e.g. visit intent); NULL = any time.
+    pedir_identificacao_quando JSONB NULL CHECK (pedir_identificacao_quando IS NULL OR jsonb_typeof(pedir_identificacao_quando) = 'object'),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -286,15 +293,16 @@ BEGIN
 
     IF p_copiar_de IS NOT NULL THEN
         INSERT INTO agents.qualificacao_criterios
-            (versao_id, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, validade_dias)
-        SELECT v_novo, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, validade_dias
+            (versao_id, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, escopo, validade_dias)
+        SELECT v_novo, chave, grupo, rotulo, descricao_modelo, tipo, opcoes, unidade, sensivel, pontuacao, ordem, ativo, eixo, escopo, validade_dias
           FROM agents.qualificacao_criterios WHERE versao_id = p_copiar_de;
         INSERT INTO agents.qualificacao_estagios
             (versao_id, chave, rotulo, descricao, ordem, regra, conclusivo, terminal)
         SELECT v_novo, chave, rotulo, descricao, ordem, regra, conclusivo, terminal
           FROM agents.qualificacao_estagios WHERE versao_id = p_copiar_de;
-        INSERT INTO agents.qualificacao_parametros (versao_id, minimo_para_ofertar, lote_ofertas, score_max)
-        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max
+        INSERT INTO agents.qualificacao_parametros
+            (versao_id, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando)
+        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando
           FROM agents.qualificacao_parametros WHERE versao_id = p_copiar_de;
     END IF;
     RETURN v_novo;
@@ -423,10 +431,56 @@ CREATE TABLE IF NOT EXISTS agents.lead_qualificacao_estado (
     score INT NOT NULL DEFAULT 0,
     scores JSONB NOT NULL DEFAULT '{}'::jsonb,  -- per axis
     estagio TEXT NOT NULL,
+    regra_id TEXT NULL,  -- explainability: the rule that fired for the stage
+    detalhe JSONB NOT NULL DEFAULT '{}'::jsonb,  -- per-axis breakdown, criterion -> points
+    descartado_sugerido JSONB NULL,  -- LGPD art. 20: only SUGGESTED until a human confirms
     faltando TEXT[] NOT NULL DEFAULT '{}',
     calculado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
     hash TEXT NOT NULL
 );
+
+-- A HUMAN's confirmation of a terminal stage (descartado). The engine only ever suggests it.
+CREATE TABLE IF NOT EXISTS agents.lead_qualificacao_confirmacoes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
+    lead_ref_id UUID NOT NULL,  -- NOC-REMEDIATE[qual-lead-ref-fk]
+    estagio TEXT NOT NULL,
+    ator_user_id UUID NOT NULL,
+    motivo TEXT NULL CHECK (motivo IS NULL OR char_length(motivo) <= 500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Lead identity, apart from the qualification records (never in `trecho`, never in LLM context).
+-- cpf / rg are Fernet-encrypted by the application (ENCRYPTION_KEY, the fleet seam); cpf_hash is a
+-- keyed HMAC for dedupe / lookup. Purpose: registering the visit / pre-contractual (LGPD art. 7 V).
+CREATE TABLE IF NOT EXISTS agents.lead_identificacao (
+    lead_ref_id UUID PRIMARY KEY,  -- NOC-REMEDIATE[qual-lead-ref-fk]
+    org_id UUID NOT NULL,
+    nome TEXT NULL CHECK (nome IS NULL OR char_length(nome) <= 120),
+    telefone TEXT NULL CHECK (telefone IS NULL OR telefone ~ '^[0-9]{8,15}$'),  -- from the channel ref, never asked
+    email TEXT NULL CHECK (email IS NULL OR char_length(email) <= 254),
+    cpf_cifrado TEXT NULL,
+    rg_cifrado TEXT NULL,
+    rg_uf TEXT NULL CHECK (rg_uf IS NULL OR rg_uf ~ '^[A-Z]{2}$'),
+    cpf_hash TEXT NULL CHECK (cpf_hash IS NULL OR char_length(cpf_hash) = 64),
+    coletado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+    coletado_por_agent_id UUID NULL REFERENCES agents.agents(id),
+    origem_msg_id UUID NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lead_identificacao_cpf_hash ON agents.lead_identificacao (org_id, cpf_hash)
+    WHERE cpf_hash IS NOT NULL;
+
+-- Who read the clear text, when: written BEFORE the value leaves. No personal data in it.
+CREATE TABLE IF NOT EXISTS agents.lead_identificacao_acessos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
+    lead_ref_id UUID NOT NULL,
+    ator_user_id UUID NOT NULL,
+    campos TEXT[] NOT NULL DEFAULT '{}',
+    motivo TEXT NULL CHECK (motivo IS NULL OR char_length(motivo) <= 500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lead_identificacao_acessos_lead ON agents.lead_identificacao_acessos (org_id, lead_ref_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_lead_qualificacao_registros_lead
     ON agents.lead_qualificacao_registros (org_id, lead_ref_id, created_at);
@@ -454,12 +508,32 @@ GRANT EXECUTE ON FUNCTION agents.guard_lead_qualificacao_append_only() TO servic
 CREATE OR REPLACE TRIGGER guard_lead_qualificacao_registros_append_only
     BEFORE UPDATE OR DELETE ON agents.lead_qualificacao_registros
     FOR EACH ROW EXECUTE FUNCTION agents.guard_lead_qualificacao_append_only();
+CREATE OR REPLACE TRIGGER guard_lead_qualificacao_confirmacoes_append_only
+    BEFORE UPDATE OR DELETE ON agents.lead_qualificacao_confirmacoes
+    FOR EACH ROW EXECUTE FUNCTION agents.guard_lead_qualificacao_append_only();
+-- The access audit is append-only and has NO erasure exception (accountability; it holds no personal data).
+CREATE OR REPLACE FUNCTION agents.guard_lead_identificacao_acessos_append_only()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = agents, public
+AS $$
+BEGIN
+    RAISE EXCEPTION 'append_only' USING ERRCODE = 'P0001';
+END;
+$$;
+REVOKE ALL ON FUNCTION agents.guard_lead_identificacao_acessos_append_only() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.guard_lead_identificacao_acessos_append_only() TO service_role;
+CREATE OR REPLACE TRIGGER guard_lead_identificacao_acessos_append_only
+    BEFORE UPDATE OR DELETE ON agents.lead_identificacao_acessos
+    FOR EACH ROW EXECUTE FUNCTION agents.guard_lead_identificacao_acessos_append_only();
 
 -- Lead personal data (LGPD): service-role only, exactly like channel_inbound (025).
 -- The API reads them org-scoped; a direct authenticated read never reaches a lead.
 ALTER TABLE agents.lead_qualificacao_registros ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents.lead_imovel_eventos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents.lead_qualificacao_estado ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agents.lead_qualificacao_confirmacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agents.lead_identificacao ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agents.lead_identificacao_acessos ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "service_role_bypass" ON agents.lead_qualificacao_registros;
 CREATE POLICY "service_role_bypass" ON agents.lead_qualificacao_registros
@@ -471,6 +545,19 @@ DROP POLICY IF EXISTS "service_role_bypass" ON agents.lead_qualificacao_estado;
 CREATE POLICY "service_role_bypass" ON agents.lead_qualificacao_estado
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.lead_qualificacao_confirmacoes;
+CREATE POLICY "service_role_bypass" ON agents.lead_qualificacao_confirmacoes
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.lead_identificacao;
+CREATE POLICY "service_role_bypass" ON agents.lead_identificacao
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "service_role_bypass" ON agents.lead_identificacao_acessos;
+CREATE POLICY "service_role_bypass" ON agents.lead_identificacao_acessos
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+REVOKE ALL ON agents.lead_qualificacao_confirmacoes FROM anon, authenticated;
+REVOKE ALL ON agents.lead_identificacao FROM anon, authenticated;
+REVOKE ALL ON agents.lead_identificacao_acessos FROM anon, authenticated;
 REVOKE ALL ON agents.lead_qualificacao_registros FROM anon, authenticated;
 REVOKE ALL ON agents.lead_imovel_eventos FROM anon, authenticated;
 REVOKE ALL ON agents.lead_qualificacao_estado FROM anon, authenticated;
@@ -493,6 +580,10 @@ BEGIN
     DELETE FROM agents.lead_imovel_eventos WHERE org_id = p_org_id AND lead_ref_id = p_lead_ref_id;
     GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
     DELETE FROM agents.lead_qualificacao_estado WHERE org_id = p_org_id AND lead_ref_id = p_lead_ref_id;
+    GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
+    DELETE FROM agents.lead_qualificacao_confirmacoes WHERE org_id = p_org_id AND lead_ref_id = p_lead_ref_id;
+    GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
+    DELETE FROM agents.lead_identificacao WHERE org_id = p_org_id AND lead_ref_id = p_lead_ref_id;
     GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
     PERFORM set_config('agents.erasing_lead_qualificacao', 'off', true);
     RETURN v_n;
@@ -518,6 +609,8 @@ BEGIN
         SELECT org_id, lead_ref_id, created_at AS ts FROM agents.lead_qualificacao_registros
         UNION ALL SELECT org_id, lead_ref_id, created_at FROM agents.lead_imovel_eventos
         UNION ALL SELECT org_id, lead_ref_id, calculado_em FROM agents.lead_qualificacao_estado
+        UNION ALL SELECT org_id, lead_ref_id, created_at FROM agents.lead_qualificacao_confirmacoes
+        UNION ALL SELECT org_id, lead_ref_id, coletado_em FROM agents.lead_identificacao
     ) a GROUP BY org_id, lead_ref_id HAVING MAX(ts) < p_cutoff;
     DELETE FROM agents.lead_qualificacao_registros r USING _qual_inativos i
      WHERE r.org_id = i.org_id AND r.lead_ref_id = i.lead_ref_id;
@@ -526,6 +619,12 @@ BEGIN
      WHERE r.org_id = i.org_id AND r.lead_ref_id = i.lead_ref_id;
     GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
     DELETE FROM agents.lead_qualificacao_estado r USING _qual_inativos i
+     WHERE r.org_id = i.org_id AND r.lead_ref_id = i.lead_ref_id;
+    GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
+    DELETE FROM agents.lead_qualificacao_confirmacoes r USING _qual_inativos i
+     WHERE r.org_id = i.org_id AND r.lead_ref_id = i.lead_ref_id;
+    GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
+    DELETE FROM agents.lead_identificacao r USING _qual_inativos i
      WHERE r.org_id = i.org_id AND r.lead_ref_id = i.lead_ref_id;
     GET DIAGNOSTICS v_c = ROW_COUNT; v_n := v_n + v_c;
     PERFORM set_config('agents.erasing_lead_qualificacao', 'off', true);

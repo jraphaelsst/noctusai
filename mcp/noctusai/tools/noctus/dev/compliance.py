@@ -14702,6 +14702,13 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the one-draft-per-standard partial unique index has no "
         "live object to probe against yet. Register a GuardProbe in the SAME change that applies it.",
     ),
+    (
+        "products/agents/backend/migrations/032_julia_v2_qualificacao.sql",
+        "guard_lead_identificacao_acessos_append_only",
+        "Migration 032 unapplied (Julia v2 A-QUAL, applied only by the tech-lead via migrate_product) — the "
+        "append-only trigger of the identity-access audit has no live object to probe against yet. Register a "
+        "GuardProbe in the SAME change that applies it.",
+    ),
 )
 
 

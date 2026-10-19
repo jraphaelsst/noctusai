@@ -6,12 +6,19 @@ from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 
 from app.dependencies import get_auth_context
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
 from app.qualificacao.service import ItemPerfil, QualificacaoService
 from app.qualificacao.store import FakePadraoStore
-from app.routers.qualificacao_router import get_lead_qualificacao_store_dep, get_padrao_store_dep
+from app.qualificacao.ident_store import FakeIdentificacaoStore
+from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
+from app.routers.qualificacao_router import (
+    get_identificacao_service_dep,
+    get_lead_qualificacao_store_dep,
+    get_padrao_store_dep,
+)
 from noctusai_lib.api.auth.session import AuthContext
 from tests.qualificacao.fixture_v1 import versao_v1
 from tests.qualificacao.harness import AGENTE, LEAD, publicar_v1
@@ -34,13 +41,18 @@ def qc(agents_client):
     padroes, leads = FakePadraoStore(), FakeLeadQualificacaoStore()
     app.dependency_overrides[get_padrao_store_dep] = lambda: padroes
     app.dependency_overrides[get_lead_qualificacao_store_dep] = lambda: leads
+    ident_store = FakeIdentificacaoStore()
+    ident = IdentificacaoService(ident_store, IdentCipher(Fernet.generate_key()))
+    app.dependency_overrides[get_identificacao_service_dep] = lambda: ident
     agents_client.padroes, agents_client.leads = padroes, leads
+    agents_client.ident, agents_client.ident_store = ident, ident_store
     _role(agents_client, "admin")
     try:
         yield agents_client
     finally:
         app.dependency_overrides.pop(get_padrao_store_dep, None)
         app.dependency_overrides.pop(get_lead_qualificacao_store_dep, None)
+        app.dependency_overrides.pop(get_identificacao_service_dep, None)
 
 
 def _criterio_body(**over):
@@ -262,3 +274,79 @@ def test_lead_qualificacao_auth_boundary(qc, chan_auth):
     assert qc.raw().get(url).status_code == 403  # wrong scope
     chan_auth(["agents:channel-status"], issuer="outro")
     assert qc.raw().get(url).status_code == 403  # issuer not allowed
+
+
+# ── explainability + suggested discard + identity over HTTP ─────────────────
+
+def test_read_api_returns_regra_id_breakdown_and_never_the_quote(qc, chan_auth):
+    _seed_lead(qc)
+    chan_auth(["agents:channel-status"])
+    b = qc.raw().get(f"/api/channels/leads/{LEAD}/qualificacao").json()
+    assert b["regra_id"] == "em_conversa" and b["descartado_sugerido"] is None
+    assert b["detalhe"]["sem_eixo"] == {"operacao": 10}
+    assert b["identificacao_faltando"] == [] and "scores" in b
+
+
+def test_confirm_discard_needs_a_suggestion_then_records_the_human(qc, chan_auth):
+    from dataclasses import replace
+    from app.qualificacao.models import EstagioDef
+
+    vid = _seed_lead(qc)
+    chan_auth(["agents:channel-turn"])
+    url = f"/api/channels/leads/{LEAD}/descarte/confirmar"
+    quem = str(uuid4())
+    r = qc.raw().post(url, json={"ator_user_id": quem})
+    assert r.status_code == 409 and r.json()["code"] == "sem_sugestao"
+    assert qc.raw().post(f"/api/channels/leads/{uuid4()}/descarte/confirmar", json={"ator_user_id": quem}).status_code == 404
+    assert qc.raw().post(url, json={"ator_user_id": quem, "x": 1}).status_code == 422
+    # make the standard suggest a discard when the lead asked for a human (a signalled event)
+    base = qc.padroes.obter_versao(vid)
+    novo = qc.padroes.criar_rascunho(qc.padroes.obter_padrao("imob-lead").id, None, vid)
+    qc.padroes.salvar_estagio(novo, EstagioDef("descartado", "Descartado", 6, {"evento": "pediu_humano"}, terminal=True))
+    qc.padroes.publicar(novo, UUID(quem))
+    from app.qualificacao.lead_store import EstadoCache
+    atual = qc.leads.obter_estado(DEFAULT_ORG_ID, LEAD)
+    qc.leads.salvar_estado(replace(atual, versao_id=novo))
+    body = {"ator_user_id": quem, "sinais": {"eventos": {"pediu_humano": 1}}, "motivo": "pediu atendimento humano"}
+    r = qc.raw().post(url, json=body)
+    assert r.status_code == 200 and r.json()["estagio"] == "descartado"
+    [c] = qc.leads.listar_confirmacoes(DEFAULT_ORG_ID, LEAD)
+    assert (str(c.ator_user_id), c.estagio, c.motivo) == (quem, "descartado", "pediu atendimento humano")
+
+
+def _guardar_identidade(qc):
+    qc.ident.registrar_identificacao(DEFAULT_ORG_ID, LEAD, agent_id=AGENTE, campo="cpf", valor="529.982.247-25",
+                                     mensagens_lead=["529.982.247-25"])
+
+
+def test_identity_read_is_masked_for_the_channel(qc, chan_auth):
+    _guardar_identidade(qc)
+    chan_auth(["agents:channel-status"])
+    b = qc.raw().get(f"/api/channels/leads/{LEAD}/identificacao")
+    assert b.status_code == 200 and b.json()["cpf"] == "***.***.***-25"
+    assert "52998224725" not in b.text
+    assert qc.raw().get(f"/api/channels/leads/{uuid4()}/identificacao").json()["code"] == "lead_sem_identificacao"
+
+
+def test_reveal_is_org_owner_admin_only_audited_and_org_scoped(qc):
+    _guardar_identidade(qc)
+    url = f"{BASE}/leads/{LEAD}/identificacao/revelar"
+    assert qc.raw().post(url, json={}).status_code == 401
+    _role(qc, "user", "viewer")
+    assert qc.post(url, json={}).status_code == 403  # RLS-style role gate: members cannot read clear text
+    _role(qc, "user", "member")
+    assert qc.post(url, json={}).status_code == 403
+    assert qc.ident_store.listar_acessos(DEFAULT_ORG_ID, LEAD) == []  # refused reads leave no value and no access row
+    _role(qc, "user", "admin")
+    r = qc.post(url, json={"motivo": "conferir documento para a visita"})
+    assert r.status_code == 200 and r.json()["cpf"] == "52998224725"
+    [a] = qc.ident_store.listar_acessos(DEFAULT_ORG_ID, LEAD)
+    assert a.ator_user_id == DEFAULT_USER_ID and a.campos == ("cpf",) and a.motivo.startswith("conferir")
+    assert qc.post(f"{BASE}/leads/{uuid4()}/identificacao/revelar", json={}).json()["code"] == "lead_sem_identificacao"
+    assert qc.post(url, json={"surpresa": 1}).status_code == 422
+
+
+def test_reveal_with_a_product_token_is_refused(qc, chan_auth):
+    _guardar_identidade(qc)
+    chan_auth(["agents:channel-status", "agents:channel-turn"])
+    assert qc.raw().post(f"{BASE}/leads/{LEAD}/identificacao/revelar", json={}).status_code == 403

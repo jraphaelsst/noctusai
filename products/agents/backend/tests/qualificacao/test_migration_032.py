@@ -140,4 +140,48 @@ def test_axis_validity_and_scores_columns_exist():
     assert "eixo TEXT NULL CHECK" in crit and "validade_dias INT NULL CHECK" in crit
     assert "scores JSONB NOT NULL DEFAULT '{}'::jsonb" in _table("lead_qualificacao_estado")
     copy = SQL[SQL.index("INSERT INTO agents.qualificacao_criterios"):]
-    assert "eixo, validade_dias" in copy[: copy.index("FROM agents.qualificacao_criterios")]
+    assert "eixo, escopo, validade_dias" in copy[: copy.index("FROM agents.qualificacao_criterios")]
+
+
+def test_new_state_columns_and_param_columns():
+    est = _table("lead_qualificacao_estado")
+    for col in ("regra_id TEXT NULL", "detalhe JSONB NOT NULL", "descartado_sugerido JSONB NULL"):
+        assert col in est
+    par = _table("qualificacao_parametros")
+    assert "eixos JSONB NOT NULL DEFAULT '{}'::jsonb" in par and "pedir_identificacao_quando JSONB NULL" in par
+    assert "'derivado', 'identificacao'" in _table("qualificacao_criterios")
+    copy = SQL[SQL.index("INSERT INTO agents.qualificacao_parametros"):]
+    assert "eixos, pedir_identificacao_quando" in copy[:400]
+
+
+def test_human_confirmation_table_is_append_only_and_service_role_only():
+    assert "ator_user_id UUID NOT NULL" in _table("lead_qualificacao_confirmacoes")
+    assert re.search(r"guard_lead_qualificacao_confirmacoes_append_only\s+BEFORE UPDATE OR DELETE ON agents\.lead_qualificacao_confirmacoes", SQL)
+    assert "REVOKE ALL ON agents.lead_qualificacao_confirmacoes FROM anon, authenticated" in SQL
+
+
+def test_identity_tables_encrypted_columns_audit_and_lockdown():
+    ident = _table("lead_identificacao")
+    for col in ("cpf_cifrado TEXT NULL", "rg_cifrado TEXT NULL", "cpf_hash TEXT NULL", "rg_uf TEXT NULL",
+                "coletado_por_agent_id UUID NULL REFERENCES agents.agents(id)", "origem_msg_id UUID NULL"):
+        assert col in ident, col
+    for clear in ("cpf TEXT", "rg TEXT", "cpf_hash TEXT NOT NULL"):
+        assert clear not in ident  # no clear-text CPF/RG column, ever
+    assert "char_length(cpf_hash) = 64" in ident
+    assert "ator_user_id UUID NOT NULL" in _table("lead_identificacao_acessos")
+    # the access audit has no erasure exception: its trigger always raises
+    body = SQL[SQL.index("FUNCTION agents.guard_lead_identificacao_acessos_append_only()"):]
+    body = body[: body.index("$$;", body.index("AS $$"))]
+    assert "RAISE EXCEPTION 'append_only'" in body and "erasing" not in body
+    for t in ("lead_identificacao", "lead_identificacao_acessos", "lead_qualificacao_confirmacoes"):
+        assert f"ALTER TABLE agents.{t} ENABLE ROW LEVEL SECURITY" in SQL
+        assert f"REVOKE ALL ON agents.{t} FROM anon, authenticated" in SQL
+        assert f'"service_role_bypass" ON agents.{t}' in SQL
+
+
+def test_erasure_covers_identity_and_confirmations():
+    for fn in ("apagar_qualificacao_lead", "purgar_qualificacao_inativos"):
+        body = SQL[SQL.index(f"FUNCTION agents.{fn}("):]
+        body = body[: body.index("$$;", body.index("AS $$"))]
+        assert "DELETE FROM agents.lead_identificacao " in body and "DELETE FROM agents.lead_qualificacao_confirmacoes" in body
+        assert "lead_identificacao_acessos" not in body  # the audit survives erasure (no personal data in it)

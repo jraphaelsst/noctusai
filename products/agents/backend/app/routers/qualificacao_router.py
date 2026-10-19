@@ -12,15 +12,24 @@ Seams (FastAPI dependencies, overridable in tests): ``get_padrao_store_dep``,
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import Field
 
-from app.dependencies import require_channel_status, require_member, require_platform_admin
+from app.dependencies import (
+    require_admin,
+    require_channel_status,
+    require_channel_turn,
+    require_member,
+    require_platform_admin,
+)
 from app.qualificacao import engine
+from app.qualificacao.identificacao import EncryptionNotConfigured, IdentificacaoService, RevelarNegado
 from app.qualificacao.lead_store import LeadQualificacaoStore
-from app.qualificacao.models import EventoImovel
+from app.qualificacao.models import EventoImovel, LeadSinais
 from app.qualificacao.schemas import (
     CriterioIn,
     EstagioIn,
@@ -34,6 +43,7 @@ from app.qualificacao.service import QualificacaoService
 from app.qualificacao.store import PadraoStore
 from app.stores._db_errors import StudioConflict, VersionImmutable
 from app.stores.errors import NotFound
+from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import AuthContext
 
 router = APIRouter(tags=["qualificacao"])
@@ -51,6 +61,17 @@ def get_lead_qualificacao_store_dep() -> LeadQualificacaoStore:
     from app.qualificacao.lead_store import get_lead_qualificacao_store
 
     return get_lead_qualificacao_store(settings)
+
+
+def get_identificacao_service_dep() -> IdentificacaoService:
+    from app.config import settings
+    from app.qualificacao.ident_store import get_identificacao_service
+
+    return get_identificacao_service(settings)
+
+
+def _service(padroes, leads, ident) -> QualificacaoService:
+    return QualificacaoService(padroes, leads, identificacao=ident)
 
 
 def _err(status: int, code: str, detail: str, **extra: Any) -> HTTPException:
@@ -275,20 +296,101 @@ async def obter_qualificacao_lead(
     ctx: AuthContext = Depends(require_channel_status),
     padroes: PadraoStore = Depends(get_padrao_store_dep),
     leads: LeadQualificacaoStore = Depends(get_lead_qualificacao_store_dep),
+    ident: IdentificacaoService = Depends(get_identificacao_service_dep),
 ) -> dict[str, Any]:
-    service = QualificacaoService(padroes, leads)
+    """Full computed state: stage + the rule that fired, total and per-axis scores with the
+    criterion-by-criterion breakdown, a suggested (never applied) discard, property events. The
+    literal quotes and the identity values never leave through this route."""
+    service = _service(padroes, leads, ident)
     with _Mapped():
         q = service.obter_qualificacao(ctx.org_id, lead_ref)
     if q is None:
         raise _err(404, "lead_sem_qualificacao", "Lead sem qualificacao registrada.")
     e = q.estado
     return {
-        "lead_ref": str(lead_ref), "versao_id": str(q.versao_id), "estagio": e.estagio, "score": e.score,
-        "scores": dict(e.scores), "valores": e.valores, "faltando": list(e.faltando), "pode_ofertar": e.pode_ofertar,
-        "pode_concluir": e.pode_concluir, "hash": e.hash,
+        "lead_ref": str(lead_ref), "versao_id": str(q.versao_id), "estagio": e.estagio, "regra_id": e.regra_id,
+        "score": e.score, "scores": dict(e.scores), "detalhe": e.detalhe,
+        "descartado_sugerido": e.descartado_sugerido, "valores": e.valores, "faltando": list(e.faltando),
+        "identificacao_faltando": list(e.identificacao_faltando) if e.pedir_identificacao else [],
+        "pode_ofertar": e.pode_ofertar, "pode_concluir": e.pode_concluir, "hash": e.hash,
         "calculado_em": q.calculado_em.isoformat(),
         "eventos_imovel": [_evento_out(ev) for ev in q.eventos],
     }
+
+
+class SinaisIn(StrictHttpModel):
+    ultima_resposta_em: datetime | None = None
+    respostas_count: int | None = Field(default=None, ge=0)
+    eventos: dict[str, int] = Field(default_factory=dict)
+
+    def to_sinais(self) -> LeadSinais:
+        return LeadSinais(self.ultima_resposta_em, self.respostas_count, dict(self.eventos))
+
+
+class ConfirmarDescarteIn(StrictHttpModel):
+    ator_user_id: UUID
+    motivo: str | None = Field(default=None, max_length=500)
+    estagio: str | None = Field(default=None, max_length=64)
+    sinais: SinaisIn | None = None
+
+
+@router.post("/api/channels/leads/{lead_ref}/descarte/confirmar")
+async def confirmar_descarte(
+    lead_ref: UUID,
+    body: ConfirmarDescarteIn,
+    ctx: AuthContext = Depends(require_channel_turn),
+    padroes: PadraoStore = Depends(get_padrao_store_dep),
+    leads: LeadQualificacaoStore = Depends(get_lead_qualificacao_store_dep),
+    ident: IdentificacaoService = Depends(get_identificacao_service_dep),
+) -> dict[str, Any]:
+    """LGPD art. 20: the engine only SUGGESTS ``descartado``; a human (``ator_user_id``) confirms here."""
+    cache = leads.obter_estado(ctx.org_id, lead_ref)
+    if cache is None:
+        raise _err(404, "lead_sem_qualificacao", "Lead sem qualificacao registrada.")
+    with _Mapped():
+        r = _service(padroes, leads, ident).confirmar_terminal(
+            ctx.org_id, lead_ref, cache.versao_id, ator_user_id=body.ator_user_id, estagio=body.estagio,
+            motivo=body.motivo, sinais=body.sinais.to_sinais() if body.sinais else None,
+        )
+    if not r.ok:
+        raise _err(409, r.codigo or "conflito", "Nada a confirmar.")
+    return {"estagio": r.estado.estagio, "regra_id": r.estado.regra_id}
+
+
+# ── lead identity: masked by default, clear text only for org owner/admin, audited ──
+
+@router.get("/api/channels/leads/{lead_ref}/identificacao")
+async def identificacao_mascarada(
+    lead_ref: UUID,
+    ctx: AuthContext = Depends(require_channel_status),
+    ident: IdentificacaoService = Depends(get_identificacao_service_dep),
+) -> dict[str, Any]:
+    m = ident.mascarado(ctx.org_id, lead_ref)
+    if m is None:
+        raise _err(404, "lead_sem_identificacao", "Lead sem identificacao registrada.")
+    return m
+
+
+class RevelarIn(StrictHttpModel):
+    motivo: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/api/qualificacao/leads/{lead_ref}/identificacao/revelar")
+async def revelar_identificacao(
+    lead_ref: UUID,
+    body: RevelarIn,
+    ctx: AuthContext = Depends(require_admin),
+    ident: IdentificacaoService = Depends(get_identificacao_service_dep),
+) -> dict[str, Any]:
+    """Clear CPF/RG for an org owner/admin (human session). The access is audited BEFORE the value is returned."""
+    if ctx.user_id is None:
+        raise _err(403, "user_required", "Restricted to human users")
+    try:
+        return ident.revelar(ctx.org_id, lead_ref, ator_user_id=ctx.user_id, motivo=body.motivo)
+    except RevelarNegado as exc:
+        raise _err(404, "lead_sem_identificacao", "Lead sem identificacao registrada.") from exc
+    except EncryptionNotConfigured as exc:
+        raise _err(503, "encryption_not_configured", "Chave de cifra nao configurada.") from exc
 
 
 def _evento_out(ev: EventoImovel) -> dict[str, Any]:
@@ -298,4 +400,4 @@ def _evento_out(ev: EventoImovel) -> dict[str, Any]:
     }
 
 
-__all__ = ["router", "get_padrao_store_dep", "get_lead_qualificacao_store_dep"]
+__all__ = ["router", "get_padrao_store_dep", "get_lead_qualificacao_store_dep", "get_identificacao_service_dep"]

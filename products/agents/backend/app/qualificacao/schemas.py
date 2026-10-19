@@ -11,7 +11,7 @@ from app.qualificacao.models import CriterioDef, EstagioDef, Opcao, ParametrosDe
 from noctusai_lib.api import StrictHttpModel
 
 Grupo = Literal["prontidao", "bloqueios", "interesse", "perfil_imovel", "perfil_vida", "contato"]
-Tipo = Literal["enum", "multi", "bool", "numero", "faixa", "texto", "imovel_ref"]
+Tipo = Literal["enum", "multi", "bool", "numero", "faixa", "texto", "imovel_ref", "derivado", "identificacao"]
 _CHAVE = r"^[a-z][a-z0-9_]{1,63}$"
 
 
@@ -34,6 +34,7 @@ class CriterioIn(StrictHttpModel):
     ordem: int = 0
     ativo: bool = True
     eixo: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    escopo: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,31}$")
     validade_dias: int | None = Field(default=None, ge=1, le=3650)
 
     def to_def(self, chave: str) -> CriterioDef:
@@ -42,7 +43,7 @@ class CriterioIn(StrictHttpModel):
             tipo=self.tipo,
             opcoes=tuple(Opcao(o.valor, o.rotulo, o.descricao_modelo, tuple(o.sinonimos)) for o in self.opcoes),
             unidade=self.unidade, sensivel=self.sensivel, pontuacao=self.pontuacao, ordem=self.ordem,
-            ativo=self.ativo, eixo=self.eixo, validade_dias=self.validade_dias,
+            ativo=self.ativo, eixo=self.eixo, escopo=self.escopo, validade_dias=self.validade_dias,
         )
 
 
@@ -65,9 +66,12 @@ class ParametrosIn(StrictHttpModel):
     minimo_para_ofertar: dict[str, Any]
     lote_ofertas: int = Field(default=3, ge=1, le=5)
     score_max: int = Field(default=100, ge=1, le=1000)
+    eixos: dict[str, Any] = Field(default_factory=dict)
+    pedir_identificacao_quando: dict[str, Any] | None = None
 
     def to_def(self) -> ParametrosDef:
-        return ParametrosDef(self.minimo_para_ofertar, self.lote_ofertas, self.score_max)
+        return ParametrosDef(self.minimo_para_ofertar, self.lote_ofertas, self.score_max, self.eixos,
+                             self.pedir_identificacao_quando)
 
 
 class PadraoCreate(StrictHttpModel):
@@ -113,7 +117,7 @@ def versao_out(v: VersaoPadrao) -> dict[str, Any]:
                      "sinonimos": list(o.sinonimos)} for o in c.opcoes
                 ],
                 "unidade": c.unidade, "sensivel": c.sensivel, "pontuacao": c.pontuacao, "ordem": c.ordem,
-                "ativo": c.ativo, "eixo": c.eixo, "validade_dias": c.validade_dias,
+                "ativo": c.ativo, "eixo": c.eixo, "escopo": c.escopo, "validade_dias": c.validade_dias,
             }
             for c in v.criterios
         ],
@@ -127,5 +131,6 @@ def versao_out(v: VersaoPadrao) -> dict[str, Any]:
         "parametros": {
             "minimo_para_ofertar": v.parametros.minimo_para_ofertar,
             "lote_ofertas": v.parametros.lote_ofertas, "score_max": v.parametros.score_max,
+            "eixos": v.parametros.eixos, "pedir_identificacao_quando": v.parametros.pedir_identificacao_quando,
         },
     }

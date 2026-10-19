@@ -7,7 +7,7 @@ then recomputes the state with :func:`engine.calcular` and refreshes the cache r
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable, Sequence
 from uuid import UUID
@@ -15,8 +15,11 @@ from uuid import UUID
 from app.qualificacao import engine
 from app.qualificacao.lead_store import EstadoCache, LeadQualificacaoStore
 from app.qualificacao.matcher import MAX_TRECHO, conferir_trecho
+from app.qualificacao.identificacao import IdentificacaoService
 from app.qualificacao.models import (
     DERIVADOS,
+    Confirmacao,
+    LeadSinais,
     EVENTOS_IMOVEL,
     ORIGENS_IMOVEL,
     EstadoQualificacao,
@@ -34,6 +37,7 @@ __all__ = [
     "RegistrarPerfilResultado",
     "EventoImovelResultado",
     "ConclusaoResultado",
+    "ConfirmacaoResultado",
     "QualificacaoLead",
     "VersaoNaoUtilizavel",
     "QualificacaoService",
@@ -103,6 +107,13 @@ class ConclusaoResultado:
 
 
 @dataclass(frozen=True)
+class ConfirmacaoResultado:
+    ok: bool
+    codigo: str | None
+    estado: EstadoQualificacao
+
+
+@dataclass(frozen=True)
 class QualificacaoLead:
     """Full computed state + property events (``GET .../leads/{ref}/qualificacao``)."""
 
@@ -119,10 +130,12 @@ class QualificacaoService:
         leads: LeadQualificacaoStore,
         *,
         agora: Callable[[], datetime] = utcnow,
+        identificacao: IdentificacaoService | None = None,
     ) -> None:
         self._padroes = padroes
         self._leads = leads
         self._agora = agora
+        self._ident = identificacao
 
     # ── loading ────────────────────────────────────────────────────────────
 
@@ -132,23 +145,35 @@ class QualificacaoService:
             raise VersaoNaoUtilizavel()
         return v
 
-    def _calcular(self, v: VersaoPadrao, registros, eventos) -> EstadoQualificacao:
-        return engine.calcular(v, registros, eventos, self._agora())
+    def _calcular(
+        self, v: VersaoPadrao, org_id: UUID, lead_ref_id: UUID, registros, eventos,
+        escopo: str | None = None, sinais: LeadSinais | None = None,
+    ) -> EstadoQualificacao:
+        """Pure engine + the lead's stored facts: collected identity FIELDS (names only) and the
+        terminal stages a human confirmed. ``sinais`` carries what only the caller knows."""
+        if self._ident is not None:
+            sinais = replace(sinais or LeadSinais(), identificacao=self._ident.coletados(org_id, lead_ref_id))
+        confirmados = [c.estagio for c in self._leads.listar_confirmacoes(org_id, lead_ref_id)]
+        return engine.calcular(v, registros, eventos, self._agora(), escopo, sinais, confirmados)
 
     def _persistir(self, org_id: UUID, lead_ref_id: UUID, v: VersaoPadrao, e: EstadoQualificacao) -> None:
         self._leads.salvar_estado(EstadoCache(
             org_id=org_id, lead_ref_id=lead_ref_id, versao_id=v.id, valores=e.valores, score=e.score,
-            estagio=e.estagio, faltando=e.faltando, hash=e.hash, scores=dict(e.scores), calculado_em=e.calculado_em or self._agora(),
+            estagio=e.estagio, faltando=e.faltando, hash=e.hash, scores=dict(e.scores), regra_id=e.regra_id, detalhe=dict(e.detalhe),
+            descartado_sugerido=e.descartado_sugerido, calculado_em=e.calculado_em or self._agora(),
         ))
 
     # ── reads ──────────────────────────────────────────────────────────────
 
-    def avaliar(self, org_id: UUID, lead_ref_id: UUID, versao_id: UUID) -> EstadoQualificacao:
+    def avaliar(
+        self, org_id: UUID, lead_ref_id: UUID, versao_id: UUID, escopo: str | None = None,
+        sinais: LeadSinais | None = None,
+    ) -> EstadoQualificacao:
         """The ``avaliar_lead`` state (``.avaliar_payload()`` is the §3.4 payload).
         Computed fresh from the records; writes nothing."""
         v = self._versao(versao_id)
         return self._calcular(
-            v, self._leads.listar_registros(org_id, lead_ref_id), self._leads.listar_eventos(org_id, lead_ref_id),
+            v, org_id, lead_ref_id, self._leads.listar_registros(org_id, lead_ref_id), self._leads.listar_eventos(org_id, lead_ref_id), escopo, sinais,
         )
 
     def obter_qualificacao(self, org_id: UUID, lead_ref_id: UUID) -> QualificacaoLead | None:
@@ -158,7 +183,7 @@ class QualificacaoService:
             return None
         v = self._padroes.obter_versao(cache.versao_id)
         eventos = self._leads.listar_eventos(org_id, lead_ref_id)
-        estado = self._calcular(v, self._leads.listar_registros(org_id, lead_ref_id), eventos)
+        estado = self._calcular(v, org_id, lead_ref_id, self._leads.listar_registros(org_id, lead_ref_id), eventos)
         return QualificacaoLead(cache.versao_id, estado, tuple(eventos), estado.calculado_em or self._agora())
 
     def codigos_oferecidos(self, org_id: UUID, lead_ref_id: UUID) -> list[str]:
@@ -187,6 +212,8 @@ class QualificacaoService:
         thread_id: UUID | None = None,
         message_id: UUID | None = None,
         fonte: str = "lead_informou",
+        escopo: str | None = None,
+        sinais: LeadSinais | None = None,
     ) -> RegistrarPerfilResultado:
         """Validate then append the lead's answers. Per-item refusals do not block
         the accepted items (typed in ``recusados``). ``trecho`` must be found in the
@@ -204,7 +231,7 @@ class QualificacaoService:
 
         registros = self._leads.listar_registros(org_id, lead_ref_id)
         eventos = self._leads.listar_eventos(org_id, lead_ref_id)
-        atuais = self._calcular(v, registros, eventos).valores
+        atuais = self._calcular(v, org_id, lead_ref_id, registros, eventos, escopo, sinais).valores
 
         novos: list[Registro] = []
         aceitos: list[str] = []
@@ -212,7 +239,7 @@ class QualificacaoService:
         recusados: list[ItemRecusado] = []
         vistos: set[str] = set()
         for item in itens:
-            codigo = self._recusa_item(v, item, fonte, mensagens_lead, vistos)
+            codigo = self._recusa_item(v, item, fonte, mensagens_lead, vistos, escopo)
             if codigo is not None:
                 recusados.append(ItemRecusado(item.criterio, codigo))
                 continue
@@ -234,7 +261,7 @@ class QualificacaoService:
                 org_id, lead_ref_id, agent_id=agent_id, versao_id=versao_id, thread_id=thread_id,
                 message_id=message_id, registros=novos,
             )
-        estado = self._calcular(v, [*registros, *escritos], eventos)
+        estado = self._calcular(v, org_id, lead_ref_id, [*registros, *escritos], eventos, escopo, sinais)
         if novos or self._leads.obter_estado(org_id, lead_ref_id) is None:
             self._persistir(org_id, lead_ref_id, v, estado)
         return RegistrarPerfilResultado(
@@ -245,6 +272,7 @@ class QualificacaoService:
     @staticmethod
     def _recusa_item(
         v: VersaoPadrao, item: ItemPerfil, fonte: str, mensagens_lead: Sequence[str], vistos: set[str],
+        escopo: str | None = None,
     ) -> str | None:
         if item.criterio in vistos:
             return "criterio_repetido"
@@ -255,6 +283,8 @@ class QualificacaoService:
             return "criterio_desconhecido"
         if crit.sensivel == "nao_coletar":
             return "nao_coletar"
+        if not engine.no_escopo(crit, escopo):
+            return "fora_do_escopo"
         ok, _, codigo = engine.validar_valor(crit, item.valor)
         if not ok:
             return codigo
@@ -281,6 +311,8 @@ class QualificacaoService:
         lote: int | None = None,
         motivo: str | None = None,
         thread_id: UUID | None = None,
+        escopo: str | None = None,
+        sinais: LeadSinais | None = None,
     ) -> EventoImovelResultado:
         if evento not in EVENTOS_IMOVEL:
             return EventoImovelResultado(False, "evento_invalido")
@@ -307,30 +339,33 @@ class QualificacaoService:
         if evento == "oferecido":
             if oferecido:
                 if origem == "pedido_lead":
-                    return EventoImovelResultado(True, inalterado=True, estado=self._calcular(v, registros, eventos))
+                    return EventoImovelResultado(True, inalterado=True, estado=self._calcular(v, org_id, lead_ref_id, registros, eventos, escopo, sinais))
                 return EventoImovelResultado(False, "imovel_ja_oferecido")
         else:
             if not oferecido:
                 return EventoImovelResultado(False, "imovel_nao_oferecido")
             if ultima == evento:
-                return EventoImovelResultado(True, inalterado=True, estado=self._calcular(v, registros, eventos))
+                return EventoImovelResultado(True, inalterado=True, estado=self._calcular(v, org_id, lead_ref_id, registros, eventos, escopo, sinais))
 
         novo = self._leads.adicionar_evento(
             org_id, lead_ref_id, agent_id=agent_id, thread_id=thread_id,
             evento=EventoImovel(codigo_imovel=codigo_imovel, evento=evento, origem=origem, lote=lote, motivo=motivo),
         )
-        estado = self._calcular(v, registros, [*eventos, novo])
+        estado = self._calcular(v, org_id, lead_ref_id, registros, [*eventos, novo], escopo, sinais)
         self._persistir(org_id, lead_ref_id, v, estado)
         return EventoImovelResultado(True, estado=estado)
 
     # ── concluir ───────────────────────────────────────────────────────────
 
-    def pode_concluir(self, org_id: UUID, lead_ref_id: UUID, versao_id: UUID) -> ConclusaoResultado:
+    def pode_concluir(
+        self, org_id: UUID, lead_ref_id: UUID, versao_id: UUID, escopo: str | None = None,
+        sinais: LeadSinais | None = None,
+    ) -> ConclusaoResultado:
         """Code-gated ``concluir_qualificacao``: allowed only when the computed
         stage is ``conclusivo``. On success carries the ``lead_pronto`` action payload."""
         v = self._versao(versao_id)
         eventos = self._leads.listar_eventos(org_id, lead_ref_id)
-        estado = self._calcular(v, self._leads.listar_registros(org_id, lead_ref_id), eventos)
+        estado = self._calcular(v, org_id, lead_ref_id, self._leads.listar_registros(org_id, lead_ref_id), eventos, escopo, sinais)
         if not estado.pode_concluir:
             return ConclusaoResultado(False, estado.estagio, codigo="estagio_nao_conclusivo")
         ativos = engine_ultimas_reacoes(eventos)
@@ -343,11 +378,40 @@ class QualificacaoService:
             },
         )
 
+    # ── terminal stages: only a HUMAN confirms (LGPD art. 20) ──────────────
+
+    def confirmar_terminal(
+        self, org_id: UUID, lead_ref_id: UUID, versao_id: UUID, *, ator_user_id: UUID,
+        estagio: str | None = None, motivo: str | None = None, escopo: str | None = None,
+        sinais: LeadSinais | None = None,
+    ) -> "ConfirmacaoResultado":
+        """Record a human's confirmation of the suggested terminal stage (``descartado``). Refused
+        when the engine is not currently suggesting one (or suggests another)."""
+        v = self._versao(versao_id)
+        registros = self._leads.listar_registros(org_id, lead_ref_id)
+        eventos = self._leads.listar_eventos(org_id, lead_ref_id)
+        antes = self._calcular(v, org_id, lead_ref_id, registros, eventos, escopo, sinais)
+        sug = antes.descartado_sugerido
+        if sug is None:
+            return ConfirmacaoResultado(False, "sem_sugestao", antes)
+        if estagio is not None and estagio != sug["estagio"]:
+            return ConfirmacaoResultado(False, "estagio_diferente_do_sugerido", antes)
+        if motivo is not None and len(motivo) > 500:
+            return ConfirmacaoResultado(False, "motivo_longo", antes)
+        self._leads.adicionar_confirmacao(
+            org_id, lead_ref_id, Confirmacao(estagio=sug["estagio"], ator_user_id=ator_user_id, motivo=motivo))
+        depois = self._calcular(v, org_id, lead_ref_id, registros, eventos, escopo, sinais)
+        self._persistir(org_id, lead_ref_id, v, depois)
+        return ConfirmacaoResultado(True, None, depois)
+
     # ── LGPD ───────────────────────────────────────────────────────────────
 
     def apagar_por_lead(self, org_id: UUID, lead_ref_id: UUID) -> int:
         """Delete-by-lead, idempotent. A-THREAD's ``apagar_lead`` calls this."""
-        return self._leads.apagar_por_lead(org_id, lead_ref_id)
+        n = self._leads.apagar_por_lead(org_id, lead_ref_id)
+        if self._ident is not None:
+            n += self._ident.apagar_por_lead(org_id, lead_ref_id)
+        return n
 
     def purgar_inativos(self, cutoff: datetime) -> int:
         return self._leads.purgar_inativos(cutoff)

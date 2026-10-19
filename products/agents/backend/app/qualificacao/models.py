@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 GRUPOS = ("prontidao", "bloqueios", "interesse", "perfil_imovel", "perfil_vida", "contato")
-TIPOS = ("enum", "multi", "bool", "numero", "faixa", "texto", "imovel_ref")
+TIPOS = ("enum", "multi", "bool", "numero", "faixa", "texto", "imovel_ref", "derivado", "identificacao")
 SENSIVEL = (None, "faixa", "nao_coletar")
 FONTES = ("lead_informou", "migracao", "humano")
 EVENTOS_IMOVEL = ("oferecido", "gostou", "nao_gostou", "quer_visitar", "descartado", "quer_ver_mais")
@@ -17,7 +17,12 @@ STATUS_VERSAO = ("rascunho", "publicada", "arquivada")
 #: Criteria computed from the property events, never recorded by the model.
 #: A rule may reference them; a version may also define a criterion row with
 #: the same key to attach points to them (its ``pontuacao`` then applies).
-DERIVADOS = ("imoveis_gostou", "deseja_visitar", "imoveis_oferecidos", "quer_mais_opcoes")
+DERIVADOS = (
+    "imoveis_gostou", "deseja_visitar", "imoveis_oferecidos", "quer_mais_opcoes", "imoveis_rejeitados",
+    "respostas_count", "dias_sem_resposta",
+)
+#: Event names a rule may test: the property events plus two computed/ signalled ones.
+EVENTOS_REGRA = EVENTOS_IMOVEL + ("lote_rejeitado", "pediu_humano")
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,7 @@ class CriterioDef:
     ordem: int = 0
     ativo: bool = True
     eixo: str | None = None  # named score axis (fit / intencao / urgencia ...); None = total only
+    escopo: str | None = None  # agent/block that asks it (sdr | financeiro | juridico ...); None = every scope
     validade_dias: int | None = None  # a record older than this stops counting (the criterion is missing again)
     id: UUID | None = None
 
@@ -60,9 +66,33 @@ class EstagioDef:
 
 @dataclass(frozen=True)
 class ParametrosDef:
+    """``eixos``: per-axis config, all data::
+
+        {"intencao": {"max": 100,
+                      "multiplicadores": [{"quando": <rule>, "fator": 0.6}],
+                      "decaimento": [{"apos_dias": 14, "fator": 0.75}, {"apos_dias": 30, "fator": 0.5}]}}
+
+    ``multiplicadores`` apply when their rule is true (factors multiply); ``decaimento`` picks the
+    factor of the largest ``apos_dias`` <= days since the lead's last reply.
+    """
+
     minimo_para_ofertar: dict[str, Any]
     lote_ofertas: int = 3
     score_max: int = 100
+    eixos: dict[str, Any] = field(default_factory=dict)
+    #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.
+    pedir_identificacao_quando: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class LeadSinais:
+    """System signals about the lead that are not criteria records (pure inputs of ``calcular``)."""
+
+    ultima_resposta_em: datetime | None = None
+    respostas_count: int | None = None
+    eventos: dict[str, int] = field(default_factory=dict)  # e.g. {"pediu_humano": 1}
+    #: Identity FIELDS already collected (names only, never values) -- from agents.lead_identificacao.
+    identificacao: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -139,7 +169,12 @@ class EstadoQualificacao:
     pode_concluir: bool
     hash: str
     calculado_em: datetime | None = None
-    scores: dict[str, int] = field(default_factory=dict)  # per axis, each clamped to [0, score_max]
+    scores: dict[str, int] = field(default_factory=dict)  # per axis, each clamped to [0, axis max]
+    regra_id: str | None = None  # the rule that fired for `estagio` (a node "id", else the stage key)
+    descartado_sugerido: dict[str, Any] | None = None  # LGPD art. 20: only SUGGESTED until a human confirms
+    detalhe: dict[str, Any] = field(default_factory=dict)  # per-axis breakdown, criterion -> points
+    identificacao_faltando: tuple[str, ...] = ()  # identity fields still to collect (only once asking is due)
+    pedir_identificacao: bool = True  # the data rule says asking for identity is due now
 
     def avaliar_payload(self) -> dict[str, Any]:
         """The ``avaliar_lead`` tool payload (CONTRACT §3.4) — small by design
@@ -148,8 +183,22 @@ class EstadoQualificacao:
             "estagio": self.estagio,
             "score": self.score,
             **({"scores": dict(self.scores)} if self.scores else {}),
+            "regra_id": self.regra_id,
+            **({"descartado_sugerido": dict(self.descartado_sugerido)} if self.descartado_sugerido else {}),
             "faltando": list(self.faltando),
+            "identificacao_faltando": list(self.identificacao_faltando) if self.pedir_identificacao else [],
             "proximo_criterio": self.proximo_criterio.to_dict() if self.proximo_criterio else None,
             "pode_ofertar": self.pode_ofertar,
             "pode_concluir": self.pode_concluir,
         }
+
+
+@dataclass(frozen=True)
+class Confirmacao:
+    """A HUMAN's confirmation of a terminal stage (descartado). The engine only ever suggests it."""
+
+    estagio: str
+    ator_user_id: UUID
+    motivo: str | None = None
+    created_at: datetime | None = None
+    id: UUID | None = None

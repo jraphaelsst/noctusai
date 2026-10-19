@@ -119,7 +119,8 @@ def test_proximo_criterio_carries_options_without_synonyms():
         {"valor": "compra", "rotulo": "Compra", "descricao_modelo": "significa compra"},
         {"valor": "aluguel", "rotulo": "Aluguel", "descricao_modelo": "significa aluguel"},
     ]
-    assert set(e.avaliar_payload()) == {"estagio", "score", "faltando", "proximo_criterio", "pode_ofertar", "pode_concluir"}
+    assert set(e.avaliar_payload()) == {"estagio", "regra_id", "score", "faltando", "identificacao_faltando", "proximo_criterio",
+                                         "pode_ofertar", "pode_concluir"}
 
 
 # ── per-type scoring ────────────────────────────────────────────────────────

@@ -249,7 +249,7 @@ def criterio_from_row(r: dict[str, Any]) -> CriterioDef:
         id=UUID(str(r["id"])) if r.get("id") else None, chave=r["chave"], grupo=r["grupo"], rotulo=r["rotulo"],
         descricao_modelo=r.get("descricao_modelo") or "", tipo=r["tipo"], opcoes=_opcoes_in(r.get("opcoes")),
         unidade=r.get("unidade"), sensivel=r.get("sensivel"), pontuacao=r.get("pontuacao") or {},
-        ordem=r.get("ordem", 0), ativo=r.get("ativo", True), eixo=r.get("eixo"),
+        ordem=r.get("ordem", 0), ativo=r.get("ativo", True), eixo=r.get("eixo"), escopo=r.get("escopo"),
         validade_dias=r.get("validade_dias"),
     )
 
@@ -320,7 +320,8 @@ class SupabasePadraoStore:
         par = self._t("qualificacao_parametros").select("*").eq("versao_id", str(versao_id)).limit(1).execute()
         prow = (par.data or [None])[0]
         parametros = (
-            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 3), prow.get("score_max", 100))
+            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 3), prow.get("score_max", 100),
+                          prow.get("eixos") or {}, prow.get("pedir_identificacao_quando"))
             if prow else ParametrosDef(minimo_para_ofertar={"todos": []})
         )
         return VersaoPadrao(
@@ -357,7 +358,7 @@ class SupabasePadraoStore:
             "versao_id": str(versao_id), "chave": c.chave, "grupo": c.grupo, "rotulo": c.rotulo,
             "descricao_modelo": c.descricao_modelo, "tipo": c.tipo, "opcoes": _opcoes_out(c.opcoes),
             "unidade": c.unidade, "sensivel": c.sensivel, "pontuacao": c.pontuacao, "ordem": c.ordem,
-            "ativo": c.ativo, "eixo": c.eixo, "validade_dias": c.validade_dias,
+            "ativo": c.ativo, "eixo": c.eixo, "escopo": c.escopo, "validade_dias": c.validade_dias,
         }
         exec_query(self._t("qualificacao_criterios").upsert(row, on_conflict="versao_id,chave"))
 
@@ -385,7 +386,8 @@ class SupabasePadraoStore:
     def salvar_parametros(self, versao_id, p):
         row = {
             "versao_id": str(versao_id), "minimo_para_ofertar": p.minimo_para_ofertar,
-            "lote_ofertas": p.lote_ofertas, "score_max": p.score_max, "updated_at": utcnow_iso(),
+            "lote_ofertas": p.lote_ofertas, "score_max": p.score_max, "eixos": p.eixos,
+            "pedir_identificacao_quando": p.pedir_identificacao_quando, "updated_at": utcnow_iso(),
         }
         exec_query(self._t("qualificacao_parametros").upsert(row, on_conflict="versao_id"))
 
