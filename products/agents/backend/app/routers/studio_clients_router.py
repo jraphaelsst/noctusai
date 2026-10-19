@@ -16,7 +16,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.dependencies import require_admin, require_member
+from app.dependencies import require_platform_admin
 from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
     http_error,
@@ -67,7 +67,7 @@ def _resolve_entry(store, org_id: UUID, client_id: UUID, entry_id: UUID):
 @router.get("", response_model=ClientListOut)
 async def list_clients(
     key: str,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientListOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -84,7 +84,7 @@ async def list_clients(
 async def create_client(
     key: str,
     payload: ClientCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -99,7 +99,7 @@ async def create_client(
 async def get_client(
     key: str,
     client_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -111,7 +111,7 @@ async def update_client(
     key: str,
     client_id: UUID,
     payload: ClientUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -127,7 +127,7 @@ async def create_entry(
     key: str,
     client_id: UUID,
     payload: ClientEntryCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientEntryOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -146,7 +146,7 @@ async def update_entry(
     client_id: UUID,
     entry_id: UUID,
     payload: ClientEntryUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> ClientEntryOut:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -163,7 +163,7 @@ async def delete_entry(
     key: str,
     client_id: UUID,
     entry_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> Response:
     agent = resolve_agent(store, ctx.org_id, key)

@@ -1,7 +1,7 @@
 """``/api/studio/agents/{key}/knowledge`` + ``.../documents`` (contract
 §D3, slice BE-KE).
 
-Auth: ``require_member`` for reads, ``require_admin`` for writes (the
+Auth: ``require_platform_admin`` (visibility tier 1 — the definition/knowledge/evals of an agent are the platform's IP, never an org admin's) (the
 SAME deps every other studio router uses). The agent is resolved through
 BE-DEF's ``StudioDefinitionStore`` and its ``resolve_agent`` — ONE resolver
 for every studio route: 404 ``agent_not_found`` for an unknown key, 409
@@ -31,7 +31,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.dependencies import require_admin, require_member
+from app.dependencies import require_platform_admin
 from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
     resolve_agent,
@@ -131,7 +131,7 @@ def _document_out(record) -> DocumentOut:
 @router.get("/{key}/knowledge", response_model=CollectionListOut)
 async def list_collections(
     key: str,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionListOut:
@@ -148,7 +148,7 @@ async def list_collections(
 async def create_collection(
     key: str,
     payload: CollectionCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionOut:
@@ -167,7 +167,7 @@ async def update_collection(
     key: str,
     col_id: UUID,
     payload: CollectionUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionOut:
@@ -199,7 +199,7 @@ async def list_documents(
     tipo: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentListOut:
@@ -223,7 +223,7 @@ async def create_document(
     key: str,
     col_id: UUID,
     payload: DocumentCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
@@ -254,7 +254,7 @@ async def create_documents_batch(
     key: str,
     col_id: UUID,
     payload: DocumentBatchCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentBatchResultOut:
@@ -298,7 +298,7 @@ async def create_documents_batch(
 async def get_document(
     key: str,
     doc_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
@@ -315,7 +315,7 @@ async def update_document(
     key: str,
     doc_id: UUID,
     payload: DocumentUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
@@ -339,7 +339,7 @@ async def update_document(
 async def list_revisions(
     key: str,
     doc_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> RevisionListOut:
@@ -363,7 +363,7 @@ async def search_knowledge(
     q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX),
     colecao: str | None = Query(None),
     limite: int = Query(8, ge=1, le=20),
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> SearchOut:

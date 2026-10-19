@@ -33,6 +33,9 @@ from app.routers.studio_agents_router import (
 )
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
+from app.routers.studio_evals_router import router as studio_evals_router
+from app.routers.studio_knowledge_router import router as studio_knowledge_router
+from app.routers.studio_package_sync_router import router as studio_package_sync_router
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.studio.models import FakeEvalGate, FakeKnowledgeCatalog
 from noctusai_lib.api.app_factory import configure_app
@@ -105,6 +108,10 @@ def _build_app() -> FastAPI:
     app.include_router(studio_agents_router)
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
+    # mounted for the visibility-tier matrix only (their seams stay unbound: auth answers first)
+    app.include_router(studio_knowledge_router)
+    app.include_router(studio_evals_router)
+    app.include_router(studio_package_sync_router)
     return app
 
 

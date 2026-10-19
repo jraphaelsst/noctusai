@@ -21,15 +21,18 @@ same compare-and-set the section writes use.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.dependencies import (
     ADMIN_ROLES,
     get_auth_context,
     get_core_client,
+    get_product_token_admin_dep,
+    get_token_audit_dep,
     require_admin,
     require_platform_admin,
 )
@@ -45,7 +48,10 @@ from app.routers.studio_agents_router import (
     resolve_version,
     store_errors,
 )
+from app.channels.token_audit import TokenAudit
 from app.schemas.studio_conteudo import (
+    ContentTokenCreateRequest,
+    ContentTokenOut,
     CompiladoOrgOut,
     ConteudoPayloadOut,
     DecisaoOut,
@@ -80,7 +86,7 @@ from app.studio.especificacoes import conflitos_com_regras_fixas, validar_valor
 from app.studio.plataforma import chaves_de_plataforma, ensure_definicao
 from app.studio.resolucao import compile_for_org, conteudo_status, resolve_agent_for_org
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
-from noctusai_lib.api.auth.session import AuthContext, require_scopes
+from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin, require_scopes
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +94,12 @@ router = APIRouter(prefix="/api/studio", tags=["studio-conteudo"])
 
 #: The product-token scope of the ``noctus.agents.content`` MCP path: draft content routes only.
 SCOPE_STUDIO_CONTENT_WRITE = "studio:content-write"
+#: The ONLY issuer a content-write token may carry. It is stamped server-side by
+#: ``POST /plataforma/content-token`` (platform admin); the seed's generic ``POST /api/settings/api-tokens``
+#: (any org owner/admin, any scope string) never sets an issuer — so a token an org admin minted with this
+#: scope still answers 403 ``issuer_not_allowed``, and the scope is deliberately NOT in ``MINTABLE_TOKEN_SCOPES``.
+CONTENT_TOKEN_ISSUER = "noctus-platform"
+CONTENT_TOKEN_TTL_DAYS = 30
 
 _content_write_base = require_scopes(
     SCOPE_STUDIO_CONTENT_WRITE,
@@ -102,7 +114,11 @@ async def require_content_write(ctx: AuthContext = Depends(_content_write_base))
     """Visibility tier 1: the definition is written by a PLATFORM ADMIN (``noctus_users.role == 'admin'``,
     never an org owner/admin) or by a product token that carries ``studio:content-write``
     (the ``noctus.agents.content`` MCP path)."""
-    if ctx.caller_kind != "product" and resolve_platform_admin_role(get_core_client(), ctx.user_id) != "admin":
+    if ctx.caller_kind == "product":
+        if ctx.issuer != CONTENT_TOKEN_ISSUER:
+            raise http_error(403, "issuer_not_allowed", "Token issuer not allowed for this API")
+        return ctx
+    if resolve_platform_admin_role(get_core_client(), ctx.user_id) != "admin":
         raise http_error(403, "platform_admin_required", "Restrito a administradores da plataforma NoctusAI")
     return ctx
 
@@ -453,6 +469,40 @@ async def set_textos_plataforma(
     return PlataformaTextosOut(itens=[
         PlataformaTextoOut(chave=r.chave, conteudo=r.conteudo, updated_at=r.updated_at) for r in rows
     ])
+
+
+@router.post("/plataforma/content-token", response_model=ContentTokenOut, status_code=status.HTTP_201_CREATED)
+async def mint_content_token(
+    payload: ContentTokenCreateRequest, response: Response, ctx: AuthContext = Depends(require_platform_admin),
+    token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
+    audit: TokenAudit = Depends(get_token_audit_dep),
+) -> ContentTokenOut:
+    """Mint the ``noctus.agents.content`` MCP token: scope ``studio:content-write`` only, issuer
+    ``noctus-platform`` (server-side), 30 days, org-bound to the platform org the admin acts in. PLATFORM ADMIN
+    only; the raw secret is returned once. Audited like the channel token."""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CONTENT_TOKEN_TTL_DAYS)
+    try:
+        minted = token_admin.mint(
+            "agents", org_id=ctx.org_id, label=f"conteudo: {payload.label}",
+            scopes=[SCOPE_STUDIO_CONTENT_WRITE], expires_at=expires_at, issuer=CONTENT_TOKEN_ISSUER,
+            minted_by=ctx.user_id,
+        )
+    except Exception as exc:
+        logger.error("agents.content_token.mint_failed org_id=%s error=%s", ctx.org_id, type(exc).__name__)
+        raise http_error(502, "mint_failed", "Falha ao emitir o token.") from exc
+    try:
+        audit.record(
+            api_token_id=minted.info.id, org_id=ctx.org_id, action="MINT", agent_key="studio-content",
+            actor_user_id=ctx.user_id, status=201,
+        )
+    except Exception as exc:
+        token_admin.revoke("agents", minted.info.id, org_id=ctx.org_id)
+        raise http_error(502, "audit_failed", "Falha ao registrar a emissão do token.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return ContentTokenOut(
+        id=minted.info.id, token=minted.secret, prefix=minted.info.prefix, expires_at=expires_at,
+        scopes=[SCOPE_STUDIO_CONTENT_WRITE],
+    )
 
 
 @router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED)

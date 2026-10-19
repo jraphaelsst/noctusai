@@ -175,7 +175,8 @@ class TestHookContract:
             ln.strip() for ln in text.splitlines()
             # A real command, not the block comment explaining why it is gone.
             if not ln.lstrip().startswith("#")
-            and re.search(r"\bgit\b.*\bcommit\b", ln)
+            # `git [opts] commit` the SUBCOMMAND — not a `^{commit}` rev-parse peel in a cat-file probe.
+            and re.search(r"\bgit\s+(?:-\S+\s+)*commit\b", ln)
         ]
         assert not offenders, (
             "pre-push must not create commits — found:\n  " + "\n  ".join(offenders)

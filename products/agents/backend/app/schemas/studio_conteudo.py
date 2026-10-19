@@ -215,3 +215,15 @@ class PlataformaTextoOut(BaseModel):
 
 class PlataformaTextosOut(BaseModel):
     itens: list[PlataformaTextoOut]
+
+
+class ContentTokenCreateRequest(StrictHttpModel):
+    label: str = Field(..., min_length=1, max_length=120)
+
+
+class ContentTokenOut(BaseModel):
+    id: UUID
+    token: str
+    prefix: str
+    expires_at: datetime
+    scopes: list[str]

@@ -27,13 +27,13 @@ class TestAuthBoundary:
 
 class TestAgentResolution:
     def test_unknown_agent_key_404s(self, ke_client):
-        seed_org_role(ke_client, role="member")
+        seed_org_role(ke_client, role="owner")
         resp = ke_client.get("/api/studio/agents/nope/knowledge")
         assert resp.status_code == 404
         assert resp.json()["code"] == "agent_not_found"
 
     def test_legacy_agent_409s(self, ke_client):
-        seed_org_role(ke_client, role="member")
+        seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client, key="bia", definition_mode="legacy")
         resp = ke_client.get("/api/studio/agents/bia/knowledge")
         assert resp.status_code == 409
@@ -44,7 +44,7 @@ class TestAgentResolution:
 
         other_org = uuid4()
         seed_studio_agent(ke_client, key="isaia", org_id=other_org)
-        seed_org_role(ke_client, role="member")  # seeds DEFAULT_ORG_ID's role
+        seed_org_role(ke_client, role="owner")  # seeds DEFAULT_ORG_ID's role
         resp = ke_client.get("/api/studio/agents/isaia/knowledge")
         assert resp.status_code == 404
 
@@ -181,7 +181,7 @@ class TestDocumentsCrud:
     def test_unknown_document_404s(self, ke_client):
         import uuid
 
-        seed_org_role(ke_client, role="member")
+        seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         resp = ke_client.get(f"/api/studio/agents/isaia/documents/{uuid.uuid4()}")
         assert resp.status_code == 404
@@ -345,7 +345,7 @@ class TestSearchRoute:
         assert items[0]["colecao"] == "audience"
 
     def test_search_requires_q(self, ke_client):
-        seed_org_role(ke_client, role="member")
+        seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         resp = ke_client.get("/api/studio/agents/isaia/knowledge/search")
         assert resp.status_code == 422

@@ -897,3 +897,8 @@ Key files for the implementers:
 - `/Users/rapha/Documents/repository/NoctusAI/noctusai/products/social-wiring/backend/app/modules/atendimento_blocos/handoffs.py`
 - `/Users/rapha/Documents/repository/NoctusAI/noctusai/products/social-wiring/backend/app/modules/supervisao/metricas.py`
 - `/Users/rapha/Documents/repository/NoctusAI/noctusai/products/social-wiring/backend/app/modules/pipeline/aceite.py`
+  The same tier covers the clients, knowledge, evals and package-sync routers (platform admin only; strict
+  403 `platform_admin_required` / 401). The `studio:content-write` token is minted ONLY by `POST
+  /api/studio/plataforma/content-token` (platform admin; server-stamped issuer `noctus-platform`, 30 days) and
+  is deliberately outside `MINTABLE_TOKEN_SCOPES`: a token an org admin mints with that scope string through the
+  generic route has no issuer and is refused (403 `issuer_not_allowed`).

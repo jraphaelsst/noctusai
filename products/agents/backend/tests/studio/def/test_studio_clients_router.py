@@ -32,24 +32,25 @@ class TestAuthBoundary:
         resp = getattr(studio.raw, method)(path, **({} if method == "get" else {"json": {}}))
         assert resp.status_code == 401
 
-    def test_member_reads_but_cannot_write(self, studio):
+    def test_org_admins_and_members_are_403_platform_admin_required_on_every_route(self, studio):
         _agent(studio)
         client = _client(studio)
-        studio.as_role("member")
-        assert studio.get(f"{BASE}/isa/clients").status_code == 200
-        assert studio.get(f"{BASE}/isa/clients/{client['id']}").status_code == 200
-        for resp in (
-            studio.post(f"{BASE}/isa/clients", json={"slug": "y", "nome": "Y"}),
-            studio.patch(f"{BASE}/isa/clients/{client['id']}", json={"nome": "Z"}),
-            studio.post(f"{BASE}/isa/clients/{client['id']}/entries", json={"tipo": "nota", "titulo": "t"}),
-        ):
-            assert resp.status_code == 403
-            assert resp.json()["code"] == "role_missing"
+        for who in ("org_admin", "member"):
+            studio.as_org_admin_only() if who == "org_admin" else studio.as_role("member")
+            for resp in (
+                studio.get(f"{BASE}/isa/clients"),
+                studio.get(f"{BASE}/isa/clients/{client['id']}"),
+                studio.post(f"{BASE}/isa/clients", json={"slug": "y", "nome": "Y"}),
+                studio.patch(f"{BASE}/isa/clients/{client['id']}", json={"nome": "Z"}),
+                studio.post(f"{BASE}/isa/clients/{client['id']}/entries", json={"tipo": "nota", "titulo": "t"}),
+            ):
+                assert resp.status_code == 403
+                assert resp.json()["code"] == "platform_admin_required"
 
     def test_other_org_404(self, studio):
         _agent(studio)
         client = _client(studio)
-        studio.as_other_org()
+        studio.as_other_org(platform=True)
         _agent(studio)  # same key, other org
         resp = studio.get(f"{BASE}/isa/clients/{client['id']}")
         assert resp.status_code == 404

@@ -252,7 +252,7 @@ class TestProjectsView:
         with advisor.as_token("project-knowledge:write", "packages:read", "learnings:write", "learnings:read"):
             resp = advisor.get("/api/studio/agents/mobile-dev/projects")
         assert resp.status_code == 403
-        assert resp.json()["code"] == "user_required"
+        assert resp.json()["code"] == "platform_admin_required"
 
     def test_no_credential_is_401(self, advisor):
         assert advisor.rt.client.raw().get("/api/studio/agents/mobile-dev/projects").status_code == 401

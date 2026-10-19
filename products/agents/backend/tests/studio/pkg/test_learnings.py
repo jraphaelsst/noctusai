@@ -54,7 +54,7 @@ class TestAuthBoundary:
         with advisor.as_token("learnings:write", "learnings:read", "packages:read", "project-knowledge:write"):
             resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 403
-        assert resp.json()["code"] == "user_required"
+        assert resp.json()["code"] == "platform_admin_required"
 
     def test_review_without_credential_is_401(self, advisor):
         assert advisor.rt.client.raw().patch(f"{URL}/{advisor.rt.user_id}", json={"status": "aceito", "nota": "revisado pelo dono"}).status_code == 401
@@ -64,7 +64,7 @@ class TestAuthBoundary:
         seed_org_role(advisor.rt.client, role="member")
         resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 403
-        assert resp.json()["code"] == "role_missing"
+        assert resp.json()["code"] == "platform_admin_required"
 
     def test_token_of_another_org_is_404(self, advisor):
         with advisor.as_token("learnings:write", org_id=OTHER_ORG):

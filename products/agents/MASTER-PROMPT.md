@@ -74,7 +74,9 @@ seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat component
   textos/ferramentas/decisoes/payload, compiled-per-org) are **platform-admin only**, audited as
   `definicao_lida`; writes are platform admin or a `studio:content-write` token (audited
   `conteudo_editado_mcp`); an org admin gets `GET/PUT /agents/{key}/specs` (its own values; text that
-  contradicts a platform-locked rule is refused 422) and `GET /agents/{key}/status` (booleans only).
+  contradicts a platform-locked rule is refused 422) and `GET /agents/{key}/status` (booleans only). The clients,
+  knowledge, evals and package-sync routers are platform-admin only too; the `studio:content-write` token is minted
+  only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`).
 
 ## What the framework provides automatically
 

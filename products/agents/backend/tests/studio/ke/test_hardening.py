@@ -427,7 +427,7 @@ class TestQueries:
             FakeStudioKnowledgeStore().list_documents(ORG, AGENT, uuid4(), q="x" * 201)
 
     def test_search_q_cap(self, ke_client):
-        seed_org_role(ke_client, role="member")
+        seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         assert ke_client.get(f"{BASE}/knowledge/search", params={"q": "x" * 513}).status_code == 422
         with pytest.raises(ValueError):

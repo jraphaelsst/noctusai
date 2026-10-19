@@ -26,10 +26,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.dependencies import (
-    require_admin,
     require_learnings_read,
     require_learnings_write,
-    require_member,
+    require_platform_admin,
     require_project_knowledge_write,
 )
 from app.routers.agent_packages_router import resolve_dev_advisor
@@ -122,7 +121,7 @@ async def put_project_sources(
 @router.get("/{key}/projects", response_model=ProjectListOut)
 async def list_projects(
     key: str,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     definitions=Depends(get_studio_definition_store_dep),
     knowledge=Depends(get_studio_knowledge_store_dep),
     packages=Depends(get_agent_package_store_dep),
@@ -190,7 +189,7 @@ async def review_learning(
     key: str,
     learning_id: UUID,
     body: LearningReviewIn,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     definitions=Depends(get_studio_definition_store_dep),
     packages=Depends(get_agent_package_store_dep),
 ) -> LearningOut:

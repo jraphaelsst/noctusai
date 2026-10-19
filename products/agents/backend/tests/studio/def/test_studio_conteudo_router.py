@@ -354,7 +354,7 @@ class TestMcpTokenPath:
         raw_app = plat.raw.app
         raw_app.dependency_overrides[get_auth_context] = lambda: AuthContext(
             org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=["studio:content-write"],
-            raw_token="tok", api_token_id=UUID(int=9),
+            raw_token="tok", api_token_id=UUID(int=9), issuer="noctus-platform",
         )
         resp = plat.raw.put(f"{BASE}/julia/draft/textos", json={"itens": TEXTOS[:1]})
         assert resp.status_code == 200, resp.text
@@ -451,3 +451,41 @@ class TestVisibilityTiers:
 def _draft_id_active(studio) -> UUID:
     agent = studio.store.get_agent(DEFAULT_ORG_ID, "julia")
     return studio.store.get_active_version(DEFAULT_ORG_ID, agent.id).id
+
+
+class TestContentTokenMint:
+    """The content-write scope is a PLATFORM-ADMIN mint: server-stamped issuer, never in the org-admin set."""
+
+    def test_the_scope_is_not_in_the_org_admin_mintable_set(self):
+        from app.dependencies import MINTABLE_TOKEN_SCOPES
+
+        assert "studio:content-write" not in MINTABLE_TOKEN_SCOPES
+
+    def test_a_token_with_the_scope_but_not_the_platform_issuer_is_403(self, plat):
+        for issuer in (None, "social-wiring"):
+            plat.raw.app.dependency_overrides[get_auth_context] = lambda issuer=issuer: AuthContext(
+                org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=["studio:content-write"],
+                raw_token="tok", api_token_id=UUID(int=9), issuer=issuer,
+            )
+            resp = plat.raw.put(f"{BASE}/julia/draft/textos", json={"itens": []})
+            assert resp.status_code == 403 and resp.json()["code"] == "issuer_not_allowed"
+
+    def test_only_a_platform_admin_mints_it(self, plat):
+        from app.dependencies import get_product_token_admin_dep, get_token_audit_dep
+        from app.channels.token_audit import FakeTokenAudit
+        from noctusai_lib.api.auth.session import FakeProductTokenAdmin
+
+        admin, audit = FakeProductTokenAdmin(), FakeTokenAudit()
+        app = plat.raw.app
+        app.dependency_overrides[get_product_token_admin_dep] = lambda: admin
+        app.dependency_overrides[get_token_audit_dep] = lambda: audit
+        plat.as_org_admin_only()
+        denied = plat.post(f"{PLAT}/content-token", json={"label": "mcp"})
+        assert denied.status_code == 403 and denied.json()["code"] == "platform_admin_required"
+        plat.as_role("owner")
+        ok = plat.post(f"{PLAT}/content-token", json={"label": "mcp"})
+        assert ok.status_code == 201 and ok.headers["Cache-Control"] == "no-store"
+        assert ok.json()["token"].startswith("pk_") and ok.json()["scopes"] == ["studio:content-write"]
+        row = admin.rows["agents"][0]
+        assert row["issuer"] == "noctus-platform" and row["scopes"] == ["studio:content-write"]
+        assert row["org_id"] == str(DEFAULT_ORG_ID) and len(audit.rows) == 1

@@ -1,7 +1,7 @@
 """``/api/studio/agents/{key}/evals`` — cases + runs + results (contract
 §D4, slice BE-KE).
 
-Auth: ``require_member`` for reads, ``require_admin`` for writes (contract
+Auth: ``require_platform_admin`` (visibility tier 1 — the definition/knowledge/evals of an agent are the platform's IP, never an org admin's) (contract
 §D intro). The agent (and a run's version) resolve through BE-DEF's
 ``StudioDefinitionStore`` + ``resolve_agent``/``resolve_version`` — one
 resolver for every studio route (404 ``agent_not_found`` / 409
@@ -34,7 +34,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import settings
-from app.dependencies import require_admin, require_member, require_publish_read, require_publish_write
+from app.dependencies import require_platform_admin, require_publish_read, require_publish_write
 from app.routers.studio_agents_router import (
     actor_id,
     require_user_or_dev_advisor,
@@ -129,7 +129,7 @@ def _run_out(record) -> EvalRunOut:
 @router.get("/{key}/evals/cases", response_model=EvalCaseListOut)
 async def list_cases(
     key: str,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseListOut:
@@ -142,7 +142,7 @@ async def list_cases(
 async def create_case(
     key: str,
     payload: EvalCaseCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseOut:
@@ -165,7 +165,7 @@ async def update_case(
     key: str,
     case_id: UUID,
     payload: EvalCaseUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseOut:
@@ -190,7 +190,7 @@ async def update_case(
 async def delete_case(
     key: str,
     case_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> None:
@@ -310,7 +310,7 @@ async def get_run(
 async def cancel_run(
     key: str,
     run_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunOut:
