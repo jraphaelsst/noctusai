@@ -58,7 +58,7 @@ confirmed value. Corroboration never launders those.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any, Mapping, Optional
 
@@ -94,6 +94,11 @@ CAMPOS_INFORMATIVOS: tuple[str, ...] = ("profissao", "genero", "nacionalidade")
 #: Fields whose parser emits a calibrated confidence (see module docstring).
 _CONFIANCA_CALIBRADA = frozenset({"cpf", "estado_civil", "regime_bens"})
 
+#: Critical fields whose vision-read confidence is CAPPED at `baixa` by
+#: design (`real._temper_name_confidence`) — their `baixa` carries no signal
+#: on its own, so evidence found by this gate may raise it (`calibrar`).
+_CONFIANCA_LIMITADA = frozenset({"nome", "rg", "rne"})
+
 #: Reasons that corroboration or a verified check digit can clear.
 MOTIVOS_SUAVES = frozenset({
     "confianca_parser_baixa", "precisao_medida_baixa", AVISO_RESOLUCAO_REDUZIDA,
@@ -101,6 +106,20 @@ MOTIVOS_SUAVES = frozenset({
 #: Informational reasons (never doubt).
 MOTIVOS_INFORMATIVOS = frozenset({
     "precisao_nao_medida", "corroborado_outro_documento", "dv_verificado",
+    "precisao_medida_ok",
+})
+
+#: 🔴 CONFIDENCE CALIBRATION (deal 876, 2026-10-19) — the POSITIVE evidence
+#: that lets a gate-cleared `baixa` reading be stored as `media`
+#: (`calibrar`). Each is deterministic and independent of the model's own
+#: say-so: a check digit that verifies, another document that already holds
+#: the same value, or a measured per-(model, type, field) precision at or
+#: above `roteamento.LIMIAR_PRECISAO` on a sufficient sample. A verdict that
+#: is `confiavel` only because nothing was measured (`precisao_nao_medida`)
+#: carries NONE of these and stays `baixa` — the real low-confidence reads
+#: keep their flag.
+MOTIVOS_EVIDENCIA = frozenset({
+    "dv_verificado", "corroborado_outro_documento", "precisao_medida_ok",
 })
 
 _ANO_MINIMO = 1900
@@ -267,6 +286,8 @@ def avaliar(
                 motivos.append("precisao_nao_medida")
             elif medida.precisao_residual < roteamento.LIMIAR_PRECISAO:
                 motivos.append("precisao_medida_baixa")
+            else:
+                motivos.append("precisao_medida_ok")
         confirmado = (confirmados or {}).get(campo)
         if confirmado not in (None, "") and campo != "conjuges":
             if _mesmo_valor(campo, confirmado, valor):
@@ -286,6 +307,77 @@ def _estado(motivos: list[str]) -> str:
     ):
         return CONFIAVEL
     return DUVIDOSO
+
+
+def calibrar(
+    fields: IdentityFields,
+    vereditos: Mapping[str, Veredito],
+    *,
+    excluir: tuple[str, ...] = (),
+    original: Optional[IdentityFields] = None,
+) -> IdentityFields:
+    """Raise a gate-cleared, EVIDENCE-backed `baixa` field to `media`.
+
+    WHY (deal 876 legal review, 2026-10-19): every vision-read `nome` / `rg`
+    leaves the extractor at `baixa` BY CONSTRUCTION
+    (`real._temper_name_confidence`: "a field with no structural
+    self-evidence may not be written unattended off a transcription"), and
+    nothing ever raised it again — not even when the trust gate below had
+    just found the very self-evidence that rule says is missing. The legal
+    review panel shows the document's stored confidence, so 5 of its 37
+    rows on deal 876 were correct RG/CNH reads flagged "baixa": noise that
+    trains the reviewer to ignore the flag the real low reads depend on.
+
+    The rule — `media`, never `alta` (`ExtractionConfidence.MEDIA`'s
+    "some evidence stronger than a bare guess", not "safe unattended"):
+
+    - only a field whose `baixa` is the vision CAP, not a parser judgement
+      (`_CONFIANCA_LIMITADA`: `nome`/`rg`/`rne` — the ones
+      `_temper_name_confidence` demotes). A CALIBRATED parser's `baixa`
+      (`_CONFIANCA_CALIBRADA`: an unlabelled CPF, which may be a parent's)
+      IS the low-confidence signal and is never raised;
+    - its verdict is `confiavel` (no HARD or SOFT doubt left standing);
+    - AND it carries POSITIVE evidence (`MOTIVOS_EVIDENCIA`): a verified
+      check digit, corroboration by another document, or a measured
+      precision at/above the routing threshold.
+
+    A `confiavel` verdict resting only on "nothing was measured" stays
+    `baixa`; `nenhuma`/`media`/`alta` are never touched; a field in
+    `excluir` (one a fallback read just reconciled — its confidence is
+    `releitura.conciliar`'s to set) is left alone, and so is any field whose
+    value no longer equals the read the verdicts judged (`original`, when
+    the caller reconciled). Pure: returns a copy.
+    """
+    from noctusai_lib.integrations.documents.releitura import _mesmo_valor
+
+    novos: dict[str, Any] = {}
+    for campo, v in vereditos.items():
+        if campo not in _CONFIANCA_LIMITADA or campo in excluir or v.estado != CONFIAVEL:
+            continue
+        if not MOTIVOS_EVIDENCIA.intersection(v.motivos):
+            continue
+        if original is not None and not _mesmo_valor(
+            campo, getattr(fields, campo, None), getattr(original, campo, None)
+        ):
+            continue
+        atributo = f"{campo}_confianca"
+        if getattr(fields, atributo, None) is ExtractionConfidence.BAIXA:
+            novos[atributo] = ExtractionConfidence.MEDIA
+        if campo == "rg" and "dv_verificado" in v.motivos and _orgao_sp(fields):
+            # The RG check digit EXISTS only for São Paulo (`identificador.
+            # _RG_UFS_CONHECIDAS`): a verified one is the SP issuer's own
+            # evidence, so the `.../SP` issuer read beside it rides along.
+            novos["rg_orgao_confianca"] = ExtractionConfidence.MEDIA
+    return replace(fields, **novos) if novos else fields
+
+
+def _orgao_sp(fields: IdentityFields) -> bool:
+    from noctusai_lib.integrations.documents.rg import separar_orgao_uf
+
+    return (
+        fields.rg_orgao_confianca is ExtractionConfidence.BAIXA
+        and separar_orgao_uf(fields.rg_orgao)[1] == "SP"
+    )
 
 
 def impressao(campo: str, valor: Any) -> Optional[str]:
@@ -351,8 +443,10 @@ __all__ = [
     "CONFIAVEL",
     "DUVIDOSO",
     "MOTIVOS_SUAVES",
+    "MOTIVOS_EVIDENCIA",
     "Veredito",
     "avaliar",
+    "calibrar",
     "campos_avaliados",
     "campos_criticos",
     "criticos_duvidosos",

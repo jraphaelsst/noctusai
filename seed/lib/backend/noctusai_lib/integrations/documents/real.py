@@ -584,18 +584,26 @@ class LadderIdentityExtractor:
                 tipo_documento, primario, self._escalation_model, modo, vereditos,
                 (), fields, None, resultado, custos,
             ))
+        # 🔴 CONFIDENCE CALIBRATION (`confianca.calibrar`, 2026-10-19): a
+        # vision-capped `baixa` (nome/rg/rne) the gate just cleared ON
+        # EVIDENCE (check digit, another document, measured precision) is
+        # stored as `media` — the review panel stops flagging correct reads,
+        # while an unevidenced or doubtful one keeps its `baixa`. The
+        # verdicts themselves (the learning-loop record) are unchanged.
         if not self._escalar_releitura:
             # Per-org OFF SWITCH: the single read, as before — verdicts are
             # recorded (learning loop) but nothing is reconciled.
-            return replace(fields, roteamento=_resumo(
+            calibrado = confianca.calibrar(fields, vereditos)
+            return replace(calibrado, roteamento=_resumo(
                 tipo_documento, primario, None, "leitura_unica", vereditos,
-                (), fields, None, fields, custos,
+                (), fields, None, calibrado, custos,
             ))
         duvidosos = confianca.criticos_duvidosos(vereditos, fields, tipo_documento)
         if not duvidosos:
-            return replace(fields, roteamento=_resumo(
+            calibrado = confianca.calibrar(fields, vereditos)
+            return replace(calibrado, roteamento=_resumo(
                 tipo_documento, primario, fallback, "producao", vereditos,
-                (), fields, None, fields, custos,
+                (), fields, None, calibrado, custos,
             ))
         lida = await self._ler_fallback(
             fallback, content, mimetype, filename, fields.kind, titular, tipo_documento, custos
@@ -614,6 +622,12 @@ class LadderIdentityExtractor:
         resultado = releitura.conciliar(
             fields, lida, duvidosos=duvidosos, modelo_fallback=fallback,
             substitutos=substitutos,
+        )
+        # Only the fields the PRIMARY verdict still describes: a reconciled
+        # (`duvidosos`) or substituted field's confidence is `conciliar`'s.
+        resultado = confianca.calibrar(
+            resultado, vereditos, excluir=tuple({*duvidosos, *substitutos}),
+            original=fields,
         )
         return replace(resultado, roteamento=_resumo(
             tipo_documento, primario, fallback, "producao", vereditos,

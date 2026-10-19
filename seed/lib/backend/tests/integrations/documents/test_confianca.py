@@ -167,3 +167,76 @@ class TestFingerprint:
     def test_different_values_differ(self):
         assert confianca.impressao("cpf", CPF_OK) != confianca.impressao("cpf", "303.102.653-55")
 
+
+
+class TestCalibrar:
+    """`confianca.calibrar` — a vision-capped `baixa` (nome/rg/rne) the gate
+    cleared ON EVIDENCE becomes `media`; everything else keeps its flag.
+    Shapes from the deal-876 reads that filled the legal review with
+    correct-but-`baixa` rows (2026-10-19): an SP RG whose own check digit
+    verifies, a CNH name with a measured 1.0 precision."""
+
+    def _calibrado(self, f, tipo, **kw):
+        return confianca.calibrar(f, _v(f, tipo, **kw))
+
+    def test_an_sp_rg_whose_check_digit_verifies_is_raised_to_media(self):
+        f = _f(rg="19.131.047-5", rg_orgao="SSP/SP", rg_confianca=C.BAIXA,
+               rg_orgao_confianca=C.BAIXA)
+        out = self._calibrado(f, "rg", medir_precisao=False)
+        assert out.rg_confianca is C.MEDIA
+        # The DV exists only for SP: it vouches for the SP issuer beside it.
+        assert out.rg_orgao_confianca is C.MEDIA
+
+    def test_a_verified_rg_never_vouches_for_a_non_sp_issuer(self):
+        f = _f(rg="19.131.047-5", rg_orgao="SSP/RJ", rg_confianca=C.BAIXA,
+               rg_orgao_confianca=C.BAIXA)
+        out = self._calibrado(f, "rg", medir_precisao=False)
+        assert out.rg_orgao_confianca is C.BAIXA
+
+    def test_a_cnh_name_with_measured_precision_is_raised_to_media(self):
+        f = _f(nome="FULANO DE TAL SOBRENOME", nome_confianca=C.BAIXA)
+        out = self._calibrado(f, "cnh", modelo="claude-sonnet-5")
+        assert out.nome_confianca is C.MEDIA
+
+    def test_a_name_corroborated_by_another_document_is_raised(self):
+        f = _f(nome="FULANO DE TAL SOBRENOME", nome_confianca=C.BAIXA)
+        out = self._calibrado(f, "rg", medir_precisao=False,
+                              confirmados={"nome": "Fulano de Tal Sobrenome"})
+        assert out.nome_confianca is C.MEDIA
+
+    def test_unmeasured_and_uncorroborated_stays_baixa(self):
+        """`confiavel` only because nothing was measured is NOT evidence —
+        a real low read must keep its flag."""
+        f = _f(nome="FULANO DE TAL SOBRENOME", nome_confianca=C.BAIXA)
+        assert self._calibrado(f, "rg", modelo="claude-sonnet-5").nome_confianca is C.BAIXA
+
+    def test_an_rg_with_no_check_digit_and_no_corroboration_stays_baixa(self):
+        f = _f(rg="18.568.536", rg_orgao="SSP/SP", rg_confianca=C.BAIXA)
+        assert self._calibrado(f, "cnh", modelo="claude-sonnet-5").rg_confianca is C.BAIXA
+
+    def test_a_doubtful_field_is_never_raised(self):
+        f = _f(rg="52.179.965-1", rg_orgao="SSP/SP", rg_confianca=C.BAIXA)
+        assert self._calibrado(f, "rg", medir_precisao=False).rg_confianca is C.BAIXA
+
+    def test_a_contradicted_name_is_never_raised(self):
+        f = _f(nome="FULANO DE TAL SOBRENOME", nome_confianca=C.BAIXA)
+        out = self._calibrado(f, "cnh", modelo="claude-sonnet-5",
+                              confirmados={"nome": "Beltrano Outro Nome"})
+        assert out.nome_confianca is C.BAIXA
+
+    def test_a_calibrated_parsers_baixa_is_the_signal_and_never_raised(self):
+        """An unlabelled DV-valid CPF may be a parent's — its `baixa` IS
+        the low-confidence signal (`_CONFIANCA_CALIBRADA`)."""
+        f = _f(cpf=CPF_OK, cpf_confianca=C.BAIXA)
+        assert self._calibrado(f, "cnh", medir_precisao=False).cpf_confianca is C.BAIXA
+
+    def test_never_promotes_to_alta_nor_touches_alta_or_nenhuma(self):
+        f = _f(rg="19.131.047-5", rg_orgao="SSP/SP", rg_confianca=C.ALTA)
+        assert self._calibrado(f, "rg", medir_precisao=False).rg_confianca is C.ALTA
+
+    def test_excluded_and_changed_fields_are_left_to_the_reconciliation(self):
+        f = _f(rg="19.131.047-5", rg_orgao="SSP/SP", rg_confianca=C.BAIXA)
+        v = _v(f, "rg", medir_precisao=False)
+        assert confianca.calibrar(f, v, excluir=("rg",)).rg_confianca is C.BAIXA
+        outro = _f(rg="19.131.048-3", rg_orgao="SSP/SP", rg_confianca=C.BAIXA)
+        assert confianca.calibrar(outro, v, original=f).rg_confianca is C.BAIXA

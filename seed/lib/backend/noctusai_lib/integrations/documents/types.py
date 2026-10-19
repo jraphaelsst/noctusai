@@ -71,9 +71,16 @@ class ExtractionConfidence(str, Enum):
             it. Positional attribution is an inference, capped below
             `alta` the same way a coincidental whole-document match would
             be — see that module for the misattribution it replaces.
+          - `documents.confianca.calibrar` (deal 876, 2026-10-19): a
+            vision-read `nome`/`rg`/`rne` — capped at `baixa` by
+            `real._temper_name_confidence` — that the trust gate cleared on
+            POSITIVE evidence (a verified check digit, another document's
+            matching value, or a measured precision at the routing
+            threshold); an SP RG's verified DV also vouches for its `.../SP`
+            issuer. Evidence-backed, still a vision read — never `alta`.
         Every OTHER extractor in this package still uses only
         `alta`/`baixa`/`nenhuma` — a `media` appearing outside one of the
-        three shapes above is a bug, not a new convention.
+        four shapes above is a bug, not a new convention.
     BAIXA — a plausible value was found, but not label-anchored (or the
         text came off a rasterize→vision pass, where digit confusion is
         real). Surface it for a human to confirm; do NOT persist silently.
