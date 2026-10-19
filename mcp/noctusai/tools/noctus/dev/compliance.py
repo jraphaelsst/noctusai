@@ -14891,6 +14891,48 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
         "change that applies the migration.",
     ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "eval_cases_suite_check",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the suite enum CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "eval_cases_k_check",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the k (runs per case) range CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "eval_cases_criterios_ou_mecanismo",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the criteria-required-for-comportamento-only CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "eval_cases_mecanismo_conteudo",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the mecanismo-case-needs-roteiro-and-asserts CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "eval_mecanismo_runs_aprovado_consistente",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the approved-only-if-finished-complete-under-budget-all-green CHECK has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
+    (
+        "products/agents/backend/migrations/038_julia_v2_evals_roteiro.sql",
+        "uq_eval_mecanismo_runs_um_em_execucao",
+        "Migration 038 unapplied (Julia v2 A-EVAL, applied only by the tech-lead) — the one-executing-mechanism-run-per-version partial unique index has no live object to probe against yet. "
+        "Replace this entry with a real GuardProbe in verify_db_guards.DEFAULT_REGISTRY in the SAME "
+        "change that applies the migration.",
+    ),
 )
 
 

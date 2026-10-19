@@ -89,6 +89,7 @@ from app.stores.studio_definitions import (
 )
 from app.studio.bundles import client_bundle, compile_version
 from app.studio.compiler import CONTEUDO_CODIGOS
+from app.studio.eval_mecanismo import decidir_portao
 from app.studio.julia import ensure_julia
 from app.studio.models import (
     CompiledPrompt,
@@ -858,6 +859,19 @@ async def publish_draft(
             avisos=[w.to_dict() for w in compiled.avisos],
         )
 
+    # Julia v2 A-EVAL (CONTRACT 3.5 E4): the mechanism suite is a HARD gate with NO override. It runs ahead of
+    # the judge suite so a green judge run (or an owner override) can never stand in for it.
+    mecanismo = gate.mecanismo_requisito(ctx.org_id, agent.id, draft.id)
+    portao = decidir_portao(mecanismo, compiled.hash)
+    if not portao.liberado:
+        raise http_error(
+            409, "mecanismo_reprovado",
+            "Publicar exige a suíte de mecanismo aprovada (100% pass^k, modelo real) para o prompt atual.",
+            motivo=portao.codigo, hash_atual=compiled.hash,
+        )
+    # The judge suite is advisory for an agent under the mechanism gate unless it opted in to blocking.
+    comportamento_consultivo = mecanismo.exigido and not mecanismo.comportamento_bloqueia
+
     run = gate.latest_concluded_run(ctx.org_id, draft.id)
     passes = (
         run is not None
@@ -870,6 +884,10 @@ async def publish_draft(
     )
     if passes:
         eval_run_id, override_reason = run.id, None
+    elif comportamento_consultivo:
+        # Audited as `publicado_override` with the mechanism run as the reason (the DB function's only
+        # no-judge-run path); the reason is system-written, never caller-supplied.
+        eval_run_id, override_reason = None, f"portao_mecanismo_aprovado run={portao.run_id}; suite comportamento consultiva"
     elif payload.override_reason is not None:
         eval_run_id, override_reason = None, payload.override_reason
     else:

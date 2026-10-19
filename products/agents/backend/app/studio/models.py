@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
+from app.studio.eval_mecanismo import MecanismoRequisito
+
 __all__ = [
     "SectionData",
     "TextoData",
@@ -473,12 +475,18 @@ class EvalGate(Protocol):
         (H1 — a later subset run must never hide the complete one)."""
         ...
 
+    def mecanismo_requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
+        """Julia v2 A-EVAL: what the publish gate needs to know about the multi-turn mechanism suite
+        (required?, active cases, newest LIVE-driver run, whether the judge suite blocks)."""
+        ...
+
 
 class FakeEvalGate:
     """In-memory :class:`EvalGate`; tests set runs with :meth:`set_run`."""
 
     def __init__(self) -> None:
         self._runs: dict[tuple[UUID, UUID], GateRun] = {}
+        self._mecanismo: dict[tuple[UUID, UUID], MecanismoRequisito] = {}
 
     def set_run(self, org_id: UUID, version_id: UUID, run: GateRun | None) -> None:
         if run is None:
@@ -488,6 +496,12 @@ class FakeEvalGate:
 
     def latest_concluded_run(self, org_id: UUID, version_id: UUID) -> GateRun | None:
         return self._runs.get((org_id, version_id))
+
+    def set_mecanismo(self, org_id: UUID, version_id: UUID, req: MecanismoRequisito) -> None:
+        self._mecanismo[(org_id, version_id)] = req
+
+    def mecanismo_requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
+        return self._mecanismo.get((org_id, version_id), MecanismoRequisito())
 
 
 # ── Knowledge catalog seam (compile input from BE-KE's tables) ──────────────

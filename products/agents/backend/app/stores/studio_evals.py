@@ -33,6 +33,7 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
+from app.studio.eval_mecanismo import MecanismoRequisito
 from app.studio.models import (
     EVAL_RUN_BUDGET_USD_MAX,
     EVAL_RUN_BUDGET_USD_MIN,
@@ -96,6 +97,35 @@ def _validate_criterios(criterios: dict[str, Any]) -> None:
         raise ValueError("criterios must contain at least one item across deve/nao_deve")
 
 
+def _validate_caso(
+    *, suite: str, criterios: dict[str, Any], k: int, roteiro: Any, asserts: Any, **conteudo: Any,
+) -> None:
+    """Suite-aware validation. ``comportamento`` needs judge criteria; ``mecanismo`` needs a valid script +
+    asserts, and refuses personal data in ANY text (fixtures are synthetic, Meta 4.7)."""
+    from app.studio.eval_mecanismo import SUITES, validar_caso_mecanismo
+
+    if suite not in SUITES:
+        raise ValueError(f"suite must be one of {SUITES}; got {suite!r}")
+    if suite == "comportamento":
+        _validate_criterios(criterios)
+        return
+    validar_caso_mecanismo(k=k, roteiro=roteiro, asserts=asserts, criterios=criterios, **conteudo)
+
+
+def _validate_update_mecanismo(current: "EvalCaseRecord", **changes: Any) -> None:
+    """An update that touches a ``mecanismo`` case re-validates the MERGED case (same rules as create)."""
+    if current.suite != "mecanismo":
+        if any(changes.get(n) is not _UNSET for n in ("k", "roteiro", "asserts")):
+            raise ValueError("k / roteiro / asserts only exist on a mecanismo case")
+        return
+    merged = {
+        "titulo": current.titulo, "entrada": current.entrada, "contexto": current.contexto,
+        "tags": list(current.tags), "k": current.k, "roteiro": current.roteiro, "asserts": current.asserts,
+    }
+    merged.update({n: v for n, v in changes.items() if v is not _UNSET})
+    _validate_caso(suite="mecanismo", criterios=current.criterios, **merged)
+
+
 def _validate_modelo_geracao(modelo_geracao: str | None) -> None:
     if modelo_geracao is not None and modelo_geracao not in EVAL_RUN_MODEL_ALLOWLIST:
         raise ValueError(f"modelo_geracao must be one of {EVAL_RUN_MODEL_ALLOWLIST} or None; got {modelo_geracao!r}")
@@ -136,6 +166,11 @@ class EvalCaseInput:
     rubrica: str | None = None
     tags: tuple[str, ...] = ()
     ativo: bool = True
+    #: Julia v2 A-EVAL: ``mecanismo`` (scripted multi-turn, deterministic asserts, pass^k) | ``comportamento``.
+    suite: str = "comportamento"
+    k: int = 3
+    roteiro: dict[str, Any] | None = None
+    asserts: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +188,10 @@ class EvalCaseRecord:
     ativo: bool
     created_at: datetime
     updated_at: datetime
+    suite: str = "comportamento"
+    k: int = 3
+    roteiro: dict[str, Any] | None = None
+    asserts: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +278,7 @@ class EvalStore(Protocol):
         titulo: str | Any = _UNSET, entrada: str | Any = _UNSET, contexto: str | None | Any = _UNSET,
         criterios: dict[str, Any] | Any = _UNSET, rubrica: str | None | Any = _UNSET,
         tags: tuple[str, ...] | Any = _UNSET, ativo: bool | Any = _UNSET,
+        k: int | Any = _UNSET, roteiro: dict[str, Any] | Any = _UNSET, asserts: dict[str, Any] | Any = _UNSET,
     ) -> EvalCaseRecord: ...
 
     def delete_case(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> None:
@@ -310,7 +350,10 @@ class FakeEvalStore:
 
     def create_case(self, org_id: UUID, agent_id: UUID, data: EvalCaseInput) -> EvalCaseRecord:
         _validate_slug(data.slug)
-        _validate_criterios(data.criterios)
+        _validate_caso(
+            suite=data.suite, criterios=data.criterios, k=data.k, roteiro=data.roteiro, asserts=data.asserts,
+            titulo=data.titulo, entrada=data.entrada, contexto=data.contexto, tags=list(data.tags),
+        )
         for row in self._cases.values():
             if row["agent_id"] == agent_id and row["slug"] == data.slug:
                 # 013 UNIQUE (agent_id, slug)
@@ -321,6 +364,7 @@ class FakeEvalStore:
             "entrada": data.entrada, "contexto": data.contexto, "criterios": dict(data.criterios),
             "rubrica": data.rubrica, "tags": tuple(data.tags), "ativo": data.ativo,
             "created_at": now, "updated_at": now,
+            "suite": data.suite, "k": data.k, "roteiro": data.roteiro, "asserts": data.asserts,
         }
         self._cases[row["id"]] = row
         return self._case_record(row)
@@ -329,12 +373,20 @@ class FakeEvalStore:
         self, org_id: UUID, agent_id: UUID, case_id: UUID, *,
         titulo: Any = _UNSET, entrada: Any = _UNSET, contexto: Any = _UNSET, criterios: Any = _UNSET,
         rubrica: Any = _UNSET, tags: Any = _UNSET, ativo: Any = _UNSET,
+        k: Any = _UNSET, roteiro: Any = _UNSET, asserts: Any = _UNSET,
     ) -> EvalCaseRecord:
         row = self._cases.get(case_id)
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"eval case {case_id} not found for agent {agent_id}")
         if criterios is not _UNSET:
             _validate_criterios(criterios)
+        _validate_update_mecanismo(
+            self._case_record(row), titulo=titulo, entrada=entrada, contexto=contexto, tags=tags,
+            k=k, roteiro=roteiro, asserts=asserts,
+        )
+        for _n, _v in (("k", k), ("roteiro", roteiro), ("asserts", asserts)):
+            if _v is not _UNSET:
+                row[_n] = _v
         if titulo is not _UNSET:
             row["titulo"] = titulo
         if entrada is not _UNSET:
@@ -377,13 +429,16 @@ class FakeEvalStore:
         if explicit is None:
             resolved = [
                 c["id"] for c in sorted(self._own_cases(org_id, agent_id), key=lambda c: c["created_at"])
-                if c["ativo"]
+                if c["ativo"] and c["suite"] == "comportamento"
             ]
         else:
             resolved = []
             for cid in explicit:
                 row = self._cases.get(cid)
-                if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
+                if (
+                    row is None or row["org_id"] != org_id or row["agent_id"] != agent_id
+                    or row["suite"] != "comportamento"
+                ):
                     raise NotFound(f"eval case {cid} not found for agent {agent_id}")
                 resolved.append(cid)
         if not resolved:
@@ -526,11 +581,15 @@ class SupabaseEvalStore:
 
     def create_case(self, org_id: UUID, agent_id: UUID, data: EvalCaseInput) -> EvalCaseRecord:
         _validate_slug(data.slug)
-        _validate_criterios(data.criterios)
+        _validate_caso(
+            suite=data.suite, criterios=data.criterios, k=data.k, roteiro=data.roteiro, asserts=data.asserts,
+            titulo=data.titulo, entrada=data.entrada, contexto=data.contexto, tags=list(data.tags),
+        )
         payload = {
             "org_id": str(org_id), "agent_id": str(agent_id), "slug": data.slug, "titulo": data.titulo,
             "entrada": data.entrada, "contexto": data.contexto, "criterios": dict(data.criterios),
             "rubrica": data.rubrica, "tags": list(data.tags), "ativo": data.ativo,
+            "suite": data.suite, "k": data.k, "roteiro": data.roteiro, "asserts": data.asserts,
         }
         resp = exec_query(self._t(_CASES_TABLE).insert(payload), unique_code="slug_taken")
         rows = resp.data or []
@@ -542,8 +601,16 @@ class SupabaseEvalStore:
         self, org_id: UUID, agent_id: UUID, case_id: UUID, *,
         titulo: Any = _UNSET, entrada: Any = _UNSET, contexto: Any = _UNSET, criterios: Any = _UNSET,
         rubrica: Any = _UNSET, tags: Any = _UNSET, ativo: Any = _UNSET,
+        k: Any = _UNSET, roteiro: Any = _UNSET, asserts: Any = _UNSET,
     ) -> EvalCaseRecord:
         updates: dict[str, Any] = {"updated_at": utcnow_iso()}
+        _validate_update_mecanismo(
+            self.get_case(org_id, agent_id, case_id), titulo=titulo, entrada=entrada, contexto=contexto,
+            tags=tags, k=k, roteiro=roteiro, asserts=asserts,
+        )
+        for _n, _v in (("k", k), ("roteiro", roteiro), ("asserts", asserts)):
+            if _v is not _UNSET:
+                updates[_n] = _v
         if titulo is not _UNSET:
             updates["titulo"] = titulo
         if entrada is not _UNSET:
@@ -678,6 +745,8 @@ class SupabaseEvalStore:
             criterios=row.get("criterios") or {}, rubrica=row.get("rubrica"),
             tags=tuple(row.get("tags") or ()), ativo=bool(row.get("ativo", False)),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            suite=row.get("suite") or "comportamento", k=int(row.get("k") or 3),
+            roteiro=row.get("roteiro"), asserts=row.get("asserts"),
         )
 
     @staticmethod
@@ -755,6 +824,12 @@ class SupabaseEvalGate:
             completa=bool(row.get("completa", False)),
             total=int(row.get("total") or 0),
         )
+
+
+    def mecanismo_requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
+        from app.stores.studio_eval_mecanismo import SupabaseMecanismoStore
+
+        return SupabaseMecanismoStore(self._client).requisito(org_id, agent_id, version_id)
 
 
 def get_eval_gate(settings: Any) -> EvalGate:
