@@ -1,0 +1,1251 @@
+{
+  "ChannelTurnRequest": {
+    "$defs": {
+      "ChannelContact": {
+        "additionalProperties": false,
+        "description": "Display metadata only. NEVER put into a prompt (§10.1 M3).",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Name"
+          },
+          "phone_e164": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Phone E164"
+          }
+        },
+        "title": "ChannelContact",
+        "type": "object"
+      },
+      "ChannelContexto": {
+        "additionalProperties": false,
+        "description": "SW-rendered per-turn context (§2.1(a)); ``extra=\"forbid\"`` at every level.",
+        "properties": {
+          "acoes": {
+            "items": {
+              "enum": [
+                "salvar_slots",
+                "definir_operacao",
+                "qualificar_lead",
+                "pedido_visita",
+                "captacao",
+                "encerrar",
+                "consentimento_credito",
+                "handoff"
+              ],
+              "type": "string"
+            },
+            "title": "Acoes",
+            "type": "array"
+          },
+          "agora": {
+            "format": "date-time",
+            "title": "Agora",
+            "type": "string"
+          },
+          "capacidades": {
+            "$ref": "#/$defs/ContextoCapacidades"
+          },
+          "conhecimento_md": {
+            "default": "",
+            "maxLength": 60000,
+            "title": "Conhecimento Md",
+            "type": "string"
+          },
+          "estado": {
+            "$ref": "#/$defs/ContextoEstado"
+          },
+          "ferramentas": {
+            "items": {
+              "enum": [
+                "buscar_imoveis",
+                "detalhes_imovel",
+                "horarios_visita",
+                "consultar_empreendimento"
+              ],
+              "type": "string"
+            },
+            "title": "Ferramentas",
+            "type": "array"
+          },
+          "fuso": {
+            "const": "America/Sao_Paulo",
+            "title": "Fuso",
+            "type": "string"
+          },
+          "hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Hash",
+            "type": "string"
+          },
+          "perguntas": {
+            "items": {
+              "$ref": "#/$defs/ContextoPergunta"
+            },
+            "maxItems": 8,
+            "title": "Perguntas",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hash",
+          "estado",
+          "agora",
+          "fuso"
+        ],
+        "title": "ChannelContexto",
+        "type": "object"
+      },
+      "ChannelInboundMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "provider_message_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Provider Message Id",
+            "type": "string"
+          },
+          "texto": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Texto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "texto",
+          "provider_message_id",
+          "at"
+        ],
+        "title": "ChannelInboundMessage",
+        "type": "object"
+      },
+      "ChannelLead": {
+        "additionalProperties": false,
+        "description": "Who the lead is: SW ``julia_contatos.id`` is authoritative (the agents ``lead_refs.ref_externa``).",
+        "properties": {
+          "crm_lead_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Crm Lead Id"
+          },
+          "ref": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "title": "ChannelLead",
+        "type": "object"
+      },
+      "ChannelRef": {
+        "additionalProperties": false,
+        "description": "The conversation identity within a channel: the connection (the number)\nand the chat on it. Unique per org + agent.",
+        "properties": {
+          "chat_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Chat Id",
+            "type": "string"
+          },
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection_id",
+          "chat_id"
+        ],
+        "title": "ChannelRef",
+        "type": "object"
+      },
+      "ContextoCapacidades": {
+        "additionalProperties": false,
+        "description": "What SW can do right now (not what the model must): ``ferramentas_sw=False`` withholds the CRM tools.",
+        "properties": {
+          "ferramentas_sw": {
+            "default": true,
+            "title": "Ferramentas Sw",
+            "type": "boolean"
+          }
+        },
+        "title": "ContextoCapacidades",
+        "type": "object"
+      },
+      "ContextoCredito": {
+        "additionalProperties": false,
+        "description": "Wave 13: the credit-analysis state of an aluguel lead. ``consentimento`` is ``None`` until the\nlead answered; the model asks ONCE (before the visit) and records the answer with\n``consentimento_credito``. Absent from ``estado`` when the org does not use the analysis.",
+        "properties": {
+          "ativo": {
+            "title": "Ativo",
+            "type": "boolean"
+          },
+          "consentimento": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consentimento"
+          }
+        },
+        "required": [
+          "ativo"
+        ],
+        "title": "ContextoCredito",
+        "type": "object"
+      },
+      "ContextoEstado": {
+        "additionalProperties": false,
+        "description": "The operational state SW owns, closed and typed (no free-form keys: an unknown one is a 422).\n\n``atendente_nome`` and the re-engagement flavour (``reengajamento`` / ``reescrever`` / ``texto_base`` /\n``tentativa``) used to be stripped by SW because agents forbade them (NOC-REMEDIATE\n[julia-v2-reengajamento-contexto], closed here): they are now fields, rendered by DB texts.",
+        "properties": {
+          "atendente_nome": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Atendente Nome"
+          },
+          "credito": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContextoCredito"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "encerrado": {
+            "title": "Encerrado",
+            "type": "boolean"
+          },
+          "interacao_id": {
+            "format": "uuid",
+            "title": "Interacao Id",
+            "type": "string"
+          },
+          "operacao": {
+            "anyOf": [
+              {
+                "enum": [
+                  "compra",
+                  "aluguel",
+                  "administracao"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operacao"
+          },
+          "origem": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContextoOrigem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reengajamento": {
+            "anyOf": [
+              {
+                "enum": [
+                  "minutos",
+                  "horas",
+                  "regua"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reengajamento"
+          },
+          "reescrever": {
+            "default": false,
+            "title": "Reescrever",
+            "type": "boolean"
+          },
+          "slots": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Slots",
+            "type": "object"
+          },
+          "tentativa": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tentativa"
+          },
+          "texto_base": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Texto Base"
+          }
+        },
+        "required": [
+          "interacao_id",
+          "encerrado"
+        ],
+        "title": "ContextoEstado",
+        "type": "object"
+      },
+      "ContextoOrigem": {
+        "additionalProperties": false,
+        "description": "Where the lead came from: the campaign property Julia opens the offer with.",
+        "properties": {
+          "canal_origem": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Canal Origem"
+          },
+          "codigo_imovel_campanha": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Codigo Imovel Campanha"
+          }
+        },
+        "title": "ContextoOrigem",
+        "type": "object"
+      },
+      "ContextoPergunta": {
+        "additionalProperties": false,
+        "description": "v1 only (the essential questions): ignored by turn v2 -- the qualification standard replaced them.",
+        "properties": {
+          "categoria": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Categoria",
+            "type": "string"
+          },
+          "chave": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Chave",
+            "type": "string"
+          },
+          "dica": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dica"
+          },
+          "label": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "operacao": {
+            "anyOf": [
+              {
+                "enum": [
+                  "compra",
+                  "aluguel"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operacao"
+          },
+          "qualificatoria": {
+            "title": "Qualificatoria",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "chave",
+          "label",
+          "categoria",
+          "qualificatoria"
+        ],
+        "title": "ContextoPergunta",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "agent_key": {
+        "maxLength": 64,
+        "minLength": 1,
+        "title": "Agent Key",
+        "type": "string"
+      },
+      "channel": {
+        "const": "whatsapp",
+        "title": "Channel",
+        "type": "string"
+      },
+      "channel_ref": {
+        "$ref": "#/$defs/ChannelRef"
+      },
+      "contact": {
+        "$ref": "#/$defs/ChannelContact"
+      },
+      "contexto": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ChannelContexto"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "gatilho": {
+        "default": "mensagem",
+        "enum": [
+          "mensagem",
+          "reengajamento"
+        ],
+        "title": "Gatilho",
+        "type": "string"
+      },
+      "lead": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ChannelLead"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "messages": {
+        "items": {
+          "$ref": "#/$defs/ChannelInboundMessage"
+        },
+        "maxItems": 20,
+        "title": "Messages",
+        "type": "array"
+      }
+    },
+    "required": [
+      "agent_key",
+      "channel",
+      "channel_ref"
+    ],
+    "title": "ChannelTurnRequest",
+    "type": "object"
+  },
+  "ChannelTurnResponse": {
+    "$defs": {
+      "CaptacaoActionOut": {
+        "properties": {
+          "descricao": {
+            "title": "Descricao",
+            "type": "string"
+          },
+          "endereco": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Endereco"
+          },
+          "operacao": {
+            "anyOf": [
+              {
+                "enum": [
+                  "venda",
+                  "aluguel"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operacao"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "captacao",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "descricao"
+        ],
+        "title": "CaptacaoActionOut",
+        "type": "object"
+      },
+      "ChannelReplyOut": {
+        "properties": {
+          "partes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Partes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "partes"
+        ],
+        "title": "ChannelReplyOut",
+        "type": "object"
+      },
+      "ChannelUsageOut": {
+        "properties": {
+          "custo_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Custo Usd"
+          },
+          "tokens_entrada": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tokens Entrada"
+          },
+          "tokens_saida": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tokens Saida"
+          }
+        },
+        "title": "ChannelUsageOut",
+        "type": "object"
+      },
+      "ConformidadeOut": {
+        "properties": {
+          "violacoes": {
+            "items": {
+              "$ref": "#/$defs/ViolacaoOut"
+            },
+            "title": "Violacoes",
+            "type": "array"
+          }
+        },
+        "title": "ConformidadeOut",
+        "type": "object"
+      },
+      "ConsentimentoCreditoActionOut": {
+        "properties": {
+          "aceito": {
+            "title": "Aceito",
+            "type": "boolean"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "consentimento_credito",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "aceito"
+        ],
+        "title": "ConsentimentoCreditoActionOut",
+        "type": "object"
+      },
+      "EncerrarActionOut": {
+        "properties": {
+          "motivo": {
+            "enum": [
+              "lead_encerrou",
+              "sem_interesse",
+              "invalido",
+              "outro"
+            ],
+            "title": "Motivo",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "encerrar",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "motivo"
+        ],
+        "title": "EncerrarActionOut",
+        "type": "object"
+      },
+      "HandoffActionOut": {
+        "properties": {
+          "motivo": {
+            "title": "Motivo",
+            "type": "string"
+          },
+          "motivo_codigo": {
+            "title": "Motivo Codigo",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "handoff",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "motivo_codigo",
+          "motivo"
+        ],
+        "title": "HandoffActionOut",
+        "type": "object"
+      },
+      "IntencaoVisitaActionOut": {
+        "description": "The lead wants to visit property ``codigo``. Nothing is scheduled (D11).",
+        "properties": {
+          "codigo": {
+            "title": "Codigo",
+            "type": "string"
+          },
+          "preferencia_horario": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preferencia Horario"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "intencao_visita",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "codigo"
+        ],
+        "title": "IntencaoVisitaActionOut",
+        "type": "object"
+      },
+      "LeadProntoActionOut": {
+        "description": "``concluir_qualificacao`` took effect (code-gated on a ``conclusivo`` computed stage).",
+        "properties": {
+          "estagio": {
+            "title": "Estagio",
+            "type": "string"
+          },
+          "imoveis_gostou": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imoveis Gostou",
+            "type": "array"
+          },
+          "intencoes_visita": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Intencoes Visita",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "const": "lead_pronto",
+            "title": "Type",
+            "type": "string"
+          },
+          "valores": {
+            "additionalProperties": true,
+            "title": "Valores",
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "estagio",
+          "score",
+          "valores",
+          "imoveis_gostou",
+          "intencoes_visita"
+        ],
+        "title": "LeadProntoActionOut",
+        "type": "object"
+      },
+      "ParticipanteOut": {
+        "properties": {
+          "agent_key": {
+            "title": "Agent Key",
+            "type": "string"
+          },
+          "estado": {
+            "enum": [
+              "ativo",
+              "pausado",
+              "concluido",
+              "encerrado",
+              "transferido"
+            ],
+            "title": "Estado",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_key",
+          "estado"
+        ],
+        "title": "ParticipanteOut",
+        "type": "object"
+      },
+      "QualificacaoOut": {
+        "description": "The computed state after the turn (SW mirrors it; it never acts on a model's say-so).",
+        "properties": {
+          "estagio": {
+            "title": "Estagio",
+            "type": "string"
+          },
+          "faltando": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Faltando",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "versao": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Versao"
+          }
+        },
+        "required": [
+          "estagio",
+          "score",
+          "faltando"
+        ],
+        "title": "QualificacaoOut",
+        "type": "object"
+      },
+      "ViolacaoOut": {
+        "properties": {
+          "bloqueada": {
+            "default": false,
+            "title": "Bloqueada",
+            "type": "boolean"
+          },
+          "politica": {
+            "enum": [
+              "registrar",
+              "bloquear",
+              "sinal"
+            ],
+            "title": "Politica",
+            "type": "string"
+          },
+          "regra": {
+            "title": "Regra",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regra",
+          "politica"
+        ],
+        "title": "ViolacaoOut",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "actions": {
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "captacao": "#/$defs/CaptacaoActionOut",
+              "consentimento_credito": "#/$defs/ConsentimentoCreditoActionOut",
+              "encerrar": "#/$defs/EncerrarActionOut",
+              "handoff": "#/$defs/HandoffActionOut",
+              "intencao_visita": "#/$defs/IntencaoVisitaActionOut",
+              "lead_pronto": "#/$defs/LeadProntoActionOut"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HandoffActionOut"
+            },
+            {
+              "$ref": "#/$defs/LeadProntoActionOut"
+            },
+            {
+              "$ref": "#/$defs/IntencaoVisitaActionOut"
+            },
+            {
+              "$ref": "#/$defs/CaptacaoActionOut"
+            },
+            {
+              "$ref": "#/$defs/EncerrarActionOut"
+            },
+            {
+              "$ref": "#/$defs/ConsentimentoCreditoActionOut"
+            }
+          ]
+        },
+        "title": "Actions",
+        "type": "array"
+      },
+      "conformidade": {
+        "$ref": "#/$defs/ConformidadeOut"
+      },
+      "conversation_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Conversation Id"
+      },
+      "participante": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ParticipanteOut"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "qualificacao": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/QualificacaoOut"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "reply": {
+        "$ref": "#/$defs/ChannelReplyOut"
+      },
+      "status": {
+        "enum": [
+          "respondido",
+          "silencio",
+          "handoff",
+          "encerrado",
+          "concluido",
+          "agente_desligado",
+          "novo_lead_recusado",
+          "conversa_pausada",
+          "conversa_com_outro_responsavel",
+          "conversa_com_outro_agente",
+          "reengajamento_ignorado",
+          "lead_opt_out",
+          "limite_atingido"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "thread_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Thread Id"
+      },
+      "usage": {
+        "$ref": "#/$defs/ChannelUsageOut"
+      }
+    },
+    "required": [
+      "status",
+      "reply",
+      "actions"
+    ],
+    "title": "ChannelTurnResponse",
+    "type": "object"
+  },
+  "ContextoEstado": {
+    "$defs": {
+      "ContextoCredito": {
+        "additionalProperties": false,
+        "description": "Wave 13: the credit-analysis state of an aluguel lead. ``consentimento`` is ``None`` until the\nlead answered; the model asks ONCE (before the visit) and records the answer with\n``consentimento_credito``. Absent from ``estado`` when the org does not use the analysis.",
+        "properties": {
+          "ativo": {
+            "title": "Ativo",
+            "type": "boolean"
+          },
+          "consentimento": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consentimento"
+          }
+        },
+        "required": [
+          "ativo"
+        ],
+        "title": "ContextoCredito",
+        "type": "object"
+      },
+      "ContextoOrigem": {
+        "additionalProperties": false,
+        "description": "Where the lead came from: the campaign property Julia opens the offer with.",
+        "properties": {
+          "canal_origem": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Canal Origem"
+          },
+          "codigo_imovel_campanha": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Codigo Imovel Campanha"
+          }
+        },
+        "title": "ContextoOrigem",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "The operational state SW owns, closed and typed (no free-form keys: an unknown one is a 422).\n\n``atendente_nome`` and the re-engagement flavour (``reengajamento`` / ``reescrever`` / ``texto_base`` /\n``tentativa``) used to be stripped by SW because agents forbade them (NOC-REMEDIATE\n[julia-v2-reengajamento-contexto], closed here): they are now fields, rendered by DB texts.",
+    "properties": {
+      "atendente_nome": {
+        "anyOf": [
+          {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Atendente Nome"
+      },
+      "credito": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContextoCredito"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "encerrado": {
+        "title": "Encerrado",
+        "type": "boolean"
+      },
+      "interacao_id": {
+        "format": "uuid",
+        "title": "Interacao Id",
+        "type": "string"
+      },
+      "operacao": {
+        "anyOf": [
+          {
+            "enum": [
+              "compra",
+              "aluguel",
+              "administracao"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Operacao"
+      },
+      "origem": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContextoOrigem"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "reengajamento": {
+        "anyOf": [
+          {
+            "enum": [
+              "minutos",
+              "horas",
+              "regua"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Reengajamento"
+      },
+      "reescrever": {
+        "default": false,
+        "title": "Reescrever",
+        "type": "boolean"
+      },
+      "slots": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "Slots",
+        "type": "object"
+      },
+      "tentativa": {
+        "anyOf": [
+          {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Tentativa"
+      },
+      "texto_base": {
+        "anyOf": [
+          {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Texto Base"
+      }
+    },
+    "required": [
+      "interacao_id",
+      "encerrado"
+    ],
+    "title": "ContextoEstado",
+    "type": "object"
+  },
+  "versao": "channels.v2"
+}

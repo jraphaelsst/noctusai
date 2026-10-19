@@ -11,8 +11,9 @@ This module is STRUCTURE only: the key, the runtime kind (``runtime='llm'``,
 ``owner_product='social-wiring'``), the settings the definition's first draft starts with and the
 legacy-key alias. NO prompt text lives in code (D2/D3, keeper ``check_agent_prompt_text_in_code``):
 sections, skills, system texts, tool descriptions and decisions are rows, written as data through the
-Studio API / the ``noctus.agents.content`` MCP tool. The v1 constants that used to live here are a
-test-only fixture now (``tests/channels/julia_v1.py``).
+Studio API / the ``noctus.agents.content`` MCP tool. The v1 constants that used to live here are gone from
+code (the one-time data seed is a project artifact); the channel test suites build a content-complete world
+of synthetic rows (``tests/channels/julia_v2.py``).
 
 Seed model: ``gpt-5.6-terra`` — the OpenAI cost tier meant for high-volume use (US$ 2 / 12 per 1M
 tokens). ``luna`` (the economy tier) is cheaper but is the likelier to fumble tool calls and to hold a
@@ -66,6 +67,8 @@ JULIA_DEFINICAO = DefinicaoPlataforma(
         "provider": JULIA_PROVIDER, "model": JULIA_MODEL, "effort": _EFFORT,
         "max_turns": _MAX_TURNS, "tool_policy": dict(_TOOL_POLICY),
     },
+    escopo_qualificacao="sdr",
+    padrao_qualificacao="imob-lead",
 )
 
 

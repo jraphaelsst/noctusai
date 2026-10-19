@@ -384,34 +384,24 @@ def test_delete_by_lead_during_a_running_turn_is_409_and_erases_nothing(thr):
 
 
 def test_turning_on_needs_complete_content_and_names_what_is_missing(thr):
-    from app.stores.studio_definitions_conteudo import FerramentaInput, SpecDefInput, TextoInput
+    from app.stores.studio_definitions_conteudo import SpecDefInput
+    from tests.channels.julia_v2 import PLAT_ORG
+    from tests.studio.rt.fakes import publish
 
-    studio = thr.chan.rt.studio
-    from dataclasses import replace
+    studio, chan = thr.chan.rt.studio, thr.chan
+    definicao = chan.world.definicao
+    # The platform definition's NEXT version declares a required org spec nobody filled yet.
+    draft = studio.create_draft(PLAT_ORG, definicao.id, chan.version.id, chan.rt.user_id)
+    studio.replace_spec_defs(PLAT_ORG, draft.id, [SpecDefInput("agencia", "Nome da imobiliária")])
+    from app.studio.catalog import StoreKnowledgeCatalog
 
-    # A-CONT's line-based content mode (the shape Julia v2 runs in): the compile then checks the org specs.
-    studio._agents[(thr.chan.org_id, "julia")] = replace(studio.get_agent(thr.chan.org_id, "julia"), conteudo_modo="linhas")
-    draft = studio.create_draft(thr.chan.org_id, thr.chan.agent.id, thr.chan.version.id, thr.chan.rt.user_id)
-    from app.stores.studio_definitions import SectionInput
-
-    studio.replace_sections(thr.chan.org_id, draft.id, [  # decisions are rows in this mode, not prompt sections
-        SectionInput(chave=x.chave, titulo=x.titulo, ordem=x.ordem, conteudo=x.conteudo)
-        for x in studio.list_sections(thr.chan.org_id, draft.id) if not x.chave.startswith("decisao-")
-    ])
-    studio.replace_spec_defs(thr.chan.org_id, draft.id, [SpecDefInput("agencia", "Nome da imobiliária")])
-    studio.replace_textos(thr.chan.org_id, draft.id, [
-        TextoInput("compilador.titulo_ferramentas", "Ferramentas"),
-        TextoInput("compilador.ferramenta_linha.web_desativada", "- Web: desligada."),
-        TextoInput("compilador.ferramenta_linha.conhecimento_desativada", "- Conhecimento: desligado."),
-    ])
-    studio.replace_ferramentas(thr.chan.org_id, draft.id, [FerramentaInput("handoff", "Passa a conversa para uma pessoa.")])
-    thr.chan.rt.publish(thr.chan.agent, draft.id)  # v2 declares a required org spec nobody filled yet
-    c = thr.chan.client
+    publish(studio, PLAT_ORG, definicao, draft.id, chan.rt.user_id, catalog=StoreKnowledgeCatalog(chan.rt.knowledge))
+    c = chan.client
     resp = c.put("/api/studio/agents/julia/controle", json={"modo": "ligado"})
     assert resp.status_code == 409 and _code(resp) == "conteudo_incompleto" and "agencia" in resp.text
     assert c.put("/api/studio/agents/julia/controle", json={"modo": "drenando"}).status_code == 409
     assert c.put("/api/studio/agents/julia/controle", json={"modo": "desligado"}).status_code == 200  # off never needs content
-    studio.upsert_org_specs(thr.chan.org_id, "julia", {"agencia": "Imobiliária Exemplo"})
+    studio.upsert_org_specs(chan.org_id, "julia", {"agencia": "Imobiliária Exemplo"})
     final = c.put("/api/studio/agents/julia/controle", json={"modo": "ligado"})
     assert final.status_code == 200, final.text
 

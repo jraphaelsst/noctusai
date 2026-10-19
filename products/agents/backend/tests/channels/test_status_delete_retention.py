@@ -24,6 +24,7 @@ class TestStatus:
         assert resp.json() == {
             "agent_key": "julia", "nome": "Julia", "ativo": True, "versao_ativa": 1,
             "provider": "openai", "model": "gpt-5.6-terra", "llm_configurado": True,
+            "modo": "ligado", "aceita_novos_leads": True, "threads_abertas": 0, "conteudo_completo": True,
         }
 
     def test_org_without_a_key_reports_llm_configurado_false(self, chan):

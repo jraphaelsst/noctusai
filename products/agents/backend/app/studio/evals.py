@@ -79,6 +79,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from app.channels.conformidade import GuardaVazamento
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores._util import utcnow
 from app.studio.models import BUDGET_EXCEEDED_NOTA
@@ -481,7 +482,11 @@ class EvalRunner:
         slot_poll_seconds: float = DEFAULT_SLOT_POLL_SECONDS,
         turn_timeout_seconds: float = 600.0,
         llm_runtime: Any = None,
+        guardar_vazamento: bool = False,
     ) -> None:
+        #: The prompt-leak detector on every output (Julia v2 IP protection): ON for a run started by a caller
+        #: who is not a platform admin -- they can read the results, never the prompt.
+        self._guardar_vazamento = guardar_vazamento
         self._llm_runtime = llm_runtime
         self._evals = evals
         self._runs = runs
@@ -725,6 +730,11 @@ class EvalRunner:
             await slot.release()
         if not textos:
             raise _CaseError("O agente não produziu resposta.")
+        if self._guardar_vazamento:
+            guarda = GuardaVazamento(spec.prompt_append)
+            if any(guarda.verificar(t) for t in textos):
+                logger.warning("agents.eval.vazamento_bloqueado run_id=%s", run.id)
+                raise _CaseError("A resposta foi retida pelo detector de vazamento do prompt.")
         return textos[-1][:MAX_SAIDA_CHARS], custo
 
 

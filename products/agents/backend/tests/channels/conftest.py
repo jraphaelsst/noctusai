@@ -18,13 +18,14 @@ from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 from noctusai_lib.api.auth.session import AuthContext, FakeProductTokenAdmin
 from noctusai_lib.integrations.llm import FakeProvider
 
 from app.channels.retention import FakeChannelRetention
-from app.clients.social_wiring import FakeSocialWiringClient
 from app.channels.token_audit import FakeTokenAudit
-from app.channels.tools import HandoffCollector, make_channel_tools_factory
+from app.channels.tool_registry import make_channel_tools_factory
+from app.clients.social_wiring import FakeSocialWiringClient
 from app.dependencies import (
     SCOPE_CHANNEL_STATUS,
     SCOPE_CHANNEL_TURN,
@@ -32,16 +33,33 @@ from app.dependencies import (
     get_channel_inbound_store_dep,
     get_channel_llm_runtime_dep,
     get_channel_retention_dep,
-    get_handoff_collector_dep,
+    get_conformidade_store_dep,
+    get_lais_tools_client_dep,
     get_llm_runtime_dep,
     get_org_llm_key_resolver_dep,
     get_product_token_admin_dep,
+    get_skills_factory_dep,
     get_token_audit_dep,
 )
+from app.qualificacao.ident_store import FakeIdentificacaoStore
+from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
+from app.qualificacao.lead_store import FakeLeadQualificacaoStore
+from app.qualificacao.service import QualificacaoService
+from app.qualificacao.store import FakePadraoStore
+from app.routers.channel_threads_router import get_agent_controle_store_dep, get_thread_store_dep
+from app.routers.qualificacao_router import (
+    get_identificacao_service_dep,
+    get_lead_qualificacao_store_dep,
+    get_padrao_store_dep,
+)
 from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_guard
+from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.channel_inbound import FakeChannelInboundStore
+from app.stores.conformidade import FakeConformidadeStore
+from app.stores.threads import FakeThreadStore
+from app.studio.catalog import StoreKnowledgeCatalog
 from app.studio.julia import JULIA_KEY
-from tests.channels.julia_v1 import seed_julia_org_agent
+from tests.channels.julia_v2 import montar_julia_v2, publicar_padrao
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, agents_client  # noqa: F401 — fixture
 from tests.studio.rt.conftest import RtHarness, rt  # noqa: F401 — fixtures
 
@@ -53,11 +71,33 @@ CONNECTION_ID = UUID(int=77)
 BOTH = (SCOPE_CHANNEL_TURN, SCOPE_CHANNEL_STATUS)
 
 
+def contexto_body(*, origem: dict | None = None, credito: dict | None = None, **estado_extra: Any) -> dict[str, Any]:
+    """A v2 ``contexto`` (the operational facts SW owns)."""
+    estado: dict[str, Any] = {"interacao_id": str(UUID(int=555)), "encerrado": False, **estado_extra}
+    if origem is not None:
+        estado["origem"] = origem
+    if credito is not None:
+        estado["credito"] = credito
+    return {
+        "hash": "a" * 64, "estado": estado, "agora": datetime(2026, 10, 19, 15, 0, tzinfo=timezone.utc).isoformat(),
+        "fuso": "America/Sao_Paulo",
+    }
+
+
 def turn_body(*texts: str, agent_key: str = JULIA_KEY, chat_id: str = "chat-1", ids: list[str] | None = None,
-              connection_id: UUID = CONNECTION_ID, contact: dict | None = None) -> dict[str, Any]:
+              connection_id: UUID = CONNECTION_ID, contact: dict | None = None, lead_ref: str | None = "contato-1",
+              contexto: dict | None = None, gatilho: str | None = None) -> dict[str, Any]:
     texts = texts or ("Oi, quero um apartamento",)
     ids = ids or [f"wamid.{i}-{abs(hash(t)) % 10**6}" for i, t in enumerate(texts)]
+    extra: dict[str, Any] = {}
+    if lead_ref is not None:
+        extra["lead"] = {"ref": lead_ref}
+    if contexto is not None:
+        extra["contexto"] = contexto
+    if gatilho is not None:
+        extra["gatilho"] = gatilho
     return {
+        **extra,
         "agent_key": agent_key,
         "channel": "whatsapp",
         "channel_ref": {"connection_id": str(connection_id), "chat_id": chat_id},
@@ -75,9 +115,18 @@ class ChannelHarness:
         self.client = rt_.client
         self.org_id: UUID = rt_.org_id
         self.inbound = FakeChannelInboundStore()
-        self.retention = FakeChannelRetention(rt_.stores.conversations, rt_.stores.messages, self.inbound)
-        self.collector = HandoffCollector()
+        self.threads = FakeThreadStore(rt_.stores.conversations)
+        self.controles = FakeAgentControleStore()
+        self.conformidade = FakeConformidadeStore()
+        self.padroes = FakePadraoStore()
+        self.leads = FakeLeadQualificacaoStore()
+        self.ident = IdentificacaoService(FakeIdentificacaoStore(), IdentCipher(Fernet.generate_key()))
+        self.qual = QualificacaoService(self.padroes, self.leads, identificacao=self.ident)
+        self.retention = FakeChannelRetention(
+            rt_.stores.conversations, rt_.stores.messages, self.inbound, self.threads, self.qual)
         self.lais = FakeSocialWiringClient()
+        self.lais.lais_token_orgs.add(rt_.org_id)
+        self.skills_factory: Any = None
         self.provider = FakeProvider(tool_responses=["Oi! Você quer comprar ou alugar?"])
         self.keys: dict[tuple[str, UUID], str] = {("openai", rt_.org_id): ORG_KEY}
         self.limiter = LlmTurnLimiter(4)
@@ -88,17 +137,22 @@ class ChannelHarness:
         self.version: Any = None
 
     # ── seeding
-    def seed_agent(self, *, ativo: bool = True, publish: bool = True) -> Any:
-        """`julia` as the pre-v2 per-org agent (v1 fixture content), optionally activated + published."""
+    def seed_agent(self, *, ativo: bool = True, publish: bool = True, modo: str | None = None, **world: Any) -> Any:
+        """Julia v2: the platform definition (published unless ``publish=False``) + this org's instance, the
+        published ``imob-lead`` standard, and the control set to ``ligado`` (``ativo=False`` -> ``desligado``)."""
         studio = self.rt.studio
-        agent = seed_julia_org_agent(self.org_id, studio_store=studio, created_by=DEFAULT_USER_ID)
-        if publish:
-            draft = studio.get_draft(self.org_id, agent.id)
-            self.version = self.rt.publish(agent, draft.id)
-        if ativo:
-            agent = studio.update_agent(self.org_id, JULIA_KEY, {"ativo": True})
+        catalog = StoreKnowledgeCatalog(self.rt.knowledge)
+        mundo = montar_julia_v2(
+            studio, catalog, self.org_id, DEFAULT_USER_ID, controles=self.controles,
+            ativo_modo=modo or ("ligado" if ativo else "desligado"), publicar=publish, **world)
+        self.world = mundo
+        self.version = mundo.versao if publish else None
+        self.padrao_versao_id = publicar_padrao(self.padroes)
         self.agent = studio.get_agent(self.org_id, JULIA_KEY)
         return self.agent
+
+    def lead_ref(self, ref: str = "contato-1"):
+        return self.threads.get_lead_ref_by_externa(self.org_id, ref)
 
     # ── runtime
     def use_provider(self, provider: FakeProvider, *, key_for_org: bool = True) -> None:
@@ -114,7 +168,7 @@ class ChannelHarness:
             key_resolver=lambda provider, org: self.keys.get((provider, org)),
             limiter=self.limiter,
             budget_guard=make_budget_guard(messages=self.rt.stores.messages, daily_cap_usd=self.daily_cap_usd),
-            tools_factory=make_channel_tools_factory(self.collector, lais_client_factory=lambda: self.lais),
+            tools_factory=make_channel_tools_factory(),
             provider_impl=self.provider,
         )
         self.runtime = runtime
@@ -164,7 +218,14 @@ def chan(rt):
     bindings = {
         get_channel_inbound_store_dep: lambda: h.inbound,
         get_channel_retention_dep: lambda: h.retention,
-        get_handoff_collector_dep: lambda: h.collector,
+        get_thread_store_dep: lambda: h.threads,
+        get_agent_controle_store_dep: lambda: h.controles,
+        get_conformidade_store_dep: lambda: h.conformidade,
+        get_padrao_store_dep: lambda: h.padroes,
+        get_lead_qualificacao_store_dep: lambda: h.leads,
+        get_identificacao_service_dep: lambda: h.ident,
+        get_lais_tools_client_dep: lambda: h.lais,
+        get_skills_factory_dep: lambda: h.skills_factory,
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,
         get_token_audit_dep: lambda: h.audit,

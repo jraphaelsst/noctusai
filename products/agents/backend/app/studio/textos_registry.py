@@ -15,9 +15,11 @@ A required, applicable key that is missing or blank makes the compile carry a BL
 ``texto_ausente`` warning and publish answers 409 ``conteudo_incompleto``. There is NO default
 string anywhere: an empty row is a hole the author must fill, never something code papers over.
 
-Other slices add their keys here (one dict entry each, additive): A-RT ``contexto.*`` /
-``credito.*`` / ``ferramenta.resultado.*`` / ``runtime.*`` / ``resumo.*`` / ``decisao.*`` /
-``reengajamento.*``; A-EVAL ``eval.*``.
+A-RT's keys (the channel runtime: ``contexto.*`` · ``credito.*`` · ``reengajamento.*`` ·
+``ferramenta.resultado.*`` · ``ferramenta.handoff.*`` · ``historico.*`` · ``runtime.*`` · ``resumo.*`` ·
+``decisao.*`` · ``conformidade.*`` · ``escalonamento.*``) are all ``aplica_a="canal"`` and required, except
+the two ``runtime`` texts whose absence IS the defined behaviour (a channel turn that exhausts its tool loop,
+or stops on its safety budget, answers with SILENCE unless the owner wrote a text). A-EVAL adds ``eval.*``.
 """
 from __future__ import annotations
 
@@ -25,6 +27,9 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
+    "CODIGOS_RECUSA",
+    "MOTIVOS_HANDOFF",
+    "MOTIVOS_HANDOFF_SERVIDOR",
     "APLICA_A",
     "CONDICOES",
     "CHAVE_RE",
@@ -99,6 +104,91 @@ TEXTOS: dict[str, TextoSpec] = {
         )
     },
 }
+
+
+#: Every machine refusal code a channel tool can answer with. The WORDING of each is the row
+#: ``ferramenta.resultado.recusa.<codigo>``; a tool result is ``{"ok": false, "codigo": ..., "mensagem": <row>}``.
+CODIGOS_RECUSA: tuple[str, ...] = (
+    "skill_nao_aberta", "skill_inexistente", "arquivo_inexistente",
+    "sem_itens", "itens_demais", "versao_nao_publicada", "fonte_invalida", "criterio_repetido",
+    "criterio_derivado", "criterio_desconhecido", "nao_coletar", "fora_do_escopo", "valor_invalido",
+    "opcao_invalida", "usar_identificacao",
+    "trecho_ausente", "trecho_longo", "trecho_curto", "trecho_nao_confere",
+    "evento_invalido", "origem_invalida", "codigo_invalido", "motivo_longo", "lote_invalido",
+    "imovel_ja_oferecido", "imovel_nao_oferecido",
+    "estagio_nao_conclusivo", "nao_pode_ofertar", "limite_ofertas", "sem_codigo_campanha",
+    "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel",
+    "credito_inativo", "limite_recusas", "indisponivel",
+)
+#: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
+MOTIVOS_HANDOFF: tuple[str, ...] = (
+    "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
+)
+#: Values only the SERVER writes (deterministic escalation / safety stops).
+MOTIVOS_HANDOFF_SERVIDOR: tuple[str, ...] = (
+    "falhas_repetidas", "conformidade", "qualificacao_concluida", "limite_recusas",
+)
+
+
+def _canal(categoria: str, *placeholders: str, obrigatoria: bool = True) -> TextoSpec:
+    return TextoSpec(
+        categoria=categoria, obrigatoria=obrigatoria, placeholders_permitidos=tuple(placeholders),
+        aplica_a="canal",
+    )
+
+
+TEXTOS.update({
+    # the second system message (state + dossier) ------------------------------------------
+    **{f"contexto.{k}": _canal("contexto") for k in (
+        "titulo_estado", "rotulo_data_hora", "rotulo_encerrado", "sim", "nao", "rotulo_atendente",
+        "rotulo_origem", "rotulo_campanha", "titulo_dossie", "dossie_vazio", "aviso_valores_cliente",
+        "rotulo_estagio", "rotulo_score", "rotulo_faltando", "rotulo_oferecidos", "rotulo_gostou",
+        "titulo_handoff", "titulo_credito", "titulo_reengajamento",
+    )},
+    **{f"credito.{k}": _canal("credito") for k in ("pedir", "consentiu", "recusou")},
+    "reengajamento.minutos": _canal("reengajamento"),
+    "reengajamento.horas": _canal("reengajamento"),
+    "reengajamento.regua": _canal("reengajamento"),
+    "reengajamento.texto_base": _canal("reengajamento", "texto_base"),
+    # history of a shared thread (other agents / humans / events) ---------------------------
+    "historico.rotulo_agente": _canal("historico", "nome"),
+    "historico.rotulo_humano": _canal("historico"),
+    "historico.rotulo_evento": _canal("historico"),
+    # tool results the model reads ------------------------------------------------------------
+    "ferramenta.resultado.registrado": _canal("ferramenta"),
+    "ferramenta.resultado.argumentos_invalidos": _canal("ferramenta", "motivo"),
+    "ferramenta.resultado.desconhecida": _canal("ferramenta"),
+    "ferramenta.resultado.handoff": _canal("ferramenta"),
+    "ferramenta.resultado.encerrado": _canal("ferramenta"),
+    "ferramenta.resultado.concluido": _canal("ferramenta"),
+    "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
+    "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score"),
+    **{
+        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()))
+        for c in CODIGOS_RECUSA
+    },
+    # runtime ----------------------------------------------------------------------------------
+    "runtime.ferramenta_falhou": _canal("runtime"),
+    "runtime.resposta_fallback": _canal("runtime", obrigatoria=False),
+    "runtime.parada_segura": _canal("runtime", obrigatoria=False),
+    # extraction calls (episode summary + transport decisions) -------------------------------
+    "resumo.sistema": _canal("resumo"),
+    "resumo.rotulo_cliente": _canal("resumo"),
+    "resumo.rotulo_atendente": _canal("resumo"),
+    "resumo.rotulo_conversa": _canal("resumo"),
+    "resumo.sem_mensagens": _canal("resumo"),
+    "decisao.sistema": _canal("decisao", "regra"),
+    "decisao.rotulo_opcoes": _canal("decisao"),
+    "decisao.rotulo_dados": _canal("decisao"),
+    "decisao.sem_dados": _canal("decisao"),
+    # conformance: the corrective system message of a blocked reply + the owner's hand-off note ----
+    **{f"conformidade.correcao.{r}": _canal("conformidade") for r in (
+        "imovel_sem_ferramenta", "termina_sem_pergunta", "perfil_citado_sem_registro", "fallback_enviado",
+        "pergunta_repetida", "vazamento_prompt",
+    )},
+    "conformidade.handoff_resumo": _canal("conformidade", "regra"),
+    "escalonamento.resumo": _canal("escalonamento", "motivo_codigo"),
+})
 
 
 def chaves_exigidas(

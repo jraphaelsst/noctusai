@@ -5,7 +5,8 @@ Seed IO shape: ``LeadQualificacaoStore`` Protocol + Fake + Real + factory. Every
 method is org-scoped. ``registros`` are append-only (no update/delete API); the
 only deleters are :meth:`apagar_por_lead` (LGPD, on request — the method A-THREAD's
 ``apagar_lead`` calls) and :meth:`purgar_inativos` (the 180-day retention).
-``lead_ref_id`` carries no FK yet (NOC-REMEDIATE[qual-lead-ref-fk] in 032).
+``lead_ref_id`` is a FOREIGN KEY to ``agents.lead_refs`` ON DELETE CASCADE (migration 037): deleting a lead
+erases its qualification with it, and the retention purge does the same.
 """
 from __future__ import annotations
 

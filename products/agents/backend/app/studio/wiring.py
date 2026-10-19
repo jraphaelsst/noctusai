@@ -109,6 +109,7 @@ def studio_eval_scheduler(
     anything but the authenticated context."""
     from app.routers.conversations_router import INSTANCE_ID, _track_background_task
     from app.studio.evals import EvalRunner
+    from app.studio.vazamento import chamador_e_admin_da_plataforma
 
     runner = EvalRunner(
         evals=evals,
@@ -121,6 +122,7 @@ def studio_eval_scheduler(
         judge=judge,
         instance_id=INSTANCE_ID,
         turn_timeout_seconds=float(settings.turn_timeout_seconds),
+        guardar_vazamento=not chamador_e_admin_da_plataforma(ctx),
     )
     app_state = request.app.state
 

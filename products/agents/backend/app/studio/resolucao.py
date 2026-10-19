@@ -121,8 +121,13 @@ def org_specs_hash(r: AgenteResolvido) -> str:
     return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def carimbo(store, catalog: KnowledgeCatalog, r: AgenteResolvido) -> Carimbo:
-    compiled = compile_for_org(store, catalog, r)
+def carimbo(
+    store, catalog: KnowledgeCatalog, r: AgenteResolvido, *, qualificacao=None,
+    compiled: CompiledPrompt | None = None,
+) -> Carimbo:
+    """The version tuple. Pass the ``compiled`` prompt the model actually received (compiled WITH the
+    pinned ``qualificacao``) so the stamp is the hash of what ran, not of a second compile."""
+    compiled = compiled or compile_for_org(store, catalog, r, qualificacao=qualificacao)
     return Carimbo(r.versao.id, compiled.hash, org_specs_hash(r))
 
 
@@ -137,10 +142,13 @@ class ConteudoStatus:
     avisos_bloqueantes: tuple[str, ...]
 
 
-def conteudo_status(store, catalog: KnowledgeCatalog, r: AgenteResolvido) -> ConteudoStatus:
+def conteudo_status(
+    store, catalog: KnowledgeCatalog, r: AgenteResolvido, *, qualificacao=None,
+    compiled: CompiledPrompt | None = None,
+) -> ConteudoStatus:
     if r.versao is None:
         return ConteudoStatus(False, True, r.faltando, ())
-    compiled = compile_for_org(store, catalog, r)
+    compiled = compiled or compile_for_org(store, catalog, r, qualificacao=qualificacao)
     bloqueantes = tuple(w.codigo for w in compiled.avisos if w.bloqueante)
     return ConteudoStatus(
         completo=not bloqueantes, sem_versao=False, specs_faltando=compiled.specs_faltando,

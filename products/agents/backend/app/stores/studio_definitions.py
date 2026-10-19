@@ -227,6 +227,9 @@ class VersionRecord:
     package_sha: str | None = None
     #: 024: the LLM provider the version runs on (`anthropic` unless chosen).
     provider: str = "anthropic"
+    #: 032: the published qualification-standard version this agent version pins (NULL = not pinned yet;
+    #: the channel turn then uses the newest published version of the agent's standard).
+    qualificacao_versao_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -1373,6 +1376,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])),
             agent_id=UUID(str(row["agent_id"])), versao=int(row["versao"]), status=row["status"],
             notas=row.get("notas"), provider=row.get("provider") or "anthropic",
+            qualificacao_versao_id=_uuid_or_none(row.get("qualificacao_versao_id")),
             model=row["model"], effort=row["effort"],
             max_turns=int(row["max_turns"]), idioma=row["idioma"],
             tool_policy=dict(row.get("tool_policy") or {}),

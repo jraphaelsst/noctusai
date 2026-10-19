@@ -386,55 +386,54 @@ def get_message_store_dep():
     return get_message_store(settings)
 
 
-_handoff_collector = None
-
-
-def get_handoff_collector_dep():
-    """The process-wide :class:`~app.channels.tools.HandoffCollector` the
-    ``handoff`` tool writes to and the channel turn route reads from."""
-    global _handoff_collector
-    if _handoff_collector is None:
-        from app.channels.tools import HandoffCollector
-
-        _handoff_collector = HandoffCollector()
-    return _handoff_collector
-
-
-def get_llm_runtime_dep(
-    msg_store=Depends(get_message_store_dep), collector=Depends(get_handoff_collector_dep)
-):
+def get_llm_runtime_dep(msg_store=Depends(get_message_store_dep)):
     """The provider-neutral runtime (``agents.runtime='llm'``, Lais A1) —
     memory over the SAME message store the route persists to, so a test that
     overrides ``get_message_store_dep`` (or this dep, with a ``FakeProvider``-
     driven ``LlmToolRuntime``) reaches it. Cheap: no network at construction.
 
-    Carries the page-0 ``handoff`` tool (§7) so the studio TEST chat of an
-    ``llm`` agent behaves like the channel one (the tool call shows as a block;
-    nothing is dispatched)."""
-    from app.channels.tools import make_channel_tools_factory
+    The studio TEST chat of an ``llm`` agent carries no channel tools: they need a lead, a thread and
+    the server-built turn state a channel turn brings (``TurnContext.julia``)."""
+    from app.channels.tool_registry import make_channel_tools_factory
     from app.runtime import get_llm_runtime
 
-    return get_llm_runtime(
-        settings, messages=msg_store, tools_factory=make_channel_tools_factory(collector)
-    )
+    return get_llm_runtime(settings, messages=msg_store, tools_factory=make_channel_tools_factory())
 
 
-def get_channel_llm_runtime_dep(
-    msg_store=Depends(get_message_store_dep), collector=Depends(get_handoff_collector_dep)
-):
+def get_channel_llm_runtime_dep(msg_store=Depends(get_message_store_dep)):
     """The runtime a CHANNEL turn runs on: the same provider-neutral runtime,
     with the per-org daily cap ON by default (`channel_daily_budget_usd`, §10.1
-    M4) and the ``handoff`` tool bound to this process's collector. Tests
+    M4) and the Julia v2 toolset (``app.channels.tool_registry``). Tests
     override THIS dep with a ``FakeProvider``-driven runtime."""
-    from app.channels.tools import make_channel_tools_factory
+    from app.channels.tool_registry import make_channel_tools_factory
     from app.runtime import get_llm_runtime
 
     return get_llm_runtime(
         settings,
         messages=msg_store,
-        tools_factory=make_channel_tools_factory(collector),
+        tools_factory=make_channel_tools_factory(),
         daily_cap_usd=float(settings.channel_daily_budget_usd),
     )
+
+
+def get_conformidade_store_dep():
+    """Conformance rules/violations, leak fingerprints and the per-agent abuse limits (migration 037)."""
+    from app.stores.conformidade import get_conformidade_store
+
+    return get_conformidade_store(settings)
+
+
+def get_lais_tools_client_dep():
+    """The SW client the channel tools read the CRM through (the org's own tools token, per call)."""
+    from app.clients.social_wiring import get_lais_tools_client
+
+    return get_lais_tools_client(settings)
+
+
+def get_skills_factory_dep():
+    """``(definitions, definition_org, definition_agent, version) -> SkillFonte``; ``None`` = the version's
+    own skills. The shared skill library (A-SKILLS) overrides this seam."""
+    return None
 
 
 def get_channel_inbound_store_dep():
@@ -526,7 +525,9 @@ __all__ = [
     "get_channel_inbound_store_dep",
     "get_channel_llm_runtime_dep",
     "get_channel_retention_dep",
-    "get_handoff_collector_dep",
+    "get_conformidade_store_dep",
+    "get_lais_tools_client_dep",
+    "get_skills_factory_dep",
     "get_org_llm_key_resolver_dep",
     "get_product_token_admin_dep",
     "get_token_audit_dep",

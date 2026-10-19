@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DefinicaoPlataforma",
     "definicao_registrada",
+    "escopo_de",
+    "padrao_de",
     "chaves_de_plataforma",
     "ensure_definicao",
     "ensure_instancia",
@@ -40,6 +42,12 @@ class DefinicaoPlataforma:
     owner_product: str | None
     #: The settings the definition's first draft starts with.
     rascunho: dict[str, Any] = field(default_factory=dict)
+    #: The qualification SCOPE the agent works (a criterion's ``escopo`` is empty or equal to it; Julia
+    #: only works ``sdr``, later agents work theirs over the same lead state). ``None`` = every scope.
+    escopo_qualificacao: str | None = None
+    #: The qualification standard (``qualificacao_padroes.chave``) the agent works. An agent version that
+    #: pins a standard version uses that one; otherwise the newest PUBLISHED version of this standard.
+    padrao_qualificacao: str | None = None
 
 
 def _registro() -> dict[str, DefinicaoPlataforma]:
@@ -51,6 +59,18 @@ def _registro() -> dict[str, DefinicaoPlataforma]:
 
 def definicao_registrada(key: str) -> DefinicaoPlataforma | None:
     return _registro().get(key)
+
+
+def escopo_de(key: str) -> str | None:
+    """The qualification scope the platform-defined agent ``key`` works (``None`` = every scope)."""
+    spec = definicao_registrada(key)
+    return spec.escopo_qualificacao if spec is not None else None
+
+
+def padrao_de(key: str) -> str | None:
+    """The qualification standard key the platform-defined agent ``key`` works (``None`` = none)."""
+    spec = definicao_registrada(key)
+    return spec.padrao_qualificacao if spec is not None else None
 
 
 def chaves_de_plataforma() -> frozenset[str]:

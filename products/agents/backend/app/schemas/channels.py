@@ -1,9 +1,17 @@
-"""Schemas of the channel turn API (Lais contract §3.1 / §3.2 / §4).
+"""Schemas of the channel turn API (Lais contract §3.1 / §3.2 / §4; Julia v2 CONTRACT §8).
 
 Request bodies are :class:`~noctusai_lib.api.StrictHttpModel` (``extra="forbid"``
 → 422 on an unknown field). The caps are the §10.1 M4 flood limits: a batch is
 1..20 messages, each 1..8000 characters, 16 000 characters in total — enforced
 here, BEFORE any model call or write.
+
+**Turn v2** (Julia v2): ``lead`` identifies the lead (SW ``julia_contatos.id``), ``gatilho`` says why the
+turn runs (``mensagem`` / ``reengajamento``) and ``contexto.estado`` carries the closed, typed operational
+facts SW owns -- the attendant, the re-engagement flavour, the campaign property, the credit state. The v1
+shape (no ``lead``/``gatilho``; ``contexto.perguntas|ferramentas|acoes|conhecimento_md``,
+``estado.slots|operacao``) is still ACCEPTED for one release and ignored where v2 replaced it: the response
+is v2 either way. The JSON Schema of the request/response is generated to
+``products/agents/backend/contracts/channels.v2.json`` (drift-tested) -- SW validates against that file.
 """
 from __future__ import annotations
 
@@ -20,12 +28,11 @@ __all__ = [
     "BATCH_MAX_CHARS",
     "BATCH_MAX_MESSAGES",
     "MESSAGE_MAX_CHARS",
-    "ACAO_NAMES",
     "CONTEXTO_MAX_CHARS",
-    "FERRAMENTA_NAMES",
-    "ActionArgs",
     "CaptacaoActionOut",
+    "ContextoCapacidades",
     "ContextoCredito",
+    "ContextoOrigem",
     "ConsentimentoCreditoActionOut",
     "ChannelActionOut",
     "ChannelAgentStatusOut",
@@ -33,6 +40,7 @@ __all__ = [
     "ChannelContact",
     "ChannelDeleteRequest",
     "ChannelInboundMessage",
+    "ChannelLead",
     "ChannelRef",
     "ChannelReplyOut",
     "ChannelTokenCreateRequest",
@@ -44,14 +52,16 @@ __all__ = [
     "ChannelResumoResponse",
     "ChannelResumoUsageOut",
     "ChannelToolsTokenRequest",
+    "ConformidadeOut",
     "ContextoEstado",
     "ContextoPergunta",
-    "DefinirOperacaoActionOut",
     "EncerrarActionOut",
     "HandoffActionOut",
-    "PedidoVisitaActionOut",
-    "QualificarLeadActionOut",
-    "SalvarSlotsActionOut",
+    "IntencaoVisitaActionOut",
+    "LeadProntoActionOut",
+    "ParticipanteOut",
+    "QualificacaoOut",
+    "ViolacaoOut",
 ]
 
 BATCH_MAX_MESSAGES = 20
@@ -98,19 +108,17 @@ CONTEXTO_MAX_CHARS = 80_000
 _CONTEXTO_TOO_BIG = "contexto_grande"
 
 Operacao = Literal["compra", "aluguel"]
-FerramentaName = Literal["buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento"]
-AcaoName = Literal[
-    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "consentimento_credito", "handoff"
+#: v1 vocabularies, ACCEPTED (and ignored) on a v1-shaped request for one release.
+_FerramentaV1 = Literal["buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento"]
+_AcaoV1 = Literal[
+    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar",
+    "consentimento_credito", "handoff",
 ]
-FERRAMENTA_NAMES: tuple[str, ...] = (
-    "buscar_imoveis", "detalhes_imovel", "horarios_visita", "consultar_empreendimento",
-)
-ACAO_NAMES: tuple[str, ...] = (
-    "salvar_slots", "definir_operacao", "qualificar_lead", "pedido_visita", "captacao", "encerrar", "consentimento_credito", "handoff",
-)
 
 
 class ContextoPergunta(StrictHttpModel):
+    """v1 only (the essential questions): ignored by turn v2 -- the qualification standard replaced them."""
+
     chave: str = Field(..., min_length=1, max_length=64)
     label: str = Field(..., min_length=1, max_length=300)
     dica: str | None = Field(default=None, max_length=600)
@@ -128,23 +136,55 @@ class ContextoCredito(StrictHttpModel):
     consentimento: bool | None = None
 
 
+class ContextoOrigem(StrictHttpModel):
+    """Where the lead came from: the campaign property Julia opens the offer with."""
+
+    canal_origem: str | None = Field(default=None, max_length=64)
+    codigo_imovel_campanha: str | None = Field(default=None, max_length=64)
+
+
 class ContextoEstado(StrictHttpModel):
+    """The operational state SW owns, closed and typed (no free-form keys: an unknown one is a 422).
+
+    ``atendente_nome`` and the re-engagement flavour (``reengajamento`` / ``reescrever`` / ``texto_base`` /
+    ``tentativa``) used to be stripped by SW because agents forbade them (NOC-REMEDIATE
+    [julia-v2-reengajamento-contexto], closed here): they are now fields, rendered by DB texts."""
+
+    #: v1 (recorded slots / operation): accepted, ignored -- the dossier is the qualification state.
     slots: dict[str, str] = Field(default_factory=dict)
     operacao: Literal["compra", "aluguel", "administracao"] | None = None
     interacao_id: UUID
     encerrado: bool
     credito: ContextoCredito | None = None
+    #: The human attendant who owns the chat (a fact for the model, never a command).
+    atendente_nome: str | None = Field(default=None, min_length=1, max_length=120)
+    #: A re-engagement turn: the flow that triggered it (matches the turn's ``gatilho``).
+    reengajamento: Literal["minutos", "horas", "regua"] | None = None
+    #: The template text of a regua attempt (``reescrever``: put it in the agent's voice, same facts).
+    reescrever: bool = False
+    texto_base: str | None = Field(default=None, min_length=1, max_length=2000)
+    tentativa: int | None = Field(default=None, ge=1, le=100)
+    origem: ContextoOrigem | None = None
+
+
+class ContextoCapacidades(StrictHttpModel):
+    """What SW can do right now (not what the model must): ``ferramentas_sw=False`` withholds the CRM tools."""
+
+    ferramentas_sw: bool = True
 
 
 class ChannelContexto(StrictHttpModel):
     """SW-rendered per-turn context (§2.1(a)); ``extra="forbid"`` at every level."""
 
     hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    #: v1 (knowledge moved to the org specs; essential questions to the standard; tool/action lists to
+    #: the agent version's tool rows): accepted, ignored.
     conhecimento_md: str = Field(default="", max_length=60_000)
     perguntas: list[ContextoPergunta] = Field(default_factory=list, max_length=8)
+    ferramentas: list[_FerramentaV1] = Field(default_factory=list)
+    acoes: list[_AcaoV1] = Field(default_factory=list)
     estado: ContextoEstado
-    ferramentas: list[FerramentaName] = Field(default_factory=list)
-    acoes: list[AcaoName] = Field(default_factory=list)
+    capacidades: ContextoCapacidades = Field(default_factory=ContextoCapacidades)
     agora: datetime
     fuso: Literal["America/Sao_Paulo"]
 
@@ -155,17 +195,32 @@ class ChannelContexto(StrictHttpModel):
         return self
 
 
+class ChannelLead(StrictHttpModel):
+    """Who the lead is: SW ``julia_contatos.id`` is authoritative (the agents ``lead_refs.ref_externa``)."""
+
+    ref: str = Field(..., min_length=1, max_length=256)
+    crm_lead_id: UUID | None = None
+
+
 class ChannelTurnRequest(StrictHttpModel):
     agent_key: str = Field(..., min_length=1, max_length=64)
     channel: Channel
     channel_ref: ChannelRef
     contact: ChannelContact = Field(default_factory=ChannelContact)
-    messages: list[ChannelInboundMessage] = Field(..., min_length=1, max_length=BATCH_MAX_MESSAGES)
+    #: v2: the lead. A v1-shaped request without it is keyed by its ``channel_ref`` (one release).
+    lead: ChannelLead | None = None
+    #: Why the turn runs. A ``reengajamento`` turn has no new lead message (``messages`` may be empty).
+    gatilho: Literal["mensagem", "reengajamento"] = "mensagem"
+    messages: list[ChannelInboundMessage] = Field(default_factory=list, max_length=BATCH_MAX_MESSAGES)
     #: Lais F-AG (§2.1(a)): optional; absent = page-0 behaviour.
     contexto: ChannelContexto | None = None
 
     @model_validator(mode="after")
     def _batch_caps(self) -> "ChannelTurnRequest":
+        if self.gatilho == "mensagem" and not self.messages:
+            raise ValueError("a message turn needs at least one message")
+        if self.gatilho == "reengajamento" and self.contexto is None:
+            raise ValueError("a re-engagement turn needs contexto")
         total = sum(len(m.texto) for m in self.messages)
         if total > BATCH_MAX_CHARS:
             raise ValueError(f"the batch holds {total} characters; the maximum is {BATCH_MAX_CHARS}")
@@ -187,30 +242,28 @@ class _ActionOut(BaseModel):
 
 class HandoffActionOut(_ActionOut):
     type: Literal["handoff"]
+    #: Typed reason (the code is an enum in the tool schema; its label is a DB row).
+    motivo_codigo: str
     motivo: str
 
 
-class SalvarSlotsActionOut(_ActionOut):
-    type: Literal["salvar_slots"]
-    slots: dict[str, str]
+class LeadProntoActionOut(_ActionOut):
+    """``concluir_qualificacao`` took effect (code-gated on a ``conclusivo`` computed stage)."""
+
+    type: Literal["lead_pronto"]
+    estagio: str
+    score: int
+    valores: dict[str, Any]
+    imoveis_gostou: list[str]
+    intencoes_visita: list[str]
 
 
-class DefinirOperacaoActionOut(_ActionOut):
-    type: Literal["definir_operacao"]
-    operacao: Literal["compra", "aluguel", "administracao", "atualizacao"]
+class IntencaoVisitaActionOut(_ActionOut):
+    """The lead wants to visit property ``codigo``. Nothing is scheduled (D11)."""
 
-
-class QualificarLeadActionOut(_ActionOut):
-    type: Literal["qualificar_lead"]
-    motivo: str
-
-
-class PedidoVisitaActionOut(_ActionOut):
-    type: Literal["pedido_visita"]
-    codigo_imovel: str | None = None
-    inicio: datetime
-    fim: datetime
-    cpf: str | None = None
+    type: Literal["intencao_visita"]
+    codigo: str
+    preferencia_horario: str | None = None
 
 
 class CaptacaoActionOut(_ActionOut):
@@ -233,23 +286,11 @@ class ConsentimentoCreditoActionOut(_ActionOut):
 #: Discriminated union on ``type`` (§2.1(d)).
 ChannelActionOut = Annotated[
     Union[
-        HandoffActionOut, SalvarSlotsActionOut, DefinirOperacaoActionOut, QualificarLeadActionOut,
-        PedidoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut, ConsentimentoCreditoActionOut,
+        HandoffActionOut, LeadProntoActionOut, IntencaoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut,
+        ConsentimentoCreditoActionOut,
     ],
     Field(discriminator="type"),
 ]
-
-#: Model-facing argument schemas of the action tools (strict: the model's
-#: arguments are validated BEFORE anything is recorded).
-ActionArgs = {
-    "salvar_slots": SalvarSlotsActionOut,
-    "definir_operacao": DefinirOperacaoActionOut,
-    "qualificar_lead": QualificarLeadActionOut,
-    "pedido_visita": PedidoVisitaActionOut,
-    "captacao": CaptacaoActionOut,
-    "encerrar": EncerrarActionOut,
-    "consentimento_credito": ConsentimentoCreditoActionOut,
-}
 
 
 class ChannelUsageOut(BaseModel):
@@ -258,22 +299,67 @@ class ChannelUsageOut(BaseModel):
     tokens_saida: int | None = None
 
 
+class ParticipanteOut(BaseModel):
+    agent_key: str
+    estado: Literal["ativo", "pausado", "concluido", "encerrado", "transferido"]
+
+
+class QualificacaoOut(BaseModel):
+    """The computed state after the turn (SW mirrors it; it never acts on a model's say-so)."""
+
+    versao: str | None = None
+    estagio: str
+    score: int
+    faltando: list[str]
+
+
+class ViolacaoOut(BaseModel):
+    regra: str
+    politica: Literal["registrar", "bloquear", "sinal"]
+    bloqueada: bool = False
+
+
+class ConformidadeOut(BaseModel):
+    violacoes: list[ViolacaoOut] = Field(default_factory=list)
+
+
+#: The turn's outcome. ``respondido`` / ``silencio`` / ``handoff`` / ``encerrado`` / ``concluido`` are turns
+#: the model ran; every other value is a control or limit that answered WITHOUT running it (nothing is sent).
+TurnStatus = Literal[
+    "respondido", "silencio", "handoff", "encerrado", "concluido",
+    "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
+    "conversa_com_outro_agente", "reengajamento_ignorado", "lead_opt_out", "limite_atingido",
+]
+
+
 class ChannelTurnResponse(BaseModel):
-    conversation_id: UUID
+    #: ``None`` only when a brand-new lead was refused (nothing was stored).
+    thread_id: UUID | None = None
+    #: Alias of ``thread_id`` for one release.
+    conversation_id: UUID | None = None
+    status: TurnStatus
     reply: ChannelReplyOut
     actions: list[ChannelActionOut]
-    status: Literal["respondido", "silencio", "handoff", "encerrado"]
-    usage: ChannelUsageOut
+    participante: ParticipanteOut | None = None
+    qualificacao: QualificacaoOut | None = None
+    conformidade: ConformidadeOut = Field(default_factory=ConformidadeOut)
+    usage: ChannelUsageOut = Field(default_factory=ChannelUsageOut)
 
 
 class ChannelAgentStatusOut(BaseModel):
     agent_key: str
     nome: str
+    #: Kept for one release; ``modo`` is the control.
     ativo: bool
     versao_ativa: int | None
     provider: str | None
     model: str | None
     llm_configurado: bool
+    modo: Literal["ligado", "drenando", "desligado"] = "desligado"
+    aceita_novos_leads: bool = False
+    threads_abertas: int = 0
+    #: Every required text/spec is filled: a turn would not answer 409 ``conteudo_incompleto``.
+    conteudo_completo: bool = False
 
 
 class ChannelUsoOut(BaseModel):
@@ -308,8 +394,10 @@ class ChannelTokenOut(BaseModel):
 
 
 class ChannelResumoRequest(StrictHttpModel):
-    """``POST /api/channels/conversations/{id}/resumo`` (§2.1(e))."""
+    """``POST /api/channels/threads/{id}/resumo`` (also ``/conversations/{id}/resumo``): a narrative only --
+    the criteria come from the qualification records, never from this call."""
 
+    #: v1 (essential questions): accepted, ignored.
     perguntas: list[ContextoPergunta] = Field(default_factory=list, max_length=8)
     desde: datetime | None = None
 
@@ -322,28 +410,26 @@ class ChannelResumoUsageOut(BaseModel):
 
 class ChannelResumoResponse(BaseModel):
     resumo: str
-    slots: dict[str, str]
-    operacao: str | None = None
-    intencoes: list[Literal["encerrar", "captacao", "cobranca_atendimento", "parceria", "visita", "reclamacao"]]
-    desfecho: Literal["qualificado", "frio", "captacao", "invalido", "em_andamento"]
+    #: Display only -- SW never acts on it (the computed stage does).
+    desfecho_sugerido: Literal["qualificado", "frio", "captacao", "invalido", "em_andamento"]
     usage: ChannelResumoUsageOut
 
 
-#: A decision key: the agent's prompt section ``decisao-<chave>`` holds its rule.
+#: A decision key: the agent version's ``agent_version_decisoes.chave``.
 DECISAO_CHAVE_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 _OPCAO_PATTERN = r"^[a-z0-9_]{1,40}$"
 DecisaoValor = Union[str, int, float, bool, None]
 
 
 class ChannelDecisaoRequest(StrictHttpModel):
-    """``POST /api/channels/agents/{agent_key}/decisoes/{chave}``: pick ONE of
-    ``opcoes`` for ``dados`` by the rule the owner wrote in the agent's prompt
-    section ``decisao-<chave>``; ``regra_padrao`` (the caller's built-in rule)
-    applies only while the published version has no such section."""
+    """``POST /api/channels/agents/{agent_key}/decisoes/{chave}``: pick ONE of ``opcoes`` for ``dados`` by the
+    rule of the agent version's decision row (``agent_version_decisoes``). No rule travels with the call."""
 
     opcoes: list[Annotated[str, Field(pattern=_OPCAO_PATTERN)]] = Field(..., min_length=2, max_length=10)
     dados: dict[Annotated[str, Field(max_length=60)], DecisaoValor] = Field(default_factory=dict, max_length=30)
-    regra_padrao: str = Field(..., min_length=1, max_length=2000)
+    #: v1 (the caller's built-in rule): accepted, ignored -- the rule is the version's, and the fallback
+    #: is the option the row flags ``padrao`` (D13).
+    regra_padrao: str | None = Field(default=None, max_length=2000)
 
     @field_validator("opcoes")
     @classmethod
@@ -363,8 +449,9 @@ class ChannelDecisaoRequest(StrictHttpModel):
 class ChannelDecisaoResponse(BaseModel):
     escolha: str
     motivo: str
-    #: ``secao`` = the owner's prompt section decided; ``padrao`` = the caller's ``regra_padrao``.
-    regra: Literal["secao", "padrao"]
+    #: ``versao`` = the model decided by the version's rule; ``padrao_da_versao`` = the row's ``padrao``
+    #: option answered (no rule written, or the model could not decide).
+    regra: Literal["versao", "padrao_da_versao"]
     usage: ChannelResumoUsageOut
 
 

@@ -96,7 +96,7 @@ class TestEventVocabulary:
         }
         assert events[1]["payload"] == {
             "status": "ociosa", "sdk_session_id": None, "custo_usd": 0.0021,
-            "tokens_entrada": 120, "tokens_saida": 30, "tokens_cache_leitura": 40,
+            "tokens_entrada": 120, "tokens_saida": 30, "tokens_cache_leitura": 40, "esgotou_loop": False,
         }
 
     async def test_tool_turn_emits_started_finished_then_text(self):
@@ -148,10 +148,23 @@ class TestEventVocabulary:
         )
         assert events[1]["payload"]["resultado"] == "erro"
         tool_msgs = [m for m in provider.calls[1]["messages"] if m.role == "tool"]
-        assert tool_msgs[0].content == "Falha ao executar a ferramenta."
+        assert tool_msgs[0].content == '{"ok": false}'  # structural: the sentence, if any, is the version's text
         assert "secret" not in repr(events)
 
-    async def test_loop_cap_emits_the_fallback_reply(self):
+    async def test_the_failure_text_is_the_toolsets_own_row_never_a_default_sentence(self):
+        call = ToolCall("c1", "boom", {})
+        provider = FakeProvider(tool_responses=[
+            ChatToolsResponse(tool_calls=(call,), finish_reason="tool_calls"), ChatToolsResponse(text="ok"),
+        ])
+
+        def _handler(c):
+            raise RuntimeError("secret internals")
+
+        toolset = LlmToolset(tools=(ToolSpec("boom"),), handler=_handler, falha="texto da versão")
+        await _collect(_runtime(provider, tools_factory=lambda s, c: toolset), _spec(), _ctx(), "x")
+        assert [m.content for m in provider.calls[1]["messages"] if m.role == "tool"] == ["texto da versão"]
+
+    async def test_loop_cap_is_silence_unless_the_version_carries_a_fallback_text(self):
         call = ToolCall("c1", "t", {})
         provider = FakeProvider(tool_responses=[
             ChatToolsResponse(tool_calls=(call,), finish_reason="tool_calls") for _ in range(3)
@@ -161,8 +174,37 @@ class TestEventVocabulary:
             _runtime(provider, tools_factory=lambda s, c: toolset, max_iterations=2),
             _spec(), _ctx(), "x",
         )
-        texts = [e["payload"]["texto"] for e in events if e["event"] == "message.new"]
-        assert len(texts) == 1 and "reformular" in texts[0]
+        assert [e for e in events if e["event"] == "message.new"] == []  # no default sentence in code
+        assert events[-1]["payload"]["esgotou_loop"] is True
+
+    async def test_loop_cap_replies_with_the_fallback_row_when_the_version_has_one(self):
+        call = ToolCall("c1", "t", {})
+        provider = FakeProvider(tool_responses=[
+            ChatToolsResponse(tool_calls=(call,), finish_reason="tool_calls") for _ in range(3)
+        ])
+        toolset = LlmToolset(tools=(ToolSpec("t"),), handler=lambda c: ToolResult(c.call_id, "ok"))
+        events = await _collect(
+            _runtime(provider, tools_factory=lambda s, c: toolset, max_iterations=2),
+            _spec(), _ctx(resposta_fallback="Pode reformular?"), "x",
+        )
+        assert [e["payload"]["texto"] for e in events if e["event"] == "message.new"] == ["Pode reformular?"]
+
+    async def test_should_stop_ends_the_loop_without_another_provider_call_and_keeps_the_usage(self):
+        call = ToolCall("c1", "t", {})
+        provider = FakeProvider(tool_responses=[
+            ChatToolsResponse(tool_calls=(call,), finish_reason="tool_calls", usage=LLMUsage(10, 5, 0, 0, 0.001)),
+            ChatToolsResponse(text="nunca"),
+        ])
+        stop = []
+
+        def _handler(c):
+            stop.append(True)
+            return ToolResult(c.call_id, "ok")
+
+        toolset = LlmToolset(tools=(ToolSpec("t"),), handler=_handler, should_stop=lambda: bool(stop))
+        events = await _collect(_runtime(provider, tools_factory=lambda s, c: toolset), _spec(), _ctx(), "x")
+        assert len(provider.calls) == 1 and [e for e in events if e["event"] == "message.new"] == []
+        assert events[-1]["payload"]["custo_usd"] == pytest.approx(0.001)
 
 
 @pytest.mark.asyncio

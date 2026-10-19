@@ -2,7 +2,6 @@
 §10.2 "reuses existing minting")."""
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -11,14 +10,13 @@ from noctusai_lib.api.auth.session import hash_token
 
 from app.config import settings
 from app.dependencies import CHANNEL_TOKEN_SCOPES, MINTABLE_TOKEN_SCOPES
-from app.stores.studio_definitions import MODELS_BY_PROVIDER, SectionInput
+from app.stores.studio_definitions import MODELS_BY_PROVIDER
 from app.studio.julia import (
     JULIA_MODEL,
     JULIA_PROVIDER,
     ensure_julia,
 )
 from app.studio.plataforma import ensure_definicao
-from tests.channels.julia_v1 import JULIA_SECTIONS
 from tests.channels.conftest import OTHER_ORG
 from tests.routers.conftest import DEFAULT_USER_ID, seed_org_role
 
@@ -81,34 +79,12 @@ class TestJuliaSeed:
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
 
 
-class TestJulia_V1_Fixture:
-    """The v1 prompt kept as a TEST-ONLY fixture (the channel suites still run a per-org agent)."""
-
-    def test_the_prompt_follows_the_brief(self):
-        text = "\n".join(s.conteudo for s in JULIA_SECTIONS).lower()
-        titles = [s.titulo for s in JULIA_SECTIONS]
-        assert "comprar ou alugar" in text  # the first question
-        assert "já enviou a apresentação" in text and "não se apresente de novo" in text  # §11.3
-        assert "termina com uma pergunta" in text  # always end with a question
-        assert "nunca invente dados de imóvel" in text  # never invent property data
-        assert "administração" in text and "parceria" in text  # partnerships → admin contact
-        assert "handoff" in text and "reclamação" in text  # hand off on request/complaint
-        assert "nunca revele" in text  # no prompt leakage
-        assert len(set(titles)) == len(titles)
-        assert not {"Skills", "Base de conhecimento", "Ferramentas"} & set(titles)  # compiler-owned titles
-        assert all(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", s.chave) for s in JULIA_SECTIONS)
-
-    def test_no_personal_data_or_study_text_in_the_prompt(self):
-        text = "\n".join(s.conteudo for s in JULIA_SECTIONS)
-        assert not re.search(r"\d{3}\.\d{3}\.\d{3}-\d{2}", text)  # CPF
-        assert not re.search(r"\+?\d{2}\s?\(?\d{2}\)?\s?9?\d{4}-?\d{4}", text)  # phone
-        assert "@" not in text  # no e-mail
-
-    def test_the_seeded_draft_compiles_and_publishes(self, chan):
+class TestTheV2World:
+    def test_the_world_fixture_publishes_a_content_complete_definition_for_the_org(self, chan):
         agent = chan.seed_agent()
-        assert chan.version.status == "ativa"
-        assert chan.version.provider == "openai"
-        assert agent.ativo is True
+        assert chan.version.status == "ativa" and chan.version.provider == "openai"
+        assert (agent.definition_scope, agent.ativo) == ("instancia", True)
+        assert chan.rt.studio.list_versions(chan.org_id, agent.id) == []  # an instance owns no versions
 
 
 def _mint(chan, agent_key="julia", **body):
@@ -119,8 +95,8 @@ def _mint(chan, agent_key="julia", **body):
 class TestChannelTokenMint:
     @pytest.fixture(autouse=True)
     def _per_org_agent(self, chan):
-        """The pre-v2 per-org `julia` (v1 fixture content): the mint no longer seeds a row."""
-        chan.seed_agent(publish=False, ativo=False)
+        """The org's `julia` instance of the platform definition: the mint no longer seeds a row."""
+        chan.seed_agent(ativo=False)
 
     def test_admin_mints_a_token_shown_once_with_the_contracted_row(self, chan):
         resp = _mint(chan)
@@ -154,11 +130,6 @@ class TestChannelTokenMint:
         """The mint output is what SW holds: the row's issuer/principal/scopes drive the guards."""
         body = _mint(chan).json()
         row = chan.token_admin.rows["agents"][0]
-        agent = chan.rt.studio.get_agent(chan.org_id, "julia")
-        draft = chan.rt.studio.get_draft(chan.org_id, agent.id)
-        chan.version = chan.rt.publish(agent, draft.id)
-        chan.rt.studio.update_agent(chan.org_id, "julia", {"ativo": True})
-        chan.agent = chan.rt.studio.get_agent(chan.org_id, "julia")
         # Resolve through the SAME seed row mapper the SupabaseApiTokenResolver uses.
         with chan.as_token(*row["scopes"], issuer=row["issuer"], principal=UUID(row["principal_agent_id"])):
             assert chan.request("GET", "/api/channels/agents/julia/status").status_code == 200
@@ -206,7 +177,6 @@ class TestChannelTokenMint:
         assert chan.token_admin.rows == {}
 
     def test_a_product_token_can_never_mint(self, chan):
-        chan.seed_agent()
         with chan.as_token("agents:channel-turn", "agents:channel-status"):
             resp = chan.request("POST", "/api/agents/julia/channel-token",
                                 json={"product": "social-wiring", "label": "x"})

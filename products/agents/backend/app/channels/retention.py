@@ -66,12 +66,17 @@ class ChannelRetention(Protocol):
 class FakeChannelRetention:
     """Test double over the SAME Fake stores the app under test uses."""
 
-    def __init__(self, conversations: Any, messages: Any, inbound: Any, threads: Any = None) -> None:
+    def __init__(
+        self, conversations: Any, messages: Any, inbound: Any, threads: Any = None, qualificacao: Any = None,
+    ) -> None:
         self._conversations = conversations
         self._messages = messages
         self._inbound = inbound
         #: A ``FakeThreadStore`` (Julia v2): participants / events / skill openings and lead_refs.
         self._threads = threads
+        #: A ``QualificacaoService`` (Julia v2): the per-lead records / events / state / identity. In
+        #: production the lead_ref FK cascade (037) erases them with the lead; the double does it explicitly.
+        self._qualificacao = qualificacao
 
     def delete_conversation(self, org_id: UUID, conversation_id: UUID) -> bool:
         lead_ref_id = self._lead_of(org_id, conversation_id)
@@ -92,6 +97,8 @@ class FakeChannelRetention:
             return False
         for thread in self._conversations.list_threads_for_lead(org_id, lead.id):
             self.delete_conversation(org_id, thread.id)
+        if self._qualificacao is not None:
+            self._qualificacao.apagar_por_lead(org_id, lead.id)
         self._threads.purge_lead_ref(org_id, lead.id)
         return True
 
@@ -104,11 +111,16 @@ class FakeChannelRetention:
     def _drop_orphan_lead(self, org_id: UUID, lead_ref_id: UUID | None) -> None:
         """The SQL functions drop a lead_ref with its LAST thread (and the qualification with it)."""
         if lead_ref_id is not None and not self._conversations.list_threads_for_lead(org_id, lead_ref_id):
+            if self._qualificacao is not None:
+                self._qualificacao.apagar_por_lead(org_id, lead_ref_id)
             self._threads.purge_lead_ref(org_id, lead_ref_id)
 
     def purge_older_than(self, cutoff: datetime) -> int:
         victims = self._conversations.channel_ids_inactive_since(cutoff)
-        return sum(1 for org_id, cid in victims if self.delete_conversation(org_id, cid))
+        n = sum(1 for org_id, cid in victims if self.delete_conversation(org_id, cid))
+        if self._qualificacao is not None:
+            self._qualificacao.purgar_inativos(cutoff)  # a lead whose qualification outlived its threads
+        return n
 
 
 class SupabaseChannelRetention:
@@ -134,6 +146,8 @@ class SupabaseChannelRetention:
         resp = exec_rpc(self._client, _SCHEMA, "purge_channel_conversations", {
             "p_cutoff": cutoff.isoformat(),
         })
+        # A lead whose qualification outlived its threads (no activity at all since the cutoff) goes whole.
+        exec_rpc(self._client, _SCHEMA, "purgar_qualificacao_inativos", {"p_cutoff": cutoff.isoformat()})
         return int(resp.data or 0)
 
 

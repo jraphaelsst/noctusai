@@ -32,6 +32,9 @@ BASE_TEXTOS = (
     TextoData("compilador.titulo_ferramentas", "Tools"),
     TextoData("compilador.ferramenta_linha.web_desativada", "- sem web"),
     TextoData("compilador.ferramenta_linha.conhecimento_desativada", "- sem kb"),
+    # A channel agent (``canal``) also carries the channel-runtime texts (A-RT: contexto.* / ferramenta.* / ...).
+    *(TextoData(c, "x") for c, sp in TEXTOS.items()
+      if sp.aplica_a == "canal" and sp.obrigatoria and not c.startswith("compilador.")),
 )
 
 
@@ -296,7 +299,7 @@ class TestResolutionAndStore:
         with pytest.raises(VersionImmutable):
             st.replace_textos(PLAT, active.id, [TextoInput("compilador.titulo_ferramentas", "x")])
         draft = st.create_draft(PLAT, d.id, active.id, d.id)
-        assert len(st.list_textos(PLAT, draft.id)) == 3
+        assert len(st.list_textos(PLAT, draft.id)) == len(BASE_TEXTOS)
         st.discard_draft(PLAT, draft.id)
         assert st._textos and all(t.version_id != draft.id for t in st._textos.values())
 

@@ -52,6 +52,18 @@ class TurnContext:
     #: turn (``None`` everywhere else → page-0 behaviour). Rendered as a second
     #: system message by ``LlmToolRuntime`` and read by the channel tools factory.
     contexto: Any | None = None
+    #: Julia v2 (CONTRACT §6.3 / §8.1) -- what a CHANNEL turn hands the runtime, all built by the route:
+    #: the per-turn state the channel tools act on (``app.channels.tool_registry.JuliaTurno``) ...
+    julia: Any | None = None
+    #: ... the pre-rendered second system message (state + dossier; every word a DB text) ...
+    contexto_system: str | None = None
+    #: ... the thread history as ``(role, text)`` lines, labelled by author (``None`` = read the
+    #: conversation's own stored messages, the in-app chat behaviour) ...
+    historico: tuple[tuple[str, str], ...] | None = None
+    #: ... a corrective system message for the one re-run after a blocked reply (a DB text) ...
+    mensagem_correcao: str | None = None
+    #: ... and the DB text a turn that exhausts its tool loop answers with ("" = silence).
+    resposta_fallback: str = ""
 
 
 @dataclass(frozen=True)

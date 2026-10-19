@@ -34,6 +34,7 @@ from app.dependencies import (
     get_agent_store_dep,
     get_approval_broker_dep,
     get_build_bia_spec_dep,
+    get_conformidade_store_dep,
     get_conversation_store_dep,
     get_core_client,
     get_llm_runtime_dep,
@@ -43,7 +44,10 @@ from app.dependencies import (
     require_admin,
     require_member,
 )
+from app.channels.conformidade import GuardaVazamento
 from app.config import settings
+from app.stores.conformidade import Violacao
+from app.studio.vazamento import chamador_e_admin_da_plataforma
 from app.services.runtime_settings import get_runtime_settings_service
 from app.rate_limit import limiter
 from app.realtime import conversation_scope, get_bus, publish_event
@@ -128,6 +132,15 @@ def _message_out(record: MessageRecord) -> MessageOut:
     )
 
 
+def _message_out_thread(record: MessageRecord) -> MessageOut:
+    """A message of a LEAD THREAD (Julia v2) for an org member: the conversation only. Tool-call blocks, token
+    usage, cost and the version stamps are prompt-side internals (IP protection) -- stripped."""
+    return MessageOut(
+        id=record.id, conversation_id=record.conversation_id, role=record.role, texto=record.texto, blocks=[],
+        token_usage=None, created_at=record.created_at, updated_at=record.updated_at,
+    )
+
+
 def _http(status_code: int, code: str, detail: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
 
@@ -149,10 +162,11 @@ def _bia_agent(agent_store: Any, org_id: UUID) -> Any | None:
     return next((a for a in agent_store.list(org_id) if a.key == BIA_KEY), None)
 
 
-def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str) -> Any:
+def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str, *, allow_instancia: bool = False) -> Any:
     """Agent Studio §D intro — the SAME resolver every studio route uses:
-    unknown key → 404 ``agent_not_found``; legacy → 409 ``not_studio_agent``."""
-    return resolve_agent(studio_store, org_id, key)
+    unknown key → 404 ``agent_not_found``; legacy → 409 ``not_studio_agent``. ``allow_instancia``: the org's
+    INSTANCE of a platform-defined agent owns the org's conversations (it owns no versions)."""
+    return resolve_agent(studio_store, org_id, key, allow_instancia=allow_instancia)
 
 
 def _studio_agent_by_id(studio_store: Any, org_id: UUID, agent_id: UUID) -> Any | None:
@@ -292,7 +306,8 @@ async def list_channel_conversations(
     UI, filterable by ``channel``. Admin-only: they hold third-party personal
     data (LGPD). Reading one is the normal conversation/messages/stream routes
     (admins may read); writing to one is a 404 (``get_owned`` — it has no owner)."""
-    agent = _resolve_studio_agent(studio_store, ctx.org_id, canonical_channel_agent_key(agent_key))
+    agent = _resolve_studio_agent(
+        studio_store, ctx.org_id, canonical_channel_agent_key(agent_key), allow_instancia=True)
     records = store.list_channel(ctx.org_id, agent_id=agent.id, channel=channel)
     items = [_conversation_out(r, agent.key) for r in records]
     return ConversationListOut(items=items, total=len(items))
@@ -381,9 +396,18 @@ async def list_messages(
     msg_store=Depends(get_message_store_dep),
     request: Request = None,
 ) -> MessageListOut:
-    await _get_readable_conversation(ctx, conversation_id, conv_store, request)
+    conversation = await _get_readable_conversation(ctx, conversation_id, conv_store, request)
     records = msg_store.list(ctx.org_id, conversation_id, before=before, limite=limite)
-    items = [_message_out(r) for r in records]
+    if conversation.tipo == "thread_lead":
+        # A lead thread (shared by every agent) never exposes blocks, token usage or version stamps here;
+        # system notices and the empty cost-booking rows of a silent turn are not conversation either
+        # (the stripped admin read is ``GET /api/studio/threads/{id}/mensagens``).
+        items = [
+            _message_out_thread(r) for r in records
+            if r.role != "system" and not (r.role == "assistant" and not (r.texto or "").strip())
+        ]
+    else:
+        items = [_message_out(r) for r in records]
     return MessageListOut(items=items, total=len(items))
 
 
@@ -425,6 +449,7 @@ async def post_message(
     studio_store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     llm_runtime: Any = Depends(get_llm_runtime_dep),
+    conformidade=Depends(get_conformidade_store_dep),
 ) -> MessagePostResponse:
     try:
         conversation = conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
@@ -512,6 +537,12 @@ async def post_message(
                 bus=bus,
                 slot=slot,
                 spec=studio_spec,
+                # IP protection: a caller who is not a platform admin is never handed the prompt by the model.
+                guarda=(
+                    GuardaVazamento(studio_spec.prompt_append)
+                    if studio_spec is not None and not chamador_e_admin_da_plataforma(ctx) else None
+                ),
+                conformidade=conformidade,
             )
         )
         _track_background_task(request.app.state, task)
@@ -700,6 +731,8 @@ async def _run_turn_background(
     bus: Any,
     slot: Any,
     spec: AgentSpec | None = None,
+    guarda: Any = None,
+    conformidade: Any = None,
 ) -> None:
     """Contract §E.9 "What the routes must do with a turn", points 2-6,
     wrapped per §E.11 "Route order" in a turn deadline
@@ -759,7 +792,20 @@ async def _run_turn_background(
                 kind = event["event"]
                 evt_payload = event["payload"]
 
-                if kind == "message.new":
+                if kind == "message.new" and guarda is not None and (
+                    achado := guarda.verificar(evt_payload.get("texto", ""))
+                ):
+                    # The reply reproduces the prompt: suppressed (never stored, never published), recorded.
+                    logger.warning(
+                        "agents.turn.vazamento_bloqueado org_id=%s conversation_id=%s", org_id, conversation_id)
+                    if conformidade is not None:
+                        try:
+                            conformidade.registrar_violacao(
+                                org_id, agent_id, Violacao("vazamento_prompt", "bloquear", achado, True),
+                                thread_id=conversation_id, compiled_hash=stamp.get("compiled_hash"), origem="teste")
+                        except Exception:  # noqa: BLE001 -- a lost audit row is seen, the block still holds
+                            logger.exception("agents.turn.violacao_nao_registrada")
+                elif kind == "message.new":
                     record = msg_store.add(
                         org_id, conversation_id, "assistant", evt_payload.get("texto", ""),
                         blocks=[], **stamp,

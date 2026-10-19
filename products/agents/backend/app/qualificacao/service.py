@@ -194,6 +194,10 @@ class QualificacaoService:
                 vistos.append(e.codigo_imovel)
         return vistos
 
+    def eventos(self, org_id: UUID, lead_ref_id: UUID) -> list[EventoImovel]:
+        """Every property event of the lead, oldest first (the channel tools read the origin of an offer)."""
+        return list(self._leads.listar_eventos(org_id, lead_ref_id))
+
     def proximo_lote(self, org_id: UUID, lead_ref_id: UUID) -> int:
         lotes = [e.lote or 0 for e in self._leads.listar_eventos(org_id, lead_ref_id) if e.evento == "oferecido"]
         return max(lotes, default=0) + 1

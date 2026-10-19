@@ -39,7 +39,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.config import settings
-from app.dependencies import require_admin, require_member, require_platform_admin, require_publish_write
+from app.channels.conformidade import garantir_impressao
+from app.dependencies import (
+    get_conformidade_store_dep,
+    require_admin,
+    require_member,
+    require_platform_admin,
+    require_publish_write,
+)
 from app.schemas.studio import (
     AgentDetailOut,
     AgentListOut,
@@ -820,6 +827,7 @@ async def publish_draft(
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
+    conformidade=Depends(get_conformidade_store_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -885,6 +893,12 @@ async def publish_draft(
             ctx.org_id, draft.id, actor_id(ctx), eval_run_id, override_reason,
             expected_hash=compiled.hash, texto=compiled.texto, manifest=compiled.manifest_json(),
         )
+    # The prompt-leak fingerprint (hashed shingles; Julia v2 IP protection) is computed AT PUBLISH so a turn only
+    # reads it. A failure here is logged, never undoes the publish: the turn computes it on first use.
+    try:
+        garantir_impressao(conformidade, ctx.org_id, published.id, compiled)
+    except Exception:  # noqa: BLE001
+        logger.exception("agents.studio.publish.impressao_nao_salva version_id=%s", published.id)
     return _version_detail(store, gate, ctx.org_id, published)
 
 

@@ -50,9 +50,11 @@ from uuid import UUID
 
 from noctusai_lib.integrations.llm import (
     ChatMessage,
+    ChatToolsResponse,
     LLMAPIError,
     LLMBudgetExceeded,
     LLMNotConfigured,
+    LLMUsage,
     ToolCall,
     ToolCallingNotImplemented,
     ToolResult,
@@ -81,9 +83,9 @@ __all__ = [
     "service_principal_id",
 ]
 
-#: What the user reads when the loop hit its cap without a final reply.
-FALLBACK_REPLY = "Não consegui concluir esse pedido agora. Pode reformular em poucas palavras?"
-_TOOL_FAILED = "Falha ao executar a ferramenta."
+#: Structural stand-in for a failed tool when the agent's version carries no ``runtime.ferramenta_falhou``
+#: text (JSON, not prose: there is no default sentence in code -- D2).
+_TOOL_FAILED_JSON = '{"ok": false}'
 
 KeyResolver = Callable[[str, UUID], "str | None"]
 BudgetGuard = Callable[[UUID], Awaitable[None]]
@@ -106,8 +108,13 @@ class LlmToolset:
 
     tools: tuple[ToolSpec, ...]
     handler: Callable[[ToolCall], "ToolResult | Awaitable[ToolResult]"]
-    #: PT-BR one-liner for ``tool.started.resumo``; default ``Executar <name>.``
+    #: One-liner for ``tool.started.resumo`` (the admin timeline); default is the tool name.
     resumo: Callable[[str, dict[str, Any]], str] | None = None
+    #: The toolset asks the loop to stop (a safety budget ran out): the next model call is answered with
+    #: an empty reply WITHOUT reaching the provider, so the loop ends cleanly and its usage is kept.
+    should_stop: Callable[[], bool] | None = None
+    #: The agent version's ``runtime.ferramenta_falhou`` text, returned to the model when a handler raises.
+    falha: str = ""
 
 
 ToolsFactory = Callable[[AgentSpec, TurnContext], "LlmToolset | None"]
@@ -235,6 +242,12 @@ class LlmToolRuntime:
 
     # ── AgentRuntime ────────────────────────────────────────────────────
 
+    @property
+    def history_messages(self) -> int:
+        """How many stored messages a turn reads as history (a channel turn reads this many of the shared
+        thread through ``contexto_thread``)."""
+        return self._history_messages
+
     def try_reserve(self) -> LlmTurnSlot | None:
         return self._limiter.try_reserve()
 
@@ -271,8 +284,7 @@ class LlmToolRuntime:
                     "tool_use_id": call.call_id,
                     "tool_name": call.name,
                     "classe": "leitura",
-                    "resumo": (toolset.resumo(call.name, call.arguments) if toolset.resumo
-                               else f"Executar {call.name}."),
+                    "resumo": toolset.resumo(call.name, call.arguments) if toolset.resumo else call.name,
                 },
             }))
             try:
@@ -284,7 +296,7 @@ class LlmToolRuntime:
                     "agents.llm.tool_failed org_id=%s conversation_id=%s tool=%s",
                     ctx.org_id, ctx.conversation_id, call.name,
                 )
-                result = ToolResult(call.call_id, _TOOL_FAILED, is_error=True)
+                result = ToolResult(call.call_id, toolset.falha or _TOOL_FAILED_JSON, is_error=True)
             queue.put_nowait(("event", {
                 "event": "tool.finished",
                 "payload": {
@@ -306,16 +318,28 @@ class LlmToolRuntime:
             max_tokens=self._max_tokens,
             provider_impl=self._provider_impl,
         )
-        history = self._history(ctx, prompt)
+        if ctx.historico is not None:
+            history = [
+                ChatMessage.assistant(texto) if role == "assistant" else ChatMessage.user(texto)
+                for role, texto in ctx.historico
+            ]
+        else:
+            history = self._history(ctx, prompt)
         messages: list[ChatMessage] = [ChatMessage.system(spec.prompt_append, cache=True)]
-        if ctx.contexto is not None:
-            # Dynamic per-turn section AFTER the cacheable compiled prompt (§2.1(b)).
-            from app.channels.contexto import render_contexto_system
-
-            messages.append(ChatMessage.system(render_contexto_system(ctx.contexto)))
+        if ctx.contexto_system is not None:
+            # Dynamic per-turn section AFTER the cacheable compiled prompt (§2.1(b)); the route rendered
+            # it from DB texts + the dossier.
+            messages.append(ChatMessage.system(ctx.contexto_system))
         messages.extend(history)
+        if ctx.mensagem_correcao:
+            messages.append(ChatMessage.system(ctx.mensagem_correcao))
         if prompt:
             messages.append(ChatMessage.user(prompt))
+
+        async def _chat(msgs: Any, specs_: Any) -> Any:
+            if toolset is not None and toolset.should_stop is not None and toolset.should_stop():
+                return ChatToolsResponse(text="", tool_calls=(), usage=LLMUsage(), finish_reason="stop")
+            return await chat(msgs, specs_)
 
         async def _run() -> None:
             try:
@@ -323,9 +347,9 @@ class LlmToolRuntime:
                     messages,
                     list(toolset.tools) if toolset else [],
                     _handler if toolset else None,
-                    chat=chat,
+                    chat=_chat,
                     max_iterations=min(self._max_iterations, max(1, spec.max_turns)),
-                    fallback_reply=FALLBACK_REPLY,
+                    fallback_reply=ctx.resposta_fallback,
                 )
             except asyncio.CancelledError:
                 raise
@@ -369,6 +393,7 @@ class LlmToolRuntime:
                 "tokens_entrada": usage.prompt_tokens,
                 "tokens_saida": usage.completion_tokens,
                 "tokens_cache_leitura": usage.cache_read_tokens,
+                "esgotou_loop": bool(getattr(result, "exhausted", False)),
             },
         }
 

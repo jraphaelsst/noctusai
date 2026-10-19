@@ -182,6 +182,7 @@ def apagar_lead(
     retention: Any,
     instance_id: str,
     ttl_seconds: int,
+    qualificacao: Any = None,
 ) -> bool:
     """LGPD delete-by-lead: erase the lead's every thread across all agents (messages, idempotency
     rows, participants, qualification through the lead_ref cascade) and the lead_ref itself, in ONE
@@ -197,6 +198,10 @@ def apagar_lead(
             if not conversations.try_acquire_turn(org_id, thread.id, instance_id, ttl_seconds):
                 raise TurnInProgress(f"thread {thread.id} has a turn in progress")
             held.append(thread.id)
+        if qualificacao is not None:
+            # The records / events / state / identity of the lead, explicitly (idempotent): the lead_ref FK
+            # cascade (037) would erase them too, but the call is the contract -- and the Fake needs it.
+            qualificacao.apagar_por_lead(org_id, lead.id)
         erased = retention.delete_lead(org_id, ref_externa)
     except BaseException:
         for thread_id in held:

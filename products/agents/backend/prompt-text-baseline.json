@@ -1,12 +1,8 @@
 {
   "_nota": "Ratchet do keeper check_agent_prompt_text_in_code: literais de prompt tolerados por arquivo; so pode diminuir.",
   "arquivos": {
-    "products/agents/backend/app/channels/contexto.py": 1,
-    "products/agents/backend/app/channels/tools.py": 12,
     "products/agents/backend/app/studio/compiler.py": 2,
     "products/agents/backend/app/studio/evals.py": 2,
-    "products/agents/backend/app/runtime/claude_runtime.py": 5,
-    "products/agents/backend/app/runtime/llm_runtime.py": 1,
-    "products/agents/backend/app/routers/channels_router.py": 4
+    "products/agents/backend/app/runtime/claude_runtime.py": 5
   }
 }

@@ -63,6 +63,8 @@ PRODUTO_SW = "social-wiring"
 ESTADOS = ("ativo", "pausado", "concluido", "encerrado", "transferido")
 #: ``thread_participante_eventos.ator_tipo`` CHECK (033).
 ATOR_TIPOS = ("agente", "usuario", "token", "sistema")
+#: The states a hand-off may leave the giver in (``concluido``: the qualification finished -- 037).
+HANDOFF_ESTADOS = ("transferido", "pausado", "concluido")
 #: ``lead_refs.opt_in_origem`` CHECK (033): how the lead consented to be contacted.
 OPT_IN_ORIGENS = ("lead_iniciou", "formulario_meta", "campanha_ctwa", "importado")
 #: The default hand-off target for now: the org owner, who redirects to a broker (owner requirement;
@@ -253,7 +255,7 @@ class ThreadStore(Protocol):
         compromissos: Sequence[Any] = (), para_estado: str = "transferido",
         de: Sequence[str] = ("ativo",), ator_tipo: str = "agente", ator_id: UUID | None = None,
     ) -> HandoffRecord:
-        """Write the hand-off note AND move the giver (``ativo`` -> ``para_estado``: ``transferido`` or
+        """Write the hand-off note AND move the giver (``ativo`` -> ``para_estado``: ``transferido``, ``concluido`` or
         ``pausado``) in ONE transaction: the note is written first and a refused move rolls it back, so a
         transferred thread never exists without its note. A hand-off to another AGENT also makes that agent
         the active participant. Raises :class:`NotFound` (the giver does not take part) and
@@ -448,8 +450,8 @@ class FakeThreadStore:
         compromissos: Sequence[Any] = (), para_estado: str = "transferido",
         de: Sequence[str] = ("ativo",), ator_tipo: str = "agente", ator_id: UUID | None = None,
     ) -> HandoffRecord:
-        if para_estado not in ("transferido", "pausado"):
-            raise ValueError("para_estado must be 'transferido' or 'pausado'")
+        if para_estado not in HANDOFF_ESTADOS:
+            raise ValueError(f"para_estado must be one of {HANDOFF_ESTADOS}")
         if not motivo_codigo or not resumo:
             raise ValueError("a hand-off needs motivo_codigo and resumo")
         giver = self.get_participante(org_id, thread_id, de_agent_id)
@@ -710,6 +712,8 @@ class SupabaseThreadStore:
     ) -> HandoffRecord:
         if not motivo_codigo or not resumo:
             raise ValueError("a hand-off needs motivo_codigo and resumo")
+        if para_estado not in HANDOFF_ESTADOS:
+            raise ValueError(f"para_estado must be one of {HANDOFF_ESTADOS}")
         if ator_tipo not in ATOR_TIPOS:
             raise ValueError(f"ator_tipo must be one of {ATOR_TIPOS}; got {ator_tipo!r}")
         try:

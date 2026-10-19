@@ -153,6 +153,11 @@ class MessageStore(Protocol):
         (user/system rows, turns that reported none) count 0."""
         ...
 
+    def thread_usage_since(self, org_id: UUID, conversation_id: UUID, since: datetime) -> tuple[int, float]:
+        """Julia v2 abuse limits: ``(turns, cost_usd)`` of ONE thread since ``since`` -- a turn is an
+        ``assistant`` row (a silent turn books an empty one), so a flood of inbound batches counts."""
+        ...
+
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         """Lais w9 (Painel): ``(turnos, custo_usd)`` for this org over
         ``[since, until)`` — turns = assistant messages, cost = summed
@@ -283,6 +288,13 @@ class FakeMessageStore:
                 float(r.get("custo_usd") or 0.0) for r in rows if r["created_at"] >= since
             )
         return total
+
+    def thread_usage_since(self, org_id: UUID, conversation_id: UUID, since: datetime) -> tuple[int, float]:
+        rows = [
+            r for r in self._rows.get((org_id, conversation_id), [])
+            if r["role"] == "assistant" and r["created_at"] >= since
+        ]
+        return len(rows), sum(float(r.get("custo_usd") or 0.0) for r in rows)
 
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         turns, total = 0, 0.0
@@ -472,6 +484,26 @@ class SupabaseMessageStore:
             )
 
         return sum(float(row["custo_usd"] or 0.0) for row in iter_paged_rows(_page))
+
+    def thread_usage_since(self, org_id: UUID, conversation_id: UUID, since: datetime) -> tuple[int, float]:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        def _page(start: int, end: int):
+            return (
+                self._table()
+                .select("id, custo_usd")
+                .eq("org_id", str(org_id))
+                .eq("conversation_id", str(conversation_id))
+                .eq("role", "assistant")
+                .gte("created_at", since.isoformat())
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        rows = list(iter_paged_rows(_page))
+        return len(rows), sum(float(r.get("custo_usd") or 0.0) for r in rows)
 
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         from noctusai_lib.integrations.persistence.paging import iter_paged_rows

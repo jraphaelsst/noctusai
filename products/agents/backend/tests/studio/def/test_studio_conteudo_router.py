@@ -11,6 +11,7 @@ from uuid import NAMESPACE_OID, UUID, uuid5
 import pytest
 
 from app.dependencies import get_auth_context
+from app.studio.textos_registry import TEXTOS as _TEXTOS_REGISTRO
 from noctusai_lib.api.auth.session import AuthContext
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
 
@@ -27,6 +28,9 @@ TEXTOS = [
     {"chave": "compilador.titulo_ferramentas", "conteudo": "Ferramentas"},
     {"chave": "compilador.ferramenta_linha.web_desativada", "conteudo": "- Web: desligada."},
     {"chave": "compilador.ferramenta_linha.conhecimento_desativada", "conteudo": "- Conhecimento: desligado."},
+    # the channel runtime's texts (A-RT): a channel agent publishes only with every required one filled
+    *({"chave": c, "conteudo": "texto de teste"} for c, sp in _TEXTOS_REGISTRO.items()
+      if sp.aplica_a == "canal" and sp.obrigatoria and not c.startswith("compilador.")),
 ]
 FERRAMENTAS = [
     {"ferramenta": "handoff", "descricao": "Passa a conversa para uma pessoa da equipe.", "parametros": {"motivo": "Por quê."}},

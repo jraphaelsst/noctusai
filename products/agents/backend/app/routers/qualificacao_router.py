@@ -73,6 +73,16 @@ def _service(padroes, leads, ident) -> QualificacaoService:
     return QualificacaoService(padroes, leads, identificacao=ident)
 
 
+def get_qualificacao_service_dep(
+    padroes=Depends(get_padrao_store_dep),
+    leads=Depends(get_lead_qualificacao_store_dep),
+    ident=Depends(get_identificacao_service_dep),
+) -> QualificacaoService:
+    """The qualification service over the three seams (a test overrides any of them) -- what the channel
+    turn and the delete-by-lead route share."""
+    return _service(padroes, leads, ident)
+
+
 def _err(status: int, code: str, detail: str, **extra: Any) -> HTTPException:
     return HTTPException(status_code=status, detail={"detail": detail, "code": code, **extra})
 

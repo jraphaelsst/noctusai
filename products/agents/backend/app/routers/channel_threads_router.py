@@ -83,6 +83,7 @@ from app.schemas.channel_threads import (
     ThreadMensagemRequest,
     ThreadOut,
 )
+from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.schemas.channels import ChannelRef
 from app.stores._util import utcnow
 from app.stores.agent_controles import get_agent_controle_store
@@ -508,6 +509,7 @@ async def delete_lead(
     conv_store=Depends(get_conversation_store_dep),
     threads=Depends(get_thread_store_dep),
     retention: ChannelRetention = Depends(get_channel_retention_dep),
+    qual=Depends(get_qualificacao_service_dep),
 ) -> Response:
     """"Apagar meus dados" for a LEAD: erase every thread of the lead across all agents — messages,
     idempotency rows, participants, the qualification and the lead itself — in one transaction.
@@ -518,6 +520,7 @@ async def delete_lead(
         apagar_lead(
             org_id=ctx.org_id, ref_externa=ref, threads=threads, conversations=conv_store,
             retention=retention, instance_id=INSTANCE_ID, ttl_seconds=settings.turn_lock_ttl_seconds,
+            qualificacao=qual,
         )
     except TurnInProgress as exc:
         raise _err(409, "turn_in_progress", "Já existe um turno em andamento.") from exc
