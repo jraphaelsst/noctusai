@@ -78,6 +78,32 @@ seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat component
   knowledge, evals and package-sync routers are platform-admin only too; the `studio:content-write` token is minted
   only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`).
 
+## Lead qualification standard (Julia v2, `app/qualificacao/`)
+
+One platform-wide standard (`imob-lead`), versioned, the same for every org: no per-org fork. The
+model only records criterion values through tools; **score and stage are computed** by the pure
+`engine.calcular` and never judged by a model. Everything that is content is DB data:
+
+- **Library** (migration 032): `qualificacao_padroes/_versoes/_criterios/_estagios/_parametros`;
+  a published version is immutable (triggers); `agent_versions.qualificacao_versao_id` pins one.
+  Authoring + publish (rule validation, 422 with every problem) is platform-admin only:
+  `/api/qualificacao/*`.
+- **Criteria** carry a score `eixo` (several named axes + the total), `escopo` (sdr / financeiro / ...:
+  a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
+  (older records stop counting), type `derivado` (system signals the model cannot record) and
+  `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
+  (factor after N days without a lead reply).
+- **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,
+  `contagem`, `identificacao: completa`); every node may carry an `id` (explainability: `regra_id` +
+  per-axis `detalhe`). A `terminal` stage is only ever **suggested** (`descartado_sugerido`); a human
+  confirms it (`POST /api/channels/leads/{ref}/descarte/confirmar`, actor stored) - LGPD art. 20.
+- **Service** (`QualificacaoService`): `avaliar`, `registrar_perfil` (the `trecho` must be in the lead's own
+  recent messages), `registrar_evento_imovel`, `pode_concluir`, `confirmar_terminal`, `apagar_por_lead`.
+  Refusals are typed codes; their wording lives in DB texts.
+- **Lead identity** (`identificacao.py`): name/e-mail/CPF/RG apart from the records, CPF/RG Fernet-encrypted
+  with the fleet `ENCRYPTION_KEY`, masked by default, clear text only for org owner/admin via an audited
+  endpoint; 180-day retention and delete-by-lead cover it.
+
 ## What the framework provides automatically
 
 - `/api/health`, `/api/team`, `/api/notificacoes`, `/api/llm/*`
