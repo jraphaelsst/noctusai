@@ -17,15 +17,15 @@ function flatError(status: number, detail: string, code: string): ApiError {
 }
 
 describe("errorMessage — code-specific overrides (contract §E.2)", () => {
-  it("409 turn_in_progress → 'Julia ainda está respondendo a mensagem anterior.'", () => {
+  it("409 turn_in_progress → 'Bia ainda está respondendo a mensagem anterior.'", () => {
     const err = flatError(409, "Já existe um turno em andamento.", "turn_in_progress");
-    expect(errorMessage(err)).toBe("Julia ainda está respondendo a mensagem anterior.");
+    expect(errorMessage(err)).toBe("Bia ainda está respondendo a mensagem anterior.");
   });
 
-  it("409 agent_off → 'Julia está desligada — um administrador pode ligá-la em Agentes.'", () => {
-    const err = flatError(409, "O agente Julia está desligado.", "agent_off");
+  it("409 agent_off → 'Bia está desligada — um administrador pode ligá-la em Agentes.'", () => {
+    const err = flatError(409, "O agente Bia está desligado.", "agent_off");
     expect(errorMessage(err)).toBe(
-      "Julia está desligada — um administrador pode ligá-la em Agentes.",
+      "Bia está desligada — um administrador pode ligá-la em Agentes.",
     );
   });
 
@@ -83,22 +83,22 @@ describe("errorMessage — code-specific overrides (contract §E.2)", () => {
   });
 });
 
-describe("errorMessage — julia_capacidade (contract §E.11 Capacity)", () => {
-  it("429 julia_capacidade with a backend detail returns that detail verbatim", () => {
+describe("errorMessage — bia_capacidade (contract §E.11 Capacity)", () => {
+  it("429 bia_capacidade with a backend detail returns that detail verbatim", () => {
     const err = flatError(
       429,
-      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-      "julia_capacidade",
+      "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+      "bia_capacidade",
     );
     expect(errorMessage(err)).toBe(
-      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+      "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
     );
   });
 
-  it("429 julia_capacidade with no usable detail falls back to the same contract text (never the rate-limit fallback)", () => {
-    const err = new ApiError(429, "Erro HTTP 429", { code: "julia_capacidade" });
+  it("429 bia_capacidade with no usable detail falls back to the same contract text (never the rate-limit fallback)", () => {
+    const err = new ApiError(429, "Erro HTTP 429", { code: "bia_capacidade" });
     expect(errorMessage(err)).toBe(
-      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+      "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
     );
   });
 

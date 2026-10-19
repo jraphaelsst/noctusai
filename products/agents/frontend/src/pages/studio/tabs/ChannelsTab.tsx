@@ -1,5 +1,5 @@
 /**
- * Agent Studio — "Canais" (Lais page-0 agent `lead-imob`): the channel token
+ * Agent Studio — "Canais" (Lais page-0 agent `julia`): the channel token
  * social-wiring uses, the LLM-key status hint for the version's provider, and
  * the READ-ONLY list of channel conversations (leads on WhatsApp etc.). There
  * is deliberately no composer: a channel conversation is driven by the

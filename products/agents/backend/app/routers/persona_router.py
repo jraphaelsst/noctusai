@@ -1,4 +1,4 @@
-"""``/api/agents/julia/persona`` — read + edit the active persona version
+"""``/api/agents/bia/persona`` — read + edit the active persona version
 (contract §E.2, ``projects/julia-agents-academia-CONTRACT.md``).
 
 ``PUT`` is admin-only (persona writes gate on ``ADMIN_ROLES``); ``GET`` is
@@ -21,7 +21,7 @@ from app.stores.errors import NotFound
 from app.stores.personas import PersonaInput
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/agents/julia/persona", tags=["persona"])
+router = APIRouter(prefix="/api/agents/bia/persona", tags=["persona"])
 
 
 def _persona_out(record) -> PersonaOut:
@@ -50,7 +50,7 @@ async def get_persona(
     persona_store=Depends(get_persona_store_dep),
 ) -> PersonaOut:
     agent_store.ensure_default_agents(ctx.org_id)
-    agent = agent_store.get_by_key(ctx.org_id, "julia")
+    agent = agent_store.get_by_key(ctx.org_id, "bia")
     try:
         record = persona_store.get_active(ctx.org_id, agent.id)
     except NotFound as exc:
@@ -69,7 +69,7 @@ async def update_persona(
     persona_store=Depends(get_persona_store_dep),
 ) -> PersonaOut:
     agent_store.ensure_default_agents(ctx.org_id)
-    agent = agent_store.get_by_key(ctx.org_id, "julia")
+    agent = agent_store.get_by_key(ctx.org_id, "bia")
 
     data = PersonaInput(
         nome=payload.nome,

@@ -20,7 +20,7 @@ __all__ = [
     "CredentialKind",
     "CredentialSpec",
     "ISSUER",
-    "JULIA_AGENT_ID",
+    "BIA_AGENT_ID",
     "SOCIAL_WIRING_API_TOKEN",
     "TOKEN_TTL_DAYS",
     "get_spec",
@@ -47,7 +47,7 @@ class CredentialSpec:
     target_product: str | None = None
     target_schema: str | None = None
     scopes: tuple[str, ...] = field(default_factory=tuple)
-    bind_principal: bool = False  # principal_agent_id = Julia's agent id
+    bind_principal: bool = False  # principal_agent_id = Bia's agent id
     token_label: str | None = None
     secret: bool = True
     #: `agents.app_integration_config` key; defaults to ``name``.
@@ -84,7 +84,7 @@ ACADEMIA_API_TOKEN = CredentialSpec(
         "academia:sources:write",
     ),
     bind_principal=True,
-    token_label="agents → academia (Julia)",
+    token_label="agents → academia (Bia)",
 )
 
 SOCIAL_WIRING_API_TOKEN = CredentialSpec(
@@ -101,7 +101,7 @@ SOCIAL_WIRING_API_TOKEN = CredentialSpec(
 
 ANTHROPIC_API_KEY = CredentialSpec(
     name="anthropic_api_key",
-    label="Chave Anthropic da Julia",
+    label="Chave Anthropic da Bia",
     kind="api_key",
     env_var="JULIA_ANTHROPIC_API_KEY → ANTHROPIC_API_KEY",
     settings_attr="anthropic_api_key",
@@ -118,12 +118,12 @@ APPROVAL_RING = CredentialSpec(
     settings_attr="approval_assertion_secrets",
 )
 
-JULIA_AGENT_ID = CredentialSpec(
-    name="julia_agent_id",
-    label="ID da agente Julia (principal do token academia)",
+BIA_AGENT_ID = CredentialSpec(
+    name="bia_agent_id",
+    label="ID da agente Bia (principal do token academia)",
     kind="config",
-    env_var="JULIA_AGENT_ID",
-    settings_attr="julia_agent_id",
+    env_var="BIA_AGENT_ID",
+    settings_attr="bia_agent_id",
     secret=False,
 )
 
@@ -132,7 +132,7 @@ CREDENTIALS: tuple[CredentialSpec, ...] = (
     SOCIAL_WIRING_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
-    JULIA_AGENT_ID,
+    BIA_AGENT_ID,
 )
 
 _BY_NAME = {spec.name: spec for spec in CREDENTIALS}

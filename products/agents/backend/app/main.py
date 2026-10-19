@@ -1,5 +1,5 @@
 """
-NoctusAI Agentes — the Julia control-plane API (G1b: HTTP + SSE).
+NoctusAI Agentes — the Bia control-plane API (G1b: HTTP + SSE).
 
 Contract: ``projects/julia-agents-academia-CONTRACT.md`` §E. Mounts the
 unified auth router directly (NOT via ``standard_routers=["auth"]`` — that
@@ -12,7 +12,7 @@ conversations+SSE / approvals).
 / ``Orphaned`` are imported at module level — both are lightweight,
 ``claude_agent_sdk``-free). The runtime/broker/spec-builder INSTANCES are
 still resolved lazily via ``app/dependencies.py``'s ``get_agent_runtime_dep``
-/ ``get_approval_broker_dep`` / ``get_build_julia_spec_dep`` — deferring
+/ ``get_approval_broker_dep`` / ``get_build_bia_spec_dep`` — deferring
 the real runtime's conditional SDK import to first use, not because the
 package might be absent. The startup hook below (contract §E.2 "Startup",
 extended by §E.11 "Every slot is swept once at startup") is wrapped by

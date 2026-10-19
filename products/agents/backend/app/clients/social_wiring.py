@@ -106,7 +106,7 @@ class SocialWiringClient(Protocol):
         ...
 
     async def lais_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
-        """``POST /api/lais/ferramentas/{nome}`` with the org's token. Never
+        """``POST /api/julia/ferramentas/{nome}`` with the org's token. Never
         raises: any failure / timeout (8 s) returns ``{"erro": "indisponivel"}``."""
         ...
 
@@ -255,7 +255,7 @@ class HttpSocialWiringClient:
             return dict(LAIS_TOOL_UNAVAILABLE)
         if not token:
             return dict(LAIS_TOOL_UNAVAILABLE)
-        url = f"{self._base_url}/api/lais/ferramentas/{nome}"
+        url = f"{self._base_url}/api/julia/ferramentas/{nome}"
         try:
             async with httpx.AsyncClient(timeout=self._lais_timeout, transport=self._transport) as client:
                 resp = await client.post(url, json=args, headers={"Authorization": f"Bearer {token}"})

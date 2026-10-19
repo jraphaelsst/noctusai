@@ -1,5 +1,5 @@
 /**
- * Julia chat adapter — contract §E.2 (conversations/messages), §E.3 (SSE,
+ * Bia chat adapter — contract §E.2 (conversations/messages), §E.3 (SSE,
  * revised 2026-09-14), §E.7 (ChatWindow seams).
  *
  * Wires the seed `<ChatWindow>` organ (`@noctusai/lib/design-system`) onto
@@ -7,10 +7,10 @@
  * `products/social-wiring/frontend/src/hooks/useWhatsAppChats.ts` (REST +
  * ONE SSE stream per open scope patches the TanStack cache — no
  * `refetchInterval`), with one structural difference: the WhatsApp stream is
- * scoped to a CONNECTION (patches the whole thread list), Julia's stream is
+ * scoped to a CONNECTION (patches the whole thread list), Bia's stream is
  * scoped to a single CONVERSATION (`/api/conversations/{id}/stream`,
  * contract §E.3 "Scope"). So the realtime subscription is mounted inside
- * `useJuliaMessagesAdapter`, which `ChatWindow`'s `ThreadPanel` already
+ * `useBiaMessagesAdapter`, which `ChatWindow`'s `ThreadPanel` already
  * calls exactly once per opened thread (`key={thread.id}` — see
  * `ChatWindow.tsx`), not at the top `useThreads` level.
  *
@@ -83,7 +83,7 @@ interface Envelope<T> {
  * drops it (`seed/lib/frontend/src/realtime.ts` — "load-bearing"). Revised
  * 2026-09-14: `message.updated` is now load-bearing (it is the source of
  * truth for `blocks`) and MUST be included. */
-export const JULIA_STREAM_EVENTS = [
+export const BIA_STREAM_EVENTS = [
   "message.new",
   "message.updated",
   "message.delta",
@@ -95,7 +95,7 @@ export const JULIA_STREAM_EVENTS = [
   "conversation.upsert",
 ] as const;
 
-const CONVERSATIONS_KEY = ["agents", "julia", "conversations"] as const;
+const CONVERSATIONS_KEY = ["agents", "bia", "conversations"] as const;
 const messagesKey = (conversationId: string | null) =>
   [...CONVERSATIONS_KEY, conversationId, "messages"] as const;
 /** Prefix shared with `useApprovals.ts`'s `APPROVALS_KEY`
@@ -148,7 +148,7 @@ function emptyLive(): LiveTurnState {
 /**
  * No dedicated "list" SSE feed exists (contract §E.3 scope is per
  * conversation) — `conversation.upsert` only arrives while THAT
- * conversation's stream is open (patched in `useJuliaMessagesAdapter`
+ * conversation's stream is open (patched in `useBiaMessagesAdapter`
  * below), so the list itself uses a short `staleTime` rather than
  * `Infinity`, and every mutation that changes it (create, send) also
  * invalidates it.
@@ -229,7 +229,7 @@ export function useRenameConversation() {
  * `ChatWindowAdapter` addition, 2026-09-22) — `rename` MUST throw a
  * user-facing `Error`, same contract as `useSend`, so the inline pencil
  * editor can show WHY a rename failed instead of silently reverting. */
-export function useJuliaRenameConversationAdapter(): ChatRenameThreadResult {
+export function useBiaRenameConversationAdapter(): ChatRenameThreadResult {
   const mutation = useRenameConversation();
   return {
     rename: async (threadId, titulo) => {
@@ -245,7 +245,7 @@ export function useJuliaRenameConversationAdapter(): ChatRenameThreadResult {
 
 // ─── Messages + realtime (per opened conversation) ──────────────────────────
 
-export function useJuliaMessagesAdapter(conversationId: string | null) {
+export function useBiaMessagesAdapter(conversationId: string | null) {
   const qc = useQueryClient();
   const [live, setLive] = useState<LiveTurnState | null>(null);
 
@@ -329,7 +329,7 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
   useRealtimeStream(conversationId ? `/api/conversations/${conversationId}/stream` : null, {
     onEvent,
     getAuthToken,
-    events: JULIA_STREAM_EVENTS,
+    events: BIA_STREAM_EVENTS,
   });
 
   const mapped = useMemo(() => (query.data?.items ?? []).map(toChatMessage), [query.data]);
@@ -341,7 +341,7 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
     return {
       id: LIVE_ID,
       direction: "inbound",
-      body: live.textoParcial || (isThinking ? "Julia está pensando…" : ""),
+      body: live.textoParcial || (isThinking ? "Bia está pensando…" : ""),
       created_at: new Date().toISOString(),
       pending: true,
     };
@@ -356,7 +356,7 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
 
 // ─── Send ────────────────────────────────────────────────────────────────
 
-export function useJuliaSendAdapter(conversationId: string | null) {
+export function useBiaSendAdapter(conversationId: string | null) {
   const qc = useQueryClient();
   // Capacity countdown (contract §E.11 "Capacity") — seconds remaining
   // before the composer may send again, or `null` when there is no active
@@ -428,7 +428,7 @@ export function useJuliaSendAdapter(conversationId: string | null) {
 
 // ─── Approval decision (ChatWindow seam, contract §E.7) ────────────────────
 
-export function useJuliaApprovalActionAdapter() {
+export function useBiaApprovalActionAdapter() {
   const qc = useQueryClient();
 
   const mutation = useMutation<unknown, unknown, { approvalId: string; aprovada: boolean }>({
@@ -456,12 +456,12 @@ export function useJuliaApprovalActionAdapter() {
 
 // ─── Adapter bag ────────────────────────────────────────────────────────────
 
-export function buildJuliaChatAdapter(): ChatWindowAdapter {
+export function buildBiaChatAdapter(): ChatWindowAdapter {
   return {
     useThreads: () => useThreads(),
-    useMessages: (_scopeId, threadId) => useJuliaMessagesAdapter(threadId),
-    useSend: (_scopeId, threadId) => useJuliaSendAdapter(threadId),
-    useApprovalAction: () => useJuliaApprovalActionAdapter(),
-    useRenameThread: () => useJuliaRenameConversationAdapter(),
+    useMessages: (_scopeId, threadId) => useBiaMessagesAdapter(threadId),
+    useSend: (_scopeId, threadId) => useBiaSendAdapter(threadId),
+    useApprovalAction: () => useBiaApprovalActionAdapter(),
+    useRenameThread: () => useBiaRenameConversationAdapter(),
   };
 }

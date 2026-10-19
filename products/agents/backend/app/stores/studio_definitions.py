@@ -173,10 +173,10 @@ class StudioAgentRecord:
     publicacao_limiar: float
     created_at: datetime
     updated_at: datetime
-    #: 017: ``runtime`` (IsaIA, Julia, ...) | ``dev-advisor`` (a package).
+    #: 017: ``runtime`` (IsaIA, Bia, ...) | ``dev-advisor`` (a package).
     kind: str = "runtime"
     #: 006: the product that owns the agent's transport (``social-wiring`` for
-    #: ``lead-imob``); ``None`` for agents agents itself serves.
+    #: ``julia``); ``None`` for agents agents itself serves.
     owner_product: str | None = None
 
 

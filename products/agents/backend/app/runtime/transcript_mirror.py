@@ -1,5 +1,5 @@
 """``ConversationTranscriptMirror`` — the SDK ``SessionStore`` adapter that
-gives Julia durable, per-conversation transcripts (contract §E.11 "Durable
+gives Bia durable, per-conversation transcripts (contract §E.11 "Durable
 transcripts").
 
 Implements ``claude_agent_sdk.types.SessionStore`` (verified against the
@@ -37,10 +37,10 @@ from app.stores.transcripts import TranscriptStore
 __all__ = ["ConversationTranscriptMirror"]
 
 #: The slot script (contract §E.11 "Slot script") always creates
-#: ``home/.claude/projects/-app`` — HOME is pinned to ``/run/julia-K/home``
+#: ``home/.claude/projects/-app`` — HOME is pinned to ``/run/bia-K/home``
 #: and the CLI's cwd inside the container is ``/app``, so
 #: ``project_key_for_directory("/app")`` sanitizes to this literal. A frame
-#: whose ``project_key`` is anything else did not originate from Julia's own
+#: whose ``project_key`` is anything else did not originate from Bia's own
 #: cwd and is dropped.
 _EXPECTED_PROJECT_KEY = "-app"
 
@@ -115,12 +115,12 @@ class ConversationTranscriptMirror:
         :attr:`frames_dropped`) and never reaches the store:
 
         1. **Subpath frames** (subagent transcripts,
-           ``<session>/subagents/agent-<id>.jsonl``) are dropped. Julia has
+           ``<session>/subagents/agent-<id>.jsonl``) are dropped. Bia has
            no subagents in this slice's scope, and even if she did, only
            the MAIN transcript is durable here.
         2. **Wrong project key.** ``key["project_key"]`` must be
            :data:`_EXPECTED_PROJECT_KEY` — anything else means the frame's
-           path did not come from Julia's own pinned cwd (see the module
+           path did not come from Bia's own pinned cwd (see the module
            docstring's trusted-binding note).
         3. **Session-id mismatch.** A fresh session (``expected_session_id``
            was ``None`` at construction) pins the FIRST accepted frame's
@@ -216,7 +216,7 @@ class ConversationTranscriptMirror:
         on a mirror constructed with ``expected_session_id`` set to the
         conversation's stored ``sdk_session_id``, BEFORE spawning the next
         turn's CLI — to get the entries it writes to
-        ``/run/julia-handoff/K/<sid>.jsonl`` for the slot script to pick
+        ``/run/bia-handoff/K/<sid>.jsonl`` for the slot script to pick
         up. Returns ``None`` unless the transcript's stored estado is
         exactly ``"ok"`` (a ``truncado``/``incompleto``/``invalido``
         transcript is never handed off — the caller starts a fresh

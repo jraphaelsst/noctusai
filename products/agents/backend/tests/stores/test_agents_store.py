@@ -14,17 +14,17 @@ def store() -> FakeAgentStore:
     return FakeAgentStore()
 
 
-def test_ensure_default_agents_creates_julia_and_one_chat(store):
+def test_ensure_default_agents_creates_bia_and_one_chat(store):
     org_id = uuid4()
     store.ensure_default_agents(org_id)
 
     rows = {r.key: r for r in store.list(org_id)}
-    assert set(rows) == {"julia", "one-chat"}
+    assert set(rows) == {"bia", "one-chat"}
 
-    julia = rows["julia"]
-    assert julia.runtime == "claude_sdk"
-    assert julia.owner_product is None
-    assert julia.ativo is False
+    bia = rows["bia"]
+    assert bia.runtime == "claude_sdk"
+    assert bia.owner_product is None
+    assert bia.ativo is False
 
     one_chat = rows["one-chat"]
     assert one_chat.runtime == "external"
@@ -38,14 +38,14 @@ def test_ensure_default_agents_is_idempotent(store):
     store.ensure_default_agents(org_id)
     # A caller may have already toggled `ativo` — a second ensure call must
     # never clobber that back to the default.
-    store.set_active(org_id, "julia", True)
+    store.set_active(org_id, "bia", True)
 
     store.ensure_default_agents(org_id)
 
     rows = store.list(org_id)
     assert len(rows) == 2, "ensure_default_agents must not duplicate rows"
-    julia = store.get_by_key(org_id, "julia")
-    assert julia.ativo is True, "a second ensure call clobbered an existing toggle"
+    bia = store.get_by_key(org_id, "bia")
+    assert bia.ativo is True, "a second ensure call clobbered an existing toggle"
 
 
 def test_ensure_default_agents_is_per_org(store):
@@ -56,7 +56,7 @@ def test_ensure_default_agents_is_per_org(store):
     assert len(store.list(org_a)) == 2
     assert len(store.list(org_b)) == 2
     # Different rows entirely — not shared/aliased across orgs.
-    assert store.get_by_key(org_a, "julia").id != store.get_by_key(org_b, "julia").id
+    assert store.get_by_key(org_a, "bia").id != store.get_by_key(org_b, "bia").id
 
 
 def test_get_by_key_raises_not_found_for_unknown_key(store):
@@ -70,16 +70,16 @@ def test_get_by_key_raises_not_found_for_another_org(store):
     org_a, org_b = uuid4(), uuid4()
     store.ensure_default_agents(org_a)
     with pytest.raises(NotFound):
-        store.get_by_key(org_b, "julia")
+        store.get_by_key(org_b, "bia")
 
 
 def test_set_active_toggles_and_raises_on_unknown(store):
     org_id = uuid4()
     store.ensure_default_agents(org_id)
 
-    updated = store.set_active(org_id, "julia", True)
+    updated = store.set_active(org_id, "bia", True)
     assert updated.ativo is True
-    assert store.get_by_key(org_id, "julia").ativo is True
+    assert store.get_by_key(org_id, "bia").ativo is True
 
     with pytest.raises(NotFound):
         store.set_active(org_id, "nope", True)

@@ -2,7 +2,7 @@
 runner, importer, app wiring).
 
 ``rt`` drives the REAL product app (``app.main.app``) — the one BE-RT wires —
-through the shared ``agents_client`` fixture (Julia's stores/runtime/broker
+through the shared ``agents_client`` fixture (Bia's stores/runtime/broker
 already bound to shared Fakes), and additionally binds every studio store
 seam onto shared Fakes via ``app.dependency_overrides``. The production seam
 bindings ``install_studio_seams`` put on the app (eval gate, knowledge

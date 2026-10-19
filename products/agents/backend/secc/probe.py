@@ -5,7 +5,7 @@
 Baked into the ``secc-proof`` build stage ONLY (``products/agents/backend
 /Dockerfile``), root:root, and pointed at by
 ``/usr/local/bin/claude-bundled`` INSTEAD of the real bundled CLI — the
-wrapper (``bin/julia-cli-exec``) and entrypoint (``bin/entrypoint.sh``) are
+wrapper (``bin/bia-cli-exec``) and entrypoint (``bin/entrypoint.sh``) are
 byte-identical to the ``runtime`` target (asserted by ``run_proof.py`` via
 sha256) and always exec whatever ``/usr/local/bin/claude-bundled`` resolves
 to, so pointing that ONE symlink/file at this probe (rather than the real
@@ -19,7 +19,7 @@ push.sh`` / ``.github/workflows/build-and-push.yml`` build+push
 ``check_build_and_push_never_builds_secc_proof``).
 
 Whatever uid/gid/caps/env this process observes on ``os.getuid()`` /
-``/proc/self/status`` / ``os.environ`` IS the real thing the julia CLI
+``/proc/self/status`` / ``os.environ`` IS the real thing the bia CLI
 would have run under for that same invocation — the wrapper has ALREADY
 done its own uid switch + cap drop by the time this execs. That makes this
 process the natural place to ALSO run the "as uid 1001" access-check
@@ -52,7 +52,7 @@ reports ITS OWN identity, never assumes uid 1001):
     live process and filesystem paths, never uvicorn's.
   * ``--secc-read-handoff-copy <sid>`` — contract §E.11 D2 check 5: reads
     back ``$HOME/.claude/projects/-app/<sid>.jsonl`` (the file
-    ``bin/julia-cli-slot`` copies FROM the handoff mount INTO this slot's
+    ``bin/bia-cli-slot`` copies FROM the handoff mount INTO this slot's
     own tmpfs at turn start) — proving the copy landed, from the one
     uid (this slot's own) that is SUPPOSED to be able to read it.
   * ``--secc-fill-quota`` — contract §E.11 D2 check 8: writes 1 MiB
@@ -159,7 +159,7 @@ def _run_access_checks() -> dict[str, object]:
     checks["proc_cwd"] = _access_check(lambda: os.readlink(f"/proc/{target_pid}/cwd"))
     checks["kill_minus_0"] = _access_check(lambda: os.kill(target_pid, 0))
 
-    # `noctus`'s /tmp is mode 1770 uid=0 gid=1000 — "other" (julia-cli,
+    # `noctus`'s /tmp is mode 1770 uid=0 gid=1000 — "other" (bia-cli,
     # groups cleared) has NO access at all, so even STATTING a path under
     # it fails at the directory-traversal level; no file needs to exist.
     checks["tmp_read"] = _access_check(lambda: os.listdir("/tmp"))
@@ -251,7 +251,7 @@ def _cross_slot_probe(
 
 
 def _read_handoff_copy(sid: str) -> dict[str, object]:
-    """Contract §E.11 D2 check 5: reads back the file ``bin/julia-cli-
+    """Contract §E.11 D2 check 5: reads back the file ``bin/bia-cli-
     slot`` copies FROM the handoff mount INTO this slot's own tmpfs at
     turn start (``$HOME/.claude/projects/-app/<sid>.jsonl``) — proving the
     copy landed, readable by the one uid (this slot's own) that is

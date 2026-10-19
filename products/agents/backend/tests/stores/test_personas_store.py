@@ -16,7 +16,7 @@ def store() -> FakePersonaStore:
 
 def _input(**overrides) -> PersonaInput:
     base = dict(
-        nome="Julia",
+        nome="Bia",
         papel="assistente de pesquisa",
         model="claude-sonnet-5",
         effort="medium",

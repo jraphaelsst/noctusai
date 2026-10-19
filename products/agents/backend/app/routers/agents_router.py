@@ -1,7 +1,7 @@
 """``/api/agents`` — list + toggle (contract §E.2,
 ``projects/julia-agents-academia-CONTRACT.md``).
 
-Every route is user-only. Toggling ``julia`` flips the local
+Every route is user-only. Toggling ``bia`` flips the local
 ``agents.agents.ativo`` column. Toggling ``one-chat`` calls the
 social-wiring E.6 bridge instead — its ``ativo``/``estado_externo`` are
 whatever social-wiring returns, never a locally-stored truth (the row's

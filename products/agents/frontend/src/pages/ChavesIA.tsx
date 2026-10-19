@@ -3,7 +3,7 @@
  * server-side by `api_keys_router`).
  *
  * The org's LLM provider keys (`openai_api_key`, `anthropic_api_key`) that a
- * `runtime='llm'` agent (Julia / `lead-imob`) resolves per turn. Consumes the
+ * `runtime='llm'` agent (Julia / `julia`) resolves per turn. Consumes the
  * canonical seed `ApiKeysPanel` organ — status, set/replace, Testar, remove —
  * over `/api/settings/api-keys`; nothing is re-implemented here.
  */

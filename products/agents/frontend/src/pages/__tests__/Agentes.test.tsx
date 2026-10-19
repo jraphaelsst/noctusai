@@ -23,9 +23,9 @@ vi.mock("@/hooks/useIsAdmin", () => ({
   useIsAdmin: () => mockUseIsAdmin(),
 }));
 
-const JULIA = {
-  key: "julia",
-  nome: "Julia",
+const BIA = {
+  key: "bia",
+  nome: "Bia",
   runtime: "claude_sdk",
   owner_product: null,
   ativo: true,
@@ -45,7 +45,7 @@ const ONE_CHAT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockUseAgents.mockReturnValue({ data: [JULIA, ONE_CHAT], showSkeleton: false, isError: false });
+  mockUseAgents.mockReturnValue({ data: [BIA, ONE_CHAT], showSkeleton: false, isError: false });
   mockUseToggleAgent.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 
@@ -59,14 +59,14 @@ async function renderPage() {
 }
 
 describe("Agentes — admin sees an interactive toggle", () => {
-  it("renders a toggle switch and the persona link for julia", async () => {
+  it("renders a toggle switch and the persona link for bia", async () => {
     mockUseIsAdmin.mockReturnValue(true);
     await renderPage();
 
-    expect(screen.getByTestId("agent-toggle-julia")).toBeTruthy();
+    expect(screen.getByTestId("agent-toggle-bia")).toBeTruthy();
     expect(screen.getByTestId("agent-toggle-one-chat")).toBeTruthy();
     expect(screen.getByTestId("agent-persona-link")).toBeTruthy();
-    expect(screen.queryByTestId("agent-status-julia")).toBeNull();
+    expect(screen.queryByTestId("agent-status-bia")).toBeNull();
   });
 
   it("shows the aviso when one-chat's estado_externo is null", async () => {
@@ -83,9 +83,9 @@ describe("Agentes — member sees read-only state", () => {
     mockUseIsAdmin.mockReturnValue(false);
     await renderPage();
 
-    expect(screen.getByTestId("agent-status-julia")).toBeTruthy();
+    expect(screen.getByTestId("agent-status-bia")).toBeTruthy();
     expect(screen.getByTestId("agent-status-one-chat")).toBeTruthy();
-    expect(screen.queryByTestId("agent-toggle-julia")).toBeNull();
+    expect(screen.queryByTestId("agent-toggle-bia")).toBeNull();
     expect(screen.queryByTestId("agent-toggle-one-chat")).toBeNull();
     expect(screen.queryByTestId("agent-persona-link")).toBeNull();
   });

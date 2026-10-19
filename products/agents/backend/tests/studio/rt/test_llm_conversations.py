@@ -1,7 +1,7 @@
 """Studio "Testar conversa" for a ``runtime='llm'`` agent (Lais A1) through the
 REAL product app: the same conversation route, the provider-neutral runtime
 over the seed's ``FakeProvider`` (installed through the product's
-``get_llm_runtime_dep`` seam), Julia / ``claude_sdk`` agents unchanged.
+``get_llm_runtime_dep`` seam), Bia / ``claude_sdk`` agents unchanged.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from tests.routers.conftest import install_runtime, wait_turn_released, wait_unt
 ORG_KEY = "sk-org-test-key"
 
 
-def _llm_agent(rt, key="lead-imob", *, provider="openai", model="gpt-5.6-terra"):
+def _llm_agent(rt, key="julia", *, provider="openai", model="gpt-5.6-terra"):
     agent, _ = rt.make_agent(key, nome="Julia", publish=False, ativo=True)
     rt.studio._agents[(rt.org_id, key)] = replace(agent, runtime="llm")
     draft = rt.studio.get_draft(rt.org_id, agent.id)
@@ -51,7 +51,7 @@ def _drop_llm_override():
     app.dependency_overrides.pop(get_llm_runtime_dep, None)
 
 
-def _conv(rt, key="lead-imob"):
+def _conv(rt, key="julia"):
     resp = rt.post("/api/conversations", json={"agent_key": key})
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -130,7 +130,7 @@ class TestLlmAgentTestChat:
         assert provider.calls == []
         assert rt.get(f"/api/conversations/{conv['id']}/messages").json()["items"] == []
 
-    def test_full_limiter_is_429_julia_capacidade_like_every_runtime(self, rt):
+    def test_full_limiter_is_429_bia_capacidade_like_every_runtime(self, rt):
         provider = FakeProvider(tool_responses=["x"])
         runtime = _install_llm(rt, provider, capacity=1)
         _llm_agent(rt)
@@ -138,7 +138,7 @@ class TestLlmAgentTestChat:
         held = runtime.try_reserve()
         assert held is not None
         resp = _post(rt, conv["id"])
-        assert resp.status_code == 429 and resp.json()["code"] == "julia_capacidade"
+        assert resp.status_code == 429 and resp.json()["code"] == "bia_capacidade"
 
     def test_org_b_conversation_never_uses_org_a_key(self, rt):
         """The injected resolver only knows org A (`rt.org_id`); a different

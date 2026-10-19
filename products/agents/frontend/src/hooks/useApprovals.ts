@@ -2,7 +2,7 @@
  * Approvals hooks — contract §E.2
  * (`GET /api/approvals?estado=pendente`, `POST /api/approvals/{id}/decision`).
  *
- * Shared by the standalone `/aprovacoes` page AND `useJuliaChat.ts`'s
+ * Shared by the standalone `/aprovacoes` page AND `useBiaChat.ts`'s
  * `useApprovalAction` adapter (the `ChatWindow` approval-card seam,
  * contract §E.7) — both decide through the SAME mutation shape so a
  * decision made from either surface invalidates both caches.
@@ -12,10 +12,10 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 
 export const APPROVALS_KEY = ["agents", "approvals", "pendente"] as const;
-/** Prefix shared with `useJuliaChat.ts`'s per-conversation messages key —
+/** Prefix shared with `useBiaChat.ts`'s per-conversation messages key —
  * used to invalidate every open conversation's message list after a
  * decision lands somewhere else (contract §E.2 "then refetch"). */
-export const CONVERSATIONS_PREFIX = ["agents", "julia", "conversations"] as const;
+export const CONVERSATIONS_PREFIX = ["agents", "bia", "conversations"] as const;
 
 export interface ApprovalDiff {
   antes: string | null;

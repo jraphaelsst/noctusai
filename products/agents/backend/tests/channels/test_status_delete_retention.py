@@ -11,7 +11,7 @@ from tests.channels.conftest import CONNECTION_ID, OTHER_ORG, turn_body
 from tests.routers.conftest import DEFAULT_USER_ID, bind_user, seed_org_role
 
 
-def _status(chan, key="lead-imob", **kw):
+def _status(chan, key="julia", **kw):
     with chan.as_token(**kw):
         return chan.request("GET", f"/api/channels/agents/{key}/status")
 
@@ -22,7 +22,7 @@ class TestStatus:
         resp = _status(chan)
         assert resp.status_code == 200
         assert resp.json() == {
-            "agent_key": "lead-imob", "nome": "Julia", "ativo": True, "versao_ativa": 1,
+            "agent_key": "julia", "nome": "Julia", "ativo": True, "versao_ativa": 1,
             "provider": "openai", "model": "gpt-5.6-terra", "llm_configurado": True,
         }
 
@@ -174,21 +174,21 @@ class TestChannelConversationsInTheAgentsUi:
         chan.seed_agent()
         chan.turn(turn_body("Oi", chat_id="c1", ids=["a"]))
         chan.turn(turn_body("Oi", chat_id="c2", ids=["b"]))
-        resp = chan.client.get("/api/conversations/channel", params={"agent_key": "lead-imob"})
+        resp = chan.client.get("/api/conversations/channel", params={"agent_key": "julia"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["total"] == 2
         item = body["items"][0]
         assert item["channel"] == "whatsapp" and item["owner_user_id"] is None
-        assert item["agent_key"] == "lead-imob"
+        assert item["agent_key"] == "julia"
         assert item["channel_ref"]["connection_id"] == str(CONNECTION_ID)
-        assert chan.client.get("/api/conversations/channel", params={"agent_key": "lead-imob", "channel": "whatsapp"}).json()["total"] == 2
-        assert chan.client.get("/api/conversations/channel", params={"agent_key": "lead-imob", "channel": "telegram"}).json()["total"] == 0
+        assert chan.client.get("/api/conversations/channel", params={"agent_key": "julia", "channel": "whatsapp"}).json()["total"] == 2
+        assert chan.client.get("/api/conversations/channel", params={"agent_key": "julia", "channel": "telegram"}).json()["total"] == 0
 
     def test_members_cannot_list_leads(self, chan):
         chan.seed_agent()
         seed_org_role(chan.client, role="member")
-        resp = chan.client.get("/api/conversations/channel", params={"agent_key": "lead-imob"})
+        resp = chan.client.get("/api/conversations/channel", params={"agent_key": "julia"})
         assert resp.status_code == 403
 
     def test_channel_conversations_are_read_only_in_the_ui(self, chan):

@@ -52,7 +52,7 @@ def _resolver(provider, org_id):
 
 def _spec(**kw) -> AgentSpec:
     base = dict(
-        key="lead-imob", model="gpt-5.6-terra", effort="medium",
+        key="julia", model="gpt-5.6-terra", effort="medium",
         prompt_append="SYSTEM-PROMPT", skills=(), tools=(), max_turns=40,
         prompt_mode="custom", toolset="studio", provider="openai", runtime="llm",
     )

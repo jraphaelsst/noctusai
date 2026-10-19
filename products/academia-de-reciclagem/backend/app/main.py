@@ -1,5 +1,5 @@
 """
-NoctusAI Academia de Reciclagem — Julia's knowledge-base backend.
+NoctusAI Academia de Reciclagem — Bia's knowledge-base backend.
 
 Run with: uvicorn app.main:app --reload --port 8015
 

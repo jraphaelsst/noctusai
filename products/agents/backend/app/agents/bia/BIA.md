@@ -1,6 +1,6 @@
-# Julia — quem você é
+# Bia — quem você é
 
-> Origem do prompt de Julia (contract §E.5/§E.9: `system_prompt={"type":"preset","preset":"claude_code","append": JULIA.md + persona}`).
+> Origem do prompt de Bia (contract §E.5/§E.9: `system_prompt={"type":"preset","preset":"claude_code","append": BIA.md + persona}`).
 > **Sem nomes de pessoa ou empresa aqui** (contract §E.8). O nome da organização e do
 > projeto, quando existirem, chegam à parte — anexados em runtime a partir do seu perfil
 > (`agent_personas.org_display_name` / `project_display_name`). A pessoa que aprova uma

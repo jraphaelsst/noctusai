@@ -1,18 +1,18 @@
-"""``bin/julia-cli-exec`` + ``bin/julia-cli-slot`` — the per-conversation
+"""``bin/bia-cli-exec`` + ``bin/bia-cli-slot`` — the per-conversation
 slot wrapper and slot script (contract §E.11, supersedes §E.5; roadmap
 D1, per-conversation isolation, architect review 2026-09-15).
 
 §E.11 splits the old single-file wrapper into two root-owned scripts:
-``julia-cli-exec`` reads the kernel-set real uid, range-checks it against
-``[2000, 2000+JULIA_CLI_SLOTS)``, drift-checks the inherited
+``bia-cli-exec`` reads the kernel-set real uid, range-checks it against
+``[2000, 2000+BIA_CLI_SLOTS)``, drift-checks the inherited
 ``CLAUDE_CONFIG_DIR``, then does a same-uid self-switch + `--clear-groups`
-+ cap-strip before handing off to ``julia-cli-slot`` — which does the
++ cap-strip before handing off to ``bia-cli-slot`` — which does the
 fail-closed sweep, the handoff-file copy, and the final ``env -i`` exec of
 the real bundled CLI.
 
 Both scripts hardcode their ONE absolute exec target
-(``/app/bin/julia-cli-slot`` and ``/usr/local/bin/claude-bundled``
-respectively) — never an env var (the ``JULIA_CLAUDE_BIN`` seam was
+(``/app/bin/bia-cli-slot`` and ``/usr/local/bin/claude-bundled``
+respectively) — never an env var (the ``BIA_CLAUDE_BIN`` seam was
 dropped deliberately under §E.5 and that decision carries forward). Tests
 that need a stub therefore copy each script's TEXT with its own single
 hardcoded literal substituted — never an env var — mirroring exactly how
@@ -43,12 +43,12 @@ from pathlib import Path
 import pytest
 
 _BIN_DIR = Path(__file__).resolve().parents[2] / "bin"
-_WRAPPER = _BIN_DIR / "julia-cli-exec"
-_SLOT = _BIN_DIR / "julia-cli-slot"
+_WRAPPER = _BIN_DIR / "bia-cli-exec"
+_SLOT = _BIN_DIR / "bia-cli-slot"
 
-_SLOT_TARGET_LITERAL = "/app/bin/julia-cli-slot"
+_SLOT_TARGET_LITERAL = "/app/bin/bia-cli-slot"
 _CLI_TARGET_LITERAL = "/usr/local/bin/claude-bundled"
-_JULIA_PREFIX_LITERAL = "/run/julia-"
+_BIA_PREFIX_LITERAL = "/run/bia-"
 
 # `setpriv` (util-linux) is Linux-only — present in the real image's base
 # (python:3.11-slim / Debian trixie, verified live: `setpriv from
@@ -60,7 +60,7 @@ _JULIA_PREFIX_LITERAL = "/run/julia-"
 # nonzero, as some tests expect."
 _HAS_SETPRIV = Path("/usr/bin/setpriv").exists()
 
-# `julia-cli-slot`'s own sweep (top-down `find -exec chmod` then
+# `bia-cli-slot`'s own sweep (top-down `find -exec chmod` then
 # `find -delete`) is written against GNU findutils semantics (verified
 # live against the real image's Debian trixie base) — gate its direct-
 # invocation tests on the actual platform, not a proxy binary's presence,
@@ -118,7 +118,7 @@ _SKIP_CANNOT_SELF_SWITCH = pytest.mark.skipif(
 )
 _SKIP_NOT_LINUX = pytest.mark.skipif(
     not _IS_LINUX,
-    reason="julia-cli-slot's sweep is written against GNU findutils "
+    reason="bia-cli-slot's sweep is written against GNU findutils "
     "top-down chmod-then-delete ordering (verified against the real "
     "image's Debian trixie base) — skip on a non-Linux dev host rather "
     "than assert behaviour a different find/chmod implementation may not "
@@ -198,20 +198,20 @@ def _path_with_fake_id(bindir: Path) -> str:
 
 
 @pytest.fixture
-def julia_tmp() -> Iterator[Path]:
+def bia_tmp() -> Iterator[Path]:
     """A world-writable scratch dir a post-switch uid can traverse AND
     create its own subdirectory in.
 
     Both scripts drop to a different uid before exec'ing the next stage —
     every directory above the final stub, AND (for the slot script) the
-    scratch parent it creates its own `julia-<K>` subdirectory under, must
+    scratch parent it creates its own `bia-<K>` subdirectory under, must
     be writable by "other" (pytest's own `tmp_path` lives under
     `/tmp/pytest-of-<user>/`, mode 0700, which a switched-to uid cannot
     even enter — a harness defect, not a wrapper regression; see
     feedback_privilege_skip_guard_reproduce_as_ci_runner). Only reached
     when `_SKIP_CANNOT_SELF_SWITCH` lets the test run (root, or
     CAP_SETUID+CAP_SETGID)."""
-    scratch = Path(tempfile.mkdtemp(prefix="julia-wrapper-test-", dir="/tmp"))
+    scratch = Path(tempfile.mkdtemp(prefix="bia-wrapper-test-", dir="/tmp"))
     scratch.chmod(0o777)
     yield scratch
     shutil.rmtree(scratch, ignore_errors=True)
@@ -225,13 +225,13 @@ class TestScriptsExistAndAreExecutable:
     def test_wrapper_exists_and_is_executable(self):
         assert _WRAPPER.exists(), _WRAPPER
         assert _WRAPPER.stat().st_mode & stat.S_IXUSR, (
-            "bin/julia-cli-exec must be committed with the executable bit set"
+            "bin/bia-cli-exec must be committed with the executable bit set"
         )
 
     def test_slot_script_exists_and_is_executable(self):
         assert _SLOT.exists(), _SLOT
         assert _SLOT.stat().st_mode & stat.S_IXUSR, (
-            "bin/julia-cli-slot must be committed with the executable bit set"
+            "bin/bia-cli-slot must be committed with the executable bit set"
         )
 
     def test_wrapper_hardcodes_the_slot_script_absolute_path(self):
@@ -239,16 +239,16 @@ class TestScriptsExistAndAreExecutable:
         assert _SLOT_TARGET_LITERAL in text
         code_lines = [line for line in text.splitlines() if not line.strip().startswith("#")]
         code = "\n".join(code_lines)
-        assert "JULIA_CLAUDE_BIN" not in code, (
+        assert "BIA_CLAUDE_BIN" not in code, (
             "the wrapper's CODE (comments may still explain the removal) "
-            "must not read a JULIA_CLAUDE_BIN env var — dropped deliberately"
+            "must not read a BIA_CLAUDE_BIN env var — dropped deliberately"
         )
 
     def test_slot_script_hardcodes_the_bundled_cli_absolute_path(self):
         text = _SLOT.read_text()
         assert _CLI_TARGET_LITERAL in text
         code_lines = [line for line in text.splitlines() if not line.strip().startswith("#")]
-        assert "JULIA_CLAUDE_BIN" not in "\n".join(code_lines)
+        assert "BIA_CLAUDE_BIN" not in "\n".join(code_lines)
 
 
 class TestWrapperNeverTrustsArgsOrEnvForTheSlot:
@@ -264,7 +264,7 @@ class TestWrapperNeverTrustsArgsOrEnvForTheSlot:
         ]
         code = "\n".join(code_lines)
         assert "id -u" in code, "the wrapper must derive its slot from `id -u`"
-        for forbidden in ("JULIA_SLOT", "SLOT_ARG", "$1", "${1"):
+        for forbidden in ("BIA_SLOT", "SLOT_ARG", "$1", "${1"):
             assert forbidden not in code, (
                 f"the wrapper's code must never read the slot number from "
                 f"{forbidden!r} — found it outside a comment"
@@ -276,13 +276,13 @@ class TestWrapperNeverTrustsArgsOrEnvForTheSlot:
         ]
         code = "\n".join(code_lines)
         assert "id -u" in code
-        for forbidden in ("JULIA_SLOT", "SLOT_ARG"):
+        for forbidden in ("BIA_SLOT", "SLOT_ARG"):
             assert forbidden not in code
 
 
 class TestWrapperUidRangeRefusal:
     """Contract §E.11 step 1: exit 126 unless the real uid is in
-    `[2000, 2000+JULIA_CLI_SLOTS)`. None of these reach `setpriv` — no
+    `[2000, 2000+BIA_CLI_SLOTS)`. None of these reach `setpriv` — no
     privilege needed to run them anywhere."""
 
     @pytest.mark.parametrize(
@@ -318,23 +318,23 @@ class TestWrapperUidRangeRefusal:
         assert result.returncode == 126, result.stderr
         assert "unreadable real uid" in result.stderr
 
-    def test_malformed_julia_cli_slots_is_refused(self, tmp_path):
+    def test_malformed_bia_cli_slots_is_refused(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")
         result = _run(
             [str(_WRAPPER)],
-            env={"PATH": _path_with_fake_id(bindir), "JULIA_CLI_SLOTS": "banana"},
+            env={"PATH": _path_with_fake_id(bindir), "BIA_CLI_SLOTS": "banana"},
         )
         assert result.returncode == 126, result.stderr
-        assert "JULIA_CLI_SLOTS" in result.stderr
+        assert "BIA_CLI_SLOTS" in result.stderr
 
-    def test_custom_julia_cli_slots_widens_the_range(self, tmp_path):
+    def test_custom_bia_cli_slots_widens_the_range(self, tmp_path):
         # uid 2004 is outside the DEFAULT range (3 slots) but inside a
         # widened one (5 slots) — proving the bound is read from
-        # JULIA_CLI_SLOTS, not hardcoded to 3.
+        # BIA_CLI_SLOTS, not hardcoded to 3.
         bindir = _fake_id_dir(tmp_path, "2004")
         result = _run(
             [str(_WRAPPER)],
-            env={"PATH": _path_with_fake_id(bindir), "JULIA_CLI_SLOTS": "5"},
+            env={"PATH": _path_with_fake_id(bindir), "BIA_CLI_SLOTS": "5"},
         )
         assert result.returncode == 126, result.stderr
         assert "outside the slot range" not in result.stderr
@@ -342,7 +342,7 @@ class TestWrapperUidRangeRefusal:
 
 class TestWrapperConfigDirDriftCheck:
     """Contract §E.11 step 2: refuse unless the inherited
-    `CLAUDE_CONFIG_DIR` equals `/run/julia-<K>/home/.claude` for the
+    `CLAUDE_CONFIG_DIR` equals `/run/bia-<K>/home/.claude` for the
     uid-derived slot — a drift check only; the value is recomputed, never
     trusted as the slot's own source."""
 
@@ -350,7 +350,7 @@ class TestWrapperConfigDirDriftCheck:
         bindir = _fake_id_dir(tmp_path, "2000")
         result = _run([str(_WRAPPER)], env={"PATH": _path_with_fake_id(bindir)})
         assert result.returncode == 126, result.stderr
-        assert "does not match the expected '/run/julia-0/home/.claude'" in result.stderr
+        assert "does not match the expected '/run/bia-0/home/.claude'" in result.stderr
 
     def test_config_dir_for_the_wrong_slot_is_refused(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")  # slot 0
@@ -358,11 +358,11 @@ class TestWrapperConfigDirDriftCheck:
             [str(_WRAPPER)],
             env={
                 "PATH": _path_with_fake_id(bindir),
-                "CLAUDE_CONFIG_DIR": "/run/julia-1/home/.claude",  # slot 1
+                "CLAUDE_CONFIG_DIR": "/run/bia-1/home/.claude",  # slot 1
             },
         )
         assert result.returncode == 126, result.stderr
-        assert "does not match the expected '/run/julia-0/home/.claude'" in result.stderr
+        assert "does not match the expected '/run/bia-0/home/.claude'" in result.stderr
 
     def test_matching_config_dir_passes_the_drift_check(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2001")  # slot 1
@@ -370,7 +370,7 @@ class TestWrapperConfigDirDriftCheck:
             [str(_WRAPPER)],
             env={
                 "PATH": _path_with_fake_id(bindir),
-                "CLAUDE_CONFIG_DIR": "/run/julia-1/home/.claude",
+                "CLAUDE_CONFIG_DIR": "/run/bia-1/home/.claude",
             },
         )
         # Whatever happens next (a real setpriv attempt, which may itself
@@ -406,7 +406,7 @@ class TestWrapperSelfSwitchOrdering:
         assert switch_idx < clear_groups_idx < drop_idx < handoff_idx, (
             "expected order: self-switch (--reuid=), THEN --clear-groups, "
             "THEN the cap drop (--ambient-caps=-all), THEN the absolute "
-            "handoff to julia-cli-slot — any other order leaves a window "
+            "handoff to bia-cli-slot — any other order leaves a window "
             "where caps/groups from the prior identity are still live"
         )
         assert "/usr/bin/setpriv" in full_text, (
@@ -422,9 +422,9 @@ class TestWrapperPrivilegedChain:
     own CapEff answer (see feedback_privilege_skip_guard_reproduce_as_ci_runner),
     never a uid comparison."""
 
-    def test_child_caps_are_all_empty_after_the_drop(self, julia_tmp: Path):
-        bindir = _fake_id_dir(julia_tmp, "2000")
-        caps_dumper = julia_tmp / "caps-dumper.py"
+    def test_child_caps_are_all_empty_after_the_drop(self, bia_tmp: Path):
+        bindir = _fake_id_dir(bia_tmp, "2000")
+        caps_dumper = bia_tmp / "caps-dumper.py"
         caps_dumper.write_text(
             f"#!{sys.executable}\n"
             "with open('/proc/self/status') as f:\n"
@@ -434,7 +434,7 @@ class TestWrapperPrivilegedChain:
         )
         caps_dumper.chmod(0o755)
         wrapper_copy = _copy_with_subs(
-            _WRAPPER, julia_tmp, "julia-cli-exec-under-test",
+            _WRAPPER, bia_tmp, "bia-cli-exec-under-test",
             {_SLOT_TARGET_LITERAL: str(caps_dumper)},
         )
 
@@ -442,7 +442,7 @@ class TestWrapperPrivilegedChain:
             [str(wrapper_copy)],
             env={
                 "PATH": _path_with_fake_id(bindir),
-                "CLAUDE_CONFIG_DIR": "/run/julia-0/home/.claude",
+                "CLAUDE_CONFIG_DIR": "/run/bia-0/home/.claude",
             },
         )
         assert result.returncode == 0, result.stderr
@@ -456,9 +456,9 @@ class TestWrapperPrivilegedChain:
             assert key in caps, f"{key} missing from child status: {result.stdout}"
             assert caps[key] == zero_mask, f"{key} should be all-zero after the drop, got {caps[key]}"
 
-    def test_child_cannot_signal_pid_1(self, julia_tmp: Path):
-        bindir = _fake_id_dir(julia_tmp, "2000")
-        killer = julia_tmp / "killer.py"
+    def test_child_cannot_signal_pid_1(self, bia_tmp: Path):
+        bindir = _fake_id_dir(bia_tmp, "2000")
+        killer = bia_tmp / "killer.py"
         killer.write_text(
             f"#!{sys.executable}\n"
             "import os\n"
@@ -472,7 +472,7 @@ class TestWrapperPrivilegedChain:
         )
         killer.chmod(0o755)
         wrapper_copy = _copy_with_subs(
-            _WRAPPER, julia_tmp, "julia-cli-exec-under-test",
+            _WRAPPER, bia_tmp, "bia-cli-exec-under-test",
             {_SLOT_TARGET_LITERAL: str(killer)},
         )
 
@@ -480,7 +480,7 @@ class TestWrapperPrivilegedChain:
             [str(wrapper_copy)],
             env={
                 "PATH": _path_with_fake_id(bindir),
-                "CLAUDE_CONFIG_DIR": "/run/julia-0/home/.claude",
+                "CLAUDE_CONFIG_DIR": "/run/bia-0/home/.claude",
             },
         )
         assert result.returncode == 0, result.stderr
@@ -490,15 +490,15 @@ class TestWrapperPrivilegedChain:
             f"{result.stdout!r}"
         )
 
-    def test_full_chain_env_allowlist_reaches_the_real_slot_script(self, julia_tmp: Path):
-        """The real, unmodified sweep/handoff/exec logic of `julia-cli-slot`
-        — only its OWN two hardcoded literals (the `/run/julia-` prefix and
+    def test_full_chain_env_allowlist_reaches_the_real_slot_script(self, bia_tmp: Path):
+        """The real, unmodified sweep/handoff/exec logic of `bia-cli-slot`
+        — only its OWN two hardcoded literals (the `/run/bia-` prefix and
         the final CLI target) are substituted, exactly as sanctioned by the
         module docstring's test-seam rule. Proves the full wrapper->slot
         handoff produces EXACTLY the 9-key allowlist, with HOME/TMPDIR/
         CLAUDE_CONFIG_DIR correctly rooted under this slot's own directory."""
-        bindir = _fake_id_dir(julia_tmp, "2000")
-        env_dumper = julia_tmp / "env-dumper.py"
+        bindir = _fake_id_dir(bia_tmp, "2000")
+        env_dumper = bia_tmp / "env-dumper.py"
         env_dumper.write_text(
             f"#!{sys.executable}\n"
             "import os\n"
@@ -506,23 +506,23 @@ class TestWrapperPrivilegedChain:
             "    print(f'{k}={v}')\n"
         )
         env_dumper.chmod(0o755)
-        scratch_prefix = str(julia_tmp / "julia-")
+        scratch_prefix = str(bia_tmp / "bia-")
 
         slot_copy = _copy_with_subs(
-            _SLOT, julia_tmp, "julia-cli-slot-under-test",
+            _SLOT, bia_tmp, "bia-cli-slot-under-test",
             {
-                _JULIA_PREFIX_LITERAL: scratch_prefix,
+                _BIA_PREFIX_LITERAL: scratch_prefix,
                 _CLI_TARGET_LITERAL: str(env_dumper),
             },
         )
         wrapper_copy = _copy_with_subs(
-            _WRAPPER, julia_tmp, "julia-cli-exec-under-test",
+            _WRAPPER, bia_tmp, "bia-cli-exec-under-test",
             {_SLOT_TARGET_LITERAL: str(slot_copy)},
         )
 
         parent_env = {
             "PATH": _path_with_fake_id(bindir),
-            "CLAUDE_CONFIG_DIR": "/run/julia-0/home/.claude",
+            "CLAUDE_CONFIG_DIR": "/run/bia-0/home/.claude",
             "ANTHROPIC_API_KEY": "sk-ant-fake",
             "CLAUDE_CODE_ENTRYPOINT": "sdk-py",
             "CLAUDE_AGENT_SDK_VERSION": "0.2.152",
@@ -544,9 +544,9 @@ class TestWrapperPrivilegedChain:
         assert not unexpected and not missing, (
             f"child env leaked or dropped keys: extra={unexpected} missing={missing}"
         )
-        assert out["HOME"] == f"{julia_tmp}/julia-0/home"
-        assert out["TMPDIR"] == f"{julia_tmp}/julia-0/tmp"
-        assert out["CLAUDE_CONFIG_DIR"] == f"{julia_tmp}/julia-0/home/.claude"
+        assert out["HOME"] == f"{bia_tmp}/bia-0/home"
+        assert out["TMPDIR"] == f"{bia_tmp}/bia-0/tmp"
+        assert out["CLAUDE_CONFIG_DIR"] == f"{bia_tmp}/bia-0/home/.claude"
         assert out["PATH"] == "/usr/bin:/bin"
         assert out["DISABLE_AUTOUPDATER"] == "1"
         assert out["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
@@ -555,23 +555,23 @@ class TestWrapperPrivilegedChain:
         assert "secret-one" not in result.stdout
 
         # And the slot script actually created the fresh state on disk.
-        project_dir = julia_tmp / "julia-0" / "home" / ".claude" / "projects" / "-app"
+        project_dir = bia_tmp / "bia-0" / "home" / ".claude" / "projects" / "-app"
         assert project_dir.is_dir()
-        assert (julia_tmp / "julia-0" / "tmp").is_dir()
+        assert (bia_tmp / "bia-0" / "tmp").is_dir()
 
 
 @_SKIP_NOT_LINUX
 class TestSlotScriptSweep:
-    """Direct invocation of a (path-substituted) `julia-cli-slot` copy —
+    """Direct invocation of a (path-substituted) `bia-cli-slot` copy —
     no uid switch, no privilege needed: the sweep/handoff logic runs fine
-    as the test's own uid once the `/run/julia-` prefix points at a
+    as the test's own uid once the `/run/bia-` prefix points at a
     tmp_path the test itself owns throughout."""
 
     def _slot_copy(self, tmp_path: Path, cli_stub: Path) -> Path:
-        scratch_prefix = str(tmp_path / "julia-")
+        scratch_prefix = str(tmp_path / "bia-")
         return _copy_with_subs(
-            _SLOT, tmp_path, "julia-cli-slot-under-test",
-            {_JULIA_PREFIX_LITERAL: scratch_prefix, _CLI_TARGET_LITERAL: str(cli_stub)},
+            _SLOT, tmp_path, "bia-cli-slot-under-test",
+            {_BIA_PREFIX_LITERAL: scratch_prefix, _CLI_TARGET_LITERAL: str(cli_stub)},
         )
 
     def _env_dumper(self, tmp_path: Path) -> Path:
@@ -587,7 +587,7 @@ class TestSlotScriptSweep:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        slot0 = tmp_path / "julia-0"
+        slot0 = tmp_path / "bia-0"
         slot0.mkdir(mode=0o700)
         (slot0 / "junk.txt").write_text("leftover from a SIGKILLed turn")
         locked_dir = slot0 / "locked"
@@ -602,30 +602,30 @@ class TestSlotScriptSweep:
         remaining = sorted(p.name for p in slot0.iterdir())
         assert remaining == ["home", "tmp"], remaining
 
-    def test_julia_sweep_mode_only_sweeps_and_never_creates_fresh_state(self, tmp_path):
+    def test_bia_sweep_mode_only_sweeps_and_never_creates_fresh_state(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        slot0 = tmp_path / "julia-0"
+        slot0 = tmp_path / "bia-0"
         slot0.mkdir(mode=0o700)
         (slot0 / "junk.txt").write_text("leftover")
 
         result = _run(
-            [str(slot_copy), "--julia-sweep"], env={"PATH": _path_with_fake_id(bindir)}
+            [str(slot_copy), "--bia-sweep"], env={"PATH": _path_with_fake_id(bindir)}
         )
         assert result.returncode == 0, result.stderr
         assert list(slot0.iterdir()) == [], "the sweep-only mode must not create home/tmp"
 
-    def test_julia_sweep_mode_on_a_missing_slot_dir_is_a_clean_pass(self, tmp_path):
+    def test_bia_sweep_mode_on_a_missing_slot_dir_is_a_clean_pass(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
-        # /run/julia-0 (here: tmp_path/julia-0) never created — the real
+        # /run/bia-0 (here: tmp_path/bia-0) never created — the real
         # tmpfs mountpoint always pre-exists, but a vacuously-empty
         # nonexistent slot must not be treated as a failure.
         result = _run(
-            [str(slot_copy), "--julia-sweep"], env={"PATH": _path_with_fake_id(bindir)}
+            [str(slot_copy), "--bia-sweep"], env={"PATH": _path_with_fake_id(bindir)}
         )
         assert result.returncode == 0, result.stderr
 
@@ -633,10 +633,10 @@ class TestSlotScriptSweep:
 @_SKIP_NOT_LINUX
 class TestSlotScriptHandoff:
     def _slot_copy(self, tmp_path: Path, cli_stub: Path) -> Path:
-        scratch_prefix = str(tmp_path / "julia-")
+        scratch_prefix = str(tmp_path / "bia-")
         return _copy_with_subs(
-            _SLOT, tmp_path, "julia-cli-slot-under-test",
-            {_JULIA_PREFIX_LITERAL: scratch_prefix, _CLI_TARGET_LITERAL: str(cli_stub)},
+            _SLOT, tmp_path, "bia-cli-slot-under-test",
+            {_BIA_PREFIX_LITERAL: scratch_prefix, _CLI_TARGET_LITERAL: str(cli_stub)},
         )
 
     def _env_dumper(self, tmp_path: Path) -> Path:
@@ -652,7 +652,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         handoff_file = handoff_dir / f"{self._VALID_SID}.jsonl"
         handoff_file.write_text('{"type": "mirror-frame"}\n')
@@ -660,7 +660,7 @@ class TestSlotScriptHandoff:
         result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
         assert result.returncode == 0, result.stderr
         copied = (
-            tmp_path / "julia-0" / "home" / ".claude" / "projects" / "-app"
+            tmp_path / "bia-0" / "home" / ".claude" / "projects" / "-app"
             / f"{self._VALID_SID}.jsonl"
         )
         assert copied.is_file()
@@ -678,7 +678,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         (handoff_dir / f"{self._VALID_SID}.jsonl").write_text("{}")
         (handoff_dir / "11111111-1111-1111-1111-111111111111.jsonl").write_text("{}")
@@ -697,13 +697,13 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
-        (handoff_dir / "append.md").write_text("# JULIA.md + persona\n")
+        (handoff_dir / "append.md").write_text("# BIA.md + persona\n")
 
         result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
         assert result.returncode == 0, result.stderr
-        project_dir = tmp_path / "julia-0" / "home" / ".claude" / "projects" / "-app"
+        project_dir = tmp_path / "bia-0" / "home" / ".claude" / "projects" / "-app"
         assert list(project_dir.iterdir()) == []
 
     def test_append_md_beside_a_transcript_copies_only_the_transcript(self, tmp_path):
@@ -712,14 +712,14 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
-        (handoff_dir / "append.md").write_text("# JULIA.md + persona\n")
+        (handoff_dir / "append.md").write_text("# BIA.md + persona\n")
         (handoff_dir / f"{self._VALID_SID}.jsonl").write_text('{"type": "mirror-frame"}\n')
 
         result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
         assert result.returncode == 0, result.stderr
-        project_dir = tmp_path / "julia-0" / "home" / ".claude" / "projects" / "-app"
+        project_dir = tmp_path / "bia-0" / "home" / ".claude" / "projects" / "-app"
         assert [p.name for p in project_dir.iterdir()] == [f"{self._VALID_SID}.jsonl"]
 
     def test_refuses_an_unexpected_entry(self, tmp_path):
@@ -729,7 +729,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         (handoff_dir / "append.md").write_text("# persona\n")
         (handoff_dir / "sneaky.sh").write_text("#!/bin/sh\n")
@@ -743,7 +743,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         (handoff_dir / "not-a-uuid.jsonl").write_text("{}")
 
@@ -756,7 +756,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         real_target = tmp_path / "elsewhere.jsonl"
         real_target.write_text("{}")
@@ -774,7 +774,7 @@ class TestSlotScriptHandoff:
         cli_stub = self._env_dumper(tmp_path)
         slot_copy = self._slot_copy(tmp_path, cli_stub)
 
-        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir = tmp_path / "bia-handoff" / "0"
         handoff_dir.mkdir(parents=True)
         (handoff_dir / f"{self._VALID_SID}.jsonl").mkdir()
 

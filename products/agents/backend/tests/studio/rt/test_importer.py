@@ -178,7 +178,7 @@ class TestRefusals:
         assert resp.status_code == 422
         assert resp.json()["code"] == "key_mismatch"
 
-    @pytest.mark.parametrize("key", ["julia", "one-chat"])
+    @pytest.mark.parametrize("key", ["bia", "one-chat"])
     def test_reserved_keys_are_refused(self, rt, key):
         body = copy.deepcopy(BUNDLE)
         body["agente"]["key"] = key

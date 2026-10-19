@@ -4,7 +4,7 @@
 Seed IO shape: ``RuntimeSettingsStore`` Protocol + ``FakeRuntimeSettingsStore``
 + ``SupabaseRuntimeSettingsStore`` + ``get_runtime_settings_store(settings)``
 factory (``KB § PATTERNS/backend/seed-fake-real-adapter.md``). Product-wide
-(one Julia runtime per deployment), so no ``org_id``.
+(one Bia runtime per deployment), so no ``org_id``.
 """
 from __future__ import annotations
 

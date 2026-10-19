@@ -119,7 +119,7 @@ def test_the_documented_scope_set_is_exactly_the_five_the_routes_use():
 
 
 class TestExistingSurfacesUnchanged:
-    """Julia and IsaIA keep their Studio contract: shapes + auth as before."""
+    """Bia and IsaIA keep their Studio contract: shapes + auth as before."""
 
     def test_a_runtime_import_without_any_c4_key_still_works_and_is_runtime(self, pkg):
         body = make_bundle(agente__kind="runtime")
@@ -132,7 +132,7 @@ class TestExistingSurfacesUnchanged:
         assert resp.json()["pacote"] is None
         assert pkg.get("/api/studio/agents/mobile-dev").json()["kind"] == "runtime"
 
-    def test_julia_keeps_its_listing_shape_and_is_a_runtime_agent(self, pkg):
+    def test_bia_keeps_its_listing_shape_and_is_a_runtime_agent(self, pkg):
         resp = pkg.get("/api/studio/agents")
         assert resp.status_code == 200
         for item in resp.json()["items"]:

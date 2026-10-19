@@ -47,7 +47,7 @@ class MessageRecord:
     #: Contract §L "Controle de custo" (014 columns): an assistant message's
     #: turn cost + token counts, straight off the SDK's `ResultMessage`
     #: (`app.runtime.claude_runtime.run_turn`'s final `session.status`
-    #: event). `None` for `user`/`system` rows and for every Julia message
+    #: event). `None` for `user`/`system` rows and for every Bia message
     #: whose turn reported no `ResultMessage`.
     custo_usd: float | None = None
     tokens_entrada: int | None = None
@@ -293,7 +293,7 @@ class SupabaseMessageStore:
             "blocks": list(blocks or []),
             "token_usage": token_usage,
         }
-        # Studio-only columns — omitted for Julia (her insert is unchanged).
+        # Studio-only columns — omitted for Bia (her insert is unchanged).
         if version_id is not None:
             payload["version_id"] = str(version_id)
         if compiled_hash is not None:

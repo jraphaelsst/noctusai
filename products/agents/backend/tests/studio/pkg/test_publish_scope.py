@@ -1,7 +1,7 @@
 """``studio:publish`` (2026-10-03) — the noc pre-push publish leg's token scope.
 
 Accepted ONLY on: import, eval-run start + status/results, draft publish; and
-only for a ``dev-advisor`` agent. A runtime agent (Julia, IsaIA) stays
+only for a ``dev-advisor`` agent. A runtime agent (Bia, IsaIA) stays
 user-only (403 ``user_required``); a token can never use the gate override
 (403 ``override_requires_user``); the eval gate still decides; the audit actor
 is the token id. Auth seams are `dependency_overrides` — never a patched guard.
@@ -50,7 +50,7 @@ def seams(pkg):
                 app.dependency_overrides[k] = v
 
 
-def _runtime(pkg, key="julia2"):
+def _runtime(pkg, key="bia2"):
     agent, _ = pkg.rt.make_agent(key, publish=True)
     return agent
 
@@ -102,7 +102,7 @@ class TestImport:
     def test_token_cannot_import_over_an_existing_runtime_agent(self, pkg):
         _runtime(pkg)
         with pkg.as_token(SCOPE):
-            resp = pkg.rt.client.raw().post(f"{BASE}/julia2/import", json=make_bundle(agente__key="julia2"))
+            resp = pkg.rt.client.raw().post(f"{BASE}/bia2/import", json=make_bundle(agente__key="bia2"))
         assert resp.status_code == 403
         assert resp.json()["code"] == "user_required"
 
@@ -151,9 +151,9 @@ class TestEvalRuns:
         with pkg.as_token(SCOPE):
             raw = pkg.rt.client.raw()
             calls = [
-                raw.post(f"{BASE}/julia2/evals/runs", json={"version_id": vid}),
-                raw.get(f"{BASE}/julia2/evals/runs"),
-                raw.get(f"{BASE}/julia2/evals/runs/{UUID(int=1)}"),
+                raw.post(f"{BASE}/bia2/evals/runs", json={"version_id": vid}),
+                raw.get(f"{BASE}/bia2/evals/runs"),
+                raw.get(f"{BASE}/bia2/evals/runs/{UUID(int=1)}"),
             ]
         for resp in calls:
             assert resp.status_code == 403
@@ -214,7 +214,7 @@ class TestPublish:
     def test_runtime_agent_publish_stays_user_only(self, pkg, seams):
         _runtime(pkg)
         with pkg.as_token(SCOPE):
-            resp = pkg.rt.client.raw().post(f"{BASE}/julia2/draft/publish", json={})
+            resp = pkg.rt.client.raw().post(f"{BASE}/bia2/draft/publish", json={})
         assert resp.status_code == 403
         assert resp.json()["code"] == "user_required"
 

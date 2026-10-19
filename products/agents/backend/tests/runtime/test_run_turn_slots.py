@@ -41,10 +41,10 @@ _asyncio_mark = pytest.mark.asyncio
 
 def _spec(**overrides) -> AgentSpec:
     defaults = dict(
-        key="julia",
+        key="bia",
         model="claude-sonnet-5",
         effort="medium",
-        prompt_append="PERSONA-TEXT-JULIA.md",
+        prompt_append="PERSONA-TEXT-BIA.md",
         skills=(),
         tools=(),
         max_turns=40,
@@ -112,7 +112,7 @@ def _runtime(*, transport_factory, transcripts=None, slot_pool=None) -> ClaudeAg
         academia_api=FakeAcademiaApi(),
         agent_id=uuid4(),
         approval_secret="s3cr3t",
-        plugin_path="/app/agents/julia/plugin",
+        plugin_path="/app/agents/bia/plugin",
         approvals=FakeApprovalStore(),
         slot_pool=slot_pool or FakeSlotPool(1),
         transcripts=transcripts if transcripts is not None else FakeTranscriptStore(),

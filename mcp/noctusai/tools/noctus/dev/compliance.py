@@ -22923,7 +22923,7 @@ def check_prod_compose_hardening_parity(repo_root: Path | None = None) -> list[d
     design — `KB § PATTERNS/devops/dev-prod-parity.md`) can silently drift
     from the propagate source the moment either changes, and this hardening
     block is a security control, not cosmetic YAML — a drifted `cap_add` or
-    a dropped `read_only: true` in prod is a silent widening of Julia's
+    a dropped `read_only: true` in prod is a silent widening of Bia's
     per-conversation isolation guarantee (contract
     `projects/julia-agents-academia-CONTRACT.md` §E.11), never a build
     failure.
@@ -23787,7 +23787,7 @@ def check_prod_compose_env_manifest_sync(repo_root: Path | None = None) -> list[
     mechanism from `env_file: ../../.env`, which feeds variables INSIDE the
     already-started container. `JULIA_ANTHROPIC_API_KEY` was only ever
     documented as a root-`.env` key (an earlier, wrong README table), so it
-    silently resolved to `''` and every Julia turn failed at the CLI-spawn
+    silently resolved to `''` and every Bia turn failed at the CLI-spawn
     step while the container stayed healthy — the tech-lead had to copy it
     into `.env.fleet` on the host, live. The identical mechanism already
     bit the fleet once before, for `NOCTUS_CACHE_PG_PASSWORD`

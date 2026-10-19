@@ -51,7 +51,7 @@ class ConversationRecord:
     created_at: datetime
     updated_at: datetime
     #: Agent Studio §D6 (012 columns): the version a studio conversation is
-    #: pinned to, and its client brain. Both ``None`` for Julia.
+    #: pinned to, and its client brain. Both ``None`` for Bia.
     version_id: UUID | None = None
     client_id: UUID | None = None
     #: Lais A2 (025): the channel identity. ``channel`` is ``None`` for every
@@ -415,7 +415,7 @@ class SupabaseConversationStore:
             "titulo": titulo,
             "status": "ativa",
         }
-        # Studio-only columns — omitted (not sent as null) for Julia so her
+        # Studio-only columns — omitted (not sent as null) for Bia so her
         # insert stays exactly what it was before 012.
         if version_id is not None:
             payload["version_id"] = str(version_id)

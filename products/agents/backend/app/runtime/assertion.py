@@ -3,8 +3,8 @@ plane after a human approved a specific tool call, verified by the
 product that receives the write (academia-de-reciclagem today).
 
 **Only the agents control plane ever calls :func:`mint_assertion`.** The
-Julia CLI subprocess never sees ``approval_assertion_secrets`` — the
-``env -i`` wrapper (contract §E.5, ``bin/julia-cli-exec``) guarantees that
+Bia CLI subprocess never sees ``approval_assertion_secrets`` — the
+``env -i`` wrapper (contract §E.5, ``bin/bia-cli-exec``) guarantees that
 independently of this module.
 
 :func:`verify_assertion` is shipped here because G2 owns the minting side

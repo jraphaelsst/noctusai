@@ -1,5 +1,5 @@
 """The academia in-process SDK MCP tools (contract §C / §E.4 / §E.5) — one
-per academia tool Julia's allowlist exposes.
+per academia tool Bia's allowlist exposes.
 
 ``build_academia_tools`` is a PER-TURN factory (not module-level ``@tool``
 definitions) because every handler closes over a specific
@@ -7,7 +7,7 @@ definitions) because every handler closes over a specific
 reason ``build_launch_options`` (claude_runtime.py) is called fresh for
 every ``run_turn``.
 
-Handlers run in the CONTROL PLANE (this process), never in the Julia CLI
+Handlers run in the CONTROL PLANE (this process), never in the Bia CLI
 subprocess — that is the whole point of an in-process SDK MCP server
 (contract §E.5 "Tools are in-process SDK MCP tools ... executed by the
 control plane, not by the CLI").

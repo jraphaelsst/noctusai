@@ -6,7 +6,7 @@ tree served is the one the build produced (``dist/claude/``), stored on the
 version at import time (017 ``agent_package_trees``) — it carries the
 package's ``LEARNINGS.md`` / ``PACKAGE.json``, which cannot be re-derived from
 the Studio rows. Only ``dev-advisor`` agents are packages: a runtime agent
-(IsaIA, Julia) is a 404 here, so a ``packages:read`` token can never read a
+(IsaIA, Bia) is a 404 here, so a ``packages:read`` token can never read a
 runtime agent's prompt. Unknown agent, runtime agent, unknown semver and a
 version without a tree are all 404 with distinct codes only where that does
 not reveal a runtime agent's existence.

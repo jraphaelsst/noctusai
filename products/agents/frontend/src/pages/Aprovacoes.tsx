@@ -100,7 +100,7 @@ export default function Aprovacoes() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Aprovações</h1>
         <p className="text-sm text-muted-foreground">
-          Ações de escrita da Julia aguardando sua aprovação.
+          Ações de escrita da Bia aguardando sua aprovação.
         </p>
       </div>
 

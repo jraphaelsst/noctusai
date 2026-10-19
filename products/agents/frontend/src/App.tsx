@@ -22,11 +22,15 @@ const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Finance organ (seed `FinanceShell`) -- `/financeiro/*`; section in the URL.
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
-// Julia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
-const Julia = lazy(() => import("@/pages/Julia"));
+// Bia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
+const Bia = lazy(() => import("@/pages/Bia"));
 const Agentes = lazy(() => import("@/pages/Agentes"));
-const JuliaPersona = lazy(() => import("@/pages/JuliaPersona"));
+const BiaPersona = lazy(() => import("@/pages/BiaPersona"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
+// Pre-rename routes (Julia -> Bia, lead-imob -> julia) — NOC-REMEDIATE[drop-julia-route-redirects].
+const RedirectJuliaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaToBia })));
+const RedirectJuliaPersonaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaPersonaToBia })));
+const RedirectLeadImobStudioToJulia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectLeadImobStudioToJulia })));
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
 const ChavesIA = lazy(() => import("@/pages/ChavesIA"));
@@ -44,7 +48,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Home,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Julia", href: "/julia", icon: MessageCircle, route: "julia" },
+      { name: "Bia", href: "/bia", icon: MessageCircle, route: "bia" },
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
       { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
@@ -71,7 +75,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Home,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Julia", href: "/julia", icon: MessageCircle },
+      { name: "Bia", href: "/bia", icon: MessageCircle },
       { name: "Agentes", href: "/agentes", icon: Bot },
       { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
@@ -103,9 +107,11 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/julia", component: Julia },
+    { path: "/bia", component: Bia },
     { path: "/agentes", component: Agentes },
-    { path: "/agentes/julia/persona", component: JuliaPersona },
+    { path: "/agentes/bia/persona", component: BiaPersona },
+    { path: "/julia", component: RedirectJuliaToBia },
+    { path: "/agentes/julia/persona", component: RedirectJuliaPersonaToBia },
     { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro/*", component: Financeiro },
@@ -116,6 +122,7 @@ export default createProductApp({
     // Declared before `/studio/:key` for readability; react-router ranks the
     // static `prompts` segment above the `:key` param regardless.
     { path: "/studio/prompts/:hash", component: PromptByHash },
+    { path: "/studio/lead-imob", component: RedirectLeadImobStudioToJulia },
     { path: "/studio/:key", component: StudioAgent },
   ],
   Layout,

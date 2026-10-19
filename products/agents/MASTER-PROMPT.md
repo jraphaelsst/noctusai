@@ -8,7 +8,7 @@
 Home of the NoctusAI managed AI agents. An agent works **on** another product through that
 product's scoped API and never touches its database. Two agents in this release:
 
-- **Julia** runs here, on the Claude Agent SDK in headless mode. She is reachable only from
+- **Bia** runs here, on the Claude Agent SDK in headless mode. She is reachable only from
   this app's UI. Her job is helping with the Academia de Reciclagem project, which she does
   by reading the `academia-de-reciclagem` API and proposing writes to it. A person approves
   or denies every write before it happens.
@@ -27,14 +27,14 @@ products/agents/backend/app/
   runtime/           → AgentRuntime Protocol · ClaudeAgentSdkRuntime · FakeAgentRuntime · make_agent_runtime()
   gate/              → approval gate: tool classification, pending approvals, timeout = deny,
                        single-use signed approval assertions sent to the target product
-  agents/julia/      → spec.yaml · JULIA.md · plugin/skills/ar-* (baked, read-only, CODEOWNERS-guarded)
+  agents/bia/      → spec.yaml · BIA.md · plugin/skills/ar-* (baked, read-only, CODEOWNERS-guarded)
   tools/             → in-process SDK MCP tools that proxy HTTP to academia AFTER the gate
                        (the CLI subprocess never sees a product token)
   routers/           → conversations · messages · approvals · persona · agents (list, on/off)
   clients/           → academia API client · social-wiring toggle client (seed token scheme)
 ```
 
-### Julia's hardened launch (non-negotiable)
+### Bia's hardened launch (non-negotiable)
 
 - `setting_sources=[]`: no project `CLAUDE.md`, `settings.json` or hooks get loaded.
 - Explicit `allowed_tools`: the academia tool proxies, `WebSearch`, and `Skill` restricted to
@@ -53,7 +53,7 @@ products/agents/backend/app/
 
 ### Frontend
 
-The Agents UI (Julia chat, inline approvals, persona, agent list with toggles) consumes the
+The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
 ## What the framework provides automatically

@@ -57,7 +57,7 @@ describe("useStudioAgents / useStudioAgent", () => {
 
     expect(result.current.showSkeleton).toBe(true);
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
-    expect(result.current.data?.map((a) => a.key)).toEqual(["estrategista", "julia"]);
+    expect(result.current.data?.map((a) => a.key)).toEqual(["estrategista", "bia"]);
     expect(result.current.isRefreshing).toBe(false);
     expect(net.calls[0]).toMatchObject({ method: "GET", path: "/api/studio/agents" });
     expect(net.unmatched).toEqual([]);
@@ -68,13 +68,13 @@ describe("useStudioAgents / useStudioAgent", () => {
     const net = installFetch([
       {
         method: "GET",
-        path: "/api/studio/agents/julia",
+        path: "/api/studio/agents/bia",
         status: 409,
         body: { detail: "Agente legado não é editável no Studio.", code: "not_studio_agent" },
       },
     ]);
     const { useStudioAgent } = await import("@/hooks/studio/useStudioAgents");
-    const { result } = renderHook(() => useStudioAgent("julia"), {
+    const { result } = renderHook(() => useStudioAgent("bia"), {
       wrapper: wrap(new QueryClient()), // default retries ON — the hook itself must disable them
     });
     await waitFor(() => expect(result.current.isError).toBe(true));

@@ -1,6 +1,6 @@
 /**
  * Agent Studio — `/studio` (CONTRACT §G): every agent of the org, studio and
- * legacy. Legacy agents (Julia) are listed read-only — their studio routes
+ * legacy. Legacy agents (Bia) are listed read-only — their studio routes
  * answer 409 `not_studio_agent`, so they link to `/agentes` instead.
  * "Novo agente" + the ativo toggle are admin-only (server-enforced too).
  */

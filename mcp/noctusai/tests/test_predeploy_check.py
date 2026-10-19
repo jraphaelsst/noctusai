@@ -918,7 +918,7 @@ def test_env_fleet_manifest_flags_missing_value(tmp_path):
         "NOCTUS_IMAGE_TAG\nJULIA_ANTHROPIC_API_KEY\n", encoding="utf-8"
     )
     snap = tmp_path / ".env.fleet.snapshot"
-    snap.write_text("NOCTUS_IMAGE_TAG=abc123\n", encoding="utf-8")  # JULIA key absent
+    snap.write_text("NOCTUS_IMAGE_TAG=abc123\n", encoding="utf-8")  # BIA key absent
 
     ok, msg = PC._default_run_check(
         "env_fleet_manifest", "core", tmp_path, env_fleet_path=str(snap)

@@ -1,5 +1,5 @@
 """Studio branch of ``build_launch_options`` + the studio ``can_use_tool``
-(Agent Studio §A5/§E3, security review of wave 1). Julia's branch is pinned
+(Agent Studio §A5/§E3, security review of wave 1). Bia's branch is pinned
 by the untouched ``tests/runtime/test_claude_runtime.py``."""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
 
-from app.runtime import build_julia_spec
+from app.runtime import build_bia_spec
 from app.runtime.academia_api import FakeAcademiaApi
 from app.runtime.broker import StoreApprovalBroker
 from app.runtime.claude_runtime import (
@@ -74,7 +74,7 @@ def _build(spec: AgentSpec, **overrides):
     kwargs = dict(
         spec=spec, ctx=_ctx(), academia_api=FakeAcademiaApi(), agent_id=uuid4(), approval_secret="s3cr3t",
         can_use_tool=None, approvals=FakeApprovalStore(), slot=slot, mirror=None, resume=None,
-        plugin_path="/app/agents/julia/plugin", studio_tools={"type": "sdk", "name": "studio", "instance": object()},
+        plugin_path="/app/agents/bia/plugin", studio_tools={"type": "sdk", "name": "studio", "instance": object()},
         anthropic_api_key="sk-ant-test",
     )
     kwargs.update(overrides)
@@ -115,14 +115,14 @@ class TestStudioLaunchOptions:
         opts, _ = _build(_studio_spec(web_search=False, knowledge=False))
         assert opts.allowed_tools == STUDIO_FOUR[:2]
 
-    def test_disallowed_is_julias_list_plus_skill_agent_todowrite(self):
+    def test_disallowed_is_bia_list_plus_skill_agent_todowrite(self):
         opts, _ = _build(_studio_spec())
         assert set(opts.disallowed_tools) == set(DISALLOWED_TOOLS) | {"Skill", "Agent", "TodoWrite"}
         for name in ("Skill", "WebFetch", "Task", "Agent", "Write", "Edit", "NotebookEdit", "TodoWrite", "Bash", "Read"):
             assert name in opts.disallowed_tools
         assert list(STUDIO_DISALLOWED_TOOLS) == opts.disallowed_tools
 
-    def test_env_is_the_same_explicit_allowlist_as_julia(self):
+    def test_env_is_the_same_explicit_allowlist_as_bia(self):
         opts, slot = _build(_studio_spec())
         assert opts.env == {"CLAUDE_CONFIG_DIR": slot.config_dir, "ANTHROPIC_API_KEY": "sk-ant-test"}
 
@@ -134,9 +134,9 @@ class TestStudioLaunchOptions:
         with pytest.raises(RuntimeError):
             _build(_studio_spec(), studio_tools=None)
 
-    def test_julia_spec_keeps_the_legacy_defaults_explicitly(self):
-        persona = {"nome": "Julia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"}
-        spec = build_julia_spec(persona)
+    def test_bia_spec_keeps_the_legacy_defaults_explicitly(self):
+        persona = {"nome": "Bia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"}
+        spec = build_bia_spec(persona)
         assert (spec.prompt_mode, spec.toolset, spec.compiled_hash) == ("preset_append", "academia", None)
         opts, _ = _build(spec, studio_tools=None)
         assert opts.system_prompt == {"type": "preset", "preset": "claude_code"}

@@ -3,7 +3,7 @@ name: Agents SEC-C Isolation Proof
 # Roadmap julia-agents-academia-2026-09, row SEC-C. Builds the REAL agents
 # `runtime` image (plus the proof-only `secc-proof` stage) on this
 # amd64 runner and asserts the isolation properties
-# `products/agents/backend/bin/entrypoint.sh` / `bin/julia-cli-exec` /
+# `products/agents/backend/bin/entrypoint.sh` / `bin/bia-cli-exec` /
 # `products/agents/docker-compose.yml`'s security block claim — against a
 # container started EXACTLY the way prod will start it (the docker-run
 # flags are DERIVED from the compose file, never hand-copied — see

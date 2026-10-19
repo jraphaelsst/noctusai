@@ -25,7 +25,7 @@ from tests.routers.conftest import (
 
 def _seed_conversation(agents_client, *, owner_user_id=DEFAULT_USER_ID):
     agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
-    agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+    agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
     return agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, owner_user_id)
 
 
@@ -80,7 +80,7 @@ class TestListApprovals:
         # Another user's approval — must NOT show up for the member.
         other_user = uuid4()
         other_conv = agents_client.stores.conversations.create(
-            DEFAULT_ORG_ID, agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia").id,
+            DEFAULT_ORG_ID, agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia").id,
             other_user,
         )
         agents_client.stores.approvals.create_pending(
@@ -102,7 +102,7 @@ class TestListApprovals:
         )
         other_user = uuid4()
         other_conv = agents_client.stores.conversations.create(
-            DEFAULT_ORG_ID, agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia").id,
+            DEFAULT_ORG_ID, agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia").id,
             other_user,
         )
         agents_client.stores.approvals.create_pending(

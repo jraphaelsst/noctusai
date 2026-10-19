@@ -7,7 +7,7 @@ for `agents`. `${VAR}` interpolation is resolved from `deploy/fleet/.env.fleet`
 (compose-parse time) — a DIFFERENT mechanism from `env_file:` (which reads the
 root `.env` inside the already-started container). `JULIA_ANTHROPIC_API_KEY`
 was only ever documented as a root-`.env` key, so it silently interpolated to
-`''` — every Julia turn failed at the CLI-spawn step while the container
+`''` — every Bia turn failed at the CLI-spawn step while the container
 stayed healthy. This keeper is the mechanism: (1) every ${VAR} either prod
 compose file interpolates must be listed (names only) in
 `deploy/fleet/env.fleet.keys`; (2) a secret-shaped var name with no enforced

@@ -1,6 +1,6 @@
 /**
  * usePersona.ts hook tests — contract §E.2
- * (`GET`/`PUT /api/agents/julia/persona`).
+ * (`GET`/`PUT /api/agents/bia/persona`).
  */
 import React from "react";
 import { renderHook, waitFor } from "@testing-library/react";
@@ -36,7 +36,7 @@ function newClient() {
 
 const PERSONA = {
   versao: 3,
-  nome: "Julia",
+  nome: "Bia",
   papel: "Assistente de conhecimento",
   tom: "acolhedor",
   system_prompt_append: null,
@@ -54,14 +54,14 @@ const PERSONA = {
 beforeEach(() => vi.clearAllMocks());
 
 describe("usePersona", () => {
-  it("GETs /api/agents/julia/persona", async () => {
+  it("GETs /api/agents/bia/persona", async () => {
     mockGet.mockResolvedValue(PERSONA);
     const { usePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
     const { result } = renderHook(() => usePersona(), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
-    expect(mockGet).toHaveBeenCalledWith("/api/agents/julia/persona");
+    expect(mockGet).toHaveBeenCalledWith("/api/agents/bia/persona");
     expect(result.current.data?.versao).toBe(3);
   });
 
@@ -99,14 +99,14 @@ describe("usePersona", () => {
 });
 
 describe("useUpdatePersona", () => {
-  it("PUTs /api/agents/julia/persona with the full payload", async () => {
+  it("PUTs /api/agents/bia/persona with the full payload", async () => {
     mockPut.mockResolvedValue({ ...PERSONA, versao: 4, papel: "Novo papel" });
     const { useUpdatePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
     const { result } = renderHook(() => useUpdatePersona(), { wrapper: wrapper(qc) });
 
     const payload = {
-      nome: "Julia",
+      nome: "Bia",
       papel: "Novo papel",
       model: "claude-opus-5",
       effort: "high",
@@ -119,7 +119,7 @@ describe("useUpdatePersona", () => {
     result.current.mutate(payload);
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockPut).toHaveBeenCalledWith("/api/agents/julia/persona", payload);
+    expect(mockPut).toHaveBeenCalledWith("/api/agents/bia/persona", payload);
     expect(result.current.data?.versao).toBe(4);
   });
 });

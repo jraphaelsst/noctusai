@@ -9,7 +9,7 @@ per-org keys (B1) — see ``app/credentials/org_keys.py``.
 
 The router's platform-chain tier is bound to ``resolve_org_credential``
 (this org's ``org_settings`` row only): the default ``resolve_credential``
-would answer ``anthropic_api_key`` from the tier-0 override (Julia-academia's
+would answer ``anthropic_api_key`` from the tier-0 override (Bia-academia's
 platform key) and report an org "configured" — and ``POST .../test`` would
 probe the PLATFORM key — for a key the org never set. The status screen must
 tell the truth the runtime acts on (``resolve_org_llm_key``).

@@ -44,8 +44,8 @@ export const AGENT_SUMMARY: AgentSummary = {
 
 export const LEGACY_SUMMARY: AgentSummary = {
   id: "0b6f0000-0000-4000-8000-000000000002",
-  key: "julia",
-  nome: "Julia",
+  key: "bia",
+  nome: "Bia",
   descricao: null,
   definition_mode: "legacy",
   ativo: true,

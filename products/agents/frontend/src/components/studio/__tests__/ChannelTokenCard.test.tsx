@@ -34,13 +34,13 @@ afterEach(cleanup);
 describe("ChannelTokenCard", () => {
   it("renders skeleton, error and empty states", () => {
     mockTokens.mockReturnValue(view({ data: undefined, showSkeleton: true }));
-    const { rerender } = render(<ChannelTokenCard agentKey="lead-imob" isAdmin />);
+    const { rerender } = render(<ChannelTokenCard agentKey="julia" isAdmin />);
     expect(screen.getByTestId("channel-tokens-skeleton")).toBeTruthy();
     mockTokens.mockReturnValue(view({ data: undefined, isError: true, error: new Error("falhou") }));
-    rerender(<ChannelTokenCard agentKey="lead-imob" isAdmin />);
+    rerender(<ChannelTokenCard agentKey="julia" isAdmin />);
     expect(screen.getByTestId("studio-error")).toBeTruthy();
     mockTokens.mockReturnValue(view({}));
-    rerender(<ChannelTokenCard agentKey="lead-imob" isAdmin />);
+    rerender(<ChannelTokenCard agentKey="julia" isAdmin />);
     expect(screen.getByText(/Nenhum token de canal ativo/)).toBeTruthy();
   });
 
@@ -48,7 +48,7 @@ describe("ChannelTokenCard", () => {
     mint.mutateAsync.mockResolvedValue({
       id: "t1", token: "pk_secret_value", prefix: "pk_secr", expires_at: "2026-11-01T00:00:00Z", scopes: [],
     });
-    render(<ChannelTokenCard agentKey="lead-imob" isAdmin />);
+    render(<ChannelTokenCard agentKey="julia" isAdmin />);
     fireEvent.click(screen.getByTestId("channel-token-new"));
     fireEvent.click(screen.getByTestId("channel-token-mint"));
     await waitFor(() => expect(screen.getByTestId("channel-token-value").textContent).toBe("pk_secret_value"));
@@ -61,14 +61,14 @@ describe("ChannelTokenCard", () => {
 
   it("lists active tokens and revokes with confirmation; hides actions for non-admins", async () => {
     mockTokens.mockReturnValue(
-      view({ data: [{ id: "t1", label: "canal social-wiring · lead-imob: x", prefix: "pk_ab", scopes: [], created_at: "2026-10-01T10:00:00Z", last_used_at: null, revoked_at: null }] }),
+      view({ data: [{ id: "t1", label: "canal social-wiring · julia: x", prefix: "pk_ab", scopes: [], created_at: "2026-10-01T10:00:00Z", last_used_at: null, revoked_at: null }] }),
     );
     revoke.mutateAsync.mockResolvedValue(undefined);
-    const { rerender } = render(<ChannelTokenCard agentKey="lead-imob" isAdmin />);
+    const { rerender } = render(<ChannelTokenCard agentKey="julia" isAdmin />);
     fireEvent.click(screen.getByTestId("channel-token-revoke-t1"));
     fireEvent.click(screen.getByTestId("channel-token-revoke-confirm"));
     await waitFor(() => expect(revoke.mutateAsync).toHaveBeenCalledWith("t1"));
-    rerender(<ChannelTokenCard agentKey="lead-imob" isAdmin={false} />);
+    rerender(<ChannelTokenCard agentKey="julia" isAdmin={false} />);
     expect(screen.queryByTestId("channel-token-new")).toBeNull();
     expect(screen.queryByTestId("channel-token-revoke-t1")).toBeNull();
   });

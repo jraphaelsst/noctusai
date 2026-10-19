@@ -142,7 +142,7 @@ class TestHandoffUnlink:
         link.symlink_to(target)
 
         pool = _pool(1)
-        # The pool builds slots with a fixed `/run/julia-handoff/K` path by
+        # The pool builds slots with a fixed `/run/bia-handoff/K` path by
         # default; point this lease's handoff_dir at the tmp dir so the
         # unlink runs against a real filesystem.
         slot = pool.try_reserve()
@@ -206,12 +206,12 @@ class TestHealth:
 
 class TestRealDiscovery:
     def test_excludes_a_slot_whose_mount_is_missing(self, tmp_path):
-        (tmp_path / "julia-0").mkdir()
-        (tmp_path / "julia-1").mkdir()
-        # julia-2 deliberately NOT created.
+        (tmp_path / "bia-0").mkdir()
+        (tmp_path / "bia-1").mkdir()
+        # bia-2 deliberately NOT created.
 
         class _Settings:
-            julia_cli_slots = 3
+            bia_cli_slots = 3
 
         pool = RealSlotPool(_Settings(), base_path=str(tmp_path))
 

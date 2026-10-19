@@ -122,7 +122,7 @@ class TestResolveOrgLlmKey:
         assert resolve_org_llm_key("openai", ORG_B, store_factory=lambda: store, org_settings_reader=reader) is None
 
     def test_platform_override_env_and_platform_settings_are_unreachable(self, store, monkeypatch):
-        """The Julia-academia tier-0 override (a platform Anthropic key), an env
+        """The Bia-academia tier-0 override (a platform Anthropic key), an env
         key and a platform_settings row all exist — an org with no key of its own
         still resolves to None."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")

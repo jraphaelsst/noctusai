@@ -3,7 +3,7 @@
 The agents product keeps TWO unrelated credential stores — do not conflate:
 
 * ``app_integration_config`` (``app/credentials/resolver.py``): product-wide
-  platform secrets (Julia-academia's Anthropic key, the academia/SW tokens).
+  platform secrets (Bia-academia's Anthropic key, the academia/SW tokens).
   Never used for a provider-neutral (``runtime='llm'``) turn.
 * ``agents.credentials`` (this module): the per-org, Fernet-encrypted keys an
   org admin writes through the seed api-keys router

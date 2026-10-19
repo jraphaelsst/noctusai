@@ -13,8 +13,8 @@
 # isolated" — every check below is a refusal-to-boot, not a warning.
 #
 # WHY `--ambient-caps=... +kill`: `noctus` (uid 1000) must be able to
-# `kill()` a slot's Julia CLI subprocess (a DIFFERENT uid — one of
-# `julia-cli-0`/`julia-cli-1`/`julia-cli-2`) on turn-timeout / SDK client
+# `kill()` a slot's Bia CLI subprocess (a DIFFERENT uid — one of
+# `bia-cli-0`/`bia-cli-1`/`bia-cli-2`) on turn-timeout / SDK client
 # close — sending a signal across a uid boundary needs CAP_KILL (or being
 # the same uid, or root), and `noctus` is neither of the other two.
 # Without it, a timed-out/hung CLI process leaks for the container's
@@ -85,21 +85,21 @@ fi
 #    size (contract §E.11) — a compose edit that drops one slot's tmpfs,
 #    or leaves it wrongly owned/sized, must not fall back to "boots
 #    anyway, with that one slot silently unusable or under-isolated."
-#    $JULIA_CLI_SLOTS itself must resolve — `set -u` would already abort
+#    $BIA_CLI_SLOTS itself must resolve — `set -u` would already abort
 #    on a genuinely unset var below, but this gives a named reason instead
 #    of a bare "unbound variable" shell error.
-case "${JULIA_CLI_SLOTS:-}" in
+case "${BIA_CLI_SLOTS:-}" in
   ''|*[!0-9]*)
-    fail "JULIA_CLI_SLOTS must be a positive integer, got '${JULIA_CLI_SLOTS:-<unset>}'"
+    fail "BIA_CLI_SLOTS must be a positive integer, got '${BIA_CLI_SLOTS:-<unset>}'"
     ;;
 esac
 
 k=0
-while [ "$k" -lt "$JULIA_CLI_SLOTS" ]; do
-  mnt="/run/julia-$k"
+while [ "$k" -lt "$BIA_CLI_SLOTS" ]; do
+  mnt="/run/bia-$k"
   uid=$((2000 + k))
   opts="$(_mount_opts "$mnt")"
-  [ -n "$opts" ] || fail "missing tmpfs mount at $mnt (JULIA_CLI_SLOTS=$JULIA_CLI_SLOTS expects one per slot; compose tmpfs: entry missing or the mount point is wrong)"
+  [ -n "$opts" ] || fail "missing tmpfs mount at $mnt (BIA_CLI_SLOTS=$BIA_CLI_SLOTS expects one per slot; compose tmpfs: entry missing or the mount point is wrong)"
   _opts_has "$opts" "uid=$uid" || fail "$mnt: expected uid=$uid; got options '$opts'"
   _opts_has "$opts" "gid=$uid" || fail "$mnt: expected gid=$uid; got options '$opts'"
   _opts_has "$opts" "mode=700" || fail "$mnt: expected mode=700; got options '$opts'"
@@ -113,11 +113,11 @@ done
 #    different owner would break the "noctus writes, only the matching
 #    slot's own primary group can read" guarantee the handoff file's own
 #    mode 0640 depends on.
-handoff_opts="$(_mount_opts /run/julia-handoff)"
-[ -n "$handoff_opts" ] || fail "missing tmpfs mount at /run/julia-handoff (compose tmpfs: entry missing)"
-_opts_has "$handoff_opts" "uid=1000" || fail "/run/julia-handoff: expected uid=1000; got options '$handoff_opts'"
-_opts_has "$handoff_opts" "gid=1000" || fail "/run/julia-handoff: expected gid=1000; got options '$handoff_opts'"
-_opts_has "$handoff_opts" "mode=711" || fail "/run/julia-handoff: expected mode=711; got options '$handoff_opts'"
+handoff_opts="$(_mount_opts /run/bia-handoff)"
+[ -n "$handoff_opts" ] || fail "missing tmpfs mount at /run/bia-handoff (compose tmpfs: entry missing)"
+_opts_has "$handoff_opts" "uid=1000" || fail "/run/bia-handoff: expected uid=1000; got options '$handoff_opts'"
+_opts_has "$handoff_opts" "gid=1000" || fail "/run/bia-handoff: expected gid=1000; got options '$handoff_opts'"
+_opts_has "$handoff_opts" "mode=711" || fail "/run/bia-handoff: expected mode=711; got options '$handoff_opts'"
 
 umask 077
 

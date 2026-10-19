@@ -96,6 +96,7 @@ from app.schemas.channels import (
 )
 from app.stores.channel_inbound import ChannelInboundRecord
 from app.stores.errors import Conflict, NotFound
+from app.studio.julia import canonical_channel_agent_key
 from app.studio.spec import StudioSpecError, StudioTurnTarget, build_studio_spec
 from noctusai_lib.api.auth.session import AuthContext
 from noctusai_lib.integrations.llm import ToolSpec
@@ -149,6 +150,7 @@ def _resolve_channel_agent(studio_store: Any, ctx: AuthContext, agent_key: str) 
     is bound to. Anything else is a 404 ``agent_not_found`` (a channel token
     cannot probe legacy / claude_sdk / dev-advisor agents) or 403
     ``agent_not_allowed`` (a real agent the token was not minted for)."""
+    agent_key = canonical_channel_agent_key(agent_key)
     try:
         agent = studio_store.get_agent(ctx.org_id, agent_key)
     except NotFound as exc:

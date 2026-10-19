@@ -1,6 +1,6 @@
 /**
- * Persona da Julia — contract §E.2 (`GET`/`PUT /api/agents/julia/persona`),
- * `/agentes/julia/persona`. Admin-only (server-enforced via `require_admin`;
+ * Persona da Bia — contract §E.2 (`GET`/`PUT /api/agents/bia/persona`),
+ * `/agentes/bia/persona`. Admin-only (server-enforced via `require_admin`;
  * this page also gates on `useIsAdmin()` so a non-admin never sees an
  * editable form that would 403 on submit — members are redirected to
  * `/agentes`).
@@ -47,7 +47,7 @@ const MODEL_LABELS: Record<string, string> = {
 // the admin's to author, not a UI default.
 function emptyForm(): PersonaUpdateInput {
   return {
-    nome: "Julia",
+    nome: "Bia",
     papel: "",
     model: PERSONA_MODELS[1],
     effort: "medium",
@@ -59,7 +59,7 @@ function emptyForm(): PersonaUpdateInput {
   };
 }
 
-export default function JuliaPersona() {
+export default function BiaPersona() {
   const isAdmin = useIsAdmin();
   const { data: persona, showSkeleton, isError } = usePersona();
   const updatePersona = useUpdatePersona();
@@ -114,9 +114,9 @@ export default function JuliaPersona() {
       <div className="flex items-center gap-3">
         <Settings className="h-6 w-6 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Persona da Julia</h1>
+          <h1 className="text-2xl font-bold text-foreground">Persona da Bia</h1>
           <p className="text-sm text-muted-foreground">
-            Configure o comportamento e o modelo usados pela Julia.
+            Configure o comportamento e o modelo usados pela Bia.
           </p>
         </div>
       </div>
@@ -140,7 +140,7 @@ export default function JuliaPersona() {
             </Badge>
           ) : (
             <p className="text-sm text-muted-foreground" data-testid="persona-create-notice">
-              Julia ainda não tem uma persona configurada e não vai responder até que uma seja
+              Bia ainda não tem uma persona configurada e não vai responder até que uma seja
               salva aqui.
             </p>
           )}
@@ -261,7 +261,7 @@ export default function JuliaPersona() {
               id="persona-system-prompt"
               className={`${INPUT_CLASS} h-32 resize-y py-2`}
               value={form.system_prompt_append ?? ""}
-              placeholder="Instruções extras anexadas ao prompt de sistema da Julia"
+              placeholder="Instruções extras anexadas ao prompt de sistema da Bia"
               onChange={(e) => setField("system_prompt_append", e.target.value)}
               data-testid="persona-system-prompt"
             />

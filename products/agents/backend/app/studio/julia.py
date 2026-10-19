@@ -1,4 +1,4 @@
-"""The ``lead-imob`` agent — Julia, the lead-facing real-estate assistant
+"""The ``julia`` agent — Julia, the lead-facing real-estate assistant
 (Lais contract §7 + §11.3).
 
 A studio agent (``definition_mode='studio'``) on the provider-neutral runtime
@@ -33,26 +33,39 @@ from app.stores.studio_definitions import SectionInput, StudioConflict
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "LEAD_IMOB_KEY",
-    "LEAD_IMOB_MODEL",
-    "LEAD_IMOB_PROVIDER",
-    "LEAD_IMOB_SECTIONS",
-    "ensure_lead_imob",
+    "JULIA_KEY",
+    "JULIA_MODEL",
+    "JULIA_PROVIDER",
+    "JULIA_SECTIONS",
+    "canonical_channel_agent_key",
+    "ensure_julia",
 ]
 
-LEAD_IMOB_KEY = "lead-imob"
-LEAD_IMOB_NAME = "Julia"
-LEAD_IMOB_DESCRIPTION = (
+JULIA_KEY = "julia"
+#: NOC-REMEDIATE[drop-lead-imob-alias]: the SDR agent was keyed ``lead-imob`` before
+#: 2026-10-19. social-wiring (and any token minted before the rename) still sends the old key
+#: for one release; every channel/token entry point maps it onto ``julia`` through
+#: :func:`canonical_channel_agent_key`. Remove together with the social-wiring side.
+_LEGACY_KEY_ALIASES = {"lead-imob": JULIA_KEY}
+
+
+def canonical_channel_agent_key(agent_key: str) -> str:
+    """The current key for ``agent_key`` (``lead-imob`` is an alias of ``julia``)."""
+    return _LEGACY_KEY_ALIASES.get(agent_key, agent_key)
+
+
+JULIA_NAME = "Julia"
+JULIA_DESCRIPTION = (
     "Assistente virtual que atende leads de imóveis no WhatsApp: entende se a pessoa quer "
     "comprar ou alugar, qualifica e passa para um corretor."
 )
-LEAD_IMOB_PROVIDER = "openai"
-LEAD_IMOB_MODEL = "gpt-5.6-terra"
+JULIA_PROVIDER = "openai"
+JULIA_MODEL = "gpt-5.6-terra"
 _EFFORT = "medium"
 _MAX_TURNS = 8
 _TOOL_POLICY = {"web_search": False, "knowledge": False}
 
-LEAD_IMOB_SECTIONS: tuple[SectionInput, ...] = (
+JULIA_SECTIONS: tuple[SectionInput, ...] = (
     SectionInput(
         chave="persona",
         titulo="Quem você é",
@@ -145,7 +158,7 @@ LEAD_IMOB_SECTIONS: tuple[SectionInput, ...] = (
         ),
     ),
     # A RULE, not a conversation instruction (``decisao-*`` never enters the chat prompt): social-wiring asks
-    # ``POST /api/channels/agents/lead-imob/decisoes/abordagem-meta`` which first-contact template a Meta
+    # ``POST /api/channels/agents/julia/decisoes/abordagem-meta`` which first-contact template a Meta
     # lead-form lead gets. Owner-confirmed default, 2026-10-19; edit it here to change the rule.
     SectionInput(
         chave="decisao-abordagem-meta",
@@ -160,33 +173,33 @@ LEAD_IMOB_SECTIONS: tuple[SectionInput, ...] = (
 )
 
 
-def ensure_lead_imob(org_id: UUID, *, studio_store: Any, created_by: UUID | None = None) -> Any:
-    """Idempotently seed ``lead-imob`` for ``org_id`` and return its record.
+def ensure_julia(org_id: UUID, *, studio_store: Any, created_by: UUID | None = None) -> Any:
+    """Idempotently seed ``julia`` for ``org_id`` and return its record.
 
     A no-op once the agent exists (never touches an admin's edits, never
     re-creates a discarded draft, never publishes or activates). A missing
     agent is created with its draft version 1: provider ``openai``, model
-    :data:`LEAD_IMOB_MODEL` and the :data:`LEAD_IMOB_SECTIONS`. ``created_by``
+    :data:`JULIA_MODEL` and the :data:`JULIA_SECTIONS`. ``created_by``
     attributes the draft (a user id when an admin triggered the seed; the
     agent's own id — its service principal — otherwise)."""
     try:
-        return studio_store.get_agent(org_id, LEAD_IMOB_KEY)
+        return studio_store.get_agent(org_id, JULIA_KEY)
     except NotFound:
-        logger.debug("agents.lead_imob.seeding org_id=%s", org_id)
+        logger.debug("agents.julia.seeding org_id=%s", org_id)
     try:
         agent = studio_store.create_studio_agent(
-            org_id, LEAD_IMOB_KEY, LEAD_IMOB_NAME, LEAD_IMOB_DESCRIPTION,
+            org_id, JULIA_KEY, JULIA_NAME, JULIA_DESCRIPTION,
             runtime="llm", owner_product="social-wiring",
         )
     except StudioConflict:
         # A concurrent first use created it between the read and the insert.
-        return studio_store.get_agent(org_id, LEAD_IMOB_KEY)
+        return studio_store.get_agent(org_id, JULIA_KEY)
     draft = studio_store.create_draft(org_id, agent.id, None, created_by or agent.id)
     studio_store.update_draft(org_id, draft.id, {
-        "provider": LEAD_IMOB_PROVIDER, "model": LEAD_IMOB_MODEL, "effort": _EFFORT,
+        "provider": JULIA_PROVIDER, "model": JULIA_MODEL, "effort": _EFFORT,
         "max_turns": _MAX_TURNS, "tool_policy": dict(_TOOL_POLICY),
         "notas": "Rascunho inicial da Julia (leads). Revise antes de publicar.",
     })
-    studio_store.replace_sections(org_id, draft.id, list(LEAD_IMOB_SECTIONS))
-    logger.info("agents.lead_imob.seeded org_id=%s agent_id=%s", org_id, agent.id)
+    studio_store.replace_sections(org_id, draft.id, list(JULIA_SECTIONS))
+    logger.info("agents.julia.seeded org_id=%s agent_id=%s", org_id, agent.id)
     return agent

@@ -1,9 +1,9 @@
-"""Effective Julia runtime specs: an admin override (DB) wins, the env
+"""Effective Bia runtime specs: an admin override (DB) wins, the env
 setting is the default (Configurações do agente page).
 
 Editable: ``approval_timeout_seconds`` (contract §E.2 "Timeout"),
 ``max_turns`` (§E.5), ``messages_rate_limit`` (§E rate limit).
-Read-only: ``julia_cli_slots`` — structural (one uid + one tmpfs mount per
+Read-only: ``bia_cli_slots`` — structural (one uid + one tmpfs mount per
 slot in the image and compose, §E.11), so changing it needs a redeploy.
 
 Every consumer reads at use time through the process singleton, whose
@@ -40,7 +40,7 @@ __all__ = [
 EDITABLE_KEYS = ("approval_timeout_seconds", "max_turns", "messages_rate_limit")
 
 _RATE_LIMIT_RE = re.compile(r"^[1-9]\d{0,4}/(second|minute|hour|day)$")
-_SPEC_PATH = Path(__file__).resolve().parent.parent / "agents" / "julia" / "spec.yaml"
+_SPEC_PATH = Path(__file__).resolve().parent.parent / "agents" / "bia" / "spec.yaml"
 _MAX_TURNS_LIMIT = 200
 _MIN_APPROVAL_TIMEOUT = 30
 
@@ -87,7 +87,7 @@ class RuntimeSettingsService:
     # ── defaults (env) ─────────────────────────────────────────────────
 
     def _defaults(self) -> dict[str, Any]:
-        configured_turns = getattr(self._settings, "julia_max_turns", None)
+        configured_turns = getattr(self._settings, "bia_max_turns", None)
         return {
             "approval_timeout_seconds": int(getattr(self._settings, "approval_timeout_seconds", 300)),
             "max_turns": int(configured_turns) if configured_turns else _spec_max_turns(),
@@ -109,7 +109,7 @@ class RuntimeSettingsService:
             rows = self._store.get_all()
         except Exception:
             # Loud, and the env default still applies: a DB blip must not
-            # stop Julia from answering.
+            # stop Bia from answering.
             logger.exception("agents.runtime_settings_read_failed — using env defaults")
             rows = {}
         with self._lock:
@@ -158,8 +158,8 @@ class RuntimeSettingsService:
             )
             for key in EDITABLE_KEYS
         ]
-        slots = int(getattr(self._settings, "julia_cli_slots", 3))
-        views.append(SettingView(key="julia_cli_slots", value=slots, default=slots, source="env", editable=False))
+        slots = int(getattr(self._settings, "bia_cli_slots", 3))
+        views.append(SettingView(key="bia_cli_slots", value=slots, default=slots, source="env", editable=False))
         return views
 
     def _validate(self, key: str, value: Any) -> Any:

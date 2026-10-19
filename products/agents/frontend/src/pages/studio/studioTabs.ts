@@ -33,7 +33,7 @@ export function isStudioTab(value: string | null): value is StudioTabId {
 /** Tabs that only exist for one agent kind (Agent Packages §D3). */
 const RUNTIME_ONLY: readonly StudioTabId[] = ["clientes", "canais"];
 /** Tabs that only exist for the channel agent (Lais page-0 agent "Julia"). */
-export const CHANNEL_AGENT_KEY = "lead-imob";
+export const CHANNEL_AGENT_KEY = "julia";
 const DEV_ADVISOR_ONLY: readonly StudioTabId[] = ["aprendizados"];
 
 export function isTabVisibleForKind(tab: StudioTabId, kind: string, agentKey?: string): boolean {

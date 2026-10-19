@@ -7,10 +7,10 @@ from uuid import uuid4
 
 from noctusai_lib.integrations.llm import ChatToolsResponse, FakeProvider, LLMUsage, ToolCall
 
-from app.studio.lead_imob import LEAD_IMOB_KEY, LEAD_IMOB_SECTIONS
+from app.studio.julia import JULIA_KEY, JULIA_SECTIONS
 from tests.channels.conftest import OTHER_ORG, turn_body
 
-URL = f"/api/channels/agents/{LEAD_IMOB_KEY}/decisoes/abordagem-meta"
+URL = f"/api/channels/agents/{JULIA_KEY}/decisoes/abordagem-meta"
 REGRA_PADRAO = "Use `comercial` se houver codigo_imovel, senão `neutra`."
 BODY = {"opcoes": ["comercial", "neutra"], "dados": {"codigo_imovel": "ONE9551", "campanha": "Casas Granja"},
         "regra_padrao": REGRA_PADRAO}
@@ -28,11 +28,11 @@ def _post(chan, body=None, url=URL, **kw):
 
 
 def _seed_without_rule(chan):
-    """A published lead-imob version whose sections lack ``decisao-abordagem-meta`` (an org seeded before it)."""
+    """A published julia version whose sections lack ``decisao-abordagem-meta`` (an org seeded before it)."""
     chan.seed_agent(publish=False)
     studio = chan.rt.studio
     draft = studio.get_draft(chan.org_id, chan.agent.id)
-    studio.replace_sections(chan.org_id, draft.id, [s for s in LEAD_IMOB_SECTIONS if not s.chave.startswith("decisao-")])
+    studio.replace_sections(chan.org_id, draft.id, [s for s in JULIA_SECTIONS if not s.chave.startswith("decisao-")])
     chan.version = chan.rt.publish(chan.agent, draft.id)
 
 
@@ -50,7 +50,7 @@ class TestDecisao:
         assert call["tool_choice"] == "registrar_escolha"
         assert call["api_key"] == "sk-org-a-key"
         system, user = call["messages"][0].content, call["messages"][1].content
-        regra = next(s for s in LEAD_IMOB_SECTIONS if s.chave == "decisao-abordagem-meta").conteudo
+        regra = next(s for s in JULIA_SECTIONS if s.chave == "decisao-abordagem-meta").conteudo
         assert regra in system and REGRA_PADRAO not in system
         assert "codigo_imovel: ONE9551" in user and "comercial, neutra" in user
 
@@ -62,7 +62,7 @@ class TestDecisao:
         studio.replace_sections(chan.org_id, draft.id, [
             s if s.chave != "decisao-abordagem-meta" else type(s)(
                 chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=nova, ativo=True)
-            for s in LEAD_IMOB_SECTIONS
+            for s in JULIA_SECTIONS
         ])
         chan.version = chan.rt.publish(chan.agent, draft.id)
         chan.use_provider(_escolha({"escolha": "neutra", "motivo": "regra"}))
@@ -113,7 +113,7 @@ class TestDecisao:
         ):
             resp = _post(chan, body)
             assert resp.status_code == 422 and resp.json()["code"] == "invalid_field", body
-        resp = _post(chan, url=f"/api/channels/agents/{LEAD_IMOB_KEY}/decisoes/Abordagem_Meta")
+        resp = _post(chan, url=f"/api/channels/agents/{JULIA_KEY}/decisoes/Abordagem_Meta")
         assert resp.status_code == 422 and resp.json()["code"] == "invalid_field"
 
 

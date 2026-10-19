@@ -6,7 +6,7 @@ company employees (recycling, reuse, waste reduction). This product holds the pr
 database, with full revision history. Later it will host the project's video training
 platform.
 
-Julia (the AI assistant in the `agents` product) works on this project only through this
+Bia (the AI assistant in the `agents` product) works on this project only through this
 product's scoped API, with every write approved by a person.
 
 > **Status:** live in prod at `https://academia.noctusai.com` behind SSO since 2026-09-16;
@@ -37,7 +37,7 @@ Ports: backend **8015**, frontend **8190** (single container in prod).
 | Knowledge base entries with append-only revisions and provenance | shipped (M2) |
 | Decisions (D-nn, append-only), open questions (Q-nn), roadmap phases, tasks (T-nnn) | shipped (M2) |
 | Import of the original workspace history (verified revision counts + hashes) | shipped (M2) |
-| Scoped API (SSO users + product tokens) consumed by Julia and the `academia.*` MCP tools | shipped (M2) |
+| Scoped API (SSO users + product tokens) consumed by Bia and the `academia.*` MCP tools | shipped (M2) |
 | UI: KB browser, Decisions, Open questions, Roadmap / Tasks | shipped (M2) |
 | Public `/coleta` — calendário de coleta por município (8 cities around the Granja Viana; search by bairro/condomínio/rua; sources + caveats per city; static data in `frontend/src/content/coleta/`) | shipped 2026-09-29 |
 | Video training platform | deferred (roadmap T3) |

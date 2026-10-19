@@ -88,7 +88,7 @@ class TestConversationOwnershipBoundary:
         seed_org_role(agents_client, role="member")
         seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
-        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
 
         resp = agents_client.get(f"/api/conversations/{other_conv.id}")
@@ -98,7 +98,7 @@ class TestConversationOwnershipBoundary:
         seed_org_role(agents_client, role="owner")
         seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
-        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
 
         resp = agents_client.get(f"/api/conversations/{other_conv.id}")
@@ -108,7 +108,7 @@ class TestConversationOwnershipBoundary:
         seed_org_role(agents_client, role="owner")  # even admins may not POST
         seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
-        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
 
         resp = agents_client.post(
@@ -120,7 +120,7 @@ class TestConversationOwnershipBoundary:
         seed_org_role(agents_client, role="member")
         seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
-        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
 
         resp = agents_client.get(f"/api/conversations/{other_conv.id}/messages")
@@ -130,7 +130,7 @@ class TestConversationOwnershipBoundary:
         seed_org_role(agents_client, role="owner")  # even admins may not rename
         seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
-        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
 
         resp = agents_client.patch(
@@ -213,7 +213,7 @@ class TestPostMessage:
         seed_active_agent_and_persona(agents_client, ativo=False)
         conv = agents_client.stores.conversations.create(
             DEFAULT_ORG_ID,
-            agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia").id,
+            agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia").id,
             DEFAULT_USER_ID,
         )
         resp = agents_client.post(
@@ -411,10 +411,10 @@ class TestSlotCapacityAndReleaseEveryPath:
         assert resp.status_code == 429, resp.text
         assert resp.json() == {
             "detail": (
-                "A Julia está atendendo o número máximo de conversas agora. "
+                "A Bia está atendendo o número máximo de conversas agora. "
                 "Tente novamente em instantes."
             ),
-            "code": "julia_capacidade",
+            "code": "bia_capacidade",
         }
         assert resp.headers["retry-after"] == "10"
 

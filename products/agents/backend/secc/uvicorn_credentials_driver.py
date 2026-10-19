@@ -4,7 +4,7 @@ the running container (roadmap ``julia-agents-academia-2026-09``, row
 SEC-C; extended contract §E.11 / roadmap D2 to drive MULTIPLE per-
 conversation slots instead of the old single shared uid).
 
-WHY THIS SHAPE, NOT ``docker exec -u <julia-cli-uid>``: per the D1 retro's
+WHY THIS SHAPE, NOT ``docker exec -u <bia-cli-uid>``: per the D1 retro's
 own methodology note, ``docker exec -u <user>`` does NOT reproduce the
 app's real spawn path for a NON-root uid — it gets no ambient-capability
 inheritance from the entrypoint's own ``setpriv`` chain, so a wrapper
@@ -14,9 +14,9 @@ invocation whose flags are EXTRACTED from ``bin/entrypoint.sh`` itself
 (never hand-copied — see ``run_proof.py``'s ``_entrypoint_setpriv_
 prefix``), landing THIS driver process at uid 1000 (``noctus``) with the
 exact same ambient SETUID/SETGID/KILL uvicorn itself runs with. From
-there, every ``subprocess.run(..., user="julia-cli-<K>")`` below mirrors
+there, every ``subprocess.run(..., user="bia-cli-<K>")`` below mirrors
 what a real ``app/runtime/claude_runtime.py`` turn does (``cli_path=
-"/app/bin/julia-cli-exec"``, ``user="julia-cli-<K>"``, ``env={}``), and
+"/app/bin/bia-cli-exec"``, ``user="bia-cli-<K>"``, ``env={}``), and
 the un-``user=`` call mirrors the SDK's own no-``user=`` version-check
 spawn (``claude_agent_sdk/_internal/transport/subprocess_cli.py::
 _check_claude_version`` — ``anyio.open_process([cli_path, "-v"], ...)``).
@@ -31,8 +31,8 @@ Placeholders (substituted by ``run_proof.py`` via plain ``str.replace`` —
 the SAME "one test seam: literal substitution, never a templating engine"
 convention ``tests/runtime/test_wrapper.py``'s ``_copy_with_subs`` uses)::
 
-    __SECC_APPEND_PATH__    /run/julia-handoff/0/append.md (the persona/
-                             JULIA.md injection path — contract §E.11
+    __SECC_APPEND_PATH__    /run/bia-handoff/0/append.md (the persona/
+                             BIA.md injection path — contract §E.11
                              "Launch options": `extra_args={"append-
                              system-prompt-file": ...}`, never on argv).
                              Note this is UNRELATED to the "durable
@@ -46,8 +46,8 @@ convention ``tests/runtime/test_wrapper.py``'s ``_copy_with_subs`` uses)::
                              __SECC_APPEND_PATH__` is alive
 
 DELIBERATELY NOT the "durable transcripts" handoff *.jsonl file here: that
-needs a specific, non-empty ``/run/julia-handoff/0/<sid>.jsonl`` to exist,
-and ``julia-cli-slot``'s own handoff-copy step runs on EVERY invocation of
+needs a specific, non-empty ``/run/bia-handoff/0/<sid>.jsonl`` to exist,
+and ``bia-cli-slot``'s own handoff-copy step runs on EVERY invocation of
 slot 0 (not just a dedicated one) — seeding it before THIS script's own
 clean identity/caps/env spawns would contaminate them with whatever that
 copy step does. ``run_proof.py``'s ``secc/handoff_check_driver.py`` is the
@@ -69,7 +69,7 @@ import subprocess
 import sys
 import time
 
-_WRAPPER = "/app/bin/julia-cli-exec"
+_WRAPPER = "/app/bin/bia-cli-exec"
 _PROBE_MARKER = "SECC_PROBE_JSON:"
 
 _APPEND_PATH = "__SECC_APPEND_PATH__"
@@ -84,12 +84,12 @@ def _parse_probe_json(stdout: str) -> dict | None:
 
 
 def _config_dir_for(user: str) -> str:
-    """``julia-cli-<K>`` -> ``/run/julia-<K>/home/.claude`` — the ONE env
+    """``bia-cli-<K>`` -> ``/run/bia-<K>/home/.claude`` — the ONE env
     key ``ClaudeAgentOptions.env`` actually carries for a real turn
     (contract §E.11 "Launch options": ``env={"CLAUDE_CONFIG_DIR": ...}``).
     """
     k = user.rsplit("-", 1)[1]
-    return f"/run/julia-{k}/home/.claude"
+    return f"/run/bia-{k}/home/.claude"
 
 
 def _spawn(args: list[str], *, user: str | None = None, real_turn: bool = False, timeout: int = 40) -> dict:
@@ -189,7 +189,7 @@ def _scan_cmdlines_for(sentinel: str) -> list[int]:
     """``/proc/*/cmdline`` is world-readable regardless of uid — this
     driver (uid 1000) needs no special access to run this scan itself.
     Returns every pid whose argv contains ``sentinel`` (expected: none —
-    contract §E.11's persona/JULIA.md text is injected via a FILE the
+    contract §E.11's persona/BIA.md text is injected via a FILE the
     real CLI reads, never via argv)."""
     hits: list[int] = []
     sentinel_bytes = sentinel.encode()
@@ -218,8 +218,8 @@ def main() -> int:
     #    driver — secc/handoff_check_driver.py — owns that; see this
     #    module's docstring for why). ------------------------------------
     result["main_spawns"] = {
-        "0": _spawn(["--secc-proof-main-turn"], user="julia-cli-0", real_turn=True),
-        "1": _spawn(["--secc-proof-main-turn"], user="julia-cli-1", real_turn=True),
+        "0": _spawn(["--secc-proof-main-turn"], user="bia-cli-0", real_turn=True),
+        "1": _spawn(["--secc-proof-main-turn"], user="bia-cli-1", real_turn=True),
     }
 
     # -- persona sentinel: slot 0 stays alive with the append-system-
@@ -228,7 +228,7 @@ def main() -> int:
     #    only inside the file, never on any argv) ----------------------
     sentinel_proc, sentinel_diag = _spawn_background(
         ["--secc-sigterm-ignore", "--append-system-prompt-file", _APPEND_PATH],
-        user="julia-cli-0",
+        user="bia-cli-0",
     )
     result["sentinel_target_pid"] = sentinel_proc.pid
     result["sentinel_target_diag"] = sentinel_diag
@@ -243,10 +243,10 @@ def main() -> int:
         [
             "--secc-cross-slot-probe",
             str(sentinel_proc.pid),
-            "/run/julia-0",
-            "/run/julia-handoff/0",
+            "/run/bia-0",
+            "/run/bia-handoff/0",
         ],
-        user="julia-cli-1",
+        user="bia-cli-1",
         real_turn=True,
     )
 
@@ -258,11 +258,11 @@ def main() -> int:
     sentinel_proc.wait(timeout=5)
 
     # -- kill + reap, 3 fresh iterations, slot 0 ------------------------
-    result["kill_and_reap"] = [_kill_and_reap_once(user="julia-cli-0") for _ in range(3)]
+    result["kill_and_reap"] = [_kill_and_reap_once(user="bia-cli-0") for _ in range(3)]
 
     # -- quota: slot 0 fills to ENOSPC, slot 1 still writes fine --------
-    result["quota_fill"] = _spawn(["--secc-fill-quota"], user="julia-cli-0", real_turn=True)
-    result["quota_other_write"] = _spawn(["--secc-write-test"], user="julia-cli-1", real_turn=True)
+    result["quota_fill"] = _spawn(["--secc-fill-quota"], user="bia-cli-0", real_turn=True)
+    result["quota_other_write"] = _spawn(["--secc-write-test"], user="bia-cli-1", real_turn=True)
 
     print(f"SECC_DRIVER_JSON:{json.dumps(result)}", flush=True)
     return 0

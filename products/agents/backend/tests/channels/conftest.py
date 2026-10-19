@@ -40,7 +40,7 @@ from app.dependencies import (
 )
 from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_guard
 from app.stores.channel_inbound import FakeChannelInboundStore
-from app.studio.lead_imob import LEAD_IMOB_KEY, ensure_lead_imob
+from app.studio.julia import JULIA_KEY, ensure_julia
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, agents_client  # noqa: F401 — fixture
 from tests.studio.rt.conftest import RtHarness, rt  # noqa: F401 — fixtures
 
@@ -52,7 +52,7 @@ CONNECTION_ID = UUID(int=77)
 BOTH = (SCOPE_CHANNEL_TURN, SCOPE_CHANNEL_STATUS)
 
 
-def turn_body(*texts: str, agent_key: str = LEAD_IMOB_KEY, chat_id: str = "chat-1", ids: list[str] | None = None,
+def turn_body(*texts: str, agent_key: str = JULIA_KEY, chat_id: str = "chat-1", ids: list[str] | None = None,
               connection_id: UUID = CONNECTION_ID, contact: dict | None = None) -> dict[str, Any]:
     texts = texts or ("Oi, quero um apartamento",)
     ids = ids or [f"wamid.{i}-{abs(hash(t)) % 10**6}" for i, t in enumerate(texts)]
@@ -88,15 +88,15 @@ class ChannelHarness:
 
     # ── seeding
     def seed_agent(self, *, ativo: bool = True, publish: bool = True) -> Any:
-        """`lead-imob` through the production seed, optionally activated + published."""
+        """`julia` through the production seed, optionally activated + published."""
         studio = self.rt.studio
-        agent = ensure_lead_imob(self.org_id, studio_store=studio, created_by=DEFAULT_USER_ID)
+        agent = ensure_julia(self.org_id, studio_store=studio, created_by=DEFAULT_USER_ID)
         if publish:
             draft = studio.get_draft(self.org_id, agent.id)
             self.version = self.rt.publish(agent, draft.id)
         if ativo:
-            agent = studio.update_agent(self.org_id, LEAD_IMOB_KEY, {"ativo": True})
-        self.agent = studio.get_agent(self.org_id, LEAD_IMOB_KEY)
+            agent = studio.update_agent(self.org_id, JULIA_KEY, {"ativo": True})
+        self.agent = studio.get_agent(self.org_id, JULIA_KEY)
         return self.agent
 
     # ── runtime

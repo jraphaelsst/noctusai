@@ -3,7 +3,7 @@
 Home of the NoctusAI managed AI agents. An agent here works **on** other products
 through their scoped APIs — never through their databases.
 
-- **Julia** — Claude Agent SDK (headless), reachable from this app's UI only. She helps
+- **Bia** — Claude Agent SDK (headless), reachable from this app's UI only. She helps
   run the Academia de Reciclagem project: reads its knowledge base and proposes writes,
   which you approve or deny before anything lands.
 - **One Chat** — the WhatsApp assistant that keeps running inside `social-wiring`. Listed
@@ -33,11 +33,11 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 
 | Capability | Milestone |
 |---|---|
-| Chat with Julia (streamed turns, tool cards) | M4 |
-| Approve / deny Julia's writes to Academia (single-use signed approvals, timeout denies) | M4 |
-| Julia persona (admin-only, versioned, model allowlist) | M4 |
-| Agent list with on/off — Julia, and One Chat via social-wiring | M4, M5 |
-| Isolation suite (no platform secrets in Julia's env; cross-product token denials) | M4 |
+| Chat with Bia (streamed turns, tool cards) | M4 |
+| Approve / deny Bia's writes to Academia (single-use signed approvals, timeout denies) | M4 |
+| Bia persona (admin-only, versioned, model allowlist) | M4 |
+| Agent list with on/off — Bia, and One Chat via social-wiring | M4, M5 |
+| Isolation suite (no platform secrets in Bia's env; cross-product token denials) | M4 |
 
 ## Tests
 

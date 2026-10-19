@@ -1,6 +1,6 @@
 /**
- * Julia persona hooks — contract §E.2
- * (`GET`/`PUT /api/agents/julia/persona`).
+ * Bia persona hooks — contract §E.2
+ * (`GET`/`PUT /api/agents/bia/persona`).
  *
  * `PUT` is admin-only server-side (`require_admin`); the page also gates
  * the form on `useIsAdmin()` so a non-admin never sees an editable form
@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ApiError } from "@/lib/errors";
 
-const PERSONA_KEY = ["agents", "julia", "persona"] as const;
+const PERSONA_KEY = ["agents", "bia", "persona"] as const;
 
 export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
 export const PERSONA_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -47,8 +47,8 @@ export interface PersonaUpdateInput {
 export function usePersona() {
   const query = useQuery<Persona>({
     queryKey: PERSONA_KEY,
-    queryFn: () => api.get<Persona>("/api/agents/julia/persona"),
-    // A 404 here means "Julia has no persona yet" (contract §E.2,
+    queryFn: () => api.get<Persona>("/api/agents/bia/persona"),
+    // A 404 here means "Bia has no persona yet" (contract §E.2,
     // `code: "not_found"`) — a definitive, stable answer, not a transient
     // failure. Retrying it 3x just stretches the skeleton before the page
     // can fall back to its create-mode form. Any other status (5xx,
@@ -75,7 +75,7 @@ export function useUpdatePersona() {
   const qc = useQueryClient();
 
   return useMutation<Persona, unknown, PersonaUpdateInput>({
-    mutationFn: (payload) => api.put<Persona>("/api/agents/julia/persona", payload),
+    mutationFn: (payload) => api.put<Persona>("/api/agents/bia/persona", payload),
     onSuccess: (persona) => {
       qc.setQueryData(PERSONA_KEY, persona);
     },

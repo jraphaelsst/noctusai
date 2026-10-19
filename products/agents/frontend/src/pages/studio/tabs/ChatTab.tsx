@@ -1,7 +1,7 @@
 /**
  * Conversar tab — Agent Studio CONTRACT.md §G "Conversar" (`/studio/:key?tab=conversar`).
  *
- * Reuses the seed `<ChatWindow>` organ exactly like Julia does, through the
+ * Reuses the seed `<ChatWindow>` organ exactly like Bia does, through the
  * shared `<AgentChatWindow>` pass-through (`@/components/AgentChatWindow.tsx`).
  * All 2-pane rendering (loading/empty/error/success, both panes) lives in
  * the organ; this tab only owns the "Nova conversa" action + the optional

@@ -1,4 +1,4 @@
-"""Plugin invariant (contract §E.5, build-time test): ``agents/julia/plugin/``
+"""Plugin invariant (contract §E.5, build-time test): ``agents/bia/plugin/``
 contains ONLY ``skills/`` (no ``hooks/``, ``.mcp.json``, ``agents/`` or
 ``commands/``), and no ``SKILL.md`` declares ``allowed-tools`` frontmatter."""
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 _PLUGIN_DIR = (
-    Path(__file__).resolve().parents[2] / "app" / "agents" / "julia" / "plugin"
+    Path(__file__).resolve().parents[2] / "app" / "agents" / "bia" / "plugin"
 )
 
 

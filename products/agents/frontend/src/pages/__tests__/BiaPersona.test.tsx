@@ -1,12 +1,12 @@
 /**
- * JuliaPersona.tsx page tests — contract §E.2 (`GET`/`PUT
- * /api/agents/julia/persona`).
+ * BiaPersona.tsx page tests — contract §E.2 (`GET`/`PUT
+ * /api/agents/bia/persona`).
  *
  * Stubs `@/hooks/usePersona` and `@/hooks/useIsAdmin` so this test asserts
  * ONLY the page's state rendering (create-mode vs. edit-mode vs. error),
  * not the hooks themselves (covered by `usePersona.test.ts`).
  *
- * Prod defect this covers: Julia's `agents.agent_personas` row can be
+ * Prod defect this covers: Bia's `agents.agent_personas` row can be
  * empty (never created), and the `GET` correctly 404s — the page must
  * treat that as "no persona yet", not as an error, and let the admin
  * create the first version (the existing `PUT` already creates versão 1
@@ -34,7 +34,7 @@ vi.mock("@/hooks/useIsAdmin", () => ({
 
 const PERSONA = {
   versao: 3,
-  nome: "Julia",
+  nome: "Bia",
   papel: "Assistente de conhecimento",
   tom: "acolhedor",
   system_prompt_append: null,
@@ -61,11 +61,11 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 async function renderPage() {
-  const JuliaPersona = (await import("@/pages/JuliaPersona")).default;
-  render(React.createElement(MemoryRouter, null, React.createElement(JuliaPersona)));
+  const BiaPersona = (await import("@/pages/BiaPersona")).default;
+  render(React.createElement(MemoryRouter, null, React.createElement(BiaPersona)));
 }
 
-describe("JuliaPersona — no persona yet (404, contract §E.2 not_found)", () => {
+describe("BiaPersona — no persona yet (404, contract §E.2 not_found)", () => {
   it("renders the form in create mode: no version badge, 'Criar persona' button", async () => {
     mockUsePersona.mockReturnValue({
       data: undefined,
@@ -80,7 +80,7 @@ describe("JuliaPersona — no persona yet (404, contract §E.2 not_found)", () =
     expect(screen.getByTestId("persona-create-notice")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Criar persona" })).toBeTruthy();
     // Defaults: nome pre-filled, papel/tom/system_prompt_append left blank.
-    expect(screen.getByLabelText("Nome *")).toHaveProperty("value", "Julia");
+    expect(screen.getByLabelText("Nome *")).toHaveProperty("value", "Bia");
     expect(screen.getByLabelText("Papel *")).toHaveProperty("value", "");
   });
 
@@ -102,7 +102,7 @@ describe("JuliaPersona — no persona yet (404, contract §E.2 not_found)", () =
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const payload = mutateAsync.mock.calls[0][0];
     expect(payload).toMatchObject({
-      nome: "Julia",
+      nome: "Bia",
       papel: "Assistente da Academia de Reciclagem",
       model: "claude-sonnet-5",
       effort: "medium",
@@ -134,7 +134,7 @@ describe("JuliaPersona — no persona yet (404, contract §E.2 not_found)", () =
   });
 });
 
-describe("JuliaPersona — genuine failure (5xx/network)", () => {
+describe("BiaPersona — genuine failure (5xx/network)", () => {
   it("renders the error card, not the form", async () => {
     mockUsePersona.mockReturnValue({
       data: undefined,
@@ -152,7 +152,7 @@ describe("JuliaPersona — genuine failure (5xx/network)", () => {
   });
 });
 
-describe("JuliaPersona — existing persona", () => {
+describe("BiaPersona — existing persona", () => {
   it("renders current behaviour: version badge, 'Salvar' button, no create notice", async () => {
     mockUsePersona.mockReturnValue({
       data: PERSONA,
@@ -166,7 +166,7 @@ describe("JuliaPersona — existing persona", () => {
     expect(screen.getByTestId("persona-version").textContent).toBe("Versão 3");
     expect(screen.queryByTestId("persona-create-notice")).toBeNull();
     expect(screen.getByRole("button", { name: "Salvar" })).toBeTruthy();
-    expect(screen.getByLabelText("Nome *")).toHaveProperty("value", "Julia");
+    expect(screen.getByLabelText("Nome *")).toHaveProperty("value", "Bia");
     expect(screen.getByLabelText("Papel *")).toHaveProperty("value", "Assistente de conhecimento");
   });
 });

@@ -188,7 +188,7 @@ class TestIdempotency:
         chan.seed_agent()
         body = turn_body("Oi", ids=["m1"])
         first = chan.turn(body).json()
-        chan.rt.studio.update_agent(chan.org_id, "lead-imob", {"ativo": False})
+        chan.rt.studio.update_agent(chan.org_id, "julia", {"ativo": False})
         replay = chan.turn(body)
         assert replay.status_code == 200 and replay.json() == first
 
@@ -316,21 +316,21 @@ class TestRefusalsBeforeAnythingIsPersisted:
         assert chan.provider.calls == []
 
     def test_per_org_key_isolation_org_b_never_uses_org_a_key(self, chan):
-        """Org A has a key; org B has none. A token of org B (with its own `lead-imob`) is a 424 and the
+        """Org A has a key; org B has none. A token of org B (with its own `julia`) is a 424 and the
         provider is never called with org A's key."""
         chan.seed_agent()
         from app.stores.studio_definitions import SectionInput
-        from app.studio.lead_imob import ensure_lead_imob
+        from app.studio.julia import ensure_julia
 
         studio = chan.rt.studio
-        b_agent = ensure_lead_imob(OTHER_ORG, studio_store=studio, created_by=OTHER_ORG)
+        b_agent = ensure_julia(OTHER_ORG, studio_store=studio, created_by=OTHER_ORG)
         draft = studio.get_draft(OTHER_ORG, b_agent.id)
         studio.replace_sections(OTHER_ORG, draft.id, [SectionInput(chave="p", titulo="P", ordem=1, conteudo="Persona B.")])
         from tests.studio.rt.fakes import publish
         from app.studio.catalog import StoreKnowledgeCatalog
 
         publish(studio, OTHER_ORG, b_agent, draft.id, OTHER_ORG, catalog=StoreKnowledgeCatalog(chan.rt.knowledge))
-        studio.update_agent(OTHER_ORG, "lead-imob", {"ativo": True})
+        studio.update_agent(OTHER_ORG, "julia", {"ativo": True})
         resp = chan.turn(principal=b_agent.id, org_id=OTHER_ORG)
         assert resp.status_code == 424 and resp.json()["code"] == "llm_not_configured"
         assert chan.provider.calls == []

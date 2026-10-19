@@ -1,7 +1,7 @@
 """``/api/agents/{agent_key}/channel-token`` — mint / revoke the channel token
 (Lais contract §4, §10.1 M1, §10.2 "§4 reuses existing minting").
 
-The token social-wiring holds to drive ``lead-imob`` over the channel turn API.
+The token social-wiring holds to drive ``julia`` over the channel turn API.
 It REUSES the platform's one minting path — the seed ``ProductTokenAdmin.mint``
 (the same row builder as ``POST /api/settings/api-tokens``; only a SHA-256 of
 the secret is stored, the raw ``pk_*`` is returned exactly once) — with:
@@ -43,7 +43,7 @@ from app.routers.channels_router import CHANNEL_STUDIO_RUNTIME
 from app.routers.studio_agents_router import get_studio_definition_store_dep
 from app.schemas.channels import ChannelTokenCreateRequest, ChannelTokenOut
 from app.stores.errors import NotFound
-from app.studio.lead_imob import LEAD_IMOB_KEY, ensure_lead_imob
+from app.studio.julia import JULIA_KEY, canonical_channel_agent_key, ensure_julia
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin
 
 logger = logging.getLogger(__name__)
@@ -60,9 +60,10 @@ def _err(status_code: int, code: str, detail: str) -> HTTPException:
 
 
 def _channel_agent(studio_store, ctx: AuthContext, agent_key: str):
-    if agent_key == LEAD_IMOB_KEY:
+    agent_key = canonical_channel_agent_key(agent_key)
+    if agent_key == JULIA_KEY:
         # First use for this org: seed the draft agent so there is something to bind to.
-        ensure_lead_imob(ctx.org_id, studio_store=studio_store, created_by=ctx.user_id)
+        ensure_julia(ctx.org_id, studio_store=studio_store, created_by=ctx.user_id)
     try:
         agent = studio_store.get_agent(ctx.org_id, agent_key)
     except NotFound as exc:

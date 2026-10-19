@@ -20,7 +20,7 @@ from app.stores.transcripts import FakeTranscriptStore
 
 def _spec(**overrides) -> AgentSpec:
     defaults = dict(
-        key="julia",
+        key="bia",
         model="claude-sonnet-5",
         effort="medium",
         prompt_append="be helpful",
@@ -83,7 +83,7 @@ def _build(**overrides):
         slot=_slot(),
         mirror=_mirror(),
         resume=None,
-        plugin_path="/app/agents/julia/plugin",
+        plugin_path="/app/agents/bia/plugin",
     )
     kwargs.update(overrides)
     return build_launch_options(**kwargs)
@@ -92,7 +92,7 @@ def _build(**overrides):
 class TestBuildLaunchOptions:
     def test_cli_path_is_the_wrapper(self):
         opts = _build()
-        assert opts.cli_path == "/app/bin/julia-cli-exec"
+        assert opts.cli_path == "/app/bin/bia-cli-exec"
 
     def test_cli_path_is_overridable_for_tests(self):
         opts = _build(cli_path="/tmp/fake-cli")
@@ -115,8 +115,8 @@ class TestBuildLaunchOptions:
         assert "append" not in opts.system_prompt
 
     def test_plugins_is_one_local_plugin_at_the_given_path(self):
-        opts = _build(plugin_path="/app/agents/julia/plugin")
-        assert opts.plugins == [{"type": "local", "path": "/app/agents/julia/plugin"}]
+        opts = _build(plugin_path="/app/agents/bia/plugin")
+        assert opts.plugins == [{"type": "local", "path": "/app/agents/bia/plugin"}]
 
     def test_skills_is_passed_through_from_spec(self):
         opts = _build(spec=_spec(skills=("ar-capturar", "ar-decisao")))

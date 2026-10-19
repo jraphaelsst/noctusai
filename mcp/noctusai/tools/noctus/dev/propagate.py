@@ -145,7 +145,7 @@ _C_VOLUME_EXTRA: dict[str, str] = {"core": _C_CORE_DOCKER_SOCK}
 # before the tunnel service. Scoped to the two D1 slugs deliberately (N=2,
 # triage-not-formalize per KB § PATTERNS/architect/project-execution.md):
 # `read_only`+`tmpfs` need a per-product proof of every genuine write path
-# (§B.6's multipart import spool for academia; the Julia CLI's HOME for
+# (§B.6's multipart import spool for academia; the Bia CLI's HOME for
 # agents), which the rest of the fleet has not been individually audited
 # for yet. Fleet-wide hardening is a separate, larger decision (architect),
 # not something this slice extends to by default. Mirrors the `_C_VOLUME_EXTRA`
@@ -188,14 +188,14 @@ _C_HARDENING_AGENTS = (
     "    cap_drop:\n"
     "      - ALL\n"
     "    # SETUID/SETGID/KILL — nothing else. I4 (contract §E.11): never\n"
-    "    # CHOWN, FOWNER or DAC_OVERRIDE. contract §E.11 spawns the Julia CLI\n"
-    "    # subprocess under a per-conversation slot uid (`user=\"julia-cli-\n"
+    "    # CHOWN, FOWNER or DAC_OVERRIDE. contract §E.11 spawns the Bia CLI\n"
+    "    # subprocess under a per-conversation slot uid (`user=\"bia-cli-\n"
     "    # <K>\"` on ClaudeAgentOptions); dropping to that uid AT EXEC\n"
     "    # (`bin/entrypoint.sh`'s own `setpriv`, not a bare `USER` directive\n"
     "    # — verified empirically that `USER` alone never populates AMBIENT\n"
     "    # caps for a non-root process, moby#45491) needs CAP_SETUID +\n"
     "    # CAP_SETGID effective on the process making that switch — the\n"
-    "    # SAME two caps also let `bin/julia-cli-exec`'s own `setpriv\n"
+    "    # SAME two caps also let `bin/bia-cli-exec`'s own `setpriv\n"
     "    # --clear-groups` run for ANY slot uid (setgroups always needs\n"
     "    # CAP_SETGID, even for an already-matching uid). CAP_KILL: `noctus`\n"
     "    # must be able to signal a slot uid's CLI subprocess (a DIFFERENT\n"
@@ -203,7 +203,7 @@ _C_HARDENING_AGENTS = (
     "    # signalling a different uid without it is denied (EPERM), leaking\n"
     "    # a hung CLI process for the container's whole lifetime. Nothing\n"
     "    # wider is ever added: no CAP_CHOWN/FOWNER/DAC_OVERRIDE — the slot\n"
-    "    # sweep (`bin/julia-cli-slot`) only ever chmod/rm's files the\n"
+    "    # sweep (`bin/bia-cli-slot`) only ever chmod/rm's files the\n"
     "    # sweeping uid already OWNS (only that uid can ever create a file\n"
     "    # under its own mode-0700 tmpfs), so no capability is needed for\n"
     "    # that either. NOT CAP_SETPCAP: every `setpriv --bounding-set=`\n"
@@ -221,18 +221,18 @@ _C_HARDENING_AGENTS = (
     "    security_opt:\n"
     "      - no-new-privileges:true\n"
     "    read_only: true\n"
-    "    # One dedicated tmpfs PER SLOT for the Julia CLI's own per-\n"
-    "    # conversation HOME/TMPDIR — each owned by its own `julia-cli-K`\n"
+    "    # One dedicated tmpfs PER SLOT for the Bia CLI's own per-\n"
+    "    # conversation HOME/TMPDIR — each owned by its own `bia-cli-K`\n"
     "    # uid/gid alone, mode 0700 (I3: nothing from one conversation's\n"
     "    # slot is readable by another slot's uid — verified empirically\n"
     "    # both ways, and by neither slot uid). 40m each (24 MiB transcript\n"
     "    # cap plus working space, contract §E.11 user decision 2026-09-15).\n"
-    "    # `/run/julia-handoff` is the ONE shared mount across slots —\n"
+    "    # `/run/bia-handoff` is the ONE shared mount across slots —\n"
     "    # owned by `noctus` (uid/gid 1000), mode 0711 (traversable by every\n"
     "    # slot uid — \"other\" — but not LISTABLE, so a slot can only ever\n"
     "    # reach a file whose exact path it already expects, never discover\n"
     "    # a sibling slot's files by listing); `noctus` writes each slot's\n"
-    "    # handoff file with mode 0640 and group `julia-cli-K`, so only that\n"
+    "    # handoff file with mode 0640 and group `bia-cli-K`, so only that\n"
     "    # one slot uid (via its own primary group after `--clear-groups`)\n"
     "    # can read it.\n"
     "    #\n"
@@ -245,10 +245,10 @@ _C_HARDENING_AGENTS = (
     "    # `noctus` closes the one path a slot uid could otherwise have\n"
     "    # used to leave a file `noctus` might later trust.\n"
     "    tmpfs:\n"
-    "      - /run/julia-0:uid=2000,gid=2000,mode=0700,size=40m\n"
-    "      - /run/julia-1:uid=2001,gid=2001,mode=0700,size=40m\n"
-    "      - /run/julia-2:uid=2002,gid=2002,mode=0700,size=40m\n"
-    "      - /run/julia-handoff:uid=1000,gid=1000,mode=0711,size=80m\n"
+    "      - /run/bia-0:uid=2000,gid=2000,mode=0700,size=40m\n"
+    "      - /run/bia-1:uid=2001,gid=2001,mode=0700,size=40m\n"
+    "      - /run/bia-2:uid=2002,gid=2002,mode=0700,size=40m\n"
+    "      - /run/bia-handoff:uid=1000,gid=1000,mode=0711,size=80m\n"
     "      - /tmp:mode=1770,uid=0,gid=1000,size=64m\n"
     "    # A small explicit /dev/shm — python/uvicorn have no real shared-\n"
     "    # memory need here; explicit + small beats an unexamined default.\n"
@@ -260,7 +260,7 @@ _C_HARDENING_AGENTS = (
     "    # rather than shrink the tmpfs caps.\n"
     "    mem_limit: 1g\n"
     "    # `init: true` — a minimal PID-1 init (tini) reaps zombies from any\n"
-    "    # slot's Julia CLI subprocess tree so a killed-but-unreaped child\n"
+    "    # slot's Bia CLI subprocess tree so a killed-but-unreaped child\n"
     "    # (see the CAP_KILL comment above) never accumulates; without it\n"
     "    # `noctus` (not PID 1 here — the entrypoint execs INTO it, so it IS\n"
     "    # PID 1) would have to reap its own children, which the SDK's\n"
@@ -365,25 +365,25 @@ _D_KE_EXTRA = (
     "    && apt-get install -y --no-install-recommends ffmpeg \\\n"
     "    && rm -rf /var/lib/apt/lists/*\n"
 )
-# agents: Julia's dedicated per-conversation slot uids + the CLI she is
+# agents: Bia's dedicated per-conversation slot uids + the CLI she is
 # launched through (contract projects/julia-agents-academia-CONTRACT.md
 # §E.11, supersedes §E.5; roadmap D1, per-conversation isolation,
 # architect review 2026-09-15 — checked against SDK 0.2.152 and bundled
 # CLI 2.1.259). Injected as root, before the non-root-user step below.
 _D_AGENTS_EXTRA = (
-    "# agents: Julia's dedicated per-conversation slot uids/gids + the CLI\n"
+    "# agents: Bia's dedicated per-conversation slot uids/gids + the CLI\n"
     "# she is launched through (contract §E.11, supersedes §E.5's single\n"
     "# shared uid 1001). `--no-create-home`: there is no home dir to\n"
     "# protect (nothing is ever baked there) — the slot script points\n"
     "# HOME/TMPDIR at a dedicated per-slot tmpfs instead (compose `tmpfs:\n"
-    "# [/run/julia-0, /run/julia-1, /run/julia-2]`, each uid/gid-owned by\n"
+    "# [/run/bia-0, /run/bia-1, /run/bia-2]`, each uid/gid-owned by\n"
     "# its own slot uid — this product's `/tmp` belongs to `noctus` only).\n"
-    "# Fixed at 3 slots (uid/gid 2000-2002), matching `ENV JULIA_CLI_SLOTS`\n"
+    "# Fixed at 3 slots (uid/gid 2000-2002), matching `ENV BIA_CLI_SLOTS`\n"
     "# below — I3: nothing from one conversation is readable by another\n"
     "# slot's uid, so each slot gets its OWN dedicated uid/gid, never a\n"
     "# shared one (that was §E.5's whole problem: one compromised turn\n"
     "# could read every other conversation's transcript under the same\n"
-    "# shared uid 1001/HOME=/run/julia).\n"
+    "# shared uid 1001/HOME=/run/bia).\n"
     "# `--user-group` (tried first, real-image check 2026-09-15) auto-\n"
     "# assigns the GROUP an arbitrary next-free SYSTEM gid (999, 998, 997\n"
     "# on the real image) and ignores `--uid` for it entirely — `useradd`\n"
@@ -394,16 +394,16 @@ _D_AGENTS_EXTRA = (
     "# requires BOTH, not uid alone).\n"
     "RUN for _slot in 0 1 2; do \\\n"
     "        _uid=$((2000 + _slot)); \\\n"
-    "        groupadd --system --gid \"$_uid\" \"julia-cli-$_slot\"; \\\n"
+    "        groupadd --system --gid \"$_uid\" \"bia-cli-$_slot\"; \\\n"
     "        useradd --system --no-create-home --shell /usr/sbin/nologin \\\n"
-    "            --uid \"$_uid\" --gid \"$_uid\" \"julia-cli-$_slot\"; \\\n"
+    "            --uid \"$_uid\" --gid \"$_uid\" \"bia-cli-$_slot\"; \\\n"
     "    done\n"
-    "ENV JULIA_CLI_SLOTS=3\n"
+    "ENV BIA_CLI_SLOTS=3\n"
     "# The SDK's one-off version-check spawn (`_internal/transport/\n"
     "# subprocess_cli.py:799`, `[cli_path, \"-v\"]`) runs WITHOUT `user=` at\n"
     "# all — it would launch as whatever uid called it (`noctus`), which\n"
-    "# `bin/julia-cli-exec` would then refuse with exit 126 (uid 1000 is\n"
-    "# outside the [2000, 2000+JULIA_CLI_SLOTS) slot range). Skipping the\n"
+    "# `bin/bia-cli-exec` would then refuse with exit 126 (uid 1000 is\n"
+    "# outside the [2000, 2000+BIA_CLI_SLOTS) slot range). Skipping the\n"
     "# version check entirely avoids that spawn altogether; the CLI\n"
     "# version is already pinned by the wheel (contract §E.11).\n"
     "ENV CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1\n"
@@ -418,11 +418,11 @@ _D_AGENTS_EXTRA = (
     "# root:root from `pip install` running as root, before the non-root\n"
     "# step below — verified live). Resolved via python, not a second\n"
     "# hardcoded path literal, and `test -x` fails the BUILD (not a live\n"
-    "# Julia turn) the day a future SDK bump relocates or drops it. The\n"
+    "# Bia turn) the day a future SDK bump relocates or drops it. The\n"
     "# symlink is what makes the wrapper's own hardcoded exec target a\n"
     "# stable literal that never needs to track the exact venv/\n"
-    "# site-packages path (no `JULIA_CLAUDE_BIN` env seam — dropped\n"
-    "# deliberately, see `bin/julia-cli-exec`'s own header comment).\n"
+    "# site-packages path (no `BIA_CLAUDE_BIN` env seam — dropped\n"
+    "# deliberately, see `bin/bia-cli-exec`'s own header comment).\n"
     "RUN CLAUDE_BUNDLED=\"$(python3 -c 'import claude_agent_sdk, pathlib; "
     "print(pathlib.Path(claude_agent_sdk.__file__).parent / \"_bundled\" / \"claude\")')\" \\\n"
     "    && test -x \"$CLAUDE_BUNDLED\" || { echo \"bundled claude CLI not found/executable "
@@ -437,14 +437,14 @@ _D_AGENTS_EXTRA = (
     "# otherwise flip them to `noctus`, silently undoing \"root-owned, not\n"
     "# app-writable\" (see the ownership reassertion a few lines down —\n"
     "# that same block also drops the canonical `USER noctus` for this\n"
-    "# product only; see the ENTRYPOINT at the bottom). `julia-cli-slot`\n"
+    "# product only; see the ENTRYPOINT at the bottom). `bia-cli-slot`\n"
     "# is root-owned for the same reason as the other two: it runs the\n"
     "# per-conversation sweep + handoff-copy + CLI exec AS the slot uid\n"
     "# (no capabilities), so it must never be writable by that uid or by\n"
     "# `noctus`.\n"
-    "COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec\n"
+    "COPY products/agents/backend/bin/bia-cli-exec /app/bin/bia-cli-exec\n"
     "COPY products/agents/backend/bin/entrypoint.sh /app/bin/entrypoint.sh\n"
-    "COPY products/agents/backend/bin/julia-cli-slot /app/bin/julia-cli-slot\n"
+    "COPY products/agents/backend/bin/bia-cli-slot /app/bin/bia-cli-slot\n"
     "\n"
     "# Strip every setuid/setgid bit in the image (roadmap D1) — defence in\n"
     "# depth ORTHOGONAL to the capability model above: a setuid/setgid file\n"
@@ -480,8 +480,8 @@ _D_EXTRA: dict[str, str] = {
 #    capability set, and a plain `USER noctus` directive does NOT
 #    populate that set — confirmed by reproducing the exact compose
 #    hardening flags against a real container: `USER noctus` alone leaves
-#    CapEff/CapAmb at zero, so the SDK's `Popen(user="julia-cli-<K>")`
-#    subprocess spawn gets PermissionError on every Julia turn
+#    CapEff/CapAmb at zero, so the SDK's `Popen(user="bia-cli-<K>")`
+#    subprocess spawn gets PermissionError on every Bia turn
 #    (moby#45491, moby PR#36587). The container instead stays root all the
 #    way to the ENTRYPOINT (see `_D_ENTRYPOINT_OVERRIDE` below), which
 #    itself fails closed (refuses to drop privilege at all unless the
@@ -493,16 +493,16 @@ _D_EXTRA: dict[str, str] = {
 #    so this needs no keeper change — verified against the real keeper.
 _D_POST_CHOWN_ANCHOR = "RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app\nUSER noctus\n"
 _D_AGENTS_POST_CHOWN = (
-    "RUN useradd -m -u 1000 -G julia-cli-0,julia-cli-1,julia-cli-2 noctus \\\n"
+    "RUN useradd -m -u 1000 -G bia-cli-0,bia-cli-1,bia-cli-2 noctus \\\n"
     "    && chown -R noctus:noctus /app \\\n"
-    "    && chown root:root /app/bin/julia-cli-exec /app/bin/entrypoint.sh /app/bin/julia-cli-slot \\\n"
-    "    && chmod 0755 /app/bin/julia-cli-exec /app/bin/entrypoint.sh /app/bin/julia-cli-slot\n"
+    "    && chown root:root /app/bin/bia-cli-exec /app/bin/entrypoint.sh /app/bin/bia-cli-slot \\\n"
+    "    && chmod 0755 /app/bin/bia-cli-exec /app/bin/entrypoint.sh /app/bin/bia-cli-slot\n"
     "# `noctus` is a supplementary member of exactly the 3 slot groups\n"
     "# (contract §E.11) — `--init-groups` in `bin/entrypoint.sh`'s own\n"
     "# `setpriv` call picks them up at the root->noctus drop. This is what\n"
     "# lets `noctus` (writing the durable-transcript handoff file as part\n"
     "# of a future slice's turn setup) set that file's GROUP to\n"
-    "# `julia-cli-K` with a plain chown(path, -1, gid) — Linux only requires\n"
+    "# `bia-cli-K` with a plain chown(path, -1, gid) — Linux only requires\n"
     "# the calling process to be a MEMBER of the target group for a\n"
     "# group-only chown, never CAP_CHOWN, so this membership is what makes\n"
     "# \"no CHOWN capability is ever needed\" literally true, not just\n"
@@ -510,7 +510,7 @@ _D_AGENTS_POST_CHOWN = (
     "# No `USER noctus` here (deviates from the canonical shape, agents-only,\n"
     "# roadmap D1): the ENTRYPOINT below does the uid switch AT EXEC via\n"
     "# `setpriv` instead, which is what actually populates AMBIENT caps for\n"
-    "# the SDK's `Popen(user=\"julia-cli\")` subprocess spawn — a plain\n"
+    "# the SDK's `Popen(user=\"bia-cli\")` subprocess spawn — a plain\n"
     "# `USER noctus` directive here does not (verified empirically,\n"
     "# moby#45491/PR#36587).\n"
 )
@@ -532,8 +532,8 @@ _D_POST_CHOWN_EXTRA: dict[str, str] = {"agents": _D_AGENTS_POST_CHOWN}
 #      root->noctus privilege drop, done AT EXEC so ambient caps end up
 #      populated (see `_D_AGENTS_POST_CHOWN` above for why a plain `USER
 #      noctus` cannot do this). `+kill`: `noctus` must be able to signal
-#      a slot uid's Julia CLI subprocess (contract §E.11 — one of
-#      `julia-cli-0`/`julia-cli-1`/`julia-cli-2`, always a DIFFERENT uid) on
+#      a slot uid's Bia CLI subprocess (contract §E.11 — one of
+#      `bia-cli-0`/`bia-cli-1`/`bia-cli-2`, always a DIFFERENT uid) on
 #      turn-timeout/SDK-close — verified empirically that this needs
 #      CAP_KILL (a same-uid-only signal check otherwise denies it), and
 #      that a killed different-uid child shows as a transient ZOMBIE in
@@ -565,7 +565,7 @@ _D_ENTRYPOINT_OVERRIDE: dict[str, str] = {
 # secc-proof (roadmap julia-agents-academia-2026-09, row SEC-C;
 # `products/agents/backend/secc/run_proof.py`) — a PROOF-ONLY `FROM runtime`
 # stage, inserted right after the ENTRYPOINT line and before the
-# runtime-watch stage. agents ONLY: no other product has a Julia-CLI
+# runtime-watch stage. agents ONLY: no other product has a Bia-CLI
 # subprocess spawn path to prove in CI without a real API key. NEVER
 # tagged/pushed/deployed — `run_proof.py`'s own
 # `check_build_and_push_never_builds_secc_proof` asserts that statically.
@@ -575,13 +575,13 @@ _D_SECC_PROOF_EXTRA: dict[str, str] = {
         "# ── secc-proof: PROOF-ONLY stage, NEVER tagged/pushed/deployed ──────────\n"
         "# Roadmap julia-agents-academia-2026-09, row SEC-C\n"
         "# (`products/agents/backend/secc/run_proof.py`). CI has no real\n"
-        "# `ANTHROPIC_API_KEY` to exercise the Julia CLI subprocess with, so this\n"
+        "# `ANTHROPIC_API_KEY` to exercise the Bia CLI subprocess with, so this\n"
         "# stage re-points ONLY `/usr/local/bin/claude-bundled` at a root-owned\n"
         "# probe script (`secc/probe.py`) that dumps its own uid/gid/groups/caps/\n"
         "# env + an EACCES/EPERM access-check battery instead of talking to\n"
-        "# Anthropic. `bin/julia-cli-exec` and `bin/entrypoint.sh` are otherwise\n"
+        "# Anthropic. `bin/bia-cli-exec` and `bin/entrypoint.sh` are otherwise\n"
         "# BYTE-IDENTICAL to `runtime` (asserted by `run_proof.py` via sha256) —\n"
-        "# only the one symlink target changes. `bin/julia-cli-slot` (contract\n"
+        "# only the one symlink target changes. `bin/bia-cli-slot` (contract\n"
         "# §E.11, roadmap D1) is a third root-owned script in this same image;\n"
         "# extending the sha256 proof to cover it too is roadmap D2's row, not\n"
         "# yet done here (D1 declares it, does not fix the harness).\n"
@@ -596,7 +596,7 @@ _D_SECC_PROOF_EXTRA: dict[str, str] = {
         "COPY products/agents/backend/secc/probe.py /usr/local/bin/claude-bundled\n"
         "# probe.py's `#!/usr/bin/env python3` shebang resolves through `env`'s OWN\n"
         "# PATH lookup — and the `env -i PATH=/usr/bin:/bin ...` handoff (now in\n"
-        "# `bin/julia-cli-slot`, contract §E.11 — `bin/julia-cli-exec` only\n"
+        "# `bin/bia-cli-slot`, contract §E.11 — `bin/bia-cli-exec` only\n"
         "# switches identity and hands off to it) deliberately does NOT include\n"
         "# `/opt/venv/bin` (the real bundled CLI is a native binary, not a python\n"
         "# script, so it never needed it). Symlinking the venv's python3 onto that\n"
@@ -611,12 +611,12 @@ _D_SECC_PROOF_EXTRA: dict[str, str] = {
 # KB § PATTERNS/devops/dev-fleet-dormant.md, and this is declared rather
 # than fixed, per that rule) does NOT inherit SEC-A/SEC-C's isolation:
 # this stage's OWN `chown -R noctus:noctus /app` (a few lines down, the
-# canonical local-watch node-install step) flips `julia-cli-exec` +
+# canonical local-watch node-install step) flips `bia-cli-exec` +
 # `entrypoint.sh` back to `noctus`-owned, and its `local-watch`
 # ENTRYPOINT overrides the `runtime` stage's `entrypoint.sh` with a plain
 # `USER noctus`. Not fixed here: `get_agent_runtime` only ever returns the
 # real `ClaudeAgentSdkRuntime` when `ANTHROPIC_API_KEY` is configured, and
-# no real key is ever set for local dev (never a live Julia turn to
+# no real key is ever set for local dev (never a live Bia turn to
 # isolate in this stage today) — see the D1 report for the explicit
 # call-out this comment stands in for.
 _D_RUNTIME_WATCH_NOTE: dict[str, str] = {
@@ -629,7 +629,7 @@ _D_RUNTIME_WATCH_NOTE: dict[str, str] = {
         "# the `local-watch` ENTRYPOINT, not `bin/entrypoint.sh`. Harmless only\n"
         "# because `get_agent_runtime` never returns the real SDK runtime\n"
         "# without a configured `ANTHROPIC_API_KEY`, which local dev never\n"
-        "# sets — there is no live Julia turn to isolate in this stage today.\n"
+        "# sets — there is no live Bia turn to isolate in this stage today.\n"
     ),
 }
 _D_PIP_RUN_SEED = (
@@ -677,7 +677,7 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
     # this point). See `_D_ENTRYPOINT_OVERRIDE`'s docstring for what/why.
     # `bin/entrypoint.sh` hardcodes this product's own port/app-dir
     # directly (it is a plain, agents-only committed file, same as
-    # `bin/julia-cli-exec` — never templated), so this is a straight
+    # `bin/bia-cli-exec` — never templated), so this is a straight
     # CMD -> ENTRYPOINT line swap, no port/slug substitution needed here.
     entrypoint_override = _D_ENTRYPOINT_OVERRIDE.get(slug)
     if entrypoint_override:

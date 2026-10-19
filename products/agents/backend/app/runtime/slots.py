@@ -5,11 +5,11 @@ Seed IO shape: ``SlotPool`` Protocol + ``FakeSlotPool`` + ``RealSlotPool``
 ``app.stores.approvals`` (``ApprovalStore`` / ``FakeApprovalStore`` /
 ``SupabaseApprovalStore`` / ``get_approval_store``).
 
-**Why a pool at all (contract §E.11).** Every Julia turn used to run as a
+**Why a pool at all (contract §E.11).** Every Bia turn used to run as a
 single shared uid with a single shared ``HOME``, where the CLI keeps
 session transcripts. A CLI compromised during one conversation's turn
 could then read every OTHER conversation's transcript on the same
-container. This pool leases one of ``JULIA_CLI_SLOTS`` fixed uids
+container. This pool leases one of ``BIA_CLI_SLOTS`` fixed uids
 (``2000+K``) per turn, and ``TurnSlot.release()`` proves the slot is
 genuinely clean (no live process of that uid, no leftover handoff file)
 before it goes back to the free list — the invariant the rest of §E.11's
@@ -23,8 +23,8 @@ survives the kill poll, a non-zero sweep, ...) regardless of which pool
 flavour it starts from.
 
 **One free list, shared release orchestration.** Discovery differs between
-:class:`RealSlotPool` (validates ``JULIA_CLI_SLOTS`` fixed uids against
-real ``/run/julia-K`` mounts, excluding — never silently using — a slot
+:class:`RealSlotPool` (validates ``BIA_CLI_SLOTS`` fixed uids against
+real ``/run/bia-K`` mounts, excluding — never silently using — a slot
 whose mount is missing) and :class:`FakeSlotPool` (a plain ``capacity``
 count); the release/quarantine bookkeeping itself is identical either way,
 so it lives once in :class:`_BaseSlotPool`.
@@ -66,31 +66,31 @@ __all__ = [
     "get_slot_pool",
 ]
 
-#: Contract §E.11 — "3 slots" is the current user decision; `JULIA_CLI_SLOTS`
-#: is the deploy-configurable source of truth (image `ENV JULIA_CLI_SLOTS=3`).
+#: Contract §E.11 — "3 slots" is the current user decision; `BIA_CLI_SLOTS`
+#: is the deploy-configurable source of truth (image `ENV BIA_CLI_SLOTS=3`).
 DEFAULT_SLOT_COUNT = 3
 
 #: Contract §E.11 "Slot pool" step 1: "Poll for up to 5 s."
 DEFAULT_KILL_POLL_SECONDS = 5.0
 _DEFAULT_KILL_POLL_INTERVAL = 0.05
 
-#: Contract §E.11 image section: "Slot users `julia-cli-K` ... for K from 0
+#: Contract §E.11 image section: "Slot users `bia-cli-K` ... for K from 0
 #: to 2", uid/gid `2000+K`.
 _UID_BASE = 2000
 
 
 def _resolve_slot_count(settings: Any) -> int:
-    """``JULIA_CLI_SLOTS`` from ``settings`` (a ``SeedSettings`` field, so
+    """``BIA_CLI_SLOTS`` from ``settings`` (a ``SeedSettings`` field, so
     pydantic-settings already binds the env var of the same name), falling
     back to a bare ``os.environ`` read for callers that pass a plain
     settings-shaped object without the field, and finally to
     :data:`DEFAULT_SLOT_COUNT` — mirrors
     ``app.runtime._resolve_instance_id``'s settings-then-env fallback
     shape."""
-    value = getattr(settings, "julia_cli_slots", None)
+    value = getattr(settings, "bia_cli_slots", None)
     if value:
         return int(value)
-    raw = os.environ.get("JULIA_CLI_SLOTS", "").strip()
+    raw = os.environ.get("BIA_CLI_SLOTS", "").strip()
     if raw:
         return int(raw)
     return DEFAULT_SLOT_COUNT
@@ -208,16 +208,16 @@ class Sweeper(Protocol):
 
 
 class RealSweeper:
-    """Spawns ``/app/bin/julia-cli-slot --julia-sweep`` as
+    """Spawns ``/app/bin/bia-cli-slot --bia-sweep`` as
     ``user=<slot.user_name>`` (contract §E.11 "Slot pool" step 2)."""
 
-    def __init__(self, script_path: str = "/app/bin/julia-cli-slot") -> None:
+    def __init__(self, script_path: str = "/app/bin/bia-cli-slot") -> None:
         self._script_path = script_path
 
     async def sweep(self, slot: "TurnSlot") -> int:
         proc = await asyncio.create_subprocess_exec(
             self._script_path,
-            "--julia-sweep",
+            "--bia-sweep",
             user=slot.user_name,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
@@ -477,8 +477,8 @@ class _BaseSlotPool:
 
 
 class RealSlotPool(_BaseSlotPool):
-    """Discovers ``JULIA_CLI_SLOTS`` fixed uids against real
-    ``/run/julia-K`` mounts. A slot whose mount is missing is excluded —
+    """Discovers ``BIA_CLI_SLOTS`` fixed uids against real
+    ``/run/bia-K`` mounts. A slot whose mount is missing is excluded —
     quarantined from construction, never silently used — and logged."""
 
     isolated = True
@@ -489,21 +489,21 @@ class RealSlotPool(_BaseSlotPool):
         *,
         base_path: str = "/run",
         handoff_base_path: str | None = None,
-        slot_script_path: str = "/app/bin/julia-cli-slot",
+        slot_script_path: str = "/app/bin/bia-cli-slot",
         kill_poll_seconds: float = DEFAULT_KILL_POLL_SECONDS,
     ) -> None:
         count = _resolve_slot_count(settings)
-        handoff_base = handoff_base_path or os.path.join(base_path, "julia-handoff")
+        handoff_base = handoff_base_path or os.path.join(base_path, "bia-handoff")
 
         specs: list[TurnSlotSpec] = []
         excluded: list[int] = []
         for k in range(count):
-            mount = os.path.join(base_path, f"julia-{k}")
+            mount = os.path.join(base_path, f"bia-{k}")
             specs.append(
                 TurnSlotSpec(
                     index=k,
                     uid=_UID_BASE + k,
-                    user_name=f"julia-cli-{k}",
+                    user_name=f"bia-cli-{k}",
                     config_dir=os.path.join(mount, "home", ".claude"),
                     handoff_dir=os.path.join(handoff_base, str(k)),
                 )
@@ -546,9 +546,9 @@ class FakeSlotPool(_BaseSlotPool):
             TurnSlotSpec(
                 index=k,
                 uid=_UID_BASE + k,
-                user_name=f"julia-cli-{k}",
-                config_dir=f"/run/julia-{k}/home/.claude",
-                handoff_dir=f"/run/julia-handoff/{k}",
+                user_name=f"bia-cli-{k}",
+                config_dir=f"/run/bia-{k}/home/.claude",
+                handoff_dir=f"/run/bia-handoff/{k}",
             )
             for k in range(capacity)
         ]

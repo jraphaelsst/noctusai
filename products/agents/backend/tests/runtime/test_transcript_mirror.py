@@ -236,7 +236,7 @@ class TestSdkProtocolConformance:
         async def _on_error(key, message):
             errors.append((key, message))
 
-        projects_dir = "/run/julia-0/home/.claude/projects"
+        projects_dir = "/run/bia-0/home/.claude/projects"
         batcher = TranscriptMirrorBatcher(
             store=mirror, projects_dir=projects_dir, on_error=_on_error
         )

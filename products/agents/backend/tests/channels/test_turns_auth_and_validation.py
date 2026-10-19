@@ -31,7 +31,7 @@ class TestAuthMatrix:
 
     def test_status_route_without_credential_is_401(self, chan):
         chan.seed_agent()
-        assert chan.request("GET", "/api/channels/agents/lead-imob/status").status_code == 401
+        assert chan.request("GET", "/api/channels/agents/julia/status").status_code == 401
 
     def test_delete_route_without_credential_is_401(self, chan):
         chan.seed_agent()
@@ -53,7 +53,7 @@ class TestAuthMatrix:
     def test_scopes_are_split_the_turn_scope_does_not_open_status(self, chan):
         chan.seed_agent()
         with chan.as_token(SCOPE_CHANNEL_TURN):
-            resp = chan.request("GET", "/api/channels/agents/lead-imob/status")
+            resp = chan.request("GET", "/api/channels/agents/julia/status")
         assert resp.status_code == 403
         assert _code(resp) == "scope_missing"
 
@@ -72,7 +72,7 @@ class TestAuthMatrix:
         assert resp.status_code == 403
         assert _code(resp) == "issuer_not_allowed"
         with chan.as_token(issuer=issuer):
-            status_resp = chan.request("GET", "/api/channels/agents/lead-imob/status")
+            status_resp = chan.request("GET", "/api/channels/agents/julia/status")
         assert status_resp.status_code == 403
         assert _code(status_resp) == "issuer_not_allowed"
 
@@ -102,7 +102,7 @@ class TestAuthMatrix:
         assert _code(resp) == "agent_not_found"
 
     def test_org_comes_from_the_token_agent_is_resolved_inside_it(self, chan):
-        """Org B's token naming `lead-imob` finds nothing in org B — it never sees org A's."""
+        """Org B's token naming `julia` finds nothing in org B — it never sees org A's."""
         chan.seed_agent()
         resp = chan.turn(principal=chan.agent.id, org_id=OTHER_ORG)
         assert resp.status_code == 404

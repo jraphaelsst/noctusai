@@ -1,5 +1,5 @@
 """Conversations for studio agents (Agent Studio §D6, §E2, §E4, §A7) through
-the REAL product app, with Julia's shape kept (default list = julia)."""
+the REAL product app, with Bia's shape kept (default list = bia)."""
 from __future__ import annotations
 
 import hashlib
@@ -22,15 +22,15 @@ def _studio_conv(rt, key="isa", **body):
 
 
 class TestCreateAndList:
-    def test_list_defaults_to_julia(self, rt):
+    def test_list_defaults_to_bia(self, rt):
         seed_active_agent_and_persona(rt.client)
         rt.make_agent()
-        julia = rt.post("/api/conversations", json={"titulo": "J"}).json()
+        bia = rt.post("/api/conversations", json={"titulo": "J"}).json()
         studio = _studio_conv(rt)
 
         items = rt.get("/api/conversations").json()["items"]
-        assert [c["id"] for c in items] == [julia["id"]]
-        assert items[0]["agent_key"] == "julia" and items[0]["version_id"] is None
+        assert [c["id"] for c in items] == [bia["id"]]
+        assert items[0]["agent_key"] == "bia" and items[0]["version_id"] is None
 
         items = rt.get("/api/conversations", params={"agent_key": "isa"}).json()["items"]
         assert [c["id"] for c in items] == [studio["id"]]
@@ -54,7 +54,7 @@ class TestCreateAndList:
             assert resp.status_code == 422
             assert resp.json()["code"] == "invalid_client"
 
-    def test_julia_takes_no_client(self, rt):
+    def test_bia_takes_no_client(self, rt):
         resp = rt.post("/api/conversations", json={"client_id": "00000000-0000-0000-0000-000000000001"})
         assert resp.status_code == 422
         assert resp.json()["code"] == "invalid_client"
@@ -164,7 +164,7 @@ class TestStudioTurn:
         assert resp.status_code == 409
         assert resp.json()["code"] == "client_inactive"
 
-    def test_capacity_message_does_not_name_julia(self, rt):
+    def test_capacity_message_does_not_name_bia(self, rt):
         runtime, _ = install_runtime(rt.client, [], capacity=1)
         rt.make_agent()
         conv = _studio_conv(rt)
@@ -173,10 +173,10 @@ class TestStudioTurn:
         resp = self._post(rt, conv["id"])
         assert resp.status_code == 429
         body = resp.json()
-        assert body["code"] == "julia_capacidade"
-        assert "Julia" not in body["detail"] and "Isa" in body["detail"]
+        assert body["code"] == "bia_capacidade"
+        assert "Bia" not in body["detail"] and "Isa" in body["detail"]
 
-    def test_julia_turn_is_not_stamped(self, rt):
+    def test_bia_turn_is_not_stamped(self, rt):
         seed_active_agent_and_persona(rt.client)
         install_runtime(rt.client, [
             {"event": "message.new", "payload": {"role": "assistant", "texto": "Oi", "blocks": []}},

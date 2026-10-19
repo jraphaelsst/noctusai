@@ -1,10 +1,10 @@
-"""The gate: Julia's tool-class table (contract §E.4) — exhaustive.
+"""The gate: Bia's tool-class table (contract §E.4) — exhaustive.
 
 ``LEITURA`` and ``ESCRITA`` are the ONLY two allow-shaped classes. Every
 name not in either tuple is denied — by construction, not by omission:
 :func:`classify` returns ``"deny"`` for anything it doesn't recognise, so
 a new tool added anywhere else in the codebase does not silently become
-callable by Julia until someone adds it here.
+callable by Bia until someone adds it here.
 
 Matching is EXACT string equality, never ``endswith``/``startswith``
 (contract §E.4: "architect debt" — a prefix match would let
@@ -25,7 +25,7 @@ __all__ = [
 ToolClass = Literal["leitura", "escrita", "deny"]
 
 #: Contract §E.4 — allowed without asking. Includes the two SDK built-ins
-#: Julia's base tool set carries (``WebSearch``, ``Skill``) alongside every
+#: Bia's base tool set carries (``WebSearch``, ``Skill``) alongside every
 #: read-only academia MCP proxy.
 LEITURA: tuple[str, ...] = (
     "mcp__academia__kb_buscar",

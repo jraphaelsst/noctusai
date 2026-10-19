@@ -38,11 +38,11 @@ RUNTIMES = ("claude_sdk", "external")
 #: The two rows `ensure_default_agents` seeds, per org. Never inserted by
 #: the migration itself (org_id is per-org) — the migration header notes
 #: this; this module is the idempotent seeding path.
-#: Also reserves `lead-imob` (Lais A2): seeded per org by
-#: `app.studio.lead_imob.ensure_lead_imob` (a studio agent on the `llm`
+#: Also reserves `julia` (Lais A2): seeded per org by
+#: `app.studio.julia.ensure_julia` (a studio agent on the `llm`
 #: runtime, not by this store) — a studio agent squatting the key would stop
 #: the seed and leave the channel API without its agent.
-DEFAULT_AGENT_KEYS = ("julia", "one-chat", "lead-imob")
+DEFAULT_AGENT_KEYS = ("bia", "one-chat", "julia")
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ class AgentStore(Protocol):
         ...
 
     def ensure_default_agents(self, org_id: UUID) -> None:
-        """Idempotently create ``julia`` (claude_sdk) and ``one-chat``
+        """Idempotently create ``bia`` (claude_sdk) and ``one-chat``
         (external, owner_product=social-wiring), both ``ativo=false``, for
         ``org_id``. Safe to call every request — a no-op once the rows
         exist."""
@@ -127,7 +127,7 @@ class FakeAgentStore:
 
     def ensure_default_agents(self, org_id: UUID) -> None:
         self._ensure_one(
-            org_id, key="julia", nome="Julia", runtime="claude_sdk",
+            org_id, key="bia", nome="Bia", runtime="claude_sdk",
             owner_product=None,
         )
         self._ensure_one(
@@ -225,8 +225,8 @@ class SupabaseAgentStore:
         defaults = [
             {
                 "org_id": str(org_id),
-                "key": "julia",
-                "nome": "Julia",
+                "key": "bia",
+                "nome": "Bia",
                 "runtime": "claude_sdk",
                 "owner_product": None,
                 "ativo": False,

@@ -2,7 +2,7 @@
  * Agentes page — contract §E.2 (`GET /api/agents`,
  * `POST /api/agents/{key}/toggle`), `/agentes`.
  *
- * Lists every agent (`julia`, `one-chat`). For `one-chat` shows the live
+ * Lists every agent (`bia`, `one-chat`). For `one-chat` shows the live
  * social-wiring auto-reply state (`estado_externo.auto_reply_enabled`), or
  * `aviso` when `estado_externo` is null (not configured / unreachable). The
  * on/off toggle is admin/owner-only (`useIsAdmin`) — members see read-only
@@ -17,7 +17,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 
 const AGENT_ICON: Record<string, typeof Bot> = {
-  julia: Bot,
+  bia: Bot,
   "one-chat": Cpu,
 };
 
@@ -120,7 +120,7 @@ export default function Agentes() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{agent.nome}</p>
-                    {agent.key === "julia" && (
+                    {agent.key === "bia" && (
                       <Badge variant={agent.ativo ? "default" : "muted"}>
                         {agent.ativo ? "Ligada" : "Desligada"}
                       </Badge>
@@ -146,9 +146,9 @@ export default function Agentes() {
                   )}
                 </div>
 
-                {agent.key === "julia" && isAdmin && (
+                {agent.key === "bia" && isAdmin && (
                   <Link
-                    to="/agentes/julia/persona"
+                    to="/agentes/bia/persona"
                     className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
                     data-testid="agent-persona-link"
                   >

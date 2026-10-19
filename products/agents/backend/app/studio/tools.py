@@ -3,7 +3,7 @@
 Progressive disclosure for studio agents: skill bodies, skill reference files
 and the knowledge library load just-in-time through READ-ONLY tools that read
 the DB via the stores — never through filesystem ``Read`` (which stays
-disallowed, Julia's hardened posture).
+disallowed, Bia's hardened posture).
 
 Security invariants (security review of wave 1, binding):
 

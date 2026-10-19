@@ -16,7 +16,7 @@ and keeps it in the database with full revision history:
 - content drafts
 - research sources
 
-Humans use it through the UI. Julia, who lives in `agents`, works on it only through the
+Humans use it through the UI. Bia, who lives in `agents`, works on it only through the
 scoped API, and a person approves every write. The project's video training platform will be
 built here later (roadmap trigger T3).
 
@@ -63,7 +63,7 @@ Every table has RLS and is org-scoped via `public.current_org_id()`.
 
 ### MCP
 
-The root `mcp/academia/` is a thin HTTP client over this API. Terminal-Julia uses it with a
+The root `mcp/academia/` is a thin HTTP client over this API. Terminal-Bia uses it with a
 personal token. The vendored `_kit` copy goes; the server uses noc's `mcp/_kit`.
 
 ### Frontend

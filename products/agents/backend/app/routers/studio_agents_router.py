@@ -81,7 +81,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.lead_imob import ensure_lead_imob
+from app.studio.julia import ensure_julia
 from app.studio.models import (
     CompiledPrompt,
     EvalGate,
@@ -170,7 +170,7 @@ def actor_id(ctx: AuthContext) -> UUID:
 
 def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
     """A ``studio:publish`` token acts ONLY on a dev-advisor agent; a runtime
-    agent (Julia, IsaIA) stays human-only → 403 ``user_required``, exactly
+    agent (Bia, IsaIA) stays human-only → 403 ``user_required``, exactly
     as before the scope existed."""
     if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") != "dev-advisor":
         raise http_error(403, "user_required", "Restricted to human users")
@@ -395,9 +395,9 @@ async def list_studio_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentListOut:
-    # Lais A2 (§7): `lead-imob` (Julia, the lead agent) is seeded per org on first
+    # Lais A2 (§7): `julia` (Julia, the lead agent) is seeded per org on first
     # use — an idempotent draft, never published or switched on here.
-    ensure_lead_imob(ctx.org_id, studio_store=store, created_by=ctx.user_id)
+    ensure_julia(ctx.org_id, studio_store=store, created_by=ctx.user_id)
     return AgentListOut(items=[_summary(store, ctx.org_id, a) for a in store.list_agents(ctx.org_id)])
 
 

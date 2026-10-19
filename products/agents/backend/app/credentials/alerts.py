@@ -54,7 +54,7 @@ def _message(alert: ExpiryAlert) -> tuple[str, str]:
     if alert.reason == "revoked":
         return (f"{alert.label}: token revogado", "Renove em Agentes → Credenciais e integrações.")
     if alert.reason == "expired":
-        return (f"{alert.label}: token expirado", "A Julia não consegue usá-lo. Renove em Agentes → Credenciais.")
+        return (f"{alert.label}: token expirado", "A Bia não consegue usá-lo. Renove em Agentes → Credenciais.")
     return (
         f"{alert.label}: expira em {alert.days_left} dia(s)",
         "Renove em Agentes → Credenciais e integrações antes do vencimento.",

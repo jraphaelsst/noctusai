@@ -25,7 +25,7 @@ vi.mock("@/components/studio/ChannelTokenCard", () => ({ ChannelTokenCard: () =>
 
 import ChannelsTab from "../ChannelsTab";
 
-const renderTab = () => render(<MemoryRouter><ChannelsTab agentKey="lead-imob" /></MemoryRouter>);
+const renderTab = () => render(<MemoryRouter><ChannelsTab agentKey="julia" /></MemoryRouter>);
 
 beforeEach(() => {
   mockKeys.mockReturnValue(v({ data: { items: [{ key: "openai_api_key", configured: false }], total: 1 } }));

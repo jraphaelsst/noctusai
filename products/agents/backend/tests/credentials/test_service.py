@@ -14,7 +14,7 @@ from app.credentials.registry import ACADEMIA_API_TOKEN, APPROVAL_RING, SOCIAL_W
 from app.credentials.service import CredentialError
 from tests.credentials.conftest import (
     ANTHROPIC,
-    JULIA_ID,
+    BIA_ID,
     NOW,
     OLD_ACADEMIA,
     ORG_ID,
@@ -95,7 +95,7 @@ class TestWrites:
         [
             ("anthropic_api_key", "not-a-key"),
             ("academia_api_token", "tok_wrong"),
-            ("julia_agent_id", "not-a-uuid"),
+            ("bia_agent_id", "not-a-uuid"),
             ("anthropic_api_key", "   "),
         ],
     )
@@ -136,7 +136,7 @@ class TestRenew:
     async def test_mint_verify_store_then_revoke_old(self, kit):
         old = seed_academia_token(kit, days_left=5)
         outcome = await kit.service.renew(
-            "academia_api_token", actor_user_id=JULIA_ID, fallback_org_id=ORG_ID
+            "academia_api_token", actor_user_id=BIA_ID, fallback_org_id=ORG_ID
         )
         new_secret = kit.store.get("academia_api_token")
         assert new_secret and new_secret != OLD_ACADEMIA
@@ -145,7 +145,7 @@ class TestRenew:
         rows = kit.admin.rows["academia_de_reciclagem"]
         new_row = next(r for r in rows if r["id"] != str(old.id))
         assert new_row["scopes"] == list(ACADEMIA_API_TOKEN.scopes)
-        assert new_row["principal_agent_id"] == str(JULIA_ID)
+        assert new_row["principal_agent_id"] == str(BIA_ID)
         assert new_row["issuer"] == "agents"
         assert new_row["org_id"] == str(ORG_ID)
         old_row = next(r for r in rows if r["id"] == str(old.id))
@@ -194,7 +194,7 @@ class TestRenew:
         assert row["scopes"] == list(SOCIAL_WIRING_API_TOKEN.scopes)
 
     @pytest.mark.asyncio
-    async def test_academia_renew_needs_julia_agent_id(self):
+    async def test_academia_renew_needs_bia_agent_id(self):
         kit = build_kit()
         with pytest.raises(CredentialError) as exc:
             await kit.service.renew("academia_api_token", actor_user_id=None, fallback_org_id=ORG_ID)
@@ -245,7 +245,7 @@ class TestRing:
 class TestExpiryAlerts:
     def test_alerts_for_expiring_expired_and_revoked(self):
         kit = build_kit(academia_api_token=OLD_ACADEMIA, social_wiring_api_token="pk_" + "c" * 64,
-                        julia_agent_id=str(JULIA_ID))
+                        bia_agent_id=str(BIA_ID))
         seed_academia_token(kit, days_left=3)
         kit.admin.seed(
             "social_wiring", "pk_" + "c" * 64, org_id=ORG_ID,

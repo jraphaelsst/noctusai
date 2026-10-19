@@ -2,11 +2,11 @@
  * Studio agent chat adapter — Agent Studio CONTRACT.md §D6, §G "Conversar".
  *
  * Wires the seed `<ChatWindow>` organ (`@noctusai/lib/design-system`) onto
- * `/api/conversations` for a STUDIO agent (`agent_key` != "julia"),
- * mirroring `useJuliaChat.ts`'s shape (REST + one SSE stream per open
+ * `/api/conversations` for a STUDIO agent (`agent_key` != "bia"),
+ * mirroring `useBiaChat.ts`'s shape (REST + one SSE stream per open
  * conversation patches the TanStack cache — no `refetchInterval`) with two
  * differences:
- *   - `agent_key` is a parameter (any studio agent, not just Julia) and
+ *   - `agent_key` is a parameter (any studio agent, not just Bia) and
  *     conversation creation may pass an optional `client_id` (contract §D6).
  *   - No approval seam. §E.3 gives studio agents read-only
  *     `mcp__studio__*` tools with "no write tools" — there is no approval
@@ -45,7 +45,7 @@ import type { Envelope, StudioConversation, StudioMessage } from "@/api/studio/t
 import { formatUsdCost } from "@/lib/utils";
 
 /** Every event name the studio conversation stream emits — mirrors
- * `JULIA_STREAM_EVENTS` minus `approval.*` (no write tools, §E.3). The
+ * `BIA_STREAM_EVENTS` minus `approval.*` (no write tools, §E.3). The
  * `events` list MUST name every one, or the seed transport silently drops
  * it (`seed/lib/frontend/src/realtime.ts`). */
 export const STUDIO_STREAM_EVENTS = [
@@ -258,7 +258,7 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
         }
         // `tool.started`/`tool.finished` no longer build UI state — the
         // persisted `blocks` (via `message.updated`) are the source of
-        // truth (mirrors `useJuliaChat.ts`).
+        // truth (mirrors `useBiaChat.ts`).
         default:
           break;
       }
@@ -302,7 +302,7 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
 export function useStudioSendAdapter(agentKey: string, conversationId: string | null) {
   const qc = useQueryClient();
   // Reactive cooldown countdown — ticked here, not in the organ, mirroring
-  // `useJuliaSendAdapter` (`ChatSendResult.retryAfterSeconds` is purely
+  // `useBiaSendAdapter` (`ChatSendResult.retryAfterSeconds` is purely
   // reactive; `ChatWindow` never runs its own timer).
   const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
 

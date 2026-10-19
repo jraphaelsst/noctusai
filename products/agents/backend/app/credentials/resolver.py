@@ -6,7 +6,7 @@ WHY the seed `AppConfigStore` seam and NOT `resolve_credential`
 ``override → org_settings → platform_settings → env``. Its tier 2
 (`public.platform_settings`) is the platform-WIDE default — a row
 ``anthropic_api_key`` there is a key other products share, and it would be
-served to Julia BEFORE her dedicated env key. Contract §E.5 forbids exactly
+served to Bia BEFORE her dedicated env key. Contract §E.5 forbids exactly
 that ("a dedicated, spend-capped key ... never shared"). So this module uses
 the seed's other credential-resolution seam — the encrypted app-wide store
 (`noctusai_lib.security.app_config`, the one social-wiring uses for its Meta
@@ -19,7 +19,7 @@ at USE time (per request / per turn), so an in-app change is live in this
 process at once and in every other worker within the TTL — no redeploy.
 
 §E.5 invariant: nothing here touches `os.environ`; the only secret that
-reaches the Julia CLI is the Anthropic key, handed to the `env -i` wrapper
+reaches the Bia CLI is the Anthropic key, handed to the `env -i` wrapper
 through `ClaudeAgentOptions.env` (app/runtime/claude_runtime.py).
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ from app.credentials.registry import (
     ACADEMIA_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
-    JULIA_AGENT_ID,
+    BIA_AGENT_ID,
     SOCIAL_WIRING_API_TOKEN,
     CredentialSpec,
 )
@@ -184,14 +184,14 @@ class CredentialResolver:
         key = self.approval_ring().signing_key(now or datetime.now(timezone.utc))
         return key.secret if key else None
 
-    def julia_agent_id(self) -> UUID | None:
-        raw = self.value(JULIA_AGENT_ID)
+    def bia_agent_id(self) -> UUID | None:
+        raw = self.value(BIA_AGENT_ID)
         if not raw:
             return None
         try:
             return UUID(raw)
         except ValueError:
-            logger.error("agents.julia_agent_id_malformed — ignoring the configured value")
+            logger.error("agents.bia_agent_id_malformed — ignoring the configured value")
             return None
 
 
@@ -201,7 +201,7 @@ def get_credential_resolver(settings: Any) -> CredentialResolver:
 
 def _missing_runtime_keys(resolver: CredentialResolver, provider: str = "anthropic") -> list[str]:
     """The PLATFORM-held key the runtime serving ``provider`` needs. Only the
-    Claude Agent SDK runtime holds one (Julia's dedicated Anthropic key); an
+    Claude Agent SDK runtime holds one (Bia's dedicated Anthropic key); an
     ``openai`` (``runtime='llm'``) turn uses a per-ORG key resolved at turn
     time and fails closed there (424), so the platform needs nothing — an
     OpenAI-only org must not need an Anthropic key (contract §10.2 B1)."""
@@ -216,14 +216,14 @@ def _missing_academia_keys(resolver: CredentialResolver) -> list[str]:
         for env, present in (
             ("APPROVAL_ASSERTION_SECRETS", bool(resolver.approval_signing_secret())),
             ("ACADEMIA_API_TOKEN", bool(resolver.academia_api_token())),
-            ("JULIA_AGENT_ID", resolver.julia_agent_id() is not None),
+            ("BIA_AGENT_ID", resolver.bia_agent_id() is not None),
         )
         if not present
     ]
 
 
 def require_resolved_runtime_config(resolver: CredentialResolver, provider: str = "anthropic") -> None:
-    """Deploy-context guard for a Claude-SDK turn (Julia and studio alike): the
+    """Deploy-context guard for a Claude-SDK turn (Bia and studio alike): the
     Anthropic key is the only value both toolsets need. PER-PROVIDER (Lais B1):
     for any other provider no platform key is required (see
     ``_missing_runtime_keys``)."""
@@ -235,7 +235,7 @@ def require_resolved_runtime_config(resolver: CredentialResolver, provider: str 
 
 
 def require_resolved_academia_config(resolver: CredentialResolver) -> None:
-    """Deploy-context guard for an ``academia``-toolset (Julia) turn — run
+    """Deploy-context guard for an ``academia``-toolset (Bia) turn — run
     at that turn's launch, never for a studio turn, which uses none of
     these three keys."""
     if not is_deploy_context():
@@ -248,10 +248,10 @@ def require_resolved_academia_config(resolver: CredentialResolver) -> None:
 def require_resolved_prod_config(resolver: CredentialResolver) -> None:
     """Deploy-context guard over RESOLVED values (DB or env) — the
     DB-aware successor of `require_prod_config([...])` for all four keys
-    the Julia runtime needs. Lists every gap at once. The per-turn path
+    the Bia runtime needs. Lists every gap at once. The per-turn path
     uses the two scoped halves above (`require_resolved_runtime_config`
     + `require_resolved_academia_config`) so a studio turn never depends
-    on Julia-only config."""
+    on Bia-only config."""
     if not is_deploy_context():
         return
     missing = _missing_runtime_keys(resolver) + _missing_academia_keys(resolver)

@@ -1,6 +1,6 @@
 /**
  * useStudioChat.ts hook tests — Agent Studio CONTRACT.md §D6, §G "Conversar".
- * Mirrors `useJuliaChat.test.ts`'s mocking convention (`@/lib/api`,
+ * Mirrors `useBiaChat.test.ts`'s mocking convention (`@/lib/api`,
  * `@noctusai/seed/infra`, `useRealtimeStream` captured, no real HTTP/SSE).
  */
 import React from "react";

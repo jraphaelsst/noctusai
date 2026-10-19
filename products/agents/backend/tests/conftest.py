@@ -35,7 +35,7 @@ _mod.purge_shadowing_editable_finders(_LIB)
 # PRESENCE is a switch, not a value: `get_slot_pool()` (and every sibling
 # agents runtime factory) hands back the REAL implementation when a key
 # resolves, and `RealSlotPool` sweeps via `RealSweeper`, which spawns
-# `/app/bin/julia-cli-slot` as a per-slot unix user. That path exists only
+# `/app/bin/bia-cli-slot` as a per-slot unix user. That path exists only
 # inside the container, so on any developer machine the spawn fails, all
 # three slots are quarantined at startup, and the three slot-pool tests in
 # `test_main.py` fail on `assert [0, 1, 2] == []`.

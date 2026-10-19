@@ -318,7 +318,7 @@ services:
     # seed `noctusai_lib.domain.help_chat`) read ANTHROPIC_API_KEY. Mapped
     # from a DEDICATED, spend-capped `IGIG_ANTHROPIC_API_KEY` (compose
     # ${...} INTERPOLATION from deploy/fleet/.env.fleet, same pattern as the
-    # `agents` service's JULIA key) — never the bare fleet key dev-team reads.
+    # `agents` service's JULIA_ANTHROPIC_API_KEY) — never the bare fleet key dev-team reads.
     # env-fleet-empty-ok — REVIEWED: unset ⇒ the container stays healthy and
     # both features answer 503 `ia_nao_configurada` (loud, never faked).
     # The VALUE must be set in deploy/fleet/.env.fleet on the VPS (owner).
@@ -353,7 +353,7 @@ services:
       retries: 3
       start_period: 20s
 
-  # ── academia-de-reciclagem 8015 — Julia's real-life project knowledge base ─
+  # ── academia-de-reciclagem 8015 — Bia's real-life project knowledge base ─
   # (roadmap julia-agents-academia-2026-09, M6 cutover). Single product
   # token, append-only kb_revisions, imported sibling-workspace history.
   academia-de-reciclagem:
@@ -390,8 +390,8 @@ services:
       - /tmp:mode=1777,size=64m
     mem_limit: 512m
 
-  # ── agents 8016 — Julia chat, approvals, persona; lists One Chat's toggle ──
-  # (roadmap julia-agents-academia-2026-09, M6 cutover). Julia reaches
+  # ── agents 8016 — Bia chat, approvals, persona; lists One Chat's toggle ──
+  # (roadmap julia-agents-academia-2026-09, M6 cutover). Bia reaches
   # academia ONLY through her own scoped product token (contract §E.6);
   # her Claude CLI subprocess is spawned per-conversation under one of 3
   # dedicated slot uids (contract §E.11) — never the container's own uid.
@@ -399,14 +399,14 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-agents:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-agents
-    # Merge the FULL prod env, then map Julia's DEDICATED, spend-capped key
+    # Merge the FULL prod env, then map Bia's DEDICATED, spend-capped key
     # (contract §E.5 — never shared with any other product's LLM calls) onto
     # the container's ANTHROPIC_API_KEY. `JULIA_ANTHROPIC_API_KEY` is a
     # SEPARATE deploy/fleet/.env.fleet key (compose ${...} INTERPOLATION, not
     # env_file:) from the bare `ANTHROPIC_API_KEY` dev-team reads above — the
     # bare name must never reach this container. 🔴 2026-09-16 incident: this
     # key was only ever documented as a root `.env` entry, so it silently
-    # interpolated to '' — every Julia turn failed at the CLI-spawn step
+    # interpolated to '' — every Bia turn failed at the CLI-spawn step
     # while /api/health stayed 200. Must be listed (names only) in
     # deploy/fleet/env.fleet.keys AND actually set, with a value, in
     # deploy/fleet/.env.fleet on the VPS — `check_prod_compose_env_manifest_
@@ -439,14 +439,14 @@ services:
     cap_drop:
       - ALL
     # SETUID/SETGID/KILL — nothing else. I4 (contract §E.11): never
-    # CHOWN, FOWNER or DAC_OVERRIDE. contract §E.11 spawns the Julia CLI
-    # subprocess under a per-conversation slot uid (`user="julia-cli-
+    # CHOWN, FOWNER or DAC_OVERRIDE. contract §E.11 spawns the Bia CLI
+    # subprocess under a per-conversation slot uid (`user="bia-cli-
     # <K>"` on ClaudeAgentOptions); dropping to that uid AT EXEC
     # (`bin/entrypoint.sh`'s own `setpriv`, not a bare `USER` directive
     # — verified empirically that `USER` alone never populates AMBIENT
     # caps for a non-root process, moby#45491) needs CAP_SETUID +
     # CAP_SETGID effective on the process making that switch — the
-    # SAME two caps also let `bin/julia-cli-exec`'s own `setpriv
+    # SAME two caps also let `bin/bia-cli-exec`'s own `setpriv
     # --clear-groups` run for ANY slot uid (setgroups always needs
     # CAP_SETGID, even for an already-matching uid). CAP_KILL: `noctus`
     # must be able to signal a slot uid's CLI subprocess (a DIFFERENT
@@ -454,7 +454,7 @@ services:
     # signalling a different uid without it is denied (EPERM), leaking
     # a hung CLI process for the container's whole lifetime. Nothing
     # wider is ever added: no CAP_CHOWN/FOWNER/DAC_OVERRIDE — the slot
-    # sweep (`bin/julia-cli-slot`) only ever chmod/rm's files the
+    # sweep (`bin/bia-cli-slot`) only ever chmod/rm's files the
     # sweeping uid already OWNS (only that uid can ever create a file
     # under its own mode-0700 tmpfs), so no capability is needed for
     # that either. NOT CAP_SETPCAP: every `setpriv --bounding-set=`
@@ -472,18 +472,18 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
-    # One dedicated tmpfs PER SLOT for the Julia CLI's own per-
-    # conversation HOME/TMPDIR — each owned by its own `julia-cli-K`
+    # One dedicated tmpfs PER SLOT for the Bia CLI's own per-
+    # conversation HOME/TMPDIR — each owned by its own `bia-cli-K`
     # uid/gid alone, mode 0700 (I3: nothing from one conversation's
     # slot is readable by another slot's uid — verified empirically
     # both ways, and by neither slot uid). 40m each (24 MiB transcript
     # cap plus working space, contract §E.11 user decision 2026-09-15).
-    # `/run/julia-handoff` is the ONE shared mount across slots —
+    # `/run/bia-handoff` is the ONE shared mount across slots —
     # owned by `noctus` (uid/gid 1000), mode 0711 (traversable by every
     # slot uid — "other" — but not LISTABLE, so a slot can only ever
     # reach a file whose exact path it already expects, never discover
     # a sibling slot's files by listing); `noctus` writes each slot's
-    # handoff file with mode 0640 and group `julia-cli-K`, so only that
+    # handoff file with mode 0640 and group `bia-cli-K`, so only that
     # one slot uid (via its own primary group after `--clear-groups`)
     # can read it.
     #
@@ -496,10 +496,10 @@ services:
     # `noctus` closes the one path a slot uid could otherwise have
     # used to leave a file `noctus` might later trust.
     tmpfs:
-      - /run/julia-0:uid=2000,gid=2000,mode=0700,size=40m
-      - /run/julia-1:uid=2001,gid=2001,mode=0700,size=40m
-      - /run/julia-2:uid=2002,gid=2002,mode=0700,size=40m
-      - /run/julia-handoff:uid=1000,gid=1000,mode=0711,size=80m
+      - /run/bia-0:uid=2000,gid=2000,mode=0700,size=40m
+      - /run/bia-1:uid=2001,gid=2001,mode=0700,size=40m
+      - /run/bia-2:uid=2002,gid=2002,mode=0700,size=40m
+      - /run/bia-handoff:uid=1000,gid=1000,mode=0711,size=80m
       - /tmp:mode=1770,uid=0,gid=1000,size=64m
     # A small explicit /dev/shm — python/uvicorn have no real shared-
     # memory need here; explicit + small beats an unexamined default.
@@ -511,7 +511,7 @@ services:
     # rather than shrink the tmpfs caps.
     mem_limit: 1g
     # `init: true` — a minimal PID-1 init (tini) reaps zombies from any
-    # slot's Julia CLI subprocess tree so a killed-but-unreaped child
+    # slot's Bia CLI subprocess tree so a killed-but-unreaped child
     # (see the CAP_KILL comment above) never accumulates; without it
     # `noctus` (not PID 1 here — the entrypoint execs INTO it, so it IS
     # PID 1) would have to reap its own children, which the SDK's

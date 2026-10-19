@@ -109,8 +109,8 @@ class TestAuthBoundary:
         resp = studio.get(f"{BASE}/isa")
         assert resp.status_code == 404
         assert resp.json()["code"] == "agent_not_found"
-        # The other org sees none of OUR agents (only its own seeded default, `lead-imob`).
-        assert [a["key"] for a in studio.get(BASE).json()["items"]] == ["lead-imob"]
+        # The other org sees none of OUR agents (only its own seeded default, `julia`).
+        assert [a["key"] for a in studio.get(BASE).json()["items"]] == ["julia"]
         assert studio.patch(f"{BASE}/isa", json={"nome": "hijack"}).status_code == 404
         # Their own agent with the same key cannot reach our version id.
         _create(studio)
@@ -137,7 +137,7 @@ class TestAgents:
         assert resp.status_code == 409
         assert resp.json()["code"] == "key_taken"
 
-    @pytest.mark.parametrize("key", ["julia", "one-chat"])
+    @pytest.mark.parametrize("key", ["bia", "one-chat"])
     def test_legacy_default_keys_are_reserved(self, studio, key):
         resp = studio.post(BASE, json={"key": key, "nome": "X"})
         assert resp.status_code == 409
@@ -148,20 +148,20 @@ class TestAgents:
         assert studio.post(BASE, json=body).status_code == 422
 
     def test_list_includes_legacy_agents(self, studio):
-        studio.store.add_legacy_agent(studio.org_id, "julia", "Julia")
+        studio.store.add_legacy_agent(studio.org_id, "bia", "Bia")
         _create(studio)
         items = {i["key"]: i for i in studio.get(BASE).json()["items"]}
-        assert items["julia"]["definition_mode"] == "legacy"
-        assert items["julia"]["tem_rascunho"] is False
+        assert items["bia"]["definition_mode"] == "legacy"
+        assert items["bia"]["tem_rascunho"] is False
         assert items["isa"]["tem_rascunho"] is True
 
     def test_legacy_agent_on_studio_route_409(self, studio):
-        studio.store.add_legacy_agent(studio.org_id, "julia", "Julia")
+        studio.store.add_legacy_agent(studio.org_id, "bia", "Bia")
         for resp in (
-            studio.get(f"{BASE}/julia"),
-            studio.patch(f"{BASE}/julia", json={"nome": "X"}),
-            studio.post(f"{BASE}/julia/draft", json={}),
-            studio.get(f"{BASE}/julia/clients"),
+            studio.get(f"{BASE}/bia"),
+            studio.patch(f"{BASE}/bia", json={"nome": "X"}),
+            studio.post(f"{BASE}/bia/draft", json={}),
+            studio.get(f"{BASE}/bia/clients"),
         ):
             assert resp.status_code == 409
             assert resp.json()["code"] == "not_studio_agent"

@@ -114,9 +114,9 @@ def agents_client(client):
     # doesn't care about turn behaviour still needs SOMETHING here. Both
     # are G2's REAL implementations (`app.runtime.fake_runtime.
     # FakeAgentRuntime` / `app.runtime.broker.StoreApprovalBroker`) —
-    # never a G1b-local stand-in. `get_build_julia_spec_dep` is NOT
-    # overridden: G2's real `build_julia_spec` reads two shipped files
-    # (`JULIA.md` / `spec.yaml`) and a persona row — no test double needed.
+    # never a G1b-local stand-in. `get_build_bia_spec_dep` is NOT
+    # overridden: G2's real `build_bia_spec` reads two shipped files
+    # (`BIA.md` / `spec.yaml`) and a persona row — no test double needed.
     #
     # `get_approval_broker(settings)` (the un-overridden factory) is a
     # PROCESS-WIDE singleton bound to whatever `get_approval_store(settings)`
@@ -171,16 +171,16 @@ def bind_user(client, *, user_id: UUID = DEFAULT_USER_ID, org_id: UUID = DEFAULT
 
 
 def seed_active_agent_and_persona(agents_client, *, ativo: bool = True):
-    """Julia, active, with a published persona — the minimum fixture every
+    """Bia, active, with a published persona — the minimum fixture every
     turn-loop / persona test needs."""
     agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
-    agent = agents_client.stores.agents.set_active(DEFAULT_ORG_ID, "julia", ativo)
+    agent = agents_client.stores.agents.set_active(DEFAULT_ORG_ID, "bia", ativo)
     from app.stores.personas import PersonaInput
 
     agents_client.stores.personas.create_version(
         DEFAULT_ORG_ID,
         agent.id,
-        PersonaInput(nome="Julia", papel="assistente", model="claude-sonnet-5", effort="medium"),
+        PersonaInput(nome="Bia", papel="assistente", model="claude-sonnet-5", effort="medium"),
         created_by=DEFAULT_USER_ID,
     )
     return agent

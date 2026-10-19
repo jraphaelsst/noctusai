@@ -1,5 +1,5 @@
 """Contract §E.3 canonical fixture — the real published SSE sequence for
-one Julia escrita turn, asserted against
+one Bia escrita turn, asserted against
 ``products/agents/contract-fixtures/escrita-turn.events.json`` using its
 own ``comparison_rule``.
 

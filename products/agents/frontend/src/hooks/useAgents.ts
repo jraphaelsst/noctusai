@@ -4,7 +4,7 @@
  *
  * `GET /api/agents` returns `estado_externo: {auto_reply_enabled} | null`
  * for `one-chat` (live from social-wiring), plus `aviso` when it could not
- * be reached / is not configured yet. `julia`'s own `ativo` is the local
+ * be reached / is not configured yet. `bia`'s own `ativo` is the local
  * source of truth; `one-chat`'s `ativo` mirrors whatever social-wiring last
  * reported (contract: "the response reflects social-wiring's returned
  * state").

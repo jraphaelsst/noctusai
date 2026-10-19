@@ -128,7 +128,7 @@ class _InitializeOnlySuccessTransport:
 
 def _spec() -> AgentSpec:
     return AgentSpec(
-        key="julia",
+        key="bia",
         model="claude-sonnet-5",
         effort="medium",
         prompt_append="be helpful",
@@ -159,7 +159,7 @@ def _runtime(*, transport_factory) -> ClaudeAgentSdkRuntime:
         academia_api=FakeAcademiaApi(),
         agent_id=uuid4(),
         approval_secret="s3cr3t",
-        plugin_path="/app/agents/julia/plugin",
+        plugin_path="/app/agents/bia/plugin",
         approvals=FakeApprovalStore(),
         slot_pool=FakeSlotPool(1),
         transcripts=FakeTranscriptStore(),

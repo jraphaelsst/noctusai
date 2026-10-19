@@ -26,9 +26,9 @@ function newClient() {
   });
 }
 
-const JULIA = {
-  key: "julia",
-  nome: "Julia",
+const BIA = {
+  key: "bia",
+  nome: "Bia",
   runtime: "claude_sdk",
   owner_product: null,
   ativo: true,
@@ -50,21 +50,21 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("useAgents", () => {
   it("GETs /api/agents and returns the item list", async () => {
-    mockGet.mockResolvedValue({ items: [JULIA, ONE_CHAT], total: 2 });
+    mockGet.mockResolvedValue({ items: [BIA, ONE_CHAT], total: 2 });
     const { useAgents } = await import("@/hooks/useAgents");
     const qc = newClient();
     const { result } = renderHook(() => useAgents(), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
     expect(mockGet).toHaveBeenCalledWith("/api/agents");
-    expect(result.current.data?.map((a) => a.key)).toEqual(["julia", "one-chat"]);
+    expect(result.current.data?.map((a) => a.key)).toEqual(["bia", "one-chat"]);
   });
 });
 
 describe("useToggleAgent", () => {
   it("POSTs /api/agents/{key}/toggle with {ativo} and reconciles on success", async () => {
-    mockGet.mockResolvedValue({ items: [JULIA], total: 1 });
-    mockPost.mockResolvedValue({ ...JULIA, ativo: false });
+    mockGet.mockResolvedValue({ items: [BIA], total: 1 });
+    mockPost.mockResolvedValue({ ...BIA, ativo: false });
     const { useAgents } = await import("@/hooks/useAgents");
     const { useToggleAgent } = await import("@/hooks/useAgents");
     const qc = newClient();
@@ -72,9 +72,9 @@ describe("useToggleAgent", () => {
     await waitFor(() => expect(agents.result.current.showSkeleton).toBe(false));
 
     const toggle = renderHook(() => useToggleAgent(), { wrapper: wrapper(qc) });
-    await toggle.result.current.mutateAsync({ key: "julia", ativo: false });
+    await toggle.result.current.mutateAsync({ key: "bia", ativo: false });
 
-    expect(mockPost).toHaveBeenCalledWith("/api/agents/julia/toggle", { ativo: false });
+    expect(mockPost).toHaveBeenCalledWith("/api/agents/bia/toggle", { ativo: false });
     await waitFor(() => expect(agents.result.current.data?.[0].ativo).toBe(false));
   });
 

@@ -8,7 +8,7 @@ Drives the REAL ``app.runtime.slots`` code — :class:`RealSlotPool` /
 :class:`TurnSlot` — from INSIDE the real image, rather than re-implementing
 the release/sweep/kill orchestration here. ``RealSweeper.sweep()``
 internally does ``asyncio.create_subprocess_exec(slot_script_path,
-"--julia-sweep", user=slot.user_name, ...)``, and
+"--bia-sweep", user=slot.user_name, ...)``, and
 ``_BaseSlotPool._kill_uid_processes`` does ``os.kill(pid, SIGKILL)``
 across a uid boundary — BOTH need CAP_SETUID/SETGID/KILL EFFECTIVE on
 THIS process, which is exactly what the entrypoint-extracted ``setpriv``
@@ -17,8 +17,8 @@ This is the SAME reason ``uvicorn_credentials_driver.py`` needs that
 bootstrap for a bare wrapper spawn — it is not specific to asyncio.
 
 ``settings=None`` is deliberate: :func:`app.runtime.slots._resolve_slot_
-count` falls back to the bare ``JULIA_CLI_SLOTS`` env var
-(``getattr(None, "julia_cli_slots", None)`` is ``None``), which the image
+count` falls back to the bare ``BIA_CLI_SLOTS`` env var
+(``getattr(None, "bia_cli_slots", None)`` is ``None``), which the image
 already sets to ``3`` — no full ``SeedSettings`` construction (and its
 Supabase/JWT config requirements) is needed just to exercise the pool.
 

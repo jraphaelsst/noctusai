@@ -28,14 +28,14 @@ _SHM_SIZE_FLAG = "--shm-size"
 #: (``run_proof.py``); values are the compose key(s) each gate reads.
 GATE_NAMES = ("cap_drop_and_add", "no_new_privileges", "read_only")
 
-#: Contract §E.11 — one tmpfs per slot at ``/run/julia-<K>``, plus the
-#: single shared ``/run/julia-handoff``. DERIVED below, never hand-copied
+#: Contract §E.11 — one tmpfs per slot at ``/run/bia-<K>``, plus the
+#: single shared ``/run/bia-handoff``. DERIVED below, never hand-copied
 #: (same rationale as the module docstring for ``derive_security_flags``):
 #: a compose edit that drops a slot's mount, or changes its owner/mode,
 #: must change what THIS module reports too, so the SEC-C harness catches
 #: it instead of silently keeping a stale hand-written expectation.
-_SLOT_MOUNT_RE = re.compile(r"^/run/julia-(\d+)$")
-HANDOFF_MOUNT = "/run/julia-handoff"
+_SLOT_MOUNT_RE = re.compile(r"^/run/bia-(\d+)$")
+HANDOFF_MOUNT = "/run/bia-handoff"
 
 
 def load_service(compose_path: Path, service: str) -> dict[str, Any]:
@@ -149,14 +149,14 @@ def _parse_tmpfs_entry(entry: str) -> dict[str, str]:
 
 
 def slot_tmpfs_specs(compose_path: Path, service: str) -> list[dict[str, str]]:
-    """Per-slot ``/run/julia-<K>`` tmpfs entries, DERIVED from the compose
+    """Per-slot ``/run/bia-<K>`` tmpfs entries, DERIVED from the compose
     ``tmpfs:`` list (contract §E.11) — sorted by slot index, each carrying
     ``index`` (str, e.g. ``"0"``) plus every raw tmpfs option (``mount``,
     ``uid``, ``gid``, ``mode``, ``size``, ``raw``).
 
     Raises ``ValueError`` if the slot indices aren't a contiguous
-    ``0..N-1`` run — a gap (e.g. ``julia-0`` and ``julia-2`` but no
-    ``julia-1``) is a compose bug this harness must catch, never silently
+    ``0..N-1`` run — a gap (e.g. ``bia-0`` and ``bia-2`` but no
+    ``bia-1``) is a compose bug this harness must catch, never silently
     tolerate as "2 slots with weird numbering."
     """
     svc = load_service(compose_path, service)
@@ -178,7 +178,7 @@ def slot_tmpfs_specs(compose_path: Path, service: str) -> list[dict[str, str]]:
 
 
 def handoff_tmpfs_spec(compose_path: Path, service: str) -> dict[str, str]:
-    """The single shared ``/run/julia-handoff`` tmpfs entry (contract
+    """The single shared ``/run/bia-handoff`` tmpfs entry (contract
     §E.11). Raises ``KeyError`` (never returns ``{}``) if compose doesn't
     declare it — the harness must fail loud, not silently skip the
     handoff-mount checks."""
@@ -193,7 +193,7 @@ def handoff_tmpfs_spec(compose_path: Path, service: str) -> dict[str, str]:
 def slot_count(compose_path: Path, service: str) -> int:
     """The number of per-slot tmpfs mounts compose declares — the harness's
     OWN derived slot count, independent of (and cross-checked against) the
-    image's ``JULIA_CLI_SLOTS`` env var."""
+    image's ``BIA_CLI_SLOTS`` env var."""
     return len(slot_tmpfs_specs(compose_path, service))
 
 

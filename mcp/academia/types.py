@@ -1,7 +1,7 @@
 """Pydantic schemas — MCP tool INPUT only (CONTRACT §C).
 
 Field names are PT-BR, exactly as the sibling's tools defined them and
-as the CONTRACT §C "Change" column specifies — Julia's skills and tool
+as the CONTRACT §C "Change" column specifies — Bia's skills and tool
 calls are already written against these names.
 
 Every tool's OUTPUT is the bare HTTP-response envelope the client

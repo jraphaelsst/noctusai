@@ -7,7 +7,7 @@ family marker) or a digest ``fingerprint`` (ring keys) — never more.
 
 Renewal ("Renovar", product tokens) — ordering is the safety property:
   1. look up the CURRENT token's row in the target product (by hash);
-  2. mint a new token there (same org, registry scopes, Julia principal,
+  2. mint a new token there (same org, registry scopes, Bia principal,
      issuer ``agents``, 90 days) via the seed ``ProductTokenAdmin``;
   3. probe the NEW token live — on failure revoke it and stop (the old one
      is untouched and still in use);
@@ -35,7 +35,7 @@ from app.credentials.registry import (
     APPROVAL_RING,
     CREDENTIALS,
     ISSUER,
-    JULIA_AGENT_ID,
+    BIA_AGENT_ID,
     TOKEN_TTL_DAYS,
     CredentialSpec,
     get_spec,
@@ -85,7 +85,7 @@ class CredentialStatus:
     source: str | None  # "db" | "env" | None
     prefix: str | None = None
     fingerprint: str | None = None
-    value: str | None = None  # non-secret config only (julia_agent_id)
+    value: str | None = None  # non-secret config only (bia_agent_id)
     expires_at: datetime | None = None
     days_left: int | None = None
     last_used_at: datetime | None = None
@@ -243,9 +243,9 @@ class CredentialService:
             warnings.append("Token revogado — renove.")
             severity = "critical"
         if spec.bind_principal:
-            julia = self._resolver.julia_agent_id()
-            if julia is not None and info.principal_agent_id != julia:
-                warnings.append("principal_agent_id do token ≠ JULIA_AGENT_ID — as escritas serão recusadas.")
+            bia = self._resolver.bia_agent_id()
+            if bia is not None and info.principal_agent_id != bia:
+                warnings.append("principal_agent_id do token ≠ BIA_AGENT_ID — as escritas serão recusadas.")
                 severity = "critical"
         return CredentialStatus(
             **base,
@@ -316,11 +316,11 @@ class CredentialService:
             raise CredentialError(422, "invalid_value", "Um token de produto começa com pk_.")
         if spec.kind == "api_key" and not value.startswith("sk-"):
             raise CredentialError(422, "invalid_value", "Uma chave Anthropic começa com sk-.")
-        if spec is JULIA_AGENT_ID:
+        if spec is BIA_AGENT_ID:
             try:
                 value = str(UUID(value))
             except ValueError as exc:
-                raise CredentialError(422, "invalid_value", "JULIA_AGENT_ID deve ser um UUID.") from exc
+                raise CredentialError(422, "invalid_value", "BIA_AGENT_ID deve ser um UUID.") from exc
         self._require_writable()
         self._handle.store.put(spec.store_key, value)
         logger.info("agents.credential_set credential=%s", spec.name)
@@ -373,11 +373,11 @@ class CredentialService:
 
         principal: UUID | None = None
         if spec.bind_principal:
-            principal = self._resolver.julia_agent_id() or (old.principal_agent_id if old else None)
+            principal = self._resolver.bia_agent_id() or (old.principal_agent_id if old else None)
             if principal is None:
                 raise CredentialError(
                     409, "principal_missing",
-                    "Defina JULIA_AGENT_ID antes de renovar o token da academia.",
+                    "Defina BIA_AGENT_ID antes de renovar o token da academia.",
                 )
 
         now = self._clock()

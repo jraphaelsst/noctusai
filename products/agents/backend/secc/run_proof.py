@@ -5,7 +5,7 @@ roadmap D2 to the per-conversation slot layout).
 
 Builds the REAL agents ``runtime`` image (plus the proof-only
 ``secc-proof`` stage) and asserts the isolation properties
-``bin/entrypoint.sh`` / ``bin/julia-cli-exec`` / ``bin/julia-cli-slot`` /
+``bin/entrypoint.sh`` / ``bin/bia-cli-exec`` / ``bin/bia-cli-slot`` /
 ``products/agents/docker-compose.yml``'s security block claim, against a
 container started EXACTLY the way prod will start it — the docker-run
 flags are DERIVED from the compose file (``secc.compose_flags``), never
@@ -76,17 +76,17 @@ REPO_ROOT = _BACKEND_DIR.parents[2]
 COMPOSE_PATH = REPO_ROOT / "products/agents/docker-compose.yml"
 DOCKERFILE = REPO_ROOT / "products/agents/backend/Dockerfile"
 ENTRYPOINT_SH = REPO_ROOT / "products/agents/backend/bin/entrypoint.sh"
-WRAPPER_SH = REPO_ROOT / "products/agents/backend/bin/julia-cli-exec"
-SLOT_SCRIPT_SH = REPO_ROOT / "products/agents/backend/bin/julia-cli-slot"
+WRAPPER_SH = REPO_ROOT / "products/agents/backend/bin/bia-cli-exec"
+SLOT_SCRIPT_SH = REPO_ROOT / "products/agents/backend/bin/bia-cli-slot"
 DRIVER_SCRIPT = _BACKEND_DIR / "secc" / "uvicorn_credentials_driver.py"
 POOL_DRIVER_SCRIPT = _BACKEND_DIR / "secc" / "slot_pool_driver.py"
 HANDOFF_DRIVER_SCRIPT = _BACKEND_DIR / "secc" / "handoff_check_driver.py"
 BUILD_AND_PUSH_SH = REPO_ROOT / "scripts/infra/build-and-push.sh"
 BUILD_AND_PUSH_WORKFLOW = REPO_ROOT / ".github/workflows/build-and-push.yml"
 
-_WRAPPER_PATH_IN_IMAGE = "/app/bin/julia-cli-exec"
+_WRAPPER_PATH_IN_IMAGE = "/app/bin/bia-cli-exec"
 _ENTRYPOINT_PATH_IN_IMAGE = "/app/bin/entrypoint.sh"
-_SLOT_SCRIPT_PATH_IN_IMAGE = "/app/bin/julia-cli-slot"
+_SLOT_SCRIPT_PATH_IN_IMAGE = "/app/bin/bia-cli-slot"
 _BUNDLED_CLI_PATH_IN_IMAGE = "/usr/local/bin/claude-bundled"
 
 # Non-secret placeholders only — this repo is PUBLIC (no client/company/
@@ -105,7 +105,7 @@ PLACEHOLDER_ENV = {
     "CORS_ORIGINS": "http://localhost:5173",
     "ANTHROPIC_API_KEY": "",
     "ACADEMIA_API_TOKEN": "secc-proof-placeholder-token",
-    "JULIA_AGENT_ID": "00000000-0000-0000-0000-000000000000",
+    "BIA_AGENT_ID": "00000000-0000-0000-0000-000000000000",
     "SOCIAL_WIRING_API_TOKEN": "secc-proof-placeholder-token",
     "APPROVAL_ASSERTION_SECRETS": "secc-proof-placeholder-secret",
 }
@@ -212,7 +212,7 @@ class Proof:
 
     def check_wrapper_entrypoint_slot_byte_identical(self) -> bool:
         """Extends the original wrapper/entrypoint byte-identity proof to
-        ``bin/julia-cli-slot`` too (contract §E.11 / roadmap D1's own
+        ``bin/bia-cli-slot`` too (contract §E.11 / roadmap D1's own
         Dockerfile comment: "extending the sha256 proof to cover it too is
         roadmap D2's row, not yet done here" — done here)."""
         ok = True
@@ -263,7 +263,7 @@ class Proof:
     def check1_image_slot_users_and_env(self) -> bool:
         overall = True
         specs = slot_tmpfs_specs(COMPOSE_PATH, "agents")
-        expected_users = {f"julia-cli-{s['index']}" for s in specs}
+        expected_users = {f"bia-cli-{s['index']}" for s in specs}
         expected_uids = {int(s["uid"]) for s in specs}
 
         proc = _run(
@@ -298,7 +298,7 @@ class Proof:
             detail="uid 1001 present in /etc/passwd" if uid_1001_present else "uid 1001 absent",
         ) and overall
 
-        # Contract §E.11 image section, verbatim: "Slot users `julia-cli-K`
+        # Contract §E.11 image section, verbatim: "Slot users `bia-cli-K`
         # with uid AND gid `2000+K`." `useradd --user-group` creates a
         # matching-NAME group but does NOT pin its gid to the uid — on
         # this base image it auto-allocates from the system gid range
@@ -320,7 +320,7 @@ class Proof:
             timeout=20,
         )
         id_ok = proc.returncode == 0
-        groups_in_output = set(re.findall(r"\d+\((julia-cli-\d+)\)", proc.stdout))
+        groups_in_output = set(re.findall(r"\d+\((bia-cli-\d+)\)", proc.stdout))
         groups_exactly_slots = id_ok and groups_in_output == expected_users
         overall = self.record(
             "e11_check1_noctus_groups_exactly_slot_groups", groups_exactly_slots,
@@ -402,17 +402,17 @@ class Proof:
         flags = derive_security_flags(COMPOSE_PATH, "agents")
         slot0 = next(s for s in slot_tmpfs_specs(COMPOSE_PATH, "agents") if s["index"] == "0")
 
-        missing = mutate_tmpfs_flag(flags, "/run/julia-0", None)
+        missing = mutate_tmpfs_flag(flags, "/run/bia-0", None)
         overall = self._run_with_mutated_flags("missing_slot_mount", missing) and overall
 
         wrong_owner_entry = re.sub(
             rf"uid={slot0['uid']},gid={slot0['gid']}", "uid=9999,gid=9999", slot0["raw"]
         )
-        wrong_owner = mutate_tmpfs_flag(flags, "/run/julia-0", wrong_owner_entry)
+        wrong_owner = mutate_tmpfs_flag(flags, "/run/bia-0", wrong_owner_entry)
         overall = self._run_with_mutated_flags("wrong_owner", wrong_owner) and overall
 
         wrong_mode_entry = re.sub(rf"mode={slot0['mode']}", "mode=0755", slot0["raw"])
-        wrong_mode = mutate_tmpfs_flag(flags, "/run/julia-0", wrong_mode_entry)
+        wrong_mode = mutate_tmpfs_flag(flags, "/run/bia-0", wrong_mode_entry)
         overall = self._run_with_mutated_flags("wrong_mode", wrong_mode) and overall
         return overall
 
@@ -441,7 +441,7 @@ class Proof:
             detail=f"exit={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr.strip()[-200:]}",
         ) and overall
 
-        proc = _exec_as("2000", {"CLAUDE_CONFIG_DIR": "/run/julia-1/home/.claude"})
+        proc = _exec_as("2000", {"CLAUDE_CONFIG_DIR": "/run/bia-1/home/.claude"})
         ok = proc.returncode == 126 and proc.stdout.strip() == "" and "does not match the expected" in proc.stderr
         overall = self.record(
             "e11_check3_wrapper_refuses_mismatched_config_dir", ok,
@@ -554,13 +554,13 @@ class Proof:
     def run_slot_driver(self) -> dict | None:
         setpriv_prefix = self._entrypoint_setpriv_prefix()
         sentinel = "SECC-PERSONA-SENTINEL-" + uuid.uuid4().hex
-        append_path_in_image = "/run/julia-handoff/0/append.md"
+        append_path_in_image = "/run/bia-handoff/0/append.md"
 
         # Seed as `noctus` (uid 1000) — it OWNS the shared handoff mount
         # (compose: uid=1000,gid=1000), so no elevated capability is
         # needed for any of this. Root uid 0 CANNOT do this in this
         # container (cap_drop: ALL strips CAP_DAC_OVERRIDE too — verified
-        # live: `docker exec --user 0 ... mkdir /run/julia-handoff/0`
+        # live: `docker exec --user 0 ... mkdir /run/bia-handoff/0`
         # itself gets EACCES) — a real, if orthogonal, illustration of
         # I4's "root isn't privileged here either" intent. Only an EMPTY
         # handoff directory + the (unrelated) append.md persona file are
@@ -573,10 +573,10 @@ class Proof:
         setup = _run(
             [
                 "docker", "exec", "--user", "noctus", self.main_container, "sh", "-c",
-                f"mkdir -p /run/julia-handoff/0 && chmod 0750 /run/julia-handoff/0 "
-                f"&& chgrp julia-cli-0 /run/julia-handoff/0 "
+                f"mkdir -p /run/bia-handoff/0 && chmod 0750 /run/bia-handoff/0 "
+                f"&& chgrp bia-cli-0 /run/bia-handoff/0 "
                 f"&& printf 'persona: %s' '{sentinel}' > {append_path_in_image} "
-                f"&& chmod 0640 {append_path_in_image} && chgrp julia-cli-0 {append_path_in_image}",
+                f"&& chmod 0640 {append_path_in_image} && chgrp bia-cli-0 {append_path_in_image}",
             ],
             timeout=15,
         )
@@ -622,7 +622,7 @@ class Proof:
     # ── §E.11 D2 check 5: the dedicated, LATER, handoff-file driver ───
     def run_handoff_check_driver(self) -> dict | None:
         sid = str(uuid.uuid4())
-        handoff_file_in_image = f"/run/julia-handoff/0/{sid}.jsonl"
+        handoff_file_in_image = f"/run/bia-handoff/0/{sid}.jsonl"
         sentinel_content = json.dumps({"type": "mirror-frame", "sid": sid}) + "\n"
 
         # Resolve the group's ACTUAL current gid via `getent` — NEVER a
@@ -636,7 +636,7 @@ class Proof:
         # for the RIGHT, attributable reason instead of a harness-side
         # "wrong literal" false negative.
         getent = _run(
-            ["docker", "exec", "--user", "noctus", self.main_container, "getent", "group", "julia-cli-0"],
+            ["docker", "exec", "--user", "noctus", self.main_container, "getent", "group", "bia-cli-0"],
             timeout=10,
         )
         if getent.returncode != 0 or not getent.stdout.strip():
@@ -645,7 +645,7 @@ class Proof:
         actual_gid = getent.stdout.strip().split(":")[2]
         self.record(
             "e11_check5_resolve_slot0_group_gid", True,
-            detail=f"julia-cli-0 gid={actual_gid} (contract expects 2000; a mismatch here "
+            detail=f"bia-cli-0 gid={actual_gid} (contract expects 2000; a mismatch here "
                    "is the real defect this project's delivery note reports)",
         )
 
@@ -795,7 +795,7 @@ class Proof:
             overall = self._check_spawn_diag(f"e11_check4_slot{k}_identity_caps_env", spawn, uid) and overall
             access = (spawn.get("diag") or {}).get("access_checks") or {}
             overall = self._check_access_battery(
-                f"e11_check4_slot{k}_protects_uvicorn", access, f"/run/julia-{k}"
+                f"e11_check4_slot{k}_protects_uvicorn", access, f"/run/bia-{k}"
             ) and overall
 
         # -- check 4: cross-slot EACCES/EPERM battery (slot 1 -> slot 0) --
@@ -904,17 +904,17 @@ class Proof:
         # CAP_DAC_OVERRIDE in this container (cap_drop: ALL strips it
         # too — verified live, same finding as ``run_slot_driver``'s own
         # setup) and could not write into a 0700 dir it doesn't own
-        # anyway; uid 2000 owns `/run/julia-0` outright, so no capability
+        # anyway; uid 2000 owns `/run/bia-0` outright, so no capability
         # is needed for any of this.
         seed = _run(
             [
                 "docker", "exec", "--user", "2000", self.main_container, "sh", "-c",
                 "set -e; "
-                "mkdir -p /run/julia-0/locked; "
-                "printf 'leftover from a SIGKILLed turn' > /run/julia-0/junk.txt; "
-                "printf 'nested leftover' > /run/julia-0/locked/inside.txt; "
-                "chmod 000 /run/julia-0/locked; "
-                "dd if=/dev/zero of=/run/julia-0/big.bin bs=1M count=10 status=none",
+                "mkdir -p /run/bia-0/locked; "
+                "printf 'leftover from a SIGKILLed turn' > /run/bia-0/junk.txt; "
+                "printf 'nested leftover' > /run/bia-0/locked/inside.txt; "
+                "chmod 000 /run/bia-0/locked; "
+                "dd if=/dev/zero of=/run/bia-0/big.bin bs=1M count=10 status=none",
             ],
             timeout=15,
         )
@@ -967,7 +967,7 @@ class Proof:
         # only matters AFTER release, when it should be genuinely empty.
         proc = _run(
             ["docker", "exec", "--user", "2000", self.main_container, "sh", "-c",
-             "ls -A /run/julia-0 2>&1; echo ---; df -B1 /run/julia-0 | tail -1"],
+             "ls -A /run/bia-0 2>&1; echo ---; df -B1 /run/bia-0 | tail -1"],
             timeout=10,
         )
         listing, _, df_line = proc.stdout.partition("---")

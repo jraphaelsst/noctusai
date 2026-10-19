@@ -1,7 +1,7 @@
 /**
  * SettingsTab.tsx — the model selector (§B1 `agent_versions.model`).
  * Stubs `useVersions`/`useStudioAgents`/`useIsAdmin` so this test asserts
- * ONLY the "Modelo" select's options, mirroring `JuliaPersona.test.tsx`'s
+ * ONLY the "Modelo" select's options, mirroring `BiaPersona.test.tsx`'s
  * equivalent coverage for the persona page's own selector.
  */
 import React from "react";

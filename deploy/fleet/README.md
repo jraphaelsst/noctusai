@@ -103,7 +103,7 @@ values live only in the gitignored `.env.fleet`). `check_prod_compose_env_
 manifest_sync` (pre-commit-gated when either compose file or the manifest
 is staged) cross-checks it and flags a secret-shaped var (`*_KEY`/`*_TOKEN`/
 `*_SECRET`/`*_PASSWORD`) that has no enforced non-empty default — the exact
-`JULIA_ANTHROPIC_API_KEY` failure mode (§ "Julia / agents + academia-de-
+`JULIA_ANTHROPIC_API_KEY` failure mode (§ "Bia / agents + academia-de-
 reciclagem env keys" below). It cannot see whether the VPS's `.env.fleet`
 actually carries a VALUE for a listed key — that live half has no repo-only
 witness; verify manually (or via `noctus.dev.predeploy_check`'s optional
@@ -221,12 +221,12 @@ tunnel is the only public ingress.
 | dev-team | 8009 | needs `ANTHROPIC_API_KEY` (runtime); `dev_team/` engine baked into image (no mount) |
 | social-wiring | 8011 | |
 | orbity | 8010 | |
-| academia-de-reciclagem | 8015 | see § Julia/agents env keys below |
+| academia-de-reciclagem | 8015 | see § Bia/agents env keys below |
 | igig | 8013 | |
 | p-studio | 8014 | |
-| agents | 8016 | see § Julia/agents env keys below |
+| agents | 8016 | see § Bia/agents env keys below |
 
-### Julia / agents + academia-de-reciclagem env keys
+### Bia / agents + academia-de-reciclagem env keys
 
 Roadmap `julia-agents-academia-2026-09`, M6 cutover. Both containers are
 hardened (`cap_drop: ALL`, `read_only: true`, per-slug tmpfs — see the
@@ -242,7 +242,7 @@ a compose `${...}` **interpolation**, resolved at compose-PARSE time from
 wins over `env_file:`, so it is NEVER read from the root `.env` regardless of
 what that file carries for the name. An earlier version of this table said
 "root `.env`" for it too; that mistake is exactly what shipped 2026-09-16 —
-the key silently interpolated to `''` and every Julia turn failed at the
+the key silently interpolated to `''` and every Bia turn failed at the
 CLI-spawn step while `/api/health` stayed 200. It must be listed (names
 only) in `deploy/fleet/env.fleet.keys` — `check_prod_compose_env_manifest_
 sync` gates that — **and actually set, with a value, in
@@ -262,14 +262,14 @@ boot-time refusal — verify at first real use, not just `/api/health`):
 
 | Key | Used by | Effect if unset |
 |---|---|---|
-| `JULIA_ANTHROPIC_API_KEY` 🔴 `deploy/fleet/.env.fleet`, NOT root `.env` — see callout above | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Julia turn fails at the CLI-spawn step. |
-| `ACADEMIA_API_TOKEN` | agents only | agents' in-process MCP tool proxies can't authenticate to academia's API — Julia's academia-scoped tools 401. |
-| `JULIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
+| `JULIA_ANTHROPIC_API_KEY` 🔴 `deploy/fleet/.env.fleet`, NOT root `.env` — see callout above | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Bia turn fails at the CLI-spawn step. |
+| `ACADEMIA_API_TOKEN` | agents only | agents' in-process MCP tool proxies can't authenticate to academia's API — Bia's academia-scoped tools 401. |
+| `BIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
 | `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |
 
 **Managed from the UI since 2026-09-16 (Agentes → Credenciais e integrações).**
-`ANTHROPIC_API_KEY` (Julia), `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`,
-`APPROVAL_ASSERTION_SECRETS` and `JULIA_AGENT_ID` now resolve DB-first
+`ANTHROPIC_API_KEY` (Bia), `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`,
+`APPROVAL_ASSERTION_SECRETS` and `BIA_AGENT_ID` now resolve DB-first
 (`agents.app_integration_config`, Fernet with the fleet `ENCRYPTION_KEY`),
 env-fallback. The `.env` values above stay as the bootstrap —
 `required_prod_config` still reads `APPROVAL_ASSERTION_SECRETS` and

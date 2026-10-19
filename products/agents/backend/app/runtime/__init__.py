@@ -1,5 +1,5 @@
 """The three §E.9 factories: :func:`get_agent_runtime`,
-:func:`get_approval_broker`, :func:`build_julia_spec`.
+:func:`get_approval_broker`, :func:`build_bia_spec`.
 
 Nothing in this module imports :mod:`claude_agent_sdk` at module scope —
 that import happens ONLY inside :func:`get_agent_runtime`'s real-runtime
@@ -26,13 +26,13 @@ __all__ = [
     "get_agent_runtime",
     "get_llm_runtime",
     "get_approval_broker",
-    "build_julia_spec",
+    "build_bia_spec",
     "make_academia_launch_provider",
     "make_studio_tools_factory",
 ]
 
-_JULIA_DIR = Path(__file__).resolve().parent.parent / "agents" / "julia"
-_JULIA_PLUGIN_PATH = str(_JULIA_DIR / "plugin")
+_BIA_DIR = Path(__file__).resolve().parent.parent / "agents" / "bia"
+_BIA_PLUGIN_PATH = str(_BIA_DIR / "plugin")
 
 _ACADEMIA_AUD = "academia-de-reciclagem"
 
@@ -94,15 +94,15 @@ def get_agent_runtime(
     """Dispatch on ``agent.runtime`` (Lais A1): ``'llm'`` →
     :func:`get_llm_runtime` (provider-neutral; per-ORG keys, so an OpenAI-only
     org needs no Anthropic key and the platform guard below never runs for it);
-    anything else — ``'claude_sdk'`` (Julia-academia, byte-for-byte unchanged),
+    anything else — ``'claude_sdk'`` (Bia-academia, byte-for-byte unchanged),
     ``'external'`` — or ``agent=None`` (the agent-agnostic call) → the
     behaviour below. ``org_id`` binds an ``llm`` runtime to ONE org.
 
     Legacy path: ``ClaudeAgentSdkRuntime`` when the Anthropic key resolves,
     ``FakeAgentRuntime`` in tests/dev. In a deploy context an unresolvable
     Anthropic key raises here — there is no silent Fake in prod (contract
-    §E.9). The Julia-only config (approval signing key /
-    ``ACADEMIA_API_TOKEN`` / ``JULIA_AGENT_ID`` / academia URL) is NOT
+    §E.9). The Bia-only config (approval signing key /
+    ``ACADEMIA_API_TOKEN`` / ``BIA_AGENT_ID`` / academia URL) is NOT
     resolved here: :func:`make_academia_launch_provider` resolves it when an
     academia-toolset turn launches, failing closed there — a studio turn
     builds and runs with none of it configured.
@@ -134,15 +134,15 @@ def get_agent_runtime(
         # a key later). Never run the REAL CLI without per-slot isolation
         # (contract §E.11) — refuse loudly; a restart picks the real pool.
         raise RuntimeError(
-            "Julia slot pool was created without isolation; restart the "
+            "Bia slot pool was created without isolation; restart the "
             "agents process after configuring the Anthropic key."
         )
 
     return ClaudeAgentSdkRuntime(
-        # Julia-only inputs, resolved lazily per academia turn (see above).
+        # Bia-only inputs, resolved lazily per academia turn (see above).
         academia_config=make_academia_launch_provider(credentials),
         anthropic_api_key=anthropic_key,
-        plugin_path=_JULIA_PLUGIN_PATH,
+        plugin_path=_BIA_PLUGIN_PATH,
         # Contract §E.10 — the escrita handler (app/runtime/tools.py) needs
         # the SAME approvals store the broker decides against; both read
         # `get_approval_store(settings)`, which is stateless over the
@@ -159,9 +159,9 @@ def get_agent_runtime(
         approval_use_window_seconds=int(
             getattr(settings, "approval_use_window_seconds", 120) or 120
         ),
-        # Config-wired (roadmap D1) — see `SeedSettings.julia_cli_path`'s
+        # Config-wired (roadmap D1) — see `SeedSettings.bia_cli_path`'s
         # docstring for why this must not be a second hardcoded literal.
-        cli_path=getattr(settings, "julia_cli_path", "") or DEFAULT_CLI_PATH,
+        cli_path=getattr(settings, "bia_cli_path", "") or DEFAULT_CLI_PATH,
         # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
         studio_tools_factory=make_studio_tools_factory(settings),
     )
@@ -217,7 +217,7 @@ def get_llm_runtime(
 
 
 def make_academia_launch_provider(credentials: Any) -> Callable[[], Any]:
-    """Zero-arg provider of the Julia-only launch inputs
+    """Zero-arg provider of the Bia-only launch inputs
     (:class:`~app.runtime.claude_runtime.AcademiaLaunchConfig`), called by
     the runtime only when an academia-toolset turn launches. Fails closed
     with the same errors the runtime factory used to raise eagerly: the
@@ -241,7 +241,7 @@ def make_academia_launch_provider(credentials: Any) -> Callable[[], Any]:
         )
         return AcademiaLaunchConfig(
             academia_api=academia_api,
-            agent_id=credentials.julia_agent_id() or _NIL_AGENT_ID,
+            agent_id=credentials.bia_agent_id() or _NIL_AGENT_ID,
             approval_secret=signing_secret,
         )
 
@@ -275,7 +275,7 @@ def make_studio_tools_factory(settings: Any):
     return _factory
 
 
-#: `JULIA_AGENT_ID` — the `agents.agents` row id for the `julia` key,
+#: `BIA_AGENT_ID` — the `agents.agents` row id for the `bia` key,
 #: contract §D `sub`. A process-WIDE constant, not per-org: `agents` holds
 #: exactly ONE `ACADEMIA_API_TOKEN` (contract §B.0) whose
 #: `principal_agent_id` was set when it was minted, and the resolved value
@@ -285,8 +285,8 @@ def make_studio_tools_factory(settings: Any):
 _NIL_AGENT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
-def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> AgentSpec:
-    """Merge Julia's static spec (``agents/julia/spec.yaml`` + ``JULIA.md``)
+def build_bia_spec(persona_row: Any, *, max_turns: int | None = None) -> AgentSpec:
+    """Merge Bia's static spec (``agents/bia/spec.yaml`` + ``BIA.md``)
     with the active persona row into one :class:`AgentSpec` (contract
     §E.9). ``persona_row`` is anything with the
     :class:`app.stores.personas.PersonaRecord` fields (attribute access;
@@ -301,8 +301,8 @@ def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> Agent
             raise ValueError(f"persona_row is missing required field {name!r}")
         return value
 
-    julia_md = (_JULIA_DIR / "JULIA.md").read_text(encoding="utf-8")
-    spec_data = yaml.safe_load((_JULIA_DIR / "spec.yaml").read_text(encoding="utf-8")) or {}
+    bia_md = (_BIA_DIR / "BIA.md").read_text(encoding="utf-8")
+    spec_data = yaml.safe_load((_BIA_DIR / "spec.yaml").read_text(encoding="utf-8")) or {}
 
     persona_lines = [
         "",
@@ -326,12 +326,12 @@ def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> Agent
     if system_prompt_append:
         persona_lines.extend(["", system_prompt_append])
 
-    prompt_append = julia_md + "\n" + "\n".join(persona_lines) + "\n"
+    prompt_append = bia_md + "\n" + "\n".join(persona_lines) + "\n"
 
     tools = tuple(gate.LEITURA) + tuple(gate.ESCRITA)
 
     return AgentSpec(
-        key="julia",
+        key="bia",
         model=_field("model"),
         effort=_field("effort"),
         prompt_append=prompt_append,
@@ -339,8 +339,8 @@ def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> Agent
         tools=tools,
         # An admin override (Configurações do agente) wins over spec.yaml.
         max_turns=int(max_turns) if max_turns else int(spec_data.get("max_turns", 40)),
-        # Agent Studio §E1: Julia's defaults, stated explicitly — the
-        # claude_code preset + JULIA.md appended, the academia toolset.
+        # Agent Studio §E1: Bia's defaults, stated explicitly — the
+        # claude_code preset + BIA.md appended, the academia toolset.
         prompt_mode="preset_append",
         toolset="academia",
     )

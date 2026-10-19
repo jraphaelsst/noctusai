@@ -9,7 +9,7 @@ per field (``NOC-REMEDIATE[config-merge]`` closed).
 """
 from __future__ import annotations
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from noctusai_lib.config.csv_settings import parse_csv_setting, reject_json_array
 from noctusai_seed import ProductSettings
@@ -30,7 +30,7 @@ class SeedSettings(ProductSettings):
     # An unanswered approval request becomes `expirada` after this many
     # seconds; the waiting tool call is then denied (app/runtime/broker.py).
     # Default 300 (user decision 2026-09-15, down from 900, contract
-    # §E.11 "Timeout") — a waiting approval holds one of Julia's three
+    # §E.11 "Timeout") — a waiting approval holds one of Bia's three
     # slots, so the timeout also bounds how long a pending approval can
     # block a slot from returning to the pool.
     approval_timeout_seconds: int = 300
@@ -56,7 +56,7 @@ class SeedSettings(ProductSettings):
     # academia-side product would ACCEPT any element (not this product's
     # concern). Empty/missing → the product refuses to start in a deploy
     # context (`required_prod_config` at app boot); the key is never
-    # exposed to the Julia CLI subprocess (contract §E.5 — the `env -i`
+    # exposed to the Bia CLI subprocess (contract §E.5 — the `env -i`
     # wrapper strips it either way). The `_list` property below is the
     # single point every consumer reads; never split
     # `approval_assertion_secrets` ad hoc at a call site.
@@ -76,27 +76,32 @@ class SeedSettings(ProductSettings):
         docstring for why it isn't `list[str]`)."""
         return reject_json_array(v, "APPROVAL_ASSERTION_SECRETS")
 
-    # ── Julia runtime (contract §E.5 / §E.9) ───────────────────────────
-    # Dedicated, spend-capped key for Julia's workspace — never shared
+    # ── Bia runtime (contract §E.5 / §E.9) ───────────────────────────
+    # Dedicated, spend-capped key for Bia's workspace — never shared
     # with any other product's LLM calls. Consumed by
     # `app.runtime.get_agent_runtime`; re-exported into the CLI subprocess
-    # env by `bin/julia-cli-exec` ONLY (never passed via `options.env`).
+    # env by `bin/bia-cli-exec` ONLY (never passed via `options.env`).
     anthropic_api_key: str = ""
 
     # Product token the control plane sends as `Authorization: Bearer` when
     # calling academia-de-reciclagem's HTTP API from the in-process MCP
     # tool proxies (contract §C / §E.5 "How tools reach academia"). Never
-    # reaches the Julia CLI subprocess.
+    # reaches the Bia CLI subprocess.
     academia_api_token: str = ""
 
-    # The `agents.agents` row id for the `julia` key — contract §D `sub`
+    # The `agents.agents` row id for the `bia` key — contract §D `sub`
     # claim. ONE agents deployment holds exactly ONE `ACADEMIA_API_TOKEN`
     # (a single product token, not per-org — contract §B.0), and that
     # token's `principal_agent_id` is set ONCE when it is minted; this
     # value must equal it exactly, or every §D step 5 verification on the
     # academia side fails. Set alongside `ACADEMIA_API_TOKEN` at deploy
     # time (same secret-provisioning step, never guessed at runtime).
-    julia_agent_id: str = ""
+    # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_AGENT_ID) is still read for one
+    # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
+    bia_agent_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("bia_agent_id", "julia_agent_id"),
+    )
 
     # Per-user rate limit on `POST /api/conversations/{id}/messages`
     # (contract §E "Rate limit ... per user with the product limiter").
@@ -128,24 +133,34 @@ class SeedSettings(ProductSettings):
     approval_key_retire_after_seconds: int = 86400
 
     # Contract §E.5 `max_turns=<config, default 40>`. `None` => the value
-    # in `agents/julia/spec.yaml`. An admin override lives in
+    # in `agents/bia/spec.yaml`. An admin override lives in
     # `agents.runtime_settings` (Configurações do agente page) and wins.
-    julia_max_turns: int | None = None
+    # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_MAX_TURNS) is still read for one
+    # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
+    bia_max_turns: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("bia_max_turns", "julia_max_turns"),
+    )
 
-    # ── Julia CLI path (contract §E.5, roadmap D1) ──────────────────────
-    # Where the `env -i` wrapper (`bin/julia-cli-exec`) lands inside the
+    # ── Bia CLI path (contract §E.5, roadmap D1) ──────────────────────
+    # Where the `env -i` wrapper (`bin/bia-cli-exec`) lands inside the
     # image. Was a bare Python literal duplicated in two places with no
     # link between them — `app/runtime/claude_runtime.py::DEFAULT_CLI_PATH`
-    # and the Dockerfile's `COPY ... /app/bin/julia-cli-exec` — so the two
+    # and the Dockerfile's `COPY ... /app/bin/bia-cli-exec` — so the two
     # could silently drift (a Dockerfile relocation with no matching code
-    # change would fail every real Julia turn at subprocess-spawn time,
+    # change would fail every real Bia turn at subprocess-spawn time,
     # never at build or test time). This field is now the single
     # deploy-configurable source of truth: `get_agent_runtime` reads it
     # and passes it to `ClaudeAgentSdkRuntime`, so the code default and
     # the image layout only need to agree ONCE (here), and an operator
-    # can still override via `JULIA_CLI_PATH` if the image layout ever
+    # can still override via `BIA_CLI_PATH` if the image layout ever
     # changes without a code change.
-    julia_cli_path: str = "/app/bin/julia-cli-exec"
+    # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_CLI_PATH) is still read for one
+    # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
+    bia_cli_path: str = Field(
+        default="/app/bin/bia-cli-exec",
+        validation_alias=AliasChoices("bia_cli_path", "julia_cli_path"),
+    )
 
     # ── Provider-neutral runtime (`runtime='llm'`, Lais A1) ─────────────
     # Concurrent in-process LLM turns (no subprocess, so no uid slots —
@@ -178,18 +193,23 @@ class SeedSettings(ProductSettings):
     channel_token_ttl_days: int = 30
 
     # ── Per-conversation isolation (contract §E.11) ─────────────────────
-    # Fixed slot count: uid/gid `2000+K` for K in `range(julia_cli_slots)`,
-    # each with its own tmpfs mount `/run/julia-K`. `app.runtime.slots.
-    # RealSlotPool` reads this (falling back to the bare `JULIA_CLI_SLOTS`
+    # Fixed slot count: uid/gid `2000+K` for K in `range(bia_cli_slots)`,
+    # each with its own tmpfs mount `/run/bia-K`. `app.runtime.slots.
+    # RealSlotPool` reads this (falling back to the bare `BIA_CLI_SLOTS`
     # env var, then to 3) to discover the fixed slot set. User decision
     # 2026-09-15: 3 slots.
-    julia_cli_slots: int = 3
+    # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_CLI_SLOTS) is still read for one
+    # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
+    bia_cli_slots: int = Field(
+        default=3,
+        validation_alias=AliasChoices("bia_cli_slots", "julia_cli_slots"),
+    )
 
     # ── Turn deadline + lock TTL (contract §E.11 "Route order") ─────────
     # A turn's whole `run_turn(...)` iteration is wrapped in
     # `asyncio.timeout(turn_timeout_seconds)` (app/routers/
     # conversations_router.py::_run_turn_background). Default 600 —
-    # generous headroom over a real Julia turn, bounded so a stuck
+    # generous headroom over a real Bia turn, bounded so a stuck
     # subprocess can never hold a slot forever.
     turn_timeout_seconds: int = 600
 

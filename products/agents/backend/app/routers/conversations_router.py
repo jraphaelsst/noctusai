@@ -33,7 +33,7 @@ from app.dependencies import (
     get_agent_runtime_dep,
     get_agent_store_dep,
     get_approval_broker_dep,
-    get_build_julia_spec_dep,
+    get_build_bia_spec_dep,
     get_conversation_store_dep,
     get_core_client,
     get_llm_runtime_dep,
@@ -67,6 +67,7 @@ from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
     resolve_agent,
 )
+from app.studio.julia import canonical_channel_agent_key
 from app.studio.spec import StudioSpecError, build_studio_spec
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role_for
 from noctusai_lib.realtime import create_sse_router
@@ -86,7 +87,7 @@ INSTANCE_ID = f"agents-{uuid4().hex[:12]}"
 _NOT_FOUND = {"detail": "Conversa não encontrada.", "code": "not_found"}
 
 #: Agent Studio §D6 — the agent a request that names none addresses.
-JULIA_KEY = "julia"
+BIA_KEY = "bia"
 
 
 def _conversation_out(record: ConversationRecord, agent_key: str) -> ConversationOut:
@@ -142,10 +143,10 @@ def _llm_http(exc: LlmRuntimeError) -> HTTPException:
     )
 
 
-def _julia_agent(agent_store: Any, org_id: UUID) -> Any | None:
-    """Julia's row, or ``None`` while it was never seeded for this org (an
+def _bia_agent(agent_store: Any, org_id: UUID) -> Any | None:
+    """Bia's row, or ``None`` while it was never seeded for this org (an
     explicit "maybe" read — not an ``except NotFound`` fallback)."""
-    return next((a for a in agent_store.list(org_id) if a.key == JULIA_KEY), None)
+    return next((a for a in agent_store.list(org_id) if a.key == BIA_KEY), None)
 
 
 def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str) -> Any:
@@ -197,7 +198,7 @@ def _message_payload(record: MessageRecord) -> dict[str, Any]:
     """JSON-safe SSE payload for ``message.new`` (contract §E.3).
 
     Agent Studio §A7: a stamped (studio assistant) message also carries
-    ``version_id`` + ``compiled_hash``; an unstamped one (every Julia
+    ``version_id`` + ``compiled_hash``; an unstamped one (every Bia
     message) keeps the exact pre-studio payload."""
     payload = _message_payload_base(record)
     if record.version_id is not None:
@@ -259,16 +260,16 @@ async def _get_readable_conversation(
 
 @router.get("", response_model=ConversationListOut)
 async def list_conversations(
-    agent_key: str = Query(default=JULIA_KEY, min_length=1, max_length=64),
+    agent_key: str = Query(default=BIA_KEY, min_length=1, max_length=64),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_conversation_store_dep),
     agent_store=Depends(get_agent_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationListOut:
-    """Agent Studio §D6: filtered by agent, **default ``julia``** — Julia's
+    """Agent Studio §D6: filtered by agent, **default ``bia``** — Bia's
     page sends no filter and keeps seeing exactly her conversations."""
-    if agent_key == JULIA_KEY:
-        agent = _julia_agent(agent_store, ctx.org_id)
+    if agent_key == BIA_KEY:
+        agent = _bia_agent(agent_store, ctx.org_id)
         if agent is None:  # never seeded for this org ⇒ she has no conversations
             return ConversationListOut(items=[], total=0)
     else:
@@ -291,7 +292,7 @@ async def list_channel_conversations(
     UI, filterable by ``channel``. Admin-only: they hold third-party personal
     data (LGPD). Reading one is the normal conversation/messages/stream routes
     (admins may read); writing to one is a 404 (``get_owned`` — it has no owner)."""
-    agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
+    agent = _resolve_studio_agent(studio_store, ctx.org_id, canonical_channel_agent_key(agent_key))
     records = store.list_channel(ctx.org_id, agent_id=agent.id, channel=channel)
     items = [_conversation_out(r, agent.key) for r in records]
     return ConversationListOut(items=items, total=len(items))
@@ -305,13 +306,13 @@ async def create_conversation(
     store=Depends(get_conversation_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
-    if payload.agent_key == JULIA_KEY:
+    if payload.agent_key == BIA_KEY:
         if payload.client_id is not None:
             raise _http(422, "invalid_client", "Clientes só existem para agentes do Studio.")
         agent_store.ensure_default_agents(ctx.org_id)
-        agent = agent_store.get_by_key(ctx.org_id, JULIA_KEY)
+        agent = agent_store.get_by_key(ctx.org_id, BIA_KEY)
         record = store.create(ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo)
-        return _conversation_out(record, JULIA_KEY)
+        return _conversation_out(record, BIA_KEY)
 
     # Agent Studio §D6: a studio conversation pins the ACTIVE version now (a
     # newer publish never moves it); with none yet, it pins at its first turn.
@@ -415,7 +416,7 @@ async def post_message(
     ctx: AuthContext = Depends(require_member),
     runtime: Any = Depends(get_agent_runtime_dep),
     broker: Any = Depends(get_approval_broker_dep),
-    build_spec: Any = Depends(get_build_julia_spec_dep),
+    build_spec: Any = Depends(get_build_bia_spec_dep),
     conv_store=Depends(get_conversation_store_dep),
     agent_store=Depends(get_agent_store_dep),
     msg_store=Depends(get_message_store_dep),
@@ -430,17 +431,17 @@ async def post_message(
     except NotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
 
-    julia = _julia_agent(agent_store, ctx.org_id)
+    bia = _bia_agent(agent_store, ctx.org_id)
     studio_spec: AgentSpec | None = None
-    if julia is not None and conversation.agent_id == julia.id:
-        agent = julia
+    if bia is not None and conversation.agent_id == bia.id:
+        agent = bia
         if not agent.ativo:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"detail": "O agente Julia está desligado.", "code": "agent_off"},
+                detail={"detail": "O agente Bia está desligado.", "code": "agent_off"},
             )
         capacity_text = (
-            "A Julia está atendendo o número máximo de conversas "
+            "A Bia está atendendo o número máximo de conversas "
             "agora. Tente novamente em instantes."
         )
     else:
@@ -469,7 +470,7 @@ async def post_message(
     if slot is None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={"detail": capacity_text, "code": "julia_capacidade"},
+            detail={"detail": capacity_text, "code": "bia_capacidade"},
             headers={"Retry-After": "10"},
         )
 
@@ -720,7 +721,7 @@ async def _run_turn_background(
 
     Agent Studio §E2/§E4: ``spec`` is a studio agent's ALREADY-built spec
     (the route compiled it before accepting the turn); ``None`` keeps
-    Julia's path — the active persona row through ``build_spec``. A studio
+    Bia's path — the active persona row through ``build_spec``. A studio
     spec's ``version_id`` + ``compiled_hash`` are stamped on every
     assistant message this turn persists."""
     current_message_id: UUID | None = None

@@ -1,5 +1,5 @@
 """``ClaudeAgentSdkRuntime`` — the real :class:`~app.runtime.types.AgentRuntime`,
-launching Julia via the Claude Agent SDK (contract §E.5, SEC-A/SEC-C).
+launching Bia via the Claude Agent SDK (contract §E.5, SEC-A/SEC-C).
 
 Two pieces are kept SEPARATELY TESTABLE, per the G2 brief:
 
@@ -102,7 +102,7 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True)
 class AcademiaLaunchConfig:
-    """The Julia-only inputs of an ``academia``-toolset turn: the academia
+    """The Bia-only inputs of an ``academia``-toolset turn: the academia
     API client, the §D ``sub`` agent id and the approval-assertion signing
     secret. A studio turn needs NONE of them, so the runtime resolves this
     lazily — only when a non-studio turn launches (see
@@ -113,19 +113,19 @@ class AcademiaLaunchConfig:
     approval_secret: str
 
 
-#: Contract §E.11 "Launch options" — the persona/JULIA.md text goes in a
+#: Contract §E.11 "Launch options" — the persona/BIA.md text goes in a
 #: group-only file inside the slot's handoff dir, never on argv.
 _HANDOFF_APPEND_FILENAME = "append.md"
 
 #: Contract §E.11 "Inbound": "uvicorn writes ... mode 0640, group
-#: julia-cli-K" (handoff files); the dir itself is 0750 (the slot script
+#: bia-cli-K" (handoff files); the dir itself is 0750 (the slot script
 #: and the CLI, running as K, need to read/exec into it; nothing else can).
 _HANDOFF_DIR_MODE = 0o750
 _HANDOFF_FILE_MODE = 0o640
 _HANDOFF_OPEN_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 
 #: Contract §E.5 — the `env -i` wrapper's location inside the image.
-DEFAULT_CLI_PATH = "/app/bin/julia-cli-exec"
+DEFAULT_CLI_PATH = "/app/bin/bia-cli-exec"
 
 #: Contract §E.5 base built-in tool set. MCP academia proxies arrive via
 #: `mcp_servers`, not this list.
@@ -146,7 +146,7 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
 )
 
 #: Agent Studio §E3 + security review of wave 1: a studio agent disallows
-#: every built-in Julia disallows PLUS the SDK ``Skill`` tool (studio skills
+#: every built-in Bia disallows PLUS the SDK ``Skill`` tool (studio skills
 #: load through ``mcp__studio__abrir_skill``, never the plugin loader),
 #: ``Agent`` (the sub-agent tool — ``Task``'s newer name) and ``TodoWrite``.
 #: Defence in depth only: the load-bearing control is ``can_use_tool``'s
@@ -159,7 +159,7 @@ STUDIO_DISALLOWED_TOOLS: tuple[str, ...] = DISALLOWED_TOOLS + ("Skill", "Agent",
 #: 2.1.259 (``_internal/transport/subprocess_cli.py::_build_command`` + an
 #: empirical capture of the request body the CLI sends):
 #:
-#: * ``{"type": "preset", "preset": "claude_code"}`` (Julia) emits NO
+#: * ``{"type": "preset", "preset": "claude_code"}`` (Bia) emits NO
 #:   ``--system-prompt`` flag → the CLI's ~8 800-char coding preset, with
 #:   ``append.md`` appended after it;
 #: * ``None`` emits ``--system-prompt ""`` → the CLI still opens with the
@@ -252,7 +252,7 @@ def build_launch_options(
 
     **Agent Studio §E3** — ``spec.toolset == "studio"`` branches to
     :func:`_build_studio_launch_options` (no preset, no plugin, no SDK
-    skills, only the ``studio`` MCP server); the Julia path below is
+    skills, only the ``studio`` MCP server); the Bia path below is
     untouched.
     """
     if spec.toolset == "studio":
@@ -268,7 +268,7 @@ def build_launch_options(
         )
     if academia_api is None or agent_id is None or not approval_secret:
         # Fail closed: the academia MCP server can never be built without
-        # its Julia-only inputs (they are optional only for studio specs).
+        # its Bia-only inputs (they are optional only for studio specs).
         raise RuntimeError(
             "an academia-toolset turn requires academia_api, agent_id and approval_secret"
         )
@@ -338,7 +338,7 @@ def _build_studio_launch_options(
     * ``allowed_tools`` = the exact studio allowlist; ``disallowed_tools`` =
       :data:`STUDIO_DISALLOWED_TOOLS`. ``can_use_tool`` (the caller's
       ``_TurnDriver``, built with the same allowlist) denies everything else.
-    * ``env`` is the SAME explicit allowlist Julia uses (:func:`_launch_env`).
+    * ``env`` is the SAME explicit allowlist Bia uses (:func:`_launch_env`).
     """
     if studio_tools is None:
         raise RuntimeError(
@@ -389,7 +389,7 @@ def _launch_env(slot: TurnSlot, anthropic_api_key: str | None) -> dict[str, str]
 
 def _ensure_handoff_dir(handoff_dir: str, gid: int) -> None:
     """Contract §E.11 "Launch options" / "Inbound": the per-slot handoff
-    dir under ``/run/julia-handoff`` is uvicorn-owned (mode 0711) but its
+    dir under ``/run/bia-handoff`` is uvicorn-owned (mode 0711) but its
     per-slot subdirectory does not exist until uvicorn creates it here —
     mode 0750, group ``gid`` (the slot's own gid, contract: "uid and gid
     2000+K"). Idempotent: the dir survives across turns (only its
@@ -473,7 +473,7 @@ class _TurnDriver:
         self._academia_api = academia_api
         # Agent Studio §H2: for a studio turn, the EXACT-name allowlist is
         # the whole policy — deny by default, no approval flow (there are no
-        # studio write tools). `None` = Julia's gate table (unchanged).
+        # studio write tools). `None` = Bia's gate table (unchanged).
         self._allowlist = allowlist
         self.queue: "asyncio.Queue[AgentEvent]" = asyncio.Queue()
         self._tool_names: dict[str, str] = {}
@@ -653,7 +653,7 @@ class _TurnDriver:
 #: session.
 RESUME_LOST_CONTEXT_TEXT = (
     "O contexto anterior desta conversa não está mais disponível; "
-    "Julia começou uma nova sessão."
+    "Bia começou uma nova sessão."
 )
 
 #: contract §E.11 "Durable transcripts" — "'Too long' (`truncado`) has its
@@ -661,7 +661,7 @@ RESUME_LOST_CONTEXT_TEXT = (
 #: knows THIS session grew past the 24 MiB cap, rather than context being
 #: lost to an infrastructure event.
 RESUME_TRUNCATED_TEXT = (
-    "O histórico desta conversa ficou muito longo; Julia começou uma "
+    "O histórico desta conversa ficou muito longo; Bia começou uma "
     "nova sessão e não tem mais acesso ao contexto anterior."
 )
 
@@ -671,7 +671,7 @@ RESUME_TRUNCATED_TEXT = (
 #: and has nothing to delete.
 _ABANDONED_ESTADOS = ("truncado", "incompleto", "invalido")
 
-#: Studio agents are not Julia — same meaning, agent-neutral wording.
+#: Studio agents are not Bia — same meaning, agent-neutral wording.
 STUDIO_RESUME_LOST_CONTEXT_TEXT = (
     "O contexto anterior desta conversa não está mais disponível; "
     "o agente começou uma nova sessão."
@@ -702,7 +702,7 @@ class ClaudeAgentSdkRuntime:
         anthropic_api_key: str | None = None,
         studio_tools_factory: Callable[[AgentSpec, TurnContext], Any] | None = None,
     ) -> None:
-        """Julia's academia inputs come EITHER as the three values
+        """Bia's academia inputs come EITHER as the three values
         (``academia_api`` + ``agent_id`` + ``approval_secret``) OR as
         ``academia_config`` — a zero-arg provider called once per
         academia-toolset turn, at launch. The provider form is what
@@ -726,7 +726,7 @@ class ClaudeAgentSdkRuntime:
             def academia_config() -> AcademiaLaunchConfig:
                 return fixed
         self._academia_config = academia_config
-        # The value form's inputs stay readable (tests build Julia launch
+        # The value form's inputs stay readable (tests build Bia launch
         # options straight from them); `None` under the provider form.
         self._academia_api = academia_api
         self._agent_id = agent_id
@@ -948,7 +948,7 @@ class ClaudeAgentSdkRuntime:
         studio = spec.toolset == "studio"
         studio_tools = None
         allowlist: frozenset[str] | None = None
-        # Julia-only inputs resolve HERE, per academia turn, and fail closed
+        # Bia-only inputs resolve HERE, per academia turn, and fail closed
         # (the provider raises) — a studio turn never touches them.
         academia: AcademiaLaunchConfig | None = None
         if not studio:

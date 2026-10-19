@@ -4013,7 +4013,7 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "VALUES (v_org, v_agent, 1, 'NOC probe', 'papel', 'claude-invalid-model', 'high', v_org);"
         ),
         guard_fragment="agent_personas_model_check",
-        what="a Julia persona whose model is outside the allowlist",
+        what="a Bia persona whose model is outside the allowlist",
         rationale=(
             "Contract §E.1: `agent_personas.model` is a closed vocabulary — "
             "widened by migration 015 to add `claude-haiku-4-5` alongside "

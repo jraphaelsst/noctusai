@@ -366,7 +366,7 @@ class TestHttpClient:
         )
         assert client.lais_tools_available(org_a) and not client.lais_tools_available(org_b)
         assert asyncio.run(client.lais_ferramenta(org_a, "buscar_imoveis", {"operacao": "compra"})) == {"data": [1]}
-        assert seen["url"] == "http://sw.test/api/lais/ferramentas/buscar_imoveis"
+        assert seen["url"] == "http://sw.test/api/julia/ferramentas/buscar_imoveis"
         assert seen["auth"] == "Bearer tok-a"
         assert asyncio.run(client.lais_ferramenta(org_a, "falha", {})) == {"erro": "indisponivel"}
         assert asyncio.run(client.lais_ferramenta(org_b, "buscar_imoveis", {})) == {"erro": "indisponivel"}

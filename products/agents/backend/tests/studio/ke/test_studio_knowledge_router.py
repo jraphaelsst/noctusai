@@ -34,8 +34,8 @@ class TestAgentResolution:
 
     def test_legacy_agent_409s(self, ke_client):
         seed_org_role(ke_client, role="member")
-        seed_studio_agent(ke_client, key="julia", definition_mode="legacy")
-        resp = ke_client.get("/api/studio/agents/julia/knowledge")
+        seed_studio_agent(ke_client, key="bia", definition_mode="legacy")
+        resp = ke_client.get("/api/studio/agents/bia/knowledge")
         assert resp.status_code == 409
         assert resp.json()["code"] == "not_studio_agent"
 

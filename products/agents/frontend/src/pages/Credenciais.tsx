@@ -288,7 +288,7 @@ function CredentialCard({ credential }: { credential: Credential }) {
               disabled={busy}
               onClick={() =>
                 run(() => ringAction.mutateAsync({ action: "rotate" }), () =>
-                  toast.success("Nova chave preparada — a Julia passa a assinar com ela após a ativação."),
+                  toast.success("Nova chave preparada — a Bia passa a assinar com ela após a ativação."),
                 )
               }
               data-testid="ring-rotate"
@@ -333,7 +333,7 @@ export default function Credenciais() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Credenciais e integrações</h1>
           <p className="text-sm text-muted-foreground">
-            Tokens e chaves que a Julia usa para falar com outros produtos. Os valores nunca são exibidos.
+            Tokens e chaves que a Bia usa para falar com outros produtos. Os valores nunca são exibidos.
           </p>
         </div>
       </div>

@@ -130,7 +130,7 @@ class LlmTurnSlot:
 
 class LlmTurnLimiter:
     """In-process cap on concurrent LLM turns. There is no subprocess to
-    isolate (unlike the Julia CLI :class:`~app.runtime.slots.SlotPool`), so a
+    isolate (unlike the Bia CLI :class:`~app.runtime.slots.SlotPool`), so a
     counter is the whole mechanism. ``try_reserve`` is synchronous and
     race-free for the same reason the slot pool's is (single worker, no
     ``await`` between check and take)."""

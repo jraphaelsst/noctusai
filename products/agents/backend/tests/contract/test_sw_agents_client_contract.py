@@ -63,14 +63,14 @@ def wired(chan):  # noqa: F811
     from app.main import app
 
     minted = chan.client.post(
-        "/api/agents/lead-imob/channel-token", json={"product": "social-wiring", "label": "contract-x"}
+        "/api/agents/julia/channel-token", json={"product": "social-wiring", "label": "contract-x"}
     )
     assert minted.status_code == 201, minted.text
     token = minted.json()["token"]
-    agent = chan.rt.studio.get_agent(chan.org_id, "lead-imob")
+    agent = chan.rt.studio.get_agent(chan.org_id, "julia")
     chan.version = chan.rt.publish(agent, chan.rt.studio.get_draft(chan.org_id, agent.id).id)
-    chan.rt.studio.update_agent(chan.org_id, "lead-imob", {"ativo": True})
-    chan.agent = chan.rt.studio.get_agent(chan.org_id, "lead-imob")
+    chan.rt.studio.update_agent(chan.org_id, "julia", {"ativo": True})
+    chan.agent = chan.rt.studio.get_agent(chan.org_id, "julia")
 
     resolver = SupabaseApiTokenResolver(
         MockSupabaseClient(list(chan.token_admin.rows["agents"]), schema="agents"), schema="agents"
@@ -96,7 +96,7 @@ def wired(chan):  # noqa: F811
             app.dependency_overrides[get_auth_context] = saved
 
 
-def _req(*texts, ids=None, chat_id="chat-1", agent_key="lead-imob"):
+def _req(*texts, ids=None, chat_id="chat-1", agent_key="julia"):
     from datetime import datetime, timezone
 
     ids = ids or [f"wamid.x{i}" for i in range(len(texts))]
@@ -154,16 +154,16 @@ class TestTurn:
 
 class TestStatusAndDelete:
     def test_status_parses_into_sw_agentstatus(self, wired):
-        st = _run(wired.sw_client().agent_status("lead-imob"))
+        st = _run(wired.sw_client().agent_status("julia"))
         assert isinstance(st, sw.AgentStatus)
-        assert st.agent_key == "lead-imob" and st.ativo is True
+        assert st.agent_key == "julia" and st.ativo is True
         assert st.versao_ativa == wired.version.versao
         assert st.llm_configurado is True and st.provider == "openai" and st.model
 
     def test_delete_204_is_success_and_erases(self, wired):
         client = wired.sw_client()
         _run(client.run_turn(_req("Oi", ids=["m-del"])))
-        req = sw.DeletionRequest(agent_key="lead-imob", connection_id=str(CONNECTION_ID), chat_id="chat-1")
+        req = sw.DeletionRequest(agent_key="julia", connection_id=str(CONNECTION_ID), chat_id="chat-1")
         res = _run(client.delete_conversation_data(req))
         assert isinstance(res, sw.DeletionResult)
         assert wired.rt.stores.conversations.list_channel(wired.org_id) == []

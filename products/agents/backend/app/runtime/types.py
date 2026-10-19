@@ -59,9 +59,9 @@ class AgentSpec:
     """Everything ``ClaudeAgentSdkRuntime`` needs to launch a turn.
 
     Two producers (Agent Studio contract §E1 — generic, backward
-    compatible): ``build_julia_spec(persona_row)`` (Julia, the legacy
+    compatible): ``build_bia_spec(persona_row)`` (Bia, the legacy
     path: ``prompt_mode="preset_append"``, ``toolset="academia"`` — every
-    field below that has a default keeps Julia's launch byte-identical)
+    field below that has a default keeps Bia's launch byte-identical)
     and ``app.studio.spec.build_studio_spec`` (a studio agent:
     ``prompt_mode="custom"``, ``toolset="studio"``, the pinned version's
     compiled prompt in ``prompt_append``)."""
@@ -70,12 +70,12 @@ class AgentSpec:
     model: str  # allowlist-checked by the producer (persona / studio version)
     effort: Literal["low", "medium", "high", "xhigh", "max"]
     prompt_append: str  # the text written to the slot's append.md handoff
-    skills: tuple[str, ...]  # SDK plugin skills (Julia's ar-* list); () for studio
+    skills: tuple[str, ...]  # SDK plugin skills (Bia's ar-* list); () for studio
     tools: tuple[str, ...]  # the tool names this spec may call
     max_turns: int  # default 40
     prompt_mode: Literal["preset_append", "custom"] = "preset_append"
     #: Lais A1 (contract §2): which provider runs the turn. `anthropic` keeps
-    #: every pre-existing spec (Julia-academia, studio claude_sdk agents)
+    #: every pre-existing spec (Bia-academia, studio claude_sdk agents)
     #: byte-identical; `openai` is only ever produced for a version that
     #: carries it (migration 024) and runs on `LlmToolRuntime`.
     provider: Literal["anthropic", "openai"] = "anthropic"
@@ -151,7 +151,7 @@ class AgentRuntime(Protocol):
     def try_reserve(self) -> TurnSlot | None:
         """Lease a free slot from this runtime's internal
         :class:`SlotPool`, or ``None`` when every slot is busy (the
-        route's 429 ``julia_capacidade``). Synchronous — see
+        route's 429 ``bia_capacidade``). Synchronous — see
         ``SlotPool.try_reserve``'s own docstring for why."""
         ...
 

@@ -20,7 +20,7 @@ class TestAuthBoundary:
         assert resp.status_code == 401
 
     def test_toggle_requires_auth(self, agents_client):
-        resp = agents_client.raw().post("/api/agents/julia/toggle", json={"ativo": True})
+        resp = agents_client.raw().post("/api/agents/bia/toggle", json={"ativo": True})
         assert resp.status_code == 401
 
     def test_product_token_rejected_user_required(self, agents_client):
@@ -38,13 +38,13 @@ class TestAuthBoundary:
 
 
 class TestListAgents:
-    def test_lists_julia_and_one_chat(self, agents_client):
+    def test_lists_bia_and_one_chat(self, agents_client):
         _seed_member(agents_client)
         resp = agents_client.get("/api/agents")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         keys = {item["key"] for item in body["items"]}
-        assert keys == {"julia", "one-chat"}
+        assert keys == {"bia", "one-chat"}
         assert body["total"] == 2
 
     def test_one_chat_not_configured_carries_aviso(self, agents_client):
@@ -87,16 +87,16 @@ class TestListAgents:
 class TestToggleAgent:
     def test_member_forbidden(self, agents_client):
         _seed_member(agents_client, role="member")
-        resp = agents_client.post("/api/agents/julia/toggle", json={"ativo": True})
+        resp = agents_client.post("/api/agents/bia/toggle", json={"ativo": True})
         assert resp.status_code == 403
         assert resp.json()["code"] == "role_missing"
 
-    def test_admin_can_toggle_julia(self, agents_client):
+    def test_admin_can_toggle_bia(self, agents_client):
         _seed_member(agents_client, role="admin")
-        resp = agents_client.post("/api/agents/julia/toggle", json={"ativo": True})
+        resp = agents_client.post("/api/agents/bia/toggle", json={"ativo": True})
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["key"] == "julia"
+        assert body["key"] == "bia"
         assert body["ativo"] is True
 
     def test_one_chat_not_configured_409(self, agents_client):
@@ -140,6 +140,6 @@ class TestToggleAgent:
     def test_extra_field_rejected_422(self, agents_client):
         _seed_member(agents_client, role="owner")
         resp = agents_client.post(
-            "/api/agents/julia/toggle", json={"ativo": True, "unexpected": "x"}
+            "/api/agents/bia/toggle", json={"ativo": True, "unexpected": "x"}
         )
         assert resp.status_code == 422

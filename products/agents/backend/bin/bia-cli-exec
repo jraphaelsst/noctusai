@@ -1,15 +1,15 @@
 #!/bin/sh
-# julia-cli-exec — the wrapper the Claude Agent SDK spawns as its
+# bia-cli-exec — the wrapper the Claude Agent SDK spawns as its
 # `cli_path` (contract §E.11, supersedes §E.5; roadmap D1, per-conversation
 # slot isolation, architect review 2026-09-15, checked against SDK
 # 0.2.152 and bundled CLI 2.1.259).
 #
 # WHY THIS FILE STILL EXISTS (§E.11 moved the sweep/handoff/exec logic to
-# the new `bin/julia-cli-slot`): this wrapper is the ONE place that reads
+# the new `bin/bia-cli-slot`): this wrapper is the ONE place that reads
 # the kernel-set real uid the SDK actually launched the process as — the
-# single trustworthy signal for "which slot am I." `julia-cli-slot` is
+# single trustworthy signal for "which slot am I." `bia-cli-slot` is
 # root-owned and could in principle be invoked directly (uvicorn's own
-# release-time `--julia-sweep` spawn does exactly that, deliberately
+# release-time `--bia-sweep` spawn does exactly that, deliberately
 # bypassing this wrapper since no CLI transport is needed for a sweep) —
 # but the CLI's OWN spawn path always goes through this wrapper first,
 # because it is what `ClaudeAgentOptions.cli_path` points at.
@@ -18,14 +18,14 @@
 # an argument or env var is something a compromised parent (or a stale
 # copy-paste of `ClaudeAgentOptions`) could get wrong or spoof. The real
 # uid this process is running as is kernel-set on the spawn path
-# (`Popen(user="julia-cli-<K>")` — verified against
+# (`Popen(user="bia-cli-<K>")` — verified against
 # `_internal/transport/subprocess_cli.py:1151`, the same file that showed
 # the SDK's one-off version-check spawn `[cli_path, "-v"]` runs WITHOUT
 # `user=` at all under §E.5). `CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1`
 # (Dockerfile `ENV`, `_internal/transport/subprocess_cli.py:799`) means
 # that specific no-`user=` spawn never happens any more; this wrapper's
 # own range check is what would refuse it anyway if it ever did (uid 1000,
-# `noctus`, is outside `[2000, 2000+JULIA_CLI_SLOTS)`).
+# `noctus`, is outside `[2000, 2000+BIA_CLI_SLOTS)`).
 #
 # WHY THE CLAUDE_CONFIG_DIR CHECK IS A DRIFT CHECK ONLY, NOT A SOURCE OF
 # TRUTH: the expected value is RECOMPUTED from the trusted uid-derived
@@ -50,7 +50,7 @@
 # AMBIENT set (inherited across the entrypoint's own root->noctus->
 # Popen(user=...) chain) — `--inh-caps=-all --ambient-caps=-all` strips
 # both before the handoff to the root-owned, uid-K, no-capabilities
-# `julia-cli-slot`. No `--bounding-set=` clause: it needs CAP_SETPCAP,
+# `bia-cli-slot`. No `--bounding-set=` clause: it needs CAP_SETPCAP,
 # which this process never has (verified empirically — `setpriv: apply
 # bounding set: Operation not permitted`); Docker's own `cap_drop`/
 # `cap_add` already bounds the set, and `--no-new-privs` keeps the
@@ -71,15 +71,15 @@ REAL_UID="$(id -u)"
 #    itself a refusal, not a comparison that could coerce to 0.
 case "$REAL_UID" in
   ''|*[!0-9]*)
-    echo "julia-cli-exec: refusing — unreadable real uid '$REAL_UID'" >&2
+    echo "bia-cli-exec: refusing — unreadable real uid '$REAL_UID'" >&2
     exit 126
     ;;
 esac
 
-SLOTS="${JULIA_CLI_SLOTS:-3}"
+SLOTS="${BIA_CLI_SLOTS:-3}"
 case "$SLOTS" in
   ''|*[!0-9]*)
-    echo "julia-cli-exec: refusing — JULIA_CLI_SLOTS must be a positive integer, got '${JULIA_CLI_SLOTS:-<unset>}'" >&2
+    echo "bia-cli-exec: refusing — BIA_CLI_SLOTS must be a positive integer, got '${BIA_CLI_SLOTS:-<unset>}'" >&2
     exit 126
     ;;
 esac
@@ -87,16 +87,16 @@ esac
 MIN_UID=2000
 MAX_UID=$((MIN_UID + SLOTS))
 if [ "$REAL_UID" -lt "$MIN_UID" ] || [ "$REAL_UID" -ge "$MAX_UID" ]; then
-  echo "julia-cli-exec: refusing — uid $REAL_UID is outside the slot range [$MIN_UID, $MAX_UID)" >&2
+  echo "bia-cli-exec: refusing — uid $REAL_UID is outside the slot range [$MIN_UID, $MAX_UID)" >&2
   exit 126
 fi
 SLOT=$((REAL_UID - MIN_UID))
 
 # 2. Drift check ONLY (see header). The expected value is recomputed from
 #    the trusted, uid-derived $SLOT — never taken from the inherited var.
-EXPECTED_CONFIG_DIR="/run/julia-${SLOT}/home/.claude"
+EXPECTED_CONFIG_DIR="/run/bia-${SLOT}/home/.claude"
 if [ "${CLAUDE_CONFIG_DIR:-}" != "$EXPECTED_CONFIG_DIR" ]; then
-  echo "julia-cli-exec: refusing — CLAUDE_CONFIG_DIR='${CLAUDE_CONFIG_DIR:-<unset>}' does not match the expected '$EXPECTED_CONFIG_DIR' for uid $REAL_UID" >&2
+  echo "bia-cli-exec: refusing — CLAUDE_CONFIG_DIR='${CLAUDE_CONFIG_DIR:-<unset>}' does not match the expected '$EXPECTED_CONFIG_DIR' for uid $REAL_UID" >&2
   exit 126
 fi
 
@@ -110,4 +110,4 @@ exec /usr/bin/setpriv \
   --inh-caps=-all --ambient-caps=-all \
   --no-new-privs \
   -- \
-  /app/bin/julia-cli-slot "$@"
+  /app/bin/bia-cli-slot "$@"

@@ -1,5 +1,5 @@
 /**
- * useJuliaChat.ts hook tests — contract §E.2 (conversations/messages),
+ * useBiaChat.ts hook tests — contract §E.2 (conversations/messages),
  * §E.3 (SSE events → messages cache / blocks / streaming bubble, revised
  * 2026-09-14), §E.7.
  *
@@ -109,7 +109,7 @@ describe("useThreads", () => {
       ],
       total: 2,
     });
-    const { useThreads } = await import("@/hooks/useJuliaChat");
+    const { useThreads } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     const { result } = renderHook(() => useThreads(), { wrapper: wrapper(qc) });
 
@@ -123,7 +123,7 @@ describe("useThreads", () => {
 describe("useCreateConversation", () => {
   it("POSTs /api/conversations with {titulo}", async () => {
     mockPost.mockResolvedValue({ id: "c3", agent_id: "a1", owner_user_id: "u1", titulo: "Oi", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t" });
-    const { useCreateConversation } = await import("@/hooks/useJuliaChat");
+    const { useCreateConversation } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     const { result } = renderHook(() => useCreateConversation(), { wrapper: wrapper(qc) });
 
@@ -137,9 +137,9 @@ describe("useCreateConversation", () => {
 
 async function renderMessages(conversationId = "00000000-0000-4000-8000-0000000000c1") {
   mockGet.mockResolvedValue({ items: [], total: 0 });
-  const { useJuliaMessagesAdapter } = await import("@/hooks/useJuliaChat");
+  const { useBiaMessagesAdapter } = await import("@/hooks/useBiaChat");
   const qc = newClient();
-  const { result } = renderHook(() => useJuliaMessagesAdapter(conversationId), {
+  const { result } = renderHook(() => useBiaMessagesAdapter(conversationId), {
     wrapper: wrapper(qc),
   });
   // Wait for the initial GET to settle before replaying any SSE event —
@@ -161,7 +161,7 @@ function replay(options: { onEvent: (evt: FixtureEvent) => void }, uptoExclusive
   }
 }
 
-describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
+describe("useBiaMessagesAdapter — REST + subscription wiring", () => {
   it("GETs the message list", async () => {
     await renderMessages();
     expect(mockGet).toHaveBeenCalledWith(
@@ -236,10 +236,10 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
       );
     });
 
-    const { useJuliaApprovalActionAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
     mockPost.mockResolvedValue({ id: APPROVAL_ID, decision: "aprovada" });
     const qc2 = newClient();
-    const { result: actionResult } = renderHook(() => useJuliaApprovalActionAdapter(), { wrapper: wrapper(qc2) });
+    const { result: actionResult } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc2) });
     await actionResult.current.decide(APPROVAL_ID, true);
 
     expect(mockPost).toHaveBeenCalledWith(`/api/approvals/${APPROVAL_ID}/decision`, { aprovada: true });
@@ -319,7 +319,7 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
     });
     await waitFor(() => {
       const live: any = result.current.data.find((m: any) => m.id === "__live__");
-      expect(live).toMatchObject({ pending: true, body: "Julia está pensando…" });
+      expect(live).toMatchObject({ pending: true, body: "Bia está pensando…" });
     });
 
     invalidateSpy.mockClear();
@@ -355,7 +355,7 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
 
   it("conversation.upsert patches the thread-list cache", async () => {
     const { qc, options } = await renderMessages();
-    qc.setQueryData(["agents", "julia", "conversations"], {
+    qc.setQueryData(["agents", "bia", "conversations"], {
       items: [{ id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Old", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t" }],
       total: 1,
     });
@@ -368,7 +368,7 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
     });
 
     await waitFor(() => {
-      const cached: any = qc.getQueryData(["agents", "julia", "conversations"]);
+      const cached: any = qc.getQueryData(["agents", "bia", "conversations"]);
       expect(cached.items[0].titulo).toBe("Nova conversa gerada");
     });
   });
@@ -380,22 +380,22 @@ const RAW_MESSAGE = {
   id: "m1",
   conversation_id: "c1",
   role: "user",
-  texto: "Oi Julia",
+  texto: "Oi Bia",
   blocks: [],
   token_usage: null,
   created_at: "2026-09-01T10:00:00Z",
   updated_at: "2026-09-01T10:00:00Z",
 };
 
-describe("useJuliaSendAdapter", () => {
+describe("useBiaSendAdapter", () => {
   it("POSTs {texto} to .../messages", async () => {
     mockPost.mockResolvedValue({ mensagem: RAW_MESSAGE, status: "processando" });
-    const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
-    await result.current.mutateAsync({ text: "Oi Julia" });
-    expect(mockPost).toHaveBeenCalledWith("/api/conversations/c1/messages", { texto: "Oi Julia" });
+    await result.current.mutateAsync({ text: "Oi Bia" });
+    expect(mockPost).toHaveBeenCalledWith("/api/conversations/c1/messages", { texto: "Oi Bia" });
   });
 
   it("maps a 409 turn_in_progress rejection to the PT-BR composer message", async () => {
@@ -406,53 +406,53 @@ describe("useJuliaSendAdapter", () => {
         code: "turn_in_progress",
       }),
     );
-    const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
-      "Julia ainda está respondendo a mensagem anterior.",
+      "Bia ainda está respondendo a mensagem anterior.",
     );
   });
 
   it("maps a 409 agent_off rejection to the PT-BR composer message", async () => {
     const { ApiError } = await import("@/lib/errors");
     mockPost.mockRejectedValue(
-      new ApiError(409, "O agente Julia está desligado.", {
-        detail: "O agente Julia está desligado.",
+      new ApiError(409, "O agente Bia está desligado.", {
+        detail: "O agente Bia está desligado.",
         code: "agent_off",
       }),
     );
-    const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
-      "Julia está desligada — um administrador pode ligá-la em Agentes.",
+      "Bia está desligada — um administrador pode ligá-la em Agentes.",
     );
   });
 
-  it("maps a 429 julia_capacidade rejection to the contract's PT-BR message and leaves no phantom user message in the cache (contract §E.11: a capacity 429 persists no user message)", async () => {
+  it("maps a 429 bia_capacidade rejection to the contract's PT-BR message and leaves no phantom user message in the cache (contract §E.11: a capacity 429 persists no user message)", async () => {
     const { ApiError } = await import("@/lib/errors");
     mockPost.mockRejectedValue(
       new ApiError(
         429,
-        "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+        "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
         {
-          detail: "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-          code: "julia_capacidade",
+          detail: "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+          code: "bia_capacidade",
         },
       ),
     );
-    const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const messagesKey = ["agents", "julia", "conversations", "c1", "messages"];
+    const messagesKey = ["agents", "bia", "conversations", "c1", "messages"];
     const initial = { items: [], total: 0 };
     qc.setQueryData(messagesKey, initial);
-    const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
-      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+      "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
     );
 
     // The optimistic upsert only runs in `onSuccess` — never on rejection —
@@ -476,17 +476,17 @@ describe("useJuliaSendAdapter", () => {
       mockPost.mockRejectedValue(
         new ApiError(
           429,
-          "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+          "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
           {
-            detail: "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-            code: "julia_capacidade",
+            detail: "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+            code: "bia_capacidade",
           },
           3,
         ),
       );
-      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
       const qc = newClient();
-      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
       expect(result.current.retryAfterSeconds).toBeNull();
 
@@ -520,9 +520,9 @@ describe("useJuliaSendAdapter", () => {
       mockPost.mockRejectedValue(
         new ApiError(429, "Muitas mensagens em pouco tempo.", { detail: "Muitas mensagens em pouco tempo." }),
       );
-      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
       const qc = newClient();
-      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
       await act(async () => {
         await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
@@ -535,9 +535,9 @@ describe("useJuliaSendAdapter", () => {
       mockPost.mockRejectedValue(
         new ApiError(409, "Já existe um turno em andamento.", { code: "turn_in_progress" }, 5),
       );
-      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
       const qc = newClient();
-      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
 
       await act(async () => {
         await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
@@ -549,12 +549,12 @@ describe("useJuliaSendAdapter", () => {
 
 // ─── Approval action (ChatWindow seam, contract §E.7) ──────────────────────
 
-describe("useJuliaApprovalActionAdapter", () => {
+describe("useBiaApprovalActionAdapter", () => {
   it("decide() POSTs {aprovada} to /api/approvals/{id}/decision", async () => {
     mockPost.mockResolvedValue({ id: "ap1", decision: "aprovada" });
-    const { useJuliaApprovalActionAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const { result } = renderHook(() => useJuliaApprovalActionAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc) });
 
     await result.current.decide("ap1", true);
     expect(mockPost).toHaveBeenCalledWith("/api/approvals/ap1/decision", { aprovada: true });
@@ -563,9 +563,9 @@ describe("useJuliaApprovalActionAdapter", () => {
   it("already_decided rejects with the mapped message", async () => {
     const { ApiError } = await import("@/lib/errors");
     mockPost.mockRejectedValue(new ApiError(409, "Esta aprovação já foi decidida."));
-    const { useJuliaApprovalActionAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
-    const { result } = renderHook(() => useJuliaApprovalActionAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc) });
 
     await expect(result.current.decide("ap1", true)).rejects.toThrow(
       "Esta aprovação já foi decidida.",
@@ -575,7 +575,7 @@ describe("useJuliaApprovalActionAdapter", () => {
 
 // ─── Rename (contract §E.2 PATCH /api/conversations/{id}, 2026-09-22) ──────
 
-const CONVERSATIONS_KEY = ["agents", "julia", "conversations"] as const;
+const CONVERSATIONS_KEY = ["agents", "bia", "conversations"] as const;
 
 function seedConversationsCache(qc: QueryClient) {
   qc.setQueryData(CONVERSATIONS_KEY, {
@@ -592,7 +592,7 @@ describe("useRenameConversation", () => {
       () => new Promise((resolve) => setTimeout(() => resolve({ id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Renomeada", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t2" }), 10)),
     );
 
-    const { useRenameConversation } = await import("@/hooks/useJuliaChat");
+    const { useRenameConversation } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     seedConversationsCache(qc);
     const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
@@ -615,7 +615,7 @@ describe("useRenameConversation", () => {
   it("rolls back the cache to the previous titulo on error", async () => {
     mockPatch.mockRejectedValue(new Error("boom"));
 
-    const { useRenameConversation } = await import("@/hooks/useJuliaChat");
+    const { useRenameConversation } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     seedConversationsCache(qc);
     const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
@@ -630,16 +630,16 @@ describe("useRenameConversation", () => {
   });
 });
 
-describe("useJuliaRenameConversationAdapter", () => {
+describe("useBiaRenameConversationAdapter", () => {
   it("rename() calls the mutation with {id, titulo}", async () => {
     mockPatch.mockResolvedValue({
       id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Nova", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t",
     });
 
-    const { useJuliaRenameConversationAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaRenameConversationAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     seedConversationsCache(qc);
-    const { result } = renderHook(() => useJuliaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaRenameConversationAdapter(), { wrapper: wrapper(qc) });
 
     await result.current.rename("c1", "Nova");
     expect(mockPatch).toHaveBeenCalledWith("/api/conversations/c1", { titulo: "Nova" });
@@ -649,10 +649,10 @@ describe("useJuliaRenameConversationAdapter", () => {
     const { ApiError } = await import("@/lib/errors");
     mockPatch.mockRejectedValue(new ApiError(422, "titulo não pode ficar em branco"));
 
-    const { useJuliaRenameConversationAdapter } = await import("@/hooks/useJuliaChat");
+    const { useBiaRenameConversationAdapter } = await import("@/hooks/useBiaChat");
     const qc = newClient();
     seedConversationsCache(qc);
-    const { result } = renderHook(() => useJuliaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useBiaRenameConversationAdapter(), { wrapper: wrapper(qc) });
 
     await expect(result.current.rename("c1", "")).rejects.toThrow("titulo não pode ficar em branco");
   });

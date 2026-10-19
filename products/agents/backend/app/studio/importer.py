@@ -25,7 +25,7 @@ Agent Packages (``agent-packages/CONTRACT.md`` §C4, §D2): ``agente.kind``,
 ``versao.versao_semver`` and ``versao.package_sha`` are the ONLY identity
 additions; a ``dev-advisor`` bundle must carry all three. ``kind`` can be set
 to ``dev-advisor`` only when the agent is NEW or already a dev-advisor — a
-runtime agent (IsaIA, Julia) is never flipped (409 ``kind_change_refused``,
+runtime agent (IsaIA, Bia) is never flipped (409 ``kind_change_refused``,
 and 017's ``guard_agent_kind_immutable`` is the DB backstop). One optional
 extra key, ``claude`` (``[{caminho, conteudo}]`` — the build's
 ``dist/claude/`` tree), is stored on the draft so ``GET /api/agent-packages``
