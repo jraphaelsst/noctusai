@@ -1,12 +1,14 @@
 # App reverse-engineering — study a third-party SaaS from the owner's own account, read-only, in stages
 
-**The rule.** When the owner wants to understand an external app in order to build our own version, we map it **read-only, from the owner's own logged-in account, in owner-gated stages**, and land the result as a reference folder that a later build contract can cite. Nothing is built, and nothing on the target is changed, until the owner says "go all the way".
+**The rule.** When the owner wants to understand an external app in order to build our own version, we map it **read-only, from the owner's own logged-in account, in owner-gated stages**, and land the vendor-derived result in the **private study folder outside git** (`~/Documents/repository/NoctusAI/_private-studies/<target>/`) and only OUR build specs in the repo, where a later build contract can cite them. Nothing is built, and nothing on the target is changed, until the owner says "go all the way".
 
-**Why.** Born at N=2: CoreStudio (2026-10-05/06 → `products/social-wiring/projects/core-studio/`) and Lais (2026-10-13). Both runs re-derived the same procedure by hand, and both hit the same traps: an output channel too small for bulk data, controls whose side effects were unknown, a second app hiding behind the first, and a tenant-isolation hole. CoreStudio's guessed ids returned **other customers' rows** (`core-studio/specs/mechanisms.md §15`); a procedure that relies on memory to avoid that is not a procedure.
+**Why.** Born at N=2: CoreStudio (2026-10-05/06 → `_private-studies/core-studio/`, outside git since 2026-10-19; our specs in `products/social-wiring/projects/core-studio-build/`) and Lais (2026-10-13). Both runs re-derived the same procedure by hand, and both hit the same traps: an output channel too small for bulk data, controls whose side effects were unknown, a second app hiding behind the first, and a tenant-isolation hole. CoreStudio's guessed ids returned **other customers' rows** (private study, `mechanisms` §15); a procedure that relies on memory to avoid that is not a procedure.
 
 Procedure: skill `noc-reverse-engineer`. Specialist: agent `reverse-engineer`.
 
 ## 1 · Stages (each ends with an owner checkpoint)
+
+> **Where the outputs live.** Every path in the Output column below is relative to `_private-studies/<target>/` (outside git). Only the Build row lands in the repo.
 
 | Stage | Goal | Output |
 |---|---|---|
@@ -14,7 +16,7 @@ Procedure: skill `noc-reverse-engineer`. Specialist: agent `reverse-engineer`.
 | **S2 · Data** | Real response shapes from **read-only GETs on the owner's own ids** (allowlist built from S1) | `captures/xhr-<date>/` (redacted) + `specs/xhr-to-fetch.md` status table |
 | **S3 · Mechanisms** | How it works behind the pages: entities + relations, state machines, triggers, AI layer (prompts, slots, classifiers), integrations, pricing unit | `specs/mechanisms.md`, `prompts/*-DRAFT.md` |
 | **S4 · Synthesis** | Study doc + mapping onto our platform (seed organs, existing products, gaps) + open questions for the owner | `docs/platform-study.md`, `DECISIONS.md` |
-| **Build** | Only on the owner's explicit go: contract-first slices | `specs/<module>-contract.md` (skill `noc-contract-first`) |
+| **Build** | Only on the owner's explicit go: contract-first slices | `products/<slug>/projects/<module>-build/specs/<module>-contract.md` (in git; skill `noc-contract-first`) |
 
 Interview, never assume (memory `feedback-interview-never-assume-specs`): what the target does is presented as **options**, never as our decision.
 
@@ -63,4 +65,5 @@ Unknown ⇒ treat as WRITE until the code says otherwise (static analysis classi
 
 - Tag every non-trivial claim **C** (seen; cite file/screenshot/page) · **I** (inferred) · **U** (unknown → open question). Two concepts are the same only by definition **and** real data (memory `feedback-concepts-by-definition-not-name`).
 - Study material is **private client material**: lead names, phones, e-mails, chat text and staff lists stay out of committed docs (summarise structure; redact samples). Tokens, CSRF, cookies, `eyJ…` blobs are redacted before anything is committed.
-- Folder home: the product that will consume it — `products/<slug>/projects/<target>/` (CoreStudio → social-wiring). Ask the owner when it is not obvious.
+- **Folder homes (two, never mixed).** (1) **Vendor-derived material** (captures, saved pages and scripts, bundles, screenshots, analysis of their internals, page maps of their app, mechanisms, XHR notes, their prompts, exported data files) goes ONLY to `~/Documents/repository/NoctusAI/_private-studies/<target>/`, outside every git tree. (2) **Our own build specs** (contracts, DECISIONS, test checklists, the reconstruction map onto our platform) go to `products/<slug>/projects/<module>-build/` (or `<module>/`) and name the private study by a pointer (`[private study: <name>]`), never by quoting it: no verbatim vendor prompts, internal endpoint lists or their JS identifiers. Ask the owner which product when it is not obvious.
+- **Enforced.** Keeper `check_no_vendor_study_in_git` refuses a tracked or staged file under `projects/**/captures/**`, `projects/**/screenshots/**` of a study, or a `corestudio-*.json` / `*-definition-dump*` style export; the `.gitignore` carries the same paths. Born from the 2026-10-19 owner decision that moved 345 files out of git (history purge scheduled separately).

@@ -324,7 +324,7 @@ class SocialWiringSettings(ProductSettings):
 
     # ─── Minha Pesquisa — Extrair (app/modules/media_creation) ───────────
     # Async extraction job (LLM reads one of OUR posts, proposes research
-    # items / viral topics). Contract: projects/core-studio/specs/
+    # items / viral topics). Contract: projects/core-studio-build/specs/
     # pesquisa-wave2-contract.md section 2.3. All caps are finite, never
     # "unlimited by omission".
     # Hard switch: off => the worker is not started AND submit returns 503.
@@ -357,7 +357,7 @@ class SocialWiringSettings(ProductSettings):
 
     # ─── Geração (app/modules/media_creation) ────────────────────────────
     # Dashboard / Chat / Biblioteca / Headlines / Roteiros. Contract:
-    # projects/core-studio/specs/geracao-contract.md section 9.4. Every cap is
+    # projects/core-studio-build/specs/geracao-contract.md section 9.4. Every cap is
     # finite, never "unlimited by omission". The seed org LLM budget
     # (`enforce_budget`) applies on top. Only models registered in the seed
     # catalog (llm/models.py) may be pinned: an unregistered model is recorded

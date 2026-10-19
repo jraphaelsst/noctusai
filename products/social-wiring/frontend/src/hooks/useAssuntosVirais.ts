@@ -1,7 +1,7 @@
 /**
  * Assuntos Virais — TanStack Query hooks over
  * `/api/media-creation/pesquisa/assuntos-virais` (contract
- * projects/core-studio/specs/pesquisa-wave2-contract.md §3 #18–26).
+ * projects/core-studio-build/specs/pesquisa-wave2-contract.md §3 #18–26).
  *
  * Loading rule (lying-loading-state.md): query hooks return
  * `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`

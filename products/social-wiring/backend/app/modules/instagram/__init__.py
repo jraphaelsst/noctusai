@@ -4,7 +4,7 @@ Per-post catalog + daily per-post / per-account snapshots for
 ``provider="instagram"`` integration accounts (migration
 ``208_instagram_insights.sql``), the daily ``instagram_daily_snapshot`` job,
 and the ``/api/instagram/accounts/{account_id}/...`` read + sync surface.
-Contract: ``projects/core-studio/specs/instagram-insights-api.md``.
+Contract: ``projects/core-studio-build/specs/instagram-insights-api.md``.
 
 Provider data comes from the seed Instagram-Login adapter
 (``noctusai_lib.integrations.meta.instagram_login_adapter`` — Protocol +

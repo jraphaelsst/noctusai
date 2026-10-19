@@ -1,7 +1,7 @@
 /**
  * Extrair Pesquisa (`/media-creation/pesquisa/extrair`) — pick the marca's own
  * posts and extract research items and/or viral topics from them. Contract:
- * projects/core-studio/specs/pesquisa-wave2-contract.md §4.3.
+ * projects/core-studio-build/specs/pesquisa-wave2-contract.md §4.3.
  *
  * - Job progress is polled by React Query (`useExtracaoJob`, 2 s while
  *   queued/running, stops on terminal); an active job resumes on mount through

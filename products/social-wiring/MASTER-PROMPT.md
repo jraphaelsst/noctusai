@@ -18,7 +18,7 @@ org configures, follow-ups, notifications and reports. SW never calls an LLM for
 
 ## Julia (renamed from "Lais" on 2026-10-19)
 
-"Lais" is Lastro's product (reverse-engineered under `projects/lais/`, kept as the vendor
+"Lais" is Lastro's product (reverse-engineered in a private study outside git, kept as the vendor
 study). Everything we built under that name is Julia: code `julia_*`, tables `julia_*`, API
 `/api/julia/*`, pages `/julia/*`, nav group "Julia".
 

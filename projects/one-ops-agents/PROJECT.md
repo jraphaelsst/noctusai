@@ -6,7 +6,7 @@
 
 > **Note 2026-10-14 (Lais A1 — read before resuming this project).** This project is stale since
 > 2026-09-19. **Phase B (the agent-keyed seam: `types.py`, `build_agent_spec`, the registry) is
-> SUPERSEDED by Lais slice A1** (`products/social-wiring/projects/lais/specs/julia-agent-contract.md`
+> SUPERSEDED by Lais slice A1** (`products/social-wiring/projects/julia/specs/julia-agent-contract.md`
 > §2 + §10.2): `AgentSpec` gained `provider` + `runtime`, `get_agent_runtime(settings, agent, org_id)`
 > now dispatches on `agents.runtime` (`claude_sdk` → Claude SDK, `llm` → the provider-neutral
 > `LlmToolRuntime`, per-ORG keys), `TurnContext.requested_by` is non-null (a per-agent service

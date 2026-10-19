@@ -2,7 +2,7 @@
 
 > **Owner requirement (2026-10-09):** the self-hosted transcriber is a **24/7 live service with an API we can call at any time** (agents, scripts, products). Transcription runs on our server, never on a laptop.
 > **Owner decisions:** async jobs API (submit → id → poll), with rate limiting and caps as an explicit safety requirement; built from this session (noctusai-fe).
-> **Builds on, does not replace:** `products/social-wiring/projects/core-studio/specs/transcription-contract.md` (the seed `transcription` seam, the `noctus-transcriber` worker, its abuse shield). Read it first; this file only states what differs.
+> **Builds on, does not replace:** `products/social-wiring/projects/core-studio-build/specs/transcription-contract.md` (the seed `transcription` seam, the `noctus-transcriber` worker, its abuse shield). Read it first; this file only states what differs.
 > Roadmap: `project-history/roadmaps/transcription-api-2026-10.md`.
 
 ## 0 · Placement and why

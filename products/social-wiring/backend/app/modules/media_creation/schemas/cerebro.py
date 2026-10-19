@@ -1,6 +1,6 @@
 """Segundo Cérebro — request schemas (strict at the HTTP boundary) and limits.
 
-Contract: ``projects/core-studio/specs/cerebro-contract.md`` §4. Responses are
+Contract: ``projects/core-studio-build/specs/cerebro-contract.md`` §4. Responses are
 plain dicts built by :class:`~app.modules.media_creation.services.cerebro_service.CerebroService`
 in the shape of the contract's TypeScript types.
 """

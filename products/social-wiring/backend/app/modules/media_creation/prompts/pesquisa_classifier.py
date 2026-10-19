@@ -3,7 +3,7 @@
 DRAFT — awaiting owner validation.
 
 Drafted from the reference app's captured classifier prompt
-(``projects/core-studio/prompts/pesquisa-classifier-prompt.md``): same strict
+(private CoreStudio study, outside git): same strict
 ``{{SLUG}}`` / ``[conteúdo literal]`` pair output and the same tie-break
 hierarchy, extended from the reference app's 13 slugs to all 36 classifiable
 variables. The variables table is RENDERED from

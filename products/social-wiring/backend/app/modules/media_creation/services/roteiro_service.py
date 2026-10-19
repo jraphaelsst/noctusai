@@ -1,6 +1,6 @@
 """Roteiros (Roteiro Avançado) — request side, queue handlers, dead-letter reconcile.
 
-Contract: ``projects/core-studio/specs/geracao-contract.md`` sections 2.5, 3, 4.5 and 6.1. Both
+Contract: ``projects/core-studio-build/specs/geracao-contract.md`` sections 2.5, 3, 4.5 and 6.1. Both
 prompts are DRAFT for owner validation.
 
 Two halves:

@@ -3,7 +3,7 @@
 Three sources, all marca-scoped and read-only: Instagram media of the marca's
 connected accounts, YouTube videos/shorts of its connected channels, and posts
 created in Criação de mídia (``mc_posts``). Contract:
-projects/core-studio/specs/pesquisa-wave2-contract.md sections 2.1 and 2.5.
+projects/core-studio-build/specs/pesquisa-wave2-contract.md sections 2.1 and 2.5.
 
 Rules encoded here (each has a test):
 

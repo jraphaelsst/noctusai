@@ -1,6 +1,6 @@
 """Assuntos Virais — request schemas (strict at the HTTP boundary).
 
-Contract: projects/core-studio/specs/pesquisa-wave2-contract.md section 3.
+Contract: projects/core-studio-build/specs/pesquisa-wave2-contract.md section 3.
 """
 from __future__ import annotations
 

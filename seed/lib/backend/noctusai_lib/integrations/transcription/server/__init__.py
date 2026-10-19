@@ -7,7 +7,7 @@ carries faster-whisper / numpy so no product image installs ctranslate2.
 Importing this package is cheap: `faster_whisper` is imported lazily by
 `FasterWhisperEngine.load()` only.
 
-Contract: products/social-wiring/projects/core-studio/specs/transcription-contract.md
+Contract: products/social-wiring/projects/core-studio-build/specs/transcription-contract.md
 """
 
 from noctusai_lib.integrations.transcription.server.app import create_app

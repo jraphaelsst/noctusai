@@ -216,3 +216,13 @@ projects/**/*.mov
 projects/**/*.m4a
 /pglite-*.whl
 projects/store/WhatsApp Image *.jpeg
+
+# Vendor reverse-engineering material lives OUTSIDE git, in
+# ~/Documents/repository/NoctusAI/_private-studies/<target>/ (owner decision 2026-10-19).
+# Keeper check_no_vendor_study_in_git; skill noc-reverse-engineer.
+products/*/projects/**/captures/
+products/*/projects/core-studio/
+products/*/projects/lais/
+products/*/projects/**/corestudio-*.json
+**/bubble-definition-dump*
+_private-studies/

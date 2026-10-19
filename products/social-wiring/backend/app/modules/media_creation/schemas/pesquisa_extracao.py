@@ -1,6 +1,6 @@
 """Pesquisa Extrair — request schemas (strict at the HTTP boundary).
 
-Contract: projects/core-studio/specs/pesquisa-wave2-contract.md section 3.
+Contract: projects/core-studio-build/specs/pesquisa-wave2-contract.md section 3.
 The upper bound on ``posts`` is the config knob
 ``pesquisa_extracao_max_posts_por_job`` (checked by the service → 422), not a
 hard-coded number here.

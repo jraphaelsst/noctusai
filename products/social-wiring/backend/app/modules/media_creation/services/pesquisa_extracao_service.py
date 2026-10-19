@@ -2,7 +2,7 @@
 
 An extraction is an LLM reading ONE of the marca's own posts (text + metrics)
 and proposing research items and/or viral topics, saved as ``pending``.
-Contract: projects/core-studio/specs/pesquisa-wave2-contract.md sections 2.3,
+Contract: projects/core-studio-build/specs/pesquisa-wave2-contract.md sections 2.3,
 2.4 and 3. Both extractor prompts are DRAFT for owner validation.
 
 Two halves:

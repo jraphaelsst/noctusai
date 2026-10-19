@@ -1,6 +1,6 @@
 """Roteiro Avançado — stage 1: the clarifying questions. **DRAFT for owner validation.**
 
-The reference app's prompt was never captured (``prompts/roteiro-DRAFT.md`` section 1); this one is designed
+The reference app's prompt was never captured (private CoreStudio study, outside git); this one is designed
 from the Método and must be validated by the owner before it is trusted.
 
 Everything third-party or user-authored (brain, viral transcript, instructions) goes inside a

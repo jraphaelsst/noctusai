@@ -7,7 +7,7 @@ Migration ``*_cs_cerebro.sql`` seeds ``social_wiring.cs_brain_templates`` and
 and the questionnaire/synthesis services read the same constants — so the
 questions are written ONCE.
 
-Origin (``projects/core-studio/specs/cerebro-contract.md`` §2 and §10):
+Origin (``projects/core-studio-build/specs/cerebro-contract.md`` §2 and §10):
 
 * questions are verbatim from ``pesquisa-cerebro-spec.md`` §9 /
   ``page-map-v2.md`` §8 (live-verified, wins over the earlier spec sections);

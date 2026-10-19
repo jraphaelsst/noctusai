@@ -1,6 +1,6 @@
 """Biblioteca de Virais + Minha Biblioteca -- the request-path service (endpoints 7-19).
 
-Contract: ``projects/core-studio/specs/geracao-contract.md`` sections 2.3, 4.3, 9.2, 9.3. The
+Contract: ``projects/core-studio-build/specs/geracao-contract.md`` sections 2.3, 4.3, 9.2, 9.3. The
 ingestion pipeline (sync / transcribe / classify) lives in :mod:`.biblioteca_ingestao`; this module
 only reads, edits the allow-list and ENQUEUES jobs.
 

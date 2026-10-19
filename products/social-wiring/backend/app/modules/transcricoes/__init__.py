@@ -10,7 +10,7 @@ Why a top-level module and not under ``media_creation``: the contract makes this
 SHARED layer (``contexto_tipo`` is a registry), so it must not depend on any one
 consumer — ``media_creation`` depends on it, not the reverse.
 
-Spec: ``projects/core-studio/specs/transcription-contract.md``.
+Spec: ``projects/core-studio-build/specs/transcription-contract.md``.
 """
 from __future__ import annotations
 

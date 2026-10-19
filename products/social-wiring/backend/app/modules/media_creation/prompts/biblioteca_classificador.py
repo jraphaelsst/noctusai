@@ -1,7 +1,7 @@
 """Biblioteca -- viral classifier prompt + strict output parser.
 
 DRAFT -- awaiting owner validation (``PROMPT_VERSAO``). Contract:
-``projects/core-studio/specs/geracao-contract.md`` section 3.3 step 6 and section 9.1.
+``projects/core-studio-build/specs/geracao-contract.md`` section 3.3 step 6 and section 9.1.
 
 One call per viral. Input: the post's caption and (when it is a Reel) its transcript, both
 UNTRUSTED third-party text, placed inside delimited data blocks that the system prompt declares to be

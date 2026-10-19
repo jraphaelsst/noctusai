@@ -1,7 +1,7 @@
 """Biblioteca de virais -- security review fixes (BE-SEC): H1 stored prompt injection, M1 unbounded
 pagination, M2 LGPD retention, L1 blob-delete retry + orphan sweep + sync/delete race, L2 caps, L4.
 
-Contract: ``projects/core-studio/specs/geracao-contract.md`` 2.3, 3.3, 3.4, 9.
+Contract: ``projects/core-studio-build/specs/geracao-contract.md`` 2.3, 3.3, 3.4, 9.
 """
 from __future__ import annotations
 

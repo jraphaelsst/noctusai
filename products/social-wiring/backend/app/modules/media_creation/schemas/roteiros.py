@@ -1,6 +1,6 @@
 """Roteiros (Roteiro Avançado) — request schemas, strict at the HTTP boundary.
 
-Contract: ``projects/core-studio/specs/geracao-contract.md`` section 4.5 (#32-#40). The response
+Contract: ``projects/core-studio-build/specs/geracao-contract.md`` section 4.5 (#32-#40). The response
 shapes are the plain dicts of ``roteiro_service.present_*`` (TS types in contract 4.8).
 
 ``fonte`` accepts the three contract values so ``web`` / ``link`` reach the service and answer the

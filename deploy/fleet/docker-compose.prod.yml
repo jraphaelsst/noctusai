@@ -638,7 +638,7 @@ services:
       - /tmp:mode=1777,size=96m
 
   # ── transcriber 9000 — self-hosted faster-whisper worker (infra, NOT a product) ─
-  # Contract: products/social-wiring/projects/core-studio/specs/transcription-contract.md §2.
+  # Contract: products/social-wiring/projects/core-studio-build/specs/transcription-contract.md §2.
   # Deliberately NOT <<: *prod-defaults: no env_file (holds no credentials besides
   # its own token), no noctus-net (reachable only over the internal transcribe-net,
   # which has no egress), no cache env, not in the tunnel ingress.

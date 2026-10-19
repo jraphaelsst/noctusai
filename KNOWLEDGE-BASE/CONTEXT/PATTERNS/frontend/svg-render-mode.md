@@ -120,7 +120,7 @@ repo catalog (`branding/catalog/`, `load_catalog`, `seed_catalog`,
   no-op elsewhere): marcas Gilson Tangerino / Nós no Limiar / NoctusAI + the
   empty "One Design" kit attached to One Consultoria.
 - Runbook for the first import (Nós no Limiar):
-  `products/social-wiring/projects/core-studio/specs/branding-import.md`.
+  `products/social-wiring/projects/core-studio-build/specs/branding-import.md`.
 - Triage: branding model = [A] accept at N=1 (media_creation-only);
   seed-convergence destination if a 2nd product needs design-system storage.
 

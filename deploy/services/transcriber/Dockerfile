@@ -1,5 +1,5 @@
 # noctus-transcriber — self-hosted faster-whisper worker (infrastructure, NOT a product).
-# Contract: products/social-wiring/projects/core-studio/specs/transcription-contract.md §2.
+# Contract: products/social-wiring/projects/core-studio-build/specs/transcription-contract.md §2.
 #
 # Build context = REPO ROOT (the worker imports noctusai_lib.integrations.transcription):
 #   docker build -f deploy/services/transcriber/Dockerfile -t transcriber:local .

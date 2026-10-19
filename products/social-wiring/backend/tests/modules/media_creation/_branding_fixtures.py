@@ -6,7 +6,7 @@ import base64
 import json
 from pathlib import Path
 
-#: .../products/social-wiring/projects/core-studio/design-systems
+#: .../products/social-wiring/projects/core-studio-build/design-systems
 DESIGN_SYSTEMS = Path(__file__).resolve().parents[4] / "projects" / "core-studio" / "design-systems"
 
 # 1x1 PNG

@@ -1,7 +1,7 @@
 /**
  * Minha Pesquisa (`/media-creation/pesquisa`) — per-marca research items the
  * headline/roteiro generators draw from. Contract:
- * projects/core-studio/specs/pesquisa-contract.md §4.
+ * projects/core-studio-build/specs/pesquisa-contract.md §4.
  *
  * - manual add = approved; AI-classified = pending (Aprovar / Rejeitar);
  *   rejected is soft and never listed.

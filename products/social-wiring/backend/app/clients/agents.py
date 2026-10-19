@@ -1,6 +1,6 @@
 """`AgentsClient` -- social-wiring's client of the `agents` product's channel API.
 
-Contract: products/social-wiring/projects/lais/specs/julia-agent-contract.md
+Contract: products/social-wiring/projects/julia/specs/julia-agent-contract.md
   section 3.1  POST /api/channels/turns                 -> `run_turn`
   section 3.2  GET  /api/channels/agents/{key}/status   -> `agent_status`
   section 10.1 M5  deletion on request                  -> `delete_conversation_data`

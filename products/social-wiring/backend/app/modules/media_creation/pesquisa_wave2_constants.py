@@ -4,7 +4,7 @@ Single Python source of truth for the CHECK enums in migration
 ``221_cs_research_extraction.sql``. Later slices import these; a test
 (`test_pesquisa_wave2_migration.py`) asserts the SQL carries exactly these
 values, so code and table cannot drift. Contract:
-projects/core-studio/specs/pesquisa-wave2-contract.md section 2.
+projects/core-studio-build/specs/pesquisa-wave2-contract.md section 2.
 """
 
 from __future__ import annotations

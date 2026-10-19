@@ -1,6 +1,6 @@
 /**
  * Minha Pesquisa — TanStack Query hooks over `/api/media-creation/pesquisa`
- * (build contract: projects/core-studio/specs/pesquisa-contract.md §3).
+ * (build contract: projects/core-studio-build/specs/pesquisa-contract.md §3).
  *
  * Responses arrive wrapped in `success_response` ({success, data}); we unwrap
  * at the boundary. Loading rule (lying-loading-state.md): every query hook

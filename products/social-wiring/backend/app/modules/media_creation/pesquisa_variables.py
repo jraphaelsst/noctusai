@@ -8,7 +8,7 @@ it too — so the taxonomy is written ONCE.
 
 Origin: 29 reference-app DB variables (slug as that app stores it, except the
 ``LOCAIS-...`` typo), 4 globals, 7 classifier-only concepts
-(``projects/core-studio/specs/pesquisa-contract.md`` §2). Descriptions of the
+(``projects/core-studio-build/specs/pesquisa-contract.md`` §2). Descriptions of the
 five reference-app classifier variables and the 7 classifier-only ones are
 The reference app's wording; the rest are written here. All are refinable from real
 usage ("first a fully working prototype, then refine").

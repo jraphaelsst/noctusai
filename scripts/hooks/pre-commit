@@ -781,6 +781,19 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-1. Vendor-study-in-git gate (blocking, only when a path ─────
+# under projects/**/captures/ or an exported app bundle is staged) ────────
+# Keeper `check_no_vendor_study_in_git` + skill `noc-reverse-engineer`.
+# Vendor-derived reverse-engineering material lives in _private-studies/
+# (outside git); only our own build specs are committed.
+STAGED_VENDOR_STUDY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '(^|/)projects/([^/]+/)*captures/|(corestudio|lais|lastro)-(data|pages|definition|bundle)[^/]*\.json$|bubble-definition-dump|(^|/)_private-studies/' || true)
+if [[ -n "$STAGED_VENDOR_STUDY" ]] && have_py; then
+    echo "[pre-commit] vendor study material staged — refusing..."
+    echo "$STAGED_VENDOR_STUDY" | head -20 >&2
+    echo "[pre-commit] NO-VENDOR-STUDY-IN-GIT check FAILED. Commit aborted. Move it to ~/Documents/repository/NoctusAI/_private-studies/<target>/ (outside git); commit only our own build specs. See skill noc-reverse-engineer + KB § PATTERNS/common/app-reverse-engineering.md." >&2
+    exit 1
+fi
+
 # ─── 6e-bis-2. Harness-mod integrity gate (blocking, only when a Claude ──
 # Code mod / marketplace / settings.json is staged) ──────────────────────
 # Keeper `check_harness_mod_integrity`. A mod (`.claude/mods/*`) is a UX layer

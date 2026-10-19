@@ -2,7 +2,7 @@
  * useInstagramInsights — TanStack Query wrappers for the Instagram Business
  * Login insights API (`/api/instagram/accounts/{account_id}/...`).
  *
- * Contract: products/social-wiring/projects/core-studio/specs/instagram-insights-api.md
+ * Contract: products/social-wiring/projects/core-studio-build/specs/instagram-insights-api.md
  *
  * GET routes read OUR stored data (never Graph). `null` means Meta did not
  * serve the metric — it is never coerced to 0; the UI renders "—".

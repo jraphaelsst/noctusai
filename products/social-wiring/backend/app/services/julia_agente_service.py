@@ -1,7 +1,7 @@
 """Julia (lead agent) -- connection/chat policy, shared by the webhook
 router, the lead worker and the `/api/julia/agente` routes.
 
-Contract: products/social-wiring/projects/lais/specs/julia-agent-contract.md
+Contract: products/social-wiring/projects/julia/specs/julia-agent-contract.md
 (precedence section 11 > 10 > 1-9). Everything here is either pure or takes its
 IO collaborators as arguments, so the webhook, the worker and the tests share ONE
 implementation of each rule:

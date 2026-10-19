@@ -1,6 +1,6 @@
 /**
  * Extrair Pesquisa — TanStack Query hooks over `/api/media-creation/pesquisa`
- * (build contract: projects/core-studio/specs/pesquisa-wave2-contract.md §3
+ * (build contract: projects/core-studio-build/specs/pesquisa-wave2-contract.md §3
  * endpoints 11–17, §3.1 types).
  *
  * Loading rule (lying-loading-state.md): query hooks return

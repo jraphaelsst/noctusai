@@ -20,7 +20,7 @@ and consumed over `/api/channels/*`; SW never calls an LLM for Julia's turns.
 ## The Julia module
 
 Julia is the WhatsApp SDR for a real-estate org (renamed from "Lais" on
-2026-10-19; Lais is Lastro's product, studied under `projects/lais/`).
+2026-10-19; Lais is Lastro's product, studied in a private study outside git).
 
 - **Turn flow**: WAHA webhook → `services/julia_lead_turn_service.py` → agents `POST /api/channels/turns` (studio key `julia`, formerly `lead-imob`) → Julia's actions are applied by `julia_acoes_service`; every outbound WhatsApp send passes the single gate `julia_envio_gate`.
 - **Tools for the agent**: agents calls back `POST /api/julia/ferramentas/{nome}` with a product token (scope `social-wiring:lais-tools` — kept under its old spelling until both products rename it).

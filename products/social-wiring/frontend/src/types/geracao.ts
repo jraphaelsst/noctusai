@@ -1,6 +1,6 @@
 /**
  * Geração (Criação de Mídia) — wire types. Verbatim from
- * projects/core-studio/specs/geracao-contract.md §4.8 (`export` added only).
+ * projects/core-studio-build/specs/geracao-contract.md §4.8 (`export` added only).
  * BE schemas mirror these; change the contract first.
  */
 export type LoteOrigem = 'form_me' | 'form_public' | 'form_viral' | 'biblioteca' | 'sugestao_auto'

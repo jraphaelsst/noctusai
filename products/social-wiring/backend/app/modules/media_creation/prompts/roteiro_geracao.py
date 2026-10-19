@@ -1,6 +1,6 @@
 """Roteiro Avançado — stage 2: the script. **DRAFT for owner validation** (``roteiro-v1-draft``).
 
-The reference app's roteiro prompt was never captured (``projects/core-studio/prompts/roteiro-DRAFT.md``
+The reference app's roteiro prompt was never captured (private CoreStudio study, outside git
 section 1). This one is designed from the Método and the behaviour observed on roteiros
 41428 / 41429 (beat order, viral-as-skeleton, fabricated statistics to forbid). The owner validates it.
 

@@ -12,7 +12,7 @@ The owner wants every product to have **one specialist agent**: the product's *g
 - **(a)** by Claude Code, which loads it and impersonates it whenever it works on that product;
 - **(b)** by the product's **chat bubble**, as the assistant for logged-in users.
 
-Agents live in the `agents` product (internal, admin-only). Other products reach them through an **internal-only routing API**. Every conversation is stored in the `agents` schema. The owner made shielding a first-class requirement. Our own corestudio study (`products/social-wiring/projects/core-studio/`) showed five leak classes in a peer product: system prompts served to the client, IDOR, prompt payloads readable by users, tokens in SSR HTML, and state-changing GETs. We must not ship any of them.
+Agents live in the `agents` product (internal, admin-only). Other products reach them through an **internal-only routing API**. Every conversation is stored in the `agents` schema. The owner made shielding a first-class requirement. Our own corestudio study (private study, outside git) showed five leak classes in a peer product: system prompts served to the client, IDOR, prompt payloads readable by users, tokens in SSR HTML, and state-changing GETs. We must not ship any of them.
 
 Delivery order (D-SEQ): business-interviewer agent and the agent-creation method first. Then the platform core, the bubble, the SW assistant, the seed agent generalized and validated on igig, and the generic helper.
 
@@ -216,4 +216,4 @@ Package + default for agent-less products. Verify: an agent-less product's bubbl
 
 ## Composes with
 
-`KB § PATTERNS/security/llm-bot-security.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/architect/products-consume-canonical-organs.md` · `KB § PATTERNS/frontend/consent-routes-mandate.md` · `KB § PATTERNS/devops/prod-exposure-consent.md` · `projects/one-ops-agents/PROJECT.md` · `products/social-wiring/projects/core-studio/`
+`KB § PATTERNS/security/llm-bot-security.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/architect/products-consume-canonical-organs.md` · `KB § PATTERNS/frontend/consent-routes-mandate.md` · `KB § PATTERNS/devops/prod-exposure-consent.md` · `projects/one-ops-agents/PROJECT.md` · private CoreStudio study (outside git)

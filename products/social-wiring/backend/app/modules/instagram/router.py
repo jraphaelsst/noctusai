@@ -1,6 +1,6 @@
 """Instagram insights HTTP surface (Instagram Business Login accounts).
 
-Contract: ``products/social-wiring/projects/core-studio/specs/instagram-insights-api.md``.
+Contract: ``products/social-wiring/projects/core-studio-build/specs/instagram-insights-api.md``.
 
     GET  /api/instagram/accounts/{account_id}/profile
     GET  /api/instagram/accounts/{account_id}/profile/trend?days=30

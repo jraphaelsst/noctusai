@@ -5971,6 +5971,71 @@ def check_override_is_range(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_no_vendor_study_in_git` — vendor-derived reverse-engineering material
+# (captures, saved pages/bundles, screenshots of their app, their data exports)
+# lives ONLY in `~/Documents/repository/NoctusAI/_private-studies/<target>/`,
+# outside every git tree (owner decision 2026-10-19: 345 files of CoreStudio and
+# Lais studies were moved out). Only OUR build specs belong in the repo. This is
+# the gate half of the skill `noc-reverse-engineer` + `KB § PATTERNS/common/
+# app-reverse-engineering.md`; the methodology half is "write vendor material to
+# _private-studies". Tracked (or staged) files only: `git ls-files`.
+# ---------------------------------------------------------------------------
+_VENDOR_STUDY_PATH_RES = (
+    # any `captures/` dir under a projects/ tree (xhr, crawl, raw, pages, js, css)
+    re.compile(r"(^|/)projects/(?:[^/]+/)*captures/"),
+    # study screenshots / analysis-work next to a captures dir or a study README
+    re.compile(r"(^|/)projects/[^/]+/(?:analysis-work|bubble-definition|saved-pages)/"),
+    # exported page/data/definition bundles of a studied app
+    re.compile(r"(^|/)(?:corestudio|lais|lastro)-(?:data|pages|definition|bundle)[^/]*\.json$"),
+    re.compile(r"(^|/)bubble-definition-dump[^/]*$"),
+    # a private-studies folder must never be tracked
+    re.compile(r"(^|/)_private-studies/"),
+)
+
+
+def _git_tracked_files(root: Path) -> list[str]:
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    return [f for f in proc.stdout.decode("utf-8", "replace").split("\0") if f]
+
+
+def check_no_vendor_study_in_git(
+    repo_root: Path | None = None, files: list[str] | None = None,
+) -> list[dict]:
+    """Refuse tracked vendor reverse-engineering material (captures, exports).
+
+    Vendor-derived study material goes to `_private-studies/<target>/` outside git;
+    only our own build specs are committed. `files` overrides `git ls-files`
+    (pre-commit passes the staged set; tests pass a fixture list).
+    """
+    root = repo_root or REPO_ROOT
+    candidates = files if files is not None else _git_tracked_files(root)
+    issues: list[dict] = []
+    for rel in sorted(candidates):
+        if any(rx.search(rel) for rx in _VENDOR_STUDY_PATH_RES):
+            issues.append({
+                "file": rel,
+                "issue": (
+                    f"`{rel}` is vendor-derived study material tracked in git. "
+                    f"Captures, saved pages/bundles, screenshots and data exports of a "
+                    f"studied third-party app live ONLY in "
+                    f"`~/Documents/repository/NoctusAI/_private-studies/<target>/` "
+                    f"(outside every git tree). Move it there (same relative tree) and "
+                    f"commit only OUR build specs, citing the study as "
+                    f"`[private study: <name>]`. See skill `noc-reverse-engineer` + "
+                    f"KB § PATTERNS/common/app-reverse-engineering.md."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_harness_mod_integrity` — a Claude Code "mod" (`.claude/mods/<name>/`,
 # a function-hook plugin) is a UX + reliability layer OVER the canonical
 # Python gates, never a gate itself (architect ruling, 2026-10). Four legs:
@@ -17306,6 +17371,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    # 2026-10-19 — vendor reverse-engineering captures/exports belong in _private-studies, not git.
+    all_issues.extend(check_no_vendor_study_in_git())
     # 2026-10-10 — templates/product-seed/ drifting from the seed it is generated
     # from, outside the declared divergences (templates/product-seed-divergences.json).
     from tools.noctus.dev.sync_seed_template import check_seed_template_sync

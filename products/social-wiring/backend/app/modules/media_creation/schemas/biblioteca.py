@@ -1,6 +1,6 @@
 """Biblioteca + Minha Biblioteca -- request schemas and the handle normalizer.
 
-Contract: ``projects/core-studio/specs/geracao-contract.md`` section 4.3 (endpoints 7-19) and 4.8
+Contract: ``projects/core-studio-build/specs/geracao-contract.md`` section 4.3 (endpoints 7-19) and 4.8
 (response shapes, built as plain dicts by the service so they mirror ``src/types/geracao.ts``).
 Strict at the HTTP boundary (``extra="forbid"``).
 """

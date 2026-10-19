@@ -1,7 +1,7 @@
 /**
  * Segundo Cérebro (list + editor + bio) — TanStack Query hooks over
  * `/api/media-creation/cerebro` (build contract:
- * projects/core-studio/specs/cerebro-contract.md §4).
+ * projects/core-studio-build/specs/cerebro-contract.md §4).
  *
  * Responses arrive wrapped in `success_response` ({success, data}); we unwrap
  * at the boundary. Loading rule (lying-loading-state.md): every query hook

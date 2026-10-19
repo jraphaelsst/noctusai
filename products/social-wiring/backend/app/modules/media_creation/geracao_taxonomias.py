@@ -6,7 +6,7 @@ by :func:`seed_sql`; a test asserts the migration file carries exactly that text
 and the services validate ids against the same constants -- so each list is written
 ONCE (same idiom as ``cerebro_templates.py`` / ``pesquisa_variables.py``).
 
-Origin (``projects/core-studio/specs/geracao-contract.md`` section 2.2):
+Origin (``projects/core-studio-build/specs/geracao-contract.md`` section 2.2):
 
 * nichos / profissoes: ids and labels verbatim from ``biblioteca-roteiros-analysis.md``
   section 1.4 (the reference app's ids; the gaps are deliberate, they are not renumbered);
