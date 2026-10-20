@@ -81,6 +81,14 @@ products/agents/backend/app/
 - Publish of an agent with `exige_mecanismo` (or any active mecanismo case) requires the newest LIVE run for the current compiled hash to be complete, under budget and fully green — enforced in the router AND in the DB publish function (409 `mecanismo_reprovado`). The `comportamento` (judge) suite is advisory unless `comportamento_bloqueia`.
 - The turn driver is a Protocol (`app/studio/eval_driver.py`, `tipo` live|fake); `POST /api/studio/agents/{key}/draft/mecanismo-runs` (platform admin) runs the suite. Eval fixtures are synthetic: a PII guard refuses phones/CPF/emails (never real WhatsApp transcripts — Meta WhatsApp Business terms §4.7).
 
+### Julia v2 — consumer and Studio support (A-RT2, migration 040)
+- `GET /api/channels/agents/{key}/qualificacao/estagios` (channel token) → ordered `[{chave, rotulo, ordem, conclusivo}]` only; the turn response carries `qualificacao.estagios_ordem`.
+- Publish pins the qualification standard version on the agent version (`qualificacao_versao_id`, inherited by new drafts, covered by `compiled_hash`); `GET|PUT /api/studio/agents/{key}/(draft/)qualificacao` (platform admin).
+- `GET /api/agents/catalogo` — tiered: org users get `{key, nome, papel, descricao_publica, runtime, capacidades}` from DB rows (`catalogo_agentes`, `catalogo_capacidades`); platform admins also tool keys + versions. One Chat is listed as `runtime=external`, papel `operador`.
+- Studio support: `/capacidades` (server-provided tier + tabs), conformidade rule/violation routes (codes only), thread result + participant state on the channel conversation list, textos/ferramentas registry (structure only), `ponto_cache` in compiled outputs, mecanismo summary on versions.
+- Atomic optimistic lock: the replace-set PUTs send `expected_hash` → `replace_draft_conteudo(p_expected_hash)` locks the draft row and refuses a stale writer (409 `conflito_de_versao`).
+- Mechanism eval runs are async (202 + poll), use the live turn driver against the definition's real conformance rules, and orphaned runs are swept at startup.
+
 ### Bia's hardened launch (non-negotiable)
 
 - `setting_sources=[]`: no project `CLAUDE.md`, `settings.json` or hooks get loaded.
