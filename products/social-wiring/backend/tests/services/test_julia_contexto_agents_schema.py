@@ -6,7 +6,7 @@ turn got a 422 that SW logged as a "client bug" and answered nothing. agents clo
 and SW sends them as DATA instead of stripping them.
 
 The oracle is `tests/support/agents_channel_contexto.py` (a copy of agents' `ChannelContexto`); the drift gate below compares it
-with agents' published `channels.v2.json` (it skips loudly while that file is not in the tree).
+with agents' published `channels.v2.json`.
 """
 from __future__ import annotations
 
@@ -42,11 +42,9 @@ def _sem_descricao(node):
     return node
 
 
-@pytest.mark.skipif(not SCHEMA_PATH.exists(), reason=(
-    "NOC-REMEDIATE[julia-v2-agents-contract-schema]: channels.v2.json is not in the tree yet (A-RT publishes it) -- the test "
-    "mirror is NOT drift-checked against agents until it lands"))
 def test_the_test_mirror_matches_the_published_agents_schema():
     """Drift gate: the copy under tests/support is the oracle for every other test here, so it must equal agents' file."""
+    assert SCHEMA_PATH.exists(), f"{SCHEMA_PATH} is missing"
     published = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))["ChannelTurnRequest"]["$defs"]
     mirror = ChannelContexto.model_json_schema()
     mirror_defs = {**mirror.get("$defs", {}), "ChannelContexto": {k: v for k, v in mirror.items() if k != "$defs"}}

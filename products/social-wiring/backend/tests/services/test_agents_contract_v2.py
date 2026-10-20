@@ -4,10 +4,7 @@ julia-v2 CONTRACT 10.3: agents exports `ChannelTurnRequest` / `ChannelTurnRespon
 `products/agents/backend/contracts/channels.v2.json` (generated, with a drift check on its side); SW validates every request
 it builds and parses fixture responses against that file. The file is the ARBITER: when SW and the file disagree, SW is wrong.
 
-NOC-REMEDIATE[julia-v2-agents-contract-schema]: `channels.v2.json` does not exist yet (A-RT publishes it with the channel
-runtime rewire). Until it does, every test here SKIPS -- LOUDLY: the skip reason carries this marker, `pytest -rs` prints it and
-`noctus.dev.scan_remediation_markers` lists it. When the file lands, the first run either passes (the Fake + builders already
-follow section 8.1) or names the exact drift. — 2026-10-19
+The file is committed (A-RT, dev), so these tests always run: a missing file is a FAILURE, never a skip.
 """
 from __future__ import annotations
 
@@ -35,11 +32,13 @@ AT = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
 LEAD = "22222222-2222-4222-8222-222222222222"
 THREAD = "11111111-1111-4111-8111-111111111111"
 
-_MISSING = (
-    "NOC-REMEDIATE[julia-v2-agents-contract-schema]: products/agents/backend/contracts/channels.v2.json is missing "
-    "(A-RT publishes it) -- the SW <-> agents wire is NOT contract-verified until it lands"
-)
-pytestmark = pytest.mark.skipif(not SCHEMA_PATH.exists(), reason=_MISSING)
+
+
+@pytest.fixture(autouse=True)
+def _schema_must_exist():
+    assert SCHEMA_PATH.exists(), f"{SCHEMA_PATH} is missing -- the SW <-> agents wire would be unverified"
+
+
 jsonschema = pytest.importorskip("jsonschema")
 
 

@@ -46,9 +46,8 @@ logger = logging.getLogger(__name__)
 FUSO = "America/Sao_Paulo"
 CONTEXTO_MAX = 80_000
 
-#: NOC-REMEDIATE[julia-v2-contexto-schema]: these key sets mirror agents' `channels.v2.json` (A-RT's `ChannelContexto` /
-#: `ContextoEstado`); `tests/services/test_agents_contract_v2.py` makes that file the arbiter (it skips loudly while the
-#: file is not in the tree) -- 2026-10-19
+#: These key sets mirror agents' committed `products/agents/backend/contracts/channels.v2.json` (`ChannelContexto` /
+#: `ContextoEstado`); `tests/services/test_agents_contract_v2.py` makes that file the arbiter and always runs.
 #: The closed key set of the wire `contexto` that SW sends (the schema also tolerates the retired v1 keys; SW sends none).
 CONTEXTO_CHAVES: frozenset[str] = frozenset({"hash", "agora", "fuso", "estado", "capacidades"})
 #: The `contexto.estado` keys SW sends. agents' schema ALSO accepts v1 `slots` / `operacao` (ignored): SW sends neither.
