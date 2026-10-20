@@ -168,16 +168,6 @@ def _draft_for_write(store, ctx: AuthContext, key: str):
     return agent, resolve_draft(store, ctx.org_id, agent)
 
 
-def _conferir_versao(draft, expected_hash: str | None) -> None:
-    """Optimistic lock of the replace-set writes: the caller's ``expected_hash`` must be the draft's current
-    ``compiled_hash``. The handlers are synchronous between this check and the write (no ``await``), so within
-    one worker the pair cannot interleave with another request.
-    NOC-REMEDIATE[replace-set-db-cas]: a DB-side compare-and-set (``p_expected_hash`` on ``replace_draft_conteudo``)
-    for multi-worker deploys -- 2026-10-20."""
-    if expected_hash is not None and draft.compiled_hash != expected_hash:
-        raise http_error(409, "conflito_de_versao", "O rascunho mudou desde a última leitura.")
-
-
 def _definition_version(store, ctx: AuthContext, key: str, version_id: UUID):
     agent = resolve_agent(store, ctx.org_id, key)
     return agent, resolve_version(store, ctx.org_id, agent, version_id)
@@ -235,10 +225,11 @@ async def replace_draft_textos(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> TextosOut:
     agent, draft = _draft_for_write(store, ctx, key)
-    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_textos(ctx.org_id, draft.id)]
     with store_errors():
-        rows = store.replace_textos(ctx.org_id, draft.id, [TextoInput(i.chave, i.conteudo) for i in payload.itens])
+        rows = store.replace_textos(
+            ctx.org_id, draft.id, [TextoInput(i.chave, i.conteudo) for i in payload.itens],
+            expected_hash=payload.expected_hash)
     _audit_mcp(store, ctx, agent, "texto", draft.id, antes, [r.chave for r in rows])
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return TextosOut(version_id=draft.id, itens=[_texto_out(r) for r in rows])
@@ -250,7 +241,6 @@ async def replace_draft_ferramentas(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> FerramentasOut:
     agent, draft = _draft_for_write(store, ctx, key)
-    _conferir_versao(draft, payload.expected_hash)
     antes = [r.ferramenta for r in store.list_ferramentas(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_ferramentas(ctx.org_id, draft.id, [
@@ -259,7 +249,7 @@ async def replace_draft_ferramentas(
                 obrigatoria_skill=i.obrigatoria_skill,
             )
             for i in payload.itens
-        ])
+        ], expected_hash=payload.expected_hash)
     _audit_mcp(store, ctx, agent, "ferramenta", draft.id, antes, [r.ferramenta for r in rows])
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return FerramentasOut(version_id=draft.id, itens=[_ferramenta_out(r) for r in rows])
@@ -271,7 +261,6 @@ async def replace_draft_decisoes(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> DecisoesOut:
     agent, draft = _draft_for_write(store, ctx, key)
-    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_decisoes(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_decisoes(ctx.org_id, draft.id, [
@@ -280,7 +269,7 @@ async def replace_draft_decisoes(
                 opcoes=[{"valor": o.valor, "rotulo": o.rotulo, "padrao": o.padrao} for o in i.opcoes],
             )
             for i in payload.itens
-        ])
+        ], expected_hash=payload.expected_hash)
     _audit_mcp(store, ctx, agent, "decisao", draft.id, antes, [r.chave for r in rows])
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return DecisoesOut(version_id=draft.id, itens=[_decisao_out(r) for r in rows])
@@ -292,7 +281,6 @@ async def replace_draft_spec_defs(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> SpecsOut:
     agent, draft = _draft_for_write(store, ctx, key)
-    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_spec_defs(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_spec_defs(ctx.org_id, draft.id, [
@@ -301,7 +289,7 @@ async def replace_draft_spec_defs(
                 exemplo=i.exemplo,
             )
             for i in payload.itens
-        ])
+        ], expected_hash=payload.expected_hash)
     _audit_mcp(store, ctx, agent, "spec", draft.id, antes, [r.chave for r in rows])
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return SpecsOut(version_id=draft.id, itens=[_spec_out(r) for r in rows])

@@ -67,6 +67,7 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "audit_log_append_only": _conflict("audit_log_append_only"),
     "draft_exists": _conflict("draft_exists"),
     "draft_changed": _conflict("draft_changed"),
+    "conflito_de_versao": _conflict("conflito_de_versao"),
     "eval_required": _conflict("eval_required"),
     "mecanismo_required": _conflict("mecanismo_required"),
     "chave_conflict": _conflict("chave_conflict"),

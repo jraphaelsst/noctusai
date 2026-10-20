@@ -294,18 +294,18 @@ class ConteudoStore(Protocol):
 
     # version-scoped content (replace-set, draft only)
     def list_textos(self, org_id: UUID, version_id: UUID) -> list[TextoRecord]: ...
-    def replace_textos(self, org_id: UUID, version_id: UUID, itens: list[TextoInput]) -> list[TextoRecord]: ...
+    def replace_textos(self, org_id: UUID, version_id: UUID, itens: list[TextoInput], *, expected_hash: str | None = None) -> list[TextoRecord]: ...
     def list_ferramentas(self, org_id: UUID, version_id: UUID) -> list[FerramentaRecord]: ...
     def replace_ferramentas(
-        self, org_id: UUID, version_id: UUID, itens: list[FerramentaInput],
+        self, org_id: UUID, version_id: UUID, itens: list[FerramentaInput], *, expected_hash: str | None = None,
     ) -> list[FerramentaRecord]: ...
     def list_decisoes(self, org_id: UUID, version_id: UUID) -> list[DecisaoRecord]: ...
     def replace_decisoes(
-        self, org_id: UUID, version_id: UUID, itens: list[DecisaoInput],
+        self, org_id: UUID, version_id: UUID, itens: list[DecisaoInput], *, expected_hash: str | None = None,
     ) -> list[DecisaoRecord]: ...
     def list_spec_defs(self, org_id: UUID, version_id: UUID) -> list[SpecDefRecord]: ...
     def replace_spec_defs(
-        self, org_id: UUID, version_id: UUID, itens: list[SpecDefInput],
+        self, org_id: UUID, version_id: UUID, itens: list[SpecDefInput], *, expected_hash: str | None = None,
     ) -> list[SpecDefRecord]: ...
 
     # per-org spec values
@@ -368,8 +368,11 @@ class FakeConteudoMixin:
             for rid in [rid for rid, r in store.items() if r.version_id == version_id]:
                 del store[rid]
 
-    def _replace(self, store: dict, org_id: UUID, version_id: UUID, key_of, build) -> None:
-        self._require_draft(org_id, version_id)
+    def _replace(self, store: dict, org_id: UUID, version_id: UUID, key_of, build, expected_hash: str | None = None) -> None:
+        draft = self._require_draft(org_id, version_id)
+        # 040 `replace_draft_conteudo(p_expected_hash)`: the compare and the replace are one step
+        if expected_hash is not None and draft.compiled_hash != expected_hash:
+            raise StudioConflict("conflito_de_versao", "the draft changed since it was read")
         old = {key_of(r): r for r in store.values() if r.version_id == version_id}
         for rid in [rid for rid, r in store.items() if r.version_id == version_id]:
             del store[rid]
@@ -383,7 +386,7 @@ class FakeConteudoMixin:
         self.get_version(org_id, version_id)
         return sorted((r for r in self._textos.values() if r.version_id == version_id), key=lambda r: r.chave)
 
-    def replace_textos(self, org_id, version_id, itens):
+    def replace_textos(self, org_id, version_id, itens, *, expected_hash=None):
         validar_textos(itens)
         self._replace(
             self._textos, org_id, version_id, lambda r: r.chave,
@@ -394,6 +397,7 @@ class FakeConteudoMixin:
                 )
                 for i in itens
             ],
+            expected_hash=expected_hash,
         )
         return self.list_textos(org_id, version_id)
 
@@ -404,7 +408,7 @@ class FakeConteudoMixin:
             (r for r in self._ferramentas.values() if r.version_id == version_id), key=lambda r: r.ferramenta,
         )
 
-    def replace_ferramentas(self, org_id, version_id, itens):
+    def replace_ferramentas(self, org_id, version_id, itens, *, expected_hash=None):
         validar_ferramentas(itens)
         self._replace(
             self._ferramentas, org_id, version_id, lambda r: r.ferramenta,
@@ -416,6 +420,7 @@ class FakeConteudoMixin:
                 )
                 for i in itens
             ],
+            expected_hash=expected_hash,
         )
         return self.list_ferramentas(org_id, version_id)
 
@@ -424,7 +429,7 @@ class FakeConteudoMixin:
         self.get_version(org_id, version_id)
         return sorted((r for r in self._decisoes.values() if r.version_id == version_id), key=lambda r: r.chave)
 
-    def replace_decisoes(self, org_id, version_id, itens):
+    def replace_decisoes(self, org_id, version_id, itens, *, expected_hash=None):
         itens = validar_decisoes(itens)
         self._replace(
             self._decisoes, org_id, version_id, lambda r: r.chave,
@@ -436,6 +441,7 @@ class FakeConteudoMixin:
                 )
                 for i in itens
             ],
+            expected_hash=expected_hash,
         )
         return self.list_decisoes(org_id, version_id)
 
@@ -444,7 +450,7 @@ class FakeConteudoMixin:
         self.get_version(org_id, version_id)
         return sorted((r for r in self._specs.values() if r.version_id == version_id), key=lambda r: r.chave)
 
-    def replace_spec_defs(self, org_id, version_id, itens):
+    def replace_spec_defs(self, org_id, version_id, itens, *, expected_hash=None):
         validar_specs(itens)
         self._replace(
             self._specs, org_id, version_id, lambda r: r.chave,
@@ -456,6 +462,7 @@ class FakeConteudoMixin:
                 )
                 for i in itens
             ],
+            expected_hash=expected_hash,
         )
         return self.list_spec_defs(org_id, version_id)
 
@@ -526,10 +533,16 @@ class SupabaseConteudoMixin:
             label=f"{table} version_id={version_id}", order=(order,),
         )
 
-    def _replace_rpc(self, org_id: UUID, version_id: UUID, tabela: str, itens: list[dict[str, Any]]) -> None:
-        self._rpc("replace_draft_conteudo", {
+    def _replace_rpc(
+        self, org_id: UUID, version_id: UUID, tabela: str, itens: list[dict[str, Any]],
+        expected_hash: str | None = None,
+    ) -> None:
+        params: dict[str, Any] = {
             "p_org_id": str(org_id), "p_version_id": str(version_id), "p_tabela": tabela, "p_itens": itens,
-        })
+        }
+        if expected_hash is not None:  # NULL = no check; omitted so a pre-040 database (4-arg function) still works
+            params["p_expected_hash"] = expected_hash
+        self._rpc("replace_draft_conteudo", params)
 
     # textos
     def list_textos(self, org_id: UUID, version_id: UUID) -> list[TextoRecord]:
@@ -542,9 +555,10 @@ class SupabaseConteudoMixin:
             for r in self._version_rows("agent_version_textos", org_id, version_id, "chave")
         ]
 
-    def replace_textos(self, org_id, version_id, itens):
+    def replace_textos(self, org_id, version_id, itens, *, expected_hash=None):
         validar_textos(itens)
-        self._replace_rpc(org_id, version_id, "textos", [{"chave": i.chave, "conteudo": i.conteudo} for i in itens])
+        self._replace_rpc(
+            org_id, version_id, "textos", [{"chave": i.chave, "conteudo": i.conteudo} for i in itens], expected_hash)
         return self.list_textos(org_id, version_id)
 
     # ferramentas
@@ -559,7 +573,7 @@ class SupabaseConteudoMixin:
             for r in self._version_rows("agent_version_ferramentas", org_id, version_id, "ferramenta")
         ]
 
-    def replace_ferramentas(self, org_id, version_id, itens):
+    def replace_ferramentas(self, org_id, version_id, itens, *, expected_hash=None):
         validar_ferramentas(itens)
         self._replace_rpc(org_id, version_id, "ferramentas", [
             {
@@ -567,7 +581,7 @@ class SupabaseConteudoMixin:
                 "parametros": dict(i.parametros), "obrigatoria_skill": i.obrigatoria_skill,
             }
             for i in itens
-        ])
+        ], expected_hash)
         return self.list_ferramentas(org_id, version_id)
 
     # decisoes
@@ -582,11 +596,11 @@ class SupabaseConteudoMixin:
             for r in self._version_rows("agent_version_decisoes", org_id, version_id, "chave")
         ]
 
-    def replace_decisoes(self, org_id, version_id, itens):
+    def replace_decisoes(self, org_id, version_id, itens, *, expected_hash=None):
         itens = validar_decisoes(itens)
         self._replace_rpc(org_id, version_id, "decisoes", [
             {"chave": i.chave, "titulo": i.titulo, "regra": i.regra, "opcoes": list(i.opcoes)} for i in itens
-        ])
+        ], expected_hash)
         return self.list_decisoes(org_id, version_id)
 
     # spec declarations
@@ -601,7 +615,7 @@ class SupabaseConteudoMixin:
             for r in self._version_rows("agent_version_specs", org_id, version_id, "chave")
         ]
 
-    def replace_spec_defs(self, org_id, version_id, itens):
+    def replace_spec_defs(self, org_id, version_id, itens, *, expected_hash=None):
         validar_specs(itens)
         self._replace_rpc(org_id, version_id, "specs", [
             {
@@ -609,7 +623,7 @@ class SupabaseConteudoMixin:
                 "obrigatoria": i.obrigatoria, "exemplo": i.exemplo,
             }
             for i in itens
-        ])
+        ], expected_hash)
         return self.list_spec_defs(org_id, version_id)
 
     # per-org spec values
