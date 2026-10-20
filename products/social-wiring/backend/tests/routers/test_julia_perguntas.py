@@ -242,7 +242,7 @@ class TestContato:
         c = self._seed(member.w)
         member.w.sw.table("julia_contatos").update({"responsavel_user_id": TEST_USER_ID}).eq("id", c["id"]).execute()  # A7: owner
         d = member.get(CONTATO_URL).json()["data"]
-        assert set(d) == {"contato", "slots", "interacao_atual"}
+        assert set(d) == {"contato", "slots", "interacao_atual", "qualificacao", "dados_lead"}
         assert d["contato"]["nome"] == "Ana" and d["interacao_atual"]["operacao"] == "compra"
         assert d["slots"] == {}  # neither slot is an active question (only objetivo is)
 
@@ -261,3 +261,55 @@ class TestContato:
         c = admin.w.sw.table("julia_contatos").insert({
             "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT}).execute().data[0]
         assert c and admin.get(CONTATO_URL).json()["data"]["interacao_atual"] is None
+
+
+class TestContatoQualificacao:
+    """`qualificacao` (label + score only) and `dados_lead` come from agents' computed state, else SW's mirror."""
+
+    def _com(self, admin, agents):
+        from app.main import app
+        from app.routers.julia_agente_router import get_agents_client_factory
+
+        c = TestContato()._seed(admin.w)
+        app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: agents)
+        return c
+
+    def teardown_method(self):
+        from app.main import app
+        from app.routers.julia_agente_router import get_agents_client_factory
+
+        app.dependency_overrides.pop(get_agents_client_factory, None)
+
+    def test_read_live_from_agents_with_the_stage_label_and_no_rules(self, admin):
+        from app.clients.agents import EstagioInfo, FakeAgentsClient, QualificacaoEstado
+
+        c = TestContato()._seed(admin.w)
+        agents = FakeAgentsClient(
+            estagios=[EstagioInfo("qualificado", "Qualificado", 40, True)],
+            qualificacoes={c["id"]: QualificacaoEstado(
+                lead_ref=c["id"], estagio="qualificado", score=72, valores={"faixa_preco": {"max": 900000}, "cpf": "x", "quartos": 3},
+                faltando=("prazo",), scores={"regra_secreta": 9})},
+        )
+        self._com(admin, agents)
+        d = admin.get(CONTATO_URL).json()["data"]
+        assert d["qualificacao"] == {"estagio": "qualificado", "rotulo": "Qualificado", "score": 72, "fonte": "agents"}
+        assert d["dados_lead"]["faltando"] == ["prazo"] and d["dados_lead"]["fonte"] == "agents"
+        assert d["dados_lead"]["valores"]["quartos"] == "3" and "cpf" not in d["dados_lead"]["valores"]  # sensitive never mirrored
+        assert "regra_secreta" not in str(d)
+
+    def test_agents_down_falls_back_to_the_mirror(self, admin):
+        from app.clients.agents import AgentsTimeout, FakeAgentsClient
+
+        c = self._com(admin, FakeAgentsClient(errors={"qualificacao": AgentsTimeout("x")}))
+        admin.w.sw.table("ai_outputs").insert({
+            "ref_type": "julia_contato", "ref_id": c["id"], "kind": "score", "label": "novo", "score": 5, "chip": "novo"}).execute()
+        d = admin.get(CONTATO_URL).json()["data"]
+        assert d["qualificacao"]["estagio"] == "novo" and d["qualificacao"]["fonte"] == "espelho"
+        assert d["dados_lead"] == {"valores": {"faixa_preco": "900000", "quartos": "3"}, "faltando": [], "fonte": "espelho"}
+
+    def test_nothing_known_is_null(self, admin):
+        from app.clients.agents import FakeAgentsClient
+
+        self._com(admin, FakeAgentsClient())
+        d = admin.get(CONTATO_URL).json()["data"]
+        assert d["qualificacao"] is None

@@ -2,7 +2,7 @@
 
   GET /api/julia/perguntas                              member read    {data: {catalogo, limites}}
   PUT /api/julia/perguntas                              org admin      full replace -> same shape
-  GET /api/julia/contatos/{connection_id}/{chat_id}     member read    {data: {contato, slots, interacao_atual}}
+  GET /api/julia/contatos/{connection_id}/{chat_id}     member read    {data: {contato, slots, interacao_atual, qualificacao, dados_lead}}
 
 Errors (AppException envelope): 422 `limite_ativas` / `limite_qualificatorias` / `objetivo_obrigatorio` /
 `chave_desconhecida` / `selecao_invalida`; 409 `usada_em_criterio` (`details.criterios`); 404 `contato_nao_encontrado`.
@@ -19,7 +19,8 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.services import julia_acesso, julia_contatos_service, julia_perguntas_service as svc
+from app.routers.julia_agente_router import get_agents_client_factory
+from app.services import julia_acesso, julia_contatos_service, julia_espelho_service, julia_perguntas_service as svc
 
 router = APIRouter(tags=["julia-perguntas"])
 
@@ -58,12 +59,13 @@ def put_perguntas(
 
 
 @router.get("/api/julia/contatos/{connection_id}/{chat_id}")
-def get_contato(
+async def get_contato(
     connection_id: UUID,
     chat_id: str,
     request: Request = None,
     auth: tuple = Depends(get_current_user_org),
     client: Any = Depends(get_perguntas_client),
+    client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org_id = coerce_org_uuid(auth[2])
     contato = julia_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
@@ -72,7 +74,13 @@ def get_contato(
     julia_acesso.exigir_acesso(client, julia_acesso.contexto(auth, request), contato)  # A7: owner/admin only
     ativas = set(svc.selecao_org(client, org_id))
     interacao = julia_contatos_service.interacao_aberta(client, contato["id"])
+    qualificacao, dados_lead = await julia_espelho_service.qualificacao_do_contato(
+        client, org_id, contato, client_factory(org_id))
     return {"data": {
+        # computed stage (label + score only) and the recorded criteria + what is still missing; `fonte` says
+        # whether it was read live from agents or from SW's own mirror
+        "qualificacao": qualificacao,
+        "dados_lead": dados_lead,
         "contato": {k: contato.get(k) for k in (
             "id", "nome", "email", "operacao", "status_envio", "encerrado_at", "ultimo_inbound_at")},
         # values of a question the org later switched off are kept in the row but not shown

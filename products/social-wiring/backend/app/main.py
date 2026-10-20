@@ -135,6 +135,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_reengajamento_router import router as julia_reengajamento_router
     from app.routers.julia_cloud_router import router as julia_cloud_router
     from app.routers.julia_painel_router import router as julia_painel_router
+    from app.routers.julia_qualificacao_router import router as julia_qualificacao_router
     from app.routers.julia_envio_router import router as julia_envio_router
     from app.routers.julia_relatorios_router import router as julia_relatorios_router
     from app.routers.julia_captacao_router import router as julia_captacao_router
@@ -259,6 +260,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_reengajamento_router,
             julia_cloud_router,
             julia_painel_router,
+            julia_qualificacao_router,
             julia_envio_router,
             julia_relatorios_router,
             julia_captacao_router,

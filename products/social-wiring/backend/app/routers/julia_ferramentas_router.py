@@ -71,9 +71,10 @@ def post_ferramenta(
             "invalid_field", "Argumentos inválidos.", status_code=422, details={"campos": campos},
         ) from exc
     org_id = coerce_org_uuid(ctx.org_id)
-    data = svc.FERRAMENTAS[nome](client, org_id, args)
+    resultado = svc.FERRAMENTAS[nome](client, org_id, args)
+    data, meta = (resultado.data, resultado.meta) if isinstance(resultado, svc.ComMeta) else (resultado, {})
     svc.registrar_consulta(client, org_id, nome, args, data)  # feeds Relatorios "top imoveis"; never raises
-    return {"data": data}
+    return {"data": data, **meta}
 
 
 __all__ = ["router"]

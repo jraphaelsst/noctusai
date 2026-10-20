@@ -409,6 +409,18 @@ class QualificacaoEstado:
     hash: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class EstagioInfo:
+    """One qualification stage as agents reports it (`GET /api/channels/agents/{key}/qualificacao/estagios`):
+    `ordem` is the comparable position ("stage >= estagio_minimo" uses it); `conclusivo` marks a stage that may
+    conclude. Labels are the org's own words (a DB row on the agents side), never a rule or a prompt."""
+
+    chave: str
+    rotulo: str
+    ordem: int
+    conclusivo: bool = False
+
+
 # ── typed errors (one per row of the section 3.1 error table) ───────────────
 class AgentsClientError(Exception):
     """Base of every failure of a call to agents. `code` is agents' own code."""
@@ -543,6 +555,8 @@ class AgentsClient(Protocol):
 
     async def controle(self, agent_key: str) -> ControleInfo: ...
 
+    async def estagios(self, agent_key: str) -> tuple[EstagioInfo, ...]: ...
+
     async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]: ...
 
     async def identificacao_mascarada(self, lead_ref: str) -> Optional[dict[str, Any]]: ...
@@ -591,7 +605,13 @@ class FakeAgentsClient:
         controle: Union[ControleInfo, AgentsClientError, None] = None,
         qualificacoes: Optional[dict[str, QualificacaoEstado]] = None,
         errors: Optional[dict[str, AgentsClientError]] = None,
+        estagios: Optional[Sequence[EstagioInfo]] = None,
     ):
+        self._estagios = tuple(estagios) if estagios is not None else tuple(
+            EstagioInfo(chave=c, rotulo=c.replace("_", " ").capitalize(), ordem=i * 10, conclusivo=i >= len(FAKE_ESTAGIOS) - 2)
+            for i, c in enumerate(FAKE_ESTAGIOS)
+        )
+        self.estagios_calls: list[str] = []
         self._uso = uso
         self.uso_calls: list[str] = []
         self._script = list(script)
@@ -822,6 +842,11 @@ class FakeAgentsClient:
         if isinstance(self._controle, AgentsClientError):
             raise self._controle
         return self._controle or ControleInfo(agent_key=agent_key, modo="ligado", aceita_novos_leads=True)
+
+    async def estagios(self, agent_key: str) -> tuple[EstagioInfo, ...]:
+        self._maybe_fail("estagios")
+        self.estagios_calls.append(agent_key)
+        return tuple(sorted(self._estagios, key=lambda e: (e.ordem, e.chave)))
 
     async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]:
         self._maybe_fail("qualificacao")
@@ -1126,6 +1151,20 @@ def parse_controle(body: Any) -> ControleInfo:
     )
 
 
+def parse_estagios(body: Any) -> tuple[EstagioInfo, ...]:
+    itens = body.get("data") if isinstance(body, dict) else body
+    if not isinstance(itens, list):
+        raise AgentsUpstreamError("agents returned a malformed stage list")
+    out: list[EstagioInfo] = []
+    for i in itens:
+        ordem = i.get("ordem") if isinstance(i, dict) else None
+        if not isinstance(i, dict) or not isinstance(i.get("chave"), str) or not isinstance(ordem, int) or isinstance(ordem, bool):
+            raise AgentsUpstreamError("agents returned a malformed stage list")
+        out.append(EstagioInfo(chave=i["chave"], rotulo=str(i.get("rotulo") or i["chave"]), ordem=ordem,
+                               conclusivo=bool(i.get("conclusivo"))))
+    return tuple(sorted(out, key=lambda e: (e.ordem, e.chave)))
+
+
 def parse_qualificacao_estado(body: Any) -> QualificacaoEstado:
     score = body.get("score")
     faltando = body.get("faltando")
@@ -1342,6 +1381,12 @@ class HttpAgentsClient:
         mode and never gates on a cached copy of this -- the turn endpoint decides."""
         return parse_controle(await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/controle"))
 
+    async def estagios(self, agent_key: str) -> tuple[EstagioInfo, ...]:
+        """`GET /api/channels/agents/{key}/qualificacao/estagios` -> `[{chave, rotulo, ordem, conclusivo}]` (a bare
+        list or `{"data": [...]}`), sorted by `ordem`. Read-only for SW."""
+        body = await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/qualificacao/estagios")
+        return parse_estagios(body)
+
     async def qualificacao(self, lead_ref: str) -> Optional[QualificacaoEstado]:
         """`GET /api/channels/leads/{ref}/qualificacao`: the full computed state. None = nothing recorded yet."""
         try:
@@ -1393,13 +1438,13 @@ __all__ = [
     "Action", "AgentNotFound", "AgentStatus", "AgentUnavailable", "AgentUso", "AgentsBadRequest", "AgentsClient",
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid", "AgentsUpstreamError",
     "AppendResult", "CapacityExceeded", "ConsentInfo", "ControleIndisponivel", "ControleInfo", "ConversationNotFound",
-    "DecisaoRequest", "DecisaoResult", "DeletionRequest", "DeletionResult", "FAKE_ESTAGIOS", "FakeAgentsClient",
+    "DecisaoRequest", "DecisaoResult", "DeletionRequest", "DeletionResult", "EstagioInfo", "FAKE_ESTAGIOS", "FakeAgentsClient",
     "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
     "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadSemQualificacao", "LlmNotConfigured",
     "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",
     "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO",
     "STATUS_TURNO", "ThreadInfo", "ThreadNotFound", "TransicaoInvalida", "TurnInProgress",
     "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status", "parse_consent",
-    "parse_controle", "parse_decisao_result", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
+    "parse_controle", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
     "parse_thread", "parse_turn_result", "parse_uso",
 ]

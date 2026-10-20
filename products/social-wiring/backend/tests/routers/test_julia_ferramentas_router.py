@@ -142,14 +142,17 @@ class TestRouting:
 
     def test_success_is_the_data_envelope(self, ok):
         r = ok.post("buscar_imoveis", {"operacao": "compra"})
-        assert r.status_code == 200 and set(r.json()) == {"data"}
+        assert r.status_code == 200 and set(r.json()) == {"data", "restantes_estimados", "relaxado"}
+        assert set(ok.post("horarios_visita", {}).json()) == {"data"}
 
 
 class TestBuscarImoveis:
     def test_returns_the_contract_shape_for_the_callers_org_only(self, ok):
         data = ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]
         assert {d["codigo"] for d in data} == {"CA1", "CA2"}  # not OTH (other org), not HID (unpublished), not AP1 (rent)
-        assert set(data[0]) == {"codigo", "titulo", "tipo", "bairro", "cidade", "preco", "quartos", "link"}
+        # absent fields are OMITTED (no link pattern saved => no `link`; no suites/condominio => no key)
+        assert set(data[0]) == {"codigo", "titulo", "tipo", "bairro", "cidade", "preco", "preco_venda", "valor_condominio",
+                                "area_m2", "quartos", "suites", "vagas", "destaques"}
         ca1 = next(d for d in data if d["codigo"] == "CA1")
         assert (ca1["preco"], ca1["quartos"], ca1["bairro"], ca1["tipo"]) == (900000.0, 3, "Granja Viana", "Casa")
 
@@ -159,20 +162,24 @@ class TestBuscarImoveis:
 
     def test_filters(self, ok):
         def codes(**f):
-            return {d["codigo"] for d in ok.post("buscar_imoveis", {"operacao": "compra", **f}).json()["data"]}
+            # limite=1: a strict hit exists, so no widening step runs (those are covered in test_julia_busca_imoveis)
+            return {d["codigo"] for d in ok.post("buscar_imoveis", {"operacao": "compra", "limite": 1, **f}).json()["data"]}
 
         assert codes(preco_max=1_000_000) == {"CA1"}
         assert codes(quartos_min=4) == {"CA2"}
         assert codes(bairro="alphaville") == {"CA2"}
-        assert codes(cidade="cotia") == {"CA1", "CA2"}
-        assert codes(tipo="apart") == set()
+        assert codes(cidade="cotia") <= {"CA1", "CA2"} and len(codes(cidade="cotia")) == 1
+        # nothing is an apartment: the typology widens and says so
+        r = ok.post("buscar_imoveis", {"operacao": "compra", "tipo": "apart"}).json()
+        assert r["relaxado"] == ["tipologia"] and {d["codigo"] for d in r["data"]} == {"CA1", "CA2"}
         r = ok.post("buscar_imoveis", {"operacao": "aluguel", "preco_max": 5000}).json()["data"]
         assert [(d["codigo"], d["preco"]) for d in r] == [("AP1", 4500.0)]
 
     def test_the_limit_is_honoured_and_capped_at_five(self, tools, catalogo):
         catalogo.set_table_data("imoveis", [_row(f"M{i}") for i in range(9)])
         tools.as_ctx(_product())
-        assert len(tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]) == 5
+        assert len(tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]) == 3  # default lote
+        assert len(tools.post("buscar_imoveis", {"operacao": "compra", "limite": 5}).json()["data"]) == 5
         assert len(tools.post("buscar_imoveis", {"operacao": "compra", "limite": 2}).json()["data"]) == 2
 
     def test_unpublished_listings_do_not_eat_the_limit(self, tools, catalogo):
@@ -183,7 +190,7 @@ class TestBuscarImoveis:
 
 class TestLinkDoImovel:
     def test_no_site_saved_means_no_link(self, ok):
-        assert {d["link"] for d in ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
+        assert {d.get("link") for d in ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
 
     def test_the_default_template_builds_site_imovel_codigo(self, tools, catalogo):
         catalogo.set_table_data("julia_conhecimento_secoes", [
@@ -213,7 +220,7 @@ class TestLinkDoImovel:
             {"org_id": str(_OTHER), "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "outra.example"}},
         ])
         tools.as_ctx(_product())
-        assert {d["link"] for d in tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
+        assert {d.get("link") for d in tools.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]} == {None}
 
 
 class TestDetalhesImovel:

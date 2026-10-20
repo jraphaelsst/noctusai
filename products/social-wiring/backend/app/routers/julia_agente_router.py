@@ -4,8 +4,7 @@
   GET   /api/julia/agente/aviso                org member                          (slice P)
   PUT   /api/julia/agente/aviso                core org role owner/admin           (slice P)
 
-  GET   /api/julia/agente                      org member: connections, token, link health
-  PUT   /api/julia/agente/conexoes/{id}        admin: the Julia switch (11.1 snapshot) + handoff target
+  GET   /api/julia/agente                      org member: token, link health (the lines live at /api/julia/roteamento)
   PUT   /api/julia/agente/token                admin: paste the org's agents channel token
   PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agente   admin: per-chat pause (calls AGENTS, mirrors its answer)
   GET   /api/whatsapp/connections/{id}/chats/{chat_id}/agente   member: the per-chat state as AGENTS reports it
@@ -181,13 +180,6 @@ TOOLS_TOKEN_TTL = timedelta(days=90)
 _TOOLS_TOKEN_SCHEMA = "social_wiring"
 
 
-class ConexaoAgenteUpdate(StrictHttpModel):
-    agente_leads_ativo: bool
-    agente_leads_key: Optional[str] = Field(default=None, max_length=63)
-    # Absent = keep; explicit null = back to "the connection owner" (11.4).
-    agente_handoff_notificar_user_id: Optional[UUID] = None
-
-
 class TokenUpdate(StrictHttpModel):
     token: str = Field(min_length=8, max_length=512)
 
@@ -201,20 +193,6 @@ def _require_admin(auth: tuple, request: Optional[Request], context: str) -> tup
     # B3: admin IN the selected org (auth tuple org_id), never the home-org role.
     require_org_admin_for(get_core_client(), auth, request, context)
     return user, coerce_org_uuid(raw_org)
-
-
-def _conexao_out(c: WhatsAppConnectionRecord) -> dict[str, Any]:
-    return {
-        "connection_id": str(c.id),
-        "label": c.label,
-        "agente_leads_ativo": c.agente_leads_ativo,
-        "agente_leads_key": c.agente_leads_key,
-        "agente_leads_ativado_em": c.agente_leads_ativado_em,
-        "agente_handoff_notificar_user_id": (
-            str(c.agente_handoff_notificar_user_id) if c.agente_handoff_notificar_user_id else None
-        ),
-        "authorized_numbers_count": len([n for n in (c.authorized_numbers or []) if str(n).strip()]),
-    }
 
 
 def _record_or_404(store: WhatsAppConnectionStore, connection_id: UUID, org_id: UUID, *, decrypt: bool = False):
@@ -231,15 +209,13 @@ def _record_or_404(store: WhatsAppConnectionStore, connection_id: UUID, org_id: 
 @router.get("/api/julia/agente")
 async def get_agente(
     auth: tuple = Depends(get_current_user_org),
-    store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg=Depends(get_settings),
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
-    """Page 0: per-connection Julia state, whether the org has an agents token, and
+    """Page 0: whether the org has an agents token, and
     the link health (live agents status, else the last turn's failure)."""
     raw_org = auth[2]
     org_id = coerce_org_uuid(raw_org)
-    conexoes = [_conexao_out(c) for c in store.list_connections(org_id=org_id)]
     token_configurado = julia.agents_token_for_org(org_id, cfg=cfg) is not None
 
     status_agente: Optional[dict[str, Any]] = None
@@ -266,7 +242,7 @@ async def get_agente(
     if erro is None:
         erro = julia.ler_erro_link(org_id, cfg=cfg)
     return {"data": {
-        "conexoes": conexoes, "token_configurado": token_configurado,
+        "token_configurado": token_configurado,
         "status_agente": status_agente, "erro": erro,
         # Where "Editar Julia no Agents" points (resolved server-side from the
         # product-URL registry, never hard-coded in the FE). Null = unresolvable.
@@ -278,8 +254,7 @@ async def aplicar_conexao(
     *, record: WhatsAppConnectionRecord, org_id: UUID, store: WhatsAppConnectionStore, cfg: Any, waha_factory: Any,
     ativo: bool, key: Optional[str], handoff_definido: bool, handoff_alvo: Optional[UUID],
 ) -> WhatsAppConnectionRecord:
-    """THE line-routing change (shared by the legacy `PUT /agente/conexoes/{id}` and the white-label
-    `PUT /roteamento/linhas/{id}`): the "this number feeds the agent" switch + the handoff notification target.
+    """THE line-routing change (used by `PUT /roteamento/linhas/{id}`; the legacy `PUT /agente/conexoes/{id}` is retired): the "this number feeds the agent" switch + the handoff notification target.
     Turning it ON checks every precondition, then takes the 11.1 snapshot of the WAHA session's chats; if the snapshot
     cannot be proven complete the switch stays OFF (502 ``snapshot_falhou``). This is TRANSPORT config (julia-v2 Q4):
     it decides which numbers reach the agent, never how the agent behaves (that is agents' Controles)."""
@@ -341,29 +316,6 @@ async def aplicar_conexao(
     if updated is None:
         raise HTTPException(status_code=404, detail="connection not found")
     return updated
-
-
-@router.put("/api/julia/agente/conexoes/{connection_id}")
-async def put_conexao(
-    connection_id: UUID,
-    payload: ConexaoAgenteUpdate,
-    auth: tuple = Depends(get_current_user_org),
-    store: WhatsAppConnectionStore = Depends(get_connection_store),
-    cfg=Depends(get_settings),
-    waha_factory=Depends(get_waha_client_factory),
-    request: Request = None,
-) -> dict[str, Any]:
-    """The line switch + handoff target (legacy surface; the white-label page uses `/api/julia/roteamento`)."""
-    _user, org_id = _require_admin(auth, request, "A Julia")
-    record = _record_or_404(store, connection_id, org_id, decrypt=True)
-    updated = await aplicar_conexao(
-        record=record, org_id=org_id, store=store, cfg=cfg, waha_factory=waha_factory,
-        ativo=payload.agente_leads_ativo,
-        key=payload.agente_leads_key,
-        handoff_definido="agente_handoff_notificar_user_id" in payload.model_fields_set,
-        handoff_alvo=payload.agente_handoff_notificar_user_id,
-    )
-    return {"data": _conexao_out(updated)}
 
 
 @router.put("/api/julia/agente/token", status_code=status.HTTP_204_NO_CONTENT)

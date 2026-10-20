@@ -152,4 +152,40 @@ async def espelhar_apos_turno(
     return resumo
 
 
-__all__ = ["REF_TYPE", "aplicar_valores", "espelhar_apos_turno", "registrar_estagio", "slots_do_espelho"]
+async def qualificacao_do_contato(
+    client: Any, org_id: UUID | str, contato: dict[str, Any], agents_client: Optional[AgentsClient],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """For the conversation header / "Dados do lead": `(qualificacao, dados_lead)`.
+
+    `qualificacao` = `{estagio, rotulo, score, fonte}` and `dados_lead` = `{valores, faltando, fonte}`; label and
+    score only, NEVER a rule, weight or criterion body. `fonte` is `agents` (live read of the computed state) or
+    `espelho` (SW's own last mirror: the `ai_outputs` stage row + the contato's slots) when agents is
+    unconfigured/unreachable. Either is None when nothing is known. Never raises."""
+    estado: Optional[QualificacaoEstado] = None
+    rotulos: dict[str, str] = {}
+    if agents_client is not None:
+        try:
+            estado = await agents_client.qualificacao(str(contato["id"]))
+            if estado is not None:
+                rotulos = {e.chave: e.rotulo for e in await agents_client.estagios("julia")}
+        except AgentsClientError as exc:
+            logger.warning("julia: qualification read failed (%s) contato=%s -- falling back to the mirror",
+                           type(exc).__name__, contato.get("id"))
+    if estado is not None and estado.estagio:
+        qualificacao = {"estagio": estado.estagio, "rotulo": rotulos.get(estado.estagio), "score": estado.score, "fonte": "agents"}
+        dados = {"valores": slots_do_espelho(estado.valores), "faltando": list(estado.faltando), "fonte": "agents"}
+        return qualificacao, dados
+    qualificacao = None
+    try:
+        ultimos = fetch_outputs_for(client, None, REF_TYPE, str(contato["id"]), limit=1)
+        if ultimos and ultimos[0].get("label"):
+            qualificacao = {"estagio": ultimos[0]["label"], "rotulo": rotulos.get(ultimos[0]["label"]),
+                            "score": ultimos[0].get("score"), "fonte": "espelho"}
+    except Exception:
+        logger.exception("julia: could not read the mirrored stage contato=%s", contato.get("id"))
+    slots = contato.get("slots") or {}
+    dados = {"valores": dict(slots), "faltando": [], "fonte": "espelho"} if slots else None
+    return qualificacao, dados
+
+
+__all__ = ["REF_TYPE", "aplicar_valores", "espelhar_apos_turno", "qualificacao_do_contato", "registrar_estagio", "slots_do_espelho"]

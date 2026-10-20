@@ -40,7 +40,8 @@ from tests.support.julia_world import (
 )
 
 BASE = "/api/julia/agente"
-CONN_URL = f"{BASE}/conexoes/{CONNECTION_ID}"
+CONN_URL = f"{BASE}/conexoes/{CONNECTION_ID}"  # only the per-chat deletion route lives here now
+ROT_URL = f"/api/julia/roteamento/linhas/{CONNECTION_ID}"
 H = {"Authorization": "Bearer test-token"}
 
 
@@ -152,7 +153,7 @@ def _off_connection(w: World, **over):
 class TestAuth:
     @pytest.mark.parametrize("method,url,body", [
         ("get", BASE, None),
-        ("put", CONN_URL, {"agente_leads_ativo": True}),
+        ("put", ROT_URL, {"alimenta": True}),
         ("put", f"{BASE}/token", {"token": "pk_12345678"}),
         ("patch", f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/agente", {"pausado": True}),
         ("post", f"{CONN_URL}/chats/{LEAD_CHAT}/apagar-dados", None),
@@ -166,7 +167,7 @@ class TestAuth:
         assert member.get(BASE).status_code == 200
 
     @pytest.mark.parametrize("method,url,body", [
-        ("put", CONN_URL, {"agente_leads_ativo": True}),
+        ("put", ROT_URL, {"alimenta": True}),
         ("put", f"{BASE}/token", {"token": "pk_12345678"}),
         ("patch", f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/agente", {"pausado": True}),
         ("post", f"{CONN_URL}/chats/{LEAD_CHAT}/apagar-dados", None),
@@ -178,7 +179,7 @@ class TestAuth:
 
     def test_a_connection_of_another_org_is_404(self, admin):
         admin.w.seed_connection(org_id=OTHER_ORG_ID)
-        assert admin.put(CONN_URL, {"agente_leads_ativo": False}).status_code == 404
+        assert admin.put(ROT_URL, {"alimenta": False}).status_code == 404
 
 
 # ── GET /api/julia/agente ────────────────────────────────────────────────────
@@ -186,10 +187,8 @@ class TestGetAgente:
     def test_shape_and_per_connection_fields(self, admin):
         admin.w.seed_connection(authorized_numbers=["+5511999990000", "+5511999991111"])
         data = admin.get(BASE).json()["data"]
-        (c,) = data["conexoes"]
-        assert c["connection_id"] == CONNECTION_ID and c["label"] == "Linha da Julia"
-        assert (c["agente_leads_ativo"], c["agente_leads_key"], c["authorized_numbers_count"]) == (True, "julia", 2)
-        assert set(data) == {"conexoes", "token_configurado", "status_agente", "erro", "agents_url"}
+        # the lines moved to GET /api/julia/roteamento
+        assert set(data) == {"token_configurado", "status_agente", "erro", "agents_url"}
 
     def test_status_agente_is_the_3_2_shape(self, admin):
         admin.w.seed_connection()
@@ -199,8 +198,11 @@ class TestGetAgente:
                       "provider": "openai", "model": "gpt-5-mini", "llm_configurado": True}
 
     def test_an_org_without_connections_still_answers(self, admin):
-        data = admin.get(BASE).json()["data"]
-        assert data["conexoes"] == []
+        assert "conexoes" not in admin.get(BASE).json()["data"]
+
+    def test_the_legacy_line_switch_is_retired(self, admin):
+        admin.w.seed_connection()
+        assert admin.put(CONN_URL, {"agente_leads_ativo": False}).status_code in (404, 405)
 
     def test_token_configurado_reflects_the_org_token_and_never_echoes_it(self, admin):
         assert admin.get(BASE).json()["data"]["token_configurado"] is False
@@ -241,10 +243,10 @@ class TestGetAgente:
         assert admin.get(BASE).json()["data"]["erro"] == julia.LINK_ERROR_MESSAGES["nao_configurado"]
 
 
-# ── PUT /conexoes/{id}: the switch ──────────────────────────────────────────
+# ── PUT /roteamento/linhas/{id}: the switch (the legacy PUT /agente/conexoes/{id} is retired) ──────────────────────────────────────────
 class TestSwitchOn:
     def _on(self, scene, **extra):
-        return scene.put(CONN_URL, {"agente_leads_ativo": True, **extra})
+        return scene.put(ROT_URL, {"alimenta": True, **extra})
 
     def test_turning_on_snapshots_the_session_then_sets_the_flag(self, admin):
         _off_connection(admin.w)
@@ -252,8 +254,8 @@ class TestSwitchOn:
         r = self._on(admin)
         assert r.status_code == 200
         out = r.json()["data"]
-        assert out["agente_leads_ativo"] is True and out["agente_leads_key"] == "julia"
-        assert out["agente_leads_ativado_em"]
+        assert out["alimenta"] is True
+        assert out["alimenta_desde"]
         # 230 phone chats + their `@s.whatsapp.net` twins
         assert len(admin.snapshot_ids()) == 460
         row = admin.conn()
@@ -265,16 +267,6 @@ class TestSwitchOn:
         admin.w.waha.fake_lids = [{"lid": "123456@lid", "pn": "5511988887777@c.us"}]
         assert self._on(admin).status_code == 200
         assert admin.snapshot_ids() >= {"5511988887777@c.us", "5511988887777@s.whatsapp.net", "123456@lid"}
-
-    def test_a_custom_agent_key_is_kept(self, admin):
-        _off_connection(admin.w)
-        assert self._on(admin, agente_leads_key="outro-agente").json()["data"]["agente_leads_key"] == "outro-agente"
-
-    @pytest.mark.parametrize("key", ["Has Space", "UPPER", "-x", "a" * 64, "ç"])
-    def test_an_invalid_agent_key_is_422(self, admin, key):
-        _off_connection(admin.w)
-        assert self._on(admin, agente_leads_key=key).status_code == 422
-        assert admin.conn()["agente_leads_ativo"] is False
 
     def test_H3_empty_authorized_numbers_is_409_and_nothing_is_written(self, admin):
         _off_connection(admin.w, authorized_numbers=[])
@@ -338,7 +330,7 @@ class TestSwitchOn:
         admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}]
         self._on(admin)
         first = admin.snapshot_ids()
-        assert admin.put(CONN_URL, {"agente_leads_ativo": False}).json()["data"]["agente_leads_ativo"] is False
+        assert admin.put(ROT_URL, {"alimenta": False}).json()["data"]["alimenta"] is False
         admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}, {"id": "5511900000002@c.us"}]
         self._on(admin)
         assert admin.snapshot_ids() > first and "5511900000002@c.us" in admin.snapshot_ids()
@@ -347,57 +339,57 @@ class TestSwitchOn:
     def test_putting_on_while_already_on_does_not_re_snapshot_nor_move_ativado_em(self, admin):
         admin.w.seed_connection()  # already on, ativado_em fixed
         admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}]
-        r = self._on(admin, agente_leads_key="julia")
+        r = self._on(admin)
         assert r.status_code == 200
         assert admin.snapshot_ids() == set()
         assert admin.conn()["agente_leads_ativado_em"] == "2026-10-01T00:00:00+00:00"
 
     def test_turning_off_keeps_the_exclusions_and_clears_only_the_flag(self, admin):
         admin.w.seed_connection()
-        r = admin.put(CONN_URL, {"agente_leads_ativo": False})
+        r = admin.put(ROT_URL, {"alimenta": False})
         assert r.status_code == 200 and admin.conn()["agente_leads_ativo"] is False
 
     def test_unknown_fields_are_rejected(self, admin):
         _off_connection(admin.w)
-        assert admin.put(CONN_URL, {"agente_leads_ativo": True, "org_id": "x"}).status_code == 422
+        assert admin.put(ROT_URL, {"alimenta": True, "org_id": "x"}).status_code == 422
 
     def test_a_missing_connection_is_404(self, admin):
-        assert admin.put(f"{BASE}/conexoes/00000000-0000-4000-8000-0000000000ee", {"agente_leads_ativo": True}).status_code == 404
+        assert admin.put(f"/api/julia/roteamento/linhas/00000000-0000-4000-8000-0000000000ee", {"alimenta": True}).status_code == 404
 
 
 # ── 11.4: handoff target ────────────────────────────────────────────────────
 class TestHandoffTargetRoute:
     def test_an_admin_target_is_stored(self, admin):
         admin.w.seed_connection()
-        r = admin.put(CONN_URL, {"agente_leads_ativo": True, "agente_handoff_notificar_user_id": ADMIN_ID})
-        assert r.status_code == 200 and r.json()["data"]["agente_handoff_notificar_user_id"] == ADMIN_ID
+        r = admin.put(ROT_URL, {"alimenta": True, "destino_handoff_user_id": ADMIN_ID})
+        assert r.status_code == 200 and r.json()["data"]["destino_handoff_user_id"] == ADMIN_ID
 
     @pytest.mark.parametrize("uid", [MEMBER_ID, CORRETOR_ID])
     def test_member_and_corretor_targets_are_422_destinatario_invalido(self, admin, uid):
         admin.w.seed_connection()
-        r = admin.put(CONN_URL, {"agente_leads_ativo": True, "agente_handoff_notificar_user_id": uid})
+        r = admin.put(ROT_URL, {"alimenta": True, "destino_handoff_user_id": uid})
         assert r.status_code == 422 and "destinatario_invalido" in r.text
         assert admin.conn()["agente_handoff_notificar_user_id"] is None
 
     def test_null_resets_to_the_connection_owner(self, admin):
         admin.w.seed_connection(agente_handoff_notificar_user_id=ADMIN_ID)
-        r = admin.put(CONN_URL, {"agente_leads_ativo": True, "agente_handoff_notificar_user_id": None})
-        assert r.json()["data"]["agente_handoff_notificar_user_id"] is None
+        r = admin.put(ROT_URL, {"alimenta": True, "destino_handoff_user_id": None})
+        assert r.json()["data"]["destino_handoff_user_id"] is None
 
     def test_omitting_the_field_keeps_the_current_target(self, admin):
         admin.w.seed_connection(agente_handoff_notificar_user_id=ADMIN_ID)
-        r = admin.put(CONN_URL, {"agente_leads_ativo": True})
-        assert r.json()["data"]["agente_handoff_notificar_user_id"] == ADMIN_ID
+        r = admin.put(ROT_URL, {"alimenta": True})
+        assert r.json()["data"]["destino_handoff_user_id"] == ADMIN_ID
 
     def test_the_target_can_be_set_while_julia_is_off_too(self, admin):
         _off_connection(admin.w)
-        r = admin.put(CONN_URL, {"agente_leads_ativo": False, "agente_handoff_notificar_user_id": ADMIN_ID})
+        r = admin.put(ROT_URL, {"alimenta": False, "destino_handoff_user_id": ADMIN_ID})
         assert r.status_code == 200 and admin.conn()["agente_handoff_notificar_user_id"] == ADMIN_ID
 
     def test_a_user_of_another_org_is_422(self, admin):
         admin.w.seed_connection()
         admin.w.core.table("noctus_users").insert({"id": "00000000-0000-4000-8000-0000000000d1", "org_id": OTHER_ORG_ID, "org_role": "admin"}).execute()
-        r = admin.put(CONN_URL, {"agente_leads_ativo": True, "agente_handoff_notificar_user_id": "00000000-0000-4000-8000-0000000000d1"})
+        r = admin.put(ROT_URL, {"alimenta": True, "destino_handoff_user_id": "00000000-0000-4000-8000-0000000000d1"})
         assert r.status_code == 422
 
 
