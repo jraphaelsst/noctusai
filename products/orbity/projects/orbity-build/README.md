@@ -17,8 +17,9 @@ Both files are GENERATED. Edit the study, re-run the generators, and never hand-
 
 ## Caveats
 
-- **"Ours today" comes from reading the code, not a live check.** Our orbity is `deploy_scope=dev` with no running container,
-  so it has not been live-checked yet. Before claiming parity, live-smoke our app (local) the way the reference app was mapped.
+- **"Ours today" comes from reading the code, not a live check.** Our orbity IS live in prod (`orbity.noctusai.com`,
+  container `noctus-orbity` healthy as of 2026-10-20) but has not been live-checked against this matrix yet. Before claiming
+  parity, live-smoke it the way the reference app was mapped.
 - The KB product doc `KNOWLEDGE-BASE/CONTEXT/PRODUCTS/orbity/PAGES-AND-DATAFLOW.md` and the roadmap
   `project-history/roadmaps/orbity-2026-06.md` are stale (e.g. "Fake sender / no scheduler"). Refresh them when this spec
   turns into a roadmap.
