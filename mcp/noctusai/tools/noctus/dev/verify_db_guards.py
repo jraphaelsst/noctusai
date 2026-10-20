@@ -4161,6 +4161,416 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — agents Julia v2 migrations 031–040 (A-CONT / A-QUAL / A-THREAD /
+# A-EVAL / A-SKILLS / A-RT2). Every probe SELF-PROVISIONS its specimen (agent,
+# version, standard, lead, thread, library skill) inside the rolled-back
+# transaction -- no dependency on production holding any Julia row. A probe
+# whose migration is not in agents' `schema_migrations` ledger yet is parked
+# as `pending_migration` (never run, never a failure) until it is applied.
+# Replaced the `_GUARD_PROBE_ALLOWLIST` entries that said "unapplied" (Julia
+# v2 A-polish #12); proven on the real chain in
+# `tests/test_agents_julia_v2_probes_on_replay.py`.
+# ---------------------------------------------------------------------------
+
+def _m(nn: str) -> str:
+    return {
+        "031": "031_julia_v2_conteudo.sql", "032": "032_julia_v2_qualificacao.sql",
+        "033": "033_julia_v2_threads.sql", "034": "034_julia_v2_controles.sql",
+        "035": "035_julia_v2_threads_constraints.sql", "038": "038_julia_v2_evals_roteiro.sql",
+        "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
+    }[nn]
+
+
+_JV2 = _AGENTS_SCHEMA
+#: Self-provisioning snippets (variables declared by `_julia_v2_probe`).
+_JV2_AGENT = _AGENTS_PROBE_AGENT_SQL
+_JV2_AGENT2 = (
+    f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode) "
+    "VALUES (v_org, 'noc-probe-2', 'NOC probe 2', 'claude_sdk', 'studio') RETURNING id INTO v_agent2;"
+)
+_JV2_VERSION = _agents_version_sql("rascunho", 1, "v_version")
+#: The platform org is BORROWED, never inserted: creating an organizations row fires every product's org triggers
+#: (licenses, ERP site config, ...), side effects a probe must not depend on. Runs BEFORE the classified block, so a
+#: missing platform org is `no_fixture` (a failure to see), never `ambiguous`.
+_JV2_PLAT_ORG_FIXTURE = """
+  SELECT id INTO v_plat FROM public.organizations WHERE is_platform LIMIT 1;
+  IF v_plat IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no organizations row has is_platform = true (core 068)';
+  END IF;"""
+_JV2_PADRAO = (
+    f"INSERT INTO {_JV2}.qualificacao_padroes (chave, nome) VALUES ('noc-probe-' || v_sufixo, 'NOC probe') "
+    "RETURNING id INTO v_padrao;\n"
+    f"    INSERT INTO {_JV2}.qualificacao_versoes (padrao_id, versao) VALUES (v_padrao, 1) RETURNING id INTO v_pv;"
+)
+_JV2_PADRAO_PUBLICADO = _JV2_PADRAO + (
+    f"\n    UPDATE {_JV2}.qualificacao_versoes SET status = 'publicada', publicada_em = now(), publicada_por = v_org "
+    "WHERE id = v_pv;"
+)
+_JV2_LEAD = (
+    f"INSERT INTO {_JV2}.lead_refs (org_id, produto, ref_externa) "
+    "VALUES (v_org, 'social-wiring', 'noc-probe-' || v_sufixo) RETURNING id INTO v_lead;"
+)
+
+
+def _jv2_thread(into: str = "v_thread", chat: str = "'noc-probe-' || v_sufixo") -> str:
+    return (
+        f"INSERT INTO {_JV2}.conversations (org_id, agent_id, owner_user_id, tipo, channel, channel_ref, lead_ref_id) "
+        f"VALUES (v_org, v_agent, v_org, 'thread_lead', 'whatsapp', jsonb_build_object('chat_id', {chat}), v_lead) "
+        f"RETURNING id INTO {into};"
+    )
+
+
+_JV2_SKILL = (
+    f"INSERT INTO {_JV2}.skills_biblioteca (chave, nome) VALUES ('noc-probe-' || v_sufixo, 'NOC probe') "
+    "RETURNING id INTO v_skill;\n"
+    f"    INSERT INTO {_JV2}.skill_versoes (skill_id, versao, descricao_modelo, corpo) "
+    "VALUES (v_skill, 1, 'quando abrir', 'corpo') RETURNING id INTO v_sv;"
+)
+_JV2_SKILL_PUBLICADA = _JV2_SKILL + (
+    f"\n    UPDATE {_JV2}.skill_versoes SET status = 'publicada', publicada_em = now(), publicada_por = v_org "
+    "WHERE id = v_sv;"
+)
+
+
+def _julia_v2_probe(
+    *, probe_id: str, guard_name: str, migrations: tuple[str, ...], setup: str, attack: str,
+    fragments: tuple[str, ...], what: str, rationale: str, fixture: str = "",
+) -> GuardProbe:
+    """One write-refusal probe: setup + attack inside the classified sub-block (a setup failure is `ambiguous`,
+    never a false `refused`); `refused` iff the error carries one of `fragments` (the guard's own name / code)."""
+    what_lit = _sql_lit(what)
+    cond = " OR ".join(f"SQLERRM LIKE '%{_sql_lit(f)}%'" for f in fragments)
+    # every table the probe touches must exist: a missing one is `no_fixture` (named), never `ambiguous`
+    tabelas = sorted(set(re.findall(rf"\b{_JV2}\.([a-z_]+)\b", setup + attack)))
+    existe = "".join(
+        f"\n  IF to_regclass('{_JV2}.{t}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_JV2}.{t} does not exist (its migration is not applied)';\n"
+        "  END IF;"
+        for t in tabelas
+    )
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_sufixo text := substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
+  v_agent uuid; v_agent2 uuid; v_version uuid; v_plat uuid;
+  v_padrao uuid; v_pv uuid; v_pv2 uuid; v_lead uuid; v_thread uuid; v_thread2 uuid;
+  v_skill uuid; v_sv uuid; v_sv2 uuid; v_registro uuid; v_acesso uuid;
+BEGIN{existe}{fixture}
+  BEGIN
+    {setup}
+    {attack}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard under test did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF {cond} THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id, product="agents", schema=_JV2, guard_name=guard_name, kind="write_refusal",
+        migrations=migrations, sql=sql, rationale=rationale,
+    )
+
+
+def _jv2_agent_insert(cols: str, vals: str) -> str:
+    return (f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode, {cols}) "
+            f"VALUES (v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'claude_sdk', 'studio', {vals});")
+
+
+_AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
+    # ── 031 · platform definition / instance / content mode ──
+    _julia_v2_probe(
+        probe_id="agents.definition_scope_vocab", guard_name="agents_definition_scope_check",
+        migrations=(_m("031"),), setup="", attack=_jv2_agent_insert("definition_scope", "'noc_probe'"),
+        fragments=("agents_definition_scope_check",), what="an agent with an unknown definition_scope",
+        rationale="definition_scope is org | plataforma | instancia: an unknown scope would bypass the "
+                  "platform-definition and instance rules every Julia resolution relies on (CONTRACT 2.6).",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.conteudo_modo_vocab", guard_name="agents_conteudo_modo_check",
+        migrations=(_m("031"),), setup="", attack=_jv2_agent_insert("conteudo_modo", "'noc_probe'"),
+        fragments=("agents_conteudo_modo_check",), what="an agent with an unknown conteudo_modo",
+        rationale="conteudo_modo selects the compiler (legado strings vs DB rows): an unknown value would compile "
+                  "under neither contract.",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.only_an_instance_names_a_definition", guard_name="agents_definition_agent_scope",
+        migrations=(_m("031"),), setup=_JV2_AGENT, attack=_jv2_agent_insert("definition_agent_id", "v_agent"),
+        fragments=("agents_definition_agent_scope",), what="an org-scoped agent pointing at a definition",
+        rationale="Only an instancia row names its definition; any other row doing so would make resolution "
+                  "follow a hop that should not exist.",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.platform_definition_is_never_legacy", guard_name="agents_scope_conteudo",
+        migrations=(_m("031"),), setup="", fixture=_JV2_PLAT_ORG_FIXTURE,
+        attack=(f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode, definition_scope, conteudo_modo) "
+                "VALUES (v_plat, 'noc-probe-' || v_sufixo, 'NOC probe', 'llm', 'studio', 'plataforma', 'legado');"),
+        fragments=("agents_scope_conteudo",), what="a platform definition in legacy content mode",
+        rationale="A platform-defined agent's every model-visible string is a DB row; legacy mode would bring the "
+                  "code-held prompt strings back for it (owner rule: content only in the DB).",
+    ),
+    # agents_one_plataforma_per_key stays in compliance._GUARD_PROBE_ALLOWLIST (it only bites for a SECOND
+    # platform org, which a side-effect-free probe cannot fabricate -- the rationale is there).
+    _julia_v2_probe(
+        probe_id="agents.platform_definition_lives_in_the_platform_org", guard_name="guard_agent_definition_scope",
+        migrations=(_m("031"),), setup="",
+        attack=(f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode, definition_scope, conteudo_modo) "
+                "VALUES (v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'llm', 'studio', 'plataforma', 'linhas');"),
+        fragments=("definition_not_platform",), what="a platform definition owned by a non-platform org",
+        rationale="IP (CONTRACT 0.4): the platform's prompts live only in the platform org; a definition in a "
+                  "tenant org would be readable/editable as that tenant's own content.",
+    ),
+    _julia_v2_probe(
+        probe_id="agent_audit_log.acao_vocab", guard_name="agent_audit_log_acao_check",
+        migrations=(_m("031"), _m("034")), setup=_JV2_AGENT,
+        attack=f"INSERT INTO {_JV2}.agent_audit_log (org_id, agent_id, acao) VALUES (v_org, v_agent, 'noc_probe_inventada');",
+        fragments=("agent_audit_log_acao_check",), what="an audit row with an unknown acao",
+        rationale="The audit log is the accountability record of definition reads/MCP writes/control changes: "
+                  "free-text actions would make it unqueryable by what happened.",
+    ),
+    # ── 032 · the qualification standard + per-lead records ──
+    _julia_v2_probe(
+        probe_id="lead_qualificacao_registros.lead_words_required", guard_name="lead_qualificacao_registros_trecho_lead_check",
+        migrations=(_m("032"),), setup="\n    ".join((_JV2_AGENT, _JV2_PADRAO, _JV2_LEAD)),
+        attack=(f"INSERT INTO {_JV2}.lead_qualificacao_registros "
+                "(org_id, lead_ref_id, agent_id, versao_id, criterio_chave, valor, fonte) "
+                "VALUES (v_org, v_lead, v_agent, v_pv, 'operacao', '\"compra\"'::jsonb, 'lead_informou');"),
+        fragments=("lead_qualificacao_registros_trecho_lead_check",), what="a lead_informou record with no trecho",
+        rationale="The model may only record what the lead said, in the lead's own words (CONTRACT 3.5 E2).",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_versoes.published_needs_who_and_when", guard_name="qualificacao_versoes_publicada_completa",
+        migrations=(_m("032"),),
+        setup=(f"INSERT INTO {_JV2}.qualificacao_padroes (chave, nome) VALUES ('noc-probe-' || v_sufixo, 'NOC probe') "
+               "RETURNING id INTO v_padrao;"),
+        attack=f"INSERT INTO {_JV2}.qualificacao_versoes (padrao_id, versao, status) VALUES (v_padrao, 1, 'publicada');",
+        fragments=("qualificacao_versoes_publicada_completa",), what="a published standard version with no publisher",
+        rationale="A published standard is what every lead is scored by: who published it and when is mandatory.",
+    ),
+    _julia_v2_probe(
+        probe_id="agent_versions.qualificacao_pin_never_a_draft", guard_name="guard_agent_version_qualificacao_pin",
+        migrations=(_m("032"), _m("040")), setup="\n    ".join((_JV2_AGENT, _JV2_VERSION, _JV2_PADRAO)),
+        attack=f"UPDATE {_JV2}.agent_versions SET qualificacao_versao_id = v_pv WHERE id = v_version;",
+        fragments=("invalid_payload",), what="an agent version pinned to a DRAFT standard version",
+        rationale="A pinned standard must be immutable (published or archived, 040): a draft pin would let the "
+                  "rubric change under a version that was judged with another one.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_qualificacao_registros.append_only", guard_name="guard_lead_qualificacao_append_only",
+        migrations=(_m("032"),), setup="\n    ".join((
+            _JV2_AGENT, _JV2_PADRAO, _JV2_LEAD,
+            f"INSERT INTO {_JV2}.lead_qualificacao_registros (org_id, lead_ref_id, agent_id, versao_id, criterio_chave, "
+            "valor, fonte) VALUES (v_org, v_lead, v_agent, v_pv, 'operacao', '\"compra\"'::jsonb, 'migracao') "
+            "RETURNING id INTO v_registro;")),
+        attack=f"UPDATE {_JV2}.lead_qualificacao_registros SET valor = '\"aluguel\"'::jsonb WHERE id = v_registro;",
+        fragments=("append_only",), what="UPDATE of a recorded qualification answer",
+        rationale="Records are history: nobody (model, API, admin) edits what a lead said; only the two erasure "
+                  "functions delete (LGPD).",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_criterios.published_parent_is_immutable", guard_name="guard_qualificacao_filho_immutable",
+        migrations=(_m("032"),), setup=_JV2_PADRAO_PUBLICADO,
+        attack=(f"INSERT INTO {_JV2}.qualificacao_criterios (versao_id, chave, grupo, rotulo, tipo) "
+                "VALUES (v_pv, 'noc_probe', 'contato', 'NOC', 'texto');"),
+        fragments=("version_immutable",), what="INSERT of a criterion into a published standard version",
+        rationale="A published standard's criteria/stages/parameters are frozen with it; otherwise scores already "
+                  "computed would no longer be reproducible.",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_versoes.published_is_immutable", guard_name="guard_qualificacao_versao_immutable",
+        migrations=(_m("032"),), setup=_JV2_PADRAO_PUBLICADO,
+        attack=f"UPDATE {_JV2}.qualificacao_versoes SET notas = 'changed' WHERE id = v_pv;",
+        fragments=("version_immutable",), what="UPDATE of a published standard version",
+        rationale="Only publicada -> arquivada moves a published standard version; its content is frozen.",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_versoes.one_draft_per_standard", guard_name="uq_qualificacao_versoes_um_rascunho",
+        migrations=(_m("032"),), setup=_JV2_PADRAO,
+        attack=f"INSERT INTO {_JV2}.qualificacao_versoes (padrao_id, versao) VALUES (v_padrao, 2);",
+        fragments=("uq_qualificacao_versoes_um_rascunho",), what="a second draft of the same standard",
+        rationale="One draft per standard: two would split edits and let a publish ship the wrong one.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_identificacao_acessos.append_only", guard_name="guard_lead_identificacao_acessos_append_only",
+        migrations=(_m("032"),), setup="\n    ".join((_JV2_LEAD, (
+            f"INSERT INTO {_JV2}.lead_identificacao_acessos (org_id, lead_ref_id, ator_user_id) "
+            "VALUES (v_org, v_lead, v_org) RETURNING id INTO v_acesso;"))),
+        attack=f"DELETE FROM {_JV2}.lead_identificacao_acessos WHERE id = v_acesso;",
+        fragments=("append_only",), what="DELETE of an identity-access audit row",
+        rationale="Who decrypted a lead's CPF/RG, and when, is accountability (owner 0.4, LGPD): it is never "
+                  "erased, not even by the lead-erasure path.",
+    ),
+    # ── 033 / 035 · the shared lead thread ──
+    _julia_v2_probe(
+        probe_id="thread_handoffs.exactly_one_destination", guard_name="thread_handoffs_para_check",
+        migrations=(_m("033"),), setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_handoffs (org_id, thread_id, lead_ref_id, de_agent_id, para_tipo, "
+                "motivo_codigo, resumo) VALUES (v_org, v_thread, v_lead, v_agent, 'humano', 'noc_probe', 'x');"),
+        fragments=("thread_handoffs_para_check",), what="a hand-off to a human with no user",
+        rationale="A hand-off names exactly one destination (agent, user or role); a destination-less hand-off "
+                  "loses the lead between agents (CONTRACT 0.4: the org owner is the default).",
+    ),
+    _julia_v2_probe(
+        probe_id="conversations.tipo_vocab", guard_name="conversations_tipo_check",
+        migrations=(_m("033"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conversations (org_id, agent_id, owner_user_id, tipo) "
+                "VALUES (v_org, v_agent, v_org, 'noc_probe');"),
+        fragments=("conversations_tipo_check",), what="a conversation with an unknown tipo",
+        rationale="tipo separates studio chats from lead threads; an unknown one would escape both code paths.",
+    ),
+    _julia_v2_probe(
+        probe_id="conversations.thread_is_a_channel_row", guard_name="conversations_thread_channel_check",
+        migrations=(_m("033"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conversations (org_id, agent_id, owner_user_id, tipo) "
+                "VALUES (v_org, v_agent, v_org, 'thread_lead');"),
+        # 035 replaces this CHECK with the stronger conversations_thread_lead_check (channel AND lead): the
+        # behaviour (no channel-less thread) is what is probed, whichever of the two holds it.
+        fragments=("conversations_thread_channel_check", "conversations_thread_lead_check"),
+        what="a lead thread with no channel",
+        rationale="A lead thread is a channel row; a channel-less thread could never be found by the turn route.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_participantes.one_active", guard_name="uq_agents_thread_participantes_one_active",
+        migrations=(_m("033"),), setup="\n    ".join((_JV2_AGENT, _JV2_AGENT2, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_participantes (thread_id, agent_id, org_id, estado) VALUES "
+                "(v_thread, v_agent, v_org, 'ativo'), (v_thread, v_agent2, v_org, 'ativo');"),
+        fragments=("uq_agents_thread_participantes_one_active",), what="two active agents on one thread",
+        rationale="Risk 11: at most ONE agent answers a lead at a time, enforced by the database.",
+    ),
+    _julia_v2_probe(
+        probe_id="messages.role_vocab", guard_name="messages_role_check",
+        migrations=(_m("033"),), setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.messages (org_id, conversation_id, role, texto) "
+                "VALUES (v_org, v_thread, 'noc_probe', 'x');"),
+        fragments=("messages_role_check",), what="a message with an unknown role",
+        rationale="Message roles drive history labelling and the model context; an unknown role would be "
+                  "rendered as nobody's turn.",
+    ),
+    _julia_v2_probe(
+        probe_id="conversations.one_thread_per_channel_ref", guard_name="uq_agents_threads_channel",
+        migrations=(_m("035"),), setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=_jv2_thread("v_thread2"),
+        fragments=("uq_agents_threads_channel",), what="a second thread for the same (org, channel, chat)",
+        rationale="One shared thread per lead chat (CONTRACT 6.1): two would split the history agents read.",
+    ),
+    _julia_v2_probe(
+        probe_id="conversations.thread_has_a_lead", guard_name="conversations_thread_lead_check",
+        migrations=(_m("035"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conversations (org_id, agent_id, owner_user_id, tipo, channel, channel_ref) "
+                "VALUES (v_org, v_agent, v_org, 'thread_lead', 'whatsapp', jsonb_build_object('chat_id', v_sufixo));"),
+        fragments=("conversations_thread_lead_check",), what="a lead thread with no lead_ref",
+        rationale="Every thread belongs to a lead (opt-out, retention, qualification all hang on lead_ref_id).",
+    ),
+    # ── 034 · controls ──
+    _julia_v2_probe(
+        probe_id="agents.modo_operacao_vocab", guard_name="agents_modo_operacao_check",
+        migrations=(_m("034"),), setup="", attack=_jv2_agent_insert("modo_operacao", "'noc_probe'"),
+        fragments=("agents_modo_operacao_check",), what="an agent with an unknown modo_operacao",
+        rationale="modo_operacao (ligado | drenando | desligado) decides whether the agent may answer at all; an "
+                  "unknown value must not exist (the controls fail closed on it).",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.dreno_inatividade_dias_range", guard_name="agents_dreno_inatividade_dias_check",
+        migrations=(_m("034"),), setup="", attack=_jv2_agent_insert("dreno_inatividade_dias", "0"),
+        fragments=("agents_dreno_inatividade_dias_check",), what="a drain idle window of 0 days",
+        rationale="The drain closes threads idle N days (owner Q3: 7, editable 1..365); 0 would close every thread "
+                  "at once.",
+    ),
+    # ── 038 · mechanism evals ──
+    _julia_v2_probe(
+        probe_id="eval_cases.suite_vocab", guard_name="eval_cases_suite_check",
+        migrations=(_m("038"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios, suite) "
+                "VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{\"deve\": [\"x\"]}'::jsonb, 'noc_probe');"),
+        fragments=("eval_cases_suite_check",), what="an eval case with an unknown suite",
+        rationale="The suite decides which runner judges a case (judge vs deterministic asserts); an unknown suite "
+                  "would be judged by neither and silently skipped by the publish gate.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_cases.k_range", guard_name="eval_cases_k_check",
+        migrations=(_m("038"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios, k) "
+                "VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{\"deve\": [\"x\"]}'::jsonb, 0);"),
+        fragments=("eval_cases_k_check",), what="an eval case with k = 0",
+        rationale="pass^k with k = 0 is vacuously green: a case that never ran would open the publish gate.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_cases.judge_case_needs_criteria", guard_name="eval_cases_criterios_ou_mecanismo",
+        migrations=(_m("038"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios) "
+                "VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{}'::jsonb);"),
+        fragments=("eval_cases_criterios_ou_mecanismo",), what="a comportamento case with no criteria",
+        rationale="A judge case with nothing to judge always passes; the CHECK keeps the judge suite meaningful.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_cases.mechanism_case_needs_script_and_asserts", guard_name="eval_cases_mecanismo_conteudo",
+        migrations=(_m("038"),), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios, suite) "
+                "VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{}'::jsonb, 'mecanismo');"),
+        fragments=("eval_cases_mecanismo_conteudo",), what="a mecanismo case with no roteiro/asserts",
+        rationale="A mechanism case IS its script + deterministic asserts; without them it would pass every run.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_mecanismo_runs.approved_only_when_all_green", guard_name="eval_mecanismo_runs_aprovado_consistente",
+        migrations=(_m("038"),), setup="\n    ".join((_JV2_AGENT, _JV2_VERSION)),
+        attack=(f"INSERT INTO {_JV2}.eval_mecanismo_runs (org_id, agent_id, version_id, compiled_hash, driver, status, "
+                "aprovado, started_by) VALUES (v_org, v_agent, v_version, 'sha256:noc', 'live', 'executando', true, v_org);"),
+        fragments=("eval_mecanismo_runs_aprovado_consistente",), what="an approved mechanism run that never finished",
+        rationale="Only a finished, complete, under-budget, all-green live run may be 'aprovado' -- the publish "
+                  "gate trusts this flag (also enforced in publish_agent_version).",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_mecanismo_runs.one_executing_per_version", guard_name="uq_eval_mecanismo_runs_um_em_execucao",
+        migrations=(_m("038"),), setup="\n    ".join((_JV2_AGENT, _JV2_VERSION)),
+        attack="\n    ".join(
+            f"INSERT INTO {_JV2}.eval_mecanismo_runs (org_id, agent_id, version_id, compiled_hash, driver, status, "
+            "started_by) VALUES (v_org, v_agent, v_version, 'sha256:noc', 'live', 'executando', v_org);"
+            for _ in (1, 2)),
+        fragments=("uq_eval_mecanismo_runs_um_em_execucao",), what="two executing mechanism runs for one version",
+        rationale="One in-flight mechanism run per version: two would double the live-model spend and race on the "
+                  "gate's 'newest run' read.",
+    ),
+    # ── 039 · the shared skill library ──
+    _julia_v2_probe(
+        probe_id="skill_versoes.published_is_immutable", guard_name="guard_skill_versao_immutable",
+        migrations=(_m("039"),), setup=_JV2_SKILL_PUBLICADA,
+        attack=f"UPDATE {_JV2}.skill_versoes SET corpo = 'changed' WHERE id = v_sv;",
+        fragments=("version_immutable",), what="UPDATE of a published library skill version's body",
+        rationale="A pinned skill version is what a published agent version was judged with; its body is frozen.",
+    ),
+    _julia_v2_probe(
+        probe_id="skill_versao_arquivos.published_parent_is_immutable", guard_name="guard_skill_arquivo_immutable",
+        migrations=(_m("039"),), setup=_JV2_SKILL_PUBLICADA,
+        attack=(f"INSERT INTO {_JV2}.skill_versao_arquivos (skill_versao_id, caminho, conteudo) "
+                "VALUES (v_sv, 'noc-probe.md', 'x');"),
+        fragments=("version_immutable",), what="INSERT of a reference file into a published skill version",
+        rationale="Reference files are part of the published skill version: frozen with it.",
+    ),
+    _julia_v2_probe(
+        probe_id="agent_version_skill_refs.never_pin_a_draft", guard_name="guard_agent_version_skill_ref",
+        migrations=(_m("039"),), setup="\n    ".join((_JV2_AGENT, _JV2_VERSION, _JV2_SKILL)),
+        attack=(f"INSERT INTO {_JV2}.agent_version_skill_refs (org_id, version_id, skill_id, skill_versao_id) "
+                "VALUES (v_org, v_version, v_skill, v_sv);"),
+        fragments=("invalid_payload",), what="a pin to a DRAFT library skill version",
+        rationale="A draft is mutable: pinning it would let a skill body change under a judged agent version (D7).",
+    ),
+    _julia_v2_probe(
+        probe_id="skill_versoes.one_draft_per_skill", guard_name="uq_skill_versoes_um_rascunho",
+        migrations=(_m("039"),), setup=_JV2_SKILL,
+        attack=(f"INSERT INTO {_JV2}.skill_versoes (skill_id, versao, descricao_modelo, corpo) "
+                "VALUES (v_skill, 2, 'quando', 'corpo');"),
+        fragments=("uq_skill_versoes_um_rascunho",), what="a second draft of the same library skill",
+        rationale="One draft per skill: two would split edits and let a publish ship the wrong body.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — migration 154 (imóvel extraction under D1): the structured-read
 # lifecycle CHECK and the one-open-conflict-per-field UNIQUE.
 # ---------------------------------------------------------------------------
@@ -9795,6 +10205,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_ONE_PRIMARY_KIT_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
+    *_AGENTS_JULIA_V2_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
