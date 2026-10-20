@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 289 -- social_wiring: julia-v2 mirrors (julia_v2_espelhos)
+-- Migration 290 -- social_wiring: julia-v2 mirrors (julia_v2_espelhos)
 -- ============================================================================
 -- WHY
 -- ---
@@ -103,13 +103,16 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_textos_padrao (
 );
 
 COMMENT ON TABLE social_wiring.julia_textos_padrao IS
-    'Platform-wide default texts SW seeds an org''s rows from (julia-v2 migration 289). Placeholders: {agente} '
+    'Platform-wide default texts SW seeds an org''s rows from (julia-v2 migration 290). Placeholders: {agente} '
     '(the agents status name), {empresa}, {link}. Edited as DATA; no default text lives in code.';
 
 ALTER TABLE social_wiring.julia_textos_padrao ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "julia_textos_padrao_service_role" ON social_wiring.julia_textos_padrao;
 CREATE POLICY "julia_textos_padrao_service_role" ON social_wiring.julia_textos_padrao
     FOR ALL TO service_role USING (true) WITH CHECK (true);
+-- No browser role ever touches it (platform defaults are read by the backend with the service role only): revoke
+-- explicitly, whatever the schema's default privileges are.
+REVOKE ALL ON social_wiring.julia_textos_padrao FROM anon, authenticated;
 
 -- The default opening message (was MENSAGEM_INICIAL_PADRAO in julia_aviso_service.py, which hardcoded the
 -- persona name). ON CONFLICT DO NOTHING: re-applying never overwrites an edited row. A blank text is refused where

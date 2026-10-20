@@ -45,6 +45,11 @@ def test_the_platform_default_table_is_service_role_only():
     assert "TO authenticated" not in SQL.split("julia_textos_padrao")[-1]
 
 
+def test_the_platform_default_table_has_no_browser_grants():
+    assert "REVOKE ALL ON social_wiring.julia_textos_padrao FROM anon, authenticated" in SQL
+    assert not re.search(r"GRANT\b[^;]*julia_textos_padrao", SQL)
+
+
 def test_no_default_text_for_the_opening_message_lives_in_code():
     assert not hasattr(aviso, "MENSAGEM_INICIAL_PADRAO")
 

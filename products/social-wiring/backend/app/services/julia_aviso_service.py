@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 TABLE = "julia_aviso_privacidade"
 A_DEFINIR = "a definir"
 LINK_TOKEN = "{link}"
-#: The default opening message is a DATA row (`julia_textos_padrao`, migration 289), not a string in code: it names the
+#: The default opening message is a DATA row (`julia_textos_padrao`, migration 290), not a string in code: it names the
 #: agent through the `{agente}` placeholder (resolved from agents' status name at send time) and the controller through
 #: `{empresa}` / `{link}`.
 TABLE_TEXTOS = "julia_textos_padrao"
