@@ -64,7 +64,7 @@ describe("AgentesCatalogo", () => {
 
   it("shows admin-only fields when present", async () => {
     mockUse.mockReturnValue({
-      data: [{ ...SDR, ferramentas: ["ferramenta_x"], versao: 3 }],
+      data: [{ ...SDR, ferramentas: ["ferramenta_x"], versao_ativa: 3, versoes: [{ versao: 3, status: "ativa" }] }],
       showSkeleton: false, isRefreshing: false, isError: false,
     });
     await renderPage();

@@ -1,7 +1,7 @@
 /**
  * Catálogo de agentes — `GET /api/agents/catalogo`.
  *
- * Org tier returns display-level fields only. `ferramentas` / `versao` are
+ * Org tier returns display-level fields only. `ferramentas` / `versao_ativa` / `versoes` are
  * platform-admin extras: OPTIONAL, rendered only when the server sends them;
  * this client never requests or infers them.
  */
@@ -16,7 +16,8 @@ export interface AgenteCatalogo {
   runtime: string;
   capacidades: string[];
   ferramentas?: string[];
-  versao?: string | number;
+  versao_ativa?: number | null;
+  versoes?: { versao: number; status: string }[];
 }
 
 const CATALOGO_KEY = ["agents", "catalogo"] as const;

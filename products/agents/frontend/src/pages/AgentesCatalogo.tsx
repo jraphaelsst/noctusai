@@ -2,7 +2,7 @@
  * Catálogo de agentes — `/agentes/catalogo`.
  *
  * Cards lado a lado (nome, papel, runtime, descrição pública, capacidades).
- * Renderiza SOMENTE campos de exibição; `ferramentas` / `versao` aparecem
+ * Renderiza SOMENTE campos de exibição; `ferramentas` / `versao_ativa` aparecem
  * apenas quando o servidor os envia (tier de administrador da plataforma).
  */
 import { useMemo, useState } from "react";
@@ -37,7 +37,7 @@ function CardSkeleton() {
 
 function AgenteCard({ agente }: { agente: AgenteCatalogo }) {
   const ferramentas = agente.ferramentas?.length ? agente.ferramentas : null;
-  const temVersao = agente.versao !== undefined && agente.versao !== null && agente.versao !== "";
+  const temVersao = agente.versao_ativa !== undefined && agente.versao_ativa !== null;
   return (
     <article
       className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4"
@@ -92,7 +92,7 @@ function AgenteCard({ agente }: { agente: AgenteCatalogo }) {
 
       {temVersao && (
         <p className="text-xs text-muted-foreground" data-testid={`catalogo-versao-${agente.key}`}>
-          Versão: <span className="font-medium text-foreground">{String(agente.versao)}</span>
+          Versão: <span className="font-medium text-foreground">{String(agente.versao_ativa)}</span>
         </p>
       )}
     </article>
