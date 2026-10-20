@@ -1,7 +1,7 @@
 ---
 name: noc-refs-sheet
-description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + count + a pt-BR Observação. The link TARGET differs per sheet — getting that wrong means redoing every row.
-version: 1.1.0
+description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + count + a pt-BR Observação; on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM. The link TARGET differs per sheet — getting that wrong means redoing every row.
+version: 1.2.0
 ---
 
 # noc-refs-sheet — ONExxxxx references into a midiasone spreadsheet
@@ -58,7 +58,9 @@ working whatever account §0 names next.
 | **Priscila** | `Código, Imóvel / Valor, Link do Vídeo, Vídeos, Observação` | the **whole `ONExxxxx` ref folder** | she needs the photos too |
 
 **Cindy has a date column; Priscila does not.** So the typing run starts at `D<row>` for
-Cindy and `C<row>` for Priscila. Column B (`Imóvel / Valor`) is the user's — never fill it.
+Cindy and `C<row>` for Priscila. `Código` + `Imóvel / Valor` are therefore column **B + C**
+on Cindy and **A + B** on Priscila. Both are ours to fix on every run (§2a, §2b); this
+replaces the pre-2026-10-20 rule "`Imóvel / Valor` is the user's — never fill it".
 
 A sheet not in this table ⇒ ask which target it wants before writing anything. Once
 Phase C of `projects/one-ops-agents/PROJECT.md` lands, this table is superseded by the DB
@@ -71,7 +73,11 @@ registry and this skill points at it instead.
    connector cannot see them. Open the sheet (ID from §0) in the sheet writer's Chrome and
    fetch: `fetch('/spreadsheets/d/<id>/export?format=csv&gid=0')`.
 2. **Take only the rows that need work** — the ones with a `Código` and an empty link.
-   Never enumerate every ref in the Drive.
+   Never enumerate every ref in the Drive. **Steps 2a + 2b run on EVERY row, every run —
+   including rows whose link is already filled.** Refs are typed by hand, so a run that only
+   touches the new rows leaves the old drift in place.
+   - **2a.** Fix every `Código` (§2a).
+   - **2b.** Fill or normalize every `Imóvel / Valor` from Vista (§2b).
 3. **Resolve each ref** via the connector (the Drive reader). The search term must be the
    full `ONExxxxx` token — `title contains '8400'` returns nothing, because Drive matches
    title words by prefix:
@@ -85,6 +91,61 @@ registry and this skill points at it instead.
    Some refs sit outside both, e.g. under `FOTOS DIVERSAS`.
 5. **Write the row** — see §4.
 6. **Verify** — see §5.
+
+## 2a · `Código` — canonical form, CHECK AND FIX on every run
+
+Canonical form is `^ONE\d+$`: uppercase `ONE` followed by the digits, nothing else
+(`ONE9999`, `ONE10000`). Hand-typed variants seen live: `one10118`, `One8400`, and
+U+2060 word-joiners before the code (§3).
+
+- **Normalize:** strip whitespace + zero-width/word-joiner characters (`​-‍⁠﻿`),
+  uppercase it, and drop any inner space or dash between `ONE` and the digits.
+- **Fix it in the sheet, not just in your head.** A check that only reports leaves the
+  sheet wrong. Retype every non-canonical cell (typing over a selected cell replaces it).
+- **Unfixable** (no `ONE` prefix, no digits, a different prefix): do NOT guess. Leave
+  the cell and list it for the user, with the row.
+- A row with a date but **no** Código: leave it and flag it.
+
+## 2b · `Imóvel / Valor` — `Condomínio - Preço`, from Vista, on every run
+
+Format: `<Condomínio> - <preço pt-BR>`, e.g. `Quebec Ville - 850.000`,
+`Reserva do Moinho - 3.980.000`. Exactly ` - ` (space-dash-space) between the two, `.` as
+the thousands separator, no `R$`, no cents. Regex: `^.+ - \d{1,3}(\.\d{3})+$`.
+
+**Source = the Vista CRM**, via `mcp/vista` (`vista.imoveis.get codigo=<ONExxxxx>`):
+
+| Sheet part | Vista field | Rule |
+|---|---|---|
+| Condomínio | `Empreendimento` | keep only the text before the FIRST ` - ` (drops `- Km 21`, `- Fazendinha - Km 23`). Empty ⇒ fall back to `Bairro`, same rule. |
+| Preço | `ValorVenda` | integer reais → pt-BR thousands (`3980000` → `3.980.000`) |
+
+- **Reuse the sheet's existing spelling for a condo it already names.** The user shortens
+  some names (`Authentiq`, not `Authentiq Granja Viana`; `Jd das Paineiras`, not
+  `Jardim Das Paineiras`). Check the column for the same condo first; only a condo that
+  is new to the sheet uses the Vista text, with lowercase connectors (`Parque das Artes`).
+- **Empty cell** ⇒ fill it. **Filled but off-pattern** (e.g. `Reserva do Moinho 3.980.000`,
+  missing ` - `) ⇒ rewrite it in the pattern, keeping the user's name + price.
+- **Filled, but the price differs from Vista** ⇒ do NOT overwrite (it may be the price
+  at publication time). List it for the user: row, sheet value, Vista value.
+- **`VistaRecordUnpublished`** (`ExibirNoSite=Nao`; the API key cannot see the record) ⇒
+  leave the cell empty and tell the user. Never invent a value.
+
+**Calling it when the `vista` MCP is disabled for the session** (it is off the keep-list
+in `settings.local.json`): call the handler directly from the MCP's venv:
+
+```python
+# run: SSL_CERT_FILE=/etc/ssl/cert.pem mcp/noctusai/.venv/bin/python <script> ONE8400 ...
+import asyncio, sys
+sys.path.insert(0, "<repo>/mcp")
+from vista.tools.imoveis import get_imovel
+async def main():
+    for c in sys.argv[1:]:
+        r = await get_imovel({"codigo": c})
+        raw = (((r.get("item") or {}).get("base") or {}).get("raw")) or {}
+        print(c, r.get("error", {}).get("error_class") if r.get("error") else "",
+              raw.get("Empreendimento"), raw.get("Bairro"), raw.get("ValorVenda"))
+asyncio.run(main())
+```
 
 ## 3 · Traps, each of which has cost a redo
 
@@ -109,8 +170,13 @@ registry and this skill points at it instead.
 - **The same code can appear on two rows** (Cindy `ONE10602`, rows 4 and 17). Fill it the
   same way and say `código repetido (já está na linha N)` in the Observação; deleting the
   duplicate is the user's call.
-- **Codes are sometimes lowercase** (`one10846`) — Drive search is case-insensitive, the
-  Observação should still say `ONE10846`.
+- **Codes are sometimes lowercase** (`one10846`, `One8400`). Drive search is
+  case-insensitive, but the cell itself gets fixed to `ONE10846` (§2a), not just the Observação.
+- **A column run can land one row off.** On 2026-10-20 a `Down`×N hop after a `Return`
+  chain put the `Imóvel / Valor` values one row high. Start every non-contiguous run from
+  a fresh `range=` URL instead of arrow-key hops, and let §5 catch the rest.
+- **Navigating away too soon is blocked by a "Leave site?" dialog** while Sheets is still
+  saving. Wait about 5 s after the last keystroke before the next `range=` navigation.
 
 ## 4 · Writing cells (Chrome — the connector CANNOT write)
 
@@ -145,7 +211,11 @@ not found → sem vídeo — pasta ONE10846 não encontrada no Drive (nenhuma pa
 Re-export the CSV (`cache:'no-store'`) and assert programmatically:
 
 1. every expected folder id **is present** on its row, with the right count; **and**
-2. every **superseded** id is **gone** from the sheet.
+2. every **superseded** id is **gone** from the sheet; **and**
+3. every non-empty `Código` matches `^ONE\d+$` (§2a); **and**
+4. every non-empty `Imóvel / Valor` matches `^.+ - \d{1,3}(\.\d{3})+$` **and** sits on
+   the row of its own code (compare against the Vista value you fetched, row by row; a
+   shifted run passes the regex but fails this check).
 
 Leg 2 is what catches a half-finished redo. The export lags a few seconds behind the last
 edit — re-fetch before calling a cell missing.
