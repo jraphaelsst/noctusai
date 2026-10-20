@@ -67,6 +67,8 @@ On an inbound message with `hasMedia` whose chat has a `cliente_id`, the new `do
 4. inserts `cliente_documentos` with `origem_entrada='whatsapp'`, the classified `tipo_documento` and the classifier confidence;
 5. runs extraction exactly as a card upload does.
 
+Extraction never overwrites an owner correction (owner, 2026-10-20): a reading that disagrees with a field stamped `manual` by a real edit (`identidade_extracao_service.correcao_do_dono`) opens a `cliente_campo_conflitos` row with `protege_correcao=true` (migration 291) for the owner to approve or reject; a rejection is never re-raised, the resolver backfill never decides it, and it does not block contract generation (`correcoes_contestadas` in the readiness payload).
+
 Low confidence or an unknown type ⇒ `tipo_documento='a_classificar'`. The doc shows in a triage list on the card, where the operator picks the type, and extraction then runs. Media is never dropped.
 
 Accepted MIME types gain `image/heic` (converted to JPEG on ingest).
