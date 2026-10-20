@@ -420,7 +420,7 @@ class TestAuthorizedNumbersPatch:
         r = admin.tc.patch(self.URL, json={"authorized_numbers": ["+5511977770000"]}, headers=H)
         assert r.status_code == 200 and admin.conn()["authorized_numbers"] == ["+5511977770000"]
 
-    def test_with_julia_off_the_empty_allow_all_list_is_still_allowed_as_today(self, admin):
+    def test_with_julia_off_an_empty_list_is_still_writable_it_means_nobody(self, admin):
         _off_connection(admin.w)
         assert admin.tc.patch(self.URL, json={"authorized_numbers": []}, headers=H).status_code == 200
 

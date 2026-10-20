@@ -88,13 +88,13 @@ class WhatsAppConnectionUpdate(BaseModel):
     # Per-connection intake config (migration 016).
     # Use model_fields_set to distinguish "not supplied" from "supplied as []".
     # None (field absent from request) = keep current value.
-    # [] (explicit empty list) = clear → means "allow all" / "listen to all".
+    # [] (explicit empty list) = clear → authorized: nobody (operator-only bot); bound_chats: listen to all.
     authorized_numbers: Optional[list[str]] = Field(
         default=None,
         description=(
             "Phone numbers / JIDs allowed to trigger the agent. "
-            "Empty list = all numbers allowed (not disabled — differs from the "
-            "global env var). Absent field = keep current value."
+            "Empty list = NOBODY is authorized (operator-only bot). "
+            "Absent field = keep current value."
         ),
     )
     bound_chats: Optional[list[BoundChat]] = Field(
@@ -132,7 +132,7 @@ class WhatsAppConnectionOut(BaseModel):
     default OFF).  When False the existing chatbot does not auto-reply; the
     operator can chat manually via the inbox UI.
     ``authorized_numbers`` / ``bound_chats`` added by migration 016:
-      - authorized_numbers: empty list = all numbers allowed.
+      - authorized_numbers: empty list = nobody authorized (operator-only bot).
       - bound_chats: empty list = all chats listened to.
     """
 

@@ -6,7 +6,7 @@ logic.  No network, no DB, no WAHA calls.
 
 Coverage:
   - _strip_jid_suffix — all three JID suffix forms.
-  - is_authorized with empty authorized_numbers (allow-all semantic).
+  - is_authorized with empty authorized_numbers (nobody authorized).
   - is_authorized with a non-empty list (existing whitelist logic preserved).
   - is_chat_bound with empty bound_chats (all chats).
   - is_chat_bound with a non-empty list (exact + normalized matching).
@@ -65,13 +65,15 @@ class TestStripJidSuffix:
 # ─── is_authorized ───────────────────────────────────────────────────────────
 
 class TestIsAuthorized:
-    def test_empty_authorized_numbers_allows_all(self):
-        """Per-connection default: empty list = allow all senders."""
+    def test_empty_authorized_numbers_authorizes_nobody(self):
+        """Operator-only bot: empty list = nobody authorized."""
         svc = _make_intake(authorized_numbers=[])
-        assert svc.is_authorized("5511999887766@c.us") is True
-        assert svc.is_authorized("+5521988776655") is True
-        assert svc.is_authorized("random@lid") is True
-        assert svc.is_authorized("") is True  # even empty sender passes
+        assert svc.has_authorized_numbers is False
+        assert svc.is_authorized("+5511999887766") is False
+        assert svc.is_authorized("5511999887766@c.us") is False
+        assert svc.is_authorized("33613018058989@lid") is False
+
+        assert svc.is_authorized("") is False
 
     def test_non_empty_whitelist_allows_listed_c_us(self):
         svc = _make_intake(authorized_numbers=["+5511999887766"])
@@ -96,10 +98,6 @@ class TestIsAuthorized:
     def test_empty_sender_denied_when_whitelist_set(self):
         svc = _make_intake(authorized_numbers=["+5511999887766"])
         assert svc.is_authorized("") is False
-
-    def test_empty_sender_allowed_when_allow_all(self):
-        svc = _make_intake(authorized_numbers=[])
-        assert svc.is_authorized("") is True
 
 
 # ─── is_chat_bound ───────────────────────────────────────────────────────────

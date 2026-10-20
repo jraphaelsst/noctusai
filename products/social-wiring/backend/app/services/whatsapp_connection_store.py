@@ -83,7 +83,7 @@ class WhatsAppConnectionRecord:
     webhook_token: Optional[str] = None
     auto_reply_enabled: bool = False
     # Migration 016 — per-connection intake config.
-    # authorized_numbers: empty list = all numbers allowed (not disabled).
+    # authorized_numbers: empty list = nobody authorized (operator-only bot).
     # bound_chats: list of {"chat_id": str, "label": str} dicts; empty = all.
     authorized_numbers: list[str] = field(default_factory=list)
     bound_chats: list[dict] = field(default_factory=list)
@@ -318,7 +318,7 @@ class WhatsAppConnectionStore:
         if webhook_url is not _UNSET:
             patch["webhook_url"] = webhook_url
         # Migration 016 — JSONB list fields.  _UNSET = keep current value;
-        # an explicit [] = "allow all" / "listen to all" and IS written.
+        # an explicit [] (nobody authorized / listen to all chats) IS written.
         if authorized_numbers is not _UNSET:
             patch["authorized_numbers"] = list(authorized_numbers)
         if bound_chats is not _UNSET:

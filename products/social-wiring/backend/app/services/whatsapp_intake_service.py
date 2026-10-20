@@ -238,10 +238,8 @@ class WhatsAppIntakeService:
         self._waha_api_key = waha_api_key
         self._waha_session = waha_session
         self._redis = redis_client
-        # Migration 016 — per-connection authorized_numbers semantics:
-        # empty list = allow ALL senders (not disabled; distinct from the
-        # global env var where empty means the intake service returns None).
-        self._allow_all_senders: bool = not authorized_numbers
+        # Operator-only bot (owner order 2026-10-20): an EMPTY authorized_numbers
+        # list means NOBODY is authorized (it used to mean "allow all", migration 016).
         self._authorized = set(self._normalize_numbers(authorized_numbers))
         self._crm = crm_service
         self._admin = admin_supabase
@@ -294,13 +292,16 @@ class WhatsAppIntakeService:
                 result.append(n)
         return result
 
+    @property
+    def has_authorized_numbers(self) -> bool:
+        """True when at least one authorized number is configured."""
+        return bool(self._authorized)
+
     def is_authorized(self, phone: str) -> bool:
         """Check if the sender is in the whitelist.
 
-        When ``authorized_numbers`` was empty at construction time
-        (``self._allow_all_senders``), every sender is allowed — this is the
-        per-connection "allow all" semantic (migration 016).  It differs from
-        the global env var where empty means DISABLED.
+        An empty ``authorized_numbers`` list authorizes NOBODY (operator-only
+        bot, owner order 2026-10-20).
 
         WAHA may identify the sender three different ways:
         - ``5511974693365@c.us`` — standard chat id, phone is the prefix.
@@ -310,7 +311,7 @@ class WhatsAppIntakeService:
           on different chats can have different LIDs.
 
         Resolution order:
-        1. ``_allow_all_senders`` → True immediately (per-connection default).
+        1. Empty whitelist → False immediately.
         2. Direct whitelist hit (raw LID form ``<digits>@lid`` listed in
            env wins for LID inbound).
         3. Strip JID suffixes → phone form, check whitelist with the
@@ -318,9 +319,9 @@ class WhatsAppIntakeService:
         4. Look up the LID→phone cache (populated by send-text responses)
            and recheck the phone whitelist.
         """
-        # 1) Per-connection "allow all" (empty authorized_numbers list).
-        if self._allow_all_senders:
-            return True
+        # 1) Empty whitelist authorizes nobody.
+        if not self._authorized:
+            return False
         raw = (phone or "").strip()
         if not raw:
             return False

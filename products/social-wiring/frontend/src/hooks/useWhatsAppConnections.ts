@@ -96,7 +96,7 @@ export interface CreateConnectionBody {
  * Update payload — user-editable fields.
  * - label: human-readable name
  * - api_key: write-only rotation (omit to leave unchanged)
- * - authorized_numbers: E.164 allowlist — [] means "all numbers"
+ * - authorized_numbers: E.164 allowlist — [] means nobody (operator-only bot)
  * - bound_chats: listened chat list — [] means "all chats"
  * base_url, session_name, and webhook_url are backend-derived; not sent.
  */

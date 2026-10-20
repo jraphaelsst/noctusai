@@ -251,7 +251,7 @@ function AuthorizedNumbersEditor({
           className="text-xs text-muted-foreground italic"
           data-testid="numbers-empty-hint"
         >
-          Vazio = todos os números são permitidos.
+          Vazio = ninguém pode usar o bot do operador.
         </p>
       )}
 

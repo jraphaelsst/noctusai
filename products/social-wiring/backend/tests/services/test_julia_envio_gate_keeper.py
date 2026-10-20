@@ -58,10 +58,10 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     ("services/julia_visitas_service.py", "avisar_lead"): "operator confirms / reschedules / cancels a visit in the UI",
     ("routers/whatsapp_connections_router.py", "send_message"): "operator types a message in Conversas (POST endpoint)",
     # the OPERATOR bot (pre-Julia intake + chatbot). Not a Julia send: reached only after the Julia split
-    # (`agente_leads_ativo` on -> leads go to Julia and return). It answers `authorized_numbers` -- but an EMPTY list
-    # means "everyone" (migration 016), so on a lead line it can answer leads: NOC-REMEDIATE[sw-operator-bot-allow-all].
-    ("routers/whatsapp_router.py", "_process_waha_body"): "operator bot: once-per-24h denial reply + inline chatbot fallback (NOC-REMEDIATE[sw-operator-bot-allow-all])",
-    ("services/conversation_module.py", "_llm_fallback_dispatch_inner"): "operator bot LLM fallback (NOC-REMEDIATE[sw-operator-bot-allow-all])",
+    # (`agente_leads_ativo` on -> leads go to Julia and return). It answers `authorized_numbers` only -- an EMPTY list
+    # authorizes nobody (owner order 2026-10-20), so a lead line never reaches it.
+    ("routers/whatsapp_router.py", "_process_waha_body"): "operator bot: once-per-24h denial reply + inline chatbot fallback",
+    ("services/conversation_module.py", "_llm_fallback_dispatch_inner"): "operator bot LLM fallback",
 }
 
 

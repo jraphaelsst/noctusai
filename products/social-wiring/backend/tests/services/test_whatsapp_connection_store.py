@@ -309,7 +309,7 @@ class TestConnectionSettings:
         assert got.bound_chats == chats
 
     def test_clear_authorized_numbers_with_empty_list(self, store):
-        """Empty list = 'allow all', NOT disabled. Must persist as []."""
+        """Empty list = nobody authorized. Must persist as []."""
         rec = _make(store)
         store.update_connection(
             connection_id=rec.id,

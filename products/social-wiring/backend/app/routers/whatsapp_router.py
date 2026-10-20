@@ -255,8 +255,8 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
     When ``connection`` is a :class:`WhatsAppConnectionRecord` (per-connection
     token-scoped route, migration 016):
       - ``authorized_numbers`` comes from the connection record.
-        Empty list = allow ALL senders (per-connection default — differs from
-        the global env var where empty means DISABLED).
+        Empty list = NOBODY is authorized (operator-only bot, 2026-10-20); the
+        legacy global env var path with an empty list is DISABLED (returns None).
       - ``bound_chats`` comes from the connection record.
       - ``connection_id`` is derived from ``connection.id``.
 
@@ -268,7 +268,7 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
     """
     cfg = cfg or settings
     if connection is not None:
-        # Per-connection route: empty list = allow all (NOT disabled).
+        # Per-connection route: empty list = nobody authorized (operator-only bot).
         authorized = list(connection.authorized_numbers or [])
         bound_chats: list[dict] | None = list(connection.bound_chats or [])
         _connection_id = connection.id
@@ -1018,9 +1018,8 @@ async def _process_waha_body(
     #   3. otherwise          → today's behaviour (denial reply once per 24 h).
     # The legacy global route has no connection, so it never enters the split.
     if connection is not None and connection.agente_leads_ativo and not is_group:
-        # H3 re-check at routing time. An EMPTY list means "everyone is authorized"
-        # to `is_authorized` — with Julia on that would hand every lead to the
-        # operator bot and its tools. Fail closed: no reply, nothing routed.
+        # H3 re-check at routing time. With Julia on, an empty list can never be
+        # routed to the operator bot nor to Julia. Fail closed: no reply, nothing routed.
         if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
             logger.error(
                 "Julia is ON for connection=%s but authorized_numbers is empty — failing closed",
@@ -1061,6 +1060,14 @@ async def _process_waha_body(
     # H2: a group message was already gated above on its PARTICIPANT; judge the real
     # sender here too, never the group id.
     if not intake.is_authorized(auth_sender):
+        if not intake.has_authorized_numbers:
+            # Operator-only bot: a line with NO authorized numbers is a lead line, and
+            # leads must never receive the "not on the authorized list" denial. Drop silently.
+            logger.info(
+                "WhatsApp message from %s dropped — connection has no authorized numbers",
+                sender,
+            )
+            return Response(status_code=status.HTTP_200_OK)
         already_notified = False
         try:
             denied_key = f"whatsapp:denied:{sender}"
@@ -1096,12 +1103,8 @@ async def _process_waha_body(
     canonical_session = intake.canonical_session_id(sender)
 
     # Process the message.
-    # NOC-REMEDIATE[sw-operator-bot-allow-all]: OWNER QUESTION -- with Julia OFF, an empty
-    # `authorized_numbers` makes EVERY sender "authorized" (migration 016), so on a line leads write
-    # to (prod "One Chat", 2026-10-18: Julia off, auto_reply_enabled=true, 0 authorized, 0 bound) this
-    # operator chatbot can answer LEADS automatically. Decide: fill authorized_numbers / turn
-    # auto_reply off on lead lines, or make empty = nobody for the bot. The Julia outbound gate
-    # (`julia_envio_gate`) does not cover this operator path by design -- 2026-10-18
+    # Operator-only bot: empty authorized_numbers = nobody (owner order 2026-10-20), so only
+    # authorized operators ever reach this point.
     # When a per-connection record is present, the auto_reply_enabled toggle
     # gates the chatbot.  Default is OFF — operators can chat manually without
     # the bot interfering.  The legacy global route preserves the old gate

@@ -208,6 +208,25 @@ class TestRoutingTable:
         assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") == "1"
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
 
+    def test_with_julia_off_a_stranger_gets_exactly_one_denial_reply_when_the_list_is_non_empty(self, rt):
+        rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
+        with patch("app.services.whatsapp_intake_service.get_whatsapp_client", lambda **_kw: rt.w.waha):
+            rt.post(_msg(), signed=True)
+            rt.post(_msg(mid="wamid.2"), signed=True)
+        denials = [t for t in rt.w.sent_texts() if "não está na lista de autorizados" in t]
+        assert len(denials) == 1
+
+    def test_with_julia_off_and_an_empty_list_a_stranger_is_dropped_silently_no_reply_no_turn(self, rt):
+        rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, authorized_numbers=[],
+                             auto_reply_enabled=True)
+        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        with patch("app.services.whatsapp_intake_service.get_whatsapp_client", lambda **_kw: rt.w.waha):
+            assert rt.post(_msg(), signed=True).status_code == 200
+        assert rt.w.waha.sent_messages == []
+        assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") is None
+        assert rt.lead_memory() == [] and rt.operator_memory() == [] and rt.w.agents.turns == []
+        assert rt.module.buffer.memory_for(LEAD_CHAT) == []
+
     def test_the_lead_path_bypasses_the_One_Chat_gate_B3(self, rt):
         # auto_reply_enabled stays One Chat's toggle: OFF here, and the chatbot is disabled.
         _julia_scene(rt, auto_reply_enabled=False)
@@ -420,13 +439,14 @@ class TestGroups:
         rt.post(_msg(chat=GROUP, frm=GROUP, participant="5511900002222@c.us", mid="g5", body="ONE1234"), signed=True)
         assert rt.module.buffer.memory_for(GROUP) == []
 
-    def test_a_group_with_julia_off_and_an_allow_all_list_is_not_open_to_everyone(self, rt):
+    def test_a_group_with_julia_off_and_an_empty_list_authorizes_no_participant(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, authorized_numbers=[],
                              bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
         rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
         rt.post(_msg(chat=GROUP, frm=GROUP, participant="5511900002222@c.us", mid="g6", body="ONE1234"), signed=True)
-        # allow-all means every PARTICIPANT is authorized, but only inside an explicitly bound group.
-        assert rt.module.buffer.memory_for(GROUP)
+        # empty list = nobody authorized: not even inside an explicitly bound group.
+        assert rt.module.buffer.memory_for(GROUP) == []
+        assert rt.w.waha.sent_messages == []
 
     def test_no_denial_text_is_ever_posted_into_a_group(self, rt):
         _julia_scene(rt)
