@@ -9,7 +9,7 @@ adds its name here in the same change.
 """
 from __future__ import annotations
 
-__all__ = ["FERRAMENTAS_CONHECIDAS", "ferramenta_conhecida"]
+__all__ = ["FERRAMENTAS_CONHECIDAS", "FERRAMENTAS_DE_EXTRACAO", "ferramenta_conhecida", "ferramenta_da_conversa"]
 
 FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     # Julia v2 channel toolset (CONTRACT §3.4) -- ``app.channels.tool_registry.TOOLS``. The pre-v2 tools
@@ -26,5 +26,17 @@ FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
 })
 
 
+#: Tools of the two structured-extraction calls (``app.channels.extracao``: the episode summary and the transport
+#: decision). They are model-callable ONLY inside those calls, each with its own system text; a conversation turn
+#: never offers them, so the conversation prompt's ``# Ferramentas`` block must not list them either (the model
+#: would be told about a tool it does not have). Their rows stay content: edited, hashed and shown in Compilado.
+FERRAMENTAS_DE_EXTRACAO: frozenset[str] = frozenset({"registrar_resumo", "registrar_escolha"})
+
+
 def ferramenta_conhecida(nome: str) -> bool:
     return nome in FERRAMENTAS_CONHECIDAS
+
+
+def ferramenta_da_conversa(nome: str) -> bool:
+    """A known tool the CONVERSATION model may be offered (everything but the extraction-only tools)."""
+    return nome in FERRAMENTAS_CONHECIDAS and nome not in FERRAMENTAS_DE_EXTRACAO

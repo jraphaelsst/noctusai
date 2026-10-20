@@ -73,6 +73,20 @@ class TestContentModeStrings:
         assert "- `handoff` — Passa para uma pessoa." in c.texto
         assert not c.bloqueado or _codes(c) == set()
 
+    def test_extraction_only_tools_never_reach_the_conversation_tools_block(self):
+        """``registrar_resumo`` / ``registrar_escolha`` are callable only inside the extraction calls; the turn never
+        offers them, so the conversation prompt must not announce them (A-polish #6). Still content: hashed."""
+        from app.channels.tool_registry import TOOLS
+
+        assert not {"registrar_resumo", "registrar_escolha"} & set(TOOLS)  # not offered on a turn
+        extra = (FerramentaData("registrar_resumo", "Resume o episódio."),
+                 FerramentaData("registrar_escolha", "Escolhe a opção."))
+        base = _conteudo()
+        c = compile_prompt(_inp(_conteudo(ferramentas=base.ferramentas + extra)))
+        bloco = c.texto[c.texto.index("# Tools"):]
+        assert "`handoff`" in bloco and "registrar_resumo" not in bloco and "registrar_escolha" not in bloco
+        assert c.hash != compile_prompt(_inp(base)).hash  # the rows are still part of the hashed content
+
     def test_a_missing_required_text_is_blocking_never_a_default(self):
         c = compile_prompt(_inp(_conteudo(textos=BASE_TEXTOS[:1])))
         assert "texto_ausente" in _codes(c)

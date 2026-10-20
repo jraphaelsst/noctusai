@@ -42,7 +42,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.studio.especificacoes import placeholders_org, resolver_texto
-from app.studio.ferramentas_registry import ferramenta_conhecida
+from app.studio.ferramentas_registry import ferramenta_conhecida, ferramenta_da_conversa
 from app.studio.models import (
     ClientBundle,
     CollectionSummary,
@@ -222,10 +222,12 @@ def _tools_block(web: bool, knowledge: bool, has_skills: bool, S: _Strings, ferr
     ]
     if has_skills:
         lines.append(S("compilador.ferramenta_linha.skills_ativada", ""))
-    # The tools the version actually offers: name + the DB description (CONTRACT §2.1 row 5).
+    # The tools the version actually offers IN THE CONVERSATION: name + the DB description (CONTRACT §2.1 row 5).
+    # The extraction-only tools (``registrar_resumo`` / ``registrar_escolha``) are never offered on a turn.
     lines += [
         f"- `{f.ferramenta}` — {f.descricao.strip()}"
-        for f in sorted((f for f in ferramentas if f.ativo), key=lambda f: f.ferramenta)
+        for f in sorted((f for f in ferramentas if f.ativo and ferramenta_da_conversa(f.ferramenta)),
+                        key=lambda f: f.ferramenta)
     ]
     return f"# {title}\n\n" + "\n".join(line for line in lines if line)
 
