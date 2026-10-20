@@ -116,6 +116,7 @@ from noctusai_lib.integrations.documents.address import (
 from noctusai_lib.integrations.documents import autoridade
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
+from noctusai_lib.primitives import identificador as _ident
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
 from noctusai_lib.integrations.documents.nacionalidade_civil import (
     derivar_nacionalidade_civil,
@@ -1101,10 +1102,16 @@ def _confirmados_de_outro_documento(
     atual = rows[0]
     out: dict[str, Any] = {}
     for campo, coluna in _CAMPO_CLIENTE_DA_DIVERGENCIA.items():
-        if campo == "rne":
-            continue
         valor, origem = atual.get(coluna), atual.get(f"{coluna}_origem")
         if _vazio(valor) or not origem or origem == tipo:
+            continue
+        if campo == "rne" and not _ident.validar_rne(valor).valido:
+            # 🔴 RNE shares the `rg` column with the RG (deal 876, 2026-10-20:
+            # a foreigner's CNH read the RNE once, uncorroborated, and the
+            # ficha's lower-authority copy kept the provenance). The on-file
+            # value corroborates an RNE reading ONLY when it is itself an
+            # RNE-shaped number (strict mask — no public check-digit exists
+            # for RNE/CRNM); an RG on file says nothing about an RNE.
             continue
         out[campo] = valor
     return out
