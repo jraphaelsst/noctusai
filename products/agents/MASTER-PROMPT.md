@@ -177,6 +177,7 @@ every agent (CONTRACT D7/D8). Skill text is DB data; code carries no skill conte
   `abrir(skill_key, skill_versao_id) -> SkillAberta(corpo, arquivos) | None` (the PINNED version, never "latest").
   Every compile site reads the pins through one slot (`studio.bundles.configure_skill_refs_provider`, wired by
   `install_studio_seams`), so a hash can never differ by call site.
+- **Channel turn**: `app/studio/skills_fonte.py` implements the runtime's `SkillFonte` over the library (`get_skills_factory_dep`): `abrir_skill` / `ler_arquivo_skill` serve the version's PINNED library version (never the latest), then its own skills; the pins' `obrigatoria_para` become the tool gates (`skill_nao_aberta`).
 - **MCP**: `noctus.agents.content` (`mcp/noctusai/tools/noctus/agents/content.py`) writes any content kind
   (sections, textos, ferramentas, decisoes, spec declarations, library skills + pins, standard criteria/stages/
   parameters) into a target environment through these routes: drafts only, dry-run by default, payload from a

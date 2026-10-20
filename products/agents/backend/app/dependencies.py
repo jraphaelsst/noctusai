@@ -488,8 +488,12 @@ def get_lais_tools_client_dep():
 
 def get_skills_factory_dep():
     """``(definitions, definition_org, definition_agent, version) -> SkillFonte``; ``None`` = the version's
-    own skills. The shared skill library (A-SKILLS) overrides this seam."""
-    return None
+    own skills. With pins in the shared skill library (A-SKILLS, migration 039) the turn opens the PINNED
+    library versions first (never the latest), falling back to the version's own skills."""
+    from app.stores.skills_biblioteca import get_skills_store
+    from app.studio.skills_fonte import skills_factory
+
+    return skills_factory(lambda: get_skills_store(settings))
 
 
 def get_channel_inbound_store_dep():
