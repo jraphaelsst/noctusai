@@ -21,6 +21,7 @@ from uuid import UUID
 
 from app.qualificacao.matcher import normalizar
 from app.stores._util import utcnow
+from noctusai_lib.primitives.identificador import cpf_dv_valido
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
 
@@ -52,14 +53,7 @@ def so_digitos(s: str) -> str:
 def validar_cpf(valor: str) -> tuple[bool, str]:
     """``(ok, 11 digits)`` -- check digits verified; repeated-digit CPFs are invalid."""
     d = so_digitos(valor)
-    if len(d) != 11 or d == d[0] * 11:
-        return False, ""
-    for n in (9, 10):
-        soma = sum(int(d[i]) * (n + 1 - i) for i in range(n))
-        dv = (soma * 10 % 11) % 10
-        if dv != int(d[n]):
-            return False, ""
-    return True, d
+    return (True, d) if cpf_dv_valido(d) else (False, "")
 
 
 def validar_email(valor: str) -> tuple[bool, str]:

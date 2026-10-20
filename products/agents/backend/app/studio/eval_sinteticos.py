@@ -25,6 +25,8 @@ import secrets
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from noctusai_lib.primitives.identificador import cpf_dv_valido
+
 __all__ = [
     "TOKENS",
     "TOKEN_RE",
@@ -49,22 +51,21 @@ class TokenSinteticoDesconhecido(ValueError):
         super().__init__(f"token sintético desconhecido {token!r}" + (f" em {onde}" if onde else ""))
 
 
-def _dv(digitos: list[int]) -> int:
-    n = len(digitos)
-    s = sum(v * w for v, w in zip(digitos, range(n + 1, 1, -1)))
-    return (s * 10 % 11) % 10
-
-
 def gerar_cpf_sintetico(rng: Any = _RNG) -> str:
-    """A random CPF (formatted ``000.000.000-00``) with valid check digits; never a repeated-digit one."""
+    """A random CPF (formatted ``000.000.000-00``) with valid check digits; never a repeated-digit one.
+
+    The mod-11 weights live ONLY in the seed (``cpf_dv_valido``): the two check digits are the unique
+    pair of the 100 candidates the seed accepts for the random 9-digit base.
+    """
     while True:
-        base = [rng.randrange(10) for _ in range(9)]
+        base = "".join(str(rng.randrange(10)) for _ in range(9))
         if len(set(base)) > 1:
             break
-    base.append(_dv(base))
-    base.append(_dv(base))
-    s = "".join(map(str, base))
-    return f"{s[:3]}.{s[3:6]}.{s[6:9]}-{s[9:]}"
+    for dv in range(100):
+        s = f"{base}{dv:02d}"
+        if cpf_dv_valido(s):
+            return f"{s[:3]}.{s[3:6]}.{s[6:9]}-{s[9:]}"
+    raise AssertionError("no valid CPF check-digit pair for a non-repdigit base")  # unreachable: mod-11 always yields one
 
 
 def gerar_email_sintetico(rng: Any = _RNG) -> str:

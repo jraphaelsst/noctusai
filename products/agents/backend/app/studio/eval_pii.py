@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterator
 
+from noctusai_lib.primitives.identificador import cpf_dv_valido
+
 __all__ = ["EvalFixtureComPii", "achar_pii", "recusar_pii"]
 
 _CPF = re.compile(r"(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)")
@@ -40,14 +42,7 @@ class EvalFixtureComPii(ValueError):
 
 
 def _cpf_valido(raw: str) -> bool:
-    d = [int(c) for c in raw if c.isdigit()]
-    if len(d) != 11 or len(set(d)) == 1:
-        return False
-    for n in (9, 10):
-        s = sum(v * w for v, w in zip(d[:n], range(n + 1, 1, -1)))
-        if d[n] != (s * 10 % 11) % 10:
-            return False
-    return True
+    return cpf_dv_valido("".join(c for c in raw if c.isdigit()))
 
 
 def _cnpj_valido(raw: str) -> bool:
