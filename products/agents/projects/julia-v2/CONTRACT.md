@@ -267,7 +267,9 @@ GET  /api/studio/agents/{key}/versions/{id}/payload?amostra=<contexto_exemplo>  
 
 - **New MCP tool `noctus.agents.content`**, vendor-namespaced, in `mcp/noctusai/tools/noctus/agents/content.py`.
   - Actions: `list | get | set | publish`.
-  - `kind ∈ {secao, texto, ferramenta, decisao, skill, padrao_criterio, padrao_estagio}`.
+  - `kind ∈ {secao, texto, ferramenta, decisao, skill, padrao_criterio, padrao_estagio}`, plus (A-polish, 2026-10-20)
+    `evals_mecanismo` (mechanism eval cases) and `conformidade_regras` (rule switches) -- not versioned, so the
+    result states that a case counts from the next mechanism run and a rule from the next turn.
   - DRY-RUN by default (prints a unified diff of the DB row). `confirm=True` writes the **draft**.
   - `publish` calls `POST /draft/publish` (the eval gate applies, nothing is bypassed).
 - **Credentials:** `NOCTUS_AGENTS_URL` / `NOCTUS_AGENTS_TOKEN` (as `agent_package_publish` uses).

@@ -74,19 +74,34 @@ products/agents/backend/app/
   `concluido`.
 - A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
   seeded earlier gets 409 `conteudo_incompleto`, never a default string.
+- Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /
+  `ler_arquivo_skill` return the index line, body and files with every `{{org.chave}}` replaced by the org's value -
+  the same `especificacoes.resolver_texto` the prompt sections go through (own and pinned library skills).
+- Optional enum parameters (`Literal[...] | None`, `anyOf [enum, null]` in the schema) get their value labels from the
+  row too (`enriquecer_schema`), like required ones. The extraction-only tools (`registrar_resumo` /
+  `registrar_escolha`, `ferramentas_registry.FERRAMENTAS_DE_EXTRACAO`) are never offered on a turn and are not listed in
+  the conversation prompt's `# Ferramentas` block (their rows stay hashed content).
+- `oferecer_imoveis` speaks SW's v2 `buscar_imoveis`: the lead's must-haves (criterion `itens_essenciais`) go as
+  `itens_essenciais` (SW hard filters), nice-to-haves as `caracteristicas`; the answer's `restantes_estimados`,
+  `relaxado` (axes SW widened) and `similar_a_encontrado` reach the model next to the listings (explicit allowlist).
+  `encerrar` ends the participation: a later re-engagement is ignored (no model call) and the thread reports
+  `reengajamento_suprimido`; the lead-level opt-out (`POST /leads/{ref}/opt-out`) does the same for every agent.
 
 ### Julia v2 — mechanism evals as the publish gate (A-EVAL)
 - `eval_cases` gain `suite` (`mecanismo` | `comportamento`), `k`, `roteiro` (scripted multi-turn lead messages + fixture catalogue) and `asserts` (deterministic, code-checked: ferramentas_incluem/proibidas, estagio_final, criterios_registrados, ofertas_por_lote, sem_violacoes, identificacao_completa, handoff_para, sem_vazamento, skill_aberta_antes_de). Migration 038, service-role only.
 - `app/studio/eval_mecanismo.py` runs pass^k (a case passes only if all k executions pass), supports sharded scenarios and a `limite_usd` cost cap; runs are stored in `eval_mecanismo_runs` / `eval_mecanismo_execucoes`.
 - Publish of an agent with `exige_mecanismo` (or any active mecanismo case) requires the newest LIVE run for the current compiled hash to be complete, under budget and fully green — enforced in the router AND in the DB publish function (409 `mecanismo_reprovado`). The `comportamento` (judge) suite is advisory unless `comportamento_bloqueia`.
 - The turn driver is a Protocol (`app/studio/eval_driver.py`, `tipo` live|fake); `POST /api/studio/agents/{key}/draft/mecanismo-runs` (platform admin) runs the suite. Eval fixtures are synthetic: a PII guard refuses phones/CPF/emails (never real WhatsApp transcripts — Meta WhatsApp Business terms §4.7).
+- Identity flows are scripted with TOKENS (`app/studio/eval_sinteticos.py`): `[[cpf_sintetico_valido]]` (a random, check-digit-valid CPF generated per execution, never a fixed one) and `[[email_sintetico]]` (`lead.<random>@example.com`, RFC 2606) are substituted by the live driver right before the turn; an unknown `[[token]]` is refused at validation. `skill_aberta_antes_de` reads `abrir_skill`'s real argument, derived from `AbrirSkillArgs` (`nome`).
+- Mechanism cases are written through the eval case API (`suite`/`k`/`roteiro`/`asserts`), by a platform admin or the `studio:content-write` token (`noctus.agents.content` kind `evals_mecanismo`, audited `conteudo_editado_mcp`); deleting a case and every run route stay human platform-admin.
 
 ### Julia v2 — consumer and Studio support (A-RT2, migration 040)
 - `GET /api/channels/agents/{key}/qualificacao/estagios` (channel token) → ordered `[{chave, rotulo, ordem, conclusivo}]` only; the turn response carries `qualificacao.estagios_ordem`.
 - Publish pins the qualification standard version on the agent version (`qualificacao_versao_id`, inherited by new drafts, covered by `compiled_hash`); `GET|PUT /api/studio/agents/{key}/(draft/)qualificacao` (platform admin).
 - `GET /api/agents/catalogo` — tiered: org users get `{key, nome, papel, descricao_publica, runtime, capacidades}` from DB rows (`catalogo_agentes`, `catalogo_capacidades`); platform admins also tool keys + versions. One Chat is listed as `runtime=external`, papel `operador`.
 - Studio support: `/capacidades` (server-provided tier + tabs), conformidade rule/violation routes (codes only), thread result + participant state on the channel conversation list, textos/ferramentas registry (structure only), `ponto_cache` in compiled outputs, mecanismo summary on versions.
-- Atomic optimistic lock: the replace-set PUTs send `expected_hash` → `replace_draft_conteudo(p_expected_hash)` locks the draft row and refuses a stale writer (409 `conflito_de_versao`).
+- Atomic optimistic lock: the replace-set PUTs send `expected_hash` → `replace_draft_conteudo(p_expected_hash)` locks the draft row and refuses a stale writer (409 `conflito_de_versao`). The draft-skill PATCH (`/draft/skills/{id}`) takes the same `expected_hash` → `update_draft_skill(..., p_expected_hash)` (migration 041). The content hash covers the version's own skills (name, index line, body, order, flag, files by sha256), so a skill edit moves it and breaks a stale CAS.
+- Conformance rules: `GET /api/studio/agents/{key}/conformidade/regras` lists them; the `studio:content-write` token (kind `conformidade_regras`) may read/write the DEFINITION's row only (403 `org_id_nao_permitido` for another org). Rules are not versioned: a write applies from the next turn.
 - Mechanism eval runs are async (202 + poll), use the live turn driver against the definition's real conformance rules, and orphaned runs are swept at startup.
 
 ### Bia's hardened launch (non-negotiable)
@@ -149,7 +164,9 @@ routes, studio thread state/results).
   `conteudo_incompleto` — never a default string.
 - `resolucao.resolve_agent_for_org(store, org_id, key)` → `(instancia, definicao, versao, specs)`;
   `compile_for_org` compiles the definition with that org's values (the hash covers texto + every content
-  row + the pinned standard); `carimbo` = the version tuple stamped on messages; `ponto_cache` is the
+  row + the version's own skills + the pinned standard); spec usage (`spec_nao_usada` / `spec_nao_declarada`) is read
+  from the AUTHORED rows (and the placeholders a pinned library skill uses, `SkillRef.placeholders`), never from the
+  org-resolved text; the identity block lists criterion labels, never keys; `carimbo` = the version tuple stamped on messages; `ponto_cache` is the
   prompt-cache breakpoint (static prefix before the client block).
 - DB lockdown (migration 036): every agents table is service-role only — no anon/authenticated grant or
   policy (except read-only `status_pagina`), so a browser session cannot read content over PostgREST.
@@ -214,8 +231,13 @@ every agent (CONTRACT D7/D8). Skill text is DB data; code carries no skill conte
 - **Channel turn**: `app/studio/skills_fonte.py` implements the runtime's `SkillFonte` over the library (`get_skills_factory_dep`): `abrir_skill` / `ler_arquivo_skill` serve the version's PINNED library version (never the latest), then its own skills; the pins' `obrigatoria_para` become the tool gates (`skill_nao_aberta`).
 - **MCP**: `noctus.agents.content` (`mcp/noctusai/tools/noctus/agents/content.py`) writes any content kind
   (sections, textos, ferramentas, decisoes, spec declarations, library skills + pins, standard criteria/stages/
-  parameters) into a target environment through these routes: drafts only, dry-run by default, payload from a
-  file outside git, token from `NOCTUS_AGENTS_CONTENT_TOKEN`.
+  parameters, mechanism eval cases `evals_mecanismo`, conformance rules `conformidade_regras`) into a target
+  environment through these routes: drafts only (eval cases and rules are not versioned and the result says so;
+  nothing ever publishes or runs), dry-run by default, payload from a file outside git, token from
+  `NOCTUS_AGENTS_CONTENT_TOKEN`.
+- DB guards of migrations 031-041 are proven by behaviour probes (`noctus.dev.verify_db_guards`,
+  `_AGENTS_JULIA_V2_PROBES`, parked `pending_migration` until applied); only `agents_one_plataforma_per_key` stays
+  allowlisted (reason in `compliance._GUARD_PROBE_ALLOWLIST`).
 
 ## What the framework provides automatically
 
