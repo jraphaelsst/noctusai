@@ -476,9 +476,18 @@ def _consulta_sw(valores: Mapping[str, Any]) -> dict[str, Any]:
         q["bairros"] = [reg.strip()]
     elif isinstance(reg, list) and reg:
         q["bairros"] = [str(r) for r in reg][:10]
-    if isinstance(valores.get("caracteristicas"), list) and valores["caracteristicas"]:
-        q["caracteristicas"] = [str(c) for c in valores["caracteristicas"]][:20]
+    # nice-to-haves (SW ranks by them and relaxes them first) vs MUST-haves (SW hard filters, never relaxed)
+    for src, dst in (("caracteristicas", "caracteristicas"), ("itens_essenciais", "itens_essenciais")):
+        if isinstance(valores.get(src), list) and valores[src]:
+            q[dst] = [str(c) for c in valores[src]][:20]
     return q
+
+
+#: The sibling keys of a ``buscar_imoveis`` answer (SW CONTRACT 8.3, v2) the model must see next to the listings:
+#: how many more pass (``restantes_estimados``), which axes SW widened to fill the batch (``relaxado`` -- Julia
+#: must say what was widened, never present a widened result as an exact match) and whether the campaign anchor
+#: was found (``similar_a_encontrado``). Anything else SW adds is NOT forwarded (explicit allowlist).
+_BUSCA_META = ("restantes_estimados", "relaxado", "similar_a_encontrado")
 
 
 def make_channel_tools_factory(**_unused: Any):
@@ -657,8 +666,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             if (lk := _pedaco_link(i)) is not None:
                 t.links_vistos.add(lk)
         out: dict[str, Any] = {"lote": lote, "imoveis": itens}
-        if "restantes_estimados" in body:
-            out["restantes_estimados"] = body["restantes_estimados"]
+        out.update({k: body[k] for k in _BUSCA_META if k in body})
         return _ok(**out)
 
     async def _detalhes(a: DetalhesImovelArgs) -> _Resultado:
