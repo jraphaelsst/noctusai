@@ -1,3 +1,17 @@
+---
+covers:
+  - products/social-wiring/backend/app/modules/card_hub/**
+  - products/social-wiring/backend/app/modules/imovel_hub/**
+  - products/social-wiring/backend/app/modules/pipeline/**
+  - products/social-wiring/backend/app/routers/campanhas_router.py
+  - products/social-wiring/backend/app/routers/campanhas_crud_router.py
+  - products/social-wiring/backend/app/services/campanhas_service.py
+  - products/social-wiring/backend/app/services/campanhas_veiculacao_service.py
+  - products/social-wiring/frontend/src/components/propostas/**
+  - products/social-wiring/frontend/src/hooks/usePropostas.ts
+  - products/social-wiring/frontend/src/hooks/useGerarProposta.ts
+  - products/social-wiring/frontend/src/hooks/useCampanhas.ts
+---
 # SW lead → proposta → contrato — FE↔BE contract
 
 Status: AUTHORED 2026-10-09 by noc-2 (tech-lead). Every slice builds TO this file. A change goes through noc-2 and is announced to every slice owner, never edited unilaterally.

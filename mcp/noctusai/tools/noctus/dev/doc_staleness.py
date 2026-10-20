@@ -102,6 +102,8 @@ _PATH_ROOTS = (
     "KNOWLEDGE-BASE/", "projects/", "core/", "docs/", "templates/",
 )
 _PLACEHOLDER = frozenset("<>{}*$|()[]!?, ")
+_PRODUCT_ROOT_RE = re.compile(r"products/[^/]+")
+_RELATIVE_BASE_RE = re.compile(r"[Pp]aths are relative to `([^`\n]+)`")
 _SCAFFOLD_CLAIM_RE = re.compile(
     r"scaffold(?:ed)?\s+only|only\s+scaffold|domain code is planned,?\s+not built"
     r"|every\s+domain\s+item\s+below\s+is\s+PLANNED|not\s+(?:yet\s+)?built\b",
@@ -236,11 +238,37 @@ def doc_coverage(root: Path, doc: Doc) -> list[str]:
                 f"products/{slug}/backend/migrations/*.sql"]
     if name == "CONTRACT.md":
         existing, _ = _cited_code_paths(root, doc)
-        for p in existing:
-            if p.endswith(".md"):
+        for p in existing + _relative_cited_paths(root, doc):
+            # A bare product root (`products/<slug>`) is what the product README/MASTER-PROMPT
+            # cover; as a CONTRACT citation it coupled the contract to EVERY change in the product.
+            if p.endswith(".md") or _PRODUCT_ROOT_RE.fullmatch(p):
                 continue
-            cov.append(f"{p}/**" if (root / p).is_dir() else p)
+            g = f"{p}/**" if (root / p).is_dir() else p
+            if g not in cov:
+                cov.append(g)
     return cov
+
+
+def _relative_cited_paths(root: Path, doc: Doc) -> list[str]:
+    """Cited paths written relative to the base the doc declares ("Paths are relative to
+    `products/x/`"), resolved to repo paths; only those that exist (a contract may name
+    code that is not built yet -- that is judged elsewhere, never a coverage glob)."""
+    m = _RELATIVE_BASE_RE.search(doc.text)
+    if not m:
+        return []
+    base = m.group(1).strip().rstrip("/")
+    out: list[str] = []
+    for t in _TICK_RE.finditer(doc.text):
+        tok = t.group(1).strip()
+        if tok.startswith(_PATH_ROOTS) or any(c in _PLACEHOLDER for c in tok):
+            continue
+        tok = re.sub(r"(::[\w.]+|:\d+(?:-\d+)?)$", "", tok).rstrip("/.,;")
+        if "/" not in tok or not re.search(r"\w$", tok):
+            continue
+        rel = f"{base}/{tok}"
+        if rel not in out and (root / rel).exists():
+            out.append(rel)
+    return out
 
 
 def _glob_match(path: str, pattern: str) -> bool:

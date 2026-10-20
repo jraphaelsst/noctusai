@@ -54,6 +54,28 @@ def repo(tmp_path: Path) -> Path:
 
 
 # ── coupling ────────────────────────────────────────────────────────────────
+def test_contract_citing_its_product_root_does_not_cover_the_whole_product(repo):
+    _write(repo, "products/acme/backend/app/services/b.py", "x = 1\n")
+    _write(repo, "products/acme/projects/p/CONTRACT.md",
+           "Paths are relative to `products/acme/`.\n\nThe service `backend/app/services/b.py`.\n")
+    cov = ds.doc_coverage(repo, ds.Doc(rel="products/acme/projects/p/CONTRACT.md",
+                                       text=(repo / "products/acme/projects/p/CONTRACT.md").read_text()))
+    assert "products/acme/**" not in cov
+    assert cov == ["products/acme/backend/app/services/b.py"]  # the relative citation, resolved
+
+
+def test_contract_relative_citation_that_is_not_built_is_not_a_cover(repo):
+    doc = ds.Doc(rel="products/acme/projects/p/CONTRACT.md",
+                 text="Paths are relative to `products/acme/`.\n`backend/app/services/nao_existe.py`\n")
+    assert ds.doc_coverage(repo, doc) == []
+
+
+def test_contract_without_a_declared_base_ignores_relative_tokens(repo):
+    _write(repo, "products/acme/backend/app/services/b.py", "x = 1\n")
+    doc = ds.Doc(rel="products/acme/projects/p/CONTRACT.md", text="`backend/app/services/b.py`\n")
+    assert ds.doc_coverage(repo, doc) == []
+
+
 def test_new_route_without_doc_fails_and_names_the_doc(repo):
     base = _git(repo, "rev-parse", "HEAD")
     _write(repo, "products/acme/backend/app/routers/b.py", "@router.post('/b')\ndef b(): ...\n")

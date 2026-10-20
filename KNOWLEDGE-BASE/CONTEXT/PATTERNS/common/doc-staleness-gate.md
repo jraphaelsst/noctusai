@@ -20,7 +20,7 @@ Asleep products (`deploy/fleet/active-scope.txt`) are not checked — no gate ch
 ## Coverage is declared, never guessed
 
 - Frontmatter `covers: [globs]` on any living doc (inline or `- item` list).
-- Derived: `products/<slug>/README.md` and `MASTER-PROMPT.md` cover `backend/app/**`, `frontend/src/**`, `backend/migrations/*.sql`; a `CONTRACT.md` covers the code paths it cites.
+- Derived: `products/<slug>/README.md` and `MASTER-PROMPT.md` cover `backend/app/**`, `frontend/src/**`, `backend/migrations/*.sql`; a `CONTRACT.md` covers the code paths it cites. Paths written relative to a base the contract declares ("Paths are relative to `products/<slug>/`") resolve against it, and only the ones that exist count. A bare product root (`products/<slug>`) is never a contract cover, because the README/MASTER-PROMPT already cover it. As a citation it coupled `sw-lead-to-contract/CONTRACT.md` to every SW change, so three unrelated Julia v2 branches each needed a `Docs-Reviewed:` trailer (fixed 2026-10-20). A contract that is mostly routes and cites few files declares its real scope as `covers:`.
 - `STRUCTURAL_RULES` in `doc_staleness.py` for cross-cutting inventories (today: `02-LANDSCAPE.md` ← a router/studio/channel module **added or removed**). Add a rule when a roster-style doc needs its own coupling.
 
 ## Escape hatch (auditable, never silent)
