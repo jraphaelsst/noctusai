@@ -31,12 +31,13 @@ mounted on a local test app.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import contextmanager
 from typing import Any, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -95,7 +96,12 @@ from app.studio.bundles import client_bundle, compile_version
 from app.studio.compiler import CONTEUDO_CODIGOS
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
-from app.studio.eval_mecanismo_service import DriverSemTipo, SuiteVazia, rodar_suite_mecanismo
+from app.studio.eval_mecanismo_service import (
+    DriverSemTipo,
+    SuiteVazia,
+    concluir_suite_mecanismo,
+    iniciar_suite_mecanismo,
+)
 from app.studio.julia import ensure_julia
 from app.studio.models import (
     CompiledPrompt,
@@ -138,10 +144,20 @@ def get_mecanismo_store_dep():
 
     return get_mecanismo_store(settings)
 
-def get_mecanismo_resumo_dep():
-    """Seam: ``(org_id, version_id, compiled_hash) -> MecanismoResumoOut | None``. The mechanism-eval store (A-EVAL)
-    binds it; until then the default answers ``None`` (no run) -- the versions endpoint never fails on it."""
-    return lambda org_id, version_id, compiled_hash: None
+def get_mecanismo_resumo_dep(mecanismo=Depends(get_mecanismo_store_dep)):
+    """Reader behind the versions endpoint: ``(org_id, version_id, compiled_hash) -> MecanismoResumoOut | None`` --
+    the newest FINISHED mechanism run (any driver) for exactly that hash, from A-EVAL's store. A test overrides it."""
+    from app.schemas.studio import MecanismoResumoOut
+
+    def _ler(org_id, version_id, compiled_hash):
+        run = mecanismo.latest_run(org_id, version_id, compiled_hash)
+        if run is None:
+            return None
+        return MecanismoResumoOut(
+            run_id=run.id, driver=run.driver, aprovado=run.aprovado, completo=run.completa,
+            orcamento_excedido=run.orcamento_excedido, casos_total=run.total_casos, casos_aprovados=run.casos_aprovados)
+
+    return _ler
 
 
 def get_eval_gate_dep() -> EvalGate:
@@ -1000,30 +1016,52 @@ class MecanismoCasoOut(BaseModel):
     execucoes: list[MecanismoExecucaoOut]
 
 
-class MecanismoRunOut(BaseModel):
+class MecanismoRunIniciadaOut(BaseModel):
+    """202 body: the run is booked (``executando``) and executes in the background; poll ``GET .../mecanismo-runs/{id}``."""
+
     run_id: UUID
     compiled_hash: str
     driver: str
+    status: str
+
+
+class MecanismoRunOut(BaseModel):
+    """The state of one run: counters while it executes, the per-case codes once it is ``concluida``."""
+
+    run_id: UUID
+    version_id: UUID
+    compiled_hash: str
+    driver: str
+    #: ``executando`` | ``concluida`` | ``falhou`` | ``cancelada``
+    status: str
     aprovado: bool
     completo: bool
     orcamento_excedido: bool
-    custo_usd: float
-    casos: list[MecanismoCasoOut]
+    custo_usd: float | None = None
+    total_casos: int
+    casos_aprovados: int
+    #: A FIXED text on ``falhou`` (never the exception).
+    erro: str | None = None
+    casos: list[MecanismoCasoOut] = Field(default_factory=list)
 
 
-@router.post("/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunOut, response_model_by_alias=True)
+@router.post(
+    "/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunIniciadaOut, status_code=status.HTTP_202_ACCEPTED,
+)
 async def run_mecanismo_suite(
     key: str,
+    request: Request,
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
     mecanismo=Depends(get_mecanismo_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     driver=Depends(get_eval_turn_driver),
-) -> MecanismoRunOut:
-    """Run the agent's mechanism suite against the CURRENT draft hash and record it. Platform admin only
-    (the suite is platform IP). The driver comes from the injectable ``get_eval_turn_driver``: until A-RT
-    registers the live adapter the answer is 409 ``driver_indisponivel``. The cost cap comes from settings.
-    The reply carries codes only (assert name + tool/criterion key), never reply text or prompt content."""
+) -> MecanismoRunIniciadaOut:
+    """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
+    minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
+    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. A second run for the same
+    version while one executes is 409 ``run_in_progress``. The driver comes from ``get_eval_turn_driver`` (409
+    ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
     agent = resolve_agent(store, ctx.org_id, key)
     draft = resolve_draft(store, ctx.org_id, agent)
     draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
@@ -1031,34 +1069,67 @@ async def run_mecanismo_suite(
         raise http_error(409, "compile_blocked", "O prompt compilado tem avisos bloqueantes.")
     if driver is None:
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.")
+    limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():
-            run_id, resultado = await rodar_suite_mecanismo(
+            run_id, casos = iniciar_suite_mecanismo(
                 mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
-                compiled_hash=compiled.hash, started_by=actor_id(ctx),
-                limite_usd=settings.studio_mecanismo_run_budget_usd,
-            )
+                compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
     except SuiteVazia as exc:
         raise http_error(409, "sem_casos_mecanismo", "O agente não tem casos de mecanismo ativos.") from exc
     except DriverSemTipo as exc:
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.") from exc
-    return MecanismoRunOut(
-        run_id=run_id, compiled_hash=compiled.hash, driver=driver.tipo, aprovado=resultado.aprovado,
-        completo=resultado.completo, orcamento_excedido=resultado.orcamento_excedido, custo_usd=resultado.custo_usd,
-        casos=[
-            MecanismoCasoOut(
-                slug=c.caso.slug, passou=c.passou, taxa=round(c.taxa, 3),
+
+    async def _executar() -> None:
+        try:
+            await concluir_suite_mecanismo(
+                mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite)
+        except Exception:  # noqa: BLE001 -- the run is already marked `falhou` (fixed text); nothing else to do
+            logger.exception("agents.studio.mecanismo_run_falhou run_id=%s", run_id)
+
+    from app.routers.conversations_router import _track_background_task  # lazy: that router imports this one
+
+    _track_background_task(request.app.state, asyncio.create_task(_executar()))
+    return MecanismoRunIniciadaOut(run_id=run_id, compiled_hash=compiled.hash, driver=driver.tipo, status="executando")
+
+
+@router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True)
+async def get_mecanismo_run(
+    key: str,
+    run_id: UUID,
+    ctx: AuthContext = Depends(require_platform_admin),
+    store=Depends(get_studio_definition_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
+) -> MecanismoRunOut:
+    agent = resolve_agent(store, ctx.org_id, key)
+    run = mecanismo.get_run(ctx.org_id, run_id)
+    if run is None or str(run["agent_id"]) != str(agent.id):
+        raise http_error(404, "run_not_found", "Execução não encontrada.")
+    audit_definition_read(store, ctx, agent, "mecanismo_run", UUID(str(run["version_id"])))
+    casos: list[MecanismoCasoOut] = []
+    if run["status"] == "concluida":
+        slugs = {str(c.id): c.slug for c in mecanismo.list_active_cases(ctx.org_id, agent.id)}
+        por_caso: dict[str, list[dict]] = {}
+        for e in mecanismo.list_execucoes(ctx.org_id, run_id):
+            por_caso.setdefault(str(e["case_id"]), []).append(e)
+        for cid, execs in por_caso.items():
+            execs.sort(key=lambda e: e["indice"])
+            aprov = sum(1 for e in execs if e["status"] == "aprovado")
+            casos.append(MecanismoCasoOut(
+                slug=slugs.get(cid, cid[:8]), passou=aprov == len(execs), taxa=round(aprov / len(execs), 3),
                 execucoes=[
                     MecanismoExecucaoOut(
-                        indice=e.indice, status=e.status,
-                        falhas=[MecanismoFalhaOut(assert_=f.assert_nome, codigo=f.codigo) for f in e.falhas],
-                    )
-                    for e in c.execucoes
-                ],
-            )
-            for c in resultado.casos
-        ],
-    )
+                        indice=e["indice"], status=e["status"],
+                        falhas=[MecanismoFalhaOut(assert_=f["assert"], codigo=f["codigo"]) for f in (e.get("falhas") or [])])
+                    for e in execs
+                ]))
+    custo = run.get("custo_usd")
+    return MecanismoRunOut(
+        run_id=run_id, version_id=UUID(str(run["version_id"])), compiled_hash=run["compiled_hash"],
+        driver=run["driver"], status=run["status"], aprovado=bool(run["aprovado"]), completo=bool(run["completa"]),
+        orcamento_excedido=bool(run["orcamento_excedido"]), custo_usd=float(custo) if custo is not None else None,
+        total_casos=int(run["total_casos"] or 0), casos_aprovados=int(run["casos_aprovados"] or 0),
+        erro=run.get("erro"), casos=casos)
 
 
 # ── prompts by hash ─────────────────────────────────────────────────────────

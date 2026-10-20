@@ -48,6 +48,16 @@ class MecanismoStore(Protocol):
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito: ...
 
+    def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
+        """One run row (any status) as plain data, org-scoped; ``None`` when absent."""
+        ...
+
+    def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]: ...
+
+    def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
+        """The newest FINISHED run (any driver) of the version for exactly this compiled hash."""
+        ...
+
 
 def _compose(store: Any, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
     casos = store.list_active_cases(org_id, agent_id)
@@ -137,6 +147,21 @@ class FakeMecanismoStore:
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
         return _compose(self, org_id, agent_id, version_id)
+
+    def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
+        r = self.runs.get(run_id)
+        return dict(r) if r is not None and r["org_id"] == org_id else None
+
+    def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]:
+        return [dict(e) for e in self.execucoes.get(run_id, [])] if self.get_run(org_id, run_id) else []
+
+    def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
+        rows = [
+            r for r in self.runs.values()
+            if r["org_id"] == org_id and r["version_id"] == version_id and r["compiled_hash"] == compiled_hash
+            and r["status"] == "concluida"
+        ]
+        return _gate_run(max(rows, key=lambda x: x["seq"])) if rows else None
 
 
 def _gate_run(r: dict[str, Any]) -> MecanismoGateRun:
@@ -236,6 +261,31 @@ class SupabaseMecanismoStore:
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
         return _compose(self, org_id, agent_id, version_id)
+
+    def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
+        resp = (
+            self._t("eval_mecanismo_runs").select("*").eq("org_id", str(org_id)).eq("id", str(run_id))
+            .limit(1).execute()
+        )
+        rows = resp.data or []
+        return dict(rows[0]) if rows else None
+
+    def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]:
+        resp = (
+            self._t("eval_mecanismo_execucoes").select("*").eq("org_id", str(org_id)).eq("run_id", str(run_id))
+            .order("indice").limit(1000).execute()
+        )
+        return [dict(r) for r in (resp.data or [])]
+
+    def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
+        resp = (
+            self._t("eval_mecanismo_runs")
+            .select("id, compiled_hash, status, driver, completa, aprovado, orcamento_excedido, total_casos, casos_aprovados")
+            .eq("org_id", str(org_id)).eq("version_id", str(version_id)).eq("compiled_hash", compiled_hash)
+            .eq("status", "concluida").order("finished_at", desc=True).limit(1).execute()
+        )
+        rows = resp.data or []
+        return _gate_run(rows[0]) if rows else None
 
 
 def get_mecanismo_store(settings: Any) -> MecanismoStore:
