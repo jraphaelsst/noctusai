@@ -83,7 +83,9 @@ products/agents/backend/app/
   the conversation prompt's `# Ferramentas` block (their rows stay hashed content).
 - `oferecer_imoveis` speaks SW's v2 `buscar_imoveis`: the lead's must-haves (criterion `itens_essenciais`) go as
   `itens_essenciais` (SW hard filters), nice-to-haves as `caracteristicas`; the answer's `restantes_estimados`,
-  `relaxado` (axes SW widened) and `similar_a_encontrado` reach the model next to the listings (explicit allowlist).
+  `relaxado` (axes SW widened), `similar_a_encontrado` and `itens_nao_verificaveis` (asked items SW's catalogue cannot
+  verify — pets, proximidades — which did not filter; Julia confirms them) reach the model next to the listings
+  (explicit allowlist `_BUSCA_META`).
   `encerrar` ends the participation: a later re-engagement is ignored (no model call) and the thread reports
   `reengajamento_suprimido`; the lead-level opt-out (`POST /leads/{ref}/opt-out`) does the same for every agent.
 

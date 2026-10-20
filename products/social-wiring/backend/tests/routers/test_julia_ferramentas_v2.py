@@ -59,8 +59,11 @@ class TestBuscarV2:
         assert r["relaxado"] and "preco" in r["relaxado"]
 
     def test_essential_items_and_nice_to_haves(self, vitrine):
+        r = _buscar(vitrine, itens_essenciais=["churrasqueira"], limite=3)
+        assert [d["codigo"] for d in r["data"]] == ["VIZ"]
+        # the catalogue has no pet field: a pets must-have never empties the result, it is reported instead
         r = _buscar(vitrine, itens_essenciais=["pets"], limite=3)
-        assert [d["codigo"] for d in r["data"]] == ["CAMP"]
+        assert len(r["data"]) == 3 and r["itens_nao_verificaveis"] == ["pets"]
         r = _buscar(vitrine, tipo="casa", itens_desejaveis=["sauna"], limite=1)
         assert r["data"][0]["codigo"] == "VIZ"  # the nice-to-have ranks first
 
@@ -139,10 +142,11 @@ def _agents_sw_keys() -> dict[str, set[str]]:
             for n in ast.walk(fn):
                 if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "q" and isinstance(n.slice, ast.Constant):
                     keys["buscar_imoveis"].add(n.slice.value)
-                if isinstance(n, ast.Tuple):  # the (src, dst) table
+                if isinstance(n, ast.Tuple):  # the (src, dst) tables: every dst is a key sent to SW
                     for e in n.elts:
-                        if isinstance(e, ast.Constant) and isinstance(e.value, str) and e.value.endswith("_min"):
-                            keys["buscar_imoveis"].add(e.value)
+                        if (isinstance(e, ast.Tuple) and len(e.elts) == 2
+                                and all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in e.elts)):
+                            keys["buscar_imoveis"].add(e.elts[1].value)
         if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "_oferecer":
             for n in ast.walk(fn):
                 if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "args" and isinstance(n.slice, ast.Constant):
@@ -174,6 +178,10 @@ class TestContractWithAgents:
         body = r.json()
         assert isinstance(body["data"], list) and "restantes_estimados" in body  # what agents reads from the body
 
-    def test_agents_reads_data_and_restantes_estimados_from_the_body(self):
+    def test_agents_reads_data_and_forwards_every_sw_meta_key_from_the_body(self):
         src = AGENTS_REGISTRY.read_text()
-        assert 'body.get("data")' in src and '"restantes_estimados" in body' in src
+        assert 'body.get("data")' in src
+        [meta] = [n.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "_BUSCA_META" for t in n.targets)]
+        forwarded = {e.value for e in meta.elts}  # the explicit allowlist agents forwards to the model
+        assert {"restantes_estimados", "relaxado", "similar_a_encontrado", "itens_nao_verificaveis"} <= forwarded

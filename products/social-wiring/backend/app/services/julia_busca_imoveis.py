@@ -6,6 +6,9 @@ the rows here; nothing in this module touches a client, so every rule below is u
 THE RULES (julia-v2 RESEARCH 3, "Similarity")
   - Must-haves are HARD filters: operacao (done upstream), tipo, quartos_min, vagas_min, the price band, the
     region, and `itens_essenciais`. A listing missing a field a filter needs does NOT pass (unknown is not a match).
+  - Items are standard option KEYS mapped to a catalogue predicate by `ITENS_PADRAO` (free text: folded substring).
+    An item the catalogue CANNOT verify (pets, proximidades, terreo on a non-house) never filters and never ranks;
+    it is returned in `itens_nao_verificaveis` for Julia to confirm with the lead / broker.
   - Price band = -15% / +10% of the lead's range (`preco_min * 0.85` .. `preco_max * 1.10`).
   - Same condominio first, then same region, then adjacent regions (org-configured; none when unconfigured).
   - Ranked by matched nice-to-haves, then by the SEED matcher's category scores
@@ -36,12 +39,6 @@ BANDA_PRECO_ABAIXO = 0.85
 BANDA_PRECO_ACIMA = 1.10
 BANDA_PRECO_ACIMA_LARGA = 1.20
 ORDEM_AFROUXAMENTO = ("desejaveis", "regiao_adjacente", "preco", "tipologia")
-#: `itens_essenciais` that name a policy, not a feature: matched against the listing's feature list by these stems.
-SINONIMOS = {
-    "pet": ("pet", "animal", "animais"), "pets": ("pet", "animal", "animais"),
-    "aceita pet": ("pet", "animal", "animais"), "aceita pets": ("pet", "animal", "animais"),
-    "animais": ("pet", "animal", "animais"), "aceita animais": ("pet", "animal", "animais"),
-}
 
 
 def norm(valor: Any) -> str:
@@ -80,6 +77,101 @@ def casa_tipo(tipo: Optional[str], categoria: Any) -> bool:
     return t in cat
 
 
+def _chave(item: Any) -> str:
+    """A standard option key as the map spells it ('Jardim quintal' -> 'jardim_quintal'); '' when not text."""
+    return norm(item).replace(" ", "_")
+
+
+def _compacto(c: str) -> str:
+    return c.replace(" ", "").replace("_", "")
+
+
+@dataclass(frozen=True)
+class Recursos:
+    """Feature predicate: some catalogue feature contains one of `algum` and none of `nenhum` (per FEATURE, so
+    a listing with both `quintal` and `jardiminverno` still has a garden). Stems are compact folded text."""
+
+    algum: tuple[str, ...]
+    nenhum: tuple[str, ...] = ()
+
+
+#: `pavimentos == 1` on a house; an apartment's floor count is the building's, so it is unverifiable there.
+TERREO_CASA = "terreo_casa"
+
+#: The standard `itens_essenciais` / `caracteristicas` / `itens_desejaveis` option KEYS agents sends (qualification
+#: standard v1) -> how the Vista catalogue can verify them. Checked against the live `imoveis.caracteristicas`
+#: vocabulary (2026-10-20: compact flags -- quintal, churrasqueira, sacadacomchurrasqueira, piscina, jardiminverno,
+#: sacada, terraco, ...) and its columns (`pavimentos`; no pet field, no proximity data). `None` = the catalogue
+#: CANNOT verify it: such an item never filters and never ranks, it is reported in `itens_nao_verificaveis` so
+#: Julia confirms it with the lead / broker. A value that is not a key here keeps the folded-substring match.
+ITENS_PADRAO: dict[str, Optional[Recursos | str]] = {
+    # `jardiminverno` is an indoor winter garden, not a garden/yard
+    "jardim_quintal": Recursos(("quintal", "jardim"), ("jardiminverno",)),
+    "piscina": Recursos(("piscina",)),
+    "churrasqueira": Recursos(("churrasqueira",)),  # includes sacadacomchurrasqueira
+    "varanda": Recursos(("varanda", "sacada", "terraco")),
+    "terreo_sem_escadas": TERREO_CASA,
+    # no catalogue field
+    "elevador": None, "portaria": None, "area_lazer": None,
+    "pet": None, "pets": None, "aceita_pet": None, "aceita_pets": None, "animais": None, "aceita_animais": None,
+    # proximidades: no proximity data in the catalogue
+    "escola_perto": None, "comercio_perto": None, "acesso_rodovia": None, "transporte_publico": None,
+    "comercio": None, "escolas": None, "rodovias": None, "transporte": None, "saude": None,
+}
+
+
+def avaliar_item(row: dict[str, Any], item: Any) -> Optional[bool]:
+    """Does the listing have `item`? True / False, or None when the catalogue cannot tell (never a filter)."""
+    chave = _chave(item)
+    if not chave:
+        return False
+    if chave in ITENS_PADRAO:
+        pred = ITENS_PADRAO[chave]
+        if pred is None:
+            return None
+        if pred == TERREO_CASA:
+            if not casa_tipo("casa", row.get("categoria")):
+                return None
+            pav = row.get("pavimentos")
+            return pav is not None and pav == 1  # unknown is not a match
+        return any(_atende(pred, c) for c in _carac(row))
+    n = norm(item)
+    return any(n in c for c in _carac(row))
+
+
+def _atende(pred: Recursos, c: str) -> bool:
+    cc = _compacto(c)
+    return any(s in cc for s in pred.algum) and not any(s in cc for s in pred.nenhum)
+
+
+def feature_atende(item: Any, feature: Any) -> bool:
+    """Is this one catalogue feature string what `item` asks for? (Highlights: the lead's own items first.)"""
+    chave, c = _chave(item), norm(feature)
+    if not chave or not c:
+        return False
+    pred = ITENS_PADRAO.get(chave, "")
+    if isinstance(pred, Recursos):
+        return _atende(pred, c)
+    if chave in ITENS_PADRAO:
+        return False
+    return norm(item) in c
+
+
+def nao_verificaveis(q: "Consulta", linhas: Iterable[dict[str, Any]]) -> list[str]:
+    """The asked items the catalogue could not verify, in ask order (must-haves first), deduped: an item with no
+    predicate always; a field predicate (terreo) when it was unverifiable for a returned listing."""
+    linhas = list(linhas)
+    out: list[str] = []
+    for item in (*q.essenciais, *q.desejaveis):
+        chave = _chave(item)
+        if not chave or chave in out or chave not in ITENS_PADRAO:
+            continue
+        pred = ITENS_PADRAO[chave]
+        if pred is None or (pred == TERREO_CASA and any(avaliar_item(r, item) is None for r in linhas)):
+            out.append(chave)
+    return out
+
+
 @dataclass(frozen=True)
 class Consulta:
     operacao: str  # compra | aluguel
@@ -110,19 +202,13 @@ class Resultado:
     linhas: list[dict[str, Any]]  # at most `limite`, best first
     relaxado: list[str]
     restantes: int
+    #: asked items the catalogue cannot verify (never filtered / ranked by) -- Julia confirms them with the lead
+    itens_nao_verificaveis: list[str] = field(default_factory=list)
 
 
 def preco_da_linha(row: dict[str, Any], operacao: str) -> Optional[float]:
     v = row.get("valor_venda" if operacao == "compra" else "valor_locacao")
     return float(v) if v is not None else None
-
-
-def _tem_item(caracteristicas: Iterable[str], item: str) -> bool:
-    n = norm(item)
-    if not n:
-        return False
-    stems = SINONIMOS.get(n, (n,))
-    return any(any(s in c for s in stems) for c in caracteristicas)
 
 
 def _carac(row: dict[str, Any]) -> list[str]:
@@ -183,12 +269,12 @@ def passa(row: dict[str, Any], q: Consulta, folgas: Folgas) -> bool:
         preco = preco_da_linha(row, q.operacao)
         if preco is None or (lo is not None and preco < lo) or (hi is not None and preco > hi):
             return False
-    carac = _carac(row)
-    if not all(_tem_item(carac, i) for i in q.essenciais):
+    # an item the catalogue cannot verify (None) never filters -- unknown-to-the-catalogue is not "absent"
+    if any(avaliar_item(row, i) is False for i in q.essenciais):
         return False
     if q.desejaveis and not folgas.desejaveis:
-        # nice-to-haves are a filter only while they are not relaxed: every one must be there
-        if not all(_tem_item(carac, i) for i in q.desejaveis):
+        # nice-to-haves are a filter only while they are not relaxed: every verifiable one must be there
+        if any(avaliar_item(row, i) is False for i in q.desejaveis):
             return False
     return True
 
@@ -214,8 +300,7 @@ def _pontuar(row: dict[str, Any], q: Consulta, folgas: Folgas) -> tuple:
         tier = 2
     else:
         tier = 3
-    carac = _carac(row)
-    desejados = sum(1 for i in q.desejaveis if _tem_item(carac, i))
+    desejados = sum(1 for i in q.desejaveis if avaliar_item(row, i) is True)
     preco = preco_da_linha(row, q.operacao)
     alvo = ((q.preco_min or 0) + (q.preco_max or 0)) / 2 if (q.preco_min or q.preco_max) else None
     imovel = {
@@ -258,4 +343,6 @@ def buscar(rows: list[dict[str, Any]], q: Consulta, *, limite: int, excluir: Ite
         if sum(1 for r in candidatos if passa(r, q, replace(folgas, **{e: False}))) < len(passam)
     ]
     passam.sort(key=lambda r: _pontuar(r, q, folgas))
-    return Resultado(linhas=passam[:limite], relaxado=relaxado, restantes=max(len(passam) - limite, 0))
+    linhas = passam[:limite]
+    return Resultado(linhas=linhas, relaxado=relaxado, restantes=max(len(passam) - limite, 0),
+                     itens_nao_verificaveis=nao_verificaveis(q, linhas))

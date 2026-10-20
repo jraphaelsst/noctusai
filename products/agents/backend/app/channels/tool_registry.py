@@ -517,8 +517,10 @@ def _consulta_sw(valores: Mapping[str, Any]) -> dict[str, Any]:
 #: The sibling keys of a ``buscar_imoveis`` answer (SW CONTRACT 8.3, v2) the model must see next to the listings:
 #: how many more pass (``restantes_estimados``), which axes SW widened to fill the batch (``relaxado`` -- Julia
 #: must say what was widened, never present a widened result as an exact match) and whether the campaign anchor
-#: was found (``similar_a_encontrado``). Anything else SW adds is NOT forwarded (explicit allowlist).
-_BUSCA_META = ("restantes_estimados", "relaxado", "similar_a_encontrado")
+#: was found (``similar_a_encontrado``), and the asked items SW's catalogue cannot verify (``itens_nao_verificaveis``
+#: -- pets, proximidades, ...: they did not filter the result, Julia confirms them with the lead / broker). Anything
+#: else SW adds is NOT forwarded (explicit allowlist).
+_BUSCA_META = ("restantes_estimados", "relaxado", "similar_a_encontrado", "itens_nao_verificaveis")
 
 
 def make_channel_tools_factory(**_unused: Any):

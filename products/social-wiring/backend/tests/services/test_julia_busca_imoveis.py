@@ -39,11 +39,13 @@ class TestHardFilters:
         assert not b.passa(rows[1], q(preco_max=2_000_000), b.Folgas()) and b.passa(rows[3], q(preco_max=2_000_000), b.Folgas())
         assert not b.passa(rows[2], q(quartos_min=1), b.Folgas()) and b.passa(rows[3], q(quartos_min=1), b.Folgas())
 
-    def test_essential_items_are_hard_with_accent_and_case_folding_and_pets_synonyms(self):
+    def test_essential_items_are_hard_with_accent_and_case_folding(self):
         rows = [row("PISC", caracteristicas=["Piscina", "Churrasqueira"]), row("PET", caracteristicas=["Aceita Pets"]),
                 row("NADA"), row("ANIM", caracteristicas=["Permitido animais"])]
         assert codes(b.buscar(rows, q(essenciais=("piscina",)), limite=3)) == ["PISC"]
-        assert sorted(codes(b.buscar(rows, q(essenciais=("pets",)), limite=3))) == ["ANIM", "PET"]
+        # pets: the catalogue has no pet field (a stray feature text is not a policy) => never a filter, reported
+        res = b.buscar(rows, q(essenciais=("pets",)), limite=4)
+        assert sorted(codes(res)) == ["ANIM", "NADA", "PET", "PISC"] and res.itens_nao_verificaveis == ["pets"]
         assert codes(b.buscar([row("X", caracteristicas=["Área gourmet"])], q(essenciais=("area gourmet",)), limite=1)) == ["X"]
 
     def test_essential_items_are_never_relaxed(self):
@@ -153,3 +155,84 @@ class TestCasaTipo:
     ])
     def test_mapping(self, tipo, categoria, esperado):
         assert b.casa_tipo(tipo, categoria) is esperado
+
+
+class TestItensPadrao:
+    """Standard option keys -> the catalogue's real (compact Vista flag) vocabulary; unverifiable items never filter."""
+
+    @pytest.mark.parametrize("chave,caracteristicas,esperado", [
+        ("jardim_quintal", ["Quintal"], True), ("jardim_quintal", ["quintal", "churrasqueira"], True),
+        ("jardim_quintal", ["jardiminverno"], False),  # an indoor winter garden is not a garden
+        ("jardim_quintal", ["jardiminverno", "quintal"], True),  # per feature: the yard still counts
+        ("jardim_quintal", ["salajantar", "lavabo"], False),
+        ("Jardim quintal", ["quintal"], True),  # the key spelled as text
+        ("piscina", ["piscina"], True), ("piscina", ["hidromassagem"], False),
+        ("churrasqueira", ["churrasqueira"], True), ("churrasqueira", ["sacadacomchurrasqueira"], True),
+        ("churrasqueira", ["sacada"], False),
+        ("varanda", ["sacada"], True), ("varanda", ["terraco"], True), ("varanda", ["deck"], False),
+    ])
+    def test_feature_keys(self, chave, caracteristicas, esperado):
+        assert b.avaliar_item(row("X", caracteristicas=caracteristicas), chave) is esperado
+
+    @pytest.mark.parametrize("categoria,pavimentos,esperado", [
+        ("Casa", 1, True), ("Casa em Condomínio", 1, True), ("Casa", 2, False), ("Sobrado", 2, False),
+        ("Casa", None, False),  # unknown is not a match
+        ("Apartamento", 1, None), ("Terreno", None, None),  # a building's floor count says nothing => unverifiable
+    ])
+    def test_terreo_sem_escadas_is_a_one_floor_house(self, categoria, pavimentos, esperado):
+        assert b.avaliar_item(row("X", categoria=categoria, pavimentos=pavimentos), "terreo_sem_escadas") is esperado
+
+    @pytest.mark.parametrize("chave", ["pets", "aceita_pets", "animais", "escola_perto", "comercio_perto",
+                                       "acesso_rodovia", "transporte_publico"])
+    def test_no_catalogue_field_is_unverifiable(self, chave):
+        assert b.avaliar_item(row("X", caracteristicas=["quintal", "piscina"]), chave) is None
+
+    def test_an_unverifiable_must_have_does_not_filter_and_is_reported(self):
+        rows = [row("A"), row("B", caracteristicas=["piscina"])]
+        res = b.buscar(rows, q(essenciais=("pets", "escola_perto")), limite=3)
+        assert sorted(codes(res)) == ["A", "B"] and res.relaxado == []
+        assert res.itens_nao_verificaveis == ["pets", "escola_perto"]
+
+    def test_mixed_verifiable_and_unverifiable_must_haves(self):
+        rows = [row("QUINTAL", caracteristicas=["quintal"]), row("INVERNO", caracteristicas=["jardiminverno"]),
+                row("NADA")]
+        res = b.buscar(rows, q(essenciais=("jardim_quintal", "aceita_pets")), limite=3)
+        assert codes(res) == ["QUINTAL"]  # the verifiable must-have still filters, and is never relaxed
+        assert res.itens_nao_verificaveis == ["aceita_pets"]
+
+    def test_unverifiable_nice_to_haves_neither_filter_nor_rank(self):
+        rows = [row("A"), row("B", caracteristicas=["churrasqueira"])]
+        res = b.buscar(rows, q(desejaveis=("transporte_publico", "churrasqueira")), limite=1)
+        assert codes(res) == ["B"] and res.relaxado == []  # strict: churrasqueira filters, transporte does not
+        assert res.itens_nao_verificaveis == ["transporte_publico"]
+        res = b.buscar([row("A"), row("B")], q(desejaveis=("transporte_publico",)), limite=2)
+        assert sorted(codes(res)) == ["A", "B"] and res.relaxado == []  # nothing to relax
+
+    def test_reported_in_ask_order_must_haves_first_deduped(self):
+        res = b.buscar([row("A")], q(essenciais=("escola_perto", "pets"), desejaveis=("pets", "acesso_rodovia", "piscina")),
+                       limite=1)
+        assert res.itens_nao_verificaveis == ["escola_perto", "pets", "acesso_rodovia"]
+
+    def test_terreo_reported_only_when_a_returned_listing_is_not_a_house(self):
+        casas = [row("T", pavimentos=1), row("S", pavimentos=2)]
+        res = b.buscar(casas, q(tipo="casa", essenciais=("terreo_sem_escadas",)), limite=1)
+        assert codes(res) == ["T"] and res.itens_nao_verificaveis == []
+        res = b.buscar([row("APT", categoria="Apartamento", pavimentos=12)], q(essenciais=("terreo_sem_escadas",)), limite=1)
+        assert codes(res) == ["APT"] and res.itens_nao_verificaveis == ["terreo_sem_escadas"]
+
+    def test_free_text_keeps_the_folded_substring_match(self):
+        rows = [row("SAUNA", caracteristicas=["Sauna"]), row("NAO")]
+        res = b.buscar(rows, q(essenciais=("saúna",)), limite=2)
+        assert codes(res) == ["SAUNA"] and res.itens_nao_verificaveis == []
+
+    def test_widening_order_unchanged_with_an_unverifiable_item(self):
+        alvo = row("ALVO", categoria="Apartamento", bairro="Vila Vizinha", valor_venda=1_150_000, dormitorios=2)
+        res = b.buscar([alvo], q(tipo="casa", quartos_min=3, preco_max=1_000_000, regioes=("Granja Viana",),
+                                 essenciais=("pets",), desejaveis=("piscina", "escola_perto"),
+                                 adjacentes={"granja viana": ("vila vizinha",)}), limite=1)
+        assert codes(res) == ["ALVO"] and res.relaxado == ["desejaveis", "regiao_adjacente", "preco", "tipologia"]
+        assert res.itens_nao_verificaveis == ["pets", "escola_perto"]
+
+    def test_highlights_match_a_key_against_the_catalogue_feature(self):
+        assert b.feature_atende("jardim_quintal", "Quintal") and not b.feature_atende("jardim_quintal", "jardiminverno")
+        assert not b.feature_atende("pets", "Quintal") and b.feature_atende("sauna", "Sauna")

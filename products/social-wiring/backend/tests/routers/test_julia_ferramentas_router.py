@@ -142,7 +142,7 @@ class TestRouting:
 
     def test_success_is_the_data_envelope(self, ok):
         r = ok.post("buscar_imoveis", {"operacao": "compra"})
-        assert r.status_code == 200 and set(r.json()) == {"data", "restantes_estimados", "relaxado"}
+        assert r.status_code == 200 and set(r.json()) == {"data", "restantes_estimados", "relaxado", "itens_nao_verificaveis"}
         assert set(ok.post("horarios_visita", {}).json()) == {"data"}
 
 
@@ -174,6 +174,18 @@ class TestBuscarImoveis:
         assert r["relaxado"] == ["tipologia"] and {d["codigo"] for d in r["data"]} == {"CA1", "CA2"}
         r = ok.post("buscar_imoveis", {"operacao": "aluguel", "preco_max": 5000}).json()["data"]
         assert [(d["codigo"], d["preco"]) for d in r] == [("AP1", 4500.0)]
+
+    def test_unverifiable_must_haves_do_not_empty_the_result_and_are_reported(self, ok):
+        r = ok.post("buscar_imoveis", {"operacao": "compra", "itens_essenciais": ["aceita_pets", "escola_perto"]}).json()
+        assert {d["codigo"] for d in r["data"]} == {"CA1", "CA2"} and r["relaxado"] == []
+        assert r["itens_nao_verificaveis"] == ["aceita_pets", "escola_perto"]
+        assert ok.post("buscar_imoveis", {"operacao": "compra"}).json()["itens_nao_verificaveis"] == []
+
+    def test_terreo_reads_pavimentos_on_a_house(self, tools, catalogo):
+        catalogo.set_table_data("imoveis", [_row("UM", pavimentos=1), _row("DOIS", pavimentos=2)])
+        tools.as_ctx(_product())
+        r = tools.post("buscar_imoveis", {"operacao": "compra", "itens_essenciais": ["terreo_sem_escadas"]}).json()
+        assert [d["codigo"] for d in r["data"]] == ["UM"] and r["itens_nao_verificaveis"] == []
 
     def test_the_limit_is_honoured_and_capped_at_five(self, tools, catalogo):
         catalogo.set_table_data("imoveis", [_row(f"M{i}") for i in range(9)])

@@ -2,7 +2,8 @@
 
 * the lead's MUST-haves travel as ``itens_essenciais`` (SW hard filters, never relaxed) -- nice-to-haves stay
   ``caracteristicas``;
-* the answer's ``relaxado`` (axes SW widened) and ``similar_a_encontrado`` reach the model next to the listings.
+* the answer's ``relaxado`` (axes SW widened), ``similar_a_encontrado`` and ``itens_nao_verificaveis`` (asked items
+  SW's catalogue cannot verify) reach the model next to the listings.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ class _SwV2(ScriptedSW):
         body = await super().julia_ferramenta(org_id, nome, args)
         if nome == "buscar_imoveis":
             body = {**body, "relaxado": ["regiao_adjacente", "preco"], "similar_a_encontrado": False,
-                    "interno_nao_repassar": "x"}
+                    "itens_nao_verificaveis": ["aceita_pets", "escola_perto"], "interno_nao_repassar": "x"}
         return body
 
 
@@ -63,4 +64,6 @@ def test_relaxado_and_similar_a_encontrado_reach_the_model(chan):
     chan.turn(turn_body(MENSAGEM_1, ids=["m1"], contexto=ctx_campanha()))
     [oferta] = [r for r in tool_results(chan.provider) if "imoveis" in r]
     assert oferta["relaxado"] == ["regiao_adjacente", "preco"] and oferta["similar_a_encontrado"] is False
+    # the asked items SW could not verify (they did not filter) reach the model so Julia confirms them
+    assert oferta["itens_nao_verificaveis"] == ["aceita_pets", "escola_perto"]
     assert "interno_nao_repassar" not in oferta  # an explicit allowlist, never the raw SW body

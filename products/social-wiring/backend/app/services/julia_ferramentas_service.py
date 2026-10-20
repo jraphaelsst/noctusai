@@ -47,7 +47,8 @@ OVERFETCH = 60
 COLUNAS = (
     "codigo, titulo, categoria, status, finalidades, bairro, cidade, uf, valor_venda, valor_locacao, "
     "valor_condominio, valor_iptu, dormitorios, suites, vagas, area_total, area_privativa, "
-    "descricao_web, caracteristicas, exibir_no_site, logradouro, numero, data_atualizacao, empreendimento"
+    "descricao_web, caracteristicas, exibir_no_site, logradouro, numero, data_atualizacao, empreendimento, "
+    "pavimentos"
 )
 #: Allow-list for the empreendimento tool (a subset of `COLUNAS` + the two development columns).
 COLUNAS_EMPREENDIMENTO = (
@@ -154,7 +155,7 @@ def _sobrepor_confirmacao(item: dict[str, Any], confirmacoes: list[dict[str, Any
 
 
 class ComMeta(NamedTuple):
-    """A tool result with sibling keys next to `data` (`restantes_estimados`, `relaxado`)."""
+    """A tool result with sibling keys next to `data` (`restantes_estimados`, `relaxado`, `itens_nao_verificaveis`)."""
 
     data: Any
     meta: dict[str, Any]
@@ -182,7 +183,7 @@ def _destaques(r: dict[str, Any], prioritarios: tuple[str, ...]) -> list[str]:
     """2-3 factual highlights, straight from the listing's own feature list (never invented): the lead's
     own items first."""
     carac = [c.strip() for c in (r.get("caracteristicas") or []) if isinstance(c, str) and c.strip()]
-    pri = [c for c in carac if any(busca.norm(p) and busca.norm(p) in busca.norm(c) for p in prioritarios)]
+    pri = [c for c in carac if any(busca.feature_atende(p, c) for p in prioritarios)]
     return (pri + [c for c in carac if c not in pri])[:DESTAQUES_MAX]
 
 
@@ -220,8 +221,9 @@ def _itens(client: Any, org_id: UUID, linhas: list[dict[str, Any]], operacao: Op
 def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> ComMeta:
     """Search the org's published listings for the lead; see `julia_busca_imoveis` for the rules.
 
-    Response: `{data: [item...], restantes_estimados, relaxado: [eixo...]}` (+ `similar_a_encontrado` when
-    `similar_a` was sent). `restantes_estimados` = listings that passed at the final widening level and were not
+    Response: `{data: [item...], restantes_estimados, relaxado: [eixo...], itens_nao_verificaveis: [chave...]}`
+    (+ `similar_a_encontrado` when `similar_a` was sent). `itens_nao_verificaveis` = asked items the catalogue
+    cannot verify (pets, proximidades, ...): they did not filter the result and Julia must confirm them. `restantes_estimados` = listings that passed at the final widening level and were not
     returned (a lower bound when more than FETCH_BUSCA candidates exist)."""
     a = BuscarImoveisArgs(**args)
     ancora = _um(client, org_id, a.similar_a) if a.similar_a else None
@@ -254,7 +256,8 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> ComMeta:
         qb = qb.gte("vagas", q.vagas_min)
     rows = [r for r in (qb.order("data_atualizacao", desc=True).limit(FETCH_BUSCA).execute().data or []) if _publicado(r)]
     res = busca.buscar(rows, q, limite=a.limite, excluir=excluir)
-    meta: dict[str, Any] = {"restantes_estimados": res.restantes, "relaxado": res.relaxado}
+    meta: dict[str, Any] = {"restantes_estimados": res.restantes, "relaxado": res.relaxado,
+                            "itens_nao_verificaveis": res.itens_nao_verificaveis}
     if a.similar_a:
         meta["similar_a_encontrado"] = ancora is not None
     return ComMeta(_itens(client, org_id, res.linhas, a.operacao, (*a.itens_essenciais, *a.itens_desejaveis, *a.caracteristicas)), meta)
