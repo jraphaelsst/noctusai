@@ -58,6 +58,18 @@ class TestSqlCheck:
         ("COALESCE(org_role, '') <> ALL (ARRAY['membro'])", {"org_role": "membro"}, False),
         ("COALESCE(org_role, '') <> ALL (ARRAY['membro'])", {"org_role": "owner"}, True),
         ("n > SOME (ARRAY[3, 7])", {"n": 5}, True),
+        # jsonb `->` / `->>` and a jsonb literal (agents 038: eval_cases CHECKs)
+        ("suite = 'mecanismo' OR coalesce(jsonb_array_length(criterios -> 'deve'), 0) + coalesce(jsonb_array_length(criterios -> 'nao_deve'), 0) >= 1", {"suite": "comportamento", "criterios": {"deve": ["a"], "nao_deve": []}}, True),
+        ("suite = 'mecanismo' OR coalesce(jsonb_array_length(criterios -> 'deve'), 0) + coalesce(jsonb_array_length(criterios -> 'nao_deve'), 0) >= 1", {"suite": "comportamento", "criterios": {}}, False),
+        ("suite = 'mecanismo' OR coalesce(jsonb_array_length(criterios -> 'deve'), 0) + coalesce(jsonb_array_length(criterios -> 'nao_deve'), 0) >= 1", {"suite": "mecanismo", "criterios": {}}, True),
+        ("suite <> 'mecanismo' OR COALESCE(jsonb_typeof(roteiro) = 'object' AND jsonb_typeof(roteiro -> 'turnos') = 'array' AND jsonb_array_length(roteiro -> 'turnos') >= 1 AND jsonb_typeof(asserts) = 'object' AND asserts <> '{}'::jsonb, false)", {"suite": "mecanismo", "roteiro": {"turnos": [{"lead": "x"}]}, "asserts": {"estagio_final": "a"}}, True),
+        ("suite <> 'mecanismo' OR COALESCE(jsonb_typeof(roteiro) = 'object' AND jsonb_typeof(roteiro -> 'turnos') = 'array' AND jsonb_array_length(roteiro -> 'turnos') >= 1 AND jsonb_typeof(asserts) = 'object' AND asserts <> '{}'::jsonb, false)", {"suite": "mecanismo", "roteiro": {"turnos": []}, "asserts": {"estagio_final": "a"}}, False),
+        ("suite <> 'mecanismo' OR COALESCE(jsonb_typeof(roteiro) = 'object' AND jsonb_typeof(roteiro -> 'turnos') = 'array' AND jsonb_array_length(roteiro -> 'turnos') >= 1 AND jsonb_typeof(asserts) = 'object' AND asserts <> '{}'::jsonb, false)", {"suite": "mecanismo", "roteiro": {"turnos": [1]}, "asserts": {}}, False),
+        ("suite <> 'mecanismo' OR COALESCE(jsonb_typeof(roteiro) = 'object' AND jsonb_typeof(roteiro -> 'turnos') = 'array' AND jsonb_array_length(roteiro -> 'turnos') >= 1 AND jsonb_typeof(asserts) = 'object' AND asserts <> '{}'::jsonb, false)", {"suite": "mecanismo", "roteiro": None, "asserts": {"a": 1}}, False),
+        ("suite <> 'mecanismo' OR COALESCE(jsonb_typeof(roteiro) = 'object' AND jsonb_typeof(roteiro -> 'turnos') = 'array' AND jsonb_array_length(roteiro -> 'turnos') >= 1 AND jsonb_typeof(asserts) = 'object' AND asserts <> '{}'::jsonb, false)", {"suite": "comportamento", "roteiro": None, "asserts": None}, True),
+        ("meta ->> 'k' = 'v'", {"meta": {"k": "v"}}, True),
+        ("meta ->> 'k' = 'v'", {"meta": {"k": "w"}}, False),
+        ("(itens -> 0) IS NOT NULL", {"itens": []}, False),
     ])
     def test_verdicts(self, body, row, expected):
         assert _v(body, **row) is expected

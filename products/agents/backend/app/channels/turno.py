@@ -319,7 +319,7 @@ async def executar(
         if svc.skills_factory is not None
         else SkillsDaVersao(svc.studio_store, r.definicao.org_id, r.definicao.id, r.versao.id)
     )
-    sw = svc.sw if (svc.sw is not None and svc.sw.lais_tools_available(org_id)) else None
+    sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,

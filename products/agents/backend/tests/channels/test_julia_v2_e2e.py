@@ -44,9 +44,9 @@ class ScriptedSW(FakeSocialWiringClient):
         super().__init__()
         self.batches = list(batches)
 
-    async def lais_ferramenta(self, org_id, nome, args):
-        self.lais_calls.append((org_id, nome, dict(args)))
-        if self.lais_fail:
+    async def julia_ferramenta(self, org_id, nome, args):
+        self.julia_calls.append((org_id, nome, dict(args)))
+        if self.julia_fail:
             return {"erro": "indisponivel"}
         if nome == "buscar_imoveis":
             lote = self.batches.pop(0) if self.batches else []
@@ -78,15 +78,15 @@ CPF, RG, EMAIL = "529.982.247-25", "12.345.678-9", "maria@exemplo.com"
 @pytest.fixture
 def mundo(chan):
     chan.seed_agent(obrigatoria={"registrar_perfil": "qualificar-lead", "oferecer_imoveis": "ofertar-imoveis"})
-    chan.lais = ScriptedSW([
+    chan.sw = ScriptedSW([
         [imovel("B1"), imovel("B2"), imovel("B3")],
         [imovel("B4"), imovel("B5"), imovel("B6")],
     ])
-    from app.dependencies import get_lais_tools_client_dep
+    from app.dependencies import get_julia_tools_client_dep
     from app.main import app
 
-    app.dependency_overrides[get_lais_tools_client_dep] = lambda: chan.lais
-    chan.lais.lais_token_orgs.add(chan.org_id)
+    app.dependency_overrides[get_julia_tools_client_dep] = lambda: chan.sw
+    chan.sw.julia_token_orgs.add(chan.org_id)
     return chan
 
 
@@ -138,7 +138,7 @@ class TestTheWholeQualification:
         assert r1["qualificacao"]["estagio"] == "qualificado"
         ofertados = chan.qual.codigos_oferecidos(chan.org_id, chan.lead_ref().id)
         assert ofertados == ["B1", "B2", "B3"]
-        busca = [a for _o, n, a in chan.lais.lais_calls if n == "buscar_imoveis"][0]
+        busca = [a for _o, n, a in chan.sw.julia_calls if n == "buscar_imoveis"][0]
         assert busca["limite"] == 3 and busca["similar_a"] == "AP0123" and busca["excluir_codigos"] == []
         assert (busca["operacao"], busca["tipo"], busca["preco_max"], busca["bairros"]) == (
             "compra", "apartamento", 800000, ["Pinheiros"])
@@ -146,7 +146,7 @@ class TestTheWholeQualification:
 
         r2 = chan.turn(turn_body("Nenhum me agradou, são caros", ids=["m2"], contexto=ctx_campanha())).json()
         assert r2["status"] == "respondido"
-        buscas = [a for _o, n, a in chan.lais.lais_calls if n == "buscar_imoveis"]
+        buscas = [a for _o, n, a in chan.sw.julia_calls if n == "buscar_imoveis"]
         assert buscas[1]["excluir_codigos"] == ["B1", "B2", "B3"]  # never re-offered
         eventos = chan.qual.eventos(chan.org_id, chan.lead_ref().id)
         assert [e.codigo_imovel for e in eventos if e.evento == "nao_gostou"] == ["B1", "B2", "B3"]

@@ -14,7 +14,7 @@ a write the real INSERT refuses (the `atendimento_contrato_versoes` class,
 2026-09-22). Deriving the predicate FROM the migration means there is no
 mirror to keep in sync, and a new migration is enforced the day it lands.
 
-SCOPE. The SQL subset the corpus actually uses: AND / OR / NOT, comparisons,
+SCOPE. The SQL subset the corpus actually uses: AND / OR / NOT, comparisons, jsonb `->` / `->>`,
 `IS [NOT] NULL`, `IS [NOT] TRUE|FALSE`, `IS [NOT] DISTINCT FROM`, `[NOT] IN`,
 `[NOT] BETWEEN`, `op ANY|SOME|ALL (array)`, `+ - * / % ||`, casts (`::type`), parentheses, literals
 (incl. `E'...'`), `ARRAY[...]`, array containment (`<@` / `@>`), regex match
@@ -33,6 +33,7 @@ violation, but it never fails a test on a guess.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -59,7 +60,7 @@ _TOKEN_RE = re.compile(
   | (?P<num>\d+(?:\.\d+)?)
   | (?P<qident>"[^"]+")
   | (?P<ident>[A-Za-z_][A-Za-z0-9_$]*)
-  | (?P<op><@|@>|!~\*|!~|~\*|<=|>=|<>|!=|::|\|\||[=<>+\-*/%(),.\[\]~!])
+  | (?P<op>->>|->|<@|@>|!~\*|!~|~\*|<=|>=|<>|!=|::|\|\||[=<>+\-*/%(),.\[\]~!])
     """,
     re.VERBOSE,
 )
@@ -279,9 +280,16 @@ class _Parser:
 
     def postfix(self):
         node = self.primary()
-        while self.op("::"):
-            self.take()
-            node = ("cast", node, self.type_name())
+        while self.op("::") or self.op("->") or self.op("->>"):
+            if self.op("::"):
+                self.take()
+                node = ("cast", node, self.type_name())
+            else:
+                # jsonb field / element access. Postgres ranks `->` BELOW `+ -`; the corpus only uses it as a
+                # whole operand (`jsonb_array_length(c -> 'k')`), so binding it tighter is equivalent there and
+                # `a -> 'x' + 1` (which Postgres itself rejects as jsonb + int) never occurs in a valid CHECK.
+                symbol = self.take()[1]
+                node = ("jsonget", symbol, node, self.primary())
         return node
 
     def type_name(self) -> str:
@@ -572,7 +580,34 @@ def _cast(value, type_name: str):
         if isinstance(value, bool):
             return value
         raise _Unknown
-    return value  # date/timestamptz/jsonb/uuid/…: the comparison normalizer handles them
+    if base in ("jsonb", "json"):
+        if isinstance(value, str):  # a literal such as '{}'::jsonb is parsed; a column value is already structured
+            try:
+                return json.loads(value)
+            except ValueError as exc:
+                raise _Unknown from exc
+        return value
+    return value  # date/timestamptz/uuid/…: the comparison normalizer handles them
+
+
+def _jsonget(symbol: str, container, key):
+    """`json -> key` / `json ->> key`: an object member by text key or an array element by int index; absent =
+    NULL (Postgres); `->>` returns the member as text (a JSON null is SQL NULL)."""
+    if container is None or key is None:
+        return None
+    if isinstance(container, Mapping) and isinstance(key, str):
+        found = container.get(key)
+    elif isinstance(container, (list, tuple)) and isinstance(key, int) and not isinstance(key, bool):
+        found = container[key] if -len(container) <= key < len(container) else None
+    elif isinstance(container, (Mapping, list, tuple)):
+        return None  # wrong key kind for this container: NULL in Postgres
+    else:
+        raise _Unknown  # `->` on a non-json value
+    if symbol == "->>":
+        if found is None:
+            return None
+        return found if isinstance(found, str) else json.dumps(found, ensure_ascii=False)
+    return found
 
 
 def _eval(node, row: Mapping[str, Any]):
@@ -678,6 +713,8 @@ def _eval(node, row: Mapping[str, Any]):
         return -_num(n)
     if tag == "cast":
         return _cast(_eval(node[1], row), node[2])
+    if tag == "jsonget":
+        return _jsonget(node[1], _eval(node[2], row), _eval(node[3], row))
     if tag == "call":
         return _FUNCTIONS[node[1]]([_eval(a, row) for a in node[2]])
     if tag == "array":

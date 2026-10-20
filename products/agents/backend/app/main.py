@@ -40,6 +40,7 @@ from noctusai_seed import HealthEndpointConfig, create_product_app
 from noctusai_seed.auth_router import create_auth_router
 from noctusai_seed.organs import mount_finance
 
+from app.clients.social_wiring import SocialWiringNotConfigured
 from app.config import settings
 from app.dependencies import (
     _LazyApiTokenResolver,
@@ -295,3 +296,16 @@ app = create_product_app(
 install_studio_seams(app)
 # 422 without echoing the caller's input (the seed handler can carry a validator's text; see app/validation.py).
 install_validation_handler(app)
+
+
+async def _social_wiring_nao_configurado(request, exc):  # noqa: ANN001
+    from fastapi.responses import JSONResponse
+
+    logger.error("agents.social_wiring.not_configured path=%s", request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "A integração com o social-wiring não está configurada.", "code": "social_wiring_nao_configurado"},
+    )
+
+
+app.add_exception_handler(SocialWiringNotConfigured, _social_wiring_nao_configurado)

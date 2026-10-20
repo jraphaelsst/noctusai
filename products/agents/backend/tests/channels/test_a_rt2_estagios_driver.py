@@ -159,10 +159,10 @@ class TestLiveDriver:
 class TestFixtureSw:
     def test_search_filters_pages_and_excludes(self):
         sw = FixtureSwClient(_roteiro_catalogo())
-        r = asyncio.run(sw.lais_ferramenta(None, "buscar_imoveis", {
+        r = asyncio.run(sw.julia_ferramenta(None, "buscar_imoveis", {
             "operacao": "compra", "preco_max": 700002, "excluir_codigos": ["B1"], "limite": 5}))
         assert [i["codigo"] for i in r["data"]] == ["B2", "B3"] and r["restantes_estimados"] == 0
-        assert asyncio.run(sw.lais_ferramenta(None, "detalhes_imovel", {"codigo": "ZZ"})) == {"erro": "nao_encontrado"}
+        assert asyncio.run(sw.julia_ferramenta(None, "detalhes_imovel", {"codigo": "ZZ"})) == {"erro": "nao_encontrado"}
 
 
 class TestLiveDriverRealConformance:

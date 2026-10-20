@@ -16,11 +16,11 @@ from noctusai_lib.testing.migrations import migration_sql
 
 from app.channels.contexto import Dossie, render_contexto_system
 from app.clients.social_wiring import (
-    LAIS_TOOLS_TOKEN_KEY,
+    JULIA_TOOLS_TOKEN_KEY,
     HttpSocialWiringClient,
-    resolve_lais_tools_token,
+    resolve_julia_tools_token,
 )
-from app.routers.channel_tools_token_router import get_lais_tools_token_store_dep
+from app.routers.channel_tools_token_router import get_julia_tools_token_store_dep
 from app.schemas.channels import ChannelContexto
 from app.studio.models import ConteudoBundle, TextoData
 from app.studio.textos_registry import TEXTOS
@@ -200,26 +200,26 @@ class TestHttpClient:
         org_a, org_b = uuid4(), uuid4()
         client = HttpSocialWiringClient(
             "http://sw.test", "", transport=httpx.MockTransport(handler),
-            lais_token_resolver=lambda org: {org_a: "tok-a"}.get(org),
+            julia_token_resolver=lambda org: {org_a: "tok-a"}.get(org),
         )
-        assert client.lais_tools_available(org_a) and not client.lais_tools_available(org_b)
-        assert asyncio.run(client.lais_ferramenta(org_a, "buscar_imoveis", {"operacao": "compra"})) == {"data": [1]}
+        assert client.julia_tools_available(org_a) and not client.julia_tools_available(org_b)
+        assert asyncio.run(client.julia_ferramenta(org_a, "buscar_imoveis", {"operacao": "compra"})) == {"data": [1]}
         assert seen["url"] == "http://sw.test/api/julia/ferramentas/buscar_imoveis"
         assert seen["auth"] == "Bearer tok-a"
-        assert asyncio.run(client.lais_ferramenta(org_a, "falha", {})) == {"erro": "indisponivel"}
-        assert asyncio.run(client.lais_ferramenta(org_b, "buscar_imoveis", {})) == {"erro": "indisponivel"}
+        assert asyncio.run(client.julia_ferramenta(org_a, "falha", {})) == {"erro": "indisponivel"}
+        assert asyncio.run(client.julia_ferramenta(org_b, "buscar_imoveis", {})) == {"erro": "indisponivel"}
 
     def test_resolver_reads_the_encrypted_store_then_org_settings_only(self):
         store = FakeCredentialStore()
         org = uuid4()
-        assert resolve_lais_tools_token(org, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
-        assert resolve_lais_tools_token(
+        assert resolve_julia_tools_token(org, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
+        assert resolve_julia_tools_token(
             org, store_factory=lambda: store, org_settings_reader=lambda k, o: "from-settings") == "from-settings"
         from noctusai_lib.security.api_keys import put_api_key
 
-        put_api_key(store, str(org), LAIS_TOOLS_TOKEN_KEY, "enc-token")
-        assert resolve_lais_tools_token(org, store_factory=lambda: store, org_settings_reader=lambda k, o: "s") == "enc-token"
-        assert resolve_lais_tools_token(uuid4(), store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
+        put_api_key(store, str(org), JULIA_TOOLS_TOKEN_KEY, "enc-token")
+        assert resolve_julia_tools_token(org, store_factory=lambda: store, org_settings_reader=lambda k, o: "s") == "enc-token"
+        assert resolve_julia_tools_token(uuid4(), store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
 
 
 class TestAuthStrict:
@@ -340,9 +340,9 @@ class TestToolsTokenIntake:
         from app.main import app
 
         s = FakeCredentialStore()
-        app.dependency_overrides[get_lais_tools_token_store_dep] = lambda: s
+        app.dependency_overrides[get_julia_tools_token_store_dep] = lambda: s
         yield s
-        app.dependency_overrides.pop(get_lais_tools_token_store_dep, None)
+        app.dependency_overrides.pop(get_julia_tools_token_store_dep, None)
 
     def _put(self, chan, token="pk_" + "a" * 20, **kw):
         with chan.as_token(**kw):
@@ -352,14 +352,14 @@ class TestToolsTokenIntake:
         chan.seed_agent()
         resp = self._put(chan)
         assert resp.status_code == 204 and resp.content == b""
-        assert resolve_lais_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) == "pk_" + "a" * 20
-        assert resolve_lais_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
+        assert resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) == "pk_" + "a" * 20
+        assert resolve_julia_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
 
     def test_put_twice_replaces_and_delete_is_idempotent(self, chan, store):
         chan.seed_agent()
         self._put(chan, "pk_" + "b" * 20)
         self._put(chan, "pk_" + "c" * 20)
-        read = lambda: resolve_lais_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None)  # noqa: E731
+        read = lambda: resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None)  # noqa: E731
         assert read() == "pk_" + "c" * 20
         for _ in range(2):
             with chan.as_token():
@@ -369,8 +369,8 @@ class TestToolsTokenIntake:
     def test_token_org_comes_from_the_credential(self, chan, store):
         chan.seed_agent()
         self._put(chan, org_id=OTHER_ORG)
-        assert resolve_lais_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None)
-        assert resolve_lais_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
+        assert resolve_julia_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None)
+        assert resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
 
     def test_validation_and_unknown_field_are_422(self, chan, store):
         chan.seed_agent()
@@ -400,3 +400,27 @@ class TestMigration029:
         assert "ADD COLUMN IF NOT EXISTS contexto_hash TEXT NULL" in sql
         assert sql.count("ADD COLUMN") == 1
         assert "agents.messages" in sql
+
+
+class TestSocialWiringNotConfigured:
+    """A missing social-wiring URL is a TYPED 'not configured', never a bare ValueError."""
+
+    def _sem_url(self, monkeypatch):
+        for k in ("PRODUCT_URL_SOCIAL_WIRING", "PRODUCT_URL_PATTERN"):
+            monkeypatch.delenv(k, raising=False)
+
+    def test_the_tools_client_factory_raises_the_marked_error(self, monkeypatch):
+        from noctusai_lib.primitives.not_configured import is_integration_not_configured
+
+        from app.clients.social_wiring import SocialWiringNotConfigured, get_julia_tools_client
+
+        self._sem_url(monkeypatch)
+        with pytest.raises(SocialWiringNotConfigured) as exc:
+            get_julia_tools_client(None)
+        assert is_integration_not_configured(exc.value) and not isinstance(exc.value, ValueError)
+
+    def test_the_app_answers_503_with_a_code(self):
+        from app.main import app
+        from app.clients.social_wiring import SocialWiringNotConfigured
+
+        assert SocialWiringNotConfigured in app.exception_handlers

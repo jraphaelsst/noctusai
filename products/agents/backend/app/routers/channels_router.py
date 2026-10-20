@@ -57,7 +57,7 @@ from app.dependencies import (
     get_channel_retention_dep,
     get_conformidade_store_dep,
     get_conversation_store_dep,
-    get_lais_tools_client_dep,
+    get_julia_tools_client_dep,
     get_message_store_dep,
     get_org_llm_key_resolver_dep,
     get_realtime_bus_dep,
@@ -261,7 +261,7 @@ async def run_channel_turn(
     qual: QualificacaoService = Depends(get_qualificacao_service_dep),
     padroes=Depends(get_padrao_store_dep),
     ident=Depends(get_identificacao_service_dep),
-    sw=Depends(get_lais_tools_client_dep),
+    sw=Depends(get_julia_tools_client_dep),
     skills_factory=Depends(get_skills_factory_dep),
 ) -> ChannelTurnResponse:
     org_id = ctx.org_id

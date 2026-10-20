@@ -34,7 +34,7 @@ from app.dependencies import (
     get_channel_llm_runtime_dep,
     get_channel_retention_dep,
     get_conformidade_store_dep,
-    get_lais_tools_client_dep,
+    get_julia_tools_client_dep,
     get_llm_runtime_dep,
     get_org_llm_key_resolver_dep,
     get_product_token_admin_dep,
@@ -124,8 +124,8 @@ class ChannelHarness:
         self.qual = QualificacaoService(self.padroes, self.leads, identificacao=self.ident)
         self.retention = FakeChannelRetention(
             rt_.stores.conversations, rt_.stores.messages, self.inbound, self.threads, self.qual)
-        self.lais = FakeSocialWiringClient()
-        self.lais.lais_token_orgs.add(rt_.org_id)
+        self.sw = FakeSocialWiringClient()
+        self.sw.julia_token_orgs.add(rt_.org_id)
         self.skills_factory: Any = None
         self.provider = FakeProvider(tool_responses=["Oi! Você quer comprar ou alugar?"])
         self.keys: dict[tuple[str, UUID], str] = {("openai", rt_.org_id): ORG_KEY}
@@ -224,7 +224,7 @@ def chan(rt):
         get_padrao_store_dep: lambda: h.padroes,
         get_lead_qualificacao_store_dep: lambda: h.leads,
         get_identificacao_service_dep: lambda: h.ident,
-        get_lais_tools_client_dep: lambda: h.lais,
+        get_julia_tools_client_dep: lambda: h.sw,
         get_skills_factory_dep: lambda: h.skills_factory,
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,

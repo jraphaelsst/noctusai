@@ -107,10 +107,10 @@ class FixtureSwClient:
         self._catalogo = [dict(i) for i in catalogo]
         self.chamadas: list[tuple[str, dict[str, Any]]] = []
 
-    def lais_tools_available(self, org_id: UUID) -> bool:
+    def julia_tools_available(self, org_id: UUID) -> bool:
         return True
 
-    async def lais_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
         self.chamadas.append((nome, dict(args)))
         if nome == "buscar_imoveis":
             excluir = {str(c) for c in (args.get("excluir_codigos") or [])}

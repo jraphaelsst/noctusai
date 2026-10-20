@@ -487,11 +487,11 @@ def get_conformidade_store_dep():
     return get_conformidade_store(settings)
 
 
-def get_lais_tools_client_dep():
+def get_julia_tools_client_dep():
     """The SW client the channel tools read the CRM through (the org's own tools token, per call)."""
-    from app.clients.social_wiring import get_lais_tools_client
+    from app.clients.social_wiring import get_julia_tools_client
 
-    return get_lais_tools_client(settings)
+    return get_julia_tools_client(settings)
 
 
 def get_skills_factory_dep():
@@ -594,7 +594,7 @@ __all__ = [
     "get_channel_llm_runtime_dep",
     "get_channel_retention_dep",
     "get_conformidade_store_dep",
-    "get_lais_tools_client_dep",
+    "get_julia_tools_client_dep",
     "get_skills_factory_dep",
     "get_org_llm_key_resolver_dep",
     "get_product_token_admin_dep",

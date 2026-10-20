@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from noctusai_lib.integrations.llm import ToolCall, ToolResult, ToolSpec
 
-from app.clients.social_wiring import LAIS_TOOL_TIMEOUT_SECONDS, SocialWiringClient
+from app.clients.social_wiring import JULIA_TOOL_TIMEOUT_SECONDS, SocialWiringClient
 from app.qualificacao.identificacao import CAMPOS as IDENT_CAMPOS
 from app.qualificacao.identificacao import EncryptionNotConfigured
 from app.qualificacao.models import LeadSinais, VersaoPadrao
@@ -592,7 +592,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
     async def _sw(nome: str, args: dict[str, Any]) -> dict[str, Any] | None:
         assert t.sw is not None
         try:
-            body = await asyncio.wait_for(t.sw.lais_ferramenta(t.org_id, nome, args), LAIS_TOOL_TIMEOUT_SECONDS)
+            body = await asyncio.wait_for(t.sw.julia_ferramenta(t.org_id, nome, args), JULIA_TOOL_TIMEOUT_SECONDS)
         except Exception as exc:  # noqa: BLE001 -- a tool failure is a result, never a crashed turn
             logger.warning("agents.channel.sw_tool_failed org_id=%s tool=%s error=%s", t.org_id, nome, type(exc).__name__)
             return None

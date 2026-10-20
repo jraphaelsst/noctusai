@@ -29,6 +29,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 import httpx
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +38,16 @@ _DEFAULT_TIMEOUT_SECONDS = 10.0
 #: Lais F-AG (build contract §2.1(c)/(f)): the per-org callback token SW mints
 #: for agents (scope ``social-wiring:lais-tools``). Stored encrypted through the
 #: SAME per-org writer the api-keys router uses (``agents.credentials``).
-LAIS_TOOLS_TOKEN_KEY = "social_wiring_lais_tools_token"
+#: The STORED name stays ``social_wiring_lais_tools_token``: it is the key of rows already written to the credential
+#: store; renaming the value would orphan every org's token. Only the Python symbol was renamed.
+JULIA_TOOLS_TOKEN_KEY = "social_wiring_lais_tools_token"
 #: A read tool must answer inside this; past it the model is told to carry on.
-LAIS_TOOL_TIMEOUT_SECONDS = 8.0
+JULIA_TOOL_TIMEOUT_SECONDS = 8.0
 #: What a tool call returns when SW cannot answer (never an exception text).
-LAIS_TOOL_UNAVAILABLE: dict[str, Any] = {"erro": "indisponivel"}
+JULIA_TOOL_UNAVAILABLE: dict[str, Any] = {"erro": "indisponivel"}
 
 
-def resolve_lais_tools_token(
+def resolve_julia_tools_token(
     org_id: UUID | str,
     *,
     store_factory: Callable[[], Any] | None = None,
@@ -65,18 +68,33 @@ def resolve_lais_tools_token(
     try:
         store = store_factory()
     except EncryptionNotConfigured as exc:
-        logger.warning("agents.lais_tools_token.store_unavailable: %s", exc)
+        logger.warning("agents.julia_tools_token.store_unavailable: %s", exc)
         store = None
     if store is not None:
-        stored = read_local_api_key(store, org, LAIS_TOOLS_TOKEN_KEY)
+        stored = read_local_api_key(store, org, JULIA_TOOLS_TOKEN_KEY)
         value = (stored.tokens or {}).get("value") if stored else None
         if value:
             return value
-    return reader(LAIS_TOOLS_TOKEN_KEY, org) or None
+    return reader(JULIA_TOOLS_TOKEN_KEY, org) or None
 
 
 class SocialWiringError(Exception):
     """Base class for every social-wiring bridge client error."""
+
+
+class SocialWiringNotConfigured(SocialWiringError, IntegrationNotConfigured):
+    """The social-wiring base URL cannot be resolved (no ``PRODUCT_URL_SOCIAL_WIRING`` / pattern / catalog row): the
+    integration is not configured here. Carries the ``IntegrationNotConfigured`` marker, so callers (and the
+    stand-in keeper) read it as a fail-closed 'not configured', never as a bug."""
+
+
+def _social_wiring_url() -> str:
+    from noctusai_lib.config.product_urls import resolve_product_url
+
+    try:
+        return resolve_product_url("social-wiring")
+    except ValueError as exc:
+        raise SocialWiringNotConfigured("social-wiring URL is not configured") from exc
 
 
 class SocialWiringUnreachable(SocialWiringError):
@@ -100,12 +118,12 @@ class SocialWiringClient(Protocol):
         caller maps that to ``502 upstream_failed`` (contract §E.2)."""
         ...
 
-    def lais_tools_available(self, org_id: UUID) -> bool:
+    def julia_tools_available(self, org_id: UUID) -> bool:
         """``True`` when THIS org has a tools token (read tools are exposed
         to the model only then — never a process-wide fallback)."""
         ...
 
-    async def lais_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
         """``POST /api/julia/ferramentas/{nome}`` with the org's token. Never
         raises: any failure / timeout (8 s) returns ``{"erro": "indisponivel"}``."""
         ...
@@ -123,10 +141,10 @@ class FakeSocialWiringClient:
         self.fail_connection_ids: set[str] = set()
         #: Lais tools: orgs holding a token, canned answers by tool name (a
         #: dict, or a callable ``args -> dict``), the call log, a failure switch.
-        self.lais_token_orgs: set[UUID] = set()
-        self.lais_responses: dict[str, Any] = {}
-        self.lais_calls: list[tuple[UUID, str, dict[str, Any]]] = []
-        self.lais_fail = False
+        self.julia_token_orgs: set[UUID] = set()
+        self.julia_responses: dict[str, Any] = {}
+        self.julia_calls: list[tuple[UUID, str, dict[str, Any]]] = []
+        self.julia_fail = False
 
     def register(
         self, connection_id: UUID, *, label: str = "Fake connection",
@@ -161,14 +179,14 @@ class FakeSocialWiringClient:
         return {"connection_id": key, "auto_reply_enabled": enabled}
 
 
-    def lais_tools_available(self, org_id: UUID) -> bool:
-        return org_id in self.lais_token_orgs
+    def julia_tools_available(self, org_id: UUID) -> bool:
+        return org_id in self.julia_token_orgs
 
-    async def lais_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.lais_calls.append((org_id, nome, dict(args)))
-        if self.lais_fail or org_id not in self.lais_token_orgs:
-            return dict(LAIS_TOOL_UNAVAILABLE)
-        answer = self.lais_responses.get(nome, {"data": []})
+    async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.julia_calls.append((org_id, nome, dict(args)))
+        if self.julia_fail or org_id not in self.julia_token_orgs:
+            return dict(JULIA_TOOL_UNAVAILABLE)
+        answer = self.julia_responses.get(nome, {"data": []})
         return dict(answer(args) if callable(answer) else answer)
 
 
@@ -188,15 +206,15 @@ class HttpSocialWiringClient:
         *,
         timeout: float = _DEFAULT_TIMEOUT_SECONDS,
         transport: httpx.AsyncBaseTransport | None = None,
-        lais_token_resolver: Callable[[UUID], str | None] | None = None,
-        lais_timeout: float = LAIS_TOOL_TIMEOUT_SECONDS,
+        julia_token_resolver: Callable[[UUID], str | None] | None = None,
+        julia_timeout: float = JULIA_TOOL_TIMEOUT_SECONDS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
         self._transport = transport
-        self._lais_token_resolver = lais_token_resolver or resolve_lais_tools_token
-        self._lais_timeout = lais_timeout
+        self._julia_token_resolver = julia_token_resolver or resolve_julia_tools_token
+        self._julia_timeout = julia_timeout
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
@@ -244,38 +262,36 @@ class HttpSocialWiringClient:
             ) from exc
 
 
-    def lais_tools_available(self, org_id: UUID) -> bool:
-        return bool(self._lais_token_resolver(org_id))
+    def julia_tools_available(self, org_id: UUID) -> bool:
+        return bool(self._julia_token_resolver(org_id))
 
-    async def lais_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
-            token = self._lais_token_resolver(org_id)
+            token = self._julia_token_resolver(org_id)
         except Exception:
-            logger.exception("agents.lais_tool.token_lookup_failed org_id=%s tool=%s", org_id, nome)
-            return dict(LAIS_TOOL_UNAVAILABLE)
+            logger.exception("agents.julia_tool.token_lookup_failed org_id=%s tool=%s", org_id, nome)
+            return dict(JULIA_TOOL_UNAVAILABLE)
         if not token:
-            return dict(LAIS_TOOL_UNAVAILABLE)
+            return dict(JULIA_TOOL_UNAVAILABLE)
         url = f"{self._base_url}/api/julia/ferramentas/{nome}"
         try:
-            async with httpx.AsyncClient(timeout=self._lais_timeout, transport=self._transport) as client:
+            async with httpx.AsyncClient(timeout=self._julia_timeout, transport=self._transport) as client:
                 resp = await client.post(url, json=args, headers={"Authorization": f"Bearer {token}"})
             resp.raise_for_status()
             body = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning(
-                "agents.lais_tool.unavailable org_id=%s tool=%s error=%s", org_id, nome, type(exc).__name__
+                "agents.julia_tool.unavailable org_id=%s tool=%s error=%s", org_id, nome, type(exc).__name__
             )
-            return dict(LAIS_TOOL_UNAVAILABLE)
+            return dict(JULIA_TOOL_UNAVAILABLE)
         return body if isinstance(body, dict) else {"data": body}
 
 
-def get_lais_tools_client(settings: Any = None) -> SocialWiringClient:
+def get_julia_tools_client(settings: Any = None) -> SocialWiringClient:
     """The client the Lais READ tools use: always Real (the token is per call,
     per org — an org with no token simply has no tools). Fake/Real selection for
     tests is by dependency override, never by this factory."""
-    from noctusai_lib.config.product_urls import resolve_product_url
-
-    return HttpSocialWiringClient(resolve_product_url("social-wiring"), "")
+    return HttpSocialWiringClient(_social_wiring_url(), "")
 
 
 def get_social_wiring_client(settings: Any) -> SocialWiringClient:
@@ -289,18 +305,16 @@ def get_social_wiring_client(settings: Any) -> SocialWiringClient:
     if not token:
         return FakeSocialWiringClient()
 
-    from noctusai_lib.config.product_urls import resolve_product_url
-
-    base_url = resolve_product_url("social-wiring")
-    return HttpSocialWiringClient(base_url, token)
+    return HttpSocialWiringClient(_social_wiring_url(), token)
 
 
 __all__ = [
-    "LAIS_TOOLS_TOKEN_KEY",
-    "LAIS_TOOL_TIMEOUT_SECONDS",
-    "LAIS_TOOL_UNAVAILABLE",
-    "get_lais_tools_client",
-    "resolve_lais_tools_token",
+    "JULIA_TOOLS_TOKEN_KEY",
+    "SocialWiringNotConfigured",
+    "JULIA_TOOL_TIMEOUT_SECONDS",
+    "JULIA_TOOL_UNAVAILABLE",
+    "get_julia_tools_client",
+    "resolve_julia_tools_token",
     "FakeSocialWiringClient",
     "HttpSocialWiringClient",
     "SocialWiringClient",

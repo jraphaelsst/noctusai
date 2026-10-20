@@ -33,12 +33,12 @@ def first_tools(provider: FakeProvider) -> dict[str, Any]:
 @pytest.fixture
 def gated(chan):
     chan.seed_agent(obrigatoria={"registrar_perfil": "qualificar-lead", "oferecer_imoveis": "ofertar-imoveis"})
-    chan.lais = ScriptedSW([[imovel("B1"), imovel("B2"), imovel("B3")]])
-    from app.dependencies import get_lais_tools_client_dep
+    chan.sw = ScriptedSW([[imovel("B1"), imovel("B2"), imovel("B3")]])
+    from app.dependencies import get_julia_tools_client_dep
     from app.main import app
 
-    app.dependency_overrides[get_lais_tools_client_dep] = lambda: chan.lais
-    chan.lais.lais_token_orgs.add(chan.org_id)
+    app.dependency_overrides[get_julia_tools_client_dep] = lambda: chan.sw
+    chan.sw.julia_token_orgs.add(chan.org_id)
     return chan
 
 
@@ -101,11 +101,11 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
 
     def test_sw_tools_follow_the_orgs_tools_token_and_the_capability(self, chan):
         chan.seed_agent()
-        chan.lais.lais_token_orgs.clear()
+        chan.sw.julia_token_orgs.clear()
         chan.use_provider(FakeProvider(tool_responses=[say("Oi?")]))
         chan.turn()
         assert not {"oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento"} & set(tools_offered(chan.provider))
-        chan.lais.lais_token_orgs.add(chan.org_id)
+        chan.sw.julia_token_orgs.add(chan.org_id)
         chan.use_provider(FakeProvider(tool_responses=[say("Oi?")]))
         chan.turn(turn_body(ids=["x2"], contexto={**contexto_body(), "capacidades": {"ferramentas_sw": False}}))
         assert "oferecer_imoveis" not in tools_offered(chan.provider)
@@ -209,7 +209,7 @@ class TestOtherGates:
             say("Qual o bairro?")]))
         chan.turn(turn_body("Oi"))
         assert tool_results(chan.provider)[-1]["codigo"] == "nao_pode_ofertar"
-        assert [n for _o, n, _a in chan.lais.lais_calls] == []
+        assert [n for _o, n, _a in chan.sw.julia_calls] == []
 
     def test_concluding_early_is_refused(self, gated):
         chan = gated
@@ -308,7 +308,7 @@ class TestRetryBudgetAndSafeStop:
 
     def test_repeated_tool_errors_stop_the_turn_too(self, gated):
         chan = gated
-        chan.lais.lais_fail = True
+        chan.sw.julia_fail = True
         chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_erros_ferramenta_por_turno=2)
         # SW tools answer "indisponivel" (a failure, not a refusal): detalhes_imovel x2
         chan.use_provider(FakeProvider(tool_responses=[
