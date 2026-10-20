@@ -279,3 +279,96 @@ class TestSkillsInTheHashAndTheLock:
         again = studio.patch(url, json={"corpo": "Mais um.", "expected_hash": lido})
         assert again.status_code == 409 and again.json()["code"] == "conflito_de_versao"
         assert studio.patch(url, json={"corpo": "Sem trava."}).status_code == 200  # no expected_hash -> no check
+
+
+def _content_token(studio, *, issuer="noctus-platform", scopes=("studio:content-write",)):
+    studio.raw.app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=list(scopes), raw_token="tok",
+        api_token_id=UUID(int=9), principal_agent_id=None, issuer=issuer)
+
+
+class TestMcpContentKindsBackend:
+    """A-polish #3: the ``noctus.agents.content`` kinds ``evals_mecanismo`` / ``conformidade_regras`` ride the same
+    platform content token as the other kinds -- platform-issued only, audited, the definition's own row only."""
+
+    CASE = {"slug": "m1", "titulo": "Oferta só com o mínimo", "entrada": "roteiro", "suite": "mecanismo", "k": 2,
+            "roteiro": {"turnos": [{"lead": "oi, quero comprar"}, {"lead": "cpf [[cpf_sintetico_valido]]"}]},
+            "asserts": {"sem_violacoes": True}}
+
+    @pytest.fixture(autouse=True)
+    def _one_eval_store(self, studio):
+        """Every request reads the SAME in-memory eval store (the production dep builds one per call for a Fake)."""
+        from app.routers.studio_evals_router import get_eval_store_dep
+        from app.stores.studio_evals import FakeEvalStore
+
+        store = FakeEvalStore()
+        studio.raw.app.dependency_overrides[get_eval_store_dep] = lambda: store
+        yield
+        studio.raw.app.dependency_overrides.pop(get_eval_store_dep, None)
+
+    def test_the_token_creates_lists_and_edits_a_mechanism_case_and_is_audited(self, studio):
+        agent = _julia(studio)
+        _content_token(studio)
+        try:
+            r = studio.raw.post(f"{BASE}/julia/evals/cases", json=self.CASE)
+            assert r.status_code == 201, r.text
+            body = r.json()
+            assert (body["suite"], body["k"], body["asserts"]) == ("mecanismo", 2, {"sem_violacoes": True})
+            listed = studio.raw.get(f"{BASE}/julia/evals/cases").json()["items"]
+            assert [c["slug"] for c in listed] == ["m1"] and listed[0]["roteiro"] == self.CASE["roteiro"]
+            p = studio.raw.patch(f"{BASE}/julia/evals/cases/{body['id']}", json={"k": 3})
+            assert p.status_code == 200 and p.json()["k"] == 3
+            # deleting stays a human platform-admin act
+            assert studio.raw.delete(f"{BASE}/julia/evals/cases/{body['id']}").status_code == 403
+        finally:
+            studio.raw.app.dependency_overrides.pop(get_auth_context, None)
+        rows = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "conteudo_editado_mcp"]
+        assert [a.depois["kind"] for a in rows] == ["eval_caso", "eval_caso"] and rows[0].actor == UUID(int=9)
+        assert "roteiro" not in str([a.depois for a in rows])  # the audit names the case, never its content
+
+    def test_a_mechanism_case_with_personal_data_or_an_unknown_token_is_refused(self, studio):
+        _julia(studio)
+        com_cpf = {**self.CASE, "slug": "m2", "roteiro": {"turnos": [{"lead": "meu cpf 529.982.247-25"}]}}
+        assert studio.post(f"{BASE}/julia/evals/cases", json=com_cpf).status_code == 422
+        token = {**self.CASE, "slug": "m3", "roteiro": {"turnos": [{"lead": "[[rg_real]]"}]}}
+        assert studio.post(f"{BASE}/julia/evals/cases", json=token).status_code == 422
+        sem_juiz = {k: v for k, v in self.CASE.items() if k not in ("suite", "roteiro", "asserts")}
+        assert studio.post(f"{BASE}/julia/evals/cases", json={**sem_juiz, "slug": "c1"}).status_code == 422
+
+    def test_the_token_lists_and_writes_conformance_rules_of_the_definition_only(self, studio):
+        agent = _julia(studio)
+        _content_token(studio)
+        try:
+            lista = studio.raw.get(f"{UI}/agents/julia/conformidade/regras")
+            assert lista.status_code == 200
+            assert "vazamento_prompt" in [i["regra"] for i in lista.json()["items"]]
+            put = studio.raw.put(f"{UI}/agents/julia/conformidade/regras/termina_sem_pergunta", json={"ativo": False})
+            assert put.status_code == 200 and put.json()["ativo"] is False
+            outra = studio.raw.put(f"{UI}/agents/julia/conformidade/regras/termina_sem_pergunta?org_id={uuid4()}",
+                                   json={"ativo": True})
+            assert outra.status_code == 403 and outra.json()["code"] == "org_id_nao_permitido"
+        finally:
+            studio.raw.app.dependency_overrides.pop(get_auth_context, None)
+        [row] = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "conteudo_editado_mcp"]
+        assert row.actor == UUID(int=9) and row.depois["regra"] == "termina_sem_pergunta"
+
+    @pytest.mark.parametrize("issuer,scopes,code", [
+        ("social-wiring", ("studio:content-write",), "issuer_not_allowed"),
+        ("noctus-platform", ("studio:publish",), "scope_missing"),
+    ])
+    def test_any_other_product_token_is_403(self, studio, issuer, scopes, code):
+        _julia(studio)
+        _content_token(studio, issuer=issuer, scopes=scopes)
+        try:
+            for r in (studio.raw.get(f"{BASE}/julia/evals/cases"), studio.raw.get(f"{UI}/agents/julia/conformidade/regras"),
+                      studio.raw.post(f"{BASE}/julia/evals/cases", json=self.CASE)):
+                assert r.status_code == 403 and r.json()["code"] == code
+        finally:
+            studio.raw.app.dependency_overrides.pop(get_auth_context, None)
+
+    def test_the_rule_list_is_strict_401_and_403_for_an_org_admin(self, studio):
+        _julia(studio)
+        assert studio.raw.get(f"{UI}/agents/julia/conformidade/regras").status_code == 401
+        _as(studio, org_role="owner", platform=False)
+        r = studio.get(f"{UI}/agents/julia/conformidade/regras")
+        assert r.status_code == 403 and r.json()["code"] == "platform_admin_required"

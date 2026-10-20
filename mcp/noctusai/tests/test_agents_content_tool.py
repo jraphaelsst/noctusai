@@ -34,6 +34,10 @@ class FakeAgents:
         self.decisoes: list[dict] = []
         self.specs: list[dict] = []
         self.skills: dict[str, dict] = {}  # chave -> {nome, descricao, versoes: [ {id, versao, status, ...} ]}
+        self.casos: list[dict] = [{"id": str(uuid.uuid4()), "slug": "juiz-1", "suite": "comportamento", "titulo": "J",
+                                   "entrada": "e", "k": 3, "roteiro": None, "asserts": None, "tags": [], "ativo": True}]
+        self.regras: dict[str, dict] = {r: {"regra": r, "ativo": True, "politica": "registrar", "parametros": {}}
+                                        for r in ("vazamento_prompt", "termina_sem_pergunta")}
         self.pins: dict[str, dict] = {}
         self.padrao_versoes: list[dict] = [{
             "id": str(uuid.uuid4()), "versao": 1, "status": "publicada", "notas": None, "publicada_em": "2026-01-01T00:00:00Z",
@@ -135,6 +139,26 @@ def _handler(state: FakeAgents):
                     assert v["status"] == "rascunho"
                     v["arquivos"] = [a for a in v["arquivos"] if a["caminho"] != mo.group(3)] + [{"caminho": mo.group(3), **b}]
                     return self._send(200, v)
+            # eval cases
+            if path == f"{A}/evals/cases":
+                if m == "GET":
+                    return self._send(200, {"items": state.casos})
+                if m == "POST":
+                    caso = {"id": str(uuid.uuid4()), "tags": [], "ativo": True, "k": 3, **b}
+                    state.casos.append(caso)
+                    return self._send(201, caso)
+            mo = re.fullmatch(rf"{A}/evals/cases/([0-9a-f-]+)", path)
+            if mo and m == "PATCH":
+                caso = next(c for c in state.casos if c["id"] == mo.group(1))
+                caso.update(b)
+                return self._send(200, caso)
+            # conformance rules
+            if m == "GET" and path == f"{A}/conformidade/regras":
+                return self._send(200, {"items": list(state.regras.values())})
+            mo = re.fullmatch(rf"{A}/conformidade/regras/([a-z_]+)", path)
+            if mo and m == "PUT" and mo.group(1) in state.regras:
+                state.regras[mo.group(1)].update({k: v for k, v in b.items() if v is not None})
+                return self._send(200, state.regras[mo.group(1)])
             # pins
             if m == "GET" and path == f"{A}/draft/skills-biblioteca":
                 return self._send(200, {"version_id": state.draft_id, "items": list(state.pins.values())})
@@ -331,6 +355,67 @@ class TestKinds:
     def test_unknown_standard(self, srv, private):
         out = run(srv, private, action="list", kind="padrao_criterio", padrao="nada")
         assert out["status"] == "error" and out["codigo"] == "padrao_inexistente"
+
+
+class TestEvalAndConformanceKinds:
+    """A-polish #3: mechanism eval cases + conformance rules, same dry-run / token / never-publish discipline."""
+
+    CASO = {"slug": "minimo-antes-de-ofertar", "titulo": "Sem oferta antes do mínimo", "entrada": "roteiro",
+            "k": 2, "roteiro": {"turnos": [{"lead": "oi"}]}, "asserts": {"ferramentas_proibidas": ["oferecer_imoveis"]}}
+
+    def test_a_mechanism_case_is_planned_then_created_as_mecanismo_and_never_runs(self, srv, private):
+        plan = run(srv, private, {"itens": [self.CASO]}, action="set", kind="evals_mecanismo", agent="julia")
+        assert plan["status"] == "planned" and plan["mudancas"][0]["op"] == "create" and srv.writes() == []
+        out = run(srv, private, {"itens": [self.CASO]}, action="set", kind="evals_mecanismo", agent="julia", confirm=True)
+        assert out["status"] == "written" and "próxima execução" in out["mensagem"].lower()
+        assert srv.writes() == [("POST", "/api/studio/agents/julia/evals/cases")]
+        criado = srv.casos[-1]
+        assert criado["suite"] == "mecanismo" and criado["roteiro"] == self.CASO["roteiro"]
+        assert not any("runs" in p or "publish" in p for _m, p in srv.writes())
+        again = run(srv, private, {"itens": [self.CASO]}, action="set", kind="evals_mecanismo", agent="julia")
+        assert again["status"] == "no_change"
+
+    def test_only_mecanismo_cases_are_listed_edited_and_deactivated(self, srv, private):
+        run(srv, private, {"itens": [self.CASO]}, action="set", kind="evals_mecanismo", agent="julia", confirm=True)
+        assert run(srv, private, action="list", kind="evals_mecanismo", agent="julia")["itens"] == [self.CASO["slug"]]
+        upd = run(srv, private, {"itens": [{"slug": self.CASO["slug"], "k": 4}]}, action="set", kind="evals_mecanismo",
+                  agent="julia", confirm=True)
+        assert upd["status"] == "written" and srv.casos[-1]["k"] == 4 and srv.writes()[-1][0] == "PATCH"
+        outro = {**self.CASO, "slug": "outro"}
+        plan = run(srv, private, {"itens": [outro]}, action="set", kind="evals_mecanismo", agent="julia", merge=False)
+        assert {c["chave"]: c["op"] for c in plan["mudancas"]} == {"outro": "create", self.CASO["slug"]: "deactivate"}
+        assert srv.casos[0]["slug"] == "juiz-1"  # the judge case is never touched by this kind
+
+    def test_a_new_case_must_be_complete(self, srv, private):
+        out = run(srv, private, {"itens": [{"slug": "x", "titulo": "t"}]}, action="set", kind="evals_mecanismo", agent="julia")
+        assert out["status"] == "error" and out["codigo"] == "caso_incompleto" and srv.writes() == []
+
+    def test_conformance_rules_dry_run_then_write_and_say_it_is_live(self, srv, private):
+        payload = {"itens": [{"regra": "termina_sem_pergunta", "ativo": False}]}
+        plan = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia")
+        assert plan["status"] == "planned" and plan["mudancas"][0]["op"] == "update" and srv.writes() == []
+        out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", confirm=True)
+        assert out["status"] == "written" and "próximo turno" in out["mensagem"]
+        assert srv.writes() == [("PUT", "/api/studio/agents/julia/conformidade/regras/termina_sem_pergunta")]
+        assert srv.regras["termina_sem_pergunta"]["ativo"] is False
+        got = run(srv, private, action="get", kind="conformidade_regras", agent="julia", chave="termina_sem_pergunta")
+        assert got["itens"] == {"termina_sem_pergunta": {"ativo": False, "politica": "registrar", "parametros": {}}}
+
+    @pytest.mark.parametrize("payload,merge,codigo", [
+        ({"itens": [{"regra": "inventada", "ativo": True}]}, True, "regra_desconhecida"),
+        ({"itens": [{"regra": "vazamento_prompt", "texto": "x"}]}, True, "payload_invalido"),
+        ({"itens": [{"regra": "vazamento_prompt", "ativo": True}]}, False, "merge_invalido"),
+    ])
+    def test_conformance_rules_refuse_unknowns(self, srv, private, payload, merge, codigo):
+        out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", merge=merge)
+        assert out["status"] == "error" and out["codigo"] == codigo and srv.writes() == []
+
+    def test_both_kinds_need_an_agent_and_carry_the_token_only_as_a_header(self, srv, private):
+        out = run(srv, private, action="list", kind="conformidade_regras")
+        assert out["status"] == "error" and out["codigo"] == "agent_ausente"
+        run(srv, private, action="list", kind="evals_mecanismo", agent="julia")
+        assert all(a == f"Bearer {TOKEN}" for _m, _p, _b, a in srv.log)
+        assert TOKEN not in json.dumps(run(srv, private, action="list", kind="evals_mecanismo", agent="julia"))
 
 
 class TestNeverPublishesAndKeepsTheSecret:

@@ -2,7 +2,9 @@
 §D4, slice BE-KE).
 
 Auth: ``require_platform_admin`` (visibility tier 1 — the definition/knowledge/evals of an agent are the platform's IP, never an org admin's) (contract
-§D intro). The agent (and a run's version) resolve through BE-DEF's
+§D intro). Listing, creating and editing CASES also accepts the platform-issued ``studio:content-write`` token
+(``require_platform_content_admin`` — the ``noctus.agents.content`` MCP path, kind ``evals_mecanismo``); those writes
+are audited ``conteudo_editado_mcp``. Deleting a case and every run route stay human platform admin only. The agent (and a run's version) resolve through BE-DEF's
 ``StudioDefinitionStore`` + ``resolve_agent``/``resolve_version`` — one
 resolver for every studio route (404 ``agent_not_found`` / 409
 ``not_studio_agent`` / 404 ``version_not_found``).
@@ -34,7 +36,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import settings
-from app.dependencies import require_platform_admin, require_publish_read, require_publish_write
+from app.dependencies import (
+    require_platform_admin,
+    require_platform_content_admin,
+    require_publish_read,
+    require_publish_write,
+)
 from app.routers.studio_agents_router import (
     actor_id,
     require_user_or_dev_advisor,
@@ -110,6 +117,7 @@ def _case_out(record) -> EvalCaseOut:
             nao_deve=list(record.criterios.get("nao_deve") or []),
         ),
         rubrica=record.rubrica, tags=list(record.tags), ativo=record.ativo,
+        suite=record.suite, k=record.k, roteiro=record.roteiro, asserts=record.asserts,
     )
 
 
@@ -123,13 +131,25 @@ def _run_out(record) -> EvalRunOut:
     )
 
 
+def _audit_case_mcp(defs, ctx: AuthContext, agent, case_id, record) -> None:
+    """A case written with the platform ``studio:content-write`` token (the ``noctus.agents.content`` MCP path) is
+    audit-logged like every other MCP content write: who (the token row), what (kind + slug), never the content."""
+    if ctx.caller_kind != "product":
+        return
+    defs.append_audit(
+        agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
+        None if case_id is None else {"kind": "eval_caso", "case_id": str(case_id)},
+        {"kind": "eval_caso", "case_id": str(record.id), "slug": record.slug, "suite": record.suite},
+    )
+
+
 # ── Cases ──────────────────────────────────────────────────────────────
 
 
 @router.get("/{key}/evals/cases", response_model=EvalCaseListOut)
 async def list_cases(
     key: str,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseListOut:
@@ -142,21 +162,24 @@ async def list_cases(
 async def create_case(
     key: str,
     payload: EvalCaseCreateRequest,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
+    crit = payload.criterios
     with store_errors():
         record = store.create_case(
             ctx.org_id, agent.id,
             EvalCaseInput(
                 slug=payload.slug, titulo=payload.titulo, entrada=payload.entrada,
-                criterios={"deve": payload.criterios.deve, "nao_deve": payload.criterios.nao_deve},
+                criterios={"deve": crit.deve if crit else [], "nao_deve": crit.nao_deve if crit else []},
                 contexto=payload.contexto, rubrica=payload.rubrica,
                 tags=tuple(payload.tags), ativo=payload.ativo,
+                suite=payload.suite, k=payload.k, roteiro=payload.roteiro, asserts=payload.asserts,
             ),
         )
+    _audit_case_mcp(defs, ctx, agent, None, record)
     return _case_out(record)
 
 
@@ -165,7 +188,7 @@ async def update_case(
     key: str,
     case_id: UUID,
     payload: EvalCaseUpdateRequest,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalCaseOut:
@@ -180,9 +203,12 @@ async def update_case(
                 rubrica=fields.get("rubrica", _UNSET),
                 tags=tuple(fields["tags"]) if "tags" in fields else _UNSET,
                 ativo=fields.get("ativo", _UNSET),
+                k=fields.get("k", _UNSET), roteiro=fields.get("roteiro", _UNSET),
+                asserts=fields.get("asserts", _UNSET),
             )
     except NotFound as exc:
         raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
+    _audit_case_mcp(defs, ctx, agent, case_id, record)
     return _case_out(record)
 
 

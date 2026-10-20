@@ -233,6 +233,12 @@ class EvalCaseOut(BaseModel):
     rubrica: str | None
     tags: list[str]
     ativo: bool
+    #: Julia v2 A-EVAL: ``comportamento`` (judge) | ``mecanismo`` (scripted roteiro + deterministic asserts, pass^k).
+    #: Platform-admin-only route (tier 1), so the scripted case content is returned to its editor.
+    suite: str = "comportamento"
+    k: int = 3
+    roteiro: dict[str, Any] | None = None
+    asserts: dict[str, Any] | None = None
 
 
 class EvalCaseListOut(BaseModel):
@@ -243,11 +249,26 @@ class EvalCaseCreateRequest(StrictHttpModel):
     slug: str = Field(..., min_length=1)
     titulo: str = Field(..., min_length=1)
     entrada: str = Field(..., min_length=1)
-    criterios: CriteriosModel
+    #: Required for a ``comportamento`` case (the judge's criteria); a ``mecanismo`` case has none.
+    criterios: CriteriosModel | None = None
     contexto: str | None = None
     rubrica: str | None = None
     tags: list[str] = Field(default_factory=list)
     ativo: bool = True
+    #: ``mecanismo`` needs ``roteiro`` + ``asserts`` (validated by ``eval_mecanismo.validar_caso_mecanismo`` in the
+    #: store, which also refuses personal data -- fixtures are synthetic, Meta 4.7).
+    suite: str = "comportamento"
+    k: int = 3
+    roteiro: dict[str, Any] | None = None
+    asserts: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _criterios_do_juiz(self) -> "EvalCaseCreateRequest":
+        if self.suite == "comportamento" and self.criterios is None:
+            raise ValueError("criterios is required for a comportamento case")
+        if self.suite != "mecanismo" and (self.roteiro is not None or self.asserts is not None):
+            raise ValueError("roteiro / asserts only exist on a mecanismo case")
+        return self
 
 
 class EvalCaseUpdateRequest(StrictHttpModel):
@@ -258,6 +279,10 @@ class EvalCaseUpdateRequest(StrictHttpModel):
     rubrica: str | None = None
     tags: list[str] | None = None
     ativo: bool | None = None
+    #: ``mecanismo`` cases only (the store refuses them on a ``comportamento`` case).
+    k: int | None = None
+    roteiro: dict[str, Any] | None = None
+    asserts: dict[str, Any] | None = None
 
 
 # ── Evals — runs (§D4) ──────────────────────────────────────────────────

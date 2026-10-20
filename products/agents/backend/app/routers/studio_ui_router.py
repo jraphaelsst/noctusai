@@ -2,8 +2,11 @@
 and tiered (CONTRACT 0.4): the FE never infers a tier from roles and never receives a prompt, rule text or weight.
 
 * ``GET /api/studio/agents/{key}/capacidades`` -- the caller's ``tier`` and the tab keys it may see (any org member).
-* ``GET|PUT /api/studio/agents/{key}/conformidade/regras/{regra}`` -- a conformance rule's switches (platform admin;
-  ``?org_id=`` selects another org's instance, default the caller's own row; every read audited).
+* ``GET /api/studio/agents/{key}/conformidade/regras`` and ``GET|PUT .../conformidade/regras/{regra}`` -- the
+  conformance rules' switches (platform admin, or the platform ``studio:content-write`` token of the
+  ``noctus.agents.content`` MCP path, kind ``conformidade_regras``; ``?org_id=`` selects another org's instance for a
+  HUMAN platform admin only -- a token writes the definition's own row; every read audited, every write audited
+  ``conteudo_editado_mcp``). Rules are not versioned: a write applies from the next turn.
 * ``GET /api/studio/agents/{key}/conformidade/violacoes`` -- paged violation CODES (platform admin).
 * ``GET /api/studio/agents/{key}/conformidade/resumo`` -- COUNTS only (org admin, own org).
 * ``GET /api/studio/threads/{thread_id}`` -- participant states of a lead thread (org admin).
@@ -22,8 +25,18 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.channels.conformidade import SHINGLE_MAX, SHINGLE_MIN
-from app.dependencies import get_conformidade_store_dep, get_conversation_store_dep, get_core_client, get_thread_store_dep, require_admin, require_member, require_platform_admin
+from app.dependencies import (
+    get_conformidade_store_dep,
+    get_conversation_store_dep,
+    get_core_client,
+    get_thread_store_dep,
+    require_admin,
+    require_member,
+    require_platform_admin,
+    require_platform_content_admin,
+)
 from app.routers.studio_agents_router import (
+    actor_id,
     audit_definition_read,
     get_studio_definition_store_dep,
     http_error,
@@ -96,6 +109,10 @@ class RegraOut(BaseModel):
     mensagem_correcao_texto_chave: str | None = None
 
 
+class RegrasOut(BaseModel):
+    items: list[RegraOut]
+
+
 class RegraIn(StrictHttpModel):
     ativo: bool | None = None
     politica: str | None = None
@@ -131,8 +148,10 @@ _MAX_VIOLACOES_LIDAS = 1000
 
 
 def _agente_alvo(store, ctx: AuthContext, key: str, org_id: UUID | None):
-    """The agent ROW the rules hang on: the caller's own (the platform org's definition) or, for a platform
-    admin, the named org's instance."""
+    """The agent ROW the rules hang on: the caller's own (the platform org's definition) or, for a HUMAN platform
+    admin, the named org's instance. The MCP content token acts on the definition only (403 ``org_id_nao_permitido``)."""
+    if org_id is not None and ctx.caller_kind == "product" and org_id != ctx.org_id:
+        raise http_error(403, "org_id_nao_permitido", "O token de conteúdo altera apenas a definição.")
     alvo_org = org_id or ctx.org_id
     return alvo_org, resolve_agent(store, alvo_org, key, allow_instancia=True)
 
@@ -149,10 +168,22 @@ def _regra_valida(regra: str) -> None:
         raise http_error(404, "regra_not_found", "Regra não encontrada.")
 
 
+@router.get("/agents/{key}/conformidade/regras", response_model=RegrasOut)
+async def listar_regras(
+    key: str, org_id: UUID | None = Query(default=None),
+    ctx: AuthContext = Depends(require_platform_content_admin),
+    store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
+) -> RegrasOut:
+    alvo_org, agent = _agente_alvo(store, ctx, key, org_id)
+    audit_definition_read(store, ctx, resolve_agent(store, ctx.org_id, key, allow_instancia=True), "regras")
+    regras = conformidade.regras(alvo_org, agent.id)
+    return RegrasOut(items=[_regra_out(regras[r]) for r in REGRAS])
+
+
 @router.get("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
 async def ler_regra(
     key: str, regra: str, org_id: UUID | None = Query(default=None),
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
 ) -> RegraOut:
     _regra_valida(regra)
@@ -164,7 +195,7 @@ async def ler_regra(
 @router.put("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
 async def definir_regra(
     key: str, regra: str, payload: RegraIn, org_id: UUID | None = Query(default=None),
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
 ) -> RegraOut:
     _regra_valida(regra)
@@ -181,7 +212,7 @@ async def definir_regra(
     novo = conformidade.definir_regra(
         alvo_org, agent.id, regra, ativo=payload.ativo, politica=payload.politica, parametros=payload.parametros)
     store.append_audit(
-        agent.org_id, agent.id, ctx.user_id, "conteudo_editado_mcp",
+        agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
         {"o_que": "conformidade_regra", "regra": regra, "ativo": antes.ativo, "politica": antes.politica},
         {"o_que": "conformidade_regra", "regra": regra, "ativo": novo.ativo, "politica": novo.politica},
     )

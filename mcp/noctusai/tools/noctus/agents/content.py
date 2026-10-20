@@ -38,7 +38,15 @@ kind                  payload                                                   
 ``padrao_criterio``   ``{"itens": [{chave, grupo, rotulo, tipo, ...}]}``          /api/qualificacao (draft)
 ``padrao_estagio``    ``{"itens": [{chave, rotulo, ordem, regra, ...}]}``         idem
 ``padrao_parametros`` the ParametrosIn body (an object)                           idem
+``evals_mecanismo``   ``{"itens": [{slug, titulo, entrada, k, roteiro, asserts,   /api/studio/agents/{agent}/
+                      tags, ativo}]}`` (mechanism cases; ``merge=False``          evals/cases
+                      deactivates the ones left out)
+``conformidade_regras`` ``{"itens": [{regra, ativo, politica, parametros}]}``     .../conformidade/regras/{regra}
 ====================  ==========================================================  =============================
+
+``evals_mecanismo`` and ``conformidade_regras`` are not draft rows: a case is judged by the next mechanism run (nothing
+is run here), and a rule applies from the next turn -- the dry-run diff is the review step. Both use the same platform
+``studio:content-write`` token, are audited ``conteudo_editado_mcp`` and only ever touch the definition's own rows.
 
 Agent-scoped kinds need ``agent`` (the agent key, e.g. ``julia``); ``padrao_*`` need ``padrao`` (e.g.
 ``imob-lead``). Example (never inline a token)::
@@ -515,6 +523,117 @@ class _Padrao:
         return {k: v for k, v in self._rows(self._version(api, padrao)[1]).items() if chave in (None, k)}
 
 
+# ── mechanism eval cases (the publish gate's scripted suite) ────────────────
+
+_CASO_FIELDS = ("titulo", "entrada", "k", "roteiro", "asserts", "tags", "ativo")
+_CASO_NOVO = ("titulo", "entrada", "roteiro", "asserts")
+
+
+class _EvalsMecanismo:
+    """The ``mecanismo`` eval cases of an agent (``/api/studio/agents/{agent}/evals/cases``), keyed by ``slug``.
+    Not versioned: a case is judged by the NEXT mechanism run; nothing here starts a run or publishes. Fixtures are
+    synthetic (the server refuses personal data; ``[[cpf_sintetico_valido]]`` / ``[[email_sintetico]]`` tokens are
+    the way to script identity). ``merge=False`` DEACTIVATES the cases left out (a case with results cannot be
+    deleted, and deleting stays a human act)."""
+
+    def _rows(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
+        got = api.call("GET", f"/api/studio/agents/{_q(agent)}/evals/cases")["items"]
+        return {c["slug"]: c for c in got if c.get("suite") == "mecanismo"}
+
+    def current(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
+        return {k: {f: v.get(f) for f in _CASO_FIELDS} for k, v in self._rows(api, agent).items()}
+
+    def plan(self, api: _Api, agent: str, payload: Any, merge: bool):
+        items = _items(payload)
+        rows = self._rows(api, agent)
+        changes: list[dict[str, Any]] = []
+        steps: list[tuple[str, str, dict[str, Any]]] = []
+        base = f"/api/studio/agents/{_q(agent)}/evals/cases"
+        vistos: set[str] = set()
+        for it in items:
+            slug = it.get("slug")
+            if not isinstance(slug, str) or not slug:
+                raise ContentError("payload_invalido", "Cada caso precisa de 'slug'.")
+            unknown = set(it) - set(_CASO_FIELDS) - {"slug"}
+            if unknown:
+                raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
+            vistos.add(slug)
+            touched = {k: v for k, v in it.items() if k != "slug"}
+            old = rows.get(slug)
+            if old is None:
+                faltam = [f for f in _CASO_NOVO if f not in touched]
+                if faltam:
+                    raise ContentError("caso_incompleto", f"O caso novo '{slug}' precisa de: {', '.join(faltam)}.")
+                ch = _change(slug, None, touched)
+                steps.append(("POST", base, {"slug": slug, "suite": "mecanismo", **touched}))
+            else:
+                ch = _change(slug, {k: old.get(k) for k in touched}, touched)
+                if ch["op"] != "unchanged":
+                    steps.append(("PATCH", f"{base}/{_q(old['id'])}", touched))
+            changes.append(ch)
+        if not merge:
+            for slug, old in rows.items():
+                if slug not in vistos and old.get("ativo"):
+                    changes.append({**_change(slug, {"ativo": True}, {"ativo": False}), "op": "deactivate"})
+                    steps.append(("PATCH", f"{base}/{_q(old['id'])}", {"ativo": False}))
+        if not steps:
+            return changes, None
+
+        def apply() -> None:
+            for method, path, body in steps:
+                api.call(method, path, body)
+
+        return changes, apply
+
+    def listing(self, api: _Api, agent: str) -> list[str]:
+        return sorted(self._rows(api, agent))
+
+
+# ── conformance rules (switches of the deterministic output checks) ─────────
+
+_REGRA_FIELDS = ("ativo", "politica", "parametros")
+
+
+class _ConformidadeRegras:
+    """The conformance rules of an agent's DEFINITION row (``/api/studio/agents/{agent}/conformidade/regras``),
+    keyed by ``regra``. The rule set is fixed by code (an unknown rule is refused) and the rows are NOT versioned: a
+    confirmed write applies from the next turn -- the dry-run diff is the review step. Never another org's row."""
+
+    def current(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
+        got = api.call("GET", f"/api/studio/agents/{_q(agent)}/conformidade/regras")["items"]
+        return {r["regra"]: {f: r.get(f) for f in _REGRA_FIELDS} for r in got}
+
+    def plan(self, api: _Api, agent: str, payload: Any, merge: bool):
+        if not merge:
+            raise ContentError("merge_invalido", "As regras de conformidade são um conjunto fixo: use merge=True.")
+        items = _items(payload)
+        cur = self.current(api, agent)
+        changes, steps = [], []
+        for it in items:
+            regra = it.get("regra")
+            if not isinstance(regra, str) or regra not in cur:
+                raise ContentError("regra_desconhecida", f"Regra desconhecida: {regra!r}.")
+            unknown = set(it) - set(_REGRA_FIELDS) - {"regra"}
+            if unknown:
+                raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
+            touched = {k: v for k, v in it.items() if k != "regra"}
+            ch = _change(regra, {k: cur[regra].get(k) for k in touched}, touched)
+            changes.append(ch)
+            if ch["op"] != "unchanged":
+                steps.append((f"/api/studio/agents/{_q(agent)}/conformidade/regras/{_q(regra)}", touched))
+        if not steps:
+            return changes, None
+
+        def apply() -> None:
+            for path, body in steps:
+                api.call("PUT", path, body)
+
+        return changes, apply
+
+    def listing(self, api: _Api, agent: str) -> list[str]:
+        return sorted(self.current(api, agent))
+
+
 # ── dispatch ────────────────────────────────────────────────────────────────
 
 _REPLACE_SETS: dict[str, _ReplaceSet] = {
@@ -526,7 +645,13 @@ _REPLACE_SETS: dict[str, _ReplaceSet] = {
 }
 _SKILL, _SKILL_REF = _Skill(), _SkillRef()
 _PADRAO = {"padrao_criterio": _Padrao("criterios"), "padrao_estagio": _Padrao("estagios"), "padrao_parametros": _Padrao("parametros")}
-KINDS = (*_REPLACE_SETS, "skill", "skill_ref", *_PADRAO)
+#: Agent-scoped kinds that are NOT draft rows: what a confirmed write does, said in the result.
+_AGENTE = {"evals_mecanismo": _EvalsMecanismo(), "conformidade_regras": _ConformidadeRegras()}
+_EFEITO = {
+    "evals_mecanismo": "Casos gravados: valem na PRÓXIMA execução da suíte mecanismo. Nada foi executado nem publicado.",
+    "conformidade_regras": "Regras não são versionadas: valem a partir do próximo turno. Nada foi publicado.",
+}
+KINDS = (*_REPLACE_SETS, "skill", "skill_ref", *_PADRAO, *_AGENTE)
 
 
 def content(
@@ -540,7 +665,7 @@ def content(
             raise ContentError("acao_invalida", f"action deve ser um de {ACTIONS} (esta ferramenta nunca publica).")
         if kind not in KINDS:
             raise ContentError("kind_invalido", f"kind deve ser um de {KINDS}.")
-        scoped = kind in _REPLACE_SETS or kind == "skill_ref"
+        scoped = kind in _REPLACE_SETS or kind == "skill_ref" or kind in _AGENTE
         if scoped and not agent:
             raise ContentError("agent_ausente", f"O kind '{kind}' precisa de 'agent' (a chave do agente).")
         if kind in _PADRAO and not padrao:
@@ -565,13 +690,15 @@ def _run(api: _Api, action: str, kind: str, agent, padrao, chave, payload, confi
         impl, scope = _SKILL, None
     elif kind == "skill_ref":
         impl, scope = _SKILL_REF, agent
+    elif kind in _AGENTE:
+        impl, scope = _AGENTE[kind], agent
     else:
         impl, scope = _PADRAO[kind], padrao
 
     if action == "list":
         return {"status": "ok", **head, "itens": impl.listing(api, scope)}
     if action == "get":
-        if kind in _REPLACE_SETS:
+        if kind in _REPLACE_SETS or kind in _AGENTE:
             rows = impl.current(api, scope)
             data = {k: v for k, v in rows.items() if chave in (None, k)}
         elif kind == "skill":
@@ -588,7 +715,7 @@ def _run(api: _Api, action: str, kind: str, agent, padrao, chave, payload, confi
                 "mensagem": "Nada foi escrito. Repita com confirm=True para gravar o RASCUNHO."}
     apply()
     return {"status": "written", **head, "mudancas": changes, "dry_run": False, "escritas": api.writes,
-            "mensagem": "Rascunho atualizado. Publicar e um ato humano (eval gate)."}
+            "mensagem": _EFEITO.get(kind, "Rascunho atualizado. Publicar e um ato humano (eval gate).")}
 
 
 def register(server) -> None:
@@ -600,7 +727,8 @@ def register(server) -> None:
             "Write an agent's CONTENT rows (the 'Claude, change Julia's X' path) into a target environment through the "
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
-            "padrao_estagio|padrao_parametros (need padrao=<key>). set reads a JSON payload from payload_path (a file "
+            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo (mechanism eval cases) | "
+            "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
             "(https, or http on loopback)."

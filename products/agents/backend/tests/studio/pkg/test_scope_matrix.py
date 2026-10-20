@@ -59,6 +59,14 @@ CONTENT_WRITE_ROUTES = {
     ("PUT", "/api/studio/agents/{key}/draft/skills-biblioteca/{skill}"),
     ("DELETE", "/api/studio/agents/{key}/draft/skills-biblioteca/{skill}"),
     ("GET", "/api/studio/agents/{key}/versions/{version_id}/skills-biblioteca"),
+    # A-polish #3: kinds evals_mecanismo / conformidade_regras (pinned in tests/studio/def/test_a_rt2_ui_backend.py,
+    # TestMcpContentKindsBackend: platform issuer only, audited, the definition's own row only)
+    ("GET", "/api/studio/agents/{key}/evals/cases"),
+    ("POST", "/api/studio/agents/{key}/evals/cases"),
+    ("PATCH", "/api/studio/agents/{key}/evals/cases/{case_id}"),
+    ("GET", "/api/studio/agents/{key}/conformidade/regras"),
+    ("GET", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
+    ("PUT", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
 }
 
 #: Prefixes of the product's business API. `/api/auth`, `/api/settings/api-tokens`
