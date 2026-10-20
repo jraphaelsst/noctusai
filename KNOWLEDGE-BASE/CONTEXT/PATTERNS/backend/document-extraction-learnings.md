@@ -32,6 +32,19 @@ Extraction is its own process, measured separately from contract generation (own
   financing contract read only 8 pages. A limit, if any, must fail loudly.
 - **A reading that cannot be trusted is routed to a human, never auto-applied.** Low legibility
   (see §2) → aviso + mandatory human confirmation at the review gate (owner decision 2026-09-28).
+- **A reading never overwrites an owner correction — it asks** (owner order 2026-10-20, deal 876: a
+  re-read of the ficha put back the typo "aposentanda" the owner had corrected). Predicate
+  `identidade_extracao_service.correcao_do_dono`: `<campo>_origem='manual'` + a value + NOT a phantom
+  `manual` (a form re-saved unchanged over a document, proven by its own audit row — that one stays
+  healable by a same-value read, the 2026-10-19 rule). A disagreeing reading opens a `pendente`
+  conflict with `protege_correcao=true` (SW migration 291): approve = the document's value with its
+  document provenance, reject = the correction stays and the proposal never returns
+  (`ja_rejeitado_pelo_usuario`). It never blocks contract generation (the owner's value prints);
+  the readiness report shows it as `correcoes_contestadas` with approve/reject. The resolver backfill
+  never decides one. Only exception kept: a value PROVEN invalid (check digit / another type's
+  identifier). The stamp is compliance-by-construction: `update_cliente` stamps `manual` server-side
+  only on a value that actually changed. Raw DB patches that leave a document `origem` are NOT
+  corrections — correct data through the app, or set `origem='manual'`, `documento_id=NULL`.
 - **Watch the vision request budget.** A page is re-rendered at lower DPI (400 → 150/100) to fit
   the ~5 MB request limit; dense pages lose accuracy at 100 DPI. Prefer a compressed image format
   over dropping resolution.

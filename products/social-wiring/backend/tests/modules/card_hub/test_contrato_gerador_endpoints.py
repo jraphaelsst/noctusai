@@ -553,7 +553,9 @@ class TestGeracao:
                              "modelo_derivado", "modelo_confere",
                              "modelo_automatico", "processo_legado", "modalidade_assinatura",
                              "revisao_final_unica", "switches", "faltando", "bloqueios",
-                             "avisos", "confirmacoes", "itens_revisao"}
+                             "avisos", "confirmacoes", "itens_revisao",
+                             "correcoes_contestadas"}
+        assert body["correcoes_contestadas"] == []
         # Owner decision 2026-09-30 — one final legal review is the default.
         assert body["revisao_final_unica"] is True
         # Migration 157 — a contract row with no stored modalidade is digital.

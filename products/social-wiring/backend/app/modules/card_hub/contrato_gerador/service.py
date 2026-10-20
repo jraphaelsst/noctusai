@@ -31,7 +31,9 @@ from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf,
 from app.modules.card_hub.contrato_gerador.lint import lint
 from app.modules.card_hub.contrato_gerador.politica import Politica
 from app.modules.card_hub.contrato_gerador.validacao_extracao import (
+    correcoes_contestadas,
     exigir_sem_pendentes,
+    listar_conflitos,
     pendentes_para_revisao,
 )
 
@@ -163,6 +165,12 @@ def obter_geracao(
         "confirmacoes": avaliacao.confirmacoes,
         # Migration 193 — what the final legal review will be pointed at.
         "itens_revisao": avaliacao.itens_revisao,
+        # Migration 291 (owner order 2026-10-20) — a document reading that
+        # contests a value the OWNER corrected. Never a block (the owner's
+        # value is what prints); a warning with approve/reject.
+        "correcoes_contestadas": correcoes_contestadas(
+            listar_conflitos(client, org_id, dados)
+        ),
     }
 
 

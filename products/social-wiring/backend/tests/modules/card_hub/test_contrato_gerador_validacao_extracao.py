@@ -478,7 +478,9 @@ class TestDecisoes:
 
         r = _decidir(client, ids, (chave, "aceito"))
         assert r.status_code == 200, r.text
-        assert r.json() == {"aplicadas": 1, "pendentes": [], "conflitos": []}
+        assert r.json() == {
+            "aplicadas": 1, "pendentes": [], "conflitos": [], "correcoes_contestadas": [],
+        }
 
         vendedor = _vendedor(scoped, ids)
         assert vendedor["cpf"] == cpf and vendedor["cpf_origem"] == "rg"
@@ -659,6 +661,24 @@ class TestConflitosAbertos:
         ]
         scoped.set_table_data("cliente_campo_conflitos", linhas)
         return cid
+
+    def test_a_protection_conflict_is_a_warning_not_a_block(self, client, scoped, fake_storage):
+        """Migration 291 (owner order 2026-10-20): a reading contesting a
+        value the OWNER corrected never refuses generation — the owner's
+        value is what prints — and is shown with approve/reject."""
+        ids = _seed_completo(scoped)
+        cid = self._conflito_cliente(scoped, ids)
+        linhas = [{**r, "protege_correcao": True} for r in _rows(scoped, "cliente_campo_conflitos")]
+        scoped.set_table_data("cliente_campo_conflitos", linhas)
+
+        corpo = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()
+        assert corpo["conflitos"] == []
+        [aviso] = corpo["correcoes_contestadas"]
+        assert aviso["id"] == cid and aviso["protege_correcao"] is True
+        assert aviso["mensagem"] == vx.MENSAGEM_CORRECAO_CONTESTADA
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert [c["id"] for c in geracao["correcoes_contestadas"]] == [cid]
+        assert _gerar(client, ids).status_code == 201
 
     def test_a_gate_bill_confirming_the_fichas_cep_is_not_listed(self, client, scoped):
         ids = _seed_completo(scoped)

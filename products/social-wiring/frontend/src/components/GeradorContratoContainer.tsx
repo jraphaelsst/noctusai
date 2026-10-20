@@ -31,6 +31,7 @@ import { toast } from "sonner";
 
 import GeradorContratoSection, { type GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import ValidacaoExtracaoDialog from "@/components/card/ValidacaoExtracaoDialog";
+import { useDecidirConflitoMutation } from "@/hooks/useCardHub";
 import { useCienciaPcen } from "@/hooks/useCertidoesPartes";
 import {
   ContratoGeracaoError,
@@ -90,6 +91,7 @@ export function GeradorContratoContainer({
   const query = useContratoGeracao(clienteId, contratoId, aberto, assinaturaDigitada || undefined);
   const { gerar } = useContratoMutations(clienteId);
   const ciencia = useCienciaPcen(clienteId);
+  const decidirConflito = useDecidirConflitoMutation();
   const assinaturaData = assinaturaDigitada || query.data?.assinatura_referencia || hoje();
   const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(null);
   const [avisosGerados, setAvisosGerados] = useState<string[] | null>(null);
@@ -204,6 +206,23 @@ export function GeradorContratoContainer({
     });
   }
 
+  /** Migration 291 — the owner decides a reading that contests their own
+   *  correction, through the ordinary conflict route (admin-gated there). */
+  function handleDecidirCorrecao(conflitoId: string, aceitar: boolean) {
+    decidirConflito.mutate(
+      { conflitoId, aceitar },
+      {
+        onSuccess: () => {
+          toast.success(aceitar ? "Valor do documento aplicado." : "Sua correção foi mantida.");
+          void query.refetch();
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Não foi possível registrar a decisão.");
+        },
+      },
+    );
+  }
+
   function handleSalvarManual(item: PendenteValidacao, valor: string) {
     if (!item.edicao) return;
     setSalvandoChave(item.chave);
@@ -239,6 +258,10 @@ export function GeradorContratoContainer({
         avisosGerados={avisosGerados}
         onIrPara={onIrPara}
         onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
+        onDecidirCorrecao={handleDecidirCorrecao}
+        decidindoCorrecaoId={
+          decidirConflito.isPending ? (decidirConflito.variables?.conflitoId ?? null) : null
+        }
       />
       <ValidacaoExtracaoDialog
         open={validacaoAberta}

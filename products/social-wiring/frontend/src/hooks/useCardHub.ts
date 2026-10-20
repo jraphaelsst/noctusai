@@ -1045,6 +1045,9 @@ export interface ConflitoCampo {
   origem_proposto: string;
   confianca_proposta: string | null;
   status: "pendente" | "aceito" | "rejeitado";
+  /** Migration 291 — `valor_anterior` is an OWNER CORRECTION this reading
+   *  contests (absent on an older backend ⇒ false). */
+  protege_correcao?: boolean;
   created_at: string;
 }
 

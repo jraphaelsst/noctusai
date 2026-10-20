@@ -12,11 +12,13 @@
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   CheckCircle2,
   Loader2,
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -30,6 +32,7 @@ import {
   MODELO_LABEL,
   type ContratoGeracaoError,
   type ContratoGeracaoStatus,
+  type CorrecaoContestada,
   type GeracaoAviso,
   type GeracaoBloqueio,
   type GeracaoFaltando,
@@ -585,6 +588,79 @@ export function ErroGeracaoDetalhes({
   );
 }
 
+/**
+ * Migration 291 (owner order 2026-10-20) — a document reading that contests a
+ * value the OWNER corrected. A warning, never a block: the owner's value is
+ * what the contract prints until they choose. Aprovar applies the document's
+ * value; Rejeitar keeps the correction (the backend never raises the same
+ * proposal again). Without `onDecidir` (no decide route wired) the rows are
+ * shown read-only.
+ */
+export function CorrecoesContestadas({
+  correcoes,
+  onDecidir,
+  decidindoId,
+}: {
+  correcoes: CorrecaoContestada[];
+  onDecidir?: (conflitoId: string, aceitar: boolean) => void;
+  decidindoId?: string | null;
+}) {
+  if (correcoes.length === 0) return null;
+  return (
+    <div
+      className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs"
+      data-testid="gerador-contrato-correcoes"
+    >
+      {correcoes.map((c) => {
+        const decidindo = decidindoId === c.id;
+        return (
+          <div key={c.id} className="space-y-1" data-testid={`gerador-contrato-correcao-${c.id}`}>
+            <p className="flex items-center gap-1 font-medium text-amber-800">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {c.mensagem}
+            </p>
+            <p>
+              <span className="font-medium">{c.rotulo}</span>{" "}
+              <span className="text-muted-foreground">({c.grupo})</span>
+            </p>
+            <p className="text-muted-foreground">
+              Sua correção: <span className="font-mono">{c.valor_atual ?? "—"}</span>
+              {" · "}
+              lido do documento: <span className="font-mono">{c.valor_proposto ?? "—"}</span>
+            </p>
+            {onDecidir && (
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={decidindo}
+                  onClick={() => onDecidir(c.id, true)}
+                  data-testid={`gerador-contrato-correcao-${c.id}-aprovar`}
+                >
+                  <Check className="mr-1 h-3.5 w-3.5" />
+                  Aprovar (usar o documento)
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={decidindo}
+                  onClick={() => onDecidir(c.id, false)}
+                  data-testid={`gerador-contrato-correcao-${c.id}-rejeitar`}
+                >
+                  <X className="mr-1 h-3.5 w-3.5" />
+                  Rejeitar (manter minha correção)
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface Props {
   status: ContratoGeracaoStatus | undefined;
   showSkeleton: boolean;
@@ -608,6 +684,11 @@ interface Props {
   /** Receita PCEN 2ª via: the operator's acknowledgment / support question
    *  (the container owns the mutation — this file stays presentational). */
   onCienciaPcen?: (resultadoId: string, acao: "entendi" | "duvida") => Promise<CienciaPcenResult>;
+  /** Migration 291 — decide a `correcoes_contestadas` row (the container
+   *  owns the mutation). */
+  onDecidirCorrecao?: (conflitoId: string, aceitar: boolean) => void;
+  /** The correction whose decision is in flight — its buttons wait. */
+  decidindoCorrecaoId?: string | null;
 }
 
 export default function GeradorContratoSection({
@@ -624,6 +705,8 @@ export default function GeradorContratoSection({
   avisosGerados,
   onIrPara,
   onCienciaPcen,
+  onDecidirCorrecao,
+  decidindoCorrecaoId,
 }: Props) {
   if (showSkeleton) {
     return (
@@ -732,6 +815,12 @@ export default function GeradorContratoSection({
             )}
           </>
         }
+      />
+
+      <CorrecoesContestadas
+        correcoes={status.correcoes_contestadas ?? []}
+        onDecidir={onDecidirCorrecao}
+        decidindoId={decidindoCorrecaoId}
       />
 
       <ItensRevisaoLista

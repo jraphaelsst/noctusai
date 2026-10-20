@@ -1142,6 +1142,9 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                 "valor_atual": _texto(r.get("valor_anterior")),
                 "valor_proposto": _texto(r.get("valor_proposto")),
                 "origem_proposto": r.get("origem_proposto"),
+                # Migration 291 — the on-file value is an OWNER CORRECTION
+                # this reading contests: a warning, not a block.
+                "protege_correcao": bool(r.get("protege_correcao")),
                 "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
             })
 
@@ -1239,6 +1242,31 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
     return saida
 
 
+#: pt-BR line every protection conflict carries (owner order 2026-10-20).
+MENSAGEM_CORRECAO_CONTESTADA = (
+    "A leitura do documento sugere outro valor para um campo que você corrigiu."
+)
+
+
+def bloqueantes(conflitos: list[dict]) -> list[dict]:
+    """The conflicts that REFUSE generation: every open one except a
+    protection conflict (`protege_correcao`, migration 291) — there the
+    owner's own correction is the value on file and stands until they
+    decide, so the contract prints it; the reading is a warning
+    (`correcoes_contestadas`), never a block (owner order 2026-10-20)."""
+    return [c for c in conflitos if not c.get("protege_correcao")]
+
+
+def correcoes_contestadas(conflitos: list[dict]) -> list[dict]:
+    """The protection conflicts of `listar_conflitos` — each with the pt-BR
+    `mensagem` the readiness report shows beside approve/reject."""
+    return [
+        {**c, "mensagem": MENSAGEM_CORRECAO_CONTESTADA}
+        for c in conflitos
+        if c.get("protege_correcao")
+    ]
+
+
 def listar_pendentes(
     client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
 ) -> list[dict]:
@@ -1253,11 +1281,14 @@ def listar_pendentes(
 def situacao(
     client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
 ) -> dict:
-    """The GET answer: `{pendentes, conflitos}` — generation may proceed iff
-    both are empty."""
+    """The GET answer: `{pendentes, conflitos, correcoes_contestadas}` —
+    generation may proceed iff the first two are empty; the third is the
+    owner-correction warnings (migration 291), which never block."""
+    todos = listar_conflitos(client, org_id, dados)
     return {
         "pendentes": listar_pendentes(client, org_id, dados, usuario_id=usuario_id),
-        "conflitos": listar_conflitos(client, org_id, dados),
+        "conflitos": bloqueantes(todos),
+        "correcoes_contestadas": correcoes_contestadas(todos),
     }
 
 
@@ -1808,7 +1839,7 @@ def pendentes_para_revisao(
     lives on) — one row per fact, see `_agrupar`. A `corroborado` value is
     listed for transparency but is NOT pending (`_pendentes_brutos` skips
     it), so the approval leaves it as it is."""
-    conflitos = listar_conflitos(client, org_id, dados)
+    conflitos = bloqueantes(listar_conflitos(client, org_id, dados))
     if conflitos:
         raise ExtracaoPendenteValidacao([], conflitos)
     coleta = coletar(client, org_id, dados, usuario_id)
@@ -1996,6 +2027,7 @@ def confirmar_por_revisao(
 
 __all__ = [
     "Alvo",
+    "MENSAGEM_CORRECAO_CONTESTADA",
     "CAMPOS_CLIENTE",
     "CAMPOS_IMOVEL",
     "CAMPOS_IMOVEL_PERMUTA",
@@ -2013,9 +2045,11 @@ __all__ = [
     "SECAO_DERIVADO",
     "SECAO_EXTRAIDO",
     "ValidacaoDesatualizada",
+    "bloqueantes",
     "chave",
     "coletar",
     "confirmar_por_revisao",
+    "correcoes_contestadas",
     "decidir",
     "documentos_de_origem",
     "exigir_sem_pendentes",

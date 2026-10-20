@@ -24,6 +24,21 @@ vi.mock("@/hooks/useCertidoesPartes", () => ({
   useCienciaPcen: () => ({ mutateAsync: mockCienciaMutateAsync }),
 }));
 
+// Migration 291 — the owner decides a contested correction through the
+// ordinary cliente conflict route; only the mutation is replaced here.
+const mockDecidirConflitoMutate = vi.fn();
+vi.mock("@/hooks/useCardHub", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useCardHub")>("@/hooks/useCardHub");
+  return {
+    ...actual,
+    useDecidirConflitoMutation: () => ({
+      mutate: mockDecidirConflitoMutate,
+      isPending: false,
+      variables: undefined,
+    }),
+  };
+});
+
 const mockUseContratoGeracao = vi.fn();
 const mockGerarMutate = vi.fn();
 const mockRefetch = vi.fn();
@@ -410,5 +425,57 @@ describe("GeradorContratoContainer — one final legal review (owner decision 20
     expect(mockVerificarMutate).toHaveBeenCalledTimes(1);
     expect(mockGerarMutate).not.toHaveBeenCalled();
     expect(screen.getByTestId("validacao-item-cliente:v1:cpf")).toBeTruthy();
+  });
+});
+
+describe("GeradorContratoContainer — a reading contests the owner's correction (migration 291)", () => {
+  const CORRECAO = {
+    id: "k1",
+    entidade: "cliente",
+    entidade_id: "v1",
+    campo: "profissao",
+    grupo: "Cilene (vendedora)",
+    rotulo: "Profissão",
+    valor_atual: "aposentada",
+    valor_proposto: "APOSENTANDA",
+    origem_proposto: "ficha_cadastral",
+    protege_correcao: true as const,
+    mensagem: "A leitura do documento sugere outro valor para um campo que você corrigiu.",
+  };
+
+  beforeEach(() => {
+    mockDecidirConflitoMutate.mockReset();
+    mockUseContratoGeracao.mockReturnValue({
+      data: statusFixture({ correcoes_contestadas: [CORRECAO] }),
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      refetch: mockRefetch,
+    });
+  });
+
+  it("shows the warning without blocking generation", async () => {
+    const { screen } = await render();
+    expect(screen.getByTestId("gerador-contrato-correcao-k1").textContent).toContain(
+      "A leitura do documento sugere outro valor para um campo que você corrigiu.",
+    );
+    expect(screen.getByTestId("gerador-contrato-pronto")).toBeTruthy();
+    expect((screen.getByTestId("gerador-contrato-btn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Rejeitar keeps the correction through the conflict route and refreshes the report", async () => {
+    const { screen, fireEvent } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-correcao-k1-rejeitar"));
+    expect(mockDecidirConflitoMutate).toHaveBeenCalledTimes(1);
+    const [vars, opts] = mockDecidirConflitoMutate.mock.calls[0];
+    expect(vars).toEqual({ conflitoId: "k1", aceitar: false });
+    opts.onSuccess();
+    expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("Aprovar applies the document's value", async () => {
+    const { screen, fireEvent } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-correcao-k1-aprovar"));
+    expect(mockDecidirConflitoMutate.mock.calls[0][0]).toEqual({ conflitoId: "k1", aceitar: true });
   });
 });

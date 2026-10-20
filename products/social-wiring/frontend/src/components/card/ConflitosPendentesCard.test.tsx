@@ -55,6 +55,40 @@ describe("ConflitosPendentesCard", () => {
     expect(screen.getByText(/Solteiro\(a\)/)).toBeTruthy();
   });
 
+  it("renders a protection conflict as a warning over the owner's correction", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const onDecidir = vi.fn();
+    const correcao = {
+      ...PENDENTE,
+      id: "c9",
+      campo: "profissao",
+      valor_anterior: "aposentada",
+      origem_anterior: "manual",
+      valor_proposto: "APOSENTANDA",
+      origem_proposto: "ficha_cadastral",
+      protege_correcao: true,
+    };
+    render(<ConflitosPendentesCard conflitos={[correcao]} onDecidir={onDecidir} isAdmin />);
+    expect(screen.getByText("Profissão")).toBeTruthy();
+    expect(screen.getByTestId("conflitos-pendentes-item-c9-correcao").textContent).toBe("sua correção");
+    expect(
+      screen.getByText("A leitura do documento sugere outro valor para um campo que você corrigiu."),
+    ).toBeTruthy();
+    expect(screen.getByText(/Sua correção:/).textContent).toContain("aposentada");
+    expect(screen.getByText(/Sua correção:/).textContent).toContain("APOSENTANDA");
+    fireEvent.click(screen.getByTestId("conflitos-pendentes-item-c9-rejeitar"));
+    expect(onDecidir).toHaveBeenCalledWith("c9", false);
+    fireEvent.click(screen.getByTestId("conflitos-pendentes-item-c9-aprovar"));
+    expect(onDecidir).toHaveBeenCalledWith("c9", true);
+  });
+
+  it("an ordinary conflict carries no correction badge", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ConflitosPendentesCard conflitos={[PENDENTE]} onDecidir={vi.fn()} isAdmin />);
+    expect(screen.queryByTestId("conflitos-pendentes-item-c1-correcao")).toBeNull();
+    expect(screen.queryByText(/Sua correção:/)).toBeNull();
+  });
+
   it("falls back to the raw campo key for an unlabeled field", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(

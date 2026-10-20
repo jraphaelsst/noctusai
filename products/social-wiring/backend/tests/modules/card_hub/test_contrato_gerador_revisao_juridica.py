@@ -191,6 +191,20 @@ class TestGerarComRevisaoFinal:
         assert len(erro["details"]["conflitos"]) == 1
         assert _rows(scoped, "atendimento_contrato_versoes") == []
 
+    def test_a_protection_conflict_does_not_refuse(self, client, scoped, fake_storage):
+        """Migration 291: a reading contesting an OWNER correction is a
+        warning — the owner's value is what the contract prints."""
+        ids = _seed_completo(scoped)
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": ids["vendedor"], "campo": "cpf",
+            "valor_anterior": "111", "origem_anterior": "manual", "valor_proposto": "222",
+            "origem_proposto": "rg", "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
+            "fonte_id": str(uuid4()), "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "protege_correcao": True,
+        }])
+        r = _gerar(client, ids)
+        assert r.status_code == 201, r.text
+
     def test_the_per_field_mode_still_refuses_on_pending(self, client, scoped, fake_storage, modo_por_campo):
         ids = _seed_completo(scoped)
         _cpf_extraido(scoped, ids)

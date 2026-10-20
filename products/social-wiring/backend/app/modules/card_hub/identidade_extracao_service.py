@@ -966,6 +966,7 @@ def _registrar_conflito(
     confianca_proposta: Optional[str],
     fonte_tabela: Optional[str],
     fonte_id: Optional[UUID],
+    protege_correcao: bool = False,
 ) -> Optional[dict]:
     """Migration 138 (owner directive, 2026-09-18, supersedes part of
     097/110's original design). A `sobrescreve=False` field that DISAGREES
@@ -998,6 +999,7 @@ def _registrar_conflito(
         fonte_id=fonte_id,
         igual=lambda a, b: _mesmo_valor_conflito(chave, a, b),
         suprimir_ja_mostrado=True,
+        protege_correcao=protege_correcao,
     )
 
 
@@ -1212,9 +1214,29 @@ def _origem_antes_do_reenvio(
     provenance back (value untouched, audited). Anything else — a confirmed
     value, a real edit, an un-logged typed value, a re-save whose value
     moved since — is a human's and stays `manual`."""
-    if atual.get(campo.origem) != "manual" or not _vazio(atual.get(campo.confirmado_em)):
+    return _origem_apagada_por_reenvio(
+        client, org_id, cliente_id, campo.item_key,
+        origem_atual=atual.get(campo.origem),
+        confirmado_em_atual=atual.get(campo.confirmado_em),
+        presente=atual.get(campo.item_key),
+    )
+
+
+def _origem_apagada_por_reenvio(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    item_key: str,
+    *,
+    origem_atual: Optional[str],
+    confirmado_em_atual: Any,
+    presente: Any,
+) -> Optional[str]:
+    """`_origem_antes_do_reenvio` over bare values — shared by the scalar
+    fields and the `endereco` group (`presente` is then the group's JSON,
+    compared by `_mesmo_valor_conflito`)."""
+    if origem_atual != "manual" or not _vazio(confirmado_em_atual):
         return None
-    presente = atual.get(campo.item_key)
     if _vazio(presente):
         return None
     try:
@@ -1223,7 +1245,7 @@ def _origem_antes_do_reenvio(
             .select("valor_anterior,valor_proposto,origem_anterior,origem_proposto,status,created_at")
             .eq("org_id", str(org_id))
             .eq("cliente_id", str(cliente_id))
-            .eq("campo", campo.item_key)
+            .eq("campo", item_key)
             .eq("origem_proposto", "manual")
             .order("created_at", desc=True)
             .limit(1)
@@ -1232,7 +1254,7 @@ def _origem_antes_do_reenvio(
     except Exception as exc:  # noqa: BLE001 — no proof read means no heal, never a guess
         logger.warning(
             "reenvio sem mudança: histórico de %s do cliente %s ilegível: %s",
-            campo.item_key, cliente_id, exc,
+            item_key, cliente_id, exc,
         )
         return None
     if not rows or rows[0].get("status") != "aceito":
@@ -1242,11 +1264,128 @@ def _origem_antes_do_reenvio(
     if not anterior or anterior == "manual":
         return None
     if not (
-        _mesmo_valor(campo.item_key, linha.get("valor_anterior"), linha.get("valor_proposto"))
-        and _mesmo_valor(campo.item_key, linha.get("valor_proposto"), presente)
+        _mesmo_valor_conflito(item_key, linha.get("valor_anterior"), linha.get("valor_proposto"))
+        and _mesmo_valor_conflito(item_key, linha.get("valor_proposto"), presente)
     ):
         return None
     return str(anterior)
+
+
+#: `Decisao.regra` when a reading meets an OWNER CORRECTION (`correcao_do_dono`).
+REGRA_CORRECAO_DO_DONO = "correcao_do_dono"
+
+
+def correcao_do_dono(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    item_key: str,
+    *,
+    origem_atual: Optional[str],
+    confirmado_em_atual: Any,
+    presente: Any,
+) -> bool:
+    """🔴 Is the value on file a GENUINE OWNER CORRECTION? (owner order
+    2026-10-20, prod deal 876: a re-read of the ficha put back the typo
+    "aposentanda" the owner had corrected to "aposentada".)
+
+    True iff a person TYPED it — `<campo>_origem = 'manual'` (the stamp
+    `clientes_service.update_cliente` writes, server-side, on every hand
+    edit that actually CHANGES a value; an unchanged re-send is dropped
+    before the stamp since 2026-10-19) — the value is not empty (a typed-then
+    -cleared field is `_limpo_por_humano`'s, a different rule), and it is not
+    a phantom `manual`: a form re-saved unchanged over a document, which the
+    audit trail proves (`_origem_apagada_por_reenvio`) and which stays
+    healable by a same-value reading. Every other `manual` value is a human
+    choice the documents did not make — a reading that disagrees with it
+    opens a protection conflict (`protege_correcao`), never a replace."""
+    if origem_atual != "manual" or _vazio(presente):
+        return False
+    return _origem_apagada_por_reenvio(
+        client, org_id, cliente_id, item_key,
+        origem_atual=origem_atual,
+        confirmado_em_atual=confirmado_em_atual,
+        presente=presente,
+    ) is None
+
+
+def _proteger_correcao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    item_key: str,
+    *,
+    valor_anterior: Any,
+    valor_proposto: Any,
+    origem_proposto: str,
+    confianca: Optional[str],
+    rotulo: Any,
+    fonte_tabela: Optional[str],
+    fonte_id: Optional[Any],
+    igual: Optional[Any] = None,
+) -> Optional[dict]:
+    """A reading disagrees with an OWNER CORRECTION (`correcao_do_dono`) —
+    the value on file is NEVER replaced. Either:
+
+    - the owner already REJECTED exactly this proposal for this field (any
+      document, any re-read) — nothing, not even a row: the question was
+      answered (`campo_conflitos.ja_rejeitado_pelo_usuario`);
+    - the reading cannot contest anything (baixa/nenhuma confidence, or an
+      inference) — the owner's value stands, audited as an automatic
+      decision for the correction (`REGRA_CORRECAO_DO_DONO`), no warning;
+    - otherwise a `pendente` conflict flagged `protege_correcao` — the
+      warning the owner approves (the document's value replaces theirs, with
+      its document provenance — `resolver_conflito`) or rejects (theirs
+      stays, and this proposal is never raised again).
+
+    Returns the newly-opened conflict (for the caller to notify) or None."""
+    comparar = igual or (lambda proposto: _mesmo_valor_conflito(item_key, proposto, valor_proposto))
+    if campo_conflitos.ja_rejeitado_pelo_usuario(
+        client, campo_conflitos.CLIENTE, org_id, cliente_id, item_key, valor_proposto,
+        igual=comparar,
+    ):
+        logger.info(
+            "%s do cliente %s: correção do dono já mantida contra esta leitura — "
+            "ignorada (sem novo conflito)", item_key, cliente_id,
+        )
+        return None
+    if divergencia_resolucao.confianca_baixa(confianca) or (
+        rotulo and str(rotulo).startswith("inferido")
+    ):
+        campo_conflitos.registrar_decisao_automatica(
+            client, campo_conflitos.CLIENTE, org_id, cliente_id, item_key,
+            valor_anterior=valor_anterior,
+            origem_anterior="manual",
+            valor_proposto=valor_proposto,
+            origem_proposto=origem_proposto,
+            confianca_proposta=confianca,
+            fonte_tabela=fonte_tabela,
+            fonte_id=fonte_id,
+            decisao=divergencia_resolucao.Decisao(
+                vencedor="atual",
+                regra=REGRA_CORRECAO_DO_DONO,
+                motivo=(
+                    "O valor em registro é uma correção do dono; a leitura "
+                    f"({confianca or 'sem confiança'}"
+                    f"{', inferida' if rotulo and str(rotulo).startswith('inferido') else ''})"
+                    " não a contesta."
+                ),
+                requer_humano=False,
+            ),
+            evidencia_ids=[i for i in (fonte_id,) if i],
+        )
+        return None
+    return _registrar_conflito(
+        client, org_id, cliente_id, item_key,
+        valor_anterior=valor_anterior,
+        origem_anterior="manual",
+        valor_proposto=valor_proposto,
+        origem_proposto=origem_proposto,
+        confianca_proposta=confianca,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+        protege_correcao=True,
+    )
 
 
 def _pode_retomar_proveniencia(
@@ -1797,6 +1936,34 @@ def aplicar_campos_ao_cliente(
                             "%s do cliente %s: leitura já rejeitada por um humano — "
                             "ignorada (sem novo conflito)", campo.item_key, cliente_id,
                         )
+                        continue
+                    if correcao_do_dono(
+                        client, org_id, cliente_id, campo.item_key,
+                        origem_atual=atual.get(campo.origem),
+                        confirmado_em_atual=atual.get(campo.confirmado_em),
+                        presente=presente,
+                    ) and not divergencia_resolucao.prova_objetiva_contra_atual(
+                        campo.item_key, presente, valor, uf=uf_rg, cpf_proprio=cpf_proprio,
+                    ):
+                        # 🔴 OWNER CORRECTION (owner order 2026-10-20, deal
+                        # 876): never replaced by a reading — a warning the
+                        # owner approves or rejects (`_proteger_correcao`).
+                        # The one exception stays the 2026-09-29 pin: a value
+                        # PROVEN invalid (failing check digit / another
+                        # type's identifier) is no correction to protect —
+                        # the resolver below replaces it, audited.
+                        novo = _proteger_correcao(
+                            client, org_id, cliente_id, campo.item_key,
+                            valor_anterior=presente,
+                            valor_proposto=valor,
+                            origem_proposto=origem,
+                            confianca=confianca,
+                            rotulo=_rotulo,
+                            fonte_tabela=fonte_tabela,
+                            fonte_id=fonte_id,
+                        )
+                        if novo is not None:
+                            conflitos.append(novo)
                         continue
                     if _fonte_mais_autoritativa(
                         campo, atual, origem, _rotulo
@@ -2746,6 +2913,25 @@ def aplicar_endereco_ao_cliente(
             return True, None
         if _mesmo_endereco(atual, partes):
             return False, None
+        if correcao_do_dono(
+            client, org_id, cliente_id, CAMPO_ENDERECO,
+            origem_atual=atual.get("endereco_origem"),
+            confirmado_em_atual=atual.get("endereco_confirmado_em"),
+            presente=_endereco_json(anterior),
+        ):
+            # 🔴 OWNER CORRECTION (owner order 2026-10-20): the address the
+            # owner typed is never replaced by a reading — a warning they
+            # approve or reject, same as every scalar field.
+            return False, _proteger_correcao(
+                client, org_id, cliente_id, CAMPO_ENDERECO,
+                valor_anterior=_endereco_json(anterior),
+                valor_proposto=_endereco_json(partes, titular=titular_documento),
+                origem_proposto=origem,
+                confianca=confianca,
+                rotulo=None,
+                fonte_tabela=DOCUMENTOS_TABLE if documento_id else None,
+                fonte_id=documento_id,
+            )
         if campo_conflitos.mesmo_documento_pendente(
             origem_atual=atual.get("endereco_origem"),
             confirmado_em_atual=atual.get("endereco_confirmado_em"),
@@ -3938,6 +4124,11 @@ def backfill_resolver_conflitos_pendentes(
     for row in pendentes:
         campo_chave = row["campo"]
         campo = CAMPO_POR_CHAVE.get(campo_chave)
+        if row.get("protege_correcao"):
+            # 🔴 An OWNER CORRECTION a reading contests (migration 291): only
+            # the owner decides it — never this resolver.
+            ainda_pendentes.append(row)
+            continue
         # F1 — a conflict against an EMPTY field is settled by filling it,
         # before any divergence rule runs (there is no divergence).
         if _preencher_conflito_vazio(

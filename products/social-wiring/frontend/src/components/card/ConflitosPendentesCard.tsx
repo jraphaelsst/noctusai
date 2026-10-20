@@ -32,7 +32,7 @@
  * cliente call sites pass none of them and render exactly as before.
  */
 import type { ReactNode } from "react";
-import { Check, Clock3, X } from "lucide-react";
+import { AlertTriangle, Check, Clock3, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,15 @@ const CAMPO_ROTULOS: Record<string, string> = {
   regime_bens: "Regime de bens",
   data_casamento: "Data de casamento",
   nacionalidade: "Nacionalidade",
+  profissao: "Profissão",
+  email: "E-mail",
+  endereco: "Endereço",
 };
+
+/** pt-BR line on a protection conflict (migration 291, owner order
+ *  2026-10-20) — the backend's `MENSAGEM_CORRECAO_CONTESTADA`. */
+export const MENSAGEM_CORRECAO_CONTESTADA =
+  "A leitura do documento sugere outro valor para um campo que você corrigiu.";
 
 function rotuloCampo(campo: string): string {
   return CAMPO_ROTULOS[campo] ?? campo;
@@ -91,6 +99,10 @@ export interface ConflitoPendenteBase {
   origem_proposto: string;
   /** cliente table only — read when `mostrarCliente` is set. */
   cliente_id?: string;
+  /** Migration 291 (cliente table) — `valor_anterior` is the OWNER's own
+   *  correction this reading contests: Aprovar applies the document's value,
+   *  Rejeitar keeps the correction (and the proposal never comes back). */
+  protege_correcao?: boolean;
 }
 
 /** Default value rendering: identifiers punctuated (the cliente fields),
@@ -164,28 +176,62 @@ export function ConflitosPendentesCard<T extends ConflitoPendenteBase = Conflito
         {pendentes.map((c) => {
           const deciding = decidingId === c.id;
           const itemId = idDoItem(c.id);
+          const correcao = c.protege_correcao === true;
           return (
             <div
               key={c.id}
-              className="rounded-md border p-3 text-sm"
+              className={
+                correcao
+                  ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"
+                  : "rounded-md border p-3 text-sm"
+              }
               data-testid={itemId}
             >
               <div className="mb-1 flex items-center justify-between gap-2">
                 <span className="font-medium">{rotular(c.campo)}</span>
-                <Badge variant="outline" className="text-[11px]">
-                  {c.origem_proposto === "manual" ? "edição manual" : "extração"}
-                </Badge>
+                {correcao ? (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-400 text-[11px] text-amber-800"
+                    data-testid={`${itemId}-correcao`}
+                  >
+                    sua correção
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[11px]">
+                    {c.origem_proposto === "manual" ? "edição manual" : "extração"}
+                  </Badge>
+                )}
               </div>
               {mostrarCliente && c.cliente_id && (
                 <p className="mb-1 text-xs text-muted-foreground">
                   {nomeDoCliente?.(c.cliente_id) ?? c.cliente_id}
                 </p>
               )}
-              <p className="text-xs text-muted-foreground">
-                Documento/atual: <span className="font-mono">{formatarValor(c.campo, c.valor_anterior)}</span>
-                {" → "}
-                proposto: <span className="font-mono">{formatarValor(c.campo, c.valor_proposto)}</span>
-              </p>
+              {correcao ? (
+                <>
+                  <p className="mb-1 flex items-center gap-1 text-xs text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    {MENSAGEM_CORRECAO_CONTESTADA}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Sua correção: <span className="font-mono">{formatarValor(c.campo, c.valor_anterior)}</span>
+                    {" · "}
+                    lido do documento: <span className="font-mono">{formatarValor(c.campo, c.valor_proposto)}</span>
+                  </p>
+                  {isAdmin && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Aprovar usa o valor do documento; Rejeitar mantém a sua correção.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Documento/atual: <span className="font-mono">{formatarValor(c.campo, c.valor_anterior)}</span>
+                  {" → "}
+                  proposto: <span className="font-mono">{formatarValor(c.campo, c.valor_proposto)}</span>
+                </p>
+              )}
               {renderDetalhe?.(c)}
               {isAdmin && (
                 <div className="mt-2 flex gap-2">

@@ -314,6 +314,25 @@ export interface GeracaoConfirmacao {
   acoes: { entendi: string; duvida: string };
 }
 
+/** Migration 291 (owner order 2026-10-20) — a document reading that contests
+ *  a value the OWNER corrected. Never blocks generation (the owner's value is
+ *  what prints); shown as a warning with Aprovar (use the document's value)
+ *  / Rejeitar (keep the correction — the same proposal is never raised
+ *  again). Decided through the ordinary `cliente_campo_conflitos` route. */
+export interface CorrecaoContestada {
+  id: string;
+  entidade: string;
+  entidade_id: string;
+  campo: string;
+  grupo: string;
+  rotulo: string;
+  valor_atual: string | null;
+  valor_proposto: string | null;
+  origem_proposto: string | null;
+  protege_correcao: true;
+  mensagem: string;
+}
+
 export interface ContratoGeracaoStatus {
   contrato_id: string;
   pronto: boolean;
@@ -351,6 +370,8 @@ export interface ContratoGeracaoStatus {
   /** Migration 193 — the wording the final legal review will be pointed at
    *  (absent on a pre-193 backend ⇒ none). */
   itens_revisao?: ItemRevisaoJuridica[];
+  /** Migration 291 — absent on an older backend ⇒ none. */
+  correcoes_contestadas?: CorrecaoContestada[];
 }
 
 export interface GerarContratoInput {

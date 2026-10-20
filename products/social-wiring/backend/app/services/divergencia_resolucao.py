@@ -656,6 +656,34 @@ _HUMANO_PROTEGIDO_MOTIVO = (
 )
 
 
+def prova_objetiva_contra_atual(
+    campo: str,
+    valor_atual: Any,
+    valor_proposto: Any,
+    *,
+    uf: Optional[str] = None,
+    cpf_proprio: Any = None,
+) -> Optional[str]:
+    """The `REGRAS_PROVA_OBJETIVA` rule that proves the ON-FILE value is not
+    a valid value of `campo` at all while the proposal is (a failing check
+    digit, a valid identifier of another type), else None — the same two
+    checks `_resolver` runs first, exposed so an owner-correction guard
+    (`identidade_extracao_service.correcao_do_dono`, migration 291) keeps
+    the one exception pinned since 2026-09-29: a value proven invalid is not
+    protected, whoever typed it."""
+    tipo_atual = _tipo_trocado(campo, valor_atual, uf=uf, cpf_proprio=cpf_proprio)
+    tipo_proposto = _tipo_trocado(campo, valor_proposto, uf=uf, cpf_proprio=cpf_proprio)
+    if tipo_atual and not tipo_proposto:
+        return "tipo_detectado"
+    if tipo_proposto:
+        return None
+    ok_atual = _validar(campo, valor_atual, uf=uf)
+    ok_proposto = _validar(campo, valor_proposto, uf=uf)
+    if ok_atual is False and ok_proposto is not False:
+        return "validador"
+    return None
+
+
 def _protegido(regra: str) -> Decisao:
     return Decisao(
         vencedor=None, regra="valor_humano",

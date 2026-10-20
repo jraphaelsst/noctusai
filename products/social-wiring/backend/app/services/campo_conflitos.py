@@ -161,11 +161,16 @@ class ConflictTable:
     table: str
     owner_col: str
     has_documento_id_proposto: bool = False
+    #: Migration 291 — `protege_correcao` (only `cliente_campo_conflitos`):
+    #: the on-file value is an OWNER CORRECTION a reading contests.
+    has_protege_correcao: bool = False
 
 
 #: The three registered surfaces, so a caller need not restate the table
 #: name / owner column at every call site.
-CLIENTE = ConflictTable(table="cliente_campo_conflitos", owner_col="cliente_id")
+CLIENTE = ConflictTable(
+    table="cliente_campo_conflitos", owner_col="cliente_id", has_protege_correcao=True
+)
 IMOVEL = ConflictTable(
     table="imovel_campo_conflitos", owner_col="codigo", has_documento_id_proposto=True
 )
@@ -303,6 +308,7 @@ def registrar_conflito(
     documento_id_proposto: Optional[Any] = None,
     igual: Optional[Callable[[Any, Any], bool]] = None,
     suprimir_ja_mostrado: bool = False,
+    protege_correcao: bool = False,
 ) -> Optional[dict]:
     """Open a conflict, skip when one ALREADY PENDING proposes the exact
     same `valor_proposto` (a true duplicate — nothing new to tell a human),
@@ -316,10 +322,24 @@ def registrar_conflito(
     proposto` — passing it for `CLIENTE`/`EMPRESA` is silently ignored
     rather than refused, so a generic caller (a future field shared across
     surfaces) does not need to branch on which table it is writing.
+
+    `protege_correcao` (migration 291, `CLIENTE` only — ignored elsewhere
+    like `documento_id_proposto`): the on-file value is an OWNER CORRECTION
+    (`identidade_extracao_service.correcao_do_dono`). A pending duplicate
+    that predates the correction (same proposal, flag still false) is
+    upgraded in place — the question did not change, what is at stake did.
     """
     comparar = igual or (lambda a, b: str(a) == str(b))
     existente = conflito_pendente_existente(client, table, org_id, owner, campo)
     if existente is not None and comparar(existente.get("valor_proposto"), valor_proposto):
+        if (
+            protege_correcao
+            and table.has_protege_correcao
+            and not existente.get("protege_correcao")
+        ):
+            _t(client, table.table).update({"protege_correcao": True}).eq(
+                "id", existente["id"]
+            ).execute()
         return None
     if suprimir_ja_mostrado and _ja_mostrado(
         client, table, org_id, owner, campo, valor_proposto, comparar
@@ -361,6 +381,8 @@ def registrar_conflito(
         linha["documento_id_proposto"] = (
             str(documento_id_proposto) if documento_id_proposto else None
         )
+    if table.has_protege_correcao:
+        linha["protege_correcao"] = bool(protege_correcao)
     _t(client, table.table).insert(linha).execute()
     return linha
 

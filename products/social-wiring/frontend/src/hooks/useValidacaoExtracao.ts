@@ -75,13 +75,18 @@ export interface ConflitoExtracao {
   valor_atual: string | null;
   valor_proposto: string | null;
   origem_proposto: string | null;
+  /** Migration 291 — `true` only on a `correcoes_contestadas` row. */
+  protege_correcao?: boolean;
   link: { rota: string; rotulo: string };
 }
 
-/** Everything that blocks generation — the GET answer. */
+/** Everything that blocks generation — the GET answer. `correcoes_contestadas`
+ *  (migration 291) are warnings over the owner's own corrections — they
+ *  never block, and are decided from the readiness section. */
 export interface SituacaoValidacao {
   pendentes: PendenteValidacao[];
   conflitos: ConflitoExtracao[];
+  correcoes_contestadas?: ConflitoExtracao[];
 }
 
 export interface DecisaoInput {
