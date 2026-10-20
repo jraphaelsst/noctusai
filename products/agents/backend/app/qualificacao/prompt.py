@@ -29,5 +29,5 @@ def qualificacao_data(v: VersaoPadrao) -> QualificacaoData:
             for e in v.estagios
         ),
         minimo_para_ofertar=tuple(criterios_referenciados(v.parametros.minimo_para_ofertar)),
-        identidade=tuple((c.chave, c.descricao_modelo) for c in ativos if c.tipo == "identificacao"),
+        identidade=tuple((c.chave, c.rotulo, c.descricao_modelo) for c in ativos if c.tipo == "identificacao"),
     )

@@ -214,6 +214,19 @@ def _inline(node: Any, defs: Mapping[str, Any]) -> Any:
     return {k: _inline(v, defs) for k, v in node.items() if k not in _STRIP and k != "$defs"}
 
 
+def _valores_enum(sub: Mapping[str, Any]) -> list[Any]:
+    """The enum values of a property, also when it is OPTIONAL: pydantic renders ``Literal[...] | None`` as
+    ``anyOf: [{enum: [...]}, {type: null}]``, where a bare ``sub["enum"]`` sees nothing and the labels of the
+    values would silently never reach the model."""
+    if sub.get("enum"):
+        return list(sub["enum"])
+    out: list[Any] = []
+    for ramo in (sub.get("anyOf") or sub.get("oneOf") or []):
+        if isinstance(ramo, Mapping):
+            out += [v for v in (ramo.get("enum") or []) if v not in out]
+    return out
+
+
 def enriquecer_schema(node: Any, parametros: Mapping[str, Any], caminho: str = "") -> None:
     """Write the row's parameter descriptions into the schema: ``parametros["a"]`` for property ``a``,
     ``parametros["a.b"]`` for ``b`` inside ``a``'s items; each enum value contributes
@@ -227,7 +240,7 @@ def enriquecer_schema(node: Any, parametros: Mapping[str, Any], caminho: str = "
         base = parametros.get(cam)
         if isinstance(base, str) and base.strip():
             partes.append(base.strip())
-        valores = sub.get("enum") or []
+        valores = _valores_enum(sub)
         rotulos = [f"{v}: {parametros[f'{cam}.{v}'].strip()}" for v in valores
                    if isinstance(parametros.get(f"{cam}.{v}"), str) and parametros[f"{cam}.{v}"].strip()]
         if rotulos:

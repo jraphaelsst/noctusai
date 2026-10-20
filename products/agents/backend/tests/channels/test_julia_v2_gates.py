@@ -113,6 +113,13 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
         chan.turn(turn_body(ids=["x3"]))
         assert "oferecer_imoveis" in tools_offered(chan.provider)
 
+    def test_an_optional_enum_parameter_carries_its_value_labels_too(self):
+        """``Literal[...] | None`` is ``anyOf: [{enum}, {null}]`` in the schema; its labels must still be rendered
+        (A-polish #5) -- before, only a REQUIRED enum got them."""
+        props = schema_de("captacao", {"operacao": "operação", "operacao.venda": "quer vender",
+                                       "operacao.aluguel": "quer alugar"})["properties"]
+        assert props["operacao"]["description"] == "operação venda: quer vender; aluguel: quer alugar"
+
     def test_the_model_cannot_name_an_org_or_a_lead(self, chan):
         chan.seed_agent()
         for nome, d in TOOLS.items():

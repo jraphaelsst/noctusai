@@ -288,8 +288,9 @@ class QualificacaoData:
     estagios: tuple[EstagioData, ...] = ()
     #: Criteria chaves required before the agent may offer properties (data, not code).
     minimo_para_ofertar: tuple[str, ...] = ()
-    #: ``(criterio chave, momento)`` — the identity requirement and WHEN it is asked (data).
-    identidade: tuple[tuple[str, str], ...] = ()
+    #: ``(criterio chave, rotulo, momento)`` — the identity requirement, its LABEL (what the model reads; the
+    #: identity criteria are not in ``criterios``, so the label travels here) and WHEN it is asked (data).
+    identidade: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)

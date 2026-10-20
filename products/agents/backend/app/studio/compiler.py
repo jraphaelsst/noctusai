@@ -259,7 +259,7 @@ def _qualificacao_block(q, S: _Strings) -> str:
     if q.identidade:
         parts.append(
             f"## {S('compilador.qualificacao_rotulo_identidade', '')}\n"
-            + "\n".join(f"- {rot.get(k, k)}: {m.strip()}" for k, m in q.identidade)
+            + "\n".join(f"- {r.strip()}: {m.strip()}" for _k, r, m in q.identidade)
         )
     return "\n\n".join(parts)
 

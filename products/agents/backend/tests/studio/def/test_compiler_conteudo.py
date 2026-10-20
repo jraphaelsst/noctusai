@@ -340,11 +340,11 @@ class TestQualificationBlockFromData:
             versao_id=UUID(int=5),
             criterios=(
                 CriterioData("objetivo", "Objetivo", "Comprar ou alugar?", ordem=1, opcoes=(("comprar", "Comprar", "quer comprar"),)),
-                CriterioData("nome", "Nome", "Como se chama", ordem=2),
             ),
             estagios=(EstagioData("frio", "Frio", "Sem interesse", ordem=1),),
             minimo_para_ofertar=("objetivo",),
-            identidade=(("nome", "ao final do segundo bloco"),),
+            # identity criteria never enter ``criterios`` (``qualificacao_data``): the label travels with them
+            identidade=(("cpf", "CPF do comprador", "ao final do segundo bloco"),),
         )
         base.update(kw)
         return QualificacaoData(**base)
@@ -358,12 +358,25 @@ class TestQualificationBlockFromData:
         t = c.texto
         assert "# TITULO_QUALIFICACAO" in t and "**Objetivo** (`objetivo`) — Comprar ou alugar?" in t
         assert "`comprar` (Comprar) — quer comprar" in t and "**Frio** (`frio`) — Sem interesse" in t
-        assert "QUALIFICACAO_ROTULO_MINIMO\nObjetivo" in t and "Nome: ao final do segundo bloco" in t
+        assert "QUALIFICACAO_ROTULO_MINIMO\nObjetivo" in t and "CPF do comprador: ao final do segundo bloco" in t and "- cpf:" not in t
         assert t.index("# TITULO_QUALIFICACAO") < t.index("# Tools") and c.ponto_cache == len(t)
         assert "qualificacao" in [m.chave for m in c.manifest]
+
+    def test_the_identity_block_of_a_real_standard_shows_labels_never_keys(self):
+        """End to end from the standard's rows: identity criteria are not in ``criterios`` (they are asked, not
+        scored), so the block used to fall back to the raw key (``- cpf: ...``)."""
+        from app.qualificacao.prompt import qualificacao_data
+        from tests.channels.julia_v2 import versao_com_identidade
+
+        q = qualificacao_data(versao_com_identidade())
+        t = self._c(q).texto
+        bloco = t[t.index("QUALIFICACAO_ROTULO_IDENTIDADE"):]
+        for chave in ("nome", "email", "cpf", "rg"):
+            assert f"- {chave.upper()}: identity {chave}" in bloco
+            assert f"- {chave}:" not in bloco
 
     def test_headings_missing_are_blocking_and_the_hash_follows_the_standard(self):
         i = replace(_inp(), qualificacao=self._q())
         assert "texto_ausente" in _codes(compile_prompt(i))
-        a, b = self._c(self._q()), self._c(self._q(minimo_para_ofertar=("nome",)))
+        a, b = self._c(self._q()), self._c(self._q(minimo_para_ofertar=("cpf",)))
         assert a.hash != b.hash != self._c(None).hash
