@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -54,6 +54,7 @@ from app.studio.eval_driver import (
     TurnOutcome,
     Violation,
 )
+from app.studio.eval_sinteticos import Sinteticos
 from noctusai_lib.integrations.llm import ToolResult
 from noctusai_lib.realtime import FakeRealtimeBus
 
@@ -186,6 +187,8 @@ class _Mundo:
     leads: FakeLeadQualificacaoStore
     lead_externo: str
     channel_ref: dict[str, Any]
+    #: The synthetic identity values of THIS execution (``[[cpf_sintetico_valido]]`` / ``[[email_sintetico]]``).
+    sinteticos: Sinteticos = field(default_factory=Sinteticos)
     lead_ref_id: UUID | None = None
     concluido: bool = False
     turnos: int = 0
@@ -315,6 +318,9 @@ class LiveEvalTurnDriver:
         m = self._mundo
         agora = datetime.now(timezone.utc)
         m.diario.limpar()
+        # The roteiro carries TOKENS where the lead types identity data (fixtures never hold a CPF/email, Meta 4.7);
+        # the value is generated per execution and only ever lives in this in-memory world.
+        mensagem_lead = m.sinteticos.substituir(mensagem_lead)
 
         ctl = aplicar_controles(
             org_id=m.org_id, agent_id=m.agent.id, gatilho="mensagem", channel=_CANAL, channel_ref=m.channel_ref,

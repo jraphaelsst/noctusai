@@ -214,3 +214,50 @@ class TestLiveDriverRealConformance:
         definicao = chan.rt.studio.get_platform_definition("julia")
         regras = driver._mundo.svc.conformidade.regras(definicao.org_id, definicao.id)
         assert regras["vazamento_prompt"].politica == "bloquear"
+
+
+class TestSyntheticIdentityTokens:
+    """A roteiro writes ``[[cpf_sintetico_valido]]`` / ``[[email_sintetico]]`` where the lead types identity data
+    (a fixture may never hold a CPF/email, Meta 4.7); the live adapter substitutes them before the turn."""
+
+    MSG = "meu cpf é [[cpf_sintetico_valido]] e meu email [[email_sintetico]]"
+
+    def _textos_do_lead(self, driver):
+        m = driver._mundo
+        out = []
+        for (org, _conv), rows in m.messages._rows.items():
+            out += [r["texto"] for r in rows if org == m.org_id and r["role"] == "user"]
+        return out
+
+    def test_tokens_become_a_valid_synthetic_cpf_and_a_reserved_domain_email(self, chan):
+        import re
+
+        from app.qualificacao.identificacao import validar_cpf, validar_email
+
+        chan.seed_agent(publish=False)
+        provider = FakeProvider(tool_responses=[say("Obrigada!"), say("Anotado.")])
+        driver = _driver(chan, provider)
+        th = ThreadState(catalogo=_roteiro_catalogo())
+        asyncio.run(driver.executar_turno(th, self.MSG))
+        asyncio.run(driver.executar_turno(th, "de novo: [[cpf_sintetico_valido]]"))
+        primeiro, segundo = self._textos_do_lead(driver)
+        assert "[[" not in primeiro and "[[" not in segundo
+        cpf = re.search(r"\d{3}\.\d{3}\.\d{3}-\d{2}", primeiro).group(0)
+        email = re.search(r"\S+@example\.com", primeiro).group(0)
+        assert validar_cpf(cpf)[0] and validar_email(email)[0]
+        assert cpf in segundo  # one execution, one synthetic person
+
+    def test_the_cpf_is_generated_never_a_fixed_constant(self):
+        from app.studio.eval_sinteticos import Sinteticos
+
+        assert len({Sinteticos().valor("cpf_sintetico_valido") for _ in range(20)}) > 1
+
+    def test_an_unknown_token_is_refused_at_validation_and_at_substitution(self):
+        from app.studio.eval_mecanismo import RoteiroInvalido, validar_roteiro
+        from app.studio.eval_sinteticos import Sinteticos, TokenSinteticoDesconhecido
+
+        with pytest.raises(RoteiroInvalido):
+            validar_roteiro({"turnos": [{"lead": "meu rg é [[rg_sintetico]]"}]})
+        validar_roteiro({"turnos": [{"lead": "cpf [[cpf_sintetico_valido]]"}]})
+        with pytest.raises(TokenSinteticoDesconhecido):
+            Sinteticos().substituir("[[telefone_real]]")
