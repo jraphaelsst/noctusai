@@ -30,6 +30,9 @@ class SkillRef:
     corpo_chars: int = 0
     #: ``(caminho, chars)`` of each reference file.
     arquivos: tuple[tuple[str, int], ...] = ()
+    #: The ``{{org.chave}}`` keys the pinned version's text uses (index line, body, files) -- so the compiler's
+    #: spec-usage check sees them; the body itself stays on-demand and is resolved when opened.
+    placeholders: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

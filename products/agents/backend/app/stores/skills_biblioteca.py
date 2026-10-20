@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from app.studio.especificacoes import placeholders_org
 from app.studio.skills_contract import SkillAberta, SkillArquivo, SkillRef
 from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
 from app.stores._util import utcnow
@@ -159,6 +160,14 @@ def _check_campos(campos: dict[str, Any]) -> dict[str, Any]:
     if "notas" in campos:
         _check_len("notas", campos["notas"], _MAX["notas"])
     return campos
+
+
+def _placeholders(*textos: str | None) -> tuple[str, ...]:
+    """The ``{{org.chave}}`` keys a pinned skill version's texts use (sorted, unique)."""
+    out: set[str] = set()
+    for t in textos:
+        out |= placeholders_org(t)
+    return tuple(sorted(out))
 
 
 # ── Fake ────────────────────────────────────────────────────────────────────
@@ -343,6 +352,7 @@ class FakeSkillsBibliotecaStore:
                 skill_key=r.skill_chave, skill_versao_id=r.skill_versao_id, obrigatoria_para=r.obrigatoria_para,
                 descricao=v.descricao_modelo, ordem=r.ordem, corpo_chars=len(v.corpo),
                 arquivos=tuple((a.caminho, len(a.conteudo)) for a in v.arquivos),
+                placeholders=_placeholders(v.descricao_modelo, v.corpo, *(a.conteudo for a in v.arquivos)),
             ))
         return out
 
@@ -544,17 +554,23 @@ class SupabaseSkillsBibliotecaStore:
             for r in self._t("skill_versoes").select("id,descricao_modelo,corpo").in_("id", ids).execute().data or []
         }
         arquivos: dict[str, list[tuple[str, int]]] = {}
+        textos_arquivos: dict[str, list[str]] = {}
         for r in (
             self._t("skill_versao_arquivos").select("skill_versao_id,caminho,conteudo")
             .in_("skill_versao_id", ids).execute().data or []
         ):
             arquivos.setdefault(str(r["skill_versao_id"]), []).append((r["caminho"], len(r.get("conteudo") or "")))
+            textos_arquivos.setdefault(str(r["skill_versao_id"]), []).append(r.get("conteudo") or "")
         return [
             SkillRef(
                 skill_key=r.skill_chave, skill_versao_id=r.skill_versao_id, obrigatoria_para=r.obrigatoria_para,
                 descricao=textos[str(r.skill_versao_id)].get("descricao_modelo") or "", ordem=r.ordem,
                 corpo_chars=len(textos[str(r.skill_versao_id)].get("corpo") or ""),
                 arquivos=tuple(sorted(arquivos.get(str(r.skill_versao_id), []))),
+                placeholders=_placeholders(
+                    textos[str(r.skill_versao_id)].get("descricao_modelo"), textos[str(r.skill_versao_id)].get("corpo"),
+                    *textos_arquivos.get(str(r.skill_versao_id), []),
+                ),
             )
             for r in refs
         ]

@@ -30,6 +30,7 @@ from app.channels.contexto import Dossie, render_contexto_system
 from app.channels.tool_registry import (
     JuliaTurno,
     SkillFonte,
+    SkillsComSpecs,
     SkillsDaVersao,
     executar_handoff,
     finalizar_conclusao,
@@ -314,11 +315,13 @@ async def executar(
         ultima_resposta_em=ultima_resposta_em, respostas_count=n_respostas,
         eventos={"pediu_humano": 1} if pediu_humano else {},
     )
-    skills: SkillFonte | None = (
+    fonte: SkillFonte = (
         svc.skills_factory(svc.studio_store, r.definicao.org_id, r.definicao.id, r.versao.id)
         if svc.skills_factory is not None
         else SkillsDaVersao(svc.studio_store, r.definicao.org_id, r.definicao.id, r.versao.id)
     )
+    # skill texts resolved FOR THIS ORG ({{org.chave}}), the same resolver the compiled sections went through
+    skills: SkillFonte | None = SkillsComSpecs(fonte, r.valores)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,

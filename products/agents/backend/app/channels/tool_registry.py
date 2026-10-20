@@ -54,6 +54,7 @@ __all__ = [
     "TOOLS",
     "JuliaTurno",
     "SkillFonte",
+    "SkillsComSpecs",
     "SkillsDaVersao",
     "TextoAusente",
     "ToolDef",
@@ -333,6 +334,36 @@ class SkillsDaVersao:
 
     def obrigatoria_para(self) -> Mapping[str, Sequence[str]]:
         return {}
+
+
+class SkillsComSpecs:
+    """A :class:`SkillFonte` whose texts are resolved FOR THIS ORG: every ``{{org.chave}}`` in a skill's index line,
+    body or reference file is replaced by the org's value with the SAME resolver the prompt sections use
+    (:func:`app.studio.especificacoes.resolver_texto`), at the moment the model opens it. The definition stays one
+    for every org; what an org's model reads is that org's text (CONTRACT §2.6, Q2)."""
+
+    _CAMPOS = ("descricao", "corpo", "conteudo", "titulo")
+
+    def __init__(self, inner: SkillFonte, valores: Mapping[str, str]) -> None:
+        self._inner = inner
+        self._valores = dict(valores)
+
+    def _resolver(self, out: dict[str, Any]) -> dict[str, Any]:
+        from app.studio.especificacoes import resolver_texto
+
+        if out.get("erro"):
+            return out
+        return {k: (resolver_texto(v, self._valores) if k in self._CAMPOS and isinstance(v, str) else v)
+                for k, v in out.items()}
+
+    async def abrir(self, nome: str) -> dict[str, Any]:
+        return self._resolver(await self._inner.abrir(nome))
+
+    async def ler_arquivo(self, nome: str, caminho: str) -> dict[str, Any]:
+        return self._resolver(await self._inner.ler_arquivo(nome, caminho))
+
+    def obrigatoria_para(self) -> Mapping[str, Sequence[str]]:
+        return self._inner.obrigatoria_para()
 
 
 # ── the per-turn state ──────────────────────────────────────────────────────

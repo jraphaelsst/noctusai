@@ -322,6 +322,8 @@ def _resolver_versao(v: VersionBundle, valores: dict[str, str]) -> VersionBundle
         v,
         secoes=tuple(replace(s, titulo=r(s.titulo), conteudo=r(s.conteudo)) for s in v.secoes),
         skills=tuple(replace(sk, descricao=r(sk.descricao), corpo=r(sk.corpo)) for sk in v.skills),
+        # a pinned library skill's index line is model-visible too (its body is resolved when opened)
+        skill_refs=tuple(replace(ref, descricao=r(ref.descricao)) for ref in v.skill_refs),
         conteudo=_resolver_conteudo(v.conteudo, valores) if v.conteudo is not None else None,
     )
 
@@ -431,6 +433,8 @@ def _avisos_conteudo(
     usadas: set[str] = set()
     for _, texto in _textos_de_conteudo(fonte, fonte.conteudo if fonte.conteudo is not None else cont):
         usadas |= placeholders_org(texto)
+    for ref in fonte.skill_refs:  # a pinned library skill: its index line + what its body / files use
+        usadas |= placeholders_org(ref.descricao) | set(ref.placeholders)
     nao_declaradas = sorted(usadas - declaradas)
     if nao_declaradas:
         out.append(CompileWarning(

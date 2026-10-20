@@ -139,6 +139,20 @@ def test_runtime_interface_serves_the_pinned_version_not_the_latest():
     assert runtime.skill_refs_for(uuid4()) == []
 
 
+def test_a_pin_names_the_org_placeholders_its_texts_use():
+    """A-polish #10: the compiler cannot see a pinned body (it is on-demand), so the pin carries the
+    ``{{org.chave}}`` keys its index line, body and files use."""
+    st = FakeSkillsBibliotecaStore()
+    s = st.criar_skill("s1", "S1", None)
+    v1 = st.criar_rascunho(s.id, None, None)
+    st.salvar_rascunho(v1, {"descricao_modelo": "na {{org.agencia}}", "corpo": "bairros {{ org.regioes }}"})
+    st.salvar_arquivo(v1, "ref/a.md", "A", "{{org.tabela}} e {{org.agencia}}")
+    st.publicar(v1, ADMIN)
+    st.fixar_ref(ORG, AV, v1, [], 0)
+    (ref,) = st.skill_refs_for(AV)
+    assert ref.placeholders == ("agencia", "regioes", "tabela")
+
+
 def test_a_draft_skill_version_is_never_opened_by_the_runtime():
     st = FakeSkillsBibliotecaStore()
     s = st.criar_skill("s1", "S1", None)
