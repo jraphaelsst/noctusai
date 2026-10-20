@@ -38,6 +38,7 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
         ("DELETE", "/api/channels/ferramentas-token"),
         ("DELETE", "/api/channels/leads/{ref}"),
         ("GET", "/api/channels/agents/{agent_key}/controle"),
+        ("GET", "/api/channels/agents/{agent_key}/qualificacao/estagios"),
         ("GET", "/api/channels/agents/{agent_key}/status"),
         ("GET", "/api/channels/handoffs/{handoff_id}"),
         ("GET", "/api/channels/leads/{lead_ref}/identificacao"),
