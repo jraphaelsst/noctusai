@@ -163,3 +163,54 @@ class TestFixtureSw:
             "operacao": "compra", "preco_max": 700002, "excluir_codigos": ["B1"], "limite": 5}))
         assert [i["codigo"] for i in r["data"]] == ["B2", "B3"] and r["restantes_estimados"] == 0
         assert asyncio.run(sw.lais_ferramenta(None, "detalhes_imovel", {"codigo": "ZZ"})) == {"erro": "nao_encontrado"}
+
+
+class TestLiveDriverRealConformance:
+    """The suite runs under the rules + limits configured for the definition's row, not code defaults."""
+
+    def _driver_com_regras(self, chan, real, provider):
+        d = _driver(chan, provider)
+        d._conformidade = real
+        return d
+
+    def test_rules_and_limits_are_copied_from_the_real_store(self, chan):
+        from app.stores.conformidade import FakeConformidadeStore
+
+        chan.seed_agent(publish=False)
+        definicao = chan.rt.studio.get_platform_definition("julia")
+        real = FakeConformidadeStore()
+        real.definir_regra(definicao.org_id, definicao.id, "termina_sem_pergunta", ativo=False)
+        real.definir_regra(definicao.org_id, definicao.id, "vazamento_prompt", politica="registrar",
+                           parametros={"shingle_tokens": 30})
+        real.definir_limites(definicao.org_id, definicao.id, max_turnos_janela=1)
+        driver = self._driver_com_regras(chan, real, FakeProvider(tool_responses=[say("Oi! Você quer comprar ou alugar?")]))
+
+        asyncio.run(driver.executar_turno(ThreadState(), "oi"))
+
+        cf = driver._mundo.svc.conformidade
+        regras = cf.regras(definicao.org_id, definicao.id)
+        assert regras["termina_sem_pergunta"].ativo is False
+        assert regras["vazamento_prompt"].politica == "registrar" and regras["vazamento_prompt"].parametros == {"shingle_tokens": 30}
+        assert cf.limites(definicao.org_id, definicao.id).max_turnos_janela == 1
+
+    def test_the_real_limit_is_enforced_by_the_real_turn_path(self, chan):
+        from app.stores.conformidade import FakeConformidadeStore
+
+        chan.seed_agent(publish=False)
+        definicao = chan.rt.studio.get_platform_definition("julia")
+        real = FakeConformidadeStore()
+        real.definir_limites(definicao.org_id, definicao.id, max_turnos_janela=1)
+        driver = self._driver_com_regras(chan, real, FakeProvider(tool_responses=[
+            say("Oi! Você quer comprar ou alugar?"), say("Entendi! E o bairro?")]))
+        primeiro = asyncio.run(driver.executar_turno(ThreadState(), "oi"))
+        segundo = asyncio.run(driver.executar_turno(ThreadState(), "quero comprar"))
+        assert primeiro.violacoes == () and primeiro.bolhas
+        assert [v.regra for v in segundo.violacoes] == ["limite_atingido"] and segundo.bolhas == ()
+
+    def test_without_a_real_store_the_code_defaults_apply(self, chan):
+        chan.seed_agent(publish=False)
+        driver = _driver(chan, FakeProvider(tool_responses=[say("Oi! Você quer comprar ou alugar?")]))
+        asyncio.run(driver.executar_turno(ThreadState(), "oi"))
+        definicao = chan.rt.studio.get_platform_definition("julia")
+        regras = driver._mundo.svc.conformidade.regras(definicao.org_id, definicao.id)
+        assert regras["vazamento_prompt"].politica == "bloquear"

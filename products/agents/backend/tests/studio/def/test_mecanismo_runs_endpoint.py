@@ -196,3 +196,61 @@ def test_the_versions_endpoint_summarises_the_latest_run_for_the_current_hash(st
     assert studio.put(f"{BASE}/isa/draft/sections", json={"secoes": [
         {"chave": "identidade", "titulo": "Identidade", "ordem": 10, "conteudo": "Outra.", "ativo": True}]}).status_code == 200
     assert studio.get(f"{BASE}/isa/versions/{draft_id}").json()["mecanismo"] is None
+
+
+class TestOrphanSweep:
+    """Startup: runs a dead process left ``executando`` become ``falhou`` / ``interrompida`` and free the slot."""
+
+    def _store(self):
+        from app.stores.studio_eval_mecanismo import FakeMecanismoStore
+
+        return FakeMecanismoStore(FakeEvalStore())
+
+    def _start(self, store, version):
+        return store.start_run(
+            UUID(int=1), UUID(int=2), version, compiled_hash="h", driver="live", limite_usd=None,
+            started_by=UUID(int=3), total_casos=1)
+
+    def test_an_executing_run_from_before_boot_is_failed_with_the_fixed_text_and_frees_the_slot(self):
+        from datetime import timedelta
+
+        from app.stores._util import utcnow
+        from app.studio.eval_mecanismo_service import ORFA_ERRO, varrer_runs_orfas
+
+        store, v = self._store(), UUID(int=10)
+        rid = self._start(store, v)
+        with pytest.raises(Exception, match="already executing"):
+            self._start(store, v)  # the unique slot is held
+        assert varrer_runs_orfas(store, started_before=utcnow() + timedelta(seconds=1)) == 1
+        run = store.get_run(UUID(int=1), rid)
+        assert run["status"] == "falhou" and run["erro"] == ORFA_ERRO == "interrompida" and run["finished_at"] is not None
+        assert self._start(store, v)  # freed
+
+    def test_a_run_that_started_after_the_cutoff_and_a_finished_run_are_untouched(self):
+        from datetime import timedelta
+
+        from app.stores._util import utcnow
+        from app.studio.eval_mecanismo_service import varrer_runs_orfas
+
+        store = self._store()
+        antigo, novo = self._start(store, UUID(int=11)), self._start(store, UUID(int=12))
+        store.runs[antigo]["started_at"] = utcnow() - timedelta(hours=1)
+        store.runs[novo]["status"] = "concluida"
+        livre = self._start(store, UUID(int=13))
+        assert varrer_runs_orfas(store, started_before=utcnow() - timedelta(minutes=5)) == 1
+        assert store.get_run(UUID(int=1), antigo)["status"] == "falhou"
+        assert store.get_run(UUID(int=1), novo)["status"] == "concluida"
+        assert store.get_run(UUID(int=1), livre)["status"] == "executando"
+
+    def test_nothing_to_sweep_is_zero(self):
+        from app.studio.eval_mecanismo_service import varrer_runs_orfas
+
+        assert varrer_runs_orfas(self._store()) == 0
+
+    def test_the_app_startup_runs_the_sweep_step(self):
+        import inspect
+
+        from app import main
+
+        src = inspect.getsource(main.on_startup)
+        assert "fail_orphan_mecanismo_runs" in src and "varrer_runs_orfas" in src

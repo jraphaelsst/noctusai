@@ -205,7 +205,7 @@ class LiveEvalTurnDriver:
         self, *, studio_store: Any, catalog: Any, padroes: Any, agent_key: str = "julia",
         key_resolver: Callable[[str, UUID], str | None] | None = None, provider_impl: Any | None = None,
         skills_factory: Any | None = None, tools_factory: Callable[[Any, Any], Any] | None = None,
-        daily_cap_usd: float = 0.0,
+        daily_cap_usd: float = 0.0, conformidade: Any | None = None,
     ) -> None:
         self._studio = studio_store
         self._catalog = catalog
@@ -216,6 +216,9 @@ class LiveEvalTurnDriver:
         self._skills_factory = skills_factory
         self._tools_factory = tools_factory or make_channel_tools_factory()
         self._daily_cap = daily_cap_usd
+        #: READ side of the conformance config (rules + abuse limits of the definition's row); copied into the
+        #: per-execution Fake so the suite runs under the rules that run in production. ``None`` = code defaults.
+        self._conformidade = conformidade
         self._mundo: _Mundo | None = None
 
     @property
@@ -257,9 +260,10 @@ class LiveEvalTurnDriver:
             history_messages=int(getattr(settings, "llm_history_messages", 20) or 20),
             max_iterations=int(getattr(settings, "llm_max_tool_iterations", 6) or 6),
         )
+        conformidade = self._conformidade_do_mundo(org_id, definicao.id)
         svc = turno_mod.ServicosCanal(
             studio_store=self._studio, catalog=self._catalog, conversations=conversations, messages=messages,
-            threads=threads, controles=controles, conformidade=FakeConformidadeStore(), qual=qual,
+            threads=threads, controles=controles, conformidade=conformidade, qual=qual,
             padroes=self._padroes, ident=ident, sw=sw, skills_factory=self._skills_factory,
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
@@ -270,6 +274,21 @@ class LiveEvalTurnDriver:
             threads=threads, controles=controles, leads=leads, lead_externo=externo,
             channel_ref={"connection_id": str(UUID(int=1)), "chat_id": externo},
         )
+
+    def _conformidade_do_mundo(self, org_id: UUID, agent_id: UUID) -> FakeConformidadeStore:
+        """A per-execution Fake carrying the REAL rules (active, policy, parameters, correction text key) and abuse
+        limits configured for the definition's row. A real-store read that fails is not hidden behind defaults:
+        the suite would then test rules that do not run in production, so the error propagates (run -> ``erro``)."""
+        fake = FakeConformidadeStore()
+        if self._conformidade is None:
+            return fake
+        for regra, cfg in self._conformidade.regras(org_id, agent_id).items():
+            fake.definir_regra(
+                org_id, agent_id, regra, ativo=cfg.ativo, politica=cfg.politica,
+                mensagem_correcao_texto_chave=cfg.mensagem_correcao_texto_chave, parametros=dict(cfg.parametros))
+        lim = self._conformidade.limites(org_id, agent_id)
+        fake.definir_limites(org_id, agent_id, **{f: getattr(lim, f) for f in lim.__dataclass_fields__})
+        return fake
 
     def _semear(self, m: _Mundo, estado: Estado) -> None:
         """The roteiro's starting estado (criteria already recorded, offer batches already made) into the lead
@@ -384,6 +403,7 @@ def make_live_eval_driver_factory(
 
     def _factory() -> LiveEvalTurnDriver:
         from app.qualificacao.store import get_padrao_store
+        from app.stores.conformidade import get_conformidade_store
         from app.stores.studio_definitions import get_studio_definition_store
         from app.stores.studio_knowledge import get_studio_knowledge_store
         from app.studio.catalog import StoreKnowledgeCatalog
@@ -392,7 +412,7 @@ def make_live_eval_driver_factory(
             studio_store=studio_store or get_studio_definition_store(settings),
             catalog=catalog or StoreKnowledgeCatalog(get_studio_knowledge_store(settings)),
             padroes=padroes or get_padrao_store(settings),
-            **kw,
+            **{"conformidade": get_conformidade_store(settings), **kw},
         )
 
     return _factory

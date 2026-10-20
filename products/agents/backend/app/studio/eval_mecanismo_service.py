@@ -16,9 +16,24 @@ from app.studio.eval_mecanismo import SuiteResultado, executar_suite
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SuiteVazia", "DriverSemTipo", "rodar_suite_mecanismo", "iniciar_suite_mecanismo", "concluir_suite_mecanismo"]
+__all__ = ["ORFA_ERRO", "varrer_runs_orfas", "SuiteVazia", "DriverSemTipo", "rodar_suite_mecanismo", "iniciar_suite_mecanismo", "concluir_suite_mecanismo"]
 
 _TIPOS = ("live", "fake")
+#: The fixed ``erro`` of a run whose runner died with the process.
+ORFA_ERRO = "interrompida"
+
+
+def varrer_runs_orfas(store: Any, *, started_before: Any = None) -> int:
+    """Startup: every mechanism run still ``executando`` that began before this process booted lost its background
+    task with the previous process -- mark it ``falhou`` / ``interrompida`` so the one-run-per-version slot is free
+    again. Exact for the single-replica deploy (same approximation as the judge runs'
+    ``sweep_orphaned_runs``; NOC-REMEDIATE[eval-run-instance-id] covers a multi-replica deploy)."""
+    from app.stores._util import utcnow
+
+    n = store.fail_orphaned_runs(started_before=started_before or utcnow(), erro=ORFA_ERRO)
+    if n:
+        logger.warning("agents.eval.mecanismo_orphaned_runs_failed count=%s", n)
+    return n
 
 
 class SuiteVazia(RuntimeError):

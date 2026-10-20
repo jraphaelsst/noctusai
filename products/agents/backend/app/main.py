@@ -171,7 +171,15 @@ async def on_startup() -> None:
 
     await _startup_step("slot_sweep", sweep_slots, failures)
     await _startup_step("expire_orphan_approvals", expire_approvals, failures)
+    async def fail_orphan_mecanismo_runs() -> None:
+        from app.stores.studio_eval_mecanismo import get_mecanismo_store
+        from app.studio.eval_mecanismo_service import varrer_runs_orfas
+
+        failed = varrer_runs_orfas(get_mecanismo_store(settings))
+        logger.info("agents.startup.orphaned_mecanismo_runs_failed count=%s", failed)
+
     await _startup_step("fail_orphan_eval_runs", fail_orphan_eval_runs, failures)
+    await _startup_step("fail_orphan_mecanismo_runs", fail_orphan_mecanismo_runs, failures)
 
     # Daily credential maintenance (expiry notifications + §D ring prune).
     # Fires only where `NOCTUS_SCHEDULERS_ENABLED` is set (prod compose).

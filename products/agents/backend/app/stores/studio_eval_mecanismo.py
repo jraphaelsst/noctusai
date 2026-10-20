@@ -6,6 +6,7 @@ Protocol + Fake + Supabase + factory, like every seed IO seam here. Tables are s
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -47,6 +48,11 @@ class MecanismoStore(Protocol):
     def latest_live_run(self, org_id: UUID, version_id: UUID) -> MecanismoGateRun | None: ...
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito: ...
+
+    def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
+        """Every run still ``executando`` that started before ``started_before`` becomes ``falhou`` with ``erro``
+        (its runner task died with the process); frees the one-run-per-version slot. Returns how many."""
+        ...
 
     def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         """One run row (any status) as plain data, org-scoped; ``None`` when absent."""
@@ -105,7 +111,7 @@ class FakeMecanismoStore:
             "compiled_hash": compiled_hash, "driver": driver, "status": "executando",
             "total_casos": total_casos, "casos_aprovados": 0, "completa": False, "aprovado": False,
             "orcamento_excedido": False, "limite_usd": limite_usd, "custo_usd": None, "erro": None,
-            "started_by": started_by, "finished_at": None, "seq": len(self.runs),
+            "started_by": started_by, "started_at": utcnow(), "finished_at": None, "seq": len(self.runs),
         }
         self.execucoes[rid] = []
         return rid
@@ -147,6 +153,12 @@ class FakeMecanismoStore:
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
         return _compose(self, org_id, agent_id, version_id)
+
+    def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
+        rows = [r for r in self.runs.values() if r["status"] == "executando" and r["started_at"] < started_before]
+        for r in rows:
+            r.update(status="falhou", erro=erro, finished_at=utcnow())
+        return len(rows)
 
     def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         r = self.runs.get(run_id)
@@ -261,6 +273,13 @@ class SupabaseMecanismoStore:
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
         return _compose(self, org_id, agent_id, version_id)
+
+    def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
+        resp = exec_query(
+            self._t("eval_mecanismo_runs").update({"status": "falhou", "erro": erro, "finished_at": utcnow_iso()})
+            .eq("status", "executando").lt("started_at", started_before.isoformat())
+        )
+        return len(resp.data or [])
 
     def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         resp = (
