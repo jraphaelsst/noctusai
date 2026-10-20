@@ -1,7 +1,7 @@
 ---
 name: noc-refs-sheet
-description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + count + a pt-BR Observação; on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM. The link TARGET differs per sheet — getting that wrong means redoing every row.
-version: 1.2.0
+description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + Vídeos count (an Observação ONLY when there is a real warning/reminder — never a description); on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM. The link TARGET differs per sheet — getting that wrong means redoing every row.
+version: 1.3.0
 ---
 
 # noc-refs-sheet — ONExxxxx references into a midiasone spreadsheet
@@ -85,8 +85,9 @@ registry and this skill points at it instead.
    then `parentId = '<ref id>'` for its children, and `parentId = '<VIDEOS id>'` to count.
    Add `excludeContentSnippets: true` and filter to folders — an unfiltered listing of a
    photo folder floods the context.
-4. **Resolve the parent month** (`get_file_metadata` on the ref's `parentId`) — the
-   Observação names it. Two hierarchies coexist: 2025-style (`Maio`…`Outubro`) under
+4. **Resolve the parent month** (`get_file_metadata` on the ref's `parentId`) — it is how
+   you pick between duplicate folders and what you report in chat; it does NOT go in the
+   sheet (§4a). Two hierarchies coexist: 2025-style (`Maio`…`Outubro`) under
    `Material 2025`, and 2026-style (`2-FEVEREIRO`, `5-MAIO`, `7- JULHO`) under `2026`.
    Some refs sit outside both, e.g. under `FOTOS DIVERSAS`.
 5. **Write the row** — see §4.
@@ -151,15 +152,16 @@ asyncio.run(main())
 
 - **Duplicate ref folders are the norm, not the exception.** Which one wins depends on the
   sheet: Cindy (videos-only) ⇒ whichever folder HAS the videos; Priscila (whole ref) ⇒ the
-  folder holding **both** FOTOS and VIDEOS. Always name what the *other* folder holds in
-  the Observação.
+  folder holding **both** FOTOS and VIDEOS. A duplicate that holds only photos is noise;
+  mention it in the chat report only. A duplicate that holds **other videos** is a real
+  warning, so it goes in the Observação.
 - **Sometimes no single folder satisfies the rule.** `ONE10107` has photos in `4-ABRIL` and
   its two videos in a separate `ONE10107 (OPEN H)` folder under `5-MAIO`. Link the main ref
   folder and put the second folder's URL **inside the Observação** — never silently drop it.
 - **Videos are often loose at the ref root** with no `VIDEOS` subfolder (`ONE8708`,
-  `ONE8132`). Link the ref folder and say so.
+  `ONE8132`). Link the ref folder and count the loose videos; no Observação needed.
 - **A `.txt` music-license file lives inside `VIDEOS`. It is not a vídeo.** Count
-  `mimeType` video files only.
+  `mimeType` video files only (§4b).
 - **Decoy folders exist.** `VIDEO ERRADO OUTRA CASA - ONE8861 (EXCLUSIVA)` is the wrong
   property. Read folder titles, do not just match the number.
 - **Codes carry invisible characters.** Priscila's sheet has U+2060 word-joiners prefixing
@@ -167,9 +169,10 @@ asyncio.run(main())
 - **A link cell can hold a smart chip, not a URL.** The CSV export shows the chip's title
   (`Vídeos - Google Drive`), so a naive `^https?:` test flags it as empty. A non-empty link
   cell is the user's — leave it.
-- **The same code can appear on two rows** (Cindy `ONE10602`, rows 4 and 17). Fill it the
-  same way and say `código repetido (já está na linha N)` in the Observação; deleting the
-  duplicate is the user's call.
+- **The same code can appear on two rows** (Cindy `ONE10602`, rows 4 and 17; `ONE8627`,
+  rows 6 and 8). Fill both the same way and mention it in the chat report, not the
+  sheet: the user cleared these notes on 2026-10-20 (a repeat is often a deliberate
+  re-post). Deleting a row is the user's call.
 - **Codes are sometimes lowercase** (`one10846`, `One8400`). Drive search is
   case-insensitive, but the cell itself gets fixed to `ONE10846` (§2a), not just the Observação.
 - **A column run can land one row off.** On 2026-10-20 a `Down`×N hop after a `Return`
@@ -188,7 +191,8 @@ connector, and the calendar service account does not carry a `spreadsheets` scop
   already-open tab does not reload — the cell looks selected but the grid has no keyboard
   focus and every keystroke is silently dropped. Screenshot to confirm the selection
   before typing.
-- Then per row: `type` link → `Tab` → count → `Tab` → Observação → `Return`.
+- Then per row: `type` link → `Tab` → count → `Return`. Only when the row earns an
+  Observação (§4a): link → `Tab` → count → `Tab` → Observação → `Return`.
   **`Return` reliably returns to the starting column of the next row**, so rows chain.
 - Batch a whole row (or several) through `browser_batch` — it is markedly faster and the
   chaining holds across rows.
@@ -197,14 +201,41 @@ connector, and the calendar service account does not carry a `spreadsheets` scop
   Name Box is unreliable — a click at its coordinates once typed into A1 and clobbered the
   header. The `range=` URL is the only safe targeting.
 
-### Observação style (pt-BR, every filled row gets one)
+### 4a · Observação — EMPTY by default; only for an annotation that adds value
 
-```
-found     → pasta ONE8346 (Outubro) — FOTOS + VIDEOS — 4 vídeos (YT + REELS, normal e EXCLUSIVA)
-videos-only sheet → pasta ONE10515 (7-JULHO) — link aponta para a subpasta VIDEOS — 2 vídeos (YT + REELS)
-loose     → pasta ONE8708 (Julho) — subpasta Fotos + 2 vídeos soltos na raiz (YT REF + REELS)
-not found → sem vídeo — pasta ONE10846 não encontrada no Drive (nenhuma pasta ou arquivo com 10846)
-```
+The owner's rule (2026-10-20): the Observação column is for **warnings, reminders and
+things the reader must act on**, never a description of what the row already shows.
+Most rows have **no** Observação. Everything descriptive goes in the chat report.
+
+| ✅ Write it (short, pt-BR) | ❌ Never write it |
+|---|---|
+| `sem vídeo — pasta não encontrada no Drive` | the folder month / hierarchy (`pasta ONE8346 (Outubro)`) |
+| a second folder with more videos, with its URL (`vídeos em outra pasta: <url>`) | `link aponta para a subpasta VIDEOS`; the folder holds FOTOS + VIDEOS |
+| `não publicado no Vista — condomínio/preço pendentes` | the video breakdown (`YT + REELS, normal e EXCLUSIVA`) |
+| a decoy/wrong-property folder nearby (`cuidado: pasta "VIDEO ERRADO…" é outro imóvel`) | loose videos at the root; duplicate photo-only folders |
+| `preço no Vista mudou: 740.000` (only if the user asks for it in the sheet; default = chat) | `código repetido` (chat report only) |
+
+- 🔴 **A non-empty Observação is the user's** (e.g. row 7 `Casa de Exclusividade Casa
+  Noble - video de parceiros`). Never overwrite or "clean" it; append only with ` · `.
+- Once the warning is resolved (folder found, record published), clear the note you wrote.
+
+### 4b · Vídeos — the count column, kept filled on every row
+
+`Vídeos` = the number of **video files** the link reaches. It is the column the reader
+sums up, so it must be a bare integer (`2`, not `2 vídeos`) on every row that has a link.
+
+- Count `mimeType` starting with `video/` only. Skip `.txt` music licenses, images, and
+  subfolders, and do not count shortcuts twice.
+- Count **every variant**: YT + REELS + normal + EXCLUSIVA are separate files and each one
+  counts (`ONE8346` → `4`).
+- **What to count follows the link target** (§1): the `VIDEOS` subfolder (Cindy), or every
+  video in the whole ref folder, subfolders included (Priscila); loose root videos count too.
+- **Videos split across folders** (`ONE10107`): the count is the **sum** of both, and the
+  second folder's URL goes in the Observação (§4a).
+- **Not found / zero videos** ⇒ `0`, plus the `sem vídeo` Observação. Never leave it blank
+  when the row has a code; a blank cell breaks the sum.
+- **An existing count that disagrees with the Drive** ⇒ fix it to the Drive count and
+  report the old → new value in chat (new videos get added to folders after the fact).
 
 ## 5 · Verification — assert BOTH directions
 
@@ -213,6 +244,8 @@ Re-export the CSV (`cache:'no-store'`) and assert programmatically:
 1. every expected folder id **is present** on its row, with the right count; **and**
 2. every **superseded** id is **gone** from the sheet; **and**
 3. every non-empty `Código` matches `^ONE\d+$` (§2a); **and**
+3a. every row with a `Código` has an integer `Vídeos` (`^\d+$`, §4b), and every
+   Observação you wrote is in the ✅ column of §4a; **and**
 4. every non-empty `Imóvel / Valor` matches `^.+ - \d{1,3}(\.\d{3})+$` **and** sits on
    the row of its own code (compare against the Vista value you fetched, row by row; a
    shifted run passes the regex but fails this check).
