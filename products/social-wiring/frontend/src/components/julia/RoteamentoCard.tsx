@@ -1,44 +1,42 @@
-/** Julia › Agente cards (b)+(c): per-connection Julia switch and handoff target. */
+/**
+ * Julia › Agente — the line list: "esta linha atende leads com a Julia" (on/off) and who is told when a lead goes to
+ * a human (default: the org owner). Routing only — no behaviour, prompt or rule lives in SW.
+ */
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import {
-  mensagemErroJulia,
-  useAtualizarConexaoAgente,
-  type JuliaAgente,
-  type JuliaConexaoAgente,
-} from "@/hooks/useJuliaAgente";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { useAtualizarLinha, type LinhaRoteamento, type LinhaUpdate, type Roteamento } from "@/hooks/useJuliaRoteamento";
 import { useTeamMembers } from "@/hooks/useTeam";
 
 const SEM_NUMEROS =
-  "Cadastre ao menos um número autorizado nesta conexão (Configurações) para poder ligar a Julia.";
+  "Cadastre ao menos um número autorizado nesta linha (Configurações) para poder ligar a Julia.";
 
-function ConexaoRow({
-  conexao,
+function LinhaRow({
+  linha,
   isAdmin,
   admins,
   membrosErro,
 }: {
-  conexao: JuliaConexaoAgente;
+  linha: LinhaRoteamento;
   isAdmin: boolean;
   admins: { id: string; nome: string }[];
   membrosErro: boolean;
 }) {
-  const atualizar = useAtualizarConexaoAgente();
+  const atualizar = useAtualizarLinha();
   const [erro, setErro] = useState<string | null>(null);
-  const semNumeros = conexao.authorized_numbers_count === 0;
   // Turning OFF must stay possible even if the list was emptied after switching on.
-  const bloqueadoLigar = semNumeros && !conexao.agente_leads_ativo;
-  const alvo = conexao.agente_handoff_notificar_user_id;
+  const bloqueadoLigar = linha.numeros_autorizados === 0 && !linha.alimenta;
+  const alvo = linha.destino_handoff_user_id;
   const alvoForaDaLista = !!alvo && !admins.some((a) => a.id === alvo);
 
-  function enviar(body: { agente_leads_ativo: boolean; agente_handoff_notificar_user_id?: string | null }, ok: string) {
+  function enviar(body: LinhaUpdate, ok: string) {
     setErro(null);
     atualizar.mutate(
-      { connectionId: conexao.connection_id, body },
+      { connectionId: linha.connection_id, body },
       {
         onSuccess: () => toast.success(ok),
         onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar a alteração.")),
@@ -46,25 +44,22 @@ function ConexaoRow({
     );
   }
 
-  const switchId = `julia-${conexao.connection_id}`;
+  const switchId = `julia-${linha.connection_id}`;
   return (
-    <li className="space-y-3 rounded-md border p-4" data-testid={`julia-conexao-${conexao.connection_id}`}>
+    <li className="space-y-3 rounded-md border p-4" data-testid={`julia-linha-${linha.connection_id}`}>
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={switchId} className="text-sm font-medium">
-          Julia atende leads neste número
-          <span className="ml-2 font-normal text-muted-foreground">({conexao.label})</span>
+          Esta linha atende leads com a Julia
+          <span className="ml-2 font-normal text-muted-foreground">({linha.label})</span>
         </label>
         <div className="flex items-center gap-2">
           {atualizar.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           <Switch
             id={switchId}
-            checked={conexao.agente_leads_ativo}
+            checked={linha.alimenta}
             disabled={!isAdmin || atualizar.isPending || bloqueadoLigar}
             onCheckedChange={(v) =>
-              enviar(
-                { agente_leads_ativo: v },
-                v ? "Julia ligada neste número" : "Julia desligada neste número",
-              )
+              enviar({ alimenta: v }, v ? "Esta linha agora atende leads com a Julia" : "Esta linha não atende mais leads com a Julia")
             }
           />
         </div>
@@ -79,14 +74,14 @@ function ConexaoRow({
         <p className="text-xs text-muted-foreground">Somente owner ou admin da organização pode alterar.</p>
       )}
       {erro && (
-        <p role="alert" className="text-sm text-destructive" data-testid="conexao-erro">
+        <p role="alert" className="text-sm text-destructive" data-testid="linha-erro">
           {erro}
         </p>
       )}
 
       <div className="space-y-1">
         <label htmlFor={`${switchId}-handoff`} className="text-xs text-muted-foreground">
-          Quando um lead pedir atendimento humano, avisar
+          Quando a Julia passar um lead para atendimento humano, avisar
         </label>
         <select
           id={`${switchId}-handoff`}
@@ -95,15 +90,12 @@ function ConexaoRow({
           disabled={!isAdmin || atualizar.isPending}
           onChange={(e) =>
             enviar(
-              {
-                agente_leads_ativo: conexao.agente_leads_ativo,
-                agente_handoff_notificar_user_id: e.target.value || null,
-              },
+              { alimenta: linha.alimenta, destino_handoff_user_id: e.target.value || null },
               "Destinatário do aviso atualizado",
             )
           }
         >
-          <option value="">Dono da conexão</option>
+          <option value="">Dono da organização (padrão)</option>
           {alvoForaDaLista && <option value={alvo!}>Usuário configurado (fora da lista)</option>}
           {admins.map((a) => (
             <option key={a.id} value={a.id}>
@@ -113,7 +105,7 @@ function ConexaoRow({
         </select>
         {membrosErro && (
           <p className="text-xs text-muted-foreground" data-testid="membros-erro">
-            Não foi possível listar os membros; só "Dono da conexão" está disponível.
+            Não foi possível listar os membros; só o dono da organização está disponível.
           </p>
         )}
       </div>
@@ -121,7 +113,7 @@ function ConexaoRow({
   );
 }
 
-export function JuliaConexoesCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: boolean }) {
+export function RoteamentoCard({ data, isAdmin }: { data: Roteamento; isAdmin: boolean }) {
   const team = useTeamMembers();
   // Only owner/admin of the org can receive a handoff (server re-checks: 422 destinatario_invalido).
   const admins = (team.data ?? [])
@@ -129,18 +121,19 @@ export function JuliaConexoesCard({ data, isAdmin }: { data: JuliaAgente; isAdmi
     .map((m) => ({ id: m.id, nome: m.nome || m.email }));
 
   return (
-    <Card data-testid="julia-conexoes-card">
+    <Card data-testid="julia-roteamento-card">
       <CardHeader>
-        <CardTitle className="text-base">Julia nos números do WhatsApp</CardTitle>
+        <CardTitle className="text-base">Linhas de WhatsApp</CardTitle>
         <CardDescription>
-          Números da lista de autorizados continuam no One Chat. Conversas NOVAS de qualquer outra pessoa são atendidas
-          pela Julia. Conversas que já existiam quando você liga o interruptor nunca são respondidas por ela.
+          Escolha quais números do WhatsApp da sua organização alimentam a Julia. Números da lista de autorizados
+          continuam no One Chat. Conversas NOVAS de qualquer outra pessoa são atendidas pela Julia; conversas que já
+          existiam quando você liga a linha nunca são respondidas por ela.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {data.conexoes.length === 0 ? (
-          <p className="text-sm text-muted-foreground" data-testid="sem-conexoes">
-            Nenhuma conexão WhatsApp. Adicione uma em{" "}
+        {data.linhas.length === 0 ? (
+          <p className="text-sm text-muted-foreground" data-testid="sem-linhas">
+            Nenhuma linha de WhatsApp. Adicione uma em{" "}
             <a href="/conexoes" className="text-primary underline">
               Conexões
             </a>
@@ -148,14 +141,8 @@ export function JuliaConexoesCard({ data, isAdmin }: { data: JuliaAgente; isAdmi
           </p>
         ) : (
           <ul className="space-y-3">
-            {data.conexoes.map((c) => (
-              <ConexaoRow
-                key={c.connection_id}
-                conexao={c}
-                isAdmin={isAdmin}
-                admins={admins}
-                membrosErro={team.isError}
-              />
+            {data.linhas.map((l) => (
+              <LinhaRow key={l.connection_id} linha={l} isAdmin={isAdmin} admins={admins} membrosErro={team.isError} />
             ))}
           </ul>
         )}

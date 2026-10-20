@@ -1,10 +1,14 @@
 /**
- * Julia › Envio (contract wave 3).
+ * Julia › Envio (julia-v2 Q6: ONE rubric, the send fires from the COMPUTED stage).
  *
- *   GET/PUT /api/julia/envio/regras      → {data:{regras:[{operacao, grupos}]}}
+ *   GET/PUT /api/julia/envio/regras      → {data:{diferenciar, regras:[{operacao, estagio_minimo, versao}]}}
+ *                                           PUT body {diferenciar, regras:[{operacao, estagio_minimo}]}; the server
+ *                                           refuses the retired `grupos` with 422 — this client never sends it
  *   GET/PUT /api/julia/envio/politicas   → {data: Politicas}
+ *   GET /api/julia/qualificacao/estagios → the ordered stages of the standard agents runs for this org
+ *        (SW proxy of agents' `GET /api/channels/agents/{key}/qualificacao/estagios`): label + order only.
+ *        NOC-REMEDIATE[sw-estagios-proxy]: planned path, the backend slice julia-v2-sw-ferramentas adds it — 2026-10-20
  *
- * `grupos` = OR'd groups of AND'd criteria (`[[{campo, operador, valor}]]`).
  * Loading = two signals off `data` (never `isLoading`).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,34 +16,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
-export type OperadorCriterio = "=" | "preenchido" | ">=" | "<=" | "entre";
-export interface Criterio {
-  campo: string;
-  operador: OperadorCriterio;
-  /** number | [min, max] (entre) | boolean | string; null for `preenchido`. */
-  valor: unknown;
-}
-export type Grupo = Criterio[];
 export type OperacaoRegra = "compra" | "aluguel" | "ambas";
-export interface RegraEnvio { operacao: OperacaoRegra; grupos: Grupo[] }
-export interface RegrasEnvio { regras: RegraEnvio[] }
+export interface RegraEnvio { operacao: OperacaoRegra; estagio_minimo: string | null; versao?: number }
+export interface RegrasEnvio { diferenciar?: boolean; regras: RegraEnvio[] }
+export interface RegrasEnvioSalvar {
+  diferenciar: boolean;
+  regras: { operacao: OperacaoRegra; estagio_minimo: string }[];
+}
 
-/** The locked base criterion — always first of the first group. */
-export const CRITERIO_BASE: Criterio = { campo: "comportamento", operador: "=", valor: "qualificado" };
-export const CRITERIO_BASE_ROTULO = "Comportamento = Qualificado via inteligência da Julia";
-
-export interface CampoCriterio { campo: string; rotulo: string; numerico?: boolean; moeda?: boolean; booleano?: boolean }
-export const CAMPOS_CRITERIO: CampoCriterio[] = [
-  { campo: "visita_solicitada", rotulo: "Visita — Pré-agendada via formulário da Julia", booleano: true },
-  { campo: "nome", rotulo: "Nome" },
-  { campo: "email", rotulo: "E-mail" },
-  { campo: "bairro", rotulo: "Bairro" },
-  { campo: "tipo_imovel", rotulo: "Tipo do imóvel" },
-  { campo: "orcamento", rotulo: "Orçamento", numerico: true, moeda: true },
-  { campo: "renda", rotulo: "Renda", numerico: true, moeda: true },
-  { campo: "quartos", rotulo: "Quartos", numerico: true },
-  { campo: "vagas", rotulo: "Vagas", numerico: true },
-];
+/** One stage of the pinned standard as a consumer may see it: label and order only (never rule, points or text). */
+export interface Estagio { chave: string; rotulo: string; ordem: number; conclusivo: boolean }
 
 export type FriosModo = "intervalo" | "manha_seguinte";
 export interface Politicas {
@@ -56,8 +42,8 @@ export const rotuloMinutos = (m: number): string =>
 export const ENVIO_KEY = ["sw", "julia", "envio"] as const;
 
 const MENSAGENS: Record<string, string> = {
-  criterio_invalido: "Há um critério incompleto ou inválido. Revise os campos.",
-  regra_sem_comportamento: "Defina ao menos um critério no cartão Comportamento.",
+  estagio_invalido: "Escolha a etapa a partir da qual o lead é enviado ao SW.",
+  operacoes_invalidas: "Informe uma regra para compra e outra para aluguel, ou uma única regra para todas as operações.",
 };
 export function mensagemErroEnvio(err: unknown, fallback: string): string {
   const code = (err as { body?: { error?: { code?: unknown } } } | null)?.body?.error?.code;
@@ -73,9 +59,22 @@ export function useEnvioRegras() {
 }
 export function useSalvarEnvioRegras() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, RegrasEnvio>({
+  return useMutation<unknown, unknown, RegrasEnvioSalvar>({
     mutationFn: (body) => api.put("/api/julia/envio/regras", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ENVIO_KEY }),
+  });
+}
+
+/** Ordered stages for the `estagio_minimo` dropdown. Accepts the SW envelope or a bare list. */
+export function useQualificacaoEstagios() {
+  return useQuery({
+    queryKey: ["sw", "julia", "qualificacao", "estagios"] as const,
+    retry: false,
+    queryFn: async (): Promise<Estagio[]> => {
+      const r = await api.get<{ data?: Estagio[] } | Estagio[]>("/api/julia/qualificacao/estagios");
+      const lista = Array.isArray(r) ? r : (r?.data ?? []);
+      return [...lista].sort((a, b) => a.ordem - b.ordem || a.chave.localeCompare(b.chave));
+    },
   });
 }
 
@@ -93,11 +92,12 @@ export function useSalvarEnvioPoliticas() {
   });
 }
 
-/** Rules → the shape the wizard edits: one entry for "ambas", or compra+aluguel. */
-export function regraDe(regras: RegrasEnvio | undefined, op: OperacaoRegra): Grupo[] {
-  const r = regras?.regras?.find((x) => x.operacao === op);
-  return r?.grupos?.length ? r.grupos : [[CRITERIO_BASE]];
+/** The stage a rule fires from, per operation (null = no rule yet). */
+export function estagioDe(regras: RegrasEnvio | undefined, op: OperacaoRegra): string | null {
+  return regras?.regras?.find((x) => x.operacao === op)?.estagio_minimo ?? null;
 }
 export function separaOperacao(regras: RegrasEnvio | undefined): boolean {
-  return !!regras?.regras?.some((r) => r.operacao === "compra" || r.operacao === "aluguel");
+  return regras?.diferenciar ?? !!regras?.regras?.some((r) => r.operacao === "compra" || r.operacao === "aluguel");
 }
+export const rotuloOperacao = (op: OperacaoRegra) =>
+  op === "ambas" ? "Compra e aluguel" : op === "compra" ? "Compra" : "Aluguel";

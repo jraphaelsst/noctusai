@@ -1,4 +1,4 @@
-/** Julia › Envio — wizard (OR/AND, locked base criterion, steps, exit), policy cards. */
+/** Julia › Envio (julia-v2 Q6) — the rule is a MINIMUM COMPUTED STAGE fed by agents; no criteria builder, no `grupos`. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -12,13 +12,20 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 import JuliaEnvio from "./Envio";
 
-const BASE = { campo: "comportamento", operador: "=", valor: "qualificado" };
-const REGRAS = { regras: [{ operacao: "ambas", grupos: [[BASE]] }] };
+const ESTAGIOS = [
+  { chave: "quente", rotulo: "Lead quente", ordem: 3, conclusivo: true },
+  { chave: "frio", rotulo: "Lead frio", ordem: 1, conclusivo: false },
+  { chave: "morno", rotulo: "Lead morno", ordem: 2, conclusivo: false },
+];
+const REGRAS = { diferenciar: false, regras: [{ operacao: "ambas", estagio_minimo: "morno", versao: 2 }] };
 const POL = { frios: { ativo: false, modo: "intervalo", minutos: 60 }, captacoes: "notificar", whatsapp_invalido: false, pesquisa: false };
 
-function setup(regras: unknown = REGRAS) {
-  api.get.mockImplementation((url: string) =>
-    Promise.resolve({ data: url.endsWith("/regras") ? regras : POL }));
+function setup(regras: unknown = REGRAS, estagios: unknown = ESTAGIOS) {
+  api.get.mockImplementation((url: string) => {
+    if (url === "/api/julia/qualificacao/estagios")
+      return estagios instanceof Error ? Promise.reject(estagios) : Promise.resolve({ data: estagios });
+    return Promise.resolve({ data: url.endsWith("/regras") ? regras : POL });
+  });
   api.put.mockResolvedValue({});
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}><ConfirmProvider><JuliaEnvio /></ConfirmProvider></QueryClientProvider>);
@@ -27,78 +34,113 @@ async function abrir() {
   fireEvent.click(await screen.findByTestId("envio-editar"));
   return screen.findByTestId("envio-wizard");
 }
-const pick = (el: HTMLElement, label: string, value: string) =>
-  fireEvent.change(within(el).getByLabelText(label), { target: { value } });
 
 beforeEach(() => { h.admin = true; Object.values(api).forEach((f) => f.mockReset()); });
 afterEach(cleanup);
 
-describe("Envio wizard", () => {
-  it("shows a skeleton first, then the summary and policy cards", async () => {
+describe("Envio rule — minimum computed stage", () => {
+  it("shows a skeleton first, then the rule summary with the stage LABEL and the policy cards", async () => {
     setup();
     expect(screen.getByTestId("envio-skeleton")).toBeTruthy();
     expect(await screen.findByTestId("envio-regras-resumo")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("resumo-ambas").textContent).toContain('"Lead morno"'));
     expect(screen.getByTestId("card-frios")).toBeTruthy();
   });
 
-  it("locks the base criterion (no remove, no selects) and builds AND / OR", async () => {
-    setup();
-    const w = await abrir();
-    const base = within(w).getByTestId("crit-0-0");
-    expect(base.textContent).toContain("Comportamento = Qualificado via inteligência da Julia");
-    expect(within(base).queryByLabelText("Remover critério")).toBeNull();
-
-    fireEvent.click(within(w).getByTestId("combinar-0")); // AND inside group 0
-    expect(within(w).getAllByText("E").length).toBe(1);
-    fireEvent.click(within(w).getByTestId("adicionar-grupo")); // new OR group
-    expect(within(w).getByText("OU")).toBeTruthy();
-    expect(within(w).getByTestId("grupo-1")).toBeTruthy();
+  it("empty rule: says nothing is sent automatically", async () => {
+    setup({ diferenciar: false, regras: [] });
+    expect((await screen.findByTestId("resumo-ambas")).textContent).toContain("nenhum lead é enviado");
   });
 
-  it("blocks Próximo on an incomplete criterion, then saves AND/OR on step 2", async () => {
+  it("the dropdown lists the stages in order (from agents) and preselects the saved one", async () => {
     setup();
     const w = await abrir();
-    fireEvent.click(within(w).getByTestId("combinar-0"));
-    fireEvent.click(within(w).getByTestId("wizard-proximo"));
-    expect(within(w).getByTestId("wizard-erro").textContent).toContain("Selecione o critério");
+    const sel = (await within(w).findByLabelText("Etapa mínima")) as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.text)).toEqual(["Selecionar etapa", "1. Lead frio", "2. Lead morno", "3. Lead quente"]);
+    expect(sel.value).toBe("morno");
+    expect(api.get).toHaveBeenCalledWith("/api/julia/qualificacao/estagios");
+  });
 
-    const c = within(w).getByTestId("crit-0-1");
-    pick(c, "Critério", "orcamento");
-    pick(c, "Condição", "entre");
-    fireEvent.change(within(c).getByLabelText("De"), { target: { value: "100000" } });
-    fireEvent.change(within(c).getByLabelText("Até"), { target: { value: "300000" } });
-    fireEvent.click(within(w).getByTestId("adicionar-grupo"));
-    pick(within(w).getByTestId("crit-1-0"), "Critério", "visita_solicitada");
-
-    fireEvent.click(within(w).getByTestId("wizard-proximo"));
-    expect(within(w).getByText(/Passo 2 de 2/)).toBeTruthy();
-    expect(within(w).getByTestId("resumo-grupo-0").textContent).toContain("Comportamento — Qualificado via inteligência da Julia E Orçamento: de R$ 100.000 até R$ 300.000");
-    expect(within(w).getByTestId("resumo-grupo-1").textContent).toContain("Visita");
-
+  it("saves estagio_minimo and NEVER sends `grupos`", async () => {
+    setup();
+    const w = await abrir();
+    fireEvent.change(await within(w).findByLabelText("Etapa mínima"), { target: { value: "quente" } });
     fireEvent.click(within(w).getByTestId("wizard-salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     expect(api.put).toHaveBeenCalledWith("/api/julia/envio/regras", {
-      regras: [{ operacao: "ambas", grupos: [
-        [BASE, { campo: "orcamento", operador: "entre", valor: [100000, 300000] }],
-        [{ campo: "visita_solicitada", operador: "=", valor: true }],
-      ] }],
+      diferenciar: false,
+      regras: [{ operacao: "ambas", estagio_minimo: "quente" }],
     });
+    expect(JSON.stringify(api.put.mock.calls[0][1])).not.toContain("grupos");
   });
 
-  it("splits compra/aluguel with separate tabs and sends both rules", async () => {
+  it("splits compra/aluguel: one dropdown each, both sent", async () => {
     setup();
     const w = await abrir();
     fireEvent.click(within(w).getByLabelText("Configurações diferentes para compra e aluguel"));
-    fireEvent.click(within(w).getByRole("tab", { name: "Aluguel" }));
-    fireEvent.click(within(w).getByTestId("combinar-0"));
-    pick(within(w).getByTestId("crit-0-1"), "Critério", "nome");
-    fireEvent.click(within(w).getByTestId("wizard-proximo"));
+    fireEvent.change(await within(w).findByLabelText("Etapa mínima — Aluguel"), { target: { value: "quente" } });
     fireEvent.click(within(w).getByTestId("wizard-salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
-    const body = api.put.mock.calls[0][1] as { regras: { operacao: string; grupos: unknown[][] }[] };
-    expect(body.regras.map((r) => r.operacao)).toEqual(["compra", "aluguel"]);
-    expect(body.regras[0].grupos[0].length).toBe(1);
-    expect(body.regras[1].grupos[0].length).toBe(2);
+    expect(api.put.mock.calls[0][1]).toEqual({
+      diferenciar: true,
+      regras: [
+        { operacao: "compra", estagio_minimo: "morno" },
+        { operacao: "aluguel", estagio_minimo: "quente" },
+      ],
+    });
+  });
+
+  it("blocks saving without a stage and without changes (no request)", async () => {
+    setup({ diferenciar: false, regras: [] });
+    const w = await abrir();
+    fireEvent.click(within(w).getByTestId("wizard-salvar"));
+    expect(within(w).getByTestId("wizard-erro").textContent).toContain("Nenhuma alteração");
+    fireEvent.click(within(w).getByLabelText("Configurações diferentes para compra e aluguel"));
+    fireEvent.click(within(w).getByTestId("wizard-salvar"));
+    expect(within(w).getByTestId("wizard-erro").textContent).toContain("escolha a etapa");
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["estagio_invalido", "Escolha a etapa"],
+    ["operacoes_invalidas", "uma regra para compra"],
+  ])("server 422 %s -> pt-BR message", async (code, texto) => {
+    api.put.mockReset();
+    setup();
+    api.put.mockRejectedValue(Object.assign(new Error("[422]"), { status: 422, body: { error: { code, message: "x" } } }));
+    const w = await abrir();
+    fireEvent.change(await within(w).findByLabelText("Etapa mínima"), { target: { value: "quente" } });
+    fireEvent.click(within(w).getByTestId("wizard-salvar"));
+    expect((await within(w).findByTestId("wizard-erro")).textContent).toContain(texto);
+  });
+
+  it("a 422 refusing `grupos` (generic validation error) surfaces the server message, never a silent nothing", async () => {
+    setup();
+    api.put.mockRejectedValue(Object.assign(new Error("[422]"), { status: 422, body: { error: { code: "validation_error", message: "Campo não permitido: grupos" } } }));
+    const w = await abrir();
+    fireEvent.change(await within(w).findByLabelText("Etapa mínima"), { target: { value: "frio" } });
+    fireEvent.click(within(w).getByTestId("wizard-salvar"));
+    expect((await within(w).findByTestId("wizard-erro")).textContent).toContain("grupos");
+  });
+
+  it("stages failing to load: error with retry, Save disabled", async () => {
+    setup(REGRAS, new Error("404"));
+    const w = await abrir();
+    expect(await within(w).findByTestId("estagios-erro")).toBeTruthy();
+    expect((within(w).getByTestId("wizard-salvar") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("no stages published: says so", async () => {
+    setup(REGRAS, []);
+    const w = await abrir();
+    expect(await within(w).findByTestId("estagios-vazio")).toBeTruthy();
+  });
+
+  it("a saved stage that no longer exists stays visible (not silently dropped)", async () => {
+    setup({ diferenciar: false, regras: [{ operacao: "ambas", estagio_minimo: "antigo" }] });
+    const w = await abrir();
+    const sel = (await within(w).findByLabelText("Etapa mínima")) as HTMLSelectElement;
+    expect([...sel.options].some((o) => o.text.includes("antigo"))).toBe(true);
   });
 
   it("asks 'Sair da edição?' only when dirty", async () => {
@@ -108,7 +150,7 @@ describe("Envio wizard", () => {
     await waitFor(() => expect(screen.queryByTestId("envio-wizard")).toBeNull());
 
     w = await abrir();
-    fireEvent.click(within(w).getByTestId("combinar-0"));
+    fireEvent.change(await within(w).findByLabelText("Etapa mínima"), { target: { value: "quente" } });
     fireEvent.click(within(w).getAllByLabelText("Fechar")[0]);
     expect(await screen.findByText(/Sair da edição\?/)).toBeTruthy();
   });
@@ -118,7 +160,8 @@ describe("Envio wizard", () => {
     setup();
     const w = await abrir();
     expect(within(w).getByTestId("envio-readonly")).toBeTruthy();
-    expect((within(w).getByTestId("adicionar-grupo") as HTMLButtonElement).disabled).toBe(true);
+    expect((await within(w).findByLabelText("Etapa mínima") as HTMLSelectElement).disabled).toBe(true);
+    expect(within(w).queryByTestId("wizard-salvar")).toBeNull();
   });
 });
 

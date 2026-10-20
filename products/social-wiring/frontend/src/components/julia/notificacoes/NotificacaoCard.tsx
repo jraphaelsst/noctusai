@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 
+import { HandoffDetalhe } from "@/components/julia/notificacoes/HandoffDetalhe";
+import { desescaparEntidades, mascararIdentidade } from "@/lib/mascaraIdentidade";
 import { metaTipo, type JuliaNotificacao } from "@/hooks/useJuliaNotificacoes";
 
 interface Props { notificacao: JuliaNotificacao; onLer: (id: string) => void }
@@ -18,7 +20,7 @@ export function NotificacaoCard({ notificacao: n, onLer }: Props) {
             <span className="text-[11px] font-semibold tracking-wide text-muted-foreground">{categoria}</span>
             {!n.is_read && <span className="h-2 w-2 rounded-full bg-primary" aria-label="Não lida" />}
           </div>
-          <p className="text-sm">{texto}</p>
+          <p className="text-sm">{mascararIdentidade(desescaparEntidades(texto))}</p>
           <p className="text-xs text-muted-foreground">{quando}</p>
         </div>
         <button
@@ -36,7 +38,12 @@ export function NotificacaoCard({ notificacao: n, onLer }: Props) {
       </div>
       {aberto && (
         <div className="mt-2 space-y-1 border-t pt-2 text-sm" data-testid="notificacao-detalhe">
-          {n.mensagem && n.titulo && <p>{n.mensagem}</p>}
+          {n.mensagem && n.titulo &&
+            (n.tipo === "handoff" || n.tipo === "julia_handoff" ? (
+              <HandoffDetalhe mensagem={n.mensagem} />
+            ) : (
+              <p>{mascararIdentidade(desescaparEntidades(n.mensagem))}</p>
+            ))}
           {n.link && <a href={n.link} className="text-primary underline">Abrir</a>}
         </div>
       )}

@@ -33,8 +33,17 @@ export interface JuliaSelecaoItem {
   qualificatoria: boolean;
 }
 
+/** The stage agents COMPUTED for the lead: label + score only (the rule/points are platform IP, never sent). */
+export interface JuliaQualificacaoChip {
+  estagio: string;
+  rotulo?: string | null;
+  score?: number | null;
+}
+
 export interface JuliaContatoLead {
   contato: { operacao?: string | null; [k: string]: unknown } | null;
+  /** Optional until SW exposes the computed stage on the contato read (see the Julia v2 FE delivery note). */
+  qualificacao?: JuliaQualificacaoChip | null;
   slots: Record<string, string | number | null> | null;
   interacao_atual: { operacao?: string | null; [k: string]: unknown } | null;
 }

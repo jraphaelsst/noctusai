@@ -8,26 +8,36 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EnvioWizard } from "@/components/julia/envio/EnvioWizard";
 import { PoliticasCards } from "@/components/julia/envio/PoliticasCards";
-import { rotuloCriterio, garantirBase, clonarGrupos } from "@/components/julia/envio/criterios";
-import { regraDe, useEnvioPoliticas, useEnvioRegras, type RegrasEnvio } from "@/hooks/useJuliaEnvio";
+import {
+  estagioDe,
+  rotuloOperacao,
+  useEnvioPoliticas,
+  useEnvioRegras,
+  useQualificacaoEstagios,
+  type OperacaoRegra,
+  type RegrasEnvio,
+} from "@/hooks/useJuliaEnvio";
 import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 function ResumoRegras({ regras }: { regras: RegrasEnvio }) {
-  const ops = regras.regras.length ? regras.regras.map((r) => r.operacao) : (["ambas"] as const);
+  const estagios = useQualificacaoEstagios();
+  const ops: OperacaoRegra[] = regras.regras.length ? regras.regras.map((r) => r.operacao) : ["ambas"];
+  const rotulo = (chave: string) => estagios.data?.find((e) => e.chave === chave)?.rotulo ?? chave;
   return (
     <div className="space-y-3" data-testid="envio-regras-resumo">
-      {ops.map((op) => (
-        <div key={op}>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">
-            {op === "ambas" ? "Compra e aluguel" : op === "compra" ? "Compra" : "Aluguel"}
-          </p>
-          <ul className="mt-1 space-y-1 text-sm">
-            {garantirBase(clonarGrupos(regraDe(regras, op))).map((g, i) => (
-              <li key={i}>{i > 0 && <span className="mr-1 text-xs text-muted-foreground">OU</span>}{g.map(rotuloCriterio).join(" E ")}</li>
-            ))}
-          </ul>
-        </div>
-      ))}
+      {ops.map((op) => {
+        const chave = estagioDe(regras, op);
+        return (
+          <div key={op}>
+            <p className="text-xs font-semibold uppercase text-muted-foreground">{rotuloOperacao(op)}</p>
+            <p className="mt-1 text-sm" data-testid={`resumo-${op}`}>
+              {chave
+                ? `Enviado ao SW quando a qualificação chega à etapa "${rotulo(chave)}" ou além.`
+                : "Sem regra definida: nenhum lead é enviado automaticamente."}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -48,7 +58,7 @@ export default function JuliaEnvio() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">{JULIA_LABEL} · {JULIA_PAGES.envio.name}</h1>
-          <p className="text-sm text-muted-foreground">Defina quando a Julia envia leads qualificados ao SW.</p>
+          <p className="text-sm text-muted-foreground">Defina a partir de qual etapa da qualificação a Julia envia o lead ao SW.</p>
         </div>
         {isRefreshing && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="envio-refreshing">
@@ -73,10 +83,10 @@ export default function JuliaEnvio() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h2 className="font-semibold">Envio de leads qualificados</h2>
-                  <p className="text-sm text-muted-foreground">A Julia qualifica e envia ao SW os leads que atenderem algum dos critérios.</p>
+                  <p className="text-sm text-muted-foreground">A qualificação é feita pela Julia no app de agentes; aqui você escolhe a etapa mínima para o envio.</p>
                 </div>
                 <Button size="sm" onClick={() => setEditando(true)} data-testid="envio-editar">
-                  {isAdmin ? "Editar critérios" : "Ver critérios"}
+                  {isAdmin ? "Editar regra" : "Ver regra"}
                 </Button>
               </div>
               {regras.data && <ResumoRegras regras={regras.data} />}

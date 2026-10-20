@@ -1,8 +1,8 @@
 /**
- * Julia › Agente — states, the four cards, every refusal code's pt-BR message,
- * the disabled-switch reason, handoff options (owner/admin only) and the
- * write-only token. `@/lib/api` is the seam (real hooks + real components);
- * `useIsOrgAdmin` / the team list are the only other fakes.
+ * Julia › Agente (routing only) — states, the agents-link status, the line list (on/off + handoff target), every
+ * refusal code's pt-BR message, the disabled-switch reason, handoff options (owner/admin only), the write-only token,
+ * the "Configurar a Julia no app de agentes" link, and the privacy notice. No behaviour is configured here.
+ * `@/lib/api` is the seam (real hooks + real components); `useIsOrgAdmin` / the team list are the only other fakes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
@@ -17,17 +17,21 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import JuliaAgente from "./Agente";
 
-const CONEXAO = {
+const LINHA = {
   connection_id: "c1",
   label: "Comercial",
-  agente_leads_ativo: false,
-  agente_leads_key: null,
-  authorized_numbers_count: 2,
-  agente_leads_ativado_em: null,
-  agente_handoff_notificar_user_id: null,
+  alimenta: false,
+  alimenta_desde: null,
+  numeros_autorizados: 2,
+  destino_handoff_user_id: null,
+};
+const ROTEAMENTO = {
+  linhas: [LINHA],
+  destino_handoff_padrao: { tipo: "dono_da_organizacao", user_id: "u1" },
+  agents_url: "https://agents.example.test/",
 };
 const AGENTE = {
-  conexoes: [CONEXAO],
+  conexoes: [],
   token_configurado: true,
   status_agente: { agent_key: "julia", nome: "Julia", ativo: true, versao_ativa: 4, provider: "anthropic", model: "claude-x", llm_configurado: true },
   erro: null,
@@ -44,8 +48,9 @@ function serverError(code: string, status = 409) {
   return Object.assign(new Error(`[${status}] x`), { status, body: { error: { code, message: "msg do servidor" } } });
 }
 
-function setup(agente: unknown = AGENTE, aviso: unknown = AVISO) {
+function setup(agente: unknown = AGENTE, aviso: unknown = AVISO, roteamento: unknown = ROTEAMENTO) {
   api.get.mockImplementation((url: string) => {
+    if (url === "/api/julia/roteamento") return roteamento instanceof Error ? Promise.reject(roteamento) : Promise.resolve({ data: roteamento });
     if (url === "/api/julia/agente") return agente instanceof Error ? Promise.reject(agente) : Promise.resolve({ data: agente });
     if (url === "/api/julia/agente/aviso") return Promise.resolve({ data: aviso });
     return Promise.reject(new Error(`unexpected GET ${url}`));
@@ -65,24 +70,50 @@ describe("Julia › Agente — states", () => {
   it("shows a skeleton first, then the cards", async () => {
     setup();
     expect(screen.getByTestId("agente-skeleton")).toBeTruthy();
-    expect(await screen.findByTestId("agents-link-card")).toBeTruthy();
+    expect(await screen.findByTestId("julia-roteamento-card")).toBeTruthy();
     expect(screen.queryByTestId("agente-skeleton")).toBeNull();
+    expect(await screen.findByTestId("agents-link-card")).toBeTruthy();
     expect(await screen.findByTestId("aviso-card")).toBeTruthy();
   });
 
-  it("shows an error state with retry when the page query fails", async () => {
-    setup(new Error("boom"));
+  it("shows an error state with retry when the routing query fails", async () => {
+    setup(AGENTE, AVISO, new Error("boom"));
     expect(await screen.findByTestId("agente-erro")).toBeTruthy();
     expect(screen.getByText("Tentar de novo")).toBeTruthy();
   });
 
-  it("empty: no connections points to Conexões", async () => {
-    setup({ ...AGENTE, conexoes: [] });
-    expect(await screen.findByTestId("sem-conexoes")).toBeTruthy();
+  it("empty: no lines points to Conexões", async () => {
+    setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [] });
+    expect(await screen.findByTestId("sem-linhas")).toBeTruthy();
+  });
+
+  it("a failing link-status query degrades that card only, the routing still renders", async () => {
+    setup(new Error("boom"));
+    expect(await screen.findByTestId("julia-roteamento-card")).toBeTruthy();
+    expect(await screen.findByTestId("agents-link-erro")).toBeTruthy();
+  });
+
+  it("is ROUTING ONLY: no behaviour setting, prompt or rule text is rendered", async () => {
+    setup();
+    await screen.findByTestId("julia-roteamento-card");
+    const t = document.body.textContent!.toLowerCase();
+    for (const w of ["prompt", "instruç", "persona", "tom de voz", "dica"]) expect(t).not.toContain(w);
+  });
+
+  it("links to configure Julia in the agents app", async () => {
+    setup();
+    const a = (await screen.findByTestId("configurar-julia-link")) as HTMLAnchorElement;
+    expect(a.textContent).toContain("Configurar a Julia no app de agentes");
+    expect(a.href).toBe("https://agents.example.test/studio/julia");
+  });
+
+  it("says so when the agents URL is unresolvable", async () => {
+    setup({ ...AGENTE, agents_url: null }, AVISO, { ...ROTEAMENTO, agents_url: null });
+    expect(await screen.findByTestId("configurar-julia-indisponivel")).toBeTruthy();
   });
 });
 
-describe("Card (a) — Agents link", () => {
+describe("Agents link — status + token", () => {
   it("shows token state, Julia status and the Agents link", async () => {
     setup();
     expect((await screen.findByTestId("token-status")).textContent).toContain("Token configurado");
@@ -91,9 +122,6 @@ describe("Card (a) — Agents link", () => {
     expect(st).toContain("4");
     expect(st).toContain("anthropic / claude-x");
     expect(st).toContain("Configurada");
-    expect((screen.getByTestId("editar-julia-link") as HTMLAnchorElement).href).toBe(
-      "https://agents.example.test/studio/julia",
-    );
   });
 
   it("shows the link error and a missing token", async () => {
@@ -134,32 +162,36 @@ describe("Card (a) — Agents link", () => {
   });
 });
 
-describe("Cards (b)/(c) — switch and handoff target", () => {
-  it("turning on sends the PUT with the current handoff intact", async () => {
+describe("Line list — routing switch and handoff target", () => {
+  it("turning a line on sends the routing PUT", async () => {
     api.put.mockResolvedValue({ data: {} });
     setup();
-    const sw = await screen.findByRole("switch");
-    fireEvent.click(sw);
+    fireEvent.click(await screen.findByRole("switch"));
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith("/api/julia/agente/conexoes/c1", { agente_leads_ativo: true }),
+      expect(api.put).toHaveBeenCalledWith("/api/julia/roteamento/linhas/c1", { alimenta: true }),
     );
   });
 
+  it("labels the switch as the line feeding Julia", async () => {
+    setup();
+    expect((await screen.findByLabelText(/Esta linha atende leads com a Julia/)).getAttribute("role")).toBe("switch");
+  });
+
   it("disables the switch with the reason when there are no authorized numbers", async () => {
-    setup({ ...AGENTE, conexoes: [{ ...CONEXAO, authorized_numbers_count: 0 }] });
+    setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [{ ...LINHA, numeros_autorizados: 0 }] });
     const sw = (await screen.findByRole("switch")) as HTMLButtonElement;
     expect(sw.disabled).toBe(true);
     expect(screen.getByTestId("motivo-desabilitado").textContent).toContain("número autorizado");
   });
 
   it("an already-on switch stays turn-off-able even with an emptied list", async () => {
-    setup({ ...AGENTE, conexoes: [{ ...CONEXAO, agente_leads_ativo: true, authorized_numbers_count: 0 }] });
+    setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [{ ...LINHA, alimenta: true, numeros_autorizados: 0 }] });
     expect(((await screen.findByRole("switch")) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("explains who gets whom (One Chat / new chats / pre-existing)", async () => {
     setup();
-    const t = (await screen.findByTestId("julia-conexoes-card")).textContent!;
+    const t = (await screen.findByTestId("julia-roteamento-card")).textContent!;
     expect(t).toContain("One Chat");
     expect(t).toContain("NOVAS");
     expect(t).toContain("já existiam");
@@ -176,10 +208,10 @@ describe("Cards (b)/(c) — switch and handoff target", () => {
     api.put.mockRejectedValue(serverError(code, status));
     setup();
     fireEvent.click(await screen.findByRole("switch"));
-    expect((await screen.findByTestId("conexao-erro")).textContent).toContain(texto);
+    expect((await screen.findByTestId("linha-erro")).textContent).toContain(texto);
   });
 
-  it("handoff select lists ONLY owner/admin members + the owner default, and saves null for the default", async () => {
+  it("handoff select defaults to the org owner, lists ONLY owner/admin members, and saves null for the default", async () => {
     h.team = {
       isError: false,
       data: [
@@ -189,16 +221,16 @@ describe("Cards (b)/(c) — switch and handoff target", () => {
       ],
     };
     api.put.mockResolvedValue({ data: {} });
-    setup({ ...AGENTE, conexoes: [{ ...CONEXAO, agente_handoff_notificar_user_id: "u2" }] });
+    setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [{ ...LINHA, destino_handoff_user_id: "u2" }] });
     const select = (await screen.findByLabelText(/avisar/)) as HTMLSelectElement;
     const options = within(select).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Dono da conexão", "Ana Dona", "Beto Admin"]);
+    expect(options).toEqual(["Dono da organização (padrão)", "Ana Dona", "Beto Admin"]);
     expect(select.value).toBe("u2");
     fireEvent.change(select, { target: { value: "" } });
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith("/api/julia/agente/conexoes/c1", {
-        agente_leads_ativo: false,
-        agente_handoff_notificar_user_id: null,
+      expect(api.put).toHaveBeenCalledWith("/api/julia/roteamento/linhas/c1", {
+        alimenta: false,
+        destino_handoff_user_id: null,
       }),
     );
   });
@@ -211,7 +243,7 @@ describe("Cards (b)/(c) — switch and handoff target", () => {
   });
 });
 
-describe("Card (d) — privacy notice", () => {
+describe("Privacy notice (legal, lives in SW)", () => {
   it("renders the editor and the public-page link", async () => {
     setup();
     expect(((await screen.findByLabelText("Empresa (controlador)")) as HTMLInputElement).value).toBe("Empresa X");

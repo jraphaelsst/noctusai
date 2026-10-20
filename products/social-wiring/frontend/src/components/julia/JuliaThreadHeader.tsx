@@ -2,9 +2,13 @@
  * Julia's slice of a WhatsApp thread header (contract 11.4) — plugged into the
  * seed `ChatWindow` through its `ThreadHeaderExtra` seam.
  *
- *   - chip "Julia atendendo" / "Atendimento humano" (from the chat's
- *     `agente_pausado`, kept live by the realtime `chat.upsert`);
- *   - admin toggle that pauses / resumes Julia on THIS chat;
+ *   - state chip (ativo / pausado / concluído / transferido) as AGENTS reports it
+ *     (`GET .../chats/{chat}/agente`), with its source flag: `agents` live, `espelho`
+ *     (agents unreachable: last known, possibly stale) or `nenhuma` (Julia never served
+ *     this chat) — SW decides nothing, it displays;
+ *   - computed stage chip: stage label + score ONLY (rule and points are platform IP);
+ *   - admin toggle that pauses / resumes Julia on THIS chat (proxied to agents; disabled
+ *     while the live state is unknown);
  *   - admin action "Apagar dados deste contato (LGPD)" behind a confirm dialog.
  *
  * Reads/writes are server-enforced (admin only); the UI only hides what the
@@ -12,7 +16,7 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Bot, Loader2, Trash2, UserRound } from "lucide-react";
+import { Bot, Loader2, Trash2, TrendingUp, UserRound } from "lucide-react";
 import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import type { ChatThread } from "@noctusai/lib/design-system";
 
@@ -29,7 +33,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useApagarDadosChat, useSetChatAgentePausado } from "@/hooks/useWhatsAppChats";
 import { PainelLead } from "@/components/julia/PainelLead";
-import { useJuliaAgente, mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { useJuliaRoteamento } from "@/hooks/useJuliaRoteamento";
+import { AVISO_FONTE, ROTULO_ESTADO, useJuliaConversaEstado, type EstadoConversa } from "@/hooks/useJuliaConversaEstado";
+import { useJuliaContato } from "@/hooks/useJuliaPerguntas";
 import { ConversaAcoes, contatoMeta } from "@/components/julia/conversas/ConversaAcoes";
 
 export function JuliaThreadHeader({
@@ -40,17 +47,34 @@ export function JuliaThreadHeader({
   thread: ChatThread;
 }) {
   const isAdmin = useIsOrgAdmin();
-  const { data: agente } = useJuliaAgente();
+  const { data: rot } = useJuliaRoteamento();
   const pausar = useSetChatAgentePausado(scopeId);
   const apagar = useApagarDadosChat(scopeId);
   const [confirmando, setConfirmando] = useState(false);
 
-  const pausado = thread.meta?.agente_pausado === true;
   // Present only when the thread comes from the Julia Conversas v2 feed.
   const contato = contatoMeta(thread.meta);
-  // The chip only means something on a connection where Julia is switched on.
-  const juliaLigada =
-    agente?.conexoes.find((c) => c.connection_id === scopeId)?.agente_leads_ativo === true;
+  // The chip only means something on a line that feeds Julia.
+  const juliaLigada = rot?.linhas.find((c) => c.connection_id === scopeId)?.alimenta === true;
+  const estadoQ = useJuliaConversaEstado(scopeId, thread.id, juliaLigada);
+  const lead = useJuliaContato(juliaLigada ? scopeId : null, juliaLigada ? thread.id : null);
+  // `useJuliaContato` keeps the previous chat's data while the next loads: never show ITS stage on this lead.
+  const chipEstagio = lead.isPlaceholderData ? null : (lead.data?.qualificacao ?? null);
+  // Two signals off `data`; when the live read FAILED we fall back to the mirror the chat row carries, flagged stale.
+  const estado: EstadoConversa | null =
+    estadoQ.data ??
+    (estadoQ.isError
+      ? {
+          thread_id: null,
+          estado: (thread.meta?.agente_estado as EstadoConversa["estado"]) ?? (thread.meta?.agente_pausado === true ? "pausado" : null),
+          pausado: thread.meta?.agente_pausado === true,
+          reengajamento_suprimido: null,
+          motivo: null,
+          fonte: "espelho",
+        }
+      : null);
+  const pausado = estado?.estado === "pausado";
+  const podeAlternar = estado?.fonte === "agents" && (estado.estado === "ativo" || estado.estado === "pausado");
 
   function alternar() {
     pausar.mutate(
@@ -84,20 +108,46 @@ export function JuliaThreadHeader({
     <div className="flex flex-shrink-0 items-center gap-2" data-testid="julia-thread-header">
       {contato && <ConversaAcoes contato={contato} />}
       {juliaLigada && <PainelLead connectionId={scopeId} chatId={thread.id} />}
-      {juliaLigada && (
+      {juliaLigada && !estado && (
+        <span className="h-5 w-28 animate-pulse rounded-full bg-muted" data-testid="julia-chip-skeleton" />
+      )}
+      {juliaLigada && estado && (
         <span
           data-testid="julia-chip"
+          data-estado={estado.estado ?? "nenhum"}
+          data-fonte={estado.fonte}
           data-pausado={pausado ? "true" : "false"}
+          title={AVISO_FONTE[estado.fonte] ?? undefined}
           className={
             "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium " +
-            (pausado ? "bg-amber-100 text-amber-900" : "bg-primary/10 text-primary")
+            (estado.fonte !== "agents"
+              ? "bg-muted text-muted-foreground"
+              : estado.estado === "ativo"
+                ? "bg-primary/10 text-primary"
+                : "bg-amber-100 text-amber-900")
           }
         >
-          {pausado ? <UserRound className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
-          {pausado ? "Atendimento humano" : "Julia atendendo"}
+          {estado.estado === "ativo" ? <Bot className="h-3 w-3" /> : <UserRound className="h-3 w-3" />}
+          {estado.estado ? ROTULO_ESTADO[estado.estado] : "Julia ainda não atendeu"}
+          {estado.fonte === "espelho" && " (último estado conhecido)"}
         </span>
       )}
-      {isAdmin && juliaLigada && (
+      {juliaLigada && estado && AVISO_FONTE[estado.fonte] && (
+        <span className="sr-only" data-testid="julia-fonte-aviso">
+          {AVISO_FONTE[estado.fonte]}
+        </span>
+      )}
+      {juliaLigada && chipEstagio && (
+        <span
+          data-testid="julia-estagio"
+          className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900"
+        >
+          <TrendingUp className="h-3 w-3" />
+          {chipEstagio.rotulo || chipEstagio.estagio}
+          {typeof chipEstagio.score === "number" && ` · ${chipEstagio.score}`}
+        </span>
+      )}
+      {isAdmin && juliaLigada && podeAlternar && (
         <Button
           variant="outline"
           size="sm"

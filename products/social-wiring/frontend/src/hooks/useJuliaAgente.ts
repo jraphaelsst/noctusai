@@ -1,8 +1,7 @@
 /**
- * Julia › Agente — the Julia surface (contract section 5 + 11).
+ * Julia › Agente — the agents LINK (status only; routing lives in `useJuliaRoteamento`).
  *
- *   GET /api/julia/agente                       org member: connections, token flag, link health
- *   PUT /api/julia/agente/conexoes/{id}         admin: the Julia switch + handoff target
+ *   GET /api/julia/agente                       org member: token flag, link health, agent status
  *   PUT /api/julia/agente/token                 admin: paste the org's agents channel token (204)
  *
  * Envelope `{data: …}`; typed server refusals are `AppException`s
@@ -44,13 +43,6 @@ export interface JuliaAgente {
   agents_url?: string | null;
 }
 
-export interface JuliaConexaoUpdate {
-  agente_leads_ativo: boolean;
-  agente_leads_key?: string;
-  /** Omit = keep; explicit null = back to "the connection owner". */
-  agente_handoff_notificar_user_id?: string | null;
-}
-
 export const JULIA_AGENTE_KEY = ["sw", "julia", "agente"] as const;
 
 /** pt-BR sentence per refusal code the Agente page can provoke. */
@@ -65,7 +57,10 @@ const MENSAGENS_POR_CODIGO: Record<string, string> = {
     "Não foi possível montar o link público do aviso de privacidade. Fale com o suporte.",
   snapshot_falhou:
     "Não foi possível ler as conversas existentes deste número; a Julia continua desligada.",
-  destinatario_invalido: "O destinatário do handoff precisa ser owner ou admin da organização.",
+  destinatario_invalido: "O destinatário do aviso precisa ser owner ou admin da organização.",
+  agents_nao_configurado: "O app de agentes ainda não está configurado para esta organização.",
+  conversa_sem_agente: "A Julia ainda não atendeu esta conversa, então não há o que pausar ou retomar.",
+  transicao_invalida: "A conversa não pode mudar para esse estado agora.",
   token_invalido: "O Agents recusou este token. Confira se copiou o token inteiro do canal.",
   agents_indisponivel: "Não foi possível validar o token com o Agents agora. Tente novamente em instantes.",
   link_obrigatorio: "A mensagem inicial precisa conter {link} (o link do aviso de privacidade).",
@@ -87,15 +82,6 @@ export function useJuliaAgente() {
   return useQuery({
     queryKey: JULIA_AGENTE_KEY,
     queryFn: async () => (await api.get<{ data: JuliaAgente }>("/api/julia/agente")).data,
-  });
-}
-
-export function useAtualizarConexaoAgente() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, { connectionId: string; body: JuliaConexaoUpdate }>({
-    mutationFn: ({ connectionId, body }) =>
-      api.put(`/api/julia/agente/conexoes/${connectionId}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_AGENTE_KEY }),
   });
 }
 

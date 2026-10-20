@@ -1,16 +1,13 @@
-/** Julia › Agente card (a): the link with the Agents product (token + link health). */
+/** Julia › Agente card: the link with the Agents product (token + link health). STATUS only; behaviour is configured in agents. */
 import { useState } from "react";
 import { toast } from "sonner";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mensagemErroJulia, useSalvarTokenAgents, type JuliaAgente } from "@/hooks/useJuliaAgente";
-
-/** Where Julia (agent key `julia`) is edited, in agents' Agent Studio. */
-const JULIA_STUDIO_PATH = "/studio/julia";
 
 export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: boolean }) {
   const salvar = useSalvarTokenAgents();
@@ -81,22 +78,6 @@ export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: 
           <p role="alert" className="flex items-start gap-2 text-sm text-destructive" data-testid="link-erro">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{data.erro}</span>
-          </p>
-        )}
-
-        {data.agents_url ? (
-          <a
-            href={`${data.agents_url.replace(/\/$/, "")}${JULIA_STUDIO_PATH}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-primary underline"
-            data-testid="editar-julia-link"
-          >
-            Editar Julia no Agents <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        ) : (
-          <p className="text-xs text-muted-foreground" data-testid="editar-julia-indisponivel">
-            O endereço do Agents não está disponível neste ambiente.
           </p>
         )}
 

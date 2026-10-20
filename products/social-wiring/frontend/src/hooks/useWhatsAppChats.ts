@@ -243,6 +243,8 @@ export function useSetAutoReply(connId: string | null) {
 export interface ChatAgentePausadoResult {
   chat_id: string;
   agente_pausado: boolean;
+  /** The participant state agents reported after the change (ativo | pausado | ...). */
+  agente_estado?: string | null;
 }
 
 /** Pause / resume Julia on ONE chat (admin only — the server enforces it). */
@@ -256,6 +258,8 @@ export function useSetChatAgentePausado(connId: string | null) {
         { pausado },
       ),
     onSuccess: (res) => {
+      // The state shown in the thread header comes from agents' GET: refetch it.
+      qc.invalidateQueries({ queryKey: ["sw", "julia", "conversa-estado", connId] });
       // The realtime `chat.upsert` carries the same flag; patching here too just
       // makes the chip flip without waiting for the stream round-trip.
       qc.setQueryData<Page<ChatSummary>>(chatsKey(connId), (prev) =>
