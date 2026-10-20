@@ -717,8 +717,8 @@ class TestIgigCrmProbes:
 
     @staticmethod
     def _probes():
-        return [p for p in DEFAULT_REGISTRY if p.product == "igig"
-                and not p.id.endswith(".anon_holds_no_sequence_privilege")]
+        # State assertions read the catalog and fabricate/borrow no rows (sequence lockdown, browser lockdown).
+        return [p for p in DEFAULT_REGISTRY if p.product == "igig" and p.kind != "state_assertion"]
 
     def test_every_detected_guard_in_017_to_020_is_registered(self):
         from tools.noctus.dev.compliance import _detect_guard_objects
