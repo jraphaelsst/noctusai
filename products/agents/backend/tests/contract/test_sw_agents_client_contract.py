@@ -122,6 +122,8 @@ class TestTurn:
         assert isinstance(result, sw.TurnResult)
         assert {f.name for f in fields(result)} == {
             "conversation_id", "partes", "status", "actions", "custo_usd", "tokens_entrada", "tokens_saida",
+            # channels.v2.json ChannelTurnResponse: thread_id, participante, qualificacao, conformidade
+            "thread_id", "participante_estado", "qualificacao", "conformidade",
         }
         assert result.partes == ("Oi!", "Comprar ou alugar?")
         assert result.status == "respondido" and result.actions == () and result.handoff is None
@@ -136,7 +138,8 @@ class TestTurn:
         ]))
         result = _run(wired.sw_client().run_turn(_req("quero falar com um corretor")))
         assert result.status == "handoff"
-        assert result.handoff == sw.HandoffAction(motivo="Cliente pediu um corretor.")
+        # v2 HandoffActionOut requires motivo_codigo and carries seq (channels.v2.json)
+        assert result.handoff == sw.HandoffAction(motivo="Cliente pediu um corretor.", motivo_codigo="pedido_humano", seq=1)
         assert result.partes == ("Vou chamar alguém da equipe.",)
 
     def test_idempotent_replay_returns_same_reply_without_a_second_provider_call(self, wired):

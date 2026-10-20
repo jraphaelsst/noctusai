@@ -552,7 +552,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     await _deliver(
         deps, connection=connection, chat_id=chat_id, key=key, run=run, result=result, state=state, chat_store=chat_store,
         julia_turn=julia_turn, agents_client=client,
-        lote_hash=julia_acoes_service.lote_hash_de(result.conversation_id, [m.provider_message_id for m in req.messages]),
+        lote_hash=julia_acoes_service.lote_hash_de(result.thread or result.conversation_id, [m.provider_message_id for m in req.messages]),
         fluxo=julia_envio_gate.Fluxo.RESPOSTA,
     )
 

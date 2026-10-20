@@ -922,7 +922,8 @@ def parse_qualificacao_resumo(raw: Any) -> Optional[QualificacaoResumo]:
         return None
     score = raw.get("score")
     faltando = raw.get("faltando")
-    estagios = raw.get("estagios")
+    # A-RT2 names it `estagios_ordem`; older builds sent nothing (kept optional)
+    estagios = raw.get("estagios_ordem", raw.get("estagios"))
     return QualificacaoResumo(
         versao=_opt_str(raw, "versao"),
         estagio=_opt_str(raw, "estagio"),
