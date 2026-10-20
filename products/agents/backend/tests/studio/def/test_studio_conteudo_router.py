@@ -32,6 +32,10 @@ TEXTOS = [
     *({"chave": c, "conteudo": "texto de teste"} for c, sp in _TEXTOS_REGISTRO.items()
       if sp.aplica_a == "canal" and sp.obrigatoria and not c.startswith("compilador.")),
 ]
+#: The compiler headings of the qualification block (required once the studio compile covers the standard).
+TEXTOS_REGISTRO_CHAVES_QUALIFICACAO = sorted(
+    c for c, sp in _TEXTOS_REGISTRO.items() if c.startswith("compilador.") and "qualificacao" in c
+)
 FERRAMENTAS = [
     {"ferramenta": "handoff", "descricao": "Passa a conversa para uma pessoa da equipe.", "parametros": {"motivo": "Por quê."}},
 ]

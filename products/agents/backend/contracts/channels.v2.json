@@ -869,6 +869,13 @@
             "title": "Estagio",
             "type": "string"
           },
+          "estagios_ordem": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Estagios Ordem",
+            "type": "array"
+          },
           "faltando": {
             "items": {
               "type": "string"

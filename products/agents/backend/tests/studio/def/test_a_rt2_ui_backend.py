@@ -1,0 +1,242 @@
+"""Julia v2 A-RT2 for the Studio UI (FE-A): server-provided capabilities, conformance routes, registries,
+``ponto_cache``, the mechanism-run summary and the replace-set optimistic lock. Strict 401/403 on each."""
+from __future__ import annotations
+
+import importlib
+from uuid import UUID, uuid4
+
+import pytest
+
+from app.dependencies import get_auth_context
+from app.routers.studio_agents_router import get_mecanismo_resumo_dep
+from app.schemas.studio import MecanismoResumoOut
+from app.stores.conformidade import Violacao
+from noctusai_lib.api.auth.session import AuthContext
+from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
+
+_base = importlib.import_module("tests.studio.def.test_studio_conteudo_router")
+BASE, PLAT = _base.BASE, _base.PLAT
+UI = "/api/studio"
+
+
+def _julia(studio):
+    studio.store.mark_platform_org(DEFAULT_ORG_ID)
+    _base._platform_admin(studio)
+    assert studio.post(f"{PLAT}/agents", json={"key": "julia"}).status_code == 201
+    studio.as_role("owner")
+    _base._fill(studio)
+    return studio.store.get_agent(DEFAULT_ORG_ID, "julia")
+
+
+def _as(studio, *, org_role: str, platform: bool):
+    studio.mock_supabase.set_table_data("noctus_users", [{
+        "id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "org_role": org_role,
+        "role": "admin" if platform else "user"}])
+
+
+class TestCapacidades:
+    URL = f"{UI}/agents/julia/capacidades"
+
+    def test_401_and_product_token_403(self, studio):
+        _julia(studio)
+        assert studio.raw.get(self.URL).status_code == 401
+        app = studio.raw.app
+        app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+            org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=["x"], raw_token="t",
+            api_token_id=uuid4(), principal_agent_id=None, issuer="social-wiring")
+        try:
+            r = studio.raw.get(self.URL)
+        finally:
+            app.dependency_overrides.pop(get_auth_context, None)
+        assert r.status_code == 403 and r.json()["code"] == "user_required"
+
+    @pytest.mark.parametrize("org_role,platform,tier", [
+        ("owner", True, "plataforma"), ("owner", False, "org_admin"), ("admin", False, "org_admin"),
+        ("member", False, "org_member"), ("viewer", False, "org_member"),
+    ])
+    def test_the_server_names_the_tier_and_its_tabs(self, studio, org_role, platform, tier):
+        _julia(studio)
+        _as(studio, org_role=org_role, platform=platform)
+        r = studio.get(self.URL)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        from app.routers.studio_ui_router import ABAS_POR_TIER
+
+        assert body == {"agent_key": "julia", "tier": tier, "abas": list(ABAS_POR_TIER[tier])}
+
+    def test_only_the_platform_tier_sees_definition_tabs(self):
+        from app.routers.studio_ui_router import ABAS_POR_TIER
+
+        definicao = {"secoes", "skills", "textos", "ferramentas", "decisoes", "qualificacao", "compilado"}
+        assert definicao <= set(ABAS_POR_TIER["plataforma"])
+        assert not definicao & set(ABAS_POR_TIER["org_admin"]) and not definicao & set(ABAS_POR_TIER["org_member"])
+
+    def test_unknown_agent_is_404(self, studio):
+        assert studio.get(f"{UI}/agents/nao-existe/capacidades").status_code == 404
+
+
+class TestConformidade:
+    def _url(self, regra="vazamento_prompt"):
+        return f"{UI}/agents/julia/conformidade/regras/{regra}"
+
+    def test_boundaries_are_strict(self, studio):
+        _julia(studio)
+        for m, u in (("get", self._url()), ("put", self._url()), ("get", f"{UI}/agents/julia/conformidade/violacoes")):
+            assert getattr(studio.raw, m)(u, **({"json": {}} if m == "put" else {})).status_code == 401
+        _as(studio, org_role="owner", platform=False)
+        for m, u in (("get", self._url()), ("put", self._url()), ("get", f"{UI}/agents/julia/conformidade/violacoes")):
+            r = getattr(studio, m)(u, **({"json": {}} if m == "put" else {}))
+            assert r.status_code == 403 and r.json()["code"] == "platform_admin_required"
+        _as(studio, org_role="member", platform=False)
+        assert studio.get(f"{UI}/agents/julia/conformidade/resumo").status_code == 403
+        assert studio.raw.get(f"{UI}/agents/julia/conformidade/resumo").status_code == 401
+
+    def test_read_and_write_a_rule(self, studio):
+        agent = _julia(studio)
+        r = studio.get(self._url()).json()
+        assert r["regra"] == "vazamento_prompt" and r["ativo"] is True and r["politica"] == "bloquear"
+        put = studio.put(self._url(), json={"politica": "registrar", "parametros": {"shingle_tokens": 24}})
+        assert put.status_code == 200, put.text
+        assert put.json()["politica"] == "registrar" and put.json()["parametros"] == {"shingle_tokens": 24}
+        assert studio.conformidade.regras(DEFAULT_ORG_ID, agent.id)["vazamento_prompt"].parametros == {"shingle_tokens": 24}
+        assert any(a.acao == "definicao_lida" for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id))
+
+    @pytest.mark.parametrize("body", [
+        {"politica": "ignorar"}, {"parametros": {"shingle_tokens": 3}}, {"parametros": {"shingle_tokens": "20"}},
+        {"parametros": {"x": "y" * 9000}}, {"extra": 1},
+    ])
+    def test_invalid_input_is_422(self, studio, body):
+        _julia(studio)
+        assert studio.put(self._url(), json=body).status_code == 422
+
+    def test_unknown_rule_is_404(self, studio):
+        _julia(studio)
+        assert studio.get(self._url("inventada")).status_code == 404
+
+    def _violacoes(self, studio, agent, n):
+        for i in range(n):
+            studio.conformidade.registrar_violacao(
+                DEFAULT_ORG_ID, agent.id,
+                Violacao("termina_sem_pergunta" if i % 2 else "vazamento_prompt", "registrar", {"janelas": i}, bloqueada=i % 2 == 0))
+
+    def test_violations_are_paged_codes_only(self, studio):
+        agent = _julia(studio)
+        self._violacoes(studio, agent, 5)
+        r = studio.get(f"{UI}/agents/julia/conformidade/violacoes?tamanho=2&pagina=1").json()
+        assert len(r["items"]) == 2 and r["tem_mais"] is True
+        assert set(r["items"][0]) == {"id", "regra", "politica", "bloqueada", "criada_em", "detalhe"}
+        p3 = studio.get(f"{UI}/agents/julia/conformidade/violacoes?tamanho=2&pagina=3").json()
+        assert len(p3["items"]) == 1 and p3["tem_mais"] is False
+
+    def test_org_admin_gets_counts_only(self, studio):
+        agent = _julia(studio)
+        self._violacoes(studio, agent, 5)
+        _as(studio, org_role="owner", platform=False)
+        r = studio.get(f"{UI}/agents/julia/conformidade/resumo")
+        assert r.status_code == 200
+        assert r.json() == {"total": 5, "bloqueadas": 3, "por_regra": {"vazamento_prompt": 3, "termina_sem_pergunta": 2}}
+
+
+class TestRegistries:
+    def test_textos_registro_is_platform_admin_structure_only(self, studio):
+        assert studio.raw.get(f"{UI}/textos/registro").status_code == 401
+        _as(studio, org_role="owner", platform=False)
+        assert studio.get(f"{UI}/textos/registro").status_code == 403
+        _as(studio, org_role="owner", platform=True)
+        r = studio.get(f"{UI}/textos/registro")
+        assert r.status_code == 200
+        itens = {i["chave"]: i for i in r.json()}
+        assert set(next(iter(itens.values()))) == {
+            "chave", "categoria", "obrigatoria", "placeholders_permitidos", "aplica_a", "condicao", "fixo_plataforma",
+            "aparece_quando"}
+        assert itens["compilador.titulo_skills"]["aparece_quando"] == "todas:skills"
+        assert any(i["aplica_a"] == "canal" and i["placeholders_permitidos"] for i in itens.values())
+
+    def test_ferramentas_registro_lists_schema_and_enum_values_only(self, studio):
+        assert studio.raw.get(f"{UI}/ferramentas/registro").status_code == 401
+        _as(studio, org_role="admin", platform=False)
+        assert studio.get(f"{UI}/ferramentas/registro").status_code == 403
+        _as(studio, org_role="owner", platform=True)
+        itens = {i["ferramenta"]: i for i in studio.get(f"{UI}/ferramentas/registro").json()}
+        h = itens["handoff"]
+        motivo = next(p for p in h["parametros"] if p["nome"] == "motivo_codigo")
+        assert "pedido_humano" in motivo["valores"] and "motivo_codigo.pedido_humano" in h["chaves_rotulo_enum"]
+        rp = itens["registrar_perfil"]
+        assert {"itens", "itens.criterio", "itens.trecho"} <= {p["nome"] for p in rp["parametros"]}
+        assert itens["kb_buscar"]["parametros"] == []
+        assert "descricao" not in h and all("descricao" not in p for p in h["parametros"])
+
+
+class TestPontoCache:
+    def test_compiled_and_payload_carry_it(self, studio):
+        agent = _julia(studio)
+        draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
+        c = studio.get(f"{BASE}/julia/versions/{draft.id}/compiled").json()
+        assert isinstance(c["ponto_cache"], int) and c["ponto_cache"] >= 0
+        p = studio.get(f"{BASE}/julia/versions/{draft.id}/payload").json()
+        assert p["ponto_cache"] == c["ponto_cache"]
+        _base._publish(studio)
+        org = studio.get(f"{BASE}/julia/compilado").json()
+        assert isinstance(org["ponto_cache"], int)
+
+
+class TestMecanismoSummary:
+    def test_null_without_a_gate_and_the_bound_summary_when_there_is_one(self, studio):
+        agent = _julia(studio)
+        draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
+        # a fresh draft has no stamped hash yet -> no run to speak of
+        assert studio.get(f"{BASE}/julia/versions/{draft.id}").json()["mecanismo"] is None
+        studio.store.set_compiled_hash(DEFAULT_ORG_ID, draft.id, "sha256:" + "a" * 64)
+        app = studio.raw.app
+        visto = {}
+
+        def _reader(org_id, version_id, compiled_hash):
+            visto["args"] = (org_id, version_id, compiled_hash)
+            return MecanismoResumoOut(
+                run_id=UUID(int=5), driver="live", aprovado=True, completo=True, casos_total=3, casos_aprovados=3)
+
+        app.dependency_overrides[get_mecanismo_resumo_dep] = lambda: _reader
+        body = studio.get(f"{BASE}/julia/versions/{draft.id}").json()
+        assert body["mecanismo"]["driver"] == "live" and body["mecanismo"]["casos_aprovados"] == 3
+        assert visto["args"][2] == body["compiled_hash"] == "sha256:" + "a" * 64
+
+    def test_a_failing_reader_never_fails_the_read(self, studio):
+        agent = _julia(studio)
+        draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
+        studio.store.set_compiled_hash(DEFAULT_ORG_ID, draft.id, "sha256:" + "b" * 64)
+
+        def _boom(*_a):
+            raise RuntimeError("down")
+
+        studio.raw.app.dependency_overrides[get_mecanismo_resumo_dep] = lambda: _boom
+        r = studio.get(f"{BASE}/julia/versions/{draft.id}")
+        assert r.status_code == 200 and r.json()["mecanismo"] is None
+
+
+class TestOptimisticLock:
+    @pytest.mark.parametrize("campo,corpo", [
+        ("textos", {"itens": _base.TEXTOS}),
+        ("ferramentas", {"itens": _base.FERRAMENTAS}),
+        ("decisoes", {"itens": []}),
+        ("specs", {"itens": _base.SPECS}),
+    ])
+    def test_stale_expected_hash_is_409_and_the_current_one_passes(self, studio, campo, corpo):
+        agent = _julia(studio)
+        url = f"{BASE}/julia/draft/{campo}"
+        antes = studio.store.get_draft(DEFAULT_ORG_ID, agent.id).compiled_hash
+        stale = studio.put(url, json={**corpo, "expected_hash": "sha256:" + "0" * 64})
+        assert stale.status_code == 409 and stale.json()["code"] == "conflito_de_versao"
+        assert studio.store.get_draft(DEFAULT_ORG_ID, agent.id).compiled_hash == antes  # nothing was written
+        ok = studio.put(url, json={**corpo, "expected_hash": antes})
+        assert ok.status_code == 200, ok.text
+        assert studio.put(url, json=corpo).status_code == 200  # no expected_hash -> no check
+
+    def test_two_editors_the_second_loses(self, studio):
+        agent = _julia(studio)
+        lido = studio.store.get_draft(DEFAULT_ORG_ID, agent.id).compiled_hash
+        assert studio.put(f"{BASE}/julia/draft/textos", json={"itens": _base.TEXTOS, "expected_hash": lido}).status_code == 200
+        # the first write re-stamped the hash only if it changed the compile; force a visible change
+        studio.put(f"{BASE}/julia/draft/ferramentas", json={"itens": [
+            {"ferramenta": "handoff", "descricao": "Outra descrição.", "parametros": {}}]})
+        r = studio.put(f"{BASE}/julia/draft/textos", json={"itens": _base.TEXTOS, "expected_hash": lido})
+        assert r.status_code == 409 and r.json()["code"] == "conflito_de_versao"

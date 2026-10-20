@@ -81,6 +81,7 @@ from app.routers.studio_agents_router import (
 from app.runtime.errors import LlmRuntimeError, LlmUpstreamError
 from app.schemas.channels import (
     DECISAO_CHAVE_PATTERN,
+    EstagioOut,
     ChannelAgentStatusOut,
     ChannelDecisaoRequest,
     ChannelDecisaoResponse,
@@ -483,6 +484,37 @@ async def channel_agent_status(
         threads_abertas=len(threads.list_abertos(ctx.org_id, agent.id)),
         conteudo_completo=turno_mod.conteudo_completo(svc, ctx.org_id, agent),
     )
+
+
+# ── GET /api/channels/agents/{agent_key}/qualificacao/estagios ──────────────
+
+
+@router.get("/agents/{agent_key}/qualificacao/estagios", response_model=list[EstagioOut])
+async def channel_agent_estagios(
+    agent_key: str,
+    ctx: AuthContext = Depends(require_channel_status),
+    studio_store=Depends(get_studio_definition_store_dep),
+    padroes=Depends(get_padrao_store_dep),
+) -> list[EstagioOut]:
+    """The ordered stages of the standard THIS agent runs for THIS org (the pinned version of the active agent
+    version, else the newest published): ``[{chave, rotulo, ordem, conclusivo}]`` and nothing else, for a
+    consumer's stage dropdown and its "this stage or beyond" comparator."""
+    agent = _resolve_channel_agent(studio_store, ctx, agent_key)
+    r = resolve_agent_for_org(studio_store, ctx.org_id, agent.key)
+    if r.versao is None:
+        raise _err(409, "no_active_version", "O agente não tem versão publicada.")
+    svc = turno_mod.ServicosCanal(
+        studio_store=studio_store, catalog=None, conversations=None, messages=None, threads=None,
+        controles=None, conformidade=None, qual=None, padroes=padroes, ident=None, sw=None,
+    )
+    try:
+        padrao = turno_mod.padrao_do_turno(svc, r)
+    except turno_mod.TurnoRecusado as exc:
+        raise _err(exc.status, exc.codigo, exc.detalhe) from exc
+    return [
+        EstagioOut(chave=e.chave, rotulo=e.rotulo, ordem=e.ordem, conclusivo=e.conclusivo)
+        for e in sorted(padrao.estagios, key=lambda x: (x.ordem, x.chave))
+    ]
 
 
 # ── GET /api/channels/uso (Lais Painel: month usage vs the daily cap) ───────

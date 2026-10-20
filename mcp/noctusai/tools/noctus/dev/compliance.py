@@ -14585,6 +14585,16 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Migration 040 (agents, Julia v2 A-RT2) is FILE-ONLY until the tech-lead applies it. It re-declares the 032 pin
+    # guard (relaxed to accept an archived standard version so a draft can inherit the active version's pin); a
+    # live probe needs an agent version + standard rows to exist in production. Replace with a real `GuardProbe`
+    # in the SAME change that applies 040.
+    (
+        "products/agents/backend/migrations/040_julia_v2_pin_catalogo.sql",
+        "guard_agent_version_qualificacao_pin",
+        "Migration 040 unapplied (Julia v2 A-RT2; the tech-lead applies it) - the re-declared guard has no live "
+        "behaviour to probe in production yet.",
+    ),
     # Migration 031 (agents, Julia v2 A-CONT) is FILE-ONLY until the tech-lead applies it (the slice
     # never applies migrations). `verify_db_guards` probes LIVE production, which has none of these
     # columns/constraints yet. Remove these entries and register real `GuardProbe`s in

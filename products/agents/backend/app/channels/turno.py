@@ -20,6 +20,7 @@ import logging
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -41,6 +42,7 @@ from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores.conformidade import Impressao, Violacao
 from app.stores.errors import NotFound
+from app.stores.studio_definitions_conteudo import OrgSpecRecord
 from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, rotular_historico
 from app.studio.plataforma import escopo_de, padrao_de
 from app.studio.resolucao import AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, resolve_agent_for_org
@@ -51,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "conteudo_completo",
+    "estagios_em_ordem",
+    "padrao_do_turno",
     "limite_atingido",
     "mensagem_publica",
     "Preparado",
@@ -108,7 +112,7 @@ class Preparado:
     escopo: str | None
 
 
-def _padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
+def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
     """The pinned standard version of the agent version; unpinned = the newest PUBLISHED version of the
     agent's standard (its key is part of the platform definition)."""
     pin = getattr(r.versao, "qualificacao_versao_id", None)
@@ -123,13 +127,23 @@ def _padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
         raise TurnoRecusado(409, "qualificacao_indisponivel", "O padrão de qualificação não está publicado.") from exc
 
 
-def _compilar(svc: ServicosCanal, org_id: UUID, agent: Any) -> tuple[AgenteResolvido, VersaoPadrao, Any]:
+def _compilar(
+    svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
+    specs: Mapping[str, str] | None = None,
+) -> tuple[AgenteResolvido, VersaoPadrao, Any]:
     """Resolve + compile FOR THE ORG with the pinned standard; refuses (typed) when there is nothing to run
-    or the content is incomplete. No side effect."""
-    r = resolve_agent_for_org(svc.studio_store, org_id, agent.key)
+    or the content is incomplete. No side effect. ``versao``/``specs`` serve the eval driver (a DRAFT, with
+    synthetic org-spec values); a live turn always runs the active version with the org's own values."""
+    r = resolve_agent_for_org(svc.studio_store, org_id, agent.key, versao=versao)
+    if specs is not None:
+        r = replace(r, specs_org=tuple(
+            OrgSpecRecord(
+                id=UUID(int=0), org_id=org_id, agent_key=agent.key, chave=k, valor=v, updated_by=None,
+                created_at=datetime.min.replace(tzinfo=timezone.utc), updated_at=datetime.min.replace(tzinfo=timezone.utc))
+            for k, v in specs.items()))
     if r.versao is None:
         raise TurnoRecusado(409, "no_active_version", "O agente não tem versão publicada.")
-    padrao = _padrao_do_turno(svc, r)
+    padrao = padrao_do_turno(svc, r)
     compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
     status = conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled)
     if not status.completo:
@@ -146,11 +160,14 @@ def conteudo_completo(svc: ServicosCanal, org_id: UUID, agent: Any) -> bool:
     return True
 
 
-def preparar(svc: ServicosCanal, org_id: UUID, agent: Any) -> Preparado:
+def preparar(
+    svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
+    specs: Mapping[str, str] | None = None,
+) -> Preparado:
     """Everything a turn needs that does not depend on the lead. Raises :class:`TurnoRecusado` (409) BEFORE
     anything is persisted: ``no_active_version`` · ``qualificacao_indisponivel`` · ``conteudo_incompleto`` ·
     ``prompt_too_large``."""
-    r, padrao, compiled = _compilar(svc, org_id, agent)
+    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise TurnoRecusado(409, "prompt_too_large", "O prompt compilado passa do limite de tamanho.")
     try:  # proof of use (§A7), under the org that owns the version's rows
@@ -172,7 +189,8 @@ def preparar(svc: ServicosCanal, org_id: UUID, agent: Any) -> Preparado:
         version_id=r.versao.id, compiled_hash=compiled.hash, web_search=bool(policy.get("web_search", True)),
         knowledge=bool(policy.get("knowledge", True)), client_id=None,
     )
-    impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled)
+    k = conf.shingle_tokens_da_regra(svc.conformidade.regras(org_id, agent.id).get("vazamento_prompt"))
+    impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled, k)
     return Preparado(r, padrao, compiled, marca, spec, can, impressao, escopo_de(r.definicao.key))
 
 
@@ -426,9 +444,15 @@ async def executar(
         qualificacao={
             "versao": f"{padrao.padrao_chave}@{padrao.versao}", "estagio": estado.estagio,
             "score": estado.score, "faltando": list(estado.faltando),
+            "estagios_ordem": estagios_em_ordem(padrao),
         },
         violacoes=violacoes, message_id=final,
     )
+
+
+def estagios_em_ordem(padrao: VersaoPadrao) -> list[str]:
+    """The standard's stage keys, low to high (``ordem``, then key for a stable tie)."""
+    return [e.chave for e in sorted(padrao.estagios, key=lambda x: (x.ordem, x.chave))]
 
 
 def _instance_id() -> str:

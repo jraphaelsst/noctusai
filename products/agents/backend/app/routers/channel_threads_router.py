@@ -50,6 +50,7 @@ from app.channels.thread_service import (
 )
 from app.config import settings
 from app.dependencies import (
+    get_thread_store_dep,
     get_channel_inbound_store_dep,
     get_channel_retention_dep,
     get_conversation_store_dep,
@@ -88,7 +89,7 @@ from app.schemas.channels import ChannelRef
 from app.stores._util import utcnow
 from app.stores.agent_controles import get_agent_controle_store
 from app.stores.errors import Conflict, NotFound, TurnInProgress
-from app.stores.threads import OutroAgenteAtivo, get_thread_store, mapa_agentes
+from app.stores.threads import OutroAgenteAtivo, mapa_agentes
 from app.studio.resolucao import conteudo_status, resolve_agent_for_org
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -103,10 +104,6 @@ router = APIRouter(tags=["channel-threads"])
 
 
 # ── dependency seams (overridden in tests — never patched) ──────────────────
-
-
-def get_thread_store_dep():
-    return get_thread_store(settings)
 
 
 def get_agent_controle_store_dep():

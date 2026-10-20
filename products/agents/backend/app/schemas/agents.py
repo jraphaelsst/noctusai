@@ -79,6 +79,20 @@ class PersonaUpdateRequest(StrictHttpModel):
 # ── Conversations (§E.2) ────────────────────────────────────────────────────
 
 
+class ConversaResultadoOut(BaseModel):
+    """What a channel conversation has produced so far: the computed stage and score and how many conformance
+    violations the thread has. No rule, weight or criterion detail (platform IP)."""
+
+    estagio: str
+    score: int
+    violacoes_count: int = 0
+
+
+class ConversaParticipanteOut(BaseModel):
+    agent_key: str
+    estado: str
+
+
 class ConversationOut(BaseModel):
     id: UUID
     agent_id: UUID
@@ -99,6 +113,9 @@ class ConversationOut(BaseModel):
     channel: str | None = None
     channel_ref: dict[str, Any] | None = None
     contact: dict[str, Any] | None = None
+    # Julia v2 A-RT2 (additive; ``/channel`` list only, else ``None``).
+    resultado: ConversaResultadoOut | None = None
+    participantes: list[ConversaParticipanteOut] | None = None
 
 
 class ConversationListOut(BaseModel):

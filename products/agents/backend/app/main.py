@@ -54,6 +54,9 @@ from app.routers.admin_credentials_router import router as admin_credentials_rou
 from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agents_router import router as agents_router
+from app.routers.catalogo_router import router as catalogo_router
+from app.routers.studio_padrao_router import router as studio_padrao_router
+from app.routers.studio_ui_router import router as studio_ui_router
 from app.routers.api_keys_router import router as api_keys_router
 from app.routers.channel_token_router import router as channel_token_router
 from app.routers.channel_tools_token_router import router as channel_tools_token_router
@@ -87,6 +90,7 @@ from app.routers.studio_package_sync_router import SOURCES_BODY_LIMIT_PATTERN
 from app.routers.studio_package_sync_router import router as studio_package_sync_router
 from app.schemas.packages import SOURCES_MAX_BYTES
 from app.studio.importer import MAX_BUNDLE_BYTES
+from app.validation import install_validation_handler
 from app.studio.wiring import install_studio_seams, register_anthropic_credential_override
 from app.runtime.slots import get_slot_pool
 from app.scheduler import configure as configure_scheduler
@@ -206,6 +210,8 @@ app = create_product_app(
     standard_routers=["health", "notificacoes", "team"],
     routers=[
         _auth_router,
+        # catalogo before agents_router: `/api/agents/catalogo` must not be read as a `/{key}` path.
+        catalogo_router,
         agents_router,
         persona_router,
         conversations_router,
@@ -225,6 +231,8 @@ app = create_product_app(
         studio_agents_router,
         studio_clients_router,
         studio_conteudo_router,
+        studio_padrao_router,
+        studio_ui_router,
         studio_knowledge_router,
         # Seed editorial workflow (project seed-editorial-workflow, E5): governed knowledge review.
         editorial_router,
@@ -277,3 +285,5 @@ app = create_product_app(
 # Agent Studio §J2: bind the fail-closed seams (eval gate, knowledge
 # catalog, eval scheduler, run hash) to their production implementations.
 install_studio_seams(app)
+# 422 without echoing the caller's input (the seed handler can carry a validator's text; see app/validation.py).
+install_validation_handler(app)

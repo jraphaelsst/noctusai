@@ -37,6 +37,13 @@ from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
 from app.routers.studio_package_sync_router import router as studio_package_sync_router
+from app.routers.studio_padrao_router import router as studio_padrao_router
+from app.routers.studio_ui_router import router as studio_ui_router
+from app.routers.qualificacao_router import get_padrao_store_dep
+from app.qualificacao.store import FakePadraoStore
+from app.stores.conformidade import FakeConformidadeStore
+from app.dependencies import get_conformidade_store_dep
+from app.studio import bundles as studio_bundles
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.studio.models import FakeEvalGate, FakeKnowledgeCatalog
 from noctusai_lib.api.app_factory import configure_app
@@ -58,6 +65,9 @@ class StudioHarness:
         self.store = FakeStudioDefinitionStore()
         self.gate = FakeEvalGate()
         self.catalog = FakeKnowledgeCatalog()
+        #: the qualification standards (A-RT2): a platform definition publishes only with a published standard
+        self.padroes = FakePadraoStore()
+        self.conformidade = FakeConformidadeStore()
         self.org_id = DEFAULT_ORG_ID
         self.user_id = DEFAULT_USER_ID
 
@@ -110,6 +120,9 @@ def _build_app() -> FastAPI:
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
     app.include_router(skills_biblioteca_router)
+
+    app.include_router(studio_padrao_router)
+    app.include_router(studio_ui_router)
     # mounted for the visibility-tier matrix only (their seams stay unbound: auth answers first)
     app.include_router(studio_knowledge_router)
     app.include_router(studio_evals_router)
@@ -125,11 +138,27 @@ def studio(client) -> StudioHarness:
     app.dependency_overrides[get_studio_definition_store_dep] = lambda: harness.store
     app.dependency_overrides[get_eval_gate_dep] = lambda: harness.gate
     app.dependency_overrides[get_knowledge_catalog_dep] = lambda: harness.catalog
+    app.dependency_overrides[get_padrao_store_dep] = lambda: harness.padroes
+    app.dependency_overrides[get_conformidade_store_dep] = lambda: harness.conformidade
+    from tests.channels.julia_v2 import publicar_padrao
+
+    harness.padrao_versao_id = publicar_padrao(harness.padroes)
     harness.as_role("owner")
     try:
         yield harness
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def studio_com_padrao(studio):
+    """``studio`` with the studio COMPILE covering the pinned qualification standard (what production does)."""
+    saved = studio_bundles._padrao_reader
+    studio_bundles.configure_padrao_reader(studio.padroes)
+    try:
+        yield studio
+    finally:
+        studio_bundles.configure_padrao_reader(saved)
 
 
 @pytest.fixture

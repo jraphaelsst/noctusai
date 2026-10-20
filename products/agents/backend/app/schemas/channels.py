@@ -61,6 +61,7 @@ __all__ = [
     "LeadProntoActionOut",
     "ParticipanteOut",
     "QualificacaoOut",
+    "EstagioOut",
     "ViolacaoOut",
 ]
 
@@ -311,6 +312,19 @@ class QualificacaoOut(BaseModel):
     estagio: str
     score: int
     faltando: list[str]
+    #: The pinned standard's stage KEYS in order (low to high), so a consumer can read ``estagio_minimo`` as
+    #: "this stage or beyond" without holding a copy of the standard. Keys only.
+    estagios_ordem: list[str] = Field(default_factory=list)
+
+
+class EstagioOut(BaseModel):
+    """One stage of the pinned standard as a consumer may see it: label and order only -- never the rule,
+    points or the description (platform IP, CONTRACT 0.4)."""
+
+    chave: str
+    rotulo: str
+    ordem: int
+    conclusivo: bool
 
 
 class ViolacaoOut(BaseModel):

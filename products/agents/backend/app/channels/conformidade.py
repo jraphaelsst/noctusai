@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "SHINGLE_TOKENS",
+    "shingle_tokens_da_regra",
     "EntradaConformidade",
     "GuardaVazamento",
     "canario",
@@ -112,15 +113,32 @@ def texto_fonte_do_prompt(compiled: Any) -> str:
     return "\n".join(p for p in partes if p)
 
 
+SHINGLE_MIN, SHINGLE_MAX = 4, 64  # the ``conformidade_impressoes.shingle_tokens`` CHECK (037)
+
+
+def shingle_tokens_da_regra(regra: RegraConfig | None) -> int:
+    """The shingle length of the ``vazamento_prompt`` rule: ``parametros.shingle_tokens`` (data, per agent)
+    when it is an integer in the stored range, else :data:`SHINGLE_TOKENS`. A mandatory disclosure sentence
+    of N tokens that the prompt and the replies must both carry would self-trigger a shorter window; the
+    platform admin raises the length for that agent instead of switching the rule off."""
+    bruto = (regra.parametros or {}).get("shingle_tokens") if regra is not None else None
+    if isinstance(bruto, bool) or not isinstance(bruto, int) or not (SHINGLE_MIN <= bruto <= SHINGLE_MAX):
+        if bruto is not None:
+            logger.warning("agents.conformidade.shingle_tokens_invalido valor=%r", bruto)
+        return SHINGLE_TOKENS
+    return bruto
+
+
 def garantir_impressao(
-    store: ConformidadeStore, org_id: UUID, version_id: UUID, compiled: Any,
+    store: ConformidadeStore, org_id: UUID, version_id: UUID, compiled: Any, k: int = SHINGLE_TOKENS,
 ) -> Impressao:
     """The stored fingerprint of the version, computing + storing it when publish has not (an older
-    version). Publish calls this too, so a turn normally only reads."""
+    version) or when the stored one was cut at another shingle length than the rule's ``k`` now asks.
+    Publish calls this too, so a turn normally only reads."""
     atual = store.obter_impressao(org_id, version_id)
-    if atual is not None:
+    if atual is not None and atual.shingle_tokens == k:
         return atual
-    nova = impressao_de(version_id, texto_fonte_do_prompt(compiled))
+    nova = impressao_de(version_id, texto_fonte_do_prompt(compiled), k)
     store.salvar_impressao(org_id, nova)
     return nova
 

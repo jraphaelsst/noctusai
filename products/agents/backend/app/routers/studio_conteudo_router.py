@@ -168,6 +168,16 @@ def _draft_for_write(store, ctx: AuthContext, key: str):
     return agent, resolve_draft(store, ctx.org_id, agent)
 
 
+def _conferir_versao(draft, expected_hash: str | None) -> None:
+    """Optimistic lock of the replace-set writes: the caller's ``expected_hash`` must be the draft's current
+    ``compiled_hash``. The handlers are synchronous between this check and the write (no ``await``), so within
+    one worker the pair cannot interleave with another request.
+    NOC-REMEDIATE[replace-set-db-cas]: a DB-side compare-and-set (``p_expected_hash`` on ``replace_draft_conteudo``)
+    for multi-worker deploys -- 2026-10-20."""
+    if expected_hash is not None and draft.compiled_hash != expected_hash:
+        raise http_error(409, "conflito_de_versao", "O rascunho mudou desde a última leitura.")
+
+
 def _definition_version(store, ctx: AuthContext, key: str, version_id: UUID):
     agent = resolve_agent(store, ctx.org_id, key)
     return agent, resolve_version(store, ctx.org_id, agent, version_id)
@@ -225,6 +235,7 @@ async def replace_draft_textos(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> TextosOut:
     agent, draft = _draft_for_write(store, ctx, key)
+    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_textos(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_textos(ctx.org_id, draft.id, [TextoInput(i.chave, i.conteudo) for i in payload.itens])
@@ -239,6 +250,7 @@ async def replace_draft_ferramentas(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> FerramentasOut:
     agent, draft = _draft_for_write(store, ctx, key)
+    _conferir_versao(draft, payload.expected_hash)
     antes = [r.ferramenta for r in store.list_ferramentas(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_ferramentas(ctx.org_id, draft.id, [
@@ -259,6 +271,7 @@ async def replace_draft_decisoes(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> DecisoesOut:
     agent, draft = _draft_for_write(store, ctx, key)
+    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_decisoes(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_decisoes(ctx.org_id, draft.id, [
@@ -279,6 +292,7 @@ async def replace_draft_spec_defs(
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
 ) -> SpecsOut:
     agent, draft = _draft_for_write(store, ctx, key)
+    _conferir_versao(draft, payload.expected_hash)
     antes = [r.chave for r in store.list_spec_defs(ctx.org_id, draft.id)]
     with store_errors():
         rows = store.replace_spec_defs(ctx.org_id, draft.id, [
@@ -315,7 +329,7 @@ async def get_payload(
         textos=[_texto_out(r) for r in store.list_textos(ctx.org_id, v.id)],
         ferramentas=[_ferramenta_out(r) for r in store.list_ferramentas(ctx.org_id, v.id)],
         decisoes=[_decisao_out(r) for r in store.list_decisoes(ctx.org_id, v.id)],
-        specs=[_spec_out(r) for r in store.list_spec_defs(ctx.org_id, v.id)],
+        specs=[_spec_out(r) for r in store.list_spec_defs(ctx.org_id, v.id)], ponto_cache=compiled.ponto_cache,
     )
 
 
@@ -426,7 +440,7 @@ async def get_compiled_for_org(
         version_id=r.versao.id, versao=r.versao.versao, hash=compiled.hash, texto=compiled.texto,
         tokens_estimados=compiled.tokens_estimados, manifest=compiled.manifest_json(),
         avisos=[w.to_dict() for w in compiled.avisos], specs_faltando=list(compiled.specs_faltando),
-        completo=not any(w.bloqueante for w in compiled.avisos),
+        completo=not any(w.bloqueante for w in compiled.avisos), ponto_cache=compiled.ponto_cache,
     )
 
 

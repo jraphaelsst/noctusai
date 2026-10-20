@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.channels.conformidade import garantir_impressao
+from app.routers.qualificacao_router import get_padrao_store_dep
 from app.dependencies import (
     get_conformidade_store_dep,
     require_admin,
@@ -136,6 +137,11 @@ def get_mecanismo_store_dep():
     from app.stores.studio_eval_mecanismo import get_mecanismo_store
 
     return get_mecanismo_store(settings)
+
+def get_mecanismo_resumo_dep():
+    """Seam: ``(org_id, version_id, compiled_hash) -> MecanismoResumoOut | None``. The mechanism-eval store (A-EVAL)
+    binds it; until then the default answers ``None`` (no run) -- the versions endpoint never fails on it."""
+    return lambda org_id, version_id, compiled_hash: None
 
 
 def get_eval_gate_dep() -> EvalGate:
@@ -428,7 +434,7 @@ def _compiled_out(compiled: CompiledPrompt, version_id: UUID, client_id: UUID | 
         texto=compiled.texto, hash=compiled.hash, tokens_estimados=compiled.tokens_estimados,
         manifest=compiled.manifest_json(), sob_demanda=[i.to_dict() for i in compiled.sob_demanda],
         avisos=[AvisoOut(**w.to_dict()) for w in compiled.avisos],
-        version_id=version_id, client_id=client_id,
+        version_id=version_id, client_id=client_id, ponto_cache=compiled.ponto_cache,
     )
 
 
@@ -509,11 +515,18 @@ async def get_version(
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
+    mecanismo=Depends(get_mecanismo_resumo_dep),
 ) -> VersionDetailOut:
     agent = resolve_agent(store, ctx.org_id, key)
     version = resolve_version(store, ctx.org_id, agent, version_id)
     audit_definition_read(store, ctx, agent, "versao", version.id)
-    return _version_detail(store, gate, ctx.org_id, version)
+    out = _version_detail(store, gate, ctx.org_id, version)
+    try:
+        resumo = mecanismo(ctx.org_id, version.id, version.compiled_hash) if version.compiled_hash else None
+    except Exception:  # noqa: BLE001 -- an advisory panel never fails the version read; it is logged
+        logger.exception("agents.studio.mecanismo_resumo_indisponivel version_id=%s", version.id)
+        resumo = None
+    return out.model_copy(update={"mecanismo": resumo})
 
 
 @router.get("/agents/{key}/draft", response_model=VersionDetailOut)
@@ -865,6 +878,7 @@ async def publish_draft(
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     conformidade=Depends(get_conformidade_store_dep),
+    padroes=Depends(get_padrao_store_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -884,6 +898,11 @@ async def publish_draft(
         with store_errors():
             draft = store.update_draft(ctx.org_id, draft.id, {"notas": payload.notas})
 
+    # Publish pins the qualification standard (an unpinned draft gets the newest published version) BEFORE the
+    # hash is judged: the pin is part of what the hash covers.
+    from app.routers.studio_padrao_router import estampar_padrao_no_rascunho
+
+    draft = estampar_padrao_no_rascunho(store, padroes, ctx.org_id, agent, draft)
     draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
     if compiled.bloqueado:
         # Missing content (a required text, a tool/decision/spec hole) is its own code: the author

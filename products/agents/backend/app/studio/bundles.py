@@ -8,9 +8,11 @@ the eval runner and the importer all compile through
 """
 from __future__ import annotations
 
-from typing import Callable
+import logging
+from typing import Any, Callable
 from uuid import UUID
 
+from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.studio.compiler import compile_prompt
 from app.studio.models import (
@@ -32,9 +34,11 @@ from app.studio.models import (
 )
 from app.studio.skills_contract import SkillRef, SkillsRuntime
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "version_bundle", "conteudo_bundle", "client_bundle", "compile_version",
-    "configure_skill_refs_provider", "skill_refs_of",
+    "configure_skill_refs_provider", "skill_refs_of", "configure_padrao_reader", "qualificacao_da_versao",
 ]
 
 # The shared skill library (Julia v2 D7/D8). Every compile site (publish hash, inspector, runtime,
@@ -57,6 +61,40 @@ def skill_refs_of(version_id: UUID) -> tuple[SkillRef, ...]:
     if _skill_refs_provider is None:
         return ()
     return tuple(_skill_refs_provider().skill_refs_for(version_id))
+
+
+#: The qualification-standard reader (``PadraoStore``: ``obter_versao(id)`` / ``obter_versao_publicada(chave)``).
+#: A module slot populated at startup by ``install_studio_seams`` (the studio compile call sites are many and
+#: none of them carries a standards store); unset = a compile without the standard (legacy / unit tests).
+_padrao_reader: Any = None
+
+
+def configure_padrao_reader(reader: Any) -> None:
+    global _padrao_reader
+    _padrao_reader = reader
+
+
+def qualificacao_da_versao(agent: StudioAgentRecord, version: VersionRecord):
+    """The standard block input a platform-defined agent's version compiles with: its PINNED standard version,
+    else the newest PUBLISHED version of the agent's standard -- the same rule the channel turn applies
+    (``padrao_do_turno``), so the hash a studio eval/publish judges is the hash a turn runs. ``None`` for an
+    agent without a standard or when no reader is configured."""
+    reader = _padrao_reader
+    if reader is None:
+        return None
+    from app.qualificacao.prompt import qualificacao_data
+    from app.studio.plataforma import padrao_de
+
+    chave = padrao_de(agent.key)
+    if chave is None:
+        return None
+    pin = getattr(version, "qualificacao_versao_id", None)
+    try:
+        padrao = reader.obter_versao(pin) if pin is not None else reader.obter_versao_publicada(chave)
+    except NotFound:
+        logger.warning("agents.studio.compile.padrao_ausente agent=%s pin=%s", agent.key, pin)
+        return None
+    return qualificacao_data(padrao)
 
 
 def conteudo_bundle(store, org_id: UUID, version: VersionRecord) -> ConteudoBundle:
@@ -149,6 +187,8 @@ def compile_version(
     content mode (every string a row, hash over every content table); ``org_specs`` compiles the
     definition FOR an org (see ``app.studio.resolucao.compile_for_org``)."""
     bundle = version_bundle(store, org_id, version, conteudo=agent.conteudo_modo == "linhas")
+    if qualificacao is None:
+        qualificacao = qualificacao_da_versao(agent, version)
     knowledge = tuple(catalog.collection_summaries(org_id, agent.id))
     return compile_prompt(CompileInput(
         agent_nome=agent.nome,

@@ -31,6 +31,9 @@ class TextoIn(StrictHttpModel):
 
 class TextosReplaceRequest(StrictHttpModel):
     itens: list[TextoIn]
+    #: Optimistic lock: the draft's ``compiled_hash`` as the caller last read it. A different current hash
+    #: (someone else wrote in between) answers 409 ``conflito_de_versao``. ``null`` = no check.
+    expected_hash: str | None = Field(default=None, max_length=128)
 
 
 class FerramentaIn(StrictHttpModel):
@@ -43,6 +46,9 @@ class FerramentaIn(StrictHttpModel):
 
 class FerramentasReplaceRequest(StrictHttpModel):
     itens: list[FerramentaIn]
+    #: Optimistic lock: the draft's ``compiled_hash`` as the caller last read it. A different current hash
+    #: (someone else wrote in between) answers 409 ``conflito_de_versao``. ``null`` = no check.
+    expected_hash: str | None = Field(default=None, max_length=128)
 
 
 class OpcaoIn(StrictHttpModel):
@@ -60,6 +66,9 @@ class DecisaoIn(StrictHttpModel):
 
 class DecisoesReplaceRequest(StrictHttpModel):
     itens: list[DecisaoIn]
+    #: Optimistic lock: the draft's ``compiled_hash`` as the caller last read it. A different current hash
+    #: (someone else wrote in between) answers 409 ``conflito_de_versao``. ``null`` = no check.
+    expected_hash: str | None = Field(default=None, max_length=128)
 
 
 class SpecDefIn(StrictHttpModel):
@@ -80,6 +89,9 @@ class SpecDefIn(StrictHttpModel):
 
 class SpecsReplaceRequest(StrictHttpModel):
     itens: list[SpecDefIn]
+    #: Optimistic lock: the draft's ``compiled_hash`` as the caller last read it. A different current hash
+    #: (someone else wrote in between) answers 409 ``conflito_de_versao``. ``null`` = no check.
+    expected_hash: str | None = Field(default=None, max_length=128)
 
 
 class OrgSpecsUpdateRequest(StrictHttpModel):
@@ -191,6 +203,7 @@ class ConteudoPayloadOut(BaseModel):
     ferramentas: list[FerramentaOut]
     decisoes: list[DecisaoOut]
     specs: list[SpecDefOut]
+    ponto_cache: int = 0
 
 
 class CompiladoOrgOut(BaseModel):
@@ -205,6 +218,7 @@ class CompiladoOrgOut(BaseModel):
     avisos: list[dict[str, Any]]
     specs_faltando: list[str]
     completo: bool
+    ponto_cache: int = 0
 
 
 class PlataformaTextoOut(BaseModel):

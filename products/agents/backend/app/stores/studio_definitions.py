@@ -135,6 +135,8 @@ _DRAFT_FIELDS = (
     "notas", "provider", "model", "effort", "max_turns", "idioma", "tool_policy",
     # 017 (Agent Packages §C4): the package identity the importer stamps.
     "versao_semver", "package_sha",
+    # 032/040: the pinned qualification-standard version (a platform admin moves it; publish stamps it).
+    "qualificacao_versao_id",
 )
 #: 017 `agents.kind` CHECK — immutable once the row exists.
 AGENT_KINDS = ("runtime", "dev-advisor")
@@ -145,7 +147,7 @@ _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The version-row settings that feed the compile — changing one invalidates
 #: a draft's ``compiled_hash`` (012 ``guard_agent_version_immutable``).
-_COMPILED_SETTINGS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
+_COMPILED_SETTINGS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy", "qualificacao_versao_id")
 #: 012 ``agent_audit_log.acao`` CHECK.
 #: Extended by 031 (this slice's actions + the Julia v2 contract §5.1 list).
 AUDIT_ACOES = (
@@ -464,6 +466,9 @@ def _validate_draft_fields(
         raise ValueError(f"max_turns must be between 1 and 200; got {fields['max_turns']!r}")
     if "tool_policy" in fields and not isinstance(fields["tool_policy"], dict):
         raise ValueError("tool_policy must be an object")
+    pin = fields.get("qualificacao_versao_id")
+    if pin is not None and not isinstance(pin, UUID):
+        raise ValueError("qualificacao_versao_id must be a UUID or null")
     semver = fields.get("versao_semver")
     if semver is not None and not _SEMVER_RE.match(str(semver)):
         raise ValueError(f"versao_semver must be a semver; got {semver!r}")
@@ -878,7 +883,9 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             id=uuid4(), org_id=org_id, agent_id=agent_id, versao=versao, status="rascunho",
             notas=None, based_on_version_id=based_on, created_by=created_by,
             published_by=None, published_at=None, compiled_hash=None, eval_run_id=None,
-            publish_override_reason=None, created_at=now, updated_at=now, **settings,
+            publish_override_reason=None, created_at=now, updated_at=now,
+            # 040 `agent_versions_inherit_qualificacao`: a draft inherits the pin of the version it is based on.
+            qualificacao_versao_id=src.qualificacao_versao_id if src is not None else None, **settings,
         )
         self._versions[draft.id] = draft
         if src is not None:
@@ -1569,8 +1576,9 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             )
         else:
             _validate_draft_fields(fields)
+        body = {k: (str(v) if isinstance(v, UUID) else v) for k, v in fields.items()}
         resp = self._exec(
-            self._t("agent_versions").update(dict(fields))
+            self._t("agent_versions").update(body)
             .eq("org_id", str(org_id)).eq("id", str(version_id)).eq("status", "rascunho")
         )
         rows = resp.data or []

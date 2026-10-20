@@ -131,6 +131,20 @@ class SkillOut(BaseModel):
     arquivos: list[SkillFileMetaOut]
 
 
+class MecanismoResumoOut(BaseModel):
+    """The latest mechanism-eval run of a version FOR ITS CURRENT compiled hash (A-EVAL): codes and counts only --
+    never a reply, a prompt or a case body."""
+
+    run_id: UUID
+    driver: str
+    aprovado: bool
+    completo: bool
+    orcamento_excedido: bool = False
+    custo_usd: float | None = None
+    casos_total: int = 0
+    casos_aprovados: int = 0
+
+
 class VersionDetailOut(VersionSummaryOut):
     effort: str
     max_turns: int
@@ -146,6 +160,8 @@ class VersionDetailOut(VersionSummaryOut):
     #: (``None`` on a draft). ``eval_score`` on a published version is the
     #: gating run's score snapshotted at publish (``None`` for an override).
     limiar_aplicado: float | None = None
+    #: Latest mechanism-gate run for the current compiled hash; ``None`` = none yet (or the gate is not deployed).
+    mecanismo: MecanismoResumoOut | None = None
 
 
 class DraftCreateRequest(StrictHttpModel):
@@ -286,6 +302,8 @@ class CompiledOut(BaseModel):
     avisos: list[AvisoOut]
     version_id: UUID
     client_id: UUID | None
+    #: End of the static (cacheable) prefix in ``texto`` -- a character offset (``manifest`` entries use the same unit).
+    ponto_cache: int = 0
 
 
 class DiffSideOut(BaseModel):

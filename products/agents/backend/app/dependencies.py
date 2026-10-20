@@ -472,6 +472,14 @@ def get_channel_llm_runtime_dep(msg_store=Depends(get_message_store_dep)):
     )
 
 
+def get_thread_store_dep():
+    """The shared lead-thread store (participants, hand-offs, lead refs). Lives here -- not in a router -- so the
+    conversations router and the channel-threads router share ONE seam object (a test overrides it once)."""
+    from app.stores.threads import get_thread_store
+
+    return get_thread_store(settings)
+
+
 def get_conformidade_store_dep():
     """Conformance rules/violations, leak fingerprints and the per-agent abuse limits (migration 037)."""
     from app.stores.conformidade import get_conformidade_store

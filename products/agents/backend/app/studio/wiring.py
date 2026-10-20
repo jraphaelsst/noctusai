@@ -170,8 +170,32 @@ def _skills_runtime():
 
     return get_skills_store(settings)
 
+class _PadraoReaderLazy:
+    """The standards store resolved at call time (``get_padrao_store`` needs a live client, absent at import)."""
+
+    def obter_versao(self, versao_id: UUID):
+        from app.qualificacao.store import get_padrao_store
+
+        return get_padrao_store(settings).obter_versao(versao_id)
+
+    def obter_versao_publicada(self, chave: str):
+        from app.qualificacao.store import get_padrao_store
+
+        return get_padrao_store(settings).obter_versao_publicada(chave)
+
 
 def install_studio_seams(app: Any) -> None:
     app.dependency_overrides.update(studio_seam_bindings())
     # Julia v2 D7/D8: every compile site reads the version's pinned library skills through one slot.
     configure_skill_refs_provider(_skills_runtime)
+
+    # The studio compile covers the pinned qualification standard (the hash a publish judges = the hash a turn runs).
+    from app.studio.bundles import configure_padrao_reader
+
+    configure_padrao_reader(_PadraoReaderLazy())
+    # The mechanism-eval gate's turn driver: the LIVE adapter over the real channel turn path (A-RT2). It reports
+    # `tipo='live'` only when no provider seam is injected (the real model produced the turns).
+    from app.studio.eval_driver import configure_eval_turn_driver
+    from app.studio.eval_driver_live import make_live_eval_driver_factory
+
+    configure_eval_turn_driver(make_live_eval_driver_factory())

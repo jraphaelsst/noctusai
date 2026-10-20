@@ -16,6 +16,8 @@ from app.routers.studio_conteudo_router import router as conteudo
 from app.routers.studio_evals_router import router as evals
 from app.routers.studio_knowledge_router import router as knowledge
 from app.routers.studio_package_sync_router import router as package_sync
+from app.routers.studio_padrao_router import router as padrao
+from app.routers.studio_ui_router import router as ui
 from app.routers.studio_agents_router import router as agents
 from app.routers.skills_biblioteca_router import router as skills_biblioteca
 
@@ -35,7 +37,7 @@ def _fill(path: str) -> str:
 
 def _routes():
     out = []
-    for r in (clients, knowledge, evals, package_sync, agents, conteudo, skills_biblioteca):
+    for r in (clients, knowledge, evals, package_sync, agents, conteudo, skills_biblioteca, padrao, ui):
         for route in r.routes:
             if isinstance(route, APIRoute) and _uses_platform_admin(route.dependant):
                 for m in sorted(route.methods - {"HEAD", "OPTIONS"}):

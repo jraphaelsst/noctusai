@@ -104,13 +104,13 @@ class _Mapped:
         if ev is None:
             return False
         if isinstance(ev, NotFound):
-            raise _err(404, "not_found", str(ev)) from ev
+            raise _err(404, "not_found", "Não encontrado.") from ev
         if isinstance(ev, VersionImmutable):
             raise _err(409, "version_immutable", "A versao publicada e imutavel.") from ev
         if isinstance(ev, StudioConflict):
-            raise _err(409, ev.code, str(ev)) from ev
+            raise _err(409, ev.code, "Conflito com o estado atual.") from ev
         if isinstance(ev, ValueError):
-            raise _err(422, "invalid_field", str(ev)) from ev
+            raise _err(422, "invalid_field", "Campo inválido.") from ev
         return False
 
 

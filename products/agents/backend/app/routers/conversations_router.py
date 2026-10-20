@@ -37,6 +37,7 @@ from app.dependencies import (
     get_conformidade_store_dep,
     get_conversation_store_dep,
     get_core_client,
+    get_thread_store_dep,
     get_llm_runtime_dep,
     get_message_store_dep,
     get_persona_store_dep,
@@ -46,12 +47,16 @@ from app.dependencies import (
 )
 from app.channels.conformidade import GuardaVazamento
 from app.config import settings
+from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.stores.conformidade import Violacao
+from app.stores.threads import mapa_agentes
 from app.studio.vazamento import chamador_e_admin_da_plataforma
 from app.services.runtime_settings import get_runtime_settings_service
 from app.rate_limit import limiter
 from app.realtime import conversation_scope, get_bus, publish_event
 from app.schemas.agents import (
+    ConversaParticipanteOut,
+    ConversaResultadoOut,
     ConversationCreateRequest,
     ConversationListOut,
     ConversationOut,
@@ -293,6 +298,26 @@ async def list_conversations(
     return ConversationListOut(items=items, total=len(items))
 
 
+def _enriquecer_canal(org_id, record, agent_id, agentes, threads, qual, conformidade) -> dict[str, Any]:
+    """``resultado`` (stage, score, violation count) and the participants' states of one channel thread. A failure of
+    either read leaves that field ``None`` (logged): the list is a UI convenience, never a reason to 500."""
+    extra: dict[str, Any] = {"resultado": None, "participantes": None}
+    try:
+        extra["participantes"] = [
+            ConversaParticipanteOut(agent_key=agentes.get(p.agent_id, ("", ""))[0], estado=p.estado)
+            for p in threads.list_participantes(org_id, record.id)
+        ]
+        if record.lead_ref_id is not None:
+            q = qual.obter_qualificacao(org_id, record.lead_ref_id)
+            if q is not None:
+                n = len(conformidade.listar_violacoes(org_id, agent_id, thread_id=record.id, limite=1000))
+                extra["resultado"] = ConversaResultadoOut(
+                    estagio=q.estado.estagio, score=q.estado.score, violacoes_count=n)
+    except Exception:  # noqa: BLE001
+        logger.exception("agents.conversations.channel_enriquecimento_falhou conversation_id=%s", record.id)
+    return extra
+
+
 @router.get("/channel", response_model=ConversationListOut)
 async def list_channel_conversations(
     agent_key: str = Query(..., min_length=1, max_length=64),
@@ -300,6 +325,9 @@ async def list_channel_conversations(
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_conversation_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
+    threads=Depends(get_thread_store_dep),
+    qual=Depends(get_qualificacao_service_dep),
+    conformidade=Depends(get_conformidade_store_dep),
 ) -> ConversationListOut:
     """Lais A2 (contract §3.3): the CHANNEL conversations of one agent — leads on
     WhatsApp etc., driven by a product token — listed READ-ONLY for the agents
@@ -309,7 +337,12 @@ async def list_channel_conversations(
     agent = _resolve_studio_agent(
         studio_store, ctx.org_id, canonical_channel_agent_key(agent_key), allow_instancia=True)
     records = store.list_channel(ctx.org_id, agent_id=agent.id, channel=channel)
-    items = [_conversation_out(r, agent.key) for r in records]
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    items = [
+        _conversation_out(r, agent.key).model_copy(
+            update=_enriquecer_canal(ctx.org_id, r, agent.id, agentes, threads, qual, conformidade))
+        for r in records
+    ]
     return ConversationListOut(items=items, total=len(items))
 
 
