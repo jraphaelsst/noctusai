@@ -186,7 +186,7 @@ def _destaques(r: dict[str, Any], prioritarios: tuple[str, ...]) -> list[str]:
     return (pri + [c for c in carac if c not in pri])[:DESTAQUES_MAX]
 
 
-def _item(r: dict[str, Any], operacao: Optional[str], link: Callable[[str], Optional[str]], mostrar_iptu: bool,
+def _item(r: dict[str, Any], operacao: Optional[str], link: Callable[[str], Optional[str]],
           prioritarios: tuple[str, ...] = ()) -> dict[str, Any]:
     """One property for Julia's card. Fields the listing does not have are OMITTED, never estimated."""
     item = {
@@ -194,7 +194,9 @@ def _item(r: dict[str, Any], operacao: Optional[str], link: Callable[[str], Opti
         "condominio": (r.get("empreendimento") or "").strip() or None, "cidade": r.get("cidade"),
         "preco": _preco(r, operacao), "preco_venda": _num(r.get("valor_venda")), "preco_aluguel": _num(r.get("valor_locacao")),
         "valor_condominio": _num(r.get("valor_condominio")),
-        "valor_iptu": _num(r.get("valor_iptu")) if mostrar_iptu else None,
+        # Owner rule: a price is always shown with condominio + IPTU. Known => returned, unknown => omitted (never estimated).
+        # (The wave-1 `usar_iptu` switch still governs `detalhes_imovel`.)
+        "valor_iptu": _num(r.get("valor_iptu")),
         "area_m2": _num(r.get("area_privativa") if r.get("area_privativa") is not None else r.get("area_total")),
         "quartos": r.get("dormitorios"), "suites": r.get("suites"), "vagas": r.get("vagas"),
         "destaques": _destaques(r, prioritarios),
@@ -208,8 +210,7 @@ def _itens(client: Any, org_id: UUID, linhas: list[dict[str, Any]], operacao: Op
            prioritarios: tuple[str, ...] = ()) -> list[dict[str, Any]]:
     confirmados = julia_imovel_confirmado.carregar(client, org_id, (r["codigo"] for r in linhas))
     link = julia_conhecimento_service.link_imovel_fn(client, org_id)
-    mostrar_iptu = julia_conhecimento_service.politica_endereco_iptu(client, org_id)["usar_iptu"]
-    out = [_item(r, operacao, link, mostrar_iptu, prioritarios) for r in linhas]
+    out = [_item(r, operacao, link, prioritarios) for r in linhas]
     for item, r in zip(out, linhas):
         _sobrepor_confirmacao(item, confirmados.get(str(r["codigo"]).strip().upper(), []), r,
                               "locacao" if operacao == "aluguel" else "venda")

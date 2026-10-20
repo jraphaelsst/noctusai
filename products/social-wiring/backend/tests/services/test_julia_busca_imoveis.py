@@ -138,3 +138,15 @@ class TestRanking:
         rows = [row("A_LONGE", valor_venda=1_090_000), row("PERTO", valor_venda=1_000_000)]
         res = b.buscar(rows, q(preco_min=1_000_000, preco_max=1_000_000), limite=2)
         assert codes(res)[0] == "PERTO"
+
+
+class TestCasaTipo:
+    @pytest.mark.parametrize("tipo,categoria,esperado", [
+        ("casa_condominio", "Casa em Condomínio", True), ("casa_condominio", "Casa", False),
+        ("casa", "Casa em Condomínio", True), ("apartamento", "Cobertura", True), ("terreno", "Lote", True),
+        ("comercial", "Galpão", True), ("casa", "Apartamento", False),
+        ("Casa em Condominio", "Casa em Condomínio", True),  # a free value from a campaign listing: folded substring
+        (None, "Qualquer", True),
+    ])
+    def test_mapping(self, tipo, categoria, esperado):
+        assert b.casa_tipo(tipo, categoria) is esperado

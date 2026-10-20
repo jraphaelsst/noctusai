@@ -151,7 +151,7 @@ class TestBuscarImoveis:
         data = ok.post("buscar_imoveis", {"operacao": "compra"}).json()["data"]
         assert {d["codigo"] for d in data} == {"CA1", "CA2"}  # not OTH (other org), not HID (unpublished), not AP1 (rent)
         # absent fields are OMITTED (no link pattern saved => no `link`; no suites/condominio => no key)
-        assert set(data[0]) == {"codigo", "titulo", "tipo", "bairro", "cidade", "preco", "preco_venda", "valor_condominio",
+        assert set(data[0]) == {"codigo", "titulo", "tipo", "bairro", "cidade", "preco", "preco_venda", "valor_condominio", "valor_iptu",
                                 "area_m2", "quartos", "suites", "vagas", "destaques"}
         ca1 = next(d for d in data if d["codigo"] == "CA1")
         assert (ca1["preco"], ca1["quartos"], ca1["bairro"], ca1["tipo"]) == (900000.0, 3, "Granja Viana", "Casa")

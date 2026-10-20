@@ -72,12 +72,22 @@ class TestBuscarV2:
         for ausente in ("suites", "valor_condominio", "valor_iptu", "vagas", "condominio", "link", "preco_aluguel"):
             assert ausente not in d
 
-    def test_the_iptu_stays_withheld_until_the_org_opts_in(self, vitrine, catalogo):
-        assert "valor_iptu" not in _buscar(vitrine)["data"][0]
-        catalogo.set_table_data("julia_conhecimento_secoes", [
-            {"org_id": str(_ORG), "secao": "endereco_iptu", "versao": 1, "dados": {"usar_iptu": True}},
-        ])
-        assert _buscar(vitrine)["data"][0]["valor_iptu"] == 450.0
+    def test_condominio_and_iptu_are_returned_when_known_and_omitted_when_not(self, vitrine, catalogo):
+        d = _buscar(vitrine)["data"][0]
+        assert d["valor_condominio"] == 1200.0 and d["valor_iptu"] == 450.0  # no org opt-in needed in a search result
+        catalogo.set_table_data("imoveis", [_row("SEM", valor_iptu=None, valor_condominio=None)])
+        d = _buscar(vitrine)["data"][0]
+        assert "valor_iptu" not in d and "valor_condominio" not in d
+
+    @pytest.mark.parametrize("tipo,categorias", [
+        ("casa", {"Casa", "Casa em Condomínio"}), ("casa_condominio", {"Casa em Condomínio"}),
+        ("apartamento", {"Apartamento", "Cobertura"}), ("terreno", {"Terreno"}), ("comercial", {"Sala Comercial"}),
+    ])
+    def test_the_standard_tipo_values_map_to_the_catalogue_categories(self, vitrine, catalogo, tipo, categorias):
+        todas = ["Casa", "Casa em Condomínio", "Apartamento", "Cobertura", "Terreno", "Sala Comercial"]
+        catalogo.set_table_data("imoveis", [_row(f"C{i}", categoria=c) for i, c in enumerate(todas)])
+        r = _buscar(vitrine, tipo=tipo, limite=len(categorias))
+        assert {d["tipo"] for d in r["data"]} == categorias and r["relaxado"] == []
 
     @pytest.mark.parametrize("corpo", [
         {"preco_min": 2, "preco_max": 1}, {"limite": 0}, {"excluir_codigos": ["x"] * 201}, {"itens_essenciais": ["y" * 121]},

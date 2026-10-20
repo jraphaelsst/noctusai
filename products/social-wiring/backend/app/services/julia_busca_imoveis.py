@@ -51,6 +51,33 @@ def norm(valor: Any) -> str:
     return " ".join(fold_accents(valor).casefold().split())
 
 
+#: The standard `tipo_imovel` values agents sends (qualification standard v1 options) -> the Vista catalogue's
+#: `categoria` vocabulary, as folded stems: (any of these, none of these). `casa` also takes the condominium house
+#: (a lead who says "casa" has not excluded it); `casa_condominio` does not take the street house.
+TIPOS_PADRAO: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "casa": (("casa", "sobrado"), ()),
+    "casa_condominio": (("casa", "sobrado"), ()),  # also requires "condominio" in the categoria (see casa_tipo)
+    "apartamento": (("apartamento", "cobertura", "flat", "studio", "kitnet", "loft"), ()),
+    "terreno": (("terreno", "lote"), ()),
+    "comercial": (("comercial", "sala", "loja", "galpao", "conjunto"), ()),
+}
+
+
+def casa_tipo(tipo: Optional[str], categoria: Any) -> bool:
+    """Does the listing's catalogue `categoria` satisfy the requested `tipo`? A standard value is mapped through
+    TIPOS_PADRAO; anything else (e.g. a free "Casa em Condominio" taken from a campaign listing) is a folded substring."""
+    cat = norm(categoria)
+    t = norm(tipo)
+    if not t:
+        return True
+    chave = t.replace(" ", "_")
+    if chave == "casa_condominio":
+        return "condomin" in cat and any(x in cat for x in TIPOS_PADRAO["casa"][0])
+    if chave in TIPOS_PADRAO:
+        return any(x in cat for x in TIPOS_PADRAO[chave][0])
+    return t in cat
+
+
 @dataclass(frozen=True)
 class Consulta:
     operacao: str  # compra | aluguel
@@ -140,7 +167,7 @@ def passa(row: dict[str, Any], q: Consulta, folgas: Folgas) -> bool:
     base, extra = _regioes_efetivas(q, folgas)
     if base and not _casa_regiao(row, base | extra):
         return False
-    if q.tipo and not folgas.tipologia and norm(q.tipo) not in norm(row.get("categoria")):
+    if q.tipo and not folgas.tipologia and not casa_tipo(q.tipo, row.get("categoria")):
         return False
     quartos_min = q.quartos_min
     if quartos_min is not None and folgas.tipologia:
