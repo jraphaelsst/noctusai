@@ -190,6 +190,24 @@ class TestOrgSpecs:
         assert any(w.codigo == "spec_nao_usada" and not w.bloqueante for w in c.avisos)
 
 
+    def test_an_org_compile_counts_the_specs_the_definition_uses(self):
+        """Regression (A-polish #4): compiled FOR an org, the placeholders are already resolved; usage must be read
+        from the authored rows, else every declared spec reads as unused (and an undeclared one goes unseen)."""
+        i = _inp(conteudo=_conteudo(ferramentas=(FerramentaData("handoff", "Fala com {{org.agencia}}."),)))
+        c = compile_prompt(replace(i, org_specs={"agencia": "Aurora"}))
+        assert "Atende Aurora." in c.texto
+        assert not any(w.codigo == "spec_nao_usada" for w in c.avisos), [w.codigo for w in c.avisos]
+        nao_declarada = compile_prompt(replace(_inp(secao="Usa {{org.outra}}."), org_specs={"agencia": "A"}))
+        assert "spec_nao_declarada" in _codes(nao_declarada)
+
+    def test_a_spec_used_only_in_a_skill_body_counts_as_used_for_an_org(self):
+        sk = SkillData(id=None, nome="ofertar", descricao="Quando ofertar.", corpo="Fale da {{org.agencia}}.",
+                       ordem=0, ativo=True)
+        i = _inp(secao="Sem placeholder.", skills=(sk,))
+        for c in (compile_prompt(i), compile_prompt(replace(i, org_specs={"agencia": "Aurora"}))):
+            assert not any(w.codigo == "spec_nao_usada" for w in c.avisos)
+
+
 class TestCacheBreakpointAndLint:
     def test_the_breakpoint_sits_before_the_client_block(self):
         sem = compile_prompt(_inp(conteudo=_conteudo(textos=BASE_TEXTOS + (TextoData("compilador.titulo_cliente", "Cliente"),)

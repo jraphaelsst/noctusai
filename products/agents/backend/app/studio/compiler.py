@@ -348,7 +348,7 @@ def _textos_de_conteudo(v: VersionBundle, cont: ConteudoBundle):
 
 def _avisos_conteudo(
     inp: CompileInput, cont: ConteudoBundle, S: _Strings, skills: list[SkillData], com_cliente: bool,
-    refs: list[SkillRef] = (),
+    refs: list[SkillRef] = (), autorada: VersionBundle | None = None,
 ) -> list[CompileWarning]:
     """Completeness of a content-mode compile (blocking — CONTEUDO_CODIGOS)."""
     out: list[CompileWarning] = []
@@ -423,9 +423,11 @@ def _avisos_conteudo(
             ))
 
     # org-spec declarations ↔ placeholders used
+    # read the AUTHORED rows (an org compile has already replaced every placeholder in ``v`` / ``cont``)
+    fonte = autorada if autorada is not None and autorada.conteudo is not None else v
     declaradas = {sp.chave for sp in cont.specs}
     usadas: set[str] = set()
-    for _, texto in _textos_de_conteudo(v, cont):
+    for _, texto in _textos_de_conteudo(fonte, fonte.conteudo if fonte.conteudo is not None else cont):
         usadas |= placeholders_org(texto)
     nao_declaradas = sorted(usadas - declaradas)
     if nao_declaradas:
@@ -527,6 +529,10 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     master prompt. Pure, deterministic, no IO."""
     avisos: list[CompileWarning] = []
     version = inp.version
+    #: The AUTHORED version (placeholders intact). Spec usage (``spec_nao_usada`` / ``spec_nao_declarada``) is a
+    #: property of what the definition WROTE, so it is read from here -- after an org compile the resolved text has
+    #: no ``{{org.x}}`` left and every declared spec would read as unused.
+    autorada = inp.version
     faltando_specs: tuple[str, ...] = ()
 
     # ── org specs: replace the {{org.x}} placeholders BEFORE composing, so the text, the rows
@@ -670,7 +676,8 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
 
     # ── content-mode completeness (blocking; CONTEUDO_CODIGOS)
     if cont is not None:
-        avisos += _avisos_conteudo(inp, cont, S, skills, com_cliente=inp.client is not None, refs=refs)
+        avisos += _avisos_conteudo(
+            inp, cont, S, skills, com_cliente=inp.client is not None, refs=refs, autorada=autorada)
 
     # ── assemble with exact offsets
     manifest: list[ManifestSection] = []
