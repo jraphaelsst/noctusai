@@ -75,6 +75,12 @@ products/agents/backend/app/
 - A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
   seeded earlier gets 409 `conteudo_incompleto`, never a default string.
 
+### Julia v2 — mechanism evals as the publish gate (A-EVAL)
+- `eval_cases` gain `suite` (`mecanismo` | `comportamento`), `k`, `roteiro` (scripted multi-turn lead messages + fixture catalogue) and `asserts` (deterministic, code-checked: ferramentas_incluem/proibidas, estagio_final, criterios_registrados, ofertas_por_lote, sem_violacoes, identificacao_completa, handoff_para, sem_vazamento, skill_aberta_antes_de). Migration 038, service-role only.
+- `app/studio/eval_mecanismo.py` runs pass^k (a case passes only if all k executions pass), supports sharded scenarios and a `limite_usd` cost cap; runs are stored in `eval_mecanismo_runs` / `eval_mecanismo_execucoes`.
+- Publish of an agent with `exige_mecanismo` (or any active mecanismo case) requires the newest LIVE run for the current compiled hash to be complete, under budget and fully green — enforced in the router AND in the DB publish function (409 `mecanismo_reprovado`). The `comportamento` (judge) suite is advisory unless `comportamento_bloqueia`.
+- The turn driver is a Protocol (`app/studio/eval_driver.py`, `tipo` live|fake); `POST /api/studio/agents/{key}/draft/mecanismo-runs` (platform admin) runs the suite. Eval fixtures are synthetic: a PII guard refuses phones/CPF/emails (never real WhatsApp transcripts — Meta WhatsApp Business terms §4.7).
+
 ### Bia's hardened launch (non-negotiable)
 
 - `setting_sources=[]`: no project `CLAUDE.md`, `settings.json` or hooks get loaded.
