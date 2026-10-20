@@ -228,7 +228,7 @@ Eight learnings codified this session. Each row: **symptom · root · fix
 
 ### 3.9 The clean-checkout reproducibility defect
 - **Symptom:** "It works on my machine" but fails in CI / fresh clone / `git worktree`.
-- **Root:** Long-lived primary tree carries host-populated `node_modules` (especially `seed/framework/frontend/node_modules`) that get bind-mounted in and silently mask missing image-side installs. A clean checkout has none → bind-mount of an empty dir → mod resolution fails.
+- **Root:** Long-lived primary tree carries host-populated `node_modules` (especially the seed framework frontend's own `node_modules`) that get bind-mounted in and silently mask missing image-side installs. A clean checkout has none → bind-mount of an empty dir → mod resolution fails.
 - **Fix:** install deps **in the image** at all paths the container needs them; pair with anon volumes on those nested paths so the bind-mount doesn't re-mask. Always **validate in a `git worktree`**, not the primary.
 - **Generalization:** the §9a rule (one worktree per concurrent agent) IS the structural prevention — primary tree's stray state cannot mask defects when builds happen in isolated worktrees.
 

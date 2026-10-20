@@ -25,7 +25,7 @@ async function seedSupabaseAuth(page: Page) {
 
 /**
  * Mocks the seed shell routes the layout depends on (notification bell,
- * consent badge). Without these, the shell may show error toasts but should
+ * consent badge, org access). Without these, the shell may show error toasts but should
  * not block render — they are non-blocking for social-wiring's simple layout.
  */
 async function mockShellAPIs(page: Page) {
@@ -34,6 +34,21 @@ async function mockShellAPIs(page: Page) {
   );
   await page.route('**/api/notificacoes**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [], total: 0, page: 1, page_size: 50 }) }),
+  );
+  // The seed shell gates product content on `GET /api/me/access` (multi-org S5b/S6,
+  // 2026-10-14): unanswered, `<main>` never renders and every spec times out on its
+  // first locator. A plain member of one org -> no picker (`org_selection.available: false`).
+  await page.route('**/api/me/access', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        has_access: true,
+        product_slug: 'social-wiring',
+        org: { id: 'org-e2e', nome: 'Org E2E' },
+        org_selection: { available: false },
+      }),
+    }),
   );
   await page.route('**/api/me/consents**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { catalog: [] } }) }),

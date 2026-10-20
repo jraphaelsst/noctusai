@@ -999,14 +999,29 @@ jobs:
           skip-dirs: ${{ steps.dormant.outputs.skip_dirs }}
 
       - name: Upload Trivy SARIF to GH Security tab
-        # `if: always()` so the report uploads even when the scan
-        # fails — same shape as the image-scan job above. Reviewers
-        # need to see WHICH CVE failed.
-        if: always()
+        # `always()` so the report uploads even when the scan fails —
+        # reviewers need to see WHICH CVE failed.
+        # Code scanning needs GitHub Advanced Security on PRIVATE repos (the repo
+        # went private 2026-10-20; the upload then fails "Resource not accessible
+        # by integration"). Only the UPLOAD is conditional — the scan above still
+        # runs and still fails the job on findings. The SARIF is kept as a 1-day
+        # artifact either way (next step).
+        if: always() && github.event.repository.private == false
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
+
+      - name: Keep Trivy SARIF as a workflow artifact
+        # Always (even when the scan failed) so reviewers can see WHICH finding
+        # tripped the gate when the Security-tab upload is unavailable.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs.sarif
+          path: trivy-fs.sarif
+          retention-days: 1
+          if-no-files-found: warn
 
   bandit-scan:
     # Python static-application-security-testing.
@@ -1083,11 +1098,27 @@ jobs:
             --exit-zero
 
       - name: Upload bandit SARIF to GH Security tab
-        if: always()
+        # Code scanning needs GitHub Advanced Security on PRIVATE repos (the repo
+        # went private 2026-10-20; the upload then fails "Resource not accessible
+        # by integration"). Only the UPLOAD is conditional — the scan above still
+        # runs and still fails the job on findings. The SARIF is kept as a 1-day
+        # artifact either way (next step).
+        if: always() && github.event.repository.private == false
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: bandit.sarif
           category: bandit
+
+      - name: Keep bandit SARIF as a workflow artifact
+        # Always (even when the scan failed) so reviewers can see WHICH finding
+        # tripped the gate when the Security-tab upload is unavailable.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit.sarif
+          path: bandit.sarif
+          retention-days: 1
+          if-no-files-found: warn
 
       - name: Bandit gate — fail on NEW MEDIUM+ findings
         # Real gate: re-run bandit against the committed baseline.

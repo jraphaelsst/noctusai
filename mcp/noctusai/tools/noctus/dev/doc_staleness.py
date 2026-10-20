@@ -383,6 +383,7 @@ def _route_count(root: Path, slug: str) -> int:
 
 def _applied_migrations(root: Path) -> set[str]:
     out: set[str] = set()
+    # product-scope: all — a doc may cite a migration of an asleep product; the claim is true if ANY ledger has it
     for f in (root / "products").glob("*/backend/migrations-applied.json"):
         try:
             out |= set((json.loads(f.read_text(encoding="utf-8")).get("applied") or {}))

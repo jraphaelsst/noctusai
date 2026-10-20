@@ -882,7 +882,7 @@ def _default_run_check(
         )
     if check == "webhook_secret_present":
         if not product_mounts_unsigned_capable_webhook(root, product):
-            return True, f"webhook_secret_present n/a — {product} mounts no unsigned-capable webhook"
+            return True, f"webhook_secret_present SKIPPED (n/a) — {product} mounts no unsigned-capable webhook, nothing to verify"
         env_path = _resolve_prod_env_path(root, prod_env_path)
         if env_path is None:
             return True, "webhook_secret_present SKIPPED — no prod env snapshot resolvable"
