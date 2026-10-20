@@ -111,6 +111,8 @@ products/agents/backend/app/
 The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
+`/agentes/catalogo` (`pages/AgentesCatalogo.tsx`, `hooks/useAgentesCatalogo.ts`; nav route `agentes-catalogo`, migration 040) shows one card per agent from `GET /api/agents/catalogo`: name, papel, runtime (Interno/Externo), public description, capability chips, with a papel filter. It renders display-level fields only; `ferramentas` / `versao_ativa` appear only when the server sends them (platform admins) and are never requested or inferred (owner IP rule, 2026-10-19).
+
 #### Studio, tier-aware (Julia v2 — `frontend/src/pages/studio/`)
 
 Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
