@@ -477,6 +477,7 @@ def hash_payload(
             [sp.chave, sp.rotulo, sp.descricao, sp.tipo, sp.obrigatoria, sp.exemplo] for sp in cont.specs
         ),
         "extras": extras or {},
+        **_skills_hash(version),
         **_skill_refs_hash(version),
         "qualificacao": None if qualificacao is None else {
             "versao_id": str(qualificacao.versao_id) if qualificacao.versao_id else None,
@@ -489,6 +490,20 @@ def hash_payload(
             "identidade": [list(i) for i in qualificacao.identidade],
         },
     }
+
+
+def _skills_hash(version: VersionBundle) -> dict[str, Any]:
+    """The version's OWN skills -- name, index line, BODY, order, active flag and every reference file (path,
+    title, sha256 of its text). The bodies are on-demand (never in ``texto``), so without this a skill edit left
+    the hash -- the publish CAS and the eval stamp -- unchanged: the gate could judge one body and ship another.
+    Present ONLY when the version has skills, so a version without any keeps the hash it always had."""
+    if not version.skills:
+        return {}
+    return {"skills": sorted(
+        [sk.nome, sk.descricao, sk.corpo, sk.ordem, sk.ativo,
+         sorted([f.caminho, f.titulo, f.sha256] for f in sk.arquivos)]
+        for sk in version.skills
+    )}
 
 
 def _skill_refs_hash(version: VersionBundle) -> dict[str, Any]:

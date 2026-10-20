@@ -8,6 +8,7 @@ the eval runner and the importer all compile through
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Callable
 from uuid import UUID
@@ -135,7 +136,10 @@ def version_bundle(store, org_id: UUID, version: VersionRecord, *, conteudo: boo
     files_by_skill: dict[UUID, list[SkillFileRef]] = {}
     for f in store.list_version_skill_files(org_id, version.id):
         files_by_skill.setdefault(f.skill_id, []).append(
-            SkillFileRef(caminho=f.caminho, titulo=f.titulo, chars=len(f.conteudo))
+            SkillFileRef(
+                caminho=f.caminho, titulo=f.titulo, chars=len(f.conteudo),
+                sha256=hashlib.sha256(f.conteudo.encode("utf-8")).hexdigest(),
+            )
         )
     return VersionBundle(
         model=version.model,

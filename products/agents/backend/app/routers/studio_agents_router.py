@@ -678,9 +678,10 @@ async def update_draft_skill(
 ) -> SkillOut:
     agent = resolve_agent(store, ctx.org_id, key)
     _, draft = _resolve_draft_skill(store, ctx.org_id, agent, skill_id)
-    fields = patch_fields(payload)
+    fields = patch_fields(payload, nullable=frozenset({"expected_hash"}))
+    expected_hash = fields.pop("expected_hash", None)
     with store_errors():
-        skill = store.update_skill(ctx.org_id, skill_id, fields)
+        skill = store.update_skill(ctx.org_id, skill_id, fields, expected_hash=expected_hash)
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     files = [f for f in store.list_version_skill_files(ctx.org_id, draft.id) if f.skill_id == skill.id]
     return _skill_out(skill, files)

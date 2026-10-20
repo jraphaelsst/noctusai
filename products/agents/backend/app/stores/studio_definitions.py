@@ -598,7 +598,13 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
     ) -> SkillRecord:
         """Raises ``StudioConflict('skill_exists')``."""
         ...
-    def update_skill(self, org_id: UUID, skill_id: UUID, fields: dict[str, Any]) -> SkillRecord: ...
+    def update_skill(
+        self, org_id: UUID, skill_id: UUID, fields: dict[str, Any], *, expected_hash: str | None = None,
+    ) -> SkillRecord:
+        """``expected_hash`` (the draft's ``compiled_hash`` as last read) is the optimistic lock (041
+        ``update_draft_skill``): a different current hash raises ``StudioConflict('conflito_de_versao')`` and nothing
+        is written. ``None`` = no check."""
+        ...
     def delete_skill(self, org_id: UUID, skill_id: UUID) -> None: ...
     def list_version_skill_files(self, org_id: UUID, version_id: UUID) -> list[SkillFileRecord]: ...
     def get_skill_file(self, org_id: UUID, file_id: UUID) -> SkillFileRecord: ...
@@ -1109,11 +1115,16 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         self._touch_draft(version_id)
         return sk
 
-    def update_skill(self, org_id: UUID, skill_id: UUID, fields: dict[str, Any]) -> SkillRecord:
+    def update_skill(
+        self, org_id: UUID, skill_id: UUID, fields: dict[str, Any], *, expected_hash: str | None = None,
+    ) -> SkillRecord:
         _check_fields(fields, _SKILL_FIELDS, "skill")
         _validate_skill_fields(fields)
         sk = self.get_skill(org_id, skill_id)
-        self._require_draft(org_id, sk.version_id)
+        draft = self._require_draft(org_id, sk.version_id)
+        # 041 `update_draft_skill(p_expected_hash)`: the compare and the update are one step
+        if expected_hash is not None and draft.compiled_hash != expected_hash:
+            raise StudioConflict("conflito_de_versao", "the draft changed since it was read")
         if "nome" in fields and fields["nome"] != sk.nome and any(
             s.nome == fields["nome"] for s in self._skills_of(sk.version_id)
         ):
@@ -1715,9 +1726,19 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         resp = self._exec(self._t("agent_skills").insert(payload), unique_code="skill_exists")
         return self._skill(self._one(resp, f"skill {nome!r}"))
 
-    def update_skill(self, org_id: UUID, skill_id: UUID, fields: dict[str, Any]) -> SkillRecord:
+    def update_skill(
+        self, org_id: UUID, skill_id: UUID, fields: dict[str, Any], *, expected_hash: str | None = None,
+    ) -> SkillRecord:
         _check_fields(fields, _SKILL_FIELDS, "skill")
         _validate_skill_fields(fields)
+        if expected_hash is not None:
+            # ONE transaction: lock the parent version, compare its hash, update (041). Only called WITH a hash,
+            # so a pre-041 database keeps serving the unlocked PATCH below.
+            resp = exec_rpc(self._client, _SCHEMA, "update_draft_skill", {
+                "p_org_id": str(org_id), "p_skill_id": str(skill_id), "p_campos": dict(fields),
+                "p_expected_hash": expected_hash,
+            }, unique_code="skill_exists")
+            return self._skill(self._one(resp, f"skill {skill_id}"))
         if not fields:
             return self.get_skill(org_id, skill_id)
         resp = self._exec(

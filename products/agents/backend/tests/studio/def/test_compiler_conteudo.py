@@ -151,6 +151,22 @@ class TestHashCoversEveryContentTable:
         ):
             assert self._h(decisoes=(mut,)) != h0
 
+    def test_the_versions_own_skills_body_files_and_flags(self):
+        """A-polish #9: skill bodies are on-demand (never in ``texto``) -- the hash must still follow them."""
+        from app.studio.models import SkillFileRef
+
+        sk = SkillData(None, "ofertar", "Quando ofertar.", "Passo 1.",
+                       arquivos=(SkillFileRef("ref.md", "Ref", 3, sha256="a" * 64),))
+
+        def h(*skills):
+            return compile_prompt(_inp(skills=skills)).hash
+
+        h0 = h(sk)
+        for mut in (replace(sk, corpo="Passo 2."), replace(sk, descricao="Outra."), replace(sk, ativo=False),
+                    replace(sk, ordem=3), replace(sk, arquivos=(SkillFileRef("ref.md", "Ref", 3, sha256="b" * 64),))):
+            assert h(mut) != h0
+        assert h() == compile_prompt(_inp()).hash  # a version without skills keeps the hash it always had
+
     def test_spec_declarations(self):
         h0 = self._h()
         for mut in (

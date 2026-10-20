@@ -210,6 +210,9 @@ class SkillUpdateRequest(StrictHttpModel):
     corpo: str | None = Field(default=None, max_length=LIMITS["skill.corpo"])
     ordem: int | None = None
     ativo: bool | None = None
+    #: Optimistic lock (same as the replace-set PUTs): the draft's ``compiled_hash`` as the caller last read it. A
+    #: different current hash (someone else wrote in between) answers 409 ``conflito_de_versao``. ``null`` = no check.
+    expected_hash: str | None = Field(default=None, max_length=128)
 
 
 class SkillFileUpsertRequest(StrictHttpModel):

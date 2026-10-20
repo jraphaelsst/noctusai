@@ -402,6 +402,22 @@ class TestSupabaseStore:
             "discard_agent_draft", {"p_org_id": str(ORG), "p_version_id": str(vid), "p_actor": str(USER)},
         )
 
+    def test_a_locked_skill_patch_is_one_041_call_and_a_stale_hash_maps_to_409(self):
+        sid, vid = uuid4(), uuid4()
+        h = "sha256:" + "d" * 64
+        row = {"id": str(sid), "org_id": str(ORG), "version_id": str(vid), "nome": "ofertar", "descricao": "d",
+               "corpo": "novo", "ordem": 0, "ativo": True,
+               "created_at": "2026-10-20T00:00:00+00:00", "updated_at": "2026-10-20T00:00:00+00:00"}
+        client = _RecordingClient([[row], _APIError("P0001", "conflito_de_versao")])
+        store = SupabaseStudioDefinitionStore(client)
+        rec = store.update_skill(ORG, sid, {"corpo": "novo"}, expected_hash=h)
+        assert client.executed[0][1] == ("update_draft_skill", {
+            "p_org_id": str(ORG), "p_skill_id": str(sid), "p_campos": {"corpo": "novo"}, "p_expected_hash": h})
+        assert rec.corpo == "novo" and client.tables == []  # no unlocked table UPDATE on this path
+        with pytest.raises(StudioConflict) as exc:
+            store.update_skill(ORG, sid, {"corpo": "x"}, expected_hash=h)
+        assert exc.value.code == "conflito_de_versao"
+
     @pytest.mark.parametrize(
         "error, expected, code",
         [

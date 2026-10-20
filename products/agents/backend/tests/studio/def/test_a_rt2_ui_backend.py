@@ -240,3 +240,42 @@ class TestOptimisticLock:
             {"ferramenta": "handoff", "descricao": "Outra descrição.", "parametros": {}}]})
         r = studio.put(f"{BASE}/julia/draft/textos", json={"itens": _base.TEXTOS, "expected_hash": lido})
         assert r.status_code == 409 and r.json()["code"] == "conflito_de_versao"
+
+
+class TestSkillsInTheHashAndTheLock:
+    """A-polish #9 + #11: a version's own skill body is hashed (it is on-demand, never in ``texto``), so editing it
+    moves the draft hash and breaks a stale CAS; and the skill PATCH itself takes ``expected_hash``."""
+
+    def _skill(self, studio):
+        agent = _julia(studio)
+        r = studio.post(f"{BASE}/julia/draft/skills", json={"nome": "ofertar", "descricao": "Quando ofertar.",
+                                                            "corpo": "Passo 1."})
+        assert r.status_code == 201, r.text
+        return agent, r.json()["id"]
+
+    def _hash(self, studio, agent):
+        return studio.store.get_draft(DEFAULT_ORG_ID, agent.id).compiled_hash
+
+    def test_a_skill_body_edit_moves_the_hash_and_a_stale_writer_loses(self, studio):
+        agent, sid = self._skill(studio)
+        lido = self._hash(studio, agent)
+        assert lido is not None
+        assert studio.patch(f"{BASE}/julia/draft/skills/{sid}", json={"corpo": "Passo 2."}).status_code == 200
+        depois = self._hash(studio, agent)
+        assert depois is not None and depois != lido
+        r = studio.put(f"{BASE}/julia/draft/textos", json={"itens": _base.TEXTOS, "expected_hash": lido})
+        assert r.status_code == 409 and r.json()["code"] == "conflito_de_versao"
+
+    def test_the_skill_patch_has_the_same_optimistic_lock(self, studio):
+        agent, sid = self._skill(studio)
+        url = f"{BASE}/julia/draft/skills/{sid}"
+        lido = self._hash(studio, agent)
+        stale = studio.patch(url, json={"corpo": "Outro.", "expected_hash": "sha256:" + "0" * 64})
+        assert stale.status_code == 409 and stale.json()["code"] == "conflito_de_versao"
+        assert studio.store.get_skill(DEFAULT_ORG_ID, UUID(sid)).corpo == "Passo 1."  # nothing was written
+        ok = studio.patch(url, json={"corpo": "Outro.", "expected_hash": lido})
+        assert ok.status_code == 200 and ok.json()["corpo"] == "Outro."
+        # the edit moved the hash: the same (now stale) token is refused the second time
+        again = studio.patch(url, json={"corpo": "Mais um.", "expected_hash": lido})
+        assert again.status_code == 409 and again.json()["code"] == "conflito_de_versao"
+        assert studio.patch(url, json={"corpo": "Sem trava."}).status_code == 200  # no expected_hash -> no check

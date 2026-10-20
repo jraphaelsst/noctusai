@@ -173,6 +173,8 @@ class SkillFileRef:
     caminho: str
     titulo: str | None
     chars: int
+    #: ``sha256`` of the file's text -- what the content-mode hash covers (the text itself stays on-demand).
+    sha256: str = ""
 
 
 @dataclass(frozen=True)
