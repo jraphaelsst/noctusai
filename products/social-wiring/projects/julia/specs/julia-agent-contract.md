@@ -101,7 +101,7 @@ In `_process_waha_body` [whatsapp_router.py:492], **after** dedup, media→text 
 3. otherwise → today's behaviour (denial reply once per 24 h).
 
 Safety rules (tested strictly):
-- **Enabling `agente_leads_ativo` requires `authorized_numbers` to be non-empty.** Today an empty list means "everyone is authorized" [whatsapp_connection_store.py:73-92], which would send every lead to the operator bot and its tools. Otherwise: 409 `authorized_numbers_required`.
+- **Enabling `agente_leads_ativo` requires `authorized_numbers` to be non-empty.** When this was written an empty list meant "everyone is authorized", which would have sent every lead to the operator bot and its tools; since 2026-10-20 (owner) an empty list means nobody, silently. Otherwise: 409 `authorized_numbers_required`.
 - The lead path never calls `ChatbotService` and never sees operator tools. The operator path never calls agents.
 - Messages the number's owner sends from the phone (`from_me`) are recorded and never trigger a turn.
 - Group chats (`@g.us`) never trigger a lead turn.
