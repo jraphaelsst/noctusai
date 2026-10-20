@@ -178,14 +178,29 @@ def test_sem_vazamento_canary_and_leak_violation_without_echoing_the_secret():
 
 def test_skill_aberta_antes_de_is_an_ordering_requirement():
     par = {"skill": "ofertar", "ferramenta": "oferecer_imoveis"}
-    ok = _traco(ferramentas=[ToolCall("abrir_skill", {"skill": "ofertar"}), ToolCall("oferecer_imoveis")])
-    errado = _traco(ferramentas=[ToolCall("oferecer_imoveis"), ToolCall("abrir_skill", {"skill": "ofertar"})])
-    outra = _traco(ferramentas=[ToolCall("abrir_skill", {"skill": "outra"}), ToolCall("oferecer_imoveis")])
+    ok = _traco(ferramentas=[ToolCall("abrir_skill", {"nome": "ofertar"}), ToolCall("oferecer_imoveis")])
+    errado = _traco(ferramentas=[ToolCall("oferecer_imoveis"), ToolCall("abrir_skill", {"nome": "ofertar"})])
+    outra = _traco(ferramentas=[ToolCall("abrir_skill", {"nome": "outra"}), ToolCall("oferecer_imoveis")])
     nunca_chamou = _traco(ferramentas=[ToolCall("registrar_perfil")])
     assert _codes({"skill_aberta_antes_de": par}, ok) == []
     assert _codes({"skill_aberta_antes_de": par}, errado) == ["ofertar:antes_de:oferecer_imoveis"]
     assert _codes({"skill_aberta_antes_de": [par]}, outra) == ["ofertar:antes_de:oferecer_imoveis"]
     assert _codes({"skill_aberta_antes_de": par}, nunca_chamou) == []
+
+
+def test_skill_aberta_antes_de_reads_the_argument_the_real_tool_schema_has():
+    """The model calls ``abrir_skill`` with the argument of ITS schema (``AbrirSkillArgs``); an assert reading any
+    other key would never see the skill opened and fail every honest run."""
+    from app.channels.tool_registry import TOOLS
+    from app.studio.eval_mecanismo import arg_skill
+
+    assert set(TOOLS["abrir_skill"].args.model_fields) == {arg_skill()}
+    real = ToolCall("abrir_skill", TOOLS["abrir_skill"].args(**{arg_skill(): "ofertar"}).model_dump())
+    t = _traco(ferramentas=[real, ToolCall("oferecer_imoveis")])
+    assert _codes({"skill_aberta_antes_de": {"skill": "ofertar", "ferramenta": "oferecer_imoveis"}}, t) == []
+    legado = _traco(ferramentas=[ToolCall("abrir_skill", {"skill": "ofertar"}), ToolCall("oferecer_imoveis")])
+    assert _codes({"skill_aberta_antes_de": {"skill": "ofertar", "ferramenta": "oferecer_imoveis"}}, legado) == [
+        "ofertar:antes_de:oferecer_imoveis"]
 
 
 # ── validation: fail closed ───────────────────────────────────────────────────────────────────────────────

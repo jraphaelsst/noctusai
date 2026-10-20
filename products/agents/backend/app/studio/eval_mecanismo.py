@@ -18,6 +18,7 @@ prompt content (IP, CONTRACT 0.4).
 from __future__ import annotations
 
 import dataclasses
+import functools
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from app.studio.eval_driver import (
     Violation,
     reiniciar,
 )
+from app.studio.eval_sinteticos import TokenSinteticoDesconhecido, validar_tokens
 
 __all__ = [
     "ASSERT_NAMES",
@@ -78,8 +80,23 @@ ASSERT_NAMES = (
     "sem_vazamento",
     "skill_aberta_antes_de",
 )
-#: ``abrir_skill`` is the tool whose ``args['skill']`` names the opened skill.
+#: ``abrir_skill`` is the tool whose call names the opened skill.
 FERRAMENTA_ABRIR_SKILL = "abrir_skill"
+
+
+@functools.cache
+def arg_skill() -> str:
+    """The argument of ``abrir_skill`` that names the skill, DERIVED from the tool's strict argument model
+    (``app.channels.tool_registry.TOOLS``) -- never a second hand-kept string that can drift from the schema the
+    model is actually given. The model has exactly one required field; anything else is a registry change this
+    assert must be revisited for, so it fails loudly. Resolved on first use (``tool_registry`` imports
+    ``app.studio.models``, which imports this module)."""
+    from app.channels.tool_registry import TOOLS
+
+    campos = [n for n, f in TOOLS[FERRAMENTA_ABRIR_SKILL].args.model_fields.items() if f.is_required()]
+    if len(campos) != 1:
+        raise RuntimeError(f"{FERRAMENTA_ABRIR_SKILL}: esperado 1 argumento obrigatório, obtido {campos}")
+    return campos[0]
 
 
 class RoteiroInvalido(ValueError):
@@ -142,6 +159,10 @@ def validar_roteiro(roteiro: Any) -> None:
     for i, t in enumerate(turnos):
         if not isinstance(t, dict) or not isinstance(t.get("lead"), str) or not t["lead"].strip():
             raise RoteiroInvalido(f"roteiro.turnos[{i}].lead: texto")
+        try:
+            validar_tokens([(f"roteiro.turnos[{i}].lead", t["lead"])])
+        except TokenSinteticoDesconhecido as exc:
+            raise RoteiroInvalido(str(exc)) from exc
         if "esperar" in t:
             try:
                 validar_asserts(t["esperar"], onde=f"roteiro.turnos[{i}].esperar")
@@ -281,7 +302,7 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
                 if primeira is None:
                     continue  # the path requirement binds only when the tool ran (pair with ferramentas_incluem)
                 aberta = any(
-                    c.nome == FERRAMENTA_ABRIR_SKILL and c.args.get("skill") == skill
+                    c.nome == FERRAMENTA_ABRIR_SKILL and c.args.get(arg_skill()) == skill
                     for c in t.ferramentas[:primeira]
                 )
                 if not aberta:
