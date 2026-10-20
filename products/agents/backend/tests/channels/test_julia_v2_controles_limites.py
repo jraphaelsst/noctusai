@@ -142,6 +142,39 @@ class TestReengagement:
         assert 'txt:contexto.rotulo_atendente: "Bia"' in sistema
         assert not any("[sistema]" in str(m.content) for m in last)
 
+    def test_after_the_agent_ends_the_conversation_no_follow_up_runs(self, chan):
+        """A-polish #7: the lead asks to stop, the model calls ``encerrar``; afterwards a scheduled re-engagement is
+        ignored (no model call, nothing stored) and the thread tells SW to suppress follow-ups."""
+        from app.dependencies import SCOPE_CHANNEL_STATUS
+        from tests.channels.test_julia_v2_e2e import call, step
+
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("encerrar", motivo="lead_encerrou")), say("Tudo bem, não envio mais mensagens."),
+            *[say(f"Resposta {i}?") for i in range(5)],
+        ]))
+        first = chan.turn(turn_body("Não quero mais, pare de me mandar mensagem", ids=["a"])).json()
+        assert [a["type"] for a in first["actions"]] == ["encerrar"]
+        [p] = chan.threads.list_participantes(chan.org_id, UUID(first["thread_id"]))
+        assert p.estado == "encerrado"
+        calls, antes = model_calls(chan), len(msgs(chan, first["thread_id"]))
+        body = chan.turn(self._body(texto_base="Oi, ainda procura imóvel?")).json()
+        assert body["status"] == "reengajamento_ignorado" and body["reply"]["partes"] == [] and body["actions"] == []
+        assert model_calls(chan) == calls and len(msgs(chan, first["thread_id"])) == antes
+        with chan.as_token(SCOPE_CHANNEL_STATUS):
+            t = chan.request("GET", f"/api/channels/threads/{first['thread_id']}").json()
+        assert t["reengajamento_suprimido"] is True and t["reengajamento_suprimido_motivo"] == "encerrado"
+
+    def test_after_a_lead_opt_out_no_follow_up_runs(self, on):
+        """The lead-level opt-out (SW ``POST /leads/{ref}/opt-out``) ends every participation; a re-engagement is
+        then ignored, and a lead message is recorded but never answered."""
+        first = on.turn(turn_body("Oi", ids=["a"])).json()
+        on.threads.registrar_opt_out(on.org_id, "contato-1")
+        calls, antes = model_calls(on), len(msgs(on, first["thread_id"]))
+        body = on.turn(self._body(texto_base="Oi, ainda procura imóvel?")).json()
+        assert body["status"] == "reengajamento_ignorado" and body["reply"]["partes"] == []
+        assert model_calls(on) == calls and len(msgs(on, first["thread_id"])) == antes
+
     @pytest.mark.parametrize("modo", ["desligado"])
     def test_it_is_ignored_when_the_agent_is_off(self, on, modo):
         on.turn(turn_body("Oi", ids=["a"]))
