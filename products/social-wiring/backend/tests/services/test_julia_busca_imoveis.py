@@ -145,6 +145,9 @@ class TestCasaTipo:
         ("casa_condominio", "Casa em Condomínio", True), ("casa_condominio", "Casa", False),
         ("casa", "Casa em Condomínio", True), ("apartamento", "Cobertura", True), ("terreno", "Lote", True),
         ("comercial", "Galpão", True), ("casa", "Apartamento", False),
+        ("casa", "Casa comercial", False), ("casa_condominio", "Casa comercial", False),
+        ("comercial", "Casa comercial", True), ("terreno", "Área", True), ("terreno", "Terreno em Condomínio", True),
+        ("comercial", "Salas/Conjuntos", True), ("apartamento", "Loft", True), ("casa", "Sobrado", True),
         ("Casa em Condominio", "Casa em Condomínio", True),  # a free value from a campaign listing: folded substring
         (None, "Qualquer", True),
     ])
