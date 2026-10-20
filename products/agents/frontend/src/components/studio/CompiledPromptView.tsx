@@ -4,7 +4,7 @@
  * its source and — when `onOpenSource` is given — links back to the tab that
  * edits it. Used by the inspector tab AND `/studio/prompts/:hash`.
  */
-import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
+import { Fragment, forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import { AlertTriangle, ExternalLink, Info } from "lucide-react";
 import { Badge } from "@noctusai/lib/design-system";
 import type { ManifestSection } from "@/api/studio/types";
@@ -21,10 +21,15 @@ export interface CompiledPromptViewProps {
   manifest: ManifestSection[];
   clientId?: string | null;
   onOpenSource?: (target: SourceTarget) => void;
+  /**
+   * Julia v2: character offset where the static (cacheable) prefix ends — everything after it is
+   * dynamic. A marker is drawn after the block that ends there. Absent = no marker.
+   */
+  cacheBreakpoint?: number | null;
 }
 
 export const CompiledPromptView = forwardRef<CompiledPromptViewHandle, CompiledPromptViewProps>(
-  function CompiledPromptView({ texto, manifest, clientId = null, onOpenSource }, ref) {
+  function CompiledPromptView({ texto, manifest, clientId = null, onOpenSource, cacheBreakpoint = null }, ref) {
     const { segmentos, problemas } = useMemo(() => segmentCompiled(texto, manifest), [texto, manifest]);
     const blockRefs = useRef<Record<number, HTMLElement | null>>({});
 
@@ -79,8 +84,8 @@ export const CompiledPromptView = forwardRef<CompiledPromptViewHandle, CompiledP
           const { secao, indice } = seg;
           const target = sourceTarget(secao, clientId);
           return (
+            <Fragment key={`${secao.chave}-${indice}`}>
             <section
-              key={`${secao.chave}-${indice}`}
               ref={(el) => {
                 blockRefs.current[indice] = el;
               }}
@@ -114,6 +119,18 @@ export const CompiledPromptView = forwardRef<CompiledPromptViewHandle, CompiledP
                 {seg.texto}
               </pre>
             </section>
+            {cacheBreakpoint !== null && secao.fim === cacheBreakpoint && (
+              <div
+                className="flex items-center gap-2 text-[11px] font-semibold text-sky-600"
+                role="separator"
+                data-testid="compiled-cache-breakpoint"
+              >
+                <span className="h-px flex-1 bg-sky-500/60" />
+                Ponto de cache: acima = prefixo estático, abaixo = camada dinâmica
+                <span className="h-px flex-1 bg-sky-500/60" />
+              </div>
+            )}
+            </Fragment>
           );
         })}
         <section

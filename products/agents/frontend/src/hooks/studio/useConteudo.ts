@@ -1,0 +1,157 @@
+/**
+ * Agent Studio — Julia v2 CONTENT API (CONTRACT §2.4, §2.6): the DB rows the model reads.
+ *
+ *   GET  /api/studio/agents/{key}/versions/{vid}/{textos|ferramentas|decisoes|specs}   platform admin
+ *   PUT  /api/studio/agents/{key}/draft/{textos|ferramentas|decisoes|specs}            replace-set
+ *   GET  /api/studio/agents/{key}/versions/{vid}/payload                               platform admin
+ *   GET|PUT /api/studio/agents/{key}/specs · GET .../status                            org admin
+ *   GET  /api/studio/agents/{key}/compilado?versao=ativa|rascunho                      platform admin
+ *   GET|PUT /api/studio/plataforma/textos                                              platform admin
+ *
+ * NOTHING here is cached as truth: every successful write invalidates the read keys and the
+ * server answer repaints the screen. The replace-set routes carry no `expected_hash`, so the
+ * optimistic lock is a compare-before-write: the form passes the snapshot it was seeded from
+ * and `useSaveDraftSet` refuses (`DraftConflictError`) when the server's rows moved since.
+ */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import type {
+  CompiladoOrg,
+  ConteudoKind,
+  ConteudoPayload,
+  ConteudoRowByKind,
+  ConteudoSetOut,
+  OrgSpecs,
+  OrgStatus,
+  PlataformaTexto,
+} from "@/api/studio/types-julia";
+import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
+
+const base = (key: string) => `/api/studio/agents/${seg(key)}`;
+
+/** The draft moved on the server between loading the form and saving it. */
+export class DraftConflictError extends Error {
+  constructor() {
+    super("Outra pessoa alterou este rascunho enquanto você editava. Recarregue para ver a versão do servidor.");
+    this.name = "DraftConflictError";
+  }
+}
+
+/** Content identity of a row set (server ids are not content; a replace may reissue them). */
+export function snapshotOf<T extends { id?: string }>(itens: T[]): string {
+  return JSON.stringify(itens.map(({ id: _id, ...rest }) => rest));
+}
+
+export function useVersionContent<K extends ConteudoKind>(key: string, kind: K, versionId: string | null | undefined) {
+  const q = useQuery<ConteudoSetOut<ConteudoRowByKind[K]>>({
+    queryKey: studioKeys.conteudo(key, kind, versionId ?? ""),
+    queryFn: () => api.get<ConteudoSetOut<ConteudoRowByKind[K]>>(`${base(key)}/versions/${seg(versionId as string)}/${kind}`),
+    enabled: !!key && !!versionId,
+    placeholderData: keepWithinAgent<ConteudoSetOut<ConteudoRowByKind[K]>>(key),
+  });
+  return toView(q);
+}
+
+export function useSaveDraftSet<K extends ConteudoKind>(key: string, kind: K, versionId: string | null | undefined) {
+  const qc = useQueryClient();
+  return useMutation<
+    ConteudoSetOut<ConteudoRowByKind[K]>,
+    unknown,
+    { itens: Array<Omit<ConteudoRowByKind[K], "id">>; baseSnapshot: string }
+  >({
+    mutationFn: async ({ itens, baseSnapshot }) => {
+      const fresh = await api.get<ConteudoSetOut<ConteudoRowByKind[K]>>(
+        `${base(key)}/versions/${seg(versionId as string)}/${kind}`,
+      );
+      if (snapshotOf(fresh.itens) !== baseSnapshot) throw new DraftConflictError();
+      return api.put<ConteudoSetOut<ConteudoRowByKind[K]>>(`${base(key)}/draft/${kind}`, { itens });
+    },
+    onSuccess: () => {
+      // Server answer is the truth: refetch everything the content feeds.
+      void qc.invalidateQueries({ queryKey: studioKeys.conteudoAll(key) });
+      void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
+      void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
+      void qc.invalidateQueries({ queryKey: ["studio", key, "payload"] });
+      void qc.invalidateQueries({ queryKey: ["studio", key, "compilado-org"] });
+    },
+  });
+}
+
+export function usePayload(key: string, versionId: string | null | undefined) {
+  const q = useQuery<ConteudoPayload>({
+    queryKey: studioKeys.payload(key, versionId ?? ""),
+    queryFn: () => api.get<ConteudoPayload>(`${base(key)}/versions/${seg(versionId as string)}/payload`),
+    enabled: !!key && !!versionId,
+    retry: false,
+    placeholderData: keepWithinAgent<ConteudoPayload>(key),
+  });
+  return toView(q);
+}
+
+// ── org side ────────────────────────────────────────────────────────────────
+
+export function useOrgSpecs(key: string) {
+  const q = useQuery<OrgSpecs>({
+    queryKey: studioKeys.orgSpecs(key),
+    queryFn: () => api.get<OrgSpecs>(`${base(key)}/specs`),
+    enabled: !!key,
+    retry: false,
+    placeholderData: keepWithinAgent<OrgSpecs>(key),
+  });
+  return toView(q);
+}
+
+export function useUpdateOrgSpecs(key: string) {
+  const qc = useQueryClient();
+  return useMutation<OrgSpecs, unknown, { valores: Record<string, string> }>({
+    mutationFn: (payload) => api.put<OrgSpecs>(`${base(key)}/specs`, payload),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: studioKeys.orgSpecs(key) });
+      void qc.invalidateQueries({ queryKey: studioKeys.orgStatus(key) });
+      void qc.invalidateQueries({ queryKey: studioKeys.controle(key) });
+      void qc.invalidateQueries({ queryKey: ["studio", key, "compilado-org"] });
+    },
+  });
+}
+
+export function useOrgStatus(key: string, enabled = true) {
+  const q = useQuery<OrgStatus>({
+    queryKey: studioKeys.orgStatus(key),
+    queryFn: () => api.get<OrgStatus>(`${base(key)}/status`),
+    enabled: !!key && enabled,
+    retry: false,
+    placeholderData: keepWithinAgent<OrgStatus>(key),
+  });
+  return toView(q);
+}
+
+export function useCompiladoOrg(key: string, versao: "ativa" | "rascunho", enabled = true) {
+  const q = useQuery<CompiladoOrg>({
+    queryKey: studioKeys.compiladoOrg(key, versao),
+    queryFn: () => api.get<CompiladoOrg>(`${base(key)}/compilado`, { versao }),
+    enabled: !!key && enabled,
+    retry: false,
+    placeholderData: keepWithinAgent<CompiladoOrg>(key),
+  });
+  return toView(q);
+}
+
+// ── platform texts ──────────────────────────────────────────────────────────
+
+export function usePlataformaTextos() {
+  const q = useQuery<{ itens: PlataformaTexto[] }>({
+    queryKey: studioKeys.plataformaTextos(),
+    queryFn: () => api.get<{ itens: PlataformaTexto[] }>("/api/studio/plataforma/textos"),
+    retry: false,
+    placeholderData: (prev) => prev,
+  });
+  return toView(q);
+}
+
+export function useSetPlataformaTextos() {
+  const qc = useQueryClient();
+  return useMutation<{ itens: PlataformaTexto[] }, unknown, { itens: Record<string, string> }>({
+    mutationFn: (payload) => api.put<{ itens: PlataformaTexto[] }>("/api/studio/plataforma/textos", payload),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: studioKeys.plataformaTextos() }),
+  });
+}

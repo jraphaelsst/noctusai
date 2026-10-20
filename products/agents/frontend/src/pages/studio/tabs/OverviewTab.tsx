@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import type { VersionSummary } from "@/api/studio/types";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
+import { ControlesCard } from "@/components/studio/ControlesCard";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { shortHash } from "@/components/studio/compiledSegments";
@@ -155,6 +156,8 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
           </Button>
         )}
       </div>
+
+      {agent.definition_scope === "plataforma" && <ControlesCard agentKey={agentKey} />}
 
       {isAdmin && importOpen && (
         <ImportBundleDialog

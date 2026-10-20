@@ -92,6 +92,10 @@ export interface AgentSummary {
   tem_rascunho: boolean;
   /** Agent Packages §D1: `runtime` | `dev-advisor`. */
   kind: AgentKind;
+  /** Julia v2: `org` | `plataforma` (THE definition) | `instancia` (this org's instance). Absent = `org`. */
+  definition_scope?: "org" | "plataforma" | "instancia";
+  /** Julia v2: `linhas` (every compiler string is a DB row) | `legado`. Absent = `legado`. */
+  conteudo_modo?: "linhas" | "legado";
 }
 
 export interface AgentListResponse {

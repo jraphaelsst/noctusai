@@ -33,6 +33,16 @@ function DevAdvisorSemver({ agentKey }: { agentKey: string }) {
   ) : null;
 }
 
+function EscopoBadge({ agent }: { agent: AgentSummary }) {
+  if (agent.definition_scope === "plataforma") {
+    return <Badge variant="default" data-testid={`studio-escopo-${agent.key}`}>Definição da plataforma</Badge>;
+  }
+  if (agent.definition_scope === "instancia") {
+    return <Badge variant="outline" data-testid={`studio-escopo-${agent.key}`}>Instância da organização</Badge>;
+  }
+  return null;
+}
+
 function KindBadge({ agent }: { agent: AgentSummary }) {
   if (agent.kind === "dev-advisor") {
     return (
@@ -53,7 +63,9 @@ function KindBadge({ agent }: { agent: AgentSummary }) {
 
 function AtivoToggle({ agent, isAdmin }: { agent: AgentSummary; isAdmin: boolean }) {
   const update = useUpdateStudioAgent(agent.key);
-  if (!isAdmin || agent.definition_mode === "legacy") {
+  // A platform definition / org instance is switched by its Controles (ligado/drenando/desligado), not by this toggle.
+  const scoped = agent.definition_scope === "plataforma" || agent.definition_scope === "instancia";
+  if (!isAdmin || agent.definition_mode === "legacy" || scoped) {
     return (
       <Badge variant={agent.ativo ? "default" : "muted"} data-testid={`studio-ativo-${agent.key}`}>
         {agent.ativo ? "Ativo" : "Inativo"}
@@ -245,6 +257,7 @@ export default function StudioList() {
                       </Link>
                     )}
                     {a.descricao && <p className="line-clamp-1 text-xs text-muted-foreground">{a.descricao}</p>}
+                    <EscopoBadge agent={a} />
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{a.key}</td>
                   <td className="px-4 py-3">

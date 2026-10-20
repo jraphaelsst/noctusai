@@ -31,6 +31,25 @@ export const studioKeys = {
   clients: (key: string) => ["studio", key, "clients"] as const,
   client: (key: string, clientId: string) => ["studio", key, "clients", clientId] as const,
   prompt: (hash: string) => ["studio-prompt", hash] as const,
+  // Julia v2 (content API, qualification standard, library, controls, channel threads).
+  conteudo: (key: string, kind: string, vid: string) => ["studio", key, "conteudo", kind, vid] as const,
+  conteudoAll: (key: string) => ["studio", key, "conteudo"] as const,
+  payload: (key: string, vid: string) => ["studio", key, "payload", vid] as const,
+  orgSpecs: (key: string) => ["studio", key, "org-specs"] as const,
+  orgStatus: (key: string) => ["studio", key, "org-status"] as const,
+  compiladoOrg: (key: string, versao: string) => ["studio", key, "compilado-org", versao] as const,
+  controle: (key: string) => ["studio", key, "controle"] as const,
+  canal: (key: string) => ["studio", key, "canal"] as const,
+  threadMensagens: (key: string, threadId: string) => ["studio", key, "canal", "mensagens", threadId] as const,
+  conformidade: (key: string) => ["studio", key, "conformidade"] as const,
+  bibliotecaRefs: (key: string, vid: string) => ["studio", key, "biblioteca-refs", vid] as const,
+  plataformaTextos: () => ["studio", "__plataforma__", "textos"] as const,
+  biblioteca: () => ["studio", "__biblioteca__"] as const,
+  bibliotecaVersoes: (chave: string) => ["studio", "__biblioteca__", chave, "versoes"] as const,
+  bibliotecaVersao: (id: string) => ["studio", "__biblioteca__", "versao", id] as const,
+  qual: () => ["studio", "__qualificacao__"] as const,
+  qualVersoes: (chave: string) => ["studio", "__qualificacao__", chave, "versoes"] as const,
+  qualVersao: (id: string) => ["studio", "__qualificacao__", "versao", id] as const,
 };
 
 export interface QueryView<T> {

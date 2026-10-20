@@ -5,13 +5,15 @@
  */
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Boxes } from "lucide-react";
+import { ArrowLeft, Boxes, Lock } from "lucide-react";
 import { Badge } from "@noctusai/lib/design-system";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { ApiError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { DEFAULT_TAB, STUDIO_TABS, isStudioTab, isTabVisibleForKind, type StudioTabId } from "./studioTabs";
+import { DEFAULT_TAB, isStudioTab, studioTier, visibleTabsFor, type StudioTabId, type StudioTier } from "./studioTabs";
 
 type TabComponent = LazyExoticComponent<ComponentType<{ agentKey: string }>>;
 
@@ -28,7 +30,28 @@ const TAB_COMPONENTS: Record<StudioTabId, TabComponent> = {
   versoes: lazy(() => import("./tabs/VersionsTab")),
   compilado: lazy(() => import("./tabs/CompiledTab")),
   conversar: lazy(() => import("./tabs/ChatTab")),
+  textos: lazy(() => import("./tabs/TextosTab")),
+  ferramentas: lazy(() => import("./tabs/FerramentasTab")),
+  decisoes: lazy(() => import("./tabs/DecisoesTab")),
+  qualificacao: lazy(() => import("./tabs/QualificacaoTab")),
+  biblioteca: lazy(() => import("./tabs/BibliotecaTab")),
+  especificacoes: lazy(() => import("./tabs/EspecificacoesTab")),
+  "especificacoes-org": lazy(() => import("./tabs/EspecificacoesOrgTab")),
+  controles: lazy(() => import("./tabs/ControlesTab")),
+  conversas: lazy(() => import("./tabs/ConversasTab")),
+  conformidade: lazy(() => import("./tabs/ConformidadeTab")),
 };
+
+/** Tabs whose body differs by tier: the org instance has no versions to show, only readiness. */
+const OVERVIEW_ORG: TabComponent = lazy(() => import("./tabs/InstanciaOverviewTab"));
+/** On a platform-defined agent the inspector reads the Julia content API (payload + per-org view). */
+const COMPILADO_JULIA: TabComponent = lazy(() => import("./tabs/CompiladoJuliaTab"));
+
+function tabComponent(tab: StudioTabId, tier: StudioTier): TabComponent {
+  if (tier === "organizacao" && tab === "visao-geral") return OVERVIEW_ORG;
+  if (tier !== "legado" && tab === "compilado") return COMPILADO_JULIA;
+  return TAB_COMPONENTS[tab];
+}
 
 function shellErrorMessage(error: unknown): string | undefined {
   if (error instanceof ApiError) {
@@ -45,9 +68,11 @@ export default function StudioAgent() {
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");
   const { data: agent, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgent(key);
-  const kind = agent?.kind ?? "runtime";
-  const tab: StudioTabId = isStudioTab(raw) && isTabVisibleForKind(raw, kind, key) ? raw : DEFAULT_TAB;
-  const visibleTabs = STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, kind, key));
+  const isOrgAdmin = useIsAdmin();
+  const platformAdminHint = useIsPlatformAdmin();
+  const tier = studioTier(agent);
+  const visibleTabs = visibleTabsFor(agent, { isOrgAdmin, platformAdminHint });
+  const tab: StudioTabId = isStudioTab(raw) && visibleTabs.some((t) => t.id === raw) ? raw : (visibleTabs[0]?.id ?? DEFAULT_TAB);
 
   function selectTab(next: StudioTabId) {
     // Deep-link params (secao/chave/skill/versao/cliente) belong to one tab;
@@ -55,7 +80,7 @@ export default function StudioAgent() {
     setParams({ tab: next });
   }
 
-  const TabContent = TAB_COMPONENTS[tab];
+  const TabContent = tabComponent(tab, tier);
 
   return (
     <div className="space-y-4">
@@ -84,10 +109,13 @@ export default function StudioAgent() {
                 Assessor de desenvolvimento
               </Badge>
             )}
+            {tier === "plataforma" && <Badge variant="outline" data-testid="studio-agent-escopo">Definição da plataforma</Badge>}
+            {tier === "organizacao" && <Badge variant="outline" data-testid="studio-agent-escopo">Instância da organização</Badge>}
             {agent.tem_rascunho && <Badge variant="outline">Rascunho em edição</Badge>}
             {isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
           </div>
 
+          {visibleTabs.length > 0 && (
           <nav className="flex gap-1 overflow-x-auto border-b border-border" role="tablist" aria-label="Seções do agente">
             {visibleTabs.map((t) => (
               <button
@@ -108,12 +136,22 @@ export default function StudioAgent() {
               </button>
             ))}
           </nav>
+          )}
 
-          <div role="tabpanel">
-            <Suspense fallback={<StudioLoading rows={3} testId="studio-tab-loading" />}>
-              <TabContent agentKey={agent.key} />
-            </Suspense>
-          </div>
+          {visibleTabs.length === 0 ? (
+            <div
+              className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-card p-6 text-sm text-muted-foreground"
+              data-testid="studio-sem-acesso"
+            >
+              <Lock className="h-4 w-4" /> O conteúdo deste agente é gerenciado pelos administradores da organização.
+            </div>
+          ) : (
+            <div role="tabpanel">
+              <Suspense fallback={<StudioLoading rows={3} testId="studio-tab-loading" />}>
+                <TabContent agentKey={agent.key} />
+              </Suspense>
+            </div>
+          )}
         </>
       ) : null}
     </div>

@@ -103,6 +103,30 @@ products/agents/backend/app/
 The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
+#### Studio, tier-aware (Julia v2 — `frontend/src/pages/studio/`)
+
+Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
+`/api/studio/agents[/{key}]` (`studioTier()` / `visibleTabsFor()` in `studioTabs.ts`).
+
+| Surface (`definition_scope`) | Who | Tabs |
+|---|---|---|
+| `plataforma` (THE definition, platform org) | platform admin | Visão geral (+ Controles card) · Prompt · Textos do sistema · Ferramentas · Decisões · Qualificação · Skills da biblioteca (pins, `obrigatoria_para`, "nova versão") · Especificações declaradas · Avaliações · Configurações · Conformidade · Conversas · Versões · Compilado (version payload with cache breakpoint + every off-prompt row, and the per-org view) |
+| `instancia` (this org's instance) | org admin | Visão geral (readiness only) · Especificações da org · Controles · Conversas. No Prompt / Ferramentas / Qualificação / Textos / Decisões; platform blocks are a label |
+| `instancia` | org member | none of the Studio content tabs |
+| `org` / legacy | admin | the pre-v2 tab set, unchanged |
+
+Rules the screens keep: content lives only in DB rows (the bundle carries no prompt, rule or fixture
+text; tests use synthetic fixtures under `__tests__`; the build ships no sourcemaps); edits are
+draft-only and a replace-set `PUT` is preceded by a compare-before-write read (a moved server draft
+raises the conflict banner and nothing is written); a save always refetches, nothing is cached as
+truth; "Rascunho v{n} · editável" vs "Publicada v{n} · somente leitura" is always shown; loading uses
+`showSkeleton = isPending && !data` / `isRefreshing = isFetching && !!data` (computed in the hooks).
+Org-spec refusals (`spec_conflita_com_regra_fixa`) render inline on the offending field with the locked
+block's label only; qualification publish refusals (`regras_invalidas`) list every rule error with its
+path; the Controles dialog states what happens to the open conversations before a mode change.
+Open gaps are marked `NOC-REMEDIATE[...]` in `types-julia.ts` and the `use*` hooks (conformidade
+routes, studio thread state/results).
+
 ### Platform-defined agents and org specs (Julia v2 — `app/studio/`)
 
 - `definition_scope`: `org` (default — owns its versions) · `plataforma` (THE definition of a key, in the
