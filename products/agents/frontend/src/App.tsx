@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet, BookOpen } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -25,6 +25,7 @@ const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // Bia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
 const Bia = lazy(() => import("@/pages/Bia"));
 const Agentes = lazy(() => import("@/pages/Agentes"));
+const AgentesCatalogo = lazy(() => import("@/pages/AgentesCatalogo"));
 const BiaPersona = lazy(() => import("@/pages/BiaPersona"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
 // Pre-rename routes (Julia -> Bia, lead-imob -> julia) — NOC-REMEDIATE[drop-julia-route-redirects].
@@ -50,6 +51,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Bia", href: "/bia", icon: MessageCircle, route: "bia" },
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
+      { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen, route: "agentes-catalogo" },
       { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
     ],
@@ -77,6 +79,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Bia", href: "/bia", icon: MessageCircle },
       { name: "Agentes", href: "/agentes", icon: Bot },
+      { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen },
       { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
     ],
@@ -109,6 +112,7 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/bia", component: Bia },
     { path: "/agentes", component: Agentes },
+    { path: "/agentes/catalogo", component: AgentesCatalogo },
     { path: "/agentes/bia/persona", component: BiaPersona },
     { path: "/julia", component: RedirectJuliaToBia },
     { path: "/agentes/julia/persona", component: RedirectJuliaPersonaToBia },
