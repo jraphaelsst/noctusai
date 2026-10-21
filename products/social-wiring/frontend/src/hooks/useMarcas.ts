@@ -70,6 +70,8 @@ export function useMarca(id: string) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+const byName = (a: Marca, b: Marca) => a.name.localeCompare(b.name);
+
 export function useCreateMarca() {
   return useCacheWriteMutation<Marca, CreateClientInput>({
     mutationFn: (payload) => api.post<Marca>("/api/marcas", payload),
@@ -78,7 +80,7 @@ export function useCreateMarca() {
         queryKey: CLIENTS_KEY,
         // The list is ordered by name server-side; put the new row where the settle refetch will.
         commit: (old: Marca[] | undefined, saved) =>
-          listOps.append(old, saved)?.sort((a, b) => a.name.localeCompare(b.name)),
+          listOps.insertSorted(old, saved, byName),
       },
     ],
   });
@@ -91,7 +93,8 @@ export function useUpdateMarca() {
       {
         queryKey: CLIENTS_KEY,
         optimistic: (old: Marca[] | undefined) => listOps.patch(old, id, changes as Partial<Marca>),
-        commit: (old: Marca[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+        // A rename moves the row to where the server's name order puts it.
+        commit: (old: Marca[] | undefined, saved) => listOps.insertSorted(old, saved, byName),
       },
       {
         queryKey: MARCA_KEY(id),

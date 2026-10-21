@@ -18,7 +18,7 @@ import {
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { infiniteOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { CEREBRO_KEY, POLL_MS } from "@/hooks/useCerebro";
 import type { ExtractionDetail, ExtractionSummary } from "@/types/cerebro";
@@ -97,22 +97,6 @@ export function useExtracao(id: string | null) {
 }
 
 type ExtracoesCache = InfiniteData<ExtracoesPage>;
-/** Every cached `extracoes` list (infinite pages of `{items,total}`) with `edit` applied to each page's rows. */
-const inPages = (
-  old: ExtracoesCache | undefined,
-  edit: (items: ExtractionSummary[]) => ExtractionSummary[] | undefined,
-  totalDelta = 0,
-): ExtracoesCache | undefined =>
-  old?.pages
-    ? {
-        ...old,
-        pages: old.pages.map((pg, i) => {
-          const next = listOps.within(pg, "items", edit) ?? pg;
-          return i === old.pages.length - 1 && totalDelta ? { ...next, total: Math.max(0, next.total + totalDelta) } : next;
-        }),
-      }
-    : old;
-const hasRow = (old: ExtracoesCache | undefined, id: string) => !!old?.pages?.some((pg) => pg.items.some((r) => r.id === id));
 const EXTRACOES_FAMILY = [...CEREBRO_KEY] as const;
 
 export function useCriarExtracao() {
@@ -122,15 +106,7 @@ export function useCriarExtracao() {
     targets: (v) => [
       {
         queryKey: listKey(v.marca_id, ""),
-        commit: (old: ExtracoesCache | undefined, saved) =>
-          old?.pages?.length && !hasRow(old, saved.id)
-            ? {
-                ...old,
-                pages: old.pages.map((pg, i) =>
-                  i === 0 ? { ...pg, items: [saved as unknown as ExtractionSummary, ...pg.items], total: pg.total + 1 } : pg,
-                ),
-              }
-            : old,
+        commit: (old: ExtracoesCache | undefined, saved) => infiniteOps.prepend(old, saved),
       },
     ],
     invalidate: [CEREBRO_KEY],
@@ -151,8 +127,7 @@ export function useAtualizarExtracao() {
       {
         queryKey: EXTRACOES_FAMILY,
         match: "prefix",
-        commit: (old: ExtracoesCache | undefined, saved) =>
-          hasRow(old, v.id) ? inPages(old, (l) => listOps.patch(l, v.id, saved)) : old,
+        commit: (old: ExtracoesCache | undefined, saved) => infiniteOps.patch(old, v.id, saved),
       },
     ],
     invalidate: [CEREBRO_KEY],
@@ -182,8 +157,7 @@ export function useExcluirExtracao() {
       {
         queryKey: EXTRACOES_FAMILY,
         match: "prefix",
-        optimistic: (old: ExtracoesCache | undefined) =>
-          hasRow(old, id) ? inPages(old, (l) => listOps.remove(l, id), -1) : old,
+        optimistic: (old: ExtracoesCache | undefined) => infiniteOps.remove(old, id),
       },
     ],
     invalidate: [CEREBRO_KEY],

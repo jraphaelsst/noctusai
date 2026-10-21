@@ -12,6 +12,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+
+import { isFirstMailchimpPage } from "./mailchimpFirstPage";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -132,6 +134,7 @@ export function useMailchimpCampaignMutations() {
       {
         queryKey: CAMPAIGNS_KEY,
         match: "prefix",
+        predicate: isFirstMailchimpPage,
         commit: (old: CampaignsOut | undefined, saved) => pageOps.prependNewest(old, saved),
       },
     ],

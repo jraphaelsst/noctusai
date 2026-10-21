@@ -6,8 +6,9 @@
  * at the boundary. Loading rule (lying-loading-state.md): every query hook
  * returns `showSkeleton = isPending && !data` and `isRefreshing = isFetching
  * && !!data`, with `placeholderData` on key changes — never `isLoading`.
- * Every mutation invalidates the whole `["sw","pesquisa"]` family (list +
- * counts) so the page never shows stale numbers.
+ * Every mutation writes what it knows into the cached lists (rows leave the
+ * lists they no longer belong to) and invalidates the whole `["sw","pesquisa"]`
+ * family (list + counts) in the background, so the page never shows stale numbers.
  */
 import {
   useInfiniteQuery,
@@ -15,8 +16,10 @@ import {
   useQuery,
   useQueryClient,
   keepPreviousData,
+  type QueryKey,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { infiniteOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types (contract §3) ────────────────────────────────────────────────────
 
@@ -189,9 +192,15 @@ function useInvalidatePesquisa() {
   return () => qc.invalidateQueries({ queryKey: PESQUISA_KEY });
 }
 
+type ItensCache = { pages: PesquisaItemsPage[]; pageParams: unknown[] };
+/** Every cached items list: `[…PESQUISA_KEY, "items", marcaId, status, variableSlug, sort, pageSize]`. */
+const ITENS_KEY = [...PESQUISA_KEY, "items"] as const;
+const marcaDaLista = (key?: QueryKey) => key?.[3];
+const statusDaLista = (key?: QueryKey) => key?.[4];
+
 export function useAdicionarItens() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the server classifies and dedupes the lines, so placement and counts are its call
+  return useMutation({ // noc-allow: invalidate-only — the server classifies and dedupes the lines and sorts each list (plays/recent): where (and whether) each new item lands in each cached list, and the counts, are its call
     mutationFn: async (v: { marca_id: string; variable_slug: string; lines: string[] }) =>
       unwrap(await api.post<Envelope<AdicionarResult>>(`${BASE}/items`, v)),
     onSuccess: invalidate,
@@ -207,48 +216,91 @@ export function useClassificarItens() {
   });
 }
 
+/** Approve: the item leaves the pending lists at once; the approved lists place it (sorted server-side) on the settle. */
 export function useAprovarItem() {
-  const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the item moves between status lists and counts are server-side
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<PesquisaItem, string>({
+    mutationFn: async (id) =>
       unwrap(await api.post<Envelope<PesquisaItem>>(`${BASE}/items/${encodeURIComponent(id)}/approve`)),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: ITENS_KEY,
+        match: "prefix",
+        optimistic: (old: ItensCache | undefined, _id, _ctx, key) =>
+          statusDaLista(key) === "pending" ? infiniteOps.remove(old, id) : old,
+        commit: (old: ItensCache | undefined, saved, _id, _ctx, key) =>
+          statusDaLista(key) === saved.status ? infiniteOps.replace(old, id, saved) : infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [PESQUISA_KEY],
   });
 }
 
+/** Reject: the item belongs to neither the pending nor the approved list any more. */
 export function useRejeitarItem() {
-  const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the item moves between status lists and counts are server-side
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<PesquisaItem, string>({
+    mutationFn: async (id) =>
       unwrap(await api.post<Envelope<PesquisaItem>>(`${BASE}/items/${encodeURIComponent(id)}/reject`)),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: ITENS_KEY,
+        match: "prefix",
+        commit: (old: ItensCache | undefined, saved, _id, _ctx, key) =>
+          statusDaLista(key) === saved.status ? infiniteOps.replace(old, id, saved) : infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [PESQUISA_KEY],
   });
 }
 
 export function useExcluirItem() {
-  const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); counts are server-side
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`${BASE}/items/${encodeURIComponent(id)}`);
     },
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: ITENS_KEY,
+        match: "prefix",
+        optimistic: (old: ItensCache | undefined) => infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [PESQUISA_KEY],
   });
 }
 
+/** Bulk: approve takes the ids off the pending lists; reject / delete take them off every list. */
 export function useAcaoEmMassa() {
-  const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — bulk action over an infinite-query pages cache (no seed op for it yet); the response is only {affected}
-    mutationFn: async (v: { marca_id: string; action: BulkAction; ids: string[] }) =>
+  return useCacheWriteMutation<{ affected: number }, { marca_id: string; action: BulkAction; ids: string[] }>({
+    mutationFn: async (v) =>
       unwrap(await api.post<Envelope<{ affected: number }>>(`${BASE}/items/bulk`, v)),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: ITENS_KEY,
+        match: "prefix",
+        optimistic: (old: ItensCache | undefined, _vars, _ctx, key) =>
+          v.action === "approve" && statusDaLista(key) !== "pending"
+            ? old
+            : v.ids.reduce<ItensCache | undefined>((acc, id) => infiniteOps.remove(acc, id), old),
+      },
+    ],
+    invalidate: [PESQUISA_KEY],
   });
 }
 
+/** Zero the research of a marca: all of its cached lists go blank at once. */
 export function useZerarPesquisa() {
-  const invalidate = useInvalidatePesquisa();
-  return useMutation({ // noc-allow: invalidate-only — empties the whole research set server-side; the response is only {deleted}
-    mutationFn: async (marca_id: string) =>
+  return useCacheWriteMutation<{ deleted: number }, string>({
+    mutationFn: async (marca_id) =>
       unwrap(await api.post<Envelope<{ deleted: number }>>(`${BASE}/items/empty`, { marca_id, confirm: true })),
-    onSuccess: invalidate,
+    targets: (marcaId) => [
+      {
+        queryKey: ITENS_KEY,
+        match: "prefix",
+        predicate: (key) => marcaDaLista(key) === marcaId,
+        optimistic: (old: ItensCache | undefined) =>
+          infiniteOps.mapPages(old, (pg) => ({ ...(pg as PesquisaItemsPage), items: [], total: 0 })),
+      },
+    ],
+    invalidate: [PESQUISA_KEY],
   });
 }

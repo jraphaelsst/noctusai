@@ -113,6 +113,6 @@ describe("mutations", () => {
       "/api/media-creation/pesquisa/items/empty",
       { marca_id: "m1", confirm: true },
     ]);
-    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === JSON.stringify(PESQUISA_KEY))).toHaveLength(2);
   });
 });

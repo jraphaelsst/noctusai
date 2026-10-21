@@ -117,7 +117,7 @@ export function useLeadSourceAliasMutations() {
         // The alias is mapped now: it leaves the "unmapped" queue.
         queryKey: [...ALIASES_KEY, "unmapped"],
         commit: (old: UnmappedAlias[] | undefined, saved) =>
-          Array.isArray(old) ? old.filter((u) => u.alias !== saved.alias) : old,
+          listOps.remove(old, saved.alias, "alias"),
       },
     ],
     invalidate,

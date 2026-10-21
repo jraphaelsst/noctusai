@@ -340,13 +340,15 @@ export function useEmCampaignMutations() {
   return {
     create: useCacheWriteMutation<Envelope<EmCampaign>, EmCampaignInput>({
       mutationFn: (body) => api.post<Envelope<EmCampaign>>(`${BASE}/campaigns`, body),
-      // Newest campaign first in the unfiltered list; status-filtered lists converge on the settle.
+      // Newest campaign first in the unfiltered list AND in the status list the row satisfies (never the others).
       targets: [
         {
-          queryKey: emKeys.campaigns(),
-          commit: (old: EmCampaign[] | undefined, res) => {
+          queryKey: CAMPAIGNS_KEY,
+          match: "prefix",
+          commit: (old: EmCampaign[] | undefined, res, _vars, _ctx, key) => {
             const row = unwrap<EmCampaign | null>(res, null);
-            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+            const filtro = key?.length === FAMILY.length + 2 ? key[FAMILY.length + 1] : undefined;
+            return row && (filtro === "all" || filtro === row.status) ? listOps.replace(old, row.id, row, "prepend") : old;
           },
         },
       ],
@@ -432,13 +434,17 @@ export function useEmContactMutations() {
   return {
     create: useCacheWriteMutation<Envelope<EmContact>, EmContactInput>({
       mutationFn: (body) => api.post<Envelope<EmContact>>(`${BASE}/contacts`, body),
-      // Unfiltered list only (search / status lists would need the server's filter); the rest settle.
+      // The unfiltered list and the status list the row satisfies; search lists need the server's matcher, so they settle.
       targets: [
         {
-          queryKey: emKeys.contacts(),
-          commit: (old: EmContact[] | undefined, res) => {
+          queryKey: CONTACTS_KEY,
+          match: "prefix",
+          commit: (old: EmContact[] | undefined, res, _vars, _ctx, key) => {
             const row = unwrap<EmContact | null>(res, null);
-            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+            const [status, search] = key?.slice(FAMILY.length + 1) ?? [];
+            return row && !search && (status === "all" || status === row.status)
+              ? listOps.replace(old, row.id, row, "prepend")
+              : old;
           },
         },
       ],
@@ -581,9 +587,7 @@ export function useEmListMutations() {
         {
           queryKey: emKeys.lists(),
           optimistic: (old: EmList[] | undefined, vars) =>
-            old?.map((l) =>
-              l.id === id ? { ...l, contact_count: Math.max(0, l.contact_count - vars.contactIds.length) } : l,
-            ),
+            listOps.update(old, id, (l) => ({ ...l, contact_count: Math.max(0, l.contact_count - vars.contactIds.length) })),
         },
       ],
       invalidate: [[...FAMILY, "lists"]],
@@ -626,12 +630,15 @@ export function useEmTemplateMutations() {
   return {
     create: useCacheWriteMutation<Envelope<EmTemplate>, EmTemplateInput>({
       mutationFn: (body) => api.post<Envelope<EmTemplate>>(`${BASE}/templates`, body),
+      // The unfiltered list and the categoria list the row satisfies.
       targets: [
         {
-          queryKey: emKeys.templates(),
-          commit: (old: EmTemplate[] | undefined, res) => {
+          queryKey: [...FAMILY, "templates"],
+          match: "prefix",
+          commit: (old: EmTemplate[] | undefined, res, _vars, _ctx, key) => {
             const row = unwrap<EmTemplate | null>(res, null);
-            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+            const filtro = key?.length === FAMILY.length + 2 ? key[FAMILY.length + 1] : undefined;
+            return row && (filtro === "all" || filtro === row.categoria) ? listOps.replace(old, row.id, row, "prepend") : old;
           },
         },
       ],
@@ -748,12 +755,15 @@ export function useEmAutomationMutations() {
   return {
     create: useCacheWriteMutation<Envelope<EmAutomation>, EmAutomationInput>({
       mutationFn: (body) => api.post<Envelope<EmAutomation>>(`${BASE}/automations`, body),
+      // The unfiltered list and the status list the row satisfies.
       targets: [
         {
-          queryKey: emKeys.automations(),
-          commit: (old: EmAutomation[] | undefined, res) => {
+          queryKey: AUTOMATIONS_KEY,
+          match: "prefix",
+          commit: (old: EmAutomation[] | undefined, res, _vars, _ctx, key) => {
             const row = unwrap<EmAutomation | null>(res, null);
-            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+            const filtro = key?.length === FAMILY.length + 2 ? key[FAMILY.length + 1] : undefined;
+            return row && (filtro === "all" || filtro === row.status) ? listOps.replace(old, row.id, row, "prepend") : old;
           },
         },
       ],

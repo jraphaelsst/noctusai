@@ -12,7 +12,9 @@ import {
   keepPreviousData,
   useQuery,
 } from "@tanstack/react-query";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+
+import { isFirstMailchimpPage } from "./mailchimpFirstPage";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -109,23 +111,18 @@ export function useMailchimpSegmentMembers(
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
-/** Mailchimp ids are numbers, so these edits go through `listOps.within` (untyped rows) instead of the string-id ops. */
+/** Mailchimp ids are numbers; the seed row ops address them as-is. */
 export function useMailchimpSegmentMutations() {
   const qc = useQueryClient();
-  const segmentos = (edit: (l: SegmentOut[]) => SegmentOut[], totalDelta = 0) =>
-    (old: SegmentsOut | undefined) => {
-      const next = listOps.within(old, "items", edit);
-      return next && totalDelta ? { ...next, total: Math.max(0, next.total + totalDelta) } : next;
-    };
-
   const create = useCacheWriteMutation<SegmentOut, CreateSegmentBody>({
     mutationFn: (body) => api.post<SegmentOut>(BASE, body),
-    // The default (param-less) list; paged / offset lists settle.
+    // Every first-page list (paged / offset lists settle).
     targets: [
       {
-        queryKey: [...SEGMENTS_KEY, undefined],
-        commit: (old: SegmentsOut | undefined, saved) =>
-          old?.items?.some((s) => s.id === saved.id) ? old : segmentos((l) => [...l, saved], 1)(old),
+        queryKey: SEGMENTS_KEY,
+        match: "prefix",
+        predicate: isFirstMailchimpPage,
+        commit: (old: SegmentsOut | undefined, saved) => pageOps.add(old, saved),
       },
     ],
     invalidate: [FAMILY_KEY],
@@ -137,8 +134,7 @@ export function useMailchimpSegmentMutations() {
       {
         queryKey: SEGMENTS_KEY,
         match: "prefix",
-        commit: (old: SegmentsOut | undefined, saved) =>
-          segmentos((l) => l.map((s) => (s.id === id ? { ...s, ...saved } : s)))(old),
+        commit: (old: SegmentsOut | undefined, saved) => pageOps.patch(old, id, saved),
       },
     ],
     invalidate: [FAMILY_KEY],
@@ -150,8 +146,7 @@ export function useMailchimpSegmentMutations() {
       {
         queryKey: SEGMENTS_KEY,
         match: "prefix",
-        optimistic: (old: SegmentsOut | undefined) =>
-          old?.items?.some((s) => s.id === id) ? segmentos((l) => l.filter((s) => s.id !== id), -1)(old) : old,
+        optimistic: (old: SegmentsOut | undefined) => pageOps.remove(old, id),
       },
     ],
     invalidate: [FAMILY_KEY],
@@ -170,19 +165,15 @@ export function useMailchimpSegmentMutations() {
       {
         queryKey: [...SEGMENTS_KEY, segmentId, "members"],
         match: "prefix",
-        optimistic: (old: SegmentMembersOut | undefined) => {
-          if (!old?.items?.some((m) => m.email === email)) return old;
-          const next = listOps.within(old, "items", (l) => l.filter((m) => m.email !== email));
-          return next ? { ...next, total: Math.max(0, next.total - 1) } : old;
-        },
+        optimistic: (old: SegmentMembersOut | undefined) => pageOps.remove(old, email, "email"),
       },
       {
         queryKey: SEGMENTS_KEY,
         match: "prefix",
         optimistic: (old: SegmentsOut | undefined) =>
-          segmentos((l) =>
-            l.map((s) => (s.id === segmentId ? { ...s, member_count: Math.max(0, s.member_count - 1) } : s)),
-          )(old),
+          listOps.within(old, "items", (l) =>
+            listOps.update(l, segmentId, (s) => ({ ...s, member_count: Math.max(0, s.member_count - 1) })),
+          ),
       },
     ],
     invalidate: [FAMILY_KEY],

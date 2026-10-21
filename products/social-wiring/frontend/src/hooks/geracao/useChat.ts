@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { readSseStream } from "@noctusai/lib";
-import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { infiniteOps, listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 
 import { FILTROS_VAZIOS } from "@/components/geracao/biblioteca/filtros";
@@ -66,9 +66,6 @@ export function useConversas(marcaId: string | null, agente: Agente) {
 }
 
 type ConversasCache = { pages: { items: Conversa[]; tem_mais: boolean }[]; pageParams: unknown[] };
-/** An infinite `conversas` cache with `edit` applied to each page's `items`. */
-const inPages = (old: ConversasCache | undefined, edit: (items: Conversa[]) => Conversa[] | undefined) =>
-  old?.pages ? { ...old, pages: old.pages.map((p) => listOps.within(p, "items", edit) ?? p) } : old;
 const CONVERSAS_KEY = [...CHAT_KEY, "conversas"] as const;
 
 export function useCriarConversa() {
@@ -78,15 +75,7 @@ export function useCriarConversa() {
     targets: (v) => [
       {
         queryKey: [...CONVERSAS_KEY, v.marca_id, v.agente],
-        commit: (old: ConversasCache | undefined, saved) =>
-          old?.pages?.length
-            ? {
-                ...old,
-                pages: old.pages.map((p, i) =>
-                  i === 0 ? (listOps.within(p, "items", (l) => listOps.replace(l, saved.id, saved, "prepend")) ?? p) : p,
-                ),
-              }
-            : old,
+        commit: (old: ConversasCache | undefined, saved) => infiniteOps.prepend(old, saved),
       },
     ],
   });
@@ -100,9 +89,8 @@ export function useRenomearConversa() {
       {
         queryKey: CONVERSAS_KEY,
         match: "prefix",
-        optimistic: (old: ConversasCache | undefined, vars) =>
-          inPages(old, (l) => listOps.patch(l, vars.id, { titulo: vars.titulo })),
-        commit: (old: ConversasCache | undefined, saved) => inPages(old, (l) => listOps.patch(l, v.id, saved)),
+        optimistic: (old: ConversasCache | undefined, vars) => infiniteOps.patch(old, vars.id, { titulo: vars.titulo }),
+        commit: (old: ConversasCache | undefined, saved) => infiniteOps.patch(old, v.id, saved),
       },
     ],
   });
@@ -117,7 +105,7 @@ export function useApagarConversa() {
       {
         queryKey: CONVERSAS_KEY,
         match: "prefix",
-        optimistic: (old: ConversasCache | undefined) => inPages(old, (l) => listOps.remove(l, id)),
+        optimistic: (old: ConversasCache | undefined) => infiniteOps.remove(old, id),
       },
     ],
     // Messages / contexto of the deleted conversa live under the same family.

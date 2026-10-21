@@ -22,7 +22,7 @@ import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream } from "@noctusai/lib";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { LeadRecord, LeadRecords } from "./useMetaAds";
 
@@ -117,11 +117,9 @@ export function useLeadgenSubscriptions() {
  *  button. Per-page results — the caller must render PARTIAL failure, never
  *  collapse it to a blanket success/error. Invalidates the subscriptions
  *  query so every row reflects the new state without a manual refetch. */
-/** Edit the page(s) of the cached subscriptions answer; `pages` rows are keyed by `page_id`. */
-const naPagina = (
-  old: LeadgenSubscriptions | undefined,
-  edit: (p: LeadgenPageSubscription) => LeadgenPageSubscription,
-) => (old && Array.isArray(old.pages) ? { ...old, pages: old.pages.map(edit) } : old);
+/** Edit ONE page of the cached subscriptions answer; `pages` rows are keyed by `page_id`. */
+const naPagina = (old: LeadgenSubscriptions | undefined, pageId: string, changes: Partial<LeadgenPageSubscription>) =>
+  listOps.within(old, "pages", (l) => listOps.patch(l, pageId, changes, "page_id"));
 
 export function useSubscribeLeadgenPages() {
   return useCacheWriteMutation<LeadgenSubscribeResponse, string[] | null>({
@@ -136,8 +134,9 @@ export function useSubscribeLeadgenPages() {
       {
         queryKey: SUBSCRIPTIONS_KEY,
         commit: (old: LeadgenSubscriptions | undefined, saved) => {
-          const ok = new Set(saved.results.filter((r) => r.ok).map((r) => r.page_id));
-          return naPagina(old, (p) => (ok.has(p.page_id) ? { ...p, subscribed: true } : p));
+          return saved.results
+            .filter((r) => r.ok)
+            .reduce((acc: LeadgenSubscriptions | undefined, r) => naPagina(acc, r.page_id, { subscribed: true }), old);
         },
       },
     ],
@@ -164,7 +163,7 @@ export function useUnsubscribeLeadgenPage() {
         queryKey: SUBSCRIPTIONS_KEY,
         commit: (old: LeadgenSubscriptions | undefined, saved) =>
           saved.ok
-            ? naPagina(old, (p) => (p.page_id === pageId ? { ...p, subscribed: false, subscribed_fields: [] } : p))
+            ? naPagina(old, pageId, { subscribed: false, subscribed_fields: [] })
             : old,
       },
     ],
@@ -192,9 +191,9 @@ export function useSetPageMarca() {
         queryKey: SUBSCRIPTIONS_KEY,
         // The picked client is what the user chose; the attributed-forms counts are the server's (settle).
         optimistic: (old: LeadgenSubscriptions | undefined) =>
-          naPagina(old, (p) => (p.page_id === pageId ? { ...p, marca_id: marcaId } : p)),
+          naPagina(old, pageId, { marca_id: marcaId }),
         commit: (old: LeadgenSubscriptions | undefined, saved) =>
-          naPagina(old, (p) => (p.page_id === pageId ? { ...p, ...saved } : p)),
+          naPagina(old, pageId, saved),
       },
     ],
   });

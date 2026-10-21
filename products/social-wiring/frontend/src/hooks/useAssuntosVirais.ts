@@ -6,7 +6,8 @@
  * Loading rule (lying-loading-state.md): query hooks return
  * `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`
  * with `placeholderData` on key changes — never `isLoading`. Every mutation
- * invalidates the whole `["sw","assuntos-virais"]` family (list + counts).
+ * writes the answer into the cached lists it affects (rows leave the lists they no longer belong to) and
+ * invalidates the whole `["sw","assuntos-virais"]` family (list + counts) in the background.
  */
 import {
   keepPreviousData,
@@ -14,8 +15,10 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryKey,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { infiniteOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { FonteKind } from "@/hooks/usePesquisa";
 
@@ -57,6 +60,8 @@ export interface AssuntosCounts {
 }
 
 export type AssuntoBulkAction = "approve" | "reject" | "delete";
+
+type AssuntosCache = { pages: AssuntosPage[]; pageParams: unknown[] };
 
 export const ASSUNTOS_PAGE_SIZE = 54;
 
@@ -159,9 +164,13 @@ function useInvalidateAssuntos() {
   return () => qc.invalidateQueries({ queryKey: ASSUNTOS_KEY });
 }
 
+/** Every cached list of every marca/status/sort: `[…ASSUNTOS_KEY, "list", marcaId, status, sort]`. */
+const LISTAS_KEY = [...ASSUNTOS_KEY, "list"] as const;
+const statusDaLista = (key?: QueryKey) => key?.[4];
+
 export function useAdicionarAssuntos() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet), sorted by plays server-side, and the server dedupes (skipped) — placement is its call
+  return useMutation({ // noc-allow: invalidate-only — lists are sorted by plays/recency server-side and the server dedupes (skipped): where (and whether) each new topic lands in each cached sort is its call
     mutationFn: async (v: { marca_id: string; topics: string[] }) =>
       unwrap(
         await api.post<
@@ -172,65 +181,107 @@ export function useAdicionarAssuntos() {
   });
 }
 
+/** Approve: the row leaves the pending lists at once; the approved lists place it (sorted server-side) on the settle. */
 export function useAprovarAssunto() {
-  const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the row moves between the pending/approved lists and counts are server-side
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<ViralTopic, string>({
+    mutationFn: async (id) =>
       unwrap(
         await api.post<Envelope<ViralTopic>>(
           `${BASE}/${encodeURIComponent(id)}/approve`,
         ),
       ),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        optimistic: (old: AssuntosCache | undefined, _id, _ctx, key) =>
+          statusDaLista(key) === "pending" ? infiniteOps.remove(old, id) : old,
+        commit: (old: AssuntosCache | undefined, saved, _id, _ctx, key) =>
+          statusDaLista(key) === saved.status ? infiniteOps.replace(old, id, saved) : infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [ASSUNTOS_KEY],
   });
 }
 
+/** Reject: the row belongs to neither the pending nor the approved list any more. */
 export function useRejeitarAssunto() {
-  const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the row moves between lists and counts are server-side
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<ViralTopic, string>({
+    mutationFn: async (id) =>
       unwrap(
         await api.post<Envelope<ViralTopic>>(
           `${BASE}/${encodeURIComponent(id)}/reject`,
         ),
       ),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        commit: (old: AssuntosCache | undefined, saved, _id, _ctx, key) =>
+          statusDaLista(key) === saved.status ? infiniteOps.replace(old, id, saved) : infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [ASSUNTOS_KEY],
   });
 }
 
 export function useExcluirAssunto() {
-  const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); counts are server-side
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`${BASE}/${encodeURIComponent(id)}`);
     },
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        optimistic: (old: AssuntosCache | undefined) => infiniteOps.remove(old, id),
+      },
+    ],
+    invalidate: [ASSUNTOS_KEY],
   });
 }
 
+/** Bulk: approve takes the ids off the pending lists; reject / delete take them off every list. */
 export function useAssuntosEmMassa() {
-  const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — bulk action over an infinite-query pages cache (no seed op for it yet); the response is only {affected}
-    mutationFn: async (v: {
-      marca_id: string;
-      action: AssuntoBulkAction;
-      ids: string[];
-    }) =>
+  return useCacheWriteMutation<
+    { affected: number },
+    { marca_id: string; action: AssuntoBulkAction; ids: string[] }
+  >({
+    mutationFn: async (v) =>
       unwrap(await api.post<Envelope<{ affected: number }>>(`${BASE}/bulk`, v)),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        optimistic: (old: AssuntosCache | undefined, _vars, _ctx, key) =>
+          v.action === "approve" && statusDaLista(key) !== "pending"
+            ? old
+            : v.ids.reduce<AssuntosCache | undefined>((acc, id) => infiniteOps.remove(acc, id), old),
+      },
+    ],
+    invalidate: [ASSUNTOS_KEY],
   });
 }
 
+/** Empty a status list: that marca's lists of that status (every sort) go blank at once. */
 export function useEsvaziarAssuntos() {
-  const invalidate = useInvalidateAssuntos();
-  return useMutation({ // noc-allow: invalidate-only — empties a whole list server-side over an infinite-query pages cache; the response is only {deleted}
-    mutationFn: async (v: { marca_id: string; status: AssuntoStatus }) =>
+  return useCacheWriteMutation<{ deleted: number }, { marca_id: string; status: AssuntoStatus }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.post<Envelope<{ deleted: number }>>(`${BASE}/empty`, {
           ...v,
           confirm: true,
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        predicate: (key) => key[3] === v.marca_id && statusDaLista(key) === v.status,
+        optimistic: (old: AssuntosCache | undefined) =>
+          infiniteOps.mapPages(old, (pg) => ({ ...(pg as AssuntosPage), items: [], total: 0 })),
+      },
+    ],
+    invalidate: [ASSUNTOS_KEY],
   });
 }

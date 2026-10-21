@@ -4,7 +4,6 @@
  * these hooks only cover the create/reparent/delete mutations, all of which
  * invalidate the shared workflow-list query keys on success.
  */
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
@@ -12,10 +11,6 @@ import { useActiveAccountId } from "@/state/useActiveAccount";
 import type { N8nFolderOut, N8nWorkflowListResponse } from "@/hooks/useN8nWorkflows";
 
 const WORKFLOWS_PREFIX = ["sw", "n8n", "workflows"] as const;
-
-function invalidateAllWorkflowLists(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: ["sw", "n8n", "workflows"] });
-}
 
 // ─── Create ─────────────────────────────────────────────────────────────
 
@@ -26,17 +21,26 @@ export interface N8nFolderCreateBody {
 
 /** POST /api/n8n/folders */
 export function useCreateFolder() {
-  const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({ // noc-allow: invalidate-only — workflow lists are keyed by account × scope × archived: a prefix commit would put the new folder into other accounts' cached lists
-    mutationFn: ({ body, accountId }: { body: N8nFolderCreateBody; accountId?: string | null }) => {
+  return useCacheWriteMutation<N8nFolderOut, { body: N8nFolderCreateBody; accountId?: string | null }>({
+    mutationFn: ({ body, accountId }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.post<N8nFolderOut>("/api/n8n/folders", {
         account_id: effectiveAccountId,
         ...body,
       });
     },
-    onSuccess: () => invalidateAllWorkflowLists(qc),
+    // The folder tree rides on every scope/archived list of ONE account (`[…, accountId, scope, archived]`):
+    // the new folder lands in exactly those lists, never in another account's.
+    targets: ({ accountId }) => [
+      {
+        queryKey: WORKFLOWS_PREFIX,
+        match: "prefix",
+        predicate: (key) => key.length === 6 && key[3] === (accountId ?? storeAccountId),
+        commit: (old: N8nWorkflowListResponse | undefined, saved) =>
+          listOps.within(old, "folders", (l) => listOps.insertSorted(l, saved, (a, b) => a.position - b.position)),
+      },
+    ],
   });
 }
 

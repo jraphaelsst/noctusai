@@ -476,9 +476,7 @@ export function useRoteiroMutations(clienteId: string) {
     roteiroId: string,
     edit: (visitas: Visita[]) => Visita[] | undefined,
   ) =>
-    Array.isArray(old)
-      ? old.map((r) => (r.id === roteiroId ? { ...r, visitas: edit(r.visitas) ?? r.visitas } : r))
-      : old;
+    listOps.update(old, roteiroId, (r) => ({ ...r, visitas: edit(r.visitas) ?? r.visitas }));
 
   const patchVisita = useCacheWriteMutation<
     Visita,
@@ -958,12 +956,7 @@ export function useCompradorMutations(clienteId: string) {
         queryKey: compradoresKey,
         match: "prefix",
         commit: (old: CompradoresResponse | undefined, saved) =>
-          old && Array.isArray(old.items) && (old.lado ?? "comprador") === saved.lado
-            ? {
-                ...listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved)),
-                total: old.items.some((p) => p.id === saved.id) ? old.total : old.total + 1,
-              }
-            : old,
+          (old?.lado ?? "comprador") === saved.lado ? pageOps.add(old, saved) : old,
       },
     ],
     invalidate: outrosDerivados,

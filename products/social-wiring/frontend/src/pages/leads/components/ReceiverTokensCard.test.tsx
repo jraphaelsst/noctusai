@@ -56,7 +56,8 @@ function state(over: Record<string, unknown> = {}) {
     active: tokens,
     revoked: [],
     neverUsed: [],
-    loading: false,
+    showSkeleton: false,
+    isRefreshing: false,
     isEmpty: false,
     isError: false,
     error: null,
@@ -90,20 +91,28 @@ beforeEach(() => {
 
 describe("states", () => {
   it("shows a skeleton while loading", () => {
-    state({ loading: true });
+    state({ showSkeleton: true });
     render(<ReceiverTokensCard />);
 
     expect(screen.getByTestId("receiver-tokens-loading")).toBeTruthy();
   });
 
-  it("does not claim 'no URLs' while a refetch is in flight", () => {
-    // The lying-loading-state trap: `isEmpty` must never win over a
-    // background refetch, or an operator mints a duplicate URL for a
-    // client who already has one.
-    state({ loading: true, isEmpty: false });
+  it("does not claim 'no URLs' on the first load", () => {
+    // The lying-loading-state trap: `isEmpty` must never win before data
+    // arrives, or an operator mints a duplicate URL for a client who
+    // already has one.
+    state({ showSkeleton: true, isEmpty: false });
     render(<ReceiverTokensCard />);
 
     expect(screen.queryByTestId("receiver-tokens-empty")).toBeNull();
+  });
+
+  it("keeps the rows mounted during a background refetch (no skeleton)", () => {
+    state({ active: [token()], isRefreshing: true });
+    render(<ReceiverTokensCard />);
+
+    expect(screen.queryByTestId("receiver-tokens-loading")).toBeNull();
+    expect(screen.getByText("One Consultoria")).toBeTruthy();
   });
 
   it("explains the empty state as expected, not broken", () => {

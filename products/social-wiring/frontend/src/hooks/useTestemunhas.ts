@@ -72,10 +72,7 @@ export function useCreateTestemunha() {
     targets: [
       {
         queryKey: TESTEMUNHAS_KEY,
-        commit: (old: TestemunhasCache | undefined, saved) => {
-          if (!old?.items || old.items.some((t) => t.id === saved.id)) return old;
-          return { ...old, items: [...old.items, saved], total: old.total + 1 };
-        },
+        commit: (old: TestemunhasCache | undefined, saved) => pageOps.add(old, saved),
       },
     ],
   });

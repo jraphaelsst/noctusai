@@ -4,7 +4,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
-import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { pessoaKey } from "@/hooks/usePessoa";
 import type { ItemsTotal, PropriedadeItem } from "@/types/interesses";
@@ -30,11 +30,7 @@ export function usePropriedadeMutations(clienteId: string) {
     targets: [
       {
         queryKey: propriedadesKey(clienteId),
-        commit: (old: ItemsTotal<PropriedadeItem> | undefined, saved) => {
-          if (!old?.items || old.items.some((i) => i.id === saved.id)) return old;
-          const next = listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved));
-          return next ? { ...next, total: old.total + 1 } : old;
-        },
+        commit: (old: ItemsTotal<PropriedadeItem> | undefined, saved) => pageOps.add(old, saved),
       },
     ],
     invalidate: [pessoaKey(clienteId)],

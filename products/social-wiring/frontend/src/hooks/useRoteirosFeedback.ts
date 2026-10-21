@@ -48,7 +48,7 @@ export function useResponderFeedbackRoteiro(clienteId: string) {
       {
         queryKey: ROTEIROS_PENDENTES_KEY,
         optimistic: (old: RoteiroPendenteFeedback[] | undefined) =>
-          Array.isArray(old) ? old.filter((r) => r.roteiro_id !== roteiroId) : old,
+          listOps.remove(old, roteiroId, "roteiro_id"),
       },
     ],
     invalidate: [roteirosKeys.family(clienteId), pessoaKey(clienteId), ["sw", "metricas"]],

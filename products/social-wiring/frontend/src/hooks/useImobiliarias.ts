@@ -105,10 +105,7 @@ export function useCreateImobiliaria() {
     targets: [
       {
         queryKey: IMOBILIARIAS_KEY,
-        commit: (old: ImobiliariasCache | undefined, saved) => {
-          if (!old?.items || old.items.some((r) => r.id === saved.id)) return old;
-          return { ...old, items: [...old.items, saved], total: old.total + 1 };
-        },
+        commit: (old: ImobiliariasCache | undefined, saved) => pageOps.add(old, saved),
       },
     ],
     onSuccess: invalidarSelecoes,

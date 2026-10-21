@@ -42,7 +42,7 @@ function formatWhen(value: string | null): string {
 }
 
 export default function ReceiverTokensCard() {
-  const { active, neverUsed, loading, isEmpty, isError, error, refetch } =
+  const { active, neverUsed, showSkeleton, isRefreshing, isEmpty, isError, error, refetch } =
     useReceiverTokens("olx");
   const mint = useMintReceiverToken();
   const revoke = useRevokeReceiverToken();
@@ -184,7 +184,7 @@ export default function ReceiverTokensCard() {
         </Button>
       </div>
 
-      {loading ? (
+      {showSkeleton ? (
         <div className="space-y-2" data-testid="receiver-tokens-loading">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-16 w-full" />
@@ -211,7 +211,7 @@ export default function ReceiverTokensCard() {
           Configurações → Integrações → Leads → &quot;Receber leads no CRM&quot;.
         </div>
       ) : (
-        <div className="space-y-3" data-testid="receiver-tokens-success">
+        <div className="space-y-3" data-testid="receiver-tokens-success" aria-busy={isRefreshing}>
           {neverUsed.length > 0 ? (
             <div
               className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/5 p-3 text-sm"

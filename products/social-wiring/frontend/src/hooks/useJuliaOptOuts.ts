@@ -119,7 +119,7 @@ function useInvalidarOptOuts() {
 
 export function useRenotificarOptOut() {
   const inv = useInvalidarOptOuts();
-  return useMutation<unknown, unknown, { eventoId: string }>({ // noc-allow: invalidate-only — retries a notification server-side and answers nothing; the new notificacao_status is the worker's, and the history is an infinite query the seed ops do not edit
+  return useMutation<unknown, unknown, { eventoId: string }>({ // noc-allow: invalidate-only — retries a notification server-side and answers nothing; the new notificacao_status is the worker's, so there is no row to write into the history pages
     mutationFn: ({ eventoId }) => api.post(`/api/julia/opt-outs/${encodeURIComponent(eventoId)}/notificar`, {}),
     onSettled: inv,
   });
@@ -127,7 +127,7 @@ export function useRenotificarOptOut() {
 
 export function useReativarLead() {
   const inv = useInvalidarOptOuts();
-  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({ // noc-allow: invalidate-only — the server writes a new history event and flips the lead's opt-out state; the answer carries neither, and the history is an infinite query
+  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({ // noc-allow: invalidate-only — the server writes a new history event and flips the lead's opt-out state; the answer carries neither (the new event is not in the response), so there is no row to write into the history pages
     mutationFn: ({ contatoId, motivo }) => api.post(`/api/julia/opt-outs/leads/${contatoId}/reativar`, { motivo }),
     onSettled: inv,
   });

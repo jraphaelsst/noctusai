@@ -12,11 +12,13 @@
  * digests and prefixes. That is why `mint` returns the URL to the caller
  * instead of relying on a refetch to reveal it: a refetch cannot.
  *
- * 🔴 Loading is gated on `isPending || isFetching`, never `isLoading`.
- * Under TanStack v5 `isLoading` is false during a background refetch, so
- * an `isEmpty` branch renders "no URLs yet" over URLs that exist — which
- * here would invite an operator to mint a duplicate for a client who
- * already has one. Keeper: `check_lying_loading_state`.
+ * 🔴 Loading is two signals read off `data`, never `isLoading` and never a
+ * bare `isFetching`: `showSkeleton = isPending && !data` (first load only) and
+ * `isRefreshing = isFetching && !!data` (an indicator — the rows stay mounted).
+ * `isEmpty` is only ever true once data has ARRIVED and is empty, so "no URLs
+ * yet" can never render over URLs that exist (which would invite an operator to
+ * mint a duplicate for a client who already has one). Keeper:
+ * `check_lying_loading_state`; KB § PATTERNS/frontend/lying-loading-state.md.
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
@@ -78,10 +80,11 @@ export function useReceiverTokens(provider?: ReceiverProvider) {
     active,
     revoked,
     neverUsed,
-    /** See the module header — NOT `isLoading`. */
-    loading: query.isPending || query.isFetching,
-    isEmpty:
-      !query.isPending && !query.isFetching && tokens.length === 0,
+    /** First load only (no data yet) — see the module header. */
+    showSkeleton: query.isPending && !query.data,
+    /** A refetch with the rows still on screen — an indicator, never an early return. */
+    isRefreshing: query.isFetching && !!query.data,
+    isEmpty: !!query.data && tokens.length === 0,
   };
 }
 

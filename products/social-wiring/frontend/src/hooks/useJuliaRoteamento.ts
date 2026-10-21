@@ -8,7 +8,7 @@
  * a lead goes to a human. Loading = two signals off `data` (never `isLoading`).
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -53,22 +53,17 @@ export function useAtualizarLinha() {
       {
         queryKey: JULIA_ROTEAMENTO_KEY,
         optimistic: (old: Roteamento | undefined) =>
-          old && Array.isArray(old.linhas)
-            ? {
-                ...old,
-                linhas: old.linhas.map((l) =>
-                  l.connection_id === connectionId
-                    ? {
-                        ...l,
-                        alimenta: body.alimenta,
-                        ...(body.destino_handoff_user_id !== undefined
-                          ? { destino_handoff_user_id: body.destino_handoff_user_id }
-                          : {}),
-                      }
-                    : l,
-                ),
-              }
-            : old,
+          listOps.within(old, "linhas", (l) =>
+            listOps.patch(
+              l,
+              connectionId,
+              {
+                alimenta: body.alimenta,
+                ...(body.destino_handoff_user_id !== undefined ? { destino_handoff_user_id: body.destino_handoff_user_id } : {}),
+              },
+              "connection_id",
+            ),
+          ),
       },
     ],
   });

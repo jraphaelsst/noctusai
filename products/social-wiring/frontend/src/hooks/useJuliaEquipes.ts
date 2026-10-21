@@ -58,7 +58,7 @@ export function useJuliaEquipes() {
 
 /** The team list (exact key — the metrics queries share the prefix and are not edited here). */
 const emEquipe = (id: string, fn: (e: Equipe) => Equipe) => (old: Equipe[] | undefined) =>
-  Array.isArray(old) ? old.map((e) => (e.id === id ? fn(e) : e)) : old;
+  listOps.update(old, id, fn);
 
 /** Create a team and (optionally) add its members in order. */
 export function useCriarEquipe() {

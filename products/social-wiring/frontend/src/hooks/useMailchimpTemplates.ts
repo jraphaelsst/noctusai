@@ -9,7 +9,9 @@
 import {
   useQuery,
 } from "@tanstack/react-query";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+
+import { isFirstMailchimpPage } from "./mailchimpFirstPage";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -74,19 +76,17 @@ export function useMailchimpTemplate(templateId: number | null) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
-/** Mailchimp ids are numbers, so the list edits go through `listOps.within` (untyped rows). */
+/** Mailchimp ids are numbers; the seed row ops address them as-is. */
 export function useMailchimpTemplateMutations() {
   const create = useCacheWriteMutation<TemplateOut, CreateTemplateBody>({
     mutationFn: (body) => api.post<TemplateOut>(BASE, body),
-    // The default (param-less) list; paged / offset lists settle.
+    // Every first-page list (paged / offset lists settle).
     targets: [
       {
-        queryKey: [...TEMPLATES_KEY, undefined],
-        commit: (old: TemplatesOut | undefined, saved) => {
-          if (!old?.items || old.items.some((t) => t.id === saved.id)) return old;
-          const next = listOps.within(old, "items", (l) => [...l, saved]);
-          return next ? { ...next, total: next.total + 1 } : old;
-        },
+        queryKey: TEMPLATES_KEY,
+        match: "prefix",
+        predicate: isFirstMailchimpPage,
+        commit: (old: TemplatesOut | undefined, saved) => pageOps.add(old, saved),
       },
     ],
     invalidate: [FAMILY_KEY],
@@ -99,12 +99,12 @@ export function useMailchimpTemplateMutations() {
       {
         queryKey: TEMPLATES_KEY,
         match: "prefix",
-        commit: (old: TemplatesOut | TemplateOut | undefined, saved) => {
-          if (old && "items" in old) {
-            return listOps.within(old, "items", (l) => l.map((t) => (t.id === id ? { ...t, ...saved } : t)));
-          }
-          return old && (old as TemplateOut).id === id ? { ...(old as TemplateOut), ...saved } : old;
-        },
+        commit: (old: TemplatesOut | TemplateOut | undefined, saved) =>
+          old && "items" in old
+            ? pageOps.patch(old, id, saved)
+            : old && (old as TemplateOut).id === id
+              ? listOps.merge(old as TemplateOut, saved)
+              : old,
       },
     ],
     invalidate: [FAMILY_KEY],
@@ -116,11 +116,7 @@ export function useMailchimpTemplateMutations() {
       {
         queryKey: TEMPLATES_KEY,
         match: "prefix",
-        optimistic: (old: TemplatesOut | TemplateOut | undefined) => {
-          if (!old || !("items" in old) || !old.items.some((t) => t.id === id)) return old;
-          const next = listOps.within(old, "items", (l) => l.filter((t) => t.id !== id));
-          return next ? { ...next, total: Math.max(0, next.total - 1) } : old;
-        },
+        optimistic: (old: TemplatesOut | TemplateOut | undefined) => pageOps.remove(old, id),
       },
     ],
     invalidate: [FAMILY_KEY],

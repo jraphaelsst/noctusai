@@ -90,7 +90,6 @@
     "products/personal-finance/frontend/src/hooks/useTransacoes.ts": 3,
     "products/personal-finance/frontend/src/hooks/useWatchlist.ts": 4,
     "products/social-wiring/frontend/src/hooks/useContratoAditivos.ts": 1,
-    "products/social-wiring/frontend/src/hooks/usePartes.ts": 1,
     "products/store/frontend/src/hooks/useStore.ts": 5,
     "products/therapy-platform/frontend/src/hooks/useAdmin.ts": 6,
     "products/therapy-platform/frontend/src/hooks/useAdminFinancials.ts": 3,

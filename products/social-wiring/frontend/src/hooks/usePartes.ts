@@ -7,9 +7,9 @@
  * `data` — never `isLoading`, never a bare `isFetching`.
  * → KB § PATTERNS/frontend/lying-loading-state.md
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   EmissaoCertidoesResponse,
@@ -105,8 +105,7 @@ export interface AdicionarParteResultado {
 const partesDoCardKey = (clienteId: string) => ["sw", "clientes", clienteId, "partes"] as const;
 
 export function useAdicionarParte(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
+  return useCacheWriteMutation<AdicionarParteResultado, AdicionarParteInput>({
     mutationFn: async ({
       reemitirCertidoes,
       ...body
@@ -133,24 +132,17 @@ export function useAdicionarParte(clienteId: string) {
         };
       }
     },
-    // 🔴 NOT returned: react-query awaits an `onSuccess` promise before the mutation
-    // settles, so returning the invalidations kept `isPending` true (and the add dialog
-    // on "Adicionando…") for as long as the card family's refetches took (~10s in prod,
-    // 2026-10-21) — long after the new row was already on screen. The create has
-    // succeeded; the refetches are refresh work, not part of it.
-    onSuccess: ({ parte }) => {
-      // The created party goes into the card's partes lists at once (written here, not through
-      // `useCacheWriteMutation`: its settle is awaited, and this mutation must resolve on the create).
-      qc.setQueriesData<PartesResponse>({ queryKey: partesDoCardKey(clienteId) }, (old) =>
-        old && Array.isArray(old.items) && !old.items.some((p) => p.parte_id === parte.parte_id)
-          ? { ...old, items: [...old.items, parte], total: old.total + 1 }
-          : old,
-      );
-      // The card family (compradores/vendedores lists, card summary,
-      // qualificação) lives under the seed's `["sw","cardHub"]` root.
-      void qc.invalidateQueries({ queryKey: ["sw", "cardHub"] });
-      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] });
-    },
+    // The created party goes into the card's partes lists at once (keyed by `parte_id`; the total moves with it).
+    // The settle is background (`isPending` ends at the commit), so the dialog never hangs on "Adicionando…".
+    targets: [
+      {
+        queryKey: partesDoCardKey(clienteId),
+        match: "prefix",
+        commit: (old: PartesResponse | undefined, { parte }) => pageOps.add(old, parte, "append", "parte_id"),
+      },
+    ],
+    // The card family (compradores/vendedores lists, card summary, qualificação) lives under the seed's `["sw","cardHub"]` root.
+    invalidate: [["sw", "cardHub"], ["sw", "clientes", clienteId]],
   });
 }
 
@@ -162,7 +154,6 @@ export function useAdicionarParte(clienteId: string) {
  * `PJ_MAIS_DE_UM_REPRESENTANTE`, …) reads exactly these columns.
  */
 export function useAtualizarContratoParte(clienteId: string) {
-  const qc = useQueryClient();
   return useCacheWriteMutation<ParteContratoOut, { parteId: string; patch: ParteContratoPatch }>({
     mutationFn: ({ parteId, patch }) =>
       api.patch<ParteContratoOut>(
@@ -175,37 +166,29 @@ export function useAtualizarContratoParte(clienteId: string) {
         queryKey: partesDoCardKey(clienteId),
         match: "prefix",
         commit: (old: PartesResponse | undefined, saved) =>
-          old && Array.isArray(old.items)
-            ? {
-                ...old,
-                items: old.items.map((p) =>
-                  p.parte_id !== parteId
-                    ? p
-                    : {
-                        ...p,
-                        ...(saved.pj_nire !== undefined ? { pj_nire: saved.pj_nire } : {}),
-                        ...(saved.representa_parte_id !== undefined
-                          ? { representa_parte_id: saved.representa_parte_id }
-                          : {}),
-                        pj_sede: {
-                          logradouro: saved.pj_sede_logradouro ?? p.pj_sede?.logradouro ?? null,
-                          numero: saved.pj_sede_numero ?? p.pj_sede?.numero ?? null,
-                          complemento: saved.pj_sede_complemento ?? p.pj_sede?.complemento ?? null,
-                          bairro: saved.pj_sede_bairro ?? p.pj_sede?.bairro ?? null,
-                          cidade: saved.pj_sede_cidade ?? p.pj_sede?.cidade ?? null,
-                          uf: saved.pj_sede_uf ?? p.pj_sede?.uf ?? null,
-                          cep: saved.pj_sede_cep ?? p.pj_sede?.cep ?? null,
-                        },
-                      },
-                ),
-              }
-            : old,
+          listOps.within(old, "items", (l) =>
+            listOps.update(
+              l,
+              parteId,
+              (p) => ({
+                ...p,
+                ...(saved.pj_nire !== undefined ? { pj_nire: saved.pj_nire } : {}),
+                ...(saved.representa_parte_id !== undefined ? { representa_parte_id: saved.representa_parte_id } : {}),
+                pj_sede: {
+                  logradouro: saved.pj_sede_logradouro ?? p.pj_sede?.logradouro ?? null,
+                  numero: saved.pj_sede_numero ?? p.pj_sede?.numero ?? null,
+                  complemento: saved.pj_sede_complemento ?? p.pj_sede?.complemento ?? null,
+                  bairro: saved.pj_sede_bairro ?? p.pj_sede?.bairro ?? null,
+                  cidade: saved.pj_sede_cidade ?? p.pj_sede?.cidade ?? null,
+                  uf: saved.pj_sede_uf ?? p.pj_sede?.uf ?? null,
+                  cep: saved.pj_sede_cep ?? p.pj_sede?.cep ?? null,
+                },
+              }),
+              "parte_id",
+            ),
+          ),
       },
     ],
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: ["sw", "cardHub"] }),
-        qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] }),
-      ]),
+    invalidate: [["sw", "cardHub"], ["sw", "clientes", clienteId]],
   });
 }

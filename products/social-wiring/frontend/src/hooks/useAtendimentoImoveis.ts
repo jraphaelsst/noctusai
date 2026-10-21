@@ -4,7 +4,7 @@
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
-import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   AtendimentoImovel,
@@ -44,11 +44,7 @@ export function useAtendimentoImoveisMutations(clienteId: string) {
     targets: (body) => [
       {
         queryKey: KEY(clienteId, body.atendimento_id),
-        commit: (old: AtendimentoImoveisResponse | undefined, saved) => {
-          if (!old?.items || old.items.some((i) => i.id === saved.id)) return old;
-          const next = listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved));
-          return next ? { ...next, total: old.total + 1 } : old;
-        },
+        commit: (old: AtendimentoImoveisResponse | undefined, saved) => pageOps.add(old, saved),
       },
     ],
     invalidate: [KEY_ROOT(clienteId)],
