@@ -72,7 +72,7 @@ describe("ExcluirAgenteDialog", () => {
 
   it("shows the server's 409 reason plus a short hint", async () => {
     del.mockRejectedValue(
-      new ApiError(409, "Erro HTTP 409", { detail: { code: "ativo", message: "O agente está ativo." } }),
+      new ApiError(409, "Erro HTTP 409", { code: "ativo", message: "O agente está ativo.", detail: "O agente está ativo." }),
     );
     const onClose = vi.fn();
     setup(<ExcluirAgenteDialog agentKey="julia" nome="Julia" onClose={onClose} />);
