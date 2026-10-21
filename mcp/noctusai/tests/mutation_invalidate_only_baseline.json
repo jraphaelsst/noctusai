@@ -273,7 +273,6 @@
     "seed/lib/frontend/src/design-system/ai/useAIFeedback.ts": 1,
     "seed/lib/frontend/src/finance/hooks.ts": 28,
     "seed/lib/frontend/src/finance/reminderHooks.ts": 6,
-    "seed/lib/frontend/src/hooks.ts": 3,
     "seed/lib/frontend/src/inventory/hooks.ts": 7,
     "seed/lib/frontend/src/items/hooks.ts": 9,
     "seed/lib/frontend/src/llm.ts": 2,

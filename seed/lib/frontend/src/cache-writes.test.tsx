@@ -131,3 +131,43 @@ describe('listOps.replace', () => {
     expect(listOps.replace(list, 'optimistic:1', { id: 'b' })).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
   });
 });
+
+describe("match: 'prefix'", () => {
+  it('edits every cached list under the prefix, leaves a detail object untouched, and rolls all back', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    qc.setQueryData(['things', undefined], [{ id: 'a' }, { id: 'b' }]);
+    qc.setQueryData(['things', { status: 'open' }], [{ id: 'b' }]);
+    qc.setQueryData(['things', 'b'], { id: 'b', name: 'detail' });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const server = deferred<unknown>();
+    const { result } = renderHook(
+      () =>
+        useCacheWriteMutation<unknown, string>({
+          mutationFn: () => server.promise,
+          targets: [{ queryKey: ['things'], match: 'prefix', optimistic: (old: any, id) => listOps.remove(old, id) }],
+        }),
+      { wrapper },
+    );
+    act(() => result.current.mutate('b'));
+    await waitFor(() => expect(qc.getQueryData(['things', undefined])).toEqual([{ id: 'a' }]));
+    expect(qc.getQueryData(['things', { status: 'open' }])).toEqual([]);
+    expect(qc.getQueryData(['things', 'b'])).toEqual({ id: 'b', name: 'detail' });
+
+    await act(async () => server.reject(new Error('nope')));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(qc.getQueryData(['things', undefined])).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(qc.getQueryData(['things', { status: 'open' }])).toEqual([{ id: 'b' }]);
+  });
+});
+
+describe('listOps on non-arrays', () => {
+  it('passes a paginated envelope and a detail object through unchanged', () => {
+    const env = { items: [{ id: 'a' }], next_cursor: null };
+    expect(listOps.remove(env as any, 'a')).toBe(env);
+    expect(listOps.append(env as any, { id: 'b' })).toBe(env);
+    expect(listOps.merge({ id: 'a', n: 1 }, { n: 2 })).toEqual({ id: 'a', n: 2 });
+    expect(listOps.merge([{ id: 'a' }] as any, { n: 2 } as any)).toEqual([{ id: 'a' }]);
+  });
+});

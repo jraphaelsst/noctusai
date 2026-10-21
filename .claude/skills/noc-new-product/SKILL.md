@@ -1,7 +1,7 @@
 ---
 name: noc-new-product
 description: Use when creating a product — triggers "create a new noc product", "scaffold a product", "new noc product", "add a product", "new e-commerce / store / ERP for <market>", "a product for <client>", "build the <market> version of the seed", "new product inside the store" — seed-first by construction; never hand-author the shape. Routes plain products, market products from a vertical seed, client onboarding, client extension packs and products-inside-products.
-version: 2.1.0
+version: 2.2.0
 ---
 
 # noc-new-product — seed-first, layer-aware
@@ -29,6 +29,7 @@ version: 2.1.0
 ## Guardrails
 - "Scaffolded" ≠ "complete" — backend and frontend at the SAME maturity before commit.
 - No `if org == …` in shared code; client differences are settings, then packs, then dedicated instances (`vertical-seed.md` §4).
+- Every write writes the cache — `useCacheWriteMutation` (or `createCrudHooks`), never an invalidate-only `useMutation`; the scaffold's `src/hooks/useExample.ts` is the reference shape and `check_mutation_invalidate_only` refuses the old one at commit (skill `noc-cache-writes` · `KB § PATTERNS/frontend/mutation-cache-writes.md`).
 - SSO + cross-product nav work by construction IF you resolve core's URL via `env.CORE_URL`/`env.CORE_API_URL` — never hand-roll `import.meta.env.VITE_CORE_* || "literal"` (`check_handrolled_core_url` keeper).
 
 ## Depth

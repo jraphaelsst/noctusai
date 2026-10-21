@@ -8758,11 +8758,30 @@ def mutation_invalidate_only_counts(repo_root: Path | None = None) -> dict[str, 
     return counts
 
 
+def lower_mutation_invalidate_only_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Re-derive the ratchet baseline DOWNWARD from the tree: each file keeps ``min(baseline, current)``
+    and a file at zero drops out. It never raises an entry, so a file above its baseline still blocks.
+    This is how parallel migration slices resolve a baseline merge conflict: take either side, then run
+    this (``--lower-mutation-invalidate-only-baseline``) — the baseline is derived, never hand-merged."""
+    root = repo_root or REPO_ROOT
+    path = root.joinpath(*_MIO_BASELINE_REL)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    current = mutation_invalidate_only_counts(root)
+    lowered = {
+        rel: min(int(n), current.get(rel, 0))
+        for rel, n in sorted(doc.get("arquivos", {}).items())
+        if min(int(n), current.get(rel, 0)) > 0
+    }
+    doc["arquivos"] = lowered
+    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return lowered
+
+
 def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
     """A `useMutation({...})` that neither draws its change (`onMutate`) nor writes the server's
     answer (`setQueryData`) makes the screen wait for write + refetch. Ratchet against the per-file
     baseline `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`: a file may carry fewer,
-    never more; a lowered count must lower the baseline. Use `useCacheWriteMutation` from
+    never more; a lowered count must lower the baseline (`lower_mutation_invalidate_only_baseline`). Use `useCacheWriteMutation` from
     `@noctusai/lib/cache-writes`. Severity `high`. KB § PATTERNS/frontend/mutation-cache-writes.md."""
     root = repo_root or REPO_ROOT
     baseline_path = root.joinpath(*_MIO_BASELINE_REL)
@@ -8792,7 +8811,7 @@ def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
                 "product": product, "file": rel, "severity": "high",
                 "issue": (
                     f"{have} invalidate-only mutation(s) left but the baseline still allows {allowed}: lower "
-                    f"`{rel}` in {baseline_rel} (the ratchet only shrinks)."
+                    f"`{rel}` in {baseline_rel} — run `python mcp/noctusai/cli.py --lower-mutation-invalidate-only-baseline` (the ratchet only shrinks)."
                 ),
             })
     return issues
@@ -18330,6 +18349,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/lgpd-entry-keeper.md",  # universal commons: a commit-time/CI gate + merge driver on LGPD-WARNINGS.md that EVERY committing lens (any agent that flags a concern) runs into; the LGPD domain depth stays owned by security (security/lgpd.md)
     "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/server-state-family-index.md",  # universal commons: §1 family index (frontend server state; members owned by frontend-engineer)
     "CONTEXT/01-PHILOSOPHY.md",
     "CONTEXT/02-LANDSCAPE.md",
     "CONTEXT/03-SEED-ARCHITECTURE.md",

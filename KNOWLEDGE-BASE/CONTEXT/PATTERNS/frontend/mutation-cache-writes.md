@@ -55,7 +55,21 @@ The few optimistic ones (the seed pipeline and card-hub organs, orbity's kanban 
 
 The caller's `onSuccess` and `onError` still run after the cache work, so toasts and form resets stay where they were.
 
-`listOps` holds the pure list edits: `append`, `prepend`, `replace` (stand-in → server row, never duplicating when a refetch already brought it), `patch` and `remove`. Every op passes an uncached list through untouched: there is nothing to draw on, and the next read fetches it.
+`listOps` holds the pure edits: `append`, `prepend`, `replace` (stand-in → server row, never duplicating when a refetch already brought it), `patch`, `remove`, and `merge` (one detail object). An uncached entry passes through untouched (nothing to draw on; the next read fetches it), and so does anything that is not an array — a detail object or a paginated `{ items }` envelope — so a list edit can never mangle it.
+
+**Lists keyed by filters.** A target with `match: 'prefix'` reaches EVERY cached entry whose key starts with `queryKey`: `{ queryKey: ['clientes'], match: 'prefix', optimistic: (old, id) => listOps.remove(old, id) }` removes the row from `['clientes', undefined]`, `['clientes', {status:'open'}]` and any other cached list in one target, snapshots each, and rolls each back on failure. Details sharing the prefix are skipped by the non-array rule.
+
+## Where the contract lives (structural, not per product)
+
+| Layer | What carries the contract |
+|---|---|
+| seed primitive | `useCacheWriteMutation` + `listOps` (`@noctusai/lib/cache-writes`) |
+| seed CRUD factory | `createCrudHooks` (`@noctusai/lib/hooks`) — `useCreate` commits the server row into the unfiltered list, `useUpdate` draws the edit in every list (prefix) and the detail then commits the server row, `useDelete` removes on click. Every consumer (incl. the `ResourceManager` organ) inherits it |
+| seed organ hook factories | `seed/lib/frontend/src/**/hooks.ts`, `create*Hooks` — migrated in the seed, so every product consuming the organ inherits it |
+| new-product scaffold | `products/seed/frontend/src/hooks/useExample.ts` (→ `templates/product-seed`) is the reference shape: TanStack reads with the two-signal render rule + cache-write create/update/delete |
+| procedure | skill `noc-cache-writes` (writing a new mutation · migrating a file · resolving a baseline conflict) |
+| gate | keeper `check_mutation_invalidate_only` — ratchet, pre-commit blocking; `--lower-mutation-invalidate-only-baseline` re-derives the baseline downward (never raises) |
+| always-on rule | CLAUDE.md §1 "Frontend server state" family → `KB § PATTERNS/common/server-state-family-index.md` |
 
 ## Choosing per write
 
@@ -81,7 +95,7 @@ That backend work is tracked separately in the seed request path (auth dependenc
   - Lead update and move: commit into the funil + the lead detail; the move is also optimistic.
   - Lead create: commit into the first stage.
   - Regression tests in `hooks/__tests__/useCrm.test.ts` assert what is in the cache while the request is still in flight. They fail on the old hooks.
-- **Fan-out** follows the pilots-first cadence (`KB § PATTERNS/architect/project-execution.md`): prove on three products, then migrate per product. The ratchet stops new invalidate-only mutations meanwhile.
+- **Fan-out (owner, 2026-10-21: "fan out to all products … structural, not local").** Pilots-first cadence (`KB § PATTERNS/architect/project-execution.md`): orbity (pilot 1) → seed organs + `createCrudHooks` (reach every consumer, incl. inactive products, through the seed) → active products in parallel slices (agents, igig, academia-de-reciclagem, core, commerce, social-wiring). Inactive products (`deploy/fleet/active-scope.txt`) are asleep and are NOT migrated by hand; the ratchet keeps them from growing and they inherit every seed-level fix. Parallel slices never hand-merge the baseline — on conflict, take either side and run the lower flag.
 
 ## Related
 

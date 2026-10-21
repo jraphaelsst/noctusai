@@ -29,7 +29,8 @@
  * export const useDeleteCliente = clienteHooks.useDelete;
  * ```
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from './cache-writes';
 import { toast } from 'sonner';
 import type { ApiClient } from './api';
 
@@ -81,13 +82,24 @@ export function createCrudHooks<T = any>(options: CrudHookOptions<T>) {
     });
   }
 
+  // Writes follow the cache-write contract (KB § PATTERNS/frontend/mutation-cache-writes.md):
+  // the change is on screen before / the moment the server answers; the background
+  // refetch after settle only refreshes it. Lists are reached by prefix (`[resource]`
+  // covers every `[resource, params]` list); `listOps` leave non-array entries alone,
+  // and the `[resource, id]` detail is written by an exact target.
+  const settle = invalidates;
+
   function useCreate() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (data: Partial<T>) => api.post(apiPath, data),
+    return useCacheWriteMutation<T & { id: string }, Partial<T>>({
+      mutationFn: (data) => api.post(apiPath, data),
+      // The unfiltered list gets the server's row; filtered lists can't know whether it
+      // belongs to them, so they converge on the settle refetch.
+      targets: [{
+        queryKey: [resource, undefined],
+        commit: (old: (T & { id: string })[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      }],
+      invalidate: [[resource], ...settle],
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: [resource] });
-        invalidates.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
         toast.success(`${singularName} criado(a) com sucesso`);
       },
       onError: (error: Error) => {
@@ -97,13 +109,23 @@ export function createCrudHooks<T = any>(options: CrudHookOptions<T>) {
   }
 
   function useUpdate() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: ({ id, ...data }: { id: string } & Partial<T>) =>
-        api.patch(`${apiPath}/${id}`, data),
+    return useCacheWriteMutation<T & { id: string }, { id: string } & Partial<T>>({
+      mutationFn: ({ id, ...data }) => api.patch(`${apiPath}/${id}`, data),
+      targets: ({ id }) => [
+        {
+          queryKey: [resource],
+          match: 'prefix',
+          optimistic: (old: any, { id: _id, ...changes }) => listOps.patch(old, id, changes as any),
+          commit: (old: any, saved) => (Array.isArray(old) ? listOps.patch(old, id, saved as any) : old),
+        },
+        {
+          queryKey: [resource, id],
+          optimistic: (old: any, { id: _id, ...changes }) => listOps.merge(old, changes),
+          commit: (old: any, saved) => (old === undefined ? undefined : saved),
+        },
+      ],
+      invalidate: settle,
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: [resource] });
-        invalidates.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
         toast.success(`${singularName} atualizado(a) com sucesso`);
       },
       onError: (error: Error) => {
@@ -113,12 +135,15 @@ export function createCrudHooks<T = any>(options: CrudHookOptions<T>) {
   }
 
   function useDelete() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (id: string) => api.delete(`${apiPath}/${id}`),
+    return useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${apiPath}/${id}`),
+      targets: [{
+        queryKey: [resource],
+        match: 'prefix',
+        optimistic: (old: any, id) => listOps.remove(old, id),
+      }],
+      invalidate: settle,
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: [resource] });
-        invalidates.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
         toast.success(`${singularName} excluido(a) com sucesso`);
       },
       onError: (error: Error) => {

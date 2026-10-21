@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.compliance import (  # noqa: E402
     REPO_ROOT,
     check_mutation_invalidate_only,
+    lower_mutation_invalidate_only_baseline,
     mutation_invalidate_only_counts,
     mutation_invalidate_only_hits,
 )
@@ -91,6 +92,12 @@ class TestCheckMutationInvalidateOnly:
         _tree(tmp_path, {HOOKS: WRITES_RESULT}, {HOOKS: 2})
         issues = check_mutation_invalidate_only(tmp_path)
         assert len(issues) == 1 and "lower" in issues[0]["issue"]
+
+    def test_lowering_derives_down_and_never_raises(self, tmp_path):
+        _tree(tmp_path, {HOOKS: INVALIDATE_ONLY * 2, "products/demo/frontend/src/hooks/b.ts": WRITES_RESULT},
+              {HOOKS: 1, "products/demo/frontend/src/hooks/b.ts": 3})
+        assert lower_mutation_invalidate_only_baseline(tmp_path) == {HOOKS: 1}
+        assert len(check_mutation_invalidate_only(tmp_path)) == 1  # above baseline still blocks
 
     def test_escape_marker_on_the_usemutation_line(self, tmp_path):
         text = INVALIDATE_ONLY.replace(

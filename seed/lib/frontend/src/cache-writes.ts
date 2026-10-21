@@ -64,6 +64,13 @@ export interface CacheWriteContext {
 
 export interface CacheWriteTarget<TData, TVars, TCached = unknown> {
   queryKey: QueryKey;
+  /**
+   * `'exact'` (default) touches that one cache entry. `'prefix'` touches EVERY cached entry whose
+   * key starts with `queryKey` — e.g. `[resource]` reaches each `[resource, filters]` list at once.
+   * Under `'prefix'` the edit also sees non-list entries (a `[resource, id]` detail): `listOps`
+   * pass anything that is not an array through untouched, so list edits stay safe there.
+   */
+  match?: 'exact' | 'prefix';
   /** Draw the change before the server answers. `old` is undefined when the query is not cached. */
   optimistic?: (old: TCached | undefined, vars: TVars, ctx: CacheWriteContext) => TCached | undefined;
   /** Write the server's answer. Runs on the value currently cached (which may hold the optimistic stand-in). */
@@ -101,6 +108,9 @@ export function useCacheWriteMutation<TData, TVars>(
   const qc = useQueryClient();
   const { targets, invalidate, onSuccess, onError, ...rest } = options;
   const resolveTargets = (vars: TVars) => (typeof targets === 'function' ? targets(vars) : targets);
+  /** The cached keys a target addresses right now (prefix → every matching entry that is cached). */
+  const keysOf = (t: CacheWriteTarget<TData, TVars, any>): QueryKey[] =>
+    t.match === 'prefix' ? qc.getQueriesData({ queryKey: t.queryKey }).map(([key]) => key) : [t.queryKey];
   const resolveInvalidate = (vars: TVars) =>
     (typeof invalidate === 'function' ? invalidate(vars) : invalidate) ?? [];
 
@@ -112,18 +122,24 @@ export function useCacheWriteMutation<TData, TVars>(
       // An in-flight refetch landing after the optimistic write would erase it.
       await Promise.all(optimisticTargets.map((t) => qc.cancelQueries({ queryKey: t.queryKey })));
       for (const t of optimisticTargets) {
-        const previous = qc.getQueryData(t.queryKey);
-        ctx.snapshots.push({ queryKey: t.queryKey, previous });
-        const next = t.optimistic!(previous, vars, ctx);
-        if (next !== undefined) qc.setQueryData(t.queryKey, next);
+        for (const queryKey of keysOf(t)) {
+          const previous = qc.getQueryData(queryKey);
+          const next = t.optimistic!(previous, vars, ctx);
+          if (next === undefined || next === previous) continue;
+          ctx.snapshots.push({ queryKey, previous });
+          qc.setQueryData(queryKey, next);
+        }
       }
       return ctx;
     },
     onSuccess: (result, vars, ctx, mutationCtx) => {
       for (const t of resolveTargets(vars)) {
         if (!t.commit) continue;
-        const next = t.commit(qc.getQueryData(t.queryKey), result, vars, ctx);
-        if (next !== undefined) qc.setQueryData(t.queryKey, next);
+        for (const queryKey of keysOf(t)) {
+          const old = qc.getQueryData(queryKey);
+          const next = t.commit(old, result, vars, ctx);
+          if (next !== undefined && next !== old) qc.setQueryData(queryKey, next);
+        }
       }
       return onSuccess?.(result, vars, ctx, mutationCtx);
     },
@@ -142,18 +158,23 @@ type WithId = { id: string };
 
 /**
  * Pure list edits for `optimistic` / `commit`. Every op tolerates an
- * uncached list (`undefined` in → `undefined` out = "leave it uncached").
+ * uncached list (`undefined` in → `undefined` out = "leave it uncached"), and
+ * returns anything that is not an array unchanged — so a `match: 'prefix'`
+ * target never mangles a detail object or a paginated `{ items }` envelope
+ * that shares the prefix (settle's refetch converges those).
  */
 export const listOps = {
   append<T>(list: T[] | undefined, item: T): T[] | undefined {
-    return list ? [...list, item] : undefined;
+    if (!Array.isArray(list)) return list;
+    return [...list, item];
   },
   prepend<T>(list: T[] | undefined, item: T): T[] | undefined {
-    return list ? [item, ...list] : undefined;
+    if (!Array.isArray(list)) return list;
+    return [item, ...list];
   },
   /** Replace the row with `matchId` (the stand-in or the real id) by `item`; append when absent. */
   replace<T extends WithId>(list: T[] | undefined, matchId: string, item: T, where: 'append' | 'prepend' = 'append'): T[] | undefined {
-    if (!list) return undefined;
+    if (!Array.isArray(list)) return list;
     // The server row may already be there (a background refetch won the race) — never duplicate it.
     const rest = list.filter((r) => r.id !== matchId && r.id !== item.id);
     const at = list.findIndex((r) => r.id === matchId || r.id === item.id);
@@ -162,10 +183,17 @@ export const listOps = {
     out.splice(Math.min(at, out.length), 0, item);
     return out;
   },
-  patch<T extends WithId>(list: T[] | undefined, id: string, changes: Partial<T>): T[] | undefined {
-    return list?.map((r) => (r.id === id ? { ...r, ...changes } : r));
+  patch<T extends WithId>(list: T[] | undefined, id: string, changes: Partial<NoInfer<T>>): T[] | undefined {
+    if (!Array.isArray(list)) return list;
+    return list.map((r) => (r.id === id ? { ...r, ...changes } : r));
+  },
+  /** Merge `changes` into a single cached entity (a detail query); non-objects pass through. */
+  merge<T extends object>(entity: T | undefined, changes: Partial<NoInfer<T>>): T | undefined {
+    if (!entity || typeof entity !== 'object' || Array.isArray(entity)) return entity;
+    return { ...entity, ...changes };
   },
   remove<T extends WithId>(list: T[] | undefined, id: string): T[] | undefined {
-    return list?.filter((r) => r.id !== id);
+    if (!Array.isArray(list)) return list;
+    return list.filter((r) => r.id !== id);
   },
 };

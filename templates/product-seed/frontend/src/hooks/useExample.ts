@@ -1,24 +1,28 @@
 /**
- * Example hook — placeholder data-fetching hook for the new product.
+ * Example hooks — the canonical shape every domain hook in a new product follows.
  *
- * Demonstrates the canonical shape every domain hook follows:
+ *   - reads are TanStack queries keyed by one `exampleKeys` factory;
+ *   - render state is the two-signal rule: `showSkeleton = isPending && !data`,
+ *     `isRefreshing = isFetching && !!data`, never `isLoading`
+ *     (KB § PATTERNS/frontend/lying-loading-state.md);
+ *   - every write goes through `useCacheWriteMutation`: it draws the change
+ *     when the result is predictable, commits the server's answer the moment
+ *     it arrives, and only then refetches in the background. A write that
+ *     merely invalidates makes the screen wait for write + refetch and is
+ *     refused at commit by `check_mutation_invalidate_only`
+ *     (KB § PATTERNS/frontend/mutation-cache-writes.md);
+ *   - `api` comes from `@/lib/api` (the local test seam).
  *
- *   - imports `api` from `@/lib/api` (the local seam, not the seed
- *     boundary directly — keeps tests stable)
- *   - returns `{ data, loading, error, reload }` shape
- *   - typed payload from a Pydantic schema mirror in `app/schemas/`
- *   - cancellation via `AbortController` so unmount mid-fetch doesn't
- *     setState on a dead component
+ * A plain CRUD resource can use the seed factory instead of hand-writing
+ * these: `createCrudHooks` from `@noctusai/lib/hooks` follows the same
+ * contract.
  *
- * Mirrors the canonical real-world shape used by yt-crawler's
- * `useVideos` / `useDashboard` hooks.
- *
- * TODO(new-product): rename `Example` → your domain (`Video`, `Order`,
- * `Goal`, …); replace the placeholder URL + type with your real
- * endpoint; add `useCreateExample` / `useUpdateExample` siblings as
- * needed. Backend mirror lives at `app/routers/example_router.py`.
+ * TODO(new-product): rename `Example` → your domain (`Video`, `Order`, …);
+ * replace the URL + types with your real endpoint. Backend mirror lives at
+ * `app/routers/example_router.py`.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -31,50 +35,78 @@ export interface Example {
   created_at: string;
 }
 
-export interface ExampleListResponse {
-  items: Example[];
-  next_cursor: string | null;
+export type ExampleCreate = Pick<Example, "title" | "description">;
+export type ExampleUpdate = Partial<ExampleCreate>;
+
+export const exampleKeys = {
+  all: ["examples"] as const,
+  list: () => [...exampleKeys.all, "list"] as const,
+  detail: (id: string) => [...exampleKeys.all, "detail", id] as const,
+};
+
+// ─── Reads ─────────────────────────────────────────────────────────────
+export function useExamples() {
+  const query = useQuery({
+    queryKey: exampleKeys.list(),
+    queryFn: () => api.get<Example[]>("/api/example"),
+  });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
 }
 
-// ─── Hook ──────────────────────────────────────────────────────────────
-export function useExamples(): {
-  data: Example[] | null;
-  loading: boolean;
-  error: Error | null;
-  reload: () => void;
-} {
-  const [data, setData] = useState<Example[] | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [tick, setTick] = useState<number>(0);
+// ─── Writes ────────────────────────────────────────────────────────────
+/** Optimistic + commit: the row is on screen on click, swapped for the server's row when it answers. */
+export function useCreateExample() {
+  return useCacheWriteMutation<Example, ExampleCreate>({
+    mutationFn: (payload) => api.post<Example>("/api/example", payload),
+    targets: [
+      {
+        queryKey: exampleKeys.list(),
+        optimistic: (old: Example[] | undefined, payload, { tempId }) =>
+          listOps.append(old, {
+            id: tempId,
+            org_id: "",
+            created_at: new Date().toISOString(),
+            ...payload,
+          }),
+        commit: (old: Example[] | undefined, saved, _payload, { tempId }) =>
+          listOps.replace(old, tempId, saved),
+      },
+    ],
+  });
+}
 
-  const reload = useCallback(() => setTick((n) => n + 1), []);
+/** The edit is drawn in the list and the detail, then replaced by the server's row. */
+export function useUpdateExample() {
+  return useCacheWriteMutation<Example, { id: string; changes: ExampleUpdate }>({
+    mutationFn: ({ id, changes }) => api.patch<Example>(`/api/example/${id}`, changes),
+    targets: ({ id }) => [
+      {
+        queryKey: exampleKeys.list(),
+        optimistic: (old: Example[] | undefined, { changes }) => listOps.patch<Example>(old, id, changes),
+        commit: (old: Example[] | undefined, saved) => listOps.replace(old, id, saved),
+      },
+      {
+        queryKey: exampleKeys.detail(id),
+        optimistic: (old: Example | undefined, { changes }) => listOps.merge(old, changes),
+        commit: (old: Example | undefined, saved) => (old === undefined ? undefined : saved),
+      },
+    ],
+  });
+}
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    let alive = true;
-    setLoading(true);
-    setError(null);
-
-    api
-      .get<ExampleListResponse>("/api/example", { signal: ctrl.signal })
-      .then((resp) => {
-        if (!alive) return;
-        setData(resp.items);
-      })
-      .catch((err: unknown) => {
-        if (!alive || ctrl.signal.aborted) return;
-        setError(err instanceof Error ? err : new Error(String(err)));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-
-    return () => {
-      alive = false;
-      ctrl.abort();
-    };
-  }, [tick]);
-
-  return { data, loading, error, reload };
+/** Leaves the list on click; a failed delete puts it back. */
+export function useDeleteExample() {
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`/api/example/${id}`),
+    targets: [
+      {
+        queryKey: exampleKeys.list(),
+        optimistic: (old: Example[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
+  });
 }
