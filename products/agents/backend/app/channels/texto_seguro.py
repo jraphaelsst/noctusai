@@ -26,6 +26,7 @@ from app.channels import conformidade as conf
 __all__ = [
     "ALLOW_DETALHES",
     "ALLOW_EMPREENDIMENTO",
+    "ALLOW_OFERTA",
     "Catalogo",
     "formatar_catalogo",
     "sem_contatos",
@@ -69,6 +70,13 @@ Allow = Mapping[str, "Allow | None"]
 ALLOW_DETALHES: Allow = {
     "codigo": None, "titulo": None, "descricao": None, "preco": None, "condominio": None, "iptu": None,
     "endereco": None, "caracteristicas": None, "link": None, "encontrado": None, "confirmacao_proprietario": None,
+}
+#: One listing of an ``oferecer_imoveis`` batch (SW's ``buscar_imoveis`` / ``imovel_campanha`` card).
+ALLOW_OFERTA: Allow = {
+    "codigo": None, "titulo": None, "tipo": None, "bairro": None, "condominio": None, "cidade": None, "preco": None,
+    "preco_venda": None, "preco_aluguel": None, "valor_condominio": None, "valor_iptu": None, "area_m2": None,
+    "quartos": None, "suites": None, "vagas": None, "destaques": None, "link": None,
+    "confirmacao_proprietario": None,
 }
 _ALLOW_EXEMPLO: Allow = {"codigo": None, "titulo": None, "tipo": None, "quartos": None, "preco": None}
 ALLOW_EMPREENDIMENTO: Allow = {
@@ -127,7 +135,7 @@ def _formatar(item: Mapping[str, Any], allow: Allow, limites: Any, sinais: list[
             valor = _texto(valor, limites.catalogo_titulo_max, link)
         elif chave == "descricao" and isinstance(valor, str):
             valor = _texto(valor, limites.catalogo_descricao_max, link)
-        elif chave == "caracteristicas":
+        elif chave in ("caracteristicas", "destaques"):
             if not isinstance(valor, list):
                 continue
             valor = [
@@ -138,7 +146,7 @@ def _formatar(item: Mapping[str, Any], allow: Allow, limites: Any, sinais: list[
             valor = _generico(valor, 200, link)
         textos = valor if isinstance(valor, list) and all(isinstance(x, str) for x in valor) else [valor]
         livres = [x for x in textos if isinstance(x, str)]
-        if chave in ("titulo", "descricao", "caracteristicas") and livres and conf.sinal_extracao(livres, None):
+        if chave in ("titulo", "descricao", "caracteristicas", "destaques") and livres and conf.sinal_extracao(livres, None):
             sinais.append({"campo": chave})
             continue
         if valor in ("", []):

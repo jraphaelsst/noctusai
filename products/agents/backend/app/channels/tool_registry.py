@@ -797,7 +797,9 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             t.codigos_vistos.add(str(i["codigo"]).casefold())
             if (lk := _pedaco_link(i)) is not None:
                 t.links_vistos.add(lk)
-        out: dict[str, Any] = {"lote": lote, "imoveis": itens}
+        # the cards are the agency's listing text: shaped like every other catalogue text, wrapped under one key
+        shaped = [_catalogo(body, i, texto_seguro.ALLOW_OFERTA).dados for i in itens]
+        out: dict[str, Any] = {"lote": lote, "dados_catalogo": {"imoveis": shaped}}
         out.update({k: body[k] for k in _BUSCA_META if k in body})
         return _ok(**out)
 

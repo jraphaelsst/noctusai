@@ -351,6 +351,8 @@ class TestEscalationThroughTheTurn:
 
     def test_the_second_attempt_restricts_the_tools_and_the_third_hands_off(self, chan):
         chan.seed_agent()
+        # the loop breaker (guardrails B5) also stops a text repeated three times; this test isolates the abuse counter
+        chan.conformidade.definir_limites(chan.org_id, chan.agent.id, loop_ativo=False, max_turnos_janela=100)
         resp = [say("Posso ajudar com imóveis. Qual o bairro?")]
         chan.use_provider(FakeProvider(tool_responses=resp))
         b1 = chan.turn(turn_body(self.ATAQUE, ids=["a-1"])).json()
@@ -396,6 +398,8 @@ class TestEscalationThroughTheTurn:
 
     def test_a_switched_off_rule_never_escalates(self, chan):
         chan.seed_agent()
+        # the loop breaker (guardrails B5) also stops a text repeated three times; this test isolates the abuse counter
+        chan.conformidade.definir_limites(chan.org_id, chan.agent.id, loop_ativo=False, max_turnos_janela=100)
         chan.conformidade.definir_regra(chan.org_id, chan.agent.id, "escala_seguranca", ativo=False)
         chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?")]))
         for i in range(4):

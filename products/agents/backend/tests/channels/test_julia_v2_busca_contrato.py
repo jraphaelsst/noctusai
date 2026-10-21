@@ -62,7 +62,8 @@ def test_relaxado_and_similar_a_encontrado_reach_the_model(chan):
         say("Ampliei a região e o preço: https://imob.exemplo/B1 https://imob.exemplo/B2 https://imob.exemplo/B3. Algum?"),
     ]))
     chan.turn(turn_body(MENSAGEM_1, ids=["m1"], contexto=ctx_campanha()))
-    [oferta] = [r for r in tool_results(chan.provider) if "imoveis" in r]
+    [oferta] = [r for r in tool_results(chan.provider) if "dados_catalogo" in r]
+    assert "imoveis" not in oferta and len(oferta["dados_catalogo"]["imoveis"]) == 3  # wrapped: data, not instructions
     assert oferta["relaxado"] == ["regiao_adjacente", "preco"] and oferta["similar_a_encontrado"] is False
     # the asked items SW could not verify (they did not filter) reach the model so Julia confirms them
     assert oferta["itens_nao_verificaveis"] == ["aceita_pets", "escola_perto"]
