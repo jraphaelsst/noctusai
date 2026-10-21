@@ -184,16 +184,20 @@ def exigir(
 
 async def motivo_opt_out(agents: Optional[AgentsClient], contato_id: UUID | str | None) -> Optional[str]:
     """Why a send to this lead must NOT go out because of the opt-out, or None when it may. Reads agents' consent
-    state for `lead_ref = str(contato_id)` (the thread read: `opt_out_ativo` = the re-engagement suppression reason
-    `opt_out`). Fail-closed: no client / no lead / a failed read -> `opt_out_nao_verificavel`."""
+    state for `lead_ref = str(contato_id)` (`GET .../leads/{ref}/consentimento`, independent of any thread). A lead
+    agents has never seen (None) never opted out: allowed. Fail-closed: no client / no lead / any other failed read
+    -> `opt_out_nao_verificavel`."""
     if agents is None or not contato_id:
         return MOTIVO_OPT_OUT_NAO_VERIFICAVEL
     try:
-        info = await agents.buscar_thread(lead_ref=str(contato_id))
+        info = await agents.consentimento(str(contato_id))
     except AgentsClientError as exc:
         logger.warning("julia: opt-out read failed (%s) contato=%s -- send refused", type(exc).__name__, contato_id)
         return MOTIVO_OPT_OUT_NAO_VERIFICAVEL
-    return MOTIVO_OPT_OUT if info is not None and info.opt_out_ativo else None
+    if info is None:
+        logger.debug("julia: lead %s unknown to agents (never opted out) -- opt-out leg passes", contato_id)
+        return None
+    return MOTIVO_OPT_OUT if info.opt_out_ativo else None
 
 
 def registrar_bloqueio_opt_out(

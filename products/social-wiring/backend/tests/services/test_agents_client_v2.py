@@ -354,20 +354,40 @@ class TestThreadApi:
         with pytest.raises(ValueError, match="mensagem_lead"):
             await c.opt_out(LEAD, mensagem_lead="x" * 1001)
 
-    async def test_the_fake_validates_like_the_real_one_and_reports_the_opt_out_on_the_thread(self):
+    async def test_the_fake_validates_like_the_real_one_and_reports_the_consent_state(self):
         from app.clients.agents import FakeAgentsClient
 
         f = FakeAgentsClient()
-        f.seed_lead_thread(LEAD)
-        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is False
+        assert await f.consentimento(LEAD) is None  # never seen = never opted out
         out = await f.opt_out(LEAD, origem="agente", motivo="m")
         assert out.opt_out_ativo and out.evento_id
         assert f.opt_out_calls[0]["origem"] == "agente" and f.opt_out_calls[0]["motivo"] == "m"
-        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is True
+        assert (await f.consentimento(LEAD)).opt_out_ativo is True
         with pytest.raises(ValueError):
             await f.opt_out(LEAD, origem="sistema")
         await f.opt_in(LEAD, origem="formulario_meta")  # a later opt-in lifts it
-        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is False
+        c = await f.consentimento(LEAD)
+        assert c.opt_out_ativo is False and c.opt_in_origem == "formulario_meta"
+
+    async def test_consentimento_reads_the_lead_level_state_and_maps_404_lead_desconhecido_to_none(self):
+        from app.clients.agents import AgentsUpstreamError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET" and request.url.path.endswith("/consentimento")
+            if LEAD in request.url.path:
+                return httpx.Response(200, json={
+                    "lead_ref": LEAD, "opt_in_em": None, "opt_in_origem": None, "opt_out_em": "2026-10-21T12:00:00Z",
+                    "opt_out_ativo": True, "opt_out_evento": {"id": "ev-1", "origem": "agente"}})
+            if "desconhecido" in request.url.path:
+                return httpx.Response(404, json={"detail": {"detail": "x", "code": "lead_desconhecido"}})
+            return httpx.Response(500, json={})
+
+        c = _client(handler)
+        out = await c.consentimento(LEAD)
+        assert out.opt_out_ativo and out.evento_id == "ev-1"
+        assert await c.consentimento("desconhecido") is None
+        with pytest.raises(AgentsUpstreamError):
+            await c.consentimento("outro")
 
     async def test_delete_lead_is_a_204_delete(self):
         seen = []

@@ -352,12 +352,6 @@ class ThreadInfo:
     reengajamento_suprimido_motivo: Optional[str] = None
     ultimo_handoff: Optional[HandoffRecord] = None
 
-    @property
-    def opt_out_ativo(self) -> bool:
-        """The lead asked to stop and has not opted in again: agents reports it as the re-engagement suppression
-        reason `opt_out` (the consent read SW has for a lead with a thread)."""
-        return self.reengajamento_suprimido and self.reengajamento_suprimido_motivo == "opt_out"
-
     def estado_de(self, agent_key: str) -> Optional[str]:
         return next((p.estado for p in self.participantes if p.agent_key == agent_key), None)
 
@@ -472,6 +466,11 @@ class HandoffNotFound(AgentsClientError):
     """404 handoff_not_found."""
 
 
+class LeadDesconhecido(AgentsClientError):
+    """`GET /api/channels/leads/{ref}/consentimento` 404 `lead_desconhecido`: agents has never seen the lead (the
+    opt-out POST always registers the lead, so an unknown lead has never opted out)."""
+
+
 class ParticipanteNotFound(AgentsClientError):
     """404 participante_not_found: the agent does not take part in the thread."""
 
@@ -574,6 +573,8 @@ class AgentsClient(Protocol):
         motivo: Optional[str] = None, mensagem_lead: Optional[str] = None, ator_user_id: Optional[str] = None,
     ) -> ConsentInfo: ...
 
+    async def consentimento(self, lead_ref: str) -> Optional[ConsentInfo]: ...
+
     async def controle(self, agent_key: str) -> ControleInfo: ...
 
     async def estagios(self, agent_key: str) -> tuple[EstagioInfo, ...]: ...
@@ -664,6 +665,7 @@ class FakeAgentsClient:
         self.opt_outs: list[str] = []
         self.opt_out_calls: list[dict[str, Any]] = []  # every opt_out call, with the validated body it would send
         self.leads_com_opt_out: set[str] = set()  # a later opt-in lifts it (agents' rule)
+        self.consentimentos: dict[str, ConsentInfo] = {}  # leads agents has seen via opt_in/opt_out (others: unknown)
         self.lead_threads: dict[str, str] = {}  # lead_ref -> thread_id for leads that have a thread but no recorded turn
         self.leads_apagados: list[str] = []
         self.thread_reads: list[str] = []
@@ -865,7 +867,14 @@ class FakeAgentsClient:
         self._maybe_fail("opt_in")
         self.opt_ins.append((lead_ref, origem))
         self.leads_com_opt_out.discard(lead_ref)
-        return ConsentInfo(lead_ref=lead_ref, opt_in_origem=origem, opt_in_em=(em or datetime.now()).isoformat())
+        anterior = self.consentimentos.get(lead_ref)
+        info = ConsentInfo(
+            lead_ref=lead_ref, opt_in_origem=origem, opt_in_em=(em or datetime.now()).isoformat(),
+            opt_out_em=anterior.opt_out_em if anterior else None, opt_out_ativo=False,
+            evento_id=anterior.evento_id if anterior else None,
+        )
+        self.consentimentos[lead_ref] = info
+        return info
 
     async def opt_out(
         self, lead_ref: str, *, em: Optional[datetime] = None, origem: str = ORIGEM_OPT_OUT_PADRAO,
@@ -878,10 +887,19 @@ class FakeAgentsClient:
         self.leads_com_opt_out.add(lead_ref)
         for k in list(self.participantes):
             self.participantes[k] = "encerrado"
-        return ConsentInfo(
-            lead_ref=lead_ref, opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True,
+        anterior = self.consentimentos.get(lead_ref)
+        info = ConsentInfo(
+            lead_ref=lead_ref, opt_in_em=anterior.opt_in_em if anterior else None,
+            opt_in_origem=anterior.opt_in_origem if anterior else None,
+            opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True,
             evento_id=str(uuid.uuid5(_NAMESPACE, f"opt-out|{lead_ref}|{len(self.opt_out_calls)}")),
         )
+        self.consentimentos[lead_ref] = info
+        return info
+
+    async def consentimento(self, lead_ref: str) -> Optional[ConsentInfo]:
+        self._maybe_fail("consentimento")
+        return self.consentimentos.get(lead_ref)
 
     async def controle(self, agent_key: str) -> ControleInfo:
         self._maybe_fail("controle")
@@ -953,6 +971,8 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
             raise ConversationNotFound("conversation not found", code=code)
         if code == "handoff_not_found":
             raise HandoffNotFound("handoff not found", code=code)
+        if code == "lead_desconhecido":
+            raise LeadDesconhecido("agents has never seen the lead", code=code)
         if code == "participante_not_found":
             raise ParticipanteNotFound("participant not found", code=code)
         if code in ("lead_sem_qualificacao", "lead_sem_identificacao"):
@@ -1198,6 +1218,7 @@ def opt_out_body(
 
 def parse_consent(body: Any) -> ConsentInfo:
     encerrados = body.get("participantes_encerrados")
+    evento = body.get("opt_out_evento")  # the GET carries the event object; the POST carries `evento_id`
     return ConsentInfo(
         lead_ref=_need(body, "lead_ref", str),
         opt_in_em=_opt_str(body, "opt_in_em"),
@@ -1205,7 +1226,7 @@ def parse_consent(body: Any) -> ConsentInfo:
         opt_out_em=_opt_str(body, "opt_out_em"),
         opt_out_ativo=bool(body.get("opt_out_ativo")),
         participantes_encerrados=encerrados if isinstance(encerrados, int) and not isinstance(encerrados, bool) else 0,
-        evento_id=_opt_str(body, "evento_id"),
+        evento_id=_opt_str(body, "evento_id") or _opt_str(evento if isinstance(evento, dict) else {}, "id"),
     )
 
 
@@ -1452,6 +1473,15 @@ class HttpAgentsClient:
         body = opt_out_body(em=em, origem=origem, motivo=motivo, mensagem_lead=mensagem_lead, ator_user_id=ator_user_id)
         return parse_consent(await self._send("POST", f"/api/channels/leads/{quote(lead_ref, safe='')}/opt-out", json=body))
 
+    async def consentimento(self, lead_ref: str) -> Optional[ConsentInfo]:
+        """`GET /api/channels/leads/{ref}/consentimento`: the lead-level consent state, independent of any thread.
+        None = agents has never seen the lead (404 `lead_desconhecido`), i.e. it never opted out; any other failure
+        raises."""
+        try:
+            return parse_consent(await self._send("GET", f"/api/channels/leads/{quote(lead_ref, safe='')}/consentimento"))
+        except LeadDesconhecido:
+            return None
+
     async def controle(self, agent_key: str) -> ControleInfo:
         """`GET /api/channels/agents/{key}/controle`: read-only for SW (mode + drain progress). SW never decides the
         mode and never gates on a cached copy of this -- the turn endpoint decides."""
@@ -1516,7 +1546,7 @@ __all__ = [
     "AppendResult", "CapacityExceeded", "ConsentInfo", "ControleIndisponivel", "ControleInfo", "ConversationNotFound",
     "DecisaoRequest", "DecisaoResult", "DeletionRequest", "DeletionResult", "EstagioInfo", "FAKE_ESTAGIOS", "FakeAgentsClient",
     "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
-    "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadSemQualificacao", "LlmNotConfigured",
+    "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadDesconhecido", "LeadSemQualificacao", "LlmNotConfigured",
     "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",
     "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO",
     "STATUS_TURNO", "ThreadInfo", "ThreadNotFound", "TransicaoInvalida", "TurnInProgress",

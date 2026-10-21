@@ -89,7 +89,7 @@ class TestReviewAsk:
         assert asyncio.run(av.executar_pedido(job, client=w.sw, enviar=enviar, agora=MANHA, agents=w.agents)) == "enviado"
         assert len(enviados) == 1
 
-    @pytest.mark.parametrize("agents", [None, FakeAgentsClient(errors={"buscar_thread": AgentsUpstreamError("down")})])
+    @pytest.mark.parametrize("agents", [None, FakeAgentsClient(errors={"consentimento": AgentsUpstreamError("down")})])
     def test_an_unreadable_consent_state_refuses_instead_of_assuming_consent(self, lead_world, agents):
         w = lead_world
         c, job = _pedido(w)
