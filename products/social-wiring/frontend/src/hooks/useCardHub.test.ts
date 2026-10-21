@@ -115,6 +115,9 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps mockReturnValue/mockImplementation: a cache seeded by one test must not
+  // reach the next one's commit (cache-write commits read getQueryData).
+  getQueryDataMock.mockReset();
   (globalThis as any).fetch = vi.fn();
 });
 
