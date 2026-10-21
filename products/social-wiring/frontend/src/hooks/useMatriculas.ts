@@ -284,12 +284,16 @@ export function useVincularExtracaoImovel() {
       });
       return result.data as MatriculaExtracao;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       // Every list this could now appear in/disappear from: the codigo-scoped
-      // list it just joined, the unlinked list it just left, and its own
-      // single-extraction cache.
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracao', data.id] });
+      // list it just joined, the unlinked list it just left (same
+      // `matricula-extracoes` prefix), and its own single-extraction cache.
+      // AWAITED so the item has moved before the mutation settles — a
+      // fire-and-forget refetch left it listed under a success toast.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] }),
+        queryClient.invalidateQueries({ queryKey: ['matricula-extracao', data.id] }),
+      ]);
       toast.success('Matrícula vinculada ao imóvel!');
     },
     onError: (error: Error) => {

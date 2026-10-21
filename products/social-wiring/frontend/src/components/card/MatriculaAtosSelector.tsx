@@ -40,6 +40,16 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -189,6 +199,13 @@ export default function MatriculaAtosSelector({
     if (controlado) onDraftAtoIdsChange?.(valor);
     else setDraftInterno(valor);
   };
+  // The orphan pool is collapsed by default: the normal flow is uploading on
+  // the imóvel page (linked automatically), and linking is permanent
+  // (`codigo` is write-once, no unlink), so it must not sit next to the real
+  // selection where a misclick is easy. Linking always goes through a
+  // confirmation dialog.
+  const [semImovelAberto, setSemImovelAberto] = useState(false);
+  const [vincularPendente, setVincularPendente] = useState<MatriculaExtracaoOpcao | null>(null);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
 
   // Re-seed the draft from the PERSISTED selection whenever it changes AND
@@ -364,15 +381,26 @@ export default function MatriculaAtosSelector({
           has no `codigo` to link TO (nothing shows). */}
       {(extracoesSemImovel.length > 0 || extracoesSemImovelLoading) && (
         <div className="space-y-1.5 border-t pt-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Matrículas sem imóvel vinculado
-          </p>
-          {extracoesSemImovelLoading && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-1 text-xs text-muted-foreground"
+            aria-expanded={semImovelAberto}
+            onClick={() => setSemImovelAberto((v) => !v)}
+            data-testid="matricula-atos-sem-imovel-toggle"
+          >
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${semImovelAberto ? "" : "-rotate-90"}`}
+            />
+            Vincular uma matrícula enviada sem imóvel ({extracoesSemImovel.length})
+          </Button>
+          {semImovelAberto && extracoesSemImovelLoading && (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando...
             </p>
           )}
-          {!extracoesSemImovelLoading && extracoesSemImovel.length > 0 && (
+          {semImovelAberto && !extracoesSemImovelLoading && extracoesSemImovel.length > 0 && (
             <ul
               className="max-h-32 divide-y overflow-y-auto rounded-md border text-sm"
               data-testid="matricula-atos-sem-imovel"
@@ -389,7 +417,7 @@ export default function MatriculaAtosSelector({
                     variant="outline"
                     className="h-6 shrink-0 gap-1 px-2 text-[11px]"
                     disabled={vinculando || !onVincularExtracao}
-                    onClick={() => onVincularExtracao?.(ext.id)}
+                    onClick={() => setVincularPendente(ext)}
                     data-testid={`matricula-atos-vincular-${ext.id}`}
                   >
                     {vinculando ? (
@@ -405,6 +433,38 @@ export default function MatriculaAtosSelector({
           )}
         </div>
       )}
+
+      <AlertDialog
+        open={vincularPendente !== null}
+        onOpenChange={(open) => {
+          if (!open) setVincularPendente(null);
+        }}
+      >
+        <AlertDialogContent data-testid="matricula-atos-vincular-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Vincular matrícula ao imóvel?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vincular a matrícula «{vincularPendente?.nome_arquivo}» ao imóvel {codigo ?? ""}? Os
+              dados lidos dela serão propostos para este imóvel. Esta ação não pode ser desfeita
+              pelo app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="matricula-atos-vincular-cancelar">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="matricula-atos-vincular-confirmar"
+              onClick={() => {
+                if (vincularPendente) onVincularExtracao?.(vincularPendente.id);
+                setVincularPendente(null);
+              }}
+            >
+              Confirmar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {!extracaoSelecionadaId && (
         <p className="text-xs text-muted-foreground" data-testid="matricula-atos-vazio">
