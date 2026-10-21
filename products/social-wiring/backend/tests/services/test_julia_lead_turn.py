@@ -39,6 +39,7 @@ from app.services.julia_lead_turn_service import (
 )
 
 from tests.support.julia_world import (
+    InsertFailingClient,
     ADMIN_ID,
     CONNECTION_ID,
     CORRETOR_ID,
@@ -544,14 +545,10 @@ class TestLimitesVaoParaUmHumano:
         gen_antes = world.contato()["gen"]
         assert gen_antes >= 2  # the inbound bump + the loop bump
 
-    async def test_a_notification_failure_is_logged_recorded_and_never_raised(self, world, monkeypatch):
-        def boom(*a, **kw):
-            raise RuntimeError("notifications down")
-
-        monkeypatch.setattr(julia, "notificar_handoff", boom)
+    async def test_a_notification_failure_is_logged_recorded_and_never_raised(self, world):
         world.agents = FakeAgentsClient([_ok(status="limite_taxa")])
         k = buffer_lead(world, LEAD_CHAT, ["a"], ids=["m1"])
-        await _run(world, k)
+        await _run(world, k, core_client=InsertFailingClient(world.core, "notifications"))
         [ev] = [e for e in world.rows("julia_eventos") if e["tipo"] == "limite_para_humano"]
         assert ev["payload"]["notificado"] is False
 

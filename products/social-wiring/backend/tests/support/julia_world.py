@@ -60,6 +60,38 @@ class SchemaCachingClient:
         return getattr(self._root, item)
 
 
+class InsertFailingClient:
+    """A core client whose INSERTs into `tabela` raise -- a real fault in an injected
+    collaborator, so a test exercises the caller's failure path without patching our
+    own code. Every other table and operation goes to the wrapped client."""
+
+    def __init__(self, root: Any, tabela: str, erro: str = "notifications down") -> None:
+        self._root = root
+        self._tabela = tabela
+        self._erro = erro
+
+    def table(self, name: str):
+        query = self._root.table(name)
+        if name != self._tabela:
+            return query
+        erro = self._erro
+
+        class _Falha:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def insert(self, *a: Any, **kw: Any):
+                raise RuntimeError(erro)
+
+            def __getattr__(self, item: str):
+                return getattr(self._inner, item)
+
+        return _Falha(query)
+
+    def __getattr__(self, item):
+        return getattr(self._root, item)
+
+
 class World:
     """One mock DB + the process-level fakes, wired the way production wires them."""
 

@@ -17,6 +17,7 @@ from app.clients.agents import AgentsTimeout, FakeAgentsClient
 from app.services import julia_solicitacoes_titular_service as sol
 
 from tests.support.julia_world import (
+    InsertFailingClient,
     ADMIN_ID, CONNECTION_ID, CORRETOR_ID, ENCRYPTION_KEY, LEAD_CHAT, MEMBER_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID, World,
 )
 
@@ -276,12 +277,12 @@ class TestSolicitacoes:
         assert all(n["metadata"]["product"] == "social-wiring" and n["metadata"]["link"].startswith("/julia/opt-outs") for n in avisos)
         assert admin.w.agents.leads_apagados == [] and admin.w.contato() is not None  # nothing is deleted
 
-    def test_a_failed_notice_is_recorded_on_the_row(self, admin, monkeypatch):
-        def boom(*a, **kw):
-            raise RuntimeError("notifications down")
-
-        monkeypatch.setattr(sol, "write_in_app", boom)
-        p = self._pedido(admin)
+    def test_a_failed_notice_is_recorded_on_the_row(self, admin):
+        c = admin.lead()
+        p = sol.registrar(
+            admin.w.sw, InsertFailingClient(admin.w.core, "notifications"), org_id=ORG_ID,
+            lead_ref=str(c["id"]), tipo="eliminacao", trecho="quero que apaguem meus dados", chat_id=LEAD_CHAT,
+        )
         assert p["notificacao_status"] == "falhou" and "notifications down" in p["notificacao_erro"]
         assert admin.w.rows("julia_solicitacoes_titular")[0]["notificacao_status"] == "falhou"
 
