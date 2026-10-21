@@ -599,7 +599,7 @@ class TestAgentsStudioProbes:
         "agents_runtime_check",
         # Lais A2 (migration 025).
         "conversations_channel_owner_check",
-        "uq_agents_conversations_channel_ref",
+        # uq_agents_conversations_channel_ref: dropped by migration 035, probe retired (successor uq_agents_threads_channel)
         "uq_agents_channel_inbound_msg",
     }
     _MIGRATIONS = {

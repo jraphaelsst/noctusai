@@ -4114,25 +4114,11 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "and readable by no one, or (worse) matched by a null-owner lookup."
         ),
     ),
-    _agents_studio_probe(
-        probe_id="conversations.channel_identity_unique",
-        guard_name="uq_agents_conversations_channel_ref",
-        migrations=("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
-        requires_table="channel_inbound",
-        attack_sql=(
-            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, channel, channel_ref) "
-            "VALUES (v_org, v_agent, 'whatsapp', '{\"connection_id\": \"c\", \"chat_id\": \"x\"}'::jsonb);\n"
-            f"    INSERT INTO {_AGENTS_SCHEMA}.conversations (org_id, agent_id, channel, channel_ref) "
-            "VALUES (v_org, v_agent, 'whatsapp', '{\"connection_id\": \"c\", \"chat_id\": \"x\"}'::jsonb);"
-        ),
-        guard_fragment="uq_agents_conversations_channel_ref",
-        what="a second conversation for the same (org, agent, channel, channel_ref)",
-        rationale=(
-            "Lais A2 (migration 025): the channel identity IS the conversation key — "
-            "two rows for one chat would split a lead's history across two memories "
-            "and answer the same inbound batch twice."
-        ),
-    ),
+    # `conversations.channel_identity_unique` (uq_agents_conversations_channel_ref, migration 025) is retired:
+    # migration 035 (Julia v2 M4) DROPS that per-agent index and replaces it with the per-thread identity
+    # `uq_agents_threads_channel` (org, channel, channel_ref) WHERE tipo = 'thread_lead', probed below as
+    # `conversations.one_thread_per_channel_ref`. Probing a guard a later migration removes on purpose fails
+    # every DB that is past 035 (prod, 2026-10-21) while proving nothing.
     _agents_studio_probe(
         probe_id="channel_inbound.message_idempotency_unique",
         guard_name="uq_agents_channel_inbound_msg",
