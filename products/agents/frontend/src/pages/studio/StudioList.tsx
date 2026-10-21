@@ -11,10 +11,12 @@ import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 import { SLUG_RE, type AgentSummary } from "@/api/studio/types";
 import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { ContentTokenCard } from "@/components/studio/ContentTokenCard";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { useCreateStudioAgent, useStudioAgent, useStudioAgents, useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { errorMessage } from "@/lib/errors";
 import { studioTabHref } from "./studioTabs";
 
@@ -193,6 +195,8 @@ function NovoAgenteDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
 export default function StudioList() {
   const isAdmin = useIsAdmin();
+  // UX hint only — the routes answer 403 to anyone who is not a platform admin.
+  const isPlatformAdmin = useIsPlatformAdmin();
   const { data: agents, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgents();
   const [novoOpen, setNovoOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -285,6 +289,8 @@ export default function StudioList() {
           </table>
         </div>
       )}
+
+      {isPlatformAdmin && <ContentTokenCard />}
 
       {isAdmin && <NovoAgenteDialog open={novoOpen} onClose={() => setNovoOpen(false)} />}
       {isAdmin && importOpen && (

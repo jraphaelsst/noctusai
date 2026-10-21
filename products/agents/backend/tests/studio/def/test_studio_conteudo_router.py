@@ -497,3 +497,151 @@ class TestContentTokenMint:
         row = admin.rows["agents"][0]
         assert row["issuer"] == "noctus-platform" and row["scopes"] == ["studio:content-write"]
         assert row["org_id"] == str(DEFAULT_ORG_ID) and len(audit.rows) == 1
+
+
+class _RowsClient:
+    """supabase-py query-builder stand-in over ``FakeProductTokenAdmin.rows`` (external substrate double),
+    so the REAL ``SupabaseApiTokenResolver`` can judge a minted/revoked token end to end."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def schema(self, _name):
+        return self
+
+    def table(self, _name):
+        self._f, self._upd = {}, None
+        return self
+
+    def select(self, _c):
+        return self
+
+    def update(self, payload):
+        self._upd = payload
+        return self
+
+    def eq(self, col, val):
+        self._f[col] = val
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def execute(self):
+        from types import SimpleNamespace
+
+        match = [r for r in self._rows if all(r.get(c) == v for c, v in self._f.items())]
+        for r in match:
+            if self._upd:
+                r.update(self._upd)
+        return SimpleNamespace(data=match)
+
+
+class TestContentTokenUi:
+    """The platform-admin UI routes: mint with an expiry choice, list (never the secret), revoke."""
+
+    @pytest.fixture
+    def wired(self, plat):
+        from app.channels.token_audit import FakeTokenAudit
+        from app.dependencies import get_product_token_admin_dep, get_token_audit_dep
+        from noctusai_lib.api.auth.session import FakeProductTokenAdmin
+
+        admin, audit = FakeProductTokenAdmin(), FakeTokenAudit()
+        plat.raw.app.dependency_overrides[get_product_token_admin_dep] = lambda: admin
+        plat.raw.app.dependency_overrides[get_token_audit_dep] = lambda: audit
+        plat.as_role("owner")
+        return plat, admin, audit
+
+    def test_unauthenticated_is_strict_401(self, plat):
+        assert plat.raw.get(f"{PLAT}/content-tokens").status_code == 401
+        assert plat.raw.post(f"{PLAT}/content-token", json={"label": "x"}).status_code == 401
+        assert plat.raw.delete(f"{PLAT}/content-token/{UUID(int=1)}").status_code == 401
+
+    def test_org_admin_who_is_not_platform_admin_is_403(self, wired):
+        plat, _, _ = wired
+        plat.as_org_admin_only()
+        for resp in (
+            plat.get(f"{PLAT}/content-tokens"),
+            plat.post(f"{PLAT}/content-token", json={"label": "x", "expira_em_dias": None}),
+            plat.delete(f"{PLAT}/content-token/{UUID(int=1)}"),
+        ):
+            assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
+
+    def test_default_is_30_days_and_days_are_honoured(self, wired):
+        from datetime import datetime, timedelta, timezone
+
+        plat, admin, _ = wired
+        default = plat.post(f"{PLAT}/content-token", json={"label": "a"}).json()
+        week = plat.post(f"{PLAT}/content-token", json={"label": "b", "expira_em_dias": 7}).json()
+        now = datetime.now(timezone.utc)
+        assert abs(datetime.fromisoformat(default["expires_at"]) - (now + timedelta(days=30))) < timedelta(minutes=5)
+        assert abs(datetime.fromisoformat(week["expires_at"]) - (now + timedelta(days=7))) < timedelta(minutes=5)
+
+    def test_never_expires_is_a_null_expiry_not_a_far_date(self, wired):
+        plat, admin, audit = wired
+        out = plat.post(f"{PLAT}/content-token", json={"label": "perm", "expira_em_dias": None})
+        assert out.status_code == 201 and out.json()["expires_at"] is None
+        assert admin.rows["agents"][0]["expires_at"] is None and len(audit.rows) == 1
+
+    @pytest.mark.parametrize("dias", [0, -1, 366, 10_000, "x"])
+    def test_out_of_range_days_are_422(self, wired, dias):
+        plat, admin, _ = wired
+        resp = plat.post(f"{PLAT}/content-token", json={"label": "a", "expira_em_dias": dias})
+        assert resp.status_code == 422 and not admin.rows
+
+    def test_list_never_returns_the_secret_and_only_content_tokens(self, wired):
+        from datetime import datetime, timedelta, timezone
+
+        plat, admin, _ = wired
+        minted = plat.post(f"{PLAT}/content-token", json={"label": "mcp", "expira_em_dias": None}).json()
+        # a same-org token of another scope/issuer must not appear
+        admin.mint("agents", org_id=DEFAULT_ORG_ID, label="canal", scopes=["agents:ask"],
+                   expires_at=datetime.now(timezone.utc) + timedelta(days=1), issuer="noctus-platform")
+        resp = plat.get(f"{PLAT}/content-tokens")
+        assert resp.status_code == 200 and resp.headers["Cache-Control"] == "no-store"
+        assert minted["token"] not in resp.text and "token_hash" not in resp.text
+        itens = resp.json()["itens"]
+        assert len(itens) == 1
+        item = itens[0]
+        assert item["id"] == minted["id"] and item["prefix"] == minted["prefix"]
+        assert item["status"] == "ativo" and item["expires_at"] is None and item["created_by"] == str(DEFAULT_USER_ID)
+
+    def test_revoke_is_idempotent_audited_and_the_token_is_then_refused(self, wired):
+        from noctusai_lib.api.auth.session import SupabaseApiTokenResolver
+
+        plat, admin, audit = wired
+        minted = plat.post(f"{PLAT}/content-token", json={"label": "mcp"}).json()
+        resolver = SupabaseApiTokenResolver(_RowsClient(admin.rows["agents"]), schema="agents")
+
+        # the freshly minted token is accepted by the REAL resolver ...
+        import asyncio
+        assert asyncio.run(resolver.resolve(minted["token"])) is not None
+
+        first = plat.delete(f"{PLAT}/content-token/{minted['id']}")
+        assert first.status_code == 200 and first.json()["status"] == "revogado"
+        again = plat.delete(f"{PLAT}/content-token/{minted['id']}")
+        assert again.status_code == 200 and again.json()["status"] == "revogado"
+        assert [r.method for r in audit.rows] == ["MINT", "REVOKE"]  # no second REVOKE row
+        # ... and refused once revoked (the resolver answers None -> 401 before require_content_write)
+        assert asyncio.run(resolver.resolve(minted["token"])) is None
+        listed = plat.get(f"{PLAT}/content-tokens").json()["itens"][0]
+        assert listed["status"] == "revogado" and listed["revoked_at"]
+
+    def test_revoke_unknown_or_foreign_token_is_404(self, wired):
+        from datetime import datetime, timedelta, timezone
+
+        plat, admin, _ = wired
+        foreign = admin.mint("agents", org_id=OTHER_ORG_ID, label="x", scopes=["studio:content-write"],
+                             expires_at=datetime.now(timezone.utc) + timedelta(days=1), issuer="noctus-platform")
+        for tid in (UUID(int=7), foreign.info.id):
+            resp = plat.delete(f"{PLAT}/content-token/{tid}")
+            assert resp.status_code == 404 and resp.json()["code"] == "token_not_found"
+        assert admin.list_tokens("agents", org_id=OTHER_ORG_ID)[0].revoked_at is None
+
+    def test_expired_token_lists_as_expirado(self, wired):
+        from datetime import datetime, timedelta, timezone
+
+        plat, admin, _ = wired
+        admin.mint("agents", org_id=DEFAULT_ORG_ID, label="old", scopes=["studio:content-write"],
+                   expires_at=datetime.now(timezone.utc) - timedelta(days=1), issuer="noctus-platform")
+        assert plat.get(f"{PLAT}/content-tokens").json()["itens"][0]["status"] == "expirado"

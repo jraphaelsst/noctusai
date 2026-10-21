@@ -149,3 +149,35 @@ class TestFakeAndFactory:
         info = fake.seed("s", "pk_existing", org_id=org, expires_at=EXPIRES, scopes=["a"])
         assert fake.find_by_secret("s", "pk_existing") == info
         assert fake.revoke("s", info.id, org_id=org) is True
+
+
+class TestNeverExpiresAndList:
+    def test_row_with_no_expiry_stores_null(self):
+        raw, _ = mint_token_secret()
+        row = build_api_token_row(
+            token_id=uuid4(), raw_secret=raw, org_id=uuid4(), label="x",
+            scopes=[], expires_at=None, created_at=datetime.now(timezone.utc),
+        )
+        assert row["expires_at"] is None
+
+    def test_real_mint_without_expiry_then_list_is_scoped_and_secretless(self):
+        client = _Client()
+        admin = SupabaseProductTokenAdmin(client)
+        org, other = uuid4(), uuid4()
+        keep = admin.mint("s", org_id=org, label="a", scopes=["x:w"], expires_at=None, issuer="p")
+        admin.mint("s", org_id=org, label="b", scopes=["y:r"], expires_at=EXPIRES, issuer="p")
+        admin.mint("s", org_id=org, label="c", scopes=["x:w"], expires_at=EXPIRES, issuer="q")
+        admin.mint("s", org_id=other, label="d", scopes=["x:w"], expires_at=EXPIRES, issuer="p")
+        assert keep.info.expires_at is None
+        listed = admin.list_tokens("s", org_id=org, scope="x:w", issuer="p")
+        assert [t.id for t in listed] == [keep.info.id]
+        assert keep.secret not in repr(listed)
+        assert len(admin.list_tokens("s", org_id=org)) == 3
+
+    def test_fake_list_matches_real_contract(self):
+        fake = FakeProductTokenAdmin()
+        org = uuid4()
+        fake.mint("s", org_id=org, label="a", scopes=["x:w"], expires_at=None, issuer="p")
+        fake.mint("s", org_id=uuid4(), label="z", scopes=["x:w"], expires_at=None, issuer="p")
+        listed = fake.list_tokens("s", org_id=org, scope="x:w", issuer="p")
+        assert len(listed) == 1 and listed[0].expires_at is None and listed[0].created_at is not None

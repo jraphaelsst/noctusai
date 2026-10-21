@@ -76,7 +76,7 @@ def build_api_token_row(
     org_id: UUID,
     label: str,
     scopes: list[str],
-    expires_at: datetime,
+    expires_at: Optional[datetime],
     created_at: datetime,
     principal_agent_id: Optional[UUID] = None,
     human_personal: bool = False,
@@ -101,7 +101,7 @@ def build_api_token_row(
         "created_at": created_at.isoformat(),
         "last_used_at": None,
         "revoked_at": None,
-        "expires_at": expires_at.isoformat(),
+        "expires_at": expires_at.isoformat() if expires_at is not None else None,
         "principal_agent_id": str(principal_agent_id) if principal_agent_id else None,
         "human_personal": human_personal,
         "minted_by": minted,
@@ -125,6 +125,8 @@ class ApiTokenInfo:
     revoked_at: Optional[datetime]
     principal_agent_id: Optional[UUID]
     issuer: Optional[str]
+    created_at: Optional[datetime] = None
+    created_by: Optional[UUID] = None
 
 
 @dataclass(frozen=True)
@@ -149,12 +151,22 @@ class ProductTokenAdmin(Protocol):
         org_id: UUID,
         label: str,
         scopes: list[str],
-        expires_at: datetime,
+        expires_at: Optional[datetime],
         principal_agent_id: Optional[UUID] = None,
         issuer: Optional[str] = None,
         minted_by: Optional[UUID] = None,
     ) -> MintedApiToken:
-        """Insert a new token row. Raises on any write failure."""
+        """Insert a new token row. ``expires_at=None`` mints a token that never
+        expires (the verifier treats a NULL ``expires_at`` as no expiry).
+        Raises on any write failure."""
+        ...
+
+    def list_tokens(
+        self, schema: str, *, org_id: UUID, scope: Optional[str] = None, issuer: Optional[str] = None,
+    ) -> list[ApiTokenInfo]:
+        """Non-secret projections of ``org_id``'s tokens (revoked included),
+        newest first, optionally narrowed to tokens carrying ``scope`` and/or
+        minted by ``issuer``."""
         ...
 
     def revoke(self, schema: str, token_id: UUID, *, org_id: UUID) -> bool:
@@ -183,13 +195,26 @@ def _info(row: dict[str, Any]) -> ApiTokenInfo:
         revoked_at=_ts(row.get("revoked_at")),
         principal_agent_id=UUID(str(principal)) if principal else None,
         issuer=row.get("issuer"),
+        created_at=_ts(row.get("created_at")),
+        created_by=UUID(str(row["created_by"])) if row.get("created_by") else None,
     )
+
+
+def _narrow(
+    infos: list[ApiTokenInfo], scope: Optional[str], issuer: Optional[str],
+) -> list[ApiTokenInfo]:
+    kept = [
+        i for i in infos
+        if (scope is None or scope in i.scopes) and (issuer is None or i.issuer == issuer)
+    ]
+    return kept
 
 
 _INFO_COLUMNS = (
     "id, org_id, label, token_prefix, scopes, expires_at, last_used_at, "
     "revoked_at, principal_agent_id, issuer"
 )
+_LIST_COLUMNS = _INFO_COLUMNS + ", created_at, created_by"
 
 
 class FakeProductTokenAdmin:
@@ -235,7 +260,7 @@ class FakeProductTokenAdmin:
         org_id: UUID,
         label: str,
         scopes: list[str],
-        expires_at: datetime,
+        expires_at: Optional[datetime],
         principal_agent_id: Optional[UUID] = None,
         issuer: Optional[str] = None,
         minted_by: Optional[UUID] = None,
@@ -257,6 +282,13 @@ class FakeProductTokenAdmin:
         )
         self.rows.setdefault(schema, []).append(row)
         return MintedApiToken(info=_info(row), secret=raw)
+
+    def list_tokens(
+        self, schema: str, *, org_id: UUID, scope: Optional[str] = None, issuer: Optional[str] = None,
+    ) -> list[ApiTokenInfo]:
+        rows = [r for r in self.rows.get(schema, []) if r["org_id"] == str(org_id)]
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        return _narrow([_info(r) for r in rows], scope, issuer)
 
     def revoke(self, schema: str, token_id: UUID, *, org_id: UUID) -> bool:
         if self.fail_revoke:
@@ -301,7 +333,7 @@ class SupabaseProductTokenAdmin:
         org_id: UUID,
         label: str,
         scopes: list[str],
-        expires_at: datetime,
+        expires_at: Optional[datetime],
         principal_agent_id: Optional[UUID] = None,
         issuer: Optional[str] = None,
         minted_by: Optional[UUID] = None,
@@ -325,6 +357,13 @@ class SupabaseProductTokenAdmin:
             schema, row["id"], row["token_prefix"],
         )
         return MintedApiToken(info=_info(row), secret=raw)
+
+    def list_tokens(
+        self, schema: str, *, org_id: UUID, scope: Optional[str] = None, issuer: Optional[str] = None,
+    ) -> list[ApiTokenInfo]:
+        resp = self._table(schema).select(_LIST_COLUMNS).eq("org_id", str(org_id)).execute()
+        rows = sorted(resp.data or [], key=lambda r: str(r.get("created_at") or ""), reverse=True)
+        return _narrow([_info(r) for r in rows], scope, issuer)
 
     def revoke(self, schema: str, token_id: UUID, *, org_id: UUID) -> bool:
         resp = (

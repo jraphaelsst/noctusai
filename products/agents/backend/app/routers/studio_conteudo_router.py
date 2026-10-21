@@ -54,7 +54,9 @@ from app.routers.studio_agents_router import (
 from app.channels.token_audit import TokenAudit
 from app.schemas.studio_conteudo import (
     ContentTokenCreateRequest,
+    ContentTokenInfoOut,
     ContentTokenOut,
+    ContentTokensOut,
     CompiladoOrgOut,
     ConteudoPayloadOut,
     DecisaoOut,
@@ -97,7 +99,6 @@ router = APIRouter(prefix="/api/studio", tags=["studio-conteudo"])
 
 # SCOPE_STUDIO_CONTENT_WRITE / CONTENT_TOKEN_ISSUER live in app.dependencies (shared with the skill library
 # and the qualification standard, which the same MCP token writes).
-CONTENT_TOKEN_TTL_DAYS = 30
 
 _content_write_base = require_scopes(
     SCOPE_STUDIO_CONTENT_WRITE,
@@ -478,9 +479,12 @@ async def mint_content_token(
     audit: TokenAudit = Depends(get_token_audit_dep),
 ) -> ContentTokenOut:
     """Mint the ``noctus.agents.content`` MCP token: scope ``studio:content-write`` only, issuer
-    ``noctus-platform`` (server-side), 30 days, org-bound to the platform org the admin acts in. PLATFORM ADMIN
+    ``noctus-platform`` (server-side), ``expira_em_dias`` days (default 30, 1..365; ``null`` = never expires), org-bound to the platform org the admin acts in. PLATFORM ADMIN
     only; the raw secret is returned once. Audited like the channel token."""
-    expires_at = datetime.now(timezone.utc) + timedelta(days=CONTENT_TOKEN_TTL_DAYS)
+    expires_at = (
+        None if payload.expira_em_dias is None
+        else datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
+    )
     try:
         minted = token_admin.mint(
             "agents", org_id=ctx.org_id, label=f"conteudo: {payload.label}",
@@ -498,10 +502,90 @@ async def mint_content_token(
     except Exception as exc:
         token_admin.revoke("agents", minted.info.id, org_id=ctx.org_id)
         raise http_error(502, "audit_failed", "Falha ao registrar a emissão do token.") from exc
+    logger.info(
+        "agents.content_token.minted org_id=%s token_id=%s by=%s label=%r expires_at=%s",
+        ctx.org_id, minted.info.id, ctx.user_id, payload.label, expires_at.isoformat() if expires_at else "never",
+    )
     response.headers["Cache-Control"] = "no-store"
     return ContentTokenOut(
         id=minted.info.id, token=minted.secret, prefix=minted.info.prefix, expires_at=expires_at,
         scopes=[SCOPE_STUDIO_CONTENT_WRITE],
+    )
+
+
+def _content_token_status(info) -> str:
+    if info.revoked_at is not None:
+        return "revogado"
+    if info.expires_at is not None and info.expires_at <= datetime.now(timezone.utc):
+        return "expirado"
+    return "ativo"
+
+
+def _content_tokens(token_admin: ProductTokenAdmin, org_id: UUID):
+    return token_admin.list_tokens(
+        "agents", org_id=org_id, scope=SCOPE_STUDIO_CONTENT_WRITE, issuer=CONTENT_TOKEN_ISSUER,
+    )
+
+
+@router.get("/plataforma/content-tokens", response_model=ContentTokensOut)
+async def list_content_tokens(
+    response: Response, ctx: AuthContext = Depends(require_platform_admin),
+    token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
+) -> ContentTokensOut:
+    """The platform org's ``studio:content-write`` tokens (revoked + expired included), newest first. Never the secret."""
+    try:
+        infos = _content_tokens(token_admin, ctx.org_id)
+    except Exception as exc:
+        logger.error("agents.content_token.list_failed org_id=%s error=%s", ctx.org_id, type(exc).__name__)
+        raise http_error(502, "list_failed", "Falha ao listar os tokens.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return ContentTokensOut(itens=[
+        ContentTokenInfoOut(
+            id=i.id, label=i.label, prefix=i.prefix, scopes=list(i.scopes), created_at=i.created_at,
+            created_by=i.created_by, expires_at=i.expires_at, last_used_at=i.last_used_at,
+            revoked_at=i.revoked_at, status=_content_token_status(i),
+        ) for i in infos
+    ])
+
+
+@router.delete("/plataforma/content-token/{token_id}", response_model=ContentTokenInfoOut)
+async def revoke_content_token(
+    token_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
+    token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
+    audit: TokenAudit = Depends(get_token_audit_dep),
+) -> ContentTokenInfoOut:
+    """Revoke a content token of the platform org. Idempotent (an already-revoked token answers 200 again,
+    without a second audit row); 404 for an id that is not a content token of this org. Audited."""
+    try:
+        info = next((i for i in _content_tokens(token_admin, ctx.org_id) if i.id == token_id), None)
+    except Exception as exc:
+        logger.error("agents.content_token.revoke_lookup_failed org_id=%s error=%s", ctx.org_id, type(exc).__name__)
+        raise http_error(502, "revoke_failed", "Falha ao revogar o token.") from exc
+    if info is None:
+        raise http_error(404, "token_not_found", "Token não encontrado.")
+    if info.revoked_at is None:
+        try:
+            token_admin.revoke("agents", token_id, org_id=ctx.org_id)
+        except Exception as exc:
+            logger.error("agents.content_token.revoke_failed org_id=%s error=%s", ctx.org_id, type(exc).__name__)
+            raise http_error(502, "revoke_failed", "Falha ao revogar o token.") from exc
+        try:
+            audit.record(
+                api_token_id=token_id, org_id=ctx.org_id, action="REVOKE", agent_key="studio-content",
+                actor_user_id=ctx.user_id, status=200,
+            )
+        except Exception as exc:
+            logger.error("agents.content_token.revoke_audit_failed org_id=%s token_id=%s", ctx.org_id, token_id)
+            raise http_error(502, "audit_failed", "Token revogado, mas falhou o registro de auditoria.") from exc
+        logger.info(
+            "agents.content_token.revoked org_id=%s token_id=%s by=%s label=%r",
+            ctx.org_id, token_id, ctx.user_id, info.label,
+        )
+    info = next(i for i in _content_tokens(token_admin, ctx.org_id) if i.id == token_id)
+    return ContentTokenInfoOut(
+        id=info.id, label=info.label, prefix=info.prefix, scopes=list(info.scopes), created_at=info.created_at,
+        created_by=info.created_by, expires_at=info.expires_at, last_used_at=info.last_used_at,
+        revoked_at=info.revoked_at, status=_content_token_status(info),
     )
 
 

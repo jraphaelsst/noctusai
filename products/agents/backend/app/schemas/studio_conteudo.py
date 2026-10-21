@@ -7,7 +7,7 @@ write routes are REPLACE-SET (the body is the whole set for that table of the dr
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -233,11 +233,32 @@ class PlataformaTextosOut(BaseModel):
 
 class ContentTokenCreateRequest(StrictHttpModel):
     label: str = Field(..., min_length=1, max_length=120)
+    #: Days until expiry (1..365); omitted = 30; an explicit ``null`` = never expires.
+    expira_em_dias: int | None = Field(30, ge=1, le=365)
 
 
 class ContentTokenOut(BaseModel):
     id: UUID
     token: str
     prefix: str
-    expires_at: datetime
+    expires_at: datetime | None = None  # None = never expires
     scopes: list[str]
+
+
+class ContentTokenInfoOut(BaseModel):
+    """One content token, NEVER the secret (only the display prefix)."""
+
+    id: UUID
+    label: str
+    prefix: str
+    scopes: list[str]
+    created_at: datetime | None = None
+    created_by: UUID | None = None
+    expires_at: datetime | None = None  # None = never expires
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    status: Literal["ativo", "expirado", "revogado"]
+
+
+class ContentTokensOut(BaseModel):
+    itens: list[ContentTokenInfoOut]

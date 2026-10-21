@@ -226,7 +226,15 @@ routes, studio thread state/results).
   `conteudo_editado_mcp`); an org admin gets `GET/PUT /agents/{key}/specs` (its own values; text that
   contradicts a platform-locked rule is refused 422) and `GET /agents/{key}/status` (booleans only). The clients,
   knowledge, evals and package-sync routers are platform-admin only too; the `studio:content-write` token is minted
-  only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`).
+  only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`, platform admin, org-bound to the
+  platform org) with `expira_em_dias` 1..365 (omitted = 30, explicit `null` = never expires: a NULL `expires_at`,
+  not a far date). `GET /api/studio/plataforma/content-tokens` lists the platform org's content tokens (label, prefix,
+  created/by, expiry, last use, status; never the secret) and `DELETE .../content-token/{id}` revokes (idempotent);
+  mint and revoke are audited. The Studio home (`/studio`) carries the platform-admin "Token de conteúdo (MCP)"
+  section: "Gerar token" dialog (label, days or "Nunca expira" with a warning), the secret shown once with where to
+  put it (`NOCTUS_AGENTS_CONTENT_TOKEN=` in `~/.config/noctus/agents.env`), the list and a confirmed "Revogar".
+  Scope: the token is org-bound to the platform org, so it reaches every platform-defined agent registered there
+  (today only Julia) through the draft routes only; it never publishes.
 
 ## Lead qualification standard (Julia v2, `app/qualificacao/`)
 
