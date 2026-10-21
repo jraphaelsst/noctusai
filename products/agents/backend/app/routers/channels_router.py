@@ -432,7 +432,7 @@ async def run_channel_turn(
             participante=(
                 {"agent_key": agent.key, "estado": resultado.participante_estado}
                 if resultado.participante_estado else None),
-            qualificacao=resultado.qualificacao,
+            qualificacao=resultado.qualificacao, identificacao_registrada=resultado.identificacao_registrada,
             conformidade={"violacoes": [
                 {"regra": v.regra, "politica": v.politica, "bloqueada": v.bloqueada} for v in resultado.violacoes]},
             usage={

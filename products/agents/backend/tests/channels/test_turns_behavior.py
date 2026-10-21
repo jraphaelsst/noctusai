@@ -37,7 +37,7 @@ class TestSuccessShape:
         body = resp.json()
         assert set(body) == {
             "thread_id", "conversation_id", "status", "reply", "actions", "participante", "qualificacao",
-            "conformidade", "usage",
+            "conformidade", "usage", "identificacao_registrada",
         }
         assert UUID(body["thread_id"]) == UUID(body["conversation_id"])
         assert body["participante"] == {"agent_key": "julia", "estado": "ativo"}

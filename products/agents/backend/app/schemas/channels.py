@@ -445,6 +445,9 @@ class ChannelTurnResponse(BaseModel):
     actions: list[ChannelActionOut]
     participante: ParticipanteOut | None = None
     qualificacao: QualificacaoOut | None = None
+    #: A CPF / RG was registered in THIS turn (``registrar_identificacao``) and its stored copy in the thread was
+    #: masked: the caller (social-wiring) masks its own copy without an extra read. Default false (backward compatible).
+    identificacao_registrada: bool = False
     conformidade: ConformidadeOut = Field(default_factory=ConformidadeOut)
     usage: ChannelUsageOut = Field(default_factory=ChannelUsageOut)
 

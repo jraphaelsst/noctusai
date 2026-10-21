@@ -458,6 +458,11 @@ class JuliaTurno:
     registrou_criterios: set[str] = field(default_factory=set)
     links_vistos: set[str] = field(default_factory=set)
     codigos_vistos: set[str] = field(default_factory=set)
+    #: The CPF / RG just registered this turn (normalised) -- the turn masks them in the thread's stored rows once it
+    #: settles (guardrails B8.4). Memory only: never serialised, never in a repr.
+    identificacoes_registradas: list[str] = field(default_factory=list, repr=False)
+    #: Any identification field (name / e-mail / CPF / RG) was registered this turn: the turn response flag.
+    identificacao_registrada: bool = False
     transferiu: bool = False
     encerrou: bool = False
     concluiu: bool = False
@@ -730,6 +735,9 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
                 erro=True, falha=True)
         if r.status != "registrado":
             return _recusa(t, r.codigo or "valor_invalido")
+        t.identificacao_registrada = True
+        if r.valor_registrado:
+            t.identificacoes_registradas.append(r.valor_registrado)
         # NEVER the value: the field name, the status, what is still missing.
         return _ok(**r.to_payload())
 

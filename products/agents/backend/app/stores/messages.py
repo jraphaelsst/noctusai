@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.stores._util import utcnow
@@ -162,11 +162,33 @@ class MessageStore(Protocol):
         ``assistant`` row (a silent turn books an empty one), so a flood of inbound batches counts."""
         ...
 
+    def redigir_identificacao(self, org_id: UUID, conversation_id: UUID, valores: Sequence[str]) -> int:
+        """Guardrails B8.4: replace each identity ``valor`` (CPF digits / RG alphanumerics, compared on digits and
+        letters only) by ``***`` in the ``texto``, ``blocks`` and ``meta`` of EVERY row of the thread -- the lead's
+        own text, the text extracted from its media, anything else that copied it. Only the given values are masked.
+        Idempotent. Returns how many rows changed."""
+        ...
+
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         """Lais w9 (Painel): ``(turnos, custo_usd)`` for this org over
         ``[since, until)`` — turns = assistant messages, cost = summed
         ``custo_usd``."""
         ...
+
+
+def _redigido(row: dict[str, Any], valores: Sequence[str]) -> dict[str, Any]:
+    """The columns of ``row`` (``texto`` / ``blocks`` / ``meta``) that change once ``valores`` are masked, or ``{}``."""
+    from app.qualificacao.identificacao import redigir_estrutura
+
+    novo: dict[str, Any] = {}
+    for coluna in ("texto", "blocks", "meta"):
+        atual = row.get(coluna)
+        if atual is None:
+            continue
+        depois = redigir_estrutura(atual, valores)
+        if depois != atual:
+            novo[coluna] = depois
+    return novo
 
 
 class FakeMessageStore:
@@ -301,6 +323,16 @@ class FakeMessageStore:
             if r["role"] == "assistant" and r["created_at"] >= since
         ]
         return len(rows), sum(float(r.get("custo_usd") or 0.0) for r in rows)
+
+    def redigir_identificacao(self, org_id: UUID, conversation_id: UUID, valores: Sequence[str]) -> int:
+        n = 0
+        for row in self._rows.get((org_id, conversation_id), []):
+            novo = _redigido(row, valores)
+            if novo:
+                row.update(novo)
+                row["updated_at"] = utcnow()
+                n += 1
+        return n
 
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         turns, total = 0, 0.0
@@ -513,6 +545,34 @@ class SupabaseMessageStore:
 
         rows = list(iter_paged_rows(_page))
         return len(rows), sum(float(r.get("custo_usd") or 0.0) for r in rows)
+
+    def redigir_identificacao(self, org_id: UUID, conversation_id: UUID, valores: Sequence[str]) -> int:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        def _page(start: int, end: int):
+            return (
+                self._table()
+                .select("id, texto, blocks, meta")
+                .eq("org_id", str(org_id))
+                .eq("conversation_id", str(conversation_id))
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        n = 0
+        for row in list(iter_paged_rows(_page)):
+            novo = _redigido(row, valores)
+            if not novo:
+                continue
+            (
+                self._table().update(novo)
+                .eq("id", str(row["id"])).eq("org_id", str(org_id)).eq("conversation_id", str(conversation_id))
+                .execute()
+            )
+            n += 1
+        return n
 
     def usage_between(self, org_id: UUID, since: datetime, until: datetime) -> tuple[int, float]:
         from noctusai_lib.integrations.persistence.paging import iter_paged_rows

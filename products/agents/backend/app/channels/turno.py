@@ -235,6 +235,8 @@ class ResultadoTurno:
     qualificacao: dict[str, Any] | None = None
     violacoes: list[Violacao] = field(default_factory=list)
     message_id: UUID | None = None
+    #: A CPF / RG was registered in this turn (``registrar_identificacao`` -> ``registrado``): the response flag.
+    identificacao_registrada: bool = False
 
 
 @dataclass
@@ -468,30 +470,34 @@ async def executar(
             cnpjs_proprios=conf.lista_de_spec(valores.get(conf.SPEC_CNPJ)),
         ))
 
-    async with asyncio.timeout(settings.channel_turn_timeout_seconds):
-        await publish_event(thread.id, "session.status", {"status": "pensando"}, bus=bus)
-        t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
-        tentativas.append(t1)
-        violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
-        achados = [] if turno.parar else _avaliar(t1)
-        bl = conf.violacoes_bloqueantes(achados)
-        violacoes += [replace(v, bloqueada=v in bl) for v in achados]
-        texto_final = "\n\n".join(x for x in t1.textos if x and x.strip())
-        if bl:
-            correcao = " ".join(conteudo.texto(f"conformidade.correcao.{v.regra}").strip() for v in bl)
-            # the thread keeps the CODE only: the wording is prompt text and travels in `mensagem_correcao` alone
-            svc.messages.add(
-                org_id, thread.id, "evento", codigo_evento_correcao(bl), agent_id=agent.id, lead_ref_id=lead_ref_id)
-            t2 = await _rodar(runtime, prep.spec, replace(ctx, mensagem_correcao=correcao), slot, None)
-            tentativas.append(t2)
-            achados2 = [] if turno.parar else _avaliar(t2)
-            bl2 = conf.violacoes_bloqueantes(achados2)
-            violacoes += [replace(v, bloqueada=v in bl2) for v in achados2]
-            if bl2:
-                texto_final = ""
-                bloqueios = bl2
-            else:
-                texto_final = "\n\n".join(x for x in t2.textos if x and x.strip())
+    try:
+        async with asyncio.timeout(settings.channel_turn_timeout_seconds):
+            await publish_event(thread.id, "session.status", {"status": "pensando"}, bus=bus)
+            t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
+            tentativas.append(t1)
+            violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
+            achados = [] if turno.parar else _avaliar(t1)
+            bl = conf.violacoes_bloqueantes(achados)
+            violacoes += [replace(v, bloqueada=v in bl) for v in achados]
+            texto_final = "\n\n".join(x for x in t1.textos if x and x.strip())
+            if bl:
+                correcao = " ".join(conteudo.texto(f"conformidade.correcao.{v.regra}").strip() for v in bl)
+                # the thread keeps the CODE only: the wording is prompt text and travels in `mensagem_correcao` alone
+                svc.messages.add(
+                    org_id, thread.id, "evento", codigo_evento_correcao(bl), agent_id=agent.id, lead_ref_id=lead_ref_id)
+                t2 = await _rodar(runtime, prep.spec, replace(ctx, mensagem_correcao=correcao), slot, None)
+                tentativas.append(t2)
+                achados2 = [] if turno.parar else _avaliar(t2)
+                bl2 = conf.violacoes_bloqueantes(achados2)
+                violacoes += [replace(v, bloqueada=v in bl2) for v in achados2]
+                if bl2:
+                    texto_final = ""
+                    bloqueios = bl2
+                else:
+                    texto_final = "\n\n".join(x for x in t2.textos if x and x.strip())
+    except BaseException:  # an aborted turn (deadline, provider refusal) may already hold a registered CPF / RG
+        await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id)
+        raise
 
     # ── settle: blocked twice, safe stop, deterministic escalations ──
     if bloqueios:
@@ -517,6 +523,8 @@ async def executar(
         usage = _somar(usage, t.usage)
     blocks = [b for t in tentativas for b in t.blocks]
     final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus, tag)
+    identificacao_registrada = turno.identificacao_registrada
+    await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id)
 
     for v in violacoes:
         try:
@@ -545,8 +553,36 @@ async def executar(
             "score": estado.score, "faltando": list(estado.faltando),
             "estagios_ordem": estagios_em_ordem(padrao),
         },
-        violacoes=violacoes, message_id=final,
+        violacoes=violacoes, message_id=final, identificacao_registrada=identificacao_registrada,
     )
+
+
+#: Code (migration 046 CHECK shape ``area:codigo``) of the thread ``evento`` row left when the stored copy of a registered CPF / RG could not be masked.
+EVENTO_REDACAO_FALHOU = "identificacao:redacao_falhou"
+
+
+async def _redigir_identificacao(
+    svc: ServicosCanal, turno: Any, org_id: UUID, thread_id: UUID, agent_id: UUID, lead_ref_id: UUID,
+) -> None:
+    """Guardrails B8.4: once this turn registered a CPF / RG, mask exactly those values in the thread's stored rows
+    (the lead's text, the text extracted from its media). A failure never reaches the lead -- it is LOGGED (type
+    only: no text, no number) and booked as a thread event the operator can see; the next registration retries."""
+    valores = list(dict.fromkeys(turno.identificacoes_registradas))
+    if not valores:
+        return
+    try:
+        await asyncio.to_thread(svc.messages.redigir_identificacao, org_id, thread_id, valores)
+    except Exception as exc:  # noqa: BLE001 -- the reply to the lead must not depend on the masking: seen, not silent
+        logger.error(
+            "agents.channel.identificacao_redacao_falhou org_id=%s thread_id=%s erro=%s",
+            org_id, thread_id, type(exc).__name__)
+        try:
+            svc.messages.add(
+                org_id, thread_id, "evento", EVENTO_REDACAO_FALHOU, agent_id=agent_id, lead_ref_id=lead_ref_id)
+        except Exception as exc2:  # noqa: BLE001 -- the second failure is logged too, still never raised
+            logger.error(
+                "agents.channel.identificacao_redacao_evento_falhou org_id=%s thread_id=%s erro=%s",
+                org_id, thread_id, type(exc2).__name__)
 
 
 def _loop_detectado(svc: ServicosCanal, org_id: UUID, thread_id: UUID, lote_lead: list[str], limites: Any) -> str | None:

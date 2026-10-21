@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Protocol, Sequence
 from uuid import UUID
@@ -96,6 +96,36 @@ def mascarar_email(email: str) -> str:
 def mascarar_telefone(tel: str) -> str:
     d = so_digitos(tel)
     return f"***{d[-4:]}" if len(d) >= 4 else "***"
+
+
+#: What a stored identity number is replaced by -- the SAME token social-wiring's copy uses
+#: (``identidade_mascara.MASCARA``), so both stores read alike.
+MASCARA = "***"
+_SEPARADORES = r"[.\-/ ]?"
+
+
+def redigir_valores(texto: str, valores: Sequence[str]) -> str:
+    """``texto`` with every explicit identity ``valor`` replaced by :data:`MASCARA`. Compared on digits/letters only
+    (``123.456.789-09`` and ``12345678909`` are the same value); a separator may sit between any two characters.
+    Only the given values are touched -- another number in the text stays. Idempotent."""
+    out = texto
+    for v in valores:
+        chave = re.sub(r"[^0-9A-Za-z]", "", str(v or ""))
+        if len(chave) < 5:
+            continue
+        out = re.sub(_SEPARADORES.join(re.escape(c) for c in chave), MASCARA, out, flags=re.IGNORECASE)
+    return out
+
+
+def redigir_estrutura(valor: Any, valores: Sequence[str]) -> Any:
+    """:func:`redigir_valores` over every string of a JSON-like value (dict keys are kept), returning a new value."""
+    if isinstance(valor, str):
+        return redigir_valores(valor, valores)
+    if isinstance(valor, dict):
+        return {k: redigir_estrutura(v, valores) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [redigir_estrutura(v, valores) for v in valor]
+    return valor
 
 
 def aparece_na_mensagem(campo: str, valor_normalizado: str, mensagens_lead: Sequence[str], ultimas: int = 8) -> bool:
@@ -188,6 +218,9 @@ class IdentificacaoResultado:
     status: str  # "registrado" | "invalido"
     faltando: tuple[str, ...]
     codigo: str | None = None  # typed refusal, no prose
+    #: The normalised CPF digits / RG alphanumerics just stored (``cpf`` / ``rg`` only), so the turn can redact the
+    #: lead's own copy afterwards. Never serialised, never in ``repr`` (so a log line or a traceback cannot carry it).
+    valor_registrado: str | None = field(default=None, repr=False)
 
     def to_payload(self) -> dict[str, Any]:
         return {"campo": self.campo, "status": self.status, "faltando": list(self.faltando)}
@@ -222,8 +255,9 @@ class IdentificacaoService:
         mensagens_lead: Sequence[str], message_id: UUID | None = None, obrigatorios: Sequence[str] = CAMPOS,
     ) -> IdentificacaoResultado:
         """Validate, check the value is in a real lead message, store. NEVER echoes the value."""
-        def res(status: str, codigo: str | None = None) -> IdentificacaoResultado:
-            return IdentificacaoResultado(campo, status, self.faltando(org_id, lead_ref_id, obrigatorios), codigo)
+        def res(status: str, codigo: str | None = None, registrado: str | None = None) -> IdentificacaoResultado:
+            return IdentificacaoResultado(
+                campo, status, self.faltando(org_id, lead_ref_id, obrigatorios), codigo, registrado)
 
         if campo not in CAMPOS:
             return res("invalido", "campo_desconhecido")
@@ -254,7 +288,7 @@ class IdentificacaoService:
             else:
                 cols = {"rg_cifrado": self._cipher.cifrar(norm), "rg_uf": uf}
         self._store.salvar_campos(org_id, lead_ref_id, cols, agent_id=agent_id, origem_msg_id=message_id)
-        return res("registrado")
+        return res("registrado", registrado=norm if campo in ("cpf", "rg") else None)
 
     def mascarado(self, org_id: UUID, lead_ref_id: UUID) -> dict[str, Any] | None:
         """The default display: CPF ***.***.***-12, RG masked, e-mail/phone partly hidden. Needs no key."""

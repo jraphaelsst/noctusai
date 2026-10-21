@@ -75,3 +75,21 @@ def test_thread_usage_counts_assistant_rows_of_that_thread_since_the_cutoff():
     calls = _calls(client, "messages")[0]
     eqs = [c[1] for c in calls if c[0] == "eq"]
     assert ("org_id", str(org)) in eqs and ("conversation_id", str(thread)) in eqs and ("role", "assistant") in eqs
+
+
+def test_redacting_an_identification_updates_only_the_rows_that_change_scoped_by_org_and_thread():
+    org, thread = uuid4(), uuid4()
+    sujo, limpo = str(uuid4()), str(uuid4())
+    rows = [
+        {"id": sujo, "texto": "meu cpf 529.982.247-25", "blocks": [], "meta": {"midia": {"texto_extraido": "52998224725"}}},
+        {"id": limpo, "texto": "oi", "blocks": [], "meta": {}},
+    ]
+    client = ScriptedClient(SimpleNamespace(data=rows), SimpleNamespace(data=[{"id": sujo}]))
+    n = SupabaseMessageStore(client).redigir_identificacao(org, thread, ["52998224725"])
+    assert n == 1
+    select, update = _calls(client, "messages")
+    eqs = [c[1] for c in select if c[0] == "eq"]
+    assert ("org_id", str(org)) in eqs and ("conversation_id", str(thread)) in eqs
+    [(payload,)] = [c[1] for c in update if c[0] == "update"]
+    assert payload == {"texto": "meu cpf ***", "meta": {"midia": {"texto_extraido": "***"}}}
+    assert ("id", sujo) in [c[1] for c in update if c[0] == "eq"] and ("org_id", str(org)) in [c[1] for c in update if c[0] == "eq"]

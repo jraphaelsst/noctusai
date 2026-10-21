@@ -1122,6 +1122,11 @@
         "default": null,
         "title": "Conversation Id"
       },
+      "identificacao_registrada": {
+        "default": false,
+        "title": "Identificacao Registrada",
+        "type": "boolean"
+      },
       "participante": {
         "anyOf": [
           {
