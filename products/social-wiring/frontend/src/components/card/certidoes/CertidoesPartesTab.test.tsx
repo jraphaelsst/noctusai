@@ -128,6 +128,10 @@ describe("CertidoesPartesTab", () => {
     await screen.findByTestId("parte-secao-c:cli-1");
     open("c:cli-1");
     fireEvent.click(screen.getByTestId("parte-reemitir-c:cli-1-cnd_federal"));
+    // Re-emitir is a paid emission too: nothing is sent until the dialog is confirmed.
+    expect(mockPost).not.toHaveBeenCalled();
+    expect((await screen.findByTestId("parte-confirmar-emissao-c:cli-1")).textContent).toMatch(/paga/);
+    fireEvent.click(screen.getByTestId("parte-confirmar-emissao-ok-c:cli-1"));
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/resultados/res-1/reemitir", {}));
   });
 

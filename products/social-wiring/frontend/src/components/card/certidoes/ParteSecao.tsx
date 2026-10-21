@@ -85,7 +85,7 @@ export function ParteSecao(p: ParteSecaoProps) {
   const [aberta, setAberta] = useState(false);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   // An emission is PAID (InfoSimples) — every request goes through this confirmation first.
-  const [pedido, setPedido] = useState<{ input: SolicitarEmissaoInput; nomes: string[]; daSelecao: boolean } | null>(null);
+  const [pedido, setPedido] = useState<{ executar: () => void; nomes: string[]; daSelecao: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const alvoUpload = useRef<string | null>(null);
   const mint = useMintResultadoUrl();
@@ -102,8 +102,10 @@ export function ParteSecao(p: ParteSecaoProps) {
           : !!l.tipo && alvo.includes(l.tipo),
       )
       .map((l) => l.rotulo);
-    setPedido({ input, nomes, daSelecao });
+    setPedido({ executar: () => p.onSolicitar(input), nomes, daSelecao });
   };
+  const pedirReemissao = (resultadoId: string, rotulo: string) =>
+    setPedido({ executar: () => p.onReemitir(resultadoId), nomes: [rotulo], daSelecao: false });
   const toggle = (tipo: string) =>
     setSelecionadas((prev) => {
       const n = new Set(prev);
@@ -291,7 +293,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                           <div className="flex flex-wrap items-center gap-1">
                             {auto && c.resultado_id && !c.pendencia && (
                               <Button size="sm" variant={c.stale_para_contrato ? "default" : "ghost"} className="h-7 px-2 text-xs"
-                                onClick={() => p.onReemitir(c.resultado_id as string)}
+                                onClick={() => pedirReemissao(c.resultado_id as string, linha.rotulo)}
                                 data-testid={`parte-reemitir-${parte.chave}-${linha.chave}`}>
                                 <RefreshCw className="mr-1 h-3 w-3" />
                                 Re-emitir
@@ -395,7 +397,7 @@ export function ParteSecao(p: ParteSecaoProps) {
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  Esta é uma emissão <strong>paga</strong> (InfoSimples): cada certidão solicitada gera
+                  Esta é uma emissão <strong>paga</strong> (InfoSimples): cada certidão solicitada (ou re-emitida) gera
                   cobrança para {parte.nome}.
                 </p>
                 {pedido && pedido.nomes.length > 0 && (
@@ -414,7 +416,7 @@ export function ParteSecao(p: ParteSecaoProps) {
               data-testid={`parte-confirmar-emissao-ok-${parte.chave}`}
               onClick={() => {
                 if (!pedido) return;
-                p.onSolicitar(pedido.input);
+                pedido.executar();
                 if (pedido.daSelecao) setSelecionadas(new Set());
                 setPedido(null);
               }}
