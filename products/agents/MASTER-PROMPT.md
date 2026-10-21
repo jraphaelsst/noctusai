@@ -225,6 +225,9 @@ routes, studio thread state/results).
   `definicao_lida`; writes are platform admin or a `studio:content-write` token (audited
   `conteudo_editado_mcp`); an org admin gets `GET/PUT /agents/{key}/specs` (its own values; text that
   contradicts a platform-locked rule is refused 422) and `GET /agents/{key}/status` (booleans only). The clients,
+  The `agent_audit_log.acao` CHECK must list every action in `stores/studio_definitions.AUDIT_ACOES` (047 restored
+  `definicao_lida` + `specs_org_editadas` after 034 dropped them; `tests/test_migration_audit_acao_check.py` pins the
+  latest definition).
   knowledge, evals and package-sync routers are platform-admin only too; the `studio:content-write` token is minted
   only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`, platform admin, org-bound to the
   platform org) with `expira_em_dias` 1..365 (omitted = 30, explicit `null` = never expires: a NULL `expires_at`,
