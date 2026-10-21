@@ -35,6 +35,10 @@ class NotificationSink(Protocol):
 
     def org_admin_ids(self, org_id: UUID) -> list[str]: ...
 
+    def user_label(self, user_id: UUID | str) -> str | None:
+        """A human label of the user (their e-mail) for a notice's "by whom"; ``None`` = unknown user."""
+        ...
+
     def already_sent(self, user_id: str, key: str) -> bool: ...
 
     def send(
@@ -52,6 +56,15 @@ class FakeNotificationSink:
         self.sent: list[dict[str, Any]] = []
         #: Set to an exception to make every ``send`` / ``org_admin_ids`` raise it (the failure path).
         self.fail_with: Exception | None = None
+        #: ``user_id -> label`` answered by :meth:`user_label`.
+        self.labels: dict[str, str] = {}
+        #: Set to an exception to make :meth:`user_label` raise it (the label lookup failing).
+        self.label_fail_with: Exception | None = None
+
+    def user_label(self, user_id: UUID | str) -> str | None:
+        if self.label_fail_with is not None:
+            raise self.label_fail_with
+        return self.labels.get(str(user_id))
 
     def platform_admin_ids(self) -> list[str]:
         return list(self.admin_ids)
@@ -106,6 +119,10 @@ class SupabaseNotificationSink:
         ids = {str(r["user_id"]) for r in iter_paged_rows(memberships, label="org_memberships") if r.get("user_id")}
         ids |= {str(r["id"]) for r in iter_paged_rows(home, label="noctus_users") if r.get("id")}
         return sorted(ids)
+
+    def user_label(self, user_id: UUID | str) -> str | None:
+        rows = self._core().table("noctus_users").select("id, email").eq("id", str(user_id)).limit(1).execute().data or []
+        return (rows[0].get("email") or None) if rows else None
 
     def already_sent(self, user_id: str, key: str) -> bool:
         resp = (

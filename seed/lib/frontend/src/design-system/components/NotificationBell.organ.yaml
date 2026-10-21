@@ -9,7 +9,7 @@ known_facts:
   - "Self-contained notification dropdown (no shadcn/ui deps) — intentionally avoids any UI primitive that might not be present in all products. Hook injection pattern: consumers pass a hooks object (useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas) rather than hard-wiring to a specific query client."
   - "3 consumers from @noctusai/lib/design-system in products (erp-imobiliario re-exports it locally, therapy-platform uses via @noctusai/seed/infra, and at least one other direct consumer). Meets consumer threshold but lacks test."
   - "Backed by the Notificacao type from seed/lib/frontend/src/notifications — the data shape is standardized. viewAllPath and onViewAll props enable per-product 'Ver todas' routing without forking."
-  - "onNavigate (2026-10-21): a notification carrying an in-app link (link, else metadata.link; same-origin paths only) is clickable -- marks read, closes, calls onNavigate(link). createProductInfra wires it to react-router navigate, so every product's bell opens the record a notice points at (agents lead opt-out -> /opt-outs?evento=<id>)."
+  - "onNavigate (2026-10-21): a notification carrying an in-app link (link, else metadata.link; same-origin paths only) is clickable -- marks read, closes, calls onNavigate(link). createProductInfra wires it to react-router navigate, so every product's bell opens the record a notice points at (agents lead opt-out -> social-wiring /julia/opt-outs?evento=<id>; the link is relative to the app the bell is in)."
   - "footer slot allows product-specific content at the bottom of the dropdown without structural override."
 
 errors_encountered: []

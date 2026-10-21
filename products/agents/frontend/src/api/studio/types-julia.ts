@@ -315,6 +315,7 @@ export interface ConformidadeViolacao {
 
 /** `OptOutEventoOut` -- one lead opt-out (who stopped it, why, what the lead said, did the owner get told). */
 export type OptOutOrigem = "agente" | "operador" | "integracao";
+export type OptOutTipo = "opt_out" | "reativacao";
 export type OptOutNotificacaoStatus = "pendente" | "enviada" | "falhou";
 export interface OptOutEvento {
   id: string;
@@ -326,6 +327,8 @@ export interface OptOutEvento {
   agent_key: string | null;
   agent_nome: string | null;
   ator_user_id: string | null;
+  /** `opt_out` (the lead asked to stop) or `reativacao` (an operator put the lead back in the agents flow). */
+  tipo: OptOutTipo;
   origem: OptOutOrigem | string;
   motivo: string;
   mensagem_lead: string | null;
@@ -334,8 +337,4 @@ export interface OptOutEvento {
   notificacao_status: OptOutNotificacaoStatus;
   notificacao_erro: string | null;
   notificado_em: string | null;
-}
-export interface OptOutEventosPage {
-  items: OptOutEvento[];
-  next_cursor: string | null;
 }

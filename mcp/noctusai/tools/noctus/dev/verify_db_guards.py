@@ -4178,7 +4178,7 @@ def _m(nn: str) -> str:
         "033": "033_julia_v2_threads.sql", "034": "034_julia_v2_controles.sql",
         "035": "035_julia_v2_threads_constraints.sql", "038": "038_julia_v2_evals_roteiro.sql",
         "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
-        "042": "042_julia_v2_lead_opt_out_eventos.sql",
+        "042": "042_julia_v2_lead_opt_out_eventos.sql", "043": "043_julia_v2_lead_reativacao.sql",
     }[nn]
 
 
@@ -4600,6 +4600,22 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
                 "VALUES (v_org, v_lead, 'agente', 'x', repeat('x', 1001));"),
         fragments=("lead_opt_out_eventos_mensagem_check",), what="an opt-out event quoting more than 1000 characters of the lead",
         rationale="The lead's own words are personal data: the quote is capped so the table cannot become a message archive.",
+    ),
+    # ── 043 · an operator can lift an opt-out, on the record ──
+    _julia_v2_probe(
+        probe_id="lead_opt_out_eventos.tipo_vocab", guard_name="lead_opt_out_eventos_tipo_check",
+        migrations=(_m("043"),), setup=_JV2_LEAD,
+        attack=(f"INSERT INTO {_JV2}.lead_opt_out_eventos (org_id, lead_ref_id, tipo, origem, motivo) "
+                "VALUES (v_org, v_lead, 'noc_probe', 'operador', 'x');"),
+        fragments=("lead_opt_out_eventos_tipo_check",), what="a consent-history event of an unknown type",
+        rationale="tipo (opt_out | reativacao) is how the owner's history tells a lead stopping from an operator putting it back; an unknown value would be an event nobody can read.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_refs.opt_in_origem_vocab", guard_name="lead_refs_opt_in_origem_check",
+        migrations=(_m("043"),), setup=_JV2_LEAD,
+        attack=f"UPDATE {_JV2}.lead_refs SET opt_in_origem = 'noc_probe' WHERE id = v_lead;",
+        fragments=("lead_refs_opt_in_origem_check",), what="a lead consent with an unknown origin",
+        rationale="opt_in_origem says HOW the lead came back (lead_iniciou, formulario_meta, campanha_ctwa, importado, reativacao_manual); an unknown value is a consent nobody can account for.",
     ),
     _julia_v2_probe(
         probe_id="registrar_opt_out.refuses_an_unknown_origin", guard_name="lead_opt_out_eventos_origem_check",

@@ -47,6 +47,7 @@ __all__ = [
     "LeadRefRecord",
     "OptOutEventoRecord",
     "OptOutResultado",
+    "ReativacaoResultado",
     "OutroAgenteAtivo",
     "ParticipanteEvento",
     "ParticipanteRecord",
@@ -73,6 +74,10 @@ HANDOFF_ESTADOS = ("transferido", "pausado", "concluido")
 OPT_IN_ORIGENS = ("lead_iniciou", "formulario_meta", "campanha_ctwa", "importado")
 #: ``lead_opt_out_eventos.origem`` CHECK (042): who recorded the opt-out.
 OPT_OUT_ORIGENS = ("agente", "operador", "integracao")
+#: ``lead_opt_out_eventos.tipo`` CHECK (043): an opt-out, or the operator lifting it.
+OPT_OUT_TIPOS = ("opt_out", "reativacao")
+#: ``lead_refs.opt_in_origem`` a manual reactivation stamps (043).
+OPT_IN_ORIGEM_REATIVACAO = "reativacao_manual"
 #: ``lead_opt_out_eventos.notificacao_status`` CHECK (042).
 NOTIFICACAO_STATUS = ("pendente", "enviada", "falhou")
 #: Caps mirrored from the 042 CHECKs (the RPC truncates to them).
@@ -153,6 +158,17 @@ class OptOutEventoRecord:
     notificacao_erro: str | None
     notificado_em: datetime | None
     created_at: datetime
+    #: ``opt_out`` or ``reativacao`` (043).
+    tipo: str = "opt_out"
+
+
+@dataclass(frozen=True)
+class ReativacaoResultado:
+    """What ``reativar_lead`` did. ``reativado`` is False when the lead had no active opt-out (nothing written)."""
+
+    encontrado: bool
+    reativado: bool
+    evento: OptOutEventoRecord | None
 
 
 @dataclass(frozen=True)
@@ -293,14 +309,26 @@ class ThreadStore(Protocol):
         transaction. Idempotent: an opt-out already in force records no second event (``evento_novo`` False)."""
         ...
 
+    def reativar_lead(
+        self, org_id: UUID, ref_externa: str, *, ator_user_id: UUID, motivo: str, em: datetime | None = None,
+    ) -> ReativacaoResultado:
+        """Lift the lead's active opt-out (``opt_in_em`` = now, ``opt_in_origem`` ``reativacao_manual``) and record
+        the ``reativacao`` event (operator, who, why) in the same transaction. The lead's next message is then served
+        by the agent that owns the line (an ``encerrado`` participant is reopened by it). No active opt-out ->
+        ``reativado`` False, nothing written."""
+        ...
+
     def get_opt_out_evento(self, org_id: UUID, evento_id: UUID) -> OptOutEventoRecord | None: ...
 
-    def ultimo_opt_out_evento(self, org_id: UUID, lead_ref_id: UUID) -> OptOutEventoRecord | None: ...
+    def ultimo_opt_out_evento(self, org_id: UUID, lead_ref_id: UUID) -> OptOutEventoRecord | None:
+        """The lead's latest consent-history event, of either ``tipo``."""
+        ...
 
     def listar_opt_out_eventos(
-        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None
+        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None, lead_ref_id: UUID | None = None,
     ) -> tuple[list[OptOutEventoRecord], str | None]:
-        """The org's opt-out events newest first, keyset-paged: ``(rows, next_cursor)`` (``None`` = last page)."""
+        """The org's opt-out + reactivation events newest first (optionally one lead's), keyset-paged:
+        ``(rows, next_cursor)`` (``None`` = last page)."""
         ...
 
     def marcar_notificacao_opt_out(
@@ -471,7 +499,7 @@ class FakeThreadStore:
         if not ja_em_vigor:
             self._leads[lead.id] = replace(lead, opt_out_em=em, updated_at=utcnow())
         moved = self._encerrar_participacoes_do_lead(org_id, lead.id)
-        existente = self.ultimo_opt_out_evento(org_id, lead.id) if ja_em_vigor else None
+        existente = self._ultimo_opt_out_tipo(org_id, lead.id) if ja_em_vigor else None
         if existente is not None:
             return OptOutResultado(True, moved, existente, False)
         evento = OptOutEventoRecord(
@@ -485,6 +513,34 @@ class FakeThreadStore:
         self._opt_out_eventos.append(evento)
         return OptOutResultado(True, moved, evento, True)
 
+    def _ultimo_opt_out_tipo(self, org_id: UUID, lead_ref_id: UUID) -> OptOutEventoRecord | None:
+        do_lead = [
+            e for e in self._opt_out_eventos
+            if e.org_id == org_id and e.lead_ref_id == lead_ref_id and e.tipo == "opt_out"
+        ]
+        return max(do_lead, key=lambda e: (e.em, e.created_at)) if do_lead else None
+
+    def reativar_lead(
+        self, org_id: UUID, ref_externa: str, *, ator_user_id: UUID, motivo: str, em: datetime | None = None,
+    ) -> ReativacaoResultado:
+        lead = self.get_lead_ref_by_externa(org_id, ref_externa)
+        if lead is None:
+            return ReativacaoResultado(False, False, None)
+        if not lead.opt_out_ativo:
+            return ReativacaoResultado(True, False, None)
+        em = max(em or utcnow(), lead.opt_out_em)
+        self._leads[lead.id] = replace(
+            lead, opt_in_em=em, opt_in_origem=OPT_IN_ORIGEM_REATIVACAO, updated_at=utcnow(),
+        )
+        evento = OptOutEventoRecord(
+            id=uuid4(), org_id=org_id, lead_ref_id=lead.id, em=em, origem="operador", agent_id=None, thread_id=None,
+            ator_user_id=ator_user_id, motivo=motivo.strip()[:OPT_OUT_MOTIVO_MAX], mensagem_lead=None,
+            participantes_encerrados=0, notificacao_status="pendente", notificacao_erro=None, notificado_em=None,
+            created_at=utcnow(), tipo="reativacao",
+        )
+        self._opt_out_eventos.append(evento)
+        return ReativacaoResultado(True, True, evento)
+
     def get_opt_out_evento(self, org_id: UUID, evento_id: UUID) -> OptOutEventoRecord | None:
         return next((e for e in self._opt_out_eventos if e.id == evento_id and e.org_id == org_id), None)
 
@@ -493,9 +549,12 @@ class FakeThreadStore:
         return max(do_lead, key=lambda e: (e.em, e.created_at)) if do_lead else None
 
     def listar_opt_out_eventos(
-        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None
+        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None, lead_ref_id: UUID | None = None,
     ) -> tuple[list[OptOutEventoRecord], str | None]:
-        rows = sorted((e for e in self._opt_out_eventos if e.org_id == org_id), key=lambda e: (e.em, str(e.id)), reverse=True)
+        rows = sorted(
+            (e for e in self._opt_out_eventos if e.org_id == org_id and (lead_ref_id is None or e.lead_ref_id == lead_ref_id)),
+            key=lambda e: (e.em, str(e.id)), reverse=True,
+        )
         if cursor:
             c_em, c_id = _decodificar_cursor(cursor)
             rows = [e for e in rows if (e.em, str(e.id)) < (c_em, str(c_id))]
@@ -813,6 +872,26 @@ class SupabaseThreadStore:
         evento = self.get_opt_out_evento(org_id, UUID(str(data["evento_id"]))) if data.get("evento_id") else None
         return OptOutResultado(True, int(data.get("participantes_encerrados") or 0), evento, bool(data.get("evento_novo")))
 
+    def reativar_lead(
+        self, org_id: UUID, ref_externa: str, *, ator_user_id: UUID, motivo: str, em: datetime | None = None,
+    ) -> ReativacaoResultado:
+        resp = exec_rpc(self._client, _SCHEMA, "reativar_lead", {
+            "p_org_id": str(org_id), "p_produto": PRODUTO_SW, "p_ref_externa": ref_externa,
+            "p_ator_user_id": str(ator_user_id), "p_motivo": motivo,
+            "p_em": em.isoformat() if em is not None else None,
+        })
+        data = resp.data
+        if isinstance(data, list):
+            data = data[0] if data else None
+        if not isinstance(data, dict):
+            raise RuntimeError("reativar_lead returned no result")
+        if not data.get("encontrado"):
+            return ReativacaoResultado(False, False, None)
+        if not data.get("reativado"):
+            return ReativacaoResultado(True, False, None)
+        evento = self.get_opt_out_evento(org_id, UUID(str(data["evento_id"])))
+        return ReativacaoResultado(True, True, evento)
+
     def get_opt_out_evento(self, org_id: UUID, evento_id: UUID) -> OptOutEventoRecord | None:
         rows = (
             self._t("lead_opt_out_eventos").select("*")
@@ -829,9 +908,11 @@ class SupabaseThreadStore:
         return self._opt_out_evento(rows[0]) if rows else None
 
     def listar_opt_out_eventos(
-        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None
+        self, org_id: UUID, *, limit: int = 50, cursor: str | None = None, lead_ref_id: UUID | None = None,
     ) -> tuple[list[OptOutEventoRecord], str | None]:
         q = self._t("lead_opt_out_eventos").select("*").eq("org_id", str(org_id))
+        if lead_ref_id is not None:
+            q = q.eq("lead_ref_id", str(lead_ref_id))
         if cursor:
             c_em, c_id = _decodificar_cursor(cursor)
             em = c_em.isoformat().replace("+00:00", "Z")
@@ -1066,7 +1147,7 @@ class SupabaseThreadStore:
             mensagem_lead=row.get("mensagem_lead"), participantes_encerrados=int(row.get("participantes_encerrados") or 0),
             notificacao_status=row["notificacao_status"], notificacao_erro=row.get("notificacao_erro"),
             notificado_em=_dt(row["notificado_em"]) if row.get("notificado_em") else None,
-            created_at=_dt(row["created_at"]),
+            created_at=_dt(row["created_at"]), tipo=row.get("tipo") or "opt_out",
         )
 
     @staticmethod

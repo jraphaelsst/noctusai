@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -26,6 +26,9 @@ __all__ = [
     "OptOutEventosPage",
     "OptOutOut",
     "OptOutRequest",
+    "NotificarOptOutRequest",
+    "ReativarOut",
+    "ReativarRequest",
     "MensagemThreadOut",
     "ParticipanteEstadoRequest",
     "ParticipanteOut",
@@ -108,6 +111,8 @@ class OptOutEventoOut(BaseModel):
     agent_key: str | None
     agent_nome: str | None
     ator_user_id: UUID | None
+    #: ``opt_out`` (the lead asked to stop) or ``reativacao`` (an operator lifted it).
+    tipo: Literal["opt_out", "reativacao"]
     origem: Literal["agente", "operador", "integracao"]
     #: ``nao_informado`` when nobody gave a reason.
     motivo: str
@@ -120,7 +125,7 @@ class OptOutEventoOut(BaseModel):
 
 
 class OptOutEventosPage(BaseModel):
-    """``GET /api/channels/opt-outs``: newest first; pass ``next_cursor`` back as ``cursor`` for the next page."""
+    """``GET /api/channels/opt-outs``: opt-outs and reactivations, newest first; pass ``next_cursor`` back as ``cursor`` for the next page."""
 
     items: list[OptOutEventoOut]
     next_cursor: str | None
@@ -135,6 +140,35 @@ class LeadConsentOut(BaseModel):
     opt_out_ativo: bool
     #: The latest recorded opt-out (who / why / what the lead said / notification state); ``None`` = none yet.
     opt_out_evento: OptOutEventoOut | None = None
+
+
+class ReativarRequest(StrictHttpModel):
+    """``POST /api/channels/leads/{ref}/reativar``: an operator puts the lead back into the agents flow."""
+
+    #: The signed-in social-wiring user who did it (agents has no session of its own here).
+    ator_user_id: UUID
+    #: Why, in the operator's words (the owner's record + the notice carry it).
+    motivo: str = Field(min_length=1, max_length=500)
+
+    @field_validator("motivo")
+    @classmethod
+    def _motivo_nao_vazio(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("motivo must not be blank")
+        return v
+
+
+class NotificarOptOutRequest(StrictHttpModel):
+    """``POST /api/channels/opt-outs/{evento_id}/notificar``: who asked for the re-send."""
+
+    ator_user_id: UUID
+
+
+class ReativarOut(LeadConsentOut):
+    """The lead's consent state after the reactivation, plus the ``reativacao`` event it recorded."""
+
+    evento: OptOutEventoOut
 
 
 class OptOutOut(LeadConsentOut):

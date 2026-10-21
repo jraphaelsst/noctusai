@@ -89,13 +89,14 @@ CHANNEL_ROUTES = [
     ("DELETE", "/api/channels/leads/contato-1"),
     ("POST", "/api/channels/leads/contato-1/opt-out"),
     ("GET", "/api/channels/leads/contato-1/consentimento"),
+    ("GET", "/api/channels/opt-outs"),
+    ("POST", "/api/channels/leads/contato-1/reativar"),
+    ("POST", f"/api/channels/opt-outs/{uuid4()}/notificar"),
 ]
 STUDIO_ROUTES = [
     ("GET", "/api/studio/agents/julia/controle"),
     ("PUT", "/api/studio/agents/julia/controle"),
     ("PATCH", f"/api/studio/threads/{uuid4()}/participantes/julia"),
-    ("GET", "/api/studio/opt-outs"),
-    ("POST", f"/api/studio/opt-outs/{uuid4()}/notificar"),
 ]
 
 

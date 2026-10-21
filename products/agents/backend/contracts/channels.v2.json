@@ -1425,6 +1425,14 @@
               }
             ],
             "title": "Thread Id"
+          },
+          "tipo": {
+            "enum": [
+              "opt_out",
+              "reativacao"
+            ],
+            "title": "Tipo",
+            "type": "string"
           }
         },
         "required": [
@@ -1437,6 +1445,7 @@
           "agent_key",
           "agent_nome",
           "ator_user_id",
+          "tipo",
           "origem",
           "motivo",
           "mensagem_lead",
@@ -1514,6 +1523,22 @@
       "opt_out_ativo"
     ],
     "title": "LeadConsentOut",
+    "type": "object"
+  },
+  "NotificarOptOutRequest": {
+    "additionalProperties": false,
+    "description": "``POST /api/channels/opt-outs/{evento_id}/notificar``: who asked for the re-send.",
+    "properties": {
+      "ator_user_id": {
+        "format": "uuid",
+        "title": "Ator User Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "ator_user_id"
+    ],
+    "title": "NotificarOptOutRequest",
     "type": "object"
   },
   "OptOutEventoOut": {
@@ -1679,6 +1704,14 @@
           }
         ],
         "title": "Thread Id"
+      },
+      "tipo": {
+        "enum": [
+          "opt_out",
+          "reativacao"
+        ],
+        "title": "Tipo",
+        "type": "string"
       }
     },
     "required": [
@@ -1691,6 +1724,7 @@
       "agent_key",
       "agent_nome",
       "ator_user_id",
+      "tipo",
       "origem",
       "motivo",
       "mensagem_lead",
@@ -1701,6 +1735,233 @@
       "notificado_em"
     ],
     "title": "OptOutEventoOut",
+    "type": "object"
+  },
+  "OptOutEventosPage": {
+    "$defs": {
+      "OptOutEventoOut": {
+        "description": "One opt-out that took effect: who, why, what the lead said, and whether the owner was told.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "agent_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Key"
+          },
+          "agent_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Nome"
+          },
+          "ator_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ator User Id"
+          },
+          "em": {
+            "format": "date-time",
+            "title": "Em",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lead_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Nome"
+          },
+          "lead_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Ref"
+          },
+          "lead_telefone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Telefone"
+          },
+          "mensagem_lead": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mensagem Lead"
+          },
+          "motivo": {
+            "title": "Motivo",
+            "type": "string"
+          },
+          "notificacao_erro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificacao Erro"
+          },
+          "notificacao_status": {
+            "enum": [
+              "pendente",
+              "enviada",
+              "falhou"
+            ],
+            "title": "Notificacao Status",
+            "type": "string"
+          },
+          "notificado_em": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificado Em"
+          },
+          "origem": {
+            "enum": [
+              "agente",
+              "operador",
+              "integracao"
+            ],
+            "title": "Origem",
+            "type": "string"
+          },
+          "participantes_encerrados": {
+            "title": "Participantes Encerrados",
+            "type": "integer"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "tipo": {
+            "enum": [
+              "opt_out",
+              "reativacao"
+            ],
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lead_ref",
+          "lead_nome",
+          "lead_telefone",
+          "thread_id",
+          "agent_id",
+          "agent_key",
+          "agent_nome",
+          "ator_user_id",
+          "tipo",
+          "origem",
+          "motivo",
+          "mensagem_lead",
+          "em",
+          "participantes_encerrados",
+          "notificacao_status",
+          "notificacao_erro",
+          "notificado_em"
+        ],
+        "title": "OptOutEventoOut",
+        "type": "object"
+      }
+    },
+    "description": "``GET /api/channels/opt-outs``: opt-outs and reactivations, newest first; pass ``next_cursor`` back as ``cursor`` for the next page.",
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/OptOutEventoOut"
+        },
+        "title": "Items",
+        "type": "array"
+      },
+      "next_cursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Cursor"
+      }
+    },
+    "required": [
+      "items",
+      "next_cursor"
+    ],
+    "title": "OptOutEventosPage",
     "type": "object"
   },
   "OptOutOut": {
@@ -1868,6 +2129,14 @@
               }
             ],
             "title": "Thread Id"
+          },
+          "tipo": {
+            "enum": [
+              "opt_out",
+              "reativacao"
+            ],
+            "title": "Tipo",
+            "type": "string"
           }
         },
         "required": [
@@ -1880,6 +2149,7 @@
           "agent_key",
           "agent_nome",
           "ator_user_id",
+          "tipo",
           "origem",
           "motivo",
           "mensagem_lead",
@@ -2044,6 +2314,299 @@
       }
     },
     "title": "OptOutRequest",
+    "type": "object"
+  },
+  "ReativarOut": {
+    "$defs": {
+      "OptOutEventoOut": {
+        "description": "One opt-out that took effect: who, why, what the lead said, and whether the owner was told.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "agent_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Key"
+          },
+          "agent_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Nome"
+          },
+          "ator_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ator User Id"
+          },
+          "em": {
+            "format": "date-time",
+            "title": "Em",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lead_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Nome"
+          },
+          "lead_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Ref"
+          },
+          "lead_telefone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Telefone"
+          },
+          "mensagem_lead": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mensagem Lead"
+          },
+          "motivo": {
+            "title": "Motivo",
+            "type": "string"
+          },
+          "notificacao_erro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificacao Erro"
+          },
+          "notificacao_status": {
+            "enum": [
+              "pendente",
+              "enviada",
+              "falhou"
+            ],
+            "title": "Notificacao Status",
+            "type": "string"
+          },
+          "notificado_em": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificado Em"
+          },
+          "origem": {
+            "enum": [
+              "agente",
+              "operador",
+              "integracao"
+            ],
+            "title": "Origem",
+            "type": "string"
+          },
+          "participantes_encerrados": {
+            "title": "Participantes Encerrados",
+            "type": "integer"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "tipo": {
+            "enum": [
+              "opt_out",
+              "reativacao"
+            ],
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lead_ref",
+          "lead_nome",
+          "lead_telefone",
+          "thread_id",
+          "agent_id",
+          "agent_key",
+          "agent_nome",
+          "ator_user_id",
+          "tipo",
+          "origem",
+          "motivo",
+          "mensagem_lead",
+          "em",
+          "participantes_encerrados",
+          "notificacao_status",
+          "notificacao_erro",
+          "notificado_em"
+        ],
+        "title": "OptOutEventoOut",
+        "type": "object"
+      }
+    },
+    "description": "The lead's consent state after the reactivation, plus the ``reativacao`` event it recorded.",
+    "properties": {
+      "evento": {
+        "$ref": "#/$defs/OptOutEventoOut"
+      },
+      "lead_ref": {
+        "title": "Lead Ref",
+        "type": "string"
+      },
+      "opt_in_em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt In Em"
+      },
+      "opt_in_origem": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt In Origem"
+      },
+      "opt_out_ativo": {
+        "title": "Opt Out Ativo",
+        "type": "boolean"
+      },
+      "opt_out_em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt Out Em"
+      },
+      "opt_out_evento": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/OptOutEventoOut"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "lead_ref",
+      "opt_in_em",
+      "opt_in_origem",
+      "opt_out_em",
+      "opt_out_ativo",
+      "evento"
+    ],
+    "title": "ReativarOut",
+    "type": "object"
+  },
+  "ReativarRequest": {
+    "additionalProperties": false,
+    "description": "``POST /api/channels/leads/{ref}/reativar``: an operator puts the lead back into the agents flow.",
+    "properties": {
+      "ator_user_id": {
+        "format": "uuid",
+        "title": "Ator User Id",
+        "type": "string"
+      },
+      "motivo": {
+        "maxLength": 500,
+        "minLength": 1,
+        "title": "Motivo",
+        "type": "string"
+      }
+    },
+    "required": [
+      "ator_user_id",
+      "motivo"
+    ],
+    "title": "ReativarRequest",
     "type": "object"
   },
   "versao": "channels.v2"

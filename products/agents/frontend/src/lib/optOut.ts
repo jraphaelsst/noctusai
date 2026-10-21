@@ -1,4 +1,4 @@
-/** Display helpers of a lead opt-out event (shared by the Opt-outs page and the thread banner). */
+/** Display helpers of a lead opt-out event (used by the thread banner). */
 import type { OptOutEvento } from "@/api/studio/types-julia";
 
 /** The backend's default when nobody gave a reason (`OPT_OUT_MOTIVO_PADRAO`). */
@@ -18,9 +18,4 @@ export function optOutMotivo(ev: Pick<OptOutEvento, "motivo">): string {
 export function optOutData(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-}
-
-/** The page + highlighted record the banner and the notification bell link to. */
-export function optOutLink(eventoId: string): string {
-  return `/opt-outs?evento=${encodeURIComponent(eventoId)}`;
 }

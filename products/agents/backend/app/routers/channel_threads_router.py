@@ -83,6 +83,9 @@ from app.schemas.channel_threads import (
     OptOutEventoOut,
     OptOutEventosPage,
     OptOutOut,
+    ReativarOut,
+    ReativarRequest,
+    NotificarOptOutRequest,
     OptOutRequest,
     ParticipanteEstadoRequest,
     ParticipanteOut,
@@ -660,43 +663,83 @@ async def lead_opt_out(
         evento_id=res.evento.id if res.evento is not None else None))
 
 
-@router.get("/api/studio/opt-outs", response_model=OptOutEventosPage)
+@router.post("/api/channels/leads/{ref}/reativar", response_model=ReativarOut)
+async def lead_reativar(
+    ref: str,
+    payload: ReativarRequest,
+    ctx: AuthContext = Depends(require_channel_turn),
+    threads=Depends(get_thread_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+    sink=Depends(get_notification_sink_dep),
+) -> ReativarOut:
+    """An operator puts the lead back into the agents flow ("reativar o atendimento"). The opt-out is lifted
+    (``opt_in_em`` now, ``opt_in_origem`` ``reativacao_manual``) and a ``reativacao`` event (operator, who, why) is
+    recorded in one transaction; the org's owners/admins are told (a failed notice is recorded on the event, never
+    an undone reactivation). Nothing else moves: the lead's next message reopens the ``encerrado`` participation of
+    the agent that owns the line (``controles.decidir``). ``404 lead_desconhecido``; ``409 sem_opt_out_ativo``
+    when the lead has no opt-out to lift."""
+    _valida_ref(ref)
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    service = OptOutService(threads, sink, agentes=lambda _org: agentes)
+    res = service.reativar(ctx.org_id, ref, ator_user_id=payload.ator_user_id, motivo=payload.motivo)
+    if not res.encontrado:
+        raise _err(404, "lead_desconhecido", "Lead não encontrado.")
+    if not res.reativado or res.evento is None:
+        raise _err(409, "sem_opt_out_ativo", "O lead não tem opt-out ativo para reativar.")
+    lead = threads.get_lead_ref_by_externa(ctx.org_id, ref)
+    evento = evento_out(ctx.org_id, res.evento, threads, agentes, lead)
+    return ReativarOut(**_consent_out(lead, evento), evento=evento)
+
+
+@router.get("/api/channels/opt-outs", response_model=OptOutEventosPage)
 async def list_opt_outs(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=200),
-    ctx: AuthContext = Depends(require_member),
+    lead_ref: str | None = Query(default=None, max_length=256),
+    ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
     threads=Depends(get_thread_store_dep),
 ) -> OptOutEventosPage:
-    """Every opt-out of the org, newest first, with who / why / what the lead said and whether the owner was
-    notified. Org member read (the signed-in user's JWT). Lives under ``/api/studio`` -- every ``/api/channels``
-    route is token-only and refuses a human session (``test_scope_isolation``)."""
+    """The org's consent history -- opt-outs AND reactivations (``tipo``) -- newest first, with who / why / what
+    the lead said and whether the owner was notified. The org comes from the token. ``lead_ref`` narrows it to one
+    lead (an unknown lead has no events: an empty page). This is what social-wiring's opt-out screen reads."""
+    lead_id = None
+    if lead_ref is not None:
+        lead = threads.get_lead_ref_by_externa(ctx.org_id, lead_ref)
+        if lead is None:
+            return OptOutEventosPage(items=[], next_cursor=None)
+        lead_id = lead.id
     try:
-        rows, proximo = threads.listar_opt_out_eventos(ctx.org_id, limit=limit, cursor=cursor)
+        rows, proximo = threads.listar_opt_out_eventos(ctx.org_id, limit=limit, cursor=cursor, lead_ref_id=lead_id)
     except ValueError as exc:
         raise _err(422, "invalid_cursor", "Cursor inválido.") from exc
     agentes = mapa_agentes(studio_store, ctx.org_id)
     return OptOutEventosPage(items=[evento_out(ctx.org_id, e, threads, agentes) for e in rows], next_cursor=proximo)
 
 
-@router.post("/api/studio/opt-outs/{evento_id}/notificar", response_model=OptOutEventoOut)
+@router.post("/api/channels/opt-outs/{evento_id}/notificar", response_model=OptOutEventoOut)
 async def renotificar_opt_out(
     evento_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    payload: NotificarOptOutRequest,
+    ctx: AuthContext = Depends(require_channel_turn),
     studio_store=Depends(get_studio_definition_store_dep),
     threads=Depends(get_thread_store_dep),
     sink=Depends(get_notification_sink_dep),
 ) -> OptOutEventoOut:
-    """Re-send the owner's notice of an opt-out whose notification did not go out (``falhou`` / ``pendente``)
-    and record the new outcome on the event. Org admin. Idempotent: recipients that already got the notice are
-    skipped (dedup on the event), and an event already ``enviada`` is returned unchanged -- never a second notice.
-    A failed re-send is a ``200`` with ``notificacao_status`` ``falhou`` and the error, like the first attempt."""
+    """Re-send the owner's notice of an event whose notification did not go out (``falhou`` / ``pendente``) and
+    record the new outcome on it. ``ator_user_id`` is the social-wiring user who asked (logged). Idempotent:
+    recipients that already got the notice are skipped (dedup on the event), and an event already ``enviada`` is
+    returned unchanged -- never a second notice. A failed re-send is a ``200`` with ``notificacao_status``
+    ``falhou`` and the error, like the first attempt."""
     ev = threads.get_opt_out_evento(ctx.org_id, evento_id)
     if ev is None:
         raise _err(404, "opt_out_not_found", "Registro de opt-out não encontrado.")
     agentes = mapa_agentes(studio_store, ctx.org_id)
     lead = threads.get_lead_ref(ctx.org_id, ev.lead_ref_id)
     if ev.notificacao_status != "enviada" and lead is not None:
+        logger.info(
+            "agents.lead_opt_out.renotificar org_id=%s evento_id=%s ator_user_id=%s", ctx.org_id, ev.id, payload.ator_user_id,
+        )
         ev = OptOutService(threads, sink, agentes=lambda _org: agentes).notificar(ctx.org_id, ev, lead.ref_externa)
     return evento_out(ctx.org_id, ev, threads, agentes, lead)
 

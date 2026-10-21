@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet, BookOpen, BellOff } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet, BookOpen } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -28,8 +28,6 @@ const Agentes = lazy(() => import("@/pages/Agentes"));
 const AgentesCatalogo = lazy(() => import("@/pages/AgentesCatalogo"));
 const BiaPersona = lazy(() => import("@/pages/BiaPersona"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
-// Leads that asked to stop being contacted (the notification bell links here).
-const OptOuts = lazy(() => import("@/pages/OptOuts"));
 // Pre-rename routes (Julia -> Bia, lead-imob -> julia) — NOC-REMEDIATE[drop-julia-route-redirects].
 const RedirectJuliaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaToBia })));
 const RedirectJuliaPersonaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaPersonaToBia })));
@@ -56,7 +54,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen, route: "agentes-catalogo" },
       { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
-      { name: "Opt-outs", href: "/opt-outs", icon: BellOff, route: "opt-outs" },
     ],
   },
   {
@@ -85,7 +82,6 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen },
       { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
-      { name: "Opt-outs", href: "/opt-outs", icon: BellOff },
     ],
   },
   {
@@ -121,7 +117,6 @@ export default createProductApp({
     { path: "/julia", component: RedirectJuliaToBia },
     { path: "/agentes/julia/persona", component: RedirectJuliaPersonaToBia },
     { path: "/aprovacoes", component: Aprovacoes },
-    { path: "/opt-outs", component: OptOuts },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro/*", component: Financeiro },
     { path: "/credenciais", component: Credenciais },

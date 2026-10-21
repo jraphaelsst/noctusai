@@ -15,7 +15,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.schemas.channel_threads import LeadConsentOut, OptOutEventoOut, OptOutOut, OptOutRequest
+from app.schemas.channel_threads import (
+    LeadConsentOut, NotificarOptOutRequest, OptOutEventoOut, OptOutEventosPage, OptOutOut, OptOutRequest, ReativarOut,
+    ReativarRequest,
+)
 from app.schemas.channels import ChannelTurnRequest, ChannelTurnResponse, ContextoEstado
 
 __all__ = ["CONTRACT_PATH", "VERSAO", "gerar", "render"]
@@ -26,9 +29,12 @@ CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "channels.v2
 
 def gerar() -> dict[str, Any]:
     """``{"versao", "ChannelTurnRequest", "ChannelTurnResponse", "ContextoEstado", "OptOutRequest", "OptOutOut",
-    "OptOutEventoOut", "LeadConsentOut"}``, each a self-contained JSON Schema (its ``$defs`` inside). The last
-    four are the lead opt-out call (``POST /api/channels/leads/{ref}/opt-out``), the event record it returns and the
-    thread-independent consent read (``GET /api/channels/leads/{ref}/consentimento``)."""
+    "OptOutEventoOut", "LeadConsentOut", "OptOutEventosPage", "ReativarRequest", "ReativarOut",
+    "NotificarOptOutRequest"}``, each a self-contained JSON Schema (its ``$defs`` inside). The last seven are the lead
+    opt-out call (``POST /api/channels/leads/{ref}/opt-out``), the event record it returns, the thread-independent
+    consent read (``GET /api/channels/leads/{ref}/consentimento``), the org's consent history (``GET
+    /api/channels/opt-outs``), the reactivation (``POST /api/channels/leads/{ref}/reativar``) and the notice re-send
+    (``POST /api/channels/opt-outs/{evento_id}/notificar``)."""
     return {
         "versao": VERSAO,
         "ChannelTurnRequest": ChannelTurnRequest.model_json_schema(),
@@ -38,6 +44,10 @@ def gerar() -> dict[str, Any]:
         "OptOutOut": OptOutOut.model_json_schema(mode="serialization"),
         "OptOutEventoOut": OptOutEventoOut.model_json_schema(mode="serialization"),
         "LeadConsentOut": LeadConsentOut.model_json_schema(mode="serialization"),
+        "OptOutEventosPage": OptOutEventosPage.model_json_schema(mode="serialization"),
+        "ReativarRequest": ReativarRequest.model_json_schema(),
+        "ReativarOut": ReativarOut.model_json_schema(mode="serialization"),
+        "NotificarOptOutRequest": NotificarOptOutRequest.model_json_schema(),
     }
 
 

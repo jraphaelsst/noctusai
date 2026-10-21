@@ -95,15 +95,21 @@ products/agents/backend/app/
   owners/admins in-app (`kind agents.lead_opt_out`, deduped on the event; the sink is `app/notifications.py`). The
   outcome of the notice is on the event (`pendente | enviada | falhou` + the error): a failed notice is a visible row and
   an error log and never undoes the opt-out. A repeat while the opt-out is in force records no second event and notifies
-  nobody again; an opt-in lifts it. `GET /api/studio/opt-outs` (member) lists the events, newest first; the thread and
-  the opt-in / opt-out responses expose the latest as `opt_out_evento`. Migration 042.
-  Also: `GET /api/channels/leads/{ref}/consentimento` (token, thread-independent; unknown lead -> 404
-  `lead_desconhecido`) returns the consent state + `opt_out_evento`; `POST /api/studio/opt-outs/{id}/notificar` (org
-  admin) re-sends a `falhou`/`pendente` notice (dedup keeps it idempotent); `GET /api/conversations/channel` items carry
-  `opt_out_evento`. The notice's `metadata.link` is `/opt-outs?evento=<id>`: the agents UI page `/opt-outs` (migration
-  043, status_pagina `opt-outs`) lists the records (failed notices prominent, admin "Reenviar notificação"), the thread
-  view shows a banner, and the seed `NotificationBell` opens `link`/`metadata.link` on click (`onNavigate`, wired in
-  `createProductInfra`).
+  nobody again; an opt-in lifts it. The thread and the opt-in / opt-out responses expose the latest event as
+  `opt_out_evento`. Migration 042. The opt-out is a per-ORG setting owned by social-wiring (owner decision 2026-10-21):
+  agents stores and enforces it and has NO Opt-outs page; SW calls the token routes below.
+  Token routes for SW (all `require_channel_*`, org from the token, human sessions 403): `GET
+  /api/channels/leads/{ref}/consentimento` (thread-independent; unknown lead -> 404 `lead_desconhecido`);
+  `GET /api/channels/opt-outs?limit=1..100&cursor=&lead_ref=` (`{items, next_cursor}`, newest first, both `tipo`s);
+  `POST /api/channels/opt-outs/{evento_id}/notificar` `{ator_user_id}` (re-send a `falhou`/`pendente` notice, idempotent;
+  a re-send that fails again is 200 with `falhou`); `POST /api/channels/leads/{ref}/reativar` `{ator_user_id, motivo}`
+  (both required) lifts the opt-out (`opt_in_origem` `reativacao_manual`) and records a `tipo=reativacao` event in one
+  RPC (`agents.reativar_lead`), notifies the org admins; 409 `sem_opt_out_ativo` / 404 `lead_desconhecido`. The lead is
+  back in the flow: its next message reopens the `encerrado` participation (controles). `lead_opt_out_eventos.tipo`
+  (`opt_out` | `reativacao`) is on every `OptOutEventoOut`. Notices carry `metadata.product=social-wiring` and
+  `metadata.link=/julia/opt-outs?evento=<id>` (SW's julia pages). `GET /api/conversations/channel` items carry
+  `opt_out_evento`; the staff thread view shows it as a plain-text banner. The seed `NotificationBell` opens
+  `link`/`metadata.link` on click (`onNavigate`, wired in `createProductInfra`). Migration 043.
 
 ### Julia v2 — mechanism evals as the publish gate (A-EVAL)
 - `eval_cases` gain `suite` (`mecanismo` | `comportamento`), `k`, `roteiro` (scripted multi-turn lead messages + fixture catalogue) and `asserts` (deterministic, code-checked: ferramentas_incluem/proibidas, estagio_final, criterios_registrados, ofertas_por_lote, sem_violacoes, identificacao_completa, handoff_para, sem_vazamento, skill_aberta_antes_de). Migration 038, service-role only.
