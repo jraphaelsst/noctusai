@@ -23,7 +23,8 @@ import { createApiClient } from "@noctusai/lib/api";
 import { createDeadSessionHandler, createSupabaseTokenRefresher } from "@noctusai/lib/auth";
 import { createNotificationHooks } from "@noctusai/lib/notifications";
 import { createAuthProvider } from "@noctusai/lib/components";
-import { NotificationBell as SharedNotificationBell } from "@noctusai/lib/design-system";
+import { NotificationBell as SharedNotificationBell, withNextPath } from "@noctusai/lib/design-system";
+import { env } from "@noctusai/lib";
 
 interface ProductInfraConfig {
   /** Database schema name. Optional — auto-detected from VITE_PRODUCT_SCHEMA
@@ -137,9 +138,35 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
 
   // Pre-wired notification bell
   const notificationHooks = { useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas };
+  /**
+   * Open a notice's link in the product that owns it. Core mints the SSO launch URL (license + known-product
+   * check, product URL from the same resolver the launcher uses -- `resolve_product_url`); we only append the
+   * landing path. Same request shape as SSOCallback's redeem: `credentials: include` so core's browser-bind
+   * cookie is set. Rejects (unknown product, no licence, refused URL) so the bell navigates nowhere.
+   */
+  async function openInProduct(product: string, link: string) {
+    const token = await getAuthToken();
+    const res = await fetch(`${env.CORE_API_URL}/api/sso/token`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ product_slug: product }),
+    });
+    if (!res.ok) throw new Error(`sso/token ${res.status}`);
+    const target = withNextPath((await res.json()).redirect_url, link);
+    if (!target) throw new Error("launch url refused");
+    window.location.assign(target);
+  }
   function NotificationBell() {
     const navigate = useNavigate();
-    return <SharedNotificationBell hooks={notificationHooks} onNavigate={(link) => navigate(link)} />;
+    return (
+      <SharedNotificationBell
+        hooks={notificationHooks}
+        onNavigate={(link) => navigate(link)}
+        currentProduct={env.PRODUCT_SLUG}
+        onNavigateProduct={openInProduct}
+      />
+    );
   }
 
   return {

@@ -159,6 +159,46 @@ describe('SSOCallback license gate', () => {
   });
 });
 
+describe('SSOCallback cross-product deep link (#next=)', () => {
+  const fetchMock = vi.fn();
+  afterEach(() => vi.unstubAllGlobals());
+
+  function run(hash: string) {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/api/me/access')
+        ? { ok: true, status: 200, headers: new Headers(), json: async () => ({ has_access: true }) }
+        : { ok: true, status: 200, headers: new Headers(), json: async () => ({ access_token: 'a', refresh_token: 'r' }) },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.replaceState({}, '', `/sso${hash}`);
+    const sb = makeSupabase();
+    sb.auth.getSession = vi.fn()
+      .mockResolvedValueOnce({ data: { session: null } })
+      .mockResolvedValue({ data: { session: { access_token: 'tok' } } });
+    return render(
+      <MemoryRouter initialEntries={['/sso']}>
+        <Routes>
+          <Route path="/sso" element={<SSOCallback supabase={sb} coreApiUrl="http://core" apiUrl="http://prod" />} />
+          <Route path="/" element={<div>home</div>} />
+          <Route path="/julia/opt-outs" element={<div>opt-outs</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it('lands on the carried path after redeem', async () => {
+    const { findByText } = run('#token=abc.def.ghi&next=%2Fjulia%2Fopt-outs');
+    expect(await findByText('opt-outs')).toBeTruthy();
+    expect(window.location.hash).not.toContain('next');
+  });
+
+  it.each(['https%3A%2F%2Fevil.example', '%2F%2Fevil.example'])('ignores a non-path next (%s)', async (bad) => {
+    const { findByText } = run(`#token=abc.def.ghi&next=${bad}`);
+    expect(await findByText('home')).toBeTruthy();
+  });
+});
+
 describe('SSOCallback org-picker visit marker (owner 2026-10-12)', () => {
   const fetchMock = vi.fn();
   beforeEach(() => {

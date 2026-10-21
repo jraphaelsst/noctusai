@@ -29,6 +29,11 @@ baked only `VITE_CORE_URL`.
 | **Frontend → core** | product SPA | core's URL (SSO XHR + nav) | seed getter `env.CORE_URL` / `env.CORE_API_URL` (`seed/lib/frontend/src/env.ts`) |
 | **Launcher → product** | core backend | each product's tile URL | `resolve_product_url(slug, db_url_base)` → `PRODUCT_URL_<SLUG>` env ∨ `PRODUCT_URL_PATTERN` ∨ `public.products.url_base` (the **house** port) |
 
+**Notification deep links (2026-10-21).** The shared `NotificationBell` never maps product slugs to URLs: a notice
+whose `metadata.product` differs from `env.PRODUCT_SLUG` is opened through core's `POST /api/sso/token`
+(licence + known-product check, launch URL from this same resolver); `withNextPath` appends `next=<path>` and
+`SSOCallback` lands there after redeem. Path-only links; a rejected launch navigates nowhere.
+
 This doc is primarily the **frontend → core** layer (the mandatory rule). The
 launcher → product layer is covered by [[reference_cross_product_nav_url_resolution]]
 + [[feedback_product_url_base_house_port]] (dev `url_base` = the house port, never the

@@ -42,7 +42,7 @@ export { useEffectiveSSOContext } from "../use-effective-sso-context";
 export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
 export type { ForgotPasswordPageProps } from "./components/ForgotPasswordPage";
 
-export { NotificationBell } from "./components/NotificationBell";
+export { NotificationBell, withNextPath, notificationProduct } from "./components/NotificationBell";
 export type { NotificationBellProps, NotificationHooks } from "./components/NotificationBell";
 
 export { PoweredByFooter } from "./components/PoweredByFooter";

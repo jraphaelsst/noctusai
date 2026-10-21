@@ -92,13 +92,27 @@ function readTokenFromLocation(search: URLSearchParams): string | null {
   return search.get('token');
 }
 
+/**
+ * Post-login landing path carried by a cross-product deep link (`#next=` / `?next=`, set by the notification
+ * bell). Path-only ("/x", never "//host" or a scheme): anything else is ignored, so it is never an open redirect.
+ */
+function readNextFromLocation(search: URLSearchParams): string | null {
+  const raw =
+    (typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('next')
+      : null) ?? search.get('next');
+  return raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : null;
+}
+
 /** Strip the bearer token from BOTH the fragment and the query, in history too. */
 function stripTokenFromLocation(): void {
   if (typeof window === 'undefined') return;
   const clean = new URL(window.location.href);
   clean.searchParams.delete('token');
+  clean.searchParams.delete('next');
   const hash = new URLSearchParams(clean.hash.replace(/^#/, ''));
   hash.delete('token');
+  hash.delete('next');
   const hashStr = hash.toString();
   window.history.replaceState(
     window.history.state,
@@ -139,6 +153,9 @@ export function SSOCallback({
   // The local user at the time the flow started (for failure/cancel screens).
   const currentRef = useRef<{ id: string; email: string } | null>(null);
   const handleSSORef = useRef<(token: string) => Promise<void>>(async () => {});
+
+  // Captured at mount: the token strip rewrites the location before `finish` runs.
+  const nextPathRef = useRef<string | null>(readNextFromLocation(searchParams));
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -214,7 +231,7 @@ export function SSOCallback({
       ? await checkProductAccess({ baseUrl: apiUrl ?? env.BACKEND_API_URL, token })
       : true;
     if (cancelledRef.current) return;
-    navigate(ok ? redirectPath : SEM_ACESSO_PATH, { replace: true });
+    navigate(ok ? (nextPathRef.current ?? redirectPath) : SEM_ACESSO_PATH, { replace: true });
   }, [supabase, apiUrl, navigate, redirectPath]);
 
   const adopt = useCallback(

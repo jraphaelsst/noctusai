@@ -51,6 +51,42 @@ export interface NotificationBellProps {
    * `onNavigate(link)` is called (e.g. react-router's `navigate`).
    */
   onNavigate?: (link: string) => void;
+  /** Slug of the product this bell is rendered in (`env.PRODUCT_SLUG`). Notices whose `metadata.product` differs are cross-product. */
+  currentProduct?: string;
+  /**
+   * Open `link` (a validated path) inside ANOTHER product (full navigation, same tab). Called for a notice whose
+   * `metadata.product` is a well-formed slug different from `currentProduct`. May reject (unknown product / no
+   * access): the notice is still marked read, nothing navigates. Without it a cross-product notice is inert.
+   */
+  onNavigateProduct?: (product: string, link: string) => void | Promise<void>;
+}
+
+const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** The product a notice belongs to (`metadata.product`), only when it is a well-formed slug; else `null`. */
+export function notificationProduct(n: Pick<Notificacao, "metadata">): string | null {
+  const raw = n.metadata && typeof n.metadata === "object" ? (n.metadata as { product?: unknown }).product : null;
+  return typeof raw === "string" && PRODUCT_SLUG_RE.test(raw) ? raw : null;
+}
+
+/**
+ * Append a post-login landing path (`next`) to a core-built SSO launch URL. Path-only: a non-path `link` yields
+ * `null` (the caller must not navigate). `next` rides the same component as the token (fragment for the strict
+ * regime, query for the legacy one) and is consumed by `SSOCallback`.
+ */
+export function withNextPath(launchUrl: string, link: string): string | null {
+  if (!link.startsWith("/") || link.startsWith("//")) return null;
+  let u: URL;
+  try { u = new URL(launchUrl); } catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  if (u.hash.includes("token=")) {
+    const h = new URLSearchParams(u.hash.replace(/^#/, ""));
+    h.set("next", link);
+    u.hash = h.toString();
+  } else {
+    u.searchParams.set("next", link);
+  }
+  return u.toString();
 }
 
 /** The in-app path a notification opens, or `null`. Same-origin paths only ("/x", never "//host"). */
@@ -79,7 +115,7 @@ function timeAgo(dateStr: string): string {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavigate }: NotificationBellProps) {
+export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavigate, currentProduct, onNavigateProduct }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -144,12 +180,24 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
             ) : (
               <div className="divide-y">
                 {notificacoes.map((n) => {
-                  const link = onNavigate ? notificationLink(n) : null;
+                  const produto = notificationProduct(n);
+                  const outro = !!produto && produto !== (currentProduct ?? "");
+                  const rawLink = notificationLink(n);
+                  const link = outro ? (onNavigateProduct ? rawLink : null) : onNavigate ? rawLink : null;
                   const abrir = () => {
-                    if (!link || !onNavigate) return;
+                    if (!link) return;
                     if (!n.is_read) marcarLida.mutate(n.id);
                     setOpen(false);
-                    onNavigate(link);
+                    if (outro && produto && onNavigateProduct) {
+                      // Rejection (unknown product / no access) = no navigation; the notice is already read.
+                      try {
+                        void Promise.resolve(onNavigateProduct(produto, link)).catch(() => undefined);
+                      } catch {
+                        /* synchronous refusal: same outcome */
+                      }
+                    } else if (onNavigate) {
+                      onNavigate(link);
+                    }
                   };
                   return (
                   <div
@@ -172,6 +220,14 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
                       <p className={`text-sm leading-snug ${!n.is_read ? "font-medium" : ""}`}>
                         {n.titulo}
                       </p>
+                      {outro && (
+                        <span
+                          data-testid={`notificacao-produto-${n.id}`}
+                          className="inline-block mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {produto}
+                        </span>
+                      )}
                       {n.mensagem && (
                         <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
                           {n.mensagem}
