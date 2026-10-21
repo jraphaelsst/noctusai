@@ -287,9 +287,39 @@ class TestData:
         assert any("não concordaram" in a for a in r.avisos)
 
     @pytest.mark.asyncio
-    async def test_digito_cortado_marcado_com_interrogacao_nao_e_completado(self):
+    async def test_ultimo_digito_do_ano_cortado_e_derivado_da_janela(self):
+        # PJ/negativa captures clip the clock's last year digit at the
+        # screenshot edge: the year is the one inside the plausible window.
         r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"))
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, "2026-06-17")
+
+    @pytest.mark.asyncio
+    async def test_ano_cortado_fora_da_janela_nao_grava(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"), referencia=date(2029, 1, 1))
         assert (r.numero, r.emitida_em) == (PROTOCOLO, None)
+        assert any("janela" in a for a in r.avisos)
+
+    @pytest.mark.asyncio
+    async def test_ano_cortado_sem_referencia_nao_grava(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"), referencia=None)
+        assert r.emitida_em is None
+
+    @pytest.mark.asyncio
+    async def test_leitura_cortada_e_completa_concordam(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], ["17/06/202?", "17/06/2026"]))
+        assert r.emitida_em == "2026-06-17"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lida", ["17/0?/2026", "1?/06/2026", "17/06/20??"])
+    async def test_interrogacao_fora_do_ultimo_digito_do_ano_nao_e_completada(self, lida):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], lida))
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, None)
+
+    @pytest.mark.asyncio
+    async def test_ano_cortado_com_dia_diferente_nas_duas_leituras_nao_grava(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], ["17/06/202?", "18/06/2026"]))
+        assert r.emitida_em is None
+        assert any("não concordaram" in a for a in r.avisos)
 
 
 class TestPaginaImpressa:

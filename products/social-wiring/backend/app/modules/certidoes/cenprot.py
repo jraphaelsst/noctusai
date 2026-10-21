@@ -154,6 +154,7 @@ Responda SOMENTE com JSON: {"protocolo": ..., "documento": ...}"""
 PROMPT_DATA = """Esta imagem é um recorte do relógio da barra de tarefas de um computador (hora em cima, data embaixo).
 Transcreva a linha da DATA caractere por caractere, exatamente como aparece na imagem.
 Se algum dígito estiver cortado na borda da imagem, parcialmente visível ou ilegível, escreva "?" no lugar dele — nunca complete nem deduza.
+(É comum o último dígito do ano ficar cortado na borda direita da captura: nesse caso escreva "dd/mm/aaa?" — dia e mês continuam obrigatórios.)
 Responda SOMENTE com JSON: {"data": "dd/mm/aaaa"}"""
 
 #: `(image_bytes, prompt, model) -> raw model text`. The DI seam tests use.
@@ -244,6 +245,32 @@ def _data(valor) -> Optional[date]:
         return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
     except ValueError:
         return None
+
+
+def _candidatas_data(valor) -> set[date]:
+    """Every real date a clock read can mean (empty = unreadable).
+
+    A full `dd/mm/aaaa` is itself. `dd/mm/aaa?` — the year's LAST digit cut
+    off by the screenshot's right edge (PJ/negativa captures, measured
+    2026-10-21) — is the ten years sharing the prefix; the caller keeps only
+    the one inside the plausible window around the consulta (225 days wide,
+    so at most one year survives): derived from evidence, never guessed.
+    """
+    inteira = _data(valor)
+    if inteira is not None:
+        return {inteira}
+    if not isinstance(valor, str):
+        return set()
+    m = re.fullmatch(r"\s*(\d{2})/(\d{2})/(\d{3})\?\s*", valor)
+    if not m:
+        return set()
+    candidatas: set[date] = set()
+    for digito in range(10):
+        try:
+            candidatas.add(date(int(m.group(3) + str(digito)), int(m.group(2)), int(m.group(1))))
+        except ValueError:
+            continue
+    return candidatas
 
 
 def _leitor_padrao(org_id: Optional[str], provider: str) -> LerImagem:
@@ -524,16 +551,17 @@ async def estruturar_cenprot(
     datas = await _ler_varios(
         ler, [(r, PROMPT_DATA, modelo_forte) for r in recortes_data], nome_display,
     )
-    lidas = [_data(d.get("data")) for d in datas]
+    candidatas = [_candidatas_data(d.get("data")) for d in datas]
 
     avisos: list[str] = []
     emitida_em: Optional[str] = None
-    if len(lidas) != 2 or lidas[0] is None or lidas[1] is None:
+    comuns = candidatas[0] & candidatas[1] if len(candidatas) == 2 else set()
+    if len(candidatas) != 2 or not candidatas[0] or not candidatas[1]:
         avisos.append(
             "Data (relógio da barra de tarefas): ilegível, cortada ou "
             "inválida — data não gravada."
         )
-    elif lidas[0] != lidas[1]:
+    elif not comuns:
         avisos.append(
             "Data (relógio da barra de tarefas): as duas leituras não "
             "concordaram — data não gravada."
@@ -543,13 +571,20 @@ async def estruturar_cenprot(
             "Data (relógio da barra de tarefas): sem data de referência para "
             "conferir — data não gravada."
         )
-    elif not _na_janela(lidas[0], referencia):
-        avisos.append(
-            "Data (relógio da barra de tarefas): fora da janela plausível em "
-            "relação à consulta — data não gravada."
-        )
     else:
-        emitida_em = lidas[0].isoformat()
+        na_janela = {d for d in comuns if _na_janela(d, referencia)}
+        if not na_janela:
+            avisos.append(
+                "Data (relógio da barra de tarefas): fora da janela plausível em "
+                "relação à consulta — data não gravada."
+            )
+        elif len(na_janela) > 1:
+            avisos.append(
+                "Data (relógio da barra de tarefas): leitura ambígua — "
+                "data não gravada."
+            )
+        else:
+            emitida_em = next(iter(na_janela)).isoformat()
 
     return CenprotEstrutura(numero=numero, emitida_em=emitida_em, avisos=tuple(avisos))
 
