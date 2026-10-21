@@ -1,5 +1,6 @@
 /** Julia › Modelos de mensagem — templates (contract §14 W12). Envelope `{data}`. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -76,17 +77,15 @@ export function useModelos() {
 }
 
 export function useCriarModelo() {
-  const qc = useQueryClient();
-  return useMutation<Modelo, unknown, ModeloInput>({
+  return useCacheWriteMutation<Modelo, ModeloInput>({
     mutationFn: async (body) => (await api.post<{ data: Modelo }>(BASE, body)).data,
-    onSuccess: () => qc.invalidateQueries({ queryKey: MODELOS_KEY }),
+    targets: [{ queryKey: MODELOS_KEY, commit: (old, saved) => listOps.replace(old, saved.id, saved) }],
   });
 }
 
 export function useExcluirModelo() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: async (id) => api.delete(`${BASE}/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: MODELOS_KEY }),
+    targets: (id) => [{ queryKey: MODELOS_KEY, optimistic: (old) => listOps.remove(old, id) }],
   });
 }

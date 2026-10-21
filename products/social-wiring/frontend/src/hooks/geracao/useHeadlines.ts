@@ -9,9 +9,10 @@
  * 3 s only while a visible batch is `criando`/`processando` (contract §3.2) —
  * via `jobPolling`, so the poll keeps running in a background tab.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
 import type { Criatividade, Headline, HeadlineLote, HeadlineLoteDetalhe } from "@/types/geracao";
@@ -27,11 +28,6 @@ const BASE = "/api/media-creation/headlines";
 export const HEADLINES_POLL_MS = 3000;
 export const HEADLINES_PAGE_SIZE = 20;
 const HEAD_KEY = [...GERACAO_KEY, "headlines"] as const;
-
-function useInvalidateGeracao() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: GERACAO_KEY });
-}
 
 /** True while any visible batch is still being produced (drives the poll). */
 export function algumLoteEmAndamento(items: Pick<HeadlineLote, "status">[] | undefined): boolean {
@@ -131,29 +127,55 @@ export type LoteCreate =
       post_id?: string;
     };
 
+/** A new batch is the newest row of every cached `lotes` list of its marca (server sorts newest first). */
+const lotesDaMarca = (marcaId: string) => [...HEAD_KEY, marcaId, "lotes"] as const;
+type LotesPage = { items: HeadlineLote[]; total: number };
+
 export function useCriarLote() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (body: LoteCreate) => unwrap(await api.post<Envelope<HeadlineLote>>(`${BASE}/lotes`, body)),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<HeadlineLote, LoteCreate>({
+    mutationFn: async (body) => unwrap(await api.post<Envelope<HeadlineLote>>(`${BASE}/lotes`, body)),
+    targets: (body) => [
+      {
+        queryKey: lotesDaMarca(body.marca_id),
+        match: "prefix",
+        commit: (old: LotesPage | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
 export function useReprocessarLote() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<HeadlineLote, string>({
+    mutationFn: async (id) =>
       unwrap(await api.post<Envelope<HeadlineLote>>(`${BASE}/lotes/${encodeURIComponent(id)}/reprocessar`)),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: HEAD_KEY,
+        match: "prefix",
+        commit: (old: LotesPage | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+      {
+        queryKey: [...HEAD_KEY, "lote", id],
+        commit: (old: HeadlineLoteDetalhe | undefined, saved) => (old ? { ...old, ...saved } : old),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
 export function useExcluirLotes() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (ids: string[]) =>
+  return useCacheWriteMutation<{ excluidos: number }, string[]>({
+    mutationFn: async (ids) =>
       unwrap(await api.post<Envelope<{ excluidos: number }>>(`${BASE}/lotes/excluir`, { ids })),
-    onSuccess: invalidate,
+    targets: (ids) => [
+      {
+        queryKey: HEAD_KEY,
+        match: "prefix",
+        optimistic: (old: LotesPage | undefined) => ids.reduce((page, id) => pageOps.remove(page, id), old),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
@@ -268,10 +290,16 @@ export function useHeadline(id: string | null) {
 }
 
 export function useGerarSugestoesAgora() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (marcaId: string) =>
+  return useCacheWriteMutation<HeadlineLote, string>({
+    mutationFn: async (marcaId) =>
       unwrap(await api.post<Envelope<HeadlineLote>>(`${BASE}/sugestoes/gerar-agora`, { marca_id: marcaId })),
-    onSuccess: invalidate,
+    targets: (marcaId) => [
+      {
+        queryKey: lotesDaMarca(marcaId),
+        match: "prefix",
+        commit: (old: LotesPage | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }

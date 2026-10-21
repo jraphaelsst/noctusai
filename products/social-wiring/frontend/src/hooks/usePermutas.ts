@@ -16,6 +16,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -328,79 +329,98 @@ export function usePermutaMatches(etapa?: Etapa) {
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
-/** Invalidate every permutas query — a run touches matches, and moving a
- *  match's stage changes which stage-filtered lists it belongs to. */
-function invalidarTudo(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: ["sw", "permutas"] });
-}
+/** Every permutas query — a run touches matches, and moving a match's stage changes which
+ *  stage-filtered lists it belongs to; a delete cascades to matches; an edit clears vectors. */
+const PERMUTAS_KEY = ["sw", "permutas"] as const;
 
 export function useGerarMatches() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the engine scores and inserts matches server-side; the answer is only a summary, not the rows
     mutationFn: (body: { ativo_id?: string; score_minimo?: number } = {}) =>
       api.post<GerarResultado>(`${BASE}/gerar`, body),
-    onSuccess: () => invalidarTudo(qc),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PERMUTAS_KEY }),
   });
 }
 
 export function useGerarEmbeddings() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — computes vectors server-side and answers a count; the "sem vetores" figure is derived by the server
     mutationFn: (body: { apenas_pendentes?: boolean } = {}) =>
       api.post<EmbutirResultado>(`${BASE}/embeddings`, body),
-    onSuccess: () => invalidarTudo(qc),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PERMUTAS_KEY }),
   });
 }
 
 export function useMoverEtapa() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      matchId,
-      etapa,
-      observacoes,
-    }: {
-      matchId: string;
-      etapa: Etapa;
-      observacoes?: string;
-    }) =>
+  return useCacheWriteMutation<
+    PermutaMatch,
+    { matchId: string; etapa: Etapa; observacoes?: string }
+  >({
+    mutationFn: ({ matchId, etapa, observacoes }) =>
       api.patch<PermutaMatch>(`${BASE}/matches/${matchId}`, {
         etapa,
         ...(observacoes !== undefined ? { observacoes } : {}),
       }),
-    onSuccess: () => invalidarTudo(qc),
+    // The stage (and note) is what the user chose; membership of stage-filtered lists converges on settle.
+    targets: ({ matchId, etapa, observacoes }) => [
+      {
+        queryKey: [...PERMUTAS_KEY, "matches"],
+        match: "prefix",
+        optimistic: (old: PermutaMatch[] | undefined) =>
+          listOps.patch(old, matchId, { etapa, ...(observacoes !== undefined ? { observacoes } : {}) }),
+        commit: (old: PermutaMatch[] | undefined, saved) => listOps.patch(old, matchId, saved),
+      },
+    ],
+    invalidate: [PERMUTAS_KEY],
   });
 }
 
 // ─── Registry mutations ─────────────────────────────────────────────────────
 //
-// Every write invalidates ALL permutas queries, not just the registry list:
+// Every write refreshes ALL permutas queries, not just the registry list:
 // a delete cascades to the ativo's matches (FK CASCADE), and an edit clears
 // its vectors server-side (`atualizar_ativo`), which changes the "sem
 // vetores" count on the embeddings button.
 
 export function useCriarAtivo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AtivoPayload & { natureza: Natureza }) =>
-      api.post<PermutaAtivo>(BASE, body),
-    onSuccess: () => invalidarTudo(qc),
+  return useCacheWriteMutation<PermutaAtivo, AtivoPayload & { natureza: Natureza }>({
+    mutationFn: (body) => api.post<PermutaAtivo>(BASE, body),
+    // A new ativo belongs to the list of its natureza and to the unfiltered one (each with/without inativos).
+    targets: (body) =>
+      [body.natureza, undefined].flatMap((natureza) =>
+        [false, true].map((incluirInativos) => ({
+          queryKey: ATIVOS_KEY(natureza, incluirInativos),
+          commit: (old: PermutaAtivo[] | undefined, saved: PermutaAtivo) => listOps.replace(old, saved.id, saved),
+        })),
+      ),
+    invalidate: [PERMUTAS_KEY],
   });
 }
 
 export function useAtualizarAtivo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ ativoId, body }: { ativoId: string; body: AtivoPayload }) =>
-      api.patch<PermutaAtivo>(`${BASE}/${ativoId}`, body),
-    onSuccess: () => invalidarTudo(qc),
+  return useCacheWriteMutation<PermutaAtivo, { ativoId: string; body: AtivoPayload }>({
+    mutationFn: ({ ativoId, body }) => api.patch<PermutaAtivo>(`${BASE}/${ativoId}`, body),
+    targets: ({ ativoId }) => [
+      {
+        queryKey: [...PERMUTAS_KEY, "ativos"],
+        match: "prefix",
+        commit: (old: PermutaAtivo[] | undefined, saved) => listOps.patch(old, ativoId, saved),
+      },
+    ],
+    invalidate: [PERMUTAS_KEY],
   });
 }
 
 export function useRemoverAtivo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ativoId: string) => api.delete<void>(`${BASE}/${ativoId}`),
-    onSuccess: () => invalidarTudo(qc),
+  return useCacheWriteMutation<void, string>({
+    mutationFn: (ativoId) => api.delete<void>(`${BASE}/${ativoId}`),
+    targets: (ativoId) => [
+      {
+        queryKey: [...PERMUTAS_KEY, "ativos"],
+        match: "prefix",
+        optimistic: (old: PermutaAtivo[] | undefined) => listOps.remove(old, ativoId),
+      },
+    ],
+    invalidate: [PERMUTAS_KEY],
   });
 }

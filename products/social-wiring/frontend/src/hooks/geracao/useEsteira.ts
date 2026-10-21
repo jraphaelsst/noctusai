@@ -19,6 +19,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
@@ -82,6 +83,20 @@ function useInvalidateEsteira() {
       qc.invalidateQueries({ queryKey: GERACAO_KEY }),
     ]);
 }
+
+
+/** The board cache entry is the bare `colunas` array; stage-list entries share the prefix and carry no `cards`. */
+type Colunas = EsteiraColuna[] | undefined;
+const emColunas = (old: Colunas, fn: (cards: PostCard[]) => PostCard[] | undefined): Colunas =>
+  Array.isArray(old) && old.every((c) => Array.isArray(c?.cards))
+    ? old.map((c) => {
+        const cards = fn(c.cards);
+        return cards ? { ...c, cards, total: c.total + (cards.length - c.cards.length) } : c;
+      })
+    : old;
+
+/** Keys refreshed in the background after any post write (badge on the Geração libraries, §5.3). */
+const POST_SETTLE = [[ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY, GERACAO_KEY];
 
 // ─── Board ──────────────────────────────────────────────────────────────────
 
@@ -166,32 +181,54 @@ export function usePost(id: string | null) {
 
 export function useCriarPost() {
   const invalidate = useInvalidateEsteira();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server picks the stage and position of a new post, so the board is regrouped server-side
     mutationFn: async (body: PostCreate) =>
       unwrap(await api.post<Envelope<PostDetalhe>>(`${ESTEIRA_BASE}/posts`, body)),
     onSuccess: invalidate,
   });
 }
 
+/** Commit a saved post into its detail and into the card on every cached board. */
+function postTargets(id: string) {
+  return [
+    {
+      queryKey: esteiraKeys.post(id),
+      commit: (old: PostDetalhe | undefined, saved: PostDetalhe) => listOps.merge(old, saved),
+    },
+    {
+      queryKey: [ESTEIRA_PIPELINE_KEY],
+      match: "prefix" as const,
+      commit: (old: EsteiraColuna[] | undefined, saved: PostDetalhe) =>
+        emColunas(old, (cards) => listOps.patch(cards, id, saved)),
+    },
+  ];
+}
+
 export function useAtualizarPost() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (v: { id: string; patch: PostUpdate }) =>
+  return useCacheWriteMutation<PostDetalhe, { id: string; patch: PostUpdate }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.patch<Envelope<PostDetalhe>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(v.id)}`, v.patch),
       ),
-    onSuccess: invalidate,
+    targets: (v) => postTargets(v.id),
+    invalidate: POST_SETTLE,
   });
 }
 
 export function useExcluirPost() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (id) => {
       await api.delete(`${ESTEIRA_BASE}/posts/${encodeURIComponent(id)}`);
       return id;
     },
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: [ESTEIRA_PIPELINE_KEY],
+        match: "prefix",
+        optimistic: (old: EsteiraColuna[] | undefined) => emColunas(old, (cards) => listOps.remove(cards, id)),
+      },
+    ],
+    invalidate: POST_SETTLE,
   });
 }
 
@@ -201,51 +238,67 @@ export function useExcluirPost() {
 export type VincularHeadline = { headline_id: string } | { texto: string };
 
 export function useVincularHeadline() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (v: { postId: string; body: VincularHeadline }) =>
+  return useCacheWriteMutation<PostDetalhe, { postId: string; body: VincularHeadline }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.put<Envelope<PostDetalhe>>(
           `${ESTEIRA_BASE}/posts/${encodeURIComponent(v.postId)}/headline`,
           v.body,
         ),
       ),
-    onSuccess: invalidate,
+    targets: (v) => postTargets(v.postId),
+    invalidate: POST_SETTLE,
   });
 }
 
+/** Unbinding is predictable: the post's `headline` becomes null on the detail and on the card. */
+function desvincularTargets(postId: string, campo: "headline" | "roteiro") {
+  return [
+    {
+      queryKey: esteiraKeys.post(postId),
+      optimistic: (old: PostDetalhe | undefined) => listOps.merge(old, { [campo]: null }),
+    },
+    {
+      queryKey: [ESTEIRA_PIPELINE_KEY],
+      match: "prefix" as const,
+      optimistic: (old: EsteiraColuna[] | undefined) =>
+        emColunas(old, (cards) => listOps.patch(cards, postId, { [campo]: null })),
+    },
+  ];
+}
+
 export function useDesvincularHeadline() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (postId: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (postId) => {
       await api.delete(`${ESTEIRA_BASE}/posts/${encodeURIComponent(postId)}/headline`);
       return postId;
     },
-    onSuccess: invalidate,
+    targets: (postId) => desvincularTargets(postId, "headline"),
+    invalidate: POST_SETTLE,
   });
 }
 
 export function useVincularRoteiro() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (v: { postId: string; roteiroId: string }) =>
+  return useCacheWriteMutation<PostDetalhe, { postId: string; roteiroId: string }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.put<Envelope<PostDetalhe>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(v.postId)}/roteiro`, {
           roteiro_id: v.roteiroId,
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => postTargets(v.postId),
+    invalidate: POST_SETTLE,
   });
 }
 
 export function useDesvincularRoteiro() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (postId: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (postId) => {
       await api.delete(`${ESTEIRA_BASE}/posts/${encodeURIComponent(postId)}/roteiro`);
       return postId;
     },
-    onSuccess: invalidate,
+    targets: (postId) => desvincularTargets(postId, "roteiro"),
+    invalidate: POST_SETTLE,
   });
 }
 
@@ -257,7 +310,7 @@ export function useDesvincularRoteiro() {
  * invalidates nothing.
  */
 export function useGerarLegenda() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the generated caption is returned for editing, never stored, so there is no cached read
     mutationFn: async (postId: string) =>
       unwrap(
         await api.post<Envelope<LegendaGerada>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(postId)}/legenda/gerar`),
@@ -286,31 +339,49 @@ export function useEquipe(incluirInativos = false) {
 export type MembroCreate = { nome: string; funcao?: string; cor?: string; user_id?: string };
 export type MembroUpdate = Partial<MembroCreate> & { ativo?: boolean };
 
-/** A member shows on cards (`membros`), so the board is invalidated too. */
+/** A member shows on cards (`membros`), so the board is refreshed too. */
 export function useCriarMembro() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (body: MembroCreate) => unwrap(await api.post<Envelope<MembroEquipe>>(EQUIPE_BASE, body)),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<MembroEquipe, MembroCreate>({
+    mutationFn: async (body) => unwrap(await api.post<Envelope<MembroEquipe>>(EQUIPE_BASE, body)),
+    targets: [
+      {
+        queryKey: [...ESTEIRA_KEY, "equipe"],
+        match: "prefix",
+        commit: (old, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: POST_SETTLE,
   });
 }
 
 export function useAtualizarMembro() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (v: { id: string; patch: MembroUpdate }) =>
+  return useCacheWriteMutation<MembroEquipe, { id: string; patch: MembroUpdate }>({
+    mutationFn: async (v) =>
       unwrap(await api.patch<Envelope<MembroEquipe>>(`${EQUIPE_BASE}/${encodeURIComponent(v.id)}`, v.patch)),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: [...ESTEIRA_KEY, "equipe"],
+        match: "prefix",
+        commit: (old, saved) => listOps.patch(old, v.id, saved),
+      },
+    ],
+    invalidate: POST_SETTLE,
   });
 }
 
 export function useExcluirMembro() {
-  const invalidate = useInvalidateEsteira();
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (id) => {
       await api.delete(`${EQUIPE_BASE}/${encodeURIComponent(id)}`);
       return id;
     },
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: [...ESTEIRA_KEY, "equipe"],
+        match: "prefix",
+        optimistic: (old) => listOps.remove(old, id),
+      },
+    ],
+    invalidate: POST_SETTLE,
   });
 }

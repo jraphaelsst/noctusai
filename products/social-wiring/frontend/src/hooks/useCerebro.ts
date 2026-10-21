@@ -11,6 +11,7 @@
  * import is non-terminal (contract §6).
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
@@ -104,70 +105,90 @@ export function useBioInstagram(marcaId: string | null) {
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
-function useInvalidateCerebro() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: CEREBRO_KEY });
+/** A brain's summary fields, committed into every cached brains list (prefix) and the open brain's detail. */
+function brainTargets(id: string) {
+  return [
+    {
+      queryKey: CEREBRO_KEY,
+      match: "prefix" as const,
+      commit: (old: BrainSummary[] | undefined, saved: BrainSummary) => listOps.patch(old, id, saved),
+    },
+    {
+      queryKey: brainKey(id),
+      commit: (old: BrainDetail | undefined, saved: BrainSummary) => listOps.merge(old, saved),
+    },
+  ];
 }
 
 export function useCriarBrain() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; name: string }) =>
-      unwrap(await api.post<Envelope<BrainSummary>>(`${BASE}/brains`, v)),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<BrainSummary, { marca_id: string; name: string }>({
+    mutationFn: async (v) => unwrap(await api.post<Envelope<BrainSummary>>(`${BASE}/brains`, v)),
+    targets: (v) => [
+      { queryKey: brainsKey(v.marca_id), commit: (old, saved) => listOps.replace(old, saved.id, saved) },
+    ],
+    invalidate: [CEREBRO_KEY],
   });
 }
 
 export function useRenomearBrain() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
-    mutationFn: async (v: { id: string; name: string }) =>
+  return useCacheWriteMutation<BrainSummary, { id: string; name: string }>({
+    mutationFn: async (v) =>
       unwrap(await api.patch<Envelope<BrainSummary>>(`${BASE}/brains/${encodeURIComponent(v.id)}`, { name: v.name })),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: CEREBRO_KEY,
+        match: "prefix",
+        optimistic: (old: BrainSummary[] | undefined) => listOps.patch(old, v.id, { name: v.name }),
+      },
+      ...brainTargets(v.id),
+    ],
   });
 }
 
 export function useExcluirBrain() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`${BASE}/brains/${encodeURIComponent(id)}`);
     },
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: CEREBRO_KEY,
+        match: "prefix",
+        optimistic: (old: BrainSummary[] | undefined) => listOps.remove(old, id),
+      },
+    ],
   });
 }
 
 export function useSalvarConteudo() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
-    mutationFn: async (v: { id: string; content: string; expected_version: number }) =>
+  return useCacheWriteMutation<BrainSummary, { id: string; content: string; expected_version: number }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.put<Envelope<BrainSummary>>(`${BASE}/brains/${encodeURIComponent(v.id)}/content`, {
           content: v.content,
           expected_version: v.expected_version,
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => brainTargets(v.id),
   });
 }
 
 export function useEnviarArquivo() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
+  const qc = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — the upload starts a server-side import job; the answer is not the brain, whose imports/synthesis arrive via the polled detail
     mutationFn: async (v: { id: string; file: File }) => {
       const form = new FormData();
       form.append("file", v.file, v.file.name);
       return uploadMultipart<Envelope<unknown>>(`${BASE}/brains/${encodeURIComponent(v.id)}/imports/file`, form);
     },
-    onSuccess: invalidate,
+    onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),
   });
 }
 
 export function useSalvarPerfil() {
-  const invalidate = useInvalidateCerebro();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; bio: string }) =>
-      unwrap(await api.put<Envelope<Perfil>>(`${BASE}/perfil`, v)),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<Perfil, { marca_id: string; bio: string }>({
+    mutationFn: async (v) => unwrap(await api.put<Envelope<Perfil>>(`${BASE}/perfil`, v)),
+    targets: (v) => [{ queryKey: perfilKey(v.marca_id), commit: (_old, saved) => saved }],
+    invalidate: [CEREBRO_KEY],
   });
 }

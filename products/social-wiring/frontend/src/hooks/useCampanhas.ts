@@ -8,7 +8,8 @@
  * "this imóvel deserves paid traffic". Budget, channel and dates belong to
  * whoever decides them, which is not the person pressing the button.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@noctusai/seed/infra";
 
 export interface Solicitacao {
@@ -43,19 +44,20 @@ export function useSolicitacaoDoImovel(codigo: string | null) {
 }
 
 export function useSolicitarCampanha(codigo: string | null) {
-  const qc = useQueryClient();
-  return useMutation<Solicitacao, Error, string | undefined>({
+  return useCacheWriteMutation<Solicitacao, string | undefined>({
     mutationFn: async (justificativa) =>
       api.post<Solicitacao>("/api/campanhas/solicitacoes", {
         codigo,
         justificativa: justificativa ?? null,
       }),
-    onSuccess: () => {
-      // The button's own state is derived from the pending query, so it
-      // has to re-read before the UI can stop offering the action.
-      qc.invalidateQueries({ queryKey: SOLICITACAO_KEY(codigo ?? "") });
-      qc.invalidateQueries({ queryKey: ["sw", "campanhas", "solicitacoes"] });
-    },
+    // The button's own state is derived from the pending query: the saved request IS that state.
+    targets: [
+      {
+        queryKey: SOLICITACAO_KEY(codigo ?? ""),
+        commit: (_old, saved) => (saved && saved.id ? saved : undefined),
+      },
+    ],
+    invalidate: [["sw", "campanhas", "solicitacoes"]],
   });
 }
 
@@ -111,22 +113,18 @@ export function useCampanhasLista() {
 }
 
 export function useCampanhaMutations() {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: CAMPANHAS_KEY });
-  const criar = useMutation({
-    mutationFn: async (body: CampanhaBody) =>
-      (await api.post<{ data: Campanha }>("/api/campanhas", body)).data,
-    onSuccess: invalidate,
+  const criar = useCacheWriteMutation<Campanha, CampanhaBody>({
+    mutationFn: async (body) => (await api.post<{ data: Campanha }>("/api/campanhas", body)).data,
+    targets: [{ queryKey: CAMPANHAS_KEY, commit: (old, saved) => listOps.replace(old, saved.id, saved) }],
   });
-  const atualizar = useMutation({
-    mutationFn: async ({ id, body }: { id: string; body: CampanhaBody }) =>
+  const atualizar = useCacheWriteMutation<Campanha, { id: string; body: CampanhaBody }>({
+    mutationFn: async ({ id, body }) =>
       (await api.patch<{ data: Campanha }>(`/api/campanhas/${encodeURIComponent(id)}`, body)).data,
-    onSuccess: invalidate,
+    targets: ({ id }) => [{ queryKey: CAMPANHAS_KEY, commit: (old, saved) => listOps.replace(old, id, saved) }],
   });
-  const remover = useMutation({
-    mutationFn: ({ id }: { id: string }) =>
-      api.delete(`/api/campanhas/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  const remover = useCacheWriteMutation<unknown, { id: string }>({
+    mutationFn: ({ id }) => api.delete(`/api/campanhas/${encodeURIComponent(id)}`),
+    targets: ({ id }) => [{ queryKey: CAMPANHAS_KEY, optimistic: (old) => listOps.remove(old, id) }],
   });
   return { criar, atualizar, remover };
 }

@@ -9,6 +9,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   EmissaoCertidoesResponse,
@@ -100,6 +101,9 @@ export interface AdicionarParteResultado {
 }
 
 /** `POST /api/clientes/{id}/compradores` with the PF-or-PJ body (§2.3). */
+/** The `partes` answers of this card (every atendimento filter): rows are keyed by `parte_id`, not `id`. */
+const partesDoCardKey = (clienteId: string) => ["sw", "clientes", clienteId, "partes"] as const;
+
 export function useAdicionarParte(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -134,7 +138,14 @@ export function useAdicionarParte(clienteId: string) {
     // on "Adicionando…") for as long as the card family's refetches took (~10s in prod,
     // 2026-10-21) — long after the new row was already on screen. The create has
     // succeeded; the refetches are refresh work, not part of it.
-    onSuccess: () => {
+    onSuccess: ({ parte }) => {
+      // The created party goes into the card's partes lists at once (written here, not through
+      // `useCacheWriteMutation`: its settle is awaited, and this mutation must resolve on the create).
+      qc.setQueriesData<PartesResponse>({ queryKey: partesDoCardKey(clienteId) }, (old) =>
+        old && Array.isArray(old.items) && !old.items.some((p) => p.parte_id === parte.parte_id)
+          ? { ...old, items: [...old.items, parte], total: old.total + 1 }
+          : old,
+      );
       // The card family (compradores/vendedores lists, card summary,
       // qualificação) lives under the seed's `["sw","cardHub"]` root.
       void qc.invalidateQueries({ queryKey: ["sw", "cardHub"] });
@@ -152,12 +163,45 @@ export function useAdicionarParte(clienteId: string) {
  */
 export function useAtualizarContratoParte(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ parteId, patch }: { parteId: string; patch: ParteContratoPatch }) =>
+  return useCacheWriteMutation<ParteContratoOut, { parteId: string; patch: ParteContratoPatch }>({
+    mutationFn: ({ parteId, patch }) =>
       api.patch<ParteContratoOut>(
         `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}/contrato`,
         patch,
       ),
+    // The PATCH answer carries the party's company qualification: it is merged into the party row.
+    targets: ({ parteId }) => [
+      {
+        queryKey: partesDoCardKey(clienteId),
+        match: "prefix",
+        commit: (old: PartesResponse | undefined, saved) =>
+          old && Array.isArray(old.items)
+            ? {
+                ...old,
+                items: old.items.map((p) =>
+                  p.parte_id !== parteId
+                    ? p
+                    : {
+                        ...p,
+                        ...(saved.pj_nire !== undefined ? { pj_nire: saved.pj_nire } : {}),
+                        ...(saved.representa_parte_id !== undefined
+                          ? { representa_parte_id: saved.representa_parte_id }
+                          : {}),
+                        pj_sede: {
+                          logradouro: saved.pj_sede_logradouro ?? p.pj_sede?.logradouro ?? null,
+                          numero: saved.pj_sede_numero ?? p.pj_sede?.numero ?? null,
+                          complemento: saved.pj_sede_complemento ?? p.pj_sede?.complemento ?? null,
+                          bairro: saved.pj_sede_bairro ?? p.pj_sede?.bairro ?? null,
+                          cidade: saved.pj_sede_cidade ?? p.pj_sede?.cidade ?? null,
+                          uf: saved.pj_sede_uf ?? p.pj_sede?.uf ?? null,
+                          cep: saved.pj_sede_cep ?? p.pj_sede?.cep ?? null,
+                        },
+                      },
+                ),
+              }
+            : old,
+      },
+    ],
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: ["sw", "cardHub"] }),

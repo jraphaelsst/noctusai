@@ -25,6 +25,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { createCardHubHooks, flattenTimeline } from "@noctusai/lib/components";
 import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import type { CardHubApi } from "@noctusai/lib/components";
@@ -267,16 +268,28 @@ export function useAgendamentoMutations(clienteId: string) {
       qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
     ]);
 
-  const create = useMutation({
-    mutationFn: (body: AgendamentoCreateBody) =>
-      api.post<Agendamento>(`${base}/agendamentos`, body),
-    onSuccess: invalidate,
+  // The saved appointment is committed into the list the moment it answers; the card (its badges) refetches.
+  const create = useCacheWriteMutation<Agendamento, AgendamentoCreateBody>({
+    mutationFn: (body) => api.post<Agendamento>(`${base}/agendamentos`, body),
+    targets: [
+      {
+        queryKey: AGENDAMENTOS_KEY(clienteId),
+        commit: (old, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: [CARD_KEY(clienteId)],
   });
 
-  const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: AgendamentoPatchBody }) =>
+  const update = useCacheWriteMutation<Agendamento, { id: string; body: AgendamentoPatchBody }>({
+    mutationFn: ({ id, body }) =>
       api.patch<Agendamento>(`${base}/agendamentos/${encodeURIComponent(id)}`, body),
-    onSuccess: invalidate,
+    targets: ({ id }) => [
+      {
+        queryKey: AGENDAMENTOS_KEY(clienteId),
+        commit: (old, saved) => listOps.patch(old, id, saved),
+      },
+    ],
+    invalidate: [CARD_KEY(clienteId)],
   });
 
   const remove = useMutation({
@@ -394,15 +407,31 @@ export function useRoteiroMutations(clienteId: string) {
       qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
     ]);
 
-  const create = useMutation({
-    mutationFn: (body: RoteiroCreateBody) => api.post<Roteiro>(`${base}/roteiros`, body),
-    onSuccess: invalidate,
+  // A roteiro answer carries its visitas + contagem, so it replaces the cached row as-is. The timeline
+  // (a visita outcome IS a timeline entry) refetches on settle.
+  const timeline = [...FAMILY_KEY(clienteId), "timeline"] as const;
+
+  const create = useCacheWriteMutation<Roteiro, RoteiroCreateBody>({
+    mutationFn: (body) => api.post<Roteiro>(`${base}/roteiros`, body),
+    targets: [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: [timeline],
   });
 
-  const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: RoteiroPatchBody }) =>
+  const update = useCacheWriteMutation<Roteiro, { id: string; body: RoteiroPatchBody }>({
+    mutationFn: ({ id, body }) =>
       api.patch<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}`, body),
-    onSuccess: invalidate,
+    targets: ({ id }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => listOps.patch(old, id, saved),
+      },
+    ],
+    invalidate: [timeline],
   });
 
   const remove = useMutation({
@@ -427,49 +456,78 @@ export function useRoteiroMutations(clienteId: string) {
     onSettled: invalidate,
   });
 
-  const reorder = useMutation({
-    mutationFn: ({ id, visitaIds }: { id: string; visitaIds: string[] }) =>
+  const reorder = useCacheWriteMutation<Roteiro, { id: string; visitaIds: string[] }>({
+    mutationFn: ({ id, visitaIds }) =>
       api.put<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}/ordem`, {
         visita_ids: visitaIds,
       }),
-    onSuccess: invalidate,
+    targets: ({ id }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => listOps.patch(old, id, saved),
+      },
+    ],
+    invalidate: [timeline],
   });
 
-  const patchVisita = useMutation({
-    mutationFn: ({
-      roteiroId,
-      visitaId,
-      body,
-    }: {
-      roteiroId: string;
-      visitaId: string;
-      body: VisitaPatchBody;
-    }) =>
+  /** Edit the visitas of ONE roteiro inside the cached roteiros list (`contagem` is the server's: settle refetches). */
+  const nasVisitas = (
+    old: Roteiro[] | undefined,
+    roteiroId: string,
+    edit: (visitas: Visita[]) => Visita[] | undefined,
+  ) =>
+    Array.isArray(old)
+      ? old.map((r) => (r.id === roteiroId ? { ...r, visitas: edit(r.visitas) ?? r.visitas } : r))
+      : old;
+
+  const patchVisita = useCacheWriteMutation<
+    Visita,
+    { roteiroId: string; visitaId: string; body: VisitaPatchBody }
+  >({
+    mutationFn: ({ roteiroId, visitaId, body }) =>
       api.patch<Visita>(
         `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
         body,
       ),
-    onSuccess: invalidate,
+    targets: ({ roteiroId, visitaId }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.patch(v, visitaId, saved)),
+      },
+    ],
+    invalidate: [timeline],
   });
 
   // A roteiro's property list was fixed at creation: `POST /roteiros` seeds the
   // visitas from `imoveis[]` and nothing could add or drop one afterwards,
   // even though both routes have always existed.
-  const addVisita = useMutation({
-    mutationFn: ({ roteiroId, codigo }: { roteiroId: string; codigo: string }) =>
+  const addVisita = useCacheWriteMutation<Visita, { roteiroId: string; codigo: string }>({
+    mutationFn: ({ roteiroId, codigo }) =>
       api.post<Visita>(
         `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas`,
         { codigo },
       ),
-    onSuccess: invalidate,
+    targets: ({ roteiroId }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.replace(v, saved.id, saved)),
+      },
+    ],
+    invalidate: [timeline],
   });
 
-  const removeVisita = useMutation({
-    mutationFn: ({ roteiroId, visitaId }: { roteiroId: string; visitaId: string }) =>
+  const removeVisita = useCacheWriteMutation<unknown, { roteiroId: string; visitaId: string }>({
+    mutationFn: ({ roteiroId, visitaId }) =>
       api.delete(
         `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
       ),
-    onSuccess: invalidate,
+    targets: ({ roteiroId, visitaId }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        optimistic: (old) => nasVisitas(old, roteiroId, (v) => listOps.remove(v, visitaId)),
+      },
+    ],
+    invalidate: [timeline],
   });
 
   // 🔴 ITS OWN ROUTE, not a field on `patchVisita` — migration 104 keeps
@@ -480,27 +538,22 @@ export function useRoteiroMutations(clienteId: string) {
   // Invalidates the NEGOCIAÇÃO too: accepting writes
   // `atendimento_negociacao.imovel_codigo`, so leaving that query stale would
   // show the Negociação panel contradicting the roteiro in the next tab.
-  const patchProposta = useMutation({
-    mutationFn: ({
-      roteiroId,
-      visitaId,
-      body,
-    }: {
-      roteiroId: string;
-      visitaId: string;
-      body: VisitaPropostaBody;
-    }) =>
+  const patchProposta = useCacheWriteMutation<
+    Visita,
+    { roteiroId: string; visitaId: string; body: VisitaPropostaBody }
+  >({
+    mutationFn: ({ roteiroId, visitaId, body }) =>
       api.patch<Visita>(
         `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}/proposta`,
         body,
       ),
-    onSuccess: () =>
-      Promise.all([
-        invalidate(),
-        qc.invalidateQueries({
-          queryKey: ["sw", "clientes", clienteId, "negociacao"],
-        }),
-      ]),
+    targets: ({ roteiroId, visitaId }) => [
+      {
+        queryKey: ROTEIROS_KEY(clienteId),
+        commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.patch(v, visitaId, saved)),
+      },
+    ],
+    invalidate: [timeline, ["sw", "clientes", clienteId, "negociacao"]],
   });
 
   return {
@@ -614,7 +667,7 @@ export function useDocumentoChecklist(clienteId: string | null) {
  */
 export function useExtracaoSugestaoMutation(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer is only the decision's echo; what changes is server-derived (checklist, documentos, qualificação, compradores, clientes)
     mutationFn: ({
       documentoId,
       acao,
@@ -878,25 +931,18 @@ export function useCompradores(
  * `qualificacao` root is cheap next to rendering a stale "cônjuge pendente".
  */
 export function useCompradorMutations(clienteId: string) {
-  const qc = useQueryClient();
-  // Invalidates BOTH sides, not just the one written. `remover` is not told
-  // which side the party was on, and a person moved between sides would
-  // otherwise linger in the stale list — cheap to over-invalidate, expensive
-  // to render a vendedor under Compradores.
-  const invalidate = () =>
-    Promise.all([
-      qc.invalidateQueries({
-        queryKey: [...FAMILY_KEY(clienteId), "compradores"],
-      }),
-      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
-      // The all-parties list (`usePartes`) — where a COMPANY party's role is
-      // shown and edited; without this a PJ relabel stayed stale on screen.
-      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "partes"] }),
-    ]);
+  // The party lists are `{items, total, ...}` per SIDE (`lado`) under one prefix: a row is committed
+  // into the list of ITS side only; the card, qualificação and partes refetch on settle.
+  const compradoresKey = [...FAMILY_KEY(clienteId), "compradores"] as const;
+  const outrosDerivados = [
+    CARD_KEY(clienteId),
+    QUALIFICACAO_ROOT_KEY,
+    ["sw", "clientes", clienteId, "partes"],
+  ];
 
-  const adicionar = useMutation({
-    mutationFn: (body: {
+  const adicionar = useCacheWriteMutation<
+    Comprador,
+    {
       nome?: string;
       celular?: string;
       cliente_id?: string;
@@ -904,16 +950,38 @@ export function useCompradorMutations(clienteId: string) {
       observacao?: string;
       atendimento_id?: string;
       lado?: LadoParte;
-    }) => api.post<Comprador>(`${clienteBase(clienteId)}/compradores`, body),
-    onSuccess: invalidate,
+    }
+  >({
+    mutationFn: (body) => api.post<Comprador>(`${clienteBase(clienteId)}/compradores`, body),
+    targets: [
+      {
+        queryKey: compradoresKey,
+        match: "prefix",
+        commit: (old: CompradoresResponse | undefined, saved) =>
+          old && Array.isArray(old.items) && (old.lado ?? "comprador") === saved.lado
+            ? {
+                ...listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved)),
+                total: old.items.some((p) => p.id === saved.id) ? old.total : old.total + 1,
+              }
+            : old,
+      },
+    ],
+    invalidate: outrosDerivados,
   });
 
-  const remover = useMutation({
-    mutationFn: (parteId: string) =>
+  const remover = useCacheWriteMutation<unknown, string>({
+    mutationFn: (parteId) =>
       api.delete(
         `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}`,
       ),
-    onSuccess: invalidate,
+    targets: (parteId) => [
+      {
+        queryKey: compradoresKey,
+        match: "prefix",
+        optimistic: (old: CompradoresResponse | undefined) => pageOps.remove(old, parteId),
+      },
+    ],
+    invalidate: outrosDerivados,
   });
 
   /**
@@ -928,13 +996,21 @@ export function useCompradorMutations(clienteId: string) {
    * write `clientes.conjuge_cliente_id` on two people, so the card summary is
    * no longer only about this list.
    */
-  const atualizarPapel = useMutation({
-    mutationFn: ({ parteId, papel }: { parteId: string; papel: string }) =>
+  const atualizarPapel = useCacheWriteMutation<Comprador, { parteId: string; papel: string }>({
+    mutationFn: ({ parteId, papel }) =>
       api.patch<Comprador>(
         `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}`,
         { papel },
       ),
-    onSuccess: invalidate,
+    targets: ({ parteId, papel }) => [
+      {
+        queryKey: compradoresKey,
+        match: "prefix",
+        optimistic: (old: CompradoresResponse | undefined) => pageOps.patch(old, parteId, { papel }),
+        commit: (old: CompradoresResponse | undefined, saved) => pageOps.patch(old, parteId, saved),
+      },
+    ],
+    invalidate: outrosDerivados,
   });
 
   return { adicionar, remover, atualizarPapel };
@@ -996,7 +1072,7 @@ export type DadosPessoaisSaveResult = DadosPessoais & {
 
 export function useDadosPessoaisMutation(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer holds only the personal fields; checklist, qualificação, conflitos, timeline and every party list are server-derived from them
     // Typed as the form's own shape: these are the exact columns
     // `clientes_router.ClientePatchBody` accepts. The type alone does NOT
     // keep a stray key out — a wider object (the full `clientes` row) is
@@ -1133,7 +1209,7 @@ export function contagemResolverConflitos(r: ResolverConflitosAutoResposta | nul
  */
 export function useResolverConflitosAutomaticamente() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — bulk server-side resolution; the answer is only counts, which rows left the queue and what they changed is the server's
     mutationFn: () =>
       api.post<ResolverConflitosAutoResposta>("/api/clientes/conflitos/resolver-automaticamente", {}),
     onSuccess: () =>
@@ -1151,15 +1227,20 @@ export function useResolverConflitosAutomaticamente() {
  *  surfaces through `onError`, same as any other write this file has. */
 export function useDecidirConflitoMutation() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ conflitoId, aceitar }: { conflitoId: string; aceitar: boolean }) =>
+  return useCacheWriteMutation<ConflitoCampo, { conflitoId: string; aceitar: boolean }>({
+    mutationFn: ({ conflitoId, aceitar }) =>
       api.put<ConflitoCampo>(`/api/clientes/conflitos/${conflitoId}/decidir`, {
         aceitar,
       }),
+    // A decided conflict is no longer pending: it leaves every pending queue (org-wide and per person).
+    targets: ({ conflitoId }) => [
+      {
+        queryKey: CONFLITOS_ROOT_KEY,
+        match: "prefix",
+        optimistic: (old: ConflitoCampo[] | undefined) => listOps.remove(old, conflitoId),
+      },
+    ],
     onSuccess: (result) => {
-      void qc.invalidateQueries({ queryKey: CONFLITOS_ROOT_KEY });
-      // Accepting writes the field for real — the same surfaces a normal
-      // `DadosPessoaisForm` save touches.
       void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(result.cliente_id) });
       void qc.invalidateQueries({ queryKey: CARD_KEY(result.cliente_id) });
       void qc.invalidateQueries({ queryKey: ["sw", "clientes"] });

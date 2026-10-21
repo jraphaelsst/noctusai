@@ -9,6 +9,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   CertidaoMatrizLinhaCustomizada,
@@ -43,20 +44,26 @@ export function useCertidoesMatriz(clienteId: string | null) {
  *  its (Pendente-by-default) cells. */
 export function useCriarLinhaMatriz(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server fans a Pendente cell out across every column and numbers the row (5.n); the answer is only the row definition
     mutationFn: (nome: string) =>
       api.post<CertidaoMatrizLinhaCustomizada>(linhasBase(clienteId), { nome }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: CERTIDOES_MATRIZ_KEY(clienteId) }),
   });
 }
 
-/** `PATCH .../certidoes/matriz/linhas/{linha_id}` — rename. */
+/** `PATCH .../certidoes/matriz/linhas/{linha_id}` — rename. The row label is `Outras: <nome>`, so the
+ *  change is predictable from the input. */
 export function useRenomearLinhaMatriz(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ linhaId, nome }: { linhaId: string; nome: string }) =>
+  return useCacheWriteMutation<CertidaoMatrizLinhaCustomizada, { linhaId: string; nome: string }>({
+    mutationFn: ({ linhaId, nome }) =>
       api.patch<CertidaoMatrizLinhaCustomizada>(`${linhasBase(clienteId)}/${linhaId}`, { nome }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: CERTIDOES_MATRIZ_KEY(clienteId) }),
+    targets: ({ linhaId, nome }) => [
+      {
+        queryKey: CERTIDOES_MATRIZ_KEY(clienteId),
+        optimistic: (old: CertidoesMatrizResponse | undefined) =>
+          listOps.within(old, "linhas", (l) => listOps.patch(l, linhaId, { rotulo: `Outras: ${nome}` })),
+      },
+    ],
   });
 }
 
@@ -65,7 +72,7 @@ export function useRenomearLinhaMatriz(clienteId: string) {
  *  (see the backend's own docstring). */
 export function useRemoverLinhaMatriz(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — dropping a row renumbers the remaining ones (5.n) and shifts every column's totals, both server-aggregated
     mutationFn: (linhaId: string) => api.delete(`${linhasBase(clienteId)}/${linhaId}`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: CERTIDOES_MATRIZ_KEY(clienteId) }),
   });

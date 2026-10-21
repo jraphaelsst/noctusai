@@ -70,7 +70,7 @@ export interface RegistrarImovelManualBody {
  */
 export function useRegistrarImovelManual() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer is only the codigo; the new imóvel shows up in the server-ranked busca/duplicatas results, which the client cannot place
     mutationFn: ({
       codigo,
       endereco,

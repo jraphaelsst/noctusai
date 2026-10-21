@@ -6,7 +6,8 @@
  *   GET /api/julia/avaliacoes/config (member) · PUT (admin, partial)
  *       {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id}
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -50,9 +51,9 @@ export function useAvaliacoesConfig(enabled: boolean) {
 }
 
 export function useSalvarAvaliacoesConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (c: Partial<AvaliacoesConfig>) => (await api.put("/api/julia/avaliacoes/config", c)).data as AvaliacoesConfig,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  return useCacheWriteMutation<AvaliacoesConfig, Partial<AvaliacoesConfig>>({
+    mutationFn: async (c) => (await api.put("/api/julia/avaliacoes/config", c)).data as AvaliacoesConfig,
+    targets: [{ queryKey: [...KEY, "config"], commit: (_old, saved) => saved }],
+    invalidate: [KEY], // the resumo carries `configurado`, derived from this config
   });
 }

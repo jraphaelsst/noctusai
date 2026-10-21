@@ -86,7 +86,7 @@ export function useOlxEvents(limit = 50) {
 
 export function useOlxBackfill() {
   const qc = useQueryClient();
-  return useMutation<OlxBackfillResult, unknown, void>({
+  return useMutation<OlxBackfillResult, unknown, void>({ // noc-allow: invalidate-only — a bulk ingest into the leads projection; the answer is only counts, the new events and leads are server-built
     mutationFn: () => api.post<OlxBackfillResult>(`${BASE}/backfill`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: OLX_FAMILY_KEY });

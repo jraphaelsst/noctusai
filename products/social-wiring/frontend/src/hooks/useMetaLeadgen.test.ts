@@ -31,37 +31,59 @@ vi.mock("@tanstack/react-query", () => {
     refetch: vi.fn(),
     _queryFn: queryFn,
   }));
+  // Runs the same lifecycle TanStack does (onMutate → mutationFn → onSuccess/onError → onSettled), because the
+  // subscribe/unsubscribe hooks are cache-write mutations: the invalidation now happens on SETTLE.
   const useMutation = vi.fn(
     ({
       mutationFn,
+      onMutate,
       onSuccess,
+      onError,
+      onSettled,
     }: {
       mutationFn: (v: unknown) => unknown;
-      onSuccess?: (r: unknown, v: unknown) => void;
-    }) => ({
-      mutate: (
-        vars: unknown,
-        opts?: { onSuccess?: (r: unknown) => void; onError?: (e: unknown) => void },
-      ) => {
-        Promise.resolve(mutationFn(vars))
-          .then((result) => {
-            onSuccess?.(result, vars);
-            opts?.onSuccess?.(result);
-          })
-          .catch((err) => opts?.onError?.(err));
-      },
-      mutateAsync: async (vars: unknown) => {
-        const result = await mutationFn(vars);
-        onSuccess?.(result, vars);
-        return result;
-      },
-      isPending: false,
-      isError: false,
-      error: null,
-      _mutationFn: mutationFn,
-    }),
+      onMutate?: (v: unknown) => unknown;
+      onSuccess?: (r: unknown, v: unknown, ctx: unknown) => void;
+      onError?: (e: unknown, v: unknown, ctx: unknown) => void;
+      onSettled?: (r: unknown, e: unknown, v: unknown) => unknown;
+    }) => {
+      const run = async (vars: unknown) => {
+        const ctx = await onMutate?.(vars);
+        try {
+          const result = await mutationFn(vars);
+          await onSuccess?.(result, vars, ctx);
+          return result;
+        } catch (err) {
+          await onError?.(err, vars, ctx);
+          throw err;
+        } finally {
+          await onSettled?.(undefined, null, vars);
+        }
+      };
+      return {
+        mutate: (
+          vars: unknown,
+          opts?: { onSuccess?: (r: unknown) => void; onError?: (e: unknown) => void },
+        ) => {
+          run(vars)
+            .then((result) => opts?.onSuccess?.(result))
+            .catch((err) => opts?.onError?.(err));
+        },
+        mutateAsync: run,
+        isPending: false,
+        isError: false,
+        error: null,
+        _mutationFn: mutationFn,
+      };
+    },
   );
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    cancelQueries: vi.fn(),
+    getQueryData: vi.fn(),
+    setQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 

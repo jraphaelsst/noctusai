@@ -15,15 +15,34 @@
  * card owner's cliente stays active either way).
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import { FUNIL_PIPELINE_KEY } from "@/lib/funilKeys";
 import type { MotivoPerdaCategoria } from "@/lib/motivoPerda";
 
+/** The funil board cache is the bare `colunas` array ({cards, total}); a card that leaves the board is predictable. */
+type FunilColunas = { cards: { id: string }[]; total?: number; valorTotal?: number }[] | undefined;
+const semCartao = (old: FunilColunas, id: string): FunilColunas =>
+  Array.isArray(old) && old.every((c) => Array.isArray(c?.cards))
+    ? old.map((c) => {
+        const cards = listOps.remove(c.cards, id) ?? c.cards;
+        return cards.length === c.cards.length
+          ? c
+          : { ...c, cards, ...(typeof c.total === "number" ? { total: c.total - 1 } : {}) };
+      })
+    : old;
+
+const FUNIL_BOARD = (id: string) => ({
+  queryKey: [FUNIL_PIPELINE_KEY],
+  match: "prefix" as const,
+  optimistic: (old: FunilColunas) => semCartao(old, id),
+});
+
 export function useArquivarAtendimento() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (atendimentoId: string) => {
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: async (atendimentoId) => {
       const result: any = await api.patch(
         `/api/atendimentos-venda/${atendimentoId}`,
         { arquivado: true },
@@ -35,10 +54,8 @@ export function useArquivarAtendimento() {
     },
     onError: (error: Error) =>
       toast.error("Erro ao arquivar card", { description: error.message }),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["sw-funil"] });
-      queryClient.invalidateQueries({ queryKey: ["atendimentos-venda"] });
-    },
+    targets: (atendimentoId) => [FUNIL_BOARD(atendimentoId)],
+    invalidate: [["atendimentos-venda"]],
   });
 }
 
@@ -58,7 +75,7 @@ export interface PerderAtendimentoInput {
 
 export function usePerderAtendimento() {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — where a lost card lands (stage/status) is decided by the server, so the board is regrouped there
     mutationFn: async ({ atendimentoId, categoria, motivo }: PerderAtendimentoInput) => {
       const nota = motivo?.trim();
       const result: any = await api.post(

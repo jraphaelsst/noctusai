@@ -11,6 +11,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -107,59 +108,76 @@ export function useMailchimpCampaign(campaignId: string | null) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+/** A saved campaign replaces its row on every cached page (rows are keyed by `id`) and its own detail. */
+const campaignTargets = (id: string) => [
+  {
+    queryKey: CAMPAIGNS_KEY,
+    match: "prefix" as const,
+    commit: (old: CampaignsOut | undefined, saved: CampaignOut) => pageOps.patch(old, id, saved),
+  },
+  {
+    queryKey: [...CAMPAIGNS_KEY, id],
+    commit: (old: CampaignOut | undefined, saved: CampaignOut) => listOps.merge(old, saved),
+  },
+];
+
 export function useMailchimpCampaignMutations() {
   const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  // Segments/templates/audience stats hang off the same family, so it refreshes on settle.
+  const invalidate = [FAMILY_KEY];
 
-  const create = useMutation<CampaignOut, unknown, CreateCampaignBody>({
+  const create = useCacheWriteMutation<CampaignOut, CreateCampaignBody>({
     mutationFn: (body) => api.post<CampaignOut>(BASE, body),
-    onSuccess: invalidateFamily,
+    targets: [
+      {
+        queryKey: CAMPAIGNS_KEY,
+        match: "prefix",
+        commit: (old: CampaignsOut | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate,
   });
 
-  const update = useMutation<
-    CampaignOut,
-    unknown,
-    { id: string; body: UpdateCampaignBody }
-  >({
+  const update = useCacheWriteMutation<CampaignOut, { id: string; body: UpdateCampaignBody }>({
     mutationFn: ({ id, body }) => api.patch<CampaignOut>(`${BASE}/${id}`, body),
-    onSuccess: invalidateFamily,
+    targets: ({ id }) => campaignTargets(id),
+    invalidate,
   });
 
-  const remove = useMutation<unknown, unknown, string>({
+  const remove = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/${id}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      {
+        queryKey: CAMPAIGNS_KEY,
+        match: "prefix",
+        optimistic: (old: CampaignsOut | undefined) => pageOps.remove(old, id),
+      },
+    ],
+    invalidate,
   });
 
-  const send = useMutation<CampaignOut, unknown, string>({
-    mutationFn: (id) =>
-      api.post<CampaignOut>(`${BASE}/${id}/actions/send`, {}),
-    onSuccess: invalidateFamily,
+  const send = useCacheWriteMutation<CampaignOut, string>({
+    mutationFn: (id) => api.post<CampaignOut>(`${BASE}/${id}/actions/send`, {}),
+    targets: (id) => campaignTargets(id),
+    invalidate,
   });
 
-  const schedule = useMutation<
-    CampaignOut,
-    unknown,
-    { id: string; body: ScheduleCampaignBody }
-  >({
-    mutationFn: ({ id, body }) =>
-      api.post<CampaignOut>(`${BASE}/${id}/actions/schedule`, body),
-    onSuccess: invalidateFamily,
+  const schedule = useCacheWriteMutation<CampaignOut, { id: string; body: ScheduleCampaignBody }>({
+    mutationFn: ({ id, body }) => api.post<CampaignOut>(`${BASE}/${id}/actions/schedule`, body),
+    targets: ({ id }) => campaignTargets(id),
+    invalidate,
   });
 
-  const unschedule = useMutation<CampaignOut, unknown, string>({
-    mutationFn: (id) =>
-      api.post<CampaignOut>(`${BASE}/${id}/actions/unschedule`, {}),
-    onSuccess: invalidateFamily,
+  const unschedule = useCacheWriteMutation<CampaignOut, string>({
+    mutationFn: (id) => api.post<CampaignOut>(`${BASE}/${id}/actions/unschedule`, {}),
+    targets: (id) => campaignTargets(id),
+    invalidate,
   });
 
-  const sendTest = useMutation<
-    { ok: boolean },
-    unknown,
-    { id: string; body: SendTestBody }
-  >({
+  const sendTest = useMutation<{ ok: boolean }, unknown, { id: string; body: SendTestBody }>({ // noc-allow: invalidate-only — a test send emails the given addresses and answers only {ok}; no cached row changes
     mutationFn: ({ id, body }) =>
       api.post<{ ok: boolean }>(`${BASE}/${id}/actions/test`, body),
-    onSuccess: invalidateFamily,
+    onSuccess: () => qc.invalidateQueries({ queryKey: FAMILY_KEY }),
   });
 
   return { create, update, remove, send, schedule, unschedule, sendTest };

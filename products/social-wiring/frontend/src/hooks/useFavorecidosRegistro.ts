@@ -16,6 +16,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export const FAVORECIDOS_API_BASE = "/api/card-hub/favorecidos";
 export const FAVORECIDOS_KEY = ["sw", "favorecidos"] as const;
@@ -130,7 +131,7 @@ function useInvalidateRegistro() {
 
 export function useCreateFavorecidoRegistro() {
   const invalidate = useInvalidateRegistro();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer holds CLEAR cpf/pix, while the list keeps only MASKED rows the server builds; deriving them client-side would put PII in the cache (LGPD)
     mutationFn: (payload: FavorecidoInput) =>
       api.post<FavorecidoCompleto>(FAVORECIDOS_API_BASE, payload),
     onSuccess: invalidate,
@@ -138,23 +139,45 @@ export function useCreateFavorecidoRegistro() {
 }
 
 export function useUpdateFavorecidoRegistro() {
-  const invalidate = useInvalidateRegistro();
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: FavorecidoPatchInput }) =>
+  return useCacheWriteMutation<FavorecidoCompleto, { id: string; patch: FavorecidoPatchInput }>({
+    mutationFn: ({ id, patch }) =>
       api.patch<FavorecidoCompleto>(
         `${FAVORECIDOS_API_BASE}/${encodeURIComponent(id)}`,
         patch,
       ),
-    onSuccess: invalidate,
+    // Only the NON-sensitive fields reach the list rows; the masked ones (cpf/pix) refetch on settle.
+    targets: ({ id }) => [
+      {
+        queryKey: [...FAVORECIDOS_KEY, "list"],
+        match: "prefix",
+        commit: (old: { items: FavorecidoResumo[] } | undefined, saved) =>
+          listOps.within(old, "items", (l) =>
+            listOps.patch(l, id, {
+              nome: saved.nome,
+              tipo_pessoa: saved.tipo_pessoa,
+              banco: saved.banco,
+              pix_tipo: saved.pix_tipo,
+              ativo: saved.ativo,
+            }),
+          ),
+      },
+    ],
+    invalidate: [FAVORECIDOS_KEY],
   });
 }
 
 /** Soft delete — the row is deactivated, never removed. */
 export function useDeactivateFavorecidoRegistro() {
-  const invalidate = useInvalidateRegistro();
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.delete(`${FAVORECIDOS_API_BASE}/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${FAVORECIDOS_API_BASE}/${encodeURIComponent(id)}`),
+    targets: (id) => [
+      {
+        queryKey: [...FAVORECIDOS_KEY, "list"],
+        match: "prefix",
+        optimistic: (old: { items: FavorecidoResumo[] } | undefined) =>
+          listOps.within(old, "items", (l) => listOps.patch(l, id, { ativo: false })),
+      },
+    ],
+    invalidate: [FAVORECIDOS_KEY],
   });
 }

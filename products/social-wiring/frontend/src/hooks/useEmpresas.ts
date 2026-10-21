@@ -15,7 +15,7 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { uploadMultipart } from "@/hooks/useCardHub";
 import type { DocumentoUrlResponse } from "@/types/cardHub";
@@ -112,6 +112,26 @@ export function useEmpresaChecklist(empresaId: string | null) {
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
+/** The same family as `invalidateEmpresaFamily`, as keys for a cache-write mutation's settle. */
+function empresaFamilyKeys(clienteId: string | null, empresaId?: string, comDocumentos = true) {
+  return [
+    ...(clienteId ? [EMPRESAS_DO_CARD_KEY(clienteId)] : []),
+    ...(empresaId
+      ? [...(comDocumentos ? [EMPRESA_DOCUMENTOS_KEY(empresaId)] : []), EMPRESA_CHECKLIST_KEY(empresaId)]
+      : []),
+  ];
+}
+
+/** Edit ONE empresa row of the card's list. `items` rows are keyed by `empresa.id`, not `id`. */
+const naEmpresa = (
+  old: EmpresasDoCardResponse | undefined,
+  empresaId: string,
+  edit: (item: EmpresaCardItem) => EmpresaCardItem,
+) =>
+  old && Array.isArray(old.items)
+    ? { ...old, items: old.items.map((i) => (i.empresa.id === empresaId ? edit(i) : i)) }
+    : old;
+
 function invalidateEmpresaFamily(
   qc: ReturnType<typeof useQueryClient>,
   clienteId: string | null,
@@ -127,14 +147,21 @@ function invalidateEmpresaFamily(
 /** `POST /api/clientes/{cliente_id}/empresas` (§D.2) — manual link: upserts
  *  the empresa by CNPJ and a participação with `origem='manual'`. */
 export function useAdicionarEmpresa(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AdicionarEmpresaBody) =>
+  return useCacheWriteMutation<EmpresaCardItem, AdicionarEmpresaBody>({
+    mutationFn: (body) =>
       api.post<EmpresaCardItem>(
         `/api/clientes/${encodeURIComponent(clienteId)}/empresas`,
         body,
       ),
-    onSuccess: () => invalidateEmpresaFamily(qc, clienteId),
+    targets: [
+      {
+        queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
+        commit: (old: EmpresasDoCardResponse | undefined, saved) =>
+          old && Array.isArray(old.items) && !old.items.some((i) => i.empresa.id === saved.empresa.id)
+            ? { ...old, items: [...old.items, saved] }
+            : old,
+      },
+    ],
   });
 }
 
@@ -213,11 +240,21 @@ export function useDecidirParticipacao(clienteId: string) {
  *  deferred to admin adjudication (`empresa_campo_conflitos`) — the row
  *  itself is unchanged when every touched field was deferred. */
 export function useAtualizarEmpresa(empresaId: string, clienteId: string | null = null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AtualizarEmpresaBody) =>
-      api.patch<AtualizarEmpresaResponse>(empresaBase(empresaId), body),
-    onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
+  return useCacheWriteMutation<AtualizarEmpresaResponse, AtualizarEmpresaBody>({
+    mutationFn: (body) => api.patch<AtualizarEmpresaResponse>(empresaBase(empresaId), body),
+    // The saved empresa replaces the card row's `empresa`; the verdict (exige_certidoes, cartao, certidoes) is the server's.
+    targets: clienteId
+      ? [
+          {
+            queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
+            commit: (old: EmpresasDoCardResponse | undefined, saved) => {
+              const { pendente_confirmacao: _p, ...empresa } = saved;
+              return naEmpresa(old, empresaId, (i) => ({ ...i, empresa: { ...i.empresa, ...empresa } }));
+            },
+          },
+        ]
+      : [],
+    invalidate: empresaFamilyKeys(null, empresaId),
   });
 }
 
@@ -226,11 +263,19 @@ export function useAtualizarEmpresa(empresaId: string, clienteId: string | null 
  *  this cliente from the empresa; the empresa row (and its Cartão CNPJ)
  *  is hard-deleted only when this was the last participação. */
 export function useRemoverEmpresa(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (empresaId: string) =>
+  return useCacheWriteMutation<RemoverEmpresaResponse, string>({
+    mutationFn: (empresaId) =>
       api.delete<RemoverEmpresaResponse>(clienteEmpresaBase(clienteId, empresaId)),
-    onSuccess: () => invalidateEmpresaFamily(qc, clienteId),
+    // The participação is always unlinked from this card, so the row leaves the list.
+    targets: (empresaId) => [
+      {
+        queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
+        optimistic: (old: EmpresasDoCardResponse | undefined) =>
+          old && Array.isArray(old.items)
+            ? { ...old, items: old.items.filter((i) => i.empresa.id !== empresaId) }
+            : old,
+      },
+    ],
   });
 }
 
@@ -239,15 +284,22 @@ export function useRemoverEmpresa(clienteId: string) {
  *  Schedules extraction server-side; `useEmpresaDocumentos`'s own polling
  *  picks up the terminal status once it lands. */
 export function useUploadEmpresaDocumento(empresaId: string, clienteId: string | null = null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (file: File) => {
+  return useCacheWriteMutation<EmpresaDocumento, File>({
+    mutationFn: (file) => {
       const form = new FormData();
       form.append("file", file);
       form.append("tipo_documento", "cartao_cnpj");
       return uploadMultipart<EmpresaDocumento>(`${empresaBase(empresaId)}/documentos`, form);
     },
-    onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
+    targets: [
+      {
+        queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId),
+        commit: (old: EmpresaDocumentosResponse | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    // documentos is a target of this write: its settle already refreshes it
+    invalidate: empresaFamilyKeys(clienteId, empresaId, false),
   });
 }
 
@@ -263,7 +315,7 @@ export function useUploadEmpresaDocumento(empresaId: string, clienteId: string |
  * cached, hence a mutation.
  */
 export function useEmpresaDocumentoUrl(empresaId: string) {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — a read-on-click (signed URL), writes nothing and caches nothing
     mutationFn: (documentoId: string) =>
       api.get<DocumentoUrlResponse>(
         `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}/url`,
@@ -282,13 +334,20 @@ export function useEmpresaDocumentoUrl(empresaId: string) {
  * keys every other write here does.
  */
 export function useRemoverEmpresaDocumento(empresaId: string, clienteId: string | null = null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ documentoId, motivo }: { documentoId: string; motivo: string }) =>
+  return useCacheWriteMutation<void, { documentoId: string; motivo: string }>({
+    mutationFn: ({ documentoId, motivo }) =>
       api.delete<void>(
         `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
       ),
-    onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
+    targets: ({ documentoId }) => [
+      {
+        queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId),
+        optimistic: (old: EmpresaDocumentosResponse | undefined) =>
+          listOps.within(old, "items", (l) => listOps.remove(l, documentoId)),
+      },
+    ],
+    // documentos is a target of this write: its settle already refreshes it
+    invalidate: empresaFamilyKeys(clienteId, empresaId, false),
   });
 }
 
@@ -303,34 +362,55 @@ export function useRemoverEmpresaDocumento(empresaId: string, clienteId: string 
  * `dados_confirmado_em` / E1 verdict.
  */
 export function useEmpresaExtracao(empresaId: string, clienteId: string | null = null) {
-  const qc = useQueryClient();
-  const invalidate = () => invalidateEmpresaFamily(qc, clienteId, empresaId);
-
-  const reextrair = useMutation({
-    mutationFn: (documentoId: string) =>
+  const reextrair = useCacheWriteMutation<EmpresaDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<EmpresaDocumento>(
         `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}/extrair`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: (documentoId) => [
+      {
+        queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId),
+        commit: (old: EmpresaDocumentosResponse | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.patch(l, documentoId, saved)),
+      },
+    ],
+    // documentos is a target of this write: its settle already refreshes it
+    invalidate: empresaFamilyKeys(clienteId, empresaId, false),
   });
 
-  const confirmar = useMutation({
-    mutationFn: (documentoId: string) =>
+  const confirmar = useCacheWriteMutation<EmpresaDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<EmpresaDocumento>(
         `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}/extracao/confirmar`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: (documentoId) => [
+      {
+        queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId),
+        commit: (old: EmpresaDocumentosResponse | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.patch(l, documentoId, saved)),
+      },
+    ],
+    // documentos is a target of this write: its settle already refreshes it
+    invalidate: empresaFamilyKeys(clienteId, empresaId, false),
   });
 
-  const descartar = useMutation({
-    mutationFn: (documentoId: string) =>
+  const descartar = useCacheWriteMutation<EmpresaDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<EmpresaDocumento>(
         `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}/extracao/descartar`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: (documentoId) => [
+      {
+        queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId),
+        commit: (old: EmpresaDocumentosResponse | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.patch(l, documentoId, saved)),
+      },
+    ],
+    // documentos is a target of this write: its settle already refreshes it
+    invalidate: empresaFamilyKeys(clienteId, empresaId, false),
   });
 
   return { reextrair, confirmar, descartar };

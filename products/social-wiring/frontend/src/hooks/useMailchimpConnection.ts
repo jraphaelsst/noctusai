@@ -7,11 +7,8 @@
  *
  * Built on @tanstack/react-query v5. queryFns never return undefined.
  */
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types (mirror app/modules/mailchimp/schemas.py) ────────────────────────
@@ -74,22 +71,37 @@ export function useMailchimpAudiences(enabled = true) {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useMailchimpConnectionMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  // Audiences, campaigns, segments and contacts all depend on the connection, so the family refreshes on settle.
+  const invalidate = [FAMILY_KEY];
+  const commitConnection = {
+    queryKey: CONNECTION_KEY,
+    commit: (_old: MailchimpConnectionOut | undefined, saved: MailchimpConnectionOut) => saved,
+  };
 
-  const put = useMutation<MailchimpConnectionOut, unknown, PutConnectionBody>({
+  const put = useCacheWriteMutation<MailchimpConnectionOut, PutConnectionBody>({
     mutationFn: (body) => api.put<MailchimpConnectionOut>(BASE, body),
-    onSuccess: invalidateFamily,
+    targets: [commitConnection],
+    invalidate,
   });
 
-  const patch = useMutation<MailchimpConnectionOut, unknown, PatchConnectionBody>({
+  const patch = useCacheWriteMutation<MailchimpConnectionOut, PatchConnectionBody>({
     mutationFn: (body) => api.patch<MailchimpConnectionOut>(BASE, body),
-    onSuccess: invalidateFamily,
+    targets: [commitConnection],
+    invalidate,
   });
 
-  const remove = useMutation<unknown, unknown, void>({
+  const remove = useCacheWriteMutation<unknown, void>({
     mutationFn: () => api.delete(BASE),
-    onSuccess: invalidateFamily,
+    targets: [
+      {
+        queryKey: CONNECTION_KEY,
+        optimistic: (old: MailchimpConnectionOut | undefined) =>
+          old
+            ? { ...old, connected: false, server_prefix: null, audience_id: null, audience_name: null }
+            : old,
+      },
+    ],
+    invalidate,
   });
 
   return { put, patch, remove };

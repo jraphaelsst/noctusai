@@ -4,6 +4,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { contratosQueryKey } from "@/hooks/useContratos";
 import type {
@@ -50,48 +51,64 @@ export function useProposta(clienteId: string | null, id: string | null) {
 
 export function usePropostaMutations(clienteId: string) {
   const qc = useQueryClient();
-  const invalidar = () => qc.invalidateQueries({ queryKey: propostasQueryKey(clienteId) });
-  const invalidarComContratos = () => {
-    invalidar();
-    qc.invalidateQueries({ queryKey: contratosQueryKey(clienteId) });
-    // Aceitar materializes the live negotiation + atendimento imóvel.
-    qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] });
-  };
+  const listKey = [...propostasQueryKey(clienteId), "list"] as const;
+  // A saved proposta replaces its row in the list and its own detail.
+  const salvaNoCache = (id: string) => [
+    { queryKey: listKey, commit: (old: Proposta[] | undefined, saved: Proposta) => listOps.patch(old, id, saved) },
+    {
+      queryKey: [...propostasQueryKey(clienteId), "item", id],
+      commit: (old: Proposta | undefined, saved: Proposta) => listOps.merge(old, saved),
+    },
+  ];
+  const settle = [propostasQueryKey(clienteId)];
+  const aceitarSettle = [...settle, contratosQueryKey(clienteId), ["sw", "clientes", clienteId]];
 
-  const criar = useMutation({
-    mutationFn: (body: PropostaCreateBody) => api.post<Proposta>(base(clienteId), body),
-    onSuccess: invalidar,
+  const criar = useCacheWriteMutation<Proposta, PropostaCreateBody>({
+    mutationFn: (body) => api.post<Proposta>(base(clienteId), body),
+    targets: [{ queryKey: listKey, commit: (old, saved) => listOps.replace(old, saved.id, saved) }],
+    invalidate: settle,
   });
-  const salvar = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: PropostaPatch }) =>
-      api.patch<Proposta>(item(clienteId, id), patch),
-    onSuccess: invalidar,
+  const salvar = useCacheWriteMutation<Proposta, { id: string; patch: PropostaPatch }>({
+    mutationFn: ({ id, patch }) => api.patch<Proposta>(item(clienteId, id), patch),
+    targets: ({ id }) => salvaNoCache(id),
+    invalidate: settle,
   });
-  const enviar = useMutation({
-    mutationFn: ({ id }: { id: string }) => api.post<Proposta>(`${item(clienteId, id)}/enviar`, {}),
-    onSuccess: invalidar,
+  const enviar = useCacheWriteMutation<Proposta, { id: string }>({
+    mutationFn: ({ id }) => api.post<Proposta>(`${item(clienteId, id)}/enviar`, {}),
+    targets: ({ id }) => salvaNoCache(id),
+    invalidate: settle,
   });
-  const recusar = useMutation({
-    mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
-      api.post<Proposta>(`${item(clienteId, id)}/recusar`, { motivo }),
-    onSuccess: invalidar,
+  const recusar = useCacheWriteMutation<Proposta, { id: string; motivo: string }>({
+    mutationFn: ({ id, motivo }) => api.post<Proposta>(`${item(clienteId, id)}/recusar`, { motivo }),
+    targets: ({ id }) => salvaNoCache(id),
+    invalidate: settle,
   });
-  const aceitar = useMutation({
-    mutationFn: ({ id }: { id: string }) =>
-      api.post<AceiteResponse>(`${item(clienteId, id)}/aceitar`, {}),
-    onSuccess: invalidarComContratos,
-    // A partial failure leaves the proposta `enviada`: refresh either way.
-    onError: invalidar,
+  const aceitar = useCacheWriteMutation<AceiteResponse, { id: string }>({
+    mutationFn: ({ id }) => api.post<AceiteResponse>(`${item(clienteId, id)}/aceitar`, {}),
+    // The answer carries the accepted proposta; contratos and the live negotiation (materialized) refetch.
+    targets: ({ id }) => [
+      {
+        queryKey: listKey,
+        commit: (old: Proposta[] | undefined, saved) => listOps.patch(old, id, saved.proposta),
+      },
+      {
+        queryKey: [...propostasQueryKey(clienteId), "item", id],
+        commit: (old: Proposta | undefined, saved) => listOps.merge(old, saved.proposta),
+      },
+    ],
+    invalidate: aceitarSettle,
+    // A partial failure leaves the proposta `enviada`: refresh either way (settle already does).
   });
-  const excluir = useMutation({
-    mutationFn: ({ id }: { id: string }) => api.delete(item(clienteId, id)),
-    onSuccess: invalidar,
+  const excluir = useCacheWriteMutation<unknown, { id: string }>({
+    mutationFn: ({ id }) => api.delete(item(clienteId, id)),
+    targets: ({ id }) => [{ queryKey: listKey, optimistic: (old) => listOps.remove(old, id) }],
+    invalidate: settle,
   });
-  const posAceite = useMutation({
+  const posAceite = useMutation({ // noc-allow: invalidate-only — resumes the post-acceptance steps server-side (funil, pós-aceite); the answer is the step report, not the proposta/negotiation rows it changed
     mutationFn: ({ id }: { id: string }) =>
       api.post<PosAceiteResponse>(`${item(clienteId, id)}/pos-aceite`, {}),
     onSuccess: () => {
-      invalidar();
+      qc.invalidateQueries({ queryKey: propostasQueryKey(clienteId) });
       qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] });
     },
   });

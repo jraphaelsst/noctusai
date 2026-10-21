@@ -3,11 +3,8 @@
  * + its editable alias map, "Configuração" subtab). List is NOT paginated
  * (success_response, per §5.2) — the dimension is small (~15-20 rows).
  */
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type { LeadSource, LeadSourceAlias, LeadSourceInput } from "@/pages/leads/types";
 
@@ -32,18 +29,19 @@ export function useLeadSources() {
 }
 
 export function useLeadSourceMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  // Alias rows and the leads' source labels hang off a source, so the whole family refreshes on settle.
+  const invalidate = [FAMILY_KEY];
 
-  const create = useMutation<LeadSource, unknown, LeadSourceInput>({
+  const create = useCacheWriteMutation<LeadSource, LeadSourceInput>({
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<LeadSource>>(BASE, body);
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: [{ queryKey: FAMILY_KEY, commit: (old: LeadSource[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
+    invalidate,
   });
 
-  const update = useMutation<LeadSource, unknown, { id: string; body: Partial<LeadSourceInput> }>({
+  const update = useCacheWriteMutation<LeadSource, { id: string; body: Partial<LeadSourceInput> }>({
     mutationFn: async ({ id, body }) => {
       const res = await api.patch<SuccessEnvelope<LeadSource>>(
         `${BASE}/${encodeURIComponent(id)}`,
@@ -51,16 +49,21 @@ export function useLeadSourceMutations() {
       );
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: ({ id }) => [
+      { queryKey: FAMILY_KEY, commit: (old: LeadSource[] | undefined, saved) => listOps.patch(old, id, saved) },
+    ],
+    invalidate,
   });
 
-  /** 409 (with a decoded message) if leads still reference it and no `reassignTo` given — §5.2. */
-  const remove = useMutation<unknown, unknown, { id: string; reassignTo?: string }>({
+  const remove = useCacheWriteMutation<unknown, { id: string; reassignTo?: string }>({
     mutationFn: ({ id, reassignTo }) => {
       const qs = reassignTo ? `?reassign_to=${encodeURIComponent(reassignTo)}` : "";
       return api.delete(`${BASE}/${encodeURIComponent(id)}${qs}`);
     },
-    onSuccess: invalidateFamily,
+    targets: ({ id }) => [
+      { queryKey: FAMILY_KEY, optimistic: (old: LeadSource[] | undefined) => listOps.remove(old, id) },
+    ],
+    invalidate,
   });
 
   return { create, update, remove };
@@ -100,29 +103,32 @@ export function useLeadSourceUnmapped() {
 }
 
 export function useLeadSourceAliasMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => {
-    qc.invalidateQueries({ queryKey: FAMILY_KEY });
-    qc.invalidateQueries({ queryKey: ["leads", "list"] });
-    qc.invalidateQueries({ queryKey: ["leads", "analytics"] });
-  };
+  // The leads lists/analytics carry the resolved source label, so they refresh once the alias map changes.
+  const invalidate = [FAMILY_KEY, ["leads", "list"], ["leads", "analytics"]];
 
-  /** Creates/repoints an alias, then re-links matching leads server-side (§5.2). */
-  const upsert = useMutation<
-    LeadSourceAlias,
-    unknown,
-    { alias: string; source_id: string }
-  >({
+  const upsert = useCacheWriteMutation<LeadSourceAlias, { alias: string; source_id: string }>({
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<LeadSourceAlias>>(`${BASE}/aliases`, body);
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: [
+      { queryKey: ALIASES_KEY, commit: (old: LeadSourceAlias[] | undefined, saved) => listOps.replace(old, saved.id, saved) },
+      {
+        // The alias is mapped now: it leaves the "unmapped" queue.
+        queryKey: [...ALIASES_KEY, "unmapped"],
+        commit: (old: UnmappedAlias[] | undefined, saved) =>
+          Array.isArray(old) ? old.filter((u) => u.alias !== saved.alias) : old,
+      },
+    ],
+    invalidate,
   });
 
-  const remove = useMutation<unknown, unknown, string>({
+  const remove = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/aliases/${encodeURIComponent(id)}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      { queryKey: ALIASES_KEY, optimistic: (old: LeadSourceAlias[] | undefined) => listOps.remove(old, id) },
+    ],
+    invalidate,
   });
 
   return { upsert, remove };

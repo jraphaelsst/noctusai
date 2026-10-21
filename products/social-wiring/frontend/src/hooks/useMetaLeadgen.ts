@@ -19,9 +19,10 @@
  * in this same product — do not wrap these in `.data`.
  */
 import { useCallback } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream } from "@noctusai/lib";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { LeadRecord, LeadRecords } from "./useMetaAds";
 
@@ -116,25 +117,35 @@ export function useLeadgenSubscriptions() {
  *  button. Per-page results — the caller must render PARTIAL failure, never
  *  collapse it to a blanket success/error. Invalidates the subscriptions
  *  query so every row reflects the new state without a manual refetch. */
+/** Edit the page(s) of the cached subscriptions answer; `pages` rows are keyed by `page_id`. */
+const naPagina = (
+  old: LeadgenSubscriptions | undefined,
+  edit: (p: LeadgenPageSubscription) => LeadgenPageSubscription,
+) => (old && Array.isArray(old.pages) ? { ...old, pages: old.pages.map(edit) } : old);
+
 export function useSubscribeLeadgenPages() {
-  const qc = useQueryClient();
-  return useMutation<LeadgenSubscribeResponse, Error, string[] | null>({
+  return useCacheWriteMutation<LeadgenSubscribeResponse, string[] | null>({
     mutationFn: (pageIds) =>
       api
         .post<LeadgenSubscribeResponse>("/api/meta/leadgen/subscriptions", {
           page_ids: pageIds,
         })
         .then((r) => r ?? { results: [] }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-    },
+    // The answer says which pages Meta accepted; those are subscribed now (the field list is Meta's: settle).
+    targets: [
+      {
+        queryKey: SUBSCRIPTIONS_KEY,
+        commit: (old: LeadgenSubscriptions | undefined, saved) => {
+          const ok = new Set(saved.results.filter((r) => r.ok).map((r) => r.page_id));
+          return naPagina(old, (p) => (ok.has(p.page_id) ? { ...p, subscribed: true } : p));
+        },
+      },
+    ],
   });
 }
 
-/** Undo one Page's subscription. */
 export function useUnsubscribeLeadgenPage() {
-  const qc = useQueryClient();
-  return useMutation<LeadgenSubscribeResult, Error, string>({
+  return useCacheWriteMutation<LeadgenSubscribeResult, string>({
     mutationFn: (pageId) =>
       api
         .delete<LeadgenSubscribeResult>(
@@ -148,25 +159,20 @@ export function useUnsubscribeLeadgenPage() {
               error: "resposta vazia do servidor",
             },
         ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-    },
+    targets: (pageId) => [
+      {
+        queryKey: SUBSCRIPTIONS_KEY,
+        commit: (old: LeadgenSubscriptions | undefined, saved) =>
+          saved.ok
+            ? naPagina(old, (p) => (p.page_id === pageId ? { ...p, subscribed: false, subscribed_fields: [] } : p))
+            : old,
+      },
+    ],
   });
 }
 
-/**
- * Attribute every lead form on a Page to a client — the key that decides which
- * client's recipients get alerted (migration 045). Sending `null` clears it
- * back to unattributed, which routes to the org-wide tier.
- *
- * Invalidates the subscriptions query so the badge and the counts reflect the
- * write immediately; there is no optimistic update because a partial write
- * (some forms updated, some not) must show its real end state rather than the
- * one we hoped for.
- */
 export function useSetPageMarca() {
-  const qc = useQueryClient();
-  return useMutation<LeadgenPageSubscription, Error, { pageId: string; marcaId: string | null }>({
+  return useCacheWriteMutation<LeadgenPageSubscription, { pageId: string; marcaId: string | null }>({
     mutationFn: ({ pageId, marcaId }) =>
       api
         .put<LeadgenPageSubscription>(
@@ -181,17 +187,19 @@ export function useSetPageMarca() {
               forms_total: 0, forms_attributed: 0,
             },
         ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-    },
+    targets: ({ pageId, marcaId }) => [
+      {
+        queryKey: SUBSCRIPTIONS_KEY,
+        // The picked client is what the user chose; the attributed-forms counts are the server's (settle).
+        optimistic: (old: LeadgenSubscriptions | undefined) =>
+          naPagina(old, (p) => (p.page_id === pageId ? { ...p, marca_id: marcaId } : p)),
+        commit: (old: LeadgenSubscriptions | undefined, saved) =>
+          naPagina(old, (p) => (p.page_id === pageId ? { ...p, ...saved } : p)),
+      },
+    ],
   });
 }
 
-/** Delivery health — `last_received_at === null` is the most diagnostic
- *  state in the whole feature: Meta has NEVER called our webhook, i.e. the
- *  App-Dashboard half of the handshake isn't configured. Distinguishing
- *  that from "configured but no leads yet" is the entire point of this
- *  query. */
 export function useLeadgenEvents(limit = 20) {
   return useQuery<LeadgenEvents>({
     queryKey: eventsKey(limit),

@@ -10,7 +10,8 @@
  *
  * Loading = two signals off `data` (never `isLoading`).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -61,36 +62,51 @@ export function useUsuariosDaOrg(enabled = true) {
   });
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: EQUIPE_WHATSAPP_KEY });
-}
+const LISTA_KEY = [...EQUIPE_WHATSAPP_KEY, "lista"] as const;
 
 export function useCriarMembro() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, MembroEntrada>({
-    mutationFn: (corpo) => api.post(BASE, corpo),
-    onSettled: inv,
+  return useCacheWriteMutation<MembroEquipe, MembroEntrada>({
+    mutationFn: async (corpo) => (await api.post<{ data: MembroEquipe }>(BASE, corpo)).data,
+    targets: [
+      {
+        queryKey: LISTA_KEY,
+        commit: (old: EquipeLista | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    invalidate: [EQUIPE_WHATSAPP_KEY],
   });
 }
 
 export function useAtualizarMembro() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string; campos: Partial<MembroEntrada> & { ativo?: boolean } }>({
-    mutationFn: ({ id, campos }) => api.patch(`${BASE}/${encodeURIComponent(id)}`, campos),
-    onSettled: inv,
+  return useCacheWriteMutation<MembroEquipe, { id: string; campos: Partial<MembroEntrada> & { ativo?: boolean } }>({
+    mutationFn: async ({ id, campos }) =>
+      (await api.patch<{ data: MembroEquipe }>(`${BASE}/${encodeURIComponent(id)}`, campos)).data,
+    targets: ({ id }) => [
+      {
+        queryKey: LISTA_KEY,
+        commit: (old: EquipeLista | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.patch(l, id, saved)),
+      },
+    ],
+    invalidate: [EQUIPE_WHATSAPP_KEY],
   });
 }
 
 export function useRemoverMembro() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string }>({
+  return useCacheWriteMutation<unknown, { id: string }>({
     mutationFn: ({ id }) => api.delete(`${BASE}/${encodeURIComponent(id)}`),
-    onSettled: inv,
+    targets: ({ id }) => [
+      {
+        queryKey: LISTA_KEY,
+        optimistic: (old: EquipeLista | undefined) =>
+          listOps.within(old, "items", (l) => listOps.remove(l, id)),
+      },
+    ],
+    invalidate: [EQUIPE_WHATSAPP_KEY],
   });
 }
 
-/** `5511977770009` -> `+55 11 97777-0009` (display only; the server stores digits). */
 export function formatarTelefone(d: string | null): string {
   if (!d) return "—";
   const m = /^(\d{2})(\d{2})(\d{4,5})(\d{4})$/.exec(d);

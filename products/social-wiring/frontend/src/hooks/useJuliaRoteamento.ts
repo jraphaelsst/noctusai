@@ -7,7 +7,8 @@
  * How Julia BEHAVES is configured in the agents app; SW only decides which numbers feed her and who is told when
  * a lead goes to a human. Loading = two signals off `data` (never `isLoading`).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -45,10 +46,31 @@ export function useJuliaRoteamento() {
 }
 
 export function useAtualizarLinha() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, { connectionId: string; body: LinhaUpdate }>({
+  return useCacheWriteMutation<unknown, { connectionId: string; body: LinhaUpdate }>({
     mutationFn: ({ connectionId, body }) => api.put(`/api/julia/roteamento/linhas/${connectionId}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_ROTEAMENTO_KEY }),
+    // The switch and the handoff target are exactly what the user sent; `alimenta_desde` is the server's (settle).
+    targets: ({ connectionId, body }) => [
+      {
+        queryKey: JULIA_ROTEAMENTO_KEY,
+        optimistic: (old: Roteamento | undefined) =>
+          old && Array.isArray(old.linhas)
+            ? {
+                ...old,
+                linhas: old.linhas.map((l) =>
+                  l.connection_id === connectionId
+                    ? {
+                        ...l,
+                        alimenta: body.alimenta,
+                        ...(body.destino_handoff_user_id !== undefined
+                          ? { destino_handoff_user_id: body.destino_handoff_user_id }
+                          : {}),
+                      }
+                    : l,
+                ),
+              }
+            : old,
+      },
+    ],
   });
 }
 

@@ -14,6 +14,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import {
   normalizarImovel,
@@ -70,36 +71,49 @@ function invalidarImoveis(qc: QueryClient) {
 
 export function useCriarImovelManual() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the catalog is filtered/paged/ranked by the server, and the new imóvel's detail key only exists once the código is known
     mutationFn: async (body: ImovelManualBody) =>
       normalizarImovel(await api.post<Imovel>("/api/imoveis/manuais", body)),
     onSuccess: () => invalidarImoveis(qc),
   });
 }
 
+/** A saved imóvel replaces its catalog row (pages key rows by `codigo`) and its detail. */
+const imovelTargets = <T extends object>(codigo: string, mudanca: (saved: T) => object) => [
+  {
+    queryKey: ["sw", "imoveis"],
+    match: "prefix" as const,
+    commit: (old: unknown, saved: T) => pageOps.patch(old, codigo, mudanca(saved), "codigo"),
+  },
+  {
+    queryKey: ["sw", "imoveis", "detail", codigo],
+    commit: (old: Imovel | undefined, saved: T) => listOps.merge(old, mudanca(saved) as Partial<Imovel>),
+  },
+];
+
 export function useAtualizarImovelManual(codigo: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (patch: ImovelManualPatch) =>
+  return useCacheWriteMutation<Imovel, ImovelManualPatch>({
+    mutationFn: async (patch) =>
       normalizarImovel(
         await api.patch<Imovel>(
           `/api/imoveis/manuais/${encodeURIComponent(codigo)}`,
           patch,
         ),
       ),
-    onSuccess: () => invalidarImoveis(qc),
+    targets: imovelTargets<Imovel>(codigo, (saved) => saved),
+    invalidate: [["sw", "cardHub", "imoveisBusca"]],
   });
 }
 
 export function useAtualizarReferencias(codigo: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (patch: ReferenciasPatch) =>
+  return useCacheWriteMutation<ImovelReferencias, ReferenciasPatch>({
+    mutationFn: (patch) =>
       api.patch<ImovelReferencias>(
         `/api/imoveis/${encodeURIComponent(codigo)}/referencias`,
         patch,
       ),
-    onSuccess: () => invalidarImoveis(qc),
+    targets: imovelTargets<ImovelReferencias>(codigo, (referencias) => ({ referencias })),
+    invalidate: [["sw", "cardHub", "imoveisBusca"]],
   });
 }
 

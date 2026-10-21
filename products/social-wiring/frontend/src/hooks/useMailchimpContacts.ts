@@ -6,11 +6,8 @@
  *
  * Built on @tanstack/react-query v5. queryFns never return undefined.
  */
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -73,22 +70,36 @@ export function useMailchimpContact(email: string | null) {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useMailchimpContactMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  // Members are keyed by `email`. Audience counts and campaign reach hang off the family, so it refreshes on settle.
+  const invalidate = [FAMILY_KEY];
 
-  const upsert = useMutation<
-    MemberOut,
-    unknown,
-    { email: string; body: UpsertContactBody }
-  >({
+  const upsert = useCacheWriteMutation<MemberOut, { email: string; body: UpsertContactBody }>({
     mutationFn: ({ email, body }) =>
       api.put<MemberOut>(`${BASE}/${encodeURIComponent(email)}`, body),
-    onSuccess: invalidateFamily,
+    targets: ({ email }) => [
+      {
+        queryKey: CONTACTS_KEY,
+        match: "prefix",
+        commit: (old: ContactsOut | undefined, saved) => pageOps.prependNewest(old, saved, "email"),
+      },
+      {
+        queryKey: [...CONTACTS_KEY, email],
+        commit: (old: MemberOut | undefined, saved) => listOps.merge(old, saved),
+      },
+    ],
+    invalidate,
   });
 
-  const archive = useMutation<unknown, unknown, string>({
+  const archive = useCacheWriteMutation<unknown, string>({
     mutationFn: (email) => api.delete(`${BASE}/${encodeURIComponent(email)}`),
-    onSuccess: invalidateFamily,
+    targets: (email) => [
+      {
+        queryKey: CONTACTS_KEY,
+        match: "prefix",
+        optimistic: (old: ContactsOut | undefined) => pageOps.remove(old, email, "email"),
+      },
+    ],
+    invalidate,
   });
 
   return { upsert, archive };

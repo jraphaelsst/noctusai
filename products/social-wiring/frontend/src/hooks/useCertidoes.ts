@@ -22,6 +22,7 @@
  */
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
@@ -276,16 +277,23 @@ export function useTjspFila() {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
-export function useCreateConsulta() {
-  const queryClient = useQueryClient();
+/** The consultas lists (every cached search/status filter): a new consulta is the newest row. */
+const CONSULTAS_KEY = ["certidao-consultas"] as const;
 
-  return useMutation({
-    mutationFn: async (data: ConsultaCreateData) => {
+export function useCreateConsulta() {
+  return useCacheWriteMutation<CertidaoConsulta, ConsultaCreateData>({
+    mutationFn: async (data) => {
       const result = await api.post("/api/certidoes/consultas", data);
       return result.data as CertidaoConsulta;
     },
+    targets: [
+      {
+        queryKey: CONSULTAS_KEY,
+        match: "prefix",
+        commit: (old: CertidaoConsulta[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
       toast.success("Consulta de certidões iniciada!");
     },
     onError: (error: Error) => {
@@ -297,7 +305,7 @@ export function useCreateConsulta() {
 export function useReprocessarConsulta() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — reprocessing re-queues tribunal scrapes server-side and answers nothing; status and counters are driven by the workers
     mutationFn: async (id: string) => {
       await api.post(`/api/certidoes/consultas/${id}/reprocessar`);
     },
@@ -313,14 +321,18 @@ export function useReprocessarConsulta() {
 }
 
 export function useDeleteConsulta() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`/api/certidoes/consultas/${id}`);
     },
+    targets: (id) => [
+      {
+        queryKey: CONSULTAS_KEY,
+        match: "prefix",
+        optimistic: (old: CertidaoConsulta[] | undefined) => listOps.remove(old, id),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
       toast.success("Consulta excluída com sucesso!");
     },
     onError: (error: Error) => {
@@ -332,7 +344,7 @@ export function useDeleteConsulta() {
 export function useCancelarProcessamento() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — cancels every queued scrape server-side; the answer is only a count, which consultas/resultados changed is the server's
     mutationFn: async (consultaId: string) => {
       const result = await api.post(`/api/certidoes/consultas/${consultaId}/cancelar`);
       return result.data as { cancelados: number };
@@ -402,27 +414,34 @@ export function useResultadosPorCliente(clienteId?: string) {
   });
 }
 
-export function useVincularParte() {
-  const queryClient = useQueryClient();
+/** A saved consulta replaces its row in every cached list and in its own detail. */
+const consultaTargets = (id: string) => [
+  {
+    queryKey: CONSULTAS_KEY,
+    match: "prefix" as const,
+    commit: (old: CertidaoConsulta[] | undefined, saved: CertidaoConsulta) => listOps.patch(old, id, saved),
+  },
+  {
+    queryKey: ["certidao-consulta", id],
+    commit: (old: CertidaoConsulta | null | undefined, saved: CertidaoConsulta) =>
+      old ? listOps.merge(old, saved) : old,
+  },
+];
 
-  return useMutation({
+export function useVincularParte() {
+  return useCacheWriteMutation<CertidaoConsulta, { consultaId: string; atendimentoParteId: string }>({
     mutationFn: async ({
       consultaId,
       atendimentoParteId,
-    }: {
-      consultaId: string;
-      atendimentoParteId: string;
     }) => {
       const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-parte`, {
         atendimento_parte_id: atendimentoParteId,
       });
       return result.data as CertidaoConsulta;
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["certidao-resultados-parte", variables.atendimentoParteId],
-      });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+    targets: ({ consultaId }) => consultaTargets(consultaId),
+    invalidate: ({ atendimentoParteId }) => [["certidao-resultados-parte", atendimentoParteId]],
+    onSuccess: () => {
       toast.success("Consulta vinculada à parte!");
     },
     onError: (error: Error) => {
@@ -436,26 +455,19 @@ export function useVincularParte() {
  * directly rather than resolved off an `atendimento_partes` row, because
  * the titular has none. */
 export function useVincularCliente() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
+  return useCacheWriteMutation<CertidaoConsulta, { consultaId: string; clienteId: string }>({
     mutationFn: async ({
       consultaId,
       clienteId,
-    }: {
-      consultaId: string;
-      clienteId: string;
     }) => {
       const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-cliente`, {
         cliente_id: clienteId,
       });
       return result.data as CertidaoConsulta;
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["certidao-resultados-cliente", variables.clienteId],
-      });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+    targets: ({ consultaId }) => consultaTargets(consultaId),
+    invalidate: ({ clienteId }) => [["certidao-resultados-cliente", clienteId]],
+    onSuccess: () => {
       toast.success("Consulta vinculada ao titular!");
     },
     onError: (error: Error) => {
@@ -471,26 +483,19 @@ export function useVincularCliente() {
  * linking verb for both the automated and the manually-registered path,
  * same as the person-scoped siblings. */
 export function useVincularEmpresa() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
+  return useCacheWriteMutation<CertidaoConsulta, { consultaId: string; empresaId: string }>({
     mutationFn: async ({
       consultaId,
       empresaId,
-    }: {
-      consultaId: string;
-      empresaId: string;
     }) => {
       const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-empresa`, {
         empresa_id: empresaId,
       });
       return result.data as CertidaoConsulta;
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["certidao-resultados-empresa", variables.empresaId],
-      });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+    targets: ({ consultaId }) => consultaTargets(consultaId),
+    invalidate: ({ empresaId }) => [["certidao-resultados-empresa", empresaId]],
+    onSuccess: () => {
       toast.success("Consulta vinculada à empresa!");
     },
     onError: (error: Error) => {
@@ -555,6 +560,15 @@ function invalidateCertidoesScope(
   }
 }
 
+/** The resultados listing(s) a scope addresses (at most one is ever set). */
+function scopeKeys(scope: CertidoesInvalidationScope) {
+  return [
+    ...(scope.atendimentoParteId ? [["certidao-resultados-parte", scope.atendimentoParteId]] : []),
+    ...(scope.clienteId ? [["certidao-resultados-cliente", scope.clienteId]] : []),
+    ...(scope.empresaId ? [["certidao-resultados-empresa", scope.empresaId]] : []),
+  ];
+}
+
 /**
  * `POST /consultas/manual` — creates a consulta the SAME shape the automated
  * path does (ten + three placeholder resultados) but never calls
@@ -569,10 +583,8 @@ function invalidateCertidoesScope(
  * of cache is affected whether the link happened in one call (here) or two.
  */
 export function useCriarConsultaManual() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: ConsultaManualCreateData) => {
+  return useCacheWriteMutation<CertidaoConsulta, ConsultaManualCreateData>({
+    mutationFn: async (data) => {
       const { atendimentoParteId, clienteId, ...consultaFields } = data;
       const body: Record<string, unknown> = { ...consultaFields };
       if (atendimentoParteId) body.atendimento_parte_id = atendimentoParteId;
@@ -580,12 +592,16 @@ export function useCriarConsultaManual() {
       const result = await api.post("/api/certidoes/consultas/manual", body);
       return result.data as CertidaoConsulta;
     },
-    onSuccess: (_data, variables) => {
-      invalidateCertidoesScope(queryClient, {
-        atendimentoParteId: variables.atendimentoParteId,
-        clienteId: variables.clienteId,
-      });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+    targets: [
+      {
+        queryKey: CONSULTAS_KEY,
+        match: "prefix",
+        commit: (old: CertidaoConsulta[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
+    // The new placeholder resultados show in the listing of whoever it was linked to.
+    invalidate: ({ atendimentoParteId, clienteId }) => scopeKeys({ atendimentoParteId, clienteId }),
+    onSuccess: () => {
       toast.success("Certidões registradas manualmente!");
     },
     onError: (error: Error) => {
@@ -597,21 +613,22 @@ export function useCriarConsultaManual() {
 /** `scope` scopes cache invalidation only — the mutation itself targets a
  * resultado id, not a parte/cliente. */
 export function useConfirmarResultado(scope: CertidoesInvalidationScope = {}) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
+  return useCacheWriteMutation<CertidaoResultado, { resultadoId: string; patch: ResultadoPatchInput }>({
     mutationFn: async ({
       resultadoId,
       patch,
-    }: {
-      resultadoId: string;
-      patch: ResultadoPatchInput;
     }) => {
       const result = await api.patch(`/api/certidoes/resultados/${resultadoId}`, patch);
       return result.data as CertidaoResultado;
     },
+    // The confirmed resultado replaces its row in whichever listing is open.
+    targets: ({ resultadoId }) =>
+      scopeKeys(scope).map((queryKey) => ({
+        queryKey,
+        commit: (old: CertidaoResultado[] | undefined, saved: CertidaoResultado) =>
+          listOps.patch(old, resultadoId, saved),
+      })),
     onSuccess: () => {
-      invalidateCertidoesScope(queryClient, scope);
       toast.success("Resultado confirmado!");
     },
     onError: (error: Error) => {
@@ -627,7 +644,7 @@ export function useConfirmarResultado(scope: CertidoesInvalidationScope = {}) {
 export function useUploadResultadoManual(scope: CertidoesInvalidationScope = {}) {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the upload answers nothing; the PDF is read by a background task that fills the resultado, so its new state arrives via the polled listing
     mutationFn: async ({ resultadoId, file }: { resultadoId: string; file: File }) => {
       if (file.type !== "application/pdf") {
         throw new Error("Apenas arquivos PDF são aceitos.");
@@ -656,15 +673,10 @@ export function useUploadResultadoManual(scope: CertidoesInvalidationScope = {})
  * per-parte/per-cliente listing is currently open (both fields denormalize
  * onto every resultado row of that consulta — see `CertidaoResultado`). */
 export function useAtualizarSituacaoCadastral(scope: CertidoesInvalidationScope = {}) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
+  return useCacheWriteMutation<CertidaoConsulta, { consultaId: string; patch: SituacaoCadastralPatchInput }>({
     mutationFn: async ({
       consultaId,
       patch,
-    }: {
-      consultaId: string;
-      patch: SituacaoCadastralPatchInput;
     }) => {
       const result = await api.patch(
         `/api/certidoes/consultas/${consultaId}/situacao-cadastral`,
@@ -672,8 +684,10 @@ export function useAtualizarSituacaoCadastral(scope: CertidoesInvalidationScope 
       );
       return result.data as CertidaoConsulta;
     },
+    // The status is denormalized onto every resultado row of the open listing: it refetches on settle.
+    targets: ({ consultaId }) => consultaTargets(consultaId),
+    invalidate: scopeKeys(scope),
     onSuccess: () => {
-      invalidateCertidoesScope(queryClient, scope);
       toast.success("Situação cadastral atualizada!");
     },
     onError: (error: Error) => {
@@ -685,7 +699,7 @@ export function useAtualizarSituacaoCadastral(scope: CertidoesInvalidationScope 
 /** A short-TTL signed URL for one resultado's file — action-triggered
  * (view/download click), not cached, hence a mutation rather than a query. */
 export function useMintResultadoUrl() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — a read-on-click (signed URL), writes nothing to the server and caches nothing
     mutationFn: async ({
       resultadoId,
       intent,
@@ -712,7 +726,7 @@ export function useMintResultadoUrl() {
 /** GET `/resultados/{id}/transcricao` — the "Copiar" action's JSON source.
  *  Action-triggered (not cached), same shape as `useMintResultadoUrl`. */
 export function useTranscricaoResultado() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — a read-on-click (transcription for the clipboard), writes nothing and caches nothing
     mutationFn: async (resultadoId: string) => {
       const result = await api.get(`/api/certidoes/resultados/${resultadoId}/transcricao`);
       return result.data as TranscricaoResultado;
@@ -728,7 +742,7 @@ export function useTranscricaoResultado() {
  *  is the fallback used only when the server's `Content-Disposition` is
  *  missing or unparseable. */
 export function useDownloadTranscricaoPdf() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — a file download, writes nothing and caches nothing
     mutationFn: async ({ resultadoId, filename }: { resultadoId: string; filename: string }) => {
       const url = apiUrl(`/api/certidoes/resultados/${resultadoId}/transcricao/pdf`);
       const resp = await authenticatedFetch(url);

@@ -8,6 +8,7 @@
  *   POST /api/julia/credito/{contato_id}/reprocessar (admin)
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -46,16 +47,16 @@ export function useCreditoConfig() {
 }
 
 export function useSalvarCreditoConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (c: CreditoConfig) => (await api.put("/api/julia/credito/config", c)).data as CreditoConfig,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  return useCacheWriteMutation<CreditoConfig, CreditoConfig>({
+    mutationFn: async (c) => (await api.put("/api/julia/credito/config", c)).data as CreditoConfig,
+    targets: [{ queryKey: [...KEY, "config"], commit: (_old, saved) => saved }],
+    invalidate: [KEY],
   });
 }
 
 export function useReprocessarCredito() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — re-queues the credit check server-side and answers nothing; the new status arrives from the worker
     mutationFn: (contatoId: string) => api.post(`/api/julia/credito/${contatoId}/reprocessar`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

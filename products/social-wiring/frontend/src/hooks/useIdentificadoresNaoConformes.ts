@@ -50,7 +50,7 @@ export function useIdentificadoresNaoConformes(page: number, pageSize = 50) {
  *  row's entity (clientes PATCH / imóvel dados PATCH). */
 export function useCorrigirIdentificador() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server canonicalizes and re-validates the value, so whether the row leaves the non-conforming page (or stays with a new reason) is the server's call
     mutationFn: ({ alvo, valor }: { alvo: NonNullable<IdentificadorNaoConforme["edicao"]>; valor: string }) =>
       alvo.tipo === "cliente"
         ? api.patch(`/api/clientes/${encodeURIComponent(alvo.id)}`, { [alvo.campo]: valor })

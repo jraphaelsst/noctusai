@@ -14,6 +14,7 @@
  * `placeholderData`): it belongs to ONE lead, so showing the previous chat's value would be a lie about the wrong lead.
  */
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -118,7 +119,7 @@ function useInvalidarOptOuts() {
 
 export function useRenotificarOptOut() {
   const inv = useInvalidarOptOuts();
-  return useMutation<unknown, unknown, { eventoId: string }>({
+  return useMutation<unknown, unknown, { eventoId: string }>({ // noc-allow: invalidate-only — retries a notification server-side and answers nothing; the new notificacao_status is the worker's, and the history is an infinite query the seed ops do not edit
     mutationFn: ({ eventoId }) => api.post(`/api/julia/opt-outs/${encodeURIComponent(eventoId)}/notificar`, {}),
     onSettled: inv,
   });
@@ -126,7 +127,7 @@ export function useRenotificarOptOut() {
 
 export function useReativarLead() {
   const inv = useInvalidarOptOuts();
-  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({
+  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({ // noc-allow: invalidate-only — the server writes a new history event and flips the lead's opt-out state; the answer carries neither, and the history is an infinite query
     mutationFn: ({ contatoId, motivo }) => api.post(`/api/julia/opt-outs/leads/${contatoId}/reativar`, { motivo }),
     onSettled: inv,
   });
@@ -134,7 +135,7 @@ export function useReativarLead() {
 
 export function useMarcarNaoContatar() {
   const inv = useInvalidarOptOuts();
-  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({
+  return useMutation<unknown, unknown, { contatoId: string; motivo: string }>({ // noc-allow: invalidate-only — same as reativar: a new history event plus the lead's state, built by the server
     mutationFn: ({ contatoId, motivo }) => api.post(`/api/julia/opt-outs/leads/${contatoId}/nao-contatar`, { motivo }),
     onSettled: inv,
   });
@@ -167,10 +168,17 @@ export function useSolicitacoes(status: StatusSolicitacao | "", page: number) {
 }
 
 export function useDecidirSolicitacao() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, { id: string; status: StatusSolicitacao; motivo?: string }>({
+  return useCacheWriteMutation<unknown, { id: string; status: StatusSolicitacao; motivo?: string }>({
     mutationFn: ({ id, ...body }) => api.patch(`/api/julia/opt-outs/solicitacoes/${id}`, body),
-    onSettled: () => qc.invalidateQueries({ queryKey: SOLICITACOES_KEY }),
+    // The decision is exactly what the operator picked; the deadline situation and decidido_* stamps are the server's.
+    targets: ({ id, status, motivo }) => [
+      {
+        queryKey: SOLICITACOES_KEY,
+        match: "prefix",
+        optimistic: (old: { items: Solicitacao[]; total: number } | undefined) =>
+          pageOps.patch(old, id, { status, ...(motivo !== undefined ? { motivo_decisao: motivo } : {}) }),
+      },
+    ],
   });
 }
 

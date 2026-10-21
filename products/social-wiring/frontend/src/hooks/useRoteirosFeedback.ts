@@ -8,6 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { roteirosKeys } from "@/hooks/useCardHub";
 import { pessoaKey } from "@/hooks/usePessoa";
@@ -32,20 +33,25 @@ export function useRoteirosPendentesFeedback() {
 }
 
 export function useResponderFeedbackRoteiro(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ roteiroId, body }: { roteiroId: string; body: RoteiroFeedbackBody }) =>
+  return useCacheWriteMutation<Roteiro, { roteiroId: string; body: RoteiroFeedbackBody }>({
+    mutationFn: ({ roteiroId, body }) =>
       api.post<Roteiro>(
         `${base(clienteId)}/roteiros/${encodeURIComponent(roteiroId)}/feedback`,
         body,
       ),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: roteirosKeys.family(clienteId) }),
-        qc.invalidateQueries({ queryKey: ROTEIROS_PENDENTES_KEY }),
-        qc.invalidateQueries({ queryKey: pessoaKey(clienteId) }),
-        qc.invalidateQueries({ queryKey: ["sw", "metricas"] }),
-      ]),
+    // The answered roteiro (visitas + contagem) replaces its row, and it leaves the "pendentes de feedback" queue.
+    targets: ({ roteiroId }) => [
+      {
+        queryKey: roteirosKeys.list(clienteId),
+        commit: (old: Roteiro[] | undefined, saved) => listOps.patch(old, roteiroId, saved),
+      },
+      {
+        queryKey: ROTEIROS_PENDENTES_KEY,
+        optimistic: (old: RoteiroPendenteFeedback[] | undefined) =>
+          Array.isArray(old) ? old.filter((r) => r.roteiro_id !== roteiroId) : old,
+      },
+    ],
+    invalidate: [roteirosKeys.family(clienteId), pessoaKey(clienteId), ["sw", "metricas"]],
   });
 }
 

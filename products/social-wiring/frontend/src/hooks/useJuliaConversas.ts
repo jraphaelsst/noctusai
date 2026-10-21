@@ -15,6 +15,7 @@
  * unmounts the list (KB § PATTERNS/frontend/lying-loading-state.md).
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
@@ -107,7 +108,7 @@ export interface PatchContato {
 }
 export function usePatchContato() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, { id: string } & PatchContato>({
+  return useMutation<unknown, unknown, { id: string } & PatchContato>({ // noc-allow: invalidate-only — archive/block/responsável/etiquetas decide which aba and filter lists the contato belongs to, and the responsável name is joined server-side
     mutationFn: ({ id, ...body }) => api.patch(`/api/julia/contatos/${id}`, body),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: CONVERSAS_KEY });
@@ -125,23 +126,23 @@ export function useEtiquetas() {
   });
 }
 export function useEtiquetaMutations() {
-  const qc = useQueryClient();
-  const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ETIQUETAS_KEY });
-    void qc.invalidateQueries({ queryKey: CONVERSAS_KEY });
-  };
+  // The conversas lists embed each contato's etiquetas, so they refresh on settle.
+  const invalidate = [CONVERSAS_KEY];
   return {
-    criar: useMutation<Etiqueta, unknown, { nome: string; cor?: string }>({
+    criar: useCacheWriteMutation<Etiqueta, { nome: string; cor?: string }>({
       mutationFn: async (b) => (await api.post<{ data: Etiqueta }>("/api/julia/etiquetas", b)).data,
-      onSuccess: refresh,
+      targets: [{ queryKey: ETIQUETAS_KEY, commit: (old, saved) => listOps.replace(old, saved.id, saved) }],
+      invalidate,
     }),
-    atualizar: useMutation<unknown, unknown, { id: string; nome?: string; cor?: string }>({
+    atualizar: useCacheWriteMutation<unknown, { id: string; nome?: string; cor?: string }>({
       mutationFn: ({ id, ...b }) => api.patch(`/api/julia/etiquetas/${id}`, b),
-      onSuccess: refresh,
+      targets: ({ id, ...b }) => [{ queryKey: ETIQUETAS_KEY, optimistic: (old: Etiqueta[] | undefined) => listOps.patch(old, id, b) }],
+      invalidate,
     }),
-    remover: useMutation<unknown, unknown, string>({
+    remover: useCacheWriteMutation<unknown, string>({
       mutationFn: (id) => api.delete(`/api/julia/etiquetas/${id}`),
-      onSuccess: refresh,
+      targets: (id) => [{ queryKey: ETIQUETAS_KEY, optimistic: (old) => listOps.remove(old, id) }],
+      invalidate,
     }),
   };
 }
@@ -163,24 +164,27 @@ export function useNotas(contatoId: string | null) {
   });
 }
 export function useNotaMutations(contatoId: string | null) {
-  const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: [...NOTAS_KEY, contatoId] });
   const base = `/api/julia/contatos/${contatoId}/notas`;
+  const key = [...NOTAS_KEY, contatoId] as const;
   return {
-    criar: useMutation<unknown, unknown, { texto: string }>({
-      mutationFn: (b) => api.post(base, b), onSuccess: refresh,
+    // The API lists notas newest first, so a new one goes on top and stays there after the settle refetch.
+    criar: useCacheWriteMutation<Nota, { texto: string }>({
+      mutationFn: async (b) => (await api.post<{ data: Nota }>(base, b)).data,
+      targets: [{ queryKey: key, commit: (old, saved) => listOps.replace(old, saved.id, saved, "prepend") }],
     }),
-    editar: useMutation<unknown, unknown, { id: string; texto: string }>({
-      mutationFn: ({ id, texto }) => api.patch(`${base}/${id}`, { texto }), onSuccess: refresh,
+    editar: useCacheWriteMutation<unknown, { id: string; texto: string }>({
+      mutationFn: ({ id, texto }) => api.patch(`${base}/${id}`, { texto }),
+      targets: ({ id, texto }) => [{ queryKey: key, optimistic: (old: Nota[] | undefined) => listOps.patch(old, id, { texto }) }],
     }),
-    remover: useMutation<unknown, unknown, string>({
-      mutationFn: (id) => api.delete(`${base}/${id}`), onSuccess: refresh,
+    remover: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${base}/${id}`),
+      targets: (id) => [{ queryKey: key, optimistic: (old) => listOps.remove(old, id) }],
     }),
   };
 }
 
 export function useFeedbackJulia(contatoId: string | null) {
-  return useMutation<unknown, unknown, { nota: "like" | "dislike"; comentario?: string; interacao_id?: string }>({
+  return useMutation<unknown, unknown, { nota: "like" | "dislike"; comentario?: string; interacao_id?: string }>({ // noc-allow: invalidate-only — a feedback signal with no cached read to update
     mutationFn: (b) => api.post(`/api/julia/contatos/${contatoId}/feedback`, b),
   });
 }

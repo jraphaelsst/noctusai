@@ -93,6 +93,8 @@ vi.mock("@tanstack/react-query", () => {
     cancelQueries: cancelQueriesMock,
     setQueryData: setQueryDataMock,
     getQueryData: getQueryDataMock,
+    // `match: "prefix"` cache-write targets list the cached entries they address (none in these mocks).
+    getQueriesData: vi.fn(() => []),
   }));
   return { useQuery, useInfiniteQuery, useMutation, useQueryClient };
 });

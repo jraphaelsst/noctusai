@@ -9,6 +9,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 
 // ─── Types (mirror backend schemas) ─────────────────────────────────────
@@ -654,16 +655,21 @@ export interface ApiKeySave {
  * rendering the controls (a non-admin submit would only surface a 403).
  */
 export function useSaveApiKey() {
-  const qc = useQueryClient();
-  return useMutation<ApiKeyStatus, unknown, ApiKeySave>({
+  return useCacheWriteMutation<ApiKeyStatus, ApiKeySave>({
     mutationFn: ({ key, value }) =>
       api.put<ApiKeyStatus>(
         `/api/settings/api-keys/${encodeURIComponent(key)}`,
         { value }
       ),
+    // The answer is the re-resolved status row (keyed by `key`): it replaces the cached one.
+    targets: ({ key }) => [
+      {
+        queryKey: API_KEYS_QUERY_KEY,
+        commit: (old: ApiKeysStatus | undefined, saved) => pageOps.replace(old, key, saved, "key"),
+      },
+    ],
     onSuccess: (data) => {
       toast.success(`${data.label} salva com sucesso.`);
-      void qc.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
     },
     onError: (err: any) => {
       toast.error(err?.message ?? "Falha ao salvar a chave.");
@@ -680,12 +686,18 @@ export function useSaveApiKey() {
  * told "removida" over a live key stops looking for the real source.
  */
 export function useRemoveApiKey() {
-  const qc = useQueryClient();
-  return useMutation<ApiKeyStatus, unknown, string>({
+  return useCacheWriteMutation<ApiKeyStatus, string>({
     mutationFn: (key) =>
       api.delete<ApiKeyStatus>(
         `/api/settings/api-keys/${encodeURIComponent(key)}`
       ),
+    // The answer is the RE-RESOLVED status (a platform/env tier may still answer), so it is committed as-is.
+    targets: (key) => [
+      {
+        queryKey: API_KEYS_QUERY_KEY,
+        commit: (old: ApiKeysStatus | undefined, saved) => pageOps.replace(old, key, saved, "key"),
+      },
+    ],
     onSuccess: (data) => {
       if (data.configured) {
         toast.success(
@@ -694,7 +706,6 @@ export function useRemoveApiKey() {
       } else {
         toast.success(`${data.label} removida.`);
       }
-      void qc.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
     },
     onError: (err: any) => {
       toast.error(err?.message ?? "Falha ao remover a chave.");
@@ -711,7 +722,7 @@ export function useRemoveApiKey() {
  * it comes back `success: false` with a pt-BR message to render inline.
  */
 export function useTestApiKey() {
-  return useMutation<ApiKeyTestResult, unknown, string>({
+  return useMutation<ApiKeyTestResult, unknown, string>({ // noc-allow: invalidate-only — a probe of the key (writes and caches nothing); the result renders inline
     mutationFn: (key) =>
       api.post<ApiKeyTestResult>(
         `/api/settings/api-keys/${encodeURIComponent(key)}/test`,

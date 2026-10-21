@@ -13,6 +13,7 @@
  * `app/modules/scheduling/router.py`, `response_model=list[...]`.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types (mirror app/modules/scheduling/schemas.py) ────────────────────────
@@ -228,17 +229,11 @@ export function usePendingChatIdentities() {
 }
 
 export function useResolvePendingChatIdentity() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      status,
-      resolvedToUserId,
-    }: {
-      id: string;
-      status: PendingChatStatus;
-      resolvedToUserId?: string | null;
-    }) =>
+  return useCacheWriteMutation<
+    PendingChatIdentity,
+    { id: string; status: PendingChatStatus; resolvedToUserId?: string | null }
+  >({
+    mutationFn: ({ id, status, resolvedToUserId }) =>
       api.patch<PendingChatIdentity>(
         `${BASE}/pending-chat-identities/${encodeURIComponent(id)}`,
         {
@@ -246,16 +241,20 @@ export function useResolvePendingChatIdentity() {
           resolved_to_user_id: resolvedToUserId ?? null,
         },
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: schedulingKeys.pendingIdentities() });
-    },
+    // The resolved identity (new status, resolved user) replaces its row.
+    targets: ({ id }) => [
+      {
+        queryKey: schedulingKeys.pendingIdentities(),
+        commit: (old: PendingChatIdentity[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+    ],
   });
 }
 
 // ─── Propose (read-only slot generation; no DB write) ────────────────────────
 
 export function useProposeSlots() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — read-only slot generation (no DB write); nothing is cached to update
     mutationFn: (body: ProposeInput) =>
       api.post<ProposeResponse>(`${BASE}/propose`, body),
   });

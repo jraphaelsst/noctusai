@@ -90,13 +90,14 @@ describe("mutações do registro", () => {
     await waitFor(() => expect(keys(spy)).toContain('["sw","permutas"]'));
   });
 
-  it("um erro da API chega ao chamador e não invalida", async () => {
+  it("um erro da API chega ao chamador (nada é gravado; o settle relê a verdade)", async () => {
     post.mockRejectedValue(new Error("[422] natureza é obrigatória."));
     const { spy, wrapper } = setup();
     const { result } = renderHook(() => useCriarAtivo(), { wrapper });
     await expect(
       result.current.mutateAsync({ natureza: "imovel" }),
     ).rejects.toThrow("natureza é obrigatória");
-    expect(keys(spy)).not.toContain('["sw","permutas"]');
+    // Cache-write contract: a failed write rolls back and the settle re-reads the server's truth.
+    await waitFor(() => expect(keys(spy)).toContain('["sw","permutas"]'));
   });
 });
