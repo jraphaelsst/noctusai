@@ -346,8 +346,10 @@ export function useAddActivity() {
     targets: ({ leadId }) => [
       {
         queryKey: crmKeys.activities(leadId),
+        // The API lists activities newest first (created_at desc): the new note
+        // goes on top and stays there when the server row and the refetch land.
         optimistic: (old: Activity[] | undefined, { payload }, { tempId }) =>
-          listOps.append(old, {
+          listOps.prepend(old, {
             id: tempId,
             org_id: "",
             lead_id: leadId,
@@ -357,7 +359,7 @@ export function useAddActivity() {
             created_at: new Date().toISOString(),
           }),
         commit: (old: Activity[] | undefined, saved, _vars, { tempId }) =>
-          listOps.replace(old, tempId, saved),
+          listOps.replace(old, tempId, saved, "prepend"),
       },
     ],
     onSuccess: () => {

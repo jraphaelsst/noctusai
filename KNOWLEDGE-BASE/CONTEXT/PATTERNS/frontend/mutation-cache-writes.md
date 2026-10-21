@@ -75,6 +75,7 @@ The caller's `onSuccess` and `onError` still run after the cache work, so toasts
 
 - **Draw optimistically** when the result is predictable from the input: a note, a toggle, a rename, a removal, a drag.
 - **Commit only** when the server decides something the client can't predict, such as an assigned stage, a computed total or a generated number. orbity's `useCreateLead` does this, because the server places a lead with no stage in the org's first stage.
+- **Insert where the server's ORDER puts it.** The cache holds the list in the API's order; the stand-in and the committed row must sit where the settle refetch will put them (`prepend` + `replace(..., 'prepend')` for a `created_at desc` list, `append` for asc). Render in that same order — never re-sort or `.reverse()` in the component. Otherwise the row jumps when the refetch lands. Live, 2026-10-21: orbity's notes API returned newest first, the panel `.reverse()`d it, and the optimistic note was appended, so it showed on top, then dropped to the bottom on the refetch. The owner also asked for newest first, so the panel now renders the API order and the hook prepends.
 - **Invalidate a derived view** (funnel counts, dashboards) instead of recomputing it client-side.
 - **Genuinely can't place it** (the server regroups the whole view): keep the invalidate, but mark the `useMutation(` line with `// noc-allow: invalidate-only — <why>`. That is a declared exception, not the default.
 

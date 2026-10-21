@@ -244,6 +244,26 @@ describe("cache writes", () => {
     expect(qc.getQueryData(["crm", "activities", "l1"])).toEqual([saved]);
   });
 
+  it("a new note goes on top and stays on top — the API's order is newest first (owner, 2026-10-21)", async () => {
+    const { qc, w } = clientAndWrapper();
+    const older = { id: "a0", org_id: "o1", lead_id: "l1", type: "nota", note: "antiga", created_by: "u1", created_at: "2026-10-20T10:00:00Z" };
+    qc.setQueryData(["crm", "activities", "l1"], [older]);
+    let answer!: (v: unknown) => void;
+    mockPost.mockReturnValue(new Promise((res) => (answer = res)));
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { useAddActivity } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useAddActivity(), { wrapper: w });
+
+    result.current.mutate({ leadId: "l1", payload: { type: "nota", note: "nova" } });
+    await waitFor(() =>
+      expect(qc.getQueryData<{ note: string }[]>(["crm", "activities", "l1"])?.map((a) => a.note)).toEqual(["nova", "antiga"])
+    );
+    const saved = { ...older, id: "a1", note: "nova", created_at: "2026-10-21T18:00:00Z" };
+    answer(saved);
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData(["crm", "activities", "l1"])).toEqual([saved, older]);
+  });
+
   it("a failed note save takes the stand-in back out", async () => {
     const { qc, w } = clientAndWrapper();
     qc.setQueryData(["crm", "activities", "l1"], []);

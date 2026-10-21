@@ -571,8 +571,10 @@ function LeadDetailPanel({ lead, stages, onClose, onEdit }: LeadDetailPanelProps
           ) : !activities || activities.length === 0 ? (
             <p className="text-xs text-gray-400 italic">Nenhuma atividade registrada.</p>
           ) : (
+            // Newest first — the order the API returns (created_at desc) and the
+            // order useAddActivity inserts in, so a new note never jumps.
             <ul className="space-y-2">
-              {[...activities].reverse().map((act) => (
+              {activities.map((act) => (
                 <li key={act.id} className="bg-gray-50 rounded p-2">
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="text-xs font-medium text-gray-600 capitalize">

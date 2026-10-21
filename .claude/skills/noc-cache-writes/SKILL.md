@@ -1,7 +1,7 @@
 ---
 name: noc-cache-writes
 description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", or check_mutation_invalidate_only blocking a commit. Every write puts what it knows into the cache; never invalidate-only.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-cache-writes — a write puts what it knows into the cache
@@ -17,9 +17,10 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
    - server decides (generated number, assigned stage, computed total) → `commit` only;
    - derived views (counts, dashboards, funnels) → `invalidate: [...]`, never recompute client-side;
    - lists keyed by filters → one `{ queryKey: [prefix], match: 'prefix' }` target reaches all of them; `listOps` leave non-arrays (details, `{items}` envelopes) alone.
-4. **New row stand-in** → `{ id: tempId, ... }` from the ctx; commit with `listOps.replace(old, tempId, saved)` (never duplicates).
-5. **Keep the caller's UX** — toasts, `form.reset`, `navigate` stay in `onSuccess`/`onError`; they run after the cache work.
-6. **Genuinely can't place it** (server regroups the whole view, a mutation with no cached read, a fire-and-forget action like "send email") → keep `useMutation`, put `// noc-allow: invalidate-only — <why>` on the `useMutation(` line. A reason is mandatory; "too hard" is not one.
+4. **Insert where the server's sort puts it** (`created_at desc` → `prepend` + `replace(old, tempId, saved, 'prepend')`), and render the cache in that order — no `.reverse()`/re-sort in the component, or the row jumps when the settle refetch lands.
+5. **New row stand-in** → `{ id: tempId, ... }` from the ctx; commit with `listOps.replace(old, tempId, saved)` (never duplicates).
+6. **Keep the caller's UX** — toasts, `form.reset`, `navigate` stay in `onSuccess`/`onError`; they run after the cache work.
+7. **Genuinely can't place it** (server regroups the whole view, a mutation with no cached read, a fire-and-forget action like "send email") → keep `useMutation`, put `// noc-allow: invalidate-only — <why>` on the `useMutation(` line. A reason is mandatory; "too hard" is not one.
 
 ## MIGRATING an existing file (the fan-out procedure)
 
