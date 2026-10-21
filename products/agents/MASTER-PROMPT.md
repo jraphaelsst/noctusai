@@ -78,6 +78,17 @@ products/agents/backend/app/
   `cnpj_oficial`); `proteger_args` scans the staff-facing tool args for prompt text; `alegacao_identidade` +
   extraction signals feed `escala_seguranca` (24h per thread: restricted tool set, then handoff `seguranca`).
   Invariant (keeper-tested): a detector or a claim can only REMOVE capabilities, never add one.
+- Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):
+  authorship is structural, never inferred from text. Lead lines stay one plain `user` message; human / other-agent /
+  event lines are `system` JSON envelopes keyed `plataforma_<tag>` (tag random per turn, told to the model in DB text
+  `contexto.aviso_proveniencia`; earlier tags kept in `messages.meta.tag`; a lead echoing one = `forja_proveniencia`).
+  Inbound `midia` and `truncado` render as labelled JSON literals (`historico.rotulo_midia` / `rotulo_truncado`); only
+  audio transcription counts as the lead's words. `autor: {nome, papel?}` is accepted ONLY on
+  `/api/channels/threads/{id}/mensagens` with `role: "humano"`; `/api/channels/turns` rejects it (422). Correction
+  `evento` rows persist `conformidade:<regra>` only (046 redacts old rows; CHECK enforces it). An inbound canary or
+  12-token prompt run = `canario_recebido` (severity alta, platform admins only). A per-version honeytoken
+  (`agent_version_marcadores`, service-role, never returned) appended via `seguranca.marcador_interno`: in a reply it
+  blocks as `vazamento_prompt`; inbound or in tool args it is recorded only.
 - A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
   seeded earlier gets 409 `conteudo_incompleto`, never a default string.
 - Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /
