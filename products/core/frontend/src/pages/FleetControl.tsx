@@ -89,7 +89,7 @@ export function FleetControl() {
       {
         queryKey: ['fleet'],
         commit: (old: FleetResponse | undefined, res) =>
-          listOps.within(old, 'products', (rows: FleetProduct[]) => rows.map((p) => (p.slug === slug ? res : p))),
+          listOps.within(old, 'products', (rows) => listOps.update(rows, slug, () => res, 'slug')),
       },
     ],
   });

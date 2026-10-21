@@ -272,8 +272,7 @@ export function useSetMemberProductAccess(orgId: string | null, userId: string |
       {
         queryKey: teamKeys.productAccess(orgId ?? '', userId ?? ''),
         optimistic: (old: MemberProductAccessData | undefined, { slug, blocked }) =>
-          listOps.within(old, 'products', (rows: MemberProductAccess[]) =>
-            rows.map((p) => (p.slug === slug ? { ...p, blocked } : p))),
+          listOps.within(old, 'products', (rows) => listOps.patch(rows, slug, { blocked }, 'slug')),
       },
     ],
   });

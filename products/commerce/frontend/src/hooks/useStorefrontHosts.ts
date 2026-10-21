@@ -12,7 +12,7 @@
  * (CONTRACT-DELTAS D2).
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { apiErrorStatus, commerceKeys } from "@noctusai/lib";
 
 import { api } from "@/lib/api";
@@ -45,8 +45,7 @@ export function useStorefrontHosts() {
 }
 
 export function useStorefrontHostMutations() {
-  // Hosts are keyed by `hostname` (no `id`), which the seed `listOps` do not address
-  // (seed gap: an idKey option) — the two one-line array edits below are inline.
+  // Hosts are keyed by `hostname` (no `id`): the seed `listOps` take it as their `idKey`.
   return {
     add: useCacheWriteMutation<StorefrontHost, { hostname: string; is_primary: boolean }>({
       mutationFn: async (body) =>
@@ -57,7 +56,7 @@ export function useStorefrontHostMutations() {
         {
           queryKey: hostsKey,
           commit: (old: StorefrontHost[] | undefined, saved) =>
-            Array.isArray(old) ? [...old.filter((h) => h.hostname !== saved.hostname), saved] : old,
+            listOps.replace(old, saved.hostname, saved, "append", "hostname"),
         },
       ],
     }),
@@ -67,7 +66,7 @@ export function useStorefrontHostMutations() {
         {
           queryKey: hostsKey,
           optimistic: (old: StorefrontHost[] | undefined, hostname) =>
-            Array.isArray(old) ? old.filter((h) => h.hostname !== hostname) : old,
+            listOps.remove(old, hostname, "hostname"),
         },
       ],
     }),

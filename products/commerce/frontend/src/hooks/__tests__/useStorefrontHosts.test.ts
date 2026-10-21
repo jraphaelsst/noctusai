@@ -46,4 +46,15 @@ describe("storefront host cache writes", () => {
     await waitFor(() => expect(result.current.add.isSuccess).toBe(true));
     expect((qc.getQueryData(hostsKey) as { hostname: string }[]).map((h) => h.hostname)).toEqual(["a.com", "b.com"]);
   });
+
+  it("re-adding an existing hostname replaces its row (no duplicate)", async () => {
+    const { qc, w } = setup();
+    const { hostsKey, useStorefrontHostMutations } = await import("@/hooks/useStorefrontHosts");
+    qc.setQueryData(hostsKey, [{ hostname: "a.com", is_primary: false }, { hostname: "b.com", is_primary: false }]);
+    mockPost.mockResolvedValue({ data: { hostname: "a.com", is_primary: true } });
+    const { result } = renderHook(() => useStorefrontHostMutations(), { wrapper: w });
+    result.current.add.mutate({ hostname: "a.com", is_primary: true });
+    await waitFor(() => expect(result.current.add.isSuccess).toBe(true));
+    expect(qc.getQueryData(hostsKey)).toEqual([{ hostname: "a.com", is_primary: true }, { hostname: "b.com", is_primary: false }]);
+  });
 });
