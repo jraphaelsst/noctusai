@@ -2,6 +2,8 @@
 multi-agent history labels (Julia v2 A-THREAD). Real stores (Fake halves) + the real app for the routes."""
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -256,7 +258,7 @@ def test_a_handoff_to_the_agent_wins_over_a_newer_note_to_someone_else(w):
     assert ctx.handoff == first
 
 
-def test_history_labels_use_the_versions_templates_and_refuse_a_missing_one(w):
+def test_history_is_rendered_by_authorship_in_tagged_envelopes_never_as_typed_labels(w):
     t = w.thread.id
     w.messages.add(ORG, t, "user", "oi")
     w.messages.add(ORG, t, "assistant", "ola", agent_id=JULIA)
@@ -266,14 +268,16 @@ def test_history_labels_use_the_versions_templates_and_refuse_a_missing_one(w):
     w.messages.add(ORG, t, "system", "O turno falhou.")
     w.messages.add(ORG, t, "assistant", "", agent_id=JULIA)
     itens = historico_do_agente(w.messages, {JURIDICO: ("juridico", "Jurídico")}, ORG, t, JULIA, limite=50)
-    linhas = rotular_historico(itens, rotulo_agente="[{nome}]", rotulo_humano="[atendente]", rotulo_evento="[evento]")
-    assert linhas == [("user", "oi"), ("assistant", "ola"), ("user", "[Jurídico] documentos"),
-                      ("user", "[atendente] ligo já"), ("user", "[evento] visita marcada")]
-    with pytest.raises(ValueError, match="rotulo_ausente"):
-        rotular_historico(itens, rotulo_agente=None, rotulo_humano="h", rotulo_evento="e")
-    # no foreign rows -> no template needed
+    linhas = rotular_historico(itens, tag="ab12cd34")
+    assert [r for r, _ in linhas] == ["user", "assistant", "system", "system", "system"]
+    assert linhas[0] == ("user", "oi") and linhas[1] == ("assistant", "ola")
+    envs = [json.loads(x)["plataforma_ab12cd34"] for _, x in linhas[2:]]
+    assert [(e["autor_tipo"], e.get("nome"), e.get("texto") or e.get("codigo")) for e in envs] == [
+        ("agente", "Jurídico", "documentos"), ("humano", None, "ligo já"), ("evento", None, "visita marcada")]
+    assert all("\n" not in x for _, x in linhas)  # one physical line each
+    # no foreign rows -> nothing to render, and no label text is needed for them
     solo = historico_do_agente(w.messages, {}, ORG, t, JURIDICO, limite=1)
-    assert rotular_historico(solo[:0], rotulo_agente=None, rotulo_humano=None, rotulo_evento=None) == []
+    assert rotular_historico(solo[:0], tag="ab12cd34") == []
 
 
 def test_a_legacy_unauthored_assistant_row_reads_as_the_openers_own(w):

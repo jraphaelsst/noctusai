@@ -116,11 +116,23 @@
       },
       "ChannelInboundMessage": {
         "additionalProperties": false,
+        "description": "One message the LEAD sent. There is deliberately no author field: whatever arrives on this route is the lead\nspeaking, whatever the text claims. Staff lines have their own route (``/api/channels/threads/{id}/mensagens``).",
         "properties": {
           "at": {
             "format": "date-time",
             "title": "At",
             "type": "string"
+          },
+          "midia": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChannelMidia"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "provider_message_id": {
             "maxLength": 256,
@@ -129,13 +141,17 @@
             "type": "string"
           },
           "texto": {
-            "minLength": 1,
+            "default": "",
             "title": "Texto",
             "type": "string"
+          },
+          "truncado": {
+            "default": false,
+            "title": "Truncado",
+            "type": "boolean"
           }
         },
         "required": [
-          "texto",
           "provider_message_id",
           "at"
         ],
@@ -170,6 +186,46 @@
           "ref"
         ],
         "title": "ChannelLead",
+        "type": "object"
+      },
+      "ChannelMidia": {
+        "additionalProperties": false,
+        "description": "The media a lead message carried, sent as DATA beside the text (guardrails B2): what SW extracted from it\n(transcription, OCR, a description) is never merged into ``texto`` with an in-band prefix, so typed text and\nmedia-derived text cannot be mistaken for each other.",
+        "properties": {
+          "legenda": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legenda"
+          },
+          "texto_extraido": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Texto Extraido",
+            "type": "string"
+          },
+          "tipo": {
+            "enum": [
+              "audio",
+              "imagem",
+              "video",
+              "documento"
+            ],
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tipo"
+        ],
+        "title": "ChannelMidia",
         "type": "object"
       },
       "ChannelRef": {

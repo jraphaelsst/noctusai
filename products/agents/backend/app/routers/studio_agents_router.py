@@ -85,6 +85,7 @@ from app.schemas.studio import (
 )
 from app.stores.agents import DEFAULT_AGENT_KEYS
 from app.stores.errors import NotFound
+from app.stores.marcadores import get_marcador_store
 from app.stores.studio_definitions import (
     SectionInput,
     StudioAgentRecord,
@@ -989,6 +990,11 @@ async def publish_draft(
         garantir_impressao(conformidade, ctx.org_id, published.id, compiled)
     except Exception:  # noqa: BLE001
         logger.exception("agents.studio.publish.impressao_nao_salva version_id=%s", published.id)
+    # The version's honeytoken is generated at publish too (DB-only; nothing in this API ever reads it back).
+    try:
+        get_marcador_store(settings).garantir(ctx.org_id, published.id)
+    except Exception:  # noqa: BLE001 -- the first turn of the version creates it; the failure must be seen
+        logger.exception("agents.studio.publish.marcador_nao_gerado version_id=%s", published.id)
     return _version_detail(store, gate, ctx.org_id, published)
 
 

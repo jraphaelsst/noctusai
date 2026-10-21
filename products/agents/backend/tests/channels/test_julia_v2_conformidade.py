@@ -128,7 +128,10 @@ class TestBlockPolicyThroughTheTurn:
         chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?")]))
         chan.turn()
         system = chan.provider.calls[0]["messages"][0].content
-        assert system.rstrip().endswith(self._canario(chan))
+        assert self._canario(chan) in system
+        # ... followed by the version's honeytoken line, the last thing in the system prompt
+        assert system.rstrip().rsplit("\n", 1)[-1].startswith("txt:seguranca.marcador_interno ")
+        assert system.index(self._canario(chan)) < system.index("txt:seguranca.marcador_interno ")
 
     def test_a_blocked_reply_is_suppressed_rerun_once_with_the_db_correction_and_the_clean_rerun_is_sent(self, chan):
         chan.seed_agent()
@@ -144,7 +147,8 @@ class TestBlockPolicyThroughTheTurn:
         assert correcao == "txt:conformidade.correcao.vazamento_prompt"
         rows = chan.rt.stores.messages.list(chan.org_id, UUID(body["thread_id"]), limite=50)
         assert not any(self._canario(chan) in (m.texto or "") for m in rows)  # the leaked reply was never stored
-        assert [m.texto for m in rows if m.role == "evento"] == ["txt:conformidade.correcao.vazamento_prompt"]
+        # the thread keeps the CODE of the correction, never its (prompt) wording
+        assert [m.texto for m in rows if m.role == "evento"] == ["conformidade:vazamento_prompt"]
         [v] = [x for x in chan.conformidade.listar_violacoes(chan.org_id, chan.agent.id) if x.regra == "vazamento_prompt"]
         assert v.bloqueada and self._canario(chan) not in repr(v.detalhe)
 

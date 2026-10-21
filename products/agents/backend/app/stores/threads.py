@@ -1216,6 +1216,13 @@ class HistoricoItem:
     agent_key: str | None = None
     agent_nome: str | None = None
     autor_user_id: UUID | None = None
+    #: The staff identity SW sent with a ``humano`` line (``messages.meta.autor``).
+    autor_nome: str | None = None
+    autor_papel: str | None = None
+    #: The media a lead message carried (``messages.meta.midia``), rendered as a literal beside the text.
+    midia: dict[str, Any] | None = None
+    #: The lead's text was cut to the size cap (``messages.meta.truncado``).
+    truncado: bool = False
 
 
 def mapa_agentes(studio_store: Any, org_id: UUID) -> dict[UUID, tuple[str, str]]:
@@ -1241,8 +1248,10 @@ def historico_do_agente(
     """
     out: list[HistoricoItem] = []
     for r in messages.list(org_id, thread_id, limite=limite):
-        if r.role == "user" and r.texto:
-            out.append(HistoricoItem("lead", r.texto, r.created_at))
+        meta = getattr(r, "meta", None) or {}
+        if r.role == "user" and (r.texto or meta.get("midia")):
+            out.append(HistoricoItem(
+                "lead", r.texto, r.created_at, midia=meta.get("midia"), truncado=bool(meta.get("truncado"))))
         elif r.role == "assistant" and r.texto and r.texto.strip():
             if r.agent_id is None or r.agent_id == agent_id:
                 out.append(HistoricoItem("proprio", r.texto, r.created_at))
@@ -1250,37 +1259,60 @@ def historico_do_agente(
                 key, nome = agentes.get(r.agent_id, (None, None))
                 out.append(HistoricoItem("outro_agente", r.texto, r.created_at, agent_key=key, agent_nome=nome))
         elif r.role == "humano" and r.texto:
-            out.append(HistoricoItem("humano", r.texto, r.created_at, autor_user_id=r.autor_user_id))
+            autor = meta.get("autor") or {}
+            out.append(HistoricoItem(
+                "humano", r.texto, r.created_at, autor_user_id=r.autor_user_id,
+                autor_nome=autor.get("nome"), autor_papel=autor.get("papel"),
+            ))
         elif r.role == "evento" and r.texto:
             out.append(HistoricoItem("evento", r.texto, r.created_at))
     return out
 
 
 def rotular_historico(
-    itens: Sequence[HistoricoItem], *, rotulo_agente: str | None, rotulo_humano: str | None,
-    rotulo_evento: str | None,
+    itens: Sequence[HistoricoItem], *, tag: str, rotulo_midia: str | None = None, rotulo_truncado: str | None = None,
 ) -> list[tuple[str, str]]:
-    """Chat-history lines ``(role, texto)`` from classified items: own -> ``assistant``,
-    the lead -> ``user``, everything else -> a ``user`` line prefixed by its label.
+    """Chat-history lines ``(role, texto)`` from classified items, by AUTHORSHIP (never by a typed prefix):
 
-    The label TEMPLATES are content (D2) — the caller reads them from the agent
-    version's textos (``historico.rotulo_agente`` ``"{nome}:"``, ``historico.rotulo_humano``,
-    ``historico.rotulo_evento``); ``{nome}`` is the only placeholder. No default is
-    substituted: an item that needs a label whose template is missing raises
-    ``ValueError`` (the turn is refused, never answered with an invented prefix).
+    * own -> ``assistant``; the lead -> ``user`` with the text EXACTLY as typed (a media object, when the message
+      carried one, and a ``{"<rotulo_truncado>": true}`` literal when the text was cut to the size cap, rides after it as a labelled JSON literal -- ``rotulo_midia`` is the DB text; a lead line never
+      starts with a template);
+    * a human attendant, another agent and a thread event -> a ``system`` line holding ONE JSON envelope keyed with
+      the turn's random ``tag`` (:func:`app.channels.proveniencia.envelope`). A lead cannot produce a ``system``
+      message, and cannot guess the tag, so nothing it types becomes a staff / agent / event line.
+
+    ``ValueError('rotulo_ausente: historico.rotulo_midia')`` when a lead line has media and the label is missing
+    (the turn is refused, never answered with an invented label).
     """
+    from app.channels.contexto import lit as lit_json  # lazy: channels imports this module
+    from app.channels.proveniencia import envelope, literal_midia
+
     out: list[tuple[str, str]] = []
     for it in itens:
+        em = it.created_at.isoformat() if it.created_at is not None else None
         if it.origem == "proprio":
             out.append(("assistant", it.texto))
         elif it.origem == "lead":
-            out.append(("user", it.texto))
-        else:
-            template = {"outro_agente": rotulo_agente, "humano": rotulo_humano, "evento": rotulo_evento}[it.origem]
-            if not template or not template.strip():
-                raise ValueError(f"rotulo_ausente: historico.rotulo_{it.origem.replace('outro_', '')}")
-            prefix = template.replace("{nome}", it.agent_nome or it.agent_key or "")
-            out.append(("user", f"{prefix} {it.texto}"))
+            partes = [it.texto] if it.texto else []
+            if it.midia:
+                if not rotulo_midia or not rotulo_midia.strip():
+                    raise ValueError("rotulo_ausente: historico.rotulo_midia")
+                partes.append(literal_midia(rotulo_midia, it.midia))
+            if it.truncado:
+                if not rotulo_truncado or not rotulo_truncado.strip():
+                    raise ValueError("rotulo_ausente: historico.rotulo_truncado")
+                partes.append(lit_json({rotulo_truncado.strip(): True}))
+            out.append(("user", "\n".join(partes)))
+        elif it.origem == "humano":
+            out.append(("system", envelope(tag, {
+                "autor_tipo": "humano", "nome": it.autor_nome, "papel": it.autor_papel, "texto": it.texto, "em": em,
+            })))
+        elif it.origem == "outro_agente":
+            out.append(("system", envelope(tag, {
+                "autor_tipo": "agente", "agente": it.agent_key, "nome": it.agent_nome, "texto": it.texto, "em": em,
+            })))
+        else:  # evento: a code, never prose
+            out.append(("system", envelope(tag, {"autor_tipo": "evento", "codigo": it.texto, "em": em})))
     return out
 
 

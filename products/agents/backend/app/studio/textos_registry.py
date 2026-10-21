@@ -153,10 +153,15 @@ TEXTOS.update({
     "reengajamento.horas": _canal("reengajamento"),
     "reengajamento.regua": _canal("reengajamento"),
     "reengajamento.texto_base": _canal("reengajamento", "texto_base"),
-    # history of a shared thread (other agents / humans / events) ---------------------------
-    "historico.rotulo_agente": _canal("historico", "nome"),
-    "historico.rotulo_humano": _canal("historico"),
-    "historico.rotulo_evento": _canal("historico"),
+    # history of a shared thread: other agents / humans / events travel as platform ENVELOPES (no label text);
+    # only the media object a lead message carried needs a label (guardrails B2) -----------------
+    "historico.rotulo_midia": _canal("historico"),
+    "historico.rotulo_truncado": _canal("historico"),
+    # provenance: the section that tells the model which envelopes are platform data, and the honeytoken line
+    # appended to the system prompt (guardrails B2/B7) ---------------------------------------------------
+    "contexto.titulo_proveniencia": _canal("contexto"),
+    "contexto.aviso_proveniencia": _canal("contexto", "tag"),
+    "seguranca.marcador_interno": _canal("seguranca", "marcador"),
     # tool results the model reads ------------------------------------------------------------
     "ferramenta.resultado.registrado": _canal("ferramenta"),
     "ferramenta.resultado.argumentos_invalidos": _canal("ferramenta", "motivo"),

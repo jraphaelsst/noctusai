@@ -606,7 +606,7 @@ RLS is unchanged in posture: channel threads stay invisible to `authenticated` (
 - `_history` in `llm_runtime.py:420` becomes thread-aware:
   - messages by **this** agent → `assistant`
   - lead → `user`
-  - other agents / humans / evento → `user`-role lines with a label prefix from textos (`historico.rotulo_agente` "{nome}:", `historico.rotulo_humano`, `historico.rotulo_evento`)
+  - other agents / humans / evento → one `system`-role JSON envelope each, keyed `plataforma_<tag>` where `<tag>` is a per-turn random value the state message (`contexto.aviso_proveniencia`, `{tag}`) tells the model marks platform data (guardrails B2; replaces the `historico.rotulo_agente|humano|evento` label prefixes, which a lead could type). The lead's text stays the plain `user` role, never prefixed; a lead's media rides after it as a labelled literal object (`historico.rotulo_midia`). `evento` rows are codes (`conformidade:<regra>`), never prose.
 - The second system message carries `qualificacao.valores` + `estagio` (rendered via textos), so recorded facts are never asked again.
 - History limit = version `historico_mensagens` (today 20, `llm_runtime.py:216`), editable.
 
@@ -717,7 +717,14 @@ Auth is unchanged: the `pk_*` channel token bound to agent `julia` (`principal_a
   "contact": {"nome": "…", "telefone_e164": "+55…"},
   "gatilho": "mensagem" | "reengajamento",
   "reengajamento": {"tier": "minutos|horas|regua", "texto_base": "…"} ,        // only with gatilho=reengajamento
-  "messages": [{"provider_message_id": "…", "texto": "…", "at": "…"}],        // ≥1 for mensagem; [] allowed for reengajamento
+  "messages": [{"provider_message_id": "…", "texto": "…", "at": "…",
+                "midia": {"tipo": "audio|imagem|video|documento", "texto_extraido": "…≤2000", "legenda": "…"|null}}],
+                                                                              // ≥1 for mensagem; [] allowed for reengajamento
+                                                                              // `midia` (optional, 2026-10-21): what SW extracted from the media,
+                                                                              //   sent as DATA beside `texto`, never inlined into it with a prefix.
+                                                                              //   `texto` may be "" only when `midia` is present. A text-only message
+                                                                              //   (no `midia`) is unchanged. NO author field exists on this route:
+                                                                              //   whatever arrives here is the lead speaking, whatever the text says.
   "contexto": {
     "hash": "<sha256>", "agora": "…", "fuso": "America/Sao_Paulo",
     "operacional": {"atendente_nome": "…"|null, "encerrado_sw": false, "interacao_id": "…",
@@ -754,7 +761,7 @@ Response:
 
 | Method / path | Scope | Purpose |
 |---|---|---|
-| `POST /api/channels/threads/{id}/mensagens` | channel-turn | append without a turn: `{role: user|humano, autor_user_id?, texto, provider_message_id, at}`; idempotent via `channel_inbound` |
+| `POST /api/channels/threads/{id}/mensagens` | channel-turn | append without a turn: `{role: user|humano, autor_user_id?, autor?: {nome, papel?}, texto, provider_message_id, at}`; `autor` is staff identity as SW registered it and is accepted ONLY with `role: humano` (422 otherwise); idempotent via `channel_inbound` |
 | `GET /api/channels/threads/{id}` (+ `?channel_ref=` lookup) | channel-status | participants + states, `qualificacao`, `ultimo_turno_em` |
 | `PATCH /api/channels/threads/{id}/participantes/{agent_key}` | channel-turn | `{estado: pausado|ativo, motivo, ator_user_id}` → audited |
 | `GET /api/channels/agents/{key}/status` | channel-status | adds `modo`, `aceita_novos_leads`, `threads_abertas`, `conteudo_completo` (keeps the `ativo` alias) |

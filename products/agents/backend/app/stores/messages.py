@@ -69,6 +69,9 @@ class MessageRecord:
     definition_version_id: UUID | None = None
     org_specs_hash: str | None = None
     skill_version_ids: list[UUID] | None = None
+    #: Structural facts about the line that are not its text (046): ``midia`` of a lead message (tipo /
+    #: texto_extraido / legenda) and ``autor`` (nome / papel) of a ``humano`` line.
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 class MessageStore(Protocol):
@@ -90,6 +93,7 @@ class MessageStore(Protocol):
         definition_version_id: UUID | None = None,
         org_specs_hash: str | None = None,
         skill_version_ids: list[UUID] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> MessageRecord:
         ...
 
@@ -190,6 +194,7 @@ class FakeMessageStore:
         definition_version_id: UUID | None = None,
         org_specs_hash: str | None = None,
         skill_version_ids: list[UUID] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -213,6 +218,7 @@ class FakeMessageStore:
             "definition_version_id": definition_version_id,
             "org_specs_hash": org_specs_hash,
             "skill_version_ids": list(skill_version_ids) if skill_version_ids is not None else None,
+            "meta": dict(meta or {}),
         }
         self._rows.setdefault((org_id, conversation_id), []).append(row)
         return self._to_record(row)
@@ -345,6 +351,7 @@ class SupabaseMessageStore:
         definition_version_id: UUID | None = None,
         org_specs_hash: str | None = None,
         skill_version_ids: list[UUID] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -376,6 +383,8 @@ class SupabaseMessageStore:
             payload["org_specs_hash"] = org_specs_hash
         if skill_version_ids is not None:
             payload["skill_version_ids"] = [str(v) for v in skill_version_ids]
+        if meta:
+            payload["meta"] = dict(meta)
         resp = self._table().insert(payload).execute()
         rows = resp.data or []
         return self._record(rows[0] if rows else payload)
@@ -549,6 +558,7 @@ class SupabaseMessageStore:
             definition_version_id=UUID(str(row["definition_version_id"])) if row.get("definition_version_id") else None,
             org_specs_hash=row.get("org_specs_hash"),
             skill_version_ids=[UUID(str(v)) for v in row["skill_version_ids"]] if row.get("skill_version_ids") else None,
+            meta=dict(row.get("meta") or {}),
         )
 
 

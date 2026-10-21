@@ -64,6 +64,9 @@ class MensagemEntrada:
     provider_message_id: str
     role: str = "user"
     autor_user_id: UUID | None = None
+    #: Staff identity SW registered for a ``humano`` line (kept as structure, never as text).
+    autor_nome: str | None = None
+    autor_papel: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,8 @@ def anexar_mensagens(
             raise ValueError(f"role must be one of {ROLES_ANEXAVEIS}; got {m.role!r}")
         if m.role == "humano" and m.autor_user_id is None:
             raise ValueError("a human message needs autor_user_id")
+        if m.role != "humano" and (m.autor_nome or m.autor_papel):
+            raise ValueError("only a human line carries an author")
     connection_id = _connection_id(thread)
     known = inbound.find(org_id, connection_id, [m.provider_message_id for m in mensagens])
     novas: list[MessageRecord] = []
@@ -116,6 +121,7 @@ def anexar_mensagens(
         novas.append(messages.add(
             org_id, thread.id, m.role, m.texto,
             lead_ref_id=thread.lead_ref_id, autor_user_id=m.autor_user_id,
+            meta={"autor": {k: v for k, v in (("nome", m.autor_nome), ("papel", m.autor_papel)) if v}} if m.autor_nome else None,
         ))
         inbound.add(org_id, connection_id, thread.id, m.provider_message_id, _sha(m.texto))
     if any(n.role == "user" for n in novas):

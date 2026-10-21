@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 from app.channels import admissao
 from app.channels import conformidade as conf
 from app.channels.contexto import Dossie, render_contexto_system
+from app.channels import proveniencia as prov
 from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
     JuliaTurno,
@@ -45,6 +46,7 @@ from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores.conformidade import SINAIS_SEGURANCA, Impressao, Violacao
 from app.stores.errors import NotFound
+from app.stores.marcadores import get_marcador_store
 from app.stores.studio_definitions_conteudo import OrgSpecRecord
 from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, rotular_historico
 from app.studio.plataforma import escopo_de, padrao_de
@@ -115,6 +117,8 @@ class Preparado:
     canario: str
     impressao: Impressao
     escopo: str | None
+    #: The version's honeytoken (``None`` only when its store failed, which is logged).
+    marcador: str | None = None
 
 
 def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
@@ -165,6 +169,24 @@ def conteudo_completo(svc: ServicosCanal, org_id: UUID, agent: Any) -> bool:
     return True
 
 
+def _marcador_do_prompt(r: AgenteResolvido, compiled: Any) -> tuple[str | None, str]:
+    """``(marker, the DB line that carries it)``. The marker is generated once per version (publish, or the first
+    turn of an older version) and lives only in the DB; the line is the version's ``seguranca.marcador_interno`` text
+    with ``{marcador}`` filled, appended after the canary (never in the compiled hash)."""
+    conteudo = compiled.conteudo
+    if conteudo is None:
+        return None, ""
+    try:
+        marcador = get_marcador_store(settings).garantir(r.definicao.org_id, r.versao.id)
+    except Exception:  # noqa: BLE001 -- the tripwire is detective; losing it must be seen, never stop a lead's reply
+        logger.exception("agents.channel.marcador_indisponivel version_id=%s", r.versao.id)
+        return None, ""
+    texto = conteudo.texto("seguranca.marcador_interno").strip()
+    if not texto:
+        raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
+    return marcador, texto.replace("{marcador}", marcador)
+
+
 def preparar(
     svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
     specs: Mapping[str, str] | None = None,
@@ -184,10 +206,11 @@ def preparar(
         logger.exception("agents.channel.compiled_prompt_not_saved org_id=%s hash=%s", org_id, compiled.hash)
     marca = carimbo(svc.studio_store, svc.catalog, r, compiled=compiled)
     can = conf.canario(org_id, r.versao.id, segredo=getattr(settings, "encryption_key", "") or "")
+    marcador, linha_marcador = _marcador_do_prompt(r, compiled)
     spec = AgentSpec(
         key=agent.key, provider=r.versao.provider, runtime="llm", model=r.versao.model, effort=r.versao.effort,
         # The canary rides with the prompt (never in the hash): a reply that contains it reproduced the prompt.
-        prompt_append=f"{compiled.texto}\n\n{can}", skills=(),
+        prompt_append="\n\n".join(p for p in (compiled.texto, can, linha_marcador) if p), skills=(),
         # Structural (guardrails B6.7): the channel toolset (``make_channel_tools_factory``) is the ONLY toolset of a
         # lead-facing turn -- never web search, never knowledge, never a studio tool, whatever the version's policy says.
         tools=(),
@@ -196,7 +219,7 @@ def preparar(
     )
     k = conf.shingle_tokens_da_regra(svc.conformidade.regras(org_id, agent.id).get("vazamento_prompt"))
     impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled, k)
-    return Preparado(r, padrao, compiled, marca, spec, can, impressao, escopo_de(r.definicao.key))
+    return Preparado(r, padrao, compiled, marca, spec, can, impressao, escopo_de(r.definicao.key), marcador)
 
 
 # ── the result ──────────────────────────────────────────────────────────────
@@ -226,10 +249,23 @@ def _urls(texto: str) -> set[str]:
     return {u.rstrip(".,;:!?)]}\"'") for u in _URL.findall(texto)}
 
 
-def _mensagens_do_lead(messages: Any, org_id: UUID, thread_id: UUID) -> tuple[list[str], int]:
+def _falas_do_lead(r: Any) -> list[str]:
+    """What a stored lead row says in the lead's OWN words: the typed text, plus an AUDIO's transcription (the lead
+    spoke it). An image / document / video text is not the lead speaking, so it never counts as their words."""
+    meta = getattr(r, "meta", None) or {}
+    midia = meta.get("midia") or {}
+    falas = [r.texto] if r.texto else []
+    if midia.get("tipo") == "audio" and midia.get("texto_extraido"):
+        falas.append(midia["texto_extraido"])
+    return falas
+
+
+def _mensagens_do_lead(messages: Any, org_id: UUID, thread_id: UUID) -> tuple[list[str], int, list[str]]:
+    """``(the lead's recent words, how many lead messages, the provenance tags of this thread's earlier turns)``."""
     rows = messages.list(org_id, thread_id, limite=500)
-    lead = [r.texto for r in rows if r.role == "user" and r.texto]
-    return lead[-_JANELA_LEAD:], len(lead)
+    lead = [f for r in rows if r.role == "user" for f in _falas_do_lead(r)]
+    tags = [t for r in rows if r.role == "assistant" and (t := (getattr(r, "meta", None) or {}).get("tag"))]
+    return lead[-_JANELA_LEAD:], len(lead), tags[-_JANELA_LEAD:]
 
 
 def _inicio_do_dia(agora: datetime) -> datetime:
@@ -310,10 +346,12 @@ def _numerar(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 async def executar(
     *, svc: ServicosCanal, prep: Preparado, agent: Any, org_id: UUID, thread: Any, runtime: Any, slot: Any,
     bus: Any, contexto: Any | None, gatilho: str, lote_lead: list[str], ultima_resposta_em: datetime | None,
-    agora: datetime,
+    agora: datetime, lote_entrada: list[str] | None = None,
 ) -> ResultadoTurno:
     """Run the model for ``thread`` and settle everything the turn does. ``lote_lead`` are the texts of the
-    batch just stored (empty for a re-engagement)."""
+    batch just stored (empty for a re-engagement) that the lead SAID (typed + spoken); ``lote_entrada`` adds the text
+    extracted from images / documents / video and captions, which only the input-side tripwires read."""
+    lote_entrada = list(lote_lead) if lote_entrada is None else lote_entrada
     r, padrao = prep.r, prep.padrao
     conteudo = prep.compiled.conteudo
     if conteudo is None:  # a content-mode agent always has it; anything else cannot run on this path
@@ -326,10 +364,12 @@ async def executar(
     estado_sw = contexto.estado if contexto is not None else None
     ferramentas_sw = contexto.capacidades.ferramentas_sw if contexto is not None else True
 
+    mensagens_lead, n_respostas, tags_anteriores = _mensagens_do_lead(svc.messages, org_id, thread.id)
+    tag = prov.nova_tag()
     # input-side security signals (signal only, never block): an attempt to read the instructions, a claim of
     # identity. They feed ``escala_seguranca`` (reduce-only: a claim never grants anything).
-    sinal = conf.sinal_extracao(lote_lead, regras.get("tentativa_extracao"))
-    alegacao = conf.sinal_alegacao(lote_lead, regras.get("alegacao_identidade"))
+    sinal = conf.sinal_extracao(lote_entrada, regras.get("tentativa_extracao"))
+    alegacao = conf.sinal_alegacao(lote_entrada, regras.get("alegacao_identidade"))
     violacoes: list[Violacao] = [
         Violacao(nome, "sinal", d) for nome, d in (("tentativa_extracao", sinal), ("alegacao_identidade", alegacao)) if d
     ]
@@ -338,9 +378,10 @@ async def executar(
     nivel = conf.nivel_seguranca(regras.get("escala_seguranca"), previos + len(violacoes))
     if nivel != "normal":
         violacoes.append(Violacao("escala_seguranca", "registrar", {"nivel": nivel, "sinais": previos + len(violacoes)}))
+    # leak tripwires on the input side (provenance tag echoed, canary / prompt run / honeytoken received)
+    violacoes += _sinais_de_entrada(svc, prep, org_id, agent, thread, lote_entrada, tag, tags_anteriores)
     valores = r.valores
 
-    mensagens_lead, n_respostas = _mensagens_do_lead(svc.messages, org_id, thread.id)
     pediu_humano = _pediu_humano(svc, regras, org_id, thread.id, lote_lead)
     sinais = LeadSinais(
         ultima_resposta_em=ultima_resposta_em, respostas_count=n_respostas,
@@ -380,14 +421,14 @@ async def executar(
     n = runtime.history_messages
     ct = contexto_thread(svc.messages, svc.threads, mapa_agentes(svc.studio_store, org_id), org_id, thread.id, agent.id, n=n)
     historico = tuple(rotular_historico(
-        ct.mensagens, rotulo_agente=conteudo.texto("historico.rotulo_agente"),
-        rotulo_humano=conteudo.texto("historico.rotulo_humano"), rotulo_evento=conteudo.texto("historico.rotulo_evento"),
-    ))
+        ct.mensagens, tag=tag, rotulo_midia=conteudo.texto("historico.rotulo_midia"),
+        rotulo_truncado=conteudo.texto("historico.rotulo_truncado")))
     eventos = await asyncio.to_thread(svc.qual.eventos, org_id, lead_ref_id)
     dossie = _dossie(padrao, estado0, eventos, ct.handoff)
     contexto_system = render_contexto_system(
         conteudo, agora=(contexto.agora if contexto is not None else agora),
         fuso=(contexto.fuso if contexto is not None else "America/Sao_Paulo"), estado=estado_sw, dossie=dossie,
+        tag=tag,
     )
     ctx = TurnContext(
         org_id=org_id, conversation_id=thread.id, requested_by=service_principal_id(agent.id),
@@ -407,8 +448,9 @@ async def executar(
     bloqueios: list[Violacao] = []
 
     def _avaliar(t: _Tentativa) -> list[Violacao]:
-        return conf.avaliar_resposta(conf.EntradaConformidade(
-            resposta="\n\n".join(x for x in t.textos if x and x.strip()), mensagens_lead=lote_lead, regras=regras,
+        resposta = "\n\n".join(x for x in t.textos if x and x.strip())
+        return _marcadores_da_resposta(resposta, prep.marcador, tag, regras) + conf.avaliar_resposta(conf.EntradaConformidade(
+            resposta=resposta, mensagens_lead=lote_lead, regras=regras,
             canario=prep.canario, impressao=prep.impressao,
             codigos_permitidos=turno.codigos_vistos | codigos_da_thread,
             links_permitidos={*turno.links_vistos, *links_anteriores},
@@ -437,7 +479,9 @@ async def executar(
         texto_final = "\n\n".join(x for x in t1.textos if x and x.strip())
         if bl:
             correcao = " ".join(conteudo.texto(f"conformidade.correcao.{v.regra}").strip() for v in bl)
-            svc.messages.add(org_id, thread.id, "evento", correcao, agent_id=agent.id, lead_ref_id=lead_ref_id)
+            # the thread keeps the CODE only: the wording is prompt text and travels in `mensagem_correcao` alone
+            svc.messages.add(
+                org_id, thread.id, "evento", codigo_evento_correcao(bl), agent_id=agent.id, lead_ref_id=lead_ref_id)
             t2 = await _rodar(runtime, prep.spec, replace(ctx, mensagem_correcao=correcao), slot, None)
             tentativas.append(t2)
             achados2 = [] if turno.parar else _avaliar(t2)
@@ -465,13 +509,14 @@ async def executar(
     if nivel == "handoff":  # B4: repeated extraction / identity attempts -> a person takes over, the agent pauses
         await executar_handoff(
             turno, "seguranca", conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", "seguranca"))
+    violacoes += _marcador_nas_acoes(turno.actions, prep.marcador)
     await _escalar(svc, turno, regras, org_id, lead_ref_id, lote_lead)
 
     usage: dict[str, Any] = {}
     for t in tentativas:
         usage = _somar(usage, t.usage)
     blocks = [b for t in tentativas for b in t.blocks]
-    final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus)
+    final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus, tag)
 
     for v in violacoes:
         try:
@@ -534,6 +579,81 @@ async def _parar_por_loop(
         actions=_numerar(turno.actions), status="loop_detectado", violacoes=[v],
         participante_estado=participante.estado if participante is not None else None,
     )
+
+
+#: Rule code of the thread ``evento`` row a corrective re-run leaves: ``conformidade:<regra>[,<regra>]``.
+_PREFIXO_EVENTO_CORRECAO = "conformidade"
+
+
+def codigo_evento_correcao(bloqueios: list[Violacao]) -> str:
+    return f"{_PREFIXO_EVENTO_CORRECAO}:" + ",".join(v.regra for v in bloqueios)
+
+
+def _marcadores_da_resposta(resposta: str, marcador: str | None, tag: str, regras: Any) -> list[Violacao]:
+    """The honeytoken in the reply is a prompt leak (``vazamento_prompt``, the rule's own policy: it blocks by
+    default); the turn's provenance tag in the reply is a forgery signal."""
+    out: list[Violacao] = []
+    if prov.marcador_em([resposta], marcador):
+        out.append(Violacao("vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"), {prov.MARCADOR_HONEYTOKEN: True}))
+    if tag and tag in resposta:
+        out.append(Violacao("forja_proveniencia", "sinal", {"resposta": True}))
+    return out
+
+
+def _marcador_nas_acoes(actions: list[dict[str, Any]], marcador: str | None) -> list[Violacao]:
+    """The honeytoken inside a tool call's arguments (the text that reaches staff): the action already ran, so it is
+    recorded (never blocked) -- the platform learns the model was steered into carrying the marker out."""
+    n = prov.marcador_em([prov.texto_da_acao(a) for a in actions], marcador)
+    return [Violacao("vazamento_prompt", "registrar", {prov.MARCADOR_HONEYTOKEN: True, "acoes": n})] if n else []
+
+
+def _sinais_de_entrada(
+    svc: ServicosCanal, prep: Preparado, org_id: UUID, agent: Any, thread: Any, lote: list[str], tag: str,
+    tags_anteriores: list[str],
+) -> list[Violacao]:
+    """The input side of the leak tripwires. The lead SENT us the canary / a run of the prompt (``canario_recebido``,
+    high severity: the prompt leaked earlier -- the platform admins are notified, not the org), the honeytoken
+    (``vazamento_prompt`` with the honeytoken flag) or a provenance tag of this / an earlier turn
+    (``forja_proveniencia``, signal)."""
+    out: list[Violacao] = []
+    recebido = prov.canario_recebido(lote, canario=prep.canario, impressao=prep.impressao)
+    if recebido:
+        out.append(Violacao("canario_recebido", "registrar", recebido))
+        _avisar_admins_da_plataforma(svc, org_id, agent, thread, prep, recebido)
+    if prov.marcador_em(lote, prep.marcador):
+        out.append(Violacao("vazamento_prompt", "registrar", {prov.MARCADOR_HONEYTOKEN: True, "entrada": True}))
+    forja = [prov.forja_proveniencia(lote, t) for t in (tag, *tags_anteriores)]
+    n = max((f["mensagens"] for f in forja if f), default=0)
+    if n:
+        out.append(Violacao("forja_proveniencia", "sinal", {"mensagens": n}))
+    return out
+
+
+def _avisar_admins_da_plataforma(
+    svc: ServicosCanal, org_id: UUID, agent: Any, thread: Any, prep: Preparado, detalhe: dict[str, Any],
+) -> None:
+    """Tell the PLATFORM admins (never the org) that a lead sent the prompt back. One notice per admin per thread and
+    prompt version (the dedup key), ids and counts only -- the message text is not copied. A failure is logged."""
+    sink = svc.notificacoes
+    if sink is None:
+        logger.error("agents.channel.canario_recebido_sem_sink thread_id=%s", thread.id)
+        return
+    chave = f"canario_recebido:{thread.id}:{prep.carimbo.compiled_hash}"
+    try:
+        for admin in sink.platform_admin_ids():
+            if sink.already_sent(admin, chave):
+                continue
+            sink.send(
+                admin, kind="canario_recebido", title="Prompt vazado: o lead enviou o canário",
+                message=f"Uma conversa do agente {agent.key} recebeu do lead um trecho do prompt ({detalhe}).",
+                metadata={
+                    "dedup_key": chave, "severidade": "alta", "agent_key": agent.key, "org_id": str(org_id),
+                    "thread_id": str(thread.id), "compiled_hash": prep.carimbo.compiled_hash,
+                },
+                org_id=org_id,
+            )
+    except Exception:  # noqa: BLE001 -- a lost notice must be seen; the violation row below is the durable record
+        logger.exception("agents.channel.canario_recebido_aviso_falhou thread_id=%s", thread.id)
 
 
 def estagios_em_ordem(padrao: VersaoPadrao) -> list[str]:
@@ -607,7 +727,7 @@ def _dossie(padrao: VersaoPadrao, estado: Any, eventos: list[Any], handoff: Any)
 
 async def _persistir(
     svc: ServicosCanal, prep: Preparado, agent: Any, org_id: UUID, thread: Any, contexto: Any | None,
-    texto: str, blocks: list[dict[str, Any]], usage: dict[str, Any], bus: Any,
+    texto: str, blocks: list[dict[str, Any]], usage: dict[str, Any], bus: Any, tag: str | None = None,
 ) -> UUID | None:
     """The turn's ONE assistant row, stamped with the version tuple (definition version, compiled hash, org
     specs hash, shared-skill versions) and the author agent. A silent turn that spent money still books an
@@ -621,6 +741,7 @@ async def _persistir(
         version_id=m.definition_version_id, compiled_hash=m.compiled_hash, definition_version_id=m.definition_version_id,
         org_specs_hash=m.org_specs_hash, skill_version_ids=list(m.skill_version_ids) or None,
         contexto_hash=contexto.hash if contexto is not None else None,
+        meta={"tag": tag} if tag else None,  # so a later lead message that echoes it is a forgery signal
     )
     if any(v is not None for v in usage.values()):
         svc.messages.set_turn_cost(

@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from app.studio.models import ConteudoBundle
 
-__all__ = ["Dossie", "render_contexto_system"]
+__all__ = ["Dossie", "lit", "render_contexto_system"]
 
 
 @dataclass(frozen=True)
@@ -62,11 +62,18 @@ def _lit(value: Any) -> str:
     return json.dumps(_um_linha(value), ensure_ascii=False, default=str)
 
 
+#: Public name of the one-line JSON-literal helper (history envelopes and media literals reuse it).
+lit = _lit
+
+
 def render_contexto_system(
     conteudo: ConteudoBundle, *, agora: datetime, fuso: str, estado: Any | None, dossie: Dossie,
+    tag: str | None = None,
 ) -> str:
     """``estado`` is the request's ``contexto.estado`` (``None`` = not sent); a re-engagement turn is the
-    one whose ``estado.reengajamento`` names the flow."""
+    one whose ``estado.reengajamento`` names the flow. ``tag`` is the turn's random provenance tag: when given, a
+    first section tells the model (in DB wording, ``{tag}`` filled here) that only envelopes keyed with it are
+    platform data -- the tag itself never appears in anything a lead can read."""
 
     def T(chave: str) -> str:
         texto = conteudo.texto(chave).strip()
@@ -74,7 +81,10 @@ def render_contexto_system(
             raise ValueError(f"texto_ausente: {chave}")
         return texto
 
-    out: list[str] = [f"## {T('contexto.titulo_estado')}"]
+    out: list[str] = []
+    if tag:
+        out += [f"## {T('contexto.titulo_proveniencia')}", T("contexto.aviso_proveniencia").replace("{tag}", tag), ""]
+    out.append(f"## {T('contexto.titulo_estado')}")
     local = agora.astimezone(ZoneInfo(fuso))
     out.append(f"{T('contexto.rotulo_data_hora')}: {local.strftime('%Y-%m-%d %H:%M')} ({fuso})")
     if estado is not None:

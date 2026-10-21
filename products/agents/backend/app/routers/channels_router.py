@@ -189,7 +189,7 @@ def _plan_batch(
         if rec is None:
             new.append(msg)
             continue
-        if rec.texto_sha256 != _sha(msg.texto) or conversation_id is None or rec.conversation_id != conversation_id:
+        if rec.texto_sha256 != _sha(msg.assinatura()) or conversation_id is None or rec.conversation_id != conversation_id:
             raise _err(
                 409, "idempotency_conflict",
                 "Este provider_message_id já foi recebido com outro conteúdo.",
@@ -219,9 +219,15 @@ def _persistir_lote(
     idempotency ledger; the thread's last-LEAD-message clock (the drain-idle clock) moves."""
     records = []
     for msg in plan.new:
-        records.append(msg_store.add(org_id, thread.id, "user", msg.texto, lead_ref_id=thread.lead_ref_id))
+        records.append(msg_store.add(
+            org_id, thread.id, "user", msg.texto, lead_ref_id=thread.lead_ref_id,
+            meta={
+                **({"midia": msg.midia.canonical()} if msg.midia is not None else {}),
+                **({"truncado": True} if msg.truncado else {}),
+            } or None,
+        ))
         try:
-            inbound.add(org_id, connection_id, thread.id, msg.provider_message_id, _sha(msg.texto))
+            inbound.add(org_id, connection_id, thread.id, msg.provider_message_id, _sha(msg.assinatura()))
         except Conflict as exc:
             raise _err(409, "turn_in_progress", "Já existe um turno em andamento.") from exc
     if records:
@@ -380,12 +386,13 @@ async def run_channel_turn(
                     inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))
                 return resp
 
-        lote_lead = [m.texto for m in batch]
+        lote_lead = [t for m in batch for t in m.falas_do_lead()]
+        lote_entrada = [t for m in batch for t in m.textos_de_entrada()]
         ultima = max((m.at for m in batch), default=None) if batch else ultima_antes
         try:
             resultado = await turno_mod.executar(
                 svc=svc, prep=prep, agent=agent, org_id=org_id, thread=thread, runtime=runtime, slot=slot, bus=bus,
-                contexto=payload.contexto, gatilho=payload.gatilho, lote_lead=lote_lead,
+                contexto=payload.contexto, gatilho=payload.gatilho, lote_lead=lote_lead, lote_entrada=lote_entrada,
                 ultima_resposta_em=ultima, agora=agora,
             )
         except LlmRuntimeError as exc:

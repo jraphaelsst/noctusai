@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
 __all__ = [
+    "AutorMensagem",
     "ControleOut",
     "ControleUpdateRequest",
     "DrenagemOut",
@@ -220,6 +221,14 @@ class StudioParticipanteEstadoRequest(StrictHttpModel):
     ate: datetime | None = None
 
 
+class AutorMensagem(StrictHttpModel):
+    """The staff identity of a human line, as social-wiring registered it (the org's staff list and their roles).
+    Only SW sets it, only on the staff route: agents never infers staff from text."""
+
+    nome: str = Field(..., min_length=1, max_length=120)
+    papel: str | None = Field(default=None, max_length=60)
+
+
 class ThreadMensagemRequest(StrictHttpModel):
     """``POST /api/channels/threads/{id}/mensagens`` — append without a turn (a human attendant's
     message, or a lead message that must not be answered)."""
@@ -229,6 +238,14 @@ class ThreadMensagemRequest(StrictHttpModel):
     provider_message_id: str = Field(..., min_length=1, max_length=256)
     at: datetime | None = None
     autor_user_id: UUID | None = None
+    #: Staff identity (``role='humano'`` only): rendered to the model inside a platform envelope.
+    autor: AutorMensagem | None = None
+
+    @model_validator(mode="after")
+    def _autor_so_em_linha_humana(self) -> "ThreadMensagemRequest":
+        if self.autor is not None and self.role != "humano":
+            raise ValueError("autor is only valid on a humano line")
+        return self
 
 
 class ThreadMensagemOut(BaseModel):

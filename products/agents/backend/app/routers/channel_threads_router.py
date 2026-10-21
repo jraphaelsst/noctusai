@@ -339,6 +339,8 @@ async def append_thread_message(
                 mensagens=[MensagemEntrada(
                     texto=payload.texto, provider_message_id=payload.provider_message_id,
                     role=payload.role, autor_user_id=payload.autor_user_id,
+                    autor_nome=payload.autor.nome if payload.autor else None,
+                    autor_papel=payload.autor.papel if payload.autor else None,
                 )],
             )
         except IdempotencyConflict as exc:

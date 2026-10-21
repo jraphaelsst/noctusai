@@ -15,6 +15,7 @@ is v2 either way. The JSON Schema of the request/response is generated to
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 from uuid import UUID
@@ -41,6 +42,7 @@ __all__ = [
     "ChannelContact",
     "ChannelDeleteRequest",
     "ChannelInboundMessage",
+    "ChannelMidia",
     "ChannelLead",
     "ChannelRef",
     "ChannelReplyOut",
@@ -94,18 +96,68 @@ class ChannelContact(StrictHttpModel):
     display_name: str | None = Field(default=None, max_length=200)
 
 
+MIDIA_TEXTO_MAX = 2000
+MIDIA_LEGENDA_MAX = 1000
+
+
+class ChannelMidia(StrictHttpModel):
+    """The media a lead message carried, sent as DATA beside the text (guardrails B2): what SW extracted from it
+    (transcription, OCR, a description) is never merged into ``texto`` with an in-band prefix, so typed text and
+    media-derived text cannot be mistaken for each other."""
+
+    tipo: Literal["audio", "imagem", "video", "documento"]
+    texto_extraido: str = Field(default="", max_length=MIDIA_TEXTO_MAX)
+    legenda: str | None = Field(default=None, max_length=MIDIA_LEGENDA_MAX)
+
+    def canonical(self) -> dict[str, str]:
+        return {k: v for k, v in (("tipo", self.tipo), ("texto_extraido", self.texto_extraido), ("legenda", self.legenda)) if v}
+
+
 class ChannelInboundMessage(StrictHttpModel):
-    #: Truncated (never rejected) at :data:`MESSAGE_MAX_CHARS`.
-    texto: str = Field(..., min_length=1)
+    """One message the LEAD sent. There is deliberately no author field: whatever arrives on this route is the lead
+    speaking, whatever the text claims. Staff lines have their own route (``/api/channels/threads/{id}/mensagens``)."""
+
+    #: Truncated (never rejected) at :data:`MESSAGE_MAX_CHARS`; may be empty ONLY when ``midia`` is present.
+    texto: str = Field(default="")
     provider_message_id: str = Field(..., min_length=1, max_length=256)
     at: datetime
+    #: Backward compatible: absent = the old ``texto``-only shape.
+    midia: ChannelMidia | None = None
+    #: ``True`` when ``texto`` was cut to the size cap (here, or by the batch cap). The turn tells the model, in DB
+    #: wording (``historico.rotulo_truncado``), that this message is incomplete. Set by the truncation, not trusted
+    #: from the sender: a sent ``true`` only adds the label.
+    truncado: bool = False
 
-    @field_validator("texto")
-    @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v.strip():
+    @model_validator(mode="after")
+    def _not_blank(self) -> "ChannelInboundMessage":
+        if not self.texto.strip() and self.midia is None:
             raise ValueError("texto must not be blank")
-        return v[:MESSAGE_MAX_CHARS] if len(v) > MESSAGE_MAX_CHARS else v
+        if len(self.texto) > MESSAGE_MAX_CHARS:
+            self.texto = self.texto[:MESSAGE_MAX_CHARS]
+            self.truncado = True
+        return self
+
+    def assinatura(self) -> str:
+        """What the idempotency ledger hashes: the text alone for a text-only message (unchanged hash for every
+        message stored before ``midia`` existed), the text plus the media object otherwise."""
+        if self.midia is None:
+            return self.texto
+        return self.texto + "\x1f" + json.dumps(self.midia.canonical(), ensure_ascii=False, sort_keys=True)
+
+    def falas_do_lead(self) -> list[str]:
+        """The texts the turn's detectors read as the lead's: the typed text and an AUDIO's transcription (spoken by
+        the lead), plus any other media text for the injection / extraction signals only via :meth:`textos_de_entrada`."""
+        out = [self.texto] if self.texto.strip() else []
+        if self.midia is not None and self.midia.tipo == "audio" and self.midia.texto_extraido.strip():
+            out.append(self.midia.texto_extraido)
+        return out
+
+    def textos_de_entrada(self) -> list[str]:
+        """Every text that came in with the message (typed, extracted, caption): what the input-side tripwires scan."""
+        out = [self.texto] if self.texto.strip() else []
+        if self.midia is not None:
+            out += [t for t in (self.midia.texto_extraido, self.midia.legenda) if t and t.strip()]
+        return out
 
 
 #: The whole `contexto` (as JSON) may not exceed this many characters (§2.1(a)).
@@ -217,7 +269,7 @@ def _truncar_lote(messages: list[ChannelInboundMessage]) -> list[ChannelInboundM
     for i, m in enumerate(messages):
         reservado = len(messages) - i - 1  # one character for each message still to come
         permitido = max(1, min(len(m.texto), restante - reservado))
-        out.append(m if permitido == len(m.texto) else m.model_copy(update={"texto": m.texto[:permitido]}))
+        out.append(m if permitido >= len(m.texto) else m.model_copy(update={"texto": m.texto[:permitido], "truncado": True}))
         restante -= permitido
     return out
 

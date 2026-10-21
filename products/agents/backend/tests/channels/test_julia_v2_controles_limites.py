@@ -5,6 +5,8 @@ route keeps: controls under the turn lock, BEFORE the inbound text is stored or 
 """
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -256,11 +258,15 @@ class TestSharedThreadHistory:
         on.rt.stores.messages.add(on.org_id, tid, "assistant", "Documentos ok.", agent_id=outro.id)
         on.rt.stores.messages.add(on.org_id, tid, "humano", "Já liguei para ele.", autor_user_id=uuid4())
         on.turn(turn_body("E agora?", ids=["b"]))
-        sent = [(m.role, m.content) for m in on.provider.calls[-1]["messages"] if m.role != "system"]
-        assert ("user", "txt:historico.rotulo_agente Jurídico Documentos ok.") in sent
-        assert ("user", "txt:historico.rotulo_humano Já liguei para ele.") in sent
+        msgs = on.provider.calls[-1]["messages"]
+        sent = [(m.role, m.content) for m in msgs if m.role != "system"]
         assert ("assistant", "Resposta 0?") in sent  # its OWN earlier reply keeps the assistant role
         assert sent[-1] == ("user", "E agora?")
+        # the other agent and the human attendant are NOT user lines: each is a system envelope keyed with the turn tag
+        assert not any("Documentos ok." in c or "Já liguei" in c for _, c in sent)
+        envs = [json.loads(m.content) for m in msgs if m.role == "system" and m.content.startswith('{"plataforma_')]
+        assert len(envs) == 2 and len({k for e in envs for k in e}) == 1  # one tag per turn
+        assert sorted(next(iter(e.values()))["autor_tipo"] for e in envs) == ["agente", "humano"]
 
 
 class TestTheDossierAndTheStandardPin:

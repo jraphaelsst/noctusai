@@ -319,8 +319,11 @@ class LlmToolRuntime:
             provider_impl=self._provider_impl,
         )
         if ctx.historico is not None:
+            # ``system`` = a platform envelope (staff / other agent / event); ``user`` is ONLY the lead's own text.
             history = [
-                ChatMessage.assistant(texto) if role == "assistant" else ChatMessage.user(texto)
+                ChatMessage.assistant(texto) if role == "assistant"
+                else ChatMessage.system(texto) if role == "system"
+                else ChatMessage.user(texto)
                 for role, texto in ctx.historico
             ]
         else:

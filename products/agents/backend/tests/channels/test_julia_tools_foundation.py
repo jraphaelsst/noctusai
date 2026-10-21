@@ -69,7 +69,9 @@ class TestContextoRequest:
         msgs = next(c for c in chan.provider.calls if c["method"] == "chat_with_tools")["messages"]
         system = [m for m in msgs if m.role == "system"]
         assert len(system) == 2
-        assert system[1].content.startswith("## txt:contexto.titulo_estado")
+        # the provenance section (the turn's tag, in DB wording) opens the state message, then the state itself
+        assert system[1].content.startswith("## txt:contexto.titulo_proveniencia")
+        assert "## txt:contexto.titulo_estado" in system[1].content
         assert msgs.index(system[1]) == 1
 
     def test_assistant_rows_are_stamped_with_the_contexto_hash_and_the_version_tuple(self, chan):
