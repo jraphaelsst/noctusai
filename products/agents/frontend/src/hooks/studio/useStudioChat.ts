@@ -31,6 +31,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import { ApiError, errorMessage } from "@/lib/errors";
 import { getAuthToken } from "@noctusai/seed/infra";
@@ -189,14 +190,20 @@ export function useStudioThreads(agentKey: string) {
 }
 
 export function useCreateStudioConversation(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation<StudioConversation, unknown, { clientId?: string } | undefined>({
+  // The new conversation is in the threads list the moment the POST answers (the list
+  // is sorted by recency in the hook, so the cache order is irrelevant).
+  return useCacheWriteMutation<StudioConversation, { clientId?: string } | undefined>({
     mutationFn: (payload) =>
       api.post<StudioConversation>("/api/conversations", {
         agent_key: agentKey,
         client_id: payload?.clientId ?? undefined,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: threadsKey(agentKey) }),
+    targets: [
+      {
+        queryKey: threadsKey(agentKey),
+        commit: (old: Envelope<StudioConversation> | undefined, created) => pageOps.prependNewest(old, created),
+      },
+    ],
   });
 }
 

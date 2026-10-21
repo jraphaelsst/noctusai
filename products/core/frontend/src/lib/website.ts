@@ -11,6 +11,7 @@
  */
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { ApiError } from '@noctusai/lib';
 import { api } from './api';
 
@@ -304,18 +305,24 @@ export function usePatchWebsiteLead(id: string) {
 
 export function useAddLeadActivity(id: string) {
   const w = useWebsiteApi();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { kind: ActivityKindWritable; body: string }) => w.addActivity(id, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [...KEY, 'lead', id] });
-    },
+  // Activities are listed newest first (at desc): the saved activity goes on top of the
+  // lead's timeline the moment the POST answers.
+  return useCacheWriteMutation<LeadActivity, { kind: ActivityKindWritable; body: string }>({
+    mutationFn: (body) => w.addActivity(id, body),
+    targets: [
+      {
+        queryKey: [...KEY, 'lead', id],
+        commit: (old: LeadWithActivities | undefined, saved) =>
+          old ? { ...old, activities: listOps.replace(old.activities, saved.id, saved, 'prepend') ?? old.activities } : old,
+      },
+    ],
   });
 }
 
 export function useExportLeadsCsv() {
   const w = useWebsiteApi();
-  return useMutation({ mutationFn: (filters: LeadListFilters) => w.exportCsv(filters) });
+  return useMutation({ // noc-allow: invalidate-only — a file download: nothing is written and no cached read is affected
+    mutationFn: (filters: LeadListFilters) => w.exportCsv(filters) });
 }
 
 // ── formatting / labels ─────────────────────────────────────────────────

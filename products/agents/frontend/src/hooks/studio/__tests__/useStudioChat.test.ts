@@ -81,6 +81,20 @@ describe("useCreateStudioConversation", () => {
     expect(mockPost).toHaveBeenCalledWith("/api/conversations", { agent_key: "isaia", client_id: "cl1" });
   });
 
+  it("the new conversation is in the threads list the moment the POST answers", async () => {
+    mockPost.mockResolvedValue({ ...CONVERSATION, id: "c9" });
+    mockGet.mockReturnValue(new Promise(() => {})); // the settle refetch must not be what fills the list
+    const { useCreateStudioConversation } = await import("@/hooks/studio/useStudioChat");
+    const qc = newClient();
+    qc.setQueryData(["studio", "isaia", "conversations"], { items: [CONVERSATION], total: 1 });
+    const { result } = renderHook(() => useCreateStudioConversation("isaia"), { wrapper: wrapper(qc) });
+
+    await result.current.mutateAsync(undefined);
+    const cached = qc.getQueryData<{ items: { id: string }[]; total: number }>(["studio", "isaia", "conversations"]);
+    expect(cached?.items.map((c) => c.id)).toEqual(["c9", CONVERSATION.id]);
+    expect(cached?.total).toBe(2);
+  });
+
   it("omits client_id when no client is selected", async () => {
     mockPost.mockResolvedValue(CONVERSATION);
     const { useCreateStudioConversation } = await import("@/hooks/studio/useStudioChat");

@@ -11,7 +11,8 @@
  * has no hosts hooks; lift these into `seed/lib/frontend/src/commerce/hooks.ts`
  * (CONTRACT-DELTAS D2).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { apiErrorStatus, commerceKeys } from "@noctusai/lib";
 
 import { api } from "@/lib/api";
@@ -44,17 +45,31 @@ export function useStorefrontHosts() {
 }
 
 export function useStorefrontHostMutations() {
-  const qc = useQueryClient();
-  const done = () => qc.invalidateQueries({ queryKey: hostsKey });
+  // Hosts are keyed by `hostname` (no `id`), which the seed `listOps` do not address
+  // (seed gap: an idKey option) — the two one-line array edits below are inline.
   return {
-    add: useMutation({
-      mutationFn: async (body: { hostname: string; is_primary: boolean }) =>
+    add: useCacheWriteMutation<StorefrontHost, { hostname: string; is_primary: boolean }>({
+      mutationFn: async (body) =>
         (await api.post<{ data: StorefrontHost }>("/api/commerce/hosts", body)).data,
-      onSuccess: done,
+      // Making a host primary demotes the previous primary server-side: that
+      // consequence converges on the settle refetch; the new host shows now.
+      targets: [
+        {
+          queryKey: hostsKey,
+          commit: (old: StorefrontHost[] | undefined, saved) =>
+            Array.isArray(old) ? [...old.filter((h) => h.hostname !== saved.hostname), saved] : old,
+        },
+      ],
     }),
-    remove: useMutation({
-      mutationFn: (hostname: string) => api.delete(`/api/commerce/hosts/${encodeURIComponent(hostname)}`),
-      onSuccess: done,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (hostname) => api.delete(`/api/commerce/hosts/${encodeURIComponent(hostname)}`),
+      targets: [
+        {
+          queryKey: hostsKey,
+          optimistic: (old: StorefrontHost[] | undefined, hostname) =>
+            Array.isArray(old) ? old.filter((h) => h.hostname !== hostname) : old,
+        },
+      ],
     }),
   };
 }

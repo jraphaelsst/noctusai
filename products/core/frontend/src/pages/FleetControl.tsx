@@ -13,7 +13,8 @@
  * "data is undefined" failure mode can't surface). Mutations invalidate the
  * ['fleet'] key so status refreshes after every action.
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { Power, RotateCw, Play, Square } from 'lucide-react';
 import { api } from '../lib/api';
 
@@ -74,18 +75,23 @@ function StatusBadge({ p }: { p: FleetProduct }) {
 }
 
 export function FleetControl() {
-  const queryClient = useQueryClient();
   const { data, isPending, error } = useFleet();
 
-  const act = useMutation<FleetProduct, Error, { slug: string; verb: Verb }>({
+  // The action answers with the product's new state: it replaces that row at once, and
+  // the background refetch confirms what docker actually settled on.
+  const act = useCacheWriteMutation<FleetProduct, { slug: string; verb: Verb }>({
     mutationFn: async ({ slug, verb }) => {
       // Returns the action result; never undefined.
       const res = (await api.post(`/api/fleet/${slug}/${verb}`)) as FleetProduct;
       return res;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fleet'] });
-    },
+    targets: ({ slug }) => [
+      {
+        queryKey: ['fleet'],
+        commit: (old: FleetResponse | undefined, res) =>
+          listOps.within(old, 'products', (rows: FleetProduct[]) => rows.map((p) => (p.slug === slug ? res : p))),
+      },
+    ],
   });
 
   const pendingFor = (slug: string) =>

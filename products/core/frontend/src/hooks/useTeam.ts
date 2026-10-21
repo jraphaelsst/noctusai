@@ -10,7 +10,8 @@
  * org, and keeping org A's members on screen while org B loads would label A's people as B's.
  * The page shows a skeleton for a fresh org instead (`isPending && !data`).
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import type { MeAccess, ManageableOrg } from '@noctusai/lib';
 
 import { api } from '../lib/api';
@@ -152,19 +153,24 @@ export function useTeamInvitations(orgId: string | null) {
   });
 }
 
-function useInvalidateTeam() {
-  const qc = useQueryClient();
-  return (orgId: string) => Promise.all([
-    qc.invalidateQueries({ queryKey: teamKeys.members(orgId) }),
-    qc.invalidateQueries({ queryKey: teamKeys.invitations(orgId) }),
-  ]);
-}
+/** The fields a pending invitation carries in the list (the create answer also holds the secret `token`). */
+const toInvitation = (r: TeamInvitation): TeamInvitation => ({
+  id: r.id, email: r.email, role: r.role, status: r.status,
+  invited_by: r.invited_by, expires_at: r.expires_at, created_at: r.created_at,
+});
 
 export function useInviteMember(orgId: string | null) {
-  const invalidate = useInvalidateTeam();
-  return useMutation({
-    mutationFn: (body: { email: string; role: string }) => api.post(`/api/team/invite${qs(orgId!)}`, body),
-    onSuccess: () => invalidate(orgId!),
+  // Pending invitations are listed newest first (created_at desc): the new one goes on top.
+  return useCacheWriteMutation<TeamInvitation, { email: string; role: string }>({
+    mutationFn: async (body) =>
+      (await api.post<{ data: TeamInvitation }>(`/api/team/invite${qs(orgId!)}`, body)).data,
+    targets: [
+      {
+        queryKey: teamKeys.invitations(orgId ?? ''),
+        commit: (old: TeamInvitation[] | undefined, saved) =>
+          listOps.replace(old, saved.id, toInvitation(saved), 'prepend'),
+      },
+    ],
   });
 }
 
@@ -178,38 +184,60 @@ export interface RemoveMemberResult {
 }
 
 export function useRemoveMember(orgId: string | null) {
-  const invalidate = useInvalidateTeam();
-  return useMutation({
-    mutationFn: async (userId: string) =>
+  return useCacheWriteMutation<RemoveMemberResult, string>({
+    mutationFn: async (userId) =>
       (await api.delete<{ data: RemoveMemberResult }>(`/api/team/${userId}${qs(orgId!)}`)).data,
-    onSuccess: () => invalidate(orgId!),
+    targets: [
+      {
+        queryKey: teamKeys.members(orgId ?? ''),
+        optimistic: (old: TeamMember[] | undefined, userId) => listOps.remove(old, userId),
+      },
+    ],
   });
 }
 
 export function useChangeMemberRole(orgId: string | null) {
-  const invalidate = useInvalidateTeam();
-  return useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: string }) =>
+  return useCacheWriteMutation<unknown, { userId: string; role: string }>({
+    mutationFn: ({ userId, role }) =>
       api.patch(`/api/team/${userId}/role${qs(orgId!)}`, { role }),
-    onSuccess: () => invalidate(orgId!),
+    targets: [
+      {
+        queryKey: teamKeys.members(orgId ?? ''),
+        optimistic: (old: TeamMember[] | undefined, { userId, role }) =>
+          listOps.patch(old, userId, { org_role: role }),
+      },
+    ],
   });
 }
 
 export function useCancelInvitation(orgId: string | null) {
-  const invalidate = useInvalidateTeam();
-  return useMutation({
-    mutationFn: (invitationId: string) => api.delete(`/api/team/invitations/${invitationId}${qs(orgId!)}`),
-    onSuccess: () => invalidate(orgId!),
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (invitationId) => api.delete(`/api/team/invitations/${invitationId}${qs(orgId!)}`),
+    targets: [
+      {
+        queryKey: teamKeys.invitations(orgId ?? ''),
+        optimistic: (old: TeamInvitation[] | undefined, invitationId) => listOps.remove(old, invitationId),
+      },
+    ],
   });
 }
 
 /** `POST /api/team/move` (D3) — refreshes BOTH orgs' lists. */
 export function useMoveMember() {
-  const invalidate = useInvalidateTeam();
-  return useMutation({
-    mutationFn: async (body: MoveMemberInput) =>
+  return useCacheWriteMutation<MoveMemberResult, MoveMemberInput>({
+    mutationFn: async (body) =>
       (await api.post<{ data: MoveMemberResult }>('/api/team/move', body)).data,
-    onSuccess: (_data, body) => Promise.all([invalidate(body.source_org_id), invalidate(body.target_org_id)]),
+    // A transfer takes the member out of the source org's list now; where they land in the
+    // target org (and an 'add' that keeps them in both) is the server's call, settled below.
+    targets: (body) => [
+      {
+        queryKey: teamKeys.members(body.source_org_id),
+        optimistic: (old: TeamMember[] | undefined) =>
+          body.mode === 'transfer' ? listOps.remove(old, body.user_id) : old,
+      },
+      { queryKey: teamKeys.members(body.target_org_id) },
+    ],
+    invalidate: (body) => [teamKeys.invitations(body.source_org_id), teamKeys.invitations(body.target_org_id)],
   });
 }
 
@@ -235,11 +263,19 @@ export function useMemberProductAccess(orgId: string | null, userId: string | nu
 
 /** `PUT /api/team/{user_id}/product-access/{slug}?org_id=` (D5, idempotent). */
 export function useSetMemberProductAccess(orgId: string | null, userId: string | null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ slug, blocked }: { slug: string; blocked: boolean }) =>
+  // The block/unblock switch flips on the click (a failure rolls it back); the server's
+  // blocked_at / blocked_by stamps converge on the settle refetch.
+  return useCacheWriteMutation<unknown, { slug: string; blocked: boolean }>({
+    mutationFn: ({ slug, blocked }) =>
       api.put(`/api/team/${userId}/product-access/${encodeURIComponent(slug)}${qs(orgId!)}`, { blocked }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: teamKeys.productAccess(orgId ?? '', userId ?? '') }),
+    targets: [
+      {
+        queryKey: teamKeys.productAccess(orgId ?? '', userId ?? ''),
+        optimistic: (old: MemberProductAccessData | undefined, { slug, blocked }) =>
+          listOps.within(old, 'products', (rows: MemberProductAccess[]) =>
+            rows.map((p) => (p.slug === slug ? { ...p, blocked } : p))),
+      },
+    ],
   });
 }
 
