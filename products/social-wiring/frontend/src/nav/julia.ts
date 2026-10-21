@@ -11,7 +11,7 @@
  * `JULIA_PAGES`, so no second list to keep in sync.
  */
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, CreditCard, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, ShieldOff, Sparkles, Star, Users } from "lucide-react";
+import { BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock, CreditCard, FileText, HelpCircle, Home, LayoutDashboard, MessagesSquare, RefreshCw, Send, Settings2, ShieldAlert, ShieldOff, Sparkles, UserCheck, Star, Users } from "lucide-react";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 
 /** The module's display name — the ONLY place it is spelled. */
@@ -137,6 +137,18 @@ export const JULIA_PAGES = {
     href: "/julia/opt-outs",
     icon: ShieldOff,
     route: "julia_opt_outs",
+  },
+  equipeWhatsapp: {
+    name: "Equipe do WhatsApp",
+    href: "/julia/equipe-whatsapp",
+    icon: UserCheck,
+    route: "julia_equipe_whatsapp",
+  },
+  protecao: {
+    name: "Proteção",
+    href: "/julia/protecao",
+    icon: ShieldAlert,
+    route: "julia_protecao",
   },
   avaliacoes: {
     name: "Avaliações no Google",
