@@ -111,7 +111,7 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
         chan.turn(turn_body(ids=["x2"], contexto={**contexto_body(), "capacidades": {"ferramentas_sw": False}}))
         assert "oferecer_imoveis" not in tools_offered(chan.provider)
         chan.use_provider(FakeProvider(tool_responses=[say("Oi?")]))
-        chan.turn(turn_body(ids=["x3"]))
+        chan.turn(turn_body("Quero ver apartamentos na zona sul", ids=["x3"]))
         assert "oferecer_imoveis" in tools_offered(chan.provider)
 
     def test_an_optional_enum_parameter_carries_its_value_labels_too(self):
@@ -262,7 +262,7 @@ class TestOtherGates:
 
     def test_the_offer_cap_per_thread_is_data(self, gated):
         chan = gated
-        chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_imoveis_distintos=2)
+        chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_imoveis_distintos=2, max_oferecer_turno=2)
         chan.use_provider(FakeProvider(tool_responses=[
             step(call("abrir_skill", nome="qualificar-lead"), call("abrir_skill", nome="ofertar-imoveis")),
             step(call("registrar_perfil", itens=[

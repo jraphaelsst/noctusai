@@ -208,7 +208,7 @@ class TestPerChatAbuseLimits:
             assert on.turn(turn_body(f"m{i}", ids=[f"a{i}"])).json()["status"] == "respondido"
         calls = model_calls(on)
         over = on.turn(turn_body("flood", ids=["a9"])).json()
-        assert over["status"] == "limite_atingido" and over["reply"]["partes"] == [] and over["actions"] == []
+        assert over["status"] == "limite_taxa" and over["reply"]["partes"] == [] and over["actions"] == []
         assert model_calls(on) == calls
         assert "flood" in [m.texto for m in msgs(on, over["thread_id"], "user")]
         assert on.turn(turn_body("flood", ids=["a9"])).json() == over  # replayed, not re-evaluated
@@ -216,7 +216,7 @@ class TestPerChatAbuseLimits:
     def test_the_limit_is_per_chat(self, on):
         on.conformidade.definir_limites(on.org_id, on.agent.id, max_turnos_janela=1)
         assert on.turn(turn_body("a", ids=["a"])).json()["status"] == "respondido"
-        assert on.turn(turn_body("b", ids=["b"])).json()["status"] == "limite_atingido"
+        assert on.turn(turn_body("b", ids=["b"])).json()["status"] == "limite_taxa"
         assert on.turn(turn_body("c", ids=["c"], chat_id="chat-2", lead_ref="contato-2")).json()["status"] == "respondido"
 
     def test_daily_turns_and_daily_spend_per_chat(self, on):

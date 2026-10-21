@@ -54,6 +54,7 @@ REGRAS = (
     # public-line guardrails (spec B3/B4): the output filters, the identity-claim signal, the abuse escalation
     "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
     "alegacao_identidade", "escala_seguranca",
+    "escala_loop", "injecao_ferramenta",
 )
 #: The detectors that block by default: a reply that leaks the prompt or carries an unvetted link, contact,
 #: identity number, encoded/structured payload or a forbidden pattern never reaches the lead.
@@ -96,9 +97,36 @@ class LimitesCanal:
     max_imoveis_distintos: int = 30
     max_recusas_por_turno: int = 2
     max_erros_ferramenta_por_turno: int = 3
+    # ── migration 045: guardrails B5 / B6 (abuse limits as data) ──
+    #: Per-lead rate: turns in the last hour (the per-window cap is ``max_turnos_janela``). Status ``limite_taxa``.
+    max_turnos_hora: int = 60
+    #: New-lead admission per agent (status ``novo_lead_limitado``).
+    max_novos_leads_hora: int = 30
+    max_novos_leads_dia: int = 200
+    #: Share of the org's daily channel cap kept for threads that already exist; new threads spend the rest.
+    reserva_leads_existentes_pct: int = 50
+    #: Loop / flood / echo breaker (status ``loop_detectado``).
+    loop_ativo: bool = True
+    loop_repeticoes: int = 3
+    loop_similaridade: float = 0.9
+    loop_janela_segundos: int = 600
+    loop_min_chars: int = 8
+    loop_eco_tokens: int = 12
+    loop_latencia_mediana_s: float = 3.0
+    loop_trocas: int = 5
+    #: Per-turn tool-call caps (a refusal past the cap, counted against the refusal budget).
+    max_chamadas_ferramenta_turno: int = 8
+    max_oferecer_turno: int = 1
+    max_abrir_skill_turno: int = 4
+    max_detalhes_turno: int = 3
+    #: Caps of the untrusted catalogue text a tool hands the model.
+    catalogo_descricao_max: int = 600
+    catalogo_titulo_max: int = 120
+    catalogo_caracteristicas_max: int = 30
+    catalogo_item_max: int = 60
 
 
-#: Mirror of the migration-037 column DEFAULTs (what a fresh instance reads).
+#: Mirror of the migration-037 + 045 column DEFAULTs (what a fresh instance reads).
 LIMITES_PADRAO = LimitesCanal()
 
 

@@ -129,7 +129,6 @@
             "type": "string"
           },
           "texto": {
-            "maxLength": 8000,
             "minLength": 1,
             "title": "Texto",
             "type": "string"
@@ -672,6 +671,18 @@
             "title": "Seq",
             "type": "integer"
           },
+          "trecho": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trecho"
+          },
           "type": {
             "const": "consentimento_credito",
             "title": "Type",
@@ -914,6 +925,60 @@
         "title": "QualificacaoOut",
         "type": "object"
       },
+      "SolicitacaoTitularActionOut": {
+        "description": "A data-subject request was recorded on SW's side (``registrar_solicitacao_titular``) and the lead handed to a\nperson (``handoff`` with ``motivo_codigo=\"direito_titular\"`` rides next to it). Nothing was erased.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "prazo_em": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Prazo Em"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tipo": {
+            "enum": [
+              "confirmacao",
+              "acesso",
+              "correcao",
+              "eliminacao",
+              "portabilidade",
+              "revogacao_consentimento",
+              "oposicao",
+              "info_compartilhamento",
+              "outro"
+            ],
+            "title": "Tipo",
+            "type": "string"
+          },
+          "type": {
+            "const": "solicitacao_titular",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tipo",
+          "id"
+        ],
+        "title": "SolicitacaoTitularActionOut",
+        "type": "object"
+      },
       "ViolacaoOut": {
         "properties": {
           "bloqueada": {
@@ -953,7 +1018,8 @@
               "encerrar": "#/$defs/EncerrarActionOut",
               "handoff": "#/$defs/HandoffActionOut",
               "intencao_visita": "#/$defs/IntencaoVisitaActionOut",
-              "lead_pronto": "#/$defs/LeadProntoActionOut"
+              "lead_pronto": "#/$defs/LeadProntoActionOut",
+              "solicitacao_titular": "#/$defs/SolicitacaoTitularActionOut"
             },
             "propertyName": "type"
           },
@@ -975,6 +1041,9 @@
             },
             {
               "$ref": "#/$defs/ConsentimentoCreditoActionOut"
+            },
+            {
+              "$ref": "#/$defs/SolicitacaoTitularActionOut"
             }
           ]
         },
@@ -1036,7 +1105,10 @@
           "conversa_com_outro_agente",
           "reengajamento_ignorado",
           "lead_opt_out",
-          "limite_atingido"
+          "limite_atingido",
+          "limite_taxa",
+          "novo_lead_limitado",
+          "loop_detectado"
         ],
         "title": "Status",
         "type": "string"

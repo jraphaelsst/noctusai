@@ -540,6 +540,23 @@ Pure function `app/channels/controles.py::decidir(modo, thread, participante, ga
 - Re-engagement turns (`gatilho:"reengajamento"`) run only when `ligado`/`drenando` ∧ participant `ativo`. Otherwise `status: "reengajamento_ignorado"`.
 - Fail-closed in SW: any non-`respondido` status, any error or a timeout → nothing is sent (the existing `_handle_turn_error`, `lais_lead_turn_service.py:530-568`).
 
+### 5.2a Abuse limits (guardrails B5, migration 045)
+
+Aimed at abuse (floods, many fresh numbers, bots, cost burn), never at the length of a legitimate conversation. Every
+number is a column of `agents.canal_limites` (per agent, editable later in the Studio); an over-limit answers with a
+distinct status SW routes to a human, never silence.
+
+| Status | Trips on | Columns |
+|---|---|---|
+| `limite_taxa` | turns per lead per window / per hour | `janela_segundos`, `max_turnos_janela`, `max_turnos_hora` |
+| `limite_atingido` | turns per day, spend per day | `max_turnos_dia`, `max_custo_dia_usd` |
+| `novo_lead_limitado` | new threads per agent per hour / per day, or the org's daily cap share reserved for existing threads | `max_novos_leads_hora`, `max_novos_leads_dia`, `reserva_leads_existentes_pct` |
+| `loop_detectado` | the same text again (`loop_repeticoes` within `loop_janela_segundos`), an echo of the agent's last reply (`loop_eco_tokens`), bot-fast replies (`loop_latencia_mediana_s` over `loop_trocas`) | `loop_*`; no model call, participant paused, hand-off `seguranca` |
+
+Input is truncated, never refused: 2000 characters per message, 6000 per batch. The org's daily channel budget alerts the
+owners (in-app, deduped) at 50 / 80 / 100 %. Tool hardening (B6): per-turn caps `max_chamadas_ferramenta_turno`,
+`max_oferecer_turno`, `max_abrir_skill_turno`, `max_detalhes_turno`; catalogue text caps `catalogo_*`.
+
 ### 5.3 Where it lives in the UI
 
 - **Agents Studio › Visão geral:** a "Controles" card with a 3-state segmented control (confirmation dialog states what happens to open conversations), the count of open threads and the drain progress.
@@ -717,7 +734,7 @@ Response:
 
 ```json
 { "thread_id": "…", "conversation_id": "…" /* = thread_id, alias one release */,
-  "status": "respondido|silencio|handoff|encerrado|concluido|agente_desligado|novo_lead_recusado|conversa_pausada|conversa_com_outro_responsavel|conversa_com_outro_agente|reengajamento_ignorado",
+  "status": "respondido|silencio|handoff|encerrado|concluido|agente_desligado|novo_lead_recusado|conversa_pausada|conversa_com_outro_responsavel|conversa_com_outro_agente|reengajamento_ignorado|lead_opt_out|limite_atingido|limite_taxa|novo_lead_limitado|loop_detectado",
   "reply": {"partes": ["…"]},
   "actions": [ {"seq":1,"type":"handoff","motivo_codigo":"pedido_humano","motivo":"…"},
                {"seq":2,"type":"lead_pronto","estagio":"pronto_para_corretor","score":78,"valores":{…},"imoveis_gostou":["A123"],"intencoes_visita":["A123"]},

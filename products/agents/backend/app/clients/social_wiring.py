@@ -45,6 +45,9 @@ JULIA_TOOLS_TOKEN_KEY = "social_wiring_lais_tools_token"
 JULIA_TOOL_TIMEOUT_SECONDS = 8.0
 #: What a tool call returns when SW cannot answer (never an exception text).
 JULIA_TOOL_UNAVAILABLE: dict[str, Any] = {"erro": "indisponivel"}
+#: The SW julia-tools endpoint that records a data-subject request (``POST /api/julia/ferramentas/solicitacao-titular``,
+#: body ``{lead_ref, chat_id?, tipo, trecho}`` -> ``{id, prazo_em}``). Not a catalogue read: it WRITES a record on SW's side.
+FERRAMENTA_SOLICITACAO_TITULAR = "solicitacao-titular"
 
 
 def resolve_julia_tools_token(
@@ -129,6 +132,27 @@ class SocialWiringClient(Protocol):
         ...
 
 
+def _fake_default(nome: str) -> dict[str, Any]:
+    """The Fake's answer for a tool nobody seeded: a record-creating tool answers like SW does, the reads answer empty."""
+    if nome == FERRAMENTA_SOLICITACAO_TITULAR:
+        from datetime import datetime, timedelta, timezone
+        from uuid import uuid4
+
+        return {"id": str(uuid4()), "prazo_em": (datetime.now(timezone.utc) + timedelta(days=15)).isoformat()}
+    return {"data": []}
+
+
+async def registrar_solicitacao_titular(
+    client: "SocialWiringClient", org_id: UUID, *, lead_ref: str, tipo: str, trecho: str, chat_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a data-subject request on SW's side. Returns SW's ``{id, prazo_em}``, or ``{"erro": "indisponivel"}``
+    (the :class:`SocialWiringClient` contract: never raises)."""
+    body: dict[str, Any] = {"lead_ref": lead_ref, "tipo": tipo, "trecho": trecho}
+    if chat_id:
+        body["chat_id"] = chat_id
+    return await client.julia_ferramenta(org_id, FERRAMENTA_SOLICITACAO_TITULAR, body)
+
+
 class FakeSocialWiringClient:
     """In-memory :class:`SocialWiringClient` — tests seed state via
     ``register(...)`` / force a failure via ``fail_connection_ids``."""
@@ -186,7 +210,7 @@ class FakeSocialWiringClient:
         self.julia_calls.append((org_id, nome, dict(args)))
         if self.julia_fail or org_id not in self.julia_token_orgs:
             return dict(JULIA_TOOL_UNAVAILABLE)
-        answer = self.julia_responses.get(nome, {"data": []})
+        answer = self.julia_responses.get(nome, _fake_default(nome))
         return dict(answer(args) if callable(answer) else answer)
 
 
@@ -309,6 +333,8 @@ def get_social_wiring_client(settings: Any) -> SocialWiringClient:
 
 
 __all__ = [
+    "FERRAMENTA_SOLICITACAO_TITULAR",
+    "registrar_solicitacao_titular",
     "JULIA_TOOLS_TOKEN_KEY",
     "SocialWiringNotConfigured",
     "JULIA_TOOL_TIMEOUT_SECONDS",

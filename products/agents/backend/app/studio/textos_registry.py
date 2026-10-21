@@ -119,6 +119,8 @@ CODIGOS_RECUSA: tuple[str, ...] = (
     "estagio_nao_conclusivo", "nao_pode_ofertar", "limite_ofertas", "sem_codigo_campanha",
     "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel",
     "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
+    # guardrails B6: consent / opt-out need the lead's words from THIS batch; per-turn tool-call caps
+    "consentimento_sem_evidencia", "opt_out_sem_evidencia", "limite_ferramentas",
 )
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
@@ -163,6 +165,8 @@ TEXTOS.update({
     "ferramenta.resultado.encerrado": _canal("ferramenta"),
     "ferramenta.resultado.encerrado_opt_out": _canal("ferramenta"),
     "ferramenta.resultado.concluido": _canal("ferramenta"),
+    "ferramenta.resultado.solicitacao_registrada": _canal("ferramenta"),
+    "ferramenta.handoff.resumo_titular": _canal("ferramenta", "tipo"),
     "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
     #: replaces a lead-influenced tool argument that reproduced the prompt (spec B3.6)
     "ferramenta.campo_removido": _canal("ferramenta"),

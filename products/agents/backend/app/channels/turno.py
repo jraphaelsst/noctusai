@@ -25,6 +25,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from app.channels import admissao
 from app.channels import conformidade as conf
 from app.channels.contexto import Dossie, render_contexto_system
 from app.channels.opt_out import OptOutService
@@ -49,7 +50,6 @@ from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, ro
 from app.studio.plataforma import escopo_de, padrao_de
 from app.studio.resolucao import AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, resolve_agent_for_org
 from app.studio.spec import MAX_COMPILED_PROMPT_CHARS
-from app.studio.tools import studio_allowed_tools
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ __all__ = [
     "estagios_em_ordem",
     "padrao_do_turno",
     "limite_atingido",
+    "status_do_limite",
     "mensagem_publica",
     "Preparado",
     "ResultadoTurno",
@@ -182,16 +183,16 @@ def preparar(
     except Exception:  # noqa: BLE001 -- proof-of-use must not stop a lead's reply; it must be seen
         logger.exception("agents.channel.compiled_prompt_not_saved org_id=%s hash=%s", org_id, compiled.hash)
     marca = carimbo(svc.studio_store, svc.catalog, r, compiled=compiled)
-    policy = dict(r.versao.tool_policy or {})
     can = conf.canario(org_id, r.versao.id, segredo=getattr(settings, "encryption_key", "") or "")
     spec = AgentSpec(
         key=agent.key, provider=r.versao.provider, runtime="llm", model=r.versao.model, effort=r.versao.effort,
         # The canary rides with the prompt (never in the hash): a reply that contains it reproduced the prompt.
         prompt_append=f"{compiled.texto}\n\n{can}", skills=(),
-        tools=studio_allowed_tools(knowledge=bool(policy.get("knowledge", True)), web_search=bool(policy.get("web_search", True))),
+        # Structural (guardrails B6.7): the channel toolset (``make_channel_tools_factory``) is the ONLY toolset of a
+        # lead-facing turn -- never web search, never knowledge, never a studio tool, whatever the version's policy says.
+        tools=(),
         max_turns=r.versao.max_turns, prompt_mode="custom", toolset="studio", agent_id=agent.id,
-        version_id=r.versao.id, compiled_hash=compiled.hash, web_search=bool(policy.get("web_search", True)),
-        knowledge=bool(policy.get("knowledge", True)), client_id=None,
+        version_id=r.versao.id, compiled_hash=compiled.hash, web_search=False, knowledge=False, client_id=None,
     )
     k = conf.shingle_tokens_da_regra(svc.conformidade.regras(org_id, agent.id).get("vazamento_prompt"))
     impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled, k)
@@ -236,18 +237,31 @@ def _inicio_do_dia(agora: datetime) -> datetime:
 
 
 def limite_atingido(svc: ServicosCanal, org_id: UUID, thread_id: UUID, agent_id: UUID, agora: datetime) -> str | None:
-    """Per-chat abuse limits, in data (``canal_limites``), enforced under the turn lock: turns per window,
-    turns and spend per day. Returns the limit that tripped (a code), or ``None``."""
+    """Per-chat abuse limits, in data (``canal_limites``), enforced under the turn lock: turns per window and per
+    hour, turns and spend per day. Returns the limit that tripped (a code), or ``None``. ``turnos_janela`` /
+    ``turnos_hora`` are the per-lead RATE limits (response status ``limite_taxa``, see :func:`status_do_limite`)."""
     lim = svc.conformidade.limites(org_id, agent_id)
     na_janela, _ = svc.messages.thread_usage_since(org_id, thread_id, agora - timedelta(seconds=lim.janela_segundos))
     if na_janela >= lim.max_turnos_janela:
         return "turnos_janela"
+    na_hora, _ = svc.messages.thread_usage_since(org_id, thread_id, agora - timedelta(hours=1))
+    if na_hora >= lim.max_turnos_hora:
+        return "turnos_hora"
     no_dia, custo = svc.messages.thread_usage_since(org_id, thread_id, _inicio_do_dia(agora))
     if no_dia >= lim.max_turnos_dia:
         return "turnos_dia"
     if custo >= lim.max_custo_dia_usd:
         return "custo_dia"
     return None
+
+
+#: The limits that are a RATE (a burst) rather than a daily quota: the response status SW routes on.
+_LIMITES_TAXA = frozenset({"turnos_janela", "turnos_hora"})
+
+
+def status_do_limite(limite: str) -> str:
+    """The turn-response status of a tripped limit: ``limite_taxa`` for a rate, ``limite_atingido`` for a quota."""
+    return "limite_taxa" if limite in _LIMITES_TAXA else "limite_atingido"
 
 
 # ── execution ───────────────────────────────────────────────────────────────
@@ -347,6 +361,7 @@ async def executar(
         threads=svc.threads, skills=skills, sw=sw, ident=svc.ident, handoff_destino=HandoffDestino.dono_da_org(),
         limites=limites, mensagens_lead=mensagens_lead, sinais=sinais, escopo=prep.escopo, estado_sw=estado_sw,
         ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead),
+        chat_id=(getattr(thread, "channel_ref", None) or {}).get("chat_id"),
         opt_out=OptOutService(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
         modo_restrito=nivel != "normal",
@@ -354,6 +369,11 @@ async def executar(
             (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
             if leak is not None and leak.ativo else None),
     )
+    # loop / flood / echo breaker (guardrails B5): no model call -- the participant is paused, a person is told
+    if gatilho == "mensagem":
+        sinal_loop = await asyncio.to_thread(_loop_detectado, svc, org_id, thread.id, lote_lead, limites)
+        if sinal_loop is not None:
+            return await _parar_por_loop(svc, turno, prep, agent, org_id, thread, lead_ref_id, sinal_loop)
     estado0 = await asyncio.to_thread(svc.qual.avaliar, org_id, lead_ref_id, padrao.id, prep.escopo, sinais)
 
     # the thread context of THIS agent: dossier + last N labelled turns + the newest hand-off note
@@ -410,6 +430,7 @@ async def executar(
         await publish_event(thread.id, "session.status", {"status": "pensando"}, bus=bus)
         t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
         tentativas.append(t1)
+        violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
         achados = [] if turno.parar else _avaliar(t1)
         bl = conf.violacoes_bloqueantes(achados)
         violacoes += [replace(v, bloqueada=v in bl) for v in achados]
@@ -480,6 +501,38 @@ async def executar(
             "estagios_ordem": estagios_em_ordem(padrao),
         },
         violacoes=violacoes, message_id=final,
+    )
+
+
+def _loop_detectado(svc: ServicosCanal, org_id: UUID, thread_id: UUID, lote_lead: list[str], limites: Any) -> str | None:
+    """The loop signal the freshly stored batch trips, or ``None`` (see :func:`app.channels.admissao.detectar_loop`)."""
+    if not limites.loop_ativo:
+        return None
+    # enough rows for ``loop_trocas`` exchanges and ``loop_repeticoes`` repeats, never the whole thread
+    janela = max(limites.loop_trocas * 4, limites.loop_repeticoes * 3, 12)
+    rows = svc.messages.list(org_id, thread_id, limite=janela)
+    historico = [admissao.Mensagem(r.role, r.texto or "", r.created_at) for r in rows if r.role in ("user", "assistant")]
+    return admissao.detectar_loop(historico, lote_lead, limites)
+
+
+async def _parar_por_loop(
+    svc: ServicosCanal, turno: JuliaTurno, prep: Preparado, agent: Any, org_id: UUID, thread: Any,
+    lead_ref_id: UUID, sinal: str,
+) -> ResultadoTurno:
+    """A loop was detected: no model call. The participant is paused and handed off (``seguranca``) so a person
+    looks; the response status ``loop_detectado`` is what SW routes on. Codes only are recorded."""
+    conteudo = turno.conteudo
+    await executar_handoff(turno, "seguranca", conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", "seguranca"))
+    v = Violacao("escala_loop", "sinal", {"sinal": sinal})
+    try:
+        svc.conformidade.registrar_violacao(
+            org_id, agent.id, v, thread_id=thread.id, lead_ref_id=lead_ref_id, compiled_hash=prep.carimbo.compiled_hash)
+    except Exception:  # noqa: BLE001 -- a lost audit row must be seen, never undo the stop
+        logger.exception("agents.channel.violacao_nao_registrada regra=%s", v.regra)
+    participante = svc.threads.get_participante(org_id, thread.id, agent.id)
+    return ResultadoTurno(
+        actions=_numerar(turno.actions), status="loop_detectado", violacoes=[v],
+        participante_estado=participante.estado if participante is not None else None,
     )
 
 

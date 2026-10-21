@@ -34,7 +34,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from noctusai_lib.integrations.llm import ToolCall, ToolResult, ToolSpec
 
-from app.clients.social_wiring import JULIA_TOOL_TIMEOUT_SECONDS, SocialWiringClient
+from app.channels import texto_seguro
+from app.clients.social_wiring import (
+    JULIA_TOOL_TIMEOUT_SECONDS,
+    JULIA_TOOL_UNAVAILABLE as _INDISPONIVEL,
+    SocialWiringClient,
+    registrar_solicitacao_titular,
+)
+from app.qualificacao.matcher import MIN_TRECHO, normalizar
 from app.qualificacao.identificacao import CAMPOS as IDENT_CAMPOS
 from app.qualificacao.identificacao import EncryptionNotConfigured
 from app.qualificacao.models import LeadSinais, VersaoPadrao
@@ -71,6 +78,15 @@ __all__ = [
 ]
 
 MOTIVO_MAX_CHARS = 280
+#: The longest quote a data-subject request stores (the lead's own words; the SW record column is 500).
+TRECHO_TITULAR_MAX = 300
+#: The longest quote consent / opt-out evidence stores (matches the qualification ``trecho`` column).
+TRECHO_EVIDENCIA_MAX = 160
+#: Kinds of data-subject request (LGPD art. 18) the model may register; the label of each is a tool-row parameter.
+TIPOS_SOLICITACAO_TITULAR = (
+    "confirmacao", "acesso", "correcao", "eliminacao", "portabilidade", "revogacao_consentimento", "oposicao",
+    "info_compartilhamento", "outro",
+)
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 _ANGLE = re.compile(r"[<>]")
 
@@ -81,6 +97,7 @@ def sanitize_motivo(raw: object) -> str:
     text = raw if isinstance(raw, str) else ""
     text = _ANGLE.sub("", _CONTROL.sub(" ", text))
     text = " ".join(text.split())
+    text = texto_seguro.sem_contatos(text)  # staff-facing: no URL / phone / e-mail / @-mention from the lead's words
     if len(text) > MOTIVO_MAX_CHARS:
         text = text[: MOTIVO_MAX_CHARS - 1].rstrip() + "…"
     return text
@@ -89,7 +106,7 @@ def sanitize_motivo(raw: object) -> str:
 def _limpo(raw: object, max_chars: int) -> str | None:
     """Same normalisation as :func:`sanitize_motivo` with its own cap; ``None`` when nothing is left."""
     t = raw if isinstance(raw, str) else ""
-    t = " ".join(_ANGLE.sub("", _CONTROL.sub(" ", t)).split())
+    t = texto_seguro.sem_contatos(" ".join(_ANGLE.sub("", _CONTROL.sub(" ", t)).split()))
     return ((t[: max_chars - 1].rstrip() + "…") if len(t) > max_chars else t) or None
 
 
@@ -173,6 +190,9 @@ class EncerrarArgs(_Args):
     motivo: Literal[*MOTIVOS_ENCERRAR]
     #: Why, in a few words (required for ``lead_pediu_parar``: it is the owner's record of the opt-out).
     motivo_texto: str | None = Field(default=None, max_length=MOTIVO_MAX_CHARS)
+    #: ``lead_pediu_parar`` only: the lead's own words (from THIS turn's batch) asking to stop. The opt-out is
+    #: immediate and lead-wide, so it needs evidence the lead said it just now.
+    trecho: str | None = Field(default=None, max_length=TRECHO_EVIDENCIA_MAX)
 
 
 class CaptacaoArgs(_Args):
@@ -183,6 +203,14 @@ class CaptacaoArgs(_Args):
 
 class ConsentimentoCreditoArgs(_Args):
     aceito: bool
+    #: The lead's own words (from THIS turn's batch) that answer the credit-analysis consent question.
+    trecho: str = Field(min_length=1, max_length=TRECHO_EVIDENCIA_MAX)
+
+
+class RegistrarSolicitacaoTitularArgs(_Args):
+    tipo: Literal[*TIPOS_SOLICITACAO_TITULAR]
+    #: The lead's own words (from THIS turn's batch) that make the request.
+    trecho: str = Field(min_length=1, max_length=TRECHO_TITULAR_MAX)
 
 
 @dataclass(frozen=True)
@@ -210,6 +238,7 @@ TOOLS: dict[str, ToolDef] = {t.nome: t for t in (
     ToolDef("encerrar", EncerrarArgs),
     ToolDef("captacao", CaptacaoArgs),
     ToolDef("consentimento_credito", ConsentimentoCreditoArgs, frozenset({"credito"})),
+    ToolDef("registrar_solicitacao_titular", RegistrarSolicitacaoTitularArgs),
 )}
 
 _STRIP = ("title", "default")
@@ -460,6 +489,14 @@ class JuliaTurno:
                 troca[campo] = self.texto("ferramenta.campo_removido")
                 self.campos_substituidos.append(f"{nome}.{campo}")
         return args.model_copy(update=troca) if troca else args
+    #: The chat id on the lead's connection (``channel_ref.chat_id``): travels to SW with a data-subject request.
+    chat_id: str | None = None
+    #: Tool calls made this turn, total and per tool (the per-turn caps of ``canal_limites``).
+    chamadas: int = 0
+    chamadas_por_ferramenta: dict[str, int] = field(default_factory=dict)
+    #: ``(regra, detalhe)`` signals a tool saw (codes only): ``injecao_ferramenta`` -- catalogue text that read like an
+    #: extraction attempt. ``turno.executar`` records them as violations.
+    sinais_ferramenta: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def texto(self, chave: str, **valores: object) -> str:
         bruto = self.conteudo.texto(chave)
@@ -483,6 +520,17 @@ class JuliaTurno:
         if credito is not None and credito.ativo:
             caps.add("credito")
         return frozenset(caps)
+
+    def no_lote(self, trecho: str | None, maximo: int) -> bool:
+        """Is ``trecho`` (the lead's own words) in THIS turn's batch? Normalised containment, the batch's messages
+        each alone or joined. An empty batch (a re-engagement turn) never holds evidence."""
+        if not self.lote_lead or not isinstance(trecho, str) or len(trecho) > maximo:
+            return False
+        alvo = normalizar(trecho)
+        if len(alvo) < MIN_TRECHO:
+            return False
+        janela = [m for m in (normalizar(x) for x in self.lote_lead) if m]
+        return any(alvo in c for c in janela + ([" ".join(janela)] if len(janela) > 1 else []))
 
     def acao(self, **kw: Any) -> None:
         self.actions.append(dict(kw))
@@ -753,10 +801,21 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         out.update({k: body[k] for k in _BUSCA_META if k in body})
         return _ok(**out)
 
+    def _catalogo(body: Mapping[str, Any], item: Mapping[str, Any], allow: Mapping[str, Any]) -> texto_seguro.Catalogo:
+        """The catalogue object shaped for the model; links the shaped object keeps are the ones the reply may carry."""
+        c = texto_seguro.formatar_catalogo(item, allow, t.limites)
+        if c.sinais:
+            t.sinais_ferramenta.append(("injecao_ferramenta", {"campos": sorted({x["campo"] for x in c.sinais})}))
+        return c
+
     async def _detalhes(a: DetalhesImovelArgs) -> _Resultado:
         body = await _sw("detalhes_imovel", {"codigo": a.codigo, **_interacao()})
         if body is None:
             return _falha_sw(t)
+        item = body.get("data") if isinstance(body.get("data"), dict) else body
+        if item.get("encontrado") is False:  # nothing was found: nothing is offered, nothing is remembered
+            return _ok(encontrado=False)
+        c = _catalogo(body, item, texto_seguro.ALLOW_DETALHES)
         ja = await asyncio.to_thread(t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id)
         if a.codigo not in ja:
             if len(ja) >= t.limites.max_imoveis_distintos:
@@ -765,19 +824,25 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             if not r.ok and r.codigo != "imovel_ja_oferecido":
                 return _recusa(t, r.codigo or "evento_invalido")
         t.codigos_vistos.add(a.codigo.casefold())
-        for item in ([body.get("data")] if isinstance(body.get("data"), dict) else [body]):
-            if (lk := _pedaco_link(item)) is not None:
-                t.links_vistos.add(lk)
-        return _ok(**{k: v for k, v in body.items() if k != "ok"})
+        if (lk := c.dados.get("link")) is not None:
+            t.links_vistos.add(lk)
+        return _ok(encontrado=True, dados_catalogo=c.dados)
 
     async def _empreendimento(a: ConsultarEmpreendimentoArgs) -> _Resultado:
         body = await _sw("consultar_empreendimento", {"nome": a.nome})
         if body is None:
             return _falha_sw(t)
-        for item in (body.get("data") if isinstance(body.get("data"), list) else [body]):
+        brutos = body.get("data") if isinstance(body.get("data"), list) else [body.get("data") if isinstance(body.get("data"), dict) else body]
+        lista = []
+        for item in brutos:
+            if isinstance(item, dict):
+                dados = _catalogo(body, item, texto_seguro.ALLOW_EMPREENDIMENTO).dados
+                if dados:
+                    lista.append(dados)
+        for item in brutos:  # the listing links the reply may carry (examples are the only link-bearing part)
             if (lk := _pedaco_link(item)) is not None:
                 t.links_vistos.add(lk)
-        return _ok(**{k: v for k, v in body.items() if k != "ok"})
+        return _ok(encontrado=bool(lista), dados_catalogo={"empreendimentos": lista})
 
     # ── skills ──
     async def _abrir_skill(a: AbrirSkillArgs) -> _Resultado:
@@ -806,6 +871,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         motivo_texto = _limpo(a.motivo_texto, MOTIVO_MAX_CHARS)
         if opt_out and motivo_texto is None:
             return _recusa(t, "motivo_texto_ausente")
+        if opt_out and not t.no_lote(a.trecho, TRECHO_EVIDENCIA_MAX):
+            # the opt-out is immediate and lead-wide: it needs the lead's words from THIS batch (never an old message,
+            # never a re-engagement turn, which carries none)
+            return _recusa(t, "opt_out_sem_evidencia")
         if opt_out and t.opt_out is None:
             logger.error("agents.channel.opt_out_indisponivel org_id=%s thread_id=%s", t.org_id, t.thread_id)
             return _falha_sw(t)
@@ -829,11 +898,11 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
 
     async def _registrar_opt_out(motivo_texto: str) -> None:
         """The lead asked to stop: a LEAD-level opt-out (every agent stops) + the owner's record + notice. The
-        lead's own words are what this turn received (the batch, else the latest lead message)."""
+        lead's own words are what this turn received (the batch -- ``_encerrar`` refuses without it)."""
         lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
         if lead is None:  # the thread has a lead (aplicar_controles links it); reaching here is a bug to see
             raise RuntimeError("encerrar: lead_ref not found")
-        palavras = "\n".join(t.lote_lead) if t.lote_lead else (t.mensagens_lead[-1] if t.mensagens_lead else "")
+        palavras = "\n".join(t.lote_lead)
         await asyncio.to_thread(
             t.opt_out.registrar, t.org_id, lead.ref_externa, origem="agente", motivo=motivo_texto,
             mensagem_lead=palavras[:OPT_OUT_MENSAGEM_MAX] or None, agent_id=t.agent_id, thread_id=t.thread_id)
@@ -843,9 +912,47 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
                operacao=a.operacao)
         return _ok(mensagem=t.texto("ferramenta.resultado.registrado"))
 
+    async def _titular_identificado() -> bool:
+        """Is the CPF of THIS lead on record? (consent to a credit analysis is given by the person it is run on)"""
+        if t.ident is None:
+            return False
+        faltando = await asyncio.to_thread(t.ident.faltando, t.org_id, t.lead_ref_id, ("cpf",))
+        return not faltando
+
     async def _credito(a: ConsentimentoCreditoArgs) -> _Resultado:
-        t.acao(type="consentimento_credito", aceito=a.aceito)
+        credito = getattr(t.estado_sw, "credito", None)
+        if (
+            not t.no_lote(a.trecho, TRECHO_EVIDENCIA_MAX)  # evidence: the lead said it in THIS batch
+            or (credito is not None and credito.consentimento is not None)  # already decided: not re-decidable by chat
+            or (a.aceito and not await _titular_identificado())  # a yes needs the lead's own CPF on record
+        ):
+            return _recusa(t, "consentimento_sem_evidencia")
+        t.acao(type="consentimento_credito", aceito=a.aceito, trecho=a.trecho)
         return _ok(mensagem=t.texto("ferramenta.resultado.registrado"))
+
+    async def _solicitacao_titular(a: RegistrarSolicitacaoTitularArgs) -> _Resultado:
+        """A data-subject request (LGPD art. 18): recorded on SW's side, then a person takes the lead. Nothing is
+        erased here -- erasure is an operator decision; the lead only ever asks."""
+        if not t.no_lote(a.trecho, TRECHO_TITULAR_MAX):
+            return _recusa(t, "trecho_nao_confere")
+        lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
+        if lead is None:  # the thread has a lead (aplicar_controles links it); reaching here is a bug to see
+            raise RuntimeError("registrar_solicitacao_titular: lead_ref not found")
+        registro: Mapping[str, Any] = _INDISPONIVEL
+        if t.sw is not None:
+            try:
+                registro = await asyncio.wait_for(
+                    registrar_solicitacao_titular(
+                        t.sw, t.org_id, lead_ref=lead.ref_externa, tipo=a.tipo, trecho=a.trecho, chat_id=t.chat_id),
+                    JULIA_TOOL_TIMEOUT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 -- a lost record is handled below (the hand-off still goes out)
+                logger.warning("agents.channel.solicitacao_titular_falhou org_id=%s cause=%s", t.org_id, type(exc).__name__)
+        # The request reaches a person either way: even when SW could not record it, the hand-off note says so.
+        await executar_handoff(t, "direito_titular", t.texto("ferramenta.handoff.resumo_titular", tipo=a.tipo))
+        if not isinstance(registro, Mapping) or registro.get("erro") or not registro.get("id"):
+            return _falha_sw(t)
+        t.acao(type="solicitacao_titular", tipo=a.tipo, id=str(registro["id"]), prazo_em=(str(registro["prazo_em"]) if registro.get("prazo_em") else None))
+        return _ok(mensagem=t.texto("ferramenta.resultado.solicitacao_registrada"), prazo_em=registro.get("prazo_em"))
 
     despacho: dict[str, Callable[[Any], Awaitable[_Resultado]]] = {
         "abrir_skill": _abrir_skill, "ler_arquivo_skill": _ler_arquivo,
@@ -855,6 +962,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         "registrar_intencao_visita": _visita, "registrar_identificacao": _identificar,
         "concluir_qualificacao": lambda a: _concluir(), "handoff": _handoff, "encerrar": _encerrar,
         "captacao": _captacao, "consentimento_credito": _credito,
+        "registrar_solicitacao_titular": _solicitacao_titular,
     }
 
     def _parar_se_estourou() -> None:
@@ -864,12 +972,28 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             elif t.erros >= t.limites.max_erros_ferramenta_por_turno:
                 t.parar = "falhas_repetidas"
 
+    def _acima_do_limite_do_turno(nome: str) -> bool:
+        lim = t.limites
+        por_tool = {
+            "oferecer_imoveis": lim.max_oferecer_turno, "abrir_skill": lim.max_abrir_skill_turno,
+            "detalhes_imovel": lim.max_detalhes_turno,
+        }
+        return t.chamadas > lim.max_chamadas_ferramenta_turno or (
+            nome in por_tool and t.chamadas_por_ferramenta[nome] > por_tool[nome])
+
     async def _handler(call: ToolCall) -> ToolResult:
         if t.parar is not None:
             return ToolResult(call.call_id, _json({"ok": False, "codigo": "limite_recusas",
                                                    "mensagem": t.texto("ferramenta.resultado.recusa.limite_recusas")}), True)
         if call.name not in oferecidas:
             return ToolResult(call.call_id, t.texto("ferramenta.resultado.desconhecida"), True)
+        t.chamadas += 1
+        t.chamadas_por_ferramenta[call.name] = t.chamadas_por_ferramenta.get(call.name, 0) + 1
+        if _acima_do_limite_do_turno(call.name):  # over the per-turn cap: a refusal that counts against the budget
+            res = _recusa(t, "limite_ferramentas")
+            t.recusas += 1
+            _parar_se_estourou()
+            return ToolResult(call.call_id, _json(res.payload), True)
         try:
             args = TOOLS[call.name].args.model_validate(call.arguments or {})
         except ValidationError as exc:

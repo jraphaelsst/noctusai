@@ -43,7 +43,14 @@ def test_a_violation_is_one_insert_of_codes_and_counts():
 def test_limits_upsert_a_row_on_first_use_and_read_the_db_defaults():
     org, agent = uuid4(), uuid4()
     stored = {"janela_segundos": 60, "max_turnos_janela": 6, "max_turnos_dia": 200, "max_custo_dia_usd": "2.0000",
-              "max_imoveis_distintos": 30, "max_recusas_por_turno": 2, "max_erros_ferramenta_por_turno": 3}
+              "max_imoveis_distintos": 30, "max_recusas_por_turno": 2, "max_erros_ferramenta_por_turno": 3,
+              "max_turnos_hora": 60, "max_novos_leads_hora": 30, "max_novos_leads_dia": 200,
+              "reserva_leads_existentes_pct": 50, "loop_ativo": True, "loop_repeticoes": 3,
+              "loop_similaridade": "0.900", "loop_janela_segundos": 600, "loop_min_chars": 8, "loop_eco_tokens": 12,
+              "loop_latencia_mediana_s": "3.00", "loop_trocas": 5, "max_chamadas_ferramenta_turno": 8,
+              "max_oferecer_turno": 1, "max_abrir_skill_turno": 4, "max_detalhes_turno": 3,
+              "catalogo_descricao_max": 600, "catalogo_titulo_max": 120, "catalogo_caracteristicas_max": 30,
+              "catalogo_item_max": 60}
     client = ScriptedClient(SimpleNamespace(data=[]), SimpleNamespace(data=[]), SimpleNamespace(data=[stored]))
     lim = SupabaseConformidadeStore(client).limites(org, agent)
     assert lim == LIMITES_PADRAO and isinstance(lim.max_custo_dia_usd, float)

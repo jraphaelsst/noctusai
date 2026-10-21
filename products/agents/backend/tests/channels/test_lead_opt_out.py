@@ -25,7 +25,7 @@ AGORA = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
 
 
 def _parar(motivo_texto: str | None = "O lead pediu para parar de receber mensagens") -> object:
-    args: dict = {"motivo": "lead_pediu_parar"}
+    args: dict = {"motivo": "lead_pediu_parar", "trecho": "não me mande mais mensagens"}
     if motivo_texto is not None:
         args["motivo_texto"] = motivo_texto
     return step(call("encerrar", **args))
@@ -119,7 +119,8 @@ class TestEncerrarLeadPediuParar:
     def test_an_earlier_encerrar_does_not_swallow_the_request_to_stop(self, on):
         on.use_provider(FakeProvider(tool_responses=[
             step(call("encerrar", motivo="sem_interesse")), step(call("encerrar", motivo="lead_pediu_parar",
-                                                                       motivo_texto="Pediu para parar")),
+                                                                       motivo_texto="Pediu para parar",
+                                                                       trecho="não me mande mais mensagens")),
             say("Ok"), *[say("R?")] * 5]))
         body = on.turn(turn_body(PEDIDO, ids=["a"])).json()
         assert body["actions"] == [{"type": "encerrar", "motivo": "lead_pediu_parar", "lead_opt_out": True, "seq": 1}]

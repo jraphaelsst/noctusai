@@ -192,6 +192,13 @@ class ChannelConversationStore(Protocol):
         """Every thread of one lead (one per channel line)."""
         ...
 
+    def count_threads_created_since(
+        self, org_id: UUID, agent_id: UUID, since: datetime, *, ate: int
+    ) -> int:
+        """How many lead threads the agent opened since ``since``, counted up to ``ate`` (the caller only
+        compares to a limit, so the read is bounded by it and never meets the PostgREST row cap)."""
+        ...
+
     def list_channel(
         self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
     ) -> list[ConversationRecord]:
@@ -397,6 +404,16 @@ class FakeConversationStore:
         ]
         rows.sort(key=lambda r: r["created_at"])
         return [self._to_record(r) for r in rows]
+
+    def count_threads_created_since(
+        self, org_id: UUID, agent_id: UUID, since: datetime, *, ate: int
+    ) -> int:
+        n = sum(
+            1 for r in self._rows.values()
+            if r["org_id"] == org_id and r["agent_id"] == agent_id and r["tipo"] == "thread_lead"
+            and r["created_at"] >= since
+        )
+        return min(n, ate)
 
     def list_channel(
         self, org_id: UUID, *, agent_id: UUID | None = None, channel: str | None = None
@@ -749,6 +766,16 @@ class SupabaseConversationStore:
             .order("created_at").limit(100).execute()
         )
         return [self._record(r) for r in (resp.data or [])]
+
+    def count_threads_created_since(
+        self, org_id: UUID, agent_id: UUID, since: datetime, *, ate: int
+    ) -> int:
+        resp = (
+            self._table().select("id")
+            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("tipo", "thread_lead")
+            .gte("created_at", since.isoformat()).limit(max(1, ate)).execute()
+        )
+        return len(resp.data or [])
 
     @staticmethod
     def _record(row: dict[str, Any]) -> ConversationRecord:

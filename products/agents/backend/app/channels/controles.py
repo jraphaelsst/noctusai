@@ -42,7 +42,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from app.stores._util import utcnow
@@ -62,6 +62,7 @@ __all__ = [
     "STATUS_CONVERSA_PAUSADA",
     "STATUS_LEAD_OPT_OUT",
     "STATUS_NORMAL",
+    "STATUS_NOVO_LEAD_LIMITADO",
     "STATUS_NOVO_LEAD_RECUSADO",
     "STATUS_REENGAJAMENTO_IGNORADO",
     "ControleIndisponivel",
@@ -82,6 +83,9 @@ GATILHOS = ("mensagem", "reengajamento")
 STATUS_NORMAL = "normal"
 STATUS_AGENTE_DESLIGADO = "agente_desligado"
 STATUS_NOVO_LEAD_RECUSADO = "novo_lead_recusado"
+#: The agent is on, but the new-lead admission limit (per hour / per day / the day's budget share) is spent:
+#: SW routes the lead to a human queue, not to silence.
+STATUS_NOVO_LEAD_LIMITADO = "novo_lead_limitado"
 STATUS_CONVERSA_PAUSADA = "conversa_pausada"
 STATUS_CONVERSA_COM_OUTRO_RESPONSAVEL = "conversa_com_outro_responsavel"
 STATUS_CONVERSA_COM_OUTRO_AGENTE = "conversa_com_outro_agente"
@@ -328,6 +332,7 @@ def aplicar_controles(
     version_id: UUID | None = None,
     messages: Any = None,
     agora: datetime | None = None,
+    admitir_novo_lead: Callable[[], bool] | None = None,
 ) -> ControleResultado:
     """Read the controls, decide, and apply what the decision implies.
 
@@ -345,7 +350,10 @@ def aplicar_controles(
 
     ``controles`` is an ``AgentControleStore``, ``conversations`` a ``ConversationStore`` (channel
     half), ``threads`` a ``ThreadStore``; ``messages`` (a ``MessageStore``) is only needed to stamp
-    ``lead_ref_id`` on the messages of a thread linked lazily. ``lead`` is the turn's ``lead``
+    ``lead_ref_id`` on the messages of a thread linked lazily. ``admitir_novo_lead`` is the new-lead admission
+    gate (guardrails B5, :mod:`app.channels.admissao`): consulted ONLY when the decision would open a thread for a
+    lead never served; ``False`` -> ``novo_lead_limitado``, nothing stored. A gate that raises fails closed
+    (:class:`ControleIndisponivel`). ``lead`` is the turn's ``lead``
     block: it creates / refreshes the ``lead_refs`` row and links a thread that has none yet.
     """
     agora = agora or utcnow()
@@ -381,6 +389,16 @@ def aplicar_controles(
         )
         if decisao.http_status == 503:
             raise ControleIndisponivel()
+        if decisao.criar_thread and admitir_novo_lead is not None:
+            try:
+                admitido = admitir_novo_lead()
+            except Exception as exc:
+                logger.exception("agents.controles.admissao_failed org_id=%s cause=%s", org_id, type(exc).__name__)
+                raise ControleIndisponivel() from exc
+            if not admitido:
+                return ControleResultado(
+                    decisao=_recusa(STATUS_NOVO_LEAD_LIMITADO, persistir=False), modo=controle.modo,
+                    thread=None, participante=None, lead_ref=None)
 
         # 2. APPLY.
         lead_ref = None

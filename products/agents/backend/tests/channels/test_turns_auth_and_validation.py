@@ -3,7 +3,7 @@
 never ``in (401, ...)``."""
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -118,7 +118,6 @@ class TestRequestContract:
             lambda b: b.update(messages=b["messages"] * 21),
             lambda b: b["messages"][0].update(texto=""),
             lambda b: b["messages"][0].update(texto="   "),
-            lambda b: b["messages"][0].update(texto="x" * 8001),
             lambda b: b["messages"][0].pop("provider_message_id"),
             lambda b: b.update(channel="sms"),
             lambda b: b.update(surprise=1),
@@ -137,16 +136,30 @@ class TestRequestContract:
         assert chan.provider.calls == []
         assert chan.rt.stores.conversations.list_channel(chan.org_id) == []
 
-    def test_batch_total_over_16k_characters_is_422(self, chan):
+    def test_an_oversized_message_or_batch_is_truncated_never_422(self, chan):
+        """Guardrails B5: a lead is never refused for writing too much; the text is cut to the caps (2000 / 6000)."""
         chan.seed_agent()
-        resp = chan.turn(turn_body("a" * 6000, "b" * 6000, "c" * 6000))  # each fine, 18 000 together
-        assert resp.status_code == 422
-        assert _code(resp) == "invalid_field"
-        assert chan.provider.calls == []
+        resp = chan.turn(turn_body("a" * 5000, "b" * 5000, "c" * 5000))
+        assert resp.status_code == 200, resp.text
+        stored = [m.texto for m in chan.rt.stores.messages.list(chan.org_id, UUID(resp.json()["thread_id"]), limite=50)
+                  if m.role == "user"]
+        assert [len(x) for x in stored] == [2000, 2000, 2000]
 
-    def test_batch_at_the_caps_is_accepted(self, chan):
+    def test_the_batch_cap_keeps_every_message_id_and_at_least_one_character_each(self):
+        from datetime import datetime, timezone
+
+        from app.schemas.channels import BATCH_MAX_CHARS, ChannelInboundMessage, _truncar_lote
+
+        at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        lote = [ChannelInboundMessage(texto="x" * 2000, provider_message_id=f"m{i}", at=at) for i in range(5)]
+        cortado = _truncar_lote(lote)
+        assert [m.provider_message_id for m in cortado] == [f"m{i}" for i in range(5)]
+        assert [len(m.texto) for m in cortado] == [2000, 2000, 1998, 1, 1]
+        assert sum(len(m.texto) for m in cortado) == BATCH_MAX_CHARS
+
+    def test_batch_at_the_caps_is_accepted_whole(self, chan):
         chan.seed_agent()
-        texts = ["x" * 800] * 20  # 20 messages, 16 000 characters
+        texts = ["x" * 300] * 20  # 20 messages, 6 000 characters: exactly the cap, nothing is cut
         resp = chan.turn(turn_body(*texts, ids=[f"id-{i}" for i in range(20)]))
         assert resp.status_code == 200, resp.text
 

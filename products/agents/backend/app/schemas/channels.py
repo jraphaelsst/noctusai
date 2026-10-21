@@ -34,6 +34,7 @@ __all__ = [
     "ContextoCredito",
     "ContextoOrigem",
     "ConsentimentoCreditoActionOut",
+    "SolicitacaoTitularActionOut",
     "ChannelActionOut",
     "ChannelAgentStatusOut",
     "ChannelContexto",
@@ -66,8 +67,10 @@ __all__ = [
 ]
 
 BATCH_MAX_MESSAGES = 20
-MESSAGE_MAX_CHARS = 8000
-BATCH_MAX_CHARS = 16_000
+#: Input caps (guardrails B5). A lead is NEVER answered 422 for writing too much: an oversized message / batch is
+#: truncated to the cap and the turn proceeds (the cut is the abuse bound; SW trims to the same numbers upstream).
+MESSAGE_MAX_CHARS = 2000
+BATCH_MAX_CHARS = 6000
 
 #: Channels the turn API accepts (page 0: WhatsApp via WAHA / Cloud API).
 Channel = Literal["whatsapp"]
@@ -92,7 +95,8 @@ class ChannelContact(StrictHttpModel):
 
 
 class ChannelInboundMessage(StrictHttpModel):
-    texto: str = Field(..., min_length=1, max_length=MESSAGE_MAX_CHARS)
+    #: Truncated (never rejected) at :data:`MESSAGE_MAX_CHARS`.
+    texto: str = Field(..., min_length=1)
     provider_message_id: str = Field(..., min_length=1, max_length=256)
     at: datetime
 
@@ -101,7 +105,7 @@ class ChannelInboundMessage(StrictHttpModel):
     def _not_blank(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("texto must not be blank")
-        return v
+        return v[:MESSAGE_MAX_CHARS] if len(v) > MESSAGE_MAX_CHARS else v
 
 
 #: The whole `contexto` (as JSON) may not exceed this many characters (§2.1(a)).
@@ -203,6 +207,21 @@ class ChannelLead(StrictHttpModel):
     crm_lead_id: UUID | None = None
 
 
+def _truncar_lote(messages: list[ChannelInboundMessage]) -> list[ChannelInboundMessage]:
+    """Keep the batch within :data:`BATCH_MAX_CHARS`: the earliest messages keep their text, the later ones are cut to
+    what is left (at least one character each, so every ``provider_message_id`` still answers idempotently)."""
+    if sum(len(m.texto) for m in messages) <= BATCH_MAX_CHARS:
+        return messages
+    out: list[ChannelInboundMessage] = []
+    restante = BATCH_MAX_CHARS
+    for i, m in enumerate(messages):
+        reservado = len(messages) - i - 1  # one character for each message still to come
+        permitido = max(1, min(len(m.texto), restante - reservado))
+        out.append(m if permitido == len(m.texto) else m.model_copy(update={"texto": m.texto[:permitido]}))
+        restante -= permitido
+    return out
+
+
 class ChannelTurnRequest(StrictHttpModel):
     agent_key: str = Field(..., min_length=1, max_length=64)
     channel: Channel
@@ -222,9 +241,7 @@ class ChannelTurnRequest(StrictHttpModel):
             raise ValueError("a message turn needs at least one message")
         if self.gatilho == "reengajamento" and self.contexto is None:
             raise ValueError("a re-engagement turn needs contexto")
-        total = sum(len(m.texto) for m in self.messages)
-        if total > BATCH_MAX_CHARS:
-            raise ValueError(f"the batch holds {total} characters; the maximum is {BATCH_MAX_CHARS}")
+        self.messages = _truncar_lote(self.messages)
         ids = [m.provider_message_id for m in self.messages]
         if len(set(ids)) != len(ids):
             raise ValueError("provider_message_id must be unique within a batch")
@@ -284,13 +301,29 @@ class EncerrarActionOut(_ActionOut):
 class ConsentimentoCreditoActionOut(_ActionOut):
     type: Literal["consentimento_credito"]
     aceito: bool
+    #: The lead's own words (from the turn's batch) that answer the consent question: SW stores a hash + the
+    #: message id as the evidence of the decision.
+    trecho: str | None = None
+
+
+class SolicitacaoTitularActionOut(_ActionOut):
+    """A data-subject request was recorded on SW's side (``registrar_solicitacao_titular``) and the lead handed to a
+    person (``handoff`` with ``motivo_codigo="direito_titular"`` rides next to it). Nothing was erased."""
+
+    type: Literal["solicitacao_titular"]
+    tipo: Literal[
+        "confirmacao", "acesso", "correcao", "eliminacao", "portabilidade", "revogacao_consentimento", "oposicao",
+        "info_compartilhamento", "outro",
+    ]
+    id: str
+    prazo_em: str | None = None
 
 
 #: Discriminated union on ``type`` (§2.1(d)).
 ChannelActionOut = Annotated[
     Union[
         HandoffActionOut, LeadProntoActionOut, IntencaoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut,
-        ConsentimentoCreditoActionOut,
+        ConsentimentoCreditoActionOut, SolicitacaoTitularActionOut,
     ],
     Field(discriminator="type"),
 ]
@@ -345,6 +378,8 @@ TurnStatus = Literal[
     "respondido", "silencio", "handoff", "encerrado", "concluido",
     "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
     "conversa_com_outro_agente", "reengajamento_ignorado", "lead_opt_out", "limite_atingido",
+    # abuse protection (guardrails B5): SW routes each to a human, never to silence
+    "limite_taxa", "novo_lead_limitado", "loop_detectado",
 ]
 
 

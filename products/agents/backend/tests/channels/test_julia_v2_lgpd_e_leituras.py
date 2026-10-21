@@ -181,4 +181,5 @@ class TestTheGeneratedContract:
                        ["ChannelTurnResponse"]["properties"]["status"]["enum"])
         assert {"respondido", "silencio", "handoff", "encerrado", "concluido", "agente_desligado", "novo_lead_recusado",
                 "conversa_pausada", "conversa_com_outro_responsavel", "conversa_com_outro_agente",
-                "reengajamento_ignorado", "lead_opt_out", "limite_atingido"} == statuses
+                "reengajamento_ignorado", "lead_opt_out", "limite_atingido", "limite_taxa", "novo_lead_limitado",
+                "loop_detectado"} == statuses

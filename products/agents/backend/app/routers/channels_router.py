@@ -36,7 +36,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -45,7 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
-from app.channels import extracao
+from app.channels import admissao, extracao
 from app.channels import turno as turno_mod
 from app.channels.bubbles import split_into_bubbles
 from app.channels.controles import ControleIndisponivel, LeadIdentidade, aplicar_controles
@@ -332,6 +332,11 @@ async def run_channel_turn(
                 channel_ref=channel_ref, controles=controles, conversations=conv_store, threads=threads,
                 lead=_lead_identidade(payload), contact=payload.contact.model_dump(mode="json"),
                 version_id=prep.r.versao.id if prep is not None else None, messages=msg_store, agora=agora,
+                admitir_novo_lead=lambda: admissao.motivo_novo_lead_limitado(
+                    conversations=conv_store, messages=msg_store, org_id=org_id, agent_id=agent.id,
+                    limites=conformidade.limites(org_id, agent.id), agora=agora,
+                    teto_diario_usd=float(settings.channel_daily_budget_usd),
+                ) is None,
             )
         except ControleIndisponivel as exc:
             raise exc.as_http_exception() from exc
@@ -370,7 +375,7 @@ async def run_channel_turn(
             tripped = turno_mod.limite_atingido(svc, org_id, thread.id, agent.id, agora)
             if tripped is not None:
                 logger.warning("agents.channel.turn.limite_atingido org_id=%s limite=%s", org_id, tripped)
-                resp = _resposta_sem_turno("limite_atingido", thread, agent, ctl.participante)
+                resp = _resposta_sem_turno(turno_mod.status_do_limite(tripped), thread, agent, ctl.participante)
                 if ids:
                     inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))
                 return resp
@@ -408,6 +413,7 @@ async def run_channel_turn(
             raise _err(502, "llm_upstream", _UPSTREAM_DETAIL) from exc
 
         await publish_event(thread.id, "session.status", {"status": "ociosa"}, bus=bus)
+        _avisar_orcamento(msg_store, notificacoes, org_id, agora)
         try:
             await publish_event(
                 thread.id, "conversation.upsert", _conversation_payload(conv_store.get(org_id, thread.id)), bus=bus)
@@ -436,6 +442,20 @@ async def run_channel_turn(
             conv_store.release_turn(org_id, thread.id, INSTANCE_ID)
         if slot is not None:
             await slot.release()
+
+
+def _avisar_orcamento(msg_store: Any, sink: Any, org_id: UUID, agora: datetime) -> None:
+    """Tell the owners when the org's daily channel cap crosses 50 / 80 / 100 % (deduped; best effort)."""
+    teto = float(settings.channel_daily_budget_usd)
+    if teto <= 0 or sink is None:
+        return
+    try:
+        _turnos, gasto = msg_store.usage_between(org_id, admissao.inicio_do_dia(agora), agora + timedelta(seconds=1))
+    except Exception:  # noqa: BLE001 -- the alert is garnish after a served turn: log it, never fail the response
+        logger.exception("agents.channel.turn.orcamento_leitura_falhou org_id=%s", org_id)
+        return
+    admissao.avisar_orcamento(
+        sink, org_id, gasto_usd=gasto, teto_diario_usd=teto, dia=admissao.dia_de(agora))
 
 
 async def _publish_error(conversation_id: UUID, bus: Any) -> None:
