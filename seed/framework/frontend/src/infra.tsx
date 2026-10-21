@@ -16,6 +16,7 @@
  *     Layout,
  *   });
  */
+import { useNavigate } from "react-router-dom";
 import { createProductSupabase } from "@noctusai/lib/supabase";
 import { createAuthStore } from "@noctusai/lib/stores";
 import { createApiClient } from "@noctusai/lib/api";
@@ -137,7 +138,8 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
   // Pre-wired notification bell
   const notificationHooks = { useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas };
   function NotificationBell() {
-    return <SharedNotificationBell hooks={notificationHooks} />;
+    const navigate = useNavigate();
+    return <SharedNotificationBell hooks={notificationHooks} onNavigate={(link) => navigate(link)} />;
   }
 
   return {

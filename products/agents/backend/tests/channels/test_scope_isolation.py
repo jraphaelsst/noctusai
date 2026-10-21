@@ -43,6 +43,7 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
         ("GET", "/api/channels/handoffs/{handoff_id}"),
         ("GET", "/api/channels/leads/{lead_ref}/identificacao"),
         ("GET", "/api/channels/leads/{lead_ref}/qualificacao"),
+        ("GET", "/api/channels/leads/{ref}/consentimento"),
         ("GET", "/api/channels/threads"),
         ("GET", "/api/channels/threads/{thread_id}"),
         ("GET", "/api/channels/threads/{thread_id}/handoffs"),

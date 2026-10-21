@@ -41,7 +41,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from app.channels.opt_out import OptOutService
+from app.channels.opt_out import OptOutService, evento_out, ultimo_evento_out
 from app.channels.retention import ChannelRetention
 from app.channels.thread_service import (
     IdempotencyConflict,
@@ -223,7 +223,7 @@ def _thread_out(
         opt_in_em=lead.opt_in_em if lead else None,
         opt_in_origem=lead.opt_in_origem if lead else None,
         opt_out_em=lead.opt_out_em if lead else None,
-        opt_out_evento=_ultimo_evento_out(org_id, lead, threads, agentes),
+        opt_out_evento=ultimo_evento_out(org_id, lead, threads, agentes),
         reengajamento_suprimido=motivo is not None,
         reengajamento_suprimido_motivo=motivo,
         ultimo_handoff=_handoff_out(ultimo, agentes, lead.ref_externa if lead else None) if ultimo else None,
@@ -590,28 +590,6 @@ async def accept_handoff(
 # ── consent (WhatsApp Business messaging policy) ────────────────────────────
 
 
-def _evento_out(org_id: UUID, ev: Any, threads: Any, agentes: dict, lead: Any = None) -> OptOutEventoOut:
-    """The API shape of one opt-out event (the lead's name / phone from its ``lead_ref`` contact)."""
-    lead = lead if lead is not None else threads.get_lead_ref(org_id, ev.lead_ref_id)
-    contato = (lead.contato or {}) if lead is not None else {}
-    key, nome = agentes.get(ev.agent_id, (None, None)) if ev.agent_id else (None, None)
-    return OptOutEventoOut(
-        id=ev.id, lead_ref=lead.ref_externa if lead is not None else None, lead_nome=contato.get("nome"),
-        lead_telefone=contato.get("telefone_e164"), thread_id=ev.thread_id, agent_id=ev.agent_id, agent_key=key,
-        agent_nome=nome, ator_user_id=ev.ator_user_id, origem=ev.origem, motivo=ev.motivo,
-        mensagem_lead=ev.mensagem_lead, em=ev.em, participantes_encerrados=ev.participantes_encerrados,
-        notificacao_status=ev.notificacao_status, notificacao_erro=ev.notificacao_erro,
-        notificado_em=ev.notificado_em,
-    )
-
-
-def _ultimo_evento_out(org_id: UUID, lead: Any, threads: Any, agentes: dict) -> OptOutEventoOut | None:
-    if lead is None:
-        return None
-    ev = threads.ultimo_opt_out_evento(org_id, lead.id)
-    return _evento_out(org_id, ev, threads, agentes, lead) if ev is not None else None
-
-
 def _consent_out(lead: Any, evento: OptOutEventoOut | None = None, **extra: Any) -> dict:
     return dict(
         lead_ref=lead.ref_externa, opt_in_em=lead.opt_in_em, opt_in_origem=lead.opt_in_origem,
@@ -630,7 +608,25 @@ async def lead_opt_in(
     """Record how and when the lead consented to be contacted. A LATER opt-in lifts an earlier opt-out."""
     _valida_ref(ref)
     lead = threads.registrar_opt_in(ctx.org_id, ref, origem=payload.origem, em=payload.em)
-    evento = _ultimo_evento_out(ctx.org_id, lead, threads, mapa_agentes(studio_store, ctx.org_id))
+    evento = ultimo_evento_out(ctx.org_id, lead, threads, mapa_agentes(studio_store, ctx.org_id))
+    return LeadConsentOut(**_consent_out(lead, evento))
+
+
+@router.get("/api/channels/leads/{ref}/consentimento", response_model=LeadConsentOut)
+async def lead_consentimento(
+    ref: str,
+    ctx: AuthContext = Depends(require_channel_status),
+    threads=Depends(get_thread_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+) -> LeadConsentOut:
+    """The lead's consent state (opt-in / opt-out) and its latest opt-out event, independent of any thread
+    (a lead can be opted out before it ever had one). A lead has to exist to be read: the opt-out POST registers
+    it even without a thread, so ``lead_desconhecido`` (404) means nothing was ever recorded for it."""
+    _valida_ref(ref)
+    lead = threads.get_lead_ref_by_externa(ctx.org_id, ref)
+    if lead is None:
+        raise _err(404, "lead_desconhecido", "Lead não encontrado.")
+    evento = ultimo_evento_out(ctx.org_id, lead, threads, mapa_agentes(studio_store, ctx.org_id))
     return LeadConsentOut(**_consent_out(lead, evento))
 
 
@@ -658,7 +654,7 @@ async def lead_opt_out(
         ator_user_id=payload.ator_user_id, em=payload.em,
     )
     lead = threads.get_lead_ref_by_externa(ctx.org_id, ref)
-    evento = _evento_out(ctx.org_id, res.evento, threads, agentes, lead) if res.evento is not None else None
+    evento = evento_out(ctx.org_id, res.evento, threads, agentes, lead) if res.evento is not None else None
     return OptOutOut(**_consent_out(
         lead, evento, participantes_encerrados=res.participantes_encerrados,
         evento_id=res.evento.id if res.evento is not None else None))
@@ -680,7 +676,29 @@ async def list_opt_outs(
     except ValueError as exc:
         raise _err(422, "invalid_cursor", "Cursor inválido.") from exc
     agentes = mapa_agentes(studio_store, ctx.org_id)
-    return OptOutEventosPage(items=[_evento_out(ctx.org_id, e, threads, agentes) for e in rows], next_cursor=proximo)
+    return OptOutEventosPage(items=[evento_out(ctx.org_id, e, threads, agentes) for e in rows], next_cursor=proximo)
+
+
+@router.post("/api/studio/opt-outs/{evento_id}/notificar", response_model=OptOutEventoOut)
+async def renotificar_opt_out(
+    evento_id: UUID,
+    ctx: AuthContext = Depends(require_admin),
+    studio_store=Depends(get_studio_definition_store_dep),
+    threads=Depends(get_thread_store_dep),
+    sink=Depends(get_notification_sink_dep),
+) -> OptOutEventoOut:
+    """Re-send the owner's notice of an opt-out whose notification did not go out (``falhou`` / ``pendente``)
+    and record the new outcome on the event. Org admin. Idempotent: recipients that already got the notice are
+    skipped (dedup on the event), and an event already ``enviada`` is returned unchanged -- never a second notice.
+    A failed re-send is a ``200`` with ``notificacao_status`` ``falhou`` and the error, like the first attempt."""
+    ev = threads.get_opt_out_evento(ctx.org_id, evento_id)
+    if ev is None:
+        raise _err(404, "opt_out_not_found", "Registro de opt-out não encontrado.")
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    lead = threads.get_lead_ref(ctx.org_id, ev.lead_ref_id)
+    if ev.notificacao_status != "enviada" and lead is not None:
+        ev = OptOutService(threads, sink, agentes=lambda _org: agentes).notificar(ctx.org_id, ev, lead.ref_externa)
+    return evento_out(ctx.org_id, ev, threads, agentes, lead)
 
 
 def _valida_ref(ref: str) -> None:

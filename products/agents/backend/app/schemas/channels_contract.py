@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.schemas.channel_threads import OptOutEventoOut, OptOutOut, OptOutRequest
+from app.schemas.channel_threads import LeadConsentOut, OptOutEventoOut, OptOutOut, OptOutRequest
 from app.schemas.channels import ChannelTurnRequest, ChannelTurnResponse, ContextoEstado
 
 __all__ = ["CONTRACT_PATH", "VERSAO", "gerar", "render"]
@@ -26,8 +26,9 @@ CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "channels.v2
 
 def gerar() -> dict[str, Any]:
     """``{"versao", "ChannelTurnRequest", "ChannelTurnResponse", "ContextoEstado", "OptOutRequest", "OptOutOut",
-    "OptOutEventoOut"}``, each a self-contained JSON Schema (its ``$defs`` inside). The last three are the lead
-    opt-out call (``POST /api/channels/leads/{ref}/opt-out``) and the event record it returns."""
+    "OptOutEventoOut", "LeadConsentOut"}``, each a self-contained JSON Schema (its ``$defs`` inside). The last
+    four are the lead opt-out call (``POST /api/channels/leads/{ref}/opt-out``), the event record it returns and the
+    thread-independent consent read (``GET /api/channels/leads/{ref}/consentimento``)."""
     return {
         "versao": VERSAO,
         "ChannelTurnRequest": ChannelTurnRequest.model_json_schema(),
@@ -36,6 +37,7 @@ def gerar() -> dict[str, Any]:
         "OptOutRequest": OptOutRequest.model_json_schema(),
         "OptOutOut": OptOutOut.model_json_schema(mode="serialization"),
         "OptOutEventoOut": OptOutEventoOut.model_json_schema(mode="serialization"),
+        "LeadConsentOut": LeadConsentOut.model_json_schema(mode="serialization"),
     }
 
 

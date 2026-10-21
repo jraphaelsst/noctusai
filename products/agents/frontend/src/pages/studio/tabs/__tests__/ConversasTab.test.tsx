@@ -37,6 +37,27 @@ describe("ConversasTab", () => {
     expect(net.calls[0].search.get("agent_key")).toBe(KEY);
   });
 
+  it("banners a thread whose lead asked to stop, linking to the record", async () => {
+    const evento = { id: "ev-1", em: "2026-10-20T14:30:00Z", motivo: "Cliente pediu para sair", origem: "agente", agent_nome: "Agente X", agent_key: KEY };
+    installFetch([
+      { ...LIST, body: { items: [{ ...CONVERSA, opt_out_evento: evento }], total: 1 } },
+      { method: "GET", path: `/api/studio/threads/${CONVERSA.id}/mensagens`, body: MSGS },
+    ]);
+    renderWith(<ConversasTab agentKey={KEY} />, `/?tab=conversas&conversa=${CONVERSA.id}`);
+    const banner = await screen.findByTestId("optout-banner");
+    expect(banner.textContent).toContain("O lead pediu para não ser mais contatado em");
+    expect(banner.textContent).toContain("Cliente pediu para sair");
+    expect(banner.textContent).toContain("Agente Agente X");
+    expect(screen.getByTestId("optout-banner-link").getAttribute("href")).toBe("/opt-outs?evento=ev-1");
+  });
+
+  it("shows no banner when the lead did not opt out", async () => {
+    installFetch([LIST, { method: "GET", path: `/api/studio/threads/${CONVERSA.id}/mensagens`, body: MSGS }]);
+    renderWith(<ConversasTab agentKey={KEY} />, `/?tab=conversas&conversa=${CONVERSA.id}`);
+    await screen.findByTestId("conversa-mensagens");
+    expect(screen.queryByTestId("optout-banner")).toBeNull();
+  });
+
   it("labels each line as lead / agente / humano / evento", async () => {
     installFetch([LIST, { method: "GET", path: `/api/studio/threads/${CONVERSA.id}/mensagens`, body: MSGS }]);
     renderWith(<ConversasTab agentKey={KEY} />, `/?tab=conversas&conversa=${CONVERSA.id}`);

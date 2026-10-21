@@ -263,6 +263,8 @@ export interface CanalConversa {
    * Rendered as chips only when the server provides it. — 2026-10-20
    */
   resultado?: { estagio: string | null; score: number | null; violacoes: number } | null;
+  /** The lead's latest recorded opt-out (`/api/conversations/channel`); `null`/absent = none. */
+  opt_out_evento?: OptOutEvento | null;
 }
 export interface CanalConversas {
   items: CanalConversa[];
@@ -309,4 +311,31 @@ export interface ConformidadeViolacao {
   bloqueada: boolean;
   thread_id: string | null;
   created_at: string;
+}
+
+/** `OptOutEventoOut` -- one lead opt-out (who stopped it, why, what the lead said, did the owner get told). */
+export type OptOutOrigem = "agente" | "operador" | "integracao";
+export type OptOutNotificacaoStatus = "pendente" | "enviada" | "falhou";
+export interface OptOutEvento {
+  id: string;
+  lead_ref: string | null;
+  lead_nome: string | null;
+  lead_telefone: string | null;
+  thread_id: string | null;
+  agent_id: string | null;
+  agent_key: string | null;
+  agent_nome: string | null;
+  ator_user_id: string | null;
+  origem: OptOutOrigem | string;
+  motivo: string;
+  mensagem_lead: string | null;
+  em: string;
+  participantes_encerrados: number;
+  notificacao_status: OptOutNotificacaoStatus;
+  notificacao_erro: string | null;
+  notificado_em: string | null;
+}
+export interface OptOutEventosPage {
+  items: OptOutEvento[];
+  next_cursor: string | null;
 }

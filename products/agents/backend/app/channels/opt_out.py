@@ -20,11 +20,14 @@ from typing import Any
 from uuid import UUID
 
 from app.notifications import NotificationSink
+from app.schemas.channel_threads import OptOutEventoOut
 from app.stores.threads import OPT_OUT_MOTIVO_PADRAO, OptOutEventoRecord, OptOutResultado, ThreadStore
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["KIND_LEAD_OPT_OUT", "OptOutService", "SemDestinatarios", "dedup_key"]
+__all__ = [
+    "KIND_LEAD_OPT_OUT", "OptOutService", "SemDestinatarios", "dedup_key", "evento_link", "evento_out", "ultimo_evento_out",
+]
 
 KIND_LEAD_OPT_OUT = "agents.lead_opt_out"
 _TITULO = "Lead pediu para não ser mais contatado"
@@ -37,6 +40,39 @@ class SemDestinatarios(Exception):
 
 def dedup_key(evento_id: UUID) -> str:
     return f"{KIND_LEAD_OPT_OUT}:{evento_id}"
+
+
+def evento_link(evento_id: UUID) -> str:
+    """The in-app path the notification bell opens (``metadata.link``): the opt-out record, highlighted."""
+    return f"/opt-outs?evento={evento_id}"
+
+
+def evento_out(
+    org_id: UUID, ev: OptOutEventoRecord, threads: ThreadStore, agentes: Mapping[UUID, tuple[str, str]],
+    lead: Any = None,
+) -> OptOutEventoOut:
+    """The API shape of one opt-out event (the lead's name / phone from its ``lead_ref`` contact)."""
+    lead = lead if lead is not None else threads.get_lead_ref(org_id, ev.lead_ref_id)
+    contato = (lead.contato or {}) if lead is not None else {}
+    key, nome = agentes.get(ev.agent_id, (None, None)) if ev.agent_id else (None, None)
+    return OptOutEventoOut(
+        id=ev.id, lead_ref=lead.ref_externa if lead is not None else None, lead_nome=contato.get("nome"),
+        lead_telefone=contato.get("telefone_e164"), thread_id=ev.thread_id, agent_id=ev.agent_id, agent_key=key,
+        agent_nome=nome, ator_user_id=ev.ator_user_id, origem=ev.origem, motivo=ev.motivo,
+        mensagem_lead=ev.mensagem_lead, em=ev.em, participantes_encerrados=ev.participantes_encerrados,
+        notificacao_status=ev.notificacao_status, notificacao_erro=ev.notificacao_erro,
+        notificado_em=ev.notificado_em,
+    )
+
+
+def ultimo_evento_out(
+    org_id: UUID, lead: Any, threads: ThreadStore, agentes: Mapping[UUID, tuple[str, str]],
+) -> OptOutEventoOut | None:
+    """The latest recorded opt-out of ``lead`` (``None`` = no lead, or none recorded)."""
+    if lead is None:
+        return None
+    ev = threads.ultimo_opt_out_evento(org_id, lead.id)
+    return evento_out(org_id, ev, threads, agentes, lead) if ev is not None else None
 
 
 class OptOutService:
@@ -102,7 +138,7 @@ class OptOutService:
         metadata = {
             "evento_id": str(evento.id), "lead_ref": ref_externa,
             "thread_id": str(evento.thread_id) if evento.thread_id else None,
-            "dedup_key": chave, "product": "agents",
+            "dedup_key": chave, "product": "agents", "link": evento_link(evento.id),
         }
         for user_id in admins:
             if self._sink.already_sent(user_id, chave):

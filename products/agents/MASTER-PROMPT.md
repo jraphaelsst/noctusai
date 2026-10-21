@@ -97,6 +97,13 @@ products/agents/backend/app/
   an error log and never undoes the opt-out. A repeat while the opt-out is in force records no second event and notifies
   nobody again; an opt-in lifts it. `GET /api/studio/opt-outs` (member) lists the events, newest first; the thread and
   the opt-in / opt-out responses expose the latest as `opt_out_evento`. Migration 042.
+  Also: `GET /api/channels/leads/{ref}/consentimento` (token, thread-independent; unknown lead -> 404
+  `lead_desconhecido`) returns the consent state + `opt_out_evento`; `POST /api/studio/opt-outs/{id}/notificar` (org
+  admin) re-sends a `falhou`/`pendente` notice (dedup keeps it idempotent); `GET /api/conversations/channel` items carry
+  `opt_out_evento`. The notice's `metadata.link` is `/opt-outs?evento=<id>`: the agents UI page `/opt-outs` (migration
+  043, status_pagina `opt-outs`) lists the records (failed notices prominent, admin "Reenviar notificação"), the thread
+  view shows a banner, and the seed `NotificationBell` opens `link`/`metadata.link` on click (`onNavigate`, wired in
+  `createProductInfra`).
 
 ### Julia v2 — mechanism evals as the publish gate (A-EVAL)
 - `eval_cases` gain `suite` (`mecanismo` | `comportamento`), `k`, `roteiro` (scripted multi-turn lead messages + fixture catalogue) and `asserts` (deterministic, code-checked: ferramentas_incluem/proibidas, estagio_final, criterios_registrados, ofertas_por_lote, sem_violacoes, identificacao_completa, handoff_para, sem_vazamento, skill_aberta_antes_de). Migration 038, service-role only.

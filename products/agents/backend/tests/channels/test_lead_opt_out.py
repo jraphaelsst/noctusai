@@ -15,6 +15,7 @@ from app.channels.opt_out import KIND_LEAD_OPT_OUT, OptOutService, dedup_key
 from app.notifications import FakeNotificationSink
 from app.stores.threads import FakeThreadStore
 from tests.channels.conftest import turn_body
+from tests.routers.conftest import seed_org_role
 from tests.channels.test_channel_threads_router import STATUS_ONLY, TURN_ONLY, thr  # noqa: F401 — fixtures
 from tests.channels.test_julia_v2_controles_limites import model_calls
 from tests.channels.test_julia_v2_e2e import call, say, step
@@ -272,6 +273,86 @@ class TestApi:
                      json={"origem": "lead_iniciou", "em": "2026-10-21T11:00:00+00:00"})
         assert r.status_code == 200 and r.json()["opt_out_ativo"] is False
         assert r.json()["opt_out_evento"]["motivo"] == "pediu"
+
+
+class TestConsentimento:
+    """``GET /api/channels/leads/{ref}/consentimento``: the consent state + latest event, independent of threads."""
+
+    URL = "/api/channels/leads/contato-1/consentimento"
+
+    def test_an_unknown_lead_is_404_lead_desconhecido(self, thr):
+        r = thr.call("GET", "/api/channels/leads/nunca-visto/consentimento", *STATUS_ONLY)
+        assert r.status_code == 404 and r.json()["code"] == "lead_desconhecido"
+
+    def test_a_lead_without_opt_out_reads_clean(self, thr):
+        thr.thread()
+        body = thr.call("GET", self.URL, *STATUS_ONLY).json()
+        assert body["lead_ref"] == "contato-1" and body["opt_out_ativo"] is False and body["opt_out_evento"] is None
+
+    def test_it_names_the_event_even_when_the_lead_has_no_thread(self, thr):
+        thr.call("POST", "/api/channels/leads/sem-thread/opt-out", *TURN_ONLY, json={"motivo": "pediu"})
+        body = thr.call("GET", "/api/channels/leads/sem-thread/consentimento", *STATUS_ONLY).json()
+        assert body["opt_out_ativo"] is True and body["opt_out_evento"]["motivo"] == "pediu"
+        assert body["opt_out_evento"]["lead_ref"] == "sem-thread" and body["opt_out_evento"]["thread_id"] is None
+
+    def test_it_is_org_scoped_and_token_only(self, thr):
+        outra = uuid4()
+        thr.store.upsert_lead_ref(outra, "alheio")
+        assert thr.call("GET", "/api/channels/leads/alheio/consentimento", *STATUS_ONLY).status_code == 404
+        thr.thread()
+        assert thr.call("GET", self.URL, *TURN_ONLY).status_code == 403
+        assert thr.chan.client.get(self.URL).status_code == 403  # a human session is not a channel token
+        assert thr.chan.client.raw().get(self.URL).status_code == 401
+
+
+class TestRenotificar:
+    """``POST /api/studio/opt-outs/{id}/notificar``: org admin re-sends a failed notice."""
+
+    def _falhou(self, thr) -> str:
+        thr.thread()
+        thr.chan.notificacoes.fail_with = RuntimeError("boom")
+        ev = thr.call("POST", ROTA, *TURN_ONLY, json={}).json()["opt_out_evento"]
+        assert ev["notificacao_status"] == "falhou" and "boom" in ev["notificacao_erro"]
+        thr.chan.notificacoes.fail_with = None
+        return ev["id"]
+
+    def test_a_failed_notice_is_resent_and_the_status_updated(self, thr):
+        thr.chan.notificacoes.org_admins[thr.chan.org_id] = [ADMIN]
+        eid = self._falhou(thr)
+        r = thr.chan.client.post(f"/api/studio/opt-outs/{eid}/notificar")
+        assert r.status_code == 200, r.text
+        assert r.json()["notificacao_status"] == "enviada" and r.json()["notificacao_erro"] is None
+        assert len(thr.chan.notificacoes.sent) == 1
+        assert thr.chan.notificacoes.sent[0]["metadata"]["link"] == f"/opt-outs?evento={eid}"
+        # idempotent: an already-sent event sends nothing more
+        again = thr.chan.client.post(f"/api/studio/opt-outs/{eid}/notificar")
+        assert again.status_code == 200 and again.json()["notificacao_status"] == "enviada"
+        assert len(thr.chan.notificacoes.sent) == 1
+
+    def test_a_resend_that_fails_again_stays_falhou_with_the_error(self, thr):
+        eid = self._falhou(thr)
+        thr.chan.notificacoes.fail_with = RuntimeError("ainda fora")
+        r = thr.chan.client.post(f"/api/studio/opt-outs/{eid}/notificar")
+        assert r.status_code == 200 and r.json()["notificacao_status"] == "falhou"
+        assert "ainda fora" in r.json()["notificacao_erro"]
+
+    def test_unknown_event_and_other_org_are_404(self, thr):
+        assert thr.chan.client.post(f"/api/studio/opt-outs/{uuid4()}/notificar").status_code == 404
+        outra = uuid4()
+        thr.store.upsert_lead_ref(outra, "alheio")
+        ev = thr.store.registrar_opt_out_evento(outra, "alheio", motivo="x").evento
+        assert thr.chan.client.post(f"/api/studio/opt-outs/{ev.id}/notificar").status_code == 404
+
+    def test_auth_is_strict(self, thr):
+        eid = self._falhou(thr)
+        url = f"/api/studio/opt-outs/{eid}/notificar"
+        assert thr.chan.client.raw().post(url).status_code == 401
+        assert thr.call("POST", url, *TURN_ONLY).status_code == 403  # a channel token is not an admin session
+
+    def test_a_member_who_is_not_admin_gets_403(self, thr):
+        eid = self._falhou(thr)
+        seed_org_role(thr.chan.client, role="member")
+        assert thr.chan.client.post(f"/api/studio/opt-outs/{eid}/notificar").status_code == 403
 
 
 # ── the real store (PostgREST shapes) ──────────────────────────────────────

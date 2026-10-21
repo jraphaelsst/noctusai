@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 
+from app.schemas.channel_threads import OptOutEventoOut
+
 # ── Agents (§E.2 "GET /api/agents", "POST /api/agents/{key}/toggle") ───────
 
 
@@ -116,6 +118,8 @@ class ConversationOut(BaseModel):
     # Julia v2 A-RT2 (additive; ``/channel`` list only, else ``None``).
     resultado: ConversaResultadoOut | None = None
     participantes: list[ConversaParticipanteOut] | None = None
+    #: The lead's latest recorded opt-out (``/channel`` list only; ``None`` = none recorded).
+    opt_out_evento: OptOutEventoOut | None = None
 
 
 class ConversationListOut(BaseModel):

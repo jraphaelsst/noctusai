@@ -45,6 +45,19 @@ export interface NotificationBellProps {
   onViewAll?: () => void;
   /** Optional extra content at the bottom of the dropdown */
   footer?: ReactNode;
+  /**
+   * Open the record a notification points at. When given, a notification that carries an in-app link
+   * (`link`, else `metadata.link`; see {@link notificationLink}) is clickable: it is marked read and
+   * `onNavigate(link)` is called (e.g. react-router's `navigate`).
+   */
+  onNavigate?: (link: string) => void;
+}
+
+/** The in-app path a notification opens, or `null`. Same-origin paths only ("/x", never "//host"). */
+export function notificationLink(n: Pick<Notificacao, "link" | "metadata">): string | null {
+  const meta = n.metadata && typeof n.metadata === "object" ? (n.metadata as { link?: unknown }).link : null;
+  const raw = n.link ?? meta;
+  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") ? raw : null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -66,7 +79,7 @@ function timeAgo(dateStr: string): string {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function NotificationBell({ hooks, viewAllPath, onViewAll, footer }: NotificationBellProps) {
+export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavigate }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -130,12 +143,25 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer }: Noti
               </div>
             ) : (
               <div className="divide-y">
-                {notificacoes.map((n) => (
+                {notificacoes.map((n) => {
+                  const link = onNavigate ? notificationLink(n) : null;
+                  const abrir = () => {
+                    if (!link || !onNavigate) return;
+                    if (!n.is_read) marcarLida.mutate(n.id);
+                    setOpen(false);
+                    onNavigate(link);
+                  };
+                  return (
                   <div
                     key={n.id}
+                    data-testid={`notificacao-${n.id}`}
+                    role={link ? "link" : undefined}
+                    tabIndex={link ? 0 : undefined}
+                    onClick={link ? abrir : undefined}
+                    onKeyDown={link ? (e) => { if (e.key === "Enter") abrir(); } : undefined}
                     className={`flex items-start gap-2.5 px-4 py-3 transition-colors ${
                       !n.is_read ? "bg-primary/5" : ""
-                    }`}
+                    } ${link ? "cursor-pointer hover:bg-accent" : ""}`}
                   >
                     <div
                       className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
@@ -159,13 +185,14 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer }: Noti
                     {!n.is_read && (
                       <button
                         className="p-1 rounded hover:bg-accent transition-colors shrink-0"
-                        onClick={() => marcarLida.mutate(n.id)}
+                        onClick={(e) => { e.stopPropagation(); marcarLida.mutate(n.id); }}
                       >
                         <Check className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

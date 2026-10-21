@@ -46,6 +46,7 @@ from app.dependencies import (
     require_member,
 )
 from app.channels.conformidade import GuardaVazamento
+from app.channels.opt_out import ultimo_evento_out
 from app.config import settings
 from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.stores.conformidade import Violacao
@@ -301,13 +302,15 @@ async def list_conversations(
 def _enriquecer_canal(org_id, record, agent_id, agentes, threads, qual, conformidade) -> dict[str, Any]:
     """``resultado`` (stage, score, violation count) and the participants' states of one channel thread. A failure of
     either read leaves that field ``None`` (logged): the list is a UI convenience, never a reason to 500."""
-    extra: dict[str, Any] = {"resultado": None, "participantes": None}
+    extra: dict[str, Any] = {"resultado": None, "participantes": None, "opt_out_evento": None}
     try:
         extra["participantes"] = [
             ConversaParticipanteOut(agent_key=agentes.get(p.agent_id, ("", ""))[0], estado=p.estado)
             for p in threads.list_participantes(org_id, record.id)
         ]
         if record.lead_ref_id is not None:
+            extra["opt_out_evento"] = ultimo_evento_out(
+                org_id, threads.get_lead_ref(org_id, record.lead_ref_id), threads, agentes)
             q = qual.obter_qualificacao(org_id, record.lead_ref_id)
             if q is not None:
                 n = len(conformidade.listar_violacoes(org_id, agent_id, thread_id=record.id, limite=1000))

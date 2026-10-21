@@ -10,6 +10,7 @@ import { Pause, Play } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import type { CanalConversa, MensagemThread, Participante, ThreadRole } from "@/api/studio/types-julia";
+import { OptOutBanner } from "@/components/OptOutBanner";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useAlterarParticipante, useCanalConversas, useThreadMensagens } from "@/hooks/studio/useCanalThreads";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -77,6 +78,7 @@ function Thread({ agentKey, conversa }: { agentKey: string; conversa: CanalConve
           </div>
         )}
       </div>
+      <OptOutBanner evento={conversa.opt_out_evento} />
       {erro && <p className="text-sm text-destructive" role="alert" data-testid="conversa-erro">{erro}</p>}
 
       {msgs.showSkeleton ? (

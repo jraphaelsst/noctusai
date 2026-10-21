@@ -42,6 +42,17 @@ class TestChannelListResultado:
         assert item["resultado"]["estagio"] and item["resultado"]["violacoes_count"] >= 0
         assert item["participantes"] == [{"agent_key": "julia", "estado": "ativo"}]
 
+    def test_items_carry_the_leads_latest_opt_out_event_so_the_thread_view_can_banner_it(self, chan):
+        tid = _um_turno(chan)
+        _usuario(chan, "owner")
+        [item] = chan.rt.client.get(LIST).json()["items"]
+        assert item["opt_out_evento"] is None
+        thread = chan.rt.stores.conversations.get(DEFAULT_ORG_ID, tid)
+        ref = chan.threads.get_lead_ref(DEFAULT_ORG_ID, thread.lead_ref_id).ref_externa
+        chan.threads.registrar_opt_out_evento(DEFAULT_ORG_ID, ref, motivo="pediu para parar", origem="operador")
+        [item] = chan.rt.client.get(LIST).json()["items"]
+        assert item["opt_out_evento"]["motivo"] == "pediu para parar" and item["opt_out_evento"]["origem"] == "operador"
+
     def test_user_conversations_keep_both_fields_null(self, chan):
         chan.seed_agent()
         _usuario(chan, "owner")
