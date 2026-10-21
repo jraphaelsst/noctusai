@@ -61,6 +61,8 @@ class FakeDocker:
         self.fetch_rc = fetch_rc            # non-zero => git fetch fails (unverifiable)
         self.prod_ref_rc = prod_ref_rc      # non-zero => origin/prod unresolvable (unverifiable)
         self.smoke_rc = smoke_rc            # non-zero => in-image boot smoke fails
+        self.log_text = "boot line\n"
+        self.head_rc = 0                    # non-zero => VPS `git rev-parse HEAD` fails
         self.calls: list[list[str]] = []
 
     def _id_of(self, ref_or_id):
@@ -84,6 +86,8 @@ class FakeDocker:
             sub = cmd[3] if len(cmd) > 3 else ""
             if sub == "fetch":
                 return (self.fetch_rc, "", "" if self.fetch_rc == 0 else "network unreachable")
+            if sub == "rev-parse" and cmd[4:5] == ["HEAD"]:
+                return (self.head_rc, "" if self.head_rc else "VPSHEAD111\n", "" if self.head_rc == 0 else "not a repo")
             if sub == "rev-parse":
                 return (self.prod_ref_rc, "" if self.prod_ref_rc else "PRODSHA123\n",
                         "" if self.prod_ref_rc == 0 else "unknown revision")
@@ -95,6 +99,8 @@ class FakeDocker:
                 return (0, "IMAGE BOOT SMOKE: ok — app imported, /api/health 200\n", "")
             return (self.smoke_rc, "", "ModuleNotFoundError: No module named 'multipart'\n"
                     "IMAGE BOOT SMOKE: FAILED — the app does not import/construct in this image.")
+        if cmd[:2] == ["docker", "logs"]:  # failed-container log capture
+            return (0, self.log_text, "")
         if cmd[:2] == ["docker", "restart"]:  # tunnel restart
             return (self.tunnel_restart_rc, "", "" if self.tunnel_restart_rc == 0 else "no such container")
         if cmd[:2] == ["docker", "commit"]:  # snapshot: commit container → :previous
@@ -151,6 +157,8 @@ def _run(fake, **kw):
     # returns, but injecting it keeps every pre-existing test from touching
     # the real Supabase catalog / build-scope.txt fallback file.
     kw.setdefault("live_products_fn", lambda: [])
+    # No real local git I/O: default = no deploy/fleet/ drift between VPS HEAD and image.
+    kw.setdefault("local_diff", lambda old, new: (True, [], ""))
     return DI.deploy_image("core", run_remote=fake, sleep=lambda s: None, now=_now, **kw)
 
 
@@ -244,7 +252,7 @@ def test_snapshot_failsafe_refuses_to_deploy():
 
 def test_source_local_skips_pull():
     f = FakeDocker(running="G0", latest="LOCALBUILT", health=("up",))
-    r = _run(f, confirm=True, source="local")
+    r = _run(f, confirm=True, source="local", skip_compose_drift_check=True)
     assert r["status"] == "deployed" and r["source"] == "local"
     assert f.count("pull") == 0 and f.count("up") == 1
 
@@ -407,7 +415,7 @@ def test_ancestry_guard_refuses_fail_closed_when_prod_ref_unresolvable():
 
 def test_skip_ancestry_check_overrides_missing_label():
     f = FakeDocker(running="G0", latest="NEW", health=("up",), revision=None)
-    r = _run(f, confirm=True, skip_ancestry_check=True)
+    r = _run(f, confirm=True, skip_ancestry_check=True, skip_compose_drift_check=True)
     assert r["status"] == "deployed"
     assert "source_revision" not in r
 
@@ -422,7 +430,7 @@ def test_ancestry_guard_skipped_when_source_is_local():
     # source='local' (build-on-VPS) is a deliberate on-box human action —
     # the guard only applies to the risky floating-tag GHCR-pull path.
     f = FakeDocker(running="G0", latest="LOCALBUILT", health=("up",), revision=None)
-    r = _run(f, confirm=True, source="local")
+    r = _run(f, confirm=True, source="local", skip_compose_drift_check=True)
     assert r["status"] == "deployed"
     assert "source_revision" not in r
 
@@ -432,7 +440,7 @@ def test_ancestry_guard_skipped_when_tag_is_pinned_sha():
     # tag itself — no need to consult the OCI label or origin/prod at all.
     f = FakeDocker(running="G0", health=("up",), revision=None)
     f.tags[f"{FakeDocker.IMG}:abc123def456"] = "PINNEDID"
-    r = _run(f, confirm=True, tag="abc123def456")
+    r = _run(f, confirm=True, tag="abc123def456", skip_compose_drift_check=True)
     assert r["status"] == "deployed"
     assert "source_revision" not in r
 
@@ -628,7 +636,7 @@ def test_edge_check_ok_when_hostname_provided_and_reachable():
         "core", run_remote=f, sleep=lambda s: None, now=_now,
         confirm=True, startup_grace=0, poll_interval=5,
         edge_hostname="https://core.noctusai.com.br",
-        http=_fake_http,
+        http=_fake_http, local_diff=lambda o, n: (True, [], ""),
     )
     assert r["status"] == "deployed"
     assert r.get("edge_check") == "edge reachable: HTTP 200"
@@ -647,7 +655,7 @@ def test_edge_check_surfaces_warning_when_unreachable():
         "core", run_remote=f, sleep=lambda s: None, now=_now,
         confirm=True, startup_grace=0, poll_interval=5,
         edge_hostname="https://core.noctusai.com.br",
-        http=_fake_http,
+        http=_fake_http, local_diff=lambda o, n: (True, [], ""),
     )
     assert r["status"] == "deployed"  # still deployed; warning is advisory
     assert "edge_warning" in r
@@ -804,7 +812,8 @@ def test_boot_smoke_not_applicable_without_a_product_backend():
         IMG = "ghcr.io/jraphaelsst/noctus-no-such-backend-svc"
     f = _SvcDocker(running="G0", latest="NEWID", health=("up",))
     r = DI.deploy_image("no-such-backend-svc", run_remote=f, sleep=lambda s: None, now=_now,
-                        confirm=True, startup_grace=0, live_products_fn=lambda: ["no-such-backend-svc"])
+                        confirm=True, startup_grace=0, live_products_fn=lambda: ["no-such-backend-svc"],
+                        local_diff=lambda o, n: (True, [], ""))
     assert r["boot_smoke"]["status"] == "not_applicable"
     assert _smoke_calls(f) == []
 
@@ -916,3 +925,60 @@ def test_compose_up_real_failure_still_rolls_back():
     f = FakeDocker(running="G0", latest="NEWID", up_rc=1)
     r = _run(f, confirm=True)
     assert r["status"] in ("rolled_back", "rollback_failed")
+
+
+# ── compose-drift guard + failed-container logs (2026-10-21) ──
+
+
+def test_compose_drift_refuses_before_swap_and_names_files():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True,
+             local_diff=lambda o, n: (True, ["deploy/fleet/docker-compose.prod.yml"], ""))
+    assert r["status"] == "compose_drift" and r["exit_code"] == 1 and r["ok"] is False
+    assert r["changed_files"] == ["deploy/fleet/docker-compose.prod.yml"]
+    assert "deploy_pull" in r["reason"]
+    assert f.count("up") == 0  # never swapped
+
+
+def test_compose_drift_ok_when_diff_empty_and_when_head_equals_revision():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    assert _run(f, confirm=True)["status"] == "deployed"
+    f2 = FakeDocker(running="G0", latest="NEW", health=("up",))
+    boom = lambda o, n: (_ for _ in ()).throw(AssertionError("diff must not run"))
+    # make HEAD equal the image revision
+    f2.revision = "VPSHEAD111"
+    r = _run(f2, confirm=True, skip_ancestry_check=True, local_diff=boom)
+    assert r["status"] == "deployed"
+
+
+def test_compose_drift_unverified_when_vps_head_unreadable():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    f.head_rc = 1
+    r = _run(f, confirm=True)
+    assert r["status"] == "unverified" and f.count("up") == 0
+
+
+def test_compose_drift_unverified_when_local_diff_cannot_run():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True, local_diff=lambda o, n: (None, [], "unknown sha"))
+    assert r["status"] == "unverified" and "unknown sha" in r["reason"] and f.count("up") == 0
+
+
+def test_skip_compose_drift_check_is_recorded():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True, skip_compose_drift_check=True,
+             local_diff=lambda o, n: (True, ["deploy/fleet/x.yml"], ""))
+    assert r["status"] == "deployed" and r["compose_drift"]["status"] == "skipped"
+
+
+def test_rollback_returns_redacted_truncated_failed_logs_captured_before_recreate():
+    f = FakeDocker(running="G0", latest="BROKEN", health=("down", "up"))
+    f.log_text = "boot\n" + "x" * 900 + "\nkey sk-ant-api03-" + "A" * 40 + "\n"
+    r = _run(f, confirm=True)
+    assert r["status"] == "rolled_back"
+    logs = r["failed_container_logs"]
+    assert len(logs) == 3 and len(logs[1]) == 400
+    assert "A" * 20 not in " ".join(logs)
+    idx_logs = next(i for i, c in enumerate(f.calls) if c[:2] == ["docker", "logs"])
+    idx_up2 = [i for i, c in enumerate(f.calls) if c[:3] == ["docker", "compose", "-f"] and c[4] == "up"][1]
+    assert idx_logs < idx_up2

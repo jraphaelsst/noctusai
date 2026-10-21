@@ -171,3 +171,7 @@ that no entry ends in a bare `**`, which is how the over-broad glob got in.
 trusting any scanner, gate, or CI trigger, answer *what does it look at?* and
 *what does it actually depend on?* — and make the two match. A trigger scoped
 wider than its subject does not fail loudly; it produces confident noise.
+
+## deploy_image: compose-drift precheck + failed-container logs (2026-10-21)
+
+A real release rolled back twice with only `down@0s..down@40s`: the VPS checkout's `deploy/fleet/docker-compose.prod.yml` still declared tmpfs `/run/julia-K` while the new agents image expected `/run/bia-K`, so the recreated container never answered `/api/health`. `deploy_image` now, before the swap, reads the VPS checkout HEAD (read-only `git rev-parse HEAD`) and the incoming image's `org.opencontainers.image.revision`; if they differ and `git diff --name-only <vps_head> <image_rev> -- deploy/fleet/` (computed locally) is non-empty it refuses `status='compose_drift'` naming the files — remediation: `noctus.dev.deploy_pull`, then retry. Unreadable revision/HEAD/diff is `status='unverified'` (fail-closed, container untouched); `skip_compose_drift_check=True` overrides deliberately. On a failed health probe the NEW container's last 80 log lines are captured BEFORE the rollback recreate, redacted via `env_bootstrap.redact_secrets_in_text`, truncated to 400 chars/line, and returned as `failed_container_logs`.

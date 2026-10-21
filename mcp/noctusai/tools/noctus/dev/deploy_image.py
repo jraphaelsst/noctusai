@@ -71,11 +71,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import subprocess
 import time as _time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
+
+from env_bootstrap import redact_secrets_in_text
 
 from . import _catalog_scope_guard
 from . import toolkit_freshness as _toolkit_freshness
@@ -93,13 +96,19 @@ _UA = (
 # curls the in-container /api/health for the active probe); `commit` snapshots
 # the running container into the :previous rollback image (additive, never
 # destructive).
-_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart", "run"})
+_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart", "run", "logs"})
 # `docker compose` sub-actions the tool may run. Excludes down/rm/kill/stop.
 _COMPOSE_ALLOWED = frozenset({"pull", "up"})
 # Read-only git subcommands the PROD-PIN ancestry guard (below) may run on the
 # VPS checkout — never reset/checkout/clean/push. Same allowlist shape as
 # noctus.dev.release's `_git`, scoped to this tool's one read-only use.
 _GIT_ALLOWED = frozenset({"fetch", "rev-parse", "merge-base"})
+# Failed-container log capture (read-only `docker logs --tail`).
+_FAILED_LOG_LINES = 80
+_FAILED_LOG_LINE_MAX = 400
+# Compose/fleet paths whose drift between the VPS checkout and the image revision
+# makes the recreated container fail to boot (2026-10-21 julia-K vs bia-K tmpfs).
+_COMPOSE_DRIFT_PATHS = ("deploy/fleet/",)
 # Asserted-absent by the colocated safety test (defense in depth beyond the
 # allowlists): the tool must never emit any of these, across BOTH the docker
 # and the git command surfaces.
@@ -238,6 +247,58 @@ def _is_product_backend(product: str) -> bool:
     Non-product services (deploy/fleet/services.txt, e.g. `transcriber`) have no
     `products/<slug>/backend/app/main.py` and are not boot-smoked."""
     return (_REPO_ROOT / "products" / product / "backend" / "app" / "main.py").is_file()
+
+
+def _failed_container_logs(runner, container: str) -> list[str]:
+    """Last ~80 lines of the (new, failing) container's logs, each truncated and
+    passed through the toolkit secret redactor. Best-effort: [] on any failure
+    (a missing log must never mask the rollback)."""
+    try:
+        rc, out, err = _docker(runner, "logs", "--tail", str(_FAILED_LOG_LINES), container)
+    except Exception:  # noqa: BLE001 - diagnostics must never break the rollback
+        return []
+    text = (out or "") + (("\n" + err) if err else "")
+    lines = [ln for ln in text.splitlines() if ln.strip()][-_FAILED_LOG_LINES:]
+    return [redact_secrets_in_text(ln[:_FAILED_LOG_LINE_MAX]) for ln in lines]
+
+
+def _local_fleet_diff(old: str, new: str) -> tuple[bool | None, list[str], str]:
+    """Files changed under deploy/fleet/ between two commits, computed in the
+    LOCAL repo (read-only `git diff --name-only`). (None, [], detail) when a
+    sha is unknown locally / git fails — unverifiable, never a guess."""
+    try:
+        p = subprocess.run(["git", "-C", str(_REPO_ROOT), "diff", "--name-only", old, new, "--",
+                            *_COMPOSE_DRIFT_PATHS], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, [], f"local git diff could not run: {exc}"
+    if p.returncode != 0:
+        return None, [], f"local git diff {old[:12]}..{new[:12]} failed: {p.stderr.strip()}"
+    return True, [ln for ln in p.stdout.splitlines() if ln.strip()], ""
+
+
+def _compose_drift_check(runner, repo_dir: str, image_revision: str | None,
+                         local_diff: Callable[[str, str], tuple[bool | None, list[str], str]]
+                         ) -> tuple[str, str, list[str]]:
+    """('ok'|'drift'|'unverified', detail, changed_files). The VPS checkout's
+    compose files are what `compose up` recreates from; if the checkout lags the
+    incoming image and deploy/fleet/ changed between them, the new container can
+    boot against a stale compose (2026-10-21) — refuse before the swap."""
+    if not image_revision:
+        return "unverified", (f"incoming image carries no '{_REVISION_LABEL}' label, so the VPS "
+                              "checkout cannot be compared to it"), []
+    rc, out, err = _git(runner, repo_dir, "rev-parse", "HEAD")
+    vps_head = out.strip()
+    if rc != 0 or not vps_head:
+        return "unverified", f"cannot read the VPS checkout HEAD at {repo_dir}: {err.strip() or out.strip()}", []
+    if vps_head == image_revision:
+        return "ok", "VPS checkout HEAD == image revision", []
+    ok, files, detail = local_diff(vps_head, image_revision)
+    if ok is None:
+        return "unverified", detail, []
+    if files:
+        return "drift", (f"VPS checkout {vps_head[:12]} differs from image revision "
+                         f"{image_revision[:12]} in {', '.join(files)}"), files
+    return "ok", "no deploy/fleet/ changes between VPS checkout and image revision", []
 
 
 def _boot_smoke(runner, product: str, image_id: str) -> tuple[str, str]:
@@ -414,6 +475,8 @@ def deploy_image(
     http: Callable | None = None,
     skip_ancestry_check: bool = False,
     skip_boot_smoke: bool = False,
+    skip_compose_drift_check: bool = False,
+    local_diff: Callable[[str, str], tuple[bool | None, list[str], str]] | None = None,
     allow_inactive: bool = False,
     live_products_fn: Callable[[], list[str]] | None = None,
 ) -> dict[str, Any]:
@@ -547,6 +610,8 @@ def deploy_image(
         re-probe, and VERIFY the container is actually back on the snapshot.
         Reports rollback_failed (loud, with a manual-recovery command) if not —
         never a false 'rolled_back'."""
+        # Capture the FAILED container's logs BEFORE the recreate destroys them.
+        failed_logs = _failed_container_logs(runner, container)
         _docker(runner, "tag", prev, f"{image}:{tag}")  # retag :latest from the committed snapshot
         _compose(runner, cf, "up", "-d", "--force-recreate", product)
         rb_health, rb_states = _poll_health(runner, napper, container, probe_timeout,
@@ -562,6 +627,7 @@ def deploy_image(
             **base, "status": "rolled_back" if restored else "rollback_failed",
             "exit_code": 1,  # either way the deploy did NOT land (status distinguishes safe vs broken)
             "new_image_id": new_image_id,
+            "failed_container_logs": failed_logs,
             "rollback_health": rb_health, "rollback_health_states": rb_states,
             "running_after": running_now,
             "reason": (
@@ -655,6 +721,28 @@ def deploy_image(
                         "untouched."
                     )}
         base["source_revision"] = revision
+
+    # ── COMPOSE-DRIFT guard (2026-10-21): the VPS checkout's compose is what
+    #    `up` recreates from; refuse when it lags the incoming image on deploy/fleet/ ──
+    if skip_compose_drift_check:
+        base["compose_drift"] = {"status": "skipped", "reason": "skip_compose_drift_check=True"}
+    else:
+        incoming_rev = base.get("source_revision") or _image_revision(runner, f"{image}:{tag}")
+        d_status, d_detail, d_files = _compose_drift_check(
+            runner, repo_dir, incoming_rev, local_diff or _local_fleet_diff)
+        base["compose_drift"] = {"status": d_status, "detail": d_detail, "changed_files": d_files}
+        if d_status == "drift":
+            return {**base, "ok": False, "status": "compose_drift", "exit_code": 1,
+                    "new_image_id": new_image_id, "changed_files": d_files,
+                    "reason": (f"COMPOSE DRIFT: {d_detail}. The recreated container would boot against "
+                               "a stale compose file. Run noctus.dev.deploy_pull first (fast-forwards "
+                               "the VPS checkout), then retry. Container untouched.")}
+        if d_status == "unverified":
+            return {**base, "ok": False, "status": "unverified", "exit_code": 1,
+                    "new_image_id": new_image_id,
+                    "reason": (f"COMPOSE DRIFT unverifiable: {d_detail} - REFUSING (fail-closed). "
+                               "Run noctus.dev.deploy_pull, or pass skip_compose_drift_check=True "
+                               "to override deliberately. Container untouched.")}
 
     # ── BOOT SMOKE the exact image id about to replace the running container ──
     if skip_boot_smoke:
@@ -839,12 +927,13 @@ def register(server) -> None:
             "/api/health, --network none) — a failure REFUSES (status='error', container "
             "untouched); covers source='local' builds and old pinned tags that never went "
             "through build-and-push's push-time smoke. skip_boot_smoke=True overrides. "
+            "COMPOSE-DRIFT guard (2026-10-21): before the swap, the VPS checkout HEAD is compared with the incoming image revision; if deploy/fleet/ differs between them it REFUSES status='compose_drift' (run noctus.dev.deploy_pull first), unreadable revisions -> 'unverified'; skip_compose_drift_check=True overrides. On rollback the failed container's last 80 log lines (redacted) ride on failed_container_logs. "
             "SWAP-VERIFY (2026-08-13): a healthy probe alone "
             "never proves the swap landed — after a healthy probe this re-inspects the "
             "RUNNING container's own image id + revision label (not the pulled tag) and "
             "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
             "auto-rollback) unless both verifiably match. status: planned | up_to_date | "
-            "deployed | swap_unverified | unverified | rolled_back | refused_catalog_scope | "
+            "deployed | swap_unverified | unverified | rolled_back | compose_drift | refused_catalog_scope | "
             "refused_stale_toolkit | error. "
             "Independent standalone witness for the same ground truth: "
             "noctus.dev.deploy_verify. TOOLKIT-STALENESS GUARD (2026-09-18; R4 "
@@ -873,11 +962,13 @@ def register(server) -> None:
         ssh_host: str = "noctus-vps",
         skip_ancestry_check: bool = False,
         skip_boot_smoke: bool = False,
+        skip_compose_drift_check: bool = False,
         allow_inactive: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
                             skip_ancestry_check=skip_ancestry_check, skip_boot_smoke=skip_boot_smoke,
+                            skip_compose_drift_check=skip_compose_drift_check,
                             allow_inactive=allow_inactive,
                             allow_stale_toolkit=allow_stale_toolkit)
 
