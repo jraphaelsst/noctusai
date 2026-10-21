@@ -83,3 +83,21 @@ describe('boardOps', () => {
     expect(ops.moveCard(undefined, '1', 'y')).toBeUndefined();
   });
 });
+
+describe('boardOps — columns without aggregates', () => {
+  type C = { id: string };
+  const ops = boardOps<C>(() => 0);
+  it('never writes NaN: only aggregates that exist move', () => {
+    const board = [{ etapa: 'a', cards: [{ id: '1' }] }, { etapa: 'b', total: 3, cards: [] }];
+    const moved = ops.moveCard(board, '1', 'b') as any[];
+    expect(moved[0]).not.toHaveProperty('total');
+    expect(moved[0]).not.toHaveProperty('valorTotal');
+    expect(moved[1].total).toBe(4);
+    expect(moved[1]).not.toHaveProperty('valorTotal');
+    const added = ops.addCard(board, 'a', { id: '2' }) as any[];
+    expect(added[0].cards).toHaveLength(2);
+    expect(Object.values(added[0]).some((x) => Number.isNaN(x))).toBe(false);
+    expect((ops.removeCard(board, '1') as any[])[0]).not.toHaveProperty('valorTotal');
+    expect((ops.patchCard(board, '1', { z: 1 }) as any[])[0]).not.toHaveProperty('valorTotal');
+  });
+});

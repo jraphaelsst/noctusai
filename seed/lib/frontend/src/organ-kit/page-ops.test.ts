@@ -48,3 +48,29 @@ describe('pageOps — page-1 assumption + numeric ids', () => {
     expect(pageOps.remove({ items: [{ id: 1 }, { id: 2 }], total: 2 }, 2)).toEqual({ items: [{ id: 1 }], total: 1 });
   });
 });
+
+describe('pageOps.insertSorted + function idKey', () => {
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  it('inserts at the sorted place and moves the total (+1 new, 0 replace)', () => {
+    const page = { data: [{ id: 'a', name: 'A' }, { id: 'c', name: 'C' }], pagination: { total: 2 } };
+    const out = pageOps.insertSorted(page, { id: 'b', name: 'B' }, byName)!;
+    expect(out.data.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+    expect(out.pagination.total).toBe(3);
+    const again = pageOps.insertSorted(out, { id: 'b', name: 'Z' }, byName)!;
+    expect(again.data.map((r) => r.id)).toEqual(['a', 'c', 'b']);
+    expect(again.pagination.total).toBe(3);
+    const flat = pageOps.insertSorted({ items: [], total: 0 }, { id: 'x', name: 'X' }, byName)!;
+    expect(flat).toEqual({ items: [{ id: 'x', name: 'X' }], total: 1 });
+  });
+  it('passes non-pages through', () => {
+    expect(pageOps.insertSorted(undefined, { id: 1 }, () => 0)).toBeUndefined();
+    const arr = [{ id: 1 }];
+    expect(pageOps.insertSorted(arr, { id: 2 }, () => 0)).toBe(arr);
+  });
+  it('accepts a function idKey for nested ids', () => {
+    const page = { items: [{ empresa: { id: 'e1' }, n: 1 }], total: 1 };
+    const key = (r: { empresa: { id: string } }) => r.empresa.id;
+    expect(pageOps.patch(page, 'e1', { n: 2 }, key)!.items[0].n).toBe(2);
+    expect(pageOps.remove(page, 'e1', key)).toEqual({ items: [], total: 0 });
+  });
+});

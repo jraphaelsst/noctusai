@@ -33,6 +33,7 @@
  *
  * KB § PATTERNS/frontend/mutation-cache-writes.md
  */
+import { idOf, type IdKey } from './organ-kit/page-ops';
 import {
   useMutation,
   useQueryClient,
@@ -178,7 +179,7 @@ type AnyRow = Record<string, any>; // eslint-disable-line @typescript-eslint/no-
  * that shares the prefix (settle's refetch converges those).
  *
  * Rows are addressed by `id` unless the trailing `idKey` says otherwise
- * (`hostname`, `slug`, …); ids may be strings or numbers.
+ * (`hostname`, `slug`, … or a function `(row) => row.empresa.id` for nested ids); ids may be strings or numbers.
  */
 export const listOps = {
   append<T>(list: T[] | undefined, item: T): T[] | undefined {
@@ -195,17 +196,17 @@ export const listOps = {
    * (same `idKey`) is replaced in place instead — never duplicated. Pass the SAME comparator the
    * server sorts by (e.g. `(a, b) => a.name.localeCompare(b.name)`); never re-sort in a component.
    */
-  insertSorted<T extends AnyRow>(list: T[] | undefined, item: T, compare: (a: T, b: T) => number, idKey = 'id'): T[] | undefined {
+  insertSorted<T extends AnyRow>(list: T[] | undefined, item: T, compare: (a: T, b: T) => number, idKey: IdKey = 'id'): T[] | undefined {
     if (!Array.isArray(list)) return list;
-    const rest = list.filter((r) => r[idKey] !== item[idKey]);
+    const rest = list.filter((r) => idOf(r, idKey) !== idOf(item, idKey));
     const at = rest.findIndex((r) => compare(item, r) < 0);
     return at === -1 ? [...rest, item] : [...rest.slice(0, at), item, ...rest.slice(at)];
   },
   /** Replace the row with `matchId` (the stand-in or the real id) by `item`; append when absent. */
-  replace<T extends AnyRow>(list: T[] | undefined, matchId: RowId, item: T, where: 'append' | 'prepend' = 'append', idKey = 'id'): T[] | undefined {
+  replace<T extends AnyRow>(list: T[] | undefined, matchId: RowId, item: T, where: 'append' | 'prepend' = 'append', idKey: IdKey = 'id'): T[] | undefined {
     if (!Array.isArray(list)) return list;
     // The server row may already be there (a background refetch won the race) — never duplicate it.
-    const hit = (r: T) => r[idKey] === matchId || r[idKey] === item[idKey];
+    const hit = (r: T) => idOf(r, idKey) === matchId || idOf(r, idKey) === idOf(item, idKey);
     const rest = list.filter((r) => !hit(r));
     const at = list.findIndex(hit);
     if (at === -1) return where === 'prepend' ? [item, ...rest] : [...rest, item];
@@ -213,27 +214,27 @@ export const listOps = {
     out.splice(Math.min(at, out.length), 0, item);
     return out;
   },
-  patch<T extends AnyRow>(list: T[] | undefined, id: RowId, changes: Partial<NoInfer<T>>, idKey = 'id'): T[] | undefined {
+  patch<T extends AnyRow>(list: T[] | undefined, id: RowId, changes: Partial<NoInfer<T>>, idKey: IdKey = 'id'): T[] | undefined {
     if (!Array.isArray(list)) return list;
-    return list.map((r) => (r[idKey] === id ? { ...r, ...changes } : r));
+    return list.map((r) => (idOf(r, idKey) === id ? { ...r, ...changes } : r));
   },
   /**
    * Replace the row `id` by `fn(row)` — for edits `patch` cannot express, chiefly a NESTED edit (a row
    * inside a row): `listOps.update(leads, leadId, (l) => ({ ...l, activities: listOps.prepend(l.activities, a) }))`.
    * Inside an envelope: `listOps.within(old, 'items', (l) => listOps.update(l, id, fn))`. Absent row → unchanged.
    */
-  update<T extends AnyRow>(list: T[] | undefined, id: RowId, fn: (row: T) => T, idKey = 'id'): T[] | undefined {
+  update<T extends AnyRow>(list: T[] | undefined, id: RowId, fn: (row: T) => T, idKey: IdKey = 'id'): T[] | undefined {
     if (!Array.isArray(list)) return list;
-    return list.map((r) => (r[idKey] === id ? fn(r) : r));
+    return list.map((r) => (idOf(r, idKey) === id ? fn(r) : r));
   },
   /** Merge `changes` into a single cached entity (a detail query); non-objects pass through. */
   merge<T extends object>(entity: T | undefined, changes: Partial<NoInfer<T>>): T | undefined {
     if (!entity || typeof entity !== 'object' || Array.isArray(entity)) return entity;
     return { ...entity, ...changes };
   },
-  remove<T extends AnyRow>(list: T[] | undefined, id: RowId, idKey = 'id'): T[] | undefined {
+  remove<T extends AnyRow>(list: T[] | undefined, id: RowId, idKey: IdKey = 'id'): T[] | undefined {
     if (!Array.isArray(list)) return list;
-    return list.filter((r) => r[idKey] !== id);
+    return list.filter((r) => idOf(r, idKey) !== id);
   },
   /**
    * Apply a list edit to the array an envelope keeps under `field` — for responses shaped
@@ -254,7 +255,7 @@ export const listOps = {
 };
 
 /** Paginated-envelope edits (rows + total). One home for every cache edit: import from `cache-writes`. */
-export { pageOps } from './organ-kit/page-ops';
+export { pageOps, type IdKey } from './organ-kit/page-ops';
 /** Infinite-query (`{ pages, pageParams }`) edits. */
 export { infiniteOps } from './organ-kit/infinite-ops';
 /** Row / board edits for list-or-envelope-or-detail caches + the target builders built on them. */

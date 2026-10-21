@@ -85,7 +85,14 @@ export function addTo<TData extends Row, TVars>(
   };
 }
 
-type Column = { etapa: string; total: number; valorTotal: number; cards: Array<{ id: string }> };
+type Column = { etapa: string; total?: number; valorTotal?: number; cards: Array<{ id: string }> };
+
+/** Move a column's aggregates, only those it actually has (a board without `valorTotal` must not grow a NaN). */
+const adj = (col: Column, dTotal: number, dValor: number): Column => ({
+  ...col,
+  ...(typeof col.total === 'number' ? { total: Math.max(0, col.total + dTotal) } : {}),
+  ...(typeof col.valorTotal === 'number' ? { valorTotal: col.valorTotal + dValor } : {}),
+});
 
 /** Board (`PipelineColumn[]`) edits. `valueOf` is the descriptor's `getCardValue`; `idOf` its `getCardId` (default `.id`). */
 export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: TCard) => string = (c) => (c as unknown as Row).id) {
@@ -100,7 +107,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
         const before = col.cards[at];
         const after = { ...before, ...changes };
         const cards = col.cards.map((c, i) => (i === at ? after : c));
-        return { ...col, cards, valorTotal: col.valorTotal + v(after) - v(before) };
+        return { ...adj(col, 0, v(after) - v(before)), cards };
       }) as T;
     },
     removeCard<T>(old: T | undefined, cardId: string): T | undefined {
@@ -108,7 +115,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
       return (old as Column[]).map((col) => {
         const card = col.cards.find((c) => id(c) === cardId);
         if (!card) return col;
-        return { ...col, cards: col.cards.filter((c) => id(c) !== cardId), total: Math.max(0, col.total - 1), valorTotal: col.valorTotal - v(card) };
+        return { ...adj(col, -1, -v(card)), cards: col.cards.filter((c) => id(c) !== cardId) };
       }) as T;
     },
     /** Put `card` on top of the column of stage `etapaId` (no-op when absent or the stage is not on this board). */
@@ -117,7 +124,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
       const cols = old as Column[];
       if (cols.some((c) => c.cards.some((x) => id(x) === id(card))) || !cols.some((c) => c.etapa === etapaId)) return old;
       return cols.map((col) =>
-        col.etapa === etapaId ? { ...col, cards: [card as unknown as Row, ...col.cards], total: col.total + 1, valorTotal: col.valorTotal + v(card) } : col,
+        col.etapa === etapaId ? { ...adj(col, 1, v(card)), cards: [card as unknown as Row, ...col.cards] } : col,
       ) as T;
     },
     /**
@@ -143,8 +150,8 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
         }
         if (!crossing) return { ...col, cards };
         return isFrom
-          ? { ...col, cards, total: Math.max(0, col.total - 1), valorTotal: col.valorTotal - v(card) }
-          : { ...col, cards, total: col.total + 1, valorTotal: col.valorTotal + v(card) };
+          ? { ...adj(col, -1, -v(card)), cards }
+          : { ...adj(col, 1, v(card)), cards };
       }) as T;
     },
   };

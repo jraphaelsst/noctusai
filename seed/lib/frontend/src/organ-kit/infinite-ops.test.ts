@@ -38,3 +38,25 @@ describe('infiniteOps', () => {
     expect(infiniteOps.patch(d, 'zzz', {})).toBe(d);
   });
 });
+
+describe('infiniteOps — totals move on every page that carries one', () => {
+  const pg = (ids: string[], total: number) => ({ items: ids.map((id) => ({ id })), total });
+  it('remove: the page holding the row loses it and ALL pages drop the total by one', () => {
+    const d = inf(pg(['a', 'b'], 5), pg(['c'], 5));
+    const out = infiniteOps.remove(d, 'c')!;
+    expect(out.pages.map((p: any) => p.total)).toEqual([4, 4]);
+    expect((out.pages[1] as any).items).toEqual([]);
+    expect(infiniteOps.remove(d, 'zzz')).toBe(d);
+  });
+  it('prepend: new row on page 1, every page total +1; existing row only replaced', () => {
+    const d = inf(pg(['a'], 2), pg(['b'], 2));
+    const out = infiniteOps.prepend(d, { id: 'n' })!;
+    expect(out.pages.map((p: any) => p.total)).toEqual([3, 3]);
+    expect((out.pages[0] as any).items[0]).toEqual({ id: 'n' });
+    expect(infiniteOps.prepend(d, { id: 'b', x: 1 })!.pages.map((p: any) => p.total)).toEqual([2, 2]);
+  });
+  it('function idKey', () => {
+    const d = inf([{ e: { id: 'a' } }]);
+    expect(infiniteOps.remove(d, 'a', (r: any) => r.e.id)!.pages[0]).toEqual([]);
+  });
+});

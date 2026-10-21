@@ -1,7 +1,7 @@
 ---
 name: noc-cache-writes
 description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", or check_mutation_invalidate_only blocking a commit. Every write puts what it knows into the cache; never invalidate-only.
-version: 1.4.0
+version: 1.5.0
 ---
 
 # noc-cache-writes — a write puts what it knows into the cache
@@ -39,6 +39,7 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 - **Nested edit** (a row inside a row): `listOps.update(list, parentId, (p) => ({ ...p, children: listOps.prepend(p.children, c) }))`; in an envelope wrap with `listOps.within(old, 'items', (l) => listOps.update(l, ...))`. Decision: a one-line `update` beats nested map lambdas; no dedicated "nested" op.
 - **Key-aware writes**: `commit`/`optimistic` receive the concrete `queryKey` as a trailing argument (optional in the type); a `match: 'prefix'` target takes `predicate: (queryKey) => boolean` to touch only the matching filtered lists (account/scope/archived) — never commit a create into lists it does not belong in.
 - `infiniteOps` — `{ pages, pageParams }` caches: `patch/replace/remove` by id across pages, `prepend` into page 1 (replaces if already present), `mapPages`. Pages may be bare arrays or `pageOps` envelopes; `pageParams` untouched.
+- `pageOps.insertSorted(page, row, compare, idKey?)` places a row at its server-sorted spot on an envelope and moves `total` (+1 new, 0 replace). `idKey` is a field name OR a function `(row) => id` (nested ids) in `listOps`/`pageOps`/`infiniteOps`. `infiniteOps.remove/prepend` move `total` on EVERY page that carries one (each page repeats the whole-list total; a list reading it from its last page must not lag). `boardOps` only adjusts `total`/`valorTotal` columns that have them (no NaN).
 - `pageOps.prependNewest` treats an envelope with no `page`/`pagination.page` as page 1.
 
 ## Guardrails

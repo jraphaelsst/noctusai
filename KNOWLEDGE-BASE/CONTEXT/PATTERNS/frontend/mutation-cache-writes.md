@@ -88,6 +88,10 @@ The caller's `onSuccess` and `onError` still run after the cache work, so toasts
 - `listOps` addresses rows by `id` or a trailing `idKey`; ids are `string | number`. `listOps.update(list, id, fn)` is the nested-edit idiom (a row inside a row, with `within` for envelopes); `listOps.insertSorted(list, row, compare)` places a create where the server's sort would.
 - Key-aware writes: `commit`/`optimistic` get the concrete `queryKey` as a trailing argument; a `match: 'prefix'` target accepts `predicate(queryKey)` to edit only the filtered lists the row belongs to (a create committed into every account's list is a cross-account leak).
 - `infiniteOps` (`patch/replace/remove/prepend/mapPages`) edits `useInfiniteQuery` caches `{ pages, pageParams }` without touching `pageParams`.
+- `pageOps.insertSorted(page, row, compare, idKey?)` — sorted insert into an envelope, `total` +1 on a new row, 0 on a replace. Pass the server's comparator; never re-sort in a component.
+- `idKey` is a field name or a function `(row) => id` in `listOps` / `pageOps` / `infiniteOps` (nested ids such as `row.empresa.id`).
+- `infiniteOps.remove` / `prepend` move `total` on every page that carries one (default chosen because each page repeats the WHOLE-list total, so a view reading it from the last or first page would otherwise show it off by one). Bare-array pages carry none.
+- `boardOps` tolerates columns without `total` / `valorTotal`: it adjusts only the aggregates that exist, never writes NaN.
 - `pageOps.prependNewest` assumes page 1 when the envelope carries no page number.
 
 ## What this does NOT fix — the other half of the latency
