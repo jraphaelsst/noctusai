@@ -4178,6 +4178,7 @@ def _m(nn: str) -> str:
         "033": "033_julia_v2_threads.sql", "034": "034_julia_v2_controles.sql",
         "035": "035_julia_v2_threads_constraints.sql", "038": "038_julia_v2_evals_roteiro.sql",
         "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
+        "042": "042_julia_v2_lead_opt_out_eventos.sql",
     }[nn]
 
 
@@ -4566,6 +4567,49 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
                 "VALUES (v_skill, 2, 'quando', 'corpo');"),
         fragments=("uq_skill_versoes_um_rascunho",), what="a second draft of the same library skill",
         rationale="One draft per skill: two would split edits and let a publish ship the wrong body.",
+    ),
+    # ── 042 · a lead that asks to stop is never dropped silently ──
+    _julia_v2_probe(
+        probe_id="lead_opt_out_eventos.origem_vocab", guard_name="lead_opt_out_eventos_origem_check",
+        migrations=(_m("042"),), setup=_JV2_LEAD,
+        attack=(f"INSERT INTO {_JV2}.lead_opt_out_eventos (org_id, lead_ref_id, origem, motivo) "
+                "VALUES (v_org, v_lead, 'noc_probe', 'x');"),
+        fragments=("lead_opt_out_eventos_origem_check",), what="an opt-out event with an unknown origin",
+        rationale="origem (agente | operador | integracao) tells the owner WHO stopped the lead; an unknown value would be an event nobody can attribute.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_opt_out_eventos.motivo_not_blank", guard_name="lead_opt_out_eventos_motivo_check",
+        migrations=(_m("042"),), setup=_JV2_LEAD,
+        attack=(f"INSERT INTO {_JV2}.lead_opt_out_eventos (org_id, lead_ref_id, origem, motivo) "
+                "VALUES (v_org, v_lead, 'agente', '   ');"),
+        fragments=("lead_opt_out_eventos_motivo_check",), what="an opt-out event with a blank reason",
+        rationale="The owner's record says WHY the lead was dropped (owner decision 2026-10-21): a blank reason is the silent disengage this table exists to prevent.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_opt_out_eventos.notificacao_status_vocab", guard_name="lead_opt_out_eventos_notificacao_check",
+        migrations=(_m("042"),), setup=_JV2_LEAD,
+        attack=(f"INSERT INTO {_JV2}.lead_opt_out_eventos (org_id, lead_ref_id, origem, motivo, notificacao_status) "
+                "VALUES (v_org, v_lead, 'agente', 'x', 'talvez');"),
+        fragments=("lead_opt_out_eventos_notificacao_check",), what="an opt-out event with an unknown notification status",
+        rationale="pendente | enviada | falhou is how a failed notice stays visible; an unknown status would hide whether the owner was told.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_opt_out_eventos.mensagem_lead_cap", guard_name="lead_opt_out_eventos_mensagem_check",
+        migrations=(_m("042"),), setup=_JV2_LEAD,
+        attack=(f"INSERT INTO {_JV2}.lead_opt_out_eventos (org_id, lead_ref_id, origem, motivo, mensagem_lead) "
+                "VALUES (v_org, v_lead, 'agente', 'x', repeat('x', 1001));"),
+        fragments=("lead_opt_out_eventos_mensagem_check",), what="an opt-out event quoting more than 1000 characters of the lead",
+        rationale="The lead's own words are personal data: the quote is capped so the table cannot become a message archive.",
+    ),
+    _julia_v2_probe(
+        probe_id="registrar_opt_out.refuses_an_unknown_origin", guard_name="lead_opt_out_eventos_origem_check",
+        migrations=(_m("042"),), setup=_JV2_LEAD,
+        # the schema is quoted so the table-existence preflight (which reads `agents.<name>` as a table) does not
+        # mistake the function for one; the lead_refs / lead_opt_out_eventos tables it needs are checked via setup.
+        attack="PERFORM \"agents\".registrar_opt_out(v_org, 'social-wiring', 'noc-probe-' || v_sufixo, now(), 'telepatia');",
+        fragments=("lead_opt_out_eventos_origem_check",), what="the opt-out RPC called with an unknown origin",
+        rationale="The RPC is the only writer of the event (service role): its origin must hit the same CHECK, "
+                  "so no caller can record an opt-out the owner cannot attribute.",
     ),
 )
 

@@ -11,17 +11,16 @@ Dedup: one notification per (user, credential, expiry date, bucket) —
 buckets 30/14/7/3/1/0 days — so a daily run nags at a rising cadence
 instead of every day or only once.
 
-Seed IO shape for the sink: ``NotificationSink`` Protocol +
-``FakeNotificationSink`` + ``SupabaseNotificationSink`` + factory.
+The sink (Protocol + Fake + Supabase + factory) lives in :mod:`app.notifications`, shared with the lead
+opt-out notice; it is re-exported here for the job and its tests.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Protocol
-
-from noctusai_lib.domain.notifications import write_in_app
+from typing import Any
 
 from app.credentials.service import CredentialError, CredentialService, ExpiryAlert
+from app.notifications import FakeNotificationSink, NotificationSink, SupabaseNotificationSink, get_notification_sink
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +36,7 @@ __all__ = [
 
 _BUCKETS = (0, 1, 3, 7, 14, 30)
 _LINK = "/credenciais"
+_KIND = "agents.credential_expiry"
 
 
 def dedup_key(alert: ExpiryAlert) -> str:
@@ -61,64 +61,6 @@ def _message(alert: ExpiryAlert) -> tuple[str, str]:
     )
 
 
-class NotificationSink(Protocol):
-    def platform_admin_ids(self) -> list[str]: ...
-
-    def already_sent(self, user_id: str, key: str) -> bool: ...
-
-    def send(self, user_id: str, *, title: str, message: str, metadata: dict[str, Any]) -> None: ...
-
-
-class FakeNotificationSink:
-    def __init__(self, admin_ids: list[str] | None = None) -> None:
-        self.admin_ids = list(admin_ids or [])
-        self.sent: list[dict[str, Any]] = []
-
-    def platform_admin_ids(self) -> list[str]:
-        return list(self.admin_ids)
-
-    def already_sent(self, user_id: str, key: str) -> bool:
-        return any(n["user_id"] == user_id and n["metadata"].get("dedup_key") == key for n in self.sent)
-
-    def send(self, user_id: str, *, title: str, message: str, metadata: dict[str, Any]) -> None:
-        self.sent.append({"user_id": user_id, "title": title, "message": message, "metadata": metadata})
-
-
-class SupabaseNotificationSink:
-    """Writes to core's ``public.notifications`` with a public-scoped client."""
-
-    def __init__(self, core_client_factory: Callable[[], Any]) -> None:
-        self._core = core_client_factory
-
-    def platform_admin_ids(self) -> list[str]:
-        resp = self._core().table("noctus_users").select("id").eq("role", "admin").execute()
-        return [str(r["id"]) for r in (resp.data or [])]
-
-    def already_sent(self, user_id: str, key: str) -> bool:
-        resp = (
-            self._core()
-            .table("notifications")
-            .select("id")
-            .eq("user_id", user_id)
-            .contains("metadata", {"dedup_key": key})
-            .limit(1)
-            .execute()
-        )
-        return bool(resp.data)
-
-    def send(self, user_id: str, *, title: str, message: str, metadata: dict[str, Any]) -> None:
-        write_in_app(
-            self._core(), user_ids=[user_id], kind="agents.credential_expiry",
-            title=title, message=message, metadata=metadata,
-        )
-
-
-def get_notification_sink() -> NotificationSink:
-    from app.dependencies import get_core_client
-
-    return SupabaseNotificationSink(get_core_client)
-
-
 def notify_expiry_alerts(alerts: list[ExpiryAlert], sink: NotificationSink) -> int:
     """Returns how many notifications were created."""
     if not alerts:
@@ -136,6 +78,7 @@ def notify_expiry_alerts(alerts: list[ExpiryAlert], sink: NotificationSink) -> i
                 continue
             sink.send(
                 user_id,
+                kind=_KIND,
                 title=title,
                 message=message,
                 metadata={"dedup_key": key, "product": "agents", "link": _LINK, "credential": alert.name},

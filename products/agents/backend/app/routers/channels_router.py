@@ -59,6 +59,7 @@ from app.dependencies import (
     get_conversation_store_dep,
     get_julia_tools_client_dep,
     get_message_store_dep,
+    get_notification_sink_dep,
     get_org_llm_key_resolver_dep,
     get_realtime_bus_dep,
     get_skills_factory_dep,
@@ -263,6 +264,7 @@ async def run_channel_turn(
     ident=Depends(get_identificacao_service_dep),
     sw=Depends(get_julia_tools_client_dep),
     skills_factory=Depends(get_skills_factory_dep),
+    notificacoes=Depends(get_notification_sink_dep),
 ) -> ChannelTurnResponse:
     org_id = ctx.org_id
     agent = _resolve_channel_agent(studio_store, ctx, payload.agent_key)
@@ -273,7 +275,7 @@ async def run_channel_turn(
     svc = turno_mod.ServicosCanal(
         studio_store=studio_store, catalog=catalog, conversations=conv_store, messages=msg_store, threads=threads,
         controles=controles, conformidade=conformidade, qual=qual, padroes=padroes, ident=ident, sw=sw,
-        skills_factory=skills_factory,
+        skills_factory=skills_factory, notificacoes=notificacoes,
     )
 
     existing = conv_store.find_thread(org_id, payload.channel, channel_ref)

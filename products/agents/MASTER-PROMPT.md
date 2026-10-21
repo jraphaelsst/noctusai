@@ -88,6 +88,15 @@ products/agents/backend/app/
   (explicit allowlist `_BUSCA_META`).
   `encerrar` ends the participation: a later re-engagement is ignored (no model call) and the thread reports
   `reengajamento_suprimido`; the lead-level opt-out (`POST /leads/{ref}/opt-out`) does the same for every agent.
+  `encerrar` with motive `lead_pediu_parar` (+ a required `motivo_texto`) IS that lead-level opt-out: a lead who
+  asks to stop is never dropped silently. `app/channels/opt_out.py` (`OptOutService`) records the opt-out, ends every
+  agent's participation and writes an `agents.lead_opt_out_eventos` row (origin agente | operador | integracao, the
+  agent / thread / operator, the reason, the lead's own message, how many participations ended), then notifies the org's
+  owners/admins in-app (`kind agents.lead_opt_out`, deduped on the event; the sink is `app/notifications.py`). The
+  outcome of the notice is on the event (`pendente | enviada | falhou` + the error): a failed notice is a visible row and
+  an error log and never undoes the opt-out. A repeat while the opt-out is in force records no second event and notifies
+  nobody again; an opt-in lifts it. `GET /api/studio/opt-outs` (member) lists the events, newest first; the thread and
+  the opt-in / opt-out responses expose the latest as `opt_out_evento`. Migration 042.
 
 ### Julia v2 — mechanism evals as the publish gate (A-EVAL)
 - `eval_cases` gain `suite` (`mecanismo` | `comportamento`), `k`, `roteiro` (scripted multi-turn lead messages + fixture catalogue) and `asserts` (deterministic, code-checked: ferramentas_incluem/proibidas, estagio_final, criterios_registrados, ofertas_por_lote, sem_violacoes, identificacao_completa, handoff_para, sem_vazamento, skill_aberta_antes_de). Migration 038, service-role only.

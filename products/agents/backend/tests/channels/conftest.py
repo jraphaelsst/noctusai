@@ -38,9 +38,11 @@ from app.dependencies import (
     get_llm_runtime_dep,
     get_org_llm_key_resolver_dep,
     get_product_token_admin_dep,
+    get_notification_sink_dep,
     get_skills_factory_dep,
     get_token_audit_dep,
 )
+from app.notifications import FakeNotificationSink
 from app.qualificacao.ident_store import FakeIdentificacaoStore
 from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
@@ -124,6 +126,8 @@ class ChannelHarness:
         self.qual = QualificacaoService(self.padroes, self.leads, identificacao=self.ident)
         self.retention = FakeChannelRetention(
             rt_.stores.conversations, rt_.stores.messages, self.inbound, self.threads, self.qual)
+        #: the org's owner/admin the lead opt-out notice goes to (the Fake sink; never the real core)
+        self.notificacoes = FakeNotificationSink(org_admins={rt_.org_id: [str(UUID(int=0xA11CE))]})
         self.sw = FakeSocialWiringClient()
         self.sw.julia_token_orgs.add(rt_.org_id)
         self.skills_factory: Any = None
@@ -226,6 +230,7 @@ def chan(rt):
         get_identificacao_service_dep: lambda: h.ident,
         get_julia_tools_client_dep: lambda: h.sw,
         get_skills_factory_dep: lambda: h.skills_factory,
+        get_notification_sink_dep: lambda: h.notificacoes,
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,
         get_token_audit_dep: lambda: h.audit,

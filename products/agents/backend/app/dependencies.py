@@ -480,6 +480,14 @@ def get_thread_store_dep():
     return get_thread_store(settings)
 
 
+def get_notification_sink_dep():
+    """The in-app notification sink (core's ``public.notifications``). A seam, so a test overrides it with the
+    Fake -- never patches it."""
+    from app.notifications import get_notification_sink
+
+    return get_notification_sink()
+
+
 def get_conformidade_store_dep():
     """Conformance rules/violations, leak fingerprints and the per-agent abuse limits (migration 037)."""
     from app.stores.conformidade import get_conformidade_store

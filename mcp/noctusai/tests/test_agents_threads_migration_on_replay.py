@@ -212,12 +212,13 @@ END $t$;"""),
         "a hand-off naming two targets")),
     _step("opt_out_ends_every_agents_participation_and_is_idempotent", f"""
 DO $t$ DECLARE n int; BEGIN
-  n := agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now());
+  -- 042: the RPC returns JSONB (encontrado, participantes_encerrados, evento_id, evento_novo); the 4-arg call shape is kept
+  n := (agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now())->>'participantes_encerrados')::int;
   IF n <> 2 THEN RAISE EXCEPTION 'ASSERT opt-out should end both active threads, moved %', n; END IF;
   IF EXISTS (SELECT 1 FROM agents.thread_participantes WHERE thread_id IN ('{_C1}', '{_C2}') AND estado <> 'encerrado') THEN RAISE EXCEPTION 'ASSERT every participant must be encerrado'; END IF;
   IF (SELECT count(*) FROM agents.thread_participante_eventos WHERE motivo = 'opt_out') <> 2 THEN RAISE EXCEPTION 'ASSERT one opt_out event per move'; END IF;
-  IF agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now()) <> 0 THEN RAISE EXCEPTION 'ASSERT a second opt-out moves nobody'; END IF;
-  IF agents.registrar_opt_out('{_A}', 'social-wiring', 'nunca-existiu', now()) <> -1 THEN RAISE EXCEPTION 'ASSERT unknown lead is -1'; END IF;
+  IF (agents.registrar_opt_out('{_A}', 'social-wiring', 'contato-1', now())->>'participantes_encerrados')::int <> 0 THEN RAISE EXCEPTION 'ASSERT a second opt-out moves nobody'; END IF;
+  IF (agents.registrar_opt_out('{_A}', 'social-wiring', 'nunca-existiu', now())->>'encontrado')::boolean THEN RAISE EXCEPTION 'ASSERT unknown lead is not found'; END IF;
   IF (SELECT opt_out_em IS NULL FROM agents.lead_refs WHERE ref_externa = 'contato-1') THEN RAISE EXCEPTION 'ASSERT opt_out_em stamped'; END IF;
   UPDATE agents.thread_participantes SET estado = 'ativo', saiu_em = NULL WHERE thread_id IN ('{_C1}', '{_C2}');
 END $t$;"""

@@ -15,14 +15,17 @@ Two audiences, one service layer (:mod:`app.channels.thread_service`,
   * ``GET    /api/channels/agents/{agent_key}/controle`` (``agents:channel-status``) — the agent's
     mode + the drain progress (read-only for SW: SW never decides the mode);
   * ``DELETE /api/channels/leads/{ref}`` (``agents:channel-turn``) — LGPD delete-by-lead across
-    every agent (§6.4), idempotent.
+    every agent (§6.4), idempotent;
+  * ``POST   /api/channels/leads/{ref}/opt-out`` (``agents:channel-turn``) — the lead asked to stop: the
+    lead-level opt-out + its event (who / why / what the lead said) + the owner's in-app notice.
 
 * **Agents Studio** (the signed-in user's JWT):
 
   * ``GET /api/studio/agents/{agent_key}/controle`` (member) and ``PUT`` (admin) — the
     ligado / drenando / desligado switch + the drain idle days;
   * ``PATCH /api/studio/threads/{thread_id}/participantes/{agent_key}`` (admin) — Studio's
-    per-thread pause / resume.
+    per-thread pause / resume;
+  * ``GET /api/studio/opt-outs`` (member) — the org's opt-out events, newest first.
 
 The TURN endpoint (``POST /api/channels/turns``) lives in ``channels_router`` and calls
 :func:`app.channels.controles.aplicar_controles` under the turn lock — the controls are decided there,
@@ -38,6 +41,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from app.channels.opt_out import OptOutService
 from app.channels.retention import ChannelRetention
 from app.channels.thread_service import (
     IdempotencyConflict,
@@ -50,6 +54,7 @@ from app.channels.thread_service import (
 )
 from app.config import settings
 from app.dependencies import (
+    get_notification_sink_dep,
     get_thread_store_dep,
     get_channel_inbound_store_dep,
     get_channel_retention_dep,
@@ -75,6 +80,8 @@ from app.schemas.channel_threads import (
     LeadConsentOut,
     MensagemThreadOut,
     OptInRequest,
+    OptOutEventoOut,
+    OptOutEventosPage,
     OptOutOut,
     OptOutRequest,
     ParticipanteEstadoRequest,
@@ -216,6 +223,7 @@ def _thread_out(
         opt_in_em=lead.opt_in_em if lead else None,
         opt_in_origem=lead.opt_in_origem if lead else None,
         opt_out_em=lead.opt_out_em if lead else None,
+        opt_out_evento=_ultimo_evento_out(org_id, lead, threads, agentes),
         reengajamento_suprimido=motivo is not None,
         reengajamento_suprimido_motivo=motivo,
         ultimo_handoff=_handoff_out(ultimo, agentes, lead.ref_externa if lead else None) if ultimo else None,
@@ -582,10 +590,32 @@ async def accept_handoff(
 # ── consent (WhatsApp Business messaging policy) ────────────────────────────
 
 
-def _consent_out(lead: Any, **extra: Any) -> dict:
+def _evento_out(org_id: UUID, ev: Any, threads: Any, agentes: dict, lead: Any = None) -> OptOutEventoOut:
+    """The API shape of one opt-out event (the lead's name / phone from its ``lead_ref`` contact)."""
+    lead = lead if lead is not None else threads.get_lead_ref(org_id, ev.lead_ref_id)
+    contato = (lead.contato or {}) if lead is not None else {}
+    key, nome = agentes.get(ev.agent_id, (None, None)) if ev.agent_id else (None, None)
+    return OptOutEventoOut(
+        id=ev.id, lead_ref=lead.ref_externa if lead is not None else None, lead_nome=contato.get("nome"),
+        lead_telefone=contato.get("telefone_e164"), thread_id=ev.thread_id, agent_id=ev.agent_id, agent_key=key,
+        agent_nome=nome, ator_user_id=ev.ator_user_id, origem=ev.origem, motivo=ev.motivo,
+        mensagem_lead=ev.mensagem_lead, em=ev.em, participantes_encerrados=ev.participantes_encerrados,
+        notificacao_status=ev.notificacao_status, notificacao_erro=ev.notificacao_erro,
+        notificado_em=ev.notificado_em,
+    )
+
+
+def _ultimo_evento_out(org_id: UUID, lead: Any, threads: Any, agentes: dict) -> OptOutEventoOut | None:
+    if lead is None:
+        return None
+    ev = threads.ultimo_opt_out_evento(org_id, lead.id)
+    return _evento_out(org_id, ev, threads, agentes, lead) if ev is not None else None
+
+
+def _consent_out(lead: Any, evento: OptOutEventoOut | None = None, **extra: Any) -> dict:
     return dict(
         lead_ref=lead.ref_externa, opt_in_em=lead.opt_in_em, opt_in_origem=lead.opt_in_origem,
-        opt_out_em=lead.opt_out_em, opt_out_ativo=lead.opt_out_ativo, **extra,
+        opt_out_em=lead.opt_out_em, opt_out_ativo=lead.opt_out_ativo, opt_out_evento=evento, **extra,
     )
 
 
@@ -595,11 +625,13 @@ async def lead_opt_in(
     payload: OptInRequest,
     ctx: AuthContext = Depends(require_channel_turn),
     threads=Depends(get_thread_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
 ) -> LeadConsentOut:
     """Record how and when the lead consented to be contacted. A LATER opt-in lifts an earlier opt-out."""
     _valida_ref(ref)
     lead = threads.registrar_opt_in(ctx.org_id, ref, origem=payload.origem, em=payload.em)
-    return LeadConsentOut(**_consent_out(lead))
+    evento = _ultimo_evento_out(ctx.org_id, lead, threads, mapa_agentes(studio_store, ctx.org_id))
+    return LeadConsentOut(**_consent_out(lead, evento))
 
 
 @router.post("/api/channels/leads/{ref}/opt-out", response_model=OptOutOut)
@@ -608,15 +640,47 @@ async def lead_opt_out(
     payload: OptOutRequest,
     ctx: AuthContext = Depends(require_channel_turn),
     threads=Depends(get_thread_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+    sink=Depends(get_notification_sink_dep),
 ) -> OptOutOut:
     """The lead asked to stop ("parar"): every agent's participation in every thread of the lead ends
-    (``encerrado``, motivo ``opt_out``) and SW must suppress follow-ups. The lead is registered even when
-    it has no thread yet, so a future thread respects the opt-out. Idempotent."""
+    (``encerrado``, motivo ``opt_out``), SW must suppress follow-ups, and the owner is TOLD: the event records who
+    / why / what the lead said, and the org's owners/admins get an in-app notice (its outcome is on the event --
+    a failed notice never undoes the opt-out). The lead is registered even when it has no thread yet, so a future
+    thread respects the opt-out. Idempotent: a repeat while the opt-out is in force records no second event and
+    notifies nobody again."""
     _valida_ref(ref)
-    threads.upsert_lead_ref(ctx.org_id, ref)
-    encerrados = threads.registrar_opt_out(ctx.org_id, ref, em=payload.em)
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    service = OptOutService(threads, sink, agentes=lambda _org: agentes)
+    res = service.registrar(
+        ctx.org_id, ref, origem=payload.origem, motivo=payload.motivo, mensagem_lead=payload.mensagem_lead,
+        agent_id=ctx.principal_agent_id if payload.origem == "agente" else None,
+        ator_user_id=payload.ator_user_id, em=payload.em,
+    )
     lead = threads.get_lead_ref_by_externa(ctx.org_id, ref)
-    return OptOutOut(**_consent_out(lead, participantes_encerrados=max(encerrados, 0)))
+    evento = _evento_out(ctx.org_id, res.evento, threads, agentes, lead) if res.evento is not None else None
+    return OptOutOut(**_consent_out(
+        lead, evento, participantes_encerrados=res.participantes_encerrados,
+        evento_id=res.evento.id if res.evento is not None else None))
+
+
+@router.get("/api/studio/opt-outs", response_model=OptOutEventosPage)
+async def list_opt_outs(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+    ctx: AuthContext = Depends(require_member),
+    studio_store=Depends(get_studio_definition_store_dep),
+    threads=Depends(get_thread_store_dep),
+) -> OptOutEventosPage:
+    """Every opt-out of the org, newest first, with who / why / what the lead said and whether the owner was
+    notified. Org member read (the signed-in user's JWT). Lives under ``/api/studio`` -- every ``/api/channels``
+    route is token-only and refuses a human session (``test_scope_isolation``)."""
+    try:
+        rows, proximo = threads.listar_opt_out_eventos(ctx.org_id, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise _err(422, "invalid_cursor", "Cursor inválido.") from exc
+    agentes = mapa_agentes(studio_store, ctx.org_id)
+    return OptOutEventosPage(items=[_evento_out(ctx.org_id, e, threads, agentes) for e in rows], next_cursor=proximo)
 
 
 def _valida_ref(ref: str) -> None:

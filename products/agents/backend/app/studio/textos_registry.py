@@ -118,7 +118,7 @@ CODIGOS_RECUSA: tuple[str, ...] = (
     "imovel_ja_oferecido", "imovel_nao_oferecido",
     "estagio_nao_conclusivo", "nao_pode_ofertar", "limite_ofertas", "sem_codigo_campanha",
     "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel",
-    "credito_inativo", "limite_recusas", "indisponivel",
+    "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
 )
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
@@ -160,6 +160,7 @@ TEXTOS.update({
     "ferramenta.resultado.desconhecida": _canal("ferramenta"),
     "ferramenta.resultado.handoff": _canal("ferramenta"),
     "ferramenta.resultado.encerrado": _canal("ferramenta"),
+    "ferramenta.resultado.encerrado_opt_out": _canal("ferramenta"),
     "ferramenta.resultado.concluido": _canal("ferramenta"),
     "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
     "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score"),

@@ -276,7 +276,9 @@ class CaptacaoActionOut(_ActionOut):
 
 class EncerrarActionOut(_ActionOut):
     type: Literal["encerrar"]
-    motivo: Literal["lead_encerrou", "sem_interesse", "invalido", "outro"]
+    motivo: Literal["lead_encerrou", "sem_interesse", "invalido", "outro", "lead_pediu_parar"]
+    #: The lead asked to stop: a lead-level opt-out was recorded (every agent stops, the owner was notified).
+    lead_opt_out: bool = False
 
 
 class ConsentimentoCreditoActionOut(_ActionOut):

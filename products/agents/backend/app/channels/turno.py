@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from app.channels import conformidade as conf
 from app.channels.contexto import Dossie, render_contexto_system
+from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
     JuliaTurno,
     SkillFonte,
@@ -99,6 +100,8 @@ class ServicosCanal:
     #: ``(definitions_store, definition_org, definition_agent_id, version_id) -> SkillFonte``; ``None`` = the
     #: version's own skills. The shared library (A-SKILLS) plugs in here.
     skills_factory: Any | None = None
+    #: The notification seam (``app.notifications.NotificationSink``) the lead opt-out notice goes through.
+    notificacoes: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -328,7 +331,9 @@ async def executar(
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
         threads=svc.threads, skills=skills, sw=sw, ident=svc.ident, handoff_destino=HandoffDestino.dono_da_org(),
         limites=limites, mensagens_lead=mensagens_lead, sinais=sinais, escopo=prep.escopo, estado_sw=estado_sw,
-        ferramentas_sw=ferramentas_sw,
+        ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead),
+        opt_out=OptOutService(
+            svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
     )
     estado0 = await asyncio.to_thread(svc.qual.avaliar, org_id, lead_ref_id, padrao.id, prep.escopo, sinais)
 

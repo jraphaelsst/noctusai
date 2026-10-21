@@ -22,6 +22,8 @@ __all__ = [
     "HandoffOut",
     "LeadConsentOut",
     "OptInRequest",
+    "OptOutEventoOut",
+    "OptOutEventosPage",
     "OptOutOut",
     "OptOutRequest",
     "MensagemThreadOut",
@@ -85,6 +87,43 @@ class OptInRequest(StrictHttpModel):
 
 class OptOutRequest(StrictHttpModel):
     em: datetime | None = None
+    #: Who is recording it. social-wiring leaves the default; an operator action says ``operador`` (+ ``ator_user_id``).
+    origem: Literal["agente", "operador", "integracao"] = "integracao"
+    #: Why, in the actor's words (capped 500). Blank = recorded as ``nao_informado``.
+    motivo: str | None = Field(default=None, max_length=500)
+    #: The lead's own message that triggered it (capped 1000).
+    mensagem_lead: str | None = Field(default=None, max_length=1000)
+    ator_user_id: UUID | None = None
+
+
+class OptOutEventoOut(BaseModel):
+    """One opt-out that took effect: who, why, what the lead said, and whether the owner was told."""
+
+    id: UUID
+    lead_ref: str | None
+    lead_nome: str | None
+    lead_telefone: str | None
+    thread_id: UUID | None
+    agent_id: UUID | None
+    agent_key: str | None
+    agent_nome: str | None
+    ator_user_id: UUID | None
+    origem: Literal["agente", "operador", "integracao"]
+    #: ``nao_informado`` when nobody gave a reason.
+    motivo: str
+    mensagem_lead: str | None
+    em: datetime
+    participantes_encerrados: int
+    notificacao_status: Literal["pendente", "enviada", "falhou"]
+    notificacao_erro: str | None
+    notificado_em: datetime | None
+
+
+class OptOutEventosPage(BaseModel):
+    """``GET /api/channels/opt-outs``: newest first; pass ``next_cursor`` back as ``cursor`` for the next page."""
+
+    items: list[OptOutEventoOut]
+    next_cursor: str | None
 
 
 class LeadConsentOut(BaseModel):
@@ -94,11 +133,15 @@ class LeadConsentOut(BaseModel):
     opt_out_em: datetime | None
     #: The lead asked to stop and has not opted in again since: SW sends nothing.
     opt_out_ativo: bool
+    #: The latest recorded opt-out (who / why / what the lead said / notification state); ``None`` = none yet.
+    opt_out_evento: OptOutEventoOut | None = None
 
 
 class OptOutOut(LeadConsentOut):
     #: How many agent participations the opt-out ended (every thread of the lead, every agent).
     participantes_encerrados: int
+    #: The event this call recorded -- or the one already in force (an idempotent repeat records no second).
+    evento_id: UUID | None = None
 
 
 class ThreadOut(BaseModel):
@@ -116,6 +159,7 @@ class ThreadOut(BaseModel):
     opt_in_em: datetime | None = None
     opt_in_origem: str | None = None
     opt_out_em: datetime | None = None
+    opt_out_evento: OptOutEventoOut | None = None
     #: SW must NOT send scheduled follow-ups: the lead opted out, or the token's agent is not an active
     #: participant (paused -- unless the timed pause ran out --, ended, concluded or transferred).
     reengajamento_suprimido: bool = False

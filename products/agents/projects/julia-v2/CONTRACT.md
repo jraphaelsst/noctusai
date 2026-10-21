@@ -388,7 +388,7 @@ agents.lead_qualificacao_estado    (lead_ref_id PK, org_id, versao_id, valores J
 | `registrar_intencao_visita` | `{codigo, preferencia_horario?: texto ≤120}` | records `quer_visitar`; emits action `intencao_visita`; **no scheduling** | `pedido_visita` |
 | `concluir_qualificacao` | `{}` | allowed only if the current stage is `conclusivo`; sets participant `concluido`; emits action `lead_pronto{estagio, score, valores, imoveis_gostou, intencoes_visita}` | `qualificar_lead` |
 | `handoff` | `{motivo_codigo: enum, motivo}` | as today + sets participant `pausado`/`transferido` server-side | — |
-| `encerrar` | as today | participant `encerrado` | — |
+| `encerrar` | `{motivo: lead_encerrou \| sem_interesse \| invalido \| outro \| lead_pediu_parar, motivo_texto?}` — `motivo_texto` (≤280) is required for `lead_pediu_parar` | participant `encerrado`; `lead_pediu_parar` ALSO records a lead-level opt-out (every agent stops) + an `agents.lead_opt_out_eventos` row (who / why / the lead's words) + an in-app notice to the org's owners/admins (042); emits `{type: encerrar, motivo, lead_opt_out: true}` | — |
 | `captacao`, `consentimento_credito` | as today | unchanged semantics | — |
 
 The labels and descriptions for each enum value come from DB rows. The enums themselves stay in code.

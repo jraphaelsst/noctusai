@@ -687,12 +687,18 @@
       },
       "EncerrarActionOut": {
         "properties": {
+          "lead_opt_out": {
+            "default": false,
+            "title": "Lead Opt Out",
+            "type": "boolean"
+          },
           "motivo": {
             "enum": [
               "lead_encerrou",
               "sem_interesse",
               "invalido",
-              "outro"
+              "outro",
+              "lead_pediu_parar"
             ],
             "title": "Motivo",
             "type": "string"
@@ -1252,6 +1258,536 @@
       "encerrado"
     ],
     "title": "ContextoEstado",
+    "type": "object"
+  },
+  "OptOutEventoOut": {
+    "description": "One opt-out that took effect: who, why, what the lead said, and whether the owner was told.",
+    "properties": {
+      "agent_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Agent Id"
+      },
+      "agent_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Agent Key"
+      },
+      "agent_nome": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Agent Nome"
+      },
+      "ator_user_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Ator User Id"
+      },
+      "em": {
+        "format": "date-time",
+        "title": "Em",
+        "type": "string"
+      },
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "lead_nome": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Lead Nome"
+      },
+      "lead_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Lead Ref"
+      },
+      "lead_telefone": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Lead Telefone"
+      },
+      "mensagem_lead": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Mensagem Lead"
+      },
+      "motivo": {
+        "title": "Motivo",
+        "type": "string"
+      },
+      "notificacao_erro": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Notificacao Erro"
+      },
+      "notificacao_status": {
+        "enum": [
+          "pendente",
+          "enviada",
+          "falhou"
+        ],
+        "title": "Notificacao Status",
+        "type": "string"
+      },
+      "notificado_em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Notificado Em"
+      },
+      "origem": {
+        "enum": [
+          "agente",
+          "operador",
+          "integracao"
+        ],
+        "title": "Origem",
+        "type": "string"
+      },
+      "participantes_encerrados": {
+        "title": "Participantes Encerrados",
+        "type": "integer"
+      },
+      "thread_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Thread Id"
+      }
+    },
+    "required": [
+      "id",
+      "lead_ref",
+      "lead_nome",
+      "lead_telefone",
+      "thread_id",
+      "agent_id",
+      "agent_key",
+      "agent_nome",
+      "ator_user_id",
+      "origem",
+      "motivo",
+      "mensagem_lead",
+      "em",
+      "participantes_encerrados",
+      "notificacao_status",
+      "notificacao_erro",
+      "notificado_em"
+    ],
+    "title": "OptOutEventoOut",
+    "type": "object"
+  },
+  "OptOutOut": {
+    "$defs": {
+      "OptOutEventoOut": {
+        "description": "One opt-out that took effect: who, why, what the lead said, and whether the owner was told.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "agent_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Key"
+          },
+          "agent_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Nome"
+          },
+          "ator_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ator User Id"
+          },
+          "em": {
+            "format": "date-time",
+            "title": "Em",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lead_nome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Nome"
+          },
+          "lead_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Ref"
+          },
+          "lead_telefone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Telefone"
+          },
+          "mensagem_lead": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mensagem Lead"
+          },
+          "motivo": {
+            "title": "Motivo",
+            "type": "string"
+          },
+          "notificacao_erro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificacao Erro"
+          },
+          "notificacao_status": {
+            "enum": [
+              "pendente",
+              "enviada",
+              "falhou"
+            ],
+            "title": "Notificacao Status",
+            "type": "string"
+          },
+          "notificado_em": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notificado Em"
+          },
+          "origem": {
+            "enum": [
+              "agente",
+              "operador",
+              "integracao"
+            ],
+            "title": "Origem",
+            "type": "string"
+          },
+          "participantes_encerrados": {
+            "title": "Participantes Encerrados",
+            "type": "integer"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          }
+        },
+        "required": [
+          "id",
+          "lead_ref",
+          "lead_nome",
+          "lead_telefone",
+          "thread_id",
+          "agent_id",
+          "agent_key",
+          "agent_nome",
+          "ator_user_id",
+          "origem",
+          "motivo",
+          "mensagem_lead",
+          "em",
+          "participantes_encerrados",
+          "notificacao_status",
+          "notificacao_erro",
+          "notificado_em"
+        ],
+        "title": "OptOutEventoOut",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "evento_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Evento Id"
+      },
+      "lead_ref": {
+        "title": "Lead Ref",
+        "type": "string"
+      },
+      "opt_in_em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt In Em"
+      },
+      "opt_in_origem": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt In Origem"
+      },
+      "opt_out_ativo": {
+        "title": "Opt Out Ativo",
+        "type": "boolean"
+      },
+      "opt_out_em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Opt Out Em"
+      },
+      "opt_out_evento": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/OptOutEventoOut"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "participantes_encerrados": {
+        "title": "Participantes Encerrados",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "lead_ref",
+      "opt_in_em",
+      "opt_in_origem",
+      "opt_out_em",
+      "opt_out_ativo",
+      "participantes_encerrados"
+    ],
+    "title": "OptOutOut",
+    "type": "object"
+  },
+  "OptOutRequest": {
+    "additionalProperties": false,
+    "properties": {
+      "ator_user_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ator User Id"
+      },
+      "em": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Em"
+      },
+      "mensagem_lead": {
+        "anyOf": [
+          {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Mensagem Lead"
+      },
+      "motivo": {
+        "anyOf": [
+          {
+            "maxLength": 500,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Motivo"
+      },
+      "origem": {
+        "default": "integracao",
+        "enum": [
+          "agente",
+          "operador",
+          "integracao"
+        ],
+        "title": "Origem",
+        "type": "string"
+      }
+    },
+    "title": "OptOutRequest",
     "type": "object"
   },
   "versao": "channels.v2"

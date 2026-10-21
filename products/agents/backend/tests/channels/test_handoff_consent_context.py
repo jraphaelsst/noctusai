@@ -336,11 +336,22 @@ def test_real_handoff_whose_giver_moved_surfaces_the_rolled_back_conflict():
     assert not isinstance(exc.value, OutroAgenteAtivo)
 
 
+def _opt_out_evento_row(org, lead_id) -> dict:
+    return {"id": str(uuid4()), "org_id": str(org), "lead_ref_id": str(lead_id), "em": "2026-10-21T10:00:00+00:00",
+            "origem": "integracao", "agent_id": None, "thread_id": None, "ator_user_id": None, "motivo": "nao_informado",
+            "mensagem_lead": None, "participantes_encerrados": 3, "notificacao_status": "pendente",
+            "notificacao_erro": None, "notificado_em": None, "created_at": "2026-10-21T10:00:00+00:00"}
+
+
 def test_real_opt_out_is_one_rpc_and_opt_in_a_scoped_patch():
     org = uuid4()
     lead = {"id": str(uuid4()), "org_id": str(org), "produto": "social-wiring", "ref_externa": "c1", "crm_lead_id": None,
             "contato": None, "created_at": "2026-10-19T00:00:00+00:00", "updated_at": "2026-10-19T00:00:00+00:00"}
-    client = ScriptedClient(SimpleNamespace(data=3), SimpleNamespace(data=[lead]), SimpleNamespace(data=[{**lead, "opt_in_origem": "lead_iniciou"}]))
+    evento = _opt_out_evento_row(org, UUID(lead["id"]))
+    rpc_result = {"encontrado": True, "participantes_encerrados": 3, "evento_id": evento["id"], "evento_novo": True}
+    client = ScriptedClient(
+        SimpleNamespace(data=rpc_result), SimpleNamespace(data=[evento]), SimpleNamespace(data=[lead]),
+        SimpleNamespace(data=[{**lead, "opt_in_origem": "lead_iniciou"}]))
     store = SupabaseThreadStore(client)
     assert store.registrar_opt_out(org, "c1") == 3 and client.log[0][0].startswith("rpc:registrar_opt_out")
     assert store.registrar_opt_in(org, "c1", origem="lead_iniciou").opt_in_origem == "lead_iniciou"

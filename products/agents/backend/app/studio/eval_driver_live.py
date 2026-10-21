@@ -35,6 +35,7 @@ from app.channels import turno as turno_mod
 from app.channels.controles import LeadIdentidade, aplicar_controles
 from app.channels.tool_registry import make_channel_tools_factory
 from app.config import settings
+from app.notifications import FakeNotificationSink
 from app.qualificacao.ident_store import FakeIdentificacaoStore
 from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
@@ -268,6 +269,7 @@ class LiveEvalTurnDriver:
             studio_store=self._studio, catalog=self._catalog, conversations=conversations, messages=messages,
             threads=threads, controles=controles, conformidade=conformidade, qual=qual,
             padroes=self._padroes, ident=ident, sw=sw, skills_factory=self._skills_factory,
+            notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
         externo = f"eval-{uuid4()}"
