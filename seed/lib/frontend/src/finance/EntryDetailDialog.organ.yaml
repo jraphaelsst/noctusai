@@ -7,7 +7,7 @@ organ_version: "1.0"
 validation_status: emerging
 
 known_facts:
-  - "One entry: facts, settlements (reverse with a reason), cancel and attachments."
+  - "One entry: facts, settlements (reverse with a reason), cancel, admin-only delete for mistaken entries (DELETE /entries/{id}; shown only when the detail payload says deletable) and attachments."
   - "Part of the finance organ (projects/commerce-seed-p4/CONTRACT.md §3 + §10); money is integer cents end to end, formatted only via formatCents (shared with the commerce organ); pt-BR copy in finance/messages.ts."
   - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
   - "Seed-portable: no product coupling; the host passes its authenticated api client and isAdmin (UX gate only; the server enforces every write)."

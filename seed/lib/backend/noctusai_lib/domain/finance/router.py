@@ -143,6 +143,11 @@ def make_finance_router(
     ) -> dict:
         return success_response(accounts_svc.update_account(scope(ctx), account_id, _dump(body, exclude_unset=True)))
 
+    @router.delete("/accounts/{account_id}", status_code=204, name="finance_delete_account")
+    async def delete_account_route(account_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+        accounts_svc.delete_account(scope(ctx), account_id)
+        return Response(status_code=204)
+
     @router.get("/accounts/{account_id}/balance", name="finance_account_balance")
     async def account_balance_route(
         account_id: UUID, on: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)
@@ -232,6 +237,13 @@ def make_finance_router(
     @router.post("/entries/{entry_id}/cancel", name="finance_cancel_entry")
     async def cancel_entry_route(entry_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(entries_svc.present_entry(entries_svc.cancel_entry(scope(ctx), entry_id), is_admin=ctx.is_admin))
+
+    @router.delete("/entries/{entry_id}", status_code=204, name="finance_delete_entry")
+    async def delete_entry_route(
+        entry_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep), storage=Depends(get_storage)
+    ) -> Response:
+        await attachments_svc.delete_entry_with_attachments(scope(ctx), storage, entry_id)
+        return Response(status_code=204)
 
     # ── settlements ──
     @router.post("/entries/{entry_id}/settlements", status_code=201, name="finance_settle_entry")

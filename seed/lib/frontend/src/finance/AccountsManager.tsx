@@ -1,10 +1,10 @@
 /**
  * `<AccountsManager/>` — contas (banco, caixa, gateway, cartão...) with the balance of each, create /
- * edit / deactivate on the same page, and the transfer dialog. Balance = opening + ledger up to today.
+ * edit / deactivate / delete (only when nothing references it) on the same page, and the transfer dialog. Balance = opening + ledger up to today.
  */
 import * as React from 'react';
 import { Button } from '../design-system/ui/Button';
-import { EmptyState, Field, FormError, Input, ListSkeleton, PageHeader, RefreshingBar, RetryError, Select } from './controls';
+import { ConfirmButton, EmptyState, Field, FormError, Input, ListSkeleton, PageHeader, RefreshingBar, RetryError, Select } from './controls';
 import { centsToInput, formatCents, formatDate, parseMoneyToCents } from './format';
 import { errorMessage, type FinanceHooks } from './hooks';
 import { t } from './i18n';
@@ -84,7 +84,7 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
     return <RetryError message={`${t('common.error_loading')}: ${errorMessage(accounts.error)}`} onRetry={() => accounts.refetch()} retryLabel={t('common.retry')} />;
   }
   const list = accounts.data ?? [];
-  const mutErr = m.create.error ?? m.update.error;
+  const mutErr = m.create.error ?? m.update.error ?? m.remove.error;
 
   return (
     <section className="space-y-3" aria-busy={accounts.isRefreshing || balances.isRefreshing}>
@@ -134,6 +134,18 @@ export function AccountsManager({ hooks, isAdmin = false }: AccountsManagerProps
                     >
                       {a.active ? t('common.deactivate') : t('common.activate')}
                     </Button>
+                    <ConfirmButton
+                      label={t('common.delete')}
+                      confirmLabel={t('accounts.delete_confirm')}
+                      pending={m.remove.isPending}
+                      onConfirm={async () => {
+                        try {
+                          await m.remove.mutateAsync(a.id);
+                        } catch {
+                          // Surfaced above (409 "A conta tem movimentações; desative-a.").
+                        }
+                      }}
+                    />
                   </>
                 ) : null}
               </span>

@@ -50,7 +50,7 @@ export function EntryDetailDialog({ hooks, entryId, onClose, isAdmin = false, on
     }
   }
 
-  const mutErr = m.cancel.error ?? m.reverse.error;
+  const mutErr = m.cancel.error ?? m.reverse.error ?? m.remove.error;
   let body: React.ReactNode;
   if (detail.showSkeleton) body = <ListSkeleton rows={4} />;
   else if (detail.isError && !entry) {
@@ -133,6 +133,22 @@ export function EntryDetailDialog({ hooks, entryId, onClose, isAdmin = false, on
                     await m.cancel.mutateAsync(entry.id);
                   } catch {
                     // Surfaced through `m.cancel.error`.
+                  }
+                }}
+              />
+            ) : null}
+            {entry.deletable ? (
+              <ConfirmButton
+                label={t('entry.delete')}
+                confirmLabel={t('entry.delete_confirm')}
+                variant="destructive"
+                pending={m.remove.isPending}
+                onConfirm={async () => {
+                  try {
+                    await m.remove.mutateAsync(entry.id);
+                    onClose();
+                  } catch {
+                    // Surfaced through `m.remove.error`.
                   }
                 }}
               />

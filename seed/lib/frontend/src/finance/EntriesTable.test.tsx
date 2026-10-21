@@ -158,6 +158,40 @@ describe('entry detail', () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/finance/entries/e1/cancel', {}));
   });
 
+  it('offers Excluir only when the server says deletable, deletes after confirmation and closes the dialog', async () => {
+    const user = userEvent.setup();
+    const { api, dialog } = await openDetail(user, {
+      'GET /api/finance/entries/e1': ok(detail({ status: 'open', settled_cents: 0, settlements: [], deletable: true })),
+      'DELETE /api/finance/entries/e1': null,
+    });
+    await user.click(await within(dialog).findByRole('button', { name: 'Excluir lançamento' }));
+    expect(api.delete).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Sim, excluir' }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/finance/entries/e1'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('hides Excluir when the entry is not deletable (settled / system-sourced)', async () => {
+    const user = userEvent.setup();
+    const { dialog } = await openDetail(user, {
+      'GET /api/finance/entries/e1': ok(detail({ status: 'open', settled_cents: 0, settlements: [], deletable: false })),
+    });
+    await within(dialog).findByRole('button', { name: 'Cancelar lançamento' });
+    expect(within(dialog).queryByRole('button', { name: 'Excluir lançamento' })).not.toBeInTheDocument();
+  });
+
+  it('shows the refusal inline and keeps the dialog open when delete is refused', async () => {
+    const user = userEvent.setup();
+    const { dialog } = await openDetail(user, {
+      'GET /api/finance/entries/e1': ok(detail({ status: 'open', settled_cents: 0, settlements: [], deletable: true })),
+      'DELETE /api/finance/entries/e1': () => Promise.reject(new ApiError(409, 'O lançamento tem baixas e não pode ser excluído; cancele-o.')),
+    });
+    await user.click(await within(dialog).findByRole('button', { name: 'Excluir lançamento' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Sim, excluir' }));
+    expect(await within(dialog).findByText(/não pode ser excluído; cancele-o/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('attachments: upload, list and delete', async () => {
     const user = userEvent.setup();
     const att = { id: 'att1', entry_id: 'e1', filename: 'nota.pdf', content_type: 'application/pdf', size_bytes: 2048, at: '2026-10-10T10:00:00Z', url: 'https://s/x', expires_in_seconds: 300, disposition: 'attachment' };
@@ -177,12 +211,12 @@ describe('entry detail', () => {
   });
 
   it('staff cannot upload, delete, settle or cancel', async () => {
-    const api = makeRoutedApi({ ...baseRoutes(), 'GET /api/finance/entries': page([entry()]), 'GET /api/finance/entries/e1': ok(detail()), 'GET /api/finance/entries/e1/attachments': ok([]) });
+    const api = makeRoutedApi({ ...baseRoutes(), 'GET /api/finance/entries': page([entry()]), 'GET /api/finance/entries/e1': ok(detail({ deletable: true })), 'GET /api/finance/entries/e1/attachments': ok([]) });
     render(<EntriesTable hooks={hooksFor(api)} direction="receivable" />, { wrapper: wrapperFor() });
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Pedido #100' }));
     const dialog = await screen.findByRole('dialog');
     await within(dialog).findByText(/Pagamento/);
-    for (const name of ['Anexar arquivo', 'Estornar', 'Dar baixa', 'Cancelar lançamento', 'Editar']) {
+    for (const name of ['Anexar arquivo', 'Estornar', 'Dar baixa', 'Cancelar lançamento', 'Excluir lançamento', 'Editar']) {
       expect(within(dialog).queryByRole('button', { name })).not.toBeInTheDocument();
     }
   });

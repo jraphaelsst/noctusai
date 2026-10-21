@@ -68,6 +68,41 @@ describe('AccountsManager', () => {
   });
 });
 
+describe('AccountsManager delete', () => {
+  const routes = () => ({
+    ...baseRoutes(),
+    'GET /api/finance/accounts/acc-bank/balance': ok({ account_id: 'acc-bank', on: 'x', opening_balance_cents: 0, movement_cents: 0, balance_cents: 0 }),
+    'GET /api/finance/accounts/acc-gw/balance': ok({ account_id: 'acc-gw', on: 'x', opening_balance_cents: 0, movement_cents: 0, balance_cents: 0 }),
+  });
+
+  it('deletes an account after a second confirmation (admin only)', async () => {
+    const user = userEvent.setup();
+    const api = makeRoutedApi({ ...routes(), 'DELETE /api/finance/accounts/acc-bank': null });
+    render(<AccountsManager hooks={hooksFor(api)} isAdmin />, { wrapper: wrapperFor() });
+    const row = (await screen.findByText('Itaú')).closest('li')!;
+    await user.click(within(row).getByRole('button', { name: 'Excluir' }));
+    expect(api.delete).not.toHaveBeenCalled();
+    await user.click(within(row).getByRole('button', { name: 'Sim, excluir' }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/finance/accounts/acc-bank'));
+  });
+
+  it('surfaces the 409 message inline when the account has movements', async () => {
+    const user = userEvent.setup();
+    const api = makeRoutedApi({ ...routes(), 'DELETE /api/finance/accounts/acc-bank': () => Promise.reject(new ApiError(409, 'A conta tem movimentações; desative-a.')) });
+    render(<AccountsManager hooks={hooksFor(api)} isAdmin />, { wrapper: wrapperFor() });
+    const row = (await screen.findByText('Itaú')).closest('li')!;
+    await user.click(within(row).getByRole('button', { name: 'Excluir' }));
+    await user.click(within(row).getByRole('button', { name: 'Sim, excluir' }));
+    expect(await screen.findByText(/A conta tem movimentações; desative-a\./)).toBeInTheDocument();
+  });
+
+  it('staff see no Excluir', async () => {
+    render(<AccountsManager hooks={hooksFor(makeRoutedApi(routes()))} />, { wrapper: wrapperFor() });
+    await screen.findByText('Itaú');
+    expect(screen.queryByRole('button', { name: 'Excluir' })).not.toBeInTheDocument();
+  });
+});
+
 describe('TransferDialog', () => {
   it('rejects the same account twice, then posts cents', async () => {
     const user = userEvent.setup();

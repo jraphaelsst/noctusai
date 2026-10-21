@@ -131,6 +131,10 @@ export const MESSAGES = {
   'entry.settle': 'Dar baixa',
   'entry.cancel': 'Cancelar lançamento',
   'entry.cancel_confirm': 'Sim, cancelar',
+  'entry.delete': 'Excluir lançamento',
+  'entry.delete_confirm': 'Sim, excluir',
+  'entry.delete_hint': 'Excluir apaga o lançamento lançado por engano. Lançamentos com baixa ou gerados pelo sistema só podem ser cancelados.',
+  'accounts.delete_confirm': 'Sim, excluir',
 
   // ---- settle / reverse ----
   'settle.title_receivable': 'Dar baixa — recebimento',

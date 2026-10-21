@@ -192,6 +192,8 @@ export interface FinanceAttachment {
 export interface FinanceEntryDetail extends FinanceEntry {
   settlements: Settlement[];
   attachments: Omit<FinanceAttachment, 'url' | 'expires_in_seconds' | 'disposition'>[];
+  /** Server-computed: no settlement ever (reversed included) and a hand-booked source. Only then may it be deleted. */
+  deletable?: boolean;
 }
 
 export interface RecurrenceTemplate {

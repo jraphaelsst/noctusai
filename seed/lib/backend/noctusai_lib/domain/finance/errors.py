@@ -25,6 +25,9 @@ ANEXO_INVALIDO = "anexo_invalido"
 ANEXO_GRANDE_DEMAIS = "anexo_grande_demais"
 ANEXO_LIMITE = "anexo_limite"
 DOCUMENTO_INVALIDO = "documento_invalido"
+LANCAMENTO_COM_HISTORICO = "lancamento_com_historico"
+LANCAMENTO_DE_SISTEMA = "lancamento_de_sistema"
+CONTA_EM_USO = "conta_em_uso"
 
 
 class FinanceError(OrganError):
@@ -45,6 +48,7 @@ __all__ = [
     "CATEGORIA_EM_USO",
     "CENTRO_CUSTO_DUPLICADO",
     "CONTA_COM_MOVIMENTO",
+    "CONTA_EM_USO",
     "CONTA_GATEWAY_DUPLICADA",
     "CONTA_INATIVA",
     "DOCUMENTO_INVALIDO",
@@ -52,6 +56,8 @@ __all__ = [
     "FinanceError",
     "LANCAMENTO_CANCELADO",
     "LANCAMENTO_COM_BAIXA",
+    "LANCAMENTO_COM_HISTORICO",
+    "LANCAMENTO_DE_SISTEMA",
     "LANCAMENTO_DUPLICADO",
     "conflict",
     "invalid",

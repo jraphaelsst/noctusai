@@ -26,7 +26,7 @@ from noctusai_lib.integrations.storage.protocol import StorageBackend
 
 from ._common import Scope, first, new_id, now_iso
 from .config import FinanceConfig
-from .entries import get_entry
+from .entries import check_deletable, delete_entry, get_entry
 from .errors import ANEXO_GRANDE_DEMAIS, ANEXO_INVALIDO, ANEXO_LIMITE, FinanceError, invalid, not_found
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,25 @@ async def delete_attachment(s: Scope, storage: StorageBackend, attachment_id: An
     await storage.delete(bucket=s.cfg.bucket, key=row["storage_path"])
 
 
+async def delete_entry_with_attachments(s: Scope, storage: StorageBackend, entry_id: Any) -> None:
+    """Delete a mistaken entry and the entry's own attachments (rows are deleted explicitly, storage objects after the entry).
+
+    The deletable guard runs FIRST, so a refused delete never touches storage. Objects are removed only after the
+    entry row is gone; an object that fails to delete is logged (an orphan blob, never a dangling entry).
+    """
+    check_deletable(s, entry_id)
+    keys = [r["storage_path"] for r in s.rows("attachments", eq={"entry_id": str(entry_id)})]
+    s.tbl("attachments").delete().eq("org_id", s.org_id).eq("entry_id", str(entry_id)).execute()  # explicit: never lean on the FK cascade
+    delete_entry(s, entry_id)
+    for key in keys:
+        try:
+            await storage.delete(bucket=s.cfg.bucket, key=key)
+        except Exception:  # noqa: BLE001 - the money record is already gone; the orphan object is logged for cleanup
+            logger.warning("finance: orphan attachment object left after entry delete: %s", key, exc_info=True)
+
+
 __all__ = [
+    "delete_entry_with_attachments",
     "ATTACHMENT_UPLOAD_MAX_BYTES",
     "ATTACHMENT_UPLOAD_PATH_PATTERN",
     "MAX_ATTACHMENTS_PER_ENTRY",

@@ -211,6 +211,11 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
           data<FinanceAccount>(api.patch(p(`/accounts/${id}`), b)),
         onSuccess: done,
       }),
+      /** Hard delete: only an account nothing references; otherwise 409 `conta_em_uso` (deactivate instead). */
+      remove: useMutation({
+        mutationFn: (id: string) => api.delete(p(`/accounts/${id}`)),
+        onSuccess: done,
+      }),
     };
   }
 
@@ -304,6 +309,11 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
       }),
       cancel: useMutation({
         mutationFn: (id: string) => data<FinanceEntry>(api.post(p(`/entries/${id}/cancel`), {})),
+        onSuccess: done,
+      }),
+      /** Hard delete ("lançado por engano"): only when the detail says `deletable`; else 409 (cancel instead). */
+      remove: useMutation({
+        mutationFn: (id: string) => api.delete(p(`/entries/${id}`)),
         onSuccess: done,
       }),
       settle: useMutation({

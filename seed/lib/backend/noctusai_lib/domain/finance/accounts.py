@@ -5,10 +5,10 @@ import logging
 from datetime import date
 from typing import Any, Mapping, Optional
 
-from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, is_unique_violation
 
 from ._common import Scope, first, iso, new_id, now_iso, to_date, today
-from .errors import CONTA_COM_MOVIMENTO, CONTA_GATEWAY_DUPLICADA, CONTA_INATIVA, conflict, invalid
+from .errors import CONTA_COM_MOVIMENTO, CONTA_EM_USO, CONTA_GATEWAY_DUPLICADA, CONTA_INATIVA, conflict, invalid
 from .types import AccountKind, LedgerDirection
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,39 @@ def update_account(s: Scope, account_id: Any, data: Mapping[str, Any]) -> dict:
     return {**current, **patch}
 
 
+#: (table, column) pairs that reference an account (all FK ON DELETE RESTRICT).
+_ACCOUNT_REFS = (
+    ("entries", "expected_account_id"),
+    ("settlements", "account_id"),
+    ("ledger", "account_id"),
+    ("statement_imports", "account_id"),
+    ("statement_lines", "account_id"),
+)
+
+
+def _account_in_use(s: Scope, account_id: str) -> bool:
+    for table, col in _ACCOUNT_REFS:
+        resp = s.tbl(table).select("id").eq("org_id", s.org_id).eq(col, account_id).limit(1).execute()
+        if resp.data:
+            return True
+    # recurrence templates carry the account inside JSON (no FK): a delete would leave the generator booking to a ghost
+    return any(str((rec.get("template") or {}).get("expected_account_id") or "") == account_id for rec in s.rows("recurrences"))
+
+
+def delete_account(s: Scope, account_id: Any) -> None:
+    """Hard-delete an account nothing references (entries, settlements, transfers/ledger, statements, recurrences)."""
+    get_account(s, account_id)
+    msg = "A conta tem movimentações; desative-a."
+    if _account_in_use(s, str(account_id)):
+        raise conflict(CONTA_EM_USO, msg)
+    try:
+        s.tbl("accounts").delete().eq("org_id", s.org_id).eq("id", str(account_id)).execute()
+    except Exception as exc:
+        if is_foreign_key_violation(exc):
+            raise conflict(CONTA_EM_USO, msg) from exc
+        raise
+
+
 def signed_ledger_cents(rows: list[dict]) -> int:
     return sum(
         int(r["amount_cents"]) if r["direction"] == LedgerDirection.IN.value else -int(r["amount_cents"])
@@ -160,6 +193,7 @@ def account_balance(s: Scope, account_id: Any, on: Optional[date] = None) -> dic
 __all__ = [
     "account_balance",
     "create_account",
+    "delete_account",
     "get_account",
     "get_or_create_gateway_account",
     "list_accounts",

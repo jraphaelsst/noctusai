@@ -13,7 +13,7 @@ from typing import Any, Mapping, Optional
 from noctusai_lib.domain._organ_common import mask_doc
 from noctusai_lib.integrations.persistence.table_reads import IN_FILTER_BATCH
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
-from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, is_unique_violation
 
 from ._common import (
     Scope,
@@ -32,6 +32,8 @@ from .errors import (
     DOCUMENTO_INVALIDO,
     LANCAMENTO_CANCELADO,
     LANCAMENTO_COM_BAIXA,
+    LANCAMENTO_COM_HISTORICO,
+    LANCAMENTO_DE_SISTEMA,
     LANCAMENTO_DUPLICADO,
     conflict,
     invalid,
@@ -44,6 +46,12 @@ MAX_INSTALLMENTS = 120
 _OPEN_STATUSES = (EntryStatus.OPEN.value, EntryStatus.PARTIAL.value)
 #: Sources a caller of the HTTP API may stamp. The rest belong to the organ / the bridges.
 API_SOURCES = (EntrySource.MANUAL.value, EntrySource.EXTERNAL.value)
+
+
+#: Sources a person books by hand through the UI/API: the only entries a hard delete ("lançado por engano") may remove.
+#: Every other source (recurrence, contracts billing, commerce order, import/reconciliation, purchasing, external
+#: bridges) keeps its trail and may only be cancelled.
+DELETABLE_SOURCES = (EntrySource.MANUAL.value, EntrySource.INSTALLMENT.value)
 
 
 def _plain(value: Any) -> Any:
@@ -218,7 +226,7 @@ def get_entry_detail(s: Scope, entry_id: Any) -> dict:
     atts = s.rows("attachments", eq={"entry_id": str(entry_id)})
     atts = [{k: v for k, v in a.items() if k != "storage_path"} for a in atts]
     atts.sort(key=lambda r: (str(r.get("at")), str(r["id"])))
-    return {**entry, "settlements": sett, "attachments": atts}
+    return {**entry, "settlements": sett, "attachments": atts, "deletable": delete_blocker(entry, has_settlements=bool(sett)) is None}
 
 
 def list_entries(
@@ -269,6 +277,44 @@ def list_entries(
         return query
 
     return s.page("entries", page=page, page_size=page_size, refine=refine, order=(("due_date", False), ("id", False)))
+
+
+# ─── delete ("lançado por engano") ───────────────────────────────────────────
+
+
+def delete_blocker(entry: Mapping[str, Any], *, has_settlements: bool) -> Optional[tuple[str, str]]:
+    """`(code, pt-BR message)` while the entry must keep its trail, else None.
+
+    Single source of the "deletable" rule (the detail payload's `deletable` is `blocker is None`): an entry that ever
+    had a settlement (reversed ones included) or was booked by a system source may only be cancelled.
+    """
+    if entry.get("source") not in DELETABLE_SOURCES or entry.get("recurrence_id"):
+        return (LANCAMENTO_DE_SISTEMA, "O lançamento foi gerado pelo sistema e não pode ser excluído; cancele-o.")
+    if has_settlements or int(entry.get("settled_cents") or 0) > 0:
+        return (LANCAMENTO_COM_HISTORICO, "O lançamento tem baixas (mesmo estornadas) e não pode ser excluído; cancele-o.")
+    return None
+
+
+def check_deletable(s: Scope, entry_id: Any) -> dict:
+    """The entry if it may be hard-deleted, else a 404 (foreign/missing) or 409 typed refusal."""
+    entry = get_entry(s, entry_id)
+    any_settlement = s.tbl("settlements").select("id").eq("org_id", s.org_id).eq("entry_id", str(entry_id)).limit(1).execute()
+    blocker = delete_blocker(entry, has_settlements=bool(any_settlement.data))
+    if blocker:
+        raise conflict(*blocker)
+    return entry
+
+
+def delete_entry(s: Scope, entry_id: Any) -> None:
+    """Hard-delete one entry (an installment group member deletes only itself). The caller removes attachments first
+    (`attachments.delete_entry_with_attachments`); a late FK violation (a settlement racing in) is mapped to 409."""
+    check_deletable(s, entry_id)
+    try:
+        s.tbl("entries").delete().eq("org_id", s.org_id).eq("id", str(entry_id)).execute()
+    except Exception as exc:
+        if is_foreign_key_violation(exc):
+            raise conflict(LANCAMENTO_COM_HISTORICO, "O lançamento tem movimentações e não pode ser excluído; cancele-o.") from exc
+        raise
 
 
 # ─── update / cancel ─────────────────────────────────────────────────────────
@@ -336,6 +382,10 @@ __all__ = [
     "check_refs",
     "MAX_INSTALLMENTS",
     "cancel_entry",
+    "check_deletable",
+    "delete_blocker",
+    "delete_entry",
+    "DELETABLE_SOURCES",
     "create_entry",
     "find_by_source",
     "get_entry",

@@ -28,6 +28,7 @@ ROUTES = [
     ("GET", f"{P}/accountant-checklist", True), ("GET", f"{P}/exports/dre.csv", True),
     ("GET", f"{P}/entries/{U0}/attachments", False), ("POST", f"{P}/entries/{U0}/attachments", True),
     ("DELETE", f"{P}/attachments/{U0}", True),
+    ("DELETE", f"{P}/entries/{U0}", True), ("DELETE", f"{P}/accounts/{U0}", True),
 ]
 
 
