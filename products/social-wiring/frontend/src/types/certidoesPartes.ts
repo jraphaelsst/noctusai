@@ -160,6 +160,15 @@ export interface CelulaEnsureResponse {
   criado: boolean;
 }
 
+export interface DigitarCelulaInput {
+  kind: string;
+  alvoId: string;
+  linhaChave: string;
+  /** The cell's resultado when it already has one; null ⇒ ensure it first. */
+  resultadoId: string | null;
+  patch: import("@/types/certidoesEstruturadas").ResultadoPatchInput;
+}
+
 export interface SolicitarEmissaoInput {
   kind: "pessoa" | "empresa";
   alvoId: string;

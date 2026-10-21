@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
+import type { ResultadoPatchInput } from "@/types/certidoesEstruturadas";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
   AntigoCriarInput,
@@ -25,6 +26,7 @@ import type {
   CertidoesPartesResponse,
   EmissaoResponse,
   RelerCertidoesResponse,
+  DigitarCelulaInput,
   SolicitarEmissaoInput,
   UploadCelulaInput,
 } from "@/types/certidoesPartes";
@@ -271,6 +273,42 @@ export function useUploadNaCelula(clienteId: string, atendimentoId?: string | nu
     },
     onError: (e) => {
       toast.error("Erro ao enviar certidão", { description: erroMsg(e) });
+      void invalidate();
+    },
+  });
+}
+
+/**
+ * Type a cell by hand (owner 2026-10-21: whatever a document carries can be
+ * typed). Ensure the cell's resultado through the EXISTING §1.4 ensure-cell
+ * route when the cell has none yet (idempotent: an existing winner comes
+ * back, never a second consulta), then `PATCH /api/certidoes/resultados/{id}`
+ * — the same confirm route the "Detalhes" form uses, which stamps
+ * `resultado_origem='manual'`.
+ */
+export function useDigitarNaCelula(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartes(clienteId);
+  return useMutation({
+    mutationFn: async ({ kind, alvoId, linhaChave, resultadoId, patch }: DigitarCelulaInput) => {
+      let id = resultadoId;
+      if (!id) {
+        const cel = await api.post<CelulaEnsureResponse>(`${clienteBase(clienteId)}/certidoes/celulas`, {
+          kind,
+          alvo_id: alvoId,
+          linha_chave: linhaChave,
+          atendimento_id: atendimentoId ?? null,
+        });
+        id = cel.resultado_id;
+      }
+      await api.patch(`/api/certidoes/resultados/${id}`, patch satisfies ResultadoPatchInput);
+      return id;
+    },
+    onSuccess: () => {
+      toast.success("Certidão salva.");
+      void invalidate();
+    },
+    onError: (e) => {
+      toast.error("Erro ao salvar certidão", { description: erroMsg(e) });
       void invalidate();
     },
   });

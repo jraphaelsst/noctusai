@@ -15,6 +15,7 @@ import type {
   CertidaoDivergencia,
   CienciaPcenResult,
   CertidaoParte,
+  CertidaoParteCelula,
   CertidaoParteLinha,
   SolicitarEmissaoInput,
   UploadCelulaInput,
@@ -54,12 +55,20 @@ export interface ParteSecaoProps {
   /** The resultado whose "Aplicar valores lidos" request is in flight. */
   aplicandoId: string | null;
   onDetalhes: (parte: CertidaoParte) => void;
+  /** Type the cell by hand (no document needed) — opens the shared edit form. */
+  onDigitar: (parte: CertidaoParte, linha: CertidaoParteLinha) => void;
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
   onRemover: (linha: CertidaoParteLinha) => void;
   /** Receita PCEN 2ª via acknowledgment / support question. */
   onCienciaPcen: (resultadoId: string, acao: "entendi" | "duvida") => Promise<CienciaPcenResult>;
 }
+
+/** The cell carries values (typed or read) — not a bare pending placeholder. */
+const temValores = (c: CertidaoParteCelula) =>
+  !!(c.resultado || c.numero || c.emitida_em || c.validade_ate);
+/** A human typed/confirmed these values (`resultado_origem='manual'`). */
+const digitada = (c: CertidaoParteCelula) => c.origem === "manual" && temValores(c);
 
 export function ParteSecao(p: ParteSecaoProps) {
   const { parte, linhas } = p;
@@ -224,6 +233,12 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         <CertidaoCelulaChip celula={c} testId={`parte-chip-${parte.chave}-${linha.chave}`} />
+                        {digitada(c) && (
+                          <span className="ml-1 inline-block rounded bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground"
+                            data-testid={`parte-digitado-${parte.chave}-${linha.chave}`}>
+                            Digitado
+                          </span>
+                        )}
                         {c.pendencia && c.erro_mensagem && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-pendencia-${parte.chave}-${linha.chave}`}>
                             {c.erro_mensagem}
@@ -267,6 +282,12 @@ export function ParteSecao(p: ParteSecaoProps) {
                                 Solicitar
                               </Button>
                             )}
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                              onClick={() => p.onDigitar(parte, linha)}
+                              data-testid={`parte-digitar-${parte.chave}-${linha.chave}`}>
+                              <Pencil className="mr-1 h-3 w-3" />
+                              {temValores(c) ? "Editar" : "Preencher manualmente"}
+                            </Button>
                             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
                               onClick={() => {
                                 alvoUpload.current = linha.chave;

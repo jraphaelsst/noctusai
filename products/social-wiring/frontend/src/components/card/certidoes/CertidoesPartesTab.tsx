@@ -25,13 +25,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
+  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
 import { alvoSubtabCertidoes, type GrupoCertidoes } from "../destinoDoContrato";
 import { AntigosProprietariosPainel } from "./AntigosProprietariosPainel";
 import { podeReler } from "./certidoesCelula";
+import { ResultadoEditForm } from "@/components/ResultadoEditForm";
 import { ParteSecao } from "./ParteSecao";
 
 const SUBTABS: ReadonlyArray<{ grupo: GrupoCertidoes; rotulo: string; vazio: string }> = [
@@ -56,6 +57,9 @@ export function CertidoesPartesTab(props: {
   // Which party's "Reler todas" is in flight (one mutation, keyed by the party).
   const [relendoParteChave, setRelendoParteChave] = useState<string | null>(null);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
+  const digitar = useDigitarNaCelula(clienteId, atendimentoId);
+  // Cell being typed by hand: the party KEY + linha chave, resolved against the LIVE row below.
+  const [digitando, setDigitando] = useState<{ parteChave: string; linhaChave: string } | null>(null);
   const criar = useCriarLinhaPartes(clienteId);
   const renomear = useRenomearLinhaPartes(clienteId);
   const remover = useRemoverLinhaPartes(clienteId);
@@ -110,6 +114,10 @@ export function CertidoesPartesTab(props: {
 
   const detalhes: CertidaoParte | null =
     (detalhesChave && data.partes.find((p) => p.chave === detalhesChave)) || null;
+
+  const parteDigitando = digitando ? data.partes.find((x) => x.chave === digitando.parteChave) ?? null : null;
+  const linhaDigitando = digitando ? data.linhas.find((l) => l.chave === digitando.linhaChave) ?? null : null;
+  const celulaDigitando = parteDigitando && digitando ? parteDigitando.celulas[digitando.linhaChave] ?? null : null;
 
   const fecharAdicionar = () => { setAdicionando(false); setNovoNome(""); };
   const temPdfArmazenado = data.partes.some((p) => Object.values(p.celulas).some(podeReler));
@@ -173,6 +181,7 @@ export function CertidoesPartesTab(props: {
                 onSolicitar={(i) => emissao.mutate(i)}
                 onReemitir={(id) => reemitir.mutate(id)}
                 onUpload={(i) => upload.mutate(i)}
+                onDigitar={(pt, l) => setDigitando({ parteChave: pt.chave, linhaChave: l.chave })}
                 onReler={(id) => reler.mutate(id)}
                 relendoId={relendoId}
                 onRelerParte={(ids) => {
@@ -216,6 +225,39 @@ export function CertidoesPartesTab(props: {
             ) : (
               <CertidoesPartePanel clienteId={detalhes.cliente_id as string} nomeParte={detalhes.nome} documento={detalhes.documento ?? undefined} />
             ))}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!digitando} onOpenChange={(o) => !o && setDigitando(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{linhaDigitando?.rotulo} — {parteDigitando?.nome}</DialogTitle>
+            <DialogDescription>
+              Digite os dados da certidão (número, datas e resultado). Não é preciso enviar o PDF.
+            </DialogDescription>
+          </DialogHeader>
+          {parteDigitando && linhaDigitando && celulaDigitando && (
+            <ResultadoEditForm
+              resultado={{
+                tipo: linhaDigitando.tipo, numero: celulaDigitando.numero, emitida_em: celulaDigitando.emitida_em,
+                validade_ate: celulaDigitando.validade_ate, resultado: celulaDigitando.resultado,
+              }}
+              saving={digitar.isPending}
+              onCancel={() => setDigitando(null)}
+              onConfirm={(patch) =>
+                digitar.mutate(
+                  {
+                    kind: parteDigitando.kind,
+                    alvoId: (parteDigitando.kind === "empresa" ? parteDigitando.empresa_id : parteDigitando.cliente_id) as string,
+                    linhaChave: linhaDigitando.chave,
+                    resultadoId: celulaDigitando.resultado_id,
+                    patch,
+                  },
+                  { onSuccess: () => setDigitando(null) },
+                )
+              }
+            />
+          )}
         </DialogContent>
       </Dialog>
 

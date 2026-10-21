@@ -284,6 +284,48 @@ describe("CertidoesPartesTab", () => {
     expect(mockUpload.mock.calls[0][0]).toBe("/api/certidoes/resultados/res-9/upload");
   });
 
+  it("pending cell: 'Preencher manualmente' ensures the cell, PATCHes the typed values, then shows them as Digitado", async () => {
+    mockGet.mockResolvedValueOnce(resp([parte()]));
+    mockPost.mockResolvedValue({ resultado_id: "res-7", consulta_id: "con-7", criado: true });
+    mockPatch.mockResolvedValue({ data: {} });
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.queryByTestId("parte-digitado-c:cli-1-serasa")).toBeNull();
+    expect(screen.getByTestId("parte-digitar-c:cli-1-serasa").textContent).toContain("Preencher manualmente");
+    fireEvent.click(screen.getByTestId("parte-digitar-c:cli-1-serasa"));
+    fireEvent.change(await screen.findByLabelText("Número"), { target: { value: "ABC-123" } });
+    fireEvent.change(screen.getByLabelText("Emitida em"), { target: { value: "2026-10-20" } });
+    fireEvent.change(screen.getByLabelText("Validade até"), { target: { value: "2026-11-19" } });
+    // The refetch after saving returns the cell as typed.
+    mockGet.mockResolvedValue(resp([parte({
+      celulas: {
+        ...parte().celulas,
+        serasa: cel({ tipo: "serasa", status: "nao_constam", resultado: "negativa", resultado_id: "res-7", numero: "ABC-123", emitida_em: "2026-10-20", validade_ate: "2026-11-19", origem: "manual", confirmado: true }),
+      },
+    })]));
+    fireEvent.click(screen.getByText("Confirmar"));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("/api/certidoes/resultados/res-7", { numero: "ABC-123", emitida_em: "2026-10-20", validade_ate: "2026-11-19" }));
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/celulas", { kind: "pessoa", alvo_id: "cli-1", linha_chave: "serasa", atendimento_id: "at-1" });
+    await screen.findByTestId("parte-digitado-c:cli-1-serasa");
+    expect(screen.getByTestId("parte-numero-c:cli-1-serasa").textContent).toContain("ABC-123");
+  });
+
+  it("filled cell exposes 'Editar' and PATCHes its existing resultado without ensuring a new cell", async () => {
+    mockGet.mockResolvedValue(resp([parte()]));
+    mockPatch.mockResolvedValue({ data: {} });
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    const btn = screen.getByTestId("parte-digitar-c:cli-1-cnd_federal");
+    expect(btn.textContent).toContain("Editar");
+    fireEvent.click(btn);
+    fireEvent.change(await screen.findByLabelText("Número"), { target: { value: "N-1" } });
+    fireEvent.click(screen.getByText("Confirmar"));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("/api/certidoes/resultados/res-1", { numero: "N-1" }));
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("adicionar certidão posts to the custom-row route", async () => {
     mockGet.mockResolvedValue(resp([parte()]));
     render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
