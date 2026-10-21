@@ -531,14 +531,15 @@ class TestExibicaoPeloVinculo:
         ligar(
             scoped,
             manual_dados={"endereco_manual_logradouro": "Alameda Liverpool", "endereco_manual_numero": "81",
-                          "processo_atual_numero": "876", "em_condominio": True},
+                          "processo_atual_numero": "876", "casa_de_rua": True},
             espelho={"titulo": "Casa Vista ONE", "fotos": ["a.jpg", "b.jpg"], "valor_venda": "1480000.00"},
         )
         b = client.get(f"/api/imoveis/{MANUAL}", headers=auth()).json()
         assert b["titulo"] == "Casa Vista ONE" and b["fotos"] == ["a.jpg", "b.jpg"]
         assert b["valor_venda"] == "1480000.00" or float(b["valor_venda"]) == 1_480_000.0
         assert b["codigo"] == MANUAL and b["codigo_norm"] == MANUAL and b["fonte"] == "manual"
-        assert b["referencias"]["processo_atual_numero"] == "876" and b["em_condominio"] is True
+        assert b["referencias"]["processo_atual_numero"] == "876" and b["casa_de_rua"] is True
+        assert b["em_condominio"] is False  # derived (migration 300), the manual record's own
         assert b["logradouro"] == "Alameda Liverpool"  # the manual record's own address
         assert b["vinculo"] == {"manual_codigo": MANUAL, "vista_codigo": VISTA}
 

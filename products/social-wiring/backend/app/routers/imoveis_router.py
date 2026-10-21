@@ -309,10 +309,11 @@ async def get_imovel(
         dados = dados_svc.linha(hub, org_id, canonico)
         row["fonte"] = "vista"
         row["referencias"] = dados_svc.referencias_da_linha(dados)
-        # `empreendimento` is already the mirror's column; `em_condominio` is
-        # ours (imovel_dados, migration 202) — both on the shape for EVERY
+        # `empreendimento` is already the mirror's column; the condomínio
+        # answer is ours (imovel_dados, migration 300) — on the shape for EVERY
         # imóvel so the edit modal needs no second query.
-        row["em_condominio"] = (dados or {}).get("em_condominio")
+        row.update(captacao_svc.condominio_campos(dados))
+        row["condominio"] = dados_svc.condominio_resumo(hub, org_id, (dados or {}).get("condominio_id"))
         return _com_vinculo(hub, org_id, canonico, row)
     manual = captacao_svc.obter_manual(hub, org_id, canonico)
     if manual is None:

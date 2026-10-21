@@ -82,6 +82,8 @@ _TABELAS = (
     # reads these directly; seeded empty here so a sparse card exercises
     # "no empresas" rather than an unknown table.
     "cliente_empresa_participacoes", "empresas",
+    # Migration 300 — the imóvel's attached condomínio.
+    "condominios",
 )
 
 
@@ -229,8 +231,20 @@ def _imovel(scoped, *, codigo: str, empreendimento, logradouro: str, numero: str
         "complemento": complemento, "bairro": "Bairro Modelo", "cidade": "Cidade Exemplo",
         "uf": "SP", "cep": "01000000", "foto_destaque": None, "corretores": [],
     }])
+    # Migration 300 — an imóvel with an empreendimento is ATTACHED to the
+    # condomínio of that same name (so the title is unchanged); one without
+    # stays unanswered (only the permuta ativo here, which readiness skips).
+    condominio_id = None
+    if empreendimento:
+        condominio_id = str(uuid4())
+        scoped.set_table_data("condominios", _rows(scoped, "condominios") + [{
+            "id": condominio_id, "org_id": ORG_ID, "nome": empreendimento,
+            "nome_normalizado": empreendimento.upper(), "cidade": "Cidade Exemplo",
+            "bairro": None, "status_validacao": "validado", "fundido_em_id": None,
+        }])
     scoped.set_table_data("imovel_dados", _rows(scoped, "imovel_dados") + [{
         "org_id": ORG_ID, "codigo": codigo, "numero_matricula": matricula,
+        "condominio_id": condominio_id, "casa_de_rua": False,
         "numero_registro_imoveis": "1º Oficial de Registro de Imóveis de Cidade Exemplo",
         "prefeitura_cadastro_imobiliario": inscricao, "captador_user_id": None,
         "situacao_onus": onus, "onus_observacoes": None,

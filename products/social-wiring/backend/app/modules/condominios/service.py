@@ -5,8 +5,11 @@ so RLS is bypassed and EVERY query carries ``org_id`` explicitly. The Vista
 mirror (``imoveis``) and ``imovel_dados`` are only ever READ here.
 
 Resolution of an imóvel to a condomínio mirrors the ``condominio_imoveis`` view
-(migration 265): ``alias_key(imovel_dados.empreendimento_manual or
-imoveis.empreendimento)`` looked up in ``condominio_aliases``.
+(migration 300, over 265): the FK ``imovel_dados.condominio_id`` FIRST; only
+when it is null AND the imóvel is not ``casa_de_rua``, the alias match
+``alias_key(imovel_dados.empreendimento_manual or imoveis.empreendimento)`` in
+``condominio_aliases``. :func:`buscar` / :func:`criar` serve the imóvel page's
+"attach a condomínio" picker; :func:`fundir` re-points the FK with the aliases.
 """
 from __future__ import annotations
 
@@ -18,12 +21,18 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError, ValidationError_
 
+from noctusai_lib.primitives.accents import fold_accents
+
 from app.modules.condominios import normalizacao as norm
 from app.services.table_reads import paged_rows, table
 
 CONDOMINIOS = "condominios"
 ALIASES = "condominio_aliases"
 EVENTOS = "condominio_eventos"
+DADOS = "imovel_dados"
+
+#: The picker's page size (imóvel page search-as-you-type).
+LIMITE_BUSCA = 10
 
 ATRIBUTOS_EDITAVEL = (
     "cidade", "bairro", "tipo", "seguranca_nivel", "portaria_24h", "area_lazer",
@@ -71,23 +80,29 @@ def _imoveis_com_empreendimento(client: Any, org_id: UUID) -> list[dict]:
                "valor_venda,area_privativa,area_total",
     )
     dados = paged_rows(
-        client, "imovel_dados", org_id, order_col="codigo", id_key="codigo",
-        select="codigo,empreendimento_manual",
+        client, DADOS, org_id, order_col="codigo", id_key="codigo",
+        select="codigo,empreendimento_manual,condominio_id,casa_de_rua",
     )
+    por_codigo = {(d["codigo"] or "").strip().upper(): d for d in dados}
     manual = {
-        (d["codigo"] or "").strip().upper(): d.get("empreendimento_manual")
-        for d in dados
+        cod: d.get("empreendimento_manual")
+        for cod, d in por_codigo.items()
         if (d.get("empreendimento_manual") or "").strip()
     }
+
+    def _link(cod: str) -> dict:
+        d = por_codigo.get(cod) or {}
+        return {"condominio_id": d.get("condominio_id"), "casa_de_rua": bool(d.get("casa_de_rua"))}
+
     out: list[dict] = []
     vistos = set()
     for r in mirror:
         cod = r["codigo_norm"]
         vistos.add(cod)
-        out.append({**r, "empreendimento_efetivo": manual.get(cod) or r.get("empreendimento")})
-    for cod, emp in manual.items():
-        if cod not in vistos:
-            out.append({"codigo_norm": cod, "empreendimento_efetivo": emp, "so_manual": True})
+        out.append({**r, **_link(cod), "empreendimento_efetivo": manual.get(cod) or r.get("empreendimento")})
+    for cod, d in por_codigo.items():
+        if cod not in vistos and (cod in manual or d.get("condominio_id")):
+            out.append({"codigo_norm": cod, **_link(cod), "empreendimento_efetivo": manual.get(cod), "so_manual": True})
     return out
 
 
@@ -124,6 +139,8 @@ def sugerir(client: Any, org_id: UUID, ator: Optional[UUID]) -> dict:
     lat_lng: dict[str, list[tuple[float, float]]] = {}
     for im in imoveis:
         raw = im.get("empreendimento_efetivo")
+        if raw is None:
+            continue
         chave = norm.alias_key(raw)
         if not chave:
             continue
@@ -192,12 +209,17 @@ def _stats(client: Any, org_id: UUID) -> tuple[dict[str, dict], list[dict]]:
     por_chave = {a["alias_normalizado"]: a["condominio_id"] for a in aliases}
     acc: dict[str, dict] = {}
     for im in _imoveis_com_empreendimento(client, org_id):
-        cid = por_chave.get(norm.alias_key(im.get("empreendimento_efetivo")) or "")
+        # FK first (migration 300); the alias match only for an imóvel with no
+        # FK that is not explicitly a casa de rua — the view's exact rule.
+        cid = im.get("condominio_id")
+        if not cid and not im.get("casa_de_rua"):
+            cid = por_chave.get(norm.alias_key(im.get("empreendimento_efetivo")) or "")
         if not cid:
             continue
         s = acc.setdefault(cid, {"imoveis": 0, "ativos": 0, "precos": [], "aliases_imoveis": Counter()})
         s["imoveis"] += 1
-        s["aliases_imoveis"][norm.alias_key(im.get("empreendimento_efetivo"))] += 1
+        if not im.get("condominio_id"):
+            s["aliases_imoveis"][norm.alias_key(im.get("empreendimento_efetivo"))] += 1
         if im.get("valor_venda"):
             s["ativos"] += 1
         p = _preco_m2(im)
@@ -253,6 +275,99 @@ def obter(client: Any, org_id: UUID, condominio_id: UUID) -> dict:
         ),
         "eventos": eventos,
     }
+
+
+# ── Imóvel-page picker (migration 300) ─────────────────────────────────────
+
+
+def _resumo(c: dict) -> dict:
+    return {
+        "id": c["id"], "nome": c.get("nome"), "cidade": c.get("cidade"),
+        "bairro": c.get("bairro"), "status_validacao": c.get("status_validacao"),
+    }
+
+
+def _dobrado(texto: Optional[str]) -> str:
+    return fold_accents(norm.alias_key(texto) or "")
+
+
+def buscar(client: Any, org_id: UUID, q: str, *, limite: int = LIMITE_BUSCA) -> dict:
+    """Search-as-you-type for the imóvel page: this org's attachable
+    condomínios (never a merged or discarded one) whose name CONTAINS the
+    typed text — accent-, case- and prefix-insensitive ("res vila" finds
+    "Residencial Vila Verde"; "vila" finds it too). Prefix hits first, then
+    alphabetical; at most `limite`. An empty query returns nothing (the
+    picker only searches once the user types)."""
+    alvo = _dobrado(q)
+    if not alvo:
+        return {"items": [], "total": 0}
+    chave = norm.match_key(q) or ""
+    achados: list[tuple[int, str, dict]] = []
+    for c in paged_rows(client, CONDOMINIOS, org_id):
+        if c.get("fundido_em_id") or c.get("status_validacao") == "descartado":
+            continue
+        nome = _dobrado(c.get("nome"))
+        normalizado = c.get("nome_normalizado") or ""
+        if alvo in nome or (chave and chave in normalizado):
+            prefixo = nome.startswith(alvo) or (bool(chave) and normalizado.startswith(chave))
+            achados.append((0 if prefixo else 1, nome, c))
+    achados.sort(key=lambda t: (t[0], t[1]))
+    itens = [_resumo(c) for _, _, c in achados[:limite]]
+    return {"items": itens, "total": len(itens)}
+
+
+def criar(client: Any, org_id: UUID, nome: str, ator: Optional[UUID], *,
+          cidade: Optional[str] = None, bairro: Optional[str] = None) -> dict:
+    """Create a condomínio from the imóvel page ("Cadastrar condomínio …").
+
+    Deduped by `nome_normalizado` within the org: an existing attachable row
+    with the same identity is RETURNED (``criado: False``) so the picker
+    attaches it instead of forking a duplicate; a merged one returns its
+    destination; a discarded one is a 409 (an admin reopens it). A new row
+    starts `sugerido` — the owner validates it on the Condomínios page like
+    any other — and gets its own name as an alias (when that spelling is not
+    already another condomínio's), so the name-match fallback agrees."""
+    nome = norm._WS.sub(" ", (nome or "").strip())
+    chave = norm.match_key(nome)
+    if not chave:
+        raise ValidationError_("Informe o nome do condomínio.", field="nome")
+    mesmos = (
+        table(client, CONDOMINIOS).select("*").eq("org_id", str(org_id))
+        .eq("nome_normalizado", chave).execute()
+    ).data or []
+    if mesmos:
+        ativos = [m for m in mesmos if not m.get("fundido_em_id") and m.get("status_validacao") != "descartado"]
+        if ativos:
+            return {**_resumo(ativos[0]), "criado": False}
+        fundido = next((m for m in mesmos if m.get("fundido_em_id")), None)
+        if fundido is not None:
+            return {**_resumo(_get(client, org_id, fundido["fundido_em_id"])), "criado": False}
+        raise ConflictError(
+            "Existe um condomínio descartado com esse nome; peça a um administrador "
+            "para reabri-lo na página Condomínios."
+        )
+    linha = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "nome": nome,
+        "nome_normalizado": chave,
+        "cidade": (cidade or "").strip() or None,
+        "bairro": (bairro or "").strip() or None,
+        "status_validacao": "sugerido",
+    }
+    novo = table(client, CONDOMINIOS).insert(linha).execute().data[0]
+    _evento(client, org_id, novo["id"], "sugerido", ator, origem="imovel", nome=nome)
+    alias = norm.alias_key(nome)
+    ja = (
+        table(client, ALIASES).select("id").eq("org_id", str(org_id))
+        .eq("alias_normalizado", alias).execute()
+    ).data or []
+    if not ja:
+        table(client, ALIASES).insert(
+            {"id": str(uuid4()), "org_id": str(org_id), "condominio_id": novo["id"],
+             "alias": nome, "alias_normalizado": alias, "origem": "manual"}
+        ).execute()
+    return {**_resumo(novo), "criado": True}
 
 
 # ── Writes ──────────────────────────────────────────────────────────────────
@@ -337,15 +452,26 @@ def fundir(client, org_id, origem_id: UUID, destino_id: UUID, ator) -> dict:
     for aid in movidos:
         table(client, ALIASES).update({"condominio_id": destino["id"], "origem": "fusao"}) \
             .eq("org_id", str(org_id)).eq("id", aid).execute()
+    # Migration 300 — imóveis ATTACHED to the origin follow it (recorded, so
+    # the undo moves exactly these back).
+    imoveis_movidos = [
+        d["codigo"] for d in (
+            table(client, DADOS).select("codigo").eq("org_id", str(org_id))
+            .eq("condominio_id", origem["id"]).execute()
+        ).data or []
+    ]
+    for codigo in imoveis_movidos:
+        table(client, DADOS).update({"condominio_id": destino["id"]}) \
+            .eq("org_id", str(org_id)).eq("codigo", codigo).execute()
     table(client, CONDOMINIOS).update(
         {"status_validacao": "descartado", "fundido_em_id": destino["id"]}
     ).eq("org_id", str(org_id)).eq("id", origem["id"]).execute()
     detalhes = {"alias_ids": movidos, "origem_nome": origem["nome"], "destino_nome": destino["nome"],
-                "origem_status_anterior": status_anterior}
+                "origem_status_anterior": status_anterior, "imovel_codigos": imoveis_movidos}
     _evento(client, org_id, destino["id"], "merge", ator, origem_id=origem["id"], **detalhes)
     _evento(client, org_id, origem["id"], "merge", ator, destino_id=destino["id"], **detalhes)
     return {"origem": _get(client, org_id, origem_id), "destino": _get(client, org_id, destino_id),
-            "aliases_movidos": len(movidos)}
+            "aliases_movidos": len(movidos), "imoveis_movidos": len(imoveis_movidos)}
 
 
 def desfazer_fusao(client, org_id, origem_id: UUID, ator) -> dict:
@@ -363,6 +489,11 @@ def desfazer_fusao(client, org_id, origem_id: UUID, ator) -> dict:
     for aid in det.get("alias_ids", []):
         table(client, ALIASES).update({"condominio_id": origem["id"], "origem": "manual"}) \
             .eq("org_id", str(org_id)).eq("id", aid).execute()
+    # Migration 300 — move back only the imóveis the merge moved AND that are
+    # still on the destination (one re-attached since stays where a human put it).
+    for codigo in det.get("imovel_codigos", []):
+        table(client, DADOS).update({"condominio_id": origem["id"]}) \
+            .eq("org_id", str(org_id)).eq("codigo", codigo).eq("condominio_id", destino_id).execute()
     table(client, CONDOMINIOS).update(
         {"status_validacao": det.get("origem_status_anterior") or "sugerido", "fundido_em_id": None}
     ).eq("org_id", str(org_id)).eq("id", origem["id"]).execute()

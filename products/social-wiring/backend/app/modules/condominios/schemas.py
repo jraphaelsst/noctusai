@@ -32,3 +32,11 @@ class FundirBody(StrictHttpModel):
 
 class AliasBody(StrictHttpModel):
     alias: str = Field(min_length=1, max_length=200)
+
+
+class CondominioCriarBody(StrictHttpModel):
+    """Migration 300 — "Cadastrar condomínio" from the imóvel page."""
+
+    nome: str = Field(min_length=1, max_length=200)
+    cidade: Optional[str] = Field(default=None, max_length=120)
+    bairro: Optional[str] = Field(default=None, max_length=120)

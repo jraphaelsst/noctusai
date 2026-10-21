@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from tests.modules.imovel_hub.conftest import (
     CODIGO,
     ORG_ID,
@@ -230,17 +232,13 @@ class TestWriting:
         assert body["empreendimento_manual"] == "Residencial Euroville"
         assert body["empreendimento_manual_confirmado_em"] is not None
 
-    def test_em_condominio_is_three_state_and_round_trips(self, client, scoped):
-        # Migration 202 — None (not stated) / False (explicitly NOT a condomínio) / True.
+    def test_legacy_em_condominio_is_no_longer_writable(self, client, scoped):
+        """Migration 300 — the 202 flag is read-only legacy: a body carrying
+        it is refused BY NAME (422), never silently ignored."""
         seed(scoped)
-        url = f"/api/imoveis/{CODIGO}/dados"
-        assert client.get(url, headers=auth()).json()["em_condominio"] is None
-        body = client.patch(url, json={"em_condominio": False}, headers=auth()).json()
-        assert body["em_condominio"] is False
-        body = client.patch(url, json={"em_condominio": True}, headers=auth()).json()
-        assert body["em_condominio"] is True
-        body = client.patch(url, json={"em_condominio": None}, headers=auth()).json()
-        assert body["em_condominio"] is None
+        r = client.patch(f"/api/imoveis/{CODIGO}/dados", json={"em_condominio": False}, headers=auth())
+        assert r.status_code == 422
+        assert "em_condominio" in r.text
 
     def test_clearing_an_empreendimento_clears_its_confirmation_too(self, client, scoped):
         seed(
@@ -391,3 +389,87 @@ class TestIdentificadoresCanonicosNaEscrita:
         seed(scoped)
         texto = "Serventia do Registro de Imóveis de Cotia - CNS: 11991-7"
         assert self._patch(client, numero_registro_imoveis=texto).json()["numero_registro_imoveis"] == texto
+
+
+# ─── Migration 300 — condomínio FK / casa de rua ─────────────────────────────
+
+COND = "00000000-0000-4000-8000-0000000000c1"
+COND_FUNDIDO = "00000000-0000-4000-8000-0000000000c2"
+COND_ALHEIO = "00000000-0000-4000-8000-0000000000c3"
+COND_DESCARTADO = "00000000-0000-4000-8000-0000000000c4"
+
+
+def _condominios(scoped) -> None:
+    base = {"cidade": "Cotia", "bairro": "Granja Viana", "fundido_em_id": None, "status_validacao": "validado"}
+    scoped.set_table_data("condominios", [
+        {**base, "id": COND, "org_id": ORG_ID, "nome": "Vila Verde", "nome_normalizado": "VILA VERDE"},
+        {**base, "id": COND_FUNDIDO, "org_id": ORG_ID, "nome": "Vl Verde", "nome_normalizado": "VL VERDE",
+         "status_validacao": "descartado", "fundido_em_id": COND},
+        {**base, "id": COND_ALHEIO, "org_id": str(uuid4()), "nome": "Alheio", "nome_normalizado": "ALHEIO"},
+        {**base, "id": COND_DESCARTADO, "org_id": ORG_ID, "nome": "Nada", "nome_normalizado": "NADA",
+         "status_validacao": "descartado"},
+    ])
+
+
+class TestCondominioVinculo:
+    URL = f"/api/imoveis/{CODIGO}/dados"
+
+    def test_unanswered_reads_null_and_false(self, client, scoped):
+        seed(scoped)
+        _condominios(scoped)
+        b = client.get(self.URL, headers=auth()).json()
+        assert b["condominio_id"] is None and b["condominio"] is None
+        assert b["casa_de_rua"] is False and b["em_condominio"] is None
+
+    def test_attach_returns_the_condominio_and_derives_true(self, client, scoped):
+        seed(scoped)
+        _condominios(scoped)
+        r = client.patch(self.URL, json={"condominio_id": COND}, headers=auth())
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["condominio_id"] == COND and b["casa_de_rua"] is False
+        assert b["em_condominio"] is True
+        assert b["condominio"] == {"id": COND, "nome": "Vila Verde", "cidade": "Cotia",
+                                   "bairro": "Granja Viana", "status_validacao": "validado"}
+
+    def test_casa_de_rua_detaches_and_attaching_clears_it(self, client, scoped):
+        seed(scoped, dados=[dados_row(condominio_id=COND)])
+        _condominios(scoped)
+        b = client.patch(self.URL, json={"casa_de_rua": True}, headers=auth()).json()
+        assert b["casa_de_rua"] is True and b["condominio_id"] is None and b["em_condominio"] is False
+        b = client.patch(self.URL, json={"condominio_id": COND}, headers=auth()).json()
+        assert b["casa_de_rua"] is False and b["condominio_id"] == COND
+
+    def test_detach_returns_to_unanswered(self, client, scoped):
+        seed(scoped, dados=[dados_row(condominio_id=COND)])
+        _condominios(scoped)
+        b = client.patch(self.URL, json={"condominio_id": None}, headers=auth()).json()
+        assert b["condominio_id"] is None and b["em_condominio"] is None
+
+    def test_both_at_once_is_422(self, client, scoped):
+        seed(scoped)
+        _condominios(scoped)
+        r = client.patch(self.URL, json={"condominio_id": COND, "casa_de_rua": True}, headers=auth())
+        assert r.status_code == 422
+        assert "exclusivos" in r.text
+
+    def test_casa_de_rua_null_is_422(self, client, scoped):
+        seed(scoped)
+        assert client.patch(self.URL, json={"casa_de_rua": None}, headers=auth()).status_code == 422
+
+    @pytest.mark.parametrize("cid", [COND_ALHEIO, COND_FUNDIDO, COND_DESCARTADO,
+                                     "00000000-0000-4000-8000-0000000000ff"])
+    def test_another_orgs_merged_discarded_or_unknown_condominio_is_refused(self, client, scoped, cid):
+        """A well-formed body naming a condomínio this org cannot attach: the
+        service's `ValidationError_` (house 400, naming `condominio_id`)."""
+        seed(scoped)
+        _condominios(scoped)
+        r = client.patch(self.URL, json={"condominio_id": cid}, headers=auth())
+        assert r.status_code == 400, r.text
+        assert r.json()["error"]["details"]["field"] == "condominio_id"
+        assert not [d for d in scoped.table("imovel_dados")._data if d.get("condominio_id") == cid]
+
+    def test_legacy_flag_is_exposed_read_only(self, client, scoped):
+        seed(scoped, dados=[dados_row(em_condominio=True)])
+        b = client.get(self.URL, headers=auth()).json()
+        assert b["em_condominio_legado"] is True and b["em_condominio"] is None

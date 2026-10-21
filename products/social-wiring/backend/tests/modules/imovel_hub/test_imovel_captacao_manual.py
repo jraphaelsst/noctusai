@@ -47,6 +47,7 @@ from tests.modules.imovel_hub.conftest import (
 )
 
 OUTRA_ORG = "00000000-0000-4000-8000-000000000099"
+COND_ID = "00000000-0000-4000-8000-0000000000c1"
 MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations"
 # Located by name, never by number: SW migration numbers are taken at
 # integrate time and this one was renumbered once already (225 → 226).
@@ -198,7 +199,7 @@ class TestCriar:
                 categoria="Casa", status="Venda", finalidades=["venda"],
                 valor_venda=1500000, area_total=420.5, dormitorios=4, suites=2, vagas=3,
                 descricao_web="Casa térrea", observacoes="chaves na portaria",
-                empreendimento="Reserva do Vianna", em_condominio=True,
+                empreendimento="Reserva do Vianna", casa_de_rua=True,
                 processo_atual_numero="876", drive_folder_url=DRIVE,
             ),
             headers=auth(),
@@ -211,7 +212,9 @@ class TestCriar:
         assert body["valor_venda"] == 1500000
         assert body["logradouro"] == "Alameda Liverpool" and body["uf"] == "SP"
         assert body["empreendimento"] == "Reserva do Vianna"
-        assert body["em_condominio"] is True
+        # Migration 300 — the typed answer, plus the derived three-state.
+        assert body["casa_de_rua"] is True and body["condominio_id"] is None
+        assert body["em_condominio"] is False
         assert body["referencias"] == {
             "processo_atual_numero": "876",
             "drive_folder_url": DRIVE,
@@ -357,7 +360,7 @@ class TestPinsDoTechLead:
             imoveis=[],
             dados=[dados_row("TYPED-1", endereco_manual_logradouro="Rua A", endereco_manual_numero="1",
                              endereco_manual_bairro="Centro", endereco_manual_cidade="Cotia",
-                             endereco_manual_uf="SP", empreendimento_manual="Cond X", em_condominio=False,
+                             endereco_manual_uf="SP", empreendimento_manual="Cond X", casa_de_rua=True,
                              processo_atual_numero="9")],
         )
         scoped.set_table_data("imovel_captacao", [])
@@ -367,7 +370,7 @@ class TestPinsDoTechLead:
         assert b["fonte"] == "manual" and b["titulo"] is None
         assert not set(cap.MIRROR_COLUMNS) - set(b)
         assert b["logradouro"] == "Rua A" and b["empreendimento"] == "Cond X"
-        assert b["em_condominio"] is False
+        assert b["em_condominio"] is False and b["casa_de_rua"] is True and b["condominio"] is None
         assert b["fotos"] == [] and b["finalidades"] == [] and b["valor_venda"] is None
         assert b["referencias"]["processo_atual_numero"] == "9"
 
@@ -375,11 +378,18 @@ class TestPinsDoTechLead:
         seed(
             scoped, registry=[registry_row("ONE1")],
             imoveis=[imovel_row("ONE1", empreendimento="Edifício Aurora")],
-            dados=[dados_row("ONE1", em_condominio=True)],
+            dados=[dados_row("ONE1", condominio_id=COND_ID)],
         )
+        scoped.set_table_data("condominios", [{
+            "id": COND_ID, "org_id": ORG_ID, "nome": "Edifício Aurora", "nome_normalizado": "AURORA",
+            "cidade": "Cotia", "bairro": None, "status_validacao": "validado", "fundido_em_id": None,
+        }])
         scoped.set_table_data("imovel_captacao", [])
         b = client.get("/api/imoveis/ONE1", headers=auth()).json()
         assert b["empreendimento"] == "Edifício Aurora" and b["em_condominio"] is True
+        # Migration 300 — the attached condomínio rides on the shape.
+        assert b["condominio_id"] == COND_ID and b["condominio"]["nome"] == "Edifício Aurora"
+        assert b["casa_de_rua"] is False
 
     def test_registry_de_origem_vista_sem_captacao_continua_404_no_get(self, client, scoped, espelho_vista):
         seed(scoped, registry=[registry_row("ONE7", ativo_no_vista=False)], imoveis=[])

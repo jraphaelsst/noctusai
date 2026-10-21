@@ -7,7 +7,8 @@ Identity: `imovel_registry` (`origem_descoberta='manual'`), written by the SAME
 insert `dados_service.registrar_imovel` uses (`dados_service.inserir_registry`)
 — never a second registration implementation. Listing data only a manual
 imóvel has: `imovel_captacao` (column names IDENTICAL to `imoveis`, so one
-serializer serves both). Address / empreendimento / em_condominio / deal refs:
+serializer serves both). Address / empreendimento / condomínio (migration 300:
+`condominio_id` / `casa_de_rua`) / deal refs:
 `imovel_dados`. The Vista mirror `imoveis` is NEVER written: a manual row there
 would force `_last_sync_at` to re-sync forever, be flipped by the sweep and be
 overwritten by a later Vista listing of the same código.
@@ -178,7 +179,9 @@ def imovel_manual_out(registry: dict, captacao: Optional[dict], dados: Optional[
     """The `Imovel` wire shape of a manual imóvel: every `imoveis` column
     (null/empty where a manual imóvel cannot have it — fotos, corretores,
     caracteristicas, publication flags, Vista ids), the mirror's two derived
-    presentation keys, plus `fonte`, `referencias` and `em_condominio`."""
+    presentation keys, plus `fonte`, `referencias` and the condomínio answer
+    (`condominio_id`, `casa_de_rua`, derived `em_condominio` — migration 300;
+    the `condominio` summary is added by the callers that have a client)."""
     dados = dados or {}
     # A REGISTRY-ONLY manual imóvel (the picker's typed-código registration)
     # has no captação row: the same shape, `titulo` and every listing field
@@ -209,7 +212,7 @@ def imovel_manual_out(registry: dict, captacao: Optional[dict], dados: Optional[
         orientacao_solar=[],
         dias_desde_atualizacao=None,
         fonte="manual",
-        em_condominio=dados.get("em_condominio"),
+        **condominio_campos(dados),
         referencias=dados_svc.referencias_da_linha(dados),
     )
     return out
@@ -217,7 +220,21 @@ def imovel_manual_out(registry: dict, captacao: Optional[dict], dados: Optional[
 
 #: What a LINKED manual imóvel keeps as its own when it is rendered through the
 #: Vista listing it is linked to (CONTRACT §8.7).
-_PROPRIOS_DO_MANUAL = ("org_id", "codigo", "codigo_norm", "fonte", "referencias", "em_condominio")
+_PROPRIOS_DO_MANUAL = (
+    "org_id", "codigo", "codigo_norm", "fonte", "referencias",
+    "condominio_id", "casa_de_rua", "em_condominio", "condominio",
+)
+
+
+def condominio_campos(dados: Optional[dict]) -> dict:
+    """Migration 300 — the condomínio answer on the `Imovel` wire shape (one
+    spelling for the Vista and manual paths)."""
+    dados = dados or {}
+    return {
+        "condominio_id": dados.get("condominio_id"),
+        "casa_de_rua": bool(dados.get("casa_de_rua")),
+        "em_condominio": dados_svc.em_condominio_derivado(dados),
+    }
 _ENDERECO_PROPRIO = (
     "empreendimento", "cep", "logradouro", "numero", "complemento", "bairro", "cidade", "uf",
 )
@@ -246,7 +263,10 @@ def obter_manual(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
     if registry is None or registry.get("origem_descoberta") != "manual":
         return None
     captacao = captacao_da_linha(client, org_id, canonico)
-    return imovel_manual_out(registry, captacao, dados_svc.linha(client, org_id, canonico))
+    dados = dados_svc.linha(client, org_id, canonico)
+    out = imovel_manual_out(registry, captacao, dados)
+    out["condominio"] = dados_svc.condominio_resumo(client, org_id, (dados or {}).get("condominio_id"))
+    return out
 
 
 # ─── writes ───────────────────────────────────────────────────────────────
@@ -290,8 +310,9 @@ def _escrever_dados(
     extras = {}
     if "empreendimento" in valores:
         extras["empreendimento_manual"] = valores["empreendimento"]
-    if "em_condominio" in valores:
-        extras["em_condominio"] = valores["em_condominio"]
+    for campo in ("condominio_id", "casa_de_rua"):  # migration 300
+        if campo in valores:
+            extras[campo] = valores[campo]
     if extras:
         dados_svc.atualizar(client, org_id, codigo, valores=extras, usuario_id=usuario_id)
     refs = {k: valores[k] for k in ("processo_atual_numero", "drive_folder_url") if k in valores}

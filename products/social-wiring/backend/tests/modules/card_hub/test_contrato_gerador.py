@@ -1871,6 +1871,7 @@ class TestComarcaDaMatricula:
             ("ALVO_ITENS_INTEGRANTES", "components/card/TermosNegocioSection.tsx"),
             ("ALVO_AD_CORPUS", "components/card/TermosNegocioSection.tsx"),
             ("ALVO_DOCUMENTOS_DO_IMOVEL", "components/imovel/ImovelDocumentosCard.tsx"),
+            ("ALVO_CONDOMINIO_DO_IMOVEL", "components/imovel/ImovelCartorioCard.tsx"),
         ],
     )
     def test_every_alvo_is_rendered_by_the_screen_it_names(self, constante, arquivo):

@@ -86,10 +86,12 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     # `endereco_manual_*` (149) — a single stamp, not the 154 quintet: there
     # is no document extraction for this field to reconcile against.
     "empreendimento_manual",
-    # Migration 202 — explicit "is this imóvel in a condomínio?" answer.
-    # `None` = not stated (the contract's vistoria clause then uses the
-    # condomínio wording); `False` is the only value that switches it off.
-    "em_condominio",
+    # Migration 300 — the imóvel's condomínio (FK to the master list, 265)
+    # OR the explicit "casa de rua" answer; mutually exclusive (see
+    # `_condominio_patch`). Supersedes 202's free `em_condominio` flag, which
+    # the app no longer writes (kept read-only for one release).
+    "condominio_id",
+    "casa_de_rua",
     # Migration 264 — valuation characteristics (see CAMPOS_AVALIACAO).
     "padrao_construtivo",
     "estado_conservacao",
@@ -537,7 +539,11 @@ def _fonte_onus(row: dict, resolved: dict) -> Optional[dict]:
 
 
 def _saida(
-    codigo: str, row: Optional[dict], resolved: dict, propria: Optional[dict] = None
+    codigo: str,
+    row: Optional[dict],
+    resolved: dict,
+    propria: Optional[dict] = None,
+    condominio: Optional[dict] = None,
 ) -> dict:
     """The response shape. An imóvel with no row yet is NOT an error and NOT
     an empty object — it is every field, null. A caller that had to tell
@@ -559,8 +565,16 @@ def _saida(
         "prefeitura_cadastro_imobiliario": row.get("prefeitura_cadastro_imobiliario"),
         "captador": table_reads.actor(resolved, row.get("captador_user_id")),
         "situacao_onus": row.get("situacao_onus"),
-        # Migration 202 — three-state: None (not stated) / True / False.
-        "em_condominio": row.get("em_condominio"),
+        # Migration 300 — the typed answer, and the DERIVED three-state the
+        # 202 flag used to carry: linked -> True, casa de rua -> False,
+        # neither -> None. `em_condominio_legado` is the raw 202 column
+        # (read-only, dropped next release) — the contract's fallback for an
+        # unlinked imóvel an operator once marked "em condomínio".
+        "condominio_id": row.get("condominio_id"),
+        "casa_de_rua": bool(row.get("casa_de_rua")),
+        "em_condominio": em_condominio_derivado(row),
+        "em_condominio_legado": row.get("em_condominio"),
+        "condominio": condominio,
         # Migration 264 — valuation characteristics, from the imóvel's OWN row.
         **{campo: propria.get(campo) for campo in CAMPOS_AVALIACAO},
         "avaliacao_campos_atualizado_em": propria.get("avaliacao_campos_atualizado_em"),
@@ -688,7 +702,10 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("prefeitura_cadastro_imobiliario_confirmado_por"),
         (row or {}).get("situacao_onus_confirmado_por"),
     }
-    saida = _saida(codigo, row, table_reads.resolve_actors(ids), propria)
+    saida = _saida(
+        codigo, row, table_reads.resolve_actors(ids), propria,
+        condominio_resumo(client, org_id, (row or {}).get("condominio_id")),
+    )
     # None when unlinked / read from the manual side.
     saida["vinculo_legal"] = efetivo.como_dict()
     return saida
@@ -722,6 +739,7 @@ def atualizar(
     patch = canonizar_valores(
         client, org_id, codigo, {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
     )
+    patch.update(_condominio_patch(client, org_id, patch))
 
     # A human typing the value IS the provenance. Stamped here rather than
     # left null so a later extraction can tell the column is already spoken
@@ -779,6 +797,95 @@ def atualizar(
 
     _gravar(client, org_id, codigo, atual, patch)
     return obter(client, org_id, codigo)
+
+
+# ── Migration 300 — condomínio link ─────────────────────────────────────────
+
+CONDOMINIOS_TABLE = "condominios"
+
+
+def em_condominio_derivado(row: Optional[dict]) -> Optional[bool]:
+    """The three-state answer the 202 flag carried, derived from the typed
+    link: attached -> True, casa de rua -> False, neither -> None."""
+    row = row or {}
+    if row.get("condominio_id"):
+        return True
+    if row.get("casa_de_rua"):
+        return False
+    return None
+
+
+def condominio_resumo(client: Any, org_id: UUID, condominio_id: Any) -> Optional[dict]:
+    """`{id, nome, cidade, bairro, status_validacao}` of the linked
+    condomínio, or None when unlinked. Org-scoped (the trigger guarantees it
+    on write; the read re-checks rather than trusting it)."""
+    if not condominio_id:
+        return None
+    rows = (
+        _t(client, CONDOMINIOS_TABLE)
+        .select("id,nome,cidade,bairro,status_validacao,fundido_em_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(condominio_id))
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": r["id"],
+        "nome": r.get("nome"),
+        "cidade": r.get("cidade"),
+        "bairro": r.get("bairro"),
+        "status_validacao": r.get("status_validacao"),
+    }
+
+
+def _condominio_patch(client: Any, org_id: UUID, patch: dict) -> dict:
+    """Validate + complete the condomínio pair of a write.
+
+    Exclusive by construction: attaching a condomínio clears `casa_de_rua`;
+    marking `casa_de_rua` detaches the condomínio — the CHECK can never be
+    reached through the app. Both set at once is a 422 (the schema refuses it
+    first; this is the service-level backstop for non-HTTP callers). The
+    condomínio must exist IN THIS ORG and not be merged/discarded."""
+    extra: dict = {}
+    tem_cond = "condominio_id" in patch
+    tem_rua = "casa_de_rua" in patch
+    if tem_rua and patch["casa_de_rua"] is None:
+        raise ValidationError_("casa_de_rua não pode ser nulo.", field="casa_de_rua")
+    if tem_cond and tem_rua and patch["casa_de_rua"] and patch["condominio_id"]:
+        raise ValidationError_(
+            "condominio_id e casa_de_rua são exclusivos: um imóvel de rua não "
+            "pertence a um condomínio.",
+            field="casa_de_rua",
+        )
+    if tem_cond and patch["condominio_id"]:
+        cid = str(patch["condominio_id"])
+        rows = (
+            _t(client, CONDOMINIOS_TABLE)
+            .select("id,status_validacao,fundido_em_id")
+            .eq("org_id", str(org_id))
+            .eq("id", cid)
+            .execute()
+        ).data or []
+        if not rows:
+            raise ValidationError_("Condomínio não encontrado.", field="condominio_id")
+        if rows[0].get("fundido_em_id"):
+            raise ValidationError_(
+                "Este condomínio foi fundido em outro; escolha o condomínio de destino.",
+                field="condominio_id",
+            )
+        if rows[0].get("status_validacao") == "descartado":
+            raise ValidationError_(
+                "Este condomínio foi descartado; reabra-o em Condomínios ou escolha outro.",
+                field="condominio_id",
+            )
+        extra["condominio_id"] = cid
+        if not tem_rua:
+            extra["casa_de_rua"] = False
+    if tem_rua and patch["casa_de_rua"] and not tem_cond:
+        extra["condominio_id"] = None
+    return extra
 
 
 def _json_seguro(patch: dict) -> dict:

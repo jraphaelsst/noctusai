@@ -596,6 +596,9 @@ ALVO_ANTIGOS_PROPRIETARIOS = "certidoes-subtab-antigo_proprietario"
 ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta"
 ALVO_AD_CORPUS = "termos-ad-corpus-resposta"
 ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
+#: The imóvel page's condomínio answer — "Casa de rua" checkbox + the
+#: condomínio picker (`ImovelCartorioCard`, migration 300).
+ALVO_CONDOMINIO_DO_IMOVEL = "imovel-condominio"
 #: The posse controls (prazo / marco / data fixa) of the Termos panel, and the
 #: permuta imóvel's own posse controls — `TermosNegocioSection`'s two sections.
 ALVO_POSSE = "termos-posse-controles"
@@ -1875,6 +1878,30 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
                     _pacto_do_casal(av, p, conjuge, politica, casais)
 
 
+#: Migration 300 — readiness wording for the condomínio answer.
+ROTULO_CONDOMINIO_FALTA = "Informe o condomínio do imóvel ou marque 'Casa de rua'"
+AVISO_CONDOMINIO_LEGADO = (
+    "O imóvel está marcado como \"em condomínio\" no cadastro antigo, mas nenhum "
+    "condomínio está vinculado. O contrato usa a redação de condomínio; vincule o "
+    "condomínio na página do imóvel (ou marque 'Casa de rua'). Não bloqueia a geração."
+)
+
+
+def _condominio_do_imovel(av: Avaliacao, im) -> None:
+    """Migration 300 (owner decision 2026-10-21): the imóvel must be attached
+    to its condomínio or marked "Casa de rua". Unanswered -> `falta` pointing
+    at the imóvel page's control. A deal whose imóvel carries the LEGACY 202
+    "em condomínio" flag but no link -> `aviso` only, so nothing in flight
+    breaks (its wording is unchanged: condomínio). A legacy explicit "não"
+    (False) is answered — the 300 backfill turned those into casa de rua."""
+    if im.condominio_resposta is not None or im.em_condominio is False:
+        return
+    if im.em_condominio is True:
+        av.avisa("CONDOMINIO_NAO_VINCULADO", AVISO_CONDOMINIO_LEGADO)
+        return
+    av.falta("imovel.condominio", ROTULO_CONDOMINIO_FALTA, "imovel", alvo=ALVO_CONDOMINIO_DO_IMOVEL)
+
+
 def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date) -> None:
     im = d.imovel
     if im is None:
@@ -1895,6 +1922,7 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
     ):
         if not getattr(im, campo):
             av.falta(f"imovel.{campo}", rotulo, "imovel")
+    _condominio_do_imovel(av, im)
     # [Corpus catalog §6, 34/34] The contract prints "Cartório de Registro de
     # Imóveis de <cidade>" — a reading with no city in it (a bare CNS, "… da
     # Capital") cannot be printed in that form and is named, never guessed.
@@ -3599,6 +3627,9 @@ __all__ = [
     "ALVO_PERMUTA_POSSE",
     "ALVO_POSSE",
     "ALVO_DOCUMENTOS_DO_IMOVEL",
+    "ALVO_CONDOMINIO_DO_IMOVEL",
+    "AVISO_CONDOMINIO_LEGADO",
+    "ROTULO_CONDOMINIO_FALTA",
     "ALVO_ITENS_INTEGRANTES",
     "Avaliacao",
     "Destinos",

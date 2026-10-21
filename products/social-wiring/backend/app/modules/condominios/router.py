@@ -6,7 +6,12 @@ on the TRUSTED `public.noctus_users` row (`require_org_admin_for`) -- the same
 gate imovel_hub uses for "Vincular imóveis". Editing descriptive attributes is
 open to any org member.
 
-ROUTE ORDER: literal `/sugerir` precedes `/{condominio_id}`.
+Migration 300 — the imóvel page's picker: `GET /buscar?q=` (search-as-you-
+type) and `POST ""` (create, deduped by normalised name) are open to any org
+member, like attaching the condomínio itself (`PATCH /api/imoveis/{codigo}/
+dados`); the created row is `sugerido` until an admin validates it.
+
+ROUTE ORDER: literals `/sugerir` and `/buscar` precede `/{condominio_id}`.
 """
 from __future__ import annotations
 
@@ -19,7 +24,13 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 from app.modules.condominios import service as svc
-from app.modules.condominios.schemas import AliasBody, CondominioPatchBody, FundirBody, RenomearBody
+from app.modules.condominios.schemas import (
+    AliasBody,
+    CondominioCriarBody,
+    CondominioPatchBody,
+    FundirBody,
+    RenomearBody,
+)
 from app.modules.imovel_hub.deps import get_imovel_hub_client
 
 router = APIRouter(prefix="/api/condominios", tags=["condominios"])
@@ -44,6 +55,24 @@ def listar_route(
 ) -> dict:
     _, org_id = _parts(auth)
     return svc.listar(client, org_id, status=status, cidade=cidade, q=q)
+
+
+@router.post("")
+def criar_route(body: CondominioCriarBody, auth=Depends(get_current_user_org),
+                client=Depends(get_imovel_hub_client)) -> dict:
+    user_id, org_id = _parts(auth)
+    return svc.criar(client, org_id, body.nome, user_id, cidade=body.cidade, bairro=body.bairro)
+
+
+@router.get("/buscar")
+def buscar_route(
+    q: str = Query(default="", max_length=200),
+    limite: int = Query(default=svc.LIMITE_BUSCA, ge=1, le=25),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    _, org_id = _parts(auth)
+    return svc.buscar(client, org_id, q, limite=limite)
 
 
 @router.post("/sugerir")

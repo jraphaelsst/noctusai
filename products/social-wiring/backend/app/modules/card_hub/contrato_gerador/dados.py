@@ -377,10 +377,18 @@ class Imovel:
     #: 149) has no mirror row at all, so without the authored override this
     #: is silently `None` forever and the title prints the address alone.
     empreendimento: Optional[str] = None
-    #: Migration 202 — the card's explicit answer to "is this imóvel in a
-    #: condomínio?". `None` = not stated; `contexto` treats everything except
-    #: an explicit `False` as condomínio (owner decision 2026-10-05, 91/93).
+    #: Migration 202 — the answer to "is this imóvel in a condomínio?".
+    #: `None` = not stated; `contexto` treats everything except an explicit
+    #: `False` as condomínio (owner decision 2026-10-05, 91/93). Since
+    #: migration 300 `carregador` DERIVES it from the typed link (attached ->
+    #: True, casa de rua -> False) and falls back to the legacy 202 column
+    #: only for an imóvel with neither.
     em_condominio: Optional[bool] = None
+    #: Migration 300 — HOW the condomínio question is answered on the imóvel
+    #: page: "vinculado" (attached to a master-list condomínio, FK),
+    #: "casa_de_rua", or `None` (not answered — a readiness `falta`, or an
+    #: `aviso` when the legacy flag says "em condomínio").
+    condominio_resposta: Optional[str] = None
     #: 🔴 [endereco-portaria-vs-imovel] THE PROPERTY TABLE's address (owner
     #: rule, 2026-09-23): `carregador._endereco_manual`'s per-field override
     #: (`imovel_dados.endereco_manual_*`, migrations 149/159) over the CRM/

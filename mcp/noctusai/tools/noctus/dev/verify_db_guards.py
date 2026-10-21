@@ -1962,6 +1962,99 @@ _EMPREENDIMENTO_MANUAL_PROBE = GuardProbe(
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imovel_dados condomínio FK / casa de rua
+# (migration 300): CHECK `imovel_dados_condominio_ou_casa_de_rua` + trigger
+# `imovel_dados_condominio_mesma_org`.
+# ---------------------------------------------------------------------------
+#
+# Same fresh-insert fixture as the 139/152/158 probes above, plus a
+# SELF-PROVISIONED condomínio inside the same rolled-back transaction
+# (`condominios` is empty in prod today — an ambient-data fixture would read
+# `no_fixture` forever). The same-org trigger is BEFORE INSERT, so it fires
+# BEFORE the CHECK: the CHECK probe provisions a condomínio of the fixture's
+# OWN org (trigger passes, CHECK trips); the trigger probe provisions one of a
+# random OTHER org.
+
+_IMOVEL_CONDOMINIO_MESMA_ORG_FRAGMENT = "deve ser um condomínio da mesma organização"
+
+
+def _imovel_condominio_probe(
+    *, cond_org_sql: str, casa_de_rua_sql: str, guard_fragment: str, permitted_msg: str
+) -> str:
+    """INSERT a fresh `imovel_dados` row attached to a condomínio this probe
+    provisions itself (org `cond_org_sql`), with `casa_de_rua_sql`."""
+    fx = _ENDERECO_REGISTRO_FIXTURE_FROM
+    return _do_block(f"""
+DECLARE
+  v_cond uuid := gen_random_uuid();
+  v_org uuid;
+  v_codigo text;
+BEGIN
+  SELECT fx.org_id, fx.codigo INTO v_org, v_codigo FROM {fx} LIMIT 1;
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(_ENDERECO_REGISTRO_FIXTURE_DESC)}';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.condominios (id, org_id, nome, nome_normalizado)
+  VALUES (v_cond, {cond_org_sql}, 'NOC PROBE', 'NOC PROBE ' || v_cond::text);
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.{_IMOVEL_DADOS_TABLE} (org_id, codigo, condominio_id, casa_de_rua)
+    VALUES (v_org, v_codigo, v_cond, {casa_de_rua_sql});
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)}';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{_sql_lit(guard_fragment)}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+
+
+_IMOVEL_CONDOMINIO_OU_CASA_DE_RUA_PROBE = GuardProbe(
+    id="imovel_dados.condominio_ou_casa_de_rua",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_condominio_ou_casa_de_rua",
+    kind="write_refusal",
+    migrations=("300_imovel_condominio_fk.sql",),
+    rationale=(
+        "An imóvel attached to a condomínio AND marked 'casa de rua' is a "
+        "contradiction the contract would print either way — the API refuses "
+        "it (422); this is the backstop against a writer that bypasses it."
+    ),
+    sql=_imovel_condominio_probe(
+        cond_org_sql="v_org",
+        casa_de_rua_sql="TRUE",
+        guard_fragment='constraint "imovel_dados_condominio_ou_casa_de_rua"',
+        permitted_msg="imovel_dados with condominio_id AND casa_de_rua was accepted",
+    ),
+)
+
+_IMOVEL_CONDOMINIO_MESMA_ORG_PROBE = GuardProbe(
+    id="imovel_dados.condominio_id.mesma_org",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_condominio_mesma_org",
+    kind="write_refusal",
+    migrations=("300_imovel_condominio_fk.sql",),
+    rationale=(
+        "The FK alone accepts ANY org's condomínio; attaching an imóvel to "
+        "another tenant's condomínio would leak that row into this org's "
+        "contracts and /condominios stats. The trigger refuses it."
+    ),
+    sql=_imovel_condominio_probe(
+        cond_org_sql="gen_random_uuid()",
+        casa_de_rua_sql="FALSE",
+        guard_fragment=_IMOVEL_CONDOMINIO_MESMA_ORG_FRAGMENT,
+        permitted_msg="imovel_dados attached to another org's condominio was accepted",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — zero public storage.buckets (platform-wide; the LGPD guard).
 # ---------------------------------------------------------------------------
 #
@@ -10420,6 +10513,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_REQUER_DATA_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE,
     _EMPREENDIMENTO_MANUAL_PROBE,
+    _IMOVEL_CONDOMINIO_OU_CASA_DE_RUA_PROBE,
+    _IMOVEL_CONDOMINIO_MESMA_ORG_PROBE,
     _STORAGE_BUCKETS_PROBE,
     _SECDEF_EXECUTE_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,

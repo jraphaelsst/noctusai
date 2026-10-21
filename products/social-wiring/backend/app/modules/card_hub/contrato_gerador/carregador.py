@@ -455,15 +455,41 @@ def _endereco_manual(catalogo: dict, dados: dict) -> Endereco:
 
 def _empreendimento(catalogo: dict, dados: dict) -> Optional[str]:
     """The development/condomínio name `titulo_curto` prefixes onto the
-    address (migration 158): the operator-authored override
-    (`imovel_dados.empreendimento_manual`) wins when set, falling back to
-    the CRM/Vista mirror's own `empreendimento` otherwise. A manually
+    address. Precedence (migration 300, over 158):
+
+    1. the ATTACHED condomínio's `nome` (`imovel_dados.condominio_id` ->
+       `condominios`, the owner-validated master list) — the typed answer;
+    2. the operator-authored free text (`imovel_dados.empreendimento_manual`,
+       158) — the pre-300 override, still honoured for an unlinked imóvel;
+    3. the CRM/Vista mirror's own `empreendimento`.
+
+    A casa de rua has no condomínio to name, but 2/3 still apply (a street
+    house inside a named loteamento keeps its CRM name). A manually
     registered imóvel (migration 149) has NO mirror row at all, so without
     the override `catalogo` is `{}` and this is unconditionally `None` —
     exactly the gap this migration closes. `titulo_curto` itself
     (`contexto.py`) is unchanged: it already prints `empreendimento` when
     present and falls through to the address alone when it is not."""
-    return dados.get("empreendimento_manual") or catalogo.get("empreendimento")
+    vinculado = (dados.get("condominio") or {}).get("nome")
+    return vinculado or dados.get("empreendimento_manual") or catalogo.get("empreendimento")
+
+
+def _condominio_resposta(dados: dict) -> Optional[str]:
+    """Migration 300 — "vinculado" | "casa_de_rua" | None (see `dados.Imovel`)."""
+    if dados.get("condominio_id"):
+        return "vinculado"
+    if dados.get("casa_de_rua"):
+        return "casa_de_rua"
+    return None
+
+
+def _em_condominio(dados: dict) -> Optional[bool]:
+    """Migration 300 — the derived answer when the link answers it; the
+    legacy 202 column (`em_condominio_legado`, read-only) otherwise, so an
+    in-flight deal an operator once marked "em condomínio" keeps its wording."""
+    if _condominio_resposta(dados) is not None:
+        return dados.get("em_condominio")
+    return dados.get("em_condominio_legado")
 
 
 def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -> Imovel:
@@ -499,8 +525,10 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         # `_empreendimento`'s docstring for why a manually registered imóvel
         # needs this at all.
         empreendimento=_empreendimento(catalogo, dados),
-        # Migration 202 — explicit condomínio answer (None = not stated).
-        em_condominio=dados.get("em_condominio"),
+        # Migration 300 (over 202) — derived from the typed link, legacy
+        # flag as the fallback; see `_em_condominio`.
+        em_condominio=_em_condominio(dados),
+        condominio_resposta=_condominio_resposta(dados),
         endereco=_endereco_manual(catalogo, dados),
         # Migration 093 — the CRM/Vista mirror's own m², used only by the
         # `derivacao` coherence check (never printed) — see `dados.Imovel

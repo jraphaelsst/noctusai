@@ -73,10 +73,13 @@ class ImovelDadosPatchBody(StrictHttpModel):
     #: empreendimento` to read at all. `carregador._empreendimento` prefers
     #: this over the mirror when set.
     empreendimento_manual: Optional[str] = Field(default=None, max_length=200)
-    #: Migration 202 — three-state: `None` clears to "not stated" (the
-    #: contract's vistoria clause defaults to the condomínio wording), `False`
-    #: = explicitly NOT in a condomínio, `True` = in one.
-    em_condominio: Optional[bool] = None
+    #: Migration 300 — the condomínio (master list, 265) this imóvel sits in.
+    #: `None` detaches. Mutually exclusive with `casa_de_rua=true` (422 here,
+    #: CHECK in the DB); setting one clears the other in `dados_service`.
+    #: The legacy `em_condominio` flag (202) is no longer writable.
+    condominio_id: Optional[UUID] = None
+    #: Migration 300 — TRUE = explicitly outside any condomínio. Not nullable.
+    casa_de_rua: bool = False
     #: Migration 264 — physical attributes for the price evaluator. `None`
     #: clears; absence leaves alone (same `model_fields_set` contract).
     padrao_construtivo: Optional[PadraoConstrutivo] = None
@@ -87,6 +90,11 @@ class ImovelDadosPatchBody(StrictHttpModel):
     profundidade_m: Optional[float] = Field(default=None, gt=0, lt=1_000_000)
     topografia: Optional[Topografia] = None
     posicao_lote: Optional[PosicaoLote] = None
+
+    @model_validator(mode="after")
+    def _condominio_ou_casa_de_rua(self):
+        _exigir_condominio_exclusivo(self)
+        return self
 
 
 class EnderecoManualPatchBody(StrictHttpModel):
@@ -150,6 +158,17 @@ class EnderecoManualIn(StrictHttpModel):
     cep: Optional[str] = Field(default=None, pattern=r"^\d{5}-?\d{3}$")
 
 
+def _exigir_condominio_exclusivo(body) -> None:
+    """Migration 300 — an imóvel is in ONE condomínio or is a casa de rua,
+    never both (the DB CHECK `imovel_dados_condominio_ou_casa_de_rua` is the
+    backstop). A 422 naming the conflict, never a silent pick."""
+    if body.casa_de_rua and body.condominio_id is not None:
+        raise ValueError(
+            "condominio_id e casa_de_rua são exclusivos: um imóvel de rua não "
+            "pertence a um condomínio."
+        )
+
+
 class _ImovelManualCampos(StrictHttpModel):
     """The listing fields shared by create and patch (CONTRACT §8.3). Money
     and areas are > 0 and rooms >= 0 — the same rules as the table's CHECKs, so
@@ -172,9 +191,16 @@ class _ImovelManualCampos(StrictHttpModel):
     descricao_web: Optional[str] = Field(default=None, max_length=10000)
     observacoes: Optional[str] = Field(default=None, max_length=10000)
     empreendimento: Optional[str] = Field(default=None, max_length=200)
-    em_condominio: Optional[bool] = None
+    #: Migration 300 — same pair and exclusivity as `ImovelDadosPatchBody`.
+    condominio_id: Optional[UUID] = None
+    casa_de_rua: bool = False
     processo_atual_numero: Optional[str] = Field(default=None, max_length=64)
     drive_folder_url: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _condominio_ou_casa_de_rua(self):
+        _exigir_condominio_exclusivo(self)
+        return self
 
 
 class ImovelManualIn(_ImovelManualCampos):

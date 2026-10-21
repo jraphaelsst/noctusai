@@ -291,6 +291,9 @@ def base_v1() -> DadosContrato:
             codigo="EX001",
             titulo="Apartamento",
             empreendimento="Edifício Exemplo",
+            # Migration 300 — the imóvel page answered the condomínio question
+            # (attached); readiness asks for it otherwise.
+            condominio_resposta="vinculado",
             endereco=Endereco(
                 logradouro="Rua Fictícia", numero="100", complemento="Apto 11",
                 bairro="Bairro Modelo", cidade="Cidade Exemplo", uf="SP", cep="01000000",
