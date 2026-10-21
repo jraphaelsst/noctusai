@@ -110,7 +110,8 @@ describe("TextosTab", () => {
     expect(await screen.findByTestId("conteudo-criar-rascunho")).toBeTruthy();
     expect(screen.getByTestId("conteudo-estado").textContent).toContain("somente leitura");
     expect(screen.queryByTestId("textos-salvar")).toBeNull();
-    expect((screen.getByLabelText("grupo.um") as HTMLTextAreaElement).readOnly).toBe(true);
+    // the textos query resolves after the agent detail: wait for the field, don't race it
+    expect(((await screen.findByLabelText("grupo.um")) as HTMLTextAreaElement).readOnly).toBe(true);
   });
 
   it("shows the restricted state for a non platform admin (403)", async () => {
