@@ -1,11 +1,6 @@
 {
   "_doc": "Per-file count of invalidate-only useMutation({...}) blocks (check_mutation_invalidate_only). Ratchet: may only go down. KB § PATTERNS/frontend/mutation-cache-writes.md",
   "arquivos": {
-    "products/academia-de-reciclagem/frontend/src/hooks/useDecisoes.ts": 2,
-    "products/academia-de-reciclagem/frontend/src/hooks/useInteressados.ts": 1,
-    "products/academia-de-reciclagem/frontend/src/hooks/useKb.ts": 3,
-    "products/academia-de-reciclagem/frontend/src/hooks/usePerguntas.ts": 2,
-    "products/academia-de-reciclagem/frontend/src/hooks/useRoadmap.ts": 3,
     "products/adconnect/frontend/src/hooks/useCart.ts": 4,
     "products/adconnect/frontend/src/hooks/useOrders.ts": 2,
     "products/adconnect/frontend/src/hooks/useRewards.ts": 1,

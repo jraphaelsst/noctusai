@@ -5,6 +5,7 @@
  * PUT/DELETE for decisions — only create and supersede).
  */
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Envelope } from "@/lib/types";
@@ -59,7 +60,7 @@ export interface DecisaoCreateInput {
 
 export function useCreateDecisao() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — decisions are listed by a server-side order and filtered by estado; where the new decision lands in each cached list is the server's call
     mutationFn: (data: DecisaoCreateInput) => api.post<Decision>("/api/decisions", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: decisoesKeys.all });
@@ -74,13 +75,29 @@ export interface SupersedeResult {
 
 export function useSupersedeDecisao(codigo: string | undefined) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: DecisaoCreateInput) =>
+  // The superseded decision is rewritten in every cached list and its detail, and the
+  // new one's detail is written now; the new one's place in each list (server order,
+  // estado filter) converges on the settle refetch.
+  return useCacheWriteMutation<SupersedeResult, DecisaoCreateInput>({
+    mutationFn: (data) =>
       api.post<SupersedeResult>(`/api/decisions/${codigo}/supersede`, data),
+    targets: [
+      {
+        queryKey: decisoesKeys.all,
+        match: "prefix",
+        commit: (old: Envelope<Decision> | undefined, result) =>
+          pageOps.replace(old, result.substituida.codigo, result.substituida, "codigo"),
+      },
+      ...(codigo
+        ? [{
+            queryKey: decisoesKeys.detail(codigo),
+            commit: (_old: Decision | undefined, result: SupersedeResult) => result.substituida,
+          }]
+        : []),
+    ],
+    // The new decision has no cached detail yet: seed it so its page opens instantly.
     onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: decisoesKeys.all });
-      if (codigo) qc.invalidateQueries({ queryKey: decisoesKeys.detail(codigo) });
-      qc.invalidateQueries({ queryKey: decisoesKeys.detail(result.nova.codigo) });
+      qc.setQueryData(decisoesKeys.detail(result.nova.codigo), result.nova);
     },
   });
 }

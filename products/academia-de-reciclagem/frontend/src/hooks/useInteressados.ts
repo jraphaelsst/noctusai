@@ -8,7 +8,8 @@
  * {id}`, matching this product's own `useDecisoes.ts` / `useKb.ts`
  * convention (inline `api.get`/`api.delete` calls, typed at the call site).
  */
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Envelope } from "@/lib/types";
@@ -38,11 +39,16 @@ export function useInteressadosList(limit = 50, offset = 0) {
 }
 
 export function useDeleteInteressado() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<void>(`/api/interessados/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: interessadosKeys.all });
-    },
+  // The row leaves every cached page on the click and the total follows; a failure
+  // puts it back.
+  return useCacheWriteMutation<void, string>({
+    mutationFn: (id) => api.delete<void>(`/api/interessados/${id}`),
+    targets: [
+      {
+        queryKey: interessadosKeys.all,
+        match: "prefix",
+        optimistic: (old: Envelope<Interessado> | undefined, id) => pageOps.remove(old, id),
+      },
+    ],
   });
 }

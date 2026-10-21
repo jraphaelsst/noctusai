@@ -2,6 +2,7 @@
  * Open-questions data hooks — contract §A.3, §B.3.
  */
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Envelope } from "@/lib/types";
@@ -48,7 +49,7 @@ export interface PerguntaCreateInput {
 
 export function useCreatePergunta() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the questions list order is server-side and the list is filtered by estado; where the new question falls is the server's call
     mutationFn: (data: PerguntaCreateInput) => api.post<OpenQuestion>("/api/questions", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: perguntasKeys.all });
@@ -57,12 +58,23 @@ export function useCreatePergunta() {
 }
 
 export function useAnswerPergunta(codigo: string | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (resposta: string) =>
+  // The answered question leaves the "aberta" list and is rewritten in "todas"; its
+  // place in the "respondida" list (server order) converges on the settle refetch.
+  return useCacheWriteMutation<AnswerResult, string>({
+    mutationFn: (resposta) =>
       api.post<AnswerResult>(`/api/questions/${codigo}/answer`, { resposta }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: perguntasKeys.all });
-    },
+    targets: codigo
+      ? [
+          {
+            queryKey: perguntasKeys.list("aberta"),
+            commit: (old: Envelope<OpenQuestion> | undefined) => pageOps.remove(old, codigo, "codigo"),
+          },
+          {
+            queryKey: perguntasKeys.list("todas"),
+            commit: (old: Envelope<OpenQuestion> | undefined, answered) => pageOps.replace(old, codigo, answered, "codigo"),
+          },
+          { queryKey: perguntasKeys.list("respondida") },
+        ]
+      : [],
   });
 }

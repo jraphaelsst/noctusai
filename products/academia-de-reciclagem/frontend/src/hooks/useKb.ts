@@ -6,6 +6,7 @@
  * invalidate the affected queries" rule.
  */
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Envelope } from "@/lib/types";
@@ -115,7 +116,7 @@ export interface KbCreateInput {
 
 export function useCreateKb() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — KB lists are search/filter/paged and ordered by slug server-side; whether and where a new entry falls in each cached window is the server's call
     mutationFn: (data: KbCreateInput) => api.post<KbEntry>("/api/kb", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: kbKeys.all });
@@ -136,14 +137,22 @@ export interface KbUpdateInput {
 
 export function useUpdateKb(slug: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: KbUpdateInput) => api.put<KbEntry>(`/api/kb/${slug}`, data),
+  // The saved entry is written into every cached list row (matched by the OLD slug,
+  // which a rename changes) and into the detail; the new revision is server-owned.
+  return useCacheWriteMutation<KbEntry, KbUpdateInput>({
+    mutationFn: (data) => api.put<KbEntry>(`/api/kb/${slug}`, data),
+    targets: [
+      {
+        queryKey: ["kb", "list"],
+        match: "prefix",
+        commit: (old: Envelope<KbEntrySummary> | undefined, updated) => pageOps.replace(old, slug, updated, "slug"),
+      },
+      { queryKey: kbKeys.detail(slug), commit: (_old: KbEntry | undefined, updated) => updated },
+    ],
+    invalidate: [kbKeys.revisions(slug)],
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: kbKeys.all });
-      qc.invalidateQueries({ queryKey: kbKeys.detail(slug) });
-      qc.invalidateQueries({ queryKey: kbKeys.revisions(slug) });
       if (updated.slug !== slug) {
-        qc.invalidateQueries({ queryKey: kbKeys.detail(updated.slug) });
+        qc.setQueryData(kbKeys.detail(updated.slug), updated);
         qc.invalidateQueries({ queryKey: kbKeys.revisions(updated.slug) });
       }
     },
@@ -151,13 +160,16 @@ export function useUpdateKb(slug: string) {
 }
 
 export function useArchiveKb(slug: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (motivo: string) => api.post<KbEntry>(`/api/kb/${slug}/archive`, { motivo }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: kbKeys.all });
-      qc.invalidateQueries({ queryKey: kbKeys.detail(slug) });
-      qc.invalidateQueries({ queryKey: kbKeys.revisions(slug) });
-    },
+  return useCacheWriteMutation<KbEntry, string>({
+    mutationFn: (motivo) => api.post<KbEntry>(`/api/kb/${slug}/archive`, { motivo }),
+    targets: [
+      {
+        queryKey: ["kb", "list"],
+        match: "prefix",
+        commit: (old: Envelope<KbEntrySummary> | undefined, archived) => pageOps.replace(old, slug, archived, "slug"),
+      },
+      { queryKey: kbKeys.detail(slug), commit: (_old: KbEntry | undefined, archived) => archived },
+    ],
+    invalidate: [kbKeys.revisions(slug)],
   });
 }

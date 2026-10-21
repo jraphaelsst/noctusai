@@ -2,6 +2,7 @@
  * Roadmap + tasks data hooks — contract §A.4, §A.5, §B.4.
  */
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Envelope } from "@/lib/types";
@@ -64,14 +65,18 @@ export interface PhaseUpdateInput {
 }
 
 export function useUpdatePhase() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ codigo, changes }: { codigo: string; changes: PhaseUpdateInput }) =>
-      api.patch<Phase>(`/api/roadmap/${codigo}`, changes),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: roadmapKeys.phases });
-      qc.invalidateQueries({ queryKey: roadmapKeys.sessionPrep });
-    },
+  // Phases are a fixed ordered list: the edit is drawn on the click (a failure rolls it
+  // back) and replaced by the server's row; session-prep is derived and refreshes.
+  return useCacheWriteMutation<Phase, { codigo: string; changes: PhaseUpdateInput }>({
+    mutationFn: ({ codigo, changes }) => api.patch<Phase>(`/api/roadmap/${codigo}`, changes),
+    targets: ({ codigo, changes }) => [
+      {
+        queryKey: roadmapKeys.phases,
+        optimistic: (old: Envelope<Phase> | undefined) => pageOps.patch(old, codigo, changes, "codigo"),
+        commit: (old: Envelope<Phase> | undefined, saved) => pageOps.replace(old, codigo, saved, "codigo"),
+      },
+    ],
+    invalidate: [[...roadmapKeys.sessionPrep]],
   });
 }
 
@@ -97,7 +102,7 @@ export interface TaskCreateInput {
 
 export function useCreateTask() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — tasks are listed in a server-side order under fase/estado filters; where the new task falls in each cached list is the server's call
     mutationFn: (data: TaskCreateInput) => api.post<Task>("/api/tasks", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: roadmapKeys.tasksAll });
@@ -113,14 +118,20 @@ export interface TaskUpdateInput {
 }
 
 export function useUpdateTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ codigo, changes }: { codigo: string; changes: TaskUpdateInput }) =>
-      api.patch<Task>(`/api/tasks/${codigo}`, changes),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: roadmapKeys.tasksAll });
-      qc.invalidateQueries({ queryKey: roadmapKeys.sessionPrep });
-    },
+  // The edit is drawn in every cached task list on the click and replaced by the
+  // server's row; an estado change that moves the task out of a filtered list, and
+  // session-prep, converge on the settle refetch.
+  return useCacheWriteMutation<Task, { codigo: string; changes: TaskUpdateInput }>({
+    mutationFn: ({ codigo, changes }) => api.patch<Task>(`/api/tasks/${codigo}`, changes),
+    targets: ({ codigo, changes }) => [
+      {
+        queryKey: roadmapKeys.tasksAll,
+        match: "prefix",
+        optimistic: (old: Envelope<Task> | undefined) => pageOps.patch(old, codigo, changes, "codigo"),
+        commit: (old: Envelope<Task> | undefined, saved) => pageOps.replace(old, codigo, saved, "codigo"),
+      },
+    ],
+    invalidate: [[...roadmapKeys.sessionPrep]],
   });
 }
 
