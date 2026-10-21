@@ -1,7 +1,7 @@
 ---
 name: noc-cache-writes
 description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", or check_mutation_invalidate_only blocking a commit. Every write puts what it knows into the cache; never invalidate-only.
-version: 1.3.0
+version: 1.4.0
 ---
 
 # noc-cache-writes — a write puts what it knows into the cache
@@ -31,6 +31,13 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 4. Tests: for each file you touch, at least one test asserting the cache WHILE the request is in flight (deferred promise) — see `products/orbity/frontend/src/hooks/__tests__/useCrm.test.ts` "cache writes". Existing tests that asserted `invalidateQueries` calls may need updating to the new contract, never deleting coverage.
 5. `python mcp/noctusai/cli.py --lower-mutation-invalidate-only-baseline` — re-derives the ratchet downward. On a rebase CONFLICT in `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`: take either side, re-run this flag, stage. Never hand-merge it.
 6. Gates: product `tsc --noEmit`, `vitest run`, `vite build`; `--check-mutation-invalidate-only` clean.
+
+## Op reference (seed `@noctusai/lib/cache-writes`) — v1.4.0
+- `listOps` — `append/prepend/replace/patch/remove/update/insertSorted/merge/within`. Rows by `id` or the trailing `idKey` arg (`'hostname'`, `'slug'`); ids may be `string | number`. `insertSorted(list, row, compare)` lands a create where the server's sort puts it (never append-then-re-sort).
+- **Nested edit** (a row inside a row): `listOps.update(list, parentId, (p) => ({ ...p, children: listOps.prepend(p.children, c) }))`; in an envelope wrap with `listOps.within(old, 'items', (l) => listOps.update(l, ...))`. Decision: a one-line `update` beats nested map lambdas; no dedicated "nested" op.
+- **Key-aware writes**: `commit`/`optimistic` receive the concrete `queryKey` as a trailing argument (optional in the type); a `match: 'prefix'` target takes `predicate: (queryKey) => boolean` to touch only the matching filtered lists (account/scope/archived) — never commit a create into lists it does not belong in.
+- `infiniteOps` — `{ pages, pageParams }` caches: `patch/replace/remove` by id across pages, `prepend` into page 1 (replaces if already present), `mapPages`. Pages may be bare arrays or `pageOps` envelopes; `pageParams` untouched.
+- `pageOps.prependNewest` treats an envelope with no `page`/`pagination.page` as page 1.
 
 ## Guardrails
 - Inactive products (catalog `ativo=false`, not in `deploy/fleet/active-scope.txt`) are asleep — don't migrate them; the ratchet keeps them from growing.

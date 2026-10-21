@@ -44,7 +44,7 @@ const has = (rows: Row[], id: unknown, idKey: string) => rows.some((r) => r[idKe
 
 export const pageOps = {
   /** Merge `changes` into the row with `id` on this page (no-op when the row is not on it). */
-  patch<P>(page: P | undefined, id: string, changes: object, idKey = 'id'): P | undefined {
+  patch<P>(page: P | undefined, id: string | number, changes: object, idKey = 'id'): P | undefined {
     const key = rowsKey(page);
     if (!key) return page;
     const rows = rowsOf(page as PageLike, key);
@@ -52,7 +52,7 @@ export const pageOps = {
     return withRows(page, key, rows.map((r) => (r[idKey] === id ? { ...r, ...changes } : r)));
   },
   /** Swap the row with `id` for `row` (the server's version); no-op when absent. */
-  replace<P>(page: P | undefined, id: string, row: object, idKey = 'id'): P | undefined {
+  replace<P>(page: P | undefined, id: string | number, row: object, idKey = 'id'): P | undefined {
     const key = rowsKey(page);
     if (!key) return page;
     const rows = rowsOf(page as PageLike, key);
@@ -60,7 +60,7 @@ export const pageOps = {
     return withRows(page, key, rows.map((r) => (r[idKey] === id ? (row as Row) : r)));
   },
   /** Drop the row with `id` and take one off the total; no-op when absent. */
-  remove<P>(page: P | undefined, id: string, idKey = 'id'): P | undefined {
+  remove<P>(page: P | undefined, id: string | number, idKey = 'id'): P | undefined {
     const key = rowsKey(page);
     if (!key) return page;
     const rows = rowsOf(page as PageLike, key);
@@ -83,6 +83,10 @@ export const pageOps = {
    * Put a NEW row first on page 1 of a newest-first list (and add one to the total, trimming to `page_size`).
    * Pages other than the first are left alone — they shift server-side and converge on the settle. A row already
    * on the page is replaced in place instead (never duplicated).
+   *
+   * "Page 1" is read from `page.page` or `page.pagination.page`; an envelope with NEITHER field is
+   * ASSUMED to be page 1 (the unpaginated / first-page-only case) — so do not point this at a cache
+   * entry that is a later page without a page number.
    */
   prependNewest<P>(page: P | undefined, row: object, idKey = 'id'): P | undefined {
     const key = rowsKey(page);
@@ -90,7 +94,7 @@ export const pageOps = {
     const p = page as PageLike;
     const rows = rowsOf(p, key);
     const id = (row as Row)[idKey];
-    if (has(rows, id, idKey)) return pageOps.replace(page, id as string, row, idKey);
+    if (has(rows, id, idKey)) return pageOps.replace(page, id as string | number, row, idKey);
     const no = typeof p.page === 'number' ? p.page : typeof p.pagination?.page === 'number' ? p.pagination.page : 1;
     if (no !== 1) return page;
     const size = typeof p.page_size === 'number' ? p.page_size : typeof p.pagination?.page_size === 'number' ? p.pagination.page_size : rows.length + 1;

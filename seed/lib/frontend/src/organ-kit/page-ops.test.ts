@@ -39,3 +39,12 @@ describe('pageOps (the paginated envelopes of the organs)', () => {
     expect(pageOps.prependNewest(detail, { id: 'n' })).toBe(detail);
   });
 });
+
+describe('pageOps — page-1 assumption + numeric ids', () => {
+  it('prependNewest treats an envelope with no page field as page 1', () => {
+    expect(pageOps.prependNewest({ items: [{ id: 'a' }], total: 1 }, { id: 'n' })).toEqual({ items: [{ id: 'n' }, { id: 'a' }], total: 2 });
+  });
+  it('numeric ids', () => {
+    expect(pageOps.remove({ items: [{ id: 1 }, { id: 2 }], total: 2 }, 2)).toEqual({ items: [{ id: 1 }], total: 1 });
+  });
+});

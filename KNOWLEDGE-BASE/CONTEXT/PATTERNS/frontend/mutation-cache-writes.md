@@ -81,6 +81,13 @@ The caller's `onSuccess` and `onError` still run after the cache work, so toasts
 - **Invalidate a derived view** (funnel counts, dashboards) instead of recomputing it client-side.
 - **Genuinely can't place it** (the server regroups the whole view): keep the invalidate, but mark the `useMutation(` line with `// noc-allow: invalidate-only — <why>`. That is a declared exception, not the default.
 
+## Seed ops (additive gap-closing, 2026-10-21)
+
+- `listOps` addresses rows by `id` or a trailing `idKey`; ids are `string | number`. `listOps.update(list, id, fn)` is the nested-edit idiom (a row inside a row, with `within` for envelopes); `listOps.insertSorted(list, row, compare)` places a create where the server's sort would.
+- Key-aware writes: `commit`/`optimistic` get the concrete `queryKey` as a trailing argument; a `match: 'prefix'` target accepts `predicate(queryKey)` to edit only the filtered lists the row belongs to (a create committed into every account's list is a cross-account leak).
+- `infiniteOps` (`patch/replace/remove/prepend/mapPages`) edits `useInfiniteQuery` caches `{ pages, pageParams }` without touching `pageParams`.
+- `pageOps.prependNewest` assumes page 1 when the envelope carries no page number.
+
 ## What this does NOT fix — the other half of the latency
 
 A cache write hides a slow write. It does not make reads fast. The same day's profile of one orbity read (`GET /api/crm/leads/{id}/activities`, 564 ms) found:

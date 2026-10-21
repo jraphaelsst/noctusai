@@ -181,3 +181,73 @@ describe('listOps.within', () => {
     expect(listOps.within(detail, 'items', () => [])).toBe(detail);
   });
 });
+
+describe('listOps — idKey, numeric ids, update', () => {
+  it('addresses rows by a custom key and by numeric ids', () => {
+    const hosts = [{ hostname: 'a.com', ok: false }, { hostname: 'b.com', ok: false }];
+    expect(listOps.patch(hosts, 'b.com', { ok: true }, 'hostname')).toEqual([hosts[0], { hostname: 'b.com', ok: true }]);
+    expect(listOps.remove(hosts, 'a.com', 'hostname')).toEqual([hosts[1]]);
+    expect(listOps.replace(hosts, 'a.com', { hostname: 'a.com', ok: true }, 'append', 'hostname')?.length).toBe(2);
+    const segs = [{ id: 1, n: 'x' }, { id: 2, n: 'y' }];
+    expect(listOps.patch(segs, 2, { n: 'z' })).toEqual([segs[0], { id: 2, n: 'z' }]);
+    expect(listOps.remove(segs, 1)).toEqual([segs[1]]);
+    expect(listOps.replace(segs, 1, { id: 1, n: 'new' })).toEqual([{ id: 1, n: 'new' }, segs[1]]);
+  });
+
+  it('update edits a nested row inside a row', () => {
+    const leads = [{ id: 'l1', activities: [{ id: 'a1' }] }, { id: 'l2', activities: [] as { id: string }[] }];
+    const out = listOps.update(leads, 'l1', (l) => ({ ...l, activities: listOps.prepend(l.activities, { id: 'a2' })! }));
+    expect(out?.[0].activities.map((a) => a.id)).toEqual(['a2', 'a1']);
+    expect(out?.[1]).toBe(leads[1]);
+    expect(listOps.update(undefined, 'l1', (l) => l)).toBeUndefined();
+  });
+});
+
+describe("key-aware writes (queryKey arg + predicate)", () => {
+  it('passes the concrete queryKey and only touches entries the predicate accepts', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    qc.setQueryData(['folders', 'acc1', 'all'], [{ id: 'a' }]);
+    qc.setQueryData(['folders', 'acc2', 'all'], [{ id: 'b' }]);
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    const seen: unknown[] = [];
+    const { result } = renderHook(
+      () =>
+        useCacheWriteMutation<{ id: string }, string>({
+          mutationFn: async () => ({ id: 'n' }),
+          targets: [
+            {
+              queryKey: ['folders'],
+              match: 'prefix',
+              predicate: (key) => key[1] === 'acc1',
+              optimistic: (old: any, _v, _c, key) => {
+                seen.push(['o', key]);
+                return listOps.prepend(old, { id: 'tmp' });
+              },
+              commit: (old: any, saved, _v, _c, key) => {
+                seen.push(['c', key]);
+                return listOps.replace(old, 'tmp', saved);
+              },
+            },
+          ],
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.mutateAsync('x');
+    });
+    expect(qc.getQueryData(['folders', 'acc1', 'all'])).toEqual([{ id: 'n' }, { id: 'a' }]);
+    expect(qc.getQueryData(['folders', 'acc2', 'all'])).toEqual([{ id: 'b' }]);
+    expect(seen).toEqual([['o', ['folders', 'acc1', 'all']], ['c', ['folders', 'acc1', 'all']]]);
+  });
+});
+
+describe('listOps.insertSorted', () => {
+  const byName = (a: { id: string; name: string }, b: { id: string; name: string }) => a.name.localeCompare(b.name);
+  const l = [{ id: '1', name: 'a' }, { id: '2', name: 'c' }];
+  it('lands where the sort puts it, replaces an existing id, passes non-arrays through', () => {
+    expect(listOps.insertSorted(l, { id: '3', name: 'b' }, byName)?.map((r) => r.id)).toEqual(['1', '3', '2']);
+    expect(listOps.insertSorted(l, { id: '3', name: 'z' }, byName)?.map((r) => r.id)).toEqual(['1', '2', '3']);
+    expect(listOps.insertSorted(l, { id: '2', name: 'a2' }, byName)?.map((r) => r.id)).toEqual(['1', '2']);
+    expect(listOps.insertSorted(undefined, l[0], byName)).toBeUndefined();
+  });
+});
