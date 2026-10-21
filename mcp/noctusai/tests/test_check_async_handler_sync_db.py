@@ -81,7 +81,7 @@ def _tree(root: Path, files: dict[str, str], baseline: dict[str, int] | None = N
     return root
 
 
-class TestDetection:
+class TestCheckAsyncHandlerSyncDb:
     def test_async_handler_with_direct_execute_is_flagged(self):
         assert async_handler_sync_db_handlers(BLOCKING) == [(6, "list_things")]
 
