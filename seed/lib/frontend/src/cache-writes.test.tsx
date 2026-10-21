@@ -171,3 +171,13 @@ describe('listOps on non-arrays', () => {
     expect(listOps.merge([{ id: 'a' }] as any, { n: 2 } as any)).toEqual([{ id: 'a' }]);
   });
 });
+
+describe('listOps.within', () => {
+  it('edits the array an envelope keeps under a field and passes anything else through', () => {
+    const env = { items: [{ id: 'a' }, { id: 'b' }], total: 2 };
+    expect(listOps.within(env, 'items', (l) => listOps.remove(l, 'a'))).toEqual({ items: [{ id: 'b' }], total: 2 });
+    expect(listOps.within(undefined as typeof env | undefined, 'items', (l) => l)).toBeUndefined();
+    const detail = { id: 'x', items: 'not-a-list' } as any;
+    expect(listOps.within(detail, 'items', () => [])).toBe(detail);
+  });
+});

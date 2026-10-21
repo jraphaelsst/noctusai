@@ -35,7 +35,6 @@ import type {
   KnowledgeSearchResponse,
 } from "@/api/studio/types-ke";
 import { studioKeys } from "./keys";
-import { editList } from "../cacheEnvelope";
 
 const collectionsKey = (agentKey: string) => ["studio", agentKey, "knowledge", "collections"] as const;
 const documentsKey = (
@@ -76,7 +75,7 @@ export function useCreateKnowledgeCollection(agentKey: string) {
       {
         queryKey: collectionsKey(agentKey),
         commit: (old: KnowledgeCollectionsResponse | undefined, created) =>
-          editList(old, "colecoes", (l) => listOps.replace(l, created.id, created)),
+          listOps.within(old, "colecoes", (l) => listOps.replace(l, created.id, created)),
       },
     ],
     invalidate: [studioKeys.compiledAll(agentKey)],
@@ -91,7 +90,7 @@ export function useUpdateKnowledgeCollection(agentKey: string) {
       {
         queryKey: collectionsKey(agentKey),
         commit: (old: KnowledgeCollectionsResponse | undefined, saved) =>
-          editList(old, "colecoes", (l) => listOps.replace(l, saved.id, saved)),
+          listOps.within(old, "colecoes", (l) => listOps.replace(l, saved.id, saved)),
       },
     ],
     invalidate: [studioKeys.compiledAll(agentKey)],

@@ -48,7 +48,8 @@ describe("StudioAgent tiers", () => {
     for (const t of ["prompt", "ferramentas", "qualificacao", "textos", "decisoes", "biblioteca", "especificacoes", "conformidade", "conversas", "compilado"]) {
       expect(ids).toContain(`studio-tab-${t}`);
     }
-    expect(screen.getByTestId("stub-overview")).toBeTruthy();
+    // The overview tab mounts after the tab list (a separate render pass) — wait for it, don't race it (CI a447ae5d3).
+    expect(await screen.findByTestId("stub-overview")).toBeTruthy();
   });
 
   it("org admin on the instance sees the specs form, controls, conversations — not Prompt/Ferramentas/Qualificação", async () => {
@@ -59,7 +60,7 @@ describe("StudioAgent tiers", () => {
     expect(screen.queryByTestId("studio-tab-prompt")).toBeNull();
     expect(screen.queryByTestId("studio-tab-ferramentas")).toBeNull();
     expect(screen.queryByTestId("studio-tab-qualificacao")).toBeNull();
-    expect(screen.getByTestId("stub-instancia-overview")).toBeTruthy();
+    expect(await screen.findByTestId("stub-instancia-overview")).toBeTruthy();
   });
 
   it("org member gets no Studio content tabs", async () => {

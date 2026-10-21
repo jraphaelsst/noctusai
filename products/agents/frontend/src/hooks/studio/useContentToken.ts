@@ -10,7 +10,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
-import { editList } from "../cacheEnvelope";
 import { seg, studioKeys, toView } from "./keys";
 
 export type ContentTokenStatus = "ativo" | "expirado" | "revogado";
@@ -65,7 +64,7 @@ export function useMintContentToken() {
       {
         queryKey: studioKeys.contentTokens(),
         commit: (old: TokenList | undefined, minted, vars) =>
-          editList(old, "itens", (l) =>
+          listOps.within(old, "itens", (l) =>
             listOps.replace<ContentTokenRow>(
               l,
               minted.id,
@@ -97,7 +96,7 @@ export function useRevokeContentToken() {
       {
         queryKey: studioKeys.contentTokens(),
         optimistic: (old: TokenList | undefined) =>
-          editList(old, "itens", (l: ContentTokenRow[]) =>
+          listOps.within(old, "itens", (l: ContentTokenRow[]) =>
             l.map((r) =>
               r.id === id ? { ...r, status: "revogado" as const, revoked_at: r.revoked_at ?? new Date().toISOString() } : r,
             ),

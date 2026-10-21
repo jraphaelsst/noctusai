@@ -30,7 +30,6 @@ import type {
   EvalRunDetail,
   EvalRunListResponse,
 } from "@/api/studio/types-ke";
-import { editList } from "../cacheEnvelope";
 import { studioKeys } from "./keys";
 
 const casesKey = (agentKey: string) => ["studio", agentKey, "evals", "cases"] as const;
@@ -65,7 +64,7 @@ export function useCreateEvalCase(agentKey: string) {
       {
         queryKey: casesKey(agentKey),
         commit: (old: EvalCaseListResponse | undefined, saved, _v, { tempId }) =>
-          editList(old, "items", (l) => listOps.replace(l, tempId, saved)),
+          listOps.within(old, "items", (l) => listOps.replace(l, tempId, saved)),
       },
     ],
   });
@@ -79,9 +78,9 @@ export function useUpdateEvalCase(agentKey: string) {
       {
         queryKey: casesKey(agentKey),
         optimistic: (old: EvalCaseListResponse | undefined, { patch }) =>
-          editList(old, "items", (l) => listOps.patch(l, caseId, patch as Partial<EvalCase>)),
+          listOps.within(old, "items", (l) => listOps.patch(l, caseId, patch as Partial<EvalCase>)),
         commit: (old: EvalCaseListResponse | undefined, saved) =>
-          editList(old, "items", (l) => listOps.replace(l, caseId, saved)),
+          listOps.within(old, "items", (l) => listOps.replace(l, caseId, saved)),
       },
     ],
   });
@@ -94,7 +93,7 @@ export function useDeleteEvalCase(agentKey: string) {
       {
         queryKey: casesKey(agentKey),
         optimistic: (old: EvalCaseListResponse | undefined) =>
-          editList(old, "items", (l) => listOps.remove(l, caseId)),
+          listOps.within(old, "items", (l) => listOps.remove(l, caseId)),
       },
     ],
   });

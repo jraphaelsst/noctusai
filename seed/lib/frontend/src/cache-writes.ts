@@ -195,5 +195,23 @@ export const listOps = {
   remove<T extends WithId>(list: T[] | undefined, id: string): T[] | undefined {
     if (!Array.isArray(list)) return list;
     return list.filter((r) => r.id !== id);
+  },  /**
+   * Apply a list edit to the array an envelope keeps under `field` — for responses shaped
+   * `{ items: [...] }`, `{ itens: [...] }`, `{ colecoes: [...] }`, … Composes with the ops above:
+   * `listOps.within(old, 'items', (l) => listOps.remove(l, id))`. An uncached entry or one with
+   * no array at `field` passes through unchanged (safe under `match: 'prefix'`). For paginated
+   * envelopes whose TOTAL must move with the rows (`{data, pagination}` / `{items, total}`),
+   * use `pageOps` (re-exported below).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  within<E extends object>(env: E | undefined, field: keyof E & string, fn: (list: any[]) => any[] | undefined): E | undefined {
+    if (!env || typeof env !== 'object') return env;
+    const list = (env as Record<string, unknown>)[field];
+    if (!Array.isArray(list)) return env;
+    const next = fn(list);
+    return next ? { ...env, [field]: next } : env;
   },
 };
+
+/** Paginated-envelope edits (rows + total). One home for every cache edit: import from `cache-writes`. */
+export { pageOps } from './organ-kit/page-ops';

@@ -23,7 +23,6 @@ import type {
   QualParametros,
   ValidarResposta,
 } from "@/api/studio/types-julia";
-import { editList } from "../cacheEnvelope";
 import { seg, studioKeys, toView } from "./keys";
 
 export function usePadroes() {
@@ -90,7 +89,7 @@ export function useDescartarRascunhoPadrao(chave: string) {
       {
         queryKey: studioKeys.qualVersoes(chave),
         optimistic: (old: { items: PadraoVersaoMeta[] } | undefined) =>
-          editList(old, "items", (l) => listOps.remove(l, versaoId)),
+          listOps.within(old, "items", (l) => listOps.remove(l, versaoId)),
       },
     ],
     onSuccess: (_r, { versaoId }) => {

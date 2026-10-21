@@ -24,7 +24,6 @@ import type {
   ClientListResponse,
   ClientPatchInput,
 } from "@/api/studio/types";
-import { editList } from "../cacheEnvelope";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 
 const base = (key: string) => `/api/studio/agents/${seg(key)}/clients`;
@@ -49,11 +48,11 @@ const clientTarget = <TData, TVars>(
   queryKey: studioKeys.client(key, clientId),
   optimistic: rest.optimistic
     ? (old: Client | undefined, vars: TVars, ctx: { tempId: string }) =>
-        editList(old, "entradas", (l) => rest.optimistic!(l, vars, ctx.tempId))
+        listOps.within(old, "entradas", (l) => rest.optimistic!(l, vars, ctx.tempId))
     : undefined,
   commit: rest.commit
     ? (old: Client | undefined, result: TData, _vars: TVars, ctx: { tempId: string }) =>
-        editList(old, "entradas", (l) => rest.commit!(l, result, ctx.tempId))
+        listOps.within(old, "entradas", (l) => rest.commit!(l, result, ctx.tempId))
     : undefined,
 });
 

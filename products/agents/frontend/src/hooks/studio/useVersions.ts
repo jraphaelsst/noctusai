@@ -32,7 +32,6 @@ import type {
   VersionDetail,
   VersionDiff,
 } from "@/api/studio/types";
-import { editList } from "../cacheEnvelope";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 import { useStudioAgent } from "./useStudioAgents";
 
@@ -66,7 +65,7 @@ const draftSkills = <TData, TVars>(
         {
           queryKey: studioKeys.version(key, draftId),
           commit: (old: VersionDetail | undefined, result: TData, vars: TVars, ctx: { tempId: string }) =>
-            editList(old, "skills", (l) => commit(l, result, vars, ctx.tempId)),
+            listOps.within(old, "skills", (l) => commit(l, result, vars, ctx.tempId)),
         },
       ]
     : []) as CacheWriteTarget<TData, TVars, any>[];
