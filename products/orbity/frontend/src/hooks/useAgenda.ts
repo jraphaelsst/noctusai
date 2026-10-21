@@ -9,8 +9,8 @@
  *   EventType: "meeting" | "call" | "visit" | "other"
  *   GCal sync: POST /api/agenda/events/{id}/sync-gcal
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 
@@ -121,15 +121,35 @@ const EVENTS_KEY = ['orbity-agenda-events'];
 const eventKey = (id: string) => ['orbity-agenda-event', id];
 
 export function useCreateAgendaEvent() {
-  const queryClient = useQueryClient();
-
-  return useMutation({ // noc-allow: invalidate-only — events lists are range/type/assignee-filtered and ordered by the server; where (or whether) a new event belongs in each cached window is the server's call
-    mutationFn: async (data: AgendaEventCreateData) => {
+  // Cached windows are filtered by range/type/client/assignee (all checkable here) and ordered
+  // by starts_at asc: the new event is committed into each window it belongs to, at its sorted
+  // place, when that window holds every match (page 1, not full). Anything else converges on the settle.
+  return useCacheWriteMutation<AgendaEvent, AgendaEventCreateData>({
+    mutationFn: async (data) => {
       const result = await api.post('/api/agenda/events', data);
       return result as AgendaEvent;
     },
+    targets: [
+      {
+        queryKey: EVENTS_KEY,
+        match: 'prefix',
+        commit: (old: AgendaEventListResponse | undefined, saved, _vars, _ctx, queryKey) => {
+          const f = (queryKey?.[1] ?? {}) as AgendaFilters;
+          const at = Date.parse(saved.starts_at);
+          const inWindow =
+            (!f.from || at >= Date.parse(f.from)) &&
+            (!f.to || at <= Date.parse(f.to)) &&
+            (!f.event_type || f.event_type === saved.event_type) &&
+            (!f.client_id || f.client_id === saved.client_id) &&
+            (!f.assignee_user_id || f.assignee_user_id === saved.assignee_user_id);
+          const holdsEveryMatch = !!old && Array.isArray(old.items) && (old.page ?? 1) === 1 && old.items.length < old.page_size;
+          if (!inWindow || !holdsEveryMatch) return old;
+          return listOps.within(old, 'items', (l) =>
+            listOps.insertSorted(l, saved, (x, y) => Date.parse(x.starts_at) - Date.parse(y.starts_at)));
+        },
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: EVENTS_KEY });
       toast.success('Evento criado com sucesso!');
     },
     onError: (error: Error) => {

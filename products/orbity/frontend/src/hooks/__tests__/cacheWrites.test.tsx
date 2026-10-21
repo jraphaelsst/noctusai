@@ -147,4 +147,70 @@ describe("orbity cache writes", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(qc.getQueryData(crmKeys.stages())).toEqual([{ id: "s1" }]);
   });
+
+  it("agenda: a new event lands at its sorted place, only in the windows it belongs to", async () => {
+    const { qc, w } = setup();
+    const e = (id: string, starts_at: string, event_type = "meeting") => ({ id, starts_at, event_type, client_id: null, assignee_user_id: null });
+    qc.setQueryData(["orbity-agenda-events", undefined], { items: [e("a", "2026-10-01T10:00:00Z"), e("c", "2026-10-03T10:00:00Z")], page: 1, page_size: 200 });
+    qc.setQueryData(["orbity-agenda-events", { event_type: "call" }], { items: [], page: 1, page_size: 200 });
+    qc.setQueryData(["orbity-agenda-events", { from: "2026-11-01T00:00:00Z" }], { items: [], page: 1, page_size: 200 });
+    const d = deferred();
+    mockPost.mockReturnValue(d.promise);
+    const { useCreateAgendaEvent } = await import("@/hooks/useAgenda");
+    const { result } = renderHook(() => useCreateAgendaEvent(), { wrapper: w });
+    result.current.mutate({ title: "x", starts_at: "2026-10-02T10:00:00Z", ends_at: "2026-10-02T11:00:00Z" });
+    d.answer(e("b", "2026-10-02T10:00:00Z"));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData<any>(["orbity-agenda-events", undefined]).items.map((x: any) => x.id)).toEqual(["a", "b", "c"]);
+    expect(qc.getQueryData<any>(["orbity-agenda-events", { event_type: "call" }]).items).toEqual([]);
+    expect(qc.getQueryData<any>(["orbity-agenda-events", { from: "2026-11-01T00:00:00Z" }]).items).toEqual([]);
+  });
+
+  it("conteudo: a new post is sorted by scheduled_for (unscheduled last) and skips lists whose filter excludes it", async () => {
+    const { qc, w } = setup();
+    const p = (id: string, scheduled_for: string | null, platform = "instagram") => ({ id, scheduled_for, platform, status: "draft", campaign_id: null, client_id: null });
+    qc.setQueryData(["content-posts", undefined], { items: [p("a", "2026-10-01T10:00:00Z"), p("z", null)], total: 2, page: 1, page_size: 50 });
+    qc.setQueryData(["content-posts", { platform: "tiktok" }], { items: [], total: 0, page: 1, page_size: 50 });
+    const d = deferred();
+    mockPost.mockReturnValue(d.promise);
+    const { useCreatePost } = await import("@/hooks/useConteudo");
+    const { result } = renderHook(() => useCreatePost(), { wrapper: w });
+    result.current.mutate({ platform: "instagram" } as any);
+    d.answer(p("b", "2026-10-02T10:00:00Z"));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData<any>(["content-posts", undefined]).items.map((x: any) => x.id)).toEqual(["a", "b", "z"]);
+    expect(qc.getQueryData<any>(["content-posts", { platform: "tiktok" }]).items).toEqual([]);
+  });
+
+  it("financial: a new extra charge is first on page 1 of the lists it belongs to (keyed by entry_id)", async () => {
+    const { qc, w } = setup();
+    const c = (entry_id: string, generation_status = "queued") => ({ entry_id, client_id: "c1", generation_status });
+    qc.setQueryData(["financial-charges", undefined], { items: [c("old")], total: 1, page: 1, page_size: 50 });
+    qc.setQueryData(["financial-charges", { generation_status: "failed" }], { items: [], total: 0, page: 1, page_size: 50 });
+    const d = deferred();
+    mockPost.mockReturnValue(d.promise);
+    const { useCreateExtraCharge } = await import("@/hooks/useFinancial");
+    const { result } = renderHook(() => useCreateExtraCharge(), { wrapper: w });
+    result.current.mutate({ client_id: "c1", description: "x", amount_cents: 1, due_date: "2026-10-30" });
+    d.answer(c("new"));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData<any>(["financial-charges", undefined]).items.map((x: any) => x.entry_id)).toEqual(["new", "old"]);
+    expect(qc.getQueryData<any>(["financial-charges", { generation_status: "failed" }]).items).toEqual([]);
+  });
+
+  it("tasks: a new routine lands in next_run order; active-only lists skip an inactive one", async () => {
+    const { qc, w } = setup();
+    const r = (id: string, next_run: string, active = true) => ({ id, next_run, active });
+    qc.setQueryData(["orbity-routines", { activeOnly: false }], [r("a", "2026-10-01T00:00:00Z"), r("c", "2026-10-03T00:00:00Z")]);
+    qc.setQueryData(["orbity-routines", { activeOnly: true }], [r("a", "2026-10-01T00:00:00Z")]);
+    const d = deferred();
+    mockPost.mockReturnValue(d.promise);
+    const { useCreateRoutine } = await import("@/hooks/useTasks");
+    const { result } = renderHook(() => useCreateRoutine(), { wrapper: w });
+    result.current.mutate({ title: "x" } as any);
+    d.answer(r("b", "2026-10-02T00:00:00Z", false));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData<any>(["orbity-routines", { activeOnly: false }]).map((x: any) => x.id)).toEqual(["a", "b", "c"]);
+    expect(qc.getQueryData<any>(["orbity-routines", { activeOnly: true }]).map((x: any) => x.id)).toEqual(["a"]);
+  });
 });

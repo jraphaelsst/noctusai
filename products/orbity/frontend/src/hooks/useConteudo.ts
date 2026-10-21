@@ -8,7 +8,7 @@
  * Convention: one file per domain entity, TanStack Query throughout.
  * `api` is imported from `@/lib/api` (the local seam, not seed directly).
  */
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -241,14 +241,33 @@ export function usePosts(filters?: PostFilters) {
 }
 
 export function useCreatePost() {
-  const queryClient = useQueryClient();
-
-  return useMutation({ // noc-allow: invalidate-only — posts are ordered by scheduled_for and filtered by campaign/client/platform/status; where a new post falls in each cached window is the server's call
-    mutationFn: async (data: PostCreate) => {
+  // Cached lists are filtered by campaign/client/platform/status (checkable here) and ordered by
+  // scheduled_for asc, unscheduled last: the new post goes into each list it belongs to, at its
+  // sorted place, when that list is page 1 and holds every match. The rest converges on the settle.
+  return useCacheWriteMutation<Post, PostCreate>({
+    mutationFn: async (data) => {
       return api.post<Post>("/api/content/posts", data);
     },
+    targets: [
+      {
+        queryKey: ["content-posts"],
+        match: "prefix",
+        commit: (old: ListResponse<Post> | undefined, saved, _vars, _ctx, queryKey) => {
+          const f = (queryKey?.[1] ?? {}) as PostFilters;
+          const belongs =
+            (!f.campaign_id || f.campaign_id === saved.campaign_id) &&
+            (!f.client_id || f.client_id === saved.client_id) &&
+            (!f.platform || f.platform === saved.platform) &&
+            (!f.status || f.status === saved.status);
+          const holdsEveryMatch = !!old && Array.isArray(old.items) && (old.page ?? 1) === 1 && old.items.length < old.page_size;
+          if (!belongs || !holdsEveryMatch) return old;
+          const when = (p: Post) => (p.scheduled_for ? Date.parse(p.scheduled_for) : Number.POSITIVE_INFINITY);
+          return listOps.within(old, "items", (l) =>
+            listOps.insertSorted(l, saved, (x, y) => (when(x) === when(y) ? 0 : when(x) < when(y) ? -1 : 1)));
+        },
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-posts"] });
       toast.success("Post criado com sucesso!");
     },
     onError: (error: Error) => {

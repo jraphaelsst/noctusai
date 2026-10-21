@@ -11,7 +11,7 @@
  * Loading states: callers compute `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`
  * (never `isLoading`: it is false mid-refetch, so an empty branch would lie over data that exists).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { financeKeys } from "@noctusai/lib";
@@ -165,12 +165,26 @@ export function useRequeueCharge() {
 }
 
 export function useCreateExtraCharge() {
-  const queryClient = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — charges are cached per generation_status filter + page; whether the new (queued) charge belongs in a given cached window is the server's call
-    mutationFn: async (data: ExtraChargeCreate) => api.post<Charge>("/api/financial/charges", data),
+  // Charges are listed newest first (created_at desc) under a client / generation_status filter:
+  // the new charge goes on page 1 of each list it belongs to; the rest converges on the settle.
+  return useCacheWriteMutation<Charge, ExtraChargeCreate>({
+    mutationFn: async (data) => api.post<Charge>("/api/financial/charges", data),
+    targets: [
+      {
+        queryKey: ["financial-charges"],
+        match: "prefix",
+        commit: (old: ChargeList | undefined, saved, _vars, _ctx, queryKey) => {
+          const f = (queryKey?.[1] ?? {}) as ChargeFilters;
+          const belongs =
+            (!f.client_id || f.client_id === saved.client_id) &&
+            (!f.generation_status || f.generation_status === saved.generation_status);
+          return belongs ? pageOps.prependNewest(old, saved, "entry_id") : old;
+        },
+      },
+    ],
+    // The cash-flow / finance views are server-computed aggregates.
+    invalidate: DERIVED,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["financial-charges"] });
-      for (const queryKey of DERIVED) queryClient.invalidateQueries({ queryKey });
       toast.success("Cobrança criada");
     },
     onError: (error: Error) => {

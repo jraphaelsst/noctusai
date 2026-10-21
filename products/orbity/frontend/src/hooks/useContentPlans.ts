@@ -231,7 +231,7 @@ export function useAppendPlanItems() {
         ...PLANS,
         commit: (old: PlansPage | undefined, added) =>
           listOps.within(old, "items", (plans) =>
-            plans.map((p: ContentPlan) => (p.id === planId ? { ...p, items: [...p.items, ...added] } : p)),
+            listOps.update(plans, planId, (p: ContentPlan) => ({ ...p, items: [...p.items, ...added] })),
           ),
       },
     ],
@@ -253,9 +253,10 @@ export function useUpdatePlanItem() {
         ...PLANS,
         commit: (old: PlansPage | undefined, saved) =>
           listOps.within(old, "items", (plans) =>
-            plans.map((p: ContentPlan) =>
-              p.id === planId ? { ...p, items: listOps.replace(p.items, itemId, saved) ?? p.items } : p,
-            ),
+            listOps.update(plans, planId, (p: ContentPlan) => ({
+              ...p,
+              items: listOps.replace(p.items, itemId, saved) ?? p.items,
+            })),
           ),
       },
     ],
@@ -279,16 +280,12 @@ export function useDeletePlanItem() {
         ...PLANS,
         commit: (old: PlansPage | undefined, res) =>
           listOps.within(old, "items", (plans) =>
-            plans.map((p: ContentPlan) =>
-              p.id !== planId
-                ? p
-                : {
-                    ...p,
-                    items: res.discarded
-                      ? (listOps.patch(p.items, itemId, { status: "discarded" as ItemStatus }) ?? p.items)
-                      : (listOps.remove(p.items, itemId) ?? p.items),
-                  },
-            ),
+            listOps.update(plans, planId, (p: ContentPlan) => ({
+              ...p,
+              items: res.discarded
+                ? (listOps.patch(p.items, itemId, { status: "discarded" as ItemStatus }) ?? p.items)
+                : (listOps.remove(p.items, itemId) ?? p.items),
+            })),
           ),
       },
     ],
@@ -307,7 +304,7 @@ export function useReorderPlanItems() {
         ...PLANS,
         commit: (old: PlansPage | undefined, ordered) =>
           listOps.within(old, "items", (plans) =>
-            plans.map((p: ContentPlan) => (p.id === planId ? { ...p, items: ordered } : p)),
+            listOps.update(plans, planId, (p: ContentPlan) => ({ ...p, items: ordered })),
           ),
       },
     ],
@@ -353,9 +350,10 @@ export function usePromoteItemToPost() {
         ...PLANS,
         commit: (old: PlansPage | undefined, post) =>
           listOps.within(old, "items", (plans) =>
-            plans.map((p: ContentPlan) =>
-              p.id === planId ? { ...p, items: listOps.patch(p.items, itemId, { post_id: post.id }) ?? p.items } : p,
-            ),
+            listOps.update(plans, planId, (p: ContentPlan) => ({
+              ...p,
+              items: listOps.patch(p.items, itemId, { post_id: post.id }) ?? p.items,
+            })),
           ),
       },
     ],

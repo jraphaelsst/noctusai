@@ -258,15 +258,25 @@ export function useRoutines(activeOnly?: boolean) {
 }
 
 export function useCreateRoutine() {
-  const queryClient = useQueryClient();
-
-  return useMutation({ // noc-allow: invalidate-only — routines are ordered by next_run, which the server computes from the cadence; the new routine's position is not knowable client-side
-    mutationFn: async (data: RoutineCreateData) => {
+  // Routines are listed by next_run asc (the created row carries the server-computed next_run), under an
+  // active-only filter: the new routine goes at its sorted place in each list it belongs to.
+  return useCacheWriteMutation<Routine, RoutineCreateData>({
+    mutationFn: async (data) => {
       const result = await api.post('/api/routines', data);
       return result as Routine;
     },
+    targets: [
+      {
+        queryKey: ['orbity-routines'],
+        match: 'prefix',
+        commit: (old: Routine[] | undefined, saved, _vars, _ctx, queryKey) => {
+          const f = (queryKey?.[1] ?? {}) as { activeOnly?: boolean };
+          if (f.activeOnly && !saved.active) return old;
+          return listOps.insertSorted(old, saved, (x, y) => Date.parse(x.next_run) - Date.parse(y.next_run));
+        },
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-routines'] });
       toast.success('Rotina criada com sucesso!');
     },
     onError: (error: Error) => {
