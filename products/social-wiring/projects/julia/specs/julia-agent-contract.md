@@ -203,3 +203,13 @@ Owner: "the connection's owner for now, swappable for an admin. never a member-o
 ### 11.5 Slice order (v3)
 LGPD flag (done with this commit) → **S0 ∥ P** → A1 → **A2 ∥ W1** (Fake; includes 11.1, 11.3, 11.4) → W2 (incl. the notice card + handoff target select) → X → owner tunes Julia → owner switches on.
 New migrations (re-check with `noctus.dev.next_migration_number`): SW 255 (connection/chat fields of §5 + 11.1 + 11.4, snapshot table), SW 256 (notice table, slice P — P may take 255 if it lands first; the number tool decides). P adds no status_pagina (public route).
+
+## Lead opt-out (owner decision 2026-10-21)
+
+When a lead asks to stop, agents records a lead-level opt-out (event: who, why, the lead's words), ends every agent's participation and notifies the org admins in-app. SW's side of the contract:
+
+- `POST /api/channels/leads/{ref}/opt-out` takes `origem` (`agente`|`operador`|`integracao`, default `integracao`), `motivo` (<=500), `mensagem_lead` (<=1000), `ator_user_id`; the response carries `evento_id`. SW never sends a second notification for the same event.
+- A turn action `encerrar` with `motivo: "lead_pediu_parar"` and/or `lead_opt_out: true` means agents ALREADY recorded it: SW does not call opt-out again; it bumps `gen` + `encerrado_at` (every queued follow-up goes stale) and writes the timeline event `lead_opt_out`.
+- Every SW send to a lead that does not pass through an agents turn (regua template, Meta first contact, Google review ask, disparo target, visit notice) re-reads agents' consent state (thread read by `lead_ref`, suppression reason `opt_out`) and refuses, recording an `envio_bloqueado` event (`motivo` `lead_opt_out`). An unreadable state refuses too (`opt_out_nao_verificavel`). Turn-based sends are refused by agents itself (`status: lead_opt_out`).
+- Known gap: a lead with an opt-out but no thread yet is not readable by `lead_ref` (agents answers 404); a consent read endpoint that does not depend on a thread would close it.
+- SW has no operator "stop contacting this lead" action for leads (only the proprietario `opt-out` in `julia_cloud_router`, which is a different registry); nothing in SW calls `AgentsClient.opt_out` today.

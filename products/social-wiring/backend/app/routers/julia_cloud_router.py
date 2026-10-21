@@ -37,15 +37,17 @@ from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
+from noctusai_lib.integrations.whatsapp.mappers import chat_id_for_phone
 from noctusai_lib.primitives.exceptions import AppException
+from noctusai_lib.primitives.phone import normalize_phone
 
 from app.dependencies import (
     coerce_org_uuid, get_admin_client, get_core_client, get_current_user_org, get_scoped_admin_client,
 )
 from app.routers.julia_conhecimento_router import get_nome_agente
-from app.routers.whatsapp_connections_router import get_connection_store
+from app.routers.whatsapp_connections_router import get_agents_client_factory, get_connection_store
 from app.services import (
-    julia_aviso_service, julia_conhecimento_service, julia_disparos_service, julia_modelos_service,
+    julia_aviso_service, julia_conhecimento_service, julia_contatos_service, julia_disparos_service, julia_modelos_service,
     julia_proprietarios_service, julia_transporte,
 )
 from app.services.imoveis_service import build_imoveis_service
@@ -354,14 +356,19 @@ async def primeiro_contato(
     store: WhatsAppConnectionStore = Depends(get_connection_store), db: Any = Depends(get_cloud_db),
     nome_agente: Optional[str] = Depends(get_nome_agente),
     fabrica: Callable[[Any], julia_transporte.Transporte] = Depends(get_transporte_factory),
+    agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
-    """Meta lead-form first contact (template "Abordagem comercial|neutra"). Cloud only: 409 otherwise."""
+    """Meta lead-form first contact (template "Abordagem comercial|neutra"). Cloud only: 409 otherwise. A phone that is
+    already a SW lead is checked against agents' opt-out (`motivo` `lead_opt_out`); an unknown phone has no consent record."""
     org_id = _admin(auth, request, "julia primeiro contato")
     conexao = _conexao(store, org_id, body.connection_id)
     julia_disparos_service.exigir_cloud(conexao)
+    telefone = normalize_phone(body.telefone)
+    contato = julia_contatos_service.buscar_contato(db, org_id, conexao.id, chat_id_for_phone(telefone)) if telefone else None
     resultado = await julia_disparos_service.primeiro_contato_meta(
         db, org_id, connection=conexao, transporte=fabrica(conexao), telefone=body.telefone, nome=body.nome,
         abordagem=body.abordagem, contexto=_contexto_envio(db, org_id, nome_agente),
+        contato_id=contato["id"] if contato else None, agents=agents_factory(org_id),
     )
     return {"data": resultado}
 
@@ -423,6 +430,7 @@ async def disparar_disparo(
     store: WhatsAppConnectionStore = Depends(get_connection_store), db: Any = Depends(get_cloud_db),
     nome_agente: Optional[str] = Depends(get_nome_agente),
     fabrica: Callable[[Any], julia_transporte.Transporte] = Depends(get_transporte_factory),
+    agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org_id = _admin(auth, request, "julia disparos")
     disparo = julia_disparos_service.obter(db, org_id, disparo_id)  # 404 before the transport gate
@@ -430,7 +438,7 @@ async def disparar_disparo(
     julia_disparos_service.exigir_cloud(conexao)
     return {"data": _disparo_out(await julia_disparos_service.disparar(
         db, org_id, disparo_id, connection=conexao, transporte=fabrica(conexao),
-        contexto=_contexto_envio(db, org_id, nome_agente),
+        contexto=_contexto_envio(db, org_id, nome_agente), agents=agents_factory(org_id),
     ))}
 
 

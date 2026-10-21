@@ -106,7 +106,7 @@ class TestPedido:
         c = contato(world)
         i = interacao(world, c)
         out = Saida()
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA)) == "enviado"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "enviado"
         (_, texto), = out.enviados
         assert texto == av.montar_texto("Ana Maria", LINK) and LINK in texto and texto.startswith("Oi, Ana!")
         (p,) = world.rows(av.T_PEDIDOS)
@@ -121,23 +121,23 @@ class TestPedido:
         c = contato(world)
         i = interacao(world, c)
         out = Saida()
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA)) == "enviado"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "enviado"
         i2 = interacao(world, c)
-        r = run(av.executar_pedido(job(c, i2), client=world.sw, enviar=out, agora=AGORA + timedelta(days=89)))
+        r = run(av.executar_pedido(job(c, i2), client=world.sw, enviar=out, agora=AGORA + timedelta(days=89), agents=FakeAgentsClient()))
         assert r == "ignorado:ja_pediu_90_dias" and len(out.enviados) == 1
         # day 91: the window reopened (use a fresh in-window inbound)
         c2 = contato(world, inbound_ago_h=0)
         contatos.atualizar_contato(world.sw, c["id"], {"ultimo_inbound_at": (AGORA + timedelta(days=91)).isoformat()})
-        r = run(av.executar_pedido(job(c2, i2), client=world.sw, enviar=out, agora=AGORA + timedelta(days=91, minutes=5)))
+        r = run(av.executar_pedido(job(c2, i2), client=world.sw, enviar=out, agora=AGORA + timedelta(days=91, minutes=5), agents=FakeAgentsClient()))
         assert r == "enviado" and len(out.enviados) == 2
 
     def test_a_failed_ask_does_not_count_toward_the_90_days(self, world):
         config(world)
         c = contato(world)
         i = interacao(world, c)
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(RuntimeError("x")), agora=AGORA)) == "erro:RuntimeError"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(RuntimeError("x")), agora=AGORA, agents=FakeAgentsClient())) == "erro:RuntimeError"
         assert world.rows(av.T_PEDIDOS)[0]["status"] == "erro" and world.rows(av.T_PEDIDOS)[0]["erro"] == "RuntimeError"
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA)) == "enviado"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "enviado"
 
     def test_negative_feedback_skips(self, world):
         config(world)
@@ -146,7 +146,7 @@ class TestPedido:
         world.sw.table(av.T_FEEDBACK).insert({"org_id": ORG, "contato_id": c["id"], "nota": "like", "created_at": "2026-10-14T10:00:00+00:00"}).execute()
         world.sw.table(av.T_FEEDBACK).insert({"org_id": ORG, "contato_id": c["id"], "nota": "dislike", "created_at": "2026-10-15T10:00:00+00:00"}).execute()
         out = Saida()
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA)) == "ignorado:feedback_negativo"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "ignorado:feedback_negativo"
         assert not out.enviados and not world.rows(av.T_PEDIDOS)
 
     def test_a_later_like_overrides_an_old_dislike(self, world):
@@ -155,14 +155,14 @@ class TestPedido:
         i = interacao(world, c)
         world.sw.table(av.T_FEEDBACK).insert({"org_id": ORG, "contato_id": c["id"], "nota": "dislike", "created_at": "2026-10-10T10:00:00+00:00"}).execute()
         world.sw.table(av.T_FEEDBACK).insert({"org_id": ORG, "contato_id": c["id"], "nota": "like", "created_at": "2026-10-14T10:00:00+00:00"}).execute()
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA)) == "enviado"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "enviado"
 
     def test_outside_the_24h_window_skips(self, world):
         config(world)
         c = contato(world, inbound_ago_h=25)
         i = interacao(world, c)
         out = Saida()
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA)) == "ignorado:fora_da_janela_24h"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "ignorado:fora_da_janela_24h"
         assert not out.enviados
 
     def test_never_inbound_is_outside_the_window(self, world):
@@ -175,19 +175,19 @@ class TestPedido:
         config(world)
         c = contato(world)
         i = interacao(world, c, desfecho)
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA)) == "ignorado:desfecho_nao_qualificado"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "ignorado:desfecho_nao_qualificado"
 
     def test_no_review_link_skips(self, world):
         c = contato(world)
         i = interacao(world, c)
-        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA)) == "ignorado:sem_link"
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "ignorado:sem_link"
 
     def test_stale_gen_is_obsolete_and_sends_nothing(self, world):
         config(world)
         c = contato(world)
         i = interacao(world, c)
         out = Saida()
-        assert run(av.executar_pedido(job(c, i, gen=c["gen"] + 1), client=world.sw, enviar=out, agora=AGORA)) == "obsoleto"
+        assert run(av.executar_pedido(job(c, i, gen=c["gen"] + 1), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "obsoleto"
         assert not out.enviados
 
     def test_other_org_contato_is_obsolete(self, world):
@@ -196,7 +196,7 @@ class TestPedido:
         i = interacao(world, c)
         j = job(c, i)
         j.payload["org_id"] = OTHER_ORG_ID
-        assert run(av.executar_pedido(j, client=world.sw, enviar=Saida(), agora=AGORA)) == "obsoleto"
+        assert run(av.executar_pedido(j, client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "obsoleto"
 
 
 # ── the ask: hook through the REAL close paths ──────────────────────────────────────

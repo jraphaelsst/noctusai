@@ -26,7 +26,8 @@ from noctusai_lib.domain.jobs import JobRepository, RetryPolicy, Worker, make_jo
 from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 
 from app.services import (
-    julia_avaliacoes_service, julia_capi_service, julia_credito_service, julia_envio_service, julia_reengajamento_service as svc,
+    julia_agente_service, julia_avaliacoes_service, julia_capi_service, julia_credito_service, julia_envio_service,
+    julia_reengajamento_service as svc,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,8 @@ def build_worker(repo: JobRepository, cfg: Any) -> Worker:
             **svc.handlers(deps_factory=_lead_deps_factory(cfg), repo=repo, run_turn=run_reengajamento_turn),
             **julia_envio_service.handlers(),
             **julia_credito_service.handlers(),
-            **julia_avaliacoes_service.handlers(client_provider=_scoped_client, enviar_factory=_enviador_avaliacao(cfg)),
+            **julia_avaliacoes_service.handlers(client_provider=_scoped_client, enviar_factory=_enviador_avaliacao(cfg),
+                                               agents_factory=lambda org_id: julia_agente_service.resolve_agents_client(org_id, cfg=cfg)),
             **julia_capi_service.handlers(client_provider=_scoped_client),
         },
         retry_policy=RETRY_POLICY,

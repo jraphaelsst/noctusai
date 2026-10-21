@@ -147,6 +147,16 @@ STATUS_SEM_ATENDIMENTO = (
 )
 STATUS_TURNO = STATUS_RESPONDEU + STATUS_SEM_ATENDIMENTO
 
+#: Who triggered a lead-level opt-out (agents' `origem`): the agent itself on the lead's request, a human operator,
+#: or an integration (the default when SW does not say).
+ORIGENS_OPT_OUT = ("agente", "operador", "integracao")
+ORIGEM_OPT_OUT_PADRAO = "integracao"
+OPT_OUT_MOTIVO_MAX = 500
+OPT_OUT_MENSAGEM_MAX = 1000
+#: `encerrar.motivo` agents sends when the lead asked to stop being contacted; with `lead_opt_out: true` it means
+#: agents ALREADY recorded the opt-out (SW must not call opt-out again, and stops every follow-up of that lead).
+MOTIVO_ENCERRAR_PEDIU_PARAR = "lead_pediu_parar"
+
 
 @dataclass(frozen=True)
 class QualificacaoResumo:
@@ -342,6 +352,12 @@ class ThreadInfo:
     reengajamento_suprimido_motivo: Optional[str] = None
     ultimo_handoff: Optional[HandoffRecord] = None
 
+    @property
+    def opt_out_ativo(self) -> bool:
+        """The lead asked to stop and has not opted in again: agents reports it as the re-engagement suppression
+        reason `opt_out` (the consent read SW has for a lead with a thread)."""
+        return self.reengajamento_suprimido and self.reengajamento_suprimido_motivo == "opt_out"
+
     def estado_de(self, agent_key: str) -> Optional[str]:
         return next((p.estado for p in self.participantes if p.agent_key == agent_key), None)
 
@@ -378,6 +394,8 @@ class ConsentInfo:
     opt_out_em: Optional[str] = None
     opt_out_ativo: bool = False
     participantes_encerrados: int = 0
+    #: The id of the opt-out EVENT agents recorded (who/why/how); None from an older agents build or for opt-in.
+    evento_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -551,7 +569,10 @@ class AgentsClient(Protocol):
 
     async def opt_in(self, lead_ref: str, *, origem: str, em: Optional[datetime] = None) -> ConsentInfo: ...
 
-    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo: ...
+    async def opt_out(
+        self, lead_ref: str, *, em: Optional[datetime] = None, origem: str = ORIGEM_OPT_OUT_PADRAO,
+        motivo: Optional[str] = None, mensagem_lead: Optional[str] = None, ator_user_id: Optional[str] = None,
+    ) -> ConsentInfo: ...
 
     async def controle(self, agent_key: str) -> ControleInfo: ...
 
@@ -641,6 +662,9 @@ class FakeAgentsClient:
         self.handoff_aceites: list[tuple[str, str]] = []
         self.opt_ins: list[tuple[str, str]] = []
         self.opt_outs: list[str] = []
+        self.opt_out_calls: list[dict[str, Any]] = []  # every opt_out call, with the validated body it would send
+        self.leads_com_opt_out: set[str] = set()  # a later opt-in lifts it (agents' rule)
+        self.lead_threads: dict[str, str] = {}  # lead_ref -> thread_id for leads that have a thread but no recorded turn
         self.leads_apagados: list[str] = []
         self.thread_reads: list[str] = []
         self.feedbacks: list[dict[str, Any]] = []
@@ -742,10 +766,20 @@ class FakeAgentsClient:
         parts = tuple(
             ParticipanteInfo(agent_key=k, estado=e) for (t, k), e in self.participantes.items() if t == thread_id
         )
+        if lead_ref is None:
+            lead_ref = next((x.lead_ref for x in reversed(self.turns) if x.lead_ref and self.conversation_id_for(x) == thread_id), None)
+        suprimido = lead_ref is not None and lead_ref in self.leads_com_opt_out
         return ThreadInfo(
             thread_id=thread_id, lead_ref=lead_ref, participantes=parts,
+            reengajamento_suprimido=suprimido, reengajamento_suprimido_motivo="opt_out" if suprimido else None,
             ultimo_handoff=next((h for h in reversed(self.handoffs) if h.thread_id == thread_id), None),
         )
+
+    def seed_lead_thread(self, lead_ref: str) -> str:
+        """Test seam: the lead already has a thread in agents (reads by `lead_ref` find it); returns its id."""
+        tid = str(uuid.uuid5(_NAMESPACE, f"lead-thread|{lead_ref}"))
+        self.lead_threads[lead_ref] = tid
+        return tid
 
     async def buscar_thread(
         self, *, connection_id: Optional[str] = None, chat_id: Optional[str] = None, lead_ref: Optional[str] = None,
@@ -764,6 +798,8 @@ class FakeAgentsClient:
             for x in reversed(self.turns):
                 if x.lead_ref == lead_ref:
                     return self._info(self.conversation_id_for(x), lead_ref)
+            if lead_ref in self.lead_threads:
+                return self._info(self.lead_threads[lead_ref], lead_ref)
         return None
 
     async def obter_thread(self, thread_id: str) -> ThreadInfo:
@@ -828,14 +864,24 @@ class FakeAgentsClient:
     async def opt_in(self, lead_ref: str, *, origem: str, em: Optional[datetime] = None) -> ConsentInfo:
         self._maybe_fail("opt_in")
         self.opt_ins.append((lead_ref, origem))
+        self.leads_com_opt_out.discard(lead_ref)
         return ConsentInfo(lead_ref=lead_ref, opt_in_origem=origem, opt_in_em=(em or datetime.now()).isoformat())
 
-    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo:
+    async def opt_out(
+        self, lead_ref: str, *, em: Optional[datetime] = None, origem: str = ORIGEM_OPT_OUT_PADRAO,
+        motivo: Optional[str] = None, mensagem_lead: Optional[str] = None, ator_user_id: Optional[str] = None,
+    ) -> ConsentInfo:
         self._maybe_fail("opt_out")
+        body = opt_out_body(em=em, origem=origem, motivo=motivo, mensagem_lead=mensagem_lead, ator_user_id=ator_user_id)
         self.opt_outs.append(lead_ref)
+        self.opt_out_calls.append({"lead_ref": lead_ref, **body})
+        self.leads_com_opt_out.add(lead_ref)
         for k in list(self.participantes):
             self.participantes[k] = "encerrado"
-        return ConsentInfo(lead_ref=lead_ref, opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True)
+        return ConsentInfo(
+            lead_ref=lead_ref, opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True,
+            evento_id=str(uuid.uuid5(_NAMESPACE, f"opt-out|{lead_ref}|{len(self.opt_out_calls)}")),
+        )
 
     async def controle(self, agent_key: str) -> ControleInfo:
         self._maybe_fail("controle")
@@ -1126,6 +1172,30 @@ def parse_thread(body: Any) -> ThreadInfo:
     )
 
 
+def opt_out_body(
+    *, em: Optional[datetime], origem: str, motivo: Optional[str], mensagem_lead: Optional[str],
+    ator_user_id: Optional[str],
+) -> dict[str, Any]:
+    """The validated opt-out request body (shared by the Real and the Fake so a test cannot pass what prod refuses).
+    `origem` is always sent; the optional fields only when given."""
+    if origem not in ORIGENS_OPT_OUT:
+        raise ValueError(f"opt_out origem must be one of {ORIGENS_OPT_OUT}, got {origem!r}")
+    if motivo is not None and len(motivo) > OPT_OUT_MOTIVO_MAX:
+        raise ValueError(f"opt_out motivo is capped at {OPT_OUT_MOTIVO_MAX} chars")
+    if mensagem_lead is not None and len(mensagem_lead) > OPT_OUT_MENSAGEM_MAX:
+        raise ValueError(f"opt_out mensagem_lead is capped at {OPT_OUT_MENSAGEM_MAX} chars")
+    body: dict[str, Any] = {"origem": origem}
+    if em is not None:
+        body["em"] = em.isoformat()
+    if motivo is not None:
+        body["motivo"] = motivo
+    if mensagem_lead is not None:
+        body["mensagem_lead"] = mensagem_lead
+    if ator_user_id is not None:
+        body["ator_user_id"] = str(ator_user_id)
+    return body
+
+
 def parse_consent(body: Any) -> ConsentInfo:
     encerrados = body.get("participantes_encerrados")
     return ConsentInfo(
@@ -1135,6 +1205,7 @@ def parse_consent(body: Any) -> ConsentInfo:
         opt_out_em=_opt_str(body, "opt_out_em"),
         opt_out_ativo=bool(body.get("opt_out_ativo")),
         participantes_encerrados=encerrados if isinstance(encerrados, int) and not isinstance(encerrados, bool) else 0,
+        evento_id=_opt_str(body, "evento_id"),
     )
 
 
@@ -1372,8 +1443,13 @@ class HttpAgentsClient:
             body["em"] = em.isoformat()
         return parse_consent(await self._send("PUT", f"/api/channels/leads/{quote(lead_ref, safe='')}/opt-in", json=body))
 
-    async def opt_out(self, lead_ref: str, *, em: Optional[datetime] = None) -> ConsentInfo:
-        body: dict[str, Any] = {"em": em.isoformat()} if em is not None else {}
+    async def opt_out(
+        self, lead_ref: str, *, em: Optional[datetime] = None, origem: str = ORIGEM_OPT_OUT_PADRAO,
+        motivo: Optional[str] = None, mensagem_lead: Optional[str] = None, ator_user_id: Optional[str] = None,
+    ) -> ConsentInfo:
+        """`POST /api/channels/leads/{ref}/opt-out`: ends every agent's participation for the lead and records WHO/WHY
+        (agents notifies the org admins itself -- SW sends no second notification for the same event)."""
+        body = opt_out_body(em=em, origem=origem, motivo=motivo, mensagem_lead=mensagem_lead, ator_user_id=ator_user_id)
         return parse_consent(await self._send("POST", f"/api/channels/leads/{quote(lead_ref, safe='')}/opt-out", json=body))
 
     async def controle(self, agent_key: str) -> ControleInfo:
@@ -1447,4 +1523,6 @@ __all__ = [
     "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status", "parse_consent",
     "parse_controle", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
     "parse_thread", "parse_turn_result", "parse_uso",
+    "MOTIVO_ENCERRAR_PEDIU_PARAR", "ORIGENS_OPT_OUT", "ORIGEM_OPT_OUT_PADRAO", "OPT_OUT_MENSAGEM_MAX", "OPT_OUT_MOTIVO_MAX",
+    "opt_out_body",
 ]

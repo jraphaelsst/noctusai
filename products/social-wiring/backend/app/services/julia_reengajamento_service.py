@@ -419,6 +419,25 @@ def _evento_timeline(db: Any, org_id: UUID | str, contato: dict[str, Any], **ext
     julia_eventos_service.emitir(db, org_id, "reengajamento", contato["id"], {"texto": MSG_TIMELINE, **extra})
 
 
+async def _bloqueio_opt_out(
+    deps: Any, org_id: Any, connection: Any, contato: dict[str, Any], fluxo: julia_envio_gate.Fluxo,
+) -> Optional[str]:
+    """The opt-out leg of the outbound gate for a re-engagement / regua send. Returns the `bloqueado:<motivo>` outcome
+    (the refusal is logged + an `envio_bloqueado` event) or None when the lead may be contacted. A lead who opted out
+    also gets `gen + 1` + `encerrado_at`, so every queued job of the contato is stale: the follow-up chain STOPS."""
+    factory = getattr(deps, "agents_client_factory", None)
+    agents = factory(UUID(str(org_id))) if factory is not None else None
+    try:
+        await julia_envio_gate.exigir_sem_opt_out(
+            deps.scoped, org_id, connection.id, fluxo, contato_id=contato["id"], agents=agents,
+        )
+    except julia_envio_gate.EnvioBloqueado as exc:
+        if exc.motivo == julia_envio_gate.MOTIVO_OPT_OUT:
+            julia_contatos_service.bump_gen(deps.scoped, contato["id"], encerrado_at=datetime.now(timezone.utc).isoformat())
+        return f"bloqueado:{exc.motivo}"
+    return None
+
+
 async def executar_default(
     job: Job, *, deps: Any, repo: Any, run_turn: TurnRunner, agora: Optional[datetime] = None,
 ) -> str:
@@ -439,6 +458,9 @@ async def executar_default(
         julia_envio_gate.exigir(deps.scoped, org_id, connection.id, fluxo, contato_id=contato["id"])
     except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
+    bloqueio = await _bloqueio_opt_out(deps, org_id, connection, contato, fluxo)
+    if bloqueio is not None:
+        return bloqueio
     enviou = await run_turn(deps, connection, contato["chat_id"], contato, {"reengajamento": tier}, f"reeng:{job.id}")
     if enviou:
         _evento_timeline(deps.scoped, org_id, contato, tier=tier)
@@ -475,6 +497,9 @@ async def executar_tentativa(
                                            contato_id=contato["id"], regua_id=regua["id"])
     except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
+    bloqueio = await _bloqueio_opt_out(deps, org_id, connection, contato, julia_envio_gate.Fluxo.REGUA)
+    if bloqueio is not None:
+        return bloqueio
     enviou = False
     sem_transporte = False
     if tentativa.get("template_id"):

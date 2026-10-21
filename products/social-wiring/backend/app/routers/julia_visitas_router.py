@@ -27,7 +27,7 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
-from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
+from app.routers.whatsapp_connections_router import get_agents_client_factory, get_connection_store, get_waha_client_factory
 from app.services import julia_acesso, julia_capi_service, julia_visitas_service as svc
 
 logger = logging.getLogger(__name__)
@@ -108,8 +108,13 @@ def _guardar(client: Any, auth: tuple, request: Any, org: UUID, visita_id: UUID)
     julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), v["contato_id"])
 
 
-async def _responder(client: Any, org_id: UUID, visita: dict[str, Any], acao: str, store: Any, waha_factory: Any) -> dict[str, Any]:
-    enviada = await svc.avisar_lead(client, org_id, visita, svc.mensagem_lead(acao, visita), store=store, waha_factory=waha_factory)
+async def _responder(
+    client: Any, org_id: UUID, visita: dict[str, Any], acao: str, store: Any, waha_factory: Any, agents_factory: Any,
+) -> dict[str, Any]:
+    enviada = await svc.avisar_lead(
+        client, org_id, visita, svc.mensagem_lead(acao, visita), store=store, waha_factory=waha_factory,
+        agents=agents_factory(org_id),
+    )
     return {"data": {**visita, "mensagem_enviada": enviada}}
 
 
@@ -121,13 +126,14 @@ async def confirmar(
     client: Any = Depends(get_visitas_client),
     store: Any = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org = _org(auth)
     _guardar(client, auth, request, org, visita_id)
     visita = svc.confirmar(client, org, visita_id)
     # wave 13: the CAPI `visita_agendada` signal (Meta-ads leads only; best-effort, never raises)
     await julia_capi_service.registrar_evento(client, org, visita["contato_id"], "visita_agendada", referencia=str(visita_id))
-    return await _responder(client, org, visita, "confirmar", store, waha_factory)
+    return await _responder(client, org, visita, "confirmar", store, waha_factory, agents_factory)
 
 
 @router.post("/{visita_id}/remarcar")
@@ -139,11 +145,12 @@ async def remarcar(
     client: Any = Depends(get_visitas_client),
     store: Any = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org = _org(auth)
     _guardar(client, auth, request, org, visita_id)
     v = svc.remarcar(client, org, visita_id, _aware(corpo.inicio), _aware(corpo.fim))
-    return await _responder(client, org, v, "remarcar", store, waha_factory)
+    return await _responder(client, org, v, "remarcar", store, waha_factory, agents_factory)
 
 
 @router.post("/{visita_id}/cancelar")
@@ -155,7 +162,8 @@ async def cancelar(
     client: Any = Depends(get_visitas_client),
     store: Any = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org = _org(auth)
     _guardar(client, auth, request, org, visita_id)
-    return await _responder(client, org, svc.cancelar(client, org, visita_id, corpo.motivo), "cancelar", store, waha_factory)
+    return await _responder(client, org, svc.cancelar(client, org, visita_id, corpo.motivo), "cancelar", store, waha_factory, agents_factory)

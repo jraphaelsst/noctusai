@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
+from app.clients.agents import AgentsClient
 from app.services import julia_envio_gate, julia_modelos_service, julia_transporte
 from app.services.julia_transporte import Transporte
 
@@ -336,10 +337,11 @@ def _id_da_mensagem(resp: Any) -> Optional[str]:
 
 async def disparar(
     db: Any, org_id: UUID | str, disparo_id: UUID | str, *, connection: Any, transporte: Transporte,
-    contexto: Optional[dict[str, str]] = None, agora: Optional[datetime] = None,
+    contexto: Optional[dict[str, str]] = None, agora: Optional[datetime] = None, agents: Optional[AgentsClient] = None,
 ) -> dict[str, Any]:
     """Send every pending target as the modelo's Cloud template. 409 order: transport -> status -> modelo ->
-    cap. Returns the refreshed disparo with `alvos_por_status`."""
+    cap. A lead target who opted out (agents' consent state) is NOT sent: its row ends `erro` with the refusal as
+    `erro` (`lead_opt_out` / `opt_out_nao_verificavel`) and an `envio_bloqueado` event. Returns the refreshed disparo with `alvos_por_status`."""
     exigir_cloud(connection)
     agora = _agora(agora)
     d = obter(db, org_id, disparo_id)
@@ -354,7 +356,7 @@ async def disparar(
     chaves = julia_modelos_service.corpo_posicional(modelo["corpo"])[1]
     enviados = 0
     for alvo in pendentes:
-        patch = await _enviar_um(db, org_id, d, modelo, chaves, alvo, transporte, contexto, agora)
+        patch = await _enviar_um(db, org_id, d, modelo, chaves, alvo, transporte, contexto, agora, agents)
         enviados += 1 if patch["status"] == "enviado" else 0
         db.table(T_ALVOS).update(patch).eq("org_id", str(org_id)).eq("id", alvo["id"]).execute()
     final = "enviado" if enviados or not pendentes else "erro"
@@ -365,6 +367,7 @@ async def disparar(
 async def _enviar_um(
     db: Any, org_id: UUID | str, disparo: dict[str, Any], modelo: dict[str, Any], chaves: list[str],
     alvo: dict[str, Any], transporte: Transporte, contexto: dict[str, str], agora: datetime,
+    agents: Optional[AgentsClient] = None,
 ) -> dict[str, Any]:
     nome: Optional[str] = None
     if alvo.get("proprietario_id"):
@@ -374,6 +377,10 @@ async def _enviar_um(
         nome, imovel = dono[0].get("nome"), dono[0].get("imovel_codigo")
         alvo = {**alvo, "imovel_codigo": imovel}
     elif alvo.get("contato_id"):
+        motivo_oo = await julia_envio_gate.motivo_opt_out(agents, alvo["contato_id"])
+        if motivo_oo is not None:
+            julia_envio_gate.registrar_bloqueio_opt_out(db, org_id, alvo["contato_id"], "disparo", motivo_oo)
+            return {"status": "erro", "erro": motivo_oo}
         c = db.table(T_CONTATOS).select("nome").eq("org_id", str(org_id)).eq("id", str(alvo["contato_id"])).limit(1).execute().data or []
         nome = c[0].get("nome") if c else None
     if _enviados_na_janela(db, org_id, alvo["telefone"], agora) >= MAX_TEMPLATES_POR_CONTATO:
@@ -444,13 +451,16 @@ ABORDAGENS = {"comercial": "abordagem comercial", "neutra": "abordagem neutra"}
 async def primeiro_contato_meta(
     db: Any, org_id: UUID | str, *, connection: Any, transporte: Optional[Transporte], telefone: str,
     nome: Optional[str], abordagem: Optional[str], contexto: Optional[dict[str, str]] = None,
-    contato_id: Optional[UUID | str] = None,
+    contato_id: Optional[UUID | str] = None, agents: Optional[AgentsClient] = None,
 ) -> dict[str, Any]:
     """Meta lead-form lead -> Julia's first contact as the approved "Abordagem comercial|neutra" template
     (category `primeiro_contato`). Cloud only: without it the hook returns `transporte_indisponivel` and the
     lead keeps flowing through the ordinary (WAHA) path -- it never degrades into a free-text mass send.
     The outbound gate (`julia_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
-    first-contact modelo; a refusal returns its reason as `motivo`."""
+    first-contact modelo, then (a lead known to SW, `contato_id`) the opt-out leg -- agents' consent state, fail-closed:
+    a lead who asked to stop, or whose state could not be read, returns `motivo` `lead_opt_out` /
+    `opt_out_nao_verificavel`. A refusal returns its reason as `motivo`. A send to a phone with no SW lead
+    (`contato_id` None: the operator's manual test) has no consent record to read and says so in the log."""
     if abordagem is not None and abordagem not in ABORDAGENS:
         raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
     try:
@@ -459,6 +469,15 @@ async def primeiro_contato_meta(
         )
     except julia_envio_gate.EnvioBloqueado as exc:
         return {"enviado": False, "motivo": exc.motivo}
+    if contato_id is not None:
+        try:
+            await julia_envio_gate.exigir_sem_opt_out(
+                db, org_id, connection.id, julia_envio_gate.Fluxo.PRIMEIRO_CONTATO, contato_id=contato_id, agents=agents,
+            )
+        except julia_envio_gate.EnvioBloqueado as exc:
+            return {"enviado": False, "motivo": exc.motivo}
+    else:
+        logger.info("julia: primeiro contato to a phone with no SW lead -- no opt-out record to read (org=%s)", org_id)
     if not julia_transporte.cloud_configurada(connection) or transporte is None:
         return {"enviado": False, "motivo": "transporte_indisponivel"}
     if abordagem is None:  # a template cannot go out without the decision (agents' rule picks it; SW holds no fallback)

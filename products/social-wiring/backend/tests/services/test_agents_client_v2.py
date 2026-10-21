@@ -328,6 +328,47 @@ class TestThreadApi:
         assert seen[0] == ("PUT", f"/api/channels/leads/{LEAD}/opt-in", {"origem": "lead_iniciou"})
         assert seen[1][:2] == ("POST", f"/api/channels/leads/{LEAD}/opt-out")
 
+    async def test_opt_out_forwards_who_and_why_and_returns_the_event_id(self):
+        seen = []
+
+        def handler(request):
+            seen.append(json.loads(request.content or b"{}"))
+            return httpx.Response(200, json={"lead_ref": LEAD, "opt_out_em": "2026-10-21T12:00:00Z", "opt_out_ativo": True,
+                                             "participantes_encerrados": 2, "evento_id": "ev-1"})
+
+        c = _client(handler)
+        out = await c.opt_out(LEAD, origem="operador", motivo="Pediu por telefone", mensagem_lead="parar",
+                              ator_user_id="00000000-0000-4000-8000-000000000042")
+        assert out.evento_id == "ev-1"
+        assert seen[0] == {"origem": "operador", "motivo": "Pediu por telefone", "mensagem_lead": "parar",
+                           "ator_user_id": "00000000-0000-4000-8000-000000000042"}
+        await c.opt_out(LEAD)  # no operator: the integration default is sent, the optional fields are not
+        assert seen[1] == {"origem": "integracao"}
+
+    async def test_opt_out_refuses_what_agents_would_422(self):
+        c = _client(lambda _r: httpx.Response(200, json={"lead_ref": LEAD}))
+        with pytest.raises(ValueError, match="origem"):
+            await c.opt_out(LEAD, origem="sistema")
+        with pytest.raises(ValueError, match="motivo"):
+            await c.opt_out(LEAD, motivo="x" * 501)
+        with pytest.raises(ValueError, match="mensagem_lead"):
+            await c.opt_out(LEAD, mensagem_lead="x" * 1001)
+
+    async def test_the_fake_validates_like_the_real_one_and_reports_the_opt_out_on_the_thread(self):
+        from app.clients.agents import FakeAgentsClient
+
+        f = FakeAgentsClient()
+        f.seed_lead_thread(LEAD)
+        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is False
+        out = await f.opt_out(LEAD, origem="agente", motivo="m")
+        assert out.opt_out_ativo and out.evento_id
+        assert f.opt_out_calls[0]["origem"] == "agente" and f.opt_out_calls[0]["motivo"] == "m"
+        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is True
+        with pytest.raises(ValueError):
+            await f.opt_out(LEAD, origem="sistema")
+        await f.opt_in(LEAD, origem="formulario_meta")  # a later opt-in lifts it
+        assert (await f.buscar_thread(lead_ref=LEAD)).opt_out_ativo is False
+
     async def test_delete_lead_is_a_204_delete(self):
         seen = []
         await _client(lambda r: (seen.append((r.method, r.url.path)), httpx.Response(204))[1]).apagar_lead(LEAD)

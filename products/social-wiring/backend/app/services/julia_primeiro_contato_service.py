@@ -158,6 +158,7 @@ async def iniciar(
             client, org_id, connection=conexao,
             transporte=transporte_factory(conexao) if cloud else None,
             telefone=telefone, nome=nome, abordagem=decisao["abordagem"], contexto=contexto, contato_id=contato["id"],
+            agents=agents,
         )
         if resultado.get("enviado"):
             contatos.registrar_outbound(client, contato["id"])

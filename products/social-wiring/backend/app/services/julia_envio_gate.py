@@ -40,6 +40,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import UUID
 
+from app.clients.agents import AgentsClient, AgentsClientError
 from app.services import julia_eventos_service
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,11 @@ T_REGUAS = "julia_reguas"
 T_MODELOS = "julia_modelos"
 T_AVALIACOES_CONFIG = "julia_avaliacao_config"
 EVENTO_BLOQUEADO = "envio_bloqueado"
+#: The lead asked to stop (agents holds an active lead-level opt-out): nothing automatic is sent to them.
+MOTIVO_OPT_OUT = "lead_opt_out"
+#: SW could not ask agents (no client / the read failed / no lead identity): a send to a lead is refused, never
+#: assumed fine -- the consent state is agents', and "we could not check" must not read as "it is fine".
+MOTIVO_OPT_OUT_NAO_VERIFICAVEL = "opt_out_nao_verificavel"
 
 
 class Fluxo(str, Enum):
@@ -176,6 +182,47 @@ def exigir(
     raise EnvioBloqueado(fluxo, motivo)
 
 
+async def motivo_opt_out(agents: Optional[AgentsClient], contato_id: UUID | str | None) -> Optional[str]:
+    """Why a send to this lead must NOT go out because of the opt-out, or None when it may. Reads agents' consent
+    state for `lead_ref = str(contato_id)` (the thread read: `opt_out_ativo` = the re-engagement suppression reason
+    `opt_out`). Fail-closed: no client / no lead / a failed read -> `opt_out_nao_verificavel`."""
+    if agents is None or not contato_id:
+        return MOTIVO_OPT_OUT_NAO_VERIFICAVEL
+    try:
+        info = await agents.buscar_thread(lead_ref=str(contato_id))
+    except AgentsClientError as exc:
+        logger.warning("julia: opt-out read failed (%s) contato=%s -- send refused", type(exc).__name__, contato_id)
+        return MOTIVO_OPT_OUT_NAO_VERIFICAVEL
+    return MOTIVO_OPT_OUT if info is not None and info.opt_out_ativo else None
+
+
+def registrar_bloqueio_opt_out(
+    db: Any, org_id: UUID | str, contato_id: UUID | str | None, fluxo: str, motivo: str,
+    connection_id: UUID | str | None = None,
+) -> None:
+    """The refuse-not-null record of an opt-out refusal: WARNING log + `envio_bloqueado` event (`fluxo` may be a
+    non-gate flow such as `disparo` / `aviso_visita`). Never silent."""
+    logger.warning("julia: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s", fluxo, motivo, org_id, connection_id, contato_id)
+    julia_eventos_service.emitir(
+        db, org_id, EVENTO_BLOQUEADO, contato_id,
+        {"fluxo": fluxo, "motivo": motivo, "connection_id": str(connection_id) if connection_id else None},
+    )
+
+
+async def exigir_sem_opt_out(
+    db: Any, org_id: UUID | str, connection_id: UUID | str | None, fluxo: Fluxo, *,
+    contato_id: UUID | str | None, agents: Optional[AgentsClient],
+) -> None:
+    """The opt-out leg of the outbound gate, for a send to a LEAD that does not go through an agents turn (a turn is
+    refused by agents itself with `lead_opt_out`). Call right after `exigir`. Raises `EnvioBloqueado` (logged +
+    event) when the lead opted out or the state could not be verified."""
+    motivo = await motivo_opt_out(agents, contato_id)
+    if motivo is None:
+        return
+    registrar_bloqueio_opt_out(db, org_id, contato_id, Fluxo(fluxo).value, motivo, connection_id)
+    raise EnvioBloqueado(Fluxo(fluxo), motivo)
+
+
 def conferir(liberacao: Any, connection_id: UUID | str) -> Liberacao:
     """A send helper's check that it was handed a real `Liberacao` for THIS line."""
     if not isinstance(liberacao, Liberacao):
@@ -187,5 +234,6 @@ def conferir(liberacao: Any, connection_id: UUID | str) -> Liberacao:
 
 __all__ = [
     "BLOCO_SDR", "EVENTO_BLOQUEADO", "EnvioBloqueado", "FLUXO_DO_TIER", "Fluxo", "Liberacao", "conferir", "exigir",
-    "motivo_do_bloqueio",
+    "MOTIVO_OPT_OUT", "MOTIVO_OPT_OUT_NAO_VERIFICAVEL", "exigir_sem_opt_out", "motivo_do_bloqueio", "motivo_opt_out",
+    "registrar_bloqueio_opt_out",
 ]

@@ -17,6 +17,7 @@ import pytest
 from noctusai_lib.api.scheduler import SCHEDULERS_ENABLED_ENV
 from noctusai_lib.testing.migrations import migration_sql
 
+from app.clients.agents import FakeAgentsClient
 from app.services import julia_avaliacoes_service as av
 from app.services import julia_envio_gate as gate
 from app.services import julia_reengajamento_service as reeng
@@ -285,10 +286,10 @@ class TestEveryFlowGoesThroughTheGate:
             enviados.append((texto, liberacao))
 
         julia_off(w)
-        assert asyncio.run(av.executar_pedido(job, client=w.sw, enviar=enviar, agora=MANHA)) == "bloqueado:julia_desligada"
+        assert asyncio.run(av.executar_pedido(job, client=w.sw, enviar=enviar, agora=MANHA, agents=FakeAgentsClient())) == "bloqueado:julia_desligada"
         assert enviados == [] and w.rows(av.T_PEDIDOS) == []
         w.sw.table("whatsapp_connections").update({"agente_leads_ativo": True}).eq("id", CONNECTION_ID).execute()
-        assert asyncio.run(av.executar_pedido(job, client=w.sw, enviar=enviar, agora=MANHA)) == "enviado"
+        assert asyncio.run(av.executar_pedido(job, client=w.sw, enviar=enviar, agora=MANHA, agents=FakeAgentsClient())) == "enviado"
         assert enviados[0][1].fluxo is Fluxo.AVALIACAO
 
     def test_the_review_sender_refuses_without_a_liberacao(self, lead_world):

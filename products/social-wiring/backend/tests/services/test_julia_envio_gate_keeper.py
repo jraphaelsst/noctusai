@@ -193,6 +193,34 @@ def test_the_scan_sees_the_gated_senders():
         assert esperado in vistos, esperado
 
 
+#: Direct sends to a LEAD (no agents turn in between: a turn is refused by agents itself with `lead_opt_out`). Each
+#: must consult agents' opt-out before sending (owner decision 2026-10-21). `(file, function) -> calls it must contain`.
+ENVIOS_A_LEAD_COM_OPT_OUT: dict[tuple[str, str], frozenset[str]] = {
+    ("services/julia_reengajamento_service.py", "executar_default"): frozenset({"_bloqueio_opt_out"}),
+    ("services/julia_reengajamento_service.py", "executar_tentativa"): frozenset({"_bloqueio_opt_out"}),
+    ("services/julia_reengajamento_service.py", "_bloqueio_opt_out"): frozenset({"exigir_sem_opt_out"}),
+    ("services/julia_disparos_service.py", "primeiro_contato_meta"): frozenset({"exigir_sem_opt_out"}),
+    ("services/julia_disparos_service.py", "_enviar_um"): frozenset({"motivo_opt_out"}),
+    ("services/julia_avaliacoes_service.py", "executar_pedido"): frozenset({"exigir_sem_opt_out"}),
+    ("services/julia_visitas_service.py", "avisar_lead"): frozenset({"motivo_opt_out"}),
+}
+
+
+def test_every_direct_send_to_a_lead_consults_the_opt_out():
+    achados: dict[tuple[str, str], set[str]] = {}
+    for rel, arvore in _arquivos():
+        for fn in ast.walk(arvore):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and (rel, fn.name) in ENVIOS_A_LEAD_COM_OPT_OUT:
+                achados[(rel, fn.name)] = {
+                    n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id
+                    for n in _corpo_proprio(fn)
+                    if isinstance(n, ast.Call) and isinstance(n.func, (ast.Attribute, ast.Name))
+                }
+    assert set(achados) == set(ENVIOS_A_LEAD_COM_OPT_OUT), "a listed lead sender no longer exists -- update the list"
+    faltando = {k: sorted(v - achados[k]) for k, v in ENVIOS_A_LEAD_COM_OPT_OUT.items() if v - achados[k]}
+    assert faltando == {}, f"a direct lead send lost its opt-out check: {faltando}"
+
+
 def test_the_seal_is_used_only_by_the_gate_module():
     fora = [
         f"{rel}:{n.lineno}"

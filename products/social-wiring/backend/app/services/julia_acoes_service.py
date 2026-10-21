@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, Sequence, Union, Mapping
 from uuid import UUID
 
-from app.clients.agents import AgentsClient, AgentsClientError, ResumoRequest, TurnResult
+from app.clients.agents import AgentsClient, AgentsClientError, MOTIVO_ENCERRAR_PEDIU_PARAR, ResumoRequest, TurnResult
 from app.services import julia_contatos_service as contatos
 from app.services import julia_eventos_service as eventos
 from app.services import julia_notificacoes_service as notificacoes
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 PREFERENCIA_HORARIO_MAX = 120
 CODIGO_IMOVEL_MAX = 40
-MOTIVOS_ENCERRAR = frozenset({"lead_encerrou", "sem_interesse", "invalido", "outro"})
+MOTIVOS_ENCERRAR = frozenset({"lead_encerrou", "sem_interesse", "invalido", "outro", MOTIVO_ENCERRAR_PEDIU_PARAR})
 
 
 @dataclass
@@ -157,10 +157,20 @@ async def fechar_interacao(
 
 # ── built-in handlers ───────────────────────────────────────────────────────
 async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
-    motivo = payload.get("motivo") if payload.get("motivo") in MOTIVOS_ENCERRAR else "outro"
+    # The lead asked to stop: agents ALREADY recorded the lead-level opt-out (who/why/notification are its), so SW
+    # never calls opt-out again; it stops every SW-side follow-up of the lead and leaves a timeline record.
+    pediu_parar = payload.get("lead_opt_out") is True or payload.get("motivo") == MOTIVO_ENCERRAR_PEDIU_PARAR
+    motivo = MOTIVO_ENCERRAR_PEDIU_PARAR if pediu_parar else (
+        payload.get("motivo") if payload.get("motivo") in MOTIVOS_ENCERRAR else "outro")
     agora = datetime.now(timezone.utc)
     # gen + 1 first: every job queued for this contato is now stale (contract 0.2).
     contatos.bump_gen(ctx.client, ctx.contato["id"], encerrado_at=agora.isoformat())
+    if pediu_parar:
+        logger.info("julia: lead asked to stop (agents recorded the opt-out) org=%s contato=%s -- follow-ups stopped",
+                    ctx.org_id, ctx.contato["id"])
+        eventos.emitir(ctx.client, ctx.org_id, "lead_opt_out", ctx.contato["id"],
+                       {"origem": "agente", "motivo": MOTIVO_ENCERRAR_PEDIU_PARAR,
+                        "interacao_id": str(ctx.interacao["id"]) if ctx.interacao else None})
     fechada = None
     if ctx.interacao is not None:
         fechada = await fechar_interacao(

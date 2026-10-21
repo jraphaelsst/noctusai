@@ -38,7 +38,9 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.domain.scheduling import BlockedInterval, WorkingWindow
 from noctusai_lib.primitives.exceptions import AppException
 
+from app.clients.agents import AgentsClient
 from app.modules.scheduling.engine import SchedulingRuleDefaults, build_engine, build_rules
+from app.services import julia_envio_gate
 from app.services import julia_eventos_service as eventos
 
 logger = logging.getLogger(__name__)
@@ -477,12 +479,18 @@ def mensagem_lead(acao: str, visita: dict[str, Any]) -> str:
 
 
 async def avisar_lead(client: Any, org_id: UUID | str, visita: dict[str, Any], texto: str, *, store: Any,
-                      waha_factory: Callable[..., Any]) -> bool:
+                      waha_factory: Callable[..., Any], agents: Optional[AgentsClient] = None) -> bool:
     """Send `texto` over the contato's own WAHA line. False (logged) when it could not go out --
-    the state change stands, the response says the message did not leave."""
+    the state change stands, the response says the message did not leave. A lead who asked to stop (agents'
+    opt-out) is not messaged either (`envio_bloqueado` event, fluxo `aviso_visita`); an unreadable consent state
+    refuses the same way."""
     contato = _contato(client, org_id, visita["contato_id"])
     if not contato.get("connection_id") or not contato.get("chat_id"):
         logger.warning("julia visitas: contato %s has no chat to message", visita.get("contato_id"))
+        return False
+    motivo_oo = await julia_envio_gate.motivo_opt_out(agents, contato["id"])
+    if motivo_oo is not None:
+        julia_envio_gate.registrar_bloqueio_opt_out(client, org_id, contato["id"], "aviso_visita", motivo_oo, contato.get("connection_id"))
         return False
     try:
         record = store.get_connection(connection_id=UUID(str(contato["connection_id"])), org_id=UUID(str(org_id)), decrypt=True)

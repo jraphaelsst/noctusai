@@ -28,6 +28,7 @@ from noctusai_lib.domain.jobs import Job
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
+from app.clients.agents import AgentsClient
 from app.services import julia_acesso, julia_envio_gate
 from app.services import julia_contatos_service as contatos
 from app.services import julia_painel_service as painel_svc
@@ -226,8 +227,12 @@ def _registrar_pedido(db: Any, org_id: UUID | str, contato_id: Any, interacao_id
     }).execute()
 
 
-async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Optional[datetime] = None) -> str:
-    """`julia_avaliacao_pedir` at fire time. Returns the outcome (`enviado`, `obsoleto`, `ignorado:<motivo>`, `erro:<tipo>`)."""
+async def executar_pedido(
+    job: Job, *, client: Any, enviar: Enviador, agora: Optional[datetime] = None, agents: Optional[AgentsClient] = None,
+) -> str:
+    """`julia_avaliacao_pedir` at fire time. Returns the outcome (`enviado`, `obsoleto`, `ignorado:<motivo>`,
+    `bloqueado:<motivo>`, `erro:<tipo>`). A lead who asked to stop (agents' opt-out) is never asked for a review:
+    `bloqueado:lead_opt_out` (+ an `envio_bloqueado` event); an unreadable consent state is `bloqueado:opt_out_nao_verificavel`."""
     p = job.payload or {}
     org_id, contato_id = p.get("org_id"), p.get("contato_id")
     if not (org_id and contato_id):
@@ -245,6 +250,12 @@ async def executar_pedido(job: Job, *, client: Any, enviar: Enviador, agora: Opt
     try:  # the outbound gate: Julia still on for the contato's line + the org's review link (re-read at fire time)
         liberacao = julia_envio_gate.exigir(
             client, org_id, contato.get("connection_id"), julia_envio_gate.Fluxo.AVALIACAO, contato_id=contato_id,
+        )
+    except julia_envio_gate.EnvioBloqueado as exc:
+        return f"bloqueado:{exc.motivo}"
+    try:
+        await julia_envio_gate.exigir_sem_opt_out(
+            client, org_id, contato.get("connection_id"), julia_envio_gate.Fluxo.AVALIACAO, contato_id=contato_id, agents=agents,
         )
     except julia_envio_gate.EnvioBloqueado as exc:
         return f"bloqueado:{exc.motivo}"
@@ -282,11 +293,14 @@ def enviador_padrao(connection_lookup: Callable[[UUID], Any], waha_factory: Call
 
 def handlers(
     *, client_provider: Callable[[], Any], enviar_factory: Callable[[], Enviador],
+    agents_factory: Optional[Callable[[Any], Optional[AgentsClient]]] = None,
 ) -> dict[str, Callable[[Job], Any]]:
     """`{job type: handler}` merged into the Julia worker; collaborators are built at FIRE time."""
 
     async def _pedir(job: Job) -> None:
-        outcome = await executar_pedido(job, client=client_provider(), enviar=enviar_factory())
+        org_id = (job.payload or {}).get("org_id")
+        agents = agents_factory(UUID(str(org_id))) if agents_factory is not None and org_id else None
+        outcome = await executar_pedido(job, client=client_provider(), enviar=enviar_factory(), agents=agents)
         logger.info("julia avaliacoes %s job=%s -> %s", job.type, job.id, outcome)
 
     return {JOB_PEDIR: _pedir}
