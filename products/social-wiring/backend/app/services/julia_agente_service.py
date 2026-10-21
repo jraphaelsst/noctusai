@@ -56,7 +56,6 @@ _INSERT_BATCH = 500
 LEAD_PREFIX = "lead:"
 
 #: Deletion-on-request phrase (accent/case-insensitive "contains").
-_DELETION_RE = re.compile(r"\bapagar\s+(meus|os)\s+dados\b")
 
 
 # ── buffer key / chat identity ──────────────────────────────────────────────
@@ -117,10 +116,6 @@ def chat_aliases(chat_id: str) -> set[str]:
     if d:
         out.update(phone_forms(d))
     return out
-
-
-def is_deletion_request(text: str) -> bool:
-    return bool(_DELETION_RE.search(fold_accents_ascii(text or "").lower()))
 
 
 def sanitize_motivo(motivo: str | None) -> str:
@@ -791,22 +786,13 @@ async def apagar_dados_do_chat(
     return ResultadoApagar(removed, contatos, agents_ok, agents_apagou, julia_contatos)
 
 
-MENSAGEM_APAGADO = (
-    "Pronto! Apaguei os dados desta conversa. Se precisar de algo, é só escrever de novo. 🙂"
-)
-MENSAGEM_APAGADO_PARCIAL = (
-    "Recebi seu pedido de apagar os dados. Já removi o histórico desta conversa e estou "
-    "concluindo o restante com a equipe."
-)
-
-
 __all__ = [
-    "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MENSAGEM_APAGADO", "MOTIVOS_HANDOFF",
-    "MENSAGEM_APAGADO_PARCIAL", "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
+    "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MOTIVOS_HANDOFF",
+    "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
     "agents_token_for_org", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
     "destinatario_do_handoff", "eh_eco_proprio", "encerrar_envio", "exigir_autorizados",
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
-    "expandir_aliases", "gravar_snapshot", "is_deletion_request", "is_group_chat", "is_lid",
+    "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
     "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "parse_lead_key",
     "permitir_turno", "phone_digits", "public_privacy_link", "registrar_envio_proprio",

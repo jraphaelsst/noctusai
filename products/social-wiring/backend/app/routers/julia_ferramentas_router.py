@@ -19,16 +19,18 @@ another org's catalogue. The response never contains owner/proprietario personal
 (`julia_ferramentas_service` reads an explicit column allow-list).
 """
 import logging
-from typing import Any
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
+from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import AuthContext, require_scopes
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.dependencies import coerce_org_uuid, get_auth_context, get_scoped_admin_client
+from app.dependencies import coerce_org_uuid, get_auth_context, get_core_client, get_scoped_admin_client
 from app.services import julia_ferramentas_service as svc
+from app.services import julia_solicitacoes_titular_service as solicitacoes
 from app.services.julia_contexto_service import TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_SCOPE
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,33 @@ def _require_tools(
 def get_ferramentas_client() -> Any:
     """DI seam: the schema-scoped service-role client the tools read through (tests override)."""
     return get_scoped_admin_client("social_wiring")
+
+
+class SolicitacaoTitularIn(StrictHttpModel):
+    lead_ref: str = Field(min_length=1, max_length=64)
+    chat_id: Optional[str] = Field(default=None, max_length=200)
+    tipo: Literal[
+        "confirmacao", "acesso", "correcao", "eliminacao", "portabilidade", "revogacao_consentimento", "oposicao",
+        "info_compartilhamento", "outro",
+    ]
+    trecho: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/solicitacao-titular")
+def post_solicitacao_titular(
+    corpo: SolicitacaoTitularIn,
+    ctx: AuthContext = Depends(_require_tools),
+    client: Any = Depends(get_ferramentas_client),
+) -> dict[str, Any]:
+    """Julia (the model) registers a lead's data-subject request (LGPD art. 18). It only RECORDS it and tells the org's
+    admins; nothing is deleted or changed here -- an admin decides, and an erasure is the admin's act. Declared BEFORE
+    `/{nome}`. Same auth as every tool: product token, scope `lais-tools`, issuer `agents`; the org is the token's."""
+    org_id = coerce_org_uuid(ctx.org_id)
+    linha = solicitacoes.registrar(
+        client, get_core_client(), org_id=org_id, lead_ref=corpo.lead_ref, tipo=corpo.tipo, trecho=corpo.trecho,
+        chat_id=corpo.chat_id,
+    )
+    return {"data": {"id": str(linha["id"]), "prazo_em": linha["prazo_em"]}}
 
 
 @router.post("/{nome}")

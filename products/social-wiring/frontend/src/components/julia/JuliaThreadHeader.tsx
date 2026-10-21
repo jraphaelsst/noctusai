@@ -38,6 +38,7 @@ import { useJuliaRoteamento } from "@/hooks/useJuliaRoteamento";
 import { AVISO_FONTE, ROTULO_ESTADO, useJuliaConversaEstado, type EstadoConversa } from "@/hooks/useJuliaConversaEstado";
 import { useJuliaContato } from "@/hooks/useJuliaPerguntas";
 import { ConversaAcoes, contatoMeta } from "@/components/julia/conversas/ConversaAcoes";
+import { OptOutAcoes } from "@/components/julia/optouts/OptOutConversa";
 
 export function JuliaThreadHeader({
   scopeId,
@@ -107,6 +108,7 @@ export function JuliaThreadHeader({
   return (
     <div className="flex flex-shrink-0 items-center gap-2" data-testid="julia-thread-header">
       {contato && <ConversaAcoes contato={contato} />}
+      {contato && scopeId && <OptOutAcoes connectionId={scopeId} chatId={thread.id} contatoId={contato.contatoId} />}
       {juliaLigada && <PainelLead connectionId={scopeId} chatId={thread.id} />}
       {juliaLigada && !estado && (
         <span className="h-5 w-28 animate-pulse rounded-full bg-muted" data-testid="julia-chip-skeleton" />

@@ -2,7 +2,7 @@
 
 Covers: contract 3.1's whole error table on the SW side, 11.3 (disclosure bubble first,
 only on the first turn), 11.4 (handoff target + notification), 10.1 L3 (post-turn
-re-check) / M4 (limits, batch cap) / H3 re-check / M5 deletion, and the B2 run
+re-check) / M4 (limits, batch cap) / H3 re-check / M5 (no inbound message deletes anything), and the B2 run
 semantics (an inbound that lands during a turn is NOT swallowed).
 
 Every external seam is a Fake: mock DB, `FakeWahaClient`, `FakeRealtimeBus`, fakeredis,
@@ -465,85 +465,31 @@ class TestRunSemantics:
         assert world.agents.turns[0].phone_e164 == "+5511977776666"
 
 
-# ── M5: deletion on request ─────────────────────────────────────────────────
-class TestDeletion:
-    async def _seed_conversation(self, world):
+# ── no inbound message can delete anything (owner 2026-10-21) ───────────────
+class TestLeadMessageNeverDeletes:
+    """A lead cannot trigger a destructive action on a public number. The old keyword path ("apagar meus dados") is gone:
+    the phrase is an ordinary message Julia answers; she registers a data request through her tool, an admin decides."""
+
+    @pytest.mark.parametrize("texto", ["apagar meus dados", "Por favor, APAGAR os dados", "não vou apagar os dados"])
+    async def test_the_phrase_deletes_nothing_and_the_turn_goes_on(self, world, texto):
         world.agents = FakeAgentsClient()
         k = buffer_lead(world, LEAD_CHAT, ["oi"], ids=["m1"])
         await _run(world, k)
-        world.sw.table("contacts").insert({
-            "org_id": "00000000-0000-4000-8000-0000000000e1", "source": "whatsapp", "status": "active",
-            "whatsapp_phone": "5511988887777", "nome": "Ana",
-        }).execute()
-        return k
-
-    async def test_apagar_meus_dados_deletes_sw_rows_and_calls_agents_instead_of_a_turn(self, world):
-        k = await self._seed_conversation(world)
-        assert world.messages()
         contato_id = world.contato()["id"]
-        buffer_lead(world, LEAD_CHAT, ["Por favor, APAGAR meus dados"], ids=["m9"])
+        turnos = len(world.agents.turns)
+        buffer_lead(world, LEAD_CHAT, [texto], ids=["m9"])
         await _run(world, k)
-        assert len(world.agents.turns) == 1, "the deletion request is not a turn"
-        assert world.agents.leads_apagados == [contato_id] and world.contato() is None  # agents erased the lead by its ref
-        assert world.messages() == []
-        assert world.chat_row() is None
-        assert world.sw.table("contacts").select("*").execute().data == []
-        assert world.sent_texts()[-1] == julia.MENSAGEM_APAGADO
-        assert world.buffer.memory_for(k) == []
+        assert len(world.agents.turns) == turnos + 1
+        assert world.agents.turns[-1].messages[-1].texto == texto
+        assert world.agents.leads_apagados == [] and world.agents.deletions == []
+        assert world.contato() is not None and world.contato()["id"] == contato_id
+        assert world.messages() and world.chat_row() is not None
+        assert world.sent_texts()[-1] in world.agents.DEFAULT_PARTES  # agents' partes: no reply text from code
+        assert world.rows("julia_solicitacoes_titular") == []  # no keyword creates a request
 
-    async def test_the_confirmation_is_not_recorded_back_into_the_erased_history(self, world):
-        k = await self._seed_conversation(world)
-        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
-        await _run(world, k)
-        assert world.messages() == []
-
-    async def test_deletion_is_honoured_even_for_a_paused_chat(self, world):
-        k = await self._seed_conversation(world)
-        world.sw.table("whatsapp_chats").update({"agente_pausado": True}).eq("chat_id", LEAD_CHAT).execute()
-        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
-        await _run(world, k)
-        assert world.messages() == [] and world.agents.leads_apagados
-
-    async def test_an_agents_failure_is_reported_never_swallowed_and_sw_rows_still_go(self, world):
-        k = await self._seed_conversation(world)
-
-        async def boom(ref):
-            raise AgentsUpstreamError("down")
-
-        world.agents.apagar_lead = boom
-        buffer_lead(world, LEAD_CHAT, ["apagar os dados"], ids=["m9"])
-        await _run(world, k)
-        assert world.messages() == []
-        assert world.sent_texts()[-1] == julia.MENSAGEM_APAGADO_PARCIAL
-
-    async def test_agents_is_erased_FIRST_and_by_the_lead_ref_then_sw(self, world):
-        k = await self._seed_conversation(world)
-        ordem: list[str] = []
-        contato_id = world.contato()["id"]
-        original = world.agents.apagar_lead
-
-        async def apagar(ref):
-            ordem.append(f"agents:{ref}:{'sw_ainda_tem' if world.contato() else 'sw_ja_apagou'}")
-            await original(ref)
-
-        world.agents.apagar_lead = apagar
-        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
-        await _run(world, k)
-        assert ordem == [f"agents:{contato_id}:sw_ainda_tem"] and world.contato() is None
-
-    async def test_a_pre_v2_conversation_without_a_contato_uses_the_legacy_by_chat_erase(self, world):
-        k = await self._seed_conversation(world)
-        world.sw.table("julia_contatos").delete().eq("chat_id", LEAD_CHAT).execute()
-        buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m9"])
-        await _run(world, k)
-        assert [d.chat_id for d in world.agents.deletions] == [LEAD_CHAT] and world.agents.leads_apagados == []
-
-    @pytest.mark.parametrize("text,expected", [
-        ("apagar meus dados", True), ("Apagar Meus Dados!", True), ("quero APAGAR os dados", True),
-        ("apagár meus dádos", True), ("vocês apagam meus dados?", False), ("quero comprar", False),
-    ])
-    def test_phrase_detection_is_accent_and_case_insensitive(self, text, expected):
-        assert julia.is_deletion_request(text) is expected
+    def test_the_keyword_path_and_its_hardcoded_confirmations_are_gone(self):
+        for nome in ("is_deletion_request", "MENSAGEM_APAGADO", "MENSAGEM_APAGADO_PARCIAL"):
+            assert not hasattr(julia, nome)
 
 
 # ── static guard: the lead path never touches the operator stack ────────────

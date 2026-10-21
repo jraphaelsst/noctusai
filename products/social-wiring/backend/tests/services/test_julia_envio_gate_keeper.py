@@ -185,7 +185,6 @@ def test_the_scan_sees_the_gated_senders():
     for esperado in [
         ("services/julia_lead_turn_service.py", "LeadSender.send_reply"),
         ("services/julia_lead_turn_service.py", "_deliver"),
-        ("services/julia_lead_turn_service.py", "_handle_deletion"),
         ("services/julia_reengajamento_service.py", "_enviar_template"),
         ("services/julia_disparos_service.py", "primeiro_contato_meta"),
         ("services/julia_avaliacoes_service.py", "enviador_padrao.enviar"),

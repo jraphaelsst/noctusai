@@ -628,7 +628,7 @@ class TestWorkerIntegration:
         c = world.contato()
         assert c["gen"] == 1 and c["ultimo_inbound_at"]
 
-    async def test_deletion_on_request_removes_the_julia_rows_of_the_chat_only(self, world):
+    async def test_the_operator_erase_removes_the_julia_rows_of_the_chat_only(self, world):
         world.agents = FakeAgentsClient([TurnResult(
             conversation_id=CONV, partes=("oi",), status="respondido",
             actions=(JuliaAction("pedido_visita", 1, {}),))])
@@ -638,8 +638,15 @@ class TestWorkerIntegration:
         contatos.abrir_interacao(world.sw, ORG, other)
         mine = world.contato()["id"]
         assert world.rows("julia_interacoes", contato_id=mine) and world.rows("julia_acoes_aplicadas", contato_id=mine)
+        # a lead's own message erases nothing (owner 2026-10-21); the HUMAN operator's erase (the admin "apagar-dados" route)
+        # is the one path that does, and it touches this chat's rows only
         buffer_lead(world, LEAD_CHAT, ["apagar meus dados"], ids=["m2"])
         await _run(world, k)
+        assert world.contato() is not None
+        from app.services import julia_agente_service as julia_agente
+
+        await julia_agente.apagar_dados_do_chat(
+            client=world.sw, connection=world.record(CONNECTION_ID), chat_id=LEAD_CHAT, agents_client=world.agents, agent_key="julia")
         assert world.contato() is None
         for t in ("julia_interacoes", "julia_acoes_aplicadas", "julia_eventos"):
             assert [r for r in world.rows(t) if r["contato_id"] == mine] == []

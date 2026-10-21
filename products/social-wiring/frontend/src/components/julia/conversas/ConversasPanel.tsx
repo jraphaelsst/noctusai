@@ -20,6 +20,7 @@ import {
 import { useWhatsAppChats } from "@/hooks/useWhatsAppChats";
 import { useQueryClient } from "@tanstack/react-query";
 import { ClienteColumn } from "./ClienteColumn";
+import { OptOutAviso } from "@/components/julia/optouts/OptOutConversa";
 import { ConversasKanban } from "./ConversasKanban";
 import { FiltroConversasDrawer } from "./FiltroConversasDrawer";
 
@@ -117,6 +118,8 @@ export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
       {view === "kanban" ? (
         <ConversasKanban filtros={efetivos} onAbrir={(c) => { setSelecionado(c.chat_id); setView("lista"); }} />
       ) : (
+        <>
+        {selecionado && <OptOutAviso connectionId={connectionId} chatId={selecionado} />}
         <div className="flex h-[calc(100vh-21rem)] min-h-[28rem] rounded-md border" data-refreshing={lista.isFetching && !!lista.data ? "true" : "false"}>
           <ThreadsFeedContext.Provider value={feed}>
             <WhatsAppChatWindow
@@ -129,6 +132,7 @@ export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
           </ThreadsFeedContext.Provider>
           {atual && <div className="hidden lg:flex"><ClienteColumn key={atual.contato_id} contatoId={atual.contato_id} nome={atual.nome} etiquetas={atual.etiquetas ?? []} credito={atual.credito ?? null} /></div>}
         </div>
+        </>
       )}
 
       {drawer && <FiltroConversasDrawer filtros={filtros} onAplicar={setFiltros} onClose={() => setDrawer(false)} />}

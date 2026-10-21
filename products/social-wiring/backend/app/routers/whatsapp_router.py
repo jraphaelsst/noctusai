@@ -553,18 +553,17 @@ async def _handle_lead_message(
         logger.info("Julia: chat %s not eligible (%s) — unchanged behaviour", chat_id, elegibilidade.motivo)
         return False
 
-    deletion = julia.is_deletion_request(message_body)
-    if not deletion:
-        # Conversas v2: a BLOCKED number is dropped; an ARCHIVED contato goes back to Julia (un-paused).
-        politica = julia_conversas_service.aplicar_politica_inbound(
-            get_scoped_admin_client("social_wiring"), chat_store,
-            org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
-        )
-        if politica == "bloqueado":
-            logger.info("Julia: chat %s is blocked — inbound dropped", chat_id)
-            return True
-        if politica == "devolvido":
-            state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
+    # Conversas v2: a BLOCKED number is dropped; an ARCHIVED contato goes back to Julia (un-paused). A data request
+    # ("apagar meus dados") gets no exception: it is recorded for a human by the lead worker like any other message.
+    politica = julia_conversas_service.aplicar_politica_inbound(
+        get_scoped_admin_client("social_wiring"), chat_store,
+        org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
+    )
+    if politica == "bloqueado":
+        logger.info("Julia: chat %s is blocked — inbound dropped", chat_id)
+        return True
+    if politica == "devolvido":
+        state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
     # julia-v2: NO local pause gate here. The per-conversation pause lives in AGENTS (the turn answers
     # `conversa_pausada` and the lead worker sends nothing); `whatsapp_chats.agente_pausado` is only a display mirror.
 

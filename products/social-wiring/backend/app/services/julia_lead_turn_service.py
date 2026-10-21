@@ -2,7 +2,7 @@
 
 Called by `conversation_module._build_processor` for buffer keys `lead:<connection_id>:<chat_id>` (contract 10.2 B2). It
 NEVER touches `ChatbotService`, the intake state machine or any operator tool (section 5 safety rules): the only things
-it can do for a lead are `AgentsClient.run_turn`, send the returned bubbles, and the deletion / handoff side effects.
+it can do for a lead are `AgentsClient.run_turn`, send the returned bubbles, and the handoff side effects. It never deletes anything: no inbound message can trigger a destructive action.
 
 SW does NOT decide whether Julia answers. Agents decides on EVERY turn, under its lock, before any model call (the
 controls: ligado / drenando / desligado, the per-conversation pause, another agent's thread, the lead's opt-out) and
@@ -438,12 +438,6 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     org_id = connection.org_id
     chat_store = deps.chat_store_factory(org_id)
     agent_key = connection.agente_leads_key or julia.DEFAULT_AGENT_KEY
-
-    # Deletion on request (M5) is honoured before everything else -- even for a
-    # paused chat: it is the data subject's right, not Julia's reply.
-    if any(julia.is_deletion_request(str(i.get("text") or "")) for i in run):
-        await _handle_deletion(deps, connection=connection, chat_id=chat_id, key=key, agent_key=agent_key, run=run)
-        return
 
     # H3 re-check at routing time: fail closed, no reply.
     if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
@@ -939,26 +933,6 @@ async def _apply_handoff(
                                      {"handoff_id": registro.id if registro else None, "motivo_codigo": codigo})
     except Exception:
         logger.exception("julia: handoff notification failed conn=%s chat=%s (the conversation IS handed over)", connection.id, chat_id)
-
-
-async def _handle_deletion(
-    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, key: str, agent_key: str, run: list[dict[str, Any]],
-) -> None:
-    client = deps.agents_client_factory(connection.org_id)
-    res = await julia.apagar_dados_do_chat(
-        client=deps.scoped, connection=connection, chat_id=chat_id,
-        agents_client=client, agent_key=agent_key, buffer=deps.buffer,
-    )
-    # Confirm to the lead with the connection's own WAHA client -- NOT recorded
-    # (the rows were just deleted; recording would re-create what was erased).
-    try:
-        julia_envio_gate.exigir(deps.scoped, connection.org_id, connection.id, julia_envio_gate.Fluxo.RESPOSTA)
-        waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
-        await waha.send_text(chat_id, julia.MENSAGEM_APAGADO if res.agents_ok else julia.MENSAGEM_APAGADO_PARCIAL)
-    except julia_envio_gate.EnvioBloqueado:  # Julia switched off mid-batch: the gate logged it + left the event
-        return
-    except Exception:
-        logger.exception("julia: deletion confirmation could not be sent chat=%s", chat_id)
 
 
 __all__ = [

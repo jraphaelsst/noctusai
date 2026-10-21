@@ -71,6 +71,7 @@ const JuliaAvaliacoes = lazyWithReload(() => import("@/pages/julia/Avaliacoes"))
 const JuliaCredito = lazyWithReload(() => import("@/pages/julia/Credito"));
 const JuliaRelatorios = lazyWithReload(() => import("@/pages/julia/Relatorios"));
 const JuliaEquipes = lazyWithReload(() => import("@/pages/julia/Equipes"));
+const JuliaOptOuts = lazyWithReload(() => import("@/pages/julia/OptOuts"));
 const RedirectToJuliaConversas = lazyWithReload(() => import("@/pages/RedirectToJuliaConversas"));
 const RedirectLegacyLais = lazyWithReload(() => import("@/pages/RedirectLegacyLais"));
 const Marcas = lazyWithReload(() => import("@/pages/Marcas"));
@@ -257,6 +258,7 @@ export default createProductApp({
     { path: JULIA_PAGES.envio.href, component: JuliaEnvio },
     { path: JULIA_PAGES.leads.href, component: JuliaLeads },
     { path: JULIA_PAGES.equipes.href, component: JuliaEquipes },
+    { path: JULIA_PAGES.optOuts.href, component: JuliaOptOuts },
     { path: `${JULIA_PAGES.reengajamento.href}/reguas/:id`, component: JuliaReengajamentoRegua },
     { path: JULIA_PAGES.modelos.href, component: JuliaModelos },
     { path: JULIA_PAGES.disparos.href, component: JuliaDisparos },

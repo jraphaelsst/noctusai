@@ -142,6 +142,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_equipes_router import router as julia_equipes_router
     from app.routers.julia_credito_router import router as julia_credito_router
     from app.routers.julia_avaliacoes_router import router as julia_avaliacoes_router
+    from app.routers.julia_opt_outs_router import router as julia_opt_outs_router
     from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -267,6 +268,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_equipes_router,
             julia_credito_router,
             julia_avaliacoes_router,
+            julia_opt_outs_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,

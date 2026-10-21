@@ -100,7 +100,7 @@ class World:
         self.sw.set_table_data("julia_agente_chats_preexistentes", [])
         self.sw.set_table_data("julia_aviso_privacidade", [])
         self.sw.set_table_data("whatsapp_connections", [])
-        for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos"):
+        for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos", "julia_solicitacoes_titular"):
             self.sw.set_table_data(t, [])
         # the platform default texts are DATA (migration julia_v2_espelhos): this is the migration's row, asserted equal to the SQL in
         # tests/services/test_julia_v2_espelhos_migration.py

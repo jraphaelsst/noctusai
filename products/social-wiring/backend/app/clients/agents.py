@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol, Sequence, Union, runtime_checkable
 
@@ -390,6 +390,52 @@ class ConsentInfo:
     participantes_encerrados: int = 0
     #: The id of the opt-out EVENT agents recorded (who/why/how); None from an older agents build or for opt-in.
     evento_id: Optional[str] = None
+    #: The WHY of the active opt-out (the GET carries the event object); what an operator is shown before writing.
+    opt_out_motivo: Optional[str] = None
+    opt_out_origem: Optional[str] = None
+
+
+#: `tipo` of an opt-out history record: the lead asked to stop / an authorised human put the lead back.
+TIPOS_OPT_OUT_EVENTO = ("opt_out", "reativacao")
+NOTIFICACAO_STATUS = ("pendente", "enviada", "falhou")
+REATIVACAO_MOTIVO_MAX = 500
+
+
+@dataclass(frozen=True)
+class OptOutEvento:
+    """One record of agents' lead opt-out history (`GET /api/channels/opt-outs`): WHO/WHY/WHEN of an opt-out or of a
+    reactivation, and whether the org admins' in-app notice reached them."""
+
+    id: str
+    tipo: str
+    lead_ref: str
+    em: Optional[str] = None
+    lead_nome: Optional[str] = None
+    lead_telefone: Optional[str] = None
+    thread_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_key: Optional[str] = None
+    agent_nome: Optional[str] = None
+    ator_user_id: Optional[str] = None
+    origem: Optional[str] = None
+    motivo: Optional[str] = None
+    mensagem_lead: Optional[str] = None
+    participantes_encerrados: int = 0
+    notificacao_status: str = "pendente"
+    notificacao_erro: Optional[str] = None
+    notificado_em: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class OptOutPagina:
+    items: tuple[OptOutEvento, ...] = ()
+    next_cursor: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ReativacaoResult:
+    consent: ConsentInfo
+    evento: Optional[OptOutEvento] = None
 
 
 @dataclass(frozen=True)
@@ -469,6 +515,14 @@ class HandoffNotFound(AgentsClientError):
 class LeadDesconhecido(AgentsClientError):
     """`GET /api/channels/leads/{ref}/consentimento` 404 `lead_desconhecido`: agents has never seen the lead (the
     opt-out POST always registers the lead, so an unknown lead has never opted out)."""
+
+
+class SemOptOutAtivo(AgentsClientError):
+    """409 `sem_opt_out_ativo`: the lead has no active opt-out to lift."""
+
+
+class OptOutEventoNotFound(AgentsClientError):
+    """404 on `POST /opt-outs/{id}/notificar`: agents has no such opt-out record."""
 
 
 class ParticipanteNotFound(AgentsClientError):
@@ -575,6 +629,14 @@ class AgentsClient(Protocol):
 
     async def consentimento(self, lead_ref: str) -> Optional[ConsentInfo]: ...
 
+    async def listar_opt_outs(
+        self, *, limit: int = 50, cursor: Optional[str] = None, lead_ref: Optional[str] = None,
+    ) -> OptOutPagina: ...
+
+    async def renotificar_opt_out(self, evento_id: str, *, ator_user_id: str) -> OptOutEvento: ...
+
+    async def reativar_lead(self, lead_ref: str, *, motivo: str, ator_user_id: str) -> ReativacaoResult: ...
+
     async def controle(self, agent_key: str) -> ControleInfo: ...
 
     async def estagios(self, agent_key: str) -> tuple[EstagioInfo, ...]: ...
@@ -667,6 +729,9 @@ class FakeAgentsClient:
         self.leads_com_opt_out: set[str] = set()  # a later opt-in lifts it (agents' rule)
         self.consentimentos: dict[str, ConsentInfo] = {}  # leads agents has seen via opt_in/opt_out (others: unknown)
         self.lead_threads: dict[str, str] = {}  # lead_ref -> thread_id for leads that have a thread but no recorded turn
+        self.opt_out_eventos: list[OptOutEvento] = []  # the history agents keeps (newest last; reads reverse it)
+        self.reativacoes: list[dict[str, Any]] = []
+        self.renotificacoes: list[tuple[str, str]] = []
         self.leads_apagados: list[str] = []
         self.thread_reads: list[str] = []
         self.feedbacks: list[dict[str, Any]] = []
@@ -888,18 +953,64 @@ class FakeAgentsClient:
         for k in list(self.participantes):
             self.participantes[k] = "encerrado"
         anterior = self.consentimentos.get(lead_ref)
+        quando = (em or datetime.now()).isoformat()
+        evento_id = str(uuid.uuid5(_NAMESPACE, f"opt-out|{lead_ref}|{len(self.opt_out_calls)}"))
         info = ConsentInfo(
             lead_ref=lead_ref, opt_in_em=anterior.opt_in_em if anterior else None,
             opt_in_origem=anterior.opt_in_origem if anterior else None,
-            opt_out_em=(em or datetime.now()).isoformat(), opt_out_ativo=True,
-            evento_id=str(uuid.uuid5(_NAMESPACE, f"opt-out|{lead_ref}|{len(self.opt_out_calls)}")),
+            opt_out_em=quando, opt_out_ativo=True, evento_id=evento_id, opt_out_motivo=motivo, opt_out_origem=origem,
         )
         self.consentimentos[lead_ref] = info
+        self.opt_out_eventos.append(OptOutEvento(
+            id=evento_id, tipo="opt_out", lead_ref=lead_ref, em=quando, ator_user_id=ator_user_id, origem=origem,
+            motivo=motivo, mensagem_lead=mensagem_lead, thread_id=self.lead_threads.get(lead_ref),
+        ))
         return info
 
     async def consentimento(self, lead_ref: str) -> Optional[ConsentInfo]:
         self._maybe_fail("consentimento")
         return self.consentimentos.get(lead_ref)
+
+    async def listar_opt_outs(
+        self, *, limit: int = 50, cursor: Optional[str] = None, lead_ref: Optional[str] = None,
+    ) -> OptOutPagina:
+        self._maybe_fail("listar_opt_outs")
+        if not 1 <= limit <= 100:
+            raise ValueError("listar_opt_outs limit must be 1..100")
+        itens = [e for e in reversed(self.opt_out_eventos) if lead_ref is None or e.lead_ref == lead_ref]
+        inicio = int(cursor) if cursor else 0
+        pagina = itens[inicio:inicio + limit]
+        proximo = str(inicio + limit) if inicio + limit < len(itens) else None
+        return OptOutPagina(items=tuple(pagina), next_cursor=proximo)
+
+    async def renotificar_opt_out(self, evento_id: str, *, ator_user_id: str) -> OptOutEvento:
+        self._maybe_fail("renotificar_opt_out")
+        self.renotificacoes.append((evento_id, str(ator_user_id)))
+        for i, e in enumerate(self.opt_out_eventos):
+            if e.id == evento_id:
+                novo = replace(e, notificacao_status="enviada", notificacao_erro=None, notificado_em=datetime.now().isoformat())
+                self.opt_out_eventos[i] = novo
+                return novo
+        raise OptOutEventoNotFound("opt-out record not found", code="evento_not_found")
+
+    async def reativar_lead(self, lead_ref: str, *, motivo: str, ator_user_id: str) -> ReativacaoResult:
+        self._maybe_fail("reativar_lead")
+        motivo = reativacao_motivo(motivo)
+        atual = self.consentimentos.get(lead_ref)
+        if atual is None:
+            raise LeadDesconhecido("agents has never seen the lead", code="lead_desconhecido")
+        if not atual.opt_out_ativo:
+            raise SemOptOutAtivo("the lead has no active opt-out", code="sem_opt_out_ativo")
+        self.reativacoes.append({"lead_ref": lead_ref, "motivo": motivo, "ator_user_id": str(ator_user_id)})
+        self.leads_com_opt_out.discard(lead_ref)
+        info = replace(atual, opt_out_ativo=False, participantes_encerrados=0)
+        self.consentimentos[lead_ref] = info
+        evento = OptOutEvento(
+            id=str(uuid.uuid5(_NAMESPACE, f"reativacao|{lead_ref}|{len(self.reativacoes)}")), tipo="reativacao",
+            lead_ref=lead_ref, em=datetime.now().isoformat(), ator_user_id=str(ator_user_id), origem="operador", motivo=motivo,
+        )
+        self.opt_out_eventos.append(evento)
+        return ReativacaoResult(consent=info, evento=evento)
 
     async def controle(self, agent_key: str) -> ControleInfo:
         self._maybe_fail("controle")
@@ -975,10 +1086,14 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
             raise LeadDesconhecido("agents has never seen the lead", code=code)
         if code == "participante_not_found":
             raise ParticipanteNotFound("participant not found", code=code)
+        if code in ("evento_not_found", "evento_nao_encontrado", "opt_out_evento_not_found"):
+            raise OptOutEventoNotFound("opt-out record not found", code=code)
         if code in ("lead_sem_qualificacao", "lead_sem_identificacao"):
             raise LeadSemQualificacao("nothing recorded for the lead", code=code)
         raise AgentsUpstreamError("agents answered 404", code=code)
     if status == 409:
+        if code == "sem_opt_out_ativo":
+            raise SemOptOutAtivo("the lead has no active opt-out", code=code)
         if code == "turn_in_progress":
             raise TurnInProgress("turn in progress", code=code)
         if code in ("agent_inactive", "no_active_version", "prompt_too_large", "conteudo_incompleto"):
@@ -1216,6 +1331,40 @@ def opt_out_body(
     return body
 
 
+def reativacao_motivo(motivo: Optional[str]) -> str:
+    """The required reactivation reason (1..500 chars, shared by the Real and the Fake)."""
+    limpo = (motivo or "").strip()
+    if not limpo or len(limpo) > REATIVACAO_MOTIVO_MAX:
+        raise ValueError(f"reativacao motivo is required and capped at {REATIVACAO_MOTIVO_MAX} chars")
+    return limpo
+
+
+def parse_opt_out_evento(raw: Any) -> OptOutEvento:
+    if not isinstance(raw, dict):
+        raise AgentsUpstreamError("agents returned a malformed opt-out record")
+    encerrados = raw.get("participantes_encerrados")
+    return OptOutEvento(
+        id=_need(raw, "id", str), tipo=_need(raw, "tipo", str), lead_ref=_need(raw, "lead_ref", str),
+        em=_opt_str(raw, "em"), lead_nome=_opt_str(raw, "lead_nome"), lead_telefone=_opt_str(raw, "lead_telefone"),
+        thread_id=_opt_str(raw, "thread_id"), agent_id=_opt_str(raw, "agent_id"), agent_key=_opt_str(raw, "agent_key"),
+        agent_nome=_opt_str(raw, "agent_nome"), ator_user_id=_opt_str(raw, "ator_user_id"), origem=_opt_str(raw, "origem"),
+        motivo=_opt_str(raw, "motivo"), mensagem_lead=_opt_str(raw, "mensagem_lead"),
+        participantes_encerrados=encerrados if isinstance(encerrados, int) and not isinstance(encerrados, bool) else 0,
+        notificacao_status=_opt_str(raw, "notificacao_status") or "pendente",
+        notificacao_erro=_opt_str(raw, "notificacao_erro"), notificado_em=_opt_str(raw, "notificado_em"),
+    )
+
+
+def parse_opt_out_pagina(body: Any) -> OptOutPagina:
+    itens = _need(body, "items", list)
+    return OptOutPagina(items=tuple(parse_opt_out_evento(i) for i in itens), next_cursor=_opt_str(body, "next_cursor"))
+
+
+def parse_reativacao(body: Any) -> ReativacaoResult:
+    evento = body.get("evento")
+    return ReativacaoResult(consent=parse_consent(body), evento=parse_opt_out_evento(evento) if isinstance(evento, dict) else None)
+
+
 def parse_consent(body: Any) -> ConsentInfo:
     encerrados = body.get("participantes_encerrados")
     evento = body.get("opt_out_evento")  # the GET carries the event object; the POST carries `evento_id`
@@ -1227,6 +1376,8 @@ def parse_consent(body: Any) -> ConsentInfo:
         opt_out_ativo=bool(body.get("opt_out_ativo")),
         participantes_encerrados=encerrados if isinstance(encerrados, int) and not isinstance(encerrados, bool) else 0,
         evento_id=_opt_str(body, "evento_id") or _opt_str(evento if isinstance(evento, dict) else {}, "id"),
+        opt_out_motivo=_opt_str(evento if isinstance(evento, dict) else {}, "motivo"),
+        opt_out_origem=_opt_str(evento if isinstance(evento, dict) else {}, "origem"),
     )
 
 
@@ -1482,6 +1633,31 @@ class HttpAgentsClient:
         except LeadDesconhecido:
             return None
 
+    async def listar_opt_outs(
+        self, *, limit: int = 50, cursor: Optional[str] = None, lead_ref: Optional[str] = None,
+    ) -> OptOutPagina:
+        """`GET /api/channels/opt-outs`: the opt-out + reactivation history of the org's leads, newest first."""
+        if not 1 <= limit <= 100:
+            raise ValueError("listar_opt_outs limit must be 1..100")
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if lead_ref:
+            params["lead_ref"] = lead_ref
+        return parse_opt_out_pagina(await self._send("GET", "/api/channels/opt-outs", params=params))
+
+    async def renotificar_opt_out(self, evento_id: str, *, ator_user_id: str) -> OptOutEvento:
+        """`POST /api/channels/opt-outs/{id}/notificar`: send the admins' in-app notice of that record again."""
+        return parse_opt_out_evento(await self._send(
+            "POST", f"/api/channels/opt-outs/{quote(evento_id, safe='')}/notificar", json={"ator_user_id": str(ator_user_id)},
+        ))
+
+    async def reativar_lead(self, lead_ref: str, *, motivo: str, ator_user_id: str) -> ReativacaoResult:
+        """`POST /api/channels/leads/{ref}/reativar`: lift the lead's active opt-out (409 `sem_opt_out_ativo` when
+        there is none, 404 `lead_desconhecido` for an unknown lead)."""
+        body = {"ator_user_id": str(ator_user_id), "motivo": reativacao_motivo(motivo)}
+        return parse_reativacao(await self._send("POST", f"/api/channels/leads/{quote(lead_ref, safe='')}/reativar", json=body))
+
     async def controle(self, agent_key: str) -> ControleInfo:
         """`GET /api/channels/agents/{key}/controle`: read-only for SW (mode + drain progress). SW never decides the
         mode and never gates on a cached copy of this -- the turn endpoint decides."""
@@ -1554,5 +1730,7 @@ __all__ = [
     "parse_controle", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
     "parse_thread", "parse_turn_result", "parse_uso",
     "MOTIVO_ENCERRAR_PEDIU_PARAR", "ORIGENS_OPT_OUT", "ORIGEM_OPT_OUT_PADRAO", "OPT_OUT_MENSAGEM_MAX", "OPT_OUT_MOTIVO_MAX",
-    "opt_out_body",
+    "opt_out_body", "NOTIFICACAO_STATUS", "OptOutEvento", "OptOutEventoNotFound", "OptOutPagina", "REATIVACAO_MOTIVO_MAX",
+    "ReativacaoResult", "SemOptOutAtivo", "TIPOS_OPT_OUT_EVENTO", "parse_opt_out_evento", "parse_opt_out_pagina",
+    "parse_reativacao", "reativacao_motivo",
 ]
