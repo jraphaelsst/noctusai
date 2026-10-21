@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.dependencies import (
     ADMIN_ROLES,
     CONTENT_TOKEN_ISSUER,
+    SCOPE_STUDIO_AGENT_DELETE,
     SCOPE_STUDIO_CONTENT_WRITE,
     get_auth_context,
     get_core_client,
@@ -481,6 +482,7 @@ async def mint_content_token(
     """Mint the ``noctus.agents.content`` MCP token: scope ``studio:content-write`` only, issuer
     ``noctus-platform`` (server-side), ``expira_em_dias`` days (default 30, 1..365; ``null`` = never expires), org-bound to the platform org the admin acts in. PLATFORM ADMIN
     only; the raw secret is returned once. Audited like the channel token."""
+    scopes = [SCOPE_STUDIO_CONTENT_WRITE] + ([SCOPE_STUDIO_AGENT_DELETE] if payload.permitir_exclusao else [])
     expires_at = (
         None if payload.expira_em_dias is None
         else datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
@@ -488,7 +490,7 @@ async def mint_content_token(
     try:
         minted = token_admin.mint(
             "agents", org_id=ctx.org_id, label=f"conteudo: {payload.label}",
-            scopes=[SCOPE_STUDIO_CONTENT_WRITE], expires_at=expires_at, issuer=CONTENT_TOKEN_ISSUER,
+            scopes=scopes, expires_at=expires_at, issuer=CONTENT_TOKEN_ISSUER,
             minted_by=ctx.user_id,
         )
     except Exception as exc:
@@ -506,10 +508,12 @@ async def mint_content_token(
         "agents.content_token.minted org_id=%s token_id=%s by=%s label=%r expires_at=%s",
         ctx.org_id, minted.info.id, ctx.user_id, payload.label, expires_at.isoformat() if expires_at else "never",
     )
+    if payload.permitir_exclusao:
+        logger.info("agents.content_token.minted_with_delete org_id=%s token_id=%s", ctx.org_id, minted.info.id)
     response.headers["Cache-Control"] = "no-store"
     return ContentTokenOut(
         id=minted.info.id, token=minted.secret, prefix=minted.info.prefix, expires_at=expires_at,
-        scopes=[SCOPE_STUDIO_CONTENT_WRITE],
+        scopes=scopes,
     )
 
 
@@ -591,11 +595,13 @@ async def revoke_content_token(
 
 @router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED)
 async def create_platform_definition(
-    payload: PlataformaAgentCreateRequest, ctx: AuthContext = Depends(require_platform_admin),
+    payload: PlataformaAgentCreateRequest, ctx: AuthContext = Depends(require_content_write),
     store=Depends(get_studio_definition_store_dep),
 ) -> dict[str, Any]:
     """Create the platform DEFINITION of a registered key in the caller's org (which must be the platform
-    org) with an empty draft carrying only structure. Idempotent."""
+    org) with an EMPTY draft (structure only -- no text is required: a shell grows over time; only PUBLISH
+    is gated by completeness). A platform admin OR the ``studio:content-write`` token. Idempotent; audits
+    ``agente_criado`` only when it actually creates."""
     if payload.key not in chaves_de_plataforma():
         raise http_error(422, "chave_nao_registrada", f"'{payload.key}' não é um agente definido pela plataforma.")
     with store_errors():

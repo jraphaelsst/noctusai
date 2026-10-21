@@ -601,6 +601,7 @@ class TestAgentsStudioProbes:
         "conversations_channel_owner_check",
         # uq_agents_conversations_channel_ref: dropped by migration 035, probe retired (successor uq_agents_threads_channel)
         "uq_agents_channel_inbound_msg",
+        "agent_audit_log_identifica_agente",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -610,6 +611,7 @@ class TestAgentsStudioProbes:
         ("012_agent_studio_definitions.sql", "015_haiku_model.sql"),
         ("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
         ("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
+        ("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
     }
 
     @staticmethod

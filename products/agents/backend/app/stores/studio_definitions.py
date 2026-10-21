@@ -83,6 +83,7 @@ __all__ = [
     "SkillFileInput",
     "DraftBundleResult",
     "AUDIT_ACOES",
+    "EXCLUSAO_CODIGOS",
     "DEFINITION_SCOPES",
     "ConteudoStore",
     "StudioDefinitionStore",
@@ -154,7 +155,10 @@ AUDIT_ACOES = (
     "limiar_alterado", "publicado", "publicado_override", "rascunho_descartado",
     "conteudo_editado_mcp", "specs_org_editadas", "definicao_lida",
     "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
+    "agente_excluido", "agente_criado",
 )
+#: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
+EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")
 #: 031 ``agents.definition_scope`` CHECK.
 DEFINITION_SCOPES = ("org", "plataforma", "instancia")
 _SKILL_FIELDS = ("nome", "descricao", "corpo", "ordem", "ativo")
@@ -328,12 +332,16 @@ class CompiledPromptRecord:
 class AuditRecord:
     id: UUID
     org_id: UUID
-    agent_id: UUID
+    #: ``None`` once the agent was deleted (048: the FK is ON DELETE SET NULL; the row outlives the agent).
+    agent_id: UUID | None
     actor: UUID | None
     acao: str
     antes: dict[str, Any] | None
     depois: dict[str, Any] | None
     created_at: datetime
+    #: 048 snapshot of the agent's identity, so a row still names its agent after the agent is gone.
+    agent_key: str | None = None
+    agent_nome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -527,6 +535,12 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
     def list_audit_log(self, org_id: UUID, agent_id: UUID) -> list[AuditRecord]:
         """Newest first."""
         ...
+    def delete_agent(self, org_id: UUID, agent_id: UUID, *, actor: UUID | None = None) -> None:
+        """Delete the agent and its (draft-only) dependents; its audit rows survive with ``agent_id`` NULL plus an
+        ``agente_excluido`` tombstone (048 ``agents.excluir_agente``). Raises ``NotFound`` or
+        ``StudioConflict`` with ``code`` in :data:`EXCLUSAO_CODIGOS` (``publicado`` / ``tem_instancias`` /
+        ``tem_conversas`` / ``tem_canal`` / ``ativo``)."""
+        ...
 
     # versions
     def list_versions(self, org_id: UUID, agent_id: UUID) -> list[VersionRecord]:
@@ -694,6 +708,9 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         #: agent_id -> number of active eval cases (publish needs >= 1).
         self._active_cases: dict[UUID, int] = {}
         self._seq = 0
+        #: agents whose history lives in stores this Fake does not model (048 guards, see ``mark_*``).
+        self._com_mensagens: set[UUID] = set()
+        self._com_canal: set[UUID] = set()
         #: orgs flagged ``organizations.is_platform`` (031: a platform definition lives there).
         self._platform_orgs: set[UUID] = set()
         self._init_conteudo()
@@ -727,9 +744,12 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         self, org_id: UUID, agent_id: UUID, actor: UUID | None, acao: str,
         antes: dict[str, Any] | None, depois: dict[str, Any] | None,
     ) -> None:
+        # 048 `audit_log_snapshot_agent` BEFORE INSERT trigger.
+        agent = next((a for a in self._agents.values() if a.id == agent_id), None)
         self._audit.append(AuditRecord(
             id=uuid4(), org_id=org_id, agent_id=agent_id, actor=actor, acao=acao,
             antes=antes, depois=depois, created_at=self._now(),
+            agent_key=agent.key if agent else None, agent_nome=agent.nome if agent else None,
         ))
 
     def _touch_draft(self, version_id: UUID) -> None:
@@ -738,6 +758,18 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         v = self._versions.get(version_id)
         if v is not None and v.status == "rascunho":
             self._versions[version_id] = replace(v, compiled_hash=None, updated_at=self._now())
+
+    def mark_agent_has_messages(self, agent_id: UUID) -> None:
+        """Test helper: the agent has a conversation with >= 1 message (``excluir_agente`` -> ``tem_conversas``)."""
+        self._com_mensagens.add(agent_id)
+
+    def mark_agent_has_channel(self, agent_id: UUID) -> None:
+        """Test helper: an active channel token names the agent as principal (``excluir_agente`` -> ``tem_canal``)."""
+        self._com_canal.add(agent_id)
+
+    def audit_log_all(self) -> list[AuditRecord]:
+        """Test helper: every audit row of the Fake, oldest first (including tombstones with ``agent_id`` None)."""
+        return list(self._audit)
 
     def mark_platform_org(self, org_id: UUID) -> None:
         """Test helper: flag ``org_id`` as the platform org (``organizations.is_platform``)."""
@@ -828,6 +860,40 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             (a for a in self._audit if a.org_id == org_id and a.agent_id == agent_id),
             key=lambda a: a.created_at, reverse=True,
         )
+
+    def delete_agent(self, org_id: UUID, agent_id: UUID, *, actor: UUID | None = None) -> None:
+        """048 ``agents.excluir_agente``: the same guards, in the same order, then the cascade + tombstone."""
+        agent = self._agent_by_id(org_id, agent_id)
+        versions = [v for v in self._versions.values() if v.agent_id == agent_id]
+        if any(v.status != "rascunho" for v in versions):
+            raise StudioConflict("publicado", "excluir_agente_publicado")
+        if agent.definition_scope == "plataforma" and any(
+            a.definition_agent_id == agent_id for a in self._agents.values()
+        ):
+            raise StudioConflict("tem_instancias", "excluir_agente_tem_instancias")
+        if agent_id in self._com_mensagens:
+            raise StudioConflict("tem_conversas", "excluir_agente_tem_conversas")
+        if agent_id in self._com_canal:
+            raise StudioConflict("tem_canal", "excluir_agente_tem_canal")
+        if agent.ativo:
+            raise StudioConflict("ativo", "excluir_agente_ativo")
+        for v in versions:
+            for cid in [k for k, c in self._compiled.items() if c.version_id == v.id]:
+                del self._compiled[cid]
+            self._drop_draft_rows(v.id)
+        for cid in [c.id for c in self._clients.values() if c.agent_id == agent_id]:
+            for eid in [e.id for e in self._entries.values() if e.client_id == cid]:
+                del self._entries[eid]
+            del self._clients[cid]
+        # FK ON DELETE SET NULL: the older rows keep their snapshot, lose the id; then the tombstone.
+        self._audit = [replace(a, agent_id=None) if a.agent_id == agent_id else a for a in self._audit]
+        self._audit.append(AuditRecord(
+            id=uuid4(), org_id=org_id, agent_id=None, actor=actor, acao="agente_excluido",
+            antes={"id": str(agent.id), "key": agent.key, "nome": agent.nome,
+                   "definition_scope": agent.definition_scope, "conteudo_modo": agent.conteudo_modo},
+            depois=None, created_at=self._now(), agent_key=agent.key, agent_nome=agent.nome,
+        ))
+        del self._agents[(org_id, agent.key)]
 
     def _agent_by_id(self, org_id: UUID, agent_id: UUID) -> StudioAgentRecord:
         for (o, _), a in self._agents.items():
@@ -985,16 +1051,14 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         )
         return v
 
-    def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None:
-        v = self._require_draft(org_id, version_id)
-        if any(c.version_id == version_id for c in self._compiled.values()):
-            raise StudioConflict("draft_referenced", "the draft is referenced by a stored compiled prompt")
+    def _drop_draft_rows(self, version_id: UUID) -> None:
+        """The version row and everything that cascades from it (012/013/017/031)."""
         for sk in self._skills_of(version_id):
             for fid in [f.id for f in self._files.values() if f.skill_id == sk.id]:
                 del self._files[fid]
             del self._skills[sk.id]
-        for s in self._sections_of(version_id):
-            del self._sections[s.id]
+        for sec in self._sections_of(version_id):
+            del self._sections[sec.id]
         self._drop_conteudo(version_id)
         # 013 `eval_runs.version_id ON DELETE CASCADE`.
         for rid in [r for r, row in self._eval_runs.items() if row["version_id"] == version_id]:
@@ -1002,6 +1066,12 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         # 017 `agent_package_trees.version_id ON DELETE CASCADE`.
         self._trees.pop(version_id, None)
         del self._versions[version_id]
+
+    def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None:
+        v = self._require_draft(org_id, version_id)
+        if any(c.version_id == version_id for c in self._compiled.values()):
+            raise StudioConflict("draft_referenced", "the draft is referenced by a stored compiled prompt")
+        self._drop_draft_rows(version_id)
         self._audit_append(
             org_id, v.agent_id, actor, "rascunho_descartado",
             {"version_id": str(v.id), "versao": v.versao, "compiled_hash": v.compiled_hash}, None,
@@ -1513,6 +1583,11 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             self._t("agents").update(rest).eq("org_id", str(org_id)).eq("key", key)
         )
         return self._agent(self._one(resp, f"agent {key!r}"))
+
+    def delete_agent(self, org_id: UUID, agent_id: UUID, *, actor: UUID | None = None) -> None:
+        self._rpc("excluir_agente", {
+            "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_actor": str(actor) if actor else None,
+        })
 
     def list_audit_log(self, org_id: UUID, agent_id: UUID) -> list[AuditRecord]:
         rows = self._paged(

@@ -79,6 +79,12 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "definition_invalid": _conflict("definition_invalid"),
     "scope_immutable": _conflict("scope_immutable"),
     "learning_content_immutable": _conflict("learning_content_immutable"),
+    # 048 agents.excluir_agente guards (the SQL text is distinct; the 409 code is the bare one).
+    "excluir_agente_publicado": _conflict("publicado"),
+    "excluir_agente_tem_instancias": _conflict("tem_instancias"),
+    "excluir_agente_tem_conversas": _conflict("tem_conversas"),
+    "excluir_agente_tem_canal": _conflict("tem_canal"),
+    "excluir_agente_ativo": _conflict("ativo"),
     "version_not_found": NotFound,
     "agent_not_found": NotFound,
     "participante_not_found": NotFound,

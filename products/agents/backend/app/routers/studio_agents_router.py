@@ -47,6 +47,7 @@ from app.dependencies import (
     get_conformidade_store_dep,
     require_admin,
     require_admin_or_content_token,
+    require_agent_delete,
     require_member,
     require_platform_admin,
     require_platform_content_admin,
@@ -506,6 +507,47 @@ async def get_studio_agent(
             for v in store.list_versions(ctx.org_id, agent.id)
         ]
     return AgentDetailOut(**summary.model_dump(), versoes=versoes)
+
+
+#: 409 ``code`` -> the pt-BR message of ``DELETE /agents/{key}`` (the DB function's guard codes, 048).
+_EXCLUSAO_MENSAGENS = {
+    "publicado": "O agente tem versão publicada e não pode ser excluído.",
+    "tem_instancias": "O agente é a definição da plataforma e tem instâncias em organizações.",
+    "tem_conversas": "O agente tem conversas com mensagens (ou registros de leads) e não pode ser excluído.",
+    "tem_canal": "O agente tem um canal ativo (token de canal vigente); revogue-o antes de excluir.",
+    "ativo": "O agente está ativo; desligue-o antes de excluir.",
+}
+
+
+@router.delete("/agents/{key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_studio_agent(
+    key: str,
+    ctx: AuthContext = Depends(require_agent_delete),
+    store=Depends(get_studio_definition_store_dep),
+) -> Response:
+    """Delete an agent of the caller's org: a platform admin OR the content token minted with
+    ``permitir_exclusao`` (scope ``studio:agent-delete``). Refused with 409 ``{code, message, detail}`` (flat — the seed handler passes the dict through) while the
+    agent has a published version (``publicado``), platform instances (``tem_instancias``), a conversation with a
+    message (``tem_conversas``), an active channel token (``tem_canal``) or is on (``ativo``). Empty conversations
+    and the draft go with it; the audit rows survive (``agent_id`` NULL) with an ``agente_excluido`` tombstone."""
+    nao_encontrado = http_error(404, "agente_nao_encontrado", "Agente não encontrado.")
+    try:
+        agent = store.get_agent(ctx.org_id, key)
+    except NotFound as exc:
+        raise nao_encontrado from exc
+    try:
+        store.delete_agent(ctx.org_id, agent.id, actor=actor_id(ctx))
+    except NotFound as exc:
+        raise nao_encontrado from exc
+    except StudioConflict as exc:
+        message = _EXCLUSAO_MENSAGENS.get(exc.code)
+        if message is None:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"code": exc.code, "message": message, "detail": message},
+        ) from exc
+    logger.info("agents.studio.agent_deleted org_id=%s key=%s by=%s", ctx.org_id, key, actor_id(ctx))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/agents/{key}", response_model=AgentSummaryOut)

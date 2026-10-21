@@ -48,7 +48,15 @@ kind                  payload                                                   
 is run here), and a rule applies from the next turn -- the dry-run diff is the review step. Both use the same platform
 ``studio:content-write`` token, are audited ``conteudo_editado_mcp`` and only ever touch the definition's own rows.
 
-Agent-scoped kinds need ``agent`` (the agent key, e.g. ``julia``); ``padrao_*`` need ``padrao`` (e.g.
+Lifecycle actions (no payload, no ``kind``; ``agent`` = the key; dry-run unless ``confirm=True``, like ``set``):
+
+* ``criar_agente`` -- ``POST /api/studio/plataforma/agents {key}``: the platform DEFINITION of a REGISTERED key, as an
+  EMPTY draft (an empty shell that grows over time; only publish is gated by completeness). Idempotent.
+* ``excluir_agente`` -- ``DELETE /api/studio/agents/{key}``: needs the token minted with ``permitir_exclusao``
+  (scope ``studio:agent-delete``); the server refuses (409 ``publicado`` / ``tem_instancias`` / ``tem_conversas`` /
+  ``tem_canal`` / ``ativo``) anything that is published, in use or on. The audit rows survive the agent.
+
+Neither publishes. Agent-scoped kinds need ``agent`` (the agent key, e.g. ``julia``); ``padrao_*`` need ``padrao`` (e.g.
 ``imob-lead``). Example (never inline a token)::
 
     NOCTUS_AGENTS_CONTENT_TOKEN=... noctus.agents.content(
@@ -61,6 +69,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit
@@ -73,6 +82,8 @@ DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
+LIFECYCLE_ACTIONS = ("criar_agente", "excluir_agente")
+_AGENT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -655,14 +666,18 @@ KINDS = (*_REPLACE_SETS, "skill", "skill_ref", *_PADRAO, *_AGENTE)
 
 
 def content(
-    action: str, kind: str, agent: str | None = None, padrao: str | None = None, chave: str | None = None,
+    action: str, kind: str | None = None, agent: str | None = None, padrao: str | None = None, chave: str | None = None,
     payload_path: str | None = None, base_url: str | None = None, confirm: bool = False, merge: bool = True,
     *, _transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
     """List / get / set an agent's content rows in the target environment. See the module docstring."""
     try:
+        if action in LIFECYCLE_ACTIONS:
+            return _lifecycle(action, agent, base_url, bool(confirm), _transport)
         if action not in ACTIONS:
-            raise ContentError("acao_invalida", f"action deve ser um de {ACTIONS} (esta ferramenta nunca publica).")
+            raise ContentError(
+                "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS)} (esta ferramenta nunca publica).",
+            )
         if kind not in KINDS:
             raise ContentError("kind_invalido", f"kind deve ser um de {KINDS}.")
         scoped = kind in _REPLACE_SETS or kind == "skill_ref" or kind in _AGENTE
@@ -680,6 +695,35 @@ def content(
             api.close()
     except ContentError as exc:
         return {"status": "error", "codigo": exc.codigo, "mensagem": exc.mensagem}
+
+
+def _lifecycle(action: str, agent: str | None, base_url: str | None, confirm: bool, transport: httpx.BaseTransport | None) -> dict[str, Any]:
+    """``criar_agente`` / ``excluir_agente``: one route each. The dry-run makes NO request -- the server's guards
+    (published / instances / conversations / channel / on) are re-checked in the database at the confirmed call, so a
+    pre-read here would only be a second, stale opinion."""
+    if not agent or not _AGENT_KEY_RE.match(agent):
+        raise ContentError("agent_invalido", "Informe 'agent' (a chave do agente: letras, digitos, '_', '-', '.').")
+    base = _base_url(base_url)
+    token = _token()
+    criar = action == "criar_agente"
+    method, path, body = ("POST", "/api/studio/plataforma/agents", {"key": agent}) if criar else ("DELETE", f"/api/studio/agents/{_q(agent)}", None)
+    head = {"action": action, "agent": agent, "alvo": base, "requisicao": f"{method} {path}"}
+    if not confirm:
+        return {"status": "planned", **head, "dry_run": True,
+                "mensagem": "Nada foi feito. Repita com confirm=True. "
+                + ("Cria a definição vazia (rascunho sem texto)." if criar
+                   else "Exige token com permitir_exclusao (studio:agent-delete); o servidor recusa agente publicado, com instâncias, "
+                        "com conversas, com canal ativo ou ligado.")}
+    api = _Api(base, token, transport)
+    try:
+        result = api.call(method, path, body)
+    finally:
+        api.close()
+    if criar:
+        return {"status": "created", **head, "dry_run": False, "agente": result,
+                "mensagem": "Definição criada como rascunho VAZIO (idempotente). Nada foi publicado."}
+    return {"status": "deleted", **head, "dry_run": False,
+            "mensagem": "Agente excluído; a auditoria permanece (agent_id nulo + registro agente_excluido)."}
 
 
 def _run(api: _Api, action: str, kind: str, agent, padrao, chave, payload, confirm: bool, merge: bool, base: str) -> dict[str, Any]:
@@ -728,14 +772,17 @@ def register(server) -> None:
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
             "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo (mechanism eval cases) | "
-            "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). set reads a JSON payload from payload_path (a file "
+            "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). Lifecycle: "
+            "action=criar_agente (agent=<registered key>: creates the EMPTY platform definition) | excluir_agente (agent=<key>: "
+            "deletes it; needs a token minted with permitir_exclusao; the server refuses published/in-use/on agents) - dry-run "
+            "unless confirm=True, no kind/payload. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
             "(https, or http on loopback)."
         ),
     )
     def _content(
-        action: str, kind: str, base_url: str = "", agent: str = "", padrao: str = "", chave: str = "",
+        action: str, kind: str = "", base_url: str = "", agent: str = "", padrao: str = "", chave: str = "",
         payload_path: str = "", confirm: bool = False, merge: bool = True,
     ) -> dict:
         return content(

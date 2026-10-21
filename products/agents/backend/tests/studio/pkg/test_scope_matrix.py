@@ -67,7 +67,14 @@ CONTENT_WRITE_ROUTES = {
     ("GET", "/api/studio/agents/{key}/conformidade/regras"),
     ("GET", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
     ("PUT", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
+    # agent lifecycle (S1): the same MCP tool creates the EMPTY platform definition of a registered key
+    ("POST", "/api/studio/plataforma/agents"),
 }
+
+#: Deleting an agent: reachable ONLY with the dedicated `studio:agent-delete` scope (minted with
+#: `permitir_exclusao`), never with a package/publish/content scope. Pinned in
+#: `tests/studio/def/test_agent_delete_router.py`.
+AGENT_DELETE_ROUTES = {("DELETE", "/api/studio/agents/{key}")}
 
 #: Prefixes of the product's business API. `/api/auth`, `/api/settings/api-tokens`
 #: (the seed's own auth surface, with its own human-only rules) and health are out.
@@ -99,10 +106,10 @@ def _fill(path: str) -> str:
 def test_the_matrix_actually_covers_the_product(pkg):
     routes = _business_routes()
     assert len(routes) > 60, "route discovery found too few routes — the matrix would be vacuous"
-    assert set(TOKEN_ROUTES) | PUBLISH_ROUTES | CONTENT_WRITE_ROUTES <= set(routes)
+    assert set(TOKEN_ROUTES) | PUBLISH_ROUTES | CONTENT_WRITE_ROUTES | AGENT_DELETE_ROUTES <= set(routes)
 
 
-@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES and r not in PUBLISH_ROUTES and r not in CONTENT_WRITE_ROUTES])
+@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES and r not in PUBLISH_ROUTES and r not in CONTENT_WRITE_ROUTES and r not in AGENT_DELETE_ROUTES])
 def test_every_other_route_refuses_a_fully_scoped_token_with_user_required(pkg, method, path):
     with pkg.as_token(*ALL):
         resp = pkg.rt.client.raw().request(method, _fill(path), json={})
@@ -110,6 +117,12 @@ def test_every_other_route_refuses_a_fully_scoped_token_with_user_required(pkg, 
     detail = resp.json()
     code = detail.get("code") or (detail.get("detail") or {}).get("code") if isinstance(detail, dict) else None
     assert code in ("user_required", "platform_admin_required"), f"{method} {path}: {detail}"
+
+
+def test_a_fully_scoped_package_token_cannot_delete_an_agent(pkg):
+    with pkg.as_token(*ALL):
+        resp = pkg.rt.client.raw().request("DELETE", "/api/studio/agents/x")
+    assert resp.status_code == 403 and resp.json().get("code") == "scope_missing", resp.text[:200]
 
 
 #: A concrete URL + body per token route (the agent imported by `pkg.advisor()`).

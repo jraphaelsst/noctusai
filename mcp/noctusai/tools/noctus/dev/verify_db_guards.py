@@ -3906,6 +3906,54 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
         ),
     ),
     _agents_studio_probe(
+        probe_id="agent_audit_log.agent_id_null_needs_the_delete_rpc",
+        guard_name="guard_audit_log_append_only",
+        migrations=("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_audit_log (org_id, agent_id, acao) "
+            "VALUES (v_org, v_agent, 'publicado');\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_audit_log SET agent_id = NULL WHERE agent_id = v_agent;"
+        ),
+        guard_fragment="audit_log_append_only",
+        what="UPDATE of an audit row's agent_id to NULL outside agents.excluir_agente",
+        rationale=(
+            "048 lets the audit log lose exactly one thing -- agent_id -> NULL -- and only while the transaction-local "
+            "flag agents.agent_delete is on (set by the deletion RPC around its DELETE). Without the flag the "
+            "carve-out must not open: a caller that can reach the table cannot unlink the trail from its agent."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_audit_log.identifica_agente",
+        guard_name="agent_audit_log_identifica_agente",
+        migrations=("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_audit_log (org_id, agent_id, acao) "
+            "VALUES (v_org, NULL, 'agente_criado');"
+        ),
+        guard_fragment="agent_audit_log_identifica_agente",
+        what="an audit row naming no agent (agent_id NULL and agent_key NULL)",
+        rationale=(
+            "048 makes agent_id nullable so the trail outlives a deleted agent; the CHECK keeps that from becoming "
+            "an anonymous row: a row without an agent_id must carry the agent_key snapshot."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_audit_log.delete_refused",
+        guard_name="guard_audit_log_append_only",
+        migrations=("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_audit_log (org_id, agent_id, acao) "
+            "VALUES (v_org, v_agent, 'publicado');\n"
+            f"    DELETE FROM {_AGENTS_SCHEMA}.agent_audit_log WHERE agent_id = v_agent;"
+        ),
+        guard_fragment="audit_log_append_only",
+        what="DELETE of an audit log row",
+        rationale=(
+            "The carve-out of 048 is an UPDATE of agent_id only; a DELETE stays refused under every flag state "
+            "(deleting an agent unlinks its audit rows, it never removes them)."
+        ),
+    ),
+    _agents_studio_probe(
         probe_id="agent_client_entries.active_cap",
         guard_name="guard_client_entry_cap",
         attack_sql=(

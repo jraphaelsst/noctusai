@@ -329,15 +329,18 @@ require_platform_admin = _require_platform_admin(
 #: ``POST /api/settings/api-tokens`` never sets an issuer, so a token an org admin minted with this
 #: scope still answers 403 ``issuer_not_allowed``.
 SCOPE_STUDIO_CONTENT_WRITE = "studio:content-write"
+#: The extra scope that lets the SAME platform-issued token DELETE an agent (``DELETE /api/studio/agents/{key}``).
+#: Opt-in at mint time (``permitir_exclusao``): a content token never carries it by default.
+SCOPE_STUDIO_AGENT_DELETE = "studio:agent-delete"
 CONTENT_TOKEN_ISSUER = "noctus-platform"
 
 
-def _content_token_gate(ctx: AuthContext) -> AuthContext:
-    """A product caller must carry ``studio:content-write`` AND the platform issuer."""
-    if SCOPE_STUDIO_CONTENT_WRITE not in ctx.scopes:
+def _content_token_gate(ctx: AuthContext, scope: str = SCOPE_STUDIO_CONTENT_WRITE) -> AuthContext:
+    """A product caller must carry ``scope`` (default ``studio:content-write``) AND the platform issuer."""
+    if scope not in ctx.scopes:
         raise HTTPException(
             status_code=403,
-            detail={"detail": f"Missing scope(s): {SCOPE_STUDIO_CONTENT_WRITE}", "code": "scope_missing"},
+            detail={"detail": f"Missing scope(s): {scope}", "code": "scope_missing"},
         )
     if ctx.issuer != CONTENT_TOKEN_ISSUER:
         raise HTTPException(
@@ -356,6 +359,18 @@ async def require_platform_content_admin(
     ``studio:content-write`` product token (the ``noctus.agents.content`` MCP path)."""
     if ctx.caller_kind == "product":
         return _content_token_gate(ctx)
+    return await require_platform_admin(ctx=ctx, request=request, response=response)
+
+
+async def require_agent_delete(
+    ctx: AuthContext = Depends(get_auth_context), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Deleting an agent: a NoctusAI platform admin (``noctus_users.role == 'admin'``; 403
+    ``platform_admin_required`` otherwise, 401 unauthenticated, the admin-MFA gate included) OR the
+    platform-issued product token that carries ``studio:agent-delete`` (minted with ``permitir_exclusao``).
+    A plain ``studio:content-write`` token is refused (403 ``scope_missing``)."""
+    if ctx.caller_kind == "product":
+        return _content_token_gate(ctx, SCOPE_STUDIO_AGENT_DELETE)
     return await require_platform_admin(ctx=ctx, request=request, response=response)
 
 
@@ -655,6 +670,8 @@ __all__ = [
     "require_platform_content_admin",
     "require_admin_or_content_token",
     "SCOPE_STUDIO_CONTENT_WRITE",
+    "SCOPE_STUDIO_AGENT_DELETE",
+    "require_agent_delete",
     "CONTENT_TOKEN_ISSUER",
     "resolve_sso_role",
 ]

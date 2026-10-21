@@ -235,6 +235,8 @@ class ContentTokenCreateRequest(StrictHttpModel):
     label: str = Field(..., min_length=1, max_length=120)
     #: Days until expiry (1..365); omitted = 30; an explicit ``null`` = never expires.
     expira_em_dias: int | None = Field(30, ge=1, le=365)
+    #: Also grant ``studio:agent-delete`` (the token may then DELETE agents). Default off.
+    permitir_exclusao: bool = False
 
 
 class ContentTokenOut(BaseModel):

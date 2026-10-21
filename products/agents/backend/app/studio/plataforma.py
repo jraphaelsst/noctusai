@@ -95,6 +95,10 @@ def ensure_definicao(
     )
     draft = studio_store.create_draft(org_id, agent.id, None, created_by or agent.id)
     studio_store.update_draft(org_id, draft.id, dict(spec.rascunho))
+    studio_store.append_audit(
+        org_id, agent.id, created_by, "agente_criado", None,
+        {"key": key, "nome": agent.nome, "definition_scope": "plataforma"},
+    )
     logger.info("agents.plataforma.definition_created key=%s org_id=%s agent_id=%s", key, org_id, agent.id)
     return agent
 

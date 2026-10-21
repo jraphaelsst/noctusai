@@ -89,6 +89,15 @@ def _handler(state: FakeAgents):
 
         def _route(self, m: str, path: str, b):
             A = r"/api/studio/agents/julia"
+            if m == "POST" and path == "/api/studio/plataforma/agents":
+                return self._send(201, {"id": str(uuid.uuid4()), "key": b["key"], "definition_scope": "plataforma", "conteudo_modo": "linhas"})
+            mo = re.fullmatch(r"/api/studio/agents/([A-Za-z0-9_.-]+)", path)
+            if m == "DELETE" and mo:
+                if mo.group(1) == "publicada":
+                    return self._send(409, {"code": "publicado", "message": "tem versão publicada", "detail": "tem versão publicada"})
+                if mo.group(1) == "sem-escopo":
+                    return self._send(403, {"code": "scope_missing", "detail": "Missing scope(s): studio:agent-delete"})
+                return self._send(204)
             if m == "GET" and path == f"{A}/draft":
                 return self._send(200, {"id": state.draft_id, "secoes": state.secoes})
             sets = {"sections": "secoes", "textos": "textos", "ferramentas": "ferramentas", "decisoes": "decisoes", "specs": "specs"}
@@ -499,3 +508,41 @@ class TestInputsAreGuarded:
 
         C.register(Server())
         assert names == ["noctus.agents.content"]
+
+
+class TestAgentLifecycle:
+    """criar_agente / excluir_agente: dry-run by default (no request at all), one route each, never publishes."""
+
+    def test_criar_agente_is_a_dry_run_then_posts_the_key_only(self, srv):
+        plan = C.content("criar_agente", agent="julia", base_url=srv.url)
+        assert plan["status"] == "planned" and plan["dry_run"] is True and srv.log == []
+        assert plan["requisicao"] == "POST /api/studio/plataforma/agents"
+        out = C.content("criar_agente", agent="julia", base_url=srv.url, confirm=True)
+        assert out["status"] == "created" and out["agente"]["key"] == "julia" and out["agente"]["conteudo_modo"] == "linhas"
+        assert [(m, p, b) for m, p, b, _a in srv.log] == [("POST", "/api/studio/plataforma/agents", {"key": "julia"})]
+        assert TOKEN not in json.dumps(out)
+
+    def test_excluir_agente_is_a_dry_run_then_deletes(self, srv):
+        plan = C.content("excluir_agente", agent="casca", base_url=srv.url)
+        assert plan["status"] == "planned" and srv.log == []
+        out = C.content("excluir_agente", agent="casca", base_url=srv.url, confirm=True)
+        assert out["status"] == "deleted" and out["dry_run"] is False
+        assert [(m, p) for m, p, _b, _a in srv.log] == [("DELETE", "/api/studio/agents/casca")]
+        assert {a for *_x, a in srv.log} == {f"Bearer {TOKEN}"}
+
+    def test_a_server_refusal_is_a_clean_error_with_its_code(self, srv):
+        out = C.content("excluir_agente", agent="publicada", base_url=srv.url, confirm=True)
+        assert out["status"] == "error" and out["codigo"] == "publicado"
+        out = C.content("excluir_agente", agent="sem-escopo", base_url=srv.url, confirm=True)
+        assert out["codigo"] == "scope_missing" and TOKEN not in json.dumps(out)
+
+    def test_no_kind_payload_or_publish_is_involved_and_the_key_is_validated(self, srv):
+        for bad in (None, "", "a/b", "../x", "x y"):
+            out = C.content("excluir_agente", agent=bad, base_url=srv.url, confirm=True)
+            assert out["codigo"] == "agent_invalido"
+        assert srv.log == []
+
+    def test_missing_token_makes_no_request(self, srv, monkeypatch):
+        monkeypatch.delenv(C.ENV_TOKEN)
+        assert C.content("criar_agente", agent="julia", base_url=srv.url, confirm=True)["codigo"] == "nao_configurado"
+        assert srv.log == []

@@ -238,6 +238,20 @@ routes, studio thread state/results).
   put it (`NOCTUS_AGENTS_CONTENT_TOKEN=` in `~/.config/noctus/agents.env`), the list and a confirmed "Revogar".
   Scope: the token is org-bound to the platform org, so it reaches every platform-defined agent registered there
   (today only Julia) through the draft routes only; it never publishes.
+- Agent lifecycle (S1, migration 048): an agent can be DELETED and created EMPTY. `DELETE /api/studio/agents/{key}`
+  (204; platform admin, or the content token minted with `permitir_exclusao` = extra scope `studio:agent-delete`,
+  `require_agent_delete`; a plain content token is 403 `scope_missing`) runs `agents.excluir_agente` (SECURITY
+  DEFINER, service role): it re-checks the guards in SQL and answers 409 (flat body `{code, message, detail}`) with
+  `publicado` (any non-draft version) · `tem_instancias` (a plataforma definition with instances) · `tem_conversas`
+  (a conversation with >= 1 message, a message authored by the agent, or lead records it collected) · `tem_canal`
+  (an unrevoked, unexpired channel token whose principal is the agent) · `ativo` (on). 404 `agente_nao_encontrado`.
+  Empty conversations, the draft and every dependent go with it. The audit log OUTLIVES the agent:
+  `agent_audit_log.agent_id` is nullable (FK ON DELETE SET NULL), `agent_key`/`agent_nome` are snapshotted on every
+  row (BEFORE INSERT trigger), the append-only guard permits exactly one mutation (`agent_id` -> NULL, only while the
+  transaction-local flag `agents.agent_delete` is on) and the RPC writes an `agente_excluido` tombstone (agent_id NULL).
+  `POST /api/studio/plataforma/agents {key}` (registered keys; platform admin OR the content token) creates the EMPTY
+  platform definition (no text required: only publish is gated by completeness) and audits `agente_criado` once.
+  MCP: `noctus.agents.content` actions `criar_agente` / `excluir_agente` (dry-run unless `confirm=True`).
 
 ## Lead qualification standard (Julia v2, `app/qualificacao/`)
 
