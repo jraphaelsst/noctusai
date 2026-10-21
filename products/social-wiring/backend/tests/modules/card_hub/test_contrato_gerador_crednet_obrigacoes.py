@@ -212,6 +212,13 @@ def _com_obrigacoes(local: str | None = None):
     return replace(d, termos=replace(d.termos, **extra))
 
 
+ESPERADO_LETRADO = (
+    "a) Apresentar aos COMPRADORES a certidão de cancelamento do protesto apontado; "
+    "b) Apresentar aos COMPRADORES o comprovante de baixa da pendência financeira; "
+    "c) Apresentar aos COMPRADORES o comprovante de quitação das despesas condominiais."
+)
+
+
 class TestObrigacoesLetradas:
     def test_one_lettered_paragraph_with_the_typed_closers_normalised(self):
         assert frases.obrigacoes_letradas(["Um item;", "Dois itens.", "Três"]) == (
@@ -232,23 +239,48 @@ class TestObrigacoesLocal:
         )
         assert not any(p.startswith("a) ") for p in _clausula(paragrafos, "DAS CERTIDÕES"))
 
-    def test_certidoes_places_them_after_the_groups_before_the_pendencias_paragraph(self):
+    def test_certidoes_places_them_right_after_the_sellers_person_group(self):
+        """Signed deal 857's shape: the lettered paragraph follows the
+        seller's own group ("1 - Em nome de <vendedor>") and precedes the
+        next group (here the imóvel's), never after it."""
         paragrafos = _paragrafos(1, _com_obrigacoes("certidoes"))
         certidoes = _clausula(paragrafos, "DAS CERTIDÕES")
-        esperado = (
-            "a) Apresentar aos COMPRADORES a certidão de cancelamento do protesto apontado; "
-            "b) Apresentar aos COMPRADORES o comprovante de baixa da pendência financeira; "
-            "c) Apresentar aos COMPRADORES o comprovante de quitação das despesas condominiais."
-        )
-        i = certidoes.index(esperado)
-        # right before the "Parágrafo Primeiro … PENDENTES" paragraph, after the last group item
-        assert certidoes[i + 1].startswith("Parágrafo Primeiro:")
-        assert "PENDENTES" in certidoes[i + 1]
-        assert certidoes[i - 1].endswith(".")
+        i = certidoes.index(ESPERADO_LETRADO)
+        assert certidoes[i - 1].startswith("1.") and certidoes[i - 1].endswith(".")
+        assert certidoes[i + 1].startswith("2 – Em Relação ao Imóvel")
         # gone from the ÔNUS clause — which then has no paragraph at all
         onus = _clausula(paragrafos, "DO ÔNUS")
         assert not any("Apresentar aos COMPRADORES" in p for p in onus)
         assert not any(p.startswith("Parágrafo") for p in onus)
+
+    def test_a_company_group_comes_after_the_obligations_numbering_unchanged(self):
+        """Seller person group 1, then the seller's company group 2: the
+        obligations sit between them; numbering stays 1, 2, 3 (imóvel)."""
+        def com_empresa(d):
+            v = d.vendedores[0]
+            e = fx.empresa("emp-x", CNPJ_SINTETICO, "Empresa Ficticia LTDA", "ativa", owners=[v])
+            return replace(d, empresas=[e])
+
+        sem = _clausula(_paragrafos(1, com_empresa(fx.variante(1))), "DAS CERTIDÕES")
+        com = _clausula(_paragrafos(1, com_empresa(_com_obrigacoes("certidoes"))), "DAS CERTIDÕES")
+        i = com.index(ESPERADO_LETRADO)
+        assert com[i - 1].startswith("1.")
+        assert com[i + 1] == "2 - Em nome de EMPRESA FICTICIA LTDA"
+        assert [p for p in com if p != ESPERADO_LETRADO] == sem
+
+    def test_no_seller_person_group_falls_back_to_after_all_groups(self):
+        """A company seller (no seller PERSON group): after every group,
+        before the imóvel's."""
+        from tests.modules.card_hub.test_contrato_gerador_partes_clausulas import _pj_vendedora
+
+        d = _pj_vendedora()
+        d = replace(d, termos=replace(
+            d.termos, obrigacoes_vendedor=OBRIGACOES, obrigacoes_vendedor_local="certidoes",
+        ))
+        certidoes = _clausula(_paragrafos(1, d), "DAS CERTIDÕES")
+        i = certidoes.index(ESPERADO_LETRADO)
+        assert certidoes[i - 1].startswith("1.")
+        assert certidoes[i + 1].startswith("2 – Em Relação ao Imóvel")
 
     def test_the_certidoes_paragraph_numbering_is_unchanged(self):
         """The lettered paragraph carries no `par()` label: the certidões

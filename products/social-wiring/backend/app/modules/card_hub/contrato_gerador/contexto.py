@@ -42,6 +42,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.derivacao import (
+    PAPEL_ANTIGO_PROPRIETARIO,
     _hoje_padrao,
     antigos_no_contrato,
     antigos_proprietarios,
@@ -469,6 +470,10 @@ def montar_contexto(
     pessoas_cert = pessoas_certificadas(d, sw, assinatura, politica)
     grupos, pendentes_cert = [], []
     n = 0
+    #: [Migration 299] index (in `grupos`) of the LAST group of a seller-side
+    #: PERSON (not an antigo proprietário, not a PJ seller's representative)
+    #: — where the lettered obligations go.
+    ultimo_grupo_vendedor: Optional[int] = None
     for p in pessoas_cert:
         idx = indice_certidoes(p.certidoes, "cpf")
         # [R1, reverses df54184ab] EVERY certificando's certidões are
@@ -482,6 +487,12 @@ def montar_contexto(
             continue
         n += 1
         grupos.append({"num": n, "em_nome_de": p.nome, "sufixo": None, "itens": itens})
+        if (
+            p.lado == "vendedor"
+            and p.papel != PAPEL_ANTIGO_PROPRIETARIO
+            and not p.representa_parte_id  # a PJ seller's representative is not the seller
+        ):
+            ultimo_grupo_vendedor = len(grupos) - 1
         pendentes_cert += [
             # gated: signatários by `_partes`, antigos by `_certidoes` (`nome_oficial`)
             frases.pendencia_certidao(t, p.nome or "")
@@ -612,6 +623,20 @@ def montar_contexto(
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
     seus_nomes = "seus nomes" if plural_apres else "seu nome"
+    # [Migration 299] The seller's typed obligations, when the deal puts them
+    # in this clause instead of the ÔNUS one: ONE lettered paragraph right
+    # after the LAST seller-side person group — before any company group and
+    # the imóvel's (signed deal 857: after "1 - Em nome de <vendedor>", before
+    # "2 - Em nome de <empresa>"). Group numbering is untouched (it is not a
+    # group). No seller person group ⇒ after all groups (`obrigacoes_vendedor`
+    # below). Empty string = not in this clause.
+    obrigacoes_certidoes = (
+        frases.obrigacoes_letradas(frases.paragrafos_livres(termos.obrigacoes_vendedor))
+        if termos.obrigacoes_vendedor_local == frases.OBRIGACOES_VENDEDOR_CERTIDOES
+        else ""
+    )
+    for i, g in enumerate(grupos):
+        g["obrigacoes"] = obrigacoes_certidoes if i == ultimo_grupo_vendedor else ""
     certidoes = {
         "apresentantes_texto": apresentantes,
         "apresenta": "apresentam" if plural_apres else "apresenta",
@@ -619,15 +644,10 @@ def montar_contexto(
         "grupos": grupos,
         "grupos_imovel": grupos_imovel,
         "pendencias": [{"letra": letra(i), "texto": t} for i, t in enumerate(pendencias)],
-        # [Migration 299] The seller's typed obligations, when the deal puts
-        # them HERE (after the certidão groups, before the pendências
-        # paragraph — signed deal 857) instead of the ÔNUS clause. Empty
-        # string = not here (the template omits the paragraph).
-        "obrigacoes_vendedor": (
-            frases.obrigacoes_letradas(frases.paragrafos_livres(termos.obrigacoes_vendedor))
-            if termos.obrigacoes_vendedor_local == frases.OBRIGACOES_VENDEDOR_CERTIDOES
-            else ""
-        ),
+        # [Migration 299] Fallback slot of the seller's lettered obligations:
+        # after every group, before the imóvel's — used only when no seller
+        # PERSON group exists (see `obrigacoes_certidoes` above).
+        "obrigacoes_vendedor": obrigacoes_certidoes if ultimo_grupo_vendedor is None else "",
     }
 
     # ── ônus / posse / permuta ──
