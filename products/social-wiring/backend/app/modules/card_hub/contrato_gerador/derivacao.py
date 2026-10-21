@@ -2067,6 +2067,12 @@ MOTIVO_EMISSAO_TEXTO: dict[str, str] = {
 }
 
 
+MATRICULA_VISUALIZACAO_AVISO = (
+    "A matrícula enviada é uma visualização, não uma certidão de matrícula. "
+    "O contrato pode ser gerado, mas recomenda-se anexar a certidão atualizada."
+)
+
+
 def _rotulo_certidao_imovel(tipo: str) -> str:
     return "Certidão da matrícula" if tipo == "matricula" else frases.CERTIDOES_IMOVEL_ROTULO[tipo]
 
@@ -2077,8 +2083,9 @@ def _certidoes_imovel_pendentes(av: Avaliacao, d: DadosContrato) -> None:
     check" — a false-ready):
 
     - a matrícula on file that is only a VISUALIZAÇÃO, with no certidão-typed
-      matrícula beside it → `imovel.certidao.matricula` (upload the Certidão
-      de Matrícula; the certidão wins when both exist);
+      matrícula beside it → a NON-BLOCKING aviso `MATRICULA_VISUALIZACAO`
+      (owner decision 2026-10-21: warn, don't block; the certidão wins when
+      both exist);
     - a certidão with no emission date → `imovel.certidao.<tipo>.emitida_em`,
       saying why (`emissao_motivo`) and pointing at the field where it is
       typed by hand.
@@ -2091,12 +2098,9 @@ def _certidoes_imovel_pendentes(av: Avaliacao, d: DadosContrato) -> None:
     matriculas = [c for c in im.certidoes if c.tipo == "matricula"]
     certidoes_matricula = [c for c in matriculas if not _e_visualizacao(c)]
     if matriculas and not certidoes_matricula:
-        av.falta(
-            "imovel.certidao.matricula",
-            "Envie a Certidão de Matrícula — o arquivo enviado é uma visualização, sem valor de certidão",
-            "imovel",
-            alvo=ALVO_DOCUMENTOS_DO_IMOVEL,
-        )
+        # Owner decision 2026-10-21: a visualização is NOT a blocker — warn and
+        # let the contract be generated from its transcription.
+        av.avisa("MATRICULA_VISUALIZACAO", MATRICULA_VISUALIZACAO_AVISO)
     matricula_datada = any(c.emitida_em for c in certidoes_matricula)
     for c in im.certidoes:
         if c.emitida_em is not None or _e_visualizacao(c):

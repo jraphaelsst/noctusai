@@ -43,13 +43,15 @@ def _faltas(av) -> dict[str, dict]:
 
 
 class TestVisualizacaoDaMatricula:
-    def test_a_lone_visualizacao_asks_for_the_certidao(self):
+    def test_a_lone_visualizacao_warns_and_does_not_block(self):
+        """Owner decision 2026-10-21: warn, let the contract be generated."""
         av = _avaliar(_com_certidoes(VISUALIZACAO))
-        item = _faltas(av)["imovel.certidao.matricula"]
-        assert "visualização, sem valor de certidão" in item["rotulo"]
-        assert item["destino"]["tela"] == "imovel"
-        assert item["destino"]["alvo"] == derivacao.ALVO_DOCUMENTOS_DO_IMOVEL
-        assert not av.pronto
+        assert "imovel.certidao.matricula" not in _faltas(av)
+        assert not av.bloqueios
+        avisos = {a["codigo"]: a["mensagem"] for a in av.avisos}
+        assert "é uma visualização, não uma certidão de matrícula" in avisos["MATRICULA_VISUALIZACAO"]
+        assert "recomenda-se anexar a certidão atualizada" in avisos["MATRICULA_VISUALIZACAO"]
+        assert av.pronto, (av.faltando, av.bloqueios)
 
     def test_the_old_onus_certidao_em_never_answers_for_a_visualizacao(self):
         d = _com_certidoes(VISUALIZACAO)
@@ -60,11 +62,12 @@ class TestVisualizacaoDaMatricula:
         av = _avaliar(_com_certidoes(VISUALIZACAO, CERTIDAO))
         assert not any(k.startswith("imovel.certidao.matricula") for k in _faltas(av))
         assert av.pronto, (av.faltando, av.bloqueios)
+        assert "MATRICULA_VISUALIZACAO" not in {a["codigo"] for a in av.avisos}
         assert derivacao.certidoes_imovel(_com_certidoes(VISUALIZACAO, CERTIDAO))[0] is CERTIDAO
 
-    def test_legacy_waives_age_never_the_type(self):
+    def test_legacy_still_warns(self):
         av = _avaliar(_com_certidoes(VISUALIZACAO, processo_legado=True))
-        assert "imovel.certidao.matricula" in _faltas(av)
+        assert "MATRICULA_VISUALIZACAO" in {a["codigo"] for a in av.avisos}
 
 
 class TestCertidaoSemDataDeEmissao:
