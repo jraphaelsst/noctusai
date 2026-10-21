@@ -8,9 +8,11 @@
  * `revelar` is a mutation, not a query — it is an audited, admin-only action
  * with a server-side log, and caching it would defeat both.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
+import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/marca.py) ───────────────────────
 export interface CorPaleta {
@@ -119,33 +121,32 @@ export function useRepertorio(clienteId: string | undefined, marcaId?: string | 
   };
 }
 
+/**
+ * The Módulo 2 sidebar reads the repertório — a DIFFERENT query key derived
+ * from the marca. It refreshes in the background after every marca write, or a
+ * designer keeps working against the palette that was just replaced.
+ */
+const REPERTORIO = [["igig", "repertorio"]];
+
 export function useCriarMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Partial<Marca> & { cliente_id: string; nome: string }) =>
-      api.post<Marca>("/api/marcas", payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
-      // Same reason as `useAtualizarMarca`: the Módulo 2 sidebar reads the
-      // repertório, which is a DIFFERENT query key. Without this the sidebar
-      // keeps saying "este cliente ainda não tem marca cadastrada" while the
-      // brand editor is open right next to it.
-      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
-    },
+  type Vars = Partial<Marca> & { cliente_id: string; nome: string };
+  return useCacheWriteMutation<Marca, Vars>({
+    mutationFn: (payload) => api.post<Marca>("/api/marcas", payload),
+    // Into the everyone list and its cliente's list.
+    targets: (v) => [
+      addTo<Marca, Vars>([...MARCA_QUERY_KEY, ""]),
+      addTo<Marca, Vars>([...MARCA_QUERY_KEY, v.cliente_id]),
+    ],
+    invalidate: REPERTORIO,
   });
 }
 
 export function useAtualizarMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: Partial<Marca> & { id: string }) =>
-      api.patch<Marca>(`/api/marcas/${id}`, patch),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
-      // The sidebar reads the same brand — refresh it too, or a designer keeps
-      // working against the palette that was just replaced.
-      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
-    },
+  type Vars = Partial<Marca> & { id: string };
+  return useCacheWriteMutation<Marca, Vars>({
+    mutationFn: ({ id, ...patch }) => api.patch<Marca>(`/api/marcas/${id}`, patch),
+    targets: [patchById<Marca, Vars>(MARCA_QUERY_KEY, (v) => v.id, ({ id: _id, ...changes }) => changes)],
+    invalidate: REPERTORIO,
   });
 }
 
@@ -155,13 +156,10 @@ export function useAtualizarMarca() {
  * the cofre is per CLIENTE and is untouched.
  */
 export function useRemoverMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/marcas/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
-      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
-    },
+  return useCacheWriteMutation<{ ok: boolean }, string>({
+    mutationFn: (id) => api.delete<{ ok: boolean }>(`/api/marcas/${id}`),
+    targets: [removeById<{ ok: boolean }, string>(MARCA_QUERY_KEY, (id) => id)],
+    invalidate: REPERTORIO,
   });
 }
 
@@ -172,13 +170,13 @@ export function useRemoverMarca() {
  * `JSON.stringify(new FormData())` is `"{}"`, which reaches a multipart
  * endpoint as an empty JSON object and 422s as if the backend were broken.
  *
- * Invalidates the repertório too: the sidebar renders the logo, so refreshing
- * only the brand list would leave the designer looking at the old mark.
+ * The new logo is written onto the marca as soon as the server answers; the
+ * repertório (the sidebar renders the logo) refreshes in the background.
  */
 export function useEnviarLogo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ marcaId, arquivo }: { marcaId: string; arquivo: File }) => {
+  type Vars = { marcaId: string; arquivo: File };
+  return useCacheWriteMutation<{ storage_key: string; url: string | null }, Vars>({
+    mutationFn: ({ marcaId, arquivo }) => {
       const form = new FormData();
       form.append("arquivo", arquivo);
       return api.upload<{ storage_key: string; url: string | null }>(
@@ -186,10 +184,14 @@ export function useEnviarLogo() {
         form,
       );
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
-      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
-    },
+    targets: (v) => [
+      {
+        queryKey: MARCA_QUERY_KEY,
+        match: "prefix",
+        commit: (old, saved) => (saved.url ? rowOps.patch(old, v.marcaId, { logo_url: saved.url }) : old),
+      },
+    ],
+    invalidate: REPERTORIO,
   });
 }
 
@@ -222,17 +224,11 @@ export function useAcessos(clienteId: string | undefined) {
 }
 
 export function useCriarAcesso() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: {
-      cliente_id: string;
-      rotulo: string;
-      plataforma?: string;
-      url?: string;
-      usuario?: string;
-      senha?: string;
-    }) => api.post<Acesso>("/api/marcas/acessos", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
+  type Vars = { cliente_id: string; rotulo: string; plataforma?: string; url?: string; usuario?: string; senha?: string };
+  return useCacheWriteMutation<Acesso, Vars>({
+    mutationFn: (payload) => api.post<Acesso>("/api/marcas/acessos", payload),
+    // The entry (never the password) joins the cliente's cofre as soon as the server answers.
+    targets: (v) => [addTo<Acesso, Vars>([...COFRE_QUERY_KEY, v.cliente_id])],
   });
 }
 
@@ -248,18 +244,19 @@ export function useCriarAcesso() {
  * OR blank means "keep the current password", never a way to clear it.
  */
 export function useAtualizarAcesso() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: {
-      id: string;
-      rotulo?: string | null;
-      plataforma?: string | null;
-      url?: string | null;
-      usuario?: string | null;
-      senha?: string;
-      observacoes?: string | null;
-    }) => api.patch<Acesso>(`/api/marcas/acessos/${id}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
+  type Vars = {
+    id: string;
+    rotulo?: string | null;
+    plataforma?: string | null;
+    url?: string | null;
+    usuario?: string | null;
+    senha?: string;
+    observacoes?: string | null;
+  };
+  return useCacheWriteMutation<Acesso, Vars>({
+    mutationFn: ({ id, ...patch }) => api.patch<Acesso>(`/api/marcas/acessos/${id}`, patch),
+    // `senha` never enters the cache (the API never returns one; `tem_senha` comes from the answer).
+    targets: [patchById<Acesso, Vars>(COFRE_QUERY_KEY, (v) => v.id, ({ id: _id, senha: _senha, ...changes }) => changes)],
   });
 }
 
@@ -271,17 +268,15 @@ export function useAtualizarAcesso() {
  * with it, and would let a re-render surface it without another audited call.
  */
 export function useRevelarSenha() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — an audited admin-only reveal, deliberately never cached (a decrypted credential must not sit in the query client)
     mutationFn: (acessoId: string) =>
       api.post<{ senha: string }>(`/api/marcas/acessos/${acessoId}/revelar`, {}),
   });
 }
 
 export function useRemoverAcesso() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (acessoId: string) =>
-      api.delete<{ ok: boolean }>(`/api/marcas/acessos/${acessoId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
+  return useCacheWriteMutation<{ ok: boolean }, string>({
+    mutationFn: (acessoId) => api.delete<{ ok: boolean }>(`/api/marcas/acessos/${acessoId}`),
+    targets: [removeById<{ ok: boolean }, string>(COFRE_QUERY_KEY, (id) => id)],
   });
 }

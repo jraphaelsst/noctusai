@@ -12,9 +12,11 @@
  * (`useOrcamentoMutations().gerarContrato`), which invalidates this family's
  * key (`["igig", "contratos"]`).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
+import { patchById } from "@/lib/cacheOps";
 import type { ModalidadeAssinatura } from "@/types/crm";
 
 export type ContratoStatus = "rascunho" | "aguardando_assinatura" | "ativo" | "encerrado";
@@ -74,39 +76,46 @@ export function useContratos(clienteId: string | null) {
 }
 
 export function useContratoMutations() {
-  const qc = useQueryClient();
+  const lista = [...CONTRATOS_QUERY_KEY, "lista"] as const;
   /** Signed, short-TTL URLs — fetched on click, never cached. */
-  const urlPdf = useMutation({
+  const urlPdf = useMutation({ // noc-allow: invalidate-only — a signed short-TTL URL fetched on click and deliberately never cached; no read to update
     mutationFn: (id: string) =>
       api
         .get(`/api/contratos/${encodeURIComponent(id)}/pdf`)
         .then(unwrapData<{ url: string; url_assinado: string | null }>),
   });
   /** Física only: the printed contract came back signed by hand. */
-  const marcarAssinado = useMutation({
-    mutationFn: ({ id, arquivo }: { id: string; arquivo?: File | null }) => {
+  const marcarAssinado = useCacheWriteMutation<Contrato, { id: string; arquivo?: File | null }>({
+    mutationFn: ({ id, arquivo }) => {
       const form = new FormData();
       if (arquivo) form.append("arquivo", arquivo);
       return api.upload(`/api/contratos/${encodeURIComponent(id)}/marcar-assinado`, form).then(unwrapData<Contrato>);
     },
+    targets: [patchById<Contrato, { id: string; arquivo?: File | null }>(lista, (v) => v.id)],
     // Activating the contract flips the cliente to `ativo` server-side too.
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: CONTRATOS_QUERY_KEY }),
-        qc.invalidateQueries({ queryKey: ["igig", "clientes"] }),
-      ]),
+    invalidate: [["igig", "clientes"]],
   });
-  const invalidar = () => qc.invalidateQueries({ queryKey: CONTRATOS_QUERY_KEY });
-  const editar = useMutation({
-    mutationFn: ({ id, ...campos }: { id: string } & ContratoEdicao) =>
+  const editar = useCacheWriteMutation<Contrato, { id: string } & ContratoEdicao>({
+    mutationFn: ({ id, ...campos }) =>
       api.patch(`/api/contratos/${encodeURIComponent(id)}`, campos).then(unwrapData<Contrato>),
-    onSuccess: invalidar,
+    targets: [
+      patchById<Contrato, { id: string } & ContratoEdicao>(lista, (v) => v.id, ({ id: _id, ...campos }) => campos),
+    ],
   });
   /** Contratos are never deleted — they are encerrados. */
-  const encerrar = useMutation({
-    mutationFn: ({ id, ...corpo }: { id: string; motivo: string; data_encerramento?: string }) =>
+  const encerrar = useCacheWriteMutation<
+    Contrato,
+    { id: string; motivo: string; data_encerramento?: string }
+  >({
+    mutationFn: ({ id, ...corpo }) =>
       api.post(`/api/contratos/${encodeURIComponent(id)}/encerrar`, corpo).then(unwrapData<Contrato>),
-    onSuccess: invalidar,
+    targets: [
+      patchById<Contrato, { id: string; motivo: string; data_encerramento?: string }>(
+        lista,
+        (v) => v.id,
+        (v) => ({ status: "encerrado" as const, motivo_encerramento: v.motivo }),
+      ),
+    ],
   });
   return { urlPdf, marcarAssinado, editar, encerrar };
 }

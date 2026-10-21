@@ -13,9 +13,11 @@
  * so the form sends exactly the keys of `PARAMS_POR_TIPO` in
  * `app/schemas/automacoes.py` — see `AcaoParams` below.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
+import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 export type PipelineAutomacao = "comercial" | "esteira";
 export type Gatilho = "entrada_etapa" | "sla";
@@ -140,20 +142,25 @@ export function useExecucoes(limit = 50) {
 }
 
 export function useAutomacaoMutations() {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: AUTOMACOES_QUERY_KEY });
-  const criar = useMutation({
-    mutationFn: (payload: AutomacaoInput) => api.post("/api/automacoes", payload).then(unwrapData<Automacao>),
-    onSuccess: invalidate,
+  const lista = [...AUTOMACOES_QUERY_KEY, "lista"] as const;
+  const criar = useCacheWriteMutation<Automacao, AutomacaoInput>({
+    mutationFn: (payload) => api.post("/api/automacoes", payload).then(unwrapData<Automacao>),
+    // The new rule certainly belongs in the unfiltered list and in its own
+    // pipeline's list; any other cached variant settles in the background.
+    targets: (payload) => [
+      addTo<Automacao, AutomacaoInput>([...lista, {}]),
+      addTo<Automacao, AutomacaoInput>([...lista, cleanParams({ pipeline: payload.pipeline })]),
+    ],
+    invalidate: [AUTOMACOES_QUERY_KEY],
   });
-  const atualizar = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: AutomacaoPatch }) =>
+  const atualizar = useCacheWriteMutation<Automacao, { id: string; patch: AutomacaoPatch }>({
+    mutationFn: ({ id, patch }) =>
       api.patch(`/api/automacoes/${encodeURIComponent(id)}`, patch).then(unwrapData<Automacao>),
-    onSuccess: invalidate,
+    targets: [patchById<Automacao, { id: string; patch: AutomacaoPatch }>(lista, (v) => v.id, (v) => v.patch)],
   });
-  const remover = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/automacoes/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  const remover = useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`/api/automacoes/${encodeURIComponent(id)}`),
+    targets: [removeById<unknown, string>(lista, (id) => id)],
   });
   return { criar, atualizar, remover };
 }

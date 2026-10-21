@@ -130,7 +130,7 @@ export function useRelatorioPreview(filtro: RelatorioFiltro | null) {
 }
 
 export function useBaixarRelatorio() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — downloads a file to disk; nothing cached is read or changed
     mutationFn: async ({ tipo, inicio, fim, formato }: RelatorioFiltro & { formato: FormatoArquivo }) => {
       const qs = new URLSearchParams({ inicio, fim, formato }).toString();
       const blob = await api.download(`/api/relatorios/${tipo}?${qs}`);

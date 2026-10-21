@@ -16,9 +16,11 @@
  * in flight. The lying-loading-state class the `check_lying_loading_state`
  * keeper blocks.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
+import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/cliente.py) ─────────────────────
 export type StatusCliente = "prospect" | "ativo" | "inativo" | "inadimplente";
@@ -138,11 +140,23 @@ export function useCliente(id: string | null) {
   };
 }
 
+/**
+ * The list a brand-new cliente certainly belongs in: no busca, no status
+ * filter, first page (`useClientes()` with no arguments). Filtered lists
+ * converge on the background settle.
+ */
+const LISTA_SEM_FILTRO = [...CLIENTES_QUERY_KEY, "", "", "", ""] as const;
+
+/**
+ * Create a cliente. The server decides the row (id, status), so it is
+ * committed into the default list the moment the POST answers — no waiting
+ * for the list to be fetched again.
+ */
 export function useCriarCliente() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: ClienteCreate) => api.post<Cliente>("/api/clientes", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
+  return useCacheWriteMutation<Cliente, ClienteCreate>({
+    mutationFn: (payload) => api.post<Cliente>("/api/clientes", payload),
+    targets: [addTo<Cliente, ClienteCreate>(LISTA_SEM_FILTRO, "prepend")],
+    invalidate: [CLIENTES_QUERY_KEY],
   });
 }
 
@@ -154,10 +168,9 @@ export function useCriarCliente() {
  * that intent.
  */
 export function useAtivarCliente() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.post<Cliente>(`/api/clientes/${id}/ativar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
+  return useCacheWriteMutation<Cliente, string>({
+    mutationFn: (id) => api.post<Cliente>(`/api/clientes/${id}/ativar`, {}),
+    targets: [patchById<Cliente, string>(CLIENTES_QUERY_KEY, (id) => id, () => ({ status: "ativo" }))],
   });
 }
 
@@ -171,18 +184,15 @@ export function useAtivarCliente() {
  * be corrected is not a CRM.
  */
 export function useAtualizarCliente() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: ClienteUpdate & { id: string }) =>
-      api.patch<Cliente>(`/api/clientes/${id}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
+  return useCacheWriteMutation<Cliente, ClienteUpdate & { id: string }>({
+    mutationFn: ({ id, ...patch }) => api.patch<Cliente>(`/api/clientes/${id}`, patch),
+    targets: [patchById<Cliente, ClienteUpdate & { id: string }>(CLIENTES_QUERY_KEY, (v) => v.id, ({ id: _id, ...changes }) => changes)],
   });
 }
 
 export function useRemoverCliente() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/clientes/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
+  return useCacheWriteMutation<{ ok: boolean }, string>({
+    mutationFn: (id) => api.delete<{ ok: boolean }>(`/api/clientes/${id}`),
+    targets: [removeById<{ ok: boolean }, string>(CLIENTES_QUERY_KEY, (id) => id)],
   });
 }

@@ -33,7 +33,13 @@ vi.mock("@tanstack/react-query", () => {
       }) as unknown,
   );
   const useMutation = vi.fn((opts: Record<string, unknown>) => ({ ...opts, isPending: false }));
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: mockInvalidateQueries }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: mockInvalidateQueries,
+    getQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+    setQueryData: vi.fn(),
+    cancelQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient, keepPreviousData: (prev: unknown) => prev };
 });
 
@@ -56,7 +62,9 @@ const mockUseQuery = vi.mocked(useQuery);
 
 type MutationStub = {
   mutationFn: (vars: unknown) => Promise<unknown>;
-  onSuccess: () => void;
+  onSuccess: (...args: unknown[]) => void;
+  /** `useCacheWriteMutation` settles (background invalidate) here, after the cache write. */
+  onSettled?: (...args: unknown[]) => unknown;
 };
 
 beforeEach(() => {
@@ -82,7 +90,7 @@ describe("tarefa writes", () => {
     const m = useCriarTarefa() as unknown as MutationStub;
     await m.mutationFn({ pauta_id: "p1", titulo: "Arte" });
     expect(mockPost).toHaveBeenCalledWith("/api/esteira/tarefas", { pauta_id: "p1", titulo: "Arte" });
-    m.onSuccess();
+    await m.onSettled?.(undefined, null, { pauta_id: "p1", titulo: "Arte" });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: [ESTEIRA_BOARD_KEY] });
   });
 
@@ -90,7 +98,7 @@ describe("tarefa writes", () => {
     const m = useExcluirTarefa() as unknown as MutationStub;
     await m.mutationFn({ id: "t1" });
     expect(mockDelete).toHaveBeenCalledWith("/api/esteira/tarefas/t1");
-    m.onSuccess();
+    await m.onSettled?.(undefined, null, { id: "t1" });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: [ESTEIRA_BOARD_KEY] });
   });
 

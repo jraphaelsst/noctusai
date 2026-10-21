@@ -7,10 +7,12 @@
  * either succeeds with a platform id or fails, and optimistically showing
  * "publicada" would be the exact lie this module is built to avoid.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@noctusai/lib";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
+import { addTo, patchById } from "@/lib/cacheOps";
 import { INTEGRACOES_QUERY_KEY } from "@/hooks/useIntegracoes";
 
 export type Canal = "instagram" | "facebook" | "tiktok" | "linkedin";
@@ -74,31 +76,49 @@ export function usePublicacoes(pautaId?: string) {
   };
 }
 
+const PUBLICACOES_KEY = [...DISTRIBUICAO_QUERY_KEY, "publicacoes"] as const;
+const FILA_KEY = [...DISTRIBUICAO_QUERY_KEY, "fila"] as const;
+
+/** A publication row lives in the per-pauta lists AND the scheduled queue. */
+function publicacaoTargets<TVars>(idOf: (v: TVars) => string, changesOf?: (v: TVars) => object) {
+  return [
+    patchById<Publicacao, TVars>(PUBLICACOES_KEY, idOf, changesOf),
+    patchById<Publicacao, TVars>(FILA_KEY, idOf, changesOf),
+  ];
+}
+
 export function useAgendarPublicacao() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { pauta_id: string; canal: Canal; agendada_para: string }) =>
-      api.post<Publicacao>("/api/distribuicao/publicacoes", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  type Vars = { pauta_id: string; canal: Canal; agendada_para: string };
+  return useCacheWriteMutation<Publicacao, Vars>({
+    mutationFn: (payload) => api.post<Publicacao>("/api/distribuicao/publicacoes", payload),
+    // The new row belongs in its pauta's list and the all-pautas list; the
+    // queue (ordered server-side) and the BI settle in the background.
+    targets: (v) => [
+      addTo<Publicacao, Vars>([...PUBLICACOES_KEY, v.pauta_id]),
+      addTo<Publicacao, Vars>([...PUBLICACOES_KEY, ""]),
+    ],
+    invalidate: [DISTRIBUICAO_QUERY_KEY],
   });
 }
 
 /** Edit / reschedule a still-`agendada` publication (PATCH). */
 export function useEditarPublicacao() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...payload }: { id: string; canal?: Canal; agendada_para?: string }) =>
-      api.patch<Publicacao>(`/api/distribuicao/publicacoes/${id}`, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  type Vars = { id: string; canal?: Canal; agendada_para?: string };
+  return useCacheWriteMutation<Publicacao, Vars>({
+    mutationFn: ({ id, ...payload }) => api.patch<Publicacao>(`/api/distribuicao/publicacoes/${id}`, payload),
+    targets: publicacaoTargets<Vars>((v) => v.id, ({ id: _id, ...changes }) => changes),
+    invalidate: [DISTRIBUICAO_QUERY_KEY],
   });
 }
 
 export function useExecutarPublicacao() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.post<Publicacao>(`/api/distribuicao/publicacoes/${id}/executar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  return useCacheWriteMutation<Publicacao, string>({
+    mutationFn: (id) => api.post<Publicacao>(`/api/distribuicao/publicacoes/${id}/executar`, {}),
+    // No optimism on purpose (see the module docstring): the row shows what the
+    // server says — publicada with a platform id, or falhou — as soon as it answers.
+    targets: publicacaoTargets<string>((id) => id),
+    invalidate: [DISTRIBUICAO_QUERY_KEY],
     onError: (erro) => {
       // `credencial_ilegivel` writes integracao.reconectar_necessario
       // server-side (distribuicao_router.executar_publicacao ->
@@ -112,11 +132,10 @@ export function useExecutarPublicacao() {
 }
 
 export function useCancelarPublicacao() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.post<Publicacao>(`/api/distribuicao/publicacoes/${id}/cancelar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  return useCacheWriteMutation<Publicacao, string>({
+    mutationFn: (id) => api.post<Publicacao>(`/api/distribuicao/publicacoes/${id}/cancelar`, {}),
+    targets: publicacaoTargets<string>((id) => id, () => ({ status: "cancelada" as const })),
+    invalidate: [DISTRIBUICAO_QUERY_KEY],
   });
 }
 
@@ -131,18 +150,21 @@ export function useCancelarPublicacao() {
  * overwrites: metrics move over a post's first week.
  */
 export function useRegistrarMetrica() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ publicacaoId, ...payload }: {
-      publicacaoId: string;
-      curtidas?: number;
-      comentarios?: number;
-      compartilhamentos?: number;
-      alcance?: number;
-      cliques_bio?: number;
-      visualizacoes?: number;
-    }) => api.post<Metrica>(`/api/distribuicao/publicacoes/${publicacaoId}/metricas`, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  type Vars = {
+    publicacaoId: string;
+    curtidas?: number;
+    comentarios?: number;
+    compartilhamentos?: number;
+    alcance?: number;
+    cliques_bio?: number;
+    visualizacoes?: number;
+  };
+  return useCacheWriteMutation<Metrica, Vars>({
+    mutationFn: ({ publicacaoId, ...payload }) =>
+      api.post<Metrica>(`/api/distribuicao/publicacoes/${publicacaoId}/metricas`, payload),
+    targets: (v) => [addTo<Metrica, Vars>([...DISTRIBUICAO_QUERY_KEY, "metricas", v.publicacaoId])],
+    // The BI de eficiência is derived from the metrics — never recomputed here.
+    invalidate: [DISTRIBUICAO_QUERY_KEY],
   });
 }
 

@@ -20,7 +20,13 @@ let queryState: Record<string, unknown> = {};
 vi.mock("@tanstack/react-query", () => {
   const useQuery = vi.fn(() => queryState);
   const useMutation = vi.fn((opts: Record<string, unknown>) => ({ ...opts, mutate: vi.fn(), isPending: false }));
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: mockInvalidate }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: mockInvalidate,
+    getQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+    setQueryData: vi.fn(),
+    cancelQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 
@@ -84,13 +90,13 @@ describe("useEditarPublicacao", () => {
   it("PATCHes the publication (id out of the body) and invalidates the distribuicao queries", () => {
     const opts = useEditarPublicacao() as unknown as {
       mutationFn: (v: { id: string; agendada_para: string }) => unknown;
-      onSuccess: () => void;
+      onSettled: (...args: unknown[]) => unknown;
     };
     opts.mutationFn({ id: "pub-1", agendada_para: "2099-01-01T09:00:00Z" });
     expect(mockPatch).toHaveBeenCalledWith("/api/distribuicao/publicacoes/pub-1", {
       agendada_para: "2099-01-01T09:00:00Z",
     });
-    opts.onSuccess();
+    opts.onSettled(undefined, null, { id: "pub-1" });
     expect(mockInvalidate).toHaveBeenCalled();
   });
 });

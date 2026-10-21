@@ -6,7 +6,8 @@
  * There is no `token` in any type here, deliberately: the API never returns
  * one, and modelling it would invite a component to try to render it.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import type { Canal } from "@/hooks/useDistribuicao";
@@ -45,20 +46,36 @@ export function useIntegracoes() {
   };
 }
 
+/** Rows are keyed by `canal`, not `id` — so the status list is edited by channel. */
+function porCanal(
+  old: IntegracaoStatus[] | undefined,
+  canal: Canal,
+  changes: Partial<IntegracaoStatus>,
+): IntegracaoStatus[] | undefined {
+  if (!Array.isArray(old)) return old;
+  return old.map((i) => (i.canal === canal ? { ...i, ...changes } : i));
+}
+
 export function useConectarCanal() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ canal, token, conta_externa }: {
-      canal: Canal; token: string; conta_externa?: string;
-    }) => api.post<IntegracaoStatus>(`/api/integracoes/${canal}`, { token, conta_externa }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: INTEGRACOES_QUERY_KEY }),
+  type Vars = { canal: Canal; token: string; conta_externa?: string };
+  return useCacheWriteMutation<IntegracaoStatus, Vars>({
+    mutationFn: ({ canal, token, conta_externa }) =>
+      api.post<IntegracaoStatus>(`/api/integracoes/${canal}`, { token, conta_externa }),
+    // The server's status for the channel (conectado, conta, cofre) replaces its row.
+    targets: [{ queryKey: INTEGRACOES_QUERY_KEY, commit: (old, saved) => porCanal(old, saved.canal, saved) }],
   });
 }
 
 export function useDesconectarCanal() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (canal: Canal) => api.delete<{ ok: boolean }>(`/api/integracoes/${canal}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: INTEGRACOES_QUERY_KEY }),
+  return useCacheWriteMutation<{ ok: boolean }, Canal>({
+    mutationFn: (canal) => api.delete<{ ok: boolean }>(`/api/integracoes/${canal}`),
+    targets: [
+      {
+        queryKey: INTEGRACOES_QUERY_KEY,
+        // The org's own credential is gone; an env fallback (if any) shows on settle.
+        optimistic: (old, canal) =>
+          porCanal(old, canal, { conectado: false, origem: "nenhuma", conta_externa: null, conectado_em: null, ultimo_erro: null }),
+      },
+    ],
   });
 }

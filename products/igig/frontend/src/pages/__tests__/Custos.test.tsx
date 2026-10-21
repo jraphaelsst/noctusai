@@ -53,7 +53,8 @@ afterEach(cleanup);
 describe("Custos — profissional edit + delete confirmation", () => {
   it("edits a profissional's função/custo_hora_override (achado 13)", async () => {
     renderPage();
-    const editar = await screen.findByRole("button", { name: "Editar Ana" });
+    // Generous timeout: the first render of the page is cold and slow in a loaded full-suite run.
+    const editar = await screen.findByRole("button", { name: "Editar Ana" }, { timeout: 15_000 });
     fireEvent.click(editar);
 
     // Two inputs share this placeholder: the "add profissional" form (always

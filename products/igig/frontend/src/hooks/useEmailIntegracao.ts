@@ -75,7 +75,7 @@ export function useSmtpMutations() {
     mutationFn: () => api.delete("/api/integracoes/email/smtp").then(unwrapData<SmtpStatus>),
     onSuccess: (status) => qc.setQueryData(SMTP_KEY, status),
   });
-  const testar = useMutation({
+  const testar = useMutation({ // noc-allow: invalidate-only — sends a test e-mail; fire-and-forget action with no cached read to update
     mutationFn: (para: string) =>
       api.post("/api/integracoes/email/smtp/testar", { para }).then(unwrapData<{ message_id: string }>),
   });
@@ -95,7 +95,7 @@ export function useGmailMutations() {
   const qc = useQueryClient();
   /** The Google consent URL; the caller navigates the window to it. Google
    * redirects back to `/integracoes?gmail=ok|erro&motivo=`. */
-  const iniciarOAuth = useMutation({
+  const iniciarOAuth = useMutation({ // noc-allow: invalidate-only — fetches the Google consent URL the caller navigates to; no cached read
     mutationFn: () => api.get("/api/integracoes/email/gmail/oauth/start").then(unwrapData<{ url: string }>),
   });
   const desconectar = useMutation({

@@ -12,8 +12,10 @@
  * orçamento lifecycle is `/api/orcamentos/*` now.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, unwrapData } from "@/lib/api";
+import { boardOps, patchById, rowOps } from "@/lib/cacheOps";
 import { COMERCIAL_BOARD_KEY } from "@/lib/pipelines";
 import type { AssistenteAcao, LeadManualInput, Negocio } from "@/types/crm";
 
@@ -94,14 +96,18 @@ export function useNegocioPorId(id: string | null) {
   });
 }
 
-function useInvalidateFunil() {
-  const qc = useQueryClient();
-  return () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: [COMERCIAL_BOARD_KEY] }),
-      qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
-    ]);
-}
+/** The board's card edits (a negócio's column total = sum of `valor_estimado`). */
+const board = boardOps<Negocio>((n) => Number(n.valor_estimado || 0));
+const BOARD = [COMERCIAL_BOARD_KEY] as const;
+const PERDIDOS = [...COMERCIAL_QUERY_KEY, "perdidos"] as const;
+const NEGOCIO = [...COMERCIAL_QUERY_KEY, "negocio"] as const;
+
+/**
+ * Every write here can regroup the funnel server-side and touches the lead /
+ * perdidos / negócio queries: the board and the comercial family settle in
+ * the background once the cache has been written.
+ */
+const SETTLE = [[COMERCIAL_BOARD_KEY], COMERCIAL_QUERY_KEY];
 
 /**
  * The Perdidos archive — negócios the board itself never shows (`GET /board`
@@ -123,15 +129,17 @@ export function usePerdidos() {
 
 /** "Reabrir" — returns a perdido negócio to the stage it was lost from. */
 export function useReabrirNegocio() {
-  const invalidate = useInvalidateFunil();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
+  return useCacheWriteMutation<Negocio, string>({
+    mutationFn: (id) =>
       api.post(`/api/comercial/negocios/${encodeURIComponent(id)}/reabrir`, {}).then(unwrapData<Negocio>),
-    onSuccess: () => {
-      void invalidate();
-      void qc.invalidateQueries({ queryKey: [...COMERCIAL_QUERY_KEY, "perdidos"] });
-    },
+    targets: [
+      // Leaves the archive on the click.
+      { queryKey: PERDIDOS, optimistic: (old, id) => rowOps.remove(old, id) },
+      // Back on the board in the stage the server put it in.
+      { queryKey: BOARD, match: "prefix", commit: (old, saved) => board.addCard(old, saved.etapa_id, saved) },
+      patchById<Negocio, string>(NEGOCIO, (id) => id),
+    ],
+    invalidate: SETTLE,
   });
 }
 
@@ -143,39 +151,55 @@ export function useReabrirNegocio() {
  * second one from the fresh `lead` row every negócio still requires.
  */
 export function useCriarNegocio() {
-  const invalidate = useInvalidateFunil();
-  return useMutation({
-    mutationFn: (payload: {
+  return useCacheWriteMutation<
+    Negocio,
+    {
       lead?: LeadManualInput;
       lead_id?: string;
       titulo?: string;
       valor_estimado?: number;
       responsavel_id?: string;
       cliente_id?: string;
-    }) => api.post("/api/comercial/negocios", payload).then(unwrapData<Negocio>),
-    onSuccess: invalidate,
+    }
+  >({
+    mutationFn: (payload) => api.post("/api/comercial/negocios", payload).then(unwrapData<Negocio>),
+    // The server picks the entry stage: commit the card where it says.
+    targets: [{ queryKey: BOARD, match: "prefix", commit: (old, saved) => board.addCard(old, saved.etapa_id, saved) }],
+    invalidate: SETTLE,
   });
 }
 
 export function useAtualizarNegocio() {
-  const invalidate = useInvalidateFunil();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...payload
-    }: { id: string; titulo?: string; valor_estimado?: number | null; responsavel_id?: string | null }) =>
+  type Vars = { id: string; titulo?: string; valor_estimado?: number | null; responsavel_id?: string | null };
+  return useCacheWriteMutation<Negocio, Vars>({
+    mutationFn: ({ id, ...payload }) =>
       api.patch(`/api/comercial/negocios/${encodeURIComponent(id)}`, payload).then(unwrapData<Negocio>),
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: BOARD,
+        match: "prefix",
+        optimistic: (old, { id, ...changes }) => board.patchCard(old, id, changes),
+        commit: (old, saved) => board.patchCard(old, saved.id, saved),
+      },
+      patchById<Negocio, Vars>(NEGOCIO, (v) => v.id, ({ id: _id, ...changes }) => changes),
+    ],
+    invalidate: SETTLE,
   });
 }
 
 /** "Marcar como perdido" — archive with a REQUIRED reason (loss statistics). */
 export function usePerderNegocio() {
-  const invalidate = useInvalidateFunil();
-  return useMutation({
-    mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
+  return useCacheWriteMutation<Negocio, { id: string; motivo: string }>({
+    mutationFn: ({ id, motivo }) =>
       api.post(`/api/comercial/negocios/${encodeURIComponent(id)}/perder`, { motivo }).then(unwrapData<Negocio>),
-    onSuccess: invalidate,
+    targets: [
+      // Off the board on the click…
+      { queryKey: BOARD, match: "prefix", optimistic: (old, { id }) => board.removeCard(old, id) },
+      // …and into the archive as soon as the server answers.
+      { queryKey: PERDIDOS, commit: (old, saved) => rowOps.add(old, saved, "prepend") },
+      patchById<Negocio, { id: string; motivo: string }>(NEGOCIO, (v) => v.id),
+    ],
+    invalidate: SETTLE,
   });
 }
 
@@ -185,11 +209,23 @@ export function usePerderNegocio() {
  * lead list).
  */
 export function useAtualizarLead() {
-  const invalidate = useInvalidateFunil();
-  return useMutation({
-    mutationFn: ({ id, ...payload }: LeadPatch & { id: string }) =>
+  return useCacheWriteMutation<Lead, LeadPatch & { id: string }>({
+    mutationFn: ({ id, ...payload }) =>
       api.patch(`/api/comercial/leads/${encodeURIComponent(id)}`, payload).then(unwrapData<Lead>),
-    onSuccess: invalidate,
+    // The lead list + the lead detail; the board's embedded lead summary settles.
+    targets: [
+      patchById<Lead, LeadPatch & { id: string }>(
+        [...COMERCIAL_QUERY_KEY, "leads"],
+        (v) => v.id,
+        ({ id: _id, ...changes }) => changes,
+      ),
+      patchById<Lead, LeadPatch & { id: string }>(
+        [...COMERCIAL_QUERY_KEY, "lead"],
+        (v) => v.id,
+        ({ id: _id, ...changes }) => changes,
+      ),
+    ],
+    invalidate: SETTLE,
   });
 }
 
@@ -202,8 +238,13 @@ export function useAtualizarLead() {
  * `papel_fechado_obrigatorio`).
  */
 export function useAtribuirPapelEtapaComercial() {
-  const invalidate = useInvalidateFunil();
-  return useMutation({
+  const qc = useQueryClient();
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: [COMERCIAL_BOARD_KEY] }),
+      qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
+    ]);
+  return useMutation({ // noc-allow: invalidate-only — atomically moves the `fechado` role off whatever stage held it (and 409s on the sole holder); the answer carries no row and the stage list / board are regrouped server-side
     mutationFn: ({ etapaId, papel }: { etapaId: string; papel: string | null }) =>
       api.patch(`/api/comercial/pipeline/stages/${encodeURIComponent(etapaId)}/papel`, { papel }),
     onSuccess: invalidate,
@@ -212,7 +253,7 @@ export function useAtribuirPapelEtapaComercial() {
 
 /** Assistente IA (Slice E2) — Claude via the seed LLM seam. */
 export function useAssistenteNegocio() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — generates text on demand; no cached read to update (the answer is returned to the caller)
     mutationFn: ({
       negocioId,
       acao,

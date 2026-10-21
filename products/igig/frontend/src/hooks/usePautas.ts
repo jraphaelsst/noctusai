@@ -9,9 +9,11 @@
  * The editor still counts locally while you type — that is presentation, and
  * it reconciles with the server value on save.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
+import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 
 export type Formato = "feed" | "carrossel" | "reels" | "story" | "artigo" | "video";
 export type Funil = "topo" | "meio" | "fundo";
@@ -101,26 +103,36 @@ export function usePautas(clienteId?: string) {
   };
 }
 
+const CALENDARIO_KEY = [...PAUTAS_QUERY_KEY, "calendario"] as const;
+const LISTA_KEY = [...PAUTAS_QUERY_KEY, "lista"] as const;
+const PECAS_KEY = [...PAUTAS_QUERY_KEY, "pecas"] as const;
+
+/** A pauta lives in the lists AND in the calendar windows (`{inicio, fim, itens}`): one prefix edit reaches both. */
+const PAUTAS_VIEWS = [LISTA_KEY, CALENDARIO_KEY];
+
 export function useCriarPauta() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { cliente_id: string; titulo: string } & Partial<Pauta>) =>
-      api.post<Pauta>("/api/pautas", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+  type Vars = { cliente_id: string; titulo: string } & Partial<Pauta>;
+  return useCacheWriteMutation<Pauta, Vars>({
+    mutationFn: (payload) => api.post<Pauta>("/api/pautas", payload),
+    // The new pauta joins the all-pautas list and its cliente's list; the
+    // calendar windows (date-bucketed) settle in the background.
+    targets: (v) => [addTo<Pauta, Vars>([...LISTA_KEY, ""]), addTo<Pauta, Vars>([...LISTA_KEY, v.cliente_id])],
+    invalidate: [PAUTAS_QUERY_KEY],
   });
 }
 
 export function useAtualizarPauta() {
-  const qc = useQueryClient();
-  return useMutation({
+  type Vars = { id: string } & Partial<Pauta>;
+  return useCacheWriteMutation<Pauta, Vars>({
     /**
      * `patch` is sent as-is — including explicit `null`s. Stripping them
      * would make unscheduling a pauta impossible, since "clear this date"
      * and "don't touch this field" would become indistinguishable.
      */
-    mutationFn: ({ id, ...patch }: { id: string } & Partial<Pauta>) =>
-      api.patch<Pauta>(`/api/pautas/${id}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+    mutationFn: ({ id, ...patch }) => api.patch<Pauta>(`/api/pautas/${id}`, patch),
+    // Edited on the click in every list and calendar window; the server's row (incl. `caracteres_copy`) replaces it.
+    targets: PAUTAS_VIEWS.map((key) => patchById<Pauta, Vars>(key, (v) => v.id, ({ id: _id, ...changes }) => changes)),
+    invalidate: [PAUTAS_QUERY_KEY],
   });
 }
 
@@ -131,13 +143,15 @@ export function useAtualizarPauta() {
  * with no warning at all).
  */
 export function useRemoverPauta() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, confirmarPerdaHoras }: { id: string; confirmarPerdaHoras?: boolean }) =>
+  type Vars = { id: string; confirmarPerdaHoras?: boolean };
+  return useCacheWriteMutation<{ ok: boolean }, Vars>({
+    mutationFn: ({ id, confirmarPerdaHoras }) =>
       api.delete<{ ok: boolean }>(
         `/api/pautas/${id}${confirmarPerdaHoras ? "?confirmar_perda_horas=true" : ""}`,
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+    // Gone on the click; rolled back if the server refuses (409 horas_serao_perdidas).
+    targets: PAUTAS_VIEWS.map((key) => removeById<{ ok: boolean }, Vars>(key, (v) => v.id)),
+    invalidate: [PAUTAS_QUERY_KEY],
   });
 }
 
@@ -148,24 +162,28 @@ export function useRemoverPauta() {
  * portal is supposed to show — the endpoint existed and had no consumer.
  */
 export function useEnviarPeca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ pautaId, arquivo }: { pautaId: string; arquivo: File }) => {
+  type Vars = { pautaId: string; arquivo: File };
+  return useCacheWriteMutation<Peca, Vars>({
+    mutationFn: ({ pautaId, arquivo }) => {
       const form = new FormData();
       form.append("arquivo", arquivo);
       return api.upload<Peca>(`/api/pautas/${pautaId}/pecas`, form);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+    // The uploaded peça (with its freshly-signed URL) is in the pauta's list as soon as the server answers.
+    targets: (v) => [addTo<Peca, Vars>([...PECAS_KEY, v.pautaId])],
+    invalidate: [PAUTAS_QUERY_KEY],
   });
 }
 
 /** Delete one peça. There was no way to do this at all before (achado 16). */
 export function useRemoverPeca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ pautaId, pecaId }: { pautaId: string; pecaId: string }) =>
-      api.delete<{ ok: boolean }>(`/api/pautas/${pautaId}/pecas/${pecaId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+  type Vars = { pautaId: string; pecaId: string };
+  return useCacheWriteMutation<{ ok: boolean }, Vars>({
+    mutationFn: ({ pautaId, pecaId }) => api.delete<{ ok: boolean }>(`/api/pautas/${pautaId}/pecas/${pecaId}`),
+    targets: (v) => [
+      { queryKey: [...PECAS_KEY, v.pautaId], optimistic: (old, x) => rowOps.remove(old, x.pecaId) },
+    ],
+    invalidate: [PAUTAS_QUERY_KEY],
   });
 }
 

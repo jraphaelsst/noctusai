@@ -18,8 +18,10 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPipelineHooks } from "@noctusai/lib/components";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, unwrapData } from "@/lib/api";
+import { boardOps, patchById } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/esteira.py + esteira_quadro.quadro) ──
 /** A tarefa as the board serves it — the row plus what a phone needs to read it. */
@@ -95,7 +97,16 @@ export const esteiraPipeline = createPipelineHooks<TarefaCard>(
   api,
 );
 
-/** After any tarefa write: the board (every filter variant) and the side queries. */
+/** The board's card edits (a tarefa has no money: column totals stay 0). */
+const board = boardOps<TarefaCard>(() => 0);
+const BOARD = [ESTEIRA_BOARD_KEY] as const;
+const TAREFA = [...ESTEIRA_QUERY_KEY, "tarefa"] as const;
+const APONTAMENTOS = [...ESTEIRA_QUERY_KEY, "apontamentos"] as const;
+
+/** After any tarefa write the board (every filter variant) and the side queries settle in the background. */
+const SETTLE = [[ESTEIRA_BOARD_KEY], ESTEIRA_QUERY_KEY];
+
+/** For the writes that stay invalidate-only (declared `noc-allow`): refresh the board and the side queries. */
 function useInvalidarEsteira() {
   const qc = useQueryClient();
   return () => {
@@ -104,21 +115,24 @@ function useInvalidarEsteira() {
   };
 }
 
+/** The embedded summaries a write's answer may carry as `null` must not wipe the ones the board already has. */
+function semEmbutidosNulos(saved: TarefaCard): Partial<TarefaCard> {
+  const { pauta, cliente, responsavel, ...resto } = saved;
+  return { ...resto, ...(pauta ? { pauta } : {}), ...(cliente ? { cliente } : {}), ...(responsavel ? { responsavel } : {}) };
+}
+
 // ─── Agency-side (authenticated) ───────────────────────────────────────
 /**
  * Create a tarefa. It lands in the board's FIRST stage (server rule) and takes
  * its cliente from the pauta — so the caller supplies a pauta, never a cliente.
  */
 export function useCriarTarefa() {
-  const invalidar = useInvalidarEsteira();
-  return useMutation({
-    mutationFn: (payload: {
-      pauta_id: string;
-      titulo: string;
-      responsavel_id?: string | null;
-      prazo?: string | null;
-    }) => api.post<TarefaCard>("/api/esteira/tarefas", payload),
-    onSuccess: invalidar,
+  type Vars = { pauta_id: string; titulo: string; responsavel_id?: string | null; prazo?: string | null };
+  return useCacheWriteMutation<TarefaCard, Vars>({
+    mutationFn: (payload) => api.post<TarefaCard>("/api/esteira/tarefas", payload),
+    // The server picks the stage (the first): commit the card in its column.
+    targets: [{ queryKey: BOARD, match: "prefix", commit: (old, saved) => board.addCard(old, saved.etapa_id, saved) }],
+    invalidate: SETTLE,
   });
 }
 
@@ -146,16 +160,19 @@ export function useTarefaPorId(id: string | null) {
  * apontamentos). Never `etapa_id`: stage moves stay `useMoveCard`'s job.
  */
 export function useAtualizarTarefa() {
-  const invalidar = useInvalidarEsteira();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: {
-      id: string;
-      titulo?: string;
-      responsavel_id?: string | null;
-      prazo?: string | null;
-      pauta_id?: string;
-    }) => api.patch<TarefaCard>(`/api/esteira/tarefas/${id}`, patch),
-    onSuccess: invalidar,
+  type Vars = { id: string; titulo?: string; responsavel_id?: string | null; prazo?: string | null; pauta_id?: string };
+  return useCacheWriteMutation<TarefaCard, Vars>({
+    mutationFn: ({ id, ...patch }) => api.patch<TarefaCard>(`/api/esteira/tarefas/${id}`, patch),
+    targets: [
+      {
+        queryKey: BOARD,
+        match: "prefix",
+        optimistic: (old, { id, ...changes }) => board.patchCard(old, id, changes),
+        commit: (old, saved) => board.patchCard(old, saved.id, semEmbutidosNulos(saved)),
+      },
+      patchById<TarefaCard, Vars>(TAREFA, (v) => v.id, ({ id: _id, ...changes }) => changes, (saved) => ({ ...semEmbutidosNulos(saved), id: saved.id })),
+    ],
+    invalidate: SETTLE,
   });
 }
 
@@ -168,15 +185,17 @@ export function useAtualizarTarefa() {
  * setting this.
  */
 export function useExcluirTarefa() {
-  const invalidar = useInvalidarEsteira();
-  return useMutation({
+  type Vars = { id: string; confirmarPerdaHoras?: boolean };
+  return useCacheWriteMutation<null, Vars>({
     // `confirmar_perda_horas` is a QUERY param on the backend, not a body —
     // `api.delete`'s second argument is a JSON body, so it rides in the URL.
-    mutationFn: ({ id, confirmarPerdaHoras }: { id: string; confirmarPerdaHoras?: boolean }) =>
+    mutationFn: ({ id, confirmarPerdaHoras }) =>
       api.delete<null>(
         `/api/esteira/tarefas/${id}${confirmarPerdaHoras ? "?confirmar_perda_horas=true" : ""}`,
       ),
-    onSuccess: invalidar,
+    // Off the board on the click (rolled back if the server refuses, e.g. 409 horas_serao_perdidas).
+    targets: [{ queryKey: BOARD, match: "prefix", optimistic: (old, { id }) => board.removeCard(old, id) }],
+    invalidate: SETTLE,
   });
 }
 
@@ -217,21 +236,31 @@ export function useApontamentos(tarefaId: string | null, usuarioId: string | nul
 
 /** Play — no body: the server times the AUTHENTICATED caller. */
 export function useIniciarTimer() {
-  const invalidar = useInvalidarEsteira();
-  return useMutation({
-    mutationFn: (tarefaId: string) =>
-      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/iniciar`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Apontamento, string>({
+    mutationFn: (tarefaId) => api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/iniciar`),
+    // The running segment shows the moment the server answers.
+    targets: (tarefaId) => [
+      {
+        queryKey: [...APONTAMENTOS, tarefaId],
+        commit: (old: Apontamento[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    // Starting a timer may auto-close a running one on ANOTHER tarefa.
+    invalidate: SETTLE,
   });
 }
 
 /** Pause the caller's running segment on this tarefa. */
 export function useEncerrarTimer() {
-  const invalidar = useInvalidarEsteira();
-  return useMutation({
-    mutationFn: (tarefaId: string) =>
-      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/encerrar`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Apontamento, string>({
+    mutationFn: (tarefaId) => api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/encerrar`),
+    targets: (tarefaId) => [
+      {
+        queryKey: [...APONTAMENTOS, tarefaId],
+        commit: (old: Apontamento[] | undefined, saved) => listOps.patch(old, saved.id, saved),
+      },
+    ],
+    invalidate: SETTLE,
   });
 }
 
@@ -241,7 +270,7 @@ export function useEncerrarTimer() {
  */
 export function useEmitirLinkAprovacao() {
   const invalidar = useInvalidarEsteira();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server also moves the tarefa into the approval-role stage (a board regroup the client cannot place); the minted link is not a cached read
     mutationFn: (tarefaId: string) =>
       api.post<LinkAprovacao>(`/api/esteira/tarefas/${tarefaId}/link-aprovacao`, {}),
     onSuccess: invalidar,
@@ -265,7 +294,7 @@ export const ESTEIRA_ROLE_LABELS: Record<string, string> = {
  */
 export function useAtribuirPapelEtapa() {
   const invalidar = useInvalidarEsteira();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — atomically moves the role off whatever stage held it (409 on the sole `aprovacao_cliente` holder); the answer carries no row and the stage list regroups server-side
     mutationFn: ({ etapaId, papel }: { etapaId: string; papel: string | null }) =>
       api.patch(`/api/esteira/stages/${etapaId}/papel`, { papel }),
     onSuccess: invalidar,
@@ -321,9 +350,9 @@ export function useAprovacaoPublica(token: string | undefined) {
 }
 
 export function useDecidirAprovacao(token: string | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ decisao, observacao }: { decisao: Decisao; observacao: string }) =>
+  type Vars = { decisao: Decisao; observacao: string };
+  return useCacheWriteMutation<{ ok: boolean; decisao: Decisao; notificado: boolean }, Vars>({
+    mutationFn: ({ decisao, observacao }) =>
       // `notificado`: whether the agency was ACTUALLY told (achado 8) — the
       // portal's "sua agência já foi notificada" copy reads this instead of
       // assuming success.
@@ -331,6 +360,13 @@ export function useDecidirAprovacao(token: string | undefined) {
         `/api/esteira/aprovar/${token}`,
         { decisao, observacao },
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["igig", "aprovacao-publica", token] }),
+    // A decided link is decided: the portal flips to read-only on the answer.
+    targets: [
+      {
+        queryKey: ["igig", "aprovacao-publica", token],
+        commit: (old: AprovacaoPublica | undefined) =>
+          old ? { ...old, ja_decidida: true, aguardando_aprovacao: false } : old,
+      },
+    ],
   });
 }

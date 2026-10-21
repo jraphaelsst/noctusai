@@ -22,8 +22,10 @@
  * and the clientes list go stale too.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
+import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 import { COMERCIAL_BOARD_KEY } from "@/lib/pipelines";
 import type {
   AceiteResultado,
@@ -112,66 +114,101 @@ export function useOrcamentoEmails(id: string | null) {
 
 export function useOrcamentoMutations() {
   const qc = useQueryClient();
-  const invalidate = () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: ORCAMENTOS_QUERY_KEY }),
-      qc.invalidateQueries({ queryKey: [COMERCIAL_BOARD_KEY] }),
-    ]);
+  const familia = ORCAMENTOS_QUERY_KEY;
+  /**
+   * Lists, details and the board settle in the background after every write:
+   * an accept moves the negócio to Fechado (board regroups server-side) and
+   * creates a Cliente, so the funnel and the clientes list go stale too.
+   */
+  const settle = [ORCAMENTOS_QUERY_KEY, [COMERCIAL_BOARD_KEY]];
+  /** The row edited wherever it is cached: every list and its detail (all under the family prefix). */
+  const noFamilia = <V,>(idOf: (v: V) => string, changesOf?: (v: V) => object) =>
+    patchById<Orcamento, V>(familia, idOf, changesOf);
 
-  const criar = useMutation({
-    mutationFn: (payload: OrcamentoInput) => api.post("/api/orcamentos", payload).then(unwrapData<Orcamento>),
-    onSuccess: invalidate,
+  const criar = useCacheWriteMutation<Orcamento, OrcamentoInput>({
+    mutationFn: (payload) => api.post("/api/orcamentos", payload).then(unwrapData<Orcamento>),
+    // The new rascunho certainly belongs in the unfiltered list; filtered tabs settle.
+    targets: [addTo<Orcamento, OrcamentoInput>([...familia, "lista", {}], "prepend")],
+    invalidate: settle,
   });
-  const atualizar = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: OrcamentoPatch }) =>
+  const atualizar = useCacheWriteMutation<Orcamento, { id: string; payload: OrcamentoPatch }>({
+    mutationFn: ({ id, payload }) =>
       api.patch(`/api/orcamentos/${encodeURIComponent(id)}`, payload).then(unwrapData<Orcamento>),
-    onSuccess: invalidate,
+    // Totals are server-computed: commit the answer into list + detail.
+    targets: [noFamilia<{ id: string; payload: OrcamentoPatch }>((v) => v.id)],
+    invalidate: settle,
   });
-  const novaVersao = useMutation({
-    mutationFn: ({ id, validade }: { id: string } & NovaVersaoInput) =>
+  const novaVersao = useCacheWriteMutation<Orcamento, { id: string } & NovaVersaoInput>({
+    mutationFn: ({ id, validade }) =>
       api.post(`/api/orcamentos/${encodeURIComponent(id)}/nova-versao`, { validade }).then(unwrapData<Orcamento>),
-    onSuccess: invalidate,
+    targets: [
+      // The previous version is superseded on the click…
+      noFamilia<{ id: string } & NovaVersaoInput>((v) => v.id, () => ({ status: "substituido" as const })),
+      // …and the new one joins the list when the server answers.
+      addTo<Orcamento, { id: string } & NovaVersaoInput>([...familia, "lista", {}], "prepend"),
+    ],
+    invalidate: settle,
   });
-  const aceitar = useMutation({
-    mutationFn: (id: string) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/aceitar`, {}).then(unwrapData<AceiteResultado>),
-    onSuccess: () =>
-      Promise.all([invalidate(), qc.invalidateQueries({ queryKey: ["igig", "clientes"] })]),
+  const aceitar = useCacheWriteMutation<AceiteResultado, string>({
+    mutationFn: (id) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/aceitar`, {}).then(unwrapData<AceiteResultado>),
+    targets: [
+      {
+        queryKey: familia,
+        match: "prefix",
+        commit: (old, saved) => rowOps.patch(old, saved.orcamento.id, saved.orcamento),
+      },
+    ],
+    invalidate: [...settle, ["igig", "clientes"]],
   });
   /** Idempotent recovery action on an ACCEPTED orçamento — for a deal closed
    * before pauta generation moved into the shared close path (a legacy
    * drag-to-Fechado), this fills the calendar in without editing anything. */
-  const gerarPautas = useMutation({
+  const gerarPautas = useMutation({ // noc-allow: invalidate-only — an idempotent recovery action whose answer is a count; the pautas it creates live in another feature's cache, nothing here to write
     mutationFn: (id: string) =>
       api.post(`/api/orcamentos/${encodeURIComponent(id)}/gerar-pautas`, {}).then(unwrapData<{ pautas_criadas: number }>),
-    onSuccess: invalidate,
+    onSuccess: () => Promise.all(settle.map((queryKey) => qc.invalidateQueries({ queryKey }))),
   });
-  const recusar = useMutation({
-    mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
+  const recusar = useCacheWriteMutation<Orcamento, { id: string; motivo: string }>({
+    mutationFn: ({ id, motivo }) =>
       api.post(`/api/orcamentos/${encodeURIComponent(id)}/recusar`, { motivo }).then(unwrapData<Orcamento>),
-    onSuccess: invalidate,
+    targets: [noFamilia<{ id: string; motivo: string }>((v) => v.id, (v) => ({ status: "recusado" as const, motivo_recusa: v.motivo }))],
+    invalidate: settle,
   });
   /** Hard-delete a rascunho (409 once it is sent/accepted or has a contrato/e-mail). */
-  const excluir = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/orcamentos/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  const excluir = useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`/api/orcamentos/${encodeURIComponent(id)}`),
+    targets: [removeById<unknown, string>(familia, (id) => id)],
+    invalidate: settle,
   });
-  const gerarPdf = useMutation({
-    mutationFn: (id: string) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/pdf`, {}).then(unwrapData<{ pdf_key: string; url: string }>),
-    onSuccess: invalidate,
+  const gerarPdf = useCacheWriteMutation<{ pdf_key: string; url: string }, string>({
+    mutationFn: (id) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/pdf`, {}).then(unwrapData<{ pdf_key: string; url: string }>),
+    // The PDF key lands on the orçamento (list + detail) so "baixar PDF" is enabled at once.
+    targets: (id) => [
+      { queryKey: familia, match: "prefix", commit: (old, saved) => rowOps.patch(old, id, { pdf_key: saved.pdf_key }) },
+    ],
+    invalidate: settle,
   });
   /** A signed, short-TTL URL — fetched on click, never cached. */
-  const urlPdf = useMutation({
+  const urlPdf = useMutation({ // noc-allow: invalidate-only — a signed short-TTL URL fetched on click and deliberately never cached; no read to update
     mutationFn: (id: string) => api.get(`/api/orcamentos/${encodeURIComponent(id)}/pdf`).then(unwrapData<{ url: string }>),
   });
-  const enviar = useMutation({
-    mutationFn: ({
-      id,
-      ...body
-    }: { id: string; para?: string; cc?: string; assunto?: string; mensagem?: string }) =>
+  const enviar = useCacheWriteMutation<
+    { orcamento: Orcamento; message_id: string },
+    { id: string; para?: string; cc?: string; assunto?: string; mensagem?: string }
+  >({
+    mutationFn: ({ id, ...body }) =>
       api.post(`/api/orcamentos/${encodeURIComponent(id)}/enviar`, cleanParams(body)).then(unwrapData<{ orcamento: Orcamento; message_id: string }>),
-    onSuccess: invalidate,
+    // No optimism: an e-mail is actually sent. "Enviado" shows the moment the server says so.
+    targets: [
+      {
+        queryKey: familia,
+        match: "prefix",
+        commit: (old, saved) => rowOps.patch(old, saved.orcamento.id, saved.orcamento),
+      },
+    ],
+    invalidate: settle,
   });
-  const gerarContrato = useMutation({
+  const gerarContrato = useMutation({ // noc-allow: invalidate-only — the new contrato belongs to a list keyed by cliente_id, which only the answer carries; every orçamento / contrato / board view settles instead
     mutationFn: ({
       id,
       modalidade_assinatura,
@@ -190,7 +227,7 @@ export function useOrcamentoMutations() {
         cleanParams({ modalidade_assinatura, dia_vencimento, vias, signatario_email }),
       ).then(unwrapData<ContratoGerado>),
     onSuccess: () =>
-      Promise.all([invalidate(), qc.invalidateQueries({ queryKey: ["igig", "contratos"] })]),
+      Promise.all([...settle, ["igig", "contratos"]].map((queryKey) => qc.invalidateQueries({ queryKey }))),
   });
 
   return {

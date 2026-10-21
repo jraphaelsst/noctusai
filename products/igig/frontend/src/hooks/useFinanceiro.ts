@@ -7,9 +7,11 @@
  * is derived server-side — a caller holding a stale total would show the
  * client a number that does not match the lines.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
+import { addTo, patchById, rowOps } from "@/lib/cacheOps";
 
 export type StatusFatura = "aberta" | "enviada" | "paga" | "vencida" | "cancelada";
 export type TipoItem = "mensalidade" | "excedente" | "desconto" | "avulso";
@@ -113,96 +115,138 @@ export function useFaturaItens(faturaId: string | undefined) {
   };
 }
 
+const FATURAS_KEY = [...FINANCEIRO_QUERY_KEY, "faturas"] as const;
+const ITENS_KEY = [...FINANCEIRO_QUERY_KEY, "itens"] as const;
+
+/**
+ * Totals, resumo, DRE, excedentes and inadimplentes are all derived from the
+ * faturas server-side — never recomputed here: they refresh in the background
+ * once the fatura/linha itself has been written.
+ */
+const DERIVADOS = [FINANCEIRO_QUERY_KEY];
+
+/** Where a freshly-created fatura for (cliente, competência) certainly belongs. */
+function listasDaFatura<TVars>(competencia: string, clienteId: string) {
+  return [
+    addTo<Fatura, TVars>([...FATURAS_KEY, competencia, ""]),
+    addTo<Fatura, TVars>([...FATURAS_KEY, "", clienteId]),
+    addTo<Fatura, TVars>([...FATURAS_KEY, "", ""]),
+  ];
+}
+
 export function useCriarFatura() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: {
-      cliente_id: string; competencia: string;
-      contrato_id?: string; vencimento?: string;
-    }) => api.post<Fatura>("/api/financeiro/faturas", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  type Vars = { cliente_id: string; competencia: string; contrato_id?: string; vencimento?: string };
+  return useCacheWriteMutation<Fatura, Vars>({
+    mutationFn: (payload) => api.post<Fatura>("/api/financeiro/faturas", payload),
+    targets: (v) => listasDaFatura<Vars>(v.competencia, v.cliente_id),
+    invalidate: DERIVADOS,
   });
 }
 
+/** The answer is the INVOICE (its total is derived server-side): the fatura row is committed, the new line is drawn on the click. */
 export function useAdicionarItem() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ faturaId, ...item }: {
-      faturaId: string; descricao: string; tipo?: TipoItem;
-      quantidade?: number; valor_unit?: number;
-    }) => api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/itens`, item),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  type Vars = { faturaId: string; descricao: string; tipo?: TipoItem; quantidade?: number; valor_unit?: number };
+  return useCacheWriteMutation<Fatura, Vars>({
+    mutationFn: ({ faturaId, ...item }) => api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/itens`, item),
+    targets: (v) => [
+      {
+        queryKey: [...ITENS_KEY, v.faturaId],
+        // The line has no server id yet: a stand-in until the settle brings the real one.
+        optimistic: (old: FaturaItem[] | undefined, vars, { tempId }) =>
+          listOps.append(old, {
+            id: tempId,
+            fatura_id: vars.faturaId,
+            descricao: vars.descricao,
+            tipo: vars.tipo ?? "avulso",
+            quantidade: vars.quantidade ?? 1,
+            valor_unit: vars.valor_unit ?? 0,
+          }),
+      },
+      patchById<Fatura, Vars>(FATURAS_KEY, (x) => x.faturaId),
+    ],
+    invalidate: DERIVADOS,
   });
 }
 
 export function useEditarFatura() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ faturaId, ...campos }: {
-      faturaId: string; competencia?: string; vencimento?: string;
-    }) => api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}`, campos),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  type Vars = { faturaId: string; competencia?: string; vencimento?: string };
+  return useCacheWriteMutation<Fatura, Vars>({
+    mutationFn: ({ faturaId, ...campos }) => api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}`, campos),
+    targets: [patchById<Fatura, Vars>(FATURAS_KEY, (v) => v.faturaId, ({ faturaId: _f, ...campos }) => campos)],
+    invalidate: DERIVADOS,
   });
 }
 
 export function useEditarItem() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ faturaId, itemId, ...campos }: {
-      faturaId: string; itemId: string; descricao?: string;
-      quantidade?: number; valor_unit?: number;
-    }) => api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}/itens/${itemId}`, campos),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  type Vars = { faturaId: string; itemId: string; descricao?: string; quantidade?: number; valor_unit?: number };
+  return useCacheWriteMutation<Fatura, Vars>({
+    mutationFn: ({ faturaId, itemId, ...campos }) =>
+      api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}/itens/${itemId}`, campos),
+    targets: (v) => [
+      // The linha changes on the click; the fatura's new total comes from the answer.
+      {
+        queryKey: [...ITENS_KEY, v.faturaId],
+        optimistic: (old, { faturaId: _f, itemId, ...campos }) => rowOps.patch(old, itemId, campos),
+      },
+      patchById<Fatura, Vars>(FATURAS_KEY, (x) => x.faturaId),
+    ],
+    invalidate: DERIVADOS,
   });
 }
 
 export function useRemoverItem() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ faturaId, itemId }: { faturaId: string; itemId: string }) =>
+  type Vars = { faturaId: string; itemId: string };
+  return useCacheWriteMutation<Fatura, Vars>({
+    mutationFn: ({ faturaId, itemId }) =>
       api.delete<Fatura>(`/api/financeiro/faturas/${faturaId}/itens/${itemId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+    targets: (v) => [
+      { queryKey: [...ITENS_KEY, v.faturaId], optimistic: (old, x) => rowOps.remove(old, x.itemId) },
+      patchById<Fatura, Vars>(FATURAS_KEY, (x) => x.faturaId),
+    ],
+    invalidate: DERIVADOS,
   });
 }
 
 export function useMarcarPaga() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (faturaId: string) =>
-      api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/pagar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  return useCacheWriteMutation<Fatura, string>({
+    mutationFn: (faturaId) => api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/pagar`, {}),
+    targets: [patchById<Fatura, string>(FATURAS_KEY, (id) => id, () => ({ status: "paga" as const }))],
+    invalidate: DERIVADOS,
   });
 }
 
 /** Void an invoice (admin-only server-side). */
 export function useCancelarFatura() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (faturaId: string) =>
-      api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/cancelar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  return useCacheWriteMutation<Fatura, string>({
+    mutationFn: (faturaId) => api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/cancelar`, {}),
+    targets: [patchById<Fatura, string>(FATURAS_KEY, (id) => id, () => ({ status: "cancelada" as const }))],
+    invalidate: DERIVADOS,
   });
 }
 
 /** E-mail the fatura's PDF to the cliente (admin-only server-side). */
 export function useEnviarFatura() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (faturaId: string) =>
-      api.post<{ fatura: Fatura; message_id: string }>(
-        `/api/financeiro/faturas/${faturaId}/enviar`, {},
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  return useCacheWriteMutation<{ fatura: Fatura; message_id: string }, string>({
+    mutationFn: (faturaId) =>
+      api.post<{ fatura: Fatura; message_id: string }>(`/api/financeiro/faturas/${faturaId}/enviar`, {}),
+    // No optimism: an e-mail is actually sent. The fatura shows "enviada" the moment the server says so.
+    targets: [
+      {
+        queryKey: FATURAS_KEY,
+        match: "prefix",
+        commit: (old, saved) => rowOps.patch(old, saved.fatura.id, saved.fatura),
+      },
+    ],
+    invalidate: DERIVADOS,
   });
 }
 
 /** Manual "sent outside the system" flag — no e-mail (admin-only server-side). */
 export function useMarcarFaturaEnviada() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (faturaId: string) =>
-      api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/marcar-enviada`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  return useCacheWriteMutation<Fatura, string>({
+    mutationFn: (faturaId) => api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/marcar-enviada`, {}),
+    targets: [patchById<Fatura, string>(FATURAS_KEY, (id) => id)],
+    invalidate: DERIVADOS,
   });
 }
 
@@ -277,15 +321,22 @@ export interface ResumoFinanceiro {
  * billed comes back under `existentes`, never twice.
  */
 export function useGerarCompetencia() {
-  const qc = useQueryClient();
-  return useMutation({
+  return useCacheWriteMutation<GerarCompetenciaResultado, string>({
     // The router answers the bare model today (no `{data}` envelope);
     // `unwrapData` accepts both so a later envelope alignment is a no-op here.
-    mutationFn: (competencia: string) =>
+    mutationFn: (competencia) =>
       api
         .post("/api/financeiro/faturas/gerar-competencia", { competencia })
         .then(unwrapData<GerarCompetenciaResultado>),
-    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+    // The month's faturas show up as soon as the server lists what it created.
+    targets: (competencia) => [
+      {
+        queryKey: [...FATURAS_KEY, competencia, ""],
+        commit: (old: Fatura[] | undefined, saved: GerarCompetenciaResultado) =>
+          saved.criadas.reduce<Fatura[] | undefined>((lista, f) => rowOps.add(lista, f), old),
+      },
+    ],
+    invalidate: DERIVADOS,
   });
 }
 

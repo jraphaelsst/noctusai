@@ -10,9 +10,11 @@
  * changes what its profissionais cost, so refreshing only the mutated list
  * would leave the other showing a stale `custo_hora_efetivo`.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
+import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 export const CUSTOS_QUERY_KEY = ["igig", "custos"] as const;
 
@@ -37,11 +39,13 @@ export interface Profissional {
   custo_hora_indefinido: boolean;
 }
 
-/** Both lists move together — see the module note. */
-function useInvalidarCustos() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: CUSTOS_QUERY_KEY });
-}
+const FUNCOES_KEY = [...CUSTOS_QUERY_KEY, "funcoes"] as const;
+const PROFISSIONAIS_KEY = [...CUSTOS_QUERY_KEY, "profissionais"] as const;
+
+/** Both lists move together — see the module note: a função's rate changes
+ * what its profissionais cost, a profissional's resolved rate is computed
+ * server-side. The written row shows at once; the other list settles. */
+const AMBAS = [CUSTOS_QUERY_KEY];
 
 // ─── Funções ───────────────────────────────────────────────────────────────
 
@@ -62,28 +66,28 @@ export function useFuncoes() {
 }
 
 export function useCriarFuncao() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: (payload: { nome: string; custo_hora_padrao: number }) =>
-      api.post<Funcao>("/api/custos/funcoes", payload),
-    onSuccess: invalidar,
+  type Vars = { nome: string; custo_hora_padrao: number };
+  return useCacheWriteMutation<Funcao, Vars>({
+    mutationFn: (payload) => api.post<Funcao>("/api/custos/funcoes", payload),
+    targets: [addTo<Funcao, Vars>(FUNCOES_KEY)],
+    invalidate: AMBAS,
   });
 }
 
 export function useAtualizarFuncao() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: { id: string; nome?: string; custo_hora_padrao?: number }) =>
-      api.patch<Funcao>(`/api/custos/funcoes/${id}`, patch),
-    onSuccess: invalidar,
+  type Vars = { id: string; nome?: string; custo_hora_padrao?: number };
+  return useCacheWriteMutation<Funcao, Vars>({
+    mutationFn: ({ id, ...patch }) => api.patch<Funcao>(`/api/custos/funcoes/${id}`, patch),
+    targets: [patchById<Funcao, Vars>(FUNCOES_KEY, (v) => v.id, ({ id: _id, ...changes }) => changes)],
+    invalidate: AMBAS,
   });
 }
 
 export function useRemoverFuncao() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/custos/funcoes/${id}`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<{ ok: boolean }, string>({
+    mutationFn: (id) => api.delete<{ ok: boolean }>(`/api/custos/funcoes/${id}`),
+    targets: [removeById<{ ok: boolean }, string>(FUNCOES_KEY, (id) => id)],
+    invalidate: AMBAS,
   });
 }
 
@@ -147,11 +151,14 @@ export function useMembrosEquipe() {
 }
 
 export function useCriarProfissional() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: (payload: ProfissionalPayload) =>
-      api.post<Profissional>("/api/custos/profissionais", payload),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Profissional, ProfissionalPayload>({
+    mutationFn: (payload) => api.post<Profissional>("/api/custos/profissionais", payload),
+    targets: [
+      // Everyone list; the "só ativos" list too when the new person is active.
+      addTo<Profissional, ProfissionalPayload>([...PROFISSIONAIS_KEY, false]),
+      addTo<Profissional, ProfissionalPayload>([...PROFISSIONAIS_KEY, true], "append", (p) => (p.ativo ? p : null)),
+    ],
+    invalidate: AMBAS,
   });
 }
 
@@ -160,18 +167,18 @@ export function useCriarProfissional() {
 export type ProfissionalPatch = Partial<ProfissionalPayload> & { id: string };
 
 export function useAtualizarProfissional() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: ({ id, ...patch }: ProfissionalPatch) =>
-      api.patch<Profissional>(`/api/custos/profissionais/${id}`, patch),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Profissional, ProfissionalPatch>({
+    mutationFn: ({ id, ...patch }) => api.patch<Profissional>(`/api/custos/profissionais/${id}`, patch),
+    // Commit the server's row: it carries the RESOLVED rate (`custo_hora_efetivo`).
+    targets: [patchById<Profissional, ProfissionalPatch>(PROFISSIONAIS_KEY, (v) => v.id, ({ id: _id, ...changes }) => changes)],
+    invalidate: AMBAS,
   });
 }
 
 export function useRemoverProfissional() {
-  const invalidar = useInvalidarCustos();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/custos/profissionais/${id}`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<{ ok: boolean }, string>({
+    mutationFn: (id) => api.delete<{ ok: boolean }>(`/api/custos/profissionais/${id}`),
+    targets: [removeById<{ ok: boolean }, string>(PROFISSIONAIS_KEY, (id) => id)],
+    invalidate: AMBAS,
   });
 }
