@@ -13,6 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ export function useContactMutations() {
   const invalidateFamily = () =>
     qc.invalidateQueries({ queryKey: FAMILY_KEY });
 
-  const create = useMutation<Contact, unknown, ContactCreateInput>({
+  const create = useMutation<Contact, unknown, ContactCreateInput>({ // noc-allow: invalidate-only — the lists are paginated, filtered (status/search) and server-sorted; where a new contact lands is the server's call
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<Contact>>(BASE, body);
       return res.data;
@@ -117,11 +118,8 @@ export function useContactMutations() {
     onSuccess: invalidateFamily,
   });
 
-  const update = useMutation<
-    Contact,
-    unknown,
-    { id: string; body: ContactUpdateInput }
-  >({
+  // Every cached page of the family (`[...FAMILY_KEY, params]`) is reached by the prefix target.
+  const update = useCacheWriteMutation<Contact, { id: string; body: ContactUpdateInput }>({
     mutationFn: async ({ id, body }) => {
       const res = await api.patch<SuccessEnvelope<Contact>>(
         `${BASE}/${encodeURIComponent(id)}`,
@@ -129,13 +127,27 @@ export function useContactMutations() {
       );
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: ({ id, body }) => [
+      {
+        queryKey: FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: ContactsPage | undefined) => pageOps.patch(old, id, body),
+        commit: (old: ContactsPage | undefined, saved) => pageOps.replace(old, saved.id, saved),
+      },
+    ],
   });
 
-  const archive = useMutation<unknown, unknown, string>({
+  // Archiving keeps the row but flips its status; a list filtered by status converges on the settle.
+  const archive = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) =>
       api.delete(`${BASE}/${encodeURIComponent(id)}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      {
+        queryKey: FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: ContactsPage | undefined) => pageOps.patch(old, id, { status: "archived" }),
+      },
+    ],
   });
 
   return { create, update, archive };

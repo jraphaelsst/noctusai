@@ -65,7 +65,7 @@ export function useProprietarios(status: string, q: string) {
 
 export function useSolicitarAtualizacao() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, string>({
+  return useMutation<unknown, unknown, string>({ // noc-allow: invalidate-only — the owner's status after the request (pendente/enviado/erro) is decided by the transport and template gating, and the response carries nothing
     mutationFn: async (id) => api.post(`${BASE}/${id}/solicitar`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: PROPRIETARIOS_KEY }),
   });

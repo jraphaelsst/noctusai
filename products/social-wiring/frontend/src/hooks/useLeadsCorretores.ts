@@ -2,12 +2,9 @@
  * Lead corretores hooks — `/api/leads/corretores*` (the broker dimension +
  * its alias map, mirrors `useLeadsSources.ts` exactly per §5.2).
  */
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import type { LeadCorretor, LeadCorretorAlias, LeadCorretorInput } from "@/pages/leads/types";
 
 interface SuccessEnvelope<T> {
@@ -31,22 +28,15 @@ export function useLeadCorretores() {
 }
 
 export function useLeadCorretorMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
-
-  const create = useMutation<LeadCorretor, unknown, LeadCorretorInput>({
+  const create = useCacheWriteMutation<LeadCorretor, LeadCorretorInput>({
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<LeadCorretor>>(BASE, body);
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: [{ queryKey: FAMILY_KEY, commit: (old: LeadCorretor[] | undefined, saved) => listOps.append(old, saved) }],
   });
 
-  const update = useMutation<
-    LeadCorretor,
-    unknown,
-    { id: string; body: Partial<LeadCorretorInput> }
-  >({
+  const update = useCacheWriteMutation<LeadCorretor, { id: string; body: Partial<LeadCorretorInput> }>({
     mutationFn: async ({ id, body }) => {
       const res = await api.patch<SuccessEnvelope<LeadCorretor>>(
         `${BASE}/${encodeURIComponent(id)}`,
@@ -54,16 +44,26 @@ export function useLeadCorretorMutations() {
       );
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    // Patch (not replace): the list rows carry a server-computed `lead_count` the PATCH answer may omit.
+    targets: ({ id, body }) => [
+      {
+        queryKey: FAMILY_KEY,
+        optimistic: (old: LeadCorretor[] | undefined) => listOps.patch(old, id, body as Partial<LeadCorretor>),
+        commit: (old: LeadCorretor[] | undefined, saved) => listOps.patch(old, saved.id, saved),
+      },
+    ],
   });
 
   /** Same 409/`reassignTo` rule as sources — §5.2. */
-  const remove = useMutation<unknown, unknown, { id: string; reassignTo?: string }>({
+  const remove = useCacheWriteMutation<unknown, { id: string; reassignTo?: string }>({
     mutationFn: ({ id, reassignTo }) => {
       const qs = reassignTo ? `?reassign_to=${encodeURIComponent(reassignTo)}` : "";
       return api.delete(`${BASE}/${encodeURIComponent(id)}${qs}`);
     },
-    onSuccess: invalidateFamily,
+    // A reassign moves leads to another corretor: its `lead_count` converges on the settle.
+    targets: ({ id }) => [
+      { queryKey: FAMILY_KEY, optimistic: (old: LeadCorretor[] | undefined) => listOps.remove(old, id) },
+    ],
   });
 
   return { create, update, remove };
@@ -98,28 +98,29 @@ export function useLeadCorretorUnmapped() {
 }
 
 export function useLeadCorretorAliasMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => {
-    qc.invalidateQueries({ queryKey: FAMILY_KEY });
-    qc.invalidateQueries({ queryKey: ["leads", "list"] });
-    qc.invalidateQueries({ queryKey: ["leads", "analytics"] });
-  };
+  // The lead lists and analytics group by corretor, so they refresh behind the alias write.
+  const derived = [FAMILY_KEY, ["leads", "list"], ["leads", "analytics"]] as const;
 
-  const upsert = useMutation<
-    LeadCorretorAlias,
-    unknown,
-    { alias: string; corretor_id: string }
-  >({
+  const upsert = useCacheWriteMutation<LeadCorretorAlias, { alias: string; corretor_id: string }>({
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<LeadCorretorAlias>>(`${BASE}/aliases`, body);
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: [
+      {
+        queryKey: ALIASES_KEY,
+        commit: (old: LeadCorretorAlias[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: [...derived],
   });
 
-  const remove = useMutation<unknown, unknown, string>({
+  const remove = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/aliases/${encodeURIComponent(id)}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      { queryKey: ALIASES_KEY, optimistic: (old: LeadCorretorAlias[] | undefined) => listOps.remove(old, id) },
+    ],
+    invalidate: [...derived],
   });
 
   return { upsert, remove };

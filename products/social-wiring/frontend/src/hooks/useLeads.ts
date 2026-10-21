@@ -13,6 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { FUNIL_PIPELINE_KEY } from "@/lib/funilKeys";
 import {
   buildLeadsQueryParams,
@@ -90,7 +91,7 @@ export function useLeadMutations() {
   const qc = useQueryClient();
   const invalidateFamily = () => qc.invalidateQueries({ queryKey: ["leads"] });
 
-  const create = useMutation<Lead, unknown, LeadCreateInput>({
+  const create = useMutation<Lead, unknown, LeadCreateInput>({ // noc-allow: invalidate-only — lists are paginated, filtered and server-sorted, and a DB trigger also creates the funil card; placement and the board are the server's call
     mutationFn: async (body) => {
       const res = await api.post<SuccessEnvelope<Lead>>(BASE, body);
       return res.data;
@@ -107,7 +108,8 @@ export function useLeadMutations() {
     },
   });
 
-  const update = useMutation<Lead, unknown, { id: string; body: LeadUpdateInput }>({
+  // `["leads","list",filters,params]` pages are reached by the prefix target; the detail by its key.
+  const update = useCacheWriteMutation<Lead, { id: string; body: LeadUpdateInput }>({
     mutationFn: async ({ id, body }) => {
       const res = await api.patch<SuccessEnvelope<Lead>>(
         `${BASE}/${encodeURIComponent(id)}`,
@@ -115,12 +117,32 @@ export function useLeadMutations() {
       );
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    targets: ({ id, body }) => [
+      {
+        queryKey: FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: LeadsPage | undefined) => pageOps.patch(old, id, body),
+        commit: (old: LeadsPage | undefined, saved) => pageOps.replace(old, saved.id, saved),
+      },
+      {
+        queryKey: [...DETAIL_KEY, id],
+        commit: (_old: Lead | undefined, saved) => saved,
+      },
+    ],
+    // Analytics / funil views derived from the lead refresh in the background.
+    invalidate: [["leads"]],
   });
 
-  const remove = useMutation<unknown, unknown, string>({
+  const remove = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/${encodeURIComponent(id)}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      {
+        queryKey: FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: LeadsPage | undefined) => pageOps.remove(old, id),
+      },
+    ],
+    invalidate: [["leads"]],
   });
 
   return { create, update, remove };

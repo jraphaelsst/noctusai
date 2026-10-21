@@ -12,8 +12,9 @@
  * PATCH /api/marcas/{id} → Marca
  * DELETE /api/marcas/{id} → 204
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -70,34 +71,45 @@ export function useMarca(id: string) {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useCreateMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: CreateClientInput) =>
-      api.post<Marca>("/api/marcas", payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: CLIENTS_KEY });
-    },
+  return useCacheWriteMutation<Marca, CreateClientInput>({
+    mutationFn: (payload) => api.post<Marca>("/api/marcas", payload),
+    targets: [
+      {
+        queryKey: CLIENTS_KEY,
+        // The list is ordered by name server-side; put the new row where the settle refetch will.
+        commit: (old: Marca[] | undefined, saved) =>
+          listOps.append(old, saved)?.sort((a, b) => a.name.localeCompare(b.name)),
+      },
+    ],
   });
 }
 
 export function useUpdateMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...payload }: UpdateClientInput & { id: string }) =>
-      api.patch<Marca>(`/api/marcas/${id}`, payload),
-    onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: CLIENTS_KEY });
-      qc.invalidateQueries({ queryKey: MARCA_KEY(vars.id) });
-    },
+  return useCacheWriteMutation<Marca, UpdateClientInput & { id: string }>({
+    mutationFn: ({ id, ...payload }) => api.patch<Marca>(`/api/marcas/${id}`, payload),
+    targets: ({ id, ...changes }) => [
+      {
+        queryKey: CLIENTS_KEY,
+        optimistic: (old: Marca[] | undefined) => listOps.patch(old, id, changes as Partial<Marca>),
+        commit: (old: Marca[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+      {
+        queryKey: MARCA_KEY(id),
+        optimistic: (old: Marca | undefined) => listOps.merge(old, changes as Partial<Marca>),
+        commit: (_old: Marca | undefined, saved) => saved,
+      },
+    ],
   });
 }
 
 export function useDeleteMarca() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/marcas/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: CLIENTS_KEY });
-    },
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`/api/marcas/${id}`),
+    targets: [
+      {
+        queryKey: CLIENTS_KEY,
+        optimistic: (old: Marca[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
   });
 }

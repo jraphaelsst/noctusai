@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 import type { ImovelVisita } from "@/types/cardHub";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { invalidateExtracaoDependentes } from "@/hooks/useCardHub";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -224,26 +225,26 @@ export type NegociacaoConflitoDecisao = "aceitar" | "rejeitar";
 
 export function useResolverNegociacaoConflito(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      conflitoId,
-      decisao,
-    }: {
-      conflitoId: string;
-      decisao: NegociacaoConflitoDecisao;
-    }) =>
+  return useCacheWriteMutation<
+    NegociacaoConflito,
+    { conflitoId: string; decisao: NegociacaoConflitoDecisao }
+  >({
+    mutationFn: ({ conflitoId, decisao }) =>
       api.post<NegociacaoConflito>(
         `${base(clienteId)}/conflitos/${encodeURIComponent(conflitoId)}/resolver`,
         { decisao },
       ),
+    // The decided conflict (server row) replaces the pending one in the list.
+    targets: [
+      {
+        queryKey: CONFLITOS_KEY(clienteId),
+        commit: (old: NegociacaoConflito[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    // Accepting a conflict writes the real field — the same surfaces a
+    // normal negociação/parcela save touches.
+    invalidate: [NEGOCIACAO_KEY(clienteId), ["sw", "clientes", clienteId, "negociacao", "estruturada"]],
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: CONFLITOS_KEY(clienteId) });
-      // Accepting a conflict writes the real field — the same surfaces a
-      // normal negociação/parcela save touches.
-      void qc.invalidateQueries({ queryKey: NEGOCIACAO_KEY(clienteId) });
-      void qc.invalidateQueries({
-        queryKey: ["sw", "clientes", clienteId, "negociacao", "estruturada"],
-      });
       void invalidateExtracaoDependentes(qc, clienteId);
     },
   });

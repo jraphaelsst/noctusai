@@ -27,6 +27,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Shared gate shape ───────────────────────────────────────────────────────
@@ -291,7 +292,7 @@ export function useIgSnapshots(accountId: string | null, days = 90) {
 
 export function useCaptureIgSnapshot(accountId: string | null) {
   const qc = useQueryClient();
-  return useMutation<IGSnapshot, unknown, void>({
+  return useMutation<IGSnapshot, unknown, void>({ // noc-allow: invalidate-only — the snapshot list is windowed by `days` and ordered server-side; a single new point does not tell where (or whether) it falls in each cached window
     mutationFn: () =>
       api.post<IGSnapshot>(`/api/meta/instagram/snapshot${qs({ account_id: accountId })}`, {}),
     onSuccess: () => {
@@ -304,7 +305,7 @@ export function useCaptureIgSnapshot(accountId: string | null) {
 
 export function useIgPublish(accountId: string | null) {
   const qc = useQueryClient();
-  return useMutation<GatedResult<PublishedResult>, unknown, IGPublishInput>({
+  return useMutation<GatedResult<PublishedResult>, unknown, IGPublishInput>({ // noc-allow: invalidate-only — the answer is a publish result, not a media row; the media grid is a Graph-ordered read
     mutationFn: (body) =>
       api.post<GatedResult<PublishedResult>>(
         `/api/meta/instagram/publish${qs({ account_id: accountId })}`,
@@ -331,7 +332,7 @@ export function useIgComments(accountId: string | null, mediaId: string | null) 
 
 export function useIgReplyComment(accountId: string | null, mediaId: string | null) {
   const qc = useQueryClient();
-  return useMutation<GatedResult<MetaComment>, unknown, { message: string; parent_comment_id?: string }>({
+  return useMutation<GatedResult<MetaComment>, unknown, { message: string; parent_comment_id?: string }>({ // noc-allow: invalidate-only — Graph decides where a reply sits (nested under parent_comment_id) and the answer is a gated result
     mutationFn: (body) =>
       api.post<GatedResult<MetaComment>>(
         `/api/meta/instagram/comments${qs({ account_id: accountId })}`,
@@ -344,29 +345,36 @@ export function useIgReplyComment(accountId: string | null, mediaId: string | nu
 }
 
 export function useIgHideComment(accountId: string | null, mediaId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<GatedResult<{ ok: true }>, unknown, { commentId: string; hide: boolean }>({
+  return useCacheWriteMutation<GatedResult<{ ok: true }>, { commentId: string; hide: boolean }>({
     mutationFn: ({ commentId, hide }) =>
       api.post<GatedResult<{ ok: true }>>(
         `/api/meta/instagram/comments/hide${qs({ account_id: accountId })}`,
         { comment_id: commentId, hide },
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: IG_COMMENTS_KEY(accountId, mediaId) });
-    },
+    // Draw the moderation on the click; a gated (app-review) answer rolls back through the settle.
+    targets: ({ commentId, hide }) => [
+      {
+        queryKey: IG_COMMENTS_KEY(accountId, mediaId),
+        optimistic: (old: MetaCommentsResponse | undefined) =>
+          listOps.within(old, "comments", (l) => listOps.patch(l, commentId, { hidden: hide })),
+      },
+    ],
   });
 }
 
 export function useIgDeleteComment(accountId: string | null, mediaId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<GatedResult<{ ok: true }>, unknown, string>({
+  return useCacheWriteMutation<GatedResult<{ ok: true }>, string>({
     mutationFn: (commentId) =>
       api.delete<GatedResult<{ ok: true }>>(
         `/api/meta/instagram/comments${qs({ account_id: accountId, comment_id: commentId })}`,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: IG_COMMENTS_KEY(accountId, mediaId) });
-    },
+    targets: (commentId) => [
+      {
+        queryKey: IG_COMMENTS_KEY(accountId, mediaId),
+        optimistic: (old: MetaCommentsResponse | undefined) =>
+          listOps.within(old, "comments", (l) => listOps.remove(l, commentId)),
+      },
+    ],
   });
 }
 
@@ -400,17 +408,25 @@ export function useIgMessages(accountId: string | null, conversationId: string |
 }
 
 export function useSendIgMessage(accountId: string | null, conversationId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<GatedResult<IGMessage>, unknown, { recipient_id: string; text: string }>({
+  return useCacheWriteMutation<GatedResult<IGMessage>, { recipient_id: string; text: string }>({
     mutationFn: (body) =>
       api.post<GatedResult<IGMessage>>(
         `/api/meta/instagram/messages${qs({ account_id: accountId })}`,
         body,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: IG_MESSAGES_KEY(accountId, conversationId) });
-      qc.invalidateQueries({ queryKey: IG_CONVERSATIONS_KEY(accountId) });
-    },
+    // The sent message is the server's answer (a gated one carries no `id` and is left out).
+    targets: [
+      {
+        queryKey: IG_MESSAGES_KEY(accountId, conversationId),
+        commit: (old: SetupGatedResult<IGMessagesResponse> | undefined, saved) =>
+          isAppReviewGate(saved)
+            ? old
+            : // `within` leaves a setup gate (no `messages` array) untouched.
+              listOps.within(old as IGMessagesResponse | undefined, "messages", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    // The conversation list orders by last activity.
+    invalidate: [IG_CONVERSATIONS_KEY(accountId)],
   });
 }
 
@@ -441,7 +457,7 @@ export function useFbPosts(accountId: string | null, pageId: string | null) {
 
 export function useFbPublish(accountId: string | null) {
   const qc = useQueryClient();
-  return useMutation<GatedResult<PublishedResult>, unknown, FbPublishInput>({
+  return useMutation<GatedResult<PublishedResult>, unknown, FbPublishInput>({ // noc-allow: invalidate-only — the answer is a publish result, not a post row; the posts feed is a Graph-ordered read
     mutationFn: (body) =>
       api.post<GatedResult<PublishedResult>>(
         `/api/meta/facebook/publish${qs({ account_id: accountId })}`,
@@ -468,7 +484,7 @@ export function useFbComments(accountId: string | null, postId: string | null) {
 
 export function useFbReplyComment(accountId: string | null, postId: string | null) {
   const qc = useQueryClient();
-  return useMutation<GatedResult<MetaComment>, unknown, { message: string }>({
+  return useMutation<GatedResult<MetaComment>, unknown, { message: string }>({ // noc-allow: invalidate-only — Graph decides where a reply sits and the answer is a gated result
     mutationFn: (body) =>
       api.post<GatedResult<MetaComment>>(
         `/api/meta/facebook/comments${qs({ account_id: accountId })}`,
@@ -481,28 +497,35 @@ export function useFbReplyComment(accountId: string | null, postId: string | nul
 }
 
 export function useFbHideComment(accountId: string | null, postId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<GatedResult<{ ok: true }>, unknown, { commentId: string; hide: boolean }>({
+  return useCacheWriteMutation<GatedResult<{ ok: true }>, { commentId: string; hide: boolean }>({
     mutationFn: ({ commentId, hide }) =>
       api.post<GatedResult<{ ok: true }>>(
         `/api/meta/facebook/comments/hide${qs({ account_id: accountId })}`,
         { comment_id: commentId, hide },
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: FB_COMMENTS_KEY(accountId, postId) });
-    },
+    // Draw the moderation on the click; a gated (app-review) answer rolls back through the settle.
+    targets: ({ commentId, hide }) => [
+      {
+        queryKey: FB_COMMENTS_KEY(accountId, postId),
+        optimistic: (old: MetaCommentsResponse | undefined) =>
+          listOps.within(old, "comments", (l) => listOps.patch(l, commentId, { hidden: hide })),
+      },
+    ],
   });
 }
 
 export function useFbDeleteComment(accountId: string | null, postId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<GatedResult<{ ok: true }>, unknown, string>({
+  return useCacheWriteMutation<GatedResult<{ ok: true }>, string>({
     mutationFn: (commentId) =>
       api.delete<GatedResult<{ ok: true }>>(
         `/api/meta/facebook/comments${qs({ account_id: accountId, comment_id: commentId })}`,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: FB_COMMENTS_KEY(accountId, postId) });
-    },
+    targets: (commentId) => [
+      {
+        queryKey: FB_COMMENTS_KEY(accountId, postId),
+        optimistic: (old: MetaCommentsResponse | undefined) =>
+          listOps.within(old, "comments", (l) => listOps.remove(l, commentId)),
+      },
+    ],
   });
 }

@@ -17,8 +17,9 @@
  * finances keeps rendering it. The UI says so at the point of the click rather
  * than letting the server's refusal be the first anyone hears of it.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -75,42 +76,57 @@ export function useAgentesFinanceiros(incluirInativos = false) {
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
+const AGENTES_PREFIX = ["sw", "agentes-financeiros"] as const;
+
 /**
- * Both lists are invalidated after every write.
+ * Both lists (active-only and full) are written after every change.
  *
  * Retiring an agent removes it from the active list and changes it in the
- * full one; creating adds it to both. Invalidating only the list the caller
- * happened to be reading is how the dropdown keeps offering a bank somebody
- * just retired on the other page.
+ * full one; creating adds it to both. `match: 'prefix'` reaches each cached
+ * list so the dropdown never keeps offering a bank somebody just retired on
+ * the other page.
  */
-function useInvalidateAmbas() {
-  const qc = useQueryClient();
-  return () =>
-    qc.invalidateQueries({ queryKey: ["sw", "agentes-financeiros"] });
-}
-
 export function useCriarAgenteFinanceiro() {
-  const invalidate = useInvalidateAmbas();
-  return useMutation({
-    mutationFn: (dados: AgenteFinanceiroPatch) =>
-      api.post<AgenteFinanceiro>(BASE, dados),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<AgenteFinanceiro, AgenteFinanceiroPatch>({
+    mutationFn: (dados) => api.post<AgenteFinanceiro>(BASE, dados),
+    targets: [
+      {
+        queryKey: AGENTES_PREFIX,
+        match: "prefix",
+        commit: (old: AgenteFinanceiro[] | undefined, saved) =>
+          saved.ativo === false ? old : listOps.append(old, saved),
+      },
+    ],
   });
 }
 
 export function useAtualizarAgenteFinanceiro() {
-  const invalidate = useInvalidateAmbas();
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: AgenteFinanceiroPatch }) =>
+  return useCacheWriteMutation<AgenteFinanceiro, { id: string; patch: AgenteFinanceiroPatch }>({
+    mutationFn: ({ id, patch }) =>
       api.patch<AgenteFinanceiro>(`${BASE}/${encodeURIComponent(id)}`, patch),
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: AGENTES_PREFIX,
+        match: "prefix",
+        optimistic: (old: AgenteFinanceiro[] | undefined, { id, patch }) =>
+          listOps.patch(old, id, patch as Partial<AgenteFinanceiro>),
+        // A retired agent leaves the active-only list on the settle refetch (the op cannot tell
+        // which list it is editing); the full list already shows it correctly.
+        commit: (old: AgenteFinanceiro[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
   });
 }
 
 export function useRemoverAgenteFinanceiro() {
-  const invalidate = useInvalidateAmbas();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`${BASE}/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${BASE}/${encodeURIComponent(id)}`),
+    targets: [
+      {
+        queryKey: AGENTES_PREFIX,
+        match: "prefix",
+        optimistic: (old: AgenteFinanceiro[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
   });
 }

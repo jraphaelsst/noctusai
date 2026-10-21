@@ -12,6 +12,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export type ModoDistribuicao = "funil" | "julia";
 
@@ -55,15 +56,13 @@ export function useJuliaEquipes() {
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: EQUIPES_KEY });
-}
+/** The team list (exact key — the metrics queries share the prefix and are not edited here). */
+const emEquipe = (id: string, fn: (e: Equipe) => Equipe) => (old: Equipe[] | undefined) =>
+  Array.isArray(old) ? old.map((e) => (e.id === id ? fn(e) : e)) : old;
 
 /** Create a team and (optionally) add its members in order. */
 export function useCriarEquipe() {
-  const inv = useInvalidar();
-  return useMutation<Equipe, unknown, EquipeInput & { user_ids: string[] }>({
+  return useCacheWriteMutation<Equipe, EquipeInput & { user_ids: string[] }>({
     mutationFn: async ({ user_ids, ...body }) => {
       const eq = (await api.post<{ data: Equipe }>("/api/julia/equipes", body)).data;
       for (const user_id of user_ids) {
@@ -71,47 +70,65 @@ export function useCriarEquipe() {
       }
       return eq;
     },
-    onSettled: inv,
+    // The members were added after the team was created: the settle brings their names/order.
+    targets: [{ queryKey: EQUIPES_KEY, commit: (old: Equipe[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
   });
 }
 
 export function useAtualizarEquipe() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string } & Partial<EquipeInput>>({
+  return useCacheWriteMutation<unknown, { id: string } & Partial<EquipeInput>>({
     mutationFn: ({ id, ...body }) => api.patch(`/api/julia/equipes/${id}`, body),
-    onSettled: inv,
+    targets: ({ id, ...changes }) => [
+      { queryKey: EQUIPES_KEY, optimistic: (old: Equipe[] | undefined) => listOps.patch(old, id, changes) },
+    ],
   });
 }
 
 export function useExcluirEquipe() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`/api/julia/equipes/${id}`),
-    onSettled: inv,
+    targets: (id) => [{ queryKey: EQUIPES_KEY, optimistic: (old: Equipe[] | undefined) => listOps.remove(old, id) }],
   });
 }
 
 export function useAdicionarMembro() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string; user_id: string }>({
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, { id: string; user_id: string }>({ // noc-allow: invalidate-only — the new member row needs the user's name and the server-assigned order, and the response carries neither
     mutationFn: ({ id, user_id }) => api.post(`/api/julia/equipes/${id}/membros`, { user_id }),
-    onSettled: inv,
+    onSettled: () => qc.invalidateQueries({ queryKey: EQUIPES_KEY }),
   });
 }
 
 export function useRemoverMembro() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string; user_id: string }>({
+  return useCacheWriteMutation<unknown, { id: string; user_id: string }>({
     mutationFn: ({ id, user_id }) => api.delete(`/api/julia/equipes/${id}/membros/${user_id}`),
-    onSettled: inv,
+    targets: ({ id, user_id }) => [
+      {
+        queryKey: EQUIPES_KEY,
+        optimistic: emEquipe(id, (e) => ({ ...e, membros: e.membros.filter((m) => m.user_id !== user_id) })),
+      },
+    ],
   });
 }
 
 export function useOrdenarMembros() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, { id: string; user_ids: string[] }>({
+  return useCacheWriteMutation<unknown, { id: string; user_ids: string[] }>({
     mutationFn: ({ id, user_ids }) => api.put(`/api/julia/equipes/${id}/membros/ordem`, { ordem: user_ids }),
-    onSettled: inv,
+    // The order is exactly the one sent (the server requires the current members).
+    targets: ({ id, user_ids }) => [
+      {
+        queryKey: EQUIPES_KEY,
+        optimistic: emEquipe(id, (e) => ({
+          ...e,
+          membros: user_ids
+            .map((uid, ordem) => {
+              const m = e.membros.find((x) => x.user_id === uid);
+              return m ? { ...m, ordem } : null;
+            })
+            .filter((m): m is EquipeMembro => m !== null),
+        })),
+      },
+    ],
   });
 }
 

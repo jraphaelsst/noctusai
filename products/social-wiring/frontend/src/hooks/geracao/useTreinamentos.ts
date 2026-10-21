@@ -2,8 +2,9 @@
  * Treinamentos (contract §4.2 #4/#5 + `GET /treinamentos/admin`).
  * Loading: `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { Treinamento } from "@/types/geracao";
 
@@ -38,12 +39,17 @@ export function useTreinamentosAdmin() {
 export type TreinamentoInput = Partial<Pick<Treinamento, "titulo" | "descricao" | "video_url" | "ativo" | "ordem">>;
 
 export function useAtualizarTreinamento() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { id: string } & TreinamentoInput) => {
+  return useCacheWriteMutation<Treinamento, { id: string } & TreinamentoInput>({
+    mutationFn: async (v) => {
       const { id, ...body } = v;
       return (await api.put<Envelope<Treinamento>>(`${BASE}/${encodeURIComponent(id)}`, body)).data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: TREINAMENTOS_KEY }),
+    targets: [
+      {
+        queryKey: TREINAMENTOS_KEY,
+        optimistic: (old: Treinamento[] | undefined, { id, ...changes }) => listOps.patch(old, id, changes),
+        commit: (old: Treinamento[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
   });
 }

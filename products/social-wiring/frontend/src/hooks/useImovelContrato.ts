@@ -508,7 +508,7 @@ export function useConfirmarUltimaTransferenciaManual(codigo: string) {
  */
 export function useConfirmarDocumentoExtracao(codigo: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the PATCH answer is untyped and the confirmed read fans out across certidões and imovel-dados (suggested cadastro/ônus fields), not one cached row
     // `codigo` = the document's OWN código (a linked imóvel lists the manual
     // record's certidões; the route is per-imóvel).
     mutationFn: (input: {

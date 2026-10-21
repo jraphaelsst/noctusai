@@ -18,8 +18,9 @@
  * here would invite an operator to mint a duplicate for a client who
  * already has one. Keeper: `check_lying_loading_state`.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 const BASE = "/api/portals/receiver-tokens";
 
@@ -85,28 +86,41 @@ export function useReceiverTokens(provider?: ReceiverProvider) {
 }
 
 export function useMintReceiverToken() {
-  const qc = useQueryClient();
-  return useMutation<
-    MintedReceiverToken,
-    unknown,
-    { provider: ReceiverProvider; label: string }
-  >({
+  return useCacheWriteMutation<MintedReceiverToken, { provider: ReceiverProvider; label: string }>({
     mutationFn: (body) => api.post<MintedReceiverToken>(BASE, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: RECEIVER_TOKENS_KEY });
-    },
+    // The minted answer (minus the one-time URL) is the new list row: it lands in the "all" list and
+    // in its own provider's list, never in the other provider's.
+    targets: ({ provider }) =>
+      [...new Set([provider, "all"])].map((slot) => ({
+        queryKey: [...RECEIVER_TOKENS_KEY, slot] as const,
+        commit: (old: ReceiverToken[] | undefined, saved: MintedReceiverToken) =>
+          listOps.replace(old, saved.id, {
+            id: saved.id,
+            provider: saved.provider,
+            label: saved.label,
+            token_prefix: saved.token_prefix,
+            created_at: new Date().toISOString(),
+            last_seen_at: null,
+            revoked_at: null,
+          }),
+      })),
   });
 }
 
 export function useRevokeReceiverToken() {
-  const qc = useQueryClient();
-  return useMutation<{ status: string; id: string }, unknown, string>({
+  return useCacheWriteMutation<{ status: string; id: string }, string>({
     mutationFn: (tokenId) =>
       api.delete<{ status: string; id: string }>(
         `${BASE}/${encodeURIComponent(tokenId)}`,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: RECEIVER_TOKENS_KEY });
-    },
+    // A revoked URL resolves to nothing at once; the row stays (revoked) in every list.
+    targets: (tokenId) => [
+      {
+        queryKey: RECEIVER_TOKENS_KEY,
+        match: "prefix",
+        optimistic: (old: ReceiverToken[] | undefined) =>
+          listOps.patch(old, tokenId, { revoked_at: new Date().toISOString() }),
+      },
+    ],
   });
 }

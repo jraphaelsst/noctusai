@@ -16,6 +16,7 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 
 import { apiUrl } from "@/lib/apiBase";
@@ -318,19 +319,10 @@ export function useFinanciamentoMutation(clienteId: string) {
 }
 
 export function useFinanciamentoDocumentoMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: KEY(clienteId) });
-
   // Multipart bypasses the JSON-only seed `api` client — raw fetch with the
   // auth header pulled from supabase.
-  const upload = useMutation({
-    mutationFn: async ({
-      file,
-      tipoDocumento,
-    }: {
-      file: File;
-      tipoDocumento: string;
-    }) => {
+  const upload = useCacheWriteMutation<FinanciamentoDocumento, { file: File; tipoDocumento: string }>({
+    mutationFn: async ({ file, tipoDocumento }) => {
       const formData = new FormData();
       formData.append("file", await prepareImageForUpload(file));
       formData.append("tipo_documento", tipoDocumento);
@@ -347,25 +339,31 @@ export function useFinanciamentoDocumentoMutations(clienteId: string) {
       }
       return (await response.json()) as FinanciamentoDocumento;
     },
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: KEY(clienteId),
+        commit: (old: Financiamento | undefined, saved) =>
+          listOps.within(old, "documentos", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
   });
 
-  const remove = useMutation({
-    mutationFn: ({
-      documentoId,
-      motivo,
-    }: {
-      documentoId: string;
-      motivo: string;
-    }) =>
+  const remove = useCacheWriteMutation<unknown, { documentoId: string; motivo: string }>({
+    mutationFn: ({ documentoId, motivo }) =>
       api.delete(
         `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
       ),
-    onSuccess: invalidate,
+    targets: ({ documentoId }) => [
+      {
+        queryKey: KEY(clienteId),
+        optimistic: (old: Financiamento | undefined) =>
+          listOps.within(old, "documentos", (l) => listOps.remove(l, documentoId)),
+      },
+    ],
   });
 
   /** 🔴 Each call is a RECORDED access. Never call this speculatively. */
-  const getUrl = useMutation({
+  const getUrl = useMutation({ // noc-allow: invalidate-only — mints a short-lived signed URL; no cached read depends on it (and it must never refetch anything — each call is a recorded access)
     mutationFn: ({
       documentoId,
       intent = "view",
@@ -394,29 +392,35 @@ export function useFinanciamentoDocumentoMutations(clienteId: string) {
 export function useFinanciamentoDocumentoExtracao(clienteId: string) {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY(clienteId) });
+  /** The server's version of one document replaces it in the financiamento (the answer IS the document). */
+  const documentoTarget = {
+    queryKey: KEY(clienteId),
+    commit: (old: Financiamento | undefined, saved: FinanciamentoDocumento) =>
+      listOps.within(old, "documentos", (l) => listOps.replace(l, saved.id, saved)),
+  };
 
-  const reextrair = useMutation({
-    mutationFn: (documentoId: string) =>
+  const reextrair = useCacheWriteMutation<FinanciamentoDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<FinanciamentoDocumento>(
         `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}/extrair`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: [documentoTarget],
   });
 
   // Re-read the file ALREADY STORED (no new upload) — works on an `ok`
   // reading too, which `reextrair` is for stuck/never-run ones. Refreshes
   // the negociação surfaces a new reading can change (conflicts included).
-  const reler = useMutation({
-    mutationFn: (documentoId: string) =>
+  const reler = useCacheWriteMutation<FinanciamentoDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<FinanciamentoDocumento>(
         `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}/reler`,
         {},
       ),
+    targets: [documentoTarget],
+    invalidate: [["sw", "clientes", clienteId, "negociacao"]],
     onSuccess: () => {
       toast.success("Lendo o documento novamente…");
-      void invalidate();
-      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "negociacao"] });
     },
     onError: (e) =>
       toast.error("Não foi possível ler o documento novamente", {
@@ -426,7 +430,7 @@ export function useFinanciamentoDocumentoExtracao(clienteId: string) {
 
   // `POST …/negociacao/documentos/reler` — every extractable document of the
   // card's open deal; counts come back at once, the reads run server-side.
-  const relerTodos = useMutation({
+  const relerTodos = useMutation({ // noc-allow: invalidate-only — schedules background reads for every document of the deal; the response is counts only
     mutationFn: () =>
       api.post<RelerDocumentosResponse>(
         `/api/clientes/${encodeURIComponent(clienteId)}/negociacao/documentos/reler`,
@@ -456,22 +460,22 @@ export function useFinanciamentoDocumentoExtracao(clienteId: string) {
       }),
   });
 
-  const confirmar = useMutation({
-    mutationFn: (documentoId: string) =>
+  const confirmar = useCacheWriteMutation<FinanciamentoDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<FinanciamentoDocumento>(
         `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}/extracao/confirmar`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: [documentoTarget],
   });
 
-  const descartar = useMutation({
-    mutationFn: (documentoId: string) =>
+  const descartar = useCacheWriteMutation<FinanciamentoDocumento, string>({
+    mutationFn: (documentoId) =>
       api.post<FinanciamentoDocumento>(
         `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}/extracao/descartar`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: [documentoTarget],
   });
 
   return { reextrair, reler, relerTodos, confirmar, descartar };

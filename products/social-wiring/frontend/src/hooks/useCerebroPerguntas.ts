@@ -8,6 +8,7 @@
 import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { CEREBRO_KEY, POLL_MS } from "@/hooks/useCerebro";
 import { uploadMultipart } from "@/hooks/useCardHub";
@@ -92,17 +93,23 @@ export function useSalvarResposta(brainId: string) {
 }
 
 export function useZerarRespostas(brainId: string) {
-  const qc = useQueryClient();
-  return useMutation({
+  return useCacheWriteMutation<{ deleted: number }, void>({
     mutationFn: async () =>
       unwrap(await api.post<Envelope<{ deleted: number }>>(`${BASE}/brains/${enc(brainId)}/answers/reset`, { confirm: true })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),
+    // Resetting deletes every answer: the screen empties on the click, the server confirms.
+    targets: [
+      {
+        queryKey: perguntasKey(brainId),
+        optimistic: (old: BrainDetail | undefined) => (old ? { ...old, answers: [] } : old),
+      },
+    ],
+    invalidate: [CEREBRO_KEY],
   });
 }
 
 export function useRevisarRespostas(brainId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — queues background reviews; the response is {queued} and the verdicts arrive via the polled detail
     mutationFn: async (questionIds?: string[]) =>
       unwrap(
         await api.post<Envelope<{ queued: number }>>(
@@ -130,7 +137,7 @@ export function useDecidirSugestao(brainId: string) {
 
 export function useFinalizarRespostas(brainId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — starts a server-side synthesis; the response does not carry the brain, the polled detail does
     mutationFn: async (v: { mode: "replace" | "append"; expected_version: number }) =>
       unwrap(await api.post<Envelope<{ brain: unknown }>>(`${BASE}/brains/${enc(brainId)}/synthesize`, v)),
     onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),

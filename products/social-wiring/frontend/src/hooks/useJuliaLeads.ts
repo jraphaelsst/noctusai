@@ -10,8 +10,9 @@
  * The list keeps `placeholderData: prev` across filter/page changes
  * (two-signal loading, never `isLoading`).
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 import { apiUrl } from "@/lib/apiBase";
@@ -101,23 +102,39 @@ export function useLeadsJulia(filtros: FiltrosLeads, page: number) {
   });
 }
 
+/** The list pages are `[...LEADS_KEY, "lista", filtros, page]` — the prefix reaches every cached one. */
+const LISTA_KEY = [...LEADS_KEY, "lista"] as const;
+
 export function useEnviarLead() {
-  const qc = useQueryClient();
-  return useMutation<{ status_envio: string; lead_id: string | null }, unknown, string>({
+  return useCacheWriteMutation<{ status_envio: string; lead_id: string | null }, string>({
     mutationFn: async (id) =>
       (await api.post<{ data: { status_envio: string; lead_id: string | null } }>(`/api/julia/leads/${id}/enviar`, {})).data,
-    // 409 means it was already sent elsewhere — refresh either way.
-    onSettled: () => qc.invalidateQueries({ queryKey: LEADS_KEY }),
+    // The server decides the outcome (enviado / nao_pronto / erro): commit it, never guess it.
+    // A 409 (already sent elsewhere) rolls nothing back and the settle refreshes the list either way.
+    targets: (id) => [
+      {
+        queryKey: LISTA_KEY,
+        match: "prefix",
+        commit: (old: { items: LeadJulia[]; total: number } | undefined, saved) =>
+          pageOps.patch(old, id, { status_envio: saved.status_envio as StatusEnvio, lead_id: saved.lead_id }),
+      },
+    ],
   });
 }
 
 export interface ResultadoLote { ok: string[]; erro: { id: string; code: string }[] }
 export function useEnviarLote() {
-  const qc = useQueryClient();
-  return useMutation<ResultadoLote, unknown, string[]>({
+  return useCacheWriteMutation<ResultadoLote, string[]>({
     mutationFn: async (ids) =>
       (await api.post<{ data: ResultadoLote }>("/api/julia/leads/enviar-lote", { ids })).data,
-    onSettled: () => qc.invalidateQueries({ queryKey: LEADS_KEY }),
+    targets: [
+      {
+        queryKey: LISTA_KEY,
+        match: "prefix",
+        commit: (old: { items: LeadJulia[]; total: number } | undefined, saved) =>
+          saved.ok.reduce((acc, id) => pageOps.patch(acc, id, { status_envio: "enviado" as StatusEnvio }), old),
+      },
+    ],
   });
 }
 

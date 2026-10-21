@@ -3,8 +3,9 @@
  * Mirrors useN8nWorkflows.ts conventions (const KEY, api.* client,
  * mutation-invalidates-query pattern).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { useActiveAccountId } from "@/state/useActiveAccount";
 import type { N8nTagOut } from "@/hooks/useN8nWorkflows";
@@ -59,20 +60,18 @@ export interface N8nSettingsUpdateBody {
 
 /** PUT /api/n8n/settings */
 export function useUpdateN8nSettings() {
-  const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
-    mutationFn: (body: N8nSettingsUpdateBody) => {
+  return useCacheWriteMutation<N8nSettingsOut, N8nSettingsUpdateBody>({
+    mutationFn: (body) => {
       return api.put<N8nSettingsOut>("/api/n8n/settings", {
         account_id: storeAccountId,
         ...body,
       });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sw", "n8n", "settings"] });
-      // A tag change can also affect the workflow list's tag pointer.
-      qc.invalidateQueries({ queryKey: ["sw", "n8n", "workflows"] });
-    },
+    // The PUT answers with the settings row: it is the cache entry for this account.
+    targets: [{ queryKey: SETTINGS_KEY(storeAccountId), commit: (_old, saved) => saved }],
+    // A tag change can also affect the workflow list's tag pointer.
+    invalidate: [["sw", "n8n", "settings"], ["sw", "n8n", "workflows"]],
   });
 }
 
@@ -95,13 +94,12 @@ export function useN8nTags() {
 
 /** POST /api/n8n/tags */
 export function useCreateN8nTag() {
-  const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
-    mutationFn: (name: string) =>
+  return useCacheWriteMutation<N8nTagOut, string>({
+    mutationFn: (name) =>
       api.post<N8nTagOut>("/api/n8n/tags", { account_id: storeAccountId, name }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sw", "n8n", "tags"] });
-    },
+    targets: [
+      { queryKey: TAGS_KEY(storeAccountId), commit: (old: N8nTagOut[] | undefined, saved) => listOps.replace(old, saved.id, saved) },
+    ],
   });
 }

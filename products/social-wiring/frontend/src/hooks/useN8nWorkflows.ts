@@ -25,6 +25,7 @@
  */
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { useActiveAccountId } from "@/state/useActiveAccount";
 
@@ -163,7 +164,7 @@ export function useN8nWorkflows(
 export function useAssignWorkflow() {
   const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — assigning moves the workflow from the unassigned scope list into the client one (and applies a tag); membership of the scoped lists is the server's call
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.post<N8nWorkflowOut>(
@@ -180,7 +181,7 @@ export function useAssignWorkflow() {
 export function useUnassignWorkflow() {
   const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — unassigning moves the workflow from the client scope list back to the unassigned one; membership of the scoped lists is the server's call
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.delete<N8nWorkflowOut>(
@@ -201,27 +202,33 @@ export interface N8nWorkflowUpdateBody {
   folder_id?: string | null;
 }
 
+/** Every cached list (`[…"workflows", account, scope, archived]`) is reached by the prefix; executions share it and pass through. */
+const WORKFLOWS_PREFIX = ["sw", "n8n", "workflows"] as const;
+
 /** PATCH /api/n8n/workflows/{id} */
 export function useUpdateWorkflow() {
-  const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
-    mutationFn: ({
-      workflowId,
-      body,
-      accountId,
-    }: {
-      workflowId: string;
-      body: N8nWorkflowUpdateBody;
-      accountId?: string | null;
-    }) => {
+  return useCacheWriteMutation<
+    N8nWorkflowOut,
+    { workflowId: string; body: N8nWorkflowUpdateBody; accountId?: string | null }
+  >({
+    mutationFn: ({ workflowId, body, accountId }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.patch<N8nWorkflowOut>(`/api/n8n/workflows/${encodeURIComponent(workflowId)}`, {
         account_id: effectiveAccountId,
         ...body,
       });
     },
-    onSuccess: () => invalidateAllWorkflowLists(qc),
+    targets: ({ workflowId, body }) => [
+      {
+        queryKey: WORKFLOWS_PREFIX,
+        match: "prefix",
+        optimistic: (old: N8nWorkflowListResponse | undefined) =>
+          listOps.within(old, "workflows", (l) => listOps.patch(l, workflowId, body)),
+        commit: (old: N8nWorkflowListResponse | undefined, saved) =>
+          listOps.within(old, "workflows", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
   });
 }
 
@@ -229,10 +236,9 @@ export function useUpdateWorkflow() {
 
 /** DELETE /api/n8n/workflows/{id} — irreversible; caller must confirm first. */
 export function useDeleteWorkflow() {
-  const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
-    mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
+  return useCacheWriteMutation<void, { workflowId: string; accountId?: string | null }>({
+    mutationFn: ({ workflowId, accountId }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.delete<void>(
         `/api/n8n/workflows/${encodeURIComponent(workflowId)}?account_id=${encodeURIComponent(
@@ -240,7 +246,14 @@ export function useDeleteWorkflow() {
         )}`,
       );
     },
-    onSuccess: () => invalidateAllWorkflowLists(qc),
+    targets: ({ workflowId }) => [
+      {
+        queryKey: WORKFLOWS_PREFIX,
+        match: "prefix",
+        optimistic: (old: N8nWorkflowListResponse | undefined) =>
+          listOps.within(old, "workflows", (l) => listOps.remove(l, workflowId)),
+      },
+    ],
   });
 }
 
@@ -250,7 +263,7 @@ export function useDeleteWorkflow() {
  * before invoking (the UI never offers a clickable-looking disabled button). */
 export function useRunWorkflow() {
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — fire-and-forget workflow execution; no cached read reflects the run (executions are read on demand)
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.post<N8nRunResult>(`/api/n8n/workflows/${encodeURIComponent(workflowId)}/run`, {

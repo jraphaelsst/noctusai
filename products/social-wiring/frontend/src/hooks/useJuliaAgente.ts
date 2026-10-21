@@ -9,9 +9,10 @@
  * page can provoke to its own pt-BR sentence so the UI never depends on the
  * wording the server happens to ship.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
 export interface JuliaConexaoAgente {
@@ -87,9 +88,15 @@ export function useJuliaAgente() {
 
 /** The token is write-only: it goes up once and is never read back. */
 export function useSalvarTokenAgents() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, { token: string }>({
+  return useCacheWriteMutation<unknown, { token: string }>({
     mutationFn: ({ token }) => api.put("/api/julia/agente/token", { token }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: JULIA_AGENTE_KEY }),
+    // The token is write-only (204): the flag flips on the click, the link health / agent status
+    // it unlocks are read back on the settle.
+    targets: [
+      {
+        queryKey: JULIA_AGENTE_KEY,
+        optimistic: (old: JuliaAgente | undefined) => (old ? { ...old, token_configurado: true } : old),
+      },
+    ],
   });
 }

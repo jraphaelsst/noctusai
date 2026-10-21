@@ -10,12 +10,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGet, mockPost, mockPatch, mockDelete, invalidateQueriesMock } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockPatch, mockDelete, invalidateQueriesMock, getQueriesDataMock, getQueryDataMock, setQueryDataMock } = vi.hoisted(() => ({
   mockGet: vi.fn(),
   mockPost: vi.fn(),
   mockPatch: vi.fn(),
   mockDelete: vi.fn(),
   invalidateQueriesMock: vi.fn(),
+  getQueriesDataMock: vi.fn(),
+  getQueryDataMock: vi.fn(),
+  setQueryDataMock: vi.fn(),
 }));
 vi.mock("@noctusai/seed/infra", () => ({
   api: { get: mockGet, post: mockPost, patch: mockPatch, delete: mockDelete },
@@ -61,7 +64,13 @@ vi.mock("@tanstack/react-query", () => {
       _mutationFn: mutationFn,
     }),
   );
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    cancelQueries: vi.fn(),
+    getQueriesData: getQueriesDataMock,
+    getQueryData: getQueryDataMock,
+    setQueryData: setQueryDataMock,
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 
@@ -195,6 +204,27 @@ describe("usePortalRoiOrigens", () => {
 });
 
 describe("usePortalRoiCampanhaMutations", () => {
+  beforeEach(() => {
+    // `mockReset` (not clearAllMocks): the cache seeds below must not leak into the next test.
+    getQueriesDataMock.mockReset().mockReturnValue([]);
+    getQueryDataMock.mockReset();
+    setQueryDataMock.mockReset();
+  });
+
+  it("commits the server's campanha into every cached list on update (cache write, not just a refetch)", async () => {
+    const key = ["sw", "portal-roi", "campanhas", {}];
+    const cached = [{ id: "c1", investimento: 100, cpc: null }, { id: "c2", investimento: 5, cpc: null }];
+    getQueriesDataMock.mockReturnValue([[key, cached]]);
+    getQueryDataMock.mockReturnValue(cached);
+    mockPatch.mockResolvedValue({ id: "c1", investimento: 200, cpc: 1.5 });
+    const { update } = usePortalRoiCampanhaMutations();
+    await (update as any).mutateAsync({ id: "c1", body: { investimento: 200 } });
+    expect(setQueryDataMock).toHaveBeenCalledWith(key, [
+      { id: "c1", investimento: 200, cpc: 1.5 },
+      { id: "c2", investimento: 5, cpc: null },
+    ]);
+  });
+
   it("POSTs /api/portal-roi/campanhas on create and invalidates the whole family", async () => {
     mockPost.mockResolvedValue({ id: "c1" });
     const { create } = usePortalRoiCampanhaMutations();

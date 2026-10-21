@@ -13,6 +13,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   DividirSaldoPayload,
@@ -50,12 +51,11 @@ export function useNegociacaoEstruturada(clienteId: string | null) {
 
 // ─── Shared write helpers ───────────────────────────────────────────────────
 
-function useSeedOnSuccess(clienteId: string) {
-  const qc = useQueryClient();
-  return (data: NegociacaoEstruturada) => {
-    qc.setQueryData(ESTRUTURADA_KEY(clienteId), data);
-  };
-}
+/** The aggregate comes back whole from every write that returns it: it IS the cache entry. */
+const seedTarget = (clienteId: string) => ({
+  queryKey: ESTRUTURADA_KEY(clienteId),
+  commit: (_old: NegociacaoEstruturada | undefined, saved: NegociacaoEstruturada) => saved,
+});
 
 function useInvalidateOnSuccess(clienteId: string) {
   const qc = useQueryClient();
@@ -67,91 +67,96 @@ function useInvalidateOnSuccess(clienteId: string) {
 // ─── Parcelas ───────────────────────────────────────────────────────────────
 
 export function useCreateParcela(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (payload: ParcelaCreate) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, ParcelaCreate>({
+    mutationFn: (payload) =>
       api.post<NegociacaoEstruturada>(`${base(clienteId)}/parcelas`, payload),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useUpdateParcela(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: ParcelaPatch }) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, { id: string; patch: ParcelaPatch }>({
+    mutationFn: ({ id, patch }) =>
       api.patch<NegociacaoEstruturada>(
         `${base(clienteId)}/parcelas/${id}`,
         patch,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useDeleteParcela(clienteId: string) {
-  const onSuccess = useInvalidateOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`${base(clienteId)}/parcelas/${id}`),
-    onSuccess,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${base(clienteId)}/parcelas/${id}`),
+    // The aggregate's recomputed totals (saldo, a_distribuir) converge on the settle.
+    targets: (id) => [
+      {
+        queryKey: ESTRUTURADA_KEY(clienteId),
+        optimistic: (old: NegociacaoEstruturada | undefined) =>
+          listOps.within(old, "parcelas", (l) => listOps.remove(l, id)),
+      },
+    ],
   });
 }
 
 /** Migration 195 — the FULL ordered id list; the server rewrites every
  *  `ordem` in one transaction and refuses a partial/stale list (400). */
 export function useReordenarParcelas(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (parcelaIds: string[]) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, string[]>({
+    mutationFn: (parcelaIds) =>
       api.put<NegociacaoEstruturada>(`${base(clienteId)}/parcelas/ordem`, {
         parcela_ids: parcelaIds,
       }),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useDividirSaldo(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (payload: DividirSaldoPayload) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, DividirSaldoPayload>({
+    mutationFn: (payload) =>
       api.post<NegociacaoEstruturada>(
         `${base(clienteId)}/parcelas/dividir-saldo`,
         payload,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 // ─── Favorecidos ────────────────────────────────────────────────────────────
 
 export function useCreateFavorecido(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (payload: FavorecidoCreate) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, FavorecidoCreate>({
+    mutationFn: (payload) =>
       api.post<NegociacaoEstruturada>(
         `${base(clienteId)}/favorecidos`,
         payload,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useUpdateFavorecido(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: FavorecidoPatch }) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, { id: string; patch: FavorecidoPatch }>({
+    mutationFn: ({ id, patch }) =>
       api.patch<NegociacaoEstruturada>(
         `${base(clienteId)}/favorecidos/${id}`,
         patch,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useDeleteFavorecido(clienteId: string) {
-  const onSuccess = useInvalidateOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.delete(`${base(clienteId)}/favorecidos/${id}`),
-    onSuccess,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${base(clienteId)}/favorecidos/${id}`),
+    // The aggregate's recomputed totals (saldo, a_distribuir) converge on the settle.
+    targets: (id) => [
+      {
+        queryKey: ESTRUTURADA_KEY(clienteId),
+        optimistic: (old: NegociacaoEstruturada | undefined) =>
+          listOps.within(old, "favorecidos", (l) => listOps.remove(l, id)),
+      },
+    ],
   });
 }
 
@@ -162,7 +167,7 @@ export function useDeleteFavorecido(clienteId: string) {
  */
 export function useSelecionarFavorecidoRegistro(clienteId: string) {
   const onSuccess = useInvalidateOnSuccess(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the response shape is not part of the contract and the selection rewires which favorecidos the aggregate lists
     mutationFn: ({
       atendimentoId,
       favorecidoId,
@@ -186,35 +191,38 @@ export function useSelecionarFavorecidoRegistro(clienteId: string) {
 // ─── Intermediários ─────────────────────────────────────────────────────────
 
 export function useCreateIntermediario(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (payload: IntermediarioCreate) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, IntermediarioCreate>({
+    mutationFn: (payload) =>
       api.post<NegociacaoEstruturada>(
         `${base(clienteId)}/intermediarios`,
         payload,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useUpdateIntermediario(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: IntermediarioPatch }) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, { id: string; patch: IntermediarioPatch }>({
+    mutationFn: ({ id, patch }) =>
       api.patch<NegociacaoEstruturada>(
         `${base(clienteId)}/intermediarios/${id}`,
         patch,
       ),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }
 
 export function useDeleteIntermediario(clienteId: string) {
-  const onSuccess = useInvalidateOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.delete(`${base(clienteId)}/intermediarios/${id}`),
-    onSuccess,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${base(clienteId)}/intermediarios/${id}`),
+    // The aggregate's recomputed totals (saldo, a_distribuir) converge on the settle.
+    targets: (id) => [
+      {
+        queryKey: ESTRUTURADA_KEY(clienteId),
+        optimistic: (old: NegociacaoEstruturada | undefined) =>
+          listOps.within(old, "intermediarios", (l) => listOps.remove(l, id)),
+      },
+    ],
   });
 }
 
@@ -230,7 +238,7 @@ export function useDeleteIntermediario(clienteId: string) {
  */
 export function useNegociacaoPosseMutation(clienteId: string) {
   const onSuccess = useInvalidateOnSuccess(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the PATCH answers the Negociacao row, not the /estruturada aggregate this cache holds
     mutationFn: (patch: NegociacaoPossePatch) =>
       api.patch(base(clienteId), patch),
     onSuccess,
@@ -245,10 +253,9 @@ export function useNegociacaoPosseMutation(clienteId: string) {
  * seed-not-invalidate rationale as every other write here.
  */
 export function useAtualizarTermos(clienteId: string) {
-  const onSuccess = useSeedOnSuccess(clienteId);
-  return useMutation({
-    mutationFn: (payload: TermosNegocioPut) =>
+  return useCacheWriteMutation<NegociacaoEstruturada, TermosNegocioPut>({
+    mutationFn: (payload) =>
       api.put<NegociacaoEstruturada>(`${base(clienteId)}/termos`, payload),
-    onSuccess,
+    targets: [seedTarget(clienteId)],
   });
 }

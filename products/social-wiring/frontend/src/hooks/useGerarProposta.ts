@@ -22,7 +22,7 @@ export interface PropostaCriada {
 
 export function useGerarProposta(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the response is {id,status,funil}, not the Proposta row; the stage move and metrics are server-computed across several views
     mutationFn: (visitaId: string) =>
       api.post<PropostaCriada>(`/api/clientes/${encodeURIComponent(clienteId)}/propostas`, {
         visita_id: visitaId,

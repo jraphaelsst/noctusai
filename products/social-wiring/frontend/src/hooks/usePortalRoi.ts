@@ -23,6 +23,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { ApiError, formatDate } from "@noctusai/lib";
 
 // ─── Types (mirror the FE↔BE contract verbatim — PROJECT.md §3) ────────────
@@ -197,29 +198,41 @@ export function usePortalRoiOrigens() {
 
 export function usePortalRoiCampanhaMutations() {
   const qc = useQueryClient();
-  // Every derived surface (resumo totals + per-portal rows + the campanhas
-  // list itself) is downstream of one write — invalidate the whole family
-  // rather than enumerating each key.
-  const invalidateAll = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  // Every derived surface (resumo totals + per-portal rows) is downstream of one write — the
+  // whole family refreshes behind it; the campanhas rows themselves are written directly.
+  const settle = [FAMILY_KEY];
+  const CAMPANHAS_PREFIX = [...FAMILY_KEY, "campanhas"] as const;
 
-  const create = useMutation<CampanhaRow, unknown, CampanhaWritableFields>({
+  const create = useMutation<CampanhaRow, unknown, CampanhaWritableFields>({ // noc-allow: invalidate-only — campanhas lists are filtered by origem/period, so where (and whether) the new row appears depends on the filter; resumo totals are server-computed
     mutationFn: (body) => api.post<CampanhaRow>(`${BASE}/campanhas`, body),
-    onSuccess: invalidateAll,
+    onSuccess: () => qc.invalidateQueries({ queryKey: FAMILY_KEY }),
   });
 
-  const update = useMutation<
-    CampanhaRow,
-    unknown,
-    { id: string; body: Partial<CampanhaWritableFields> }
-  >({
+  const update = useCacheWriteMutation<CampanhaRow, { id: string; body: Partial<CampanhaWritableFields> }>({
     mutationFn: ({ id, body }) =>
       api.patch<CampanhaRow>(`${BASE}/campanhas/${encodeURIComponent(id)}`, body),
-    onSuccess: invalidateAll,
+    // Every cached filter combination is reached by the prefix; the GENERATED columns come from the answer.
+    targets: ({ id, body }) => [
+      {
+        queryKey: CAMPANHAS_PREFIX,
+        match: "prefix",
+        optimistic: (old: CampanhaRow[] | undefined) => listOps.patch(old, id, body as Partial<CampanhaRow>),
+        commit: (old: CampanhaRow[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: settle,
   });
 
-  const remove = useMutation<unknown, unknown, string>({
+  const remove = useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/campanhas/${encodeURIComponent(id)}`),
-    onSuccess: invalidateAll,
+    targets: (id) => [
+      {
+        queryKey: CAMPANHAS_PREFIX,
+        match: "prefix",
+        optimistic: (old: CampanhaRow[] | undefined) => listOps.remove(old, id),
+      },
+    ],
+    invalidate: settle,
   });
 
   return { create, update, remove };

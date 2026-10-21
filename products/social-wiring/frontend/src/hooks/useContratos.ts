@@ -14,6 +14,7 @@
  * mutations go through `api`.
  */
 import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { ApiError } from "@noctusai/lib";
 import { api, supabase } from "@noctusai/seed/infra";
 
@@ -853,19 +854,17 @@ async function postAssinatura<T>(url: string, body: unknown): Promise<T> {
 export function useContratoMutations(clienteId: string) {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY(clienteId) });
+  /** The contracts list is the exact `KEY` entry (geração/assinatura/aditivos nest under it and are not lists). */
+  const contratoTarget = {
+    queryKey: KEY(clienteId),
+    commit: (old: ContratoOut[] | undefined, saved: ContratoOut) => listOps.replace(old, saved.id, saved),
+  };
 
-  const create = useMutation({
-    mutationFn: async ({
-      file,
-      titulo,
-      modelo,
-      rotulo,
-    }: {
-      file: File;
-      titulo: string;
-      modelo?: ContratoModelo;
-      rotulo?: string;
-    }) => {
+  const create = useCacheWriteMutation<
+    ContratoOut,
+    { file: File; titulo: string; modelo?: ContratoModelo; rotulo?: string }
+  >({
+    mutationFn: async ({ file, titulo, modelo, rotulo }) => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("titulo", titulo);
@@ -873,19 +872,11 @@ export function useContratoMutations(clienteId: string) {
       if (rotulo) formData.append("rotulo", rotulo);
       return postMultipart(base(clienteId), formData);
     },
-    onSuccess: invalidate,
+    targets: [contratoTarget],
   });
 
-  const addVersao = useMutation({
-    mutationFn: async ({
-      contratoId,
-      file,
-      rotulo,
-    }: {
-      contratoId: string;
-      file: File;
-      rotulo?: string;
-    }) => {
+  const addVersao = useCacheWriteMutation<ContratoOut, { contratoId: string; file: File; rotulo?: string }>({
+    mutationFn: async ({ contratoId, file, rotulo }) => {
       const formData = new FormData();
       formData.append("file", file);
       if (rotulo) formData.append("rotulo", rotulo);
@@ -894,16 +885,16 @@ export function useContratoMutations(clienteId: string) {
         formData,
       );
     },
-    onSuccess: invalidate,
+    targets: [contratoTarget],
   });
 
-  const patch = useMutation({
-    mutationFn: ({ contratoId, patch: body }: { contratoId: string; patch: ContratoPatch }) =>
+  const patch = useCacheWriteMutation<ContratoOut, { contratoId: string; patch: ContratoPatch }>({
+    mutationFn: ({ contratoId, patch: body }) =>
       api.patch<ContratoOut>(`${base(clienteId)}/${encodeURIComponent(contratoId)}`, body),
-    onSuccess: invalidate,
+    targets: [contratoTarget],
   });
 
-  const deleteVersao = useMutation({
+  const deleteVersao = useMutation({ // noc-allow: invalidate-only — removing a version re-derives versao_atual and the contract status server-side, and the response is empty
     mutationFn: ({
       contratoId,
       versaoId,
@@ -919,12 +910,14 @@ export function useContratoMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  const deleteContrato = useMutation({
-    mutationFn: ({ contratoId, motivo }: { contratoId: string; motivo: string }) =>
+  const deleteContrato = useCacheWriteMutation<unknown, { contratoId: string; motivo: string }>({
+    mutationFn: ({ contratoId, motivo }) =>
       api.delete(
         `${base(clienteId)}/${encodeURIComponent(contratoId)}?motivo=${encodeURIComponent(motivo)}`,
       ),
-    onSuccess: invalidate,
+    targets: ({ contratoId }) => [
+      { queryKey: KEY(clienteId), optimistic: (old: ContratoOut[] | undefined) => listOps.remove(old, contratoId) },
+    ],
   });
 
   /** 🔴 Same shape as `useFinanciamentoDocumentoMutations.getUrl` — call only
@@ -933,7 +926,7 @@ export function useContratoMutations(clienteId: string) {
    *  `formato` (migration 120) is omitted from the query string unless it is
    *  `"docx"` — the backend already defaults `formato=pdf`, so every
    *  pre-existing "Abrir"/"Baixar" call site stays byte-identical. */
-  const getUrl = useMutation({
+  const getUrl = useMutation({ // noc-allow: invalidate-only — mints a short-lived signed URL; no cached read depends on it
     mutationFn: ({
       contratoId,
       versaoId,
@@ -960,7 +953,7 @@ export function useContratoMutations(clienteId: string) {
    * version does) and this contract's `geracao` query (a fresh check after
    * the write, not the stale pre-generation one).
    */
-  const gerar = useMutation({
+  const gerar = useMutation({ // noc-allow: invalidate-only — the answer is a generation result, not the contract; the new gerado version, status and readiness are server-rendered
     mutationFn: ({
       contratoId,
       assinaturaData,
@@ -1046,24 +1039,18 @@ export function useContratoMutations(clienteId: string) {
    * query (the dispensed avisos only show up after a fresh readiness
    * check), same pairing `gerar` already uses.
    */
-  const processoLegado = useMutation({
-    mutationFn: ({
-      contratoId,
-      ativo,
-      motivo,
-    }: {
-      contratoId: string;
-      ativo: boolean;
-      motivo?: string;
-    }) =>
+  const processoLegado = useCacheWriteMutation<
+    ContratoOut,
+    { contratoId: string; ativo: boolean; motivo?: string }
+  >({
+    mutationFn: ({ contratoId, ativo, motivo }) =>
       api.put<ContratoOut>(
         `${base(clienteId)}/${encodeURIComponent(contratoId)}/processo-legado`,
         { ativo, motivo },
       ),
-    onSuccess: (_data, variables) => {
-      invalidate();
-      qc.invalidateQueries({ queryKey: GERACAO_KEY(clienteId, variables.contratoId) });
-    },
+    targets: [contratoTarget],
+    // The dispensed avisos only show up after a fresh readiness check.
+    invalidate: ({ contratoId }) => [GERACAO_KEY(clienteId, contratoId)],
   });
 
   /**
@@ -1073,8 +1060,8 @@ export function useContratoMutations(clienteId: string) {
    * version. Multipart because of the optional file — `postMultipart`
    * surfaces the server's own pt-BR message on every refusal.
    */
-  const marcarAssinadoFisico = useMutation({
-    mutationFn: ({ contratoId, file }: { contratoId: string; file?: File | null }) => {
+  const marcarAssinadoFisico = useCacheWriteMutation<ContratoOut, { contratoId: string; file?: File | null }>({
+    mutationFn: ({ contratoId, file }) => {
       const formData = new FormData();
       if (file) formData.append("file", file);
       return postMultipart(
@@ -1082,7 +1069,7 @@ export function useContratoMutations(clienteId: string) {
         formData,
       );
     },
-    onSuccess: invalidate,
+    targets: [contratoTarget],
   });
 
   /**
@@ -1093,13 +1080,23 @@ export function useContratoMutations(clienteId: string) {
    * whole contratos prefix — the version's review state, and the
    * validação/proveniência reads whose values it just confirmed.
    */
-  const aprovarRevisaoJuridica = useMutation({
-    mutationFn: ({ contratoId, versaoId }: { contratoId: string; versaoId: string }) =>
+  const aprovarRevisaoJuridica = useCacheWriteMutation<
+    { contrato: ContratoOut; confirmados: number },
+    { contratoId: string; versaoId: string }
+  >({
+    mutationFn: ({ contratoId, versaoId }) =>
       api.post<{ contrato: ContratoOut; confirmados: number }>(
         `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/revisao-juridica`,
         {},
       ),
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: KEY(clienteId),
+        commit: (old: ContratoOut[] | undefined, saved) => listOps.replace(old, saved.contrato.id, saved.contrato),
+      },
+    ],
+    // The validação/proveniência reads whose values the review just confirmed nest under the same prefix.
+    invalidate: [KEY(clienteId)],
   });
 
   return {

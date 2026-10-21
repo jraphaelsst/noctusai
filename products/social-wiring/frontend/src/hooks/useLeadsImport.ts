@@ -71,7 +71,7 @@ async function postXlsx<T>(path: string, file: File): Promise<T> {
 
 /** Parses the `.xlsx` and returns the diff WITHOUT writing anything. */
 export function useLeadImportPreview() {
-  return useMutation<ImportPreview, unknown, File>({
+  return useMutation<ImportPreview, unknown, File>({ // noc-allow: invalidate-only — a dry-run parse that writes nothing — there is no cache entry to update
     mutationFn: async (file) => {
       const res = await postXlsx<SuccessEnvelope<ImportPreview>>(`${BASE}/preview`, file);
       return res.data;
@@ -82,7 +82,7 @@ export function useLeadImportPreview() {
 /** Parses + upserts; invalidates every leads/analytics query family on success. */
 export function useLeadImportCommit() {
   const qc = useQueryClient();
-  return useMutation<ImportBatch, unknown, File>({
+  return useMutation<ImportBatch, unknown, File>({ // noc-allow: invalidate-only — a bulk upsert changes arbitrary rows across every leads query family (lists, analytics, batches); the response is only the batch summary
     mutationFn: async (file) => {
       const res = await postXlsx<SuccessEnvelope<ImportBatch>>(`${BASE}/commit`, file);
       return res.data;

@@ -1,7 +1,8 @@
 /** Julia › Disparos em massa (contract §14 W12). Envelope `{data, meta?}`. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import type { Transporte } from "@/hooks/useJuliaTransporte";
 
 export type DisparoTipo = "remarketing" | "atualizacao_anuncios";
@@ -79,31 +80,43 @@ export function useDisparo(id: string | null) {
   });
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: DISPAROS_KEY });
-}
+/** Status change shown on the list row and on the open detail, then confirmed by the settle. */
+const mudarStatus = (id: string, status: DisparoStatus) => [
+  {
+    queryKey: DISPAROS_KEY,
+    optimistic: (old: DisparosList | undefined) =>
+      old ? listOps.within(old, "items", (l) => listOps.patch(l, id, { status }) ?? l) : old,
+  },
+  {
+    queryKey: [...DISPAROS_KEY, id],
+    optimistic: (old: DisparoDetalhe | undefined) => listOps.merge(old, { status }),
+  },
+];
 
 export function useCriarDisparo() {
-  const inv = useInvalidar();
-  return useMutation<Disparo, unknown, DisparoInput>({
+  return useCacheWriteMutation<Disparo, DisparoInput>({
     mutationFn: async (body) => (await api.post<{ data: Disparo }>(BASE, body)).data,
-    onSuccess: inv,
+    targets: [
+      {
+        queryKey: DISPAROS_KEY,
+        commit: (old: DisparosList | undefined, saved) =>
+          old ? listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved) ?? l) : old,
+      },
+    ],
   });
 }
 
 export function useEnviarDisparo() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: async (id) => api.post(`${BASE}/${id}/enviar`, {}),
-    onSuccess: inv,
+    // The send starts server-side: it reads "enviando" until the worker finishes.
+    targets: (id) => mudarStatus(id, "enviando"),
   });
 }
 
 export function useCancelarDisparo() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: async (id) => api.post(`${BASE}/${id}/cancelar`, {}),
-    onSuccess: inv,
+    targets: (id) => mudarStatus(id, "cancelado"),
   });
 }

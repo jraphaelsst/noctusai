@@ -38,6 +38,9 @@ import {
 import { useCallback, useMemo } from "react";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+
+import type { WhatsAppConnectionLine } from "@/hooks/useWhatsAppConnections";
 
 const CONN_BASE = "/api/whatsapp/connections";
 const CONN_KEY = ["whatsapp", "connections"] as const;
@@ -179,7 +182,7 @@ export function useSendWhatsAppMessage(
   connId: string | null,
   chatId: string | null,
 ) {
-  return useMutation<Message, unknown, { text: string }>({
+  return useMutation<Message, unknown, { text: string }>({ // noc-allow: invalidate-only — no invalidation by design: the server persists the outbound row and the realtime stream delivers it as message.new, which patches the caches
     mutationFn: ({ text }) =>
       api.post<Message>(
         `${CONN_BASE}/${connId}/chats/${encodeURIComponent(chatId!)}/send`,
@@ -227,14 +230,19 @@ export function useMarkChatRead(connId: string | null) {
 // ─── Auto-reply ──────────────────────────────────────────────────────────────
 
 export function useSetAutoReply(connId: string | null) {
-  const qc = useQueryClient();
-
-  return useMutation<AutoReplyResult, unknown, { enabled: boolean }>({
+  return useCacheWriteMutation<AutoReplyResult, { enabled: boolean }>({
     mutationFn: ({ enabled }) =>
       api.put<AutoReplyResult>(`${CONN_BASE}/${connId}/auto-reply`, { enabled }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: CONN_KEY });
-    },
+    // The flag lives on the connection row of the list: draw the toggle, then take the server's value.
+    targets: ({ enabled }) => [
+      {
+        queryKey: CONN_KEY,
+        optimistic: (old: WhatsAppConnectionLine[] | undefined) =>
+          connId ? listOps.patch(old, connId, { auto_reply_enabled: enabled }) : old,
+        commit: (old: WhatsAppConnectionLine[] | undefined, saved) =>
+          listOps.patch(old, saved.connection_id, { auto_reply_enabled: saved.auto_reply_enabled }),
+      },
+    ],
   });
 }
 
@@ -287,7 +295,7 @@ export interface ApagarDadosResult {
 export function useApagarDadosChat(connId: string | null) {
   const qc = useQueryClient();
 
-  return useMutation<ApagarDadosResult, unknown, { chatId: string }>({
+  return useMutation<ApagarDadosResult, unknown, { chatId: string }>({ // noc-allow: invalidate-only — which chat rows survive an LGPD deletion (messages vs contact) is decided server-side; the response is only counts
     mutationFn: async ({ chatId }) => {
       const res = await api.post<{ data: ApagarDadosResult }>(
         `/api/julia/agente/conexoes/${connId}/chats/${encodeURIComponent(chatId)}/apagar-dados`,

@@ -10,6 +10,7 @@
 import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, supabase } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
@@ -565,23 +566,25 @@ export function useImovelDocumentoMutations(codigo: string) {
 
   // `motivo` travels as a REQUIRED query param, not a JSON body — the seed
   // `ApiClient.delete()` has no body parameter.
-  const remove = useMutation({
-    mutationFn: ({
-      documentoId,
-      motivo,
-      codigo: docCodigo,
-    }: {
-      documentoId: string;
-      motivo: string;
-      codigo?: string | null;
-    }) =>
+  const remove = useCacheWriteMutation<
+    unknown,
+    { documentoId: string; motivo: string; codigo?: string | null }
+  >({
+    mutationFn: ({ documentoId, motivo, codigo: docCodigo }) =>
       api.delete(
         `${base(docCodigo || codigo)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
       ),
-    onSuccess: invalidate,
+    targets: ({ documentoId }) => [
+      {
+        queryKey: DOCUMENTOS_KEY(codigo),
+        optimistic: (old: ImovelDocumento[] | undefined) => listOps.remove(old, documentoId),
+      },
+    ],
+    // Removing a matrícula moves the dados card and the título/ônus reads.
+    invalidate: [DADOS_KEY(codigo), ["sw", "imovel-contrato", codigo]],
   });
 
-  const getUrl = useMutation({
+  const getUrl = useMutation({ // noc-allow: invalidate-only — mints a short-lived signed URL (a recorded access); no cached read depends on it
     mutationFn: (ref: DocumentoRef) => {
       const r = refParts(ref, codigo);
       return api.get<DocumentoUrlResponse>(
@@ -594,14 +597,20 @@ export function useImovelDocumentoMutations(codigo: string) {
   // PLACE — never delete + re-upload, which would destroy this document's
   // `imovel_documento_acessos` LGPD access history (migration 109/111).
   // Mirrors `useDocumentoMutations().reextrair` (the card_hub Anexos organ).
-  const reextrair = useMutation({
-    mutationFn: (ref: DocumentoRef) => {
+  const reextrair = useCacheWriteMutation<ImovelDocumento, DocumentoRef>({
+    mutationFn: (ref) => {
       const r = refParts(ref, codigo);
       return api.post<ImovelDocumento>(
         `${base(r.codigo)}/documentos/${encodeURIComponent(r.documentoId)}/extrair`,
       );
     },
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: DOCUMENTOS_KEY(codigo),
+        commit: (old: ImovelDocumento[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: [DADOS_KEY(codigo), ["sw", "imovel-contrato", codigo]],
   });
 
   return { upload, remove, getUrl, reextrair };
@@ -673,27 +682,25 @@ export function useImovelConflitosPendentesOrg(enabled = true) {
  *  accepting writes `imovel_dados` for real, so the whole imóvel family and
  *  the contract readings it feeds go stale with it. */
 export function useDecidirImovelConflito() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      codigo,
-      conflitoId,
-      aceitar,
-    }: {
-      codigo: string;
-      conflitoId: string;
-      aceitar: boolean;
-    }) =>
+  return useCacheWriteMutation<ImovelConflito, { codigo: string; conflitoId: string; aceitar: boolean }>({
+    mutationFn: ({ codigo, conflitoId, aceitar }) =>
       api.put<ImovelConflito>(
         `${base(codigo)}/conflitos/${encodeURIComponent(conflitoId)}/decidir`,
         { aceitar },
       ),
-    onSuccess: (_r, { codigo }) =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: FAMILY_KEY(codigo) }),
-        qc.invalidateQueries({ queryKey: CONFLITOS_ORG_KEY }),
-        qc.invalidateQueries({ queryKey: ["sw", "imovel-contrato", codigo] }),
-      ]),
+    // Both lists hold PENDING conflicts: a decided one leaves them on the click.
+    targets: ({ codigo, conflitoId }) => [
+      {
+        queryKey: CONFLITOS_KEY(codigo),
+        optimistic: (old: ImovelConflito[] | undefined) => listOps.remove(old, conflitoId),
+      },
+      {
+        queryKey: CONFLITOS_ORG_KEY,
+        optimistic: (old: ImovelConflito[] | undefined) => listOps.remove(old, conflitoId),
+      },
+    ],
+    // Accepting writes `imovel_dados` for real: the family and the contract readings go stale.
+    invalidate: ({ codigo }) => [FAMILY_KEY(codigo), ["sw", "imovel-contrato", codigo]],
   });
 }
 

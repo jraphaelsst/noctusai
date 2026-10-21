@@ -7,6 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 
 export type EsperaUnidade = "minutos" | "horas" | "dias";
@@ -114,66 +115,103 @@ export function useRegua(id: string | undefined) {
   });
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: REGUAS_KEY });
-}
+/** Lists keep the settle refresh for server-computed fields (`tentativas_count`, readiness). */
+const REGUAS_SETTLE = [REGUAS_KEY];
 
 export function useCriarRegua() {
-  const inv = useInvalidar();
-  return useMutation<Regua, unknown, ReguaInput>({
+  return useCacheWriteMutation<Regua, ReguaInput>({
     mutationFn: async (body) => (await api.post<{ data: Regua }>(`${BASE}/reguas`, body)).data,
-    onSuccess: inv,
+    targets: [{ queryKey: REGUAS_KEY, commit: (old: Regua[] | undefined, saved) => listOps.append(old, saved) }],
   });
 }
 
 export function useAtualizarRegua(id: string) {
-  const inv = useInvalidar();
-  return useMutation<Regua, unknown, Partial<ReguaInput>>({
+  return useCacheWriteMutation<Regua, Partial<ReguaInput>>({
     mutationFn: async (body) => (await api.patch<{ data: Regua }>(`${BASE}/reguas/${id}`, body)).data,
-    onSuccess: inv,
+    // Patch (not replace): a list row may not carry the `tentativas` the answer omits.
+    targets: (body) => [
+      {
+        queryKey: REGUAS_KEY,
+        optimistic: (old: Regua[] | undefined) => listOps.patch(old, id, body),
+        commit: (old: Regua[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+      {
+        queryKey: reguaKey(id),
+        optimistic: (old: Regua | undefined) => listOps.merge(old, body),
+        commit: (old: Regua | undefined, saved) => listOps.merge(old, saved),
+      },
+    ],
   });
 }
 
 export function useExcluirRegua() {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/reguas/${id}`),
-    onSuccess: inv,
+    targets: (id) => [{ queryKey: REGUAS_KEY, optimistic: (old: Regua[] | undefined) => listOps.remove(old, id) }],
   });
 }
 
 export function useAtivarRegua(id: string) {
-  const inv = useInvalidar();
-  return useMutation<Regua, unknown, boolean>({
+  return useCacheWriteMutation<Regua, boolean>({
     mutationFn: async (ativar) =>
       (await api.post<{ data: Regua }>(`${BASE}/reguas/${id}/${ativar ? "ativar" : "desativar"}`, {})).data,
-    onSuccess: inv,
+    // The server may refuse (no active attempt): rollback restores, the answer commits.
+    targets: (ativar) => [
+      {
+        queryKey: REGUAS_KEY,
+        optimistic: (old: Regua[] | undefined) => listOps.patch(old, id, { ativa: ativar }),
+        commit: (old: Regua[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+      {
+        queryKey: reguaKey(id),
+        optimistic: (old: Regua | undefined) => listOps.merge(old, { ativa: ativar }),
+        commit: (old: Regua | undefined, saved) => listOps.merge(old, saved),
+      },
+    ],
   });
 }
 
 export function useCriarTentativa(reguaId: string) {
-  const inv = useInvalidar();
-  return useMutation<ReguaTentativa, unknown, TentativaInput>({
+  return useCacheWriteMutation<ReguaTentativa, TentativaInput>({
     mutationFn: async (body) =>
       (await api.post<{ data: ReguaTentativa }>(`${BASE}/reguas/${reguaId}/tentativas`, body)).data,
-    onSuccess: inv,
+    targets: [
+      {
+        queryKey: reguaKey(reguaId),
+        commit: (old: Regua | undefined, saved) =>
+          listOps.within(old, "tentativas", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    invalidate: REGUAS_SETTLE,
   });
 }
 
 export function useAtualizarTentativa(reguaId: string) {
-  const inv = useInvalidar();
-  return useMutation<ReguaTentativa, unknown, { id: string; body: Partial<TentativaInput> }>({
+  return useCacheWriteMutation<ReguaTentativa, { id: string; body: Partial<TentativaInput> }>({
     mutationFn: async ({ id, body }) =>
       (await api.patch<{ data: ReguaTentativa }>(`${BASE}/reguas/${reguaId}/tentativas/${id}`, body)).data,
-    onSuccess: inv,
+    targets: ({ id, body }) => [
+      {
+        queryKey: reguaKey(reguaId),
+        optimistic: (old: Regua | undefined) =>
+          listOps.within(old, "tentativas", (l) => listOps.patch(l, id, body)),
+        commit: (old: Regua | undefined, saved) =>
+          listOps.within(old, "tentativas", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    invalidate: REGUAS_SETTLE,
   });
 }
 
 export function useExcluirTentativa(reguaId: string) {
-  const inv = useInvalidar();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`${BASE}/reguas/${reguaId}/tentativas/${id}`),
-    onSuccess: inv,
+    targets: (id) => [
+      {
+        queryKey: reguaKey(reguaId),
+        optimistic: (old: Regua | undefined) => listOps.within(old, "tentativas", (l) => listOps.remove(l, id)),
+      },
+    ],
+    invalidate: REGUAS_SETTLE,
   });
 }

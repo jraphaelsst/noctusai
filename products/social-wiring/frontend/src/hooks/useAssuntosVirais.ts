@@ -161,7 +161,7 @@ function useInvalidateAssuntos() {
 
 export function useAdicionarAssuntos() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet), sorted by plays server-side, and the server dedupes (skipped) — placement is its call
     mutationFn: async (v: { marca_id: string; topics: string[] }) =>
       unwrap(
         await api.post<
@@ -174,7 +174,7 @@ export function useAdicionarAssuntos() {
 
 export function useAprovarAssunto() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the row moves between the pending/approved lists and counts are server-side
     mutationFn: async (id: string) =>
       unwrap(
         await api.post<Envelope<ViralTopic>>(
@@ -187,7 +187,7 @@ export function useAprovarAssunto() {
 
 export function useRejeitarAssunto() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the row moves between lists and counts are server-side
     mutationFn: async (id: string) =>
       unwrap(
         await api.post<Envelope<ViralTopic>>(
@@ -200,7 +200,7 @@ export function useRejeitarAssunto() {
 
 export function useExcluirAssunto() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); counts are server-side
     mutationFn: async (id: string) => {
       await api.delete(`${BASE}/${encodeURIComponent(id)}`);
     },
@@ -210,7 +210,7 @@ export function useExcluirAssunto() {
 
 export function useAssuntosEmMassa() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — bulk action over an infinite-query pages cache (no seed op for it yet); the response is only {affected}
     mutationFn: async (v: {
       marca_id: string;
       action: AssuntoBulkAction;
@@ -223,7 +223,7 @@ export function useAssuntosEmMassa() {
 
 export function useEsvaziarAssuntos() {
   const invalidate = useInvalidateAssuntos();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — empties a whole list server-side over an infinite-query pages cache; the response is only {deleted}
     mutationFn: async (v: { marca_id: string; status: AssuntoStatus }) =>
       unwrap(
         await api.post<Envelope<{ deleted: number }>>(`${BASE}/empty`, {

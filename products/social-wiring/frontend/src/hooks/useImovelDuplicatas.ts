@@ -10,13 +10,9 @@
  * catalog (`["sw","imoveis"]`, which covers list + detail), the picker search
  * (`["sw","cardHub","imoveisBusca"]`) and the duplicatas queue itself.
  */
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export type SinalDuplicata =
   | "matricula_cri"
@@ -61,11 +57,12 @@ export interface VinculoResultado {
 
 const DUPLICATAS_KEY = ["sw", "imoveis", "duplicatas"] as const;
 
-function invalidar(qc: QueryClient) {
-  qc.invalidateQueries({ queryKey: ["sw", "imoveis"] });
-  qc.invalidateQueries({ queryKey: ["sw", "cardHub", "imoveisBusca"] });
-  qc.invalidateQueries({ queryKey: DUPLICATAS_KEY });
-}
+/** The three families that render an imóvel: the catalog, the picker search and the duplicatas queue. */
+const FAMILIAS_IMOVEL = [
+  ["sw", "imoveis"],
+  ["sw", "cardHub", "imoveisBusca"],
+  DUPLICATAS_KEY,
+];
 
 export function useDuplicatasPendentes(enabled = true) {
   return useQuery({
@@ -77,38 +74,46 @@ export function useDuplicatasPendentes(enabled = true) {
   });
 }
 
+/** The queue holds PENDING duplicatas: an acted-on one leaves it on the click. */
+const sairDaFila = (id: string) => [
+  {
+    queryKey: [...DUPLICATAS_KEY, "pendente"] as const,
+    optimistic: (old: Duplicata[] | undefined) => listOps.remove(old, id),
+  },
+];
+
 export function useDescartarDuplicata() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
+  return useCacheWriteMutation<Duplicata, string>({
+    mutationFn: (id) =>
       api.post<Duplicata>(
         `/api/imoveis/duplicatas/${encodeURIComponent(id)}/descartar`,
         {},
       ),
-    onSuccess: () => invalidar(qc),
+    targets: sairDaFila,
+    invalidate: FAMILIAS_IMOVEL,
   });
 }
 
 export function useVincularDuplicata() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
+  return useCacheWriteMutation<VinculoResultado, string>({
+    mutationFn: (id) =>
       api.post<VinculoResultado>(
         `/api/imoveis/duplicatas/${encodeURIComponent(id)}/vincular`,
         {},
       ),
-    onSuccess: () => invalidar(qc),
+    targets: sairDaFila,
+    invalidate: FAMILIAS_IMOVEL,
   });
 }
 
 export function useDesvincularImovel() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — unlinking re-opens a duplicata and re-splits two imóveis across the catalog; the response is only the vínculo result
     mutationFn: (codigo: string) =>
       api.post<VinculoResultado>(
         `/api/imoveis/${encodeURIComponent(codigo)}/desvincular`,
         {},
       ),
-    onSuccess: () => invalidar(qc),
+    onSuccess: () => Promise.all(FAMILIAS_IMOVEL.map((queryKey) => qc.invalidateQueries({ queryKey }))),
   });
 }

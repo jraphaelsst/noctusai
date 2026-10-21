@@ -191,7 +191,7 @@ function useInvalidatePesquisa() {
 
 export function useAdicionarItens() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the server classifies and dedupes the lines, so placement and counts are its call
     mutationFn: async (v: { marca_id: string; variable_slug: string; lines: string[] }) =>
       unwrap(await api.post<Envelope<AdicionarResult>>(`${BASE}/items`, v)),
     onSuccess: invalidate,
@@ -200,7 +200,7 @@ export function useAdicionarItens() {
 
 export function useClassificarItens() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server classifies free text into variables (many rows across lists); the response is a summary
     mutationFn: async (v: { marca_id: string; text: string }) =>
       unwrap(await api.post<Envelope<ClassificarResult>>(`${BASE}/items/classify`, v)),
     onSuccess: invalidate,
@@ -209,7 +209,7 @@ export function useClassificarItens() {
 
 export function useAprovarItem() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the item moves between status lists and counts are server-side
     mutationFn: async (id: string) =>
       unwrap(await api.post<Envelope<PesquisaItem>>(`${BASE}/items/${encodeURIComponent(id)}/approve`)),
     onSuccess: invalidate,
@@ -218,7 +218,7 @@ export function useAprovarItem() {
 
 export function useRejeitarItem() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); the item moves between status lists and counts are server-side
     mutationFn: async (id: string) =>
       unwrap(await api.post<Envelope<PesquisaItem>>(`${BASE}/items/${encodeURIComponent(id)}/reject`)),
     onSuccess: invalidate,
@@ -227,7 +227,7 @@ export function useRejeitarItem() {
 
 export function useExcluirItem() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — infinite-query pages cache (no seed op for it yet); counts are server-side
     mutationFn: async (id: string) => {
       await api.delete(`${BASE}/items/${encodeURIComponent(id)}`);
     },
@@ -237,7 +237,7 @@ export function useExcluirItem() {
 
 export function useAcaoEmMassa() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — bulk action over an infinite-query pages cache (no seed op for it yet); the response is only {affected}
     mutationFn: async (v: { marca_id: string; action: BulkAction; ids: string[] }) =>
       unwrap(await api.post<Envelope<{ affected: number }>>(`${BASE}/items/bulk`, v)),
     onSuccess: invalidate,
@@ -246,7 +246,7 @@ export function useAcaoEmMassa() {
 
 export function useZerarPesquisa() {
   const invalidate = useInvalidatePesquisa();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — empties the whole research set server-side; the response is only {deleted}
     mutationFn: async (marca_id: string) =>
       unwrap(await api.post<Envelope<{ deleted: number }>>(`${BASE}/items/empty`, { marca_id, confirm: true })),
     onSuccess: invalidate,

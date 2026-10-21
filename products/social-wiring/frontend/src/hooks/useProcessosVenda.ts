@@ -21,7 +21,7 @@ export const PROCESSOS_QUERY_KEY = ["sw-processos"] as const;
 
 export function useArquivarProcesso() {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the board is a seed pipeline-seam envelope regrouped by the server (archived cards leave their column); the response is a bare flag row
     mutationFn: async (processoId: string) => {
       const result: any = await api.post(
         `/api/processos-venda/${processoId}/arquivar`,

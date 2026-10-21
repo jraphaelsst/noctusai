@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { ResultadoPatchInput } from "@/types/certidoesEstruturadas";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
@@ -80,7 +81,7 @@ const erroMsg = (e: unknown) => (e instanceof Error ? e.message : "Tente novamen
 /** `POST …/certidoes/partes/{kind}/{alvo_id}/emissao` — all (`tipos:null`) or selected. */
 export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — queues emissions that finish asynchronously; the response is only the consulta ids, the cells arrive via the polled partes read
     mutationFn: ({ kind, alvoId, tipos }: SolicitarEmissaoInput) =>
       api.post<EmissaoResponse>(
         `${clienteBase(clienteId)}/certidoes/partes/${kind}/${encodeURIComponent(alvoId)}/emissao`,
@@ -97,7 +98,7 @@ export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | 
 /** `POST …/certidoes/resultados/{resultado_id}/reemitir` — one cell, body `{}`. */
 export function useReemitirResultado(clienteId: string) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — queues a re-emission; the cell changes via the polled partes read
     mutationFn: (resultadoId: string) =>
       api.post<EmissaoResponse>(
         `${clienteBase(clienteId)}/certidoes/resultados/${encodeURIComponent(resultadoId)}/reemitir`,
@@ -117,7 +118,7 @@ export function useReemitirResultado(clienteId: string) {
  *  (the gate there flips from "aguardando ciência" to "pronto"). */
 export function useCienciaPcen(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the response is the acknowledgment, not the cell, and the contract readiness gate it flips is server-derived
     mutationFn: ({ resultadoId, acao }: { resultadoId: string; acao: "entendi" | "duvida" }) =>
       api.post<CienciaPcenResult>(
         `${clienteBase(clienteId)}/certidoes/resultados/${encodeURIComponent(resultadoId)}/ciencia-pcen`,
@@ -152,7 +153,7 @@ function useInvalidateCertidoes(clienteId: string) {
  *  back as `releitura.divergencias`). */
 export function useRelerResultado(clienteId: string) {
   const invalidate = useInvalidateCertidoes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — schedules a background re-read; the response carries nothing to write, the polled read shows the result
     mutationFn: (resultadoId: string) =>
       api.post(`/api/certidoes/resultados/${encodeURIComponent(resultadoId)}/reler`, {}),
     onSuccess: () => {
@@ -168,7 +169,7 @@ export function useRelerResultado(clienteId: string) {
  *  schedules the read). Resolves with how many were accepted / refused. */
 export function useRelerResultados(clienteId: string) {
   const invalidate = useInvalidateCertidoes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — schedules background re-reads, one call per cell; nothing in the responses is a cell
     mutationFn: async (resultadoIds: string[]) => {
       let relidos = 0;
       let recusados = 0;
@@ -205,7 +206,7 @@ export function useRelerResultados(clienteId: string) {
 export function useAplicarValoresLidos(clienteId: string) {
   const qc = useQueryClient();
   const invalidate = useInvalidateCertidoes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the PATCH re-derives the cell (lock, aviso, divergences) and contract readiness server-side; the response is not the cell
     mutationFn: ({ resultadoId, divergencias }: { resultadoId: string; divergencias: CertidaoDivergencia[] }) =>
       api.patch(
         `/api/certidoes/resultados/${encodeURIComponent(resultadoId)}`,
@@ -225,7 +226,7 @@ export function useAplicarValoresLidos(clienteId: string) {
  *  already stored. */
 export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidateCertidoes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — schedules background re-reads for the whole card; the response is counts only
     mutationFn: () =>
       api.post<RelerCertidoesResponse>(`${clienteBase(clienteId)}/certidoes/reler`, {
         atendimento_id: atendimentoId ?? null,
@@ -254,7 +255,7 @@ export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string 
 /** Upload into a cell: §1.4 ensure-cell, then the EXISTING §1.5 upload route. */
 export function useUploadNaCelula(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the server reads the PDF asynchronously; the response is the ensured cell ids, not the filled cell
     mutationFn: async ({ kind, alvoId, linhaChave, file }: UploadCelulaInput) => {
       if (file.type !== "application/pdf") throw new Error("Apenas arquivos PDF são aceitos.");
       const cel = await api.post<CelulaEnsureResponse>(`${clienteBase(clienteId)}/certidoes/celulas`, {
@@ -289,7 +290,7 @@ export function useUploadNaCelula(clienteId: string, atendimentoId?: string | nu
  */
 export function useDigitarNaCelula(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the PATCH re-derives the whole cell server-side and the response is just the resultado id
     mutationFn: async ({ kind, alvoId, linhaChave, resultadoId, patch }: DigitarCelulaInput) => {
       let id = resultadoId;
       if (!id) {
@@ -318,7 +319,7 @@ export function useDigitarNaCelula(clienteId: string, atendimentoId?: string | n
 /** Custom-row CRUD (§1.6, EXISTING routes) — invalidates THIS tab's key. */
 export function useCriarLinhaPartes(clienteId: string) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — a new custom row adds a cell to every party in the server-built matrix; the response is only the row
     mutationFn: (nome: string) =>
       api.post<CertidaoMatrizLinhaCustomizada>(`${clienteBase(clienteId)}/certidoes/matriz/linhas`, {
         nome,
@@ -330,7 +331,7 @@ export function useCriarLinhaPartes(clienteId: string) {
 
 export function useRenomearLinhaPartes(clienteId: string) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the custom row label is rendered inside the server-built matrix; the response is only the row
     mutationFn: ({ linhaId, nome }: { linhaId: string; nome: string }) =>
       api.patch<CertidaoMatrizLinhaCustomizada>(
         `${clienteBase(clienteId)}/certidoes/matriz/linhas/${linhaId}`,
@@ -343,7 +344,7 @@ export function useRenomearLinhaPartes(clienteId: string) {
 
 export function useRemoverLinhaPartes(clienteId: string) {
   const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — removing a custom row drops its cells from every party in the server-built matrix
     mutationFn: (linhaId: string) =>
       api.delete(`${clienteBase(clienteId)}/certidoes/matriz/linhas/${linhaId}`),
     onSuccess: () => void invalidate(),
@@ -389,7 +390,7 @@ export function useAntigosProprietarios(clienteId: string | null, atendimentoId?
 /** `POST …/sincronizar` (§3) — idempotent backstop, fired when the subtab opens. */
 export function useSincronizarAntigos(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartesEAntigos(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — syncs antigos owners from the matrícula and adds party rows server-side; the response is a created list, not the partes
     mutationFn: () =>
       api.post<AntigosSincronizacao>(
         `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/sincronizar`,
@@ -407,7 +408,7 @@ export function useSincronizarAntigos(clienteId: string, atendimentoId?: string 
 /** `POST …/antigos-proprietarios` (§4) — manual add. */
 export function useAdicionarAntigo(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartesEAntigos(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — adds an antigo party (new row + cells in the server-built matrix); the response does not carry the partes
     mutationFn: (input: AntigoCriarInput) =>
       api.post<AntigoCriarResponse>(`${clienteBase(clienteId)}/certidoes/antigos-proprietarios`, {
         ...input,
@@ -424,7 +425,7 @@ export function useAdicionarAntigo(clienteId: string, atendimentoId?: string | n
 /** `DELETE …/antigos-proprietarios/{parte_id}` (§4) — antigo rows only. */
 export function useRemoverAntigo(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartesEAntigos(clienteId);
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — drops an antigo party and its cells from the server-built matrix, and the header counts
     mutationFn: (parteId: string) =>
       api.delete<void>(
         `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/${encodeURIComponent(parteId)}${atQuery(atendimentoId)}`,
@@ -440,16 +441,21 @@ export function useRemoverAntigo(clienteId: string, atendimentoId?: string | nul
 /** `PUT|DELETE …/antigos-proprietarios/dispensa` (§5) — admin only. A 403 is
  *  NOT toasted here: the caller renders it inline as "sem permissão". */
 export function useDispensaAntigos(clienteId: string, atendimentoId?: string | null) {
-  const invalidate = useInvalidatePartesEAntigos(clienteId);
   const base = `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/dispensa`;
-  return useMutation({
-    mutationFn: (input: { motivo: string } | null) =>
+  return useCacheWriteMutation<AntigosEstado, { motivo: string } | null>({
+    mutationFn: (input) =>
       input
         ? api.put<AntigosEstado>(base, { motivo: input.motivo, atendimento_id: atendimentoId ?? null })
         : api.delete<AntigosEstado>(`${base}${atQuery(atendimentoId)}`),
+    // Both verbs answer with the new header state: it is the cache entry.
+    targets: [{ queryKey: antigosKey(clienteId, atendimentoId), commit: (_old, saved) => saved }],
+    // The rows and the contract readiness move with the dispensa.
+    invalidate: [
+      ["sw", "clientes", clienteId, "certidoes", "partes"],
+      ["sw", "clientes", clienteId, "contratos"],
+    ],
     onSuccess: (_r, input) => {
       toast.success(input ? "Antigos proprietários dispensados neste negócio." : "Exigência reativada.");
-      void invalidate();
     },
   });
 }
@@ -458,16 +464,39 @@ export function useDispensaAntigos(clienteId: string, atendimentoId?: string | n
  *  certidões (owner 2026-10-21). Turning the antigos switch ON also runs the
  *  matrícula sync, so the group (and its automatic emissions) appears at once. */
 export function useDefinirExigencias(clienteId: string, atendimentoId?: string | null) {
-  const invalidate = useInvalidatePartesEAntigos(clienteId);
   const sincronizar = useSincronizarAntigos(clienteId, atendimentoId);
-  return useMutation({
-    mutationFn: (input: Partial<ExigenciasCertidoes>) =>
-      api.put<{ atendimento_id: string; exigencias: ExigenciasCertidoes }>(
-        `${clienteBase(clienteId)}/certidoes/exigencias`,
-        { ...input, atendimento_id: atendimentoId ?? null },
-      ),
+  type Resposta = { atendimento_id: string; exigencias: ExigenciasCertidoes };
+  const comExigencias = (old: CertidoesPartesResponse | undefined, e: Partial<ExigenciasCertidoes>) =>
+    old && {
+      ...old,
+      exigencias: { exigir_certidoes_antigos: false, exigir_crf_fgts: false, ...old.exigencias, ...e },
+    };
+  return useCacheWriteMutation<Resposta, Partial<ExigenciasCertidoes>>({
+    mutationFn: (input) =>
+      api.put<Resposta>(`${clienteBase(clienteId)}/certidoes/exigencias`, {
+        ...input,
+        atendimento_id: atendimentoId ?? null,
+      }),
+    // The switches are predictable from the input: draw them on the click, then take the server's.
+    targets: (input) => [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        optimistic: (old: CertidoesPartesResponse | undefined) => comExigencias(old, input),
+        commit: (old: CertidoesPartesResponse | undefined, saved) => comExigencias(old, saved.exigencias),
+      },
+      {
+        queryKey: antigosKey(clienteId, atendimentoId),
+        optimistic: (old: AntigosEstado | undefined) =>
+          old && input.exigir_certidoes_antigos !== undefined ? { ...old, exigencia_ativa: input.exigir_certidoes_antigos } : old,
+      },
+    ],
+    // Turning a switch on adds rows (antigos group, CRF) the server builds.
+    invalidate: [
+      ["sw", "clientes", clienteId, "certidoes", "partes"],
+      ["sw", "clientes", clienteId, "certidoes", "antigos-proprietarios"],
+      ["sw", "clientes", clienteId, "contratos"],
+    ],
     onSuccess: (_r, input) => {
-      void invalidate();
       if (input.exigir_certidoes_antigos) sincronizar.mutate();
     },
     onError: (e) => toast.error("Não foi possível salvar a exigência", { description: erroMsg(e) }),

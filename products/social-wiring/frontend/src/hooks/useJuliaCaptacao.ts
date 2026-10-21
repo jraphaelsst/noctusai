@@ -8,9 +8,10 @@
  * Loading = two signals off `data` (never `isLoading`); `placeholderData: prev`
  * keeps the feed on screen while filters / page / page size change.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export type CaptacaoStatus = "nova" | "registrada" | "descartada";
 export type StatusFiltro = "" | CaptacaoStatus;
@@ -49,19 +50,32 @@ export function useJuliaCaptacoes(f: CaptacaoFiltro) {
   });
 }
 
+/** Every cached page / filter combination of the feed is reached by the prefix target. */
 export function useRegistrarCaptacao() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) =>
+  return useCacheWriteMutation<{ imovel_id: string; imovel_codigo: string }, string>({
+    mutationFn: async (id) =>
       (await api.post(`/api/julia/captacoes/${id}/registrar`, {})).data as { imovel_id: string; imovel_codigo: string },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    targets: (id) => [
+      {
+        queryKey: KEY,
+        match: "prefix",
+        optimistic: (old: CaptacoesPage | undefined) => pageOps.patch(old, id, { status: "registrada" }),
+        commit: (old: CaptacoesPage | undefined, saved) =>
+          pageOps.patch(old, id, { status: "registrada", imovel_id: saved.imovel_id, imovel_codigo: saved.imovel_codigo }),
+      },
+    ],
   });
 }
 
 export function useDescartarCaptacao() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.post(`/api/julia/captacoes/${id}/descartar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.post(`/api/julia/captacoes/${id}/descartar`, {}),
+    targets: (id) => [
+      {
+        queryKey: KEY,
+        match: "prefix",
+        optimistic: (old: CaptacoesPage | undefined) => pageOps.patch(old, id, { status: "descartada" }),
+      },
+    ],
   });
 }
