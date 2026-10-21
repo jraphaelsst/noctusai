@@ -5,7 +5,8 @@
  * `fingerprint` only. `useSetCredential` sends a value the page never keeps
  * after the request (write-only field).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 export const CREDENTIALS_KEY = ["agents", "admin", "credentials"] as const;
@@ -85,51 +86,51 @@ export function useCredentials({ enabled = true }: { enabled?: boolean } = {}) {
   };
 }
 
-function useReplaceOne() {
-  const qc = useQueryClient();
-  return (updated: Credential) =>
-    qc.setQueryData<CredentialList>(CREDENTIALS_KEY, (prev) => {
-      if (!prev) return prev;
-      const items = prev.items.map((c) => (c.name === updated.name ? updated : c));
-      return { ...prev, items, alerts: items.filter((c) => c.severity !== "info").length };
-    });
+/** Commit one credential the server returned into the cached list (never a secret — prefix/fingerprint only). */
+function replaceOne(prev: CredentialList | undefined, updated: Credential): CredentialList | undefined {
+  if (!prev) return prev;
+  const items = prev.items.map((c) => (c.name === updated.name ? updated : c));
+  return { ...prev, items, alerts: items.filter((c) => c.severity !== "info").length };
 }
 
+const credentialsTarget = <TData, TVars>(pick: (r: TData) => Credential) => [
+  {
+    queryKey: CREDENTIALS_KEY,
+    commit: (old: CredentialList | undefined, result: TData) => replaceOne(old, pick(result)),
+  },
+];
+
 export function useSetCredential() {
-  const replace = useReplaceOne();
-  return useMutation<Credential, unknown, { name: string; value: string }>({
+  return useCacheWriteMutation<Credential, { name: string; value: string }>({
     mutationFn: ({ name, value }) => api.put<Credential>(`/api/admin/credentials/${name}`, { value }),
-    onSuccess: replace,
+    targets: credentialsTarget<Credential, { name: string; value: string }>((c) => c),
   });
 }
 
 export function useImportCredential() {
-  const replace = useReplaceOne();
-  return useMutation<Credential, unknown, { name: string }>({
+  return useCacheWriteMutation<Credential, { name: string }>({
     mutationFn: ({ name }) => api.post<Credential>(`/api/admin/credentials/${name}/import-env`, {}),
-    onSuccess: replace,
+    targets: credentialsTarget<Credential, { name: string }>((c) => c),
   });
 }
 
 export function useProbeCredential() {
-  return useMutation<ProbeResult, unknown, { name: string }>({
+  return useMutation<ProbeResult, unknown, { name: string }>({ // noc-allow: invalidate-only — a health probe: returns a one-off ProbeResult, writes nothing and has no cached read to update
     mutationFn: ({ name }) => api.post<ProbeResult>(`/api/admin/credentials/${name}/health`, {}),
   });
 }
 
 export function useRenewCredential() {
-  const replace = useReplaceOne();
-  return useMutation<RenewResult, unknown, { name: string }>({
+  return useCacheWriteMutation<RenewResult, { name: string }>({
     mutationFn: ({ name }) => api.post<RenewResult>(`/api/admin/credentials/${name}/renew`, {}),
-    onSuccess: (result) => replace(result.credential),
+    targets: credentialsTarget<RenewResult, { name: string }>((r) => r.credential),
   });
 }
 
 export function useRingAction() {
-  const replace = useReplaceOne();
-  return useMutation<Credential, unknown, { action: "rotate" | "prune" }>({
+  return useCacheWriteMutation<Credential, { action: "rotate" | "prune" }>({
     mutationFn: ({ action }) =>
       api.post<Credential>(`/api/admin/credentials/approval_assertion_secrets/${action}`, {}),
-    onSuccess: replace,
+    targets: credentialsTarget<Credential, { action: "rotate" | "prune" }>((c) => c),
   });
 }

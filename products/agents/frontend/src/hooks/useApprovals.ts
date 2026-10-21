@@ -7,7 +7,8 @@
  * contract §E.7) — both decide through the SAME mutation shape so a
  * decision made from either surface invalidates both caches.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 
@@ -38,9 +39,18 @@ export interface Approval {
   updated_at: string;
 }
 
-interface ApprovalListResponse {
+export interface ApprovalListResponse {
   items: Approval[];
   total: number;
+}
+
+/** The decided approval leaves the cached pending list (and `total`). Shared with `useBiaChat.ts`. */
+export function withoutApproval(
+  old: ApprovalListResponse | undefined,
+  approvalId: string,
+): ApprovalListResponse | undefined {
+  if (!old?.items.some((a) => a.id === approvalId)) return old;
+  return { ...old, items: old.items.filter((a) => a.id !== approvalId), total: Math.max(0, old.total - 1) };
 }
 
 export function useApprovals() {
@@ -66,21 +76,20 @@ export function useApprovals() {
  * `pendente` row that no longer exists.
  */
 export function useDecideApproval() {
-  const qc = useQueryClient();
-
-  const mutation = useMutation<Approval, unknown, { approvalId: string; aprovada: boolean }>({
+  const mutation = useCacheWriteMutation<Approval, { approvalId: string; aprovada: boolean }>({
     mutationFn: ({ approvalId, aprovada }) =>
       api.post<Approval>(`/api/approvals/${approvalId}/decision`, { aprovada }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: APPROVALS_KEY });
-      qc.invalidateQueries({ queryKey: CONVERSATIONS_PREFIX });
-    },
-    onError: () => {
-      // already_decided / orphaned — refetch so the card/list reflects the
-      // authoritative server state (contract §E.2 "then refetch").
-      qc.invalidateQueries({ queryKey: APPROVALS_KEY });
-      qc.invalidateQueries({ queryKey: CONVERSATIONS_PREFIX });
-    },
+    // A decided approval leaves the pending list on the click. On error the card comes back
+    // (rollback) and settle re-reads the authoritative state — already_decided / orphaned
+    // (contract §E.2 "then refetch"). Open conversations' messages carry the decision card:
+    // server-rendered, so they are refreshed in the background, on success AND on error.
+    targets: ({ approvalId }) => [
+      {
+        queryKey: APPROVALS_KEY,
+        optimistic: (old: ApprovalListResponse | undefined) => withoutApproval(old, approvalId),
+      },
+    ],
+    invalidate: [CONVERSATIONS_PREFIX],
   });
 
   return {

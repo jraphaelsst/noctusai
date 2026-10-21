@@ -8,7 +8,8 @@
  *   GET /api/studio/agents/{key}/draft/skills-biblioteca
  *   PUT|DELETE /api/studio/agents/{key}/draft/skills-biblioteca/{skill}
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type { BibliotecaRefInput, BibliotecaRefs, BibliotecaSkill } from "@/api/studio/types-julia";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
@@ -36,28 +37,40 @@ export function useBibliotecaRefs(key: string, versionId: string | null | undefi
   return { ...toView(q), data: q.data?.items };
 }
 
-function useAfterPin(key: string) {
-  const qc = useQueryClient();
-  return () => {
-    void qc.invalidateQueries({ queryKey: ["studio", key, "biblioteca-refs"] });
-    void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
-    void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
-    void qc.invalidateQueries({ queryKey: ["studio", key, "payload"] });
-  };
+/**
+ * Pins are written to the DRAFT: the server answers with the draft's full pin list (it assigns
+ * `nova_versao`), so this is commit-only — never optimistic. The answer carries its `version_id`, so
+ * it lands in exactly the refs entry of that version; the compiled/payload views settle behind.
+ */
+function pinTargets(key: string) {
+  return [
+    {
+      queryKey: ["studio", key, "biblioteca-refs"],
+      match: "prefix" as const,
+      commit: (old: BibliotecaRefs | undefined, result: BibliotecaRefs) =>
+        old && old.version_id === result.version_id ? result : old,
+    },
+  ];
 }
 
+const pinInvalidate = (key: string) => [
+  studioKeys.detail(key),
+  studioKeys.compiledAll(key),
+  ["studio", key, "payload"],
+];
+
 export function useFixarSkill(key: string) {
-  const after = useAfterPin(key);
-  return useMutation<BibliotecaRefs, unknown, { skill: string; ref: BibliotecaRefInput }>({
+  return useCacheWriteMutation<BibliotecaRefs, { skill: string; ref: BibliotecaRefInput }>({
     mutationFn: ({ skill, ref }) => api.put<BibliotecaRefs>(`${base(key)}/draft/skills-biblioteca/${seg(skill)}`, ref),
-    onSuccess: after,
+    targets: pinTargets(key),
+    invalidate: pinInvalidate(key),
   });
 }
 
 export function useRemoverSkillFixada(key: string) {
-  const after = useAfterPin(key);
-  return useMutation<BibliotecaRefs, unknown, { skill: string }>({
+  return useCacheWriteMutation<BibliotecaRefs, { skill: string }>({
     mutationFn: ({ skill }) => api.delete<BibliotecaRefs>(`${base(key)}/draft/skills-biblioteca/${seg(skill)}`),
-    onSuccess: after,
+    targets: pinTargets(key),
+    invalidate: pinInvalidate(key),
   });
 }

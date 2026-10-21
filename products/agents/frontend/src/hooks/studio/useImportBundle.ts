@@ -49,7 +49,7 @@ export interface ImportBundlePreview {
 
 export function useImportBundle() {
   const qc = useQueryClient();
-  return useMutation<ImportBundleSummary, unknown, { key: string; bundle: unknown; dryRun: boolean }>({
+  return useMutation<ImportBundleSummary, unknown, { key: string; bundle: unknown; dryRun: boolean }>({ // noc-allow: invalidate-only — the answer is an import summary (counts), not rows; the agent list entry and the replaced draft are composed by the server
     mutationFn: ({ key, bundle, dryRun }) =>
       api.post<ImportBundleSummary>(`/api/studio/agents/${seg(key)}/import?dry_run=${dryRun ? "true" : "false"}`, bundle),
     onSuccess: (summary, { key }) => {

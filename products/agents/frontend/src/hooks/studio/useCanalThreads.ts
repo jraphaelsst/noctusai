@@ -45,7 +45,7 @@ export function useThreadMensagens(key: string, threadId: string | null) {
 
 export function useAlterarParticipante(key: string) {
   const qc = useQueryClient();
-  return useMutation<Participante, unknown, { threadId: string; input: ParticipanteEstadoInput }>({
+  return useMutation<Participante, unknown, { threadId: string; input: ParticipanteEstadoInput }>({ // noc-allow: invalidate-only — the answer (a Participante) is not part of any cached read (see GAP above); the lines/controls it changes are server-generated events
     mutationFn: ({ threadId, input }) =>
       api.patch<Participante>(`/api/studio/threads/${seg(threadId)}/participantes/${seg(key)}`, input),
     onSuccess: (_p, { threadId }) => {

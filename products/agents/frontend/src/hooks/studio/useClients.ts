@@ -13,6 +13,7 @@
  * shape (the §B1 writable columns).
  */
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type {
   Client,
@@ -23,15 +24,38 @@ import type {
   ClientListResponse,
   ClientPatchInput,
 } from "@/api/studio/types";
+import { editList } from "../cacheEnvelope";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 
 const base = (key: string) => `/api/studio/agents/${seg(key)}/clients`;
 
-function afterClientWrite(qc: QueryClient, key: string, clientId?: string) {
+/** Derived views of a client write: the list's `total_entradas` and the compiled `# Cliente em foco` block. */
+const afterEntryWrite = (key: string) => [studioKeys.clients(key), studioKeys.compiledAll(key)];
+
+function afterClientWrite(qc: QueryClient, key: string) {
   void qc.invalidateQueries({ queryKey: studioKeys.clients(key), exact: true });
-  if (clientId) void qc.invalidateQueries({ queryKey: studioKeys.client(key, clientId) });
   void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
 }
+
+/** Edit one cached client detail (`entradas`); the list/compiled views refresh behind. */
+const clientTarget = <TData, TVars>(
+  key: string,
+  clientId: string,
+  rest: {
+    optimistic?: (entradas: ClientEntry[], vars: TVars, tempId: string) => ClientEntry[] | undefined;
+    commit?: (entradas: ClientEntry[], result: TData, tempId: string) => ClientEntry[] | undefined;
+  },
+) => ({
+  queryKey: studioKeys.client(key, clientId),
+  optimistic: rest.optimistic
+    ? (old: Client | undefined, vars: TVars, ctx: { tempId: string }) =>
+        editList(old, "entradas", (l) => rest.optimistic!(l, vars, ctx.tempId))
+    : undefined,
+  commit: rest.commit
+    ? (old: Client | undefined, result: TData, _vars: TVars, ctx: { tempId: string }) =>
+        editList(old, "entradas", (l) => rest.commit!(l, result, ctx.tempId))
+    : undefined,
+});
 
 export function useClients(key: string) {
   const q = useQuery<ClientListResponse>({
@@ -77,26 +101,41 @@ export function useUpdateClient(key: string) {
 }
 
 export function useCreateClientEntry(key: string) {
-  const qc = useQueryClient();
-  return useMutation<ClientEntry, unknown, { clientId: string; entry: ClientEntryCreateInput }>({
+  type Vars = { clientId: string; entry: ClientEntryCreateInput };
+  // The server assigns id + created_at, so commit-only (the entry shows after one round trip).
+  return useCacheWriteMutation<ClientEntry, Vars>({
     mutationFn: ({ clientId, entry }) => api.post<ClientEntry>(`${base(key)}/${seg(clientId)}/entries`, entry),
-    onSuccess: (_e, { clientId }) => afterClientWrite(qc, key, clientId),
+    targets: ({ clientId }) => [
+      clientTarget<ClientEntry, Vars>(key, clientId, {
+        commit: (l, saved, tempId) => listOps.replace(l, tempId, saved),
+      }),
+    ],
+    invalidate: afterEntryWrite(key),
   });
 }
 
 export function useUpdateClientEntry(key: string) {
-  const qc = useQueryClient();
-  return useMutation<ClientEntry, unknown, { clientId: string; entryId: string; patch: ClientEntryPatchInput }>({
+  type Vars = { clientId: string; entryId: string; patch: ClientEntryPatchInput };
+  return useCacheWriteMutation<ClientEntry, Vars>({
     mutationFn: ({ clientId, entryId, patch }) =>
       api.patch<ClientEntry>(`${base(key)}/${seg(clientId)}/entries/${seg(entryId)}`, patch),
-    onSuccess: (_e, { clientId }) => afterClientWrite(qc, key, clientId),
+    targets: ({ clientId, entryId }) => [
+      clientTarget<ClientEntry, Vars>(key, clientId, {
+        optimistic: (l, { patch }) => listOps.patch(l, entryId, patch as Partial<ClientEntry>),
+        commit: (l, saved) => listOps.replace(l, entryId, saved),
+      }),
+    ],
+    invalidate: afterEntryWrite(key),
   });
 }
 
 export function useDeleteClientEntry(key: string) {
-  const qc = useQueryClient();
-  return useMutation<null, unknown, { clientId: string; entryId: string }>({
+  type Vars = { clientId: string; entryId: string };
+  return useCacheWriteMutation<null, Vars>({
     mutationFn: ({ clientId, entryId }) => api.delete<null>(`${base(key)}/${seg(clientId)}/entries/${seg(entryId)}`),
-    onSuccess: (_e, { clientId }) => afterClientWrite(qc, key, clientId),
+    targets: ({ clientId, entryId }) => [
+      clientTarget<null, Vars>(key, clientId, { optimistic: (l) => listOps.remove(l, entryId) }),
+    ],
+    invalidate: afterEntryWrite(key),
   });
 }

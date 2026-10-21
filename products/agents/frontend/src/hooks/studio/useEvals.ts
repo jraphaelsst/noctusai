@@ -18,6 +18,7 @@
  */
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type {
   EvalCase,
@@ -29,6 +30,7 @@ import type {
   EvalRunDetail,
   EvalRunListResponse,
 } from "@/api/studio/types-ke";
+import { editList } from "../cacheEnvelope";
 import { studioKeys } from "./keys";
 
 const casesKey = (agentKey: string) => ["studio", agentKey, "evals", "cases"] as const;
@@ -56,27 +58,45 @@ export function useEvalCases(agentKey: string) {
 }
 
 export function useCreateEvalCase(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: EvalCaseCreate) => api.post<EvalCase>(`/api/studio/agents/${agentKey}/evals/cases`, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: casesKey(agentKey) }),
+  return useCacheWriteMutation<EvalCase, EvalCaseCreate>({
+    mutationFn: (payload) => api.post<EvalCase>(`/api/studio/agents/${agentKey}/evals/cases`, payload),
+    // The server assigns the id: commit-only.
+    targets: [
+      {
+        queryKey: casesKey(agentKey),
+        commit: (old: EvalCaseListResponse | undefined, saved, _v, { tempId }) =>
+          editList(old, "items", (l) => listOps.replace(l, tempId, saved)),
+      },
+    ],
   });
 }
 
 export function useUpdateEvalCase(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ caseId, patch }: { caseId: string; patch: EvalCasePatch }) =>
+  return useCacheWriteMutation<EvalCase, { caseId: string; patch: EvalCasePatch }>({
+    mutationFn: ({ caseId, patch }) =>
       api.patch<EvalCase>(`/api/studio/agents/${agentKey}/evals/cases/${caseId}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: casesKey(agentKey) }),
+    targets: ({ caseId }) => [
+      {
+        queryKey: casesKey(agentKey),
+        optimistic: (old: EvalCaseListResponse | undefined, { patch }) =>
+          editList(old, "items", (l) => listOps.patch(l, caseId, patch as Partial<EvalCase>)),
+        commit: (old: EvalCaseListResponse | undefined, saved) =>
+          editList(old, "items", (l) => listOps.replace(l, caseId, saved)),
+      },
+    ],
   });
 }
 
 export function useDeleteEvalCase(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (caseId: string) => api.delete(`/api/studio/agents/${agentKey}/evals/cases/${caseId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: casesKey(agentKey) }),
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (caseId) => api.delete(`/api/studio/agents/${agentKey}/evals/cases/${caseId}`),
+    targets: (caseId) => [
+      {
+        queryKey: casesKey(agentKey),
+        optimistic: (old: EvalCaseListResponse | undefined) =>
+          editList(old, "items", (l) => listOps.remove(l, caseId)),
+      },
+    ],
   });
 }
 

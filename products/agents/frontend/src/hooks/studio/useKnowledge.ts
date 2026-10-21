@@ -16,10 +16,12 @@
  * otherwise the inspector shows a stale count until an unrelated refetch.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { knowledgeDocumentsBatchPath } from "@/api/studio/batchPaths";
 import { api } from "@/lib/api";
 import type {
   Document,
+  KnowledgeCollection,
   DocumentCreate,
   DocumentListResponse,
   DocumentPatch,
@@ -33,6 +35,7 @@ import type {
   KnowledgeSearchResponse,
 } from "@/api/studio/types-ke";
 import { studioKeys } from "./keys";
+import { editList } from "../cacheEnvelope";
 
 const collectionsKey = (agentKey: string) => ["studio", agentKey, "knowledge", "collections"] as const;
 const documentsKey = (
@@ -65,26 +68,33 @@ export function useKnowledgeCollections(agentKey: string) {
 }
 
 export function useCreateKnowledgeCollection(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: KnowledgeCollectionCreate) =>
-      api.post(`/api/studio/agents/${agentKey}/knowledge`, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
-      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
-    },
+  // The server assigns the id (and may default `ordem`), so commit-only: the created collection
+  // is in the list after one round trip; the compiled prompt (`# Base de conhecimento`) refreshes behind.
+  return useCacheWriteMutation<KnowledgeCollection, KnowledgeCollectionCreate>({
+    mutationFn: (payload) => api.post<KnowledgeCollection>(`/api/studio/agents/${agentKey}/knowledge`, payload),
+    targets: [
+      {
+        queryKey: collectionsKey(agentKey),
+        commit: (old: KnowledgeCollectionsResponse | undefined, created) =>
+          editList(old, "colecoes", (l) => listOps.replace(l, created.id, created)),
+      },
+    ],
+    invalidate: [studioKeys.compiledAll(agentKey)],
   });
 }
 
 export function useUpdateKnowledgeCollection(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ collectionId, patch }: { collectionId: string; patch: KnowledgeCollectionPatch }) =>
-      api.patch(`/api/studio/agents/${agentKey}/knowledge/${collectionId}`, patch),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
-      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
-    },
+  return useCacheWriteMutation<KnowledgeCollection, { collectionId: string; patch: KnowledgeCollectionPatch }>({
+    mutationFn: ({ collectionId, patch }) =>
+      api.patch<KnowledgeCollection>(`/api/studio/agents/${agentKey}/knowledge/${collectionId}`, patch),
+    targets: [
+      {
+        queryKey: collectionsKey(agentKey),
+        commit: (old: KnowledgeCollectionsResponse | undefined, saved) =>
+          editList(old, "colecoes", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    invalidate: [studioKeys.compiledAll(agentKey)],
   });
 }
 
@@ -124,13 +134,19 @@ export function useDocuments(agentKey: string, collectionId: string | null, filt
 
 export function useCreateDocument(agentKey: string, collectionId: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: DocumentCreate) =>
+  // The document lists are paginated + searched + type-filtered: whether (and where) the new row
+  // belongs is the server's call, so those lists and the collection's `total_documentos` settle by
+  // background refetch. What IS known is the created document itself — it goes straight into its detail cache.
+  return useCacheWriteMutation<Document, DocumentCreate>({
+    mutationFn: (payload) =>
       api.post<Document>(`/api/studio/agents/${agentKey}/knowledge/${collectionId}/documents`, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["studio", agentKey, "knowledge", "collections", collectionId, "documents"] });
-      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
-      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
+    targets: [
+      { queryKey: ["studio", agentKey, "knowledge", "collections", collectionId, "documents"] },
+      { queryKey: collectionsKey(agentKey) },
+    ],
+    invalidate: [studioKeys.compiledAll(agentKey)],
+    onSuccess: (created) => {
+      qc.setQueryData(documentKey(agentKey, created.id), created);
     },
   });
 }
@@ -144,7 +160,7 @@ export function useCreateDocument(agentKey: string, collectionId: string) {
  */
 export function useBatchCreateDocuments(agentKey: string, collectionId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer is a count summary (no document rows); the paginated, filtered lists and the collection counts are server-decided
     mutationFn: (documentos: KnowledgeDocumentBatchItem[]) =>
       api.post<KnowledgeDocumentsBatchResponse>(knowledgeDocumentsBatchPath(agentKey, collectionId), { documentos }),
     onSuccess: () => {

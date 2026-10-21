@@ -8,12 +8,13 @@
  *   GET  /api/studio/agents/{key}/compilado?versao=ativa|rascunho                      platform admin
  *   GET|PUT /api/studio/plataforma/textos                                              platform admin
  *
- * NOTHING here is cached as truth: every successful write invalidates the read keys and the
- * server answer repaints the screen. The replace-set routes carry no `expected_hash`, so the
+ * Every write commits the server's answer into the read it feeds (cache-writes contract) and
+ * settles the derived views by background refetch. The replace-set routes carry no `expected_hash`, so the
  * optimistic lock is a compare-before-write: the form passes the snapshot it was seeded from
  * and `useSaveDraftSet` refuses (`DraftConflictError`) when the server's rows moved since.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type {
   CompiladoOrg,
@@ -53,27 +54,28 @@ export function useVersionContent<K extends ConteudoKind>(key: string, kind: K, 
 }
 
 export function useSaveDraftSet<K extends ConteudoKind>(key: string, kind: K, versionId: string | null | undefined) {
-  const qc = useQueryClient();
-  return useMutation<
-    ConteudoSetOut<ConteudoRowByKind[K]>,
-    unknown,
-    { itens: Array<Omit<ConteudoRowByKind[K], "id">>; baseSnapshot: string }
-  >({
+  type Out = ConteudoSetOut<ConteudoRowByKind[K]>;
+  // Commit-only: the replace-set may reissue row ids, so the server's set (not the form's) is what is cached.
+  return useCacheWriteMutation<Out, { itens: Array<Omit<ConteudoRowByKind[K], "id">>; baseSnapshot: string }>({
     mutationFn: async ({ itens, baseSnapshot }) => {
-      const fresh = await api.get<ConteudoSetOut<ConteudoRowByKind[K]>>(
-        `${base(key)}/versions/${seg(versionId as string)}/${kind}`,
-      );
+      const fresh = await api.get<Out>(`${base(key)}/versions/${seg(versionId as string)}/${kind}`);
       if (snapshotOf(fresh.itens) !== baseSnapshot) throw new DraftConflictError();
-      return api.put<ConteudoSetOut<ConteudoRowByKind[K]>>(`${base(key)}/draft/${kind}`, { itens });
+      return api.put<Out>(`${base(key)}/draft/${kind}`, { itens });
     },
-    onSuccess: () => {
-      // Server answer is the truth: refetch everything the content feeds.
-      void qc.invalidateQueries({ queryKey: studioKeys.conteudoAll(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
-      void qc.invalidateQueries({ queryKey: ["studio", key, "payload"] });
-      void qc.invalidateQueries({ queryKey: ["studio", key, "compilado-org"] });
-    },
+    targets: [
+      {
+        queryKey: ["studio", key, "conteudo", kind],
+        match: "prefix",
+        commit: (old: Out | undefined, saved: Out) => (old && old.version_id === saved.version_id ? saved : old),
+      },
+    ],
+    // Everything the content feeds is derived: refreshed in the background.
+    invalidate: [
+      studioKeys.detail(key),
+      studioKeys.compiledAll(key),
+      ["studio", key, "payload"],
+      ["studio", key, "compilado-org"],
+    ],
   });
 }
 
@@ -102,15 +104,11 @@ export function useOrgSpecs(key: string) {
 }
 
 export function useUpdateOrgSpecs(key: string) {
-  const qc = useQueryClient();
-  return useMutation<OrgSpecs, unknown, { valores: Record<string, string> }>({
+  return useCacheWriteMutation<OrgSpecs, { valores: Record<string, string> }>({
     mutationFn: (payload) => api.put<OrgSpecs>(`${base(key)}/specs`, payload),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: studioKeys.orgSpecs(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.orgStatus(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.controle(key) });
-      void qc.invalidateQueries({ queryKey: ["studio", key, "compilado-org"] });
-    },
+    targets: [{ queryKey: studioKeys.orgSpecs(key), commit: (_old, saved) => saved }],
+    // Completeness status, controls and the org compile are computed from the values.
+    invalidate: [studioKeys.orgStatus(key), studioKeys.controle(key), ["studio", key, "compilado-org"]],
   });
 }
 
@@ -149,9 +147,8 @@ export function usePlataformaTextos() {
 }
 
 export function useSetPlataformaTextos() {
-  const qc = useQueryClient();
-  return useMutation<{ itens: PlataformaTexto[] }, unknown, { itens: Record<string, string> }>({
+  return useCacheWriteMutation<{ itens: PlataformaTexto[] }, { itens: Record<string, string> }>({
     mutationFn: (payload) => api.put<{ itens: PlataformaTexto[] }>("/api/studio/plataforma/textos", payload),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: studioKeys.plataformaTextos() }),
+    targets: [{ queryKey: studioKeys.plataformaTextos(), commit: (_old, saved) => saved }],
   });
 }

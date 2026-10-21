@@ -7,9 +7,10 @@
  *   GET    /api/conversations/{id}/messages
  *
  * The minted secret is returned by the mutation and is NEVER written to the
- * query cache (`gcTime: 0`, no `setQueryData`) — the dialog is its only holder.
+ * query cache (`gcTime: 0`; the cached row is built from the non-secret fields) — the dialog is its only holder.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 export const channelKeys = {
@@ -76,24 +77,50 @@ export function useChannelTokens(agentKey: string) {
 }
 
 export function useMintChannelToken(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation<ChannelTokenMinted, unknown, { label: string }>({
+  return useCacheWriteMutation<ChannelTokenMinted, { label: string }>({
     mutationFn: ({ label }) =>
       api.post<ChannelTokenMinted>(`/api/agents/${encodeURIComponent(agentKey)}/channel-token`, {
         product: "social-wiring",
         label,
       }),
     gcTime: 0,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: channelKeys.tokens() }),
+    // The new token's row is in the list after one round trip — without `token` (the secret).
+    targets: [
+      {
+        queryKey: channelKeys.tokens(),
+        commit: (old: ApiTokenRow[] | undefined, minted, { label }) =>
+          listOps.replace<ApiTokenRow>(
+            old,
+            minted.id,
+            {
+              id: minted.id,
+              // The server prefixes the stored label (`channelTokenLabelPrefix`); settle brings the exact text.
+              label: `${channelTokenLabelPrefix(agentKey)} ${label}`,
+              prefix: minted.prefix,
+              scopes: minted.scopes,
+              created_at: new Date().toISOString(),
+              last_used_at: null,
+              revoked_at: null,
+            },
+            "prepend",
+          ),
+      },
+    ],
   });
 }
 
 export function useRevokeChannelToken(agentKey: string) {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: (tokenId) =>
       api.delete(`/api/agents/${encodeURIComponent(agentKey)}/channel-token/${encodeURIComponent(tokenId)}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: channelKeys.tokens() }),
+    // Revoking is idempotent and predictable: the row flips on the click.
+    targets: (tokenId) => [
+      {
+        queryKey: channelKeys.tokens(),
+        optimistic: (old: ApiTokenRow[] | undefined) =>
+          listOps.patch(old, tokenId, { revoked_at: new Date().toISOString() }),
+      },
+    ],
   });
 }
 

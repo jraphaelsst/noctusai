@@ -12,7 +12,8 @@
  *   - publish              → + the agent list (`versao_ativa`) and every
  *                            version (the previous `ativa` became `substituida`).
  */
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation, type CacheWriteTarget } from "@noctusai/lib/cache-writes";
 import { skillFilesBatchPath } from "@/api/studio/batchPaths";
 import { api } from "@/lib/api";
 import type {
@@ -31,17 +32,44 @@ import type {
   VersionDetail,
   VersionDiff,
 } from "@/api/studio/types";
+import { editList } from "../cacheEnvelope";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 import { useStudioAgent } from "./useStudioAgents";
 
 const base = (key: string) => `/api/studio/agents/${seg(key)}`;
 
-function afterDraftWrite(qc: QueryClient, key: string, version?: VersionDetail) {
-  if (version) qc.setQueryData(studioKeys.version(key, version.id), version);
-  void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
-  void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
-  void qc.invalidateQueries({ queryKey: ["studio", key, "diff"] });
+/**
+ * Every draft write is COMMIT-ONLY, never optimistic: the server owns the version's identity,
+ * `compiled_hash` and ordering (versioned / CAS-protected prompt content). What the route returns is
+ * written into the cache the moment it arrives; the derived views settle behind.
+ */
+const draftDerived = (key: string) => [
+  studioKeys.detail(key),
+  studioKeys.compiledAll(key),
+  ["studio", key, "diff"],
+];
+
+/** Write a whole `VersionDetail` the route returned (seeds the entry even if it was never read). */
+function useSeedVersion(key: string) {
+  const qc = useQueryClient();
+  return (version: VersionDetail) => qc.setQueryData(studioKeys.version(key, version.id), version);
 }
+
+/** The draft's cached `VersionDetail`: edit its `skills` with what the skill route answered. */
+const draftSkills = <TData, TVars>(
+  key: string,
+  draftId: string | null,
+  commit: (skills: Skill[], result: TData, vars: TVars, tempId: string) => Skill[] | undefined,
+) =>
+  (draftId
+    ? [
+        {
+          queryKey: studioKeys.version(key, draftId),
+          commit: (old: VersionDetail | undefined, result: TData, vars: TVars, ctx: { tempId: string }) =>
+            editList(old, "skills", (l) => commit(l, result, vars, ctx.tempId)),
+        },
+      ]
+    : []) as CacheWriteTarget<TData, TVars, any>[];
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
@@ -96,103 +124,112 @@ export function useVersionDiff(key: string, a: string | null, b: string | null) 
 // ── Draft lifecycle ───────────────────────────────────────────────────────────
 
 export function useCreateDraft(key: string) {
-  const qc = useQueryClient();
-  return useMutation<VersionDetail, unknown, DraftCreateInput | void>({
+  const seed = useSeedVersion(key);
+  return useCacheWriteMutation<VersionDetail, DraftCreateInput | void>({
     mutationFn: (payload) => api.post<VersionDetail>(`${base(key)}/draft`, payload ?? {}),
-    onSuccess: (draft) => {
-      afterDraftWrite(qc, key, draft);
-      void qc.invalidateQueries({ queryKey: studioKeys.list() });
-    },
+    targets: [],
+    invalidate: [...draftDerived(key), studioKeys.list()],
+    onSuccess: seed,
   });
 }
 
 export function useDiscardDraft(key: string) {
   const qc = useQueryClient();
-  return useMutation<null, unknown, { draftId: string }>({
+  return useCacheWriteMutation<null, { draftId: string }>({
     mutationFn: () => api.delete<null>(`${base(key)}/draft`),
+    targets: [],
+    invalidate: [...draftDerived(key), studioKeys.list()],
     onSuccess: (_r, { draftId }) => {
       qc.removeQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
-      void qc.invalidateQueries({ queryKey: studioKeys.list() });
     },
   });
 }
 
 export function useUpdateDraft(key: string) {
-  const qc = useQueryClient();
-  return useMutation<VersionDetail, unknown, DraftPatchInput>({
+  const seed = useSeedVersion(key);
+  return useCacheWriteMutation<VersionDetail, DraftPatchInput>({
     mutationFn: (payload) => api.patch<VersionDetail>(`${base(key)}/draft`, payload),
-    onSuccess: (draft) => afterDraftWrite(qc, key, draft),
+    targets: [],
+    invalidate: draftDerived(key),
+    onSuccess: seed,
   });
 }
 
 export function useSaveSections(key: string) {
-  const qc = useQueryClient();
-  return useMutation<VersionDetail, unknown, SectionsReplaceInput>({
+  const seed = useSeedVersion(key);
+  return useCacheWriteMutation<VersionDetail, SectionsReplaceInput>({
     mutationFn: (payload) => api.put<VersionDetail>(`${base(key)}/draft/sections`, payload),
-    onSuccess: (draft) => afterDraftWrite(qc, key, draft),
+    targets: [],
+    invalidate: draftDerived(key),
+    onSuccess: seed,
   });
 }
 
 export function usePublishDraft(key: string) {
-  const qc = useQueryClient();
-  return useMutation<VersionDetail, unknown, PublishInput>({
+  const seed = useSeedVersion(key);
+  return useCacheWriteMutation<VersionDetail, PublishInput>({
     mutationFn: (payload) => api.post<VersionDetail>(`${base(key)}/draft/publish`, payload),
-    onSuccess: (published) => {
-      void qc.invalidateQueries({ queryKey: studioKeys.versions(key) });
-      afterDraftWrite(qc, key, published);
-      void qc.invalidateQueries({ queryKey: studioKeys.list() });
-    },
+    // The previous `ativa` became `substituida`, so every other cached version is refreshed too.
+    targets: [],
+    invalidate: [studioKeys.versions(key), ...draftDerived(key), studioKeys.list()],
+    onSuccess: seed,
   });
 }
 
 // ── Draft skills + files ──────────────────────────────────────────────────────
-// Skill routes return the `Skill` (not the whole version), so the draft's
-// `VersionDetail` is invalidated rather than patched by hand.
+// Skill routes return the `Skill` (not the whole version), so the answer is committed into the
+// draft's `VersionDetail.skills` (commit-only — the server assigns ids/ordem and refreshes the hash).
 
 export function useCreateSkill(key: string, draftId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<Skill, unknown, SkillCreateInput>({
+  return useCacheWriteMutation<Skill, SkillCreateInput>({
     mutationFn: (payload) => api.post<Skill>(`${base(key)}/draft/skills`, payload),
-    onSuccess: () => {
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
-    },
+    targets: draftSkills<Skill, SkillCreateInput>(key, draftId, (l, saved, _v, tempId) =>
+      listOps.replace(l, tempId, saved),
+    ),
+    invalidate: draftDerived(key),
   });
 }
 
 export function useUpdateSkill(key: string, draftId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<Skill, unknown, { skillId: string; patch: SkillPatchInput }>({
+  return useCacheWriteMutation<Skill, { skillId: string; patch: SkillPatchInput }>({
     mutationFn: ({ skillId, patch }) => api.patch<Skill>(`${base(key)}/draft/skills/${seg(skillId)}`, patch),
-    onSuccess: () => {
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
-    },
+    targets: draftSkills<Skill, { skillId: string; patch: SkillPatchInput }>(key, draftId, (l, saved, { skillId }) =>
+      listOps.replace(l, skillId, saved),
+    ),
+    invalidate: draftDerived(key),
   });
 }
 
 export function useDeleteSkill(key: string, draftId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<null, unknown, { skillId: string }>({
+  return useCacheWriteMutation<null, { skillId: string }>({
     mutationFn: ({ skillId }) => api.delete<null>(`${base(key)}/draft/skills/${seg(skillId)}`),
-    onSuccess: () => {
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
-    },
+    targets: draftSkills<null, { skillId: string }>(key, draftId, (l, _r, { skillId }) => listOps.remove(l, skillId)),
+    invalidate: draftDerived(key),
   });
 }
 
+/** Insert / replace one file summary (matched by `caminho`, the upsert key) inside its skill. */
+function withFile(skills: Skill[], skillId: string, file: SkillFileSummary): Skill[] {
+  return skills.map((s) =>
+    s.id !== skillId
+      ? s
+      : {
+          ...s,
+          arquivos: s.arquivos.some((f) => f.id === file.id || f.caminho === file.caminho)
+            ? s.arquivos.map((f) => (f.id === file.id || f.caminho === file.caminho ? file : f))
+            : [...s.arquivos, file],
+        },
+  );
+}
+
 export function useUpsertSkillFile(key: string, draftId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<SkillFileSummary, unknown, { skillId: string; file: SkillFileUpsertInput }>({
+  type Vars = { skillId: string; file: SkillFileUpsertInput };
+  return useCacheWriteMutation<SkillFileSummary, Vars>({
     mutationFn: ({ skillId, file }) =>
       api.put<SkillFileSummary>(`${base(key)}/draft/skills/${seg(skillId)}/files`, file),
-    onSuccess: (saved, { skillId }) => {
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      void qc.invalidateQueries({ queryKey: studioKeys.skillFile(key, skillId, saved.id) });
-      afterDraftWrite(qc, key);
-    },
+    targets: draftSkills<SkillFileSummary, Vars>(key, draftId, (l, saved, { skillId }) => withFile(l, skillId, saved)),
+    // The open file's text changed: its own read refreshes in the background.
+    invalidate: ({ skillId }) => [...draftDerived(key), ["studio", key, "skill-file", skillId]],
   });
 }
 
@@ -203,26 +240,36 @@ export function useUpsertSkillFile(key: string, draftId: string | null) {
  * `@/lib/batchUpload.ts`), not this hook.
  */
 export function useBatchUpsertSkillFiles(key: string, draftId: string | null) {
-  const qc = useQueryClient();
-  return useMutation<SkillFilesBatchResponse, unknown, { skillId: string; arquivos: SkillFileBatchItem[] }>({
+  type Vars = { skillId: string; arquivos: SkillFileBatchItem[] };
+  return useCacheWriteMutation<SkillFilesBatchResponse, Vars>({
     mutationFn: ({ skillId, arquivos }) =>
       api.put<SkillFilesBatchResponse>(skillFilesBatchPath(key, skillId), { arquivos }),
-    onSuccess: () => {
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
-    },
+    // Each stored file the batch answered for lands in its skill; failed entries (no id) wait for the refetch.
+    targets: draftSkills<SkillFilesBatchResponse, Vars>(key, draftId, (l, res, { skillId }) =>
+      res.resultados.reduce(
+        (skills, r) =>
+          r.id && !r.erro
+            ? withFile(skills, skillId, { id: r.id, caminho: r.caminho, titulo: r.titulo ?? null, chars: r.chars ?? 0 })
+            : skills,
+        l,
+      ),
+    ),
+    invalidate: ({ skillId }) => [...draftDerived(key), ["studio", key, "skill-file", skillId]],
   });
 }
 
 export function useDeleteSkillFile(key: string, draftId: string | null) {
   const qc = useQueryClient();
-  return useMutation<null, unknown, { skillId: string; fileId: string }>({
+  type Vars = { skillId: string; fileId: string };
+  return useCacheWriteMutation<null, Vars>({
     mutationFn: ({ skillId, fileId }) =>
       api.delete<null>(`${base(key)}/draft/skills/${seg(skillId)}/files/${seg(fileId)}`),
+    targets: draftSkills<null, Vars>(key, draftId, (l, _r, { skillId, fileId }) =>
+      l.map((s) => (s.id === skillId ? { ...s, arquivos: s.arquivos.filter((f) => f.id !== fileId) } : s)),
+    ),
+    invalidate: draftDerived(key),
     onSuccess: (_r, { skillId, fileId }) => {
       qc.removeQueries({ queryKey: studioKeys.skillFile(key, skillId, fileId) });
-      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
-      afterDraftWrite(qc, key);
     },
   });
 }

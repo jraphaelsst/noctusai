@@ -7,8 +7,10 @@
  *
  * The raw secret exists only in the mint mutation's result (`gcTime: 0`) and the dialog that shows it.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
+import { editList } from "../cacheEnvelope";
 import { seg, studioKeys, toView } from "./keys";
 
 export type ContentTokenStatus = "ativo" | "expirado" | "revogado";
@@ -51,19 +53,56 @@ export function useContentTokens() {
   return toView(q);
 }
 
+type TokenList = { itens: ContentTokenRow[] };
+
 export function useMintContentToken() {
-  const qc = useQueryClient();
-  return useMutation<ContentTokenMinted, unknown, ContentTokenMintInput>({
+  // The raw secret (`result.token`) lives ONLY in this mutation's result (`gcTime: 0`) and the dialog —
+  // the cached row is built from the server's non-secret fields + the input label, never the token.
+  return useCacheWriteMutation<ContentTokenMinted, ContentTokenMintInput>({
     mutationFn: (payload) => api.post<ContentTokenMinted>("/api/studio/plataforma/content-token", payload),
     gcTime: 0,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: studioKeys.contentTokens() }),
+    targets: [
+      {
+        queryKey: studioKeys.contentTokens(),
+        commit: (old: TokenList | undefined, minted, vars) =>
+          editList(old, "itens", (l) =>
+            listOps.replace<ContentTokenRow>(
+              l,
+              minted.id,
+              {
+                id: minted.id,
+                label: vars.label,
+                prefix: minted.prefix,
+                scopes: minted.scopes,
+                created_at: new Date().toISOString(),
+                created_by: null,
+                expires_at: minted.expires_at,
+                last_used_at: null,
+                revoked_at: null,
+                status: "ativo",
+              },
+              "prepend",
+            ),
+          ),
+      },
+    ],
   });
 }
 
 export function useRevokeContentToken() {
-  const qc = useQueryClient();
-  return useMutation<unknown, unknown, string>({
+  return useCacheWriteMutation<unknown, string>({
     mutationFn: (id) => api.delete(`/api/studio/plataforma/content-token/${seg(id)}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: studioKeys.contentTokens() }),
+    // Revoking is idempotent and predictable: flip the row on the click; settle brings the server's timestamp.
+    targets: (id) => [
+      {
+        queryKey: studioKeys.contentTokens(),
+        optimistic: (old: TokenList | undefined) =>
+          editList(old, "itens", (l: ContentTokenRow[]) =>
+            l.map((r) =>
+              r.id === id ? { ...r, status: "revogado" as const, revoked_at: r.revoked_at ?? new Date().toISOString() } : r,
+            ),
+          ),
+      },
+    ],
   });
 }

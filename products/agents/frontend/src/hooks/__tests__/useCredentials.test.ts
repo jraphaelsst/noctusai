@@ -79,11 +79,32 @@ describe("credential mutations", () => {
     await waitFor(() => expect(list.result.current.data).toBeTruthy());
 
     const { result } = renderHook(() => useRenewCredential(), { wrapper: wrapper(qc) });
+    // The settle refetch (background) answers with the server's truth: the renewed list.
+    mockGet.mockResolvedValue({ items: [renewed], total: 1, alerts: 0 });
     result.current.mutate({ name: "academia_api_token" });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockPost).toHaveBeenCalledWith("/api/admin/credentials/academia_api_token/renew", {});
     await waitFor(() => expect(list.result.current.data?.alerts).toBe(0));
     expect(list.result.current.data?.items[0].days_left).toBe(90);
+  });
+
+  it("a renewed credential is in the cached list from the POST answer, before any refetch", async () => {
+    mockGet.mockResolvedValueOnce({ items: [ACADEMIA], total: 1, alerts: 1 });
+    const { useCredentials, useRenewCredential } = await import("@/hooks/useCredentials");
+    const qc = newClient();
+    const list = renderHook(() => useCredentials(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(list.result.current.data).toBeTruthy());
+
+    mockGet.mockReturnValue(new Promise(() => {})); // the settle refetch never answers: only the commit can explain the cache
+    let answer!: (v: unknown) => void;
+    mockPost.mockReturnValue(new Promise((res) => (answer = res)));
+    const { result } = renderHook(() => useRenewCredential(), { wrapper: wrapper(qc) });
+    result.current.mutate({ name: "academia_api_token" });
+    // while the POST is in flight nothing is invented
+    expect(list.result.current.data?.items[0].days_left).toBe(15);
+    answer({ credential: { ...ACADEMIA, days_left: 90, severity: "info", warnings: [] }, warnings: [] });
+    await waitFor(() => expect(list.result.current.data?.items[0].days_left).toBe(90));
+    expect(list.result.current.data?.alerts).toBe(0);
   });
 
   it("set PUTs the write-only value", async () => {

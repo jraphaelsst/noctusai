@@ -36,8 +36,10 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import { ApiError, errorMessage } from "@/lib/errors";
+import { APPROVALS_KEY, withoutApproval, type ApprovalListResponse } from "./useApprovals";
 import { getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
 import type {
@@ -180,12 +182,16 @@ export function useThreads() {
 }
 
 export function useCreateConversation() {
-  const qc = useQueryClient();
-  return useMutation<RawConversation, unknown, { titulo?: string } | void>({
+  // The server assigns the id: commit-only. `useThreads` sorts by recency, so appending is enough.
+  return useCacheWriteMutation<RawConversation, { titulo?: string } | void>({
     mutationFn: (payload) => api.post<RawConversation>("/api/conversations", payload ?? {}),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
-    },
+    targets: [
+      {
+        queryKey: CONVERSATIONS_KEY,
+        commit: (old: Envelope<RawConversation> | undefined, created, _v, { tempId }) =>
+          old && { ...old, items: listOps.replace(old.items, tempId, created, "prepend") ?? old.items },
+      },
+    ],
   });
 }
 
@@ -429,17 +435,19 @@ export function useBiaSendAdapter(conversationId: string | null) {
 // ─── Approval decision (ChatWindow seam, contract §E.7) ────────────────────
 
 export function useBiaApprovalActionAdapter() {
-  const qc = useQueryClient();
-
-  const mutation = useMutation<unknown, unknown, { approvalId: string; aprovada: boolean }>({
+  const mutation = useCacheWriteMutation<unknown, { approvalId: string; aprovada: boolean }>({
     mutationFn: ({ approvalId, aprovada }) =>
       api.post(`/api/approvals/${approvalId}/decision`, { aprovada }),
-    onSettled: () => {
-      // Covers both success (belt to the `approval.resolved` SSE patch) and
-      // the "already_decided" / "orphaned" refetch contract §E.2 requires.
-      qc.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
-      qc.invalidateQueries({ queryKey: APPROVALS_KEY_PREFIX });
-    },
+    // The decided approval leaves the pending list on the click (rolled back on error).
+    targets: ({ approvalId }) => [
+      {
+        queryKey: APPROVALS_KEY,
+        optimistic: (old: ApprovalListResponse | undefined) => withoutApproval(old, approvalId),
+      },
+    ],
+    // Settle covers both success (belt to the `approval.resolved` SSE patch) and the
+    // "already_decided" / "orphaned" refetch contract §E.2 requires.
+    invalidate: [CONVERSATIONS_KEY, APPROVALS_KEY_PREFIX],
   });
 
   return {

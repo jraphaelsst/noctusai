@@ -8,10 +8,11 @@
  *   PUT|DELETE .../versoes/{id}/criterios/{chave} · /estagios/{chave} · PUT .../parametros
  *   POST .../versoes/{id}/validar · /publicar               (422 `regras_invalidas` + `erros[]`)
  *
- * Every write returns the full version; it is stored from the response and the version list is
- * invalidated — the server stays the only truth.
+ * Every write returns the full version; it is committed into that version's cache entry the moment it
+ * arrives (commit-only — the server owns validation + publishing) and the version list settles behind.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type {
   PadraoResumo,
@@ -22,6 +23,7 @@ import type {
   QualParametros,
   ValidarResposta,
 } from "@/api/studio/types-julia";
+import { editList } from "../cacheEnvelope";
 import { seg, studioKeys, toView } from "./keys";
 
 export function usePadroes() {
@@ -57,86 +59,84 @@ export function usePadraoVersao(versaoId: string | null | undefined) {
   return toView(q);
 }
 
-function useAfterWrite(chave: string) {
-  const qc = useQueryClient();
-  return (v?: PadraoVersao) => {
-    if (v) qc.setQueryData(studioKeys.qualVersao(v.id), v);
-    void qc.invalidateQueries({ queryKey: studioKeys.qualVersoes(chave) });
-  };
+/** Commit the full version a write returned into its cache entry; the version list settles behind. */
+function useVersionWrite<TVars>(chave: string, versaoId: string, mutationFn: (vars: TVars) => Promise<PadraoVersao>) {
+  return useCacheWriteMutation<PadraoVersao, TVars>({
+    mutationFn,
+    targets: [{ queryKey: studioKeys.qualVersao(versaoId), commit: (_old, v) => v }],
+    invalidate: [studioKeys.qualVersoes(chave)],
+  });
 }
 
 export function useCriarRascunhoPadrao(chave: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, { copiar_de?: string; notas?: string }>({
+  const qc = useQueryClient();
+  return useCacheWriteMutation<PadraoVersao, { copiar_de?: string; notas?: string }>({
     mutationFn: (body) => api.post<PadraoVersao>(`/api/qualificacao/padroes/${seg(chave)}/versoes`, body),
-    onSuccess: (v) => after(v),
+    targets: [],
+    invalidate: [studioKeys.qualVersoes(chave)],
+    // The new draft's id is only known from the answer: seed its entry so opening it is instant.
+    onSuccess: (v) => {
+      qc.setQueryData(studioKeys.qualVersao(v.id), v);
+    },
   });
 }
 
 export function useDescartarRascunhoPadrao(chave: string) {
   const qc = useQueryClient();
-  const after = useAfterWrite(chave);
-  return useMutation<null, unknown, { versaoId: string }>({
+  return useCacheWriteMutation<null, { versaoId: string }>({
     mutationFn: ({ versaoId }) => api.delete<null>(`/api/qualificacao/versoes/${seg(versaoId)}`),
+    // A discarded draft leaves the version list on the click.
+    targets: ({ versaoId }) => [
+      {
+        queryKey: studioKeys.qualVersoes(chave),
+        optimistic: (old: { items: PadraoVersaoMeta[] } | undefined) =>
+          editList(old, "items", (l) => listOps.remove(l, versaoId)),
+      },
+    ],
     onSuccess: (_r, { versaoId }) => {
       qc.removeQueries({ queryKey: studioKeys.qualVersao(versaoId) });
-      after();
     },
   });
 }
 
 export function useSalvarCriterio(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, { chave: string; criterio: QualCriterioInput }>({
-    mutationFn: ({ chave: c, criterio }) =>
-      api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/criterios/${seg(c)}`, criterio),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<{ chave: string; criterio: QualCriterioInput }>(chave, versaoId, ({ chave: c, criterio }) =>
+    api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/criterios/${seg(c)}`, criterio),
+  );
 }
 
 export function useRemoverCriterio(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, { chave: string }>({
-    mutationFn: ({ chave: c }) => api.delete<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/criterios/${seg(c)}`),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<{ chave: string }>(chave, versaoId, ({ chave: c }) =>
+    api.delete<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/criterios/${seg(c)}`),
+  );
 }
 
 export function useSalvarEstagio(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, { chave: string; estagio: QualEstagioInput }>({
-    mutationFn: ({ chave: c, estagio }) =>
-      api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/estagios/${seg(c)}`, estagio),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<{ chave: string; estagio: QualEstagioInput }>(chave, versaoId, ({ chave: c, estagio }) =>
+    api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/estagios/${seg(c)}`, estagio),
+  );
 }
 
 export function useRemoverEstagio(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, { chave: string }>({
-    mutationFn: ({ chave: c }) => api.delete<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/estagios/${seg(c)}`),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<{ chave: string }>(chave, versaoId, ({ chave: c }) =>
+    api.delete<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/estagios/${seg(c)}`),
+  );
 }
 
 export function useSalvarParametros(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, QualParametros>({
-    mutationFn: (p) => api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/parametros`, p),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<QualParametros>(chave, versaoId, (p) =>
+    api.put<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/parametros`, p),
+  );
 }
 
 export function useValidarPadrao(versaoId: string) {
-  return useMutation<ValidarResposta, unknown, void>({
+  return useMutation<ValidarResposta, unknown, void>({ // noc-allow: invalidate-only — a dry validation: returns a one-off ValidarResposta, changes nothing and has no cached read
     mutationFn: () => api.post<ValidarResposta>(`/api/qualificacao/versoes/${seg(versaoId)}/validar`, {}),
   });
 }
 
 export function usePublicarPadrao(chave: string, versaoId: string) {
-  const after = useAfterWrite(chave);
-  return useMutation<PadraoVersao, unknown, void>({
-    mutationFn: () => api.post<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/publicar`, {}),
-    onSuccess: (v) => after(v),
-  });
+  return useVersionWrite<void>(chave, versaoId, () =>
+    api.post<PadraoVersao>(`/api/qualificacao/versoes/${seg(versaoId)}/publicar`, {}),
+  );
 }
