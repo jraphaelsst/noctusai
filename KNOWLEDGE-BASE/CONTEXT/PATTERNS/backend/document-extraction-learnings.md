@@ -297,3 +297,9 @@ directive: "Human reviews are meant to be the exception, not the rule."
   automation (no CDP input until a human clicks) and can't be pre-accepted from page script. A
   misfiled doc also needs a *reclassify* action, not only delete; the upload tipo select resets
   after a failed upload, which is how an IPTU guia got filed as a matrícula.
+
+## Deal 857 live run (2026-10-21) — three matrícula/profissão findings
+
+- **A typed value is never blocked by a machine-misread guard.** The profissão vocabulary guard (`contrato_gerador/profissoes.py`) exists for machine reads ("aposentanda"); when `clientes.profissao_origem == 'manual'` the generator only warns (`PROFISSAO_DIGITADA_FORA_DO_VOCABULARIO`) and prints it as typed.
+- **ARISP "Visualização de matrícula" headings wrap onto two lines** ("REGISTRO DE IMÓVEIS, TÍTULOS E DOCUMENTOS" / "E CIVIL DE PESSOAS JURÍDICAS DE <CIDADE>"): `find_cartorio` accepts a continuation line opening `E CIVIL|E DOCUMENTOS|…`, so the city is kept.
+- **In an ônus act (hipoteca / alienação fiduciária) the bank is the credor, never an adquirente** (`matricula_ato_detalhes._credor_nao_adquirente`); names carrying prose words ("pela", "responsabilidade") are not parties.
