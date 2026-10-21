@@ -53,7 +53,7 @@ describe("ChannelTokenCard", () => {
     fireEvent.click(screen.getByTestId("channel-token-mint"));
     await waitFor(() => expect(screen.getByTestId("channel-token-value").textContent).toBe("pk_secret_value"));
     expect(screen.getByText(/não será mostrado de novo/)).toBeTruthy();
-    expect(screen.getByText(/Social Wiring › Lais › Agente/)).toBeTruthy();
+    expect(screen.getByText(/Social Wiring › Julia › Agente/)).toBeTruthy();
     expect(mint.mutateAsync).toHaveBeenCalledWith({ label: "producao" });
     fireEvent.click(screen.getByTestId("channel-token-close"));
     expect(screen.queryByText("pk_secret_value")).toBeNull();

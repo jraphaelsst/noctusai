@@ -1,5 +1,5 @@
 /**
- * Canal token card (Lais §4): mint a `pk_*` for Social Wiring, show it ONCE
+ * Canal token card (Julia §4): mint a `pk_*` for Social Wiring, show it ONCE
  * in a copy box, list the org's channel tokens (non-secret rows from the seed
  * `GET /api/settings/api-tokens`, filtered to this agent's label) and revoke.
  * The raw secret lives only in the dialog's local state — it is dropped on
@@ -58,7 +58,7 @@ function MintDialog({ agentKey, onClose }: { agentKey: string; onClose: () => vo
               <CopyTextButton text={minted.token} />
             </div>
             <p className="text-xs text-muted-foreground">
-              Cole em <strong>Social Wiring › Lais › Agente</strong>. Expira em {fmt(minted.expires_at)}.
+              Cole em <strong>Social Wiring › Julia › Agente</strong>. Expira em {fmt(minted.expires_at)}.
             </p>
           </div>
         ) : (

@@ -1,5 +1,5 @@
 /**
- * Lais channel surfaces (admin only, server-enforced):
+ * Julia channel surfaces (admin only, server-enforced):
  *   POST   /api/agents/{key}/channel-token            mint (raw `pk_*` ONCE)
  *   DELETE /api/agents/{key}/channel-token/{id}       revoke
  *   GET    /api/settings/api-tokens                   the org's tokens (seed; non-secret rows)
