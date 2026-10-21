@@ -3,9 +3,13 @@ Per-org LLM cost guardrails — ai-expansion Phase 18 (X4).
 
 Wraps three concerns into one module:
 
-  - **Storage**: monthly budget lives in `public.org_settings` under key
-    `monthly_llm_budget_brl` (string-encoded decimal). When the row is
-    absent the org has no budget configured (effectively unlimited).
+  - **Storage**: monthly budget lives in `public.org_settings` (core's
+    table — products have no `<schema>.org_settings`; the read is explicit
+    `.schema("public")`, never the product-pinned client's own schema) under
+    key `monthly_llm_budget_brl` (string-encoded decimal). When the row is
+    absent the org has no budget configured (effectively unlimited). A
+    MISSING TABLE (PGRST205) is not "no budget": it is a configuration error
+    (`LLMBudgetNotConfigured`, logged at ERROR once per process).
   - **Spend**: aggregated across every product's `<schema>.llm_usage`
     table for the current month-to-date. USD cost is converted to BRL via
     `LLM_USD_TO_BRL` env var (default 5.0; admins update when FX moves
@@ -37,7 +41,7 @@ import os
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
-from .exceptions import LLMBudgetExceeded
+from .exceptions import LLMBudgetExceeded, LLMBudgetNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,9 @@ _DEFAULT_SOFT_PCT = 0.80
 _DEFAULT_HARD_PCT = 1.00
 _DEFAULT_USD_TO_BRL = 5.0
 _BUDGET_KEY = "monthly_llm_budget_brl"
+_BUDGET_SCHEMA = "public"
+#: Ensures the "storage is missing" ERROR is logged once per process.
+_config_error_logged = False
 
 # Map product slug → schema (mirrors core/admin_llm_usage.py). Extend when a
 # new product gets `<schema>.llm_usage`.
@@ -117,6 +124,11 @@ def _usd_to_brl() -> float:
         return _DEFAULT_USD_TO_BRL
 
 
+def _reset_config_error_for_tests() -> None:
+    global _config_error_logged
+    _config_error_logged = False
+
+
 def _month_window() -> tuple[str, str]:
     now = datetime.now(timezone.utc)
     start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
@@ -128,6 +140,26 @@ def _month_window() -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _is_missing_table(exc: Exception) -> bool:
+    """PostgREST PGRST205 — the relation does not exist / is not exposed."""
+    text = str(exc)
+    return "PGRST205" in text or "Could not find the table" in text
+
+
+def _raise_not_configured(exc: Exception) -> None:
+    global _config_error_logged
+    if not _config_error_logged:
+        _config_error_logged = True
+        logger.error(
+            "llm.budget: %s.org_settings is unreadable (%s) — the budget guard "
+            "is misconfigured; every LLM call will fail until the table is "
+            "reachable.",
+            _BUDGET_SCHEMA,
+            exc,
+        )
+    raise LLMBudgetNotConfigured(str(exc)) from exc
+
+
 async def fetch_budget_brl(org_id: str) -> Optional[float]:
     """Return the org's monthly budget in BRL, or `None` when unset."""
     if not _admin_client_factory or not org_id:
@@ -135,7 +167,8 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
     try:
         db = _admin_client_factory()
         result = (
-            db.table("org_settings")
+            db.schema(_BUDGET_SCHEMA)
+            .table("org_settings")
             .select("value")
             .eq("org_id", org_id)
             .eq("key", _BUDGET_KEY)
@@ -143,6 +176,8 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
             .execute()
         )
     except Exception as exc:
+        if _is_missing_table(exc):
+            _raise_not_configured(exc)
         logger.warning(
             "llm.budget.fetch_budget_brl: org_settings read failed for org=%s: %s",
             org_id,
@@ -203,7 +238,7 @@ async def compute_status(org_id: str) -> dict[str, Any]:
     """Return `{spent_brl, budget_brl, used_pct, status, soft_pct, hard_pct}`.
 
     `status` is `'unset' | 'ok' | 'warn' | 'hard_stop'`. Always returns a
-    dict — never raises.
+    dict; raises only `LLMBudgetNotConfigured` (missing budget storage).
     """
     soft = _soft_pct()
     hard = _hard_pct()
@@ -251,7 +286,8 @@ async def enforce_budget(org_id: Optional[str]) -> None:
     Logs WARN at the soft threshold. Returns silently otherwise.
 
     Fail-open posture: if `org_id` is None, the module isn't configured,
-    or any read fails, this returns silently (LLM call proceeds). The
+    or a transient read fails, this returns silently (a MISSING budget table
+    is a configuration error and raises `LLMBudgetNotConfigured` instead) (LLM call proceeds). The
     rationale is that a flaky budget check should not break user-facing
     AI features — it's a guardrail, not a hard gate.
     """
@@ -259,6 +295,8 @@ async def enforce_budget(org_id: Optional[str]) -> None:
         return
     try:
         status = await compute_status(org_id)
+    except LLMBudgetNotConfigured:
+        raise
     except Exception as exc:
         logger.warning(
             "llm.budget.enforce_budget: status read failed for org=%s: %s",

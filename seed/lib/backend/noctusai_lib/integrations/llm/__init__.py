@@ -85,6 +85,7 @@ from .exceptions import (
     LLMAPIError,
     ProviderQuotaExhausted,
     LLMBudgetExceeded,
+    LLMBudgetNotConfigured,
     LLMNotConfigured,
     ProviderNotImplemented,
 )
@@ -157,6 +158,7 @@ __all__ = [
     "LLMAPIError",
     "ProviderQuotaExhausted",
     "LLMBudgetExceeded",
+    "LLMBudgetNotConfigured",
     "LLMNotConfigured",
     "ProviderNotImplemented",
     # Budget guardrails (Phase 18 X4)

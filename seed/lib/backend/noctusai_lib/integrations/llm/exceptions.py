@@ -101,6 +101,30 @@ class LLMBudgetExceeded(AppException):
         )
 
 
+class LLMBudgetNotConfigured(AppException, IntegrationNotConfigured):
+    """The budget guard cannot read its own storage (`public.org_settings`).
+
+    A CONFIGURATION error (the table is missing / not exposed through
+    PostgREST), not "no budget set": treating it as the latter turned every
+    LLM call into a swallowed per-call warning in prod (social-wiring,
+    2026-10, PGRST205 on `social_wiring.org_settings`). Raised by
+    `noctusai_lib.integrations.llm.budget` so the break is loud; the first
+    occurrence per process is also logged at ERROR.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(
+            code="LLM_BUDGET_NOT_CONFIGURED",
+            message=(
+                "Guarda de orçamento de IA mal configurada: não foi possível "
+                "ler public.org_settings (tabela ausente ou não exposta). "
+                f"Detalhe: {detail}"
+            ),
+            status_code=503,
+            details={"detail": detail},
+        )
+
+
 class ProviderNotImplemented(AppException):
     """A stub provider's method was called outside UI-development mode.
 

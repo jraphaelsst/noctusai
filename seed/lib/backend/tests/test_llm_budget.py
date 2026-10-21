@@ -49,6 +49,9 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
             schema_obj = MagicMock()
 
             def table(_table_name):
+                if _table_name == "org_settings":
+                    assert name == "public", "budget storage is public.org_settings"
+                    return org_settings_chain
                 t = MagicMock()
                 t.select.return_value = t
                 t.eq.return_value = t
@@ -66,6 +69,56 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
         return sb
 
     return admin
+
+
+class TestMissingBudgetTable:
+    @pytest.fixture(autouse=True)
+    def _fresh(self):
+        budget_module._reset_config_error_for_tests()
+
+    @staticmethod
+    def _admin_raising(message):
+        def admin():
+            sb = MagicMock()
+            chain = MagicMock()
+            for m in ("select", "eq", "limit"):
+                getattr(chain, m).return_value = chain
+            chain.execute.side_effect = Exception(message)
+            sb.schema.return_value.table.return_value = chain
+            return sb
+        return admin
+
+    @pytest.mark.asyncio
+    async def test_reads_public_schema_not_the_product_schema(self):
+        admin = _build_admin(settings_rows=[{"value": "100"}])
+        configure_budget_module(admin_client_factory=admin)
+        assert await fetch_budget_brl("org-1") == 100.0
+
+    @pytest.mark.asyncio
+    async def test_missing_table_is_a_configuration_error_not_no_budget(self):
+        from noctusai_lib.integrations.llm.exceptions import LLMBudgetNotConfigured
+        configure_budget_module(admin_client_factory=self._admin_raising(
+            "PGRST205 Could not find the table 'x.org_settings'"))
+        with pytest.raises(LLMBudgetNotConfigured):
+            await fetch_budget_brl("org-1")
+        with pytest.raises(LLMBudgetNotConfigured):
+            await enforce_budget("org-1")
+
+    @pytest.mark.asyncio
+    async def test_missing_table_logs_error_once_per_process(self, caplog):
+        from noctusai_lib.integrations.llm.exceptions import LLMBudgetNotConfigured
+        configure_budget_module(admin_client_factory=self._admin_raising("PGRST205 boom"))
+        with caplog.at_level("ERROR"):
+            for _ in range(3):
+                with pytest.raises(LLMBudgetNotConfigured):
+                    await fetch_budget_brl("org-1")
+        assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_transient_error_stays_fail_open(self):
+        configure_budget_module(admin_client_factory=self._admin_raising("connection reset"))
+        assert await fetch_budget_brl("org-1") is None
+        await enforce_budget("org-1")
 
 
 class TestFetchBudgetBrl:
