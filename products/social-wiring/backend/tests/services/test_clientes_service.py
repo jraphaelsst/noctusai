@@ -1638,6 +1638,79 @@ class TestAttachLeadNow:
         assert len(_touches(client)) == 1
 
 
+CORRETOR = "00000000-0000-4000-8000-0000000000c1"
+
+
+def _membros(client):
+    return client.table("cliente_membros").select("*").execute().data
+
+
+class TestCorretorViraMembroDoCard:
+    """The broker chosen at lead creation becomes the card's agent member
+    (live finding, deal 857: Negociacao said "Nenhum membro no cartao")."""
+
+    def test_attach_lead_now_adds_the_corretor_as_member(self):
+        client = _fresh_atendimento_scope()
+        lead = {**_lead("L1", "Ana Silva", K1), "corretor_id": CORRETOR}
+
+        cliente_id = svc.attach_lead_now(client, ORG, lead)
+
+        [membro] = _membros(client)
+        assert (membro["cliente_id"], membro["lead_corretor_id"], membro["org_id"]) == (
+            cliente_id, CORRETOR, ORG,
+        )
+
+    def test_is_idempotent(self):
+        client = _fresh_atendimento_scope()
+        lead = {**_lead("L1", "Ana Silva", K1), "corretor_id": CORRETOR}
+        cliente_id = svc.attach_lead_now(client, ORG, lead)
+
+        assert svc.ensure_corretor_membro(client, ORG, cliente_id, CORRETOR) is False
+        svc.attach_lead_now(client, ORG, lead)
+
+        assert len(_membros(client)) == 1
+
+    def test_lead_without_corretor_adds_no_member(self):
+        client = _fresh_atendimento_scope()
+        svc.attach_lead_now(client, ORG, _lead("L1", "Ana Silva", K1))
+        assert _membros(client) == []
+
+    def test_sweep_staffs_open_unstaffed_cards_only(self):
+        client = _scoped_client()
+        outro = "00000000-0000-4000-8000-0000000000c2"
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("leads", [
+            {**_lead("L1", "Ana", K1), "corretor_id": CORRETOR},
+            {**_lead("L2", "Beto", K2), "corretor_id": CORRETOR},
+            {**_lead("L3", "Caio", K3), "corretor_id": CORRETOR},
+        ])
+        client.set_table_data("atendimentos", [
+            _atendimento("N1", lead_id="L1"),
+            _atendimento("N2", lead_id="L2"),
+            {**_atendimento("N3", lead_id="L3"), "closed_at": "2026-01-02"},
+        ])
+        client.set_table_data("cliente_membros", [])
+        svc.run_backfill(client, ORG)  # attach identities, no corretor membership yet
+        # L2's card already has its own agent: must not be touched.
+        cliente_l2 = next(
+            a["cliente_id"] for a in client.table("atendimentos").select("*").execute().data
+            if a["id"] == "N2"
+        )
+        client.set_table_data("cliente_membros", [
+            {"cliente_id": cliente_l2, "lead_corretor_id": outro, "org_id": ORG}
+        ])
+
+        report = svc.run_backfill(client, ORG)
+
+        por_cliente = {m["cliente_id"]: m["lead_corretor_id"] for m in _membros(client)}
+        ats = {a["id"]: a["cliente_id"] for a in client.table("atendimentos").select("*").execute().data}
+        assert por_cliente[ats["N1"]] == CORRETOR
+        assert por_cliente[ats["N2"]] == outro
+        assert ats["N3"] not in por_cliente  # closed card skipped
+        assert report.membros_corretor_criados == 1
+        assert svc.run_backfill(client, ORG).membros_corretor_criados == 0
+
+
 # ─── CPF review queue + multi-deal read (2026-09-28) ──────────────────────
 #
 # `11144477735` / `12345678909` are the standard publicly-known CPF-DV test

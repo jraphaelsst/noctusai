@@ -176,6 +176,8 @@ class BackfillReport:
     merges_created: int = 0
     atendimentos_repointed: int = 0
     atendimentos_already_pointed: int = 0
+    # Leads' corretores added as the card's agent member (`_reconcile_corretor_membros`).
+    membros_corretor_criados: int = 0
     atendimentos_orphaned: list = field(default_factory=list)
     # P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires BOTH
     # `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so two
@@ -236,6 +238,7 @@ class BackfillReport:
             "merges_created": self.merges_created,
             "atendimentos_repointed": self.atendimentos_repointed,
             "atendimentos_already_pointed": self.atendimentos_already_pointed,
+            "membros_corretor_criados": self.membros_corretor_criados,
             "atendimentos_orphaned": list(self.atendimentos_orphaned),
             "atendimentos_collapsed": self.atendimentos_collapsed,
             "clientes_reactivated": self.clientes_reactivated,
@@ -369,6 +372,7 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         # undo an operator's edit.
         _refresh_contato_from_sources(client, org_id, sources)
         _repoint_atendimentos(client, org_id, report)
+        _reconcile_corretor_membros(client, org_id, leads_rows, report)
         # P1.4 completion: collapse whatever now shares a cliente_id — both
         # the sets this run just repointed AND any that already existed
         # from a prior run. Steady-state by construction: this call sits
@@ -504,6 +508,9 @@ def attach_lead_now(client: Any, org_id: UUID, lead_row: dict) -> Optional[str]:
         cliente_id = _cliente_id_for_source(client, org_id, source)
         if cliente_id:
             _repoint_one_atendimento(client, org_id, source, cliente_id)
+            ensure_corretor_membro(
+                client, org_id, cliente_id, lead_row.get("corretor_id")
+            )
         return cliente_id
     except Exception:
         logger.error(
@@ -513,6 +520,87 @@ def attach_lead_now(client: Any, org_id: UUID, lead_row: dict) -> Optional[str]:
             lead_row.get("id"), org_id, exc_info=True,
         )
         return None
+
+
+def ensure_corretor_membro(
+    client: Any, org_id: UUID, cliente_id: Any, lead_corretor_id: Any
+) -> bool:
+    """Make a lead's corretor the card's agent member (`cliente_membros`).
+
+    The broker chosen when a lead is created (`leads.corretor_id` ->
+    `lead_corretores.id`, the SAME id space `cliente_membros.lead_corretor_id`
+    points at) used to live on the lead only, so the card's Negociacao
+    "Agentes" slice read "Nenhum membro no cartao" (live finding, deal 857).
+    The membership mechanism is the existing one — this only writes the row.
+
+    Idempotent: the PRIMARY KEY (cliente_id, lead_corretor_id) is checked
+    first and a concurrent insert that loses the race is a unique violation we
+    treat as "already a member". Returns True only when a row was written.
+    Never raises (a card without its agent is recoverable by the sweep's
+    `_reconcile_corretor_membros`; creating the lead must not fail on it).
+    """
+    if not cliente_id or not lead_corretor_id:
+        return False
+    try:
+        existing = (
+            _t(client, "cliente_membros").select("lead_corretor_id")
+            .eq("cliente_id", str(cliente_id))
+            .eq("lead_corretor_id", str(lead_corretor_id))
+            .limit(1).execute()
+        ).data or []
+        if existing:
+            return False
+        _t(client, "cliente_membros").insert({
+            "cliente_id": str(cliente_id),
+            "lead_corretor_id": str(lead_corretor_id),
+            "org_id": str(org_id),
+        }).execute()
+        return True
+    except Exception as exc:
+        if is_unique_violation(exc):
+            return False
+        logger.error(
+            "clientes_service.ensure_corretor_membro: failed for cliente %s "
+            "corretor %s (org %s)", cliente_id, lead_corretor_id, org_id,
+            exc_info=True,
+        )
+        return False
+
+
+def _reconcile_corretor_membros(
+    client: Any, org_id: UUID, leads_rows: list[dict], report: "BackfillReport"
+) -> None:
+    """Sweep leg of `ensure_corretor_membro` — covers every path that does not
+    go through `attach_lead_now` (workbook import, portal/campaign intake).
+
+    Only OPEN cards whose cliente has NO member at all are staffed, so a card
+    whose agents an operator curated is never touched. Residual: an operator
+    who deliberately empties a card's members gets the lead's corretor back on
+    the next pass — an unstaffed card has an unowned commission share, so that
+    is the safer default."""
+    corretor_por_lead = {
+        str(r["id"]): str(r["corretor_id"]) for r in leads_rows if r.get("corretor_id")
+    }
+    if not corretor_por_lead:
+        return
+    atendimentos = _select_all(
+        client, "atendimentos", org_id,
+        columns="lead_id,cliente_id,arquivado,closed_at",
+    )
+    staffed = {
+        str(m["cliente_id"])
+        for m in _select_all(client, "cliente_membros", org_id, columns="cliente_id")
+    }
+    for a in atendimentos:
+        lead_id, cliente_id = a.get("lead_id"), a.get("cliente_id")
+        if not lead_id or not cliente_id or a.get("arquivado") or a.get("closed_at"):
+            continue
+        corretor = corretor_por_lead.get(str(lead_id))
+        if not corretor or str(cliente_id) in staffed:
+            continue
+        if ensure_corretor_membro(client, org_id, cliente_id, corretor):
+            staffed.add(str(cliente_id))
+            report.membros_corretor_criados += 1
 
 
 def _cliente_id_for_source(client: Any, org_id: UUID, source: SourceRow) -> Optional[str]:

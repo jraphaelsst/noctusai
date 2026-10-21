@@ -69,9 +69,20 @@ PIPELINE_PROCESSOS = PipelineConfig(
 # A CAMPAIGN-origin card has no such endpoint: there IS no `leads` row for it,
 # so the modal renders straight from this projection. That is why `campanha` is
 # projected WIDER than `lead` here — it is the whole record, not a preview.
+#
+# 🔴 The card's "Dados do cliente" page renders THIS object through
+# `leadCardSubpages` (the same descriptors the Leads table uses), so every field
+# those descriptors read must be projected here — a narrower projection shows
+# "—" for data that exists (live finding, deal 857: a lead created with a
+# corretor showed "CORRETOR —" and "CRIADO EM —"). `corretor` is the resolved
+# `lead_corretores` row (the nome), `corretor_raw` the legacy-import fallback.
 _LEAD_CARD_FIELDS = (
     "id, cliente_nome, contato, contato_tipo, empreendimento, regiao, "
-    "data_entrada, origem_raw"
+    "data_entrada, origem_raw, origem_id, tipo_lead, status, anuncio_tier, "
+    "codigo_imovel, codigo_raw, corretor_id, corretor_raw, "
+    "corretor:lead_corretores(id, nome, cor), "
+    "follow_up_data, follow_up_nota, observacoes, source_sheet, source_row, "
+    "created_at, updated_at"
 )
 _CAMPANHA_CARD_FIELDS = (
     "id, full_name, email, phone, campaign_id, campaign_name, form_id, "

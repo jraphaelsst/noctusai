@@ -10,6 +10,14 @@ export interface AtendimentoLead {
   regiao: string | null;
   data_entrada: string | null;
   origem_raw: string | null;
+  // Projected so the card's "Dados do cliente" page (leadCardSubpages) has the
+  // same data the Leads table shows: resolved corretor with the legacy raw
+  // fallback, and the lead's created_at.
+  corretor_id?: string | null;
+  corretor_raw?: string | null;
+  corretor?: { id: string; nome: string; cor?: string | null } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /**
