@@ -90,6 +90,29 @@ export type {
 // Query client
 export { createQueryClient } from './query-client';
 
+// Automatic retry — the canonical transient-failure policy (queries default to
+// it via createQueryClient; processes use useRetryableAction) + the button.
+export {
+  AUTO_RETRY_DELAYS_MS,
+  MAX_AUTO_RETRIES,
+  MAX_RETRY_AFTER_MS,
+  isTransientError,
+  isRetrySafeForWrite,
+  retryAfterMs,
+  autoRetryDelayMs,
+  shouldAutoRetry,
+  autoRetryMutationOptions,
+  describeFailure,
+} from './retry';
+export { useRetryableAction, runWithRetry } from './use-retryable-action';
+export type {
+  RetryPolicy,
+  RetryOutcome,
+  RetryableAction,
+  RetryableActionOptions,
+  RetryableActionStatus,
+} from './use-retryable-action';
+
 // Environment
 export { env, validateEnv, generateEnvExample, ENV_VARS } from './env';
 export type { ProductEnv } from './env';
@@ -101,6 +124,8 @@ export { createProductSupabase, assertSupabaseBuildEnv } from './supabase';
 export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';
 export { ConfirmProvider, useConfirm } from './components/index';
 export type { ConfirmOptions, ConfirmFn } from './components/index';
+export { RetryableError, QueryErrorState, toastRetryableError, RETRYABLE_ERROR_MESSAGES } from './components/index';
+export type { RetryableErrorProps, QueryErrorStateProps, RetryableQueryLike } from './components/index';
 export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from './components/index';
 
 // Page-visibility admin organ — the WRITE side of the status_pagina system

@@ -14,6 +14,13 @@ export type {
   ResourceFieldType,
 } from './ResourceManager';
 export { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from './SideDrawer';
+export {
+  RetryableError,
+  QueryErrorState,
+  toastRetryableError,
+  RETRYABLE_ERROR_MESSAGES,
+} from './RetryableError';
+export type { RetryableErrorProps, QueryErrorStateProps, RetryableQueryLike } from './RetryableError';
 export type { SideDrawerProps, SideDrawerWidth } from './SideDrawer';
 export { VoiceAnswerInput, VOICE_ANSWER_MESSAGES } from './VoiceAnswerInput';
 export type { VoiceAnswerInputProps } from './VoiceAnswerInput';

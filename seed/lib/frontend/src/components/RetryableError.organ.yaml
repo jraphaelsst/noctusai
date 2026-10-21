@@ -1,0 +1,31 @@
+name: RetryableError
+kind: component
+path: seed/lib/frontend/src/components/RetryableError.tsx
+phase: pilot-seed
+registered_at: "2026-10-21"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { RetryableError, QueryErrorState, toastRetryableError } from '@noctusai/lib/components'. Policy helpers (isTransientError, isRetrySafeForWrite, describeFailure, autoRetryMutationOptions) + useRetryableAction from '@noctusai/lib'."
+  - "Owner request 2026-10-21: retry automatically, paced; after a few attempts stop and give the user a 'Tentar novamente' button that re-runs the same process."
+  - "Automatic part lives elsewhere: createQueryClient defaults every query to shouldAutoRetry/autoRetryDelayMs (transient only: no response, 408/425/429/5xx; 3 retries paced 1s/3s/9s; 429/503 Retry-After wins, > 30s => stop and show the button). Mutations default retry:false."
+  - "QueryErrorState renders NOTHING unless query.isError && data === undefined (two-signal rule — a failed background refetch keeps data on screen)."
+  - "Copy never shows the server's raw text: describeFailure(err) maps to a reason CLASS. 'Tentamos N vezes automaticamente.' only for a transient failure with N > 1 total attempts (failureCount)."
+  - "Writes: useRetryableAction(fn, { isRetryable: isRetrySafeForWrite }) — only failures where the server provably did not act (refused connection, 408/425/429/502/503); a timeout/500/504 surfaces the button immediately to avoid a duplicate write."
+  - "Pilot consumer: social-wiring (GeradorContratoSection, ImovelDetalhes, ClienteDetailModal document upload/re-extraction)."
+
+errors_encountered: []
+drifts_surfaced:
+  - "Before this organ, the seed QueryClient retried EVERY failure once (retry: 1) — 404/422 included — with no pacing, and products hand-rolled their own classifiers (social-wiring useSupervisao repetirSoFalhaTransitoria, useImoveis 404 guard)."
+alternatives_considered:
+  - "Per-product retry wrappers — rejected (the forks this organ replaces)."
+  - "Auto-retry mutations by default — rejected: writes are not idempotent; opt-in via autoRetryMutationOptions / useRetryableAction."
+manual_validation_log: []
+integration_test_status: unit-tested (RetryableError.test.tsx, retry.test.ts, use-retryable-action.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

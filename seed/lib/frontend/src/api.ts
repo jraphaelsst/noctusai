@@ -99,12 +99,30 @@ export class ApiError extends Error {
   readonly status: number | null;
   readonly body: unknown;
   readonly retryAfterSeconds: number | null;
-  constructor(status: number | null, message: string, body?: unknown, retryAfterSeconds: number | null = null) {
+  /**
+   * Which transport-level failure produced a `status: null` error:
+   * `'network'` (fetch rejected — server unreachable, connection refused,
+   * DNS, tunnel down) or `'timeout'` (the request was aborted by its own
+   * deadline). `null` whenever an HTTP response DID arrive. The retry
+   * classifier (`./retry`) reads it to decide whether a WRITE is safe to
+   * re-send: a refused connection never reached the server, a timeout may
+   * have been processed. A 5th, OPTIONAL constructor parameter — every
+   * existing call site keeps constructing a valid error with `null`.
+   */
+  readonly transport: 'network' | 'timeout' | null;
+  constructor(
+    status: number | null,
+    message: string,
+    body?: unknown,
+    retryAfterSeconds: number | null = null,
+    transport: 'network' | 'timeout' | null = null,
+  ) {
     super(status === null ? message : `[${status}] ${message}`);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.transport = transport;
     // Restore prototype chain — required when extending built-ins under the
     // TS `target` this lib compiles to, so `err instanceof ApiError` holds.
     Object.setPrototypeOf(this, ApiError.prototype);
@@ -425,9 +443,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     } catch (err) {
       const path = new URL(url).pathname;
       if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-        throw new ApiError(null, `A requisicao demorou demais (${path}). Tente novamente.`);
+        throw new ApiError(null, `A requisicao demorou demais (${path}). Tente novamente.`, undefined, null, 'timeout');
       }
-      throw new ApiError(null, `Servidor indisponivel (${path}). Verifique se o backend esta rodando.`);
+      throw new ApiError(null, `Servidor indisponivel (${path}). Verifique se o backend esta rodando.`, undefined, null, 'network');
     }
   }
 

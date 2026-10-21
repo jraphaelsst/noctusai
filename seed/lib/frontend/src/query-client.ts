@@ -2,7 +2,18 @@
  * Shared QueryClient configuration.
  *
  * All products use the same defaults: 5 min stale time, 10 min GC,
- * no refetch on window focus, 1 retry, and a global error toast.
+ * no refetch on window focus, the canonical automatic-retry policy, and a
+ * global error toast.
+ *
+ * Retry policy (`./retry`, owner request 2026-10-21): a query retries ONLY a
+ * transient failure (no response / timeout / 408 / 425 / 429 / 5xx), up to
+ * 3 times paced 1s → 3s → 9s (a 429/503 `Retry-After` wins when present).
+ * A 4xx (401/403/404/422) is never retried — the same request gets the same
+ * answer. Once the attempts run out the query is in `error` and the page
+ * renders `QueryErrorState` (button → `refetch()` → the same paced attempts
+ * again). The toast fires once, after the LAST attempt — never per attempt.
+ * Mutations do NOT auto-retry (writes are not idempotent); a mutation opts
+ * in with `...autoRetryMutationOptions()`.
  *
  * Per-query opt-out: a query whose `meta.suppressErrorToastStatuses`
  * lists an HTTP status swallows the toast for a rejection at exactly that
@@ -19,6 +30,7 @@ import { QueryClient, QueryCache } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ApiError } from './api';
+import { autoRetryDelayMs, shouldAutoRetry } from './retry';
 
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -43,7 +55,11 @@ export function createQueryClient(): QueryClient {
         staleTime: 5 * 60 * 1000,
         gcTime: 10 * 60 * 1000,
         refetchOnWindowFocus: false,
-        retry: 1,
+        retry: (failureCount, error) => shouldAutoRetry(failureCount, error),
+        retryDelay: (failureCount, error) => autoRetryDelayMs(failureCount, error),
+      },
+      mutations: {
+        retry: false,
       },
     },
   });
