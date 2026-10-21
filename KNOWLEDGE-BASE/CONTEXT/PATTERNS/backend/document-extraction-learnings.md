@@ -85,7 +85,10 @@ Extraction is its own process, measured separately from contract generation (own
   spouses' names, certidão matrícula) are now emitted ONLY when two valid reads agree; the re-read
   ALWAYS runs for OCR documents carrying them. Disagreement ⇒ NO value, both readings in
   `leituras_alternativas`/`divergencias`, aviso `divergencia_leituras`; social-wiring opens a
-  pending `cliente_campo_conflitos` review with both. A CPF/matrícula whose DV verifies may stand
+  pending `cliente_campo_conflitos` review with both. When the cliente column ALREADY holds a value
+  (owner 2026-10-21): a reading equal to it opens nothing; a differing one opens a review
+  (`valor_anterior` = on-file value; `protege_correcao` if it is an owner correction; a rejected
+  reading is never re-raised) — never a silent drop. A CPF/matrícula whose DV verifies may stand
   alone; a transcription containing a CPF/32-digit matrícula with a failing DV is `ancora_falhou`
   (never counts, like a failed/compromised read — a third read is taken). Real-corpus gate = 0
   WRONG over 3 consecutive harness runs; a field left empty WITH a divergence aviso is REVIEW.

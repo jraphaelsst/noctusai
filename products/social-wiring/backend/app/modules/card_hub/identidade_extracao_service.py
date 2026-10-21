@@ -1040,9 +1040,15 @@ def abrir_revisoes_divergencia(
     picks either; an admin adjudicates through `resolver_conflito`
     (accepting writes reading B; rejecting keeps the record, and reading A is
     typed by hand). A field with a single uncorroborated reading opens the
-    review with `valor_anterior=None`. A field the record ALREADY holds is
-    skipped: the gate never overrides what is on file, so there is nothing to
-    decide. Returns the NEW rows so the caller notifies.
+    review with `valor_anterior=None`.
+
+    A field the record ALREADY holds (owner decision 2026-10-21): a reading
+    that agrees with the on-file value opens nothing; one that DIFFERS from it
+    opens a pending review (`valor_anterior` = the value on file, proposed =
+    the reading) — never a silent drop, never an overwrite without approval.
+    An OWNER CORRECTION on file sets `protege_correcao`; a reading a human
+    already rejected is never re-raised. A warning only, never a generation
+    blocker. Returns the NEW rows so the caller notifies.
     """
     abertos: list[dict] = []
     for campo, valores in divergencias or ():
@@ -1051,23 +1057,44 @@ def abrir_revisoes_divergencia(
             continue
         atual = (
             _t(client, CLIENTES_TABLE)
-            .select(f"id,{coluna}")
+            .select(f"id,{coluna},{coluna}_origem,{coluna}_confirmado_em")
             .eq("org_id", str(org_id))
             .eq("id", str(cliente_id))
             .limit(1)
             .execute()
         ).data or []
-        if atual and not _vazio(atual[0].get(coluna)):
-            continue
+        presente = atual[0].get(coluna) if atual else None
+        protege = False
+        if not _vazio(presente):
+            if any(_mesmo_valor_conflito(coluna, presente, v) for v in valores):
+                continue  # a reading agrees with the record: nothing to decide
+            if campo_conflitos.ja_rejeitado_pelo_usuario(
+                client, campo_conflitos.CLIENTE, org_id, cliente_id, coluna, valores[-1],
+                igual=lambda proposto, _c=coluna, _v=valores[-1]: _mesmo_valor_conflito(
+                    _c, proposto, _v
+                ),
+            ):
+                continue  # a human already kept the record against this reading
+            protege = correcao_do_dono(
+                client, org_id, cliente_id, coluna,
+                origem_atual=atual[0].get(f"{coluna}_origem"),
+                confirmado_em_atual=atual[0].get(f"{coluna}_confirmado_em"),
+                presente=presente,
+            )
+        com_valor = not _vazio(presente)
         linha = _registrar_conflito(
             client, org_id, cliente_id, coluna,
-            valor_anterior=valores[0] if len(valores) > 1 else None,
-            origem_anterior=ORIGEM_LEITURA_A if len(valores) > 1 else None,
+            valor_anterior=presente if com_valor else (valores[0] if len(valores) > 1 else None),
+            origem_anterior=(
+                atual[0].get(f"{coluna}_origem") if com_valor
+                else (ORIGEM_LEITURA_A if len(valores) > 1 else None)
+            ),
             valor_proposto=valores[-1],
             origem_proposto=ORIGEM_LEITURA_B,
             confianca_proposta="baixa",
             fonte_tabela=DOCUMENTOS_TABLE,
             fonte_id=documento_id,
+            protege_correcao=protege,
         )
         if linha is not None:
             abertos.append(linha)

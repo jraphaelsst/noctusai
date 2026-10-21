@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.modules.card_hub import identidade_extracao_service as svc
+from app.services import clientes_service
 from noctusai_lib.integrations.documents import (
     ExtractionConfidence,
     FakeIdentityExtractor,
@@ -86,15 +87,75 @@ async def test_a_single_uncorroborated_reading_opens_a_review_without_a_prior_va
     assert c["valor_anterior"] is None and c["valor_proposto"] == "1980-05-12"
 
 
-@pytest.mark.asyncio
-async def test_a_field_the_record_already_holds_is_not_reopened(client, scoped):
-    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "ANA SILVA SOUZA"})
-    scoped.set_table_data("cliente_campo_conflitos", [])
-    await svc.extrair_identidade(
+async def _le(scoped, storage, cid, did):
+    return await svc.extrair_identidade(
         scoped, storage, ORG_UUID, UUID(cid), UUID(did),
         extractor=FakeIdentityExtractor(_divergente()),
     )
-    assert [c for c in _conflitos(scoped) if c["campo"] == "nome_oficial"] == []
+
+
+def _de_nome(scoped) -> list[dict]:
+    return [c for c in _conflitos(scoped) if c["campo"] == "nome_oficial"]
+
+
+@pytest.mark.asyncio
+async def test_a_reading_differing_from_the_value_on_file_opens_a_review(client, scoped):
+    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "ANA SILVA SOUZA"})
+    scoped.set_table_data("cliente_campo_conflitos", [])
+    await _le(scoped, storage, cid, did)
+    (c,) = _de_nome(scoped)
+    assert c["status"] == "pendente"
+    assert c["valor_anterior"] == "ANA SILVA SOUZA"
+    assert c["valor_proposto"] == "ANA SOUZA"
+    assert c["origem_proposto"] == svc.ORIGEM_LEITURA_B
+    assert not c.get("protege_correcao")
+    # never overwritten without approval
+    assert _cliente(scoped, cid)["nome_oficial"] == "ANA SILVA SOUZA"
+
+
+@pytest.mark.asyncio
+async def test_a_reading_agreeing_with_the_value_on_file_opens_nothing(client, scoped):
+    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "Ana Silva"})
+    scoped.set_table_data("cliente_campo_conflitos", [])
+    await _le(scoped, storage, cid, did)
+    assert _de_nome(scoped) == []
+
+
+@pytest.mark.asyncio
+async def test_an_owner_correction_on_file_makes_the_review_protective(client, scoped):
+    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "ANA PEREIRA"})
+    scoped.set_table_data("cliente_campo_conflitos", [])
+    clientes_service.update_cliente(
+        scoped, ORG_UUID, UUID(cid), acting_user_id=uuid4(), is_admin=True,
+        nome_oficial="ANA CORRIGIDA",
+    )
+    await _le(scoped, storage, cid, did)
+    (c,) = _de_nome(scoped)
+    assert c["valor_anterior"] == "ANA CORRIGIDA"
+    assert c["protege_correcao"] is True
+    assert _cliente(scoped, cid)["nome_oficial"] == "ANA CORRIGIDA"
+
+
+@pytest.mark.asyncio
+async def test_approve_applies_the_reading_and_reject_is_never_reraised(client, scoped):
+    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "ANA PEREIRA"})
+    scoped.set_table_data("cliente_campo_conflitos", [])
+    await _le(scoped, storage, cid, did)
+    (c,) = _de_nome(scoped)
+    svc.resolver_conflito(scoped, ORG_UUID, UUID(c["id"]), aceitar=False, decidido_por=uuid4())
+    assert _cliente(scoped, cid)["nome_oficial"] == "ANA PEREIRA"
+    await _le(scoped, storage, cid, did)
+    assert [x for x in _de_nome(scoped) if x["status"] == "pendente"] == []
+
+
+@pytest.mark.asyncio
+async def test_approving_the_review_applies_the_reading(client, scoped):
+    cid, did, storage = await _setup(scoped, tipo="rg", cliente={"nome_oficial": "ANA PEREIRA"})
+    scoped.set_table_data("cliente_campo_conflitos", [])
+    await _le(scoped, storage, cid, did)
+    (c,) = _de_nome(scoped)
+    svc.resolver_conflito(scoped, ORG_UUID, UUID(c["id"]), aceitar=True, decidido_por=uuid4())
+    assert _cliente(scoped, cid)["nome_oficial"] == "ANA SOUZA"
 
 
 @pytest.mark.asyncio

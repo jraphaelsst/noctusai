@@ -20,8 +20,9 @@
  * ------------------------------------
  * Deliberately, and it is not decoration: the sequence is the one an operator
  * actually collects details in, so the form reads top-to-bottom as the
- * conversation goes. RG and CPF are absent because they are satisfied by
- * UPLOADING a document, not by typing — they live in Anexos below.
+ * conversation goes. RG and CPF are typable here AND satisfiable by
+ * uploading a document in Anexos below — a typed value is an owner
+ * correction, which a later document reading never overwrites unasked.
  *
  * 🔴 GÊNERO HAS NO DEFAULT — A PRE-PICKED DROPDOWN LIES OVER MISSING DATA
  * ------------------------------------------------------------------------
