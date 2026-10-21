@@ -30,6 +30,7 @@ cd products/seed/frontend && npm run dev
 - Notification proxying
 - Team/invitation management
 - Template auto-sync (post-commit hook → `templates/product-seed/`)
+- Reference domain hooks (`src/hooks/useExample.ts`): TanStack reads with the two-signal render rule + cache-write create/update/delete via `useCacheWriteMutation` (skill `noc-cache-writes`)
 
 ## Tests
 

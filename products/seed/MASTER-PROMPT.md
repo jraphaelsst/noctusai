@@ -29,7 +29,7 @@ products/seed/frontend/src/
   App.tsx              → createProductApp() + createProductLayout()
   vite.config.ts       → createViteConfig({ port: 8100 }) — 3 lines
   pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
-  hooks/               → useNotificacoes (from seed lib)
+  hooks/               → useNotificacoes (from seed lib); useExample = reference domain hooks (TanStack reads + useCacheWriteMutation writes)
   components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
   NO Layout.tsx        → framework provides it via createProductLayout()
 ```
