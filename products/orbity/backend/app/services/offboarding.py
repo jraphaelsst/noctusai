@@ -63,6 +63,16 @@ def preview(db: Any, org_id: str, client_id: str) -> dict:
     }
 
 
+def deletion_blockers(db: Any, org_id: str, client_id: str) -> dict:
+    """What stops a client from being deleted: a live contract (active/suspended) or an open charge.
+
+    Reuses ``preview`` (the same two questions inactivation asks). ``{"contracts": [...], "charges": [...]}``
+    -- both empty means the client can be deleted. Raises ``BillingError(404)`` for an unknown client.
+    """
+    state = preview(db, org_id, client_id)
+    return {"contracts": state["contracts"], "charges": state["charges"]}
+
+
 def _rpc_refusal(exc: Exception) -> Optional[BillingError]:
     text = str(exc)
     for marker, (status, code, message) in _RPC_REFUSALS.items():
@@ -130,4 +140,4 @@ def offboard(db: Any, gateway: Any, org_id: str, client_id: str, decisions: dict
     return summary
 
 
-__all__ = ["CANCEL", "KEEP", "offboard", "preview"]
+__all__ = ["CANCEL", "KEEP", "deletion_blockers", "offboard", "preview"]

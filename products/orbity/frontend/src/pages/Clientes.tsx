@@ -1,5 +1,5 @@
 /**
- * Clientes -- client list with create / edit (ClientForm) and inactivation with kept charges (ClientOffboardingDialog).
+ * Clientes -- client list with create / edit (ClientForm), soft delete (admin, confirm, 409 shown inline) and inactivation with kept charges (ClientOffboardingDialog).
  *
  * The list is the canonical ResourceManager (page-scoped CRUD organ) wired to /api/clients with create/edit turned off:
  * the form is Orbity's own `ClientForm` because it needs what the organ's form cannot do (Razão Social required, nome
@@ -9,13 +9,14 @@
  * Nav key: "clientes".
  */
 import { useState } from "react";
-import { Archive, Pencil, RotateCcw } from "lucide-react";
+import { Archive, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { ResourceManager } from "@noctusai/lib/components";
+import { ResourceManager, useConfirm } from "@noctusai/lib/components";
 import { Button, useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { ClientForm, EMPTY_CLIENT, valuesOf, type ClientFormValues, type ClientRowLike } from "@/components/ClientForm";
 import { ClientOffboardingDialog } from "@/components/ClientOffboardingDialog";
 import { api } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface ClientRow extends ClientRowLike {
   org_id: string;
@@ -45,14 +46,44 @@ async function reactivateClient(id: string, reload: () => void) {
   }
 }
 
+/** The server's pt-BR reason (`{detail}` of a 409 etc.), not the transport `[409] ...` wrapper. */
+function serverReason(err: unknown): string {
+  const body = (err as { body?: { detail?: unknown } } | null)?.body;
+  if (typeof body?.detail === "string") return body.detail;
+  return err instanceof Error ? err.message : "Falha ao excluir cliente";
+}
+
 export default function Clientes() {
   const isAdmin = useIsOrgAdmin();
+  const confirm = useConfirm();
+  const queryClient = useQueryClient();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<ClientFormValues | null>(null);
   const [offboarding, setOffboarding] = useState<string | null>(null);
   // Remounting the list is how a save made outside the organ's own form refreshes it.
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
+
+  async function deleteClient(row: ClientRow) {
+    setDeleteError(null);
+    const ok = await confirm({
+      title: `Excluir ${row.legal_name || row.name}?`,
+      description: "O cliente deixa de aparecer em listas e seletores. Contratos e cobranças já encerrados continuam no histórico.",
+      confirmLabel: "Excluir cliente",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/clients/${row.id}`);
+      toast.success("Cliente excluído");
+      queryClient.invalidateQueries({ queryKey: ["orbity-client-options"] });
+      queryClient.invalidateQueries({ queryKey: ["orbity-dashboard-clients"] });
+      refresh();
+    } catch (err: unknown) {
+      setDeleteError(serverReason(err));
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -63,6 +94,12 @@ export default function Clientes() {
         </label>
         <Button onClick={() => setEditing(EMPTY_CLIENT)}>Novo cliente</Button>
       </div>
+
+      {deleteError ? (
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {deleteError}
+        </div>
+      ) : null}
 
       <ResourceManager<ClientRow>
         key={`${refreshKey}-${showArchived}`}
@@ -87,6 +124,17 @@ export default function Clientes() {
               <Pencil className="h-3.5 w-3.5" />
               Editar
             </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={() => void deleteClient(row)}
+                title="Excluir cliente"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Excluir cliente
+              </button>
+            ) : null}
             {row.active ? (
               isAdmin ? (
                 <button

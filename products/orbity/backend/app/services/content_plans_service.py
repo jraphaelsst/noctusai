@@ -119,10 +119,10 @@ class ContentPlansService:
     def _assert_owned(self, table: str, row_id: str | None, label: str) -> None:
         if not row_id:
             return
-        rows = self._rows(
-            self._t(table).select("id").eq("org_id", self._org_id).eq("id", str(row_id)),
-            f"assert_owned.{table}",
-        )
+        query = self._t(table).select("id").eq("org_id", self._org_id).eq("id", str(row_id))
+        if table == "clients":
+            query = query.is_("deleted_at", "null")  # a deleted client is not assignable
+        rows = self._rows(query, f"assert_owned.{table}")
         if not rows:
             raise PlanReferenceError(f"{label} não encontrado")
 

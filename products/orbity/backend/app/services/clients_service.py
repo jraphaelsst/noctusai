@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from datetime import datetime, timezone
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class ClientsService:
             self._table()
             .select("*", count="exact")
             .eq("org_id", self._org_id)
+            .is_("deleted_at", "null")
             .order("created_at", desc=True)
             .range(offset, offset + page_size - 1)
         )
@@ -74,6 +76,7 @@ class ClientsService:
                 .select("*")
                 .eq("org_id", self._org_id)
                 .eq("id", client_id)
+                .is_("deleted_at", "null")
                 .execute()
             )
         except Exception:
@@ -120,6 +123,7 @@ class ClientsService:
                 .update(payload)
                 .eq("org_id", self._org_id)
                 .eq("id", client_id)
+                .is_("deleted_at", "null")
                 .execute()
             )
         except Exception:
@@ -128,3 +132,25 @@ class ClientsService:
         rows = result.data or []
         return rows[0] if rows else None
 
+
+    def soft_delete(self, client_id: str, *, deleted_by: str | None = None) -> bool:
+        """Stamp ``deleted_at``/``deleted_by``. False when the client does not exist (or is already deleted).
+
+        Callers must have verified there is nothing live to lose (see ``offboarding.deletion_blockers``).
+        """
+        patch: dict[str, Any] = {"deleted_at": datetime.now(timezone.utc).isoformat()}
+        if deleted_by:
+            patch["deleted_by"] = deleted_by
+        try:
+            result = (
+                self._table()
+                .update(patch)
+                .eq("org_id", self._org_id)
+                .eq("id", client_id)
+                .is_("deleted_at", "null")
+                .execute()
+            )
+        except Exception:
+            logger.exception("clients.soft_delete failed org=%s id=%s", self._org_id, client_id)
+            raise
+        return bool(result.data)

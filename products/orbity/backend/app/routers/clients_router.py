@@ -12,6 +12,7 @@ Endpoints:
   PATCH  /api/clients/{id}     update (``active=false`` is refused: inactivating goes through /archive)
   GET    /api/clients/cnpj/{cnpj}              Razão Social from the public CNPJ registry
   GET    /api/clients/{id}/offboarding-preview open charges + live contracts the inactivation touches  [admin]
+  DELETE /api/clients/{id}                     soft-delete (refused 409 with a live contract / open charge) [admin]
   POST   /api/clients/{id}/archive             inactivate: cancel or keep each open charge, terminate the contracts [admin]
 """
 from __future__ import annotations
@@ -216,3 +217,41 @@ async def archive_client(
                     **summary},
         )
     return {"ok": True, "id": client_id, **summary}
+
+
+@router.delete("/{client_id}", status_code=status.HTTP_200_OK)
+async def delete_client(client_id: str, auth: tuple = Depends(admin_dependency)) -> dict:
+    """Soft-delete the client (``deleted_at``/``deleted_by``): hidden from every list/picker, rows kept.
+
+    Refused 409 ``cliente_com_pendencias`` while the client has an ACTIVE/suspended contract or an open
+    (pending/overdue) charge: terminate/cancel those first (or inactivate through /archive).
+    """
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    try:
+        # The live-client check is the 404 authority: preview() below would still find an already-deleted row.
+        if ClientsService(get_user_client(token), org_id=org_id).get(client_id) is None:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado")
+        blockers = await asyncio.to_thread(lambda: offboarding.deletion_blockers(get_admin_client(), str(org_id), client_id))
+        if blockers["contracts"] or blockers["charges"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "cliente_com_pendencias",
+                    "detail": "Este cliente tem contrato ativo ou cobranças em aberto. Encerre o contrato e cancele ou receba as cobranças antes de excluir.",
+                    "contracts": len(blockers["contracts"]),
+                    "charges": len(blockers["charges"]),
+                },
+            )
+        deleted = ClientsService(get_user_client(token), org_id=org_id).soft_delete(
+            client_id, deleted_by=str(getattr(user, "id", "") or "") or None)
+    except HTTPException:
+        raise
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    except Exception:
+        logger.exception("clients.delete failed org=%s id=%s", org_id, client_id)
+        raise HTTPException(status_code=502, detail="Falha ao excluir cliente")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    return {"ok": True, "id": client_id}

@@ -129,3 +129,63 @@ class TestCnpjLookup:
         finally:
             app.dependency_overrides.clear()
         assert resp.status_code == 502 and "manualmente" in resp.text
+
+
+class TestClientDelete:
+    """Soft delete: admin-only, 404 for an unknown client, 409 with a live contract; the row is stamped, never removed."""
+
+    ORG = "00000000-0000-0000-0000-00000000c0de"
+
+    def _seed(self, client, *, contracts=()):
+        from app.dependencies import coerce_org_uuid
+
+        org = str(coerce_org_uuid("test-org-123"))
+        client.mock_supabase.set_table_data("clients", [
+            {"id": CID, "org_id": org, "name": "ACME", "legal_name": "ACME LTDA", "active": True, "deleted_at": None}])
+        client.mock_supabase.set_table_data("ctr_contracts", [
+            {"id": "k1", "org_id": org, "party_id": CID, "title": "Retainer", "status": s} for s in contracts])
+        client.mock_supabase.set_table_data("fin_entries", [])
+        client.mock_supabase.set_table_data("billing_charges", [])
+
+    def test_delete_without_auth_is_401(self, client):
+        assert client.raw().delete(f"/api/clients/{CID}").status_code == 401
+
+    def test_plain_staff_cannot_delete(self, client):
+        assert client.delete(f"/api/clients/{CID}").status_code == 403
+
+    def test_an_unknown_client_is_404(self, client):
+        make_admin(client)
+        client.mock_supabase.set_table_data("clients", [])
+        assert client.delete(f"/api/clients/{CID}").status_code == 404
+
+    def test_an_already_deleted_client_is_404(self, client):
+        make_admin(client)
+        self._seed(client)
+        client.mock_supabase.set_table_data("clients", [
+            {"id": CID, "org_id": str(__import__("app.dependencies", fromlist=["x"]).coerce_org_uuid("test-org-123")),
+             "name": "ACME", "active": True, "deleted_at": "2026-10-01T00:00:00+00:00"}])
+        assert client.delete(f"/api/clients/{CID}").status_code == 404
+
+    def test_a_clean_client_is_soft_deleted_not_removed(self, client):
+        make_admin(client)
+        self._seed(client)
+        resp = client.delete(f"/api/clients/{CID}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"ok": True, "id": CID}
+        patch = client.mock_supabase.table("clients").updated_payloads[-1]
+        assert patch["deleted_at"] and "deleted_by" in patch
+
+    def test_an_active_contract_blocks_with_409_and_a_typed_code(self, client):
+        make_admin(client)
+        self._seed(client, contracts=["active"])
+        resp = client.delete(f"/api/clients/{CID}")
+        assert resp.status_code == 409, resp.text
+        body = resp.json()  # the seed's flat machine-code shape: {"detail", "code", ...}
+        assert body["code"] == "cliente_com_pendencias" and body["contracts"] == 1
+        assert "contrato" in body["detail"]
+        assert client.mock_supabase.table("clients").updated_payloads == []
+
+    def test_an_ended_contract_does_not_block(self, client):
+        make_admin(client)
+        self._seed(client, contracts=["terminated"])
+        assert client.delete(f"/api/clients/{CID}").status_code == 200
