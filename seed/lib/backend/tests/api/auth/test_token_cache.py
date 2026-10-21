@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from types import SimpleNamespace
 
 import jwt as pyjwt
@@ -173,7 +174,9 @@ class TestCacheContract:
         assert cache.get(tok).user_metadata == {"a": 1}
 
     def test_logout_evicts_everywhere(self):
-        a, b, tok = TokenCache(), TokenCache(), _jwt()
+        # A unique subject: _jwt() is deterministic within a second, and every live cache in the
+        # process (other tests' dependencies included) would otherwise also count as holding it.
+        a, b, tok = TokenCache(), TokenCache(), _jwt(sub=f"logout-{uuid.uuid4()}")
         a.put(tok, _User())
         b.put(tok, _User())
         assert discard_token_everywhere(tok) == 2
