@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -26,7 +27,9 @@ from app.stores._util import utcnow
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DETECTORES_BLOQUEANTES",
     "LIMITES_PADRAO",
+    "SINAIS_SEGURANCA",
     "POLITICAS",
     "POLITICA_PADRAO",
     "REGRAS",
@@ -48,10 +51,21 @@ REGRAS = (
     "imovel_sem_ferramenta", "termina_sem_pergunta", "perfil_citado_sem_registro", "fallback_enviado",
     "pergunta_repetida", "vazamento_prompt", "tentativa_extracao",
     "escala_pedido_humano", "escala_fora_escopo", "escala_qualificacao_completa", "parada_segura",
+    # public-line guardrails (spec B3/B4): the output filters, the identity-claim signal, the abuse escalation
+    "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
+    "alegacao_identidade", "escala_seguranca",
 )
+#: The detectors that block by default: a reply that leaks the prompt or carries an unvetted link, contact,
+#: identity number, encoded/structured payload or a forbidden pattern never reaches the lead.
+DETECTORES_BLOQUEANTES = (
+    "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito",
+    "padroes_proibidos",
+)
+#: The input-side signals that count toward ``escala_seguranca`` (per thread, 24 h).
+SINAIS_SEGURANCA = ("tentativa_extracao", "alegacao_identidade")
 #: Code-side default policy of a rule with no row (the contract: ``registrar`` everywhere; the owner's IP
 #: mandate: the leak detector blocks by default).
-POLITICA_PADRAO: dict[str, str] = {r: "registrar" for r in REGRAS} | {"vazamento_prompt": "bloquear"}
+POLITICA_PADRAO: dict[str, str] = {r: "registrar" for r in REGRAS} | {r: "bloquear" for r in DETECTORES_BLOQUEANTES}
 
 
 @dataclass(frozen=True)
@@ -116,6 +130,12 @@ class ConformidadeStore(Protocol):
     def listar_violacoes(
         self, org_id: UUID, agent_id: UUID, *, thread_id: UUID | None = None, limite: int = 200
     ) -> list[Violacao]: ...
+
+    def contar_sinais(
+        self, org_id: UUID, agent_id: UUID, thread_id: UUID, regras: Sequence[str], desde: datetime,
+    ) -> int:
+        """How many violation rows of ``regras`` this thread has since ``desde`` (the ``escala_seguranca`` counter)."""
+        ...
 
     def obter_impressao(self, org_id: UUID, version_id: UUID) -> Impressao | None: ...
 
@@ -183,6 +203,14 @@ class FakeConformidadeStore:
     ) -> list[Violacao]:
         rows = [v for a, t, _m, v in self._violacoes if a == agent_id and (thread_id is None or t == thread_id)]
         return rows[-limite:]
+
+    def contar_sinais(
+        self, org_id: UUID, agent_id: UUID, thread_id: UUID, regras: Sequence[str], desde: datetime,
+    ) -> int:
+        return sum(
+            1 for a, t, _m, v in self._violacoes
+            if a == agent_id and t == thread_id and v.regra in regras and v.created_at is not None and v.created_at >= desde
+        )
 
     def obter_impressao(self, org_id: UUID, version_id: UUID) -> Impressao | None:
         return self._impressoes.get(version_id)
@@ -275,6 +303,14 @@ class SupabaseConformidadeStore:
                      UUID(str(r["id"])), r.get("created_at"))
             for r in reversed(rows)
         ]
+
+    def contar_sinais(
+        self, org_id: UUID, agent_id: UUID, thread_id: UUID, regras: Sequence[str], desde: datetime,
+    ) -> int:
+        rows = self._t("conformidade_violacoes").select("id").eq("org_id", str(org_id)).eq(
+            "agent_id", str(agent_id)).eq("thread_id", str(thread_id)).in_("regra", list(regras)).gte(
+            "created_at", desde.isoformat()).limit(100).execute().data or []
+        return len(rows)
 
     def obter_impressao(self, org_id: UUID, version_id: UUID) -> Impressao | None:
         rows = self._t("conformidade_impressoes").select("*").eq("org_id", str(org_id)).eq(

@@ -52,6 +52,7 @@ __all__ = [
     "finalizar_conclusao",
     "construir_toolset",
     "MOTIVO_MAX_CHARS",
+    "FERRAMENTAS_MODO_RESTRITO",
     "MOTIVOS_ENCERRAR",
     "MOTIVO_LEAD_PEDIU_PARAR",
     "TOOLS",
@@ -274,10 +275,19 @@ def schema_de(nome: str, parametros: Mapping[str, Any] | None = None) -> dict[st
     return schema
 
 
+#: The whole toolset of a ``modo_restrito`` turn (spec B4): hand over to a person, stop, or read the standing.
+FERRAMENTAS_MODO_RESTRITO = frozenset({"handoff", "encerrar", "avaliar_lead"})
+
+
 def tools_ofertaveis(conteudo: ConteudoBundle, capacidades: frozenset[str]) -> list[Any]:
-    """The tool ROWS the turn may offer: active ∩ registry ∩ capabilities, in registry order."""
+    """The tool ROWS the turn may offer: active ∩ registry ∩ capabilities, in registry order. ``modo_restrito``
+    in the capabilities narrows the set to :data:`FERRAMENTAS_MODO_RESTRITO` (a marker, never a grant)."""
     por_nome = {f.ferramenta: f for f in conteudo.ferramentas if f.ativo and (f.descricao or "").strip()}
-    return [por_nome[n] for n, d in TOOLS.items() if n in por_nome and d.exige <= capacidades]
+    restrito = "modo_restrito" in capacidades
+    return [
+        por_nome[n] for n, d in TOOLS.items()
+        if n in por_nome and d.exige <= capacidades and (not restrito or n in FERRAMENTAS_MODO_RESTRITO)
+    ]
 
 
 def montar_tool_specs(conteudo: ConteudoBundle, capacidades: frozenset[str]) -> tuple[ToolSpec, ...]:
@@ -428,6 +438,28 @@ class JuliaTurno:
     lote_lead: list[str] = field(default_factory=list)
     #: :class:`app.channels.opt_out.OptOutService` -- the lead-level opt-out + the owner's notice.
     opt_out: Any | None = None
+    #: Security escalation (spec B4): the abuse counter crossed ``limiar_suspeito`` -- only
+    #: :data:`FERRAMENTAS_MODO_RESTRITO` are offered. Set by the route from DATA; it can only REMOVE tools.
+    modo_restrito: bool = False
+    #: Spec B3.6: ``text -> True`` when the text reproduces the prompt (canary / fingerprint); ``None`` = off.
+    guarda_campos: Callable[[str], bool] | None = None
+    #: ``tool.field`` codes of the lead-influenced arguments replaced this turn (codes only, never the text).
+    campos_substituidos: list[str] = field(default_factory=list)
+
+    def proteger_args(self, nome: str, args: BaseModel) -> BaseModel:
+        """The lead-influenced arguments that reach humans, scanned for the prompt: a hit replaces the field
+        with the DB text ``ferramenta.campo_removido`` and is booked (code only) in ``campos_substituidos``."""
+        from app.channels.conformidade import CAMPOS_PROTEGIDOS
+
+        if self.guarda_campos is None:
+            return args
+        troca: dict[str, str] = {}
+        for campo in CAMPOS_PROTEGIDOS.get(nome, ()):
+            valor = getattr(args, campo, None)
+            if isinstance(valor, str) and valor.strip() and self.guarda_campos(valor):
+                troca[campo] = self.texto("ferramenta.campo_removido")
+                self.campos_substituidos.append(f"{nome}.{campo}")
+        return args.model_copy(update=troca) if troca else args
 
     def texto(self, chave: str, **valores: object) -> str:
         bruto = self.conteudo.texto(chave)
@@ -439,6 +471,8 @@ class JuliaTurno:
 
     def capacidades(self) -> frozenset[str]:
         caps = {"qualificacao"}
+        if self.modo_restrito:
+            caps.add("modo_restrito")  # narrows the offer to FERRAMENTAS_MODO_RESTRITO (tools_ofertaveis)
         if self.skills is not None:
             caps.add("skills")
         if self.sw is not None and self.ferramentas_sw:
@@ -560,6 +594,8 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
     oferecidas = {s.name for s in specs}
     obrig = obrigatorias_por_ferramenta(
         t.conteudo, t.skills.obrigatoria_para() if t.skills is not None else None)
+    if "modo_restrito" in caps:  # skills are not offered here: a skill gate must not lock the way out to a person
+        obrig = {}
 
     async def _recusar_args(nome: str, exc: ValidationError) -> _Resultado:
         campos = ", ".join(sorted({".".join(str(p) for p in e["loc"]) or "args" for e in exc.errors()}))
@@ -839,6 +875,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         except ValidationError as exc:
             res = await _recusar_args(call.name, exc)
         else:
+            args = t.proteger_args(call.name, args)
             falta = None
             for skill in obrig.get(call.name, ()):
                 if not await asyncio.to_thread(t.threads.skill_aberta, t.org_id, t.thread_id, skill, t.compiled_hash):

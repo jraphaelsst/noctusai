@@ -37,13 +37,12 @@ class TestPureDetectors:
         assert c.termina_sem_pergunta("Anotado.", participante_segue_ativo=True, encerrou_ou_transferiu=True) is None
         assert c.termina_sem_pergunta("", participante_segue_ativo=True, encerrou_ou_transferiu=False) is None
 
-    def test_imovel_sem_ferramenta_checks_codes_by_the_rule_pattern_and_links_by_origin(self):
+    def test_imovel_sem_ferramenta_checks_codes_by_the_rule_pattern(self):
         f = c.imovel_sem_ferramenta
-        assert f("Veja o AP0999!", ["AP0123"], [], r"AP\d{4}") == {"codigos": 1}
-        assert f("Veja o ap0123!", ["AP0123"], [], r"AP\d{4}") is None  # case-folded, known
-        assert f("Veja AP0999", ["AP0123"], [], None) is None  # no pattern = no code check (data)
-        assert f("https://x.exemplo/a.", [], ["https://x.exemplo/a"], None) is None
-        assert f("https://x.exemplo/b", [], ["https://x.exemplo/a"], None) == {"links": 1}
+        assert f("Veja o AP0999!", ["AP0123"], r"AP\d{4}") == {"codigos": 1}
+        assert f("Veja o ap0123!", ["AP0123"], r"AP\d{4}") is None  # case-folded, known
+        assert f("Veja AP0999", ["AP0123"], None) is None  # no pattern = no code check (data)
+        assert f("https://x.exemplo/a.", [], None) is None  # links are link_nao_permitido's
 
     def test_perfil_citado_sem_registro_only_through_the_option_synonyms(self):
         from tests.qualificacao.fixture_v1 import versao_v1
@@ -63,9 +62,11 @@ class TestPureDetectors:
         assert f("Qual o bairro?", preenchidos, []) is None
         assert f("Faixa preco anotada.", preenchidos, []) is None  # not a question
 
-    def test_the_default_policy_blocks_only_the_prompt_leak(self):
+    def test_the_default_policy_blocks_the_leak_and_the_public_line_filters_only(self):
         assert POLITICA_PADRAO["vazamento_prompt"] == "bloquear"
-        assert {r for r, p in POLITICA_PADRAO.items() if p == "bloquear"} == {"vazamento_prompt"}
+        assert {r for r, p in POLITICA_PADRAO.items() if p == "bloquear"} == {
+            "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta",
+            "formato_suspeito", "padroes_proibidos"}
 
 
 class TestPromptLeakFingerprint:

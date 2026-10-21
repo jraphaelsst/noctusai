@@ -123,6 +123,7 @@ CODIGOS_RECUSA: tuple[str, ...] = (
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
+    "seguranca", "direito_titular",
 )
 #: Values only the SERVER writes (deterministic escalation / safety stops).
 MOTIVOS_HANDOFF_SERVIDOR: tuple[str, ...] = (
@@ -163,6 +164,8 @@ TEXTOS.update({
     "ferramenta.resultado.encerrado_opt_out": _canal("ferramenta"),
     "ferramenta.resultado.concluido": _canal("ferramenta"),
     "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
+    #: replaces a lead-influenced tool argument that reproduced the prompt (spec B3.6)
+    "ferramenta.campo_removido": _canal("ferramenta"),
     "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score"),
     **{
         f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()))
@@ -186,6 +189,7 @@ TEXTOS.update({
     **{f"conformidade.correcao.{r}": _canal("conformidade") for r in (
         "imovel_sem_ferramenta", "termina_sem_pergunta", "perfil_citado_sem_registro", "fallback_enviado",
         "pergunta_repetida", "vazamento_prompt",
+        "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
     )},
     "conformidade.handoff_resumo": _canal("conformidade", "regra"),
     "escalonamento.resumo": _canal("escalonamento", "motivo_codigo"),

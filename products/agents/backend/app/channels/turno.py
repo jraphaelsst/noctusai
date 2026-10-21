@@ -42,7 +42,7 @@ from app.qualificacao.prompt import qualificacao_data
 from app.realtime import publish_event
 from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
-from app.stores.conformidade import Impressao, Violacao
+from app.stores.conformidade import SINAIS_SEGURANCA, Impressao, Violacao
 from app.stores.errors import NotFound
 from app.stores.studio_definitions_conteudo import OrgSpecRecord
 from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, rotular_historico
@@ -312,6 +312,20 @@ async def executar(
     estado_sw = contexto.estado if contexto is not None else None
     ferramentas_sw = contexto.capacidades.ferramentas_sw if contexto is not None else True
 
+    # input-side security signals (signal only, never block): an attempt to read the instructions, a claim of
+    # identity. They feed ``escala_seguranca`` (reduce-only: a claim never grants anything).
+    sinal = conf.sinal_extracao(lote_lead, regras.get("tentativa_extracao"))
+    alegacao = conf.sinal_alegacao(lote_lead, regras.get("alegacao_identidade"))
+    violacoes: list[Violacao] = [
+        Violacao(nome, "sinal", d) for nome, d in (("tentativa_extracao", sinal), ("alegacao_identidade", alegacao)) if d
+    ]
+    previos = await asyncio.to_thread(
+        svc.conformidade.contar_sinais, org_id, agent.id, thread.id, SINAIS_SEGURANCA, agora - timedelta(hours=24))
+    nivel = conf.nivel_seguranca(regras.get("escala_seguranca"), previos + len(violacoes))
+    if nivel != "normal":
+        violacoes.append(Violacao("escala_seguranca", "registrar", {"nivel": nivel, "sinais": previos + len(violacoes)}))
+    valores = r.valores
+
     mensagens_lead, n_respostas = _mensagens_do_lead(svc.messages, org_id, thread.id)
     pediu_humano = _pediu_humano(svc, regras, org_id, thread.id, lote_lead)
     sinais = LeadSinais(
@@ -326,6 +340,7 @@ async def executar(
     # skill texts resolved FOR THIS ORG ({{org.chave}}), the same resolver the compiled sections went through
     skills: SkillFonte | None = SkillsComSpecs(fonte, r.valores)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
+    leak = regras.get("vazamento_prompt")
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
@@ -334,12 +349,12 @@ async def executar(
         ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead),
         opt_out=OptOutService(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
+        modo_restrito=nivel != "normal",
+        guarda_campos=(
+            (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
+            if leak is not None and leak.ativo else None),
     )
     estado0 = await asyncio.to_thread(svc.qual.avaliar, org_id, lead_ref_id, padrao.id, prep.escopo, sinais)
-
-    # input-side extraction-attempt signal (signal only, never blocks)
-    sinal = conf.sinal_extracao(lote_lead, regras.get("tentativa_extracao"))
-    violacoes: list[Violacao] = [Violacao("tentativa_extracao", "sinal", sinal)] if sinal else []
 
     # the thread context of THIS agent: dossier + last N labelled turns + the newest hand-off note
     n = runtime.history_messages
@@ -386,6 +401,9 @@ async def executar(
                 if padrao.criterio(k) is not None and padrao.criterio(k).tipo not in ("derivado", "identificacao")
             },
             registrados_no_turno=turno.registrou_criterios, esgotou_loop=t.esgotou,
+            dominios_permitidos=conf.lista_de_spec(valores.get(conf.SPEC_DOMINIOS)),
+            contatos_permitidos=conf.lista_de_spec(valores.get(conf.SPEC_CONTATOS)),
+            cnpjs_proprios=conf.lista_de_spec(valores.get(conf.SPEC_CNPJ)),
         ))
 
     async with asyncio.timeout(settings.channel_turn_timeout_seconds):
@@ -419,6 +437,13 @@ async def executar(
         await executar_handoff(
             turno, turno.parar, conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", turno.parar))
         texto_final = conteudo.texto("runtime.parada_segura").strip()
+    if turno.campos_substituidos:  # B3.6: a lead-influenced tool argument reproduced the prompt (codes only)
+        violacoes.append(Violacao(
+            "vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"),
+            {"campos": len(turno.campos_substituidos)}, bloqueada=True))
+    if nivel == "handoff":  # B4: repeated extraction / identity attempts -> a person takes over, the agent pauses
+        await executar_handoff(
+            turno, "seguranca", conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", "seguranca"))
     await _escalar(svc, turno, regras, org_id, lead_ref_id, lote_lead)
 
     usage: dict[str, Any] = {}

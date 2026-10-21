@@ -69,7 +69,8 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
         assert props["motivo"]["description"] == "short reason"
         assert props["motivo_codigo"]["description"].startswith("reason code pedido_humano: asks for a person")
         assert props["motivo_codigo"]["enum"] == [
-            "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro"]
+            "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
+            "seguranca", "direito_titular"]
         item = tools["registrar_perfil"].parameters["properties"]["itens"]
         assert item["description"] == "answers" and item["items"]["properties"]["trecho"]["description"] == "lead's words"
         for name in ("abrir_skill", "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "handoff", "encerrar"):
@@ -282,7 +283,11 @@ class TestOtherGates:
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[say("Veja https://inventado.exemplo/XX. Gostou?")]))
         body = chan.turn(turn_body("Oi")).json()
-        assert [v["regra"] for v in body["conformidade"]["violacoes"]] == ["imovel_sem_ferramenta"]
+        # a link no tool returned is link_nao_permitido's (blocks by default: no bubble, a hand-off); the
+        # property-code half of imovel_sem_ferramenta keeps its own rule
+        assert "link_nao_permitido" in {v["regra"] for v in body["conformidade"]["violacoes"]}
+        assert not any("inventado.exemplo" in x for x in body["reply"]["partes"])  # the link never reached the lead
+        assert any(v["regra"] == "link_nao_permitido" and v["bloqueada"] for v in body["conformidade"]["violacoes"])
 
 
 class TestRetryBudgetAndSafeStop:

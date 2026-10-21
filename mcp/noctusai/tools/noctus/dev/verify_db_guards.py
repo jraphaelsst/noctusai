@@ -4175,6 +4175,7 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
 def _m(nn: str) -> str:
     return {
         "031": "031_julia_v2_conteudo.sql", "032": "032_julia_v2_qualificacao.sql",
+        "037": "037_julia_v2_conformidade.sql", "044": "044_julia_v2_guardrails.sql",
         "033": "033_julia_v2_threads.sql", "034": "034_julia_v2_controles.sql",
         "035": "035_julia_v2_threads_constraints.sql", "038": "038_julia_v2_evals_roteiro.sql",
         "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
@@ -4567,6 +4568,31 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
                 "VALUES (v_skill, 2, 'quando', 'corpo');"),
         fragments=("uq_skill_versoes_um_rascunho",), what="a second draft of the same library skill",
         rationale="One draft per skill: two would split edits and let a publish ship the wrong body.",
+    ),
+    # ── 044 · Julia guardrails: the rule parameters are well formed ──
+    _julia_v2_probe(
+        probe_id="conformidade_regras.parametros_objeto", guard_name="conformidade_regras_parametros_objeto_check",
+        migrations=(_m("037"), _m("044")), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conformidade_regras (org_id, agent_id, regra, parametros) "
+                "VALUES (v_org, v_agent, 'padroes_proibidos', '[\"x\"]'::jsonb);"),
+        fragments=("conformidade_regras_parametros_objeto_check",), what="a conformance rule whose parameters are not a JSON object",
+        rationale="Every reader does `parametros.get(...)`: a list or scalar would crash the turn that reads the rule, on a public line.",
+    ),
+    _julia_v2_probe(
+        probe_id="conformidade_regras.escala_limiares_ordem", guard_name="conformidade_regras_escala_limiares_check",
+        migrations=(_m("037"), _m("044")), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conformidade_regras (org_id, agent_id, regra, parametros) "
+                "VALUES (v_org, v_agent, 'escala_seguranca', '{\"limiar_suspeito\": 3, \"limiar_handoff\": 3}'::jsonb);"),
+        fragments=("conformidade_regras_escala_limiares_check",), what="an escalation whose hand-off threshold is not above the restricted-mode threshold",
+        rationale="limiar_handoff must be strictly above limiar_suspeito or the restricted-mode step is skipped: the lead goes from normal straight to hand-off.",
+    ),
+    _julia_v2_probe(
+        probe_id="conformidade_regras.escala_limiares_faixa", guard_name="conformidade_regras_escala_limiares_check",
+        migrations=(_m("037"), _m("044")), setup=_JV2_AGENT,
+        attack=(f"INSERT INTO {_JV2}.conformidade_regras (org_id, agent_id, regra, parametros) "
+                "VALUES (v_org, v_agent, 'escala_seguranca', '{\"limiar_suspeito\": 0}'::jsonb);"),
+        fragments=("conformidade_regras_escala_limiares_check",), what="an escalation threshold of zero",
+        rationale="A zero threshold would put every lead in restricted mode from the first message; thresholds are integers 1..20.",
     ),
     # ── 042 · a lead that asks to stop is never dropped silently ──
     _julia_v2_probe(
