@@ -23,6 +23,7 @@
     "043_julia_v2_lead_reativacao.sql": "6d2264087013b3bcc40babda6e10e148d3f1c7e042c49dd7f93d8445b353328f",
     "044_julia_v2_guardrails.sql": "3ff953223431a1a6e325a5ce18df7cb75c71dd0ef9e862eb980890198f0dbe07",
     "045_julia_v2_limites_guardas.sql": "02453818bc829e4390a75889845d8c50762296d9f3217c36ba045e8d63af13fd",
-    "046_julia_v2_proveniencia_canario.sql": "ca69840c29f3e42598ce3148b04016005a6d8cc7c98224e7ae4be3c4394b50cd"
+    "046_julia_v2_proveniencia_canario.sql": "ca69840c29f3e42598ce3148b04016005a6d8cc7c98224e7ae4be3c4394b50cd",
+    "047_audit_acao_check_restore.sql": "303a71c0553f7cdce415443755f41709c25c621898c68e184c438af74a97118e"
   }
 }
