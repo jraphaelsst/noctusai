@@ -499,3 +499,66 @@ class TestPlainTextLayerShape:
         ):
             assert o.constam is False
         assert f.ocorrencias_constam() is False
+
+
+class TestResumoDaConsultaTextLayerVariant:
+    """🔴 The portal print's `Resumo da consulta` has NO pipes and its header
+    cells wrap onto two lines ("DATA"/"NASCIMENTO", "Último"/"Registro");
+    the occurrence rows are "Pendência Refin" / "Protesto Estadual"
+    (singular). A live deal (2026-10-21) came back with participações +
+    protocolo right and cpf/nome/mãe/nascimento + every ocorrência null.
+    Fully synthetic values; CPF is the classic checksum-valid test CPF."""
+
+    CPF = "529.982.247-25"
+
+    LAYOUT = (
+        "     Crednet\n"
+        "                                                      21 de Outubro de 2026 10:15:00\n"
+        "     Resumo da consulta\n"
+        "                                                                                 DATA\n"
+        "      CPF                              NOME                                NOME DA MÃE\n"
+        "                                                                                 NASCIMENTO\n"
+        "      529.982.247-25                   FULANO DE TAL SILVA                 MARIA DE TAL SILVA                 01/01/1990\n"
+        "                                                                                 Último\n"
+        "      Ocorrências                      Quantidade                          Valor\n"
+        "                                                                                 Registro\n"
+        "      Pendências Internas                  NAO CONSTAM OCORRENCIAS                          -                -\n"
+        "      Pendência Refin                                      1                          R$ 13.460,38            05/2026\n"
+        "      Protesto Estadual                    NAO CONSTAM OCORRENCIAS                          -                -\n"
+        "      Cheques Sem Fundo BACEN              NAO CONSTAM OCORRENCIAS                          -                -\n"
+        "\n     Detalhes do documento\n"
+        "     Situação do CPF/CNPJ em 02/10/2026: REGULAR\n"
+    )
+
+    #: Same table, one cell per line (the fitz reader).
+    CELL_PER_LINE = (
+        "Resumo da consulta\nCPF\nNOME\nNOME DA MÃE\nDATA\nNASCIMENTO\n"
+        "529.982.247-25\nFULANO DE TAL SILVA\nMARIA DE TAL SILVA\n01/01/1990\n"
+        "Ocorrências\nQuantidade\nValor\nÚltimo\nRegistro\n"
+        "Pendências Internas\nNAO CONSTAM OCORRENCIAS\n-\n-\n"
+        "Pendência Refin\n1\nR$ 13.460,38\n05/2026\n"
+        "Protesto Estadual\nNAO CONSTAM OCORRENCIAS\n-\n-\n"
+        "Cheques Sem Fundo BACEN\nNAO CONSTAM OCORRENCIAS\n-\n-\n"
+        "Detalhes do documento\nSituação do CPF/CNPJ em 02/10/2026: REGULAR\n"
+        "Pendências Internas\nNAO CONSTAM OCORRENCIAS\n"
+        "Pendências Financeiras Refin\nData\nModalidade\n"
+    )
+
+    @pytest.mark.parametrize("texto", [LAYOUT, CELL_PER_LINE], ids=["layout", "cell-per-line"])
+    def test_identity_and_every_ocorrencia_are_read(self, texto):
+        f = parse_crednet(texto, TextSource.TEXT_LAYER)
+        assert f.cpf == self.CPF and f.cpf_valido is True
+        assert f.nome == "FULANO DE TAL SILVA"
+        assert f.nome_mae == "MARIA DE TAL SILVA"
+        assert f.data_nascimento == date(1990, 1, 1)
+        assert f.confiancas["nome_mae"] is ExtractionConfidence.ALTA
+        assert f.pendencias_internas.constam is False
+        assert f.protesto_estadual.constam is False
+        assert f.cheques_sem_fundo.constam is False
+        refin = f.pendencias_financeiras
+        assert refin.constam is True
+        assert refin.quantidade == 1
+        assert refin.valor == Decimal("13460.38")
+        assert refin.ultimo_registro == date(2026, 5, 1)
+        assert f.ocorrencias_constam() is True
+        assert f.cpf_situacao == "REGULAR"

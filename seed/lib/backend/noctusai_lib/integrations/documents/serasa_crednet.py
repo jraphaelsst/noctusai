@@ -275,6 +275,15 @@ def _ocorrencia(norm: str, rotulo: str) -> "OcorrenciaCrednet":
             continue
         if ultimo is None:
             d = _data_br(p)
+            if d is None:
+                # The summary prints "Último Registro" as month/year only
+                # ("05/2026") → the first day of that month.
+                mm = re.fullmatch(r"(\d{2})/(\d{4})", p)
+                if mm:
+                    try:
+                        d = date(int(mm.group(2)), int(mm.group(1)), 1)
+                    except ValueError:
+                        d = None
             if d is not None:
                 ultimo = d
     if quantidade is None and valor is None and ultimo is None:
@@ -283,6 +292,78 @@ def _ocorrencia(norm: str, rotulo: str) -> "OcorrenciaCrednet":
     return OcorrenciaCrednet(
         constam=True, quantidade=quantidade, valor=valor, ultimo_registro=ultimo
     )
+
+
+# ─── the cell-wise `Resumo da consulta` (text-layer variants) ──────────────
+#
+# The portal print's text layer has no pipes and, depending on the reader,
+# either prints each table row on one line (`pdftotext -layout`, cells split
+# by 2+ spaces, header cells WRAPPED onto two lines: "DATA"/"NASCIMENTO",
+# "Último"/"Registro") or one cell per line (fitz). Both flatten to the same
+# ordered cell list, so the block is read by CELL ORDER and anchored on the
+# value shapes (CPF, date), never on the header text.
+_RESUMO_INICIO_RE = re.compile(r"RESUMO\s+DA\s+CONSULTA")
+_RESUMO_FIM_RE = re.compile(r"DETALHES\s+DO\s+DOCUMENTO|PARTICIPACAO\s+SOCIETARIA")
+_CPF_CELULA_RE = re.compile(r"\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11}")
+_DATA_CELULA_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
+
+#: Row label as printed in the summary → the `CrednetFields` field it feeds.
+#: "Pendência Refin" (singular) is the financial-pendency row of this variant.
+_RESUMO_ROTULOS: dict[str, str] = {
+    "PENDENCIAS INTERNAS": "pendencias_internas",
+    "PENDENCIA INTERNA": "pendencias_internas",
+    "PENDENCIAS FINANCEIRAS": "pendencias_financeiras",
+    "PENDENCIA FINANCEIRA": "pendencias_financeiras",
+    "PENDENCIA REFIN": "pendencias_financeiras",
+    "PENDENCIAS REFIN": "pendencias_financeiras",
+    "PROTESTO ESTADUAL": "protesto_estadual",
+    "PROTESTOS ESTADUAIS": "protesto_estadual",
+    "CHEQUES SEM FUNDO BACEN": "cheques_sem_fundo",
+    "CHEQUE SEM FUNDO BACEN": "cheques_sem_fundo",
+}
+
+
+def _resumo_celulas(norm: str) -> list[str]:
+    ini = _RESUMO_INICIO_RE.search(norm)
+    if ini is None:
+        return []
+    bloco = norm[ini.end():]
+    fim = _RESUMO_FIM_RE.search(bloco)
+    if fim is not None:
+        bloco = bloco[: fim.start()]
+    return [
+        c.strip()
+        for linha in bloco.splitlines()
+        for c in re.split(r"\s{2,}", linha)
+        if c.strip()
+    ]
+
+
+def _resumo_identidade(celulas: list[str]) -> Optional[tuple[str, str, str, str]]:
+    """(cpf, nome, mae, nascimento) — the cells right after the CPF cell."""
+    for i, c in enumerate(celulas):
+        if _CPF_CELULA_RE.fullmatch(c) and i + 3 < len(celulas):
+            nome, mae, nasc = celulas[i + 1], celulas[i + 2], celulas[i + 3]
+            if _DATA_CELULA_RE.fullmatch(nasc):
+                return c, nome, mae, nasc
+    return None
+
+
+def _resumo_ocorrencias(celulas: list[str]) -> dict[str, "OcorrenciaCrednet"]:
+    """Each occurrence row of the summary → its parsed `OcorrenciaCrednet`.
+    A row's cells run from its label up to the next label."""
+    linhas: dict[str, list[str]] = {}
+    atual: Optional[str] = None
+    for c in celulas:
+        campo = _RESUMO_ROTULOS.get(c)
+        if campo is not None:
+            atual = campo
+            linhas.setdefault(campo, [])
+        elif atual is not None:
+            linhas[atual].append(c)
+    return {
+        campo: _ocorrencia("X  " + "  ".join(cs), "X") for campo, cs in linhas.items()
+    }
 
 
 def _participacao_de(
@@ -493,30 +574,36 @@ def parse_crednet(text: str, source: TextSource) -> CrednetFields:
         except ValueError:
             consulta_em = None
 
+    celulas = _resumo_celulas(norm)
     cpf_valor: Optional[str] = None
     cpf_valido = False
     nome: Optional[str] = None
     nome_mae: Optional[str] = None
     data_nascimento: Optional[date] = None
     m = _RESUMO_RE.search(norm)
+    resumo: Optional[tuple[str, str, str, str]] = None
     if m:
-        cpf_bruto = m.group("cpf")
+        resumo = (m.group("cpf"), m.group("nome"), m.group("mae"), m.group("nasc"))
+    else:
+        resumo = _resumo_identidade(celulas)
+    if resumo:
+        cpf_bruto, nome_txt, mae_txt, nasc_txt = resumo
         cpf_valido = _cpf_is_valid(cpf_bruto)
         cpf_valor = format_cpf(cpf_bruto) or cpf_bruto
         confiancas["cpf"] = ExtractionConfidence.ALTA if cpf_valido else ExtractionConfidence.BAIXA
         rotulos["cpf"] = "CPF"
 
-        nome = m.group("nome").strip() or None
+        nome = nome_txt.strip() or None
         if nome:
             confiancas["nome"] = ExtractionConfidence.ALTA
             rotulos["nome"] = "NOME"
 
-        nome_mae = m.group("mae").strip() or None
+        nome_mae = mae_txt.strip() or None
         if nome_mae:
             confiancas["nome_mae"] = ExtractionConfidence.ALTA
             rotulos["nome_mae"] = "NOME DA MAE"
 
-        data_nascimento = _data_br(m.group("nasc"))
+        data_nascimento = _data_br(nasc_txt)
         if data_nascimento is not None:
             confiancas["data_nascimento"] = ExtractionConfidence.ALTA
             rotulos["data_nascimento"] = "DATA NASCIMENTO"
@@ -531,10 +618,21 @@ def parse_crednet(text: str, source: TextSource) -> CrednetFields:
             confiancas["cpf_situacao"] = ExtractionConfidence.ALTA
             rotulos["cpf_situacao"] = "SITUACAO DO CPF/CNPJ EM"
 
-    pendencias_internas = _ocorrencia(norm, _OCORRENCIA_ROTULOS["pendencias_internas"])
-    pendencias_financeiras = _ocorrencia(norm, _OCORRENCIA_ROTULOS["pendencias_financeiras"])
-    protesto_estadual = _ocorrencia(norm, _OCORRENCIA_ROTULOS["protesto_estadual"])
-    cheques_sem_fundo = _ocorrencia(norm, _OCORRENCIA_ROTULOS["cheques_sem_fundo"])
+    por_resumo = _resumo_ocorrencias(celulas)
+
+    def _linha(campo: str) -> "OcorrenciaCrednet":
+        # The summary table's own row first (it is the authoritative one in
+        # the text-layer variants); the label-anchored search covers the
+        # pipe / single-line shapes where the summary block isn't separable.
+        achada = por_resumo.get(campo)
+        if achada is not None and achada.constam is not None:
+            return achada
+        return _ocorrencia(norm, _OCORRENCIA_ROTULOS[campo])
+
+    pendencias_internas = _linha("pendencias_internas")
+    pendencias_financeiras = _linha("pendencias_financeiras")
+    protesto_estadual = _linha("protesto_estadual")
+    cheques_sem_fundo = _linha("cheques_sem_fundo")
 
     participacoes = _participacoes(norm, source)
 

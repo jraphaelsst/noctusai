@@ -146,6 +146,10 @@ Extraction is its own process, measured separately from contract generation (own
 - **Old-model CNH** — the name is a bare line with no label; "CPF" merged into the identity line.
 - **Serasa Crednet** — "Participação Societária" rows can print `100.0 %` (dot decimal) and an
   unpunctuated 14-digit CNPJ; a share never has a thousands separator.
+  The portal-print text layer's "Resumo da consulta" has no pipes and wrapped headers
+  ("DATA"/"NASCIMENTO"); it is read by CELL order (2+ space split, or one cell per line),
+  anchored on the CPF + date shapes. Rows are "Pendência Refin" (→ `pendencias_financeiras`) and
+  "Protesto Estadual"; "Último Registro" is `MM/YYYY` (→ day 1).
 - **Guia ITBI (Carapicuíba)** — no transaction-value box: price = "Valor do Instrumento (à vista)"
   + "Valor Financiado" (equals the base de cálculo).
 - **Guia ITBI (Cotia, text layer)** — the price is "Valor do Instrumento (Valor Venal de
