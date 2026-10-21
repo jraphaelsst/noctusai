@@ -181,6 +181,18 @@ qualifying-green requirement remain the SW verdict.) Opt out with
 `mcp/noctusai/tools/noctus/dev/task_branch.py`'s module comment above
 `_merged_tip_red_is_new`.
 
+**2026-10-21 — cross-product readers declare `CONTRACT_OF`; the merged-tip
+selection DERIVES their gate.** Gate scope follows changed paths, so an
+agents-only integrate ran no social-wiring gate even though SW tests read
+agents' `contracts/channels.v2.json` and `tool_registry.py` (red on dev twice).
+A test that reads another product's tree declares a module-level
+`CONTRACT_OF = ("<provider glob>", ...)`; `gate_sweep._contract_consumer_specs`
+(scanner in `tools/noctus/dev/contract_of.py`) adds a scoped
+`pytest:<consumer>:contract` gate (own budget row) when a changed path matches,
+skipped if that product's full suite already runs. Keeper:
+`check_every_test_file_is_gated` fails a test whose non-docstring string/`/`-path
+literals name another product's `products/<x>/...` tree without the declaration.
+
 **2026-10-19 — a timed-out in-scope merged-tip gate BLOCKS (silence is not a
 pass).** The 90s "overall time-box" above was one shared deadline whose
 remainder became each gate's subprocess timeout, so the big suites

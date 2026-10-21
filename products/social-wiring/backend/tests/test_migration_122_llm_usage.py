@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+# Provider path this test reads (gate_sweep runs it when it changes; contract_of.py).
+CONTRACT_OF = ("products/core/backend/app/routers/admin_llm_usage.py",)
+
 MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "122_llm_usage.sql"
 TEMPLATE = (
     Path(__file__).resolve().parents[4]

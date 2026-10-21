@@ -30,6 +30,8 @@ from app.services.julia_lead_turn_service import process_lead_batch, run_reengaj
 from tests.support.agents_channel_contexto import ChannelContexto
 from tests.support.julia_world import CONNECTION_ID, LEAD_CHAT, ORG_ID, OWNER_ID, World, buffer_lead
 
+# Provider paths this test reads (gate_sweep runs it when one changes; KB self-branching-mode, CONTRACT_OF).
+CONTRACT_OF = ("products/agents/backend/contracts/**", "products/agents/backend/app/schemas/channels.py")
 SCHEMA_PATH = Path(os.environ.get("AGENTS_CONTRACT_SCHEMA") or Path(__file__).resolve().parents[5] / "products" / "agents" / "backend" / "contracts" / "channels.v2.json")
 
 

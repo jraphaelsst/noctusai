@@ -25,6 +25,8 @@ from app.clients.agents import (
 )
 from app.services import julia_contexto_service as ctxsvc
 
+# Provider paths this test reads (gate_sweep runs it when one changes; KB self-branching-mode, CONTRACT_OF).
+CONTRACT_OF = ("products/agents/backend/contracts/**", "products/agents/backend/app/schemas/channels.py")
 REPO = Path(__file__).resolve().parents[5]
 #: `AGENTS_CONTRACT_SCHEMA` points the test at another copy of the file (e.g. a peer worktree's, before it is merged).
 SCHEMA_PATH = Path(os.environ.get("AGENTS_CONTRACT_SCHEMA") or REPO / "products" / "agents" / "backend" / "contracts" / "channels.v2.json")

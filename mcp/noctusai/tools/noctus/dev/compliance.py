@@ -7906,6 +7906,26 @@ def check_every_test_file_is_gated(repo_root: Path | None = None) -> list[dict]:
             "severity": "high",
         })
 
+    # 2026-10-21 second pass (same "every test file" surface): a test that reads
+    # ANOTHER product's tree must declare `CONTRACT_OF`, else `task_branch
+    # integrate` never selects it when only that provider changes.
+    from .contract_of import undeclared_cross_product_tests
+
+    for rel, refs in undeclared_cross_product_tests(root):
+        issues.append({
+            "product": "<repo>",
+            "file": rel,
+            "issue": (
+                f"`{rel}` names {', '.join(f'products/{r}/' for r in sorted(refs))} "
+                f"but declares no module-level `CONTRACT_OF = (<provider globs>)`. "
+                f"Without it an integrate that touches only that provider runs "
+                f"none of this test and the consumer goes red on dev (agents -> "
+                f"social-wiring, twice, 2026-10). Declare the provider paths the "
+                f"test reads (see `contract_of.py`)."
+            ),
+            "severity": "high",
+        })
+
     return issues
 
 

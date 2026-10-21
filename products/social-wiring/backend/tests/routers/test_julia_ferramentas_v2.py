@@ -12,6 +12,8 @@ import pytest
 
 from tests.routers.test_julia_ferramentas_router import _ORG, _OTHER, _product, _row, catalogo, ok, tools  # noqa: F401
 
+# Provider paths this test reads (gate_sweep runs it when one changes; KB self-branching-mode, CONTRACT_OF).
+CONTRACT_OF = ("products/agents/backend/app/channels/tool_registry.py",)
 REPO = Path(__file__).resolve().parents[5]
 AGENTS_REGISTRY = REPO / "products/agents/backend/app/channels/tool_registry.py"
 

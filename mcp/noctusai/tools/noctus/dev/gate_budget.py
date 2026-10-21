@@ -25,6 +25,8 @@ from __future__ import annotations
 GATE_BUDGETS_S: dict[str, int] = {
     # social-wiring: ~300 s pytest (11.9k tests) on a quiet box, slower under load.
     "pytest:social-wiring": 480,
+    # scoped CONTRACT_OF consumer files only (contract_of.py), a few seconds-scale tests
+    "pytest:social-wiring:contract": 120,
     "e2e:social-wiring": 480,
     "vite_build:social-wiring": 240,
     # seed roots: seed/lib/backend ~180 s observed.

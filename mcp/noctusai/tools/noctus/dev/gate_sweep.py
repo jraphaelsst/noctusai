@@ -1249,6 +1249,30 @@ def _mcp_module_diffs(
     return out
 
 
+def _contract_consumer_specs(
+    root: Path, scope: dict[str, Any], specs: list[GateSpec], py: str,
+) -> list[GateSpec]:
+    """Scoped `pytest:<consumer>:contract` gates for tests that DECLARE
+    (`CONTRACT_OF`, see `contract_of.py`) they read a changed provider path.
+    Skipped when the consumer's whole `pytest:<slug>` suite already runs."""
+    from .contract_of import contract_consumers  # lazy
+
+    have = {s.gate for s in specs}
+    extra: list[GateSpec] = []
+    hits = contract_consumers(root, scope.get("changed_files", []))
+    for slug, tests in hits.items():
+        if f"pytest:{slug}" in have:
+            continue
+        extra.append(GateSpec(
+            f"pytest:{slug}:contract",
+            [py, "-m", "pytest", "-q", "--tb=short", *tests],
+            root / "products" / slug / "backend",
+        ))
+    if hits:
+        scope["contract_consumers"] = hits
+    return extra
+
+
 def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
     py = resolve_test_python()
     specs: list[GateSpec] = []
@@ -1314,6 +1338,8 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
             specs.extend(_product_gate_specs(root, slug, py))
+
+    specs.extend(_contract_consumer_specs(root, scope, specs, py))
 
     if scope.get("migration_files"):
         specs.append(
@@ -1698,6 +1724,7 @@ def gate_sweep(
     changed_files, warnings = _changed_files(root, runner_git, base_ref)
     scope = _derive_scope(changed_files)
     scope["base_ref"] = base_ref
+    scope["changed_files"] = sorted(changed_files)
     if scope["mcp"]:
         scope["mcp_diffs"] = _mcp_module_diffs(root, runner_git, base_ref, scope["mcp_files"])
     specs = _build_gate_specs(root, scope)

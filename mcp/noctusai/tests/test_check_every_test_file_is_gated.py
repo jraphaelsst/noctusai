@@ -158,3 +158,45 @@ class TestLiveRepo:
     def test_the_real_repo_is_clean(self):
         """The gate must hold on the tree that ships it."""
         assert check_every_test_file_is_gated(REPO) == []
+
+
+# ── CONTRACT_OF: cross-product test dependencies (2026-10-21) ────────────────
+class TestContractOf:
+    @staticmethod
+    def _mk(tmp_path, body, name="products/social-wiring/backend/tests/test_x.py"):
+        f = tmp_path / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    def test_undeclared_cross_product_read_is_flagged(self, tmp_path):
+        from tools.noctus.dev.contract_of import undeclared_cross_product_tests
+        self._mk(tmp_path, 'P = open("products/agents/backend/contracts/channels.v2.json")\n')
+        assert [r for r, _ in undeclared_cross_product_tests(tmp_path)] == [
+            "products/social-wiring/backend/tests/test_x.py"]
+
+    def test_declared_or_own_or_seed_refs_pass(self, tmp_path):
+        from tools.noctus.dev.contract_of import undeclared_cross_product_tests
+        self._mk(tmp_path, 'CONTRACT_OF = ("products/agents/backend/contracts/**",)\nP = open("products/agents/backend/x")\n')
+        self._mk(tmp_path, 'P = "products/social-wiring/backend/x"; Q = "products/seed/x"\n',
+                 "products/social-wiring/backend/tests/test_y.py")
+        assert undeclared_cross_product_tests(tmp_path) == []
+
+    def test_selection_agents_contract_diff_selects_sw_gate(self, tmp_path):
+        from tools.noctus.dev.contract_of import contract_consumers
+        self._mk(tmp_path, 'CONTRACT_OF = ("products/agents/backend/contracts/**", '
+                           '"products/agents/backend/app/channels/tool_registry.py")\n')
+        hit = contract_consumers(tmp_path, ["products/agents/backend/contracts/channels.v2.json"])
+        assert hit == {"social-wiring": ["tests/test_x.py"]}
+        assert contract_consumers(tmp_path, ["products/agents/backend/app/other.py"]) == {}
+
+    def test_gate_spec_emitted_only_for_matching_diff(self, tmp_path):
+        from tools.noctus.dev import gate_sweep as GS
+        self._mk(tmp_path, 'CONTRACT_OF = ("products/agents/backend/contracts/**",)\n')
+        scope = {"changed_files": ["products/agents/backend/contracts/channels.v2.json"]}
+        specs = GS._contract_consumer_specs(tmp_path, scope, [], "py")
+        assert [s.gate for s in specs] == ["pytest:social-wiring:contract"]
+        scope2 = {"changed_files": ["products/agents/backend/app/x.py"]}
+        assert GS._contract_consumer_specs(tmp_path, scope2, [], "py") == []
+        # consumer's full suite already scheduled -> no duplicate
+        full = [GS.GateSpec("pytest:social-wiring", ["x"], tmp_path)]
+        assert GS._contract_consumer_specs(tmp_path, scope, full, "py") == []
