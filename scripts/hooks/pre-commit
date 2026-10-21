@@ -973,6 +973,20 @@ if [[ -n "$STAGED_MIO" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater-bis. Async handler / sync DB gate (blocking, ratchet) ──
+# Keeper `check_async_handler_sync_db` (2026-10-21): an `async def` route handler that calls the sync
+# supabase client directly blocks the event loop for the whole round-trip (concurrent requests serialize).
+# Baselined per file in mcp/noctusai/tests/async_handler_sync_db_baseline.json; only NEW ones block.
+STAGED_AHS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/.*\.py|seed/(lib|framework)/backend/.*\.py|mcp/noctusai/tests/async_handler_sync_db_baseline\.json)$' | grep -vE '(^|/)tests/|/test_[^/]*\.py$' || true)
+if [[ -n "$STAGED_AHS" ]] && have_py; then
+    echo "[pre-commit] backend source staged — checking async handlers that block the event loop..."
+    if ! "$PY" "$CLI" --check-async-handler-sync-db --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ASYNC-HANDLER-SYNC-DB check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Make the handler a plain \`def\` (it awaits nothing) or wrap the call in await anyio.to_thread.run_sync(...). If you CONVERTED some, run --lower-async-handler-sync-db-baseline. See KB § PATTERNS/backend/request-path-latency.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-ter. Agent prompt-text-in-code gate (blocking, ratchet) ──
 # Keeper `check_agent_prompt_text_in_code` (Julia v2 D3): every string a model reads is an agents DB
 # row, never code. Fires when agents backend app code under channels/studio/runtime (or the channels

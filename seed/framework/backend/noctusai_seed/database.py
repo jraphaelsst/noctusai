@@ -17,6 +17,7 @@ Usage::
     admin = db.get_admin_client()        # service role
     core = db.get_core_client()          # public schema
 """
+import threading
 from typing import Any, Callable, Optional
 from supabase import Client
 from noctusai_lib.integrations.database import make_supabase_client
@@ -135,6 +136,11 @@ class DatabaseModule:
         self._schema = schema
         self._admin: Optional[Client] = None
         self._admin_pinned: Optional["_SchemaPinnedAdminClient"] = None
+        self._core: Optional[Client] = None
+        self._core_pinned: Optional["_SchemaPinnedAdminClient"] = None
+        #: Guards the lazy build of the two process-wide clients — two threads
+        #: racing the first call must not each build (and then fight over) one.
+        self._build_lock = threading.Lock()
 
     @property
     def schema(self) -> str:
@@ -156,17 +162,41 @@ class DatabaseModule:
             access_token=access_token,
         )
 
-    def get_core_client(self) -> Client:
-        """Create a Supabase client targeting the public schema.
+    def get_core_client(self) -> "_SchemaPinnedAdminClient":
+        """Cached service-role client targeting the ``public`` schema.
 
-        Used for platform-level tables (notifications, noctus_users, etc.).
+        Used for platform-level tables (notifications, noctus_users, licenses…).
+        Built ONCE per process and shared (it used to be rebuilt — new TLS
+        handshake included — on every call, and the auth/licence path calls it
+        on every request). Wrapped in :class:`_SchemaPinnedAdminClient` for the
+        same reason the admin client is: a deliberate ``.schema(other)`` on the
+        shared client must not leak into the next bare ``.table()`` call.
+
+        Thread-safety: the underlying httpx pool is HTTP/1.1 and lock-protected
+        (``noctusai_lib.integrations.http_pool``); the pin re-applies the schema
+        per access. NEVER run ``client.auth.sign_in_*`` / ``verify_otp`` on it —
+        those establish a session and would turn the shared service-role client
+        into a user client (the 2026-05-23 core outage); use a throwaway
+        ``create_client`` like ``auth_router`` does.
         """
-        return make_supabase_client(
-            url=self._settings.supabase_url,
-            anon_key=self._settings.supabase_anon_key,
-            service_role_key=self._settings.supabase_service_role_key,
-            schema="public",
-        )
+        if self._core_pinned is None:
+            with self._build_lock:
+                if self._core_pinned is None:
+                    self._core_pinned = _SchemaPinnedAdminClient(self._raw_core, "public")
+        return self._core_pinned
+
+    def _raw_core(self) -> Client:
+        """The cached raw public-schema client, built on first use."""
+        if self._core is None:
+            with self._build_lock:
+                if self._core is None:
+                    self._core = make_supabase_client(
+                        url=self._settings.supabase_url,
+                        anon_key=self._settings.supabase_anon_key,
+                        service_role_key=self._settings.supabase_service_role_key,
+                        schema="public",
+                    )
+        return self._core
 
     def get_admin_client(self) -> "_SchemaPinnedAdminClient":
         """Get a cached admin client (service role, bypasses RLS).
@@ -182,7 +212,9 @@ class DatabaseModule:
         plus passthrough of everything else) — no consumer needs to change.
         """
         if self._admin_pinned is None:
-            self._admin_pinned = _SchemaPinnedAdminClient(self._raw_admin, self._schema)
+            with self._build_lock:
+                if self._admin_pinned is None:
+                    self._admin_pinned = _SchemaPinnedAdminClient(self._raw_admin, self._schema)
         return self._admin_pinned
 
     def _raw_admin(self) -> Client:
@@ -190,7 +222,9 @@ class DatabaseModule:
         on every access instead of holding the client, so replacing
         ``self._admin`` is honoured immediately."""
         if self._admin is None:
-            self._admin = self.get_client()
+            with self._build_lock:
+                if self._admin is None:
+                    self._admin = self.get_client()
         return self._admin
 
 

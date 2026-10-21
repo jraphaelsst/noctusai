@@ -66,7 +66,7 @@ def _svc(token: str, org_id: UUID) -> AutomationService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/automation/flows", status_code=status.HTTP_200_OK)
-async def list_flows(
+def list_flows(
     active_only: bool = Query(default=False),
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -84,7 +84,7 @@ async def list_flows(
     response_model=FlowOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_flow(
+def create_flow(
     payload: FlowCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> FlowOut:
@@ -103,7 +103,7 @@ async def create_flow(
     response_model=FlowOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_flow(
+def get_flow(
     flow_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> FlowOut:
@@ -124,7 +124,7 @@ async def get_flow(
     response_model=FlowOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_flow(
+def update_flow(
     flow_id: str,
     payload: FlowUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -145,7 +145,7 @@ async def update_flow(
 
 
 @router.delete("/api/automation/flows/{flow_id}", status_code=status.HTTP_200_OK)
-async def delete_flow(
+def delete_flow(
     flow_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -169,7 +169,7 @@ async def delete_flow(
     "/api/automation/flows/{flow_id}/steps",
     status_code=status.HTTP_200_OK,
 )
-async def list_steps(
+def list_steps(
     flow_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -187,7 +187,7 @@ async def list_steps(
     response_model=StepOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_step(
+def create_step(
     flow_id: str,
     payload: StepCreate,
     auth: tuple = Depends(get_current_user_org),
@@ -209,7 +209,7 @@ async def create_step(
     response_model=StepOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_step(
+def update_step(
     step_id: str,
     payload: StepUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -230,7 +230,7 @@ async def update_step(
 
 
 @router.delete("/api/automation/steps/{step_id}", status_code=status.HTTP_200_OK)
-async def delete_step(
+def delete_step(
     step_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -255,7 +255,7 @@ async def delete_step(
     response_model=ExecutionOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def trigger_flow(
+def trigger_flow(
     flow_id: str,
     payload: FlowTriggerRequest,
     auth: tuple = Depends(get_current_user_org),
@@ -284,7 +284,7 @@ async def trigger_flow(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/automation/executions", status_code=status.HTTP_200_OK)
-async def list_executions(
+def list_executions(
     lead_id: str | None = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -301,7 +301,7 @@ async def list_executions(
     "/api/automation/executions/{execution_id}",
     status_code=status.HTTP_200_OK,
 )
-async def cancel_execution(
+def cancel_execution(
     execution_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -328,7 +328,7 @@ async def cancel_execution(
     response_model=RunDueResult,
     status_code=status.HTTP_200_OK,
 )
-async def run_due(
+def run_due(
     auth: tuple = Depends(get_current_user_org),
 ) -> RunDueResult:
     """Process due automation_pending_actions for this org.

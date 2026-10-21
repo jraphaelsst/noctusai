@@ -46,7 +46,7 @@ def _http(exc: bc.BillingError) -> HTTPException:
 
 
 @router.get("/gateway", status_code=status.HTTP_200_OK)
-async def gateway_status(auth: tuple = Depends(get_current_user_org)) -> dict:
+def gateway_status(auth: tuple = Depends(get_current_user_org)) -> dict:
     org_id = _org(auth)
     return {"gateway": billing.GATEWAY_NAME, "configured": billing.gateway_is_configured(org_id)}
 

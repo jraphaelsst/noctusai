@@ -61,7 +61,7 @@ def _normalized_document(raw: Optional[str]) -> Optional[str]:
 
 
 @router.get("", status_code=status.HTTP_200_OK)
-async def list_clients(
+def list_clients(
     active_only: bool = Query(default=True),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
@@ -101,7 +101,7 @@ async def create_client(
 
 
 @router.get("/{client_id}", response_model=ClientOut, status_code=status.HTTP_200_OK)
-async def get_client(
+def get_client(
     client_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> ClientOut:
@@ -119,7 +119,7 @@ async def get_client(
 
 
 @router.patch("/{client_id}", response_model=ClientOut, status_code=status.HTTP_200_OK)
-async def update_client(
+def update_client(
     client_id: str,
     payload: ClientUpdate,
     auth: tuple = Depends(get_current_user_org),

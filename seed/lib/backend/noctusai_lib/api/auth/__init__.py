@@ -68,7 +68,9 @@ import jwt
 from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth._reasons import log_auth_401, token_shape
+from noctusai_lib.api.auth.token_cache import TokenCache
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
 from noctusai_lib.domain.licensing import enforce_license as _enforce_license
@@ -195,7 +197,7 @@ def auth_provider_unavailable(exc: BaseException) -> HTTPException:
     )
 
 
-def validate_bearer_token(client: Any, token: str) -> Any:
+def validate_bearer_token(client: Any, token: str, *, cache: Optional[TokenCache] = None) -> Any:
     """Validate a Supabase access token via ``client.auth.get_user(token)``.
 
     Returns the Supabase ``User``. Raises ``HTTPException(401)`` only on an
@@ -205,7 +207,20 @@ def validate_bearer_token(client: Any, token: str) -> Any:
     Supabase access token into a user — `_get_current_user` (lib) and
     ``noctusai_seed.ProductDependencies.get_current_user`` (framework) both
     call it, so the 401-vs-503 contract cannot drift between them again.
+
+    ``cache`` (a :class:`~noctusai_lib.api.auth.token_cache.TokenCache`): a hit
+    returns the previously VERIFIED user without calling the provider; a fresh
+    success is stored, a failure never is. A revoked token can therefore keep
+    working for up to the cache TTL (30 s default) — the owner-accepted
+    trade-off, see ``token_cache``.
+
+    SYNC and blocking (network). Async callers MUST run it via
+    :func:`run_blocking` — never call it on the event loop.
     """
+    if cache is not None:
+        hit = cache.get(token)
+        if hit is not None:
+            return hit
     try:
         user_response = client.auth.get_user(token)
     except Exception as exc:  # noqa: BLE001 — classified below, never swallowed
@@ -222,7 +237,19 @@ def validate_bearer_token(client: Any, token: str) -> Any:
     if not user:
         log_auth_401("provider_returned_no_user", token=token_shape(token))
         raise HTTPException(status_code=401, detail="Token inválido")
+    if cache is not None:
+        cache.put(token, user)
     return user
+
+
+def validate_bearer_token_via(get_client_fn: Callable[[], Any], token: str, *, cache: Optional[TokenCache] = None) -> Any:
+    """:func:`validate_bearer_token` that builds its client LAZILY: a cache hit
+    never calls ``get_client_fn`` (no client construction, no network)."""
+    if cache is not None:
+        hit = cache.get(token)
+        if hit is not None:
+            return hit
+    return validate_bearer_token(get_client_fn(), token, cache=cache)
 
 
 def validate_bearer_token_with_aal(client: Any, token: str) -> Tuple[Any, Optional[str]]:
@@ -243,6 +270,7 @@ async def _get_current_user(
     authorization: Optional[str] = Header(None),
     *,
     _get_supabase_client=None,
+    _token_cache: Optional[TokenCache] = None,
 ):
     """
     Internal JWT validator. Products MUST use make_get_current_user() to
@@ -270,8 +298,18 @@ async def _get_current_user(
             "get_current_user must be called via a product-specific wrapper "
             "that supplies _get_supabase_client"
         )
-    admin = _get_supabase_client()  # service role to validate
-    return validate_bearer_token(admin, token), token
+    # Cache hit: no thread hop, no client, no network. Miss: the provider call
+    # is a blocking network round-trip, so it runs in a worker thread — on the
+    # event loop it would stall every other in-flight request (the staircase
+    # latency measured on orbity, 2026-10-21).
+    if _token_cache is not None:
+        hit = _token_cache.get(token)
+        if hit is not None:
+            return hit, token
+    user = await run_blocking(
+        validate_bearer_token_via, _get_supabase_client, token, cache=_token_cache
+    )
+    return user, token
 
 
 def make_get_current_user_ungated(get_supabase_client_fn):
@@ -282,11 +320,16 @@ def make_get_current_user_ungated(get_supabase_client_fn):
     acceptance). Keeper ``check_license_gate_by_construction`` fails a gated
     product that uses it outside a declared allowlist with rationale.
     """
+    # One verified-token cache per validator (so per app, never shared across tests).
+    token_cache = TokenCache()
+
     async def _product_get_current_user_ungated(authorization: Optional[str] = Header(None)):
         return await _get_current_user(
             authorization,
             _get_supabase_client=get_supabase_client_fn,
+            _token_cache=token_cache,
         )
+    _product_get_current_user_ungated.token_cache = token_cache
     return _product_get_current_user_ungated
 
 
@@ -315,7 +358,8 @@ def make_get_current_user(get_supabase_client_fn):
         request: Request = None,
     ):
         user, token = await ungated(authorization)
-        eff = _enforce_license_for_user(
+        eff = await run_blocking(
+            _enforce_license_for_user,
             getattr(user, "id", None), token=token,
             acting_header=x_noctus_acting_org if isinstance(x_noctus_acting_org, str) else None,
         )
@@ -452,7 +496,7 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
             response: Response = None,
         ):
             user, token = await get_current_user_fn(authorization)
-            role = get_user_role_fn(user)
+            role = await run_blocking(get_user_role_fn, user)
             if role not in allowed_roles:
                 raise HTTPException(
                     status_code=403,
@@ -846,7 +890,8 @@ def make_get_current_user_org(
         # every product's RLS `current_org_id()` reads. `get_org_id_fn`
         # (historically `user_metadata`) is never consulted (SEC-2).
         try:
-            membership = _resolve_trusted_membership(
+            membership = await run_blocking(
+                _resolve_trusted_membership,
                 get_admin_client_fn, user.id, token=token,
                 acting_header=acting_header_of(request),
             )
@@ -911,9 +956,12 @@ def make_get_current_user_org(
         if enforce_license:
             # License gate — the caller's org must hold an active
             # license for this product (core + an unconfigured process exempt).
-            _enforce_license(
-                org_id, membership.get("org_role"), allow_customer=allow_customer
-            )
+            def _license_check() -> None:
+                _enforce_license(
+                    org_id, membership.get("org_role"), allow_customer=allow_customer
+                )
+
+            await run_blocking(_license_check)
         _stash_actor(org_id, membership if membership.get("selection_id") else None)
         return user, token, org_id
     return get_current_user_org

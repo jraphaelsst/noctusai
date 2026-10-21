@@ -71,7 +71,7 @@ def _public_svc() -> ReportsPublicService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/reports", status_code=status.HTTP_200_OK)
-async def list_reports(
+def list_reports(
     client_id: str | None = Query(default=None),
     report_status: str | None = Query(default=None, alias="status"),
     auth: tuple = Depends(get_current_user_org),
@@ -90,7 +90,7 @@ async def list_reports(
     response_model=ReportOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_report(
+def create_report(
     payload: ReportCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> ReportOut:
@@ -111,7 +111,7 @@ async def create_report(
     response_model=ReportOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_report(
+def get_report(
     report_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> ReportOut:
@@ -132,7 +132,7 @@ async def get_report(
     response_model=ReportOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_report(
+def update_report(
     report_id: str,
     payload: ReportUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -153,7 +153,7 @@ async def update_report(
 
 
 @router.delete("/api/reports/{report_id}", status_code=status.HTTP_200_OK)
-async def delete_report(
+def delete_report(
     report_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -177,7 +177,7 @@ async def delete_report(
     "/api/reports/{report_id}/snapshots",
     status_code=status.HTTP_200_OK,
 )
-async def list_snapshots(
+def list_snapshots(
     report_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -195,7 +195,7 @@ async def list_snapshots(
     response_model=ReportSnapshotOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def generate_snapshot(
+def generate_snapshot(
     report_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> ReportSnapshotOut:
@@ -222,7 +222,7 @@ async def generate_snapshot(
     status_code=status.HTTP_200_OK,
 )
 @limiter.limit("30/minute;300/hour", key_func=client_ip_key)
-async def get_public_report(request: Request, token: str) -> PublicReportOut:
+def get_public_report(request: Request, token: str) -> PublicReportOut:
     """Token-gated public report — no authentication required.
 
     The token IS the authorization. The server validates:

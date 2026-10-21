@@ -19,6 +19,7 @@ def register_all(server) -> None:
     from . import auto_author_scaffolds
     from . import auto_improvement
     from . import analyzers
+    from . import async_handlers_to_def
     from . import archive
     from . import audit_product
     from . import batch_speed_gains
@@ -169,6 +170,7 @@ def register_all(server) -> None:
     agent_context.register(server)
     ai_brain.register(server)
     analyzers.register(server)
+    async_handlers_to_def.register(server)
     branch_pointer.register(server)
     archive.register(server)
     audit_product.register(server)

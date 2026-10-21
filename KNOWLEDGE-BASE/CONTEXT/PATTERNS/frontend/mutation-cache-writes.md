@@ -86,7 +86,7 @@ A cache write hides a slow write. It does not make reads fast. The same day's pr
 - a second, redundant Supabase Auth `get_user`, from `make_supabase_client` calling `set_session`;
 - all of it synchronous I/O inside `async def` on a single uvicorn worker, so concurrent requests queue behind each other. Parallel calls finished as a staircase: 985, 1,524 and 2,081 ms.
 
-That backend work is tracked separately in the seed request path (auth dependencies, `integrations/database.py`, `noctusai_seed/database.py`). Both halves are needed: cache writes for perceived latency, a faster request path for everything else.
+That backend work is `request-path-latency.md` (seed auth dependencies, `integrations/database.py`, `noctusai_seed/database.py`). Both halves are needed: cache writes for perceived latency, a faster request path for everything else.
 
 ## Pilot and fan-out
 

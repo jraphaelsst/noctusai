@@ -58,7 +58,7 @@ def _svc(token: str, org_id: UUID) -> AgendaService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/agenda/events", status_code=status.HTTP_200_OK)
-async def list_events(
+def list_events(
     from_dt: str | None = Query(default=None, alias="from"),
     to_dt: str | None = Query(default=None, alias="to"),
     event_type: str | None = Query(default=None),
@@ -111,7 +111,7 @@ async def create_event(
     response_model=AgendaEventOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_event(
+def get_event(
     event_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> AgendaEventOut:
@@ -132,7 +132,7 @@ async def get_event(
     response_model=AgendaEventOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_event(
+def update_event(
     event_id: str,
     payload: AgendaEventUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -153,7 +153,7 @@ async def update_event(
 
 
 @router.delete("/api/agenda/events/{event_id}", status_code=status.HTTP_200_OK)
-async def delete_event(
+def delete_event(
     event_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -178,7 +178,7 @@ async def delete_event(
     response_model=AgendaEventOut,
     status_code=status.HTTP_200_OK,
 )
-async def sync_gcal(
+def sync_gcal(
     event_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> AgendaEventOut:

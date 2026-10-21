@@ -88,7 +88,7 @@ def _plan_or_404(svc: ContentPlansService, plan_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/content/plans", status_code=status.HTTP_200_OK)
-async def list_plans(
+def list_plans(
     client_id: str | None = Query(default=None),
     month: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
@@ -106,7 +106,7 @@ async def list_plans(
 
 
 @router.post("/api/content/plans", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
-async def create_plan(payload: PlanCreate, auth: tuple = Depends(get_current_user_org)) -> PlanOut:
+def create_plan(payload: PlanCreate, auth: tuple = Depends(get_current_user_org)) -> PlanOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     with _guard("create_plan", org_id, "Falha ao criar planejamento"):
@@ -115,7 +115,7 @@ async def create_plan(payload: PlanCreate, auth: tuple = Depends(get_current_use
 
 
 @router.get("/api/content/plans/{plan_id}", response_model=PlanOut, status_code=status.HTTP_200_OK)
-async def get_plan(plan_id: str, auth: tuple = Depends(get_current_user_org)) -> PlanOut:
+def get_plan(plan_id: str, auth: tuple = Depends(get_current_user_org)) -> PlanOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     with _guard("get_plan", org_id, "Falha ao buscar planejamento"):
@@ -124,7 +124,7 @@ async def get_plan(plan_id: str, auth: tuple = Depends(get_current_user_org)) ->
 
 
 @router.patch("/api/content/plans/{plan_id}", response_model=PlanOut, status_code=status.HTTP_200_OK)
-async def update_plan(
+def update_plan(
     plan_id: str, payload: PlanUpdate, auth: tuple = Depends(get_current_user_org)
 ) -> PlanOut:
     _user, token, raw_org = auth
@@ -140,7 +140,7 @@ async def update_plan(
 
 
 @router.delete("/api/content/plans/{plan_id}", status_code=status.HTTP_200_OK)
-async def delete_plan(plan_id: str, auth: tuple = Depends(get_current_user_org)) -> dict:
+def delete_plan(plan_id: str, auth: tuple = Depends(get_current_user_org)) -> dict:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     with _guard("delete_plan", org_id, "Falha ao remover planejamento"):
@@ -159,7 +159,7 @@ async def delete_plan(plan_id: str, auth: tuple = Depends(get_current_user_org))
     response_model=list[PlanItemOut],
     status_code=status.HTTP_201_CREATED,
 )
-async def append_items(
+def append_items(
     plan_id: str, payload: PlanItemsAppend, auth: tuple = Depends(get_current_user_org)
 ) -> list[PlanItemOut]:
     _user, token, raw_org = auth
@@ -178,7 +178,7 @@ async def append_items(
     response_model=list[PlanItemOut],
     status_code=status.HTTP_200_OK,
 )
-async def reorder_items(
+def reorder_items(
     plan_id: str, payload: PlanItemsReorder, auth: tuple = Depends(get_current_user_org)
 ) -> list[PlanItemOut]:
     _user, token, raw_org = auth
@@ -195,7 +195,7 @@ async def reorder_items(
     response_model=PlanItemOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_item(
+def update_item(
     plan_id: str, item_id: str, payload: PlanItemUpdate,
     auth: tuple = Depends(get_current_user_org),
 ) -> PlanItemOut:
@@ -216,7 +216,7 @@ async def update_item(
     response_model=PlanItemDeleteOut,
     status_code=status.HTTP_200_OK,
 )
-async def delete_item(
+def delete_item(
     plan_id: str, item_id: str, auth: tuple = Depends(get_current_user_org)
 ) -> PlanItemDeleteOut:
     _user, token, raw_org = auth
@@ -233,7 +233,7 @@ async def delete_item(
     response_model=PostOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def promote_item_to_post(
+def promote_item_to_post(
     plan_id: str, item_id: str, auth: tuple = Depends(get_current_user_org)
 ) -> PostOut:
     _user, token, raw_org = auth
@@ -259,7 +259,7 @@ async def promote_item_to_post(
     response_model=PlanTasksOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_tasks_from_items(
+def create_tasks_from_items(
     plan_id: str, payload: PlanTasksCreate, auth: tuple = Depends(get_current_user_org)
 ) -> PlanTasksOut:
     _user, token, raw_org = auth

@@ -81,7 +81,7 @@ def _svc(token: str, org_id: UUID) -> MetaAdsService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/meta-ads/ad-accounts", status_code=status.HTTP_200_OK)
-async def list_ad_accounts(
+def list_ad_accounts(
     client_id: str | None = Query(default=None),
     account_status: str | None = Query(default=None, alias="status"),
     page: int = Query(default=1, ge=1),
@@ -107,7 +107,7 @@ async def list_ad_accounts(
     response_model=AdAccountOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_ad_account(
+def create_ad_account(
     payload: AdAccountCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> AdAccountOut:
@@ -126,7 +126,7 @@ async def create_ad_account(
     response_model=AdAccountOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_ad_account(
+def get_ad_account(
     account_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> AdAccountOut:
@@ -147,7 +147,7 @@ async def get_ad_account(
     response_model=AdAccountOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_ad_account(
+def update_ad_account(
     account_id: str,
     payload: AdAccountUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -173,7 +173,7 @@ async def update_ad_account(
     "/api/meta-ads/ad-accounts/{account_id}",
     status_code=status.HTTP_200_OK,
 )
-async def delete_ad_account(
+def delete_ad_account(
     account_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -196,7 +196,7 @@ async def delete_ad_account(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/meta-ads/campaigns", status_code=status.HTTP_200_OK)
-async def list_campaigns(
+def list_campaigns(
     ad_account_id: str | None = Query(default=None),
     client_id: str | None = Query(default=None),
     situation: str | None = Query(default=None),
@@ -226,7 +226,7 @@ async def list_campaigns(
     response_model=CampaignOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_campaign(
+def create_campaign(
     payload: CampaignCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> CampaignOut:
@@ -247,7 +247,7 @@ async def create_campaign(
     response_model=CampaignOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_campaign(
+def get_campaign(
     campaign_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> CampaignOut:
@@ -270,7 +270,7 @@ async def get_campaign(
     response_model=CampaignOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_campaign(
+def update_campaign(
     campaign_id: str,
     payload: CampaignUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -296,7 +296,7 @@ async def update_campaign(
     "/api/meta-ads/campaigns/{campaign_id}",
     status_code=status.HTTP_200_OK,
 )
-async def delete_campaign(
+def delete_campaign(
     campaign_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -319,7 +319,7 @@ async def delete_campaign(
     response_model=CampaignOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_situation(
+def update_situation(
     campaign_id: str,
     payload: SituationUpdateRequest,
     auth: tuple = Depends(get_current_user_org),
@@ -347,7 +347,7 @@ async def update_situation(
     "/api/meta-ads/campaigns/{campaign_id}/metrics",
     status_code=status.HTTP_200_OK,
 )
-async def list_campaign_metrics(
+def list_campaign_metrics(
     campaign_id: str,
     date_from: str | None = Query(default=None, description="ISO date YYYY-MM-DD"),
     date_to: str | None = Query(default=None, description="ISO date YYYY-MM-DD"),
@@ -374,7 +374,7 @@ async def list_campaign_metrics(
     response_model=CampaignMetricOut,
     status_code=status.HTTP_200_OK,
 )
-async def put_campaign_metric(
+def put_campaign_metric(
     campaign_id: UUID,
     payload: CampaignMetricManualEntry,
     auth: tuple = Depends(get_current_user_org),
@@ -417,7 +417,7 @@ async def put_campaign_metric(
     response_model=SyncCampaignsResponse,
     status_code=status.HTTP_200_OK,
 )
-async def sync_campaigns(
+def sync_campaigns(
     payload: SyncCampaignsRequest,
     auth: tuple = Depends(get_current_user_org),
 ) -> SyncCampaignsResponse:
@@ -454,7 +454,7 @@ async def sync_campaigns(
     response_model=SpendLeadsAggregate,
     status_code=status.HTTP_200_OK,
 )
-async def get_aggregate(
+def get_aggregate(
     period_start: str = Query(..., description="ISO date YYYY-MM-DD"),
     period_end: str = Query(..., description="ISO date YYYY-MM-DD"),
     client_id: str | None = Query(default=None),

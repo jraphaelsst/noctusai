@@ -89,7 +89,7 @@ def _admin_approval_svc() -> PublicApprovalService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/content/campaigns", status_code=status.HTTP_200_OK)
-async def list_campaigns(
+def list_campaigns(
     client_id: str | None = Query(default=None),
     month: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
@@ -117,7 +117,7 @@ async def list_campaigns(
     response_model=CampaignOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_campaign(
+def create_campaign(
     payload: CampaignCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> CampaignOut:
@@ -138,7 +138,7 @@ async def create_campaign(
     response_model=CampaignOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_campaign(
+def get_campaign(
     campaign_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> CampaignOut:
@@ -159,7 +159,7 @@ async def get_campaign(
     response_model=CampaignOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_campaign(
+def update_campaign(
     campaign_id: str,
     payload: CampaignUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -180,7 +180,7 @@ async def update_campaign(
 
 
 @router.delete("/api/content/campaigns/{campaign_id}", status_code=status.HTTP_200_OK)
-async def delete_campaign(
+def delete_campaign(
     campaign_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -201,7 +201,7 @@ async def delete_campaign(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/content/posts", status_code=status.HTTP_200_OK)
-async def list_posts(
+def list_posts(
     campaign_id: str | None = Query(default=None),
     client_id: str | None = Query(default=None),
     platform: str | None = Query(default=None),
@@ -231,7 +231,7 @@ async def list_posts(
     response_model=PostOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_post(
+def create_post(
     payload: PostCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> PostOut:
@@ -252,7 +252,7 @@ async def create_post(
     response_model=PostOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_post(
+def get_post(
     post_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> PostOut:
@@ -273,7 +273,7 @@ async def get_post(
     response_model=PostOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_post(
+def update_post(
     post_id: str,
     payload: PostUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -294,7 +294,7 @@ async def update_post(
 
 
 @router.delete("/api/content/posts/{post_id}", status_code=status.HTTP_200_OK)
-async def delete_post(
+def delete_post(
     post_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -319,7 +319,7 @@ async def delete_post(
     response_model=ApprovalOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_approval(
+def create_approval(
     post_id: str,
     payload: ApprovalCreate,
     auth: tuple = Depends(get_current_user_org),
@@ -342,7 +342,7 @@ async def create_approval(
     "/api/content/posts/{post_id}/approvals",
     status_code=status.HTTP_200_OK,
 )
-async def list_post_approvals(
+def list_post_approvals(
     post_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -358,7 +358,7 @@ async def list_post_approvals(
 
 
 @router.get("/api/content/approvals", status_code=status.HTTP_200_OK)
-async def list_approvals(
+def list_approvals(
     post_id: str | None = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -376,7 +376,7 @@ async def list_approvals(
     response_model=ApprovalOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_approval(
+def get_approval(
     approval_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> ApprovalOut:
@@ -404,7 +404,7 @@ async def get_approval(
     status_code=status.HTTP_200_OK,
 )
 @limiter.limit("30/minute;300/hour", key_func=client_ip_key)
-async def public_get_approval(request: Request, token: str) -> PublicApprovalView:
+def public_get_approval(request: Request, token: str) -> PublicApprovalView:
     """Public — fetch the post for the client via approval token.
 
     No auth required. Returns a safe PublicApprovalView (no org_id).
@@ -451,7 +451,7 @@ async def public_get_approval(request: Request, token: str) -> PublicApprovalVie
     status_code=status.HTTP_200_OK,
 )
 @limiter.limit("10/minute;60/hour", key_func=client_ip_key)
-async def public_submit_approval(
+def public_submit_approval(
     request: Request,  # required positionally by @limiter.limit (slowapi)
     token: str,
     payload: ApprovalDecision,

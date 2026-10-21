@@ -416,6 +416,10 @@ async def logout(authorization: Optional[str] = Header(None)):
             raise HTTPException(status_code=401, detail="Sessão inválida") from exc
         raise HTTPException(status_code=502, detail="Não foi possível encerrar as sessões") from exc
 
+    # The verified-token cache (30 s) would otherwise keep accepting this just-revoked token.
+    from noctusai_lib.api.auth.token_cache import discard_token_everywhere
+    discard_token_everywhere(token)
+
     # Core's cached per-product SSO sessions would otherwise keep handing out the
     # (now revoked) tokens for up to the cache TTL.
     from app.routers.sso import invalidate_sso_cache_for_user

@@ -41,8 +41,10 @@ from noctusai_lib.api.audit import AuditActor
 from noctusai_lib.api.auth import (
     _resolve_trusted_membership,
     make_resolve_platform_role,
-    validate_bearer_token,
+    validate_bearer_token_via,
 )
+from noctusai_lib.api.auth._blocking import run_blocking
+from noctusai_lib.api.auth.token_cache import TokenCache
 from noctusai_lib.api.auth._reasons import log_auth_401
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
@@ -115,6 +117,9 @@ class ProductDependencies:
 
     def __init__(self, db):
         self._db = db
+        # Verified-token cache (30 s default, `auth_token_cache_ttl_seconds`):
+        # one per ProductDependencies, so nothing leaks across apps or tests.
+        self._token_cache = TokenCache()
         # Trusted-first platform-admin cascade (`role-cascade-trusted`,
         # 2026-07-14) — `public.noctus_users`, NOT the spoofable
         # `user_metadata` `resolve_sso_role` used to be the sole source of.
@@ -181,7 +186,17 @@ class ProductDependencies:
         # This used to be `except Exception -> 401`, which turned a deploy-
         # window blip into "your session is dead" in every seed SPA — the
         # 2026-10-03 logouts. See `noctusai_lib.api.auth.validate_bearer_token`.
-        user = validate_bearer_token(self._db.get_client(), token)
+        #
+        # The provider call is a blocking network round-trip: it runs in a
+        # worker thread (the event loop keeps serving other requests), and a
+        # token verified in the last 30 s skips it entirely (cache hit: no
+        # client built, no network). See `noctusai_lib.api.auth.token_cache`.
+        user = self._token_cache.get(token)
+        if user is None:
+            user = await run_blocking(
+                validate_bearer_token_via,
+                lambda: self._db.get_client(), token, cache=self._token_cache,
+            )
         # `request.state`, NOT a ContextVar — see
         # `noctusai_lib.api.audit` module docstring +
         # `noctusai_lib.api.auth.make_get_current_user_org`'s same
@@ -206,7 +221,8 @@ class ProductDependencies:
         with zero per-product code. The raw, explicitly-named exemption is
         :meth:`get_current_user_ungated` (keeper-allowlisted)."""
         user, token = await self.get_current_user_ungated(authorization, request)
-        eff = enforce_license_for_user(
+        eff = await run_blocking(
+            enforce_license_for_user,
             getattr(user, "id", None), token=token,
             acting_header=acting_header_of(request),
         )

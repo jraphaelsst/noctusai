@@ -284,6 +284,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--refresh-migration-number-refs-baseline", action="store_true", help="Shrink-only refresh of the --check-migration-number-refs-in-tests baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--lower-mutation-invalidate-only-baseline", action="store_true", help="Re-derive mcp/noctusai/tests/mutation_invalidate_only_baseline.json DOWNWARD from the tree (min(baseline, current) per file; never raises). Run after migrating mutations to useCacheWriteMutation, and to resolve a baseline merge conflict between parallel slices. KB § PATTERNS/frontend/mutation-cache-writes.md.")
+    parser.add_argument("--async-handlers-to-def", metavar="PRODUCT", help="libcst codemod: convert PRODUCT's awaitless `async def` route handlers to plain `def` (threadpooled, no event-loop blocking). DRY-RUN unless --apply. MCP: noctus.dev.async_handlers_to_def. KB § PATTERNS/backend/request-path-latency.md.")
+    parser.add_argument("--apply", action="store_true", help="With --async-handlers-to-def: write the conversion (default is a dry-run plan).")
+    parser.add_argument("--check-async-handler-sync-db", action="store_true", help="Keeper (2026-10-21): an async def route handler that calls the SYNC supabase client directly (.execute() / .auth.* / .storage ops, not awaited) blocks the event loop for the whole round-trip, so concurrent requests serialize (orbity staircase 985/1524/2081 ms). RATCHET against mcp/noctusai/tests/async_handler_sync_db_baseline.json (per file; may only go down). Fix: plain `def` when the handler awaits nothing, else `await anyio.to_thread.run_sync(...)`. Escape: '# noc-allow: sync-in-async — why' on the async def line. Severity high. KB § PATTERNS/backend/request-path-latency.md.")
+    parser.add_argument("--lower-async-handler-sync-db-baseline", action="store_true", help="Lower mcp/noctusai/tests/async_handler_sync_db_baseline.json to min(current, baseline) per file after converting handlers (never raises a count).")
     parser.add_argument("--check-mutation-invalidate-only", action="store_true", help="Keeper (2026-10-21): a TanStack useMutation({...}) that neither draws its change (onMutate) nor writes the server's answer (setQueryData) makes the screen wait for write + refetch (orbity lead note ~2 s late). RATCHET against mcp/noctusai/tests/mutation_invalidate_only_baseline.json (per file; may only go down, a lowered count must lower the baseline). Fix: useCacheWriteMutation from @noctusai/lib/cache-writes. Escape: '// noc-allow: invalidate-only — why' on the useMutation line. Severity high. KB § PATTERNS/frontend/mutation-cache-writes.md.")
     parser.add_argument("--check-agent-prompt-text-in-code", action="store_true", help="Keeper (Julia v2 D3): prompt text — ToolSpec(description=...), SectionInput(conteudo=...), *_SYSTEM = ..., long UPPER_CASE string constants — must not live in products/agents/backend/app/{channels,studio,runtime} (+ routers/channels_router.py): every string a model reads is an agents DB row. RATCHET against products/agents/backend/prompt-text-baseline.json (per file; a file may carry fewer literals, never more, and a lowered count must lower the baseline). Escape: '# noc-allow: prompt-text-in-code — why'. Severity high. KB § PATTERNS/backend/backend.md.")
     parser.add_argument("--check-upload-route-body-override", action="store_true", help="Keeper: every UploadFile-declaring route under products/<slug>/backend/app/ (any annotation shape — UploadFile, list[UploadFile]/List[UploadFile], UploadFile | None, Optional[UploadFile], Annotated[UploadFile, File(...)]) must have a matching entry in that product's max_body_path_overrides map — a real byte ceiling, or the explicit noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY opt-out. A forgotten entry silently caps the route at the 1 MB webhook-DoS default and 413s in production on any realistically-sized upload, before the handler that would have accepted it ever runs. 2026-08-31: only social-wiring had ANY entries (and was missing 3 of its own routes); erp-imobiliario/igig/adconnect/therapy-platform had zero. STATIC backstop for the exhaustive runtime refusal in create_product_app / noctusai_seed.upload_route_overrides — see that module's docstring for this keeper's narrower static-resolution scope. No auto-fix (the ceiling is a per-route judgment call). Severity high. KB § PATTERNS/backend/upload-route-body-override-derivation.md.")
@@ -2329,6 +2333,29 @@ def main():
         from tools.noctus.dev.compliance import lower_mutation_invalidate_only_baseline
         _bl = lower_mutation_invalidate_only_baseline()
         print(f"  baseline lowered: {len(_bl)} file(s), {sum(_bl.values())} invalidate-only mutation(s) left.")
+        sys.exit(0)
+
+    elif args.async_handlers_to_def:
+        from tools.noctus.dev.async_handlers_to_def import async_handlers_to_def
+        _r = async_handlers_to_def(args.async_handlers_to_def, apply=args.apply)
+        print(json.dumps(_r, indent=2, ensure_ascii=False))
+        sys.exit(0 if _r.get("ok") else 1)
+
+    elif args.check_async_handler_sync_db:
+        from tools.noctus.dev.compliance import check_async_handler_sync_db
+        issues = check_async_handler_sync_db()
+        if not issues:
+            print(f"  {GREEN}✓ async-handler-sync-db: clean (no file above its baseline).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} async-handler-sync-db issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.lower_async_handler_sync_db_baseline:
+        from tools.noctus.dev.compliance import lower_async_handler_sync_db_baseline
+        _bl = lower_async_handler_sync_db_baseline()
+        print(f"  baseline lowered: {len(_bl)} file(s), {sum(_bl.values())} handler(s).")
         sys.exit(0)
 
     elif args.check_mutation_invalidate_only:

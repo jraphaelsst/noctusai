@@ -115,7 +115,7 @@ async def _emit_stage_change(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/crm/funil", status_code=status.HTTP_200_OK)
-async def get_funil(auth: tuple = Depends(get_current_user_org)) -> list:
+def get_funil(auth: tuple = Depends(get_current_user_org)) -> list:
     """Kanban view — leads grouped by stage, sorted by stage.position."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -127,7 +127,7 @@ async def get_funil(auth: tuple = Depends(get_current_user_org)) -> list:
 
 
 @router.get("/api/crm/stages", status_code=status.HTTP_200_OK)
-async def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
+def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
@@ -138,7 +138,7 @@ async def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
 
 
 @router.post("/api/crm/stages/seed-defaults", status_code=status.HTTP_200_OK)
-async def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> list:
+def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     """Self-serve: create the 7 canonical default lead stages for this org.
 
     Idempotent — a second call is a no-op that returns the existing
@@ -160,7 +160,7 @@ async def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> li
 # ---------------------------------------------------------------------------
 
 @router.get("/api/crm/leads", status_code=status.HTTP_200_OK)
-async def list_leads(
+def list_leads(
     stage_id: str | None = Query(default=None),
     owner_id: str | None = Query(default=None),
     source: str | None = Query(default=None),
@@ -210,7 +210,7 @@ async def create_lead(
     response_model=LeadOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_lead(
+def get_lead(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> LeadOut:
@@ -260,7 +260,7 @@ async def update_lead(
 
 
 @router.delete("/api/crm/leads/{lead_id}", status_code=status.HTTP_200_OK)
-async def delete_lead(
+def delete_lead(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -326,7 +326,7 @@ async def move_stage(
     "/api/crm/leads/{lead_id}/activities",
     status_code=status.HTTP_200_OK,
 )
-async def list_activities(
+def list_activities(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -349,7 +349,7 @@ async def list_activities(
     response_model=ActivityOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_activity(
+def add_activity(
     lead_id: str,
     payload: ActivityCreate,
     auth: tuple = Depends(get_current_user_org),
@@ -380,7 +380,7 @@ async def add_activity(
     response_model=ScoringResultOut,
     status_code=status.HTTP_200_OK,
 )
-async def score_lead(
+def score_lead(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> ScoringResultOut:
@@ -405,7 +405,7 @@ async def score_lead(
     "/api/crm/scoring-rules",
     status_code=status.HTTP_200_OK,
 )
-async def list_scoring_rules(
+def list_scoring_rules(
     form_id: str | None = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -433,7 +433,7 @@ async def list_scoring_rules(
     response_model=ScoringRuleOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_scoring_rule(
+def create_scoring_rule(
     payload: ScoringRuleCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> ScoringRuleOut:
@@ -457,7 +457,7 @@ async def create_scoring_rule(
     response_model=ScoringRuleOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_scoring_rule(
+def update_scoring_rule(
     rule_id: str,
     payload: ScoringRuleUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -489,7 +489,7 @@ async def update_scoring_rule(
     "/api/crm/scoring-rules/{rule_id}",
     status_code=status.HTTP_200_OK,
 )
-async def delete_scoring_rule(
+def delete_scoring_rule(
     rule_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:

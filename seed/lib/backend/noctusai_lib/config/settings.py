@@ -52,6 +52,11 @@ class BaseAppSettings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    # Seconds a VERIFIED Supabase access token is trusted without re-asking
+    # Supabase Auth (default 30; 0 disables). A session revoked in Supabase can
+    # keep working up to this long on a process that already cached it — the
+    # owner-accepted trade-off (2026-10-21). KB § PATTERNS/backend/request-path-latency.md
+    auth_token_cache_ttl_seconds: int = 30
 
     # JWT / SSO
     jwt_secret: str = ""

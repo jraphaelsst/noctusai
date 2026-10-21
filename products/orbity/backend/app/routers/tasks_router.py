@@ -75,7 +75,7 @@ def _svc(token: str, org_id: UUID) -> TasksService:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/tasks", status_code=status.HTTP_200_OK)
-async def list_tasks(
+def list_tasks(
     task_status: str | None = Query(default=None, alias="status"),
     priority: str | None = Query(default=None),
     assignee_user_id: str | None = Query(default=None),
@@ -125,7 +125,7 @@ async def create_task(
     response_model=TaskOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_task(
+def get_task(
     task_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> TaskOut:
@@ -170,7 +170,7 @@ async def update_task(
 
 
 @router.delete("/api/tasks/{task_id}", status_code=status.HTTP_200_OK)
-async def delete_task(
+def delete_task(
     task_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -221,7 +221,7 @@ async def update_task_status(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/routines", status_code=status.HTTP_200_OK)
-async def list_routines(
+def list_routines(
     active_only: bool = Query(default=False),
     auth: tuple = Depends(get_current_user_org),
 ) -> list:
@@ -239,7 +239,7 @@ async def list_routines(
     response_model=RoutineOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_routine(
+def create_routine(
     payload: RoutineCreate,
     auth: tuple = Depends(get_current_user_org),
 ) -> RoutineOut:
@@ -258,7 +258,7 @@ async def create_routine(
     response_model=RoutineOut,
     status_code=status.HTTP_200_OK,
 )
-async def get_routine(
+def get_routine(
     routine_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> RoutineOut:
@@ -279,7 +279,7 @@ async def get_routine(
     response_model=RoutineOut,
     status_code=status.HTTP_200_OK,
 )
-async def update_routine(
+def update_routine(
     routine_id: str,
     payload: RoutineUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -300,7 +300,7 @@ async def update_routine(
 
 
 @router.delete("/api/routines/{routine_id}", status_code=status.HTTP_200_OK)
-async def delete_routine(
+def delete_routine(
     routine_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
@@ -317,7 +317,7 @@ async def delete_routine(
 
 
 @router.post("/api/routines/run-due", status_code=status.HTTP_200_OK)
-async def run_due_routines(
+def run_due_routines(
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
     """On-demand: spawn tasks for all active routines due today or earlier.

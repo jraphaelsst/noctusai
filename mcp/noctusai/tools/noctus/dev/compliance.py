@@ -8818,6 +8818,221 @@ def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_async_handler_sync_db` — an `async def` route handler that calls the
+# SYNC supabase-py client directly parks the single uvicorn event loop for the
+# whole network round-trip, so concurrent requests serialize (orbity, 2026-10-21:
+# three parallel `GET /api/crm/leads/{id}/activities` finished as a staircase
+# 985 / 1,524 / 2,081 ms; one request alone is 564 ms). The fix is structural:
+#   * a handler that never `await`s anything -> plain `def` (FastAPI runs it in
+#     the threadpool), or
+#   * a handler that must stay async -> `await anyio.to_thread.run_sync(...)`.
+# The seed's own auth dependencies already hop to a thread (`api/auth/_blocking`).
+#
+# Detection (AST, intra-function, DIRECT calls only): inside an `async def`
+# decorated `@<router>.get/post/put/patch/delete/head/options/api_route`, a call
+# that is not the operand of an `await` and is `...table()/rpc()/from_()....execute()`,
+# `<client>.auth.<anything>(...)` or `<client>.storage.from_(...).<op>(...)`.
+# Nested `def`/`lambda` bodies (what you hand to `run_in_threadpool`) are not
+# counted. NOT detected: a handler that reaches the DB through a service method
+# (`svc.list(...)`) — the count is a LOWER BOUND; the codemod tool
+# (`--async-handler-to-def`) and the follow-up sweep carry the rest.
+#
+# RATCHET: handlers per file are baselined in
+# `mcp/noctusai/tests/async_handler_sync_db_baseline.json`; a file may carry
+# fewer, never more, and a lowered count must lower the baseline
+# (`--lower-async-handler-sync-db-baseline` does it). Escape for a handler that
+# genuinely must block (rare): `# noc-allow: sync-in-async — why` on the
+# `async def` line. KB § PATTERNS/backend/request-path-latency.md
+# ---------------------------------------------------------------------------
+
+_AHS_BASELINE_REL = ("mcp", "noctusai", "tests", "async_handler_sync_db_baseline.json")
+_AHS_ROUTE_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head", "options", "api_route"})
+_AHS_STORAGE_OPS = frozenset({
+    "upload", "download", "remove", "list", "create_signed_url", "create_signed_urls",
+    "get_public_url", "move", "copy", "update",
+})
+_AHS_ALLOW = re.compile(r"noc-allow:\s*sync-in-async")
+
+
+def _ahs_chain(node: ast.AST) -> list[str]:
+    """Attribute / call-name chain of ``a.b(c).d(e)`` -> ``["a", "b", "d"]`` (outermost last)."""
+    names: list[str] = []
+    cur: ast.AST | None = node
+    while cur is not None:
+        if isinstance(cur, ast.Call):
+            cur = cur.func
+        elif isinstance(cur, ast.Attribute):
+            names.append(cur.attr)
+            cur = cur.value
+        elif isinstance(cur, ast.Name):
+            names.append(cur.id)
+            cur = None
+        else:
+            cur = None
+    return list(reversed(names))
+
+
+def _ahs_is_route_handler(fn: ast.AsyncFunctionDef) -> bool:
+    for dec in fn.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if isinstance(target, ast.Attribute) and target.attr in _AHS_ROUTE_VERBS:
+            return True
+    return False
+
+
+def _ahs_is_sync_db_call(call: ast.Call) -> bool:
+    func = call.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    chain = _ahs_chain(func)
+    if func.attr == "execute":
+        return any(n in chain for n in ("table", "from_", "rpc", "select", "insert", "update", "upsert", "delete"))
+    if "auth" in chain[:-1] and func.attr != "auth":
+        return True
+    if "storage" in chain[:-1] and func.attr in _AHS_STORAGE_OPS:
+        return True
+    return False
+
+
+class _AhsVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.hits: list[int] = []
+        self._awaited: set[int] = set()
+
+    def visit_Await(self, node: ast.Await) -> None:  # noqa: N802
+        if isinstance(node.value, ast.Call):
+            self._awaited.add(id(node.value))
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
+        if id(node) not in self._awaited and _ahs_is_sync_db_call(node):
+            self.hits.append(node.lineno)
+        self.generic_visit(node)
+
+    # A nested function / lambda is what gets handed to a worker thread.
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        return None
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+    visit_Lambda = visit_FunctionDef  # noqa: N815
+    visit_ClassDef = visit_FunctionDef  # noqa: N815
+
+
+def async_handler_sync_db_handlers(text: str) -> list[tuple[int, str]]:
+    """``[(line, handler name)]`` of async route handlers making a direct sync-DB call in one module."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    lines = text.splitlines()
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef) or not _ahs_is_route_handler(node):
+            continue
+        if _AHS_ALLOW.search(lines[node.lineno - 1]):
+            continue
+        visitor = _AhsVisitor()
+        for stmt in node.body:
+            visitor.visit(stmt)
+        if visitor.hits:
+            found.append((node.lineno, node.name))
+    return sorted(found)
+
+
+def async_handler_sync_db_counts(repo_root: Path | None = None) -> dict[str, int]:
+    """``{repo-relative file: offending async handlers}`` for every file with at least one (the baseline's shape)."""
+    root = repo_root or REPO_ROOT
+    counts: dict[str, int] = {}
+    for scan_root in _postgrest_scan_roots(root):
+        for path in sorted(scan_root.rglob("*.py")):
+            if any(p in _POSTGREST_QUALIFIED_EXCLUDED_PARTS or p in ("tests", "migrations") for p in path.parts):
+                continue
+            if path.name.startswith("test_") or path.name == "conftest.py":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if ".execute(" not in text and ".auth." not in text and ".storage." not in text:
+                continue
+            n = len(async_handler_sync_db_handlers(text))
+            if n:
+                counts[path.relative_to(root).as_posix()] = n
+    return counts
+
+
+def _ahs_baseline(root: Path) -> dict[str, int]:
+    try:
+        return dict(json.loads(root.joinpath(*_AHS_BASELINE_REL).read_text(encoding="utf-8")).get("arquivos", {}))
+    except (OSError, ValueError):
+        return {}
+
+
+def check_async_handler_sync_db(repo_root: Path | None = None) -> list[dict]:
+    """An `async def` route handler calling the sync supabase client directly blocks the event loop
+    for the whole round-trip (concurrent requests serialize). Ratchet against the per-file baseline
+    `mcp/noctusai/tests/async_handler_sync_db_baseline.json`: a file may carry fewer, never more; a
+    lowered count must lower the baseline. Fix: make the handler a plain `def` when it awaits
+    nothing, else `await anyio.to_thread.run_sync(...)`. Severity `high`.
+    KB § PATTERNS/backend/request-path-latency.md."""
+    root = repo_root or REPO_ROOT
+    baseline = _ahs_baseline(root)
+    baseline_rel = "/".join(_AHS_BASELINE_REL)
+    issues: list[dict] = []
+    current = async_handler_sync_db_counts(root)
+    for rel in sorted(set(current) | set(baseline)):
+        have, allowed = current.get(rel, 0), int(baseline.get(rel, 0))
+        product = rel.split("/")[1] if rel.startswith("products/") else "seed"
+        if have > allowed:
+            names = ", ".join(
+                f"{name}:{line}" for line, name in async_handler_sync_db_handlers((root / rel).read_text(encoding="utf-8"))
+            )
+            issues.append({
+                "product": product, "file": rel, "severity": "high",
+                "issue": (
+                    f"{have} async route handler(s) call the sync supabase client directly ({names}); "
+                    f"baseline allows {allowed}. That blocks the event loop for the whole network round-trip — "
+                    "a handler that awaits nothing must be a plain `def` (FastAPI threadpools it); one that "
+                    "must stay async wraps the call in `await anyio.to_thread.run_sync(...)`. "
+                    "KB § PATTERNS/backend/request-path-latency.md"
+                ),
+            })
+        elif have < allowed:
+            issues.append({
+                "product": product, "file": rel, "severity": "high",
+                "issue": (
+                    f"{have} blocking async handler(s) left but the baseline still allows {allowed}: lower "
+                    f"`{rel}` in {baseline_rel} (`--lower-async-handler-sync-db-baseline`; the ratchet only shrinks)."
+                ),
+            })
+    return issues
+
+
+def lower_async_handler_sync_db_baseline(repo_root: Path | None = None, *, init: bool = False) -> dict[str, int]:
+    """Rewrite the baseline to ``min(current, baseline)`` per file (drops files at 0). Never RAISES a count —
+    ``init=True`` (first creation only) seeds it from the current counts. Returns the new baseline."""
+    root = repo_root or REPO_ROOT
+    current = async_handler_sync_db_counts(root)
+    old = _ahs_baseline(root)
+    new = dict(current) if init else {rel: min(n, old[rel]) for rel, n in current.items() if rel in old}
+    path = root.joinpath(*_AHS_BASELINE_REL)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "_doc": "Per-file count of async route handlers that call the sync supabase client directly "
+                        "(check_async_handler_sync_db). Ratchet: may only go down. "
+                        "KB § PATTERNS/backend/request-path-latency.md",
+                "arquivos": dict(sorted(new.items())),
+            },
+            indent=2, ensure_ascii=False,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    return new
+
+
+# ---------------------------------------------------------------------------
 # `check_stand_in_conformance` — thin delegating shim. The real
 # implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
 # separate file by design — this detector composes a per-product subprocess
@@ -17772,6 +17987,9 @@ def check_all_products() -> tuple[int, list]:
     # mutation-cache-writes (2026-10-21) — ratchet: invalidate-only
     # useMutation blocks may only go down. KB § PATTERNS/frontend/mutation-cache-writes.md.
     all_issues.extend(check_mutation_invalidate_only())
+    # request-path-latency (2026-10-21) — ratchet: async handlers calling the sync
+    # supabase client directly may only go down. KB § PATTERNS/backend/request-path-latency.md.
+    all_issues.extend(check_async_handler_sync_db())
     # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
     # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
     # halves of one contract in two languages across N+1 files. Divergence is
