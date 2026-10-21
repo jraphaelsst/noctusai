@@ -10,7 +10,7 @@
  *   GCal sync: POST /api/agenda/events/{id}/sync-gcal
  */
 import { useQuery } from '@tanstack/react-query';
-import { listOps, pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
+import { pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 
@@ -144,8 +144,7 @@ export function useCreateAgendaEvent() {
             (!f.assignee_user_id || f.assignee_user_id === saved.assignee_user_id);
           const holdsEveryMatch = !!old && Array.isArray(old.items) && (old.page ?? 1) === 1 && old.items.length < old.page_size;
           if (!inWindow || !holdsEveryMatch) return old;
-          return listOps.within(old, 'items', (l) =>
-            listOps.insertSorted(l, saved, (x, y) => Date.parse(x.starts_at) - Date.parse(y.starts_at)));
+          return pageOps.insertSorted(old, saved, (x, y) => Date.parse(x.starts_at) - Date.parse(y.starts_at));
         },
       },
     ],

@@ -151,7 +151,7 @@ describe("orbity cache writes", () => {
   it("agenda: a new event lands at its sorted place, only in the windows it belongs to", async () => {
     const { qc, w } = setup();
     const e = (id: string, starts_at: string, event_type = "meeting") => ({ id, starts_at, event_type, client_id: null, assignee_user_id: null });
-    qc.setQueryData(["orbity-agenda-events", undefined], { items: [e("a", "2026-10-01T10:00:00Z"), e("c", "2026-10-03T10:00:00Z")], page: 1, page_size: 200 });
+    qc.setQueryData(["orbity-agenda-events", undefined], { items: [e("a", "2026-10-01T10:00:00Z"), e("c", "2026-10-03T10:00:00Z")], total: 2, page: 1, page_size: 200 });
     qc.setQueryData(["orbity-agenda-events", { event_type: "call" }], { items: [], page: 1, page_size: 200 });
     qc.setQueryData(["orbity-agenda-events", { from: "2026-11-01T00:00:00Z" }], { items: [], page: 1, page_size: 200 });
     const d = deferred();
@@ -162,6 +162,7 @@ describe("orbity cache writes", () => {
     d.answer(e("b", "2026-10-02T10:00:00Z"));
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(qc.getQueryData<any>(["orbity-agenda-events", undefined]).items.map((x: any) => x.id)).toEqual(["a", "b", "c"]);
+    expect(qc.getQueryData<any>(["orbity-agenda-events", undefined]).total).toBe(3);
     expect(qc.getQueryData<any>(["orbity-agenda-events", { event_type: "call" }]).items).toEqual([]);
     expect(qc.getQueryData<any>(["orbity-agenda-events", { from: "2026-11-01T00:00:00Z" }]).items).toEqual([]);
   });
@@ -179,6 +180,7 @@ describe("orbity cache writes", () => {
     d.answer(p("b", "2026-10-02T10:00:00Z"));
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(qc.getQueryData<any>(["content-posts", undefined]).items.map((x: any) => x.id)).toEqual(["a", "b", "z"]);
+    expect(qc.getQueryData<any>(["content-posts", undefined]).total).toBe(3);
     expect(qc.getQueryData<any>(["content-posts", { platform: "tiktok" }]).items).toEqual([]);
   });
 

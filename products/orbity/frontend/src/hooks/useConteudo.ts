@@ -262,8 +262,7 @@ export function useCreatePost() {
           const holdsEveryMatch = !!old && Array.isArray(old.items) && (old.page ?? 1) === 1 && old.items.length < old.page_size;
           if (!belongs || !holdsEveryMatch) return old;
           const when = (p: Post) => (p.scheduled_for ? Date.parse(p.scheduled_for) : Number.POSITIVE_INFINITY);
-          return listOps.within(old, "items", (l) =>
-            listOps.insertSorted(l, saved, (x, y) => (when(x) === when(y) ? 0 : when(x) < when(y) ? -1 : 1)));
+          return pageOps.insertSorted(old, saved, (x, y) => (when(x) === when(y) ? 0 : when(x) < when(y) ? -1 : 1));
         },
       },
     ],
