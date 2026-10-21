@@ -37,6 +37,8 @@ dependencies = [
     "PyYAML>=6.0",
     "numpy>=1.24",
     "email-validator>=2.0.0",
+    # async_handlers_to_def.py — AST-first codemods (§1) edit via libcst.
+    "libcst>=1.1.0",
     # dep_preflight.py — Requirement/specifier matching at server startup.
     "packaging>=23.0",
     # mcp/telegram connector (MTProto user client) — a RANGE, not a pin.
