@@ -141,9 +141,33 @@ Extraction is its own process, measured separately from contract generation (own
   `media`), the numeric echo in parens is the birthdate (`media` inside the own "nascido(a)"
   clause). RGs come from "ANOTAÇÕES DE CADASTRO: Conjuge1: RG nn.nnn.nnn-d/SSP/SP. Conjuge2: …"
   — attributed by ordinal (Conjuge1 = first name), so `media` at most, recorded per spouse on the
-  `extracao_conjuges` entry (`rg`, `rg_orgao`) and **never written to `clientes`** (a certidão
-  is not the authoritative source of CPF/RG — `autoridade.AUTORIDADE`, owner rule 2026-10-13).
-  naturalidade and filiação are printed but `IdentityFields` carries neither yet.
+  `extracao_conjuges` entry (`rg`, `rg_orgao`, and now `nome_mae`/`nome_pai`/`naturalidade`).
+  **OWNER DECISION 2026-10-21 (supersedes the 2026-10-13 "a certidão is not a CPF/RG source"
+  rule):** the certidão's CPF (NOMES/CPF line), RG and órgão (annotation) now FILL an EMPTY
+  `clientes` field — machine-pending, `origem=certidao_casamento` — for the titular AND the other
+  spouse, via the generic D1 path: a different on-file value opens the approve/reject review, a
+  `manual`/`protege_correcao` value is untouched, nothing is overwritten. They are read PER
+  SPOUSE only (`autoridade.SO_POR_CONJUGE`: a whole-document read would hand the first spouse's
+  to both). Authority: `rg`/`rg_orgao` rank LAST in `PRECEDENCIA` (a real RG/CNH or the ficha
+  outranks the certidão, the certidão never takes over); `cpf` stays unranked there on purpose
+  — the measured-precision table already lets a CNH/CIN beat it with no human, and ranking it
+  would turn that win into a review. The stale `rg × certidao_casamento = 0/4` precision cell
+  (it measured the unattributed flat columns) was removed: the per-spouse RG is unmeasured.
+  **Filiação and naturalidade** are fields now (`IdentityFields.nome_mae/nome_pai/naturalidade`,
+  `filiacao.py`; migration 296 for `nome_pai`/`naturalidade`, `nome_mae` is 167's): each spouse's
+  clause ("natural de Campinas, Estado de São Paulo, … filho de A e de B") is read by anchoring on
+  the spouse's NAME (`conjuges._com_filiacao`, `media`); an RG/CIN/CNH `FILIAÇÃO` block is
+  positional (pai, mãe) so `baixa`, explicit `PAI:`/`MÃE:` labels are `alta`; two different
+  clauses in one document are two holders → nothing is attributed. The CNH prints no
+  naturalidade. Neither is required by the contract (the generator prints neither).
+  **The OTHER spouse is created when no cliente matches** (`_criar_conjuge_da_certidao`): match
+  by CPF first (org-wide — a person already registered is LINKED, never duplicated), then
+  name within the card; only a CPF that passes its check digits + a read name creates, through
+  the same `compradores_service.adicionar(papel='conjuge')` as "Adicionar cônjuge", with the CPF
+  deliberately NOT passed there (it would be stamped `manual`). It refuses (today's
+  conflict/aviso behaviour) when the titular is already linked to someone else, the destination
+  atendimento/side is ambiguous, a read is `leitura_comprometida`, or a placeholder party
+  ("Comprador 2", no CPF) on the same side might BE the spouse.
   The certidão describes BOTH spouses: when the other spouse is already linked as cônjuge but was
   not attributed an entry, she still receives estado civil / regime / data do casamento
   (`identidade_extracao_service._aplicar_fatos_do_casal`: only when the certidão is what set the

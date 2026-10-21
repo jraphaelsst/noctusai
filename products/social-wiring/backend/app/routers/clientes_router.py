@@ -288,6 +288,11 @@ class ClientePatchBody(StrictHttpModel):
     # typed value look like a document reading, or the reverse.
     celular: Optional[str] = None
     profissao: Optional[str] = None
+    #: Migrations 167 / 296 — filiação and naturalidade ("Cidade/UF"). Their
+    #: `_origem` is the server's to stamp (also read off documents).
+    nome_mae: Optional[str] = None
+    nome_pai: Optional[str] = None
+    naturalidade: Optional[str] = None
 
     # Migration 097 — qualificação civil, the fields an instrument needs to
     # name a party. `cpf` and `rg` are checklist items on the same terms as

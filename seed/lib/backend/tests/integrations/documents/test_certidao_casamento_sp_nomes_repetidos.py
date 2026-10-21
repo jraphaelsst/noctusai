@@ -112,12 +112,18 @@ def test_the_titular_gets_their_own_facts_not_the_other_spouses():
         )
     )
     assert r.nome == "BEATRIZ ALENCAR QUINTANA"
-    # Owner rule 2026-10-13 (`autoridade`): a certidão de casamento is not the
-    # authoritative source of CPF/RG, so neither rides on the flat fields...
-    assert r.cpf is None and r.rg is None and r.rg_orgao is None
-    # ...but each spouse's entry records exactly what the page prints.
+    # Owner decision 2026-10-21 (`autoridade`, supersedes 2026-10-13): the
+    # certidão's CPF/RG/órgão ARE the titular's own — the titular's flat fields
+    # carry THEIR cadastro annotation, never the other spouse's...
+    assert r.cpf == "111.444.777-35"
+    assert (r.rg, r.rg_orgao) == ("55.666.777-X", "SSP/SP")
+    assert r.rg_confianca.value == "media"  # attributed by position, never alta
+    # ...and each spouse's entry records exactly what the page prints.
     eu = next(c for c in r.conjuges if c.titular)
     assert (eu.cpf, eu.rg, eu.rg_orgao) == ("111.444.777-35", "55.666.777-X", "SSP/SP")
+    # Filiação + naturalidade come from the titular's own clause.
+    assert (r.nome_pai, r.nome_mae) == ("Hugo Quintana", "Lia Alencar")
+    assert r.naturalidade == "Santos/SP"
     assert r.data_nascimento.isoformat() == "1990-06-04"
     assert r.nacionalidade == "brasileiro"
     assert r.estado_civil == "casado" and r.regime_bens == "comunhao_parcial"

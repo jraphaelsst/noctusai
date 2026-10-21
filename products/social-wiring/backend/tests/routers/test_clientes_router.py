@@ -609,6 +609,39 @@ class TestPatchCliente:
         assert payload["data_nascimento"] == "1990-05-15"
         assert isinstance(payload["data_nascimento"], str)
 
+    def test_patch_filiacao_and_naturalidade_round_trip_and_stamp_manual_origin(
+        self, client, scoped
+    ):
+        """Migration 296 (owner decision 2026-10-21): the three new identity
+        fields are accepted, stored, and carry the server-stamped provenance."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"nome_mae": "Marta Menezes", "nome_pai": "Aurelio Prado", "naturalidade": "Campinas/SP"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        payload = scoped.table("clientes").updated_payloads[-1]
+        for campo, valor in (
+            ("nome_mae", "Marta Menezes"), ("nome_pai", "Aurelio Prado"),
+            ("naturalidade", "Campinas/SP"),
+        ):
+            assert payload[campo] == valor
+            assert payload[f"{campo}_origem"] == "manual"
+            assert payload[f"{campo}_documento_id"] is None
+
+    def test_patch_naturalidade_origem_is_not_accepted_from_the_body(self, client, scoped):
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"naturalidade": "Campinas/SP", "naturalidade_origem": "rg"},
+            headers=_auth(),
+        )
+        payload = scoped.table("clientes").updated_payloads[-1] if resp.status_code == 200 else {}
+        assert payload.get("naturalidade_origem", "manual") == "manual"
+
     def test_patch_data_casamento_is_accepted_and_stamps_manual_origin(
         self, client, scoped
     ):

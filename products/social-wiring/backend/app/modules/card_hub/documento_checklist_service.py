@@ -378,6 +378,11 @@ _CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = (
     "convive_uniao_estavel",
     "certidao_estado_civil_emitida_em",
     "nacionalidade",
+    # Migrations 167 / 296 — filiação and naturalidade: shown and editable in
+    # "Dados pessoais"; NOT required by the contract (the generator prints neither).
+    "nome_mae",
+    "nome_pai",
+    "naturalidade",
     "endereco_cep",
     "endereco_logradouro",
     "endereco_numero",

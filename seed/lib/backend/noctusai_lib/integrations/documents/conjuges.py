@@ -57,6 +57,7 @@ from noctusai_lib.integrations.documents.name import (
     nomes_compativeis,
     nomes_em_par,
 )
+from noctusai_lib.integrations.documents.filiacao import ler_trecho
 from noctusai_lib.integrations.documents.profession import find_profissao
 from noctusai_lib.integrations.documents.rg import rg_shape_valido
 from noctusai_lib.integrations.documents.text import strip_accents_upper
@@ -108,6 +109,16 @@ class ConjugeLido:
     rg_confianca: str = "nenhuma"
     rg_orgao: Optional[str] = None
     rg_orgao_confianca: str = "nenhuma"
+    #: Filiação and naturalidade off this spouse's OWN qualification clause
+    #: ("..., natural de Campinas, Estado de São Paulo, ..., filho de A e de
+    #: B"), found by anchoring on the spouse's name (`_com_filiacao`) — at most
+    #: `media`, never `alta`.
+    nome_mae: Optional[str] = None
+    nome_mae_confianca: str = "nenhuma"
+    nome_pai: Optional[str] = None
+    nome_pai_confianca: str = "nenhuma"
+    naturalidade: Optional[str] = None
+    naturalidade_confianca: str = "nenhuma"
     #: Set by the extractor (never by this module) when the caller's
     #: `TitularEsperado` hint selected this spouse.
     titular: bool = False
@@ -187,6 +198,51 @@ def _com_rgs(text: str, conjuges: tuple["ConjugeLido", ...]) -> tuple["ConjugeLi
                 c, rg=rg, rg_confianca="media",
                 rg_orgao=orgao, rg_orgao_confianca="media" if orgao else "nenhuma",
             )
+        out.append(c)
+    return tuple(out)
+
+
+def _com_filiacao(text: str, conjuges: tuple["ConjugeLido", ...]) -> tuple["ConjugeLido", ...]:
+    """Attach each spouse's filiação and naturalidade, read from the clause
+    that follows the spouse's own name.
+
+    For each name occurrence (current name, then the maiden form) the window
+    runs to the next occurrence of the OTHER spouse's name (else
+    `_SEGMENTO_MAX` chars); the first window that yields anything wins. A
+    clause that names neither a "natural de" nor a "filho de" yields nothing —
+    a spouse is never given facts the page attributes to the other.
+    """
+    if len(conjuges) != 2 or not text:
+        return conjuges
+    norm, origem = normalized_with_offsets(text)
+
+    def ocorrencias(c: "ConjugeLido") -> list[int]:
+        pos: list[int] = []
+        for nome in (c.nome, c.nome_anterior):
+            if nome:
+                pos += [m.start() for m in _padrao_nome(nome).finditer(norm)]
+        return sorted(set(pos))
+
+    posicoes = [ocorrencias(c) for c in conjuges]
+    out = []
+    for i, c in enumerate(conjuges):
+        outras = posicoes[1 - i]
+        achado: dict = {}
+        for ini in posicoes[i]:
+            fim = min(
+                [p for p in outras if p > ini] + [ini + _SEGMENTO_MAX],
+            )
+            a = origem[ini] if ini < len(origem) else 0
+            b = origem[fim - 1] + 1 if 0 < fim <= len(origem) else len(text)
+            achado = ler_trecho(text[a:b])
+            if achado:
+                break
+        if achado:
+            campos = {}
+            for chave, (valor, conf) in achado.items():
+                campos[chave] = valor
+                campos[f"{chave}_confianca"] = conf
+            c = replace(c, **campos)
         out.append(c)
     return tuple(out)
 
@@ -1316,7 +1372,9 @@ def find_conjuges(
     exactly the historical behaviour on every document whose label-driven
     read has no such conflict to notice.
     """
-    return _com_rgs(text, _finalizar(_find_conjuges_bruto(text, esperados=esperados)))
+    return _com_filiacao(
+        text, _com_rgs(text, _finalizar(_find_conjuges_bruto(text, esperados=esperados)))
+    )
 
 
 def _find_conjuges_bruto(

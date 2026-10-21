@@ -1814,6 +1814,9 @@ _CAMPOS_COM_ORIGEM: tuple[str, ...] = (
     "pacto_antenupcial_livro", "pacto_antenupcial_folha",
     # Migration 238 — the ficha cadastral's e-mail (quintet).
     "email",
+    # Migrations 167 / 296 — filiação and naturalidade (quintets), read off
+    # identity documents / certidões and hand-editable.
+    "nome_mae", "nome_pai", "naturalidade",
 )
 
 #: Migration 153 — fields whose provenance quintet covers a GROUP of columns.
@@ -2172,6 +2175,8 @@ def update_cliente(
         "pacto_antenupcial_livro", "pacto_antenupcial_folha",
         # 198 — união estável beside the legal estado civil.
         "convive_uniao_estavel",
+        # 167 / 296 — filiação and naturalidade (gated like every field above).
+        "nome_mae", "nome_pai", "naturalidade",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     # Canonical TOKENS only (never a display label) — the choke point every

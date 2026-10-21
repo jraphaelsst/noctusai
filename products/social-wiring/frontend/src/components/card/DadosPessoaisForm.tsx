@@ -98,6 +98,11 @@ export interface DadosPessoais {
   convive_uniao_estavel?: boolean | null;
   regime_bens?: string | null;
   nacionalidade?: string | null;
+  /** Migrations 167 / 296 — filiação and place of birth ("Cidade/UF"). Read
+   *  off RG/CIN/CNH and certidões; NOT required by the contract. */
+  naturalidade?: string | null;
+  nome_mae?: string | null;
+  nome_pai?: string | null;
   /** Migration 117 (contract F6) — the marriage CELEBRATION date. Shown
    *  only while `estado_civil` reads "Casado(a)". */
   data_casamento?: string | null;
@@ -149,6 +154,9 @@ const CAMPOS_DADOS_PESSOAIS: Record<keyof DadosPessoais, true> = {
   convive_uniao_estavel: true,
   regime_bens: true,
   nacionalidade: true,
+  naturalidade: true,
+  nome_mae: true,
+  nome_pai: true,
   data_casamento: true,
   certidao_estado_civil_emitida_em: true,
   endereco_cep: true,
@@ -296,6 +304,9 @@ export function DadosPessoaisForm({
     valores.convive_uniao_estavel,
     valores.regime_bens,
     valores.nacionalidade,
+    valores.naturalidade,
+    valores.nome_mae,
+    valores.nome_pai,
     valores.data_casamento,
     valores.certidao_estado_civil_emitida_em,
     valores.endereco_cep,
@@ -552,6 +563,38 @@ export function DadosPessoaisForm({
         />
         <PendenteAviso ativo={pendente("nacionalidade")} testId={`${testId}-nacionalidade`} />
       </Campo>
+
+      <Campo rotulo="Naturalidade" htmlFor={`${testId}-naturalidade`}>
+        <Input
+          id={`${testId}-naturalidade`}
+          value={texto(draft.naturalidade)}
+          onChange={(e) => campo("naturalidade", e.target.value)}
+          placeholder="Cidade/UF"
+          data-testid={`${testId}-naturalidade`}
+        />
+        <PendenteAviso ativo={pendente("naturalidade")} testId={`${testId}-naturalidade`} />
+      </Campo>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Campo rotulo="Nome da mãe" htmlFor={`${testId}-nome-mae`}>
+          <Input
+            id={`${testId}-nome-mae`}
+            value={texto(draft.nome_mae)}
+            onChange={(e) => campo("nome_mae", e.target.value)}
+            data-testid={`${testId}-nome-mae`}
+          />
+          <PendenteAviso ativo={pendente("nome_mae")} testId={`${testId}-nome-mae`} />
+        </Campo>
+        <Campo rotulo="Nome do pai" htmlFor={`${testId}-nome-pai`}>
+          <Input
+            id={`${testId}-nome-pai`}
+            value={texto(draft.nome_pai)}
+            onChange={(e) => campo("nome_pai", e.target.value)}
+            data-testid={`${testId}-nome-pai`}
+          />
+          <PendenteAviso ativo={pendente("nome_pai")} testId={`${testId}-nome-pai`} />
+        </Campo>
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <Campo rotulo="Estado civil" htmlFor={`${testId}-estado-civil`}>

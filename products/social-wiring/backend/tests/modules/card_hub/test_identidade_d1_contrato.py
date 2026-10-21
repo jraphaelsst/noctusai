@@ -1942,7 +1942,7 @@ class TestConjugePorLadoUnico:
         assert (eu["conjuge_cliente_id"], ela["conjuge_cliente_id"]) == (vendedor2, cid)
 
     @pytest.mark.asyncio
-    async def test_a_disagreeing_cpf_on_the_only_candidate_is_left_for_review(
+    async def test_a_disagreeing_cpf_on_the_only_candidate_is_never_forced_onto_her(
         self, client, scoped,
     ):
         comprador2 = str(uuid4())
@@ -1960,9 +1960,14 @@ class TestConjugePorLadoUnico:
         ela = _cliente(scoped, comprador2)
         assert ela["cpf"] == "111.111.111-11"  # untouched — no silent overwrite
         assert ela.get("conjuge_cliente_id") is None
-        assert _cliente(scoped, cid).get("conjuge_cliente_id") is None
+        # Owner decision 2026-10-21: "Comprador 2" is a DIFFERENT, known person
+        # (their own CPF), so the spouse the certidão names — matched nowhere,
+        # valid CPF — is created and linked to the titular instead of being
+        # forced onto her, or left unattributed.
+        nova = _cliente(scoped, _cliente(scoped, cid)["conjuge_cliente_id"])
+        assert nova["cpf"] == "478.982.096-30" and nova["id"] != comprador2
         registro = _documento(scoped, did)["extracao_conjuges"]
-        assert next(r for r in registro if not r["titular"])["cliente_id"] is None
+        assert next(r for r in registro if not r["titular"])["cliente_id"] == nova["id"]
 
     @pytest.mark.asyncio
     async def test_three_parties_on_a_side_is_never_auto_paired(self, client, scoped):

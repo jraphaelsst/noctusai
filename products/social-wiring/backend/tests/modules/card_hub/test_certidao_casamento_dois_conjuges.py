@@ -5,12 +5,13 @@ nationalities and the RGs (cadastro annotation). Applying it must:
 
 - fill the titular's EMPTY birthdate / nationality and the couple's facts;
 - fill the other spouse — already linked as cônjuge on the card — with HER
-  facts (never duplicating a person: no cliente is created from a certidão);
+  facts (never duplicating a person; creating one is covered in
+  `test_certidao_casamento_conjuge_completo.py`);
 - when the other spouse was not attributed (a single-entry read), still hand
   her the COUPLE's facts (estado civil, regime, data do casamento);
 - never overwrite a manual value silently — a differing value opens a review;
-- keep the RGs the page prints on the document row only (a certidão is not the
-  authoritative source of RG — `autoridade`, owner rule 2026-10-13).
+- each spouse's RG from the cadastro annotation fills an EMPTY field (owner
+  decision 2026-10-21, supersedes the 2026-10-13 "not an RG source" rule).
 
 Invented names; synthetic check-digit-valid CPFs.
 """
@@ -50,6 +51,8 @@ def _leitura(*, com_a_outra: bool = True) -> IdentityFields:
         nome="BEATRIZ ALENCAR QUINTANA", nome_confianca=ExtractionConfidence.MEDIA,
         data_nascimento=eu.data_nascimento,
         data_nascimento_confianca=ExtractionConfidence.MEDIA,
+        rg=eu.rg, rg_confianca=ExtractionConfidence.MEDIA,
+        rg_orgao=eu.rg_orgao, rg_orgao_confianca=ExtractionConfidence.MEDIA,
         nacionalidade="brasileiro", nacionalidade_confianca=ExtractionConfidence.MEDIA,
         estado_civil="casado", estado_civil_confianca=ExtractionConfidence.ALTA,
         regime_bens="comunhao_parcial", regime_bens_confianca=ExtractionConfidence.ALTA,
@@ -87,8 +90,10 @@ class TestAmbosOsConjuges:
         assert c["data_nascimento_origem"] == "certidao_casamento"
         assert c["nacionalidade"] == "brasileiro"
         assert c["estado_civil"] == "casado"
-        # RG is not a certidão field (owner rule 2026-10-13).
-        assert not c.get("rg")
+        # The titular's own RG/órgão off the cadastro annotation fills the
+        # EMPTY field, machine-pending (owner decision 2026-10-21).
+        assert c["rg"] == "55.666.777-X" and c["rg_orgao_expedidor"] == "SSP/SP"
+        assert c["rg_origem"] == "certidao_casamento" and not c.get("rg_confirmado_em")
 
     @pytest.mark.asyncio
     async def test_the_linked_spouse_gets_her_own_and_the_couples_facts(self, client, scoped):
@@ -108,7 +113,7 @@ class TestAmbosOsConjuges:
         assert len(scoped.table("clientes").select("*").execute().data) == 2
 
     @pytest.mark.asyncio
-    async def test_each_entry_records_the_rg_the_page_prints_on_the_document_only(
+    async def test_each_entry_records_the_rg_the_page_prints_and_the_spouse_gets_it(
         self, client, scoped
     ):
         cid, did, outro_id, storage = await _casal(scoped)
@@ -120,7 +125,9 @@ class TestAmbosOsConjuges:
         assert entradas["RAFAEL MENEZES DO PRADO"]["rg"] == "11.222.333-4"
         assert entradas["BEATRIZ ALENCAR QUINTANA"]["rg_orgao"] == "SSP/SP"
         assert entradas["RAFAEL MENEZES DO PRADO"]["cliente_id"] == outro_id
-        assert not _cliente(scoped, outro_id).get("rg")
+        o = _cliente(scoped, outro_id)
+        assert o["rg"] == "11.222.333-4" and o["rg_orgao_expedidor"] == "SSP/SP"
+        assert o["rg_origem"] == "certidao_casamento" and not o.get("rg_confirmado_em")
 
     @pytest.mark.asyncio
     async def test_a_manual_value_on_the_spouse_is_never_overwritten(self, client, scoped):

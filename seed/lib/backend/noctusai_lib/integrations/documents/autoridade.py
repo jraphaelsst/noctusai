@@ -31,9 +31,22 @@ Field vocabulary is `IdentityFields`' attribute names (`rg` carries
 `rg_orgao`; `rne` carries `rne_orgao`), plus the group fields `endereco` /
 `conjuges`.
 
-NOT MODELLED AS FIELDS (yet): filiação (nome_mae/nome_pai) and
-naturalidade — `IdentityFields` carries neither; the printed filiação is
-read by `legibilidade` only as a cross-check.
+FILIAÇÃO AND NATURALIDADE (`nome_mae`, `nome_pai`, `naturalidade`, owner
+decision 2026-10-21) are fields now: printed on an RG/CIN/CNH (`FILIAÇÃO`,
+RG/CIN also `NATURALIDADE`), a certidão de nascimento and — per spouse — a
+certidão de casamento. `legibilidade` still reads the printed filiação as a
+cross-check of the NAME.
+
+🔴 CERTIDÃO DE CASAMENTO AND CPF/RG (owner decision 2026-10-21, supersedes
+the 2026-10-13 rule that a marriage certificate is not a CPF/RG source): the
+SP Registro Civil standard prints each spouse's CPF (NOMES/CPF line) and RG
+(ANOTAÇÕES DE CADASTRO: "Conjuge1: RG 36.964.037-8/SSP/SP"). They are read
+PER SPOUSE only (`SO_POR_CONJUGE` — a whole-document read would mix the two)
+and are the LOWEST authority for rg/órgão (`PRECEDENCIA`; `cpf` is settled by the
+product's measured table instead): they fill an EMPTY
+cliente field, a different on-file value opens the approve/reject review, a
+manual correction is protected, and a real RG/CNH/CIN (or the party's own
+ficha) outranks them. They never overwrite.
 """
 from __future__ import annotations
 
@@ -47,35 +60,46 @@ AUTORIDADE: dict[str, frozenset[str]] = {
     # consumer derives a suggestion from the issuer), no estado civil.
     # `rne`: an RNE card uploaded under "rg" is still emitted as what it IS
     # (never into `rg`).
-    "RG": frozenset({"nome", "rg", "rne", "data_nascimento", "data_emissao", "cpf"}),
+    "RG": frozenset({
+        "nome", "rg", "rne", "data_nascimento", "data_emissao", "cpf",
+        "nome_mae", "nome_pai", "naturalidade",
+    }),
     # CIN — the number IS the CPF (so no separate `rg`); prints SEXO and
     # NACIONALIDADE.
-    "CIN": frozenset({"nome", "cpf", "data_nascimento", "genero", "nacionalidade", "data_emissao"}),
+    "CIN": frozenset({
+        "nome", "cpf", "data_nascimento", "genero", "nacionalidade", "data_emissao",
+        "nome_mae", "nome_pai", "naturalidade",
+    }),
     # CNH — RG + órgão + UF read together off the 4c box; a foreigner's box
     # holds an RNE (-> `rne`). Nº REGISTRO (11 digits, DV) — never the
     # espelho nor the RENACH. Prints no SEXO.
     "CNH": frozenset({
         "nome", "cpf", "data_nascimento", "rg", "rne", "registro_cnh",
-        "nacionalidade", "data_emissao",
+        "nacionalidade", "data_emissao", "nome_mae", "nome_pai",
     }),
     # RNE / RNM / CRNM — the foreign national's own card. Prints SEXO.
-    "RNE": frozenset({"nome", "rne", "nacionalidade", "data_nascimento", "genero", "data_emissao"}),
+    "RNE": frozenset({
+        "nome", "rne", "nacionalidade", "data_nascimento", "genero", "data_emissao",
+        "nome_mae", "nome_pai",
+    }),
     # Certidão de casamento — both spouses (names before/after), the couple's
     # facts, each spouse's nacionalidade/data de nascimento, the matrícula.
     # 🔴 `genero` is NOT printed: only a DERIVED value (grammatical agreement,
     # `IdentityFields.genero_derivado=True`) may ride, never as a reading.
-    # No CPF/RG (not the authoritative source), no profissão, no endereço
-    # (the cartório's address is nobody's home).
+    # CPF/RG/órgão (owner decision 2026-10-21) and filiação/naturalidade are
+    # read PER SPOUSE (`SO_POR_CONJUGE`) and rank LAST in `PRECEDENCIA`. Still
+    # no profissão (decades-old) and no endereço (the cartório's address is
+    # nobody's home).
     "CERTIDAO_CASAMENTO": frozenset({
         "conjuges", "nome", "data_casamento", "regime_bens", "estado_civil",
         "nacionalidade", "data_nascimento", "genero", "matricula_certidao",
-        "data_emissao",
+        "data_emissao", "cpf", "rg", "nome_mae", "nome_pai", "naturalidade",
     }),
     # Certidão de nascimento — prints SEXO; the averbação margin carries a
     # later estado civil.
     "CERTIDAO_NASCIMENTO": frozenset({
         "nome", "data_nascimento", "genero", "estado_civil", "matricula_certidao",
-        "data_emissao",
+        "data_emissao", "nome_mae", "nome_pai", "naturalidade",
     }),
 }
 
@@ -84,6 +108,14 @@ _SINONIMOS = {
     "CRNM": "RNE",
     "RNM": "RNE",
     "CEDULA_IDENTIDADE": "RG",
+}
+
+#: Fields a type may emit ONLY attributed to one person: a certidão de
+#: casamento names two spouses, so a whole-document read of these would mix
+#: them. The extractor takes them from the titular's `ConjugeLido` entry
+#: (and the other spouse's from theirs) — never from `find_*(text)`.
+SO_POR_CONJUGE: dict[str, frozenset[str]] = {
+    "CERTIDAO_CASAMENTO": frozenset({"cpf", "rg", "nome_mae", "nome_pai", "naturalidade"}),
 }
 
 #: Types whose gender is never printed — a gender here is DERIVED or absent.
@@ -139,6 +171,15 @@ PRECEDENCIA: dict[str, tuple[frozenset[str], ...]] = {
         frozenset({"CERTIDAO_CASAMENTO", "CERTIDAO_NASCIMENTO"}),
         frozenset({"FICHA_CADASTRAL"}),
     ),
+    # 🔴 The certidão de casamento is the LAST tier for rg/órgão (owner
+    # decision 2026-10-21): it fills an empty field and offers a review on a
+    # difference, but it never takes over a value from any other document —
+    # a real RG/CNH, or the party's own ficha, outranks it.
+    #
+    # `cpf` deliberately keeps the certidão UNRANKED: a CPF disagreement is
+    # already settled by the product's MEASURED source-precision table (the
+    # certidão's cell is 67%, n=3 — a CNH/CIN beats it with no human), and
+    # ranking it here would turn that automatic win into a human review.
     "cpf": (
         frozenset({"CIN", "CNH", "CPF", "RG"}),
         frozenset({"FICHA_CADASTRAL"}),
@@ -147,11 +188,28 @@ PRECEDENCIA: dict[str, tuple[frozenset[str], ...]] = {
         frozenset({"RG"}),
         frozenset({"CNH"}),
         frozenset({"FICHA_CADASTRAL"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
     ),
     "rg_orgao": (
         frozenset({"RG"}),
         frozenset({"CNH"}),
         frozenset({"FICHA_CADASTRAL"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
+    ),
+    # Filiação / naturalidade (owner decision 2026-10-21): the identity
+    # documents and the birth certificate tie (one source of truth, printed
+    # the same); the marriage certificate's narrative clause ranks below.
+    "nome_mae": (
+        frozenset({"RG", "CIN", "CNH", "RNE", "CERTIDAO_NASCIMENTO"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
+    ),
+    "nome_pai": (
+        frozenset({"RG", "CIN", "CNH", "RNE", "CERTIDAO_NASCIMENTO"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
+    ),
+    "naturalidade": (
+        frozenset({"RG", "CIN", "CERTIDAO_NASCIMENTO"}),
+        frozenset({"CERTIDAO_CASAMENTO"}),
     ),
     # Owner decision 2026-10-13 ("ficha prevalece"): the party's own
     # declaration outranks a utility bill, which only CONFIRMS it.
@@ -221,6 +279,26 @@ def mais_autoritativo(
     return novo is not None and atual is not None and novo < atual
 
 
+def so_por_conjuge(campo: str, tipo_documento: Optional[str]) -> bool:
+    """Must `campo` on this type be attributed to ONE spouse (never read off
+    the whole document)? See `SO_POR_CONJUGE`."""
+    return campo in SO_POR_CONJUGE.get(tipo_normalizado(tipo_documento) or "", frozenset())
+
+
+def capacidades_de(tipo_documento: str) -> frozenset[str]:
+    """The canonical field names a type may emit, in `capacidades.py`'s
+    vocabulary: `AUTORIDADE` plus `rg_orgao` (travels with `rg`) and
+    `conjuge` (the spouse link `conjuges` stands for). Derived, so the
+    product-facing upper bound can never exceed the authority table."""
+    campos = AUTORIDADE[tipo_normalizado(tipo_documento) or ""]
+    saida = set(campos) - {"conjuges"}
+    if "rg" in campos:
+        saida.add("rg_orgao")
+    if "conjuges" in campos:
+        saida.add("conjuge")
+    return frozenset(saida)
+
+
 def so_derivado(campo: str, tipo_documento: Optional[str]) -> bool:
     """Can `tipo_documento` only DERIVE `campo`, never read it as printed?
     (`genero` off a certidão de casamento's grammatical agreement.)"""
@@ -232,9 +310,12 @@ __all__ = [
     "GENERO_SO_DERIVADO",
     "PRECEDENCIA",
     "autorizado",
+    "SO_POR_CONJUGE",
     "campos_autorizados",
+    "capacidades_de",
     "mais_autoritativo",
     "posto",
     "so_derivado",
+    "so_por_conjuge",
     "tipo_normalizado",
 ]

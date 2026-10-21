@@ -272,6 +272,27 @@ class TestIdentidadeValoresEditaveis:
         assert set(svc._CLIENTE_COLUNAS_EXIBICAO) <= set(svc._CLIENTE_COLUNAS)
 
 
+class TestFiliacaoENaturalidadeNoFormulario:
+    """Migration 296 (owner decision 2026-10-21): filiação and naturalidade are
+    shown and editable in "Dados pessoais" — and are NOT contract-required."""
+
+    def test_valores_editaveis_carries_them(self):
+        valores = svc.valores_editaveis(
+            {"nome_mae": "Marta Menezes", "nome_pai": "Aurelio Prado", "naturalidade": "Campinas/SP"}
+        )
+        assert (valores["nome_mae"], valores["nome_pai"], valores["naturalidade"]) == (
+            "Marta Menezes", "Aurelio Prado", "Campinas/SP",
+        )
+
+    def test_empty_when_unset_and_read_from_the_cliente_row(self):
+        valores = svc.valores_editaveis({})
+        assert valores["nome_mae"] is None and valores["naturalidade"] is None
+        assert {"nome_mae", "nome_pai", "naturalidade"} <= set(svc._CLIENTE_COLUNAS)
+
+    def test_the_contract_does_not_require_them(self):
+        assert not {"nome_mae", "nome_pai", "naturalidade"} & set(svc._CAMPOS_QUALIFICACAO_CONTRATO)
+
+
 class TestCelularEEmailReadTheRegistrationKey:
     """🔴 `chave_canonica` holds a phone OR an email, and `chave_tipo` decides.
 

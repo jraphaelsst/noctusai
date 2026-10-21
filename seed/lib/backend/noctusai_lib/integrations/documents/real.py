@@ -56,6 +56,7 @@ from noctusai_lib.integrations.documents.cpf import (
     find_cpf_conflitos,
     only_digits,
 )
+from noctusai_lib.integrations.documents.filiacao import find_filiacao, find_naturalidade
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder, LeituraTexto
@@ -695,6 +696,12 @@ class LadderIdentityExtractor:
         def pode(campo: str) -> bool:
             return autorizados is None or campo in autorizados
 
+        def global_(campo: str) -> bool:
+            # May a WHOLE-DOCUMENT finder run for `campo`? Not for a field the
+            # type only emits attributed to one person (a certidão de casamento
+            # names two spouses: `autoridade.SO_POR_CONJUGE`).
+            return pode(campo) and not autoridade.so_por_conjuge(campo, tipo_norm)
+
         def explicito(campo: str) -> bool:
             # Readers that only make sense on a DECLARED type (a document
             # number with a type-specific label) never run type-agnostic.
@@ -727,15 +734,15 @@ class LadderIdentityExtractor:
         # already demoted to `baixa` on its own. Tempering here would demote
         # the reads that survived that gate — which are precisely the ones
         # worth trusting.
-        cpf, cpf_conf, cpf_label = find_cpf(text) if pode("cpf") else nada3
+        cpf, cpf_conf, cpf_label = find_cpf(text) if global_("cpf") else nada3
 
         # The RG has NO check digit anywhere in Brazil, so it gets the name's
         # treatment: a vision-read RG is a suggestion. It has no structural
         # self-evidence to fall back on, which makes it the weakest of the
         # five — see `rg.py`.
-        rg, rg_conf, rg_label = find_rg(text) if pode("rg") else nada3
+        rg, rg_conf, rg_label = find_rg(text) if global_("rg") else nada3
         rg_conf = self._temper_name_confidence(rg_conf, source)
-        if pode("rg"):
+        if global_("rg"):
             rg_orgao, rg_orgao_conf = find_rg_orgao(text, rg)
         else:
             rg_orgao, rg_orgao_conf = None, ExtractionConfidence.NENHUMA.value
@@ -755,13 +762,13 @@ class LadderIdentityExtractor:
             rne_conf = self._temper_name_confidence(rne_conf, source)
         # The CNH's 4c box, read as ONE unit: number + issuer + UF together
         # (a CNH RG used to come out without its issuer/UF).
-        caixa = find_caixa_identidade_cnh(text) if (pode("rg") or pode("rne")) else None
+        caixa = find_caixa_identidade_cnh(text) if (global_("rg") or pode("rne")) else None
         if caixa is not None:
             tipo_caixa, numero_caixa, org_caixa, uf_caixa = caixa
             if tipo_caixa == "rne" and pode("rne") and rne is None:
                 rne, rne_label, rne_orgao = numero_caixa, "DOC. IDENTIDADE (CNH)", org_caixa
                 rne_conf = self._temper_name_confidence("alta", source)
-            elif tipo_caixa == "rg" and pode("rg"):
+            elif tipo_caixa == "rg" and global_("rg"):
                 if rg is None or only_alnum(rg) == only_alnum(numero_caixa):
                     rg = numero_caixa
                     rg_label = "DOC. IDENTIDADE / ORG. EMISSOR / UF"
@@ -915,6 +922,28 @@ class LadderIdentityExtractor:
             find_profissao_invalida(text) if pode("profissao") and profissao is None else None
         )
 
+        # Filiação / naturalidade — anchored (`filiacao.py`), tempered like a
+        # name: a vision-read parent's name is a suggestion. A certidão de
+        # casamento's come ONLY from the titular spouse's own clause below.
+        nome_pai, nome_pai_conf = None, ExtractionConfidence.NENHUMA.value
+        nome_mae, nome_mae_conf = None, ExtractionConfidence.NENHUMA.value
+        filiacao_label: Optional[str] = None
+        if global_("nome_mae") or global_("nome_pai"):
+            nome_pai, nome_pai_conf, nome_mae, nome_mae_conf, filiacao_label = (
+                find_filiacao(text)
+            )
+            if not global_("nome_pai"):
+                nome_pai, nome_pai_conf = None, ExtractionConfidence.NENHUMA.value
+            if not global_("nome_mae"):
+                nome_mae, nome_mae_conf = None, ExtractionConfidence.NENHUMA.value
+            nome_pai_conf = self._temper_name_confidence(nome_pai_conf, source)
+            nome_mae_conf = self._temper_name_confidence(nome_mae_conf, source)
+        naturalidade, naturalidade_conf, naturalidade_label = (
+            find_naturalidade(text) if global_("naturalidade") else nada3
+        )
+        naturalidade_conf = self._temper_name_confidence(naturalidade_conf, source)
+        nome_pai_label = nome_mae_label = filiacao_label
+
         # Endereço — read on every document (the extractor is type-agnostic);
         # WHICH document types may promote it is the consumer's decision (a
         # certidão prints its CARTÓRIO's address, which is nobody's home).
@@ -991,6 +1020,30 @@ class LadderIdentityExtractor:
                         eu.genero, eu.genero_confianca, "certidão (concordância — derivado)"
                     )
                     genero_derivado = True
+                # 🔴 THE TITULAR'S OWN RG / FILIAÇÃO / NATURALIDADE (owner decision
+                # 2026-10-21): from THEIR clause / cadastro annotation only —
+                # `media` at most (attributed by position / name anchor).
+                if eu.rg and pode("rg"):
+                    rg, rg_conf, rg_label = (
+                        eu.rg, eu.rg_confianca, "ANOTAÇÕES DE CADASTRO (cônjuge titular)"
+                    )
+                    rg_orgao = eu.rg_orgao
+                    rg_orgao_conf = eu.rg_orgao_confianca if eu.rg_orgao else "nenhuma"
+                for attr in ("nome_mae", "nome_pai", "naturalidade"):
+                    valor_eu = getattr(eu, attr)
+                    if valor_eu and pode(attr):
+                        if attr == "nome_mae":
+                            nome_mae, nome_mae_conf, nome_mae_label = (
+                                valor_eu, eu.nome_mae_confianca, "certidão (cônjuge titular)"
+                            )
+                        elif attr == "nome_pai":
+                            nome_pai, nome_pai_conf, nome_pai_label = (
+                                valor_eu, eu.nome_pai_confianca, "certidão (cônjuge titular)"
+                            )
+                        else:
+                            naturalidade, naturalidade_conf, naturalidade_label = (
+                                valor_eu, eu.naturalidade_confianca, "certidão (cônjuge titular)"
+                            )
                 if cpf is None and eu.cpf and pode("cpf"):
                     cpf, cpf_conf, cpf_label = eu.cpf, eu.cpf_confianca, "CPF (titular do card)"
                     # The spouse pairing resolved what the bare CPF hint could
@@ -1165,6 +1218,15 @@ class LadderIdentityExtractor:
             profissao=profissao,
             profissao_confianca=ExtractionConfidence(profissao_conf),
             profissao_rotulo=profissao_label,
+            nome_mae=nome_mae,
+            nome_mae_confianca=ExtractionConfidence(nome_mae_conf),
+            nome_mae_rotulo=nome_mae_label if nome_mae else None,
+            nome_pai=nome_pai,
+            nome_pai_confianca=ExtractionConfidence(nome_pai_conf),
+            nome_pai_rotulo=nome_pai_label if nome_pai else None,
+            naturalidade=naturalidade,
+            naturalidade_confianca=ExtractionConfidence(naturalidade_conf),
+            naturalidade_rotulo=naturalidade_label,
             endereco=endereco if endereco is not None and endereco.presente else None,
             conjuges=conjuges,
             source=source,

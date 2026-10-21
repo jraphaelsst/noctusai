@@ -97,7 +97,7 @@ class TestFieldRules:
         assert _v(_f(), medir_precisao=False)["cpf"].estado == confianca.AUSENTE
 
     def test_fields_outside_the_types_authority_are_not_judged(self):
-        assert "cpf" not in _v(_f(cpf=CPF_OK), "certidao_casamento", medir_precisao=False)
+        assert "cpf" not in _v(_f(cpf=CPF_OK), "certidao_nascimento", medir_precisao=False)
 
 
 class TestDocumentLevelRules:

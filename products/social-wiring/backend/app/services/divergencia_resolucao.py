@@ -269,8 +269,12 @@ _PRECISAO_ESTUDO_2026_10_05: dict[str, dict[str, Precisao]] = {
         "ficha_cadastral": Precisao(0.5, 2),
         "cin": Precisao(1.0, 2),
     },
+    # `rg`/`certidao_casamento` 0/4 was REMOVED (2026-10-21): it measured the
+    # flat, unattributed columns of a two-person document (they named nobody).
+    # The certidão's RG is now read PER SPOUSE (annotation) and is UNMEASURED:
+    # a disagreement with a value on file opens the approve/reject review —
+    # it is neither auto-rejected on a stale 0.0 nor auto-validated.
     "rg": {
-        "certidao_casamento": Precisao(0.0, 4),
         "cin": Precisao(1.0, 2),
     },
     "data_nascimento": {"certidao_casamento": Precisao(0.0, 3)},
@@ -606,7 +610,10 @@ DOCUMENTOS_DUAS_PESSOAS = frozenset({"certidao_casamento"})
 #: `nacionalidade` stays out too: measured 6/6 from the certidão's flat
 #: reading, because both nubentes are almost always of one nationality.
 CAMPOS_POR_PESSOA = frozenset(
-    {"nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento", "genero", "profissao"}
+    {
+        "nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento", "genero",
+        "profissao", "nome_mae", "nome_pai", "naturalidade",
+    }
 )
 
 

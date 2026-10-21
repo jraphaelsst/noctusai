@@ -52,9 +52,25 @@ class TestTabela:
         assert autoridade.campos_autorizados("crnm") == autoridade.AUTORIDADE["RNE"]
 
     @pytest.mark.parametrize("tipo", ["certidao_casamento", "certidao_nascimento"])
-    def test_certidoes_are_not_a_cpf_rg_profissao_or_address_source(self, tipo: str) -> None:
+    def test_certidoes_are_not_a_profissao_rne_or_address_source(self, tipo: str) -> None:
         campos = autoridade.campos_autorizados(tipo)
-        assert not campos & {"cpf", "rg", "rne", "profissao", "endereco"}
+        assert not campos & {"rne", "profissao", "endereco"}
+
+    def test_certidao_nascimento_is_not_a_cpf_rg_source(self) -> None:
+        assert not autoridade.campos_autorizados("certidao_nascimento") & {"cpf", "rg"}
+
+    def test_certidao_casamento_is_a_cpf_rg_source_only_per_spouse(self) -> None:
+        # Owner decision 2026-10-21 (supersedes the 2026-10-13 rule).
+        assert {"cpf", "rg"} <= autoridade.campos_autorizados("certidao_casamento")
+        assert autoridade.so_por_conjuge("cpf", "certidao_casamento")
+        assert autoridade.so_por_conjuge("rg", "certidao_casamento")
+        assert not autoridade.so_por_conjuge("rg", "rg")
+
+    def test_filiacao_and_naturalidade_are_declared_where_printed(self) -> None:
+        for tipo in ("rg", "cin", "certidao_nascimento", "certidao_casamento"):
+            assert {"nome_mae", "nome_pai", "naturalidade"} <= autoridade.campos_autorizados(tipo)
+        assert {"nome_mae", "nome_pai"} <= autoridade.campos_autorizados("cnh")
+        assert "naturalidade" not in autoridade.campos_autorizados("cnh")
 
     def test_cnh_is_the_registro_source_and_never_a_gender_source(self) -> None:
         campos = autoridade.campos_autorizados("cnh")
@@ -81,9 +97,11 @@ Data de emissao: 10/01/2024
 
 class TestCertidaoCasamento:
     @pytest.mark.asyncio
-    async def test_emits_no_cpf_rg_profissao_or_address(self) -> None:
+    async def test_emits_no_profissao_or_address_and_never_the_other_spouses_cpf(self) -> None:
         out = await _ler(CERTIDAO_COM_DOCUMENTOS, "certidao_casamento", TitularEsperado(nome="Maria Luiza Ficticia"))
-        assert out.cpf is None and out.rg is None and out.rg_orgao is None and out.rne is None
+        # The CPF printed belongs to JOAO: the titular (Maria) never gets it
+        # (owner decision 2026-10-21: CPF/RG are read per spouse only).
+        assert out.cpf is None and out.rne is None
         assert out.profissao is None
         assert out.endereco is None
         assert out.data_casamento is not None and out.regime_bens == "comunhao_universal"
@@ -335,6 +353,35 @@ class TestPrecedencia:
         assert autoridade.mais_autoritativo("nome", "cnh", "certidao_casamento")
         assert autoridade.mais_autoritativo("nome", "certidao_nascimento", "ficha_cadastral")
         assert not autoridade.mais_autoritativo("nome", "rg", "cin")  # same tier
+
+    def test_certidao_casamento_is_the_last_tier_for_rg_orgao(self):
+        """Owner decision 2026-10-21: it fills an empty field, but never takes
+        over from ANY other document; a real RG/CNH (and the ficha) outrank it."""
+        for campo, alto in (("rg", "rg"), ("rg_orgao", "cnh")):
+            assert autoridade.mais_autoritativo(campo, alto, "certidao_casamento")
+            assert autoridade.mais_autoritativo(campo, "ficha_cadastral", "certidao_casamento")
+            assert not autoridade.mais_autoritativo(campo, "certidao_casamento", alto)
+            assert not autoridade.mais_autoritativo(campo, "certidao_casamento", "ficha_cadastral")
+
+    def test_cpf_from_the_certidao_stays_unranked_for_the_measured_resolver(self):
+        assert autoridade.posto("cpf", "certidao_casamento") is None
+        assert not autoridade.mais_autoritativo("cpf", "cin", "certidao_casamento")
+
+    def test_filiacao_identity_docs_tie_and_outrank_the_marriage_clause(self):
+        for campo in ("nome_mae", "nome_pai", "naturalidade"):
+            assert autoridade.mais_autoritativo(campo, "rg", "certidao_casamento")
+            assert autoridade.mais_autoritativo(campo, "certidao_nascimento", "certidao_casamento")
+            assert not autoridade.mais_autoritativo(campo, "certidao_casamento", "rg")
+            assert not autoridade.mais_autoritativo(campo, "certidao_nascimento", "rg")
+
+    def test_capacidades_are_derived_from_the_authority_table(self):
+        from noctusai_lib.integrations.documents.capacidades import CAPACIDADES
+
+        assert CAPACIDADES["rg"] == autoridade.capacidades_de("RG")
+        assert "profissao" not in CAPACIDADES["rg"] and "estado_civil" not in CAPACIDADES["rg"]
+        assert "rg_orgao" in CAPACIDADES["certidao_casamento"] and "conjuge" in CAPACIDADES["certidao_casamento"]
+        for tipo, aut in (("cin", "CIN"), ("cnh", "CNH"), ("certidao_nascimento", "CERTIDAO_NASCIMENTO")):
+            assert CAPACIDADES[tipo] == autoridade.capacidades_de(aut)
 
     def test_rg_ladder_and_endereco_ficha_first(self):
         assert autoridade.mais_autoritativo("rg", "rg", "cnh")

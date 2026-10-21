@@ -40,7 +40,7 @@ upload, on the SAME `origem="matricula"` write value, so it lands in
 second key (there is no second physical document type to key it by).
 `rg`/`rg_orgao_expedidor` from a matrícula qualification are genuinely
 narrower than an identity document's — no photo, no `data_emissao` — but the
-canonical names are the same ones `_IDENTIDADE_COMPLETA` already uses, so no
+canonical names are the same ones the identity family (derived from `autoridade.AUTORIDADE`) already uses, so no
 new vocabulary is introduced for them. The FULL matrícula parse
 (`make_matricula_extractor` — cartório, inscrição, ônus, the rest of the
 transcription beyond what a qualification or the header carries) remains a
@@ -54,21 +54,10 @@ deliberately absent here too — see that product module's own
 """
 from __future__ import annotations
 
-from noctusai_lib.integrations.documents.types import CAMPOS as _IDENTITY_CAMPOS
-
-#: Every `IdentityFields` attribute a label-anchored finder can lift off a
-#: full identity document, PLUS `rg_orgao` (read beside the RG number,
-#: `rg.py`) and `data_emissao` (the document's own issuance date, read by
-#: `civil_status.py`'s averbação pass) — both deliberately excluded from
-#: `types.CAMPOS` because they are not INDEPENDENTLY persistable columns
-#: (see that tuple's docstring), not because they cannot be read.
-_IDENTIDADE_COMPLETA: frozenset[str] = frozenset(_IDENTITY_CAMPOS) | {
-    "rg_orgao",
-    "data_emissao",
-}
+from noctusai_lib.integrations.documents.autoridade import capacidades_de as _autorizados
 
 #: `matricula_qualificacao.extrair_qualificacoes`' per-party read off the act
-#: text — canonical names already shared with `_IDENTIDADE_COMPLETA`
+#: text — canonical names already shared with the identity family
 #: (`"rg_orgao"` for the issuer, matching `types.CAMPOS`' vocabulary, not
 #: `clientes.rg_orgao_expedidor`'s column name — see this module's own
 #: docstring on why product columns are free to differ). `"endereco"` is
@@ -89,8 +78,12 @@ _QUALIFICACAO_MATRICULA: frozenset[str] = frozenset(
 CAPACIDADES: dict[str, frozenset[str]] = {
     # `factory.make_identity_extractor` over an RG (old model or CIN) or a
     # CNH photo/PDF (text-layer -> vision fallback, `ladder.py`).
-    "rg": _IDENTIDADE_COMPLETA,
-    "cnh": _IDENTIDADE_COMPLETA,
+    #
+    # 🔴 THE IDENTITY FAMILY IS DERIVED FROM `autoridade.AUTORIDADE`
+    # (2026-10-21, closes NOC-REMEDIATE[autoridade-capacidades-sync]) — what a
+    # type may CLAIM can never be broader than what the extractor may EMIT.
+    "rg": _autorizados("RG"),
+    "cnh": _autorizados("CNH"),
     # The new-model Carteira de Identidade Nacional — same reader, same
     # capability set, as `rg`/`cnh` above (`real.py`'s `_achou_algo` is what
     # falls a gov.br CIN PDF through to vision when its text layer carries
@@ -98,7 +91,7 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # 2026-09-28). A CIN prints the CPF number AS the identity number
     # (`rg.py`'s own note); that is a content fact a caller reconciles
     # (social-wiring's `_e_cin`), not a narrower capability here.
-    "cin": _IDENTIDADE_COMPLETA,
+    "cin": _autorizados("CIN"),
     # A CPF card carries only the number (and, rarely, a printed name) — no
     # birthdate/estado-civil/etc. worth claiming.
     "cpf": frozenset({"nome", "cpf"}),
@@ -106,8 +99,8 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # `types.IdentityFields`' own note on averbação timelines): the margin
     # carries estado_civil/regime_bens/data_casamento readings beside the
     # identity ones, and `conjuges.py` links the other spouse named on it.
-    "certidao_casamento": _IDENTIDADE_COMPLETA | {"conjuge"},
-    "certidao_nascimento": _IDENTIDADE_COMPLETA,
+    "certidao_casamento": _autorizados("CERTIDAO_CASAMENTO"),
+    "certidao_nascimento": _autorizados("CERTIDAO_NASCIMENTO"),
     # Address-only, by what the document is evidence OF (`address.py`) — a
     # utility bill's printed name/CPF belong to whoever it was mailed to,
     # not necessarily this titular, so this module does not claim them even
@@ -208,7 +201,7 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # PERSON — the form may name several; the seed reader returns every one
     # it found, attribution by CPF is the consumer's job, see that module's
     # own docstring). `rg_orgao` travels with `rg`, same non-independently-
-    # persistable reasoning `_IDENTIDADE_COMPLETA` gives for it.
+    # persistable reasoning `autoridade.capacidades_de` gives for it.
     "ficha_cadastral": frozenset(
         {
             "nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",

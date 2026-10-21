@@ -67,6 +67,10 @@ describe("DadosPessoaisForm", () => {
       "RG",
       "Órgão expedidor",
       "Nacionalidade",
+      // Migrations 167 / 296 — filiação and naturalidade, beside the qualification.
+      "Naturalidade",
+      "Nome da mãe",
+      "Nome do pai",
       "Estado civil",
       // Migration 148 — always shown (required for a vendedor regardless
       // of estado civil). "Data de casamento" is absent here: it only
@@ -379,6 +383,53 @@ describe("DadosPessoaisForm — pendente de confirmação do administrador (owne
     const { screen } = await abrir();
     expect(screen.queryByTestId("dados-pessoais-pendente-resumo")).toBeNull();
     expect(screen.queryByTestId("dados-pessoais-cpf-pendente")).toBeNull();
+  });
+
+  describe("filiação e naturalidade (migration 296, owner decision 2026-10-21)", () => {
+    const PAIS = {
+      naturalidade: "Campinas/SP",
+      nome_mae: "Marta Menezes",
+      nome_pai: "Aurelio Prado",
+    };
+
+    it("shows the saved values on reopen", async () => {
+      const { screen } = await abrir({ valores: PAIS });
+      const val = (id: string) =>
+        (screen.getByTestId(`dados-pessoais-${id}`) as HTMLInputElement).value;
+      expect(val("naturalidade")).toBe("Campinas/SP");
+      expect(val("nome-mae")).toBe("Marta Menezes");
+      expect(val("nome-pai")).toBe("Aurelio Prado");
+    });
+
+    it("sends only what was typed, and nothing when untouched", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: {} });
+      fireEvent.change(screen.getByTestId("dados-pessoais-nome-mae"), {
+        target: { value: "Lia Alencar" },
+      });
+      fireEvent.change(screen.getByTestId("dados-pessoais-naturalidade"), {
+        target: { value: "Santos/SP" },
+      });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({ nome_mae: "Lia Alencar", naturalidade: "Santos/SP" });
+    });
+
+    it("an untouched save never nulls the saved values", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: PAIS });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({});
+    });
+
+    it("clearing the father's name sends null", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: PAIS });
+      fireEvent.change(screen.getByTestId("dados-pessoais-nome-pai"), { target: { value: "" } });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({ nome_pai: null });
+    });
+
+    it("flags a pending admin confirmation on the field", async () => {
+      const { screen } = await abrir({ valores: PAIS, pendenteConfirmacao: ["nome_mae"] });
+      expect(screen.getByTestId("dados-pessoais-nome-mae-pendente")).toBeTruthy();
+    });
   });
 
   describe("🔴 seed + diff-only save (prod data loss, deal 857, 2026-10-21)", () => {

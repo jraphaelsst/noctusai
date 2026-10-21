@@ -124,11 +124,12 @@ from noctusai_lib.integrations.documents.nacionalidade_civil import (
 from noctusai_lib.integrations.documents.rg import only_alnum
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.storage import StorageBackend
-from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
+from noctusai_lib.integrations.documents.name import looks_like_a_name
+from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos, divergencia_resolucao, extracao_job, table_reads
+from app.services import campo_conflitos, clientes_service, divergencia_resolucao, extracao_job, table_reads
 from app.services import identificadores as idf
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub import leitura_resultados
@@ -415,6 +416,33 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_profissao_rotulo",
         sobrescreve=False,
     ),
+    # Migration 296 (owner decision 2026-10-21) — filiação and naturalidade,
+    # read off RG/CIN/CNH, certidão de nascimento and (per spouse) certidão de
+    # casamento. `nome_mae` was Serasa-only (167) and lives here now: Crednet
+    # still writes it through `CAMPO_NOME_MAE`, the SAME entry. All
+    # `sobrescreve=False`: registration facts, fill-empty / conflict / never
+    # overwrite.
+    CampoExtraido(
+        item_key="nome_mae",
+        coluna_valor="extracao_nome_mae",
+        coluna_confianca="extracao_nome_mae_confianca",
+        coluna_rotulo="extracao_nome_mae_rotulo",
+        sobrescreve=False,
+    ),
+    CampoExtraido(
+        item_key="nome_pai",
+        coluna_valor="extracao_nome_pai",
+        coluna_confianca="extracao_nome_pai_confianca",
+        coluna_rotulo="extracao_nome_pai_rotulo",
+        sobrescreve=False,
+    ),
+    CampoExtraido(
+        item_key="naturalidade",
+        coluna_valor="extracao_naturalidade",
+        coluna_confianca="extracao_naturalidade_confianca",
+        coluna_rotulo="extracao_naturalidade_rotulo",
+        sobrescreve=False,
+    ),
 )
 
 #: The seven parts of the `endereco_*` group (migration 097's columns), in
@@ -544,24 +572,10 @@ def _coluna_lida_no_documento(campo: CampoExtraido) -> str:
     column is the document-extraction `CAMPOS` entry's, by `item_key`."""
     return campo.coluna_valor or CAMPO_POR_ITEM.get(campo.item_key, "")
 
-#: P0c contract §A.8/§C4 — Serasa Crednet's `nome_mae`, held OUTSIDE the
-#: `CAMPOS` tuple deliberately: `extrair_identidade`'s per-document `lidos`
-#: dict (`_valores_lidos`/`_lidos_vazios`) is keyed EXACTLY on `CAMPOS`, and
-#: no `IdentityFields` (RG/CPF/CNH/certidão) attribute maps to a mother's
-#: name — adding it to `CAMPOS` would `KeyError` the very next identity
-#: document upload (`_valores_lidos` never populates a `"nome_mae"` key).
-#: `CAMPO_POR_CHAVE` still needs to resolve it: `resolver_conflito` (the
-#: admin's `PUT /conflitos/{id}/decidir` route) is generic over every
-#: `cliente_campo_conflitos` row regardless of which extractor opened it, so
-#: it is registered into the SAME lookup table, just not the SAME tuple.
-CAMPO_NOME_MAE = CampoExtraido(
-    item_key="nome_mae",
-    coluna_valor="extracao_nome_mae",
-    coluna_confianca="extracao_nome_mae_confianca",
-    coluna_rotulo="extracao_nome_mae_rotulo",
-    sobrescreve=False,
-)
-CAMPO_POR_CHAVE["nome_mae"] = CAMPO_NOME_MAE
+#: Serasa Crednet's `nome_mae` (P0c contract §A.8/§C4) is the SAME `CAMPOS`
+#: entry an identity document's `FILIAÇÃO` feeds (migration 296 moved it in):
+#: one field, one provenance quintet, two sources.
+CAMPO_NOME_MAE = CAMPO_POR_CHAVE["nome_mae"]
 
 #: [Migration 238] The party's e-mail as a ficha cadastral prints it
 #: (`clientes.email` + its provenance quintet). Held OUTSIDE `CAMPOS` for the
@@ -705,6 +719,11 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
         "profissao": item(
             fields.profissao, fields.profissao_confianca, fields.profissao_rotulo
         ),
+        "nome_mae": item(fields.nome_mae, fields.nome_mae_confianca, fields.nome_mae_rotulo),
+        "nome_pai": item(fields.nome_pai, fields.nome_pai_confianca, fields.nome_pai_rotulo),
+        "naturalidade": item(
+            fields.naturalidade, fields.naturalidade_confianca, fields.naturalidade_rotulo
+        ),
     }
 
 
@@ -737,6 +756,17 @@ def _lidos_do_conjuge(conjuge: Any, fields: IdentityFields) -> dict[str, tuple]:
         lidos["genero"] = lidos["genero"][:3] + (False,)
     lidos["nacionalidade"] = item(conjuge.nacionalidade, conjuge.nacionalidade_confianca, rot)
     lidos["profissao"] = item(conjuge.profissao, conjuge.profissao_confianca, rot)
+    # Owner decision 2026-10-21: the certidão's RG/órgão, filiação and
+    # naturalidade for THIS spouse (fill-empty / conflict, lowest authority).
+    rot_rg = "ANOTAÇÕES DE CADASTRO (cônjuge)"
+    lidos["rg"] = item(conjuge.rg, conjuge.rg_confianca, rot_rg)
+    lidos["rg_orgao_expedidor"] = item(
+        conjuge.rg_orgao, conjuge.rg_orgao_confianca, rot_rg if conjuge.rg_orgao else None
+    )
+    for chave in ("nome_mae", "nome_pai", "naturalidade"):
+        lidos[chave] = item(
+            getattr(conjuge, chave), getattr(conjuge, f"{chave}_confianca"), rot
+        )
     comuns = _valores_lidos(fields)
     for chave in ("estado_civil", "regime_bens", "data_casamento"):
         lidos[chave] = comuns[chave]
@@ -3626,14 +3656,20 @@ def conflitos_pendentes(
 
 #: `CampoExtraido.item_key` -> the key a `extracao_conjuges` entry carries
 #: that fact under (the `registro_conjuges` shape `extrair_identidade`
-#: writes). A per-person campo absent here (`rg`, `rg_orgao_expedidor`) is
-#: one a certidão never states per spouse — it can never be attributed.
+#: writes). A campo absent here is one a certidão never states per spouse —
+#: it can never be attributed. (`rg`/`rg_orgao_expedidor`/filiação/
+#: naturalidade joined 2026-10-21: the certidão states them per spouse.)
 _CHAVE_CONJUGE: dict[str, str] = {
     "nome_oficial": "nome",
     "cpf": "cpf",
     "data_nascimento": "data_nascimento",
     "genero": "genero",
     "profissao": "profissao",
+    "rg": "rg",
+    "rg_orgao_expedidor": "rg_orgao",
+    "nome_mae": "nome_mae",
+    "nome_pai": "nome_pai",
+    "naturalidade": "naturalidade",
 }
 
 
@@ -5301,9 +5337,12 @@ async def extrair_identidade(
         # applied above (the extractor's `titular` hint selected them and carried
         # their per-person facts onto `fields`). The OTHER spouse fills the
         # cliente they already are in this product — linked as `conjuge`, or a
-        # party on one of this cliente's cards whose name/CPF matches — and
-        # nobody is ever CREATED from a certidão: an unmatched spouse is recorded
-        # on the document row (`extracao_conjuges`) and nothing more.
+        # party on one of this cliente's cards whose name/CPF matches, or (owner
+        # decision 2026-10-21) the one cliente of the org holding their CPF.
+        # Only a spouse matched NOWHERE, whose CPF passes its check digits and
+        # whose name was read, is CREATED (`_criar_conjuge_da_certidao`, the
+        # "Adicionar cônjuge" mechanism); anyone else is recorded on the
+        # document row (`extracao_conjuges`) and nothing more.
         registro_conjuges: list[dict] = []
         if conjuges:
             outro_id: Optional[str] = None
@@ -5312,6 +5351,12 @@ async def extrair_identidade(
             if titular_idx is not None and len(conjuges) == 2:
                 outro = conjuges[1 - titular_idx]
                 outro_id = _cliente_do_outro_conjuge(client, org_id, cliente_id, outro)
+                if outro_id is None and not fields.leitura_comprometida:
+                    outro_id = _conjuge_por_cpf_na_org(client, org_id, cliente_id, outro)
+                    if outro_id is None:
+                        outro_id = _criar_conjuge_da_certidao(
+                            client, org_id, cliente_id, outro, tipo, documento_id
+                        )
                 # `outro_id` is still resolved above (used below to attribute
                 # `registro_conjuges`, a document-row RECORD, not a write to
                 # any cliente) even when comprometida — only the WRITE to the
@@ -5360,6 +5405,9 @@ async def extrair_identidade(
                         # 2026-10-13), so these never reach `clientes`.
                         "rg": c.rg,
                         "rg_orgao": c.rg_orgao,
+                        "nome_mae": c.nome_mae,
+                        "nome_pai": c.nome_pai,
+                        "naturalidade": c.naturalidade,
                         "titular": bool(c.titular),
                         "cliente_id": alvo,
                     }
@@ -5811,6 +5859,182 @@ def _cliente_do_outro_conjuge(
     if achados:
         return None  # more than one named match — genuinely ambiguous
     return _conjuge_por_lado_unico(client, org_id, cliente_id, conjuge)
+
+
+# `conjuge_cliente_id` provenance when a spouse is created/linked from a
+#: certidão — the same `conjuge_*` columns `vincular_conjuges` stamps.
+def _carimbar_vinculo(
+    client: Any, org_id: UUID, ids: tuple[str, str], origem: str, documento_id: UUID
+) -> None:
+    now = _now()
+    for um in ids:
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("id,conjuge_origem")
+            .eq("org_id", str(org_id))
+            .eq("id", um)
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows and not rows[0].get("conjuge_origem"):
+            _t(client, CLIENTES_TABLE).update({
+                "conjuge_origem": origem,
+                "conjuge_documento_id": str(documento_id),
+                "conjuge_em": now,
+                "conjuge_confirmado_por": None,
+                "conjuge_confirmado_em": None,
+            }).eq("org_id", str(org_id)).eq("id", um).execute()
+
+
+def _conjuge_por_cpf_na_org(
+    client: Any, org_id: UUID, cliente_id: UUID, conjuge: Any
+) -> Optional[str]:
+    """The ONE cliente of this org holding the spouse's CPF (owner decision
+    2026-10-21: match by CPF first, so a person already registered — on another
+    card, from another deal — is linked, never duplicated). `None` when the CPF
+    is absent/invalid, nobody holds it, it is the titular's own, or more than one
+    person holds it (ambiguous: left for a human)."""
+    cpf = only_digits(conjuge.cpf or "")
+    if not cpf or not cpf_valido(cpf):
+        return None
+    achados = [
+        r for r in clientes_service.clientes_por_cpf(client, org_id, [cpf])
+        if str(r.get("id")) != str(cliente_id)
+    ]
+    return str(achados[0]["id"]) if len(achados) == 1 else None
+
+
+def _destino_do_novo_conjuge(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[tuple[UUID, UUID, str]]:
+    """Where a spouse created from the titular's certidão goes: `(anchor
+    cliente, atendimento, lado)` for `compradores_service.adicionar`. Only the
+    two unambiguous cases — the titular IS the card (buyer side, exactly one
+    open atendimento) or is the seller-side `proprietario` of exactly one — so
+    the new spouse is never attached to the wrong deal or principal."""
+    from app.modules.card_hub import compradores_service as comp
+
+    proprios = [
+        r for r in _t(client, "atendimentos")
+        .select("id,cliente_id,substituida_por,arquivado")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute().data or []
+        if r.get("substituida_por") is None and not r.get("arquivado", False)
+    ]
+    partes = (
+        _t(client, "atendimento_partes")
+        .select("atendimento_id,lado,papel")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+    if len(proprios) == 1 and not partes:
+        return (cliente_id, UUID(str(proprios[0]["id"])), "comprador")
+    if not proprios and len(partes) == 1:
+        parte = partes[0]
+        lado = parte.get("lado") or "comprador"
+        if lado == "vendedor" and parte.get("papel") == comp.PAPEL_PADRAO_POR_LADO["vendedor"]:
+            dono = (
+                _t(client, "atendimentos")
+                .select("cliente_id")
+                .eq("org_id", str(org_id))
+                .eq("id", str(parte["atendimento_id"]))
+                .limit(1)
+                .execute()
+            ).data or []
+            if dono and dono[0].get("cliente_id"):
+                return (
+                    UUID(str(dono[0]["cliente_id"])),
+                    UUID(str(parte["atendimento_id"])),
+                    "vendedor",
+                )
+    return None
+
+
+def _ha_candidato_indefinido(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Is there a party on the titular's side with NO CPF and no real name yet
+    (a "Comprador 2" placeholder)? Such a party may well be the spouse the
+    certidão names — creating a new person would duplicate her, so creation
+    waits for a human (the existing review). A same-side party that already
+    HAS a CPF or a real name is a different, known person and does not block."""
+    ids = _pessoas_do_mesmo_lado(client, org_id, cliente_id)
+    if not ids:
+        return False
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,nome,nome_completo,nome_oficial,cpf")
+        .eq("org_id", str(org_id))
+        .in_("id", ids)
+        .execute()
+    ).data or []
+    for row in rows:
+        if row.get("cpf"):
+            continue
+        nome = next((n for n in (row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")) if n), None)
+        if _nome_vazio_ou_placeholder(nome):
+            return True
+    return False
+
+
+def _criar_conjuge_da_certidao(
+    client: Any, org_id: UUID, cliente_id: UUID, conjuge: Any, tipo: str, documento_id: UUID
+) -> Optional[str]:
+    """Create the OTHER spouse a certidão names when no cliente matched
+    (owner decision 2026-10-21), exactly as "Adicionar cônjuge" does
+    (`compradores_service.adicionar`, papel `conjuge`), and link the pair.
+
+    Only when it is safe, never a duplicate person: the CPF read passes its
+    check digits, the name was read (a plausible personal name), the titular
+    has no OTHER spouse linked, the CPF is not the titular's own, and the
+    destination is unambiguous (`_destino_do_novo_conjuge`). Anything else
+    returns `None` — today's behaviour (recorded on the document row, the
+    existing conflict/aviso review). The new person's fields are filled by the
+    caller's `aplicar_campos_ao_cliente` with origem `tipo`, machine-pending —
+    the CPF is deliberately NOT passed to `adicionar` (that would stamp it
+    `manual`)."""
+    cpf = only_digits(conjuge.cpf or "")
+    if not cpf or not cpf_valido(cpf) or not looks_like_a_name(conjuge.nome or ""):
+        return None
+    proprio = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,cpf,conjuge_cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not proprio or proprio[0].get("conjuge_cliente_id"):
+        return None  # already married on file to someone else: a human decides
+    if proprio[0].get("cpf") and only_digits(str(proprio[0]["cpf"])) == cpf:
+        return None
+    if _ha_candidato_indefinido(client, org_id, cliente_id):
+        return None  # a placeholder party on this side might BE the spouse
+    destino = _destino_do_novo_conjuge(client, org_id, cliente_id)
+    if destino is None:
+        return None
+    anchor, atendimento_id, lado = destino
+    from app.modules.card_hub import compradores_service as comp
+
+    try:
+        parte = comp.adicionar(
+            client, org_id, anchor,
+            nome=conjuge.nome, papel=comp.PAPEL_CONJUGE,
+            atendimento_id=atendimento_id, lado=lado,
+        )
+    except (ConflictError, NotFoundError, ValidationError_) as exc:
+        logger.warning(
+            "certidão %s: cônjuge não criado (%s): %s", documento_id, type(exc).__name__, exc
+        )
+        return None
+    novo = parte.get("cliente_id")
+    if not novo:
+        return None
+    # `adicionar` links only when the principal is unambiguous; the pair is
+    # certain here, so link both ways (idempotent) and stamp the provenance.
+    vincular_conjuges(client, org_id, cliente_id, UUID(str(novo)), origem=tipo, documento_id=documento_id)
+    _carimbar_vinculo(client, org_id, (str(cliente_id), str(novo)), tipo, documento_id)
+    return str(novo)
 
 
 # ─── The sweep: what happens when the process dies mid-read (migration 072) ──

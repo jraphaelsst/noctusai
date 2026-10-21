@@ -182,7 +182,9 @@ class TestLinhagemDoCard:
         }
         tipos = {f["tipo_documento"] for f in item["fontes_possiveis"]}
         assert tipos == {
-            "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
+            # `certidao_nascimento` is NOT a cpf source (seed `autoridade.AUTORIDADE`,
+            # from which the claims are now derived — 2026-10-21).
+            "rg", "cpf", "cnh", "cin", "certidao_casamento",
             # P0c contract §C1: Serasa Crednet also claims `cpf`.
             "serasa_crednet",
             # The bank's own registration form also claims `cpf` — see

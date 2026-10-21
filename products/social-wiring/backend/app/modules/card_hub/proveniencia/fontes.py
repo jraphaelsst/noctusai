@@ -126,15 +126,24 @@ RENOMEADOS_CAMPO: dict[str, str] = {
 
 #: `identidade_extracao_service.CAMPOS`' full canonical vocabulary, mapped
 #: onto `capacidades.py`'s names (`nome_oficial -> nome`, `rg_orgao_
-#: expedidor -> rg_orgao`) — every cliente-document `Fonte` below claims this
-#: much UNLESS the document physically cannot carry it (`cpf`, narrower).
+#: expedidor -> rg_orgao`) — the `clientes` columns an identity document may
+#: write. A cliente-document `Fonte` claims `_campos_cliente(tipo)`: this
+#: vocabulary NARROWED to what the seed authority table lets that type emit
+#: (closes NOC-REMEDIATE[autoridade-capacidades-sync], 2026-10-21).
 _CAMPOS_IDENTIDADE_BASE: frozenset[str] = frozenset(
     {
         "data_nascimento", "nome", "genero", "cpf", "rg", "rg_orgao",
         "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
-        "profissao",
+        "profissao", "nome_mae", "nome_pai", "naturalidade",
     }
 )
+
+
+def _campos_cliente(tipo_documento: str) -> frozenset[str]:
+    """What a cliente identity document's `Fonte` may claim: the seed
+    capability set (derived from `autoridade.AUTORIDADE`) ∩ the `clientes`
+    columns — never broader than what the extractor may emit."""
+    return CAPACIDADES[tipo_documento] & _CAMPOS_IDENTIDADE_BASE
 
 #: `imovel_hub.documentos_service.ORIGENS_ESTRUTURA`, mirrored — see
 #: `Fonte.origens`' own docstring for why this is not an import.
@@ -155,7 +164,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         entradas=_ENTRADAS_CLIENTE_UPLOAD,
         extrator="noctusai_lib.integrations.documents.factory.make_identity_extractor",
         origens=frozenset({"rg"}),
-        campos=_CAMPOS_IDENTIDADE_BASE,
+        campos=_campos_cliente("rg"),
     ),
     Fonte(
         tipo_documento="cpf",
@@ -197,7 +206,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # Not `leitura_integral`: a CIN is a single-page card/PDF, same as
         # `rg`/`cnh` — nothing here carries an averbação further into the
         # document the way a certidão does.
-        campos=_CAMPOS_IDENTIDADE_BASE,
+        campos=_campos_cliente("cin"),
     ),
     Fonte(
         tipo_documento="cnh",
@@ -205,7 +214,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         entradas=_ENTRADAS_CLIENTE_UPLOAD,
         extrator="noctusai_lib.integrations.documents.factory.make_identity_extractor",
         origens=frozenset({"cnh"}),
-        campos=_CAMPOS_IDENTIDADE_BASE,
+        campos=_campos_cliente("cnh"),
     ),
     Fonte(
         tipo_documento="certidao_casamento",
@@ -216,7 +225,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # The averbação carries estado_civil/regime_bens/data_casamento
         # beside identity, PLUS the spouse link and the certidão's own
         # emission date — see `capacidades.CAPACIDADES["certidao_casamento"]`.
-        campos=_CAMPOS_IDENTIDADE_BASE | {"conjuge", "data_emissao"},
+        campos=_campos_cliente("certidao_casamento") | {"conjuge", "data_emissao"},
         # Contract F6 / migration 110 — the estado-civil averbação is
         # further into the document than page 1; truncating it inverts the
         # answer (see `identidade_extracao_service.TIPOS_LEITURA_INTEGRAL`).
@@ -228,7 +237,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         entradas=_ENTRADAS_CLIENTE_UPLOAD,
         extrator="noctusai_lib.integrations.documents.factory.make_identity_extractor",
         origens=frozenset({"certidao_nascimento"}),
-        campos=_CAMPOS_IDENTIDADE_BASE | {"data_emissao"},
+        campos=_campos_cliente("certidao_nascimento") | {"data_emissao"},
         leitura_integral=True,
     ),
     Fonte(

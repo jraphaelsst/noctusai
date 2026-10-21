@@ -22,17 +22,33 @@ class TestShape:
 
 
 class TestIdentityDocuments:
-    """RG/CNH/CIN/certidões — the full `IdentityFields` vocabulary."""
+    """RG/CNH/CIN/certidões — DERIVED from `autoridade.AUTORIDADE` (closes
+    NOC-REMEDIATE[autoridade-capacidades-sync], 2026-10-21): what a type may
+    claim is exactly what the extractor may emit."""
 
-    def test_full_identity_docs_claim_every_seed_campo(self):
-        for tipo in ("rg", "cnh", "cin", "certidao_casamento", "certidao_nascimento"):
-            assert set(IDENTITY_CAMPOS) <= CAPACIDADES[tipo]
+    def test_identity_docs_claim_exactly_their_authority_set(self):
+        from noctusai_lib.integrations.documents.autoridade import AUTORIDADE, capacidades_de
 
-    def test_full_identity_docs_also_claim_dependent_fields(self):
-        # `rg_orgao` / `data_emissao` are real, readable fields — just not
-        # independently-persistable `IdentityFields.CAMPOS` members.
-        for tipo in ("rg", "cnh", "cin", "certidao_casamento", "certidao_nascimento"):
+        for tipo, aut in (
+            ("rg", "RG"), ("cnh", "CNH"), ("cin", "CIN"),
+            ("certidao_casamento", "CERTIDAO_CASAMENTO"),
+            ("certidao_nascimento", "CERTIDAO_NASCIMENTO"),
+        ):
+            assert CAPACIDADES[tipo] == capacidades_de(aut)
+            assert (set(AUTORIDADE[aut]) - {"conjuges"}) <= CAPACIDADES[tipo]
+            assert set(IDENTITY_CAMPOS) >= {"nome_mae", "nome_pai", "naturalidade"}
+
+    def test_a_type_never_claims_a_field_it_may_not_emit(self):
+        assert "profissao" not in CAPACIDADES["rg"]
+        assert "estado_civil" not in CAPACIDADES["cnh"]
+        assert "cpf" not in CAPACIDADES["certidao_nascimento"]
+        assert {"cpf", "rg", "rg_orgao"} <= CAPACIDADES["certidao_casamento"]
+
+    def test_identity_docs_also_claim_dependent_fields(self):
+        # `rg_orgao` travels with `rg`; `data_emissao` is every type's own.
+        for tipo in ("rg", "cnh", "certidao_casamento"):
             assert "rg_orgao" in CAPACIDADES[tipo]
+        for tipo in ("rg", "cnh", "cin", "certidao_casamento", "certidao_nascimento"):
             assert "data_emissao" in CAPACIDADES[tipo]
 
     def test_certidao_casamento_alone_claims_conjuge(self):

@@ -117,7 +117,7 @@ class TextSource(str, Enum):
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
     "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
-    "profissao", "rne",
+    "profissao", "rne", "nome_mae", "nome_pai", "naturalidade",
 )
 
 
@@ -408,6 +408,22 @@ class IdentityFields:
     profissao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     profissao_rotulo: Optional[str] = None
 
+    # ─── Filiação e naturalidade ─────────────────────────────────────────
+    #: The holder's mother's / father's name and place of birth ("Cidade/UF"),
+    #: as printed (accents kept). Read off an RG/CIN/CNH `FILIAÇÃO` block, a
+    #: certidão de nascimento, or — per spouse — a certidão de casamento's
+    #: qualification clause (`filiacao.py`). A positional `FILIAÇÃO` block is
+    #: `baixa` (an order, not a role); an explicit `PAI:`/`MÃE:` label is `alta`.
+    nome_mae: Optional[str] = None
+    nome_mae_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    nome_mae_rotulo: Optional[str] = None
+    nome_pai: Optional[str] = None
+    nome_pai_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    nome_pai_rotulo: Optional[str] = None
+    naturalidade: Optional[str] = None
+    naturalidade_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    naturalidade_rotulo: Optional[str] = None
+
     # ─── Endereço (comprovante de endereço) ─────────────────────────────
     #: 🔴 Deliberately NOT a member of :data:`CAMPOS` — it is a GROUP of seven
     #: parts that must be written together or not at all (a CEP from one bill
@@ -595,6 +611,30 @@ class IdentityFields:
     @property
     def persistable_profissao(self) -> bool:
         return self.persistable("profissao")
+
+    @property
+    def persistable_nome_mae(self) -> bool:
+        return self.persistable("nome_mae")
+
+    @property
+    def persistable_nome_pai(self) -> bool:
+        return self.persistable("nome_pai")
+
+    @property
+    def persistable_naturalidade(self) -> bool:
+        return self.persistable("naturalidade")
+
+    @property
+    def sugestao_nome_mae(self) -> bool:
+        return self.sugestao("nome_mae")
+
+    @property
+    def sugestao_nome_pai(self) -> bool:
+        return self.sugestao("nome_pai")
+
+    @property
+    def sugestao_naturalidade(self) -> bool:
+        return self.sugestao("naturalidade")
 
     @property
     def sugestao_data_nascimento(self) -> bool:
