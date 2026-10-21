@@ -96,9 +96,12 @@ describe('staff hooks', () => {
 
 describe('public hooks', () => {
   it('reads the view with the token in the path and settles the cache from a decision', async () => {
+    let view = publicView(); // the mock server keeps state: the background settle refetch must see the decision
     const api = makeApi({
-      'GET /api/public/quotes/tok': { data: publicView() },
-      'POST /api/public/quotes/tok/accept': { data: publicView({ status: 'accepted', can_decide: false, decision: { decision: 'accepted', decided_at: '2026-10-14T10:00:00Z' } }) },
+      'GET /api/public/quotes/tok': () => ({ data: view }),
+      'POST /api/public/quotes/tok/accept': () => ({
+        data: (view = publicView({ status: 'accepted', can_decide: false, decision: { decision: 'accepted', decided_at: '2026-10-14T10:00:00Z' } })),
+      }),
     });
     const hooks = createQuotesPublicHooks(api, { apiBase: 'https://api.test/' });
     const { result } = renderHook(() => ({ view: hooks.usePublicQuote('tok'), dec: hooks.usePublicDecision('tok') }), { wrapper: wrapperFor() });
@@ -123,5 +126,75 @@ describe('public hooks', () => {
     const api = makeApi();
     renderHook(() => createQuotesPublicHooks(api).usePublicQuote(null), { wrapper: wrapperFor() });
     expect(api.get).not.toHaveBeenCalled();
+  });
+});
+
+describe('cache writes (KB § PATTERNS/frontend/mutation-cache-writes.md)', () => {
+  const never = () => new Promise<never>(() => undefined); // a refetch that never answers: the cache must already be right
+  const listKey = [...quotesKeys.lists, { page: 1 }];
+
+  it('accept writes the server quote into the detail and the list row while the settle refetch is still pending', async () => {
+    let resolve!: (v: unknown) => void;
+    const posted = new Promise((r) => (resolve = r));
+    const api = makeApi({
+      'POST /api/quotes/q1/accept': () => posted,
+      'GET /api/quotes': never,
+      'GET /api/quotes/q1': never,
+    });
+    const client = makeClient();
+    client.setQueryData(listKey, page([quote({ id: 'q1', status: 'sent' }), quote({ id: 'q2' })]));
+    client.setQueryData(quotesKeys.detail('q1'), quote({ id: 'q1', status: 'sent' }));
+    const { result } = renderHook(() => createQuotesHooks(api).useQuoteMutations(), { wrapper: wrapperFor(client) });
+
+    act(() => void result.current.accept.mutate({ id: 'q1', signer_name: 'Ana Souza' }));
+    expect(client.getQueryData<{ status: string }>(quotesKeys.detail('q1'))?.status).toBe('sent'); // in flight: nothing guessed
+    await act(async () => resolve({ data: quote({ id: 'q1', status: 'accepted' }) }));
+    await waitFor(() => expect(client.getQueryData<{ status: string }>(quotesKeys.detail('q1'))?.status).toBe('accepted'));
+    const rows = client.getQueryData<{ data: { id: string; status: string }[] }>(listKey)!.data;
+    expect(rows.map((r) => r.status)).toEqual(['accepted', quote().status]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it('remove draws the removal (and the total) on the click; a failure puts the row back', async () => {
+    const api = makeApi({ 'DELETE /api/quotes/q1': () => { throw new ApiError(409, 'x', {}); }, 'GET /api/quotes': never, 'GET /api/quotes/q1': never });
+    const client = makeClient();
+    client.setQueryData(listKey, page([quote({ id: 'q1' }), quote({ id: 'q2' })]));
+    const { result } = renderHook(() => createQuotesHooks(api).useQuoteMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.remove.mutateAsync('q1').catch(() => undefined)));
+    expect(client.getQueryData<{ data: unknown[] }>(listKey)!.data).toHaveLength(2);
+
+    api.route('DELETE /api/quotes/q1', () => new Promise(() => undefined));
+    act(() => void result.current.remove.mutate('q1'));
+    await waitFor(() => expect(client.getQueryData<{ data: { id: string }[]; pagination: { total: number } }>(listKey)).toMatchObject({ data: [{ id: 'q2' }], pagination: { total: 1 } }));
+  });
+
+  it('create and new version seed the new record\'s detail from the server answer', async () => {
+    const api = makeApi({
+      'POST /api/quotes': { data: quote({ id: 'new' }) },
+      'POST /api/quotes/q1/versions': { data: quote({ id: 'v2', version: 2 }) },
+      'GET /api/quotes': never,
+      'GET /api/quotes/q1': never,
+    });
+    const client = makeClient();
+    const { result } = renderHook(() => createQuotesHooks(api).useQuoteMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => {
+      await result.current.create.mutateAsync({ party_id: 'p1', lines: [] });
+      await result.current.newVersion.mutateAsync({ id: 'q1' });
+    });
+    expect(client.getQueryData<{ id: string }>(quotesKeys.detail('new'))?.id).toBe('new');
+    expect(client.getQueryData<{ version: number }>(quotesKeys.detail('v2'))?.version).toBe(2);
+  });
+
+  it('send writes the quote carried by the send result', async () => {
+    const api = makeApi({
+      'POST /api/quotes/q1/send': { data: { quote: quote({ id: 'q1', status: 'sent' }), channel: 'link', url: 'u', sent_to: null } },
+      'GET /api/quotes': never,
+      'GET /api/quotes/q1': never,
+    });
+    const client = makeClient();
+    client.setQueryData(quotesKeys.detail('q1'), quote({ id: 'q1', status: 'draft' }));
+    const { result } = renderHook(() => createQuotesHooks(api).useQuoteMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.send.mutateAsync({ id: 'q1', channel: 'link' })));
+    expect(client.getQueryData<{ status: string }>(quotesKeys.detail('q1'))?.status).toBe('sent');
   });
 });

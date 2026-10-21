@@ -11,9 +11,11 @@
  *
  * Errors are never swallowed: queries expose `error`, mutations reject with `ApiError`.
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { ApiError, type ApiClient } from '../api';
 import { keep, signals } from '../organ-kit/query';
+import { pageOps } from '../organ-kit/page-ops';
 import type {
   Item,
   ItemCategory,
@@ -88,11 +90,6 @@ function listQuery(params: ItemListParams): Record<string, string | number> {
 export function createItemsHooks(api: ItemsApi) {
   const unwrap = async <T,>(p: Promise<ItemsEnvelope<T>>): Promise<T> => (await p).data;
 
-  function useInvalidate() {
-    const qc = useQueryClient();
-    return (...keys: QueryKey[]) => Promise.all(keys.map((k) => qc.invalidateQueries({ queryKey: k })));
-  }
-
   // ---- items -------------------------------------------------------------
   function useItems(params: ItemListParams = {}) {
     const q = useQuery<ItemsPage<Item>>({
@@ -112,32 +109,60 @@ export function createItemsHooks(api: ItemsApi) {
     return signals(q);
   }
 
+  /**
+   * Item writes (KB § PATTERNS/frontend/mutation-cache-writes.md). The server answers with the saved row, so an
+   * edit is written into the detail AND into every cached page/filter that shows the row (`pageOps`, prefix match);
+   * a NEW row is only seeded into its detail — which page / filter / sort position it belongs to is the server's
+   * call, so the lists converge on the background settle. Categories are untouched by an item write.
+   */
   function useItemMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(itemsKeys.all);
+    const qc = useQueryClient();
+    const listTarget = { queryKey: itemsKeys.list, match: 'prefix' as const };
+    const savedInto = (id: string) => ({
+      queryKey: itemsKeys.item(id),
+      commit: (_old: Item | undefined, saved: Item) => saved,
+    });
+    const savedRow = (id: string) => ({
+      ...listTarget,
+      commit: (old: unknown, saved: Item) => pageOps.replace(old, id, saved),
+    });
+    const setActive = (action: 'archive' | 'unarchive') =>
+      useCacheWriteMutation<Item, string>({
+        mutationFn: (id) => unwrap<Item>(api.post(`/api/items/${id}/${action}`)),
+        // the flag is predictable: draw it on the click (an `active` filter then drops the row on settle)
+        targets: (id) => [
+          {
+            queryKey: itemsKeys.item(id),
+            optimistic: (old: Item | undefined) => listOps.merge(old, { is_active: action === 'unarchive' }),
+            commit: (_old: Item | undefined, saved: Item) => saved,
+          },
+          {
+            ...listTarget,
+            optimistic: (old: unknown) => pageOps.patch(old, id, { is_active: action === 'unarchive' }),
+            commit: (old: unknown, saved: Item) => pageOps.replace(old, id, saved),
+          },
+        ],
+      });
     return {
-      create: useMutation({
-        mutationFn: (body: ItemInput) => unwrap<Item>(api.post('/api/items', body)),
-        onSuccess: done,
+      create: useCacheWriteMutation<Item, ItemInput>({
+        mutationFn: (body) => unwrap<Item>(api.post('/api/items', body)),
+        targets: [listTarget],
+        onSuccess: (saved) => {
+          qc.setQueryData(itemsKeys.item(saved.id), saved);
+        },
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...body }: ItemPatch & { id: string }) => unwrap<Item>(api.patch(`/api/items/${id}`, body)),
-        onSuccess: done,
+      update: useCacheWriteMutation<Item, ItemPatch & { id: string }>({
+        mutationFn: ({ id, ...body }) => unwrap<Item>(api.patch(`/api/items/${id}`, body)),
+        targets: ({ id }) => [savedInto(id), savedRow(id)],
       }),
-      archive: useMutation({
-        mutationFn: (id: string) => unwrap<Item>(api.post(`/api/items/${id}/archive`)),
-        onSuccess: done,
-      }),
-      unarchive: useMutation({
-        mutationFn: (id: string) => unwrap<Item>(api.post(`/api/items/${id}/unarchive`)),
-        onSuccess: done,
-      }),
+      archive: setActive('archive'),
+      unarchive: setActive('unarchive'),
     };
   }
 
   // ---- CSV ---------------------------------------------------------------
   function useExportItems() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — CSV download: reads nothing from the cache and changes no server state
       mutationFn: (params: Omit<ItemListParams, 'page'> = {}) => {
         const qs = new URLSearchParams(
           Object.entries({ q: params.q, item_type: params.item_type, active: params.active, category_id: params.category_id })
@@ -150,8 +175,9 @@ export function createItemsHooks(api: ItemsApi) {
   }
 
   function useImportItems() {
-    const inv = useInvalidate();
-    return useMutation({
+    const qc = useQueryClient();
+    return useMutation({ // noc-allow: invalidate-only — a bulk CSV import answers with counts only; which rows landed on which page/filter is the server's, so the item lists re-read
+
       mutationFn: ({ file, updateExisting = false, dryRun = false }: { file: File; updateExisting?: boolean; dryRun?: boolean }) => {
         const form = new FormData();
         form.append('file', file);
@@ -159,7 +185,7 @@ export function createItemsHooks(api: ItemsApi) {
         form.append('dry_run', String(dryRun));
         return unwrap<ItemImportResult>(api.upload('/api/items/import', form));
       },
-      onSuccess: (result) => (result.dry_run ? undefined : inv(itemsKeys.all)),
+      onSuccess: (result) => (result.dry_run ? undefined : qc.invalidateQueries({ queryKey: itemsKeys.all })),
     });
   }
 
@@ -173,22 +199,26 @@ export function createItemsHooks(api: ItemsApi) {
   }
 
   function useItemCategoryMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(itemsKeys.categories);
     return {
-      create: useMutation({
-        mutationFn: (b: ItemCategoryInput) => unwrap<ItemCategory>(api.post('/api/items/categories', b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<ItemCategory, ItemCategoryInput>({
+        mutationFn: (b) => unwrap<ItemCategory>(api.post('/api/items/categories', b)),
+        targets: [{ queryKey: itemsKeys.categories, commit: (old, saved) => listOps.replace(old, saved.id, saved) }],
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: Partial<ItemCategoryInput> & { id: string; is_active?: boolean }) =>
-          unwrap<ItemCategory>(api.patch(`/api/items/categories/${id}`, b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<ItemCategory, Partial<ItemCategoryInput> & { id: string; is_active?: boolean }>({
+        mutationFn: ({ id, ...b }) => unwrap<ItemCategory>(api.patch(`/api/items/categories/${id}`, b)),
+        targets: ({ id, ...changes }) => [
+          {
+            queryKey: itemsKeys.categories,
+            optimistic: (old: ItemCategory[] | undefined) => listOps.patch(old, id, changes),
+            commit: (old, saved) => listOps.replace(old, saved.id, saved),
+          },
+        ],
       }),
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(`/api/items/categories/${id}`),
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(`/api/items/categories/${id}`),
+        targets: (id) => [{ queryKey: itemsKeys.categories, optimistic: (old) => listOps.remove(old, id) }],
         // an item list may be filtered by the removed category
-        onSuccess: () => inv(itemsKeys.categories, itemsKeys.list),
+        invalidate: [itemsKeys.list],
       }),
     };
   }

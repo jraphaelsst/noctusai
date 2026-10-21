@@ -10,7 +10,8 @@
  * codes) and invalidate every read they can change: a stock move changes balances, kardex, valuation
  * and low-stock at once.
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { ApiError, type ApiClient } from '../api';
 import { errorMessage, keep, signals } from '../organ-kit/query';
 import { defaultInventoryT, type InventoryTranslate } from './i18n';
@@ -59,18 +60,30 @@ export function inventoryErrorMessage(err: unknown, t: InventoryTranslate = defa
 }
 
 
+function mapBalances(page: unknown, fn: (row: StockBalance) => StockBalance): unknown {
+  if (!page || typeof page !== 'object' || !Array.isArray((page as Paginated<StockBalance>).data)) return page;
+  const p = page as Paginated<StockBalance>;
+  return { ...p, data: p.data.map(fn) };
+}
+
+/** Write the server's post-move numbers into the balance rows (of any cached page / filter) that a move touched. */
+function applyMoves(page: unknown, moves: StockMove[]): unknown {
+  return mapBalances(page, (row) => {
+    const m = moves.find((x) => x.item_id === row.item_id && x.warehouse_id === row.warehouse_id);
+    if (!m) return row;
+    return {
+      ...row,
+      on_hand: m.on_hand_after,
+      reserved: m.reserved_after,
+      available: m.on_hand_after - m.reserved_after,
+      avg_cost_cents: m.avg_cost_after_cents,
+      value_cents: Math.round(m.on_hand_after * m.avg_cost_after_cents),
+    };
+  });
+}
+
 export function createInventoryHooks(api: InventoryApi) {
   const unwrap = async <T,>(p: Promise<InventoryEnvelope<T>>): Promise<T> => (await p).data;
-
-  function useInvalidateStock() {
-    const qc = useQueryClient();
-    return () =>
-      Promise.all(
-        [inventoryKeys.balances, inventoryKeys.kardex, inventoryKeys.valuation, inventoryKeys.lowStock].map((k) =>
-          qc.invalidateQueries({ queryKey: k }),
-        ),
-      );
-  }
 
   function useWarehouses(params: { active?: boolean } = {}) {
     const q = useQuery<Warehouse[]>({
@@ -80,17 +93,31 @@ export function createInventoryHooks(api: InventoryApi) {
     });
     return signals(q);
   }
+  /**
+   * A new warehouse is drawn into the lists it belongs to (unfiltered + active-only; it is created active) once the
+   * server answers — the code/default flag are server-decided; an edit is drawn on the click in every cached list.
+   * Other filters converge on the background settle.
+   */
   function useWarehouseMutations() {
-    const qc = useQueryClient();
-    const done = () => qc.invalidateQueries({ queryKey: inventoryKeys.warehouses });
+    const listOf = (params: object) => ({
+      queryKey: [...inventoryKeys.warehouses, params] as const,
+      commit: (old: Warehouse[] | undefined, saved: Warehouse) => listOps.replace(old, saved.id, saved),
+    });
     return {
-      create: useMutation({
-        mutationFn: (b: WarehouseInput) => unwrap<Warehouse>(api.post(`${BASE}/warehouses`, b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<Warehouse, WarehouseInput>({
+        mutationFn: (b) => unwrap<Warehouse>(api.post(`${BASE}/warehouses`, b)),
+        targets: [listOf({}), listOf({ active: true }), { queryKey: inventoryKeys.warehouses }],
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: WarehousePatch & { id: string }) => unwrap<Warehouse>(api.patch(`${BASE}/warehouses/${id}`, b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<Warehouse, WarehousePatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => unwrap<Warehouse>(api.patch(`${BASE}/warehouses/${id}`, b)),
+        targets: ({ id, ...changes }) => [
+          {
+            queryKey: inventoryKeys.warehouses,
+            match: 'prefix',
+            optimistic: (old: Warehouse[] | undefined) => listOps.patch(old, id, changes as Partial<Warehouse>),
+            commit: (old: Warehouse[] | undefined, saved: Warehouse) => listOps.patch(old, id, saved),
+          },
+        ],
       }),
     };
   }
@@ -128,16 +155,37 @@ export function createInventoryHooks(api: InventoryApi) {
     return signals(q);
   }
 
+  /**
+   * A stock move answers with the rows it wrote, and each row carries the server's resulting `on_hand_after` /
+   * `reserved_after` / `avg_cost_after_cents` — so the balance rows already on screen take those numbers the moment
+   * the POST returns. What a move changes beyond that (kardex pages, valuation, low-stock flag) is derived on the
+   * server and refreshes in the background.
+   */
   function useStockMutations() {
-    const inv = useInvalidateStock();
+    const settled = [inventoryKeys.kardex, inventoryKeys.valuation, inventoryKeys.lowStock];
+    const balanceRows = { queryKey: inventoryKeys.balances, match: 'prefix' as const };
+    const move = <V,>(post: (b: V) => Promise<MoveResult>) =>
+      useCacheWriteMutation<MoveResult, V>({
+        mutationFn: post,
+        targets: [{ ...balanceRows, commit: (old: unknown, res: MoveResult) => applyMoves(old, res.moves) }],
+        invalidate: settled,
+      });
     return {
-      receive: useMutation({ mutationFn: (b: ReceiveInput) => unwrap<MoveResult>(api.post(`${BASE}/receive`, b)), onSuccess: inv }),
-      issue: useMutation({ mutationFn: (b: IssueInput) => unwrap<MoveResult>(api.post(`${BASE}/issue`, b)), onSuccess: inv }),
-      adjust: useMutation({ mutationFn: (b: AdjustInput) => unwrap<MoveResult>(api.post(`${BASE}/adjust`, b)), onSuccess: inv }),
-      transfer: useMutation({ mutationFn: (b: TransferInput) => unwrap<MoveResult>(api.post(`${BASE}/transfer`, b)), onSuccess: inv }),
-      setMinQty: useMutation({
-        mutationFn: (b: MinQtyInput) => unwrap<{ item_id: string; warehouse_id: string; min_qty: number }>(api.put(`${BASE}/settings`, b)),
-        onSuccess: inv,
+      receive: move<ReceiveInput>((b) => unwrap<MoveResult>(api.post(`${BASE}/receive`, b))),
+      issue: move<IssueInput>((b) => unwrap<MoveResult>(api.post(`${BASE}/issue`, b))),
+      adjust: move<AdjustInput>((b) => unwrap<MoveResult>(api.post(`${BASE}/adjust`, b))),
+      transfer: move<TransferInput>((b) => unwrap<MoveResult>(api.post(`${BASE}/transfer`, b))),
+      setMinQty: useCacheWriteMutation<{ item_id: string; warehouse_id: string; min_qty: number }, MinQtyInput>({
+        mutationFn: (b) => unwrap<{ item_id: string; warehouse_id: string; min_qty: number }>(api.put(`${BASE}/settings`, b)),
+        targets: [
+          {
+            ...balanceRows,
+            commit: (old: unknown, res) =>
+              mapBalances(old, (r) => (r.item_id === res.item_id && r.warehouse_id === res.warehouse_id ? { ...r, min_qty: res.min_qty } : r)),
+          },
+        ],
+        // whether the row is now low on stock is the server's call
+        invalidate: [inventoryKeys.lowStock],
       }),
     };
   }

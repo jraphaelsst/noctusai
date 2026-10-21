@@ -9,3 +9,4 @@ export { signals, keep, createFetchTransport, errorMessage, apiErrorCode, apiErr
 export type { OrganApi } from './query';
 export { envelopeOps } from './cacheOps';
 export type { DataEnvelope } from './cacheOps';
+export { pageOps } from './page-ops';

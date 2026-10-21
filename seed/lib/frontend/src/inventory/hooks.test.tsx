@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { ApiError } from '../api';
 import { createInventoryHooks, inventoryErrorMessage, inventoryKeys } from './hooks';
-import { balance, makeApi, makeClient, page, wrapperFor } from './testUtils';
+import { ITEM, WH1, WH2, balance, makeApi, makeClient, move, page, warehouse, wrapperFor } from './testUtils';
 
 afterEach(cleanup);
 
@@ -104,5 +104,73 @@ describe('mutations', () => {
       await result.current.create.mutateAsync({ name: 'A', code: 'A' });
     });
     expect(client.getQueryState([...inventoryKeys.warehouses, {}])?.isInvalidated).toBe(true);
+  });
+});
+
+describe('cache writes (KB § PATTERNS/frontend/mutation-cache-writes.md)', () => {
+  const pending = () => new Promise<never>(() => undefined);
+
+  it('a receive puts the server\'s post-move numbers into the balance rows before any refetch', async () => {
+    const api = makeApi();
+    api.post.mockResolvedValue({ data: { status: 'ok', moves: [move({ on_hand_after: 25, reserved_after: 2, avg_cost_after_cents: 200 })] } });
+    api.get.mockReturnValue(pending()); // every refetch hangs: what is on screen must already be right
+    const client = makeClient();
+    const key = [...inventoryKeys.balances, { page: 1 }];
+    client.setQueryData(key, page([balance(), balance({ item_id: 'other', on_hand: 1, available: 1 })]));
+    const { result } = renderHook(() => createInventoryHooks(api).useStockMutations(), { wrapper: wrapperFor(client) });
+
+    await act(async () => void (await result.current.receive.mutateAsync({ item_id: ITEM, warehouse_id: WH1, qty: '15', unit_cost_cents: 200 })));
+    const rows = client.getQueryData<{ data: ReturnType<typeof balance>[] }>(key)!.data;
+    expect(rows[0]).toMatchObject({ on_hand: 25, reserved: 2, available: 23, avg_cost_cents: 200, value_cents: 5000 });
+    expect(rows[1].on_hand).toBe(1); // a row the move did not touch is left alone
+  });
+
+  it('a transfer updates both warehouses\' rows', async () => {
+    const api = makeApi();
+    api.post.mockResolvedValue({
+      data: { status: 'ok', moves: [move({ warehouse_id: WH1, on_hand_after: 4 }), move({ id: 'm2', warehouse_id: WH2, on_hand_after: 6 })] },
+    });
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    const key = [...inventoryKeys.balances, {}];
+    client.setQueryData(key, page([balance({ warehouse_id: WH1 }), balance({ warehouse_id: WH2, on_hand: 0 })]));
+    const { result } = renderHook(() => createInventoryHooks(api).useStockMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.transfer.mutateAsync({ item_id: ITEM, from_warehouse_id: WH1, to_warehouse_id: WH2, qty: '6' })));
+    expect(client.getQueryData<{ data: { on_hand: number }[] }>(key)!.data.map((r) => r.on_hand)).toEqual([4, 6]);
+  });
+
+  it('setMinQty writes the new minimum into the row; the low-stock flag stays the server\'s to decide', async () => {
+    const api = makeApi();
+    api.put.mockResolvedValue({ data: { item_id: ITEM, warehouse_id: WH1, min_qty: 12 } });
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    const key = [...inventoryKeys.balances, {}];
+    client.setQueryData(key, page([balance()]));
+    const { result } = renderHook(() => createInventoryHooks(api).useStockMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.setMinQty.mutateAsync({ item_id: ITEM, warehouse_id: WH1, min_qty: '12' })));
+    expect(client.getQueryData<{ data: { min_qty: number }[] }>(key)!.data[0].min_qty).toBe(12);
+  });
+
+  it('warehouse create commits the server row into the unfiltered + active lists; update is drawn on the click', async () => {
+    const api = makeApi();
+    let resolvePatch!: (v: unknown) => void;
+    api.post.mockResolvedValue({ data: warehouse({ id: 'w2', name: 'Filial', code: 'FIL' }) });
+    api.patch.mockReturnValue(new Promise((r) => (resolvePatch = r)));
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    const all = [...inventoryKeys.warehouses, {}];
+    const inactive = [...inventoryKeys.warehouses, { active: false }];
+    client.setQueryData(all, [warehouse()]);
+    client.setQueryData([...inventoryKeys.warehouses, { active: true }], [warehouse()]);
+    client.setQueryData(inactive, []);
+    const { result } = renderHook(() => createInventoryHooks(api).useWarehouseMutations(), { wrapper: wrapperFor(client) });
+
+    await act(async () => void (await result.current.create.mutateAsync({ name: 'Filial', code: 'FIL' })));
+    expect(client.getQueryData<{ id: string }[]>(all)!.map((w) => w.id)).toEqual([WH1, 'w2']);
+    expect(client.getQueryData<unknown[]>(inactive)).toHaveLength(0); // a filter the new row does not satisfy is not touched
+
+    act(() => void result.current.update.mutate({ id: 'w2', name: 'Filial 2' }));
+    await waitFor(() => expect(client.getQueryData<{ name: string }[]>(all)![1].name).toBe('Filial 2'));
+    await act(async () => resolvePatch({ data: warehouse({ id: 'w2', name: 'Filial 2' }) }));
   });
 });

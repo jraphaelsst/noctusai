@@ -319,7 +319,8 @@ describe('QuoteAcceptPage (public, no login)', () => {
   it('consent is explicit: Accept stays disabled until a name AND the tick; the recorded sentence is shown', async () => {
     const user = userEvent.setup();
     const accepted = publicView({ status: 'accepted', can_decide: false, consent_template: null, decision: { decision: 'accepted', decided_at: '2026-10-14T15:00:00Z' } });
-    const api = mountPublic({ 'GET /api/public/quotes/tok': { data: publicView() }, 'POST /api/public/quotes/tok/accept': { data: accepted } });
+    let view = publicView(); // the mock server keeps state: the background settle refetch must see the decision
+    const api = mountPublic({ 'GET /api/public/quotes/tok': () => ({ data: view }), 'POST /api/public/quotes/tok/accept': () => ({ data: (view = accepted) }) });
     const button = await screen.findByRole('button', { name: 'Aceitar orçamento' });
     expect(button).toBeDisabled();
     await user.type(screen.getByLabelText(/Seu nome completo/), 'Ana Souza');
@@ -336,7 +337,8 @@ describe('QuoteAcceptPage (public, no login)', () => {
   it('reject with an optional reason', async () => {
     const user = userEvent.setup();
     const rejected = publicView({ status: 'rejected', can_decide: false, consent_template: null, decision: { decision: 'rejected', decided_at: '2026-10-14T15:00:00Z' } });
-    const api = mountPublic({ 'GET /api/public/quotes/tok': { data: publicView() }, 'POST /api/public/quotes/tok/reject': { data: rejected } });
+    let view = publicView();
+    const api = mountPublic({ 'GET /api/public/quotes/tok': () => ({ data: view }), 'POST /api/public/quotes/tok/reject': () => ({ data: (view = rejected) }) });
     await user.click(await screen.findByRole('button', { name: 'Recusar este orçamento' }));
     await user.type(screen.getByLabelText('Motivo (opcional)'), 'Muito caro');
     await user.click(screen.getByRole('button', { name: 'Recusar' }));

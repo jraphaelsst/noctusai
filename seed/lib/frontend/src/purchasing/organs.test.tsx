@@ -354,16 +354,18 @@ describe('PurchaseApproversManager', () => {
 
   it('lists the org approvers (named from members), adds by picking and removes', async () => {
     const user = userEvent.setup();
-    const api = mount((h) => <PurchaseApproversManager hooks={h} currentUserId={U1} members={[{ id: U1, label: 'Ana' }, { id: U2, label: 'Beto' }]} />, { '/approvers': { data: [row(U1)] } });
+    // the mock server keeps state: the background settle refetch must see what the write did
+    const routes: Record<string, unknown> = { '/approvers': { data: [row(U1)] } };
+    const api = mount((h) => <PurchaseApproversManager hooks={h} currentUserId={U1} members={[{ id: U1, label: 'Ana' }, { id: U2, label: 'Beto' }]} />, routes);
     const r = await screen.findByTestId('approver-row');
     expect(r).toHaveTextContent('Ana');
     expect(r).toHaveTextContent('você');
-    api.post.mockResolvedValue({ data: [row(U1), row(U2)] });
+    api.post.mockImplementation(async () => (routes['/approvers'] = { data: [row(U1), row(U2)] }));
     await user.selectOptions(screen.getByLabelText('Usuário'), U2);
     await user.click(screen.getByRole('button', { name: 'Adicionar aprovador' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/purchasing/approvers', { user_id: U2 }));
     expect(await screen.findAllByTestId('approver-row')).toHaveLength(2);
-    api.delete.mockResolvedValue({ data: [row(U2)] });
+    api.delete.mockImplementation(async () => (routes['/approvers'] = { data: [row(U2)] }));
     await user.click(within(screen.getAllByTestId('approver-row')[0]).getByRole('button', { name: 'Remover' }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/purchasing/approvers/${U1}`));
     await waitFor(() => expect(screen.getAllByTestId('approver-row')).toHaveLength(1));

@@ -37,6 +37,8 @@
  * W9 added the dashboard (`/painel`).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
+import { pageOps } from '../organ-kit/page-ops';
 import type { ApiClient } from '../api';
 
 // ---------------------------------------------------------------------------
@@ -680,6 +682,24 @@ export interface PainelFiltro {
 // Hook factory — takes an api client, returns bound hooks
 // ---------------------------------------------------------------------------
 
+/** `['edicao-fotos', 'referencias', incluirArquivadas, page, pageSize]` — the archived toggle comes FIRST so a write can address "all active lists" / "all lists with archived" by prefix. */
+const REFERENCIAS_KEY = ['edicao-fotos', 'referencias'] as const;
+const REVISAO_KEY = (loteId: string | null | undefined) => ['edicao-fotos', 'revisao', loteId] as const;
+const LOTE_KEY = (loteId: string | null | undefined) => ['edicao-fotos', 'lote', loteId] as const;
+const LOTES_KEY = ['edicao-fotos', 'lotes'] as const;
+const GUIAS_KEY = ['edicao-fotos', 'guias'] as const;
+const REGRAS_KEY = ['edicao-fotos', 'regras'] as const;
+const REGRA_STATUS: RegraStatus[] = ['proposta', 'aprovada', 'rejeitada'];
+
+/** `PUT /configuracoes` answers with the saved settings when it echoes them; otherwise the body just sent stands. */
+function isOrgConfiguracoes(v: unknown): v is OrgConfiguracoes {
+  return !!v && typeof v === 'object' && 'tipos_edicao_ativos' in v && 'velocidade_padrao' in v;
+}
+
+/** Edit the photo rows of a cached batch detail (`LoteDetalhe.fotos`); anything else passes through. */
+const editLoteFotos = (edit: (fotos: FotoRevisao[]) => FotoRevisao[] | undefined) => (old: LoteDetalhe | undefined) =>
+  old && Array.isArray(old.fotos) ? listOps.merge(old, { fotos: edit(old.fotos) ?? old.fotos }) : old;
+
 export function createEdicaoFotosHooks(api: ApiClient) {
   /** `GET /capacidades` — drives every FE gate for this feature. */
   function useCapacidades() {
@@ -723,13 +743,25 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * changeable, including after the zip has been downloaded (contract §4).
    */
   function useDecidirFoto(loteId: string | null | undefined) {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: ({ fotoId, body }: { fotoId: string; body: DecisaoBody }) =>
-        api.post(`/api/edicao-fotos/revisao/${loteId}/fotos/${fotoId}/decisao`, body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'revisao', loteId] });
-      },
+    // The decision is predictable (the reviewer just made it): drawn on the click in the review grid AND the batch
+    // detail, then replaced by the row the server answers with (`estado`, `avaliacao` ...). A refusal (422
+    // `comentario_obrigatorio`) rolls it back. The per-batch decided counts on the list are server-derived.
+    return useCacheWriteMutation<FotoRevisao, { fotoId: string; body: DecisaoBody }>({
+      mutationFn: ({ fotoId, body }) =>
+        api.post<FotoRevisao>(`/api/edicao-fotos/revisao/${loteId}/fotos/${fotoId}/decisao`, body),
+      targets: ({ fotoId, body }) => [
+        {
+          queryKey: REVISAO_KEY(loteId),
+          optimistic: (old: FotoRevisao[] | undefined) => listOps.patch(old, fotoId, { decisao: body.decisao, comentario: body.comentario }),
+          commit: (old: FotoRevisao[] | undefined, saved: FotoRevisao) => listOps.patch(old, fotoId, saved),
+        },
+        {
+          queryKey: LOTE_KEY(loteId),
+          optimistic: editLoteFotos((fotos) => listOps.patch(fotos, fotoId, { decisao: body.decisao, comentario: body.comentario })),
+          commit: (old: LoteDetalhe | undefined, saved: FotoRevisao) => editLoteFotos((fotos) => listOps.patch(fotos, fotoId, saved))(old),
+        },
+      ],
+      invalidate: [LOTES_KEY],
     });
   }
 
@@ -738,13 +770,15 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * `falhou` photo (technical failure, contract §3).
    */
   function useRetentarFoto(loteId: string | null | undefined) {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (fotoId: string) =>
-        api.post(`/api/edicao-fotos/lotes/${loteId}/fotos/${fotoId}/retentar`, {}),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'revisao', loteId] });
-      },
+    // The server answers with the photo row in its new state (back in the pipeline): it replaces the failed one.
+    return useCacheWriteMutation<FotoRevisao, string>({
+      mutationFn: (fotoId) =>
+        api.post<FotoRevisao>(`/api/edicao-fotos/lotes/${loteId}/fotos/${fotoId}/retentar`, {}),
+      targets: (fotoId) => [
+        { queryKey: REVISAO_KEY(loteId), commit: (old: FotoRevisao[] | undefined, saved: FotoRevisao) => listOps.patch(old, fotoId, saved) },
+        { queryKey: LOTE_KEY(loteId), commit: (old: LoteDetalhe | undefined, saved: FotoRevisao) => editLoteFotos((fotos) => listOps.patch(fotos, fotoId, saved))(old) },
+      ],
+      invalidate: [LOTES_KEY],
     });
   }
 
@@ -759,7 +793,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   ) {
     const { page = 1, pageSize = 50, incluirArquivadas = false } = params;
     const query = useQuery<ReferenciasPage>({
-      queryKey: ['edicao-fotos', 'referencias', page, pageSize, incluirArquivadas],
+      queryKey: [...REFERENCIAS_KEY, incluirArquivadas, page, pageSize],
       queryFn: () =>
         api.get('/api/edicao-fotos/referencias', {
           page,
@@ -787,9 +821,10 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * `comodo`, `tipos_edicao` (repeated), `nota`.
    */
   function useCriarReferencia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: NovaReferenciaBody) => {
+    // The pool lists newest first: the new pair is drawn at the top of page 1 (every cached page-1 list, archived toggle
+    // either way); the pool occupancy / later pages are server-derived and refresh on the settle.
+    return useCacheWriteMutation<ReferenciaPar, NovaReferenciaBody>({
+      mutationFn: (body) => {
         const form = new FormData();
         form.append('antes', body.antes);
         form.append('depois', body.depois);
@@ -798,20 +833,36 @@ export function createEdicaoFotosHooks(api: ApiClient) {
         if (body.nota) form.append('nota', body.nota);
         return api.upload<ReferenciaPar>('/api/edicao-fotos/referencias', form);
       },
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
-      },
+      targets: [
+        {
+          queryKey: REFERENCIAS_KEY,
+          match: 'prefix',
+          commit: (old: unknown, saved: ReferenciaPar) => pageOps.prependNewest(old, saved),
+        },
+      ],
     });
   }
 
   /** `DELETE /referencias/{id}` — archive, never a hard delete (contract §5). */
   function useArquivarReferencia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (id: string) => api.delete<ReferenciaPar>(`/api/edicao-fotos/referencias/${id}`),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
-      },
+    // Archiving is predictable: the pair leaves every active-only list on the click, and shows as archived in the
+    // lists that include archived pairs; the server's archived row replaces it on success.
+    return useCacheWriteMutation<ReferenciaPar, string>({
+      mutationFn: (id) => api.delete<ReferenciaPar>(`/api/edicao-fotos/referencias/${id}`),
+      targets: (id) => [
+        {
+          queryKey: [...REFERENCIAS_KEY, false],
+          match: 'prefix',
+          optimistic: (old: unknown) => pageOps.remove(old, id),
+        },
+        {
+          queryKey: [...REFERENCIAS_KEY, true],
+          match: 'prefix',
+          optimistic: (old: unknown) => pageOps.patch(old, id, { arquivada_em: new Date().toISOString() }),
+          commit: (old: unknown, saved: ReferenciaPar) => pageOps.replace(old, id, saved),
+        },
+      ],
+      invalidate: [REFERENCIAS_KEY],
     });
   }
 
@@ -823,7 +874,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   function useGuias(params: { page?: number; pageSize?: number } = {}) {
     const { page = 1, pageSize = 20 } = params;
     const query = useQuery<GuiasPage>({
-      queryKey: ['edicao-fotos', 'guias', page, pageSize],
+      queryKey: [...GUIAS_KEY, page, pageSize],
       queryFn: () => api.get('/api/edicao-fotos/guias', { page, page_size: pageSize }),
       placeholderData: (prev) => prev,
     });
@@ -838,37 +889,45 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
-  function invalidateGuias(queryClient: ReturnType<typeof useQueryClient>) {
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'guias'] });
-  }
+  /** A new version is the highest number and the list is newest first: it is drawn at the top of page 1. */
+  const guiaCriada = {
+    queryKey: GUIAS_KEY,
+    match: 'prefix' as const,
+    commit: (old: unknown, saved: GuiaEstiloVersao) => pageOps.prependNewest(old, saved),
+  };
 
   /** `POST /guias` — a manually written DRAFT (the no-AI path, contract §6). */
   function useCriarGuia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: NovoGuiaBody) =>
-        api.post<GuiaEstiloVersao>('/api/edicao-fotos/guias', body),
-      onSuccess: () => invalidateGuias(queryClient),
+    return useCacheWriteMutation<GuiaEstiloVersao, NovoGuiaBody>({
+      mutationFn: (body) => api.post<GuiaEstiloVersao>('/api/edicao-fotos/guias', body),
+      targets: [guiaCriada],
     });
   }
 
   /** `POST /guias/{versao}/ativar` — this version becomes the one new batches snapshot. */
   function useAtivarGuia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (versao: number) =>
-        api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/ativar`, {}),
-      onSuccess: () => invalidateGuias(queryClient),
+    return useCacheWriteMutation<GuiaEstiloVersao, number>({
+      mutationFn: (versao) => api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/ativar`, {}),
+      // the activated version replaces its row and becomes `versao_ativa`; the version it superseded is server-derived
+      targets: [
+        {
+          queryKey: GUIAS_KEY,
+          match: 'prefix',
+          commit: (old: GuiasPage | undefined, saved: GuiaEstiloVersao) => {
+            const next = pageOps.replace(old, saved.id, saved);
+            return next && typeof next === 'object' && 'items' in next ? { ...next, versao_ativa: saved.versao } : next;
+          },
+        },
+      ],
+      invalidate: [['edicao-fotos', 'guia-efetivo']],
     });
   }
 
   /** `POST /guias/{versao}/restaurar` — clones the version as a NEW draft (versions are immutable). */
   function useRestaurarGuia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (versao: number) =>
-        api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/restaurar`, {}),
-      onSuccess: () => invalidateGuias(queryClient),
+    return useCacheWriteMutation<GuiaEstiloVersao, number>({
+      mutationFn: (versao) => api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/restaurar`, {}),
+      targets: [guiaCriada],
     });
   }
 
@@ -879,10 +938,10 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    */
   function useRegenerarGuia() {
     const queryClient = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a 202 that only queues the AI rebuild: the draft does not exist until the worker runs it, so there is no row to place yet
       mutationFn: () =>
         api.post<RegenerarGuiaResposta>('/api/edicao-fotos/guias/regenerar', {}),
-      onSuccess: () => invalidateGuias(queryClient),
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: GUIAS_KEY }),
     });
   }
 
@@ -898,7 +957,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   function useRegras(params: { status?: RegraStatus } = {}) {
     const { status } = params;
     const query = useQuery<RegrasPage>({
-      queryKey: ['edicao-fotos', 'regras', status ?? null],
+      queryKey: [...REGRAS_KEY, status ?? null],
       queryFn: () => api.get('/api/edicao-fotos/regras', status ? { status } : undefined),
       placeholderData: (prev) => prev,
     });
@@ -912,40 +971,62 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
-  function invalidateRegras(queryClient: ReturnType<typeof useQueryClient>) {
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'regras'] });
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'guia-efetivo'] });
-  }
+  /** What a rule write changes beyond the rule lists: the effective guide is derived from the approved rules. */
+  const REGRAS_DERIVADAS = [['edicao-fotos', 'guia-efetivo']];
+
+  /** Put `saved` into a status-filtered (or unfiltered) rule list: replaced in place if listed, appended otherwise. */
+  const upsertRegra = (old: RegrasPage | undefined, saved: RegraOrg): RegrasPage | undefined => {
+    if (!old || !Array.isArray(old.items)) return old;
+    if (old.items.some((r) => r.id === saved.id)) return pageOps.replace(old, saved.id, saved);
+    return { ...old, items: [...old.items, saved], total: old.total + 1 };
+  };
+
+  /** One target per rule list (unfiltered + each status): the decided rule is listed where its NEW status says, and leaves the others. */
+  const regraNasListas = (regraId: string) =>
+    ([null, ...REGRA_STATUS] as (RegraStatus | null)[]).map((filtro) => ({
+      queryKey: [...REGRAS_KEY, filtro],
+      commit: (old: RegrasPage | undefined, saved: RegraOrg) =>
+        filtro === null || filtro === saved.status ? upsertRegra(old, saved) : pageOps.remove(old, regraId),
+    }));
 
   /**
    * `POST /regras` — a manually written "don't do this" rule, created
    * directly APROVADA (the admin writing it down IS the approval).
    */
   function useCriarRegra() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: NovaRegraBody) => api.post<RegraOrg>('/api/edicao-fotos/regras', body),
-      onSuccess: () => invalidateRegras(queryClient),
+    return useCacheWriteMutation<RegraOrg, NovaRegraBody>({
+      mutationFn: (body) => api.post<RegraOrg>('/api/edicao-fotos/regras', body),
+      // rules list oldest first and a manual rule is born approved: it joins the unfiltered and the approved lists
+      targets: [null, 'aprovada'].map((filtro) => ({
+        queryKey: [...REGRAS_KEY, filtro],
+        commit: (old: RegrasPage | undefined, saved: RegraOrg) => upsertRegra(old, saved),
+      })),
+      invalidate: [REGRAS_KEY, ...REGRAS_DERIVADAS],
     });
   }
 
   /** `PUT /regras/{id}` — edit a rule's text; 422 `regra_arquivada` once it is REJEITADA. */
   function useEditarRegra() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: ({ regraId, texto }: { regraId: string; texto: string }) =>
-        api.put<RegraOrg>(`/api/edicao-fotos/regras/${regraId}`, { texto }),
-      onSuccess: () => invalidateRegras(queryClient),
+    return useCacheWriteMutation<RegraOrg, { regraId: string; texto: string }>({
+      mutationFn: ({ regraId, texto }) => api.put<RegraOrg>(`/api/edicao-fotos/regras/${regraId}`, { texto }),
+      targets: ({ regraId, texto }) => [
+        {
+          queryKey: REGRAS_KEY,
+          match: 'prefix',
+          optimistic: (old: unknown) => pageOps.patch(old, regraId, { texto }),
+          commit: (old: unknown, saved: RegraOrg) => pageOps.replace(old, regraId, saved),
+        },
+      ],
+      invalidate: REGRAS_DERIVADAS,
     });
   }
 
   /** `POST /regras/{id}/aprovar`. */
   function useAprovarRegra() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (regraId: string) =>
-        api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/aprovar`, {}),
-      onSuccess: () => invalidateRegras(queryClient),
+    return useCacheWriteMutation<RegraOrg, string>({
+      mutationFn: (regraId) => api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/aprovar`, {}),
+      targets: (regraId) => regraNasListas(regraId),
+      invalidate: [REGRAS_KEY, ...REGRAS_DERIVADAS],
     });
   }
 
@@ -955,11 +1036,10 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * be re-decided by a platform admin (403 otherwise).
    */
   function useRejeitarRegra() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (regraId: string) =>
-        api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/rejeitar`, {}),
-      onSuccess: () => invalidateRegras(queryClient),
+    return useCacheWriteMutation<RegraOrg, string>({
+      mutationFn: (regraId) => api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/rejeitar`, {}),
+      targets: (regraId) => regraNasListas(regraId),
+      invalidate: [REGRAS_KEY, ...REGRAS_DERIVADAS],
     });
   }
 
@@ -969,7 +1049,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * debounce (`PlataformaConfiguracoes.rule_proposal_debounce_seconds`).
    */
   function useProporRegrasAgora() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a queued job: the proposed rules do not exist until the worker runs the proposer, so there is nothing to place yet
       mutationFn: () => api.post<ProporRegrasResposta>('/api/edicao-fotos/regras/propor-agora', {}),
     });
   }
@@ -1023,14 +1103,14 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * `limite_pares_referencia`, which is left untouched when absent.
    */
   function useAtualizarConfiguracoesPlataforma() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: PlataformaConfiguracoes) =>
-        api.put<PlataformaConfiguracoes>('/api/edicao-fotos/configuracoes/plataforma', body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'configuracoes-plataforma'] });
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
-      },
+    // The whole object goes up and comes back: the saved settings replace the cached ones. The reference-pool limit
+    // changes the pool occupancy the reference lists show, which is server-derived.
+    return useCacheWriteMutation<PlataformaConfiguracoes, PlataformaConfiguracoes>({
+      mutationFn: (body) => api.put<PlataformaConfiguracoes>('/api/edicao-fotos/configuracoes/plataforma', body),
+      targets: [
+        { queryKey: ['edicao-fotos', 'configuracoes-plataforma'], commit: (_old: PlataformaConfiguracoes | undefined, saved: PlataformaConfiguracoes) => saved },
+      ],
+      invalidate: [REFERENCIAS_KEY],
     });
   }
 
@@ -1042,7 +1122,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   function useLotes(params: { page?: number; pageSize?: number } = {}) {
     const { page = 1, pageSize = 50 } = params;
     const query = useQuery<LotesPage>({
-      queryKey: ['edicao-fotos', 'lotes', page, pageSize],
+      queryKey: [...LOTES_KEY, page, pageSize],
       queryFn: () => api.get('/api/edicao-fotos/lotes', { page, page_size: pageSize }),
       placeholderData: (prev) => prev,
     });
@@ -1061,7 +1141,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   /** `GET /lotes/{id}` — batch header + per-photo state (contract §3). */
   function useLote(loteId: string | null | undefined) {
     const query = useQuery<LoteDetalhe>({
-      queryKey: ['edicao-fotos', 'lote', loteId],
+      queryKey: LOTE_KEY(loteId),
       queryFn: () => api.get(`/api/edicao-fotos/lotes/${loteId}`),
       enabled: !!loteId,
       placeholderData: (prev) => prev,
@@ -1078,10 +1158,10 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   /** `POST /lotes` — create batch metadata (contract §3). Photos follow via `useUploadFotos`/`useLoteVista`. */
   function useCriarLote() {
     const queryClient = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — the answer is only {id, nome}; the list row (imóvel, velocidade, estado agregado, photo counts) is server-derived, so the batch list re-reads
       mutationFn: (body: NovoLoteBody) => api.post<LoteCriado>('/api/edicao-fotos/lotes', body),
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
+        queryClient.invalidateQueries({ queryKey: LOTES_KEY });
       },
     });
   }
@@ -1100,7 +1180,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    */
   function useUploadFotos() {
     const queryClient = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — the answer does not carry the stored photos (ids, estado and URLs come from the server's normalisation), so the batch detail and list re-read
       mutationFn: ({ loteId, files }: { loteId: string; files: File[] }) => {
         const form = new FormData();
         files.forEach((file) => form.append('fotos', file));
@@ -1120,7 +1200,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    */
   function useLoteVista() {
     const queryClient = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — the photos are pulled from the Vista gallery server-side and the answer does not carry them, so the batch detail and list re-read
       mutationFn: ({ loteId, body }: { loteId: string; body: VistaLoteBody }) =>
         api.post(`/api/edicao-fotos/lotes/${loteId}/vista`, body),
       onSuccess: (_data, { loteId }) => {
@@ -1135,13 +1215,14 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * jobs (contract §3). `loteId` is a mutation variable — same reasoning.
    */
   function useSubmeterLote() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (loteId: string) => api.post(`/api/edicao-fotos/lotes/${loteId}/submeter`, {}),
-      onSuccess: (_data, loteId) => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lote', loteId] });
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
-      },
+    // The server answers with the batch summary (new aggregate state, counts): it replaces the list row. The photos'
+    // own states (queued jobs) are server-derived, so the batch detail re-reads.
+    return useCacheWriteMutation<LoteResumo, string>({
+      mutationFn: (loteId) => api.post<LoteResumo>(`/api/edicao-fotos/lotes/${loteId}/submeter`, {}),
+      targets: (loteId) => [
+        { queryKey: LOTES_KEY, match: 'prefix', commit: (old: unknown, saved: LoteResumo) => pageOps.replace(old, loteId, saved) },
+        { queryKey: LOTE_KEY(loteId) },
+      ],
     });
   }
 
@@ -1157,7 +1238,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * portable.
    */
   function useBaixarZip() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a binary download: it changes no server state and no cached query reads it
       mutationFn: async ({ loteId, nomeArquivo }: { loteId: string; nomeArquivo: string }) => {
         const blob = await api.download(`/api/edicao-fotos/lotes/${loteId}/zip`);
         const blobUrl = URL.createObjectURL(blob);
@@ -1193,13 +1274,18 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `PUT /configuracoes` — agency admin / platform admin only server-side (contract §1, §8). */
   function useAtualizarConfiguracoes() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: OrgConfiguracoes) => api.put('/api/edicao-fotos/configuracoes', body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'configuracoes'] });
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'capacidades'] });
-      },
+    // Read-change-write: the body IS the new settings, so it is drawn on the click and rolled back on a refusal.
+    // What the capabilities derive from it (editable types, model gates) is server-side and refreshes on the settle.
+    return useCacheWriteMutation<unknown, OrgConfiguracoes>({
+      mutationFn: (body) => api.put('/api/edicao-fotos/configuracoes', body),
+      targets: (body) => [
+        {
+          queryKey: ['edicao-fotos', 'configuracoes'],
+          optimistic: () => body,
+          commit: (_old: OrgConfiguracoes | undefined, saved: unknown) => (isOrgConfiguracoes(saved) ? saved : body),
+        },
+      ],
+      invalidate: [['edicao-fotos', 'capacidades']],
     });
   }
 
@@ -1282,23 +1368,29 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `POST /curadores` — grant `photo_curator` to a user. */
   function useAdicionarCurador() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: CuradorCreateBody) => api.post<Curador>('/api/edicao-fotos/curadores', body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'curadores'] });
-      },
+    return useCacheWriteMutation<Curador, CuradorCreateBody>({
+      mutationFn: (body) => api.post<Curador>('/api/edicao-fotos/curadores', body),
+      targets: [
+        {
+          queryKey: ['edicao-fotos', 'curadores'],
+          commit: (old: CuradoresPage | undefined, saved: Curador) =>
+            old && Array.isArray(old.items)
+              ? old.items.some((c) => c.user_id === saved.user_id)
+                ? pageOps.replace(old, saved.user_id, saved, 'user_id')
+                : { ...old, items: [...old.items, saved], total: old.total + 1 }
+              : old,
+        },
+      ],
     });
   }
 
   /** `DELETE /curadores/{user_id}` — revoke `photo_curator`. */
   function useRemoverCurador() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (userId: string) => api.delete(`/api/edicao-fotos/curadores/${userId}`),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'curadores'] });
-      },
+    return useCacheWriteMutation<unknown, string>({
+      mutationFn: (userId) => api.delete(`/api/edicao-fotos/curadores/${userId}`),
+      targets: (userId) => [
+        { queryKey: ['edicao-fotos', 'curadores'], optimistic: (old: unknown) => pageOps.remove(old, userId, 'user_id') },
+      ],
     });
   }
 
@@ -1323,13 +1415,16 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `PUT /notificacoes/preferencias` — send the whole object (read, change, write). */
   function useAtualizarNotificacaoPreferencia() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: NotificacaoPreferencia) =>
-        api.put<NotificacaoPreferencia>('/api/edicao-fotos/notificacoes/preferencias', body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'notificacoes-preferencias'] });
-      },
+    // Read-change-write: the body IS the new preference, drawn on the click; the saved row then replaces it.
+    return useCacheWriteMutation<NotificacaoPreferencia, NotificacaoPreferencia>({
+      mutationFn: (body) => api.put<NotificacaoPreferencia>('/api/edicao-fotos/notificacoes/preferencias', body),
+      targets: (body) => [
+        {
+          queryKey: ['edicao-fotos', 'notificacoes-preferencias'],
+          optimistic: () => body,
+          commit: (_old: NotificacaoPreferencia | undefined, saved: NotificacaoPreferencia) => saved,
+        },
+      ],
     });
   }
 
@@ -1354,20 +1449,31 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
-  function invalidateModelos(queryClient: ReturnType<typeof useQueryClient>) {
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelos-catalogo'] });
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelos'] });
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelo-versoes'] });
-    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'capacidades'] });
-  }
+  /** What a catalogue write changes beyond the catalogue rows: the pickers, the price history and the capabilities derive from it. */
+  const MODELOS_DERIVADOS = [
+    ['edicao-fotos', 'modelos'],
+    ['edicao-fotos', 'modelo-versoes'],
+    ['edicao-fotos', 'capacidades'],
+  ];
 
   /** `PUT /modelos/catalogo/{id}` — save one row (a new immutable version). */
   function useSalvarModeloCatalogo() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: ({ id, body }: { id: string; body: ModeloCatalogoBody }) =>
+    return useCacheWriteMutation<ModeloCatalogoSalvo, { id: string; body: ModeloCatalogoBody }>({
+      mutationFn: ({ id, body }) =>
         api.put<ModeloCatalogoSalvo>(`/api/edicao-fotos/modelos/catalogo/${encodeURIComponent(id)}`, body),
-      onSuccess: () => invalidateModelos(queryClient),
+      // the saved row (new revisao, resolved prices, origem) replaces its catalogue row; a model that is not listed yet is added
+      targets: [
+        {
+          queryKey: ['edicao-fotos', 'modelos-catalogo'],
+          commit: (old: ModelosCatalogoPage | undefined, saved: ModeloCatalogoSalvo) =>
+            old && Array.isArray(old.items)
+              ? old.items.some((m) => m.id === saved.id)
+                ? pageOps.replace(old, saved.id, saved)
+                : { ...old, items: [...old.items, saved] }
+              : old,
+        },
+      ],
+      invalidate: MODELOS_DERIVADOS,
     });
   }
 
@@ -1419,7 +1525,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `POST /modelos/notas/gerar` → 202: the rewrite runs on the worker (only while processing is active). */
   function useGerarNotasModelos() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a 202: the notes are rewritten by the worker later, so there is nothing to place yet
       mutationFn: () => api.post<RegenerarGuiaResposta>('/api/edicao-fotos/modelos/notas/gerar', {}),
     });
   }
@@ -1463,12 +1569,16 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `POST /processamento/sonda` — spends one token; run on click only. */
   function useSondarOpenAI() {
-    const queryClient = useQueryClient();
-    return useMutation({
+    // The probe result is exactly the `sonda` block of the processing panel; the credit flag derived from it
+    // (`sem_creditos`) is server-side and refreshes on the settle.
+    return useCacheWriteMutation<SondaResultado, void>({
       mutationFn: () => api.post<SondaResultado>('/api/edicao-fotos/processamento/sonda', {}),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'processamento'] });
-      },
+      targets: [
+        {
+          queryKey: ['edicao-fotos', 'processamento'],
+          commit: (old: ProcessamentoPainel | undefined, sonda: SondaResultado) => listOps.merge(old, { sonda }),
+        },
+      ],
     });
   }
 

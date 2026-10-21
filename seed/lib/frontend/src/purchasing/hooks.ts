@@ -11,8 +11,10 @@
  * `onReceived` to invalidate their own keys (`inventoryKeys.all`, the finance entries key).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { ApiError, type ApiClient } from '../api';
 import { errorMessage, keep, signals } from '../organ-kit/query';
+import { pageOps } from '../organ-kit/page-ops';
 import { defaultPurchasingT, type PurchasingTranslate } from './i18n';
 import type {
   PurchaseApprover,
@@ -65,11 +67,6 @@ export interface PurchasingHookOptions {
 export function createPurchasingHooks(api: PurchasingApi, options: PurchasingHookOptions = {}) {
   const unwrap = async <T,>(p: Promise<PurchasingEnvelope<T>>): Promise<T> => (await p).data;
 
-  function useInvalidateOrders() {
-    const qc = useQueryClient();
-    return () => Promise.all([qc.invalidateQueries({ queryKey: purchasingKeys.orders }), qc.invalidateQueries({ queryKey: ['purchasing', 'order'] })]);
-  }
-
   function usePurchaseOrders(params: PurchaseOrderListParams = {}) {
     const q = useQuery<PurchasingPaginated<PurchaseOrder>>({
       queryKey: [...purchasingKeys.orders, params],
@@ -88,30 +85,42 @@ export function createPurchasingHooks(api: PurchasingApi, options: PurchasingHoo
     return signals(q);
   }
 
+  /**
+   * The server answers every order write with the whole order, so it is written into that order's detail and into the
+   * row of every cached list page (`pageOps`, prefix match) the moment it arrives. A brand-new order has no id until
+   * then: its detail is seeded on success, and which list page it lands on is the server's call (background settle).
+   * Other order details (an approval can move the siblings) refresh in the background too.
+   */
   function usePurchaseOrderMutations() {
     const qc = useQueryClient();
-    const invalidate = useInvalidateOrders();
-    const refreshed = async (order: PurchaseOrder) => {
-      qc.setQueryData(purchasingKeys.order(order.id), order);
-      await invalidate();
-      return order;
-    };
-    const useOrderAction = (action: 'approve' | 'send') => useMutation({
-      mutationFn: (id: string) => unwrap<PurchaseOrder>(api.post(`${BASE}/orders/${id}/${action}`)),
-      onSuccess: refreshed,
-    });
+    const orderWrites = (id: string) => [
+      { queryKey: purchasingKeys.order(id), commit: (_old: PurchaseOrder | undefined, saved: PurchaseOrder) => saved },
+      { queryKey: purchasingKeys.orders, match: 'prefix' as const, commit: (old: unknown, saved: PurchaseOrder) => pageOps.replace(old, id, saved) },
+    ];
+    const settled = [['purchasing', 'order'] as const];
+    const useOrderAction = (action: 'approve' | 'send') =>
+      useCacheWriteMutation<PurchaseOrder, string>({
+        mutationFn: (id) => unwrap<PurchaseOrder>(api.post(`${BASE}/orders/${id}/${action}`)),
+        targets: (id) => orderWrites(id),
+        invalidate: [...settled],
+      });
     return {
       /** Create (no `id`) or replace a DRAFT (`id`). */
-      save: useMutation({
-        mutationFn: ({ id, ...body }: PurchaseOrderInput & { id?: string }) =>
+      save: useCacheWriteMutation<PurchaseOrder, PurchaseOrderInput & { id?: string }>({
+        mutationFn: ({ id, ...body }) =>
           unwrap<PurchaseOrder>(id ? api.put(`${BASE}/orders/${id}`, body) : api.post(`${BASE}/orders`, body)),
-        onSuccess: refreshed,
+        targets: ({ id }) => (id ? orderWrites(id) : [{ queryKey: purchasingKeys.orders }]),
+        invalidate: [...settled],
+        onSuccess: (order, vars) => {
+          if (!vars.id) qc.setQueryData(purchasingKeys.order(order.id), order);
+        },
       }),
       approve: useOrderAction('approve'),
       send: useOrderAction('send'),
-      cancel: useMutation({
-        mutationFn: ({ id, reason }: { id: string; reason?: string }) => unwrap<PurchaseOrder>(api.post(`${BASE}/orders/${id}/cancel`, reason ? { reason } : {})),
-        onSuccess: refreshed,
+      cancel: useCacheWriteMutation<PurchaseOrder, { id: string; reason?: string }>({
+        mutationFn: ({ id, reason }) => unwrap<PurchaseOrder>(api.post(`${BASE}/orders/${id}/cancel`, reason ? { reason } : {})),
+        targets: ({ id }) => orderWrites(id),
+        invalidate: [...settled],
       }),
     };
   }
@@ -125,23 +134,47 @@ export function createPurchasingHooks(api: PurchasingApi, options: PurchasingHoo
     return signals(q);
   }
 
+  /**
+   * A receipt answers with itself plus the order's new status: the order (detail + list rows) takes that status on the
+   * spot and a re-posted receipt replaces its row. The receipt LIST is the server's (new row, page, sort), and stock /
+   * payables live in other organs, so those refresh in the background / through `onReceived`.
+   */
   function useReceiptMutations() {
-    const invalidate = useInvalidateOrders();
-    const qc = useQueryClient();
-    const done = async () => {
-      await Promise.all([invalidate(), qc.invalidateQueries({ queryKey: purchasingKeys.receipts })]);
-      await options.onReceived?.();
-    };
+    const afterReceipt = () => options.onReceived?.();
     return {
-      receive: useMutation({
-        mutationFn: ({ orderId, ...body }: PurchaseReceiptInput & { orderId: string }) =>
+      receive: useCacheWriteMutation<PurchaseReceiveResult, PurchaseReceiptInput & { orderId: string }>({
+        mutationFn: ({ orderId, ...body }) =>
           unwrap<PurchaseReceiveResult>(api.post(`${BASE}/orders/${orderId}/receipts`, body)),
-        onSuccess: done,
+        targets: ({ orderId }) => [
+          {
+            queryKey: purchasingKeys.order(orderId),
+            commit: (old: PurchaseOrder | undefined, res: PurchaseReceiveResult) =>
+              res.order_status ? listOps.merge(old, { status: res.order_status }) : old,
+          },
+          {
+            queryKey: purchasingKeys.orders,
+            match: 'prefix',
+            commit: (old: unknown, res: PurchaseReceiveResult) =>
+              res.order_status ? pageOps.patch(old, orderId, { status: res.order_status }) : old,
+          },
+          { queryKey: purchasingKeys.receipts },
+        ],
+        invalidate: [['purchasing', 'order']],
+        onSuccess: afterReceipt,
       }),
       /** Re-run the posting legs (stock + payables) of a receipt that did not finish. */
-      repost: useMutation({
-        mutationFn: (receiptId: string) => unwrap<PurchaseReceipt>(api.post(`${BASE}/receipts/${receiptId}/post`)),
-        onSuccess: done,
+      repost: useCacheWriteMutation<PurchaseReceipt, string>({
+        mutationFn: (receiptId) => unwrap<PurchaseReceipt>(api.post(`${BASE}/receipts/${receiptId}/post`)),
+        targets: (receiptId) => [
+          {
+            queryKey: purchasingKeys.receipts,
+            match: 'prefix',
+            commit: (old: unknown, saved: PurchaseReceipt) => pageOps.replace(old, receiptId, saved),
+          },
+          { queryKey: purchasingKeys.orders },
+        ],
+        invalidate: [['purchasing', 'order']],
+        onSuccess: afterReceipt,
       }),
     };
   }
@@ -176,20 +209,26 @@ export function createPurchasingHooks(api: PurchasingApi, options: PurchasingHoo
   }
 
   function usePurchaseApproverMutations() {
-    const qc = useQueryClient();
-    const done = (list: PurchaseApprover[]) => {
-      qc.setQueryData(purchasingKeys.approvers, list);
-      // `is_approver` on the settings read may have changed (the caller added / removed themselves).
-      return qc.invalidateQueries({ queryKey: purchasingKeys.settings });
+    // the server answers with the whole list: it replaces the cached one. `is_approver` on the settings read may have
+    // changed (the caller added / removed themselves), so settings refresh in the background.
+    const writes = {
+      targets: [{ queryKey: purchasingKeys.approvers, commit: (_old: PurchaseApprover[] | undefined, list: PurchaseApprover[]) => list }],
+      invalidate: [purchasingKeys.settings],
     };
     return {
-      add: useMutation({
-        mutationFn: (user_id: string) => unwrap<PurchaseApprover[]>(api.post(`${BASE}/approvers`, { user_id })),
-        onSuccess: done,
+      add: useCacheWriteMutation<PurchaseApprover[], string>({
+        mutationFn: (user_id) => unwrap<PurchaseApprover[]>(api.post(`${BASE}/approvers`, { user_id })),
+        ...writes,
       }),
-      remove: useMutation({
-        mutationFn: (user_id: string) => unwrap<PurchaseApprover[]>(api.delete(`${BASE}/approvers/${user_id}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<PurchaseApprover[], string>({
+        mutationFn: (user_id) => unwrap<PurchaseApprover[]>(api.delete(`${BASE}/approvers/${user_id}`)),
+        targets: [
+          {
+            ...writes.targets[0],
+            optimistic: (old: PurchaseApprover[] | undefined, user_id: string) => old?.filter((a) => a.user_id !== user_id),
+          },
+        ],
+        invalidate: writes.invalidate,
       }),
     };
   }

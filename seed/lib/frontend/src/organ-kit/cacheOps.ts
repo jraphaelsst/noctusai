@@ -11,37 +11,25 @@
  * the server's call, so creates commit the row into its DETAIL key and let the settle refetch place it
  * in the lists.
  *
+ * One implementation: these are the typed `{ data: T[] }` views of `pageOps` (`page-ops.ts`), which also covers the
+ * `{ items, total }` envelopes, `replace` and `prependNewest`.
+ *
  * KB § PATTERNS/frontend/mutation-cache-writes.md
  */
-import { listOps } from '../cache-writes';
+import { pageOps } from './page-ops';
 
 export interface DataEnvelope<T> {
   data: T[];
   pagination?: { total?: number; [k: string]: unknown };
 }
 
-function isEnvelope<T>(page: unknown): page is DataEnvelope<T> {
-  return !!page && typeof page === 'object' && !Array.isArray(page) && Array.isArray((page as DataEnvelope<T>).data);
-}
-
 export const envelopeOps = {
   /** Merge `changes` into the row `id` wherever it is on the page. */
   patch<T extends { id: string }>(page: DataEnvelope<T> | undefined, id: string, changes: Partial<NoInfer<T>>): DataEnvelope<T> | undefined {
-    if (!isEnvelope<T>(page)) return page;
-    if (!page.data.some((r) => r.id === id)) return page;
-    return { ...page, data: listOps.patch(page.data, id, changes) as T[] };
+    return pageOps.patch(page, id, changes);
   },
   /** Drop the row `id` from the page (and the page's `total`, when it carries one). */
   remove<T extends { id: string }>(page: DataEnvelope<T> | undefined, id: string): DataEnvelope<T> | undefined {
-    if (!isEnvelope<T>(page)) return page;
-    if (!page.data.some((r) => r.id === id)) return page;
-    const total = page.pagination?.total;
-    return {
-      ...page,
-      data: page.data.filter((r) => r.id !== id),
-      ...(page.pagination && typeof total === 'number'
-        ? { pagination: { ...page.pagination, total: Math.max(0, total - 1) } }
-        : {}),
-    };
+    return pageOps.remove(page, id);
   },
 };

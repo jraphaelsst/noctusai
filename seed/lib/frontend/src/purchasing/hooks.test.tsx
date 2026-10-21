@@ -120,9 +120,11 @@ describe('writes', () => {
     const api = makeApi();
     const client = makeClient();
     const row = (user_id: string) => ({ org_id: 'o', user_id, granted_by: null, granted_at: '' });
-    api.get.mockResolvedValue({ data: [row('u1')] });
-    api.post.mockResolvedValue({ data: [row('u1'), row('u2')] });
-    api.delete.mockResolvedValue({ data: [row('u2')] });
+    // the mock server keeps state: the background settle refetch must see what the write did
+    let server = [row('u1')];
+    api.get.mockImplementation(async () => ({ data: server }));
+    api.post.mockImplementation(async () => ({ data: (server = [row('u1'), row('u2')]) }));
+    api.delete.mockImplementation(async () => ({ data: (server = [row('u2')]) }));
     const hooks = createPurchasingHooks(api);
     const spy = vi.spyOn(client, 'invalidateQueries');
     const { result } = renderHook(() => ({ q: hooks.usePurchaseApprovers(), m: hooks.usePurchaseApproverMutations() }), { wrapper: wrapperFor(client) });
@@ -164,5 +166,54 @@ describe('error mapping', () => {
     expect(purchasingErrorMessage(new ApiError(403, 'x', { error: { code: 'sem_permissao_limite', message: 'x' } }))).toContain('aprovador');
     expect(purchasingErrorMessage(new ApiError(500, 'boom', {}))).toContain('boom');
     expect(purchasingErrorMessage(new Error('rede'))).toBe('rede');
+  });
+});
+
+describe('cache writes (KB § PATTERNS/frontend/mutation-cache-writes.md)', () => {
+  const pending = () => new Promise<never>(() => undefined);
+  const pg = <T,>(rows: T[]) => ({ data: rows, pagination: { page: 1, page_size: 20, total: rows.length } });
+
+  it('approve writes the server order into the detail and the list row while any refetch is still pending', async () => {
+    const api = makeApi();
+    let resolve!: (v: unknown) => void;
+    api.post.mockReturnValue(new Promise((r) => (resolve = r)));
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    const listKey = ['purchasing', 'orders', { page: 1 }];
+    client.setQueryData(listKey, pg([order({ id: 'o1', status: 'draft' }), order({ id: 'o2' })]));
+    client.setQueryData(['purchasing', 'order', 'o1'], order({ id: 'o1', status: 'draft' }));
+    const { result } = renderHook(() => createPurchasingHooks(api).usePurchaseOrderMutations(), { wrapper: wrapperFor(client) });
+
+    act(() => void result.current.approve.mutate('o1'));
+    expect(client.getQueryData<{ status: string }>(['purchasing', 'order', 'o1'])?.status).toBe('draft'); // in flight
+    await act(async () => resolve({ data: order({ id: 'o1', status: 'approved' }) }));
+    await waitFor(() => expect(client.getQueryData<{ status: string }>(['purchasing', 'order', 'o1'])?.status).toBe('approved'));
+    expect(client.getQueryData<{ data: { status: string }[] }>(listKey)!.data[0].status).toBe('approved');
+    expect(client.getQueryData<{ data: unknown[] }>(listKey)!.data).toHaveLength(2);
+  });
+
+  it('a receipt moves the order status on screen and a failed receipt leaves it alone', async () => {
+    const api = makeApi();
+    api.post.mockResolvedValueOnce({ data: { ...receipt(), replayed: false, order_status: 'received' } });
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    client.setQueryData(['purchasing', 'order', 'o1'], order({ id: 'o1', status: 'sent' }));
+    const { result } = renderHook(() => createPurchasingHooks(api).useReceiptMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.receive.mutateAsync({ orderId: 'o1', idempotency_key: 'k', lines: [] })));
+    expect(client.getQueryData<{ status: string }>(['purchasing', 'order', 'o1'])?.status).toBe('received');
+  });
+
+  it('removing an approver draws the removal on the click', async () => {
+    const api = makeApi();
+    let resolve!: (v: unknown) => void;
+    api.delete.mockReturnValue(new Promise((r) => (resolve = r)));
+    api.get.mockReturnValue(pending());
+    const client = makeClient();
+    const row = (user_id: string) => ({ org_id: 'o', user_id, granted_by: null, granted_at: '' });
+    client.setQueryData(['purchasing', 'approvers'], [row('u1'), row('u2')]);
+    const { result } = renderHook(() => createPurchasingHooks(api).usePurchaseApproverMutations(), { wrapper: wrapperFor(client) });
+    act(() => void result.current.remove.mutate('u1'));
+    await waitFor(() => expect(client.getQueryData<{ user_id: string }[]>(['purchasing', 'approvers'])?.map((a) => a.user_id)).toEqual(['u2']));
+    await act(async () => resolve({ data: [row('u2')] }));
   });
 });

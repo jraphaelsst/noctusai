@@ -12,9 +12,11 @@
  * invalidate every read they can change. The public hooks use a plain-fetch transport (`createFetchTransport`):
  * the token in the URL IS the credential, there is no session.
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCacheWriteMutation } from '../cache-writes';
 import { ApiError } from '../api';
 import { apiErrorCode, createFetchTransport, errorMessage, keep, signals, type OrganApi } from '../organ-kit/query';
+import { pageOps } from '../organ-kit/page-ops';
 import { defaultQuotesT, type QuotesTranslate } from './i18n';
 import type {
   QuoteAcceptance,
@@ -73,11 +75,6 @@ export function listQuery(params: QuoteListParams): Record<string, string | numb
 export function createQuotesHooks(api: QuotesApi) {
   const unwrap = async <T,>(p: Promise<QuoteEnvelope<T>>): Promise<T> => (await p).data;
 
-  function useInvalidate() {
-    const qc = useQueryClient();
-    return (...keys: QueryKey[]) => Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
-  }
-
   function useQuotes(params: QuoteListParams = {}) {
     const q = useQuery<QuotePaginated<QuoteRecord>>({
       queryKey: quotesKeys.list(params),
@@ -114,48 +111,69 @@ export function createQuotesHooks(api: QuotesApi) {
     return signals(q);
   }
 
-  /** Every mutation that changes a quote refreshes the lists and that quote's detail / events / acceptance. */
+  /**
+   * Quote writes (KB § PATTERNS/frontend/mutation-cache-writes.md). The server answers with the whole quote, so a
+   * write on quote `id` puts that record into its detail and into its row on every cached list page (`pageOps`,
+   * prefix match) the moment it arrives. The quote's events and acceptance are server-derived and refresh in the
+   * background; a NEW quote (create) is seeded into its detail and the lists converge on the settle, because which
+   * page / filter / sort position it lands on is the server's call.
+   */
   function useQuoteMutations() {
-    const inv = useInvalidate();
-    const refresh = (id: string) => inv(quotesKeys.lists, quotesKeys.detail(id), quotesKeys.events(id), quotesKeys.acceptance(id));
+    const qc = useQueryClient();
+    const derived = (id: string) => [quotesKeys.events(id), quotesKeys.acceptance(id)];
+    const record = (id: string) => [
+      { queryKey: quotesKeys.detail(id), commit: (_old: QuoteRecord | undefined, saved: QuoteRecord) => saved },
+      { queryKey: quotesKeys.lists, match: 'prefix' as const, commit: (old: unknown, saved: QuoteRecord) => pageOps.replace(old, id, saved) },
+    ];
+    /** A transition of quote `id` that answers with the updated quote. */
+    const transition = <V extends { id: string }>(post: (vars: V) => Promise<QuoteRecord>) =>
+      useCacheWriteMutation<QuoteRecord, V>({ mutationFn: post, targets: ({ id }) => record(id), invalidate: ({ id }) => derived(id) });
     return {
-      create: useMutation({
-        mutationFn: (body: QuoteInput) => unwrap<QuoteRecord>(api.post(BASE, body)),
-        onSuccess: () => inv(quotesKeys.lists),
+      create: useCacheWriteMutation<QuoteRecord, QuoteInput>({
+        mutationFn: (body) => unwrap<QuoteRecord>(api.post(BASE, body)),
+        targets: [{ queryKey: quotesKeys.lists }],
+        onSuccess: (saved) => {
+          qc.setQueryData(quotesKeys.detail(saved.id), saved);
+        },
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...body }: { id: string } & QuotePatch) => unwrap<QuoteRecord>(api.patch(`${BASE}/${id}`, body)),
-        onSuccess: (_q, vars) => refresh(vars.id),
+      update: transition<{ id: string } & QuotePatch>(({ id, ...body }) => unwrap<QuoteRecord>(api.patch(`${BASE}/${id}`, body))),
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(`${BASE}/${id}`),
+        targets: (id) => [
+          { queryKey: quotesKeys.lists, match: 'prefix', optimistic: (old: unknown) => pageOps.remove(old, id) },
+          { queryKey: quotesKeys.detail(id) },
+        ],
       }),
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
-        onSuccess: (_r, id) => inv(quotesKeys.lists, quotesKeys.detail(id)),
+      // the new version is a different record: its detail is seeded, the version it was cut from is re-read
+      newVersion: useCacheWriteMutation<QuoteRecord, { id: string; valid_until?: string }>({
+        mutationFn: ({ id, valid_until }) => unwrap<QuoteRecord>(api.post(`${BASE}/${id}/versions`, valid_until ? { valid_until } : {})),
+        targets: ({ id }) => [{ queryKey: quotesKeys.lists }, { queryKey: quotesKeys.detail(id) }],
+        invalidate: ({ id }) => derived(id),
+        onSuccess: (saved) => {
+          qc.setQueryData(quotesKeys.detail(saved.id), saved);
+        },
       }),
-      newVersion: useMutation({
-        mutationFn: ({ id, valid_until }: { id: string; valid_until?: string }) =>
-          unwrap<QuoteRecord>(api.post(`${BASE}/${id}/versions`, valid_until ? { valid_until } : {})),
-        onSuccess: (_q, vars) => refresh(vars.id),
+      send: useCacheWriteMutation<QuoteSendResult, { id: string } & QuoteSendInput>({
+        mutationFn: ({ id, ...body }) => unwrap<QuoteSendResult>(api.post(`${BASE}/${id}/send`, body)),
+        targets: ({ id }) => [
+          { queryKey: quotesKeys.detail(id), commit: (_old: QuoteRecord | undefined, res: QuoteSendResult) => res.quote },
+          { queryKey: quotesKeys.lists, match: 'prefix', commit: (old: unknown, res: QuoteSendResult) => pageOps.replace(old, id, res.quote) },
+        ],
+        invalidate: ({ id }) => derived(id),
       }),
-      send: useMutation({
-        mutationFn: ({ id, ...body }: { id: string } & QuoteSendInput) => unwrap<QuoteSendResult>(api.post(`${BASE}/${id}/send`, body)),
-        onSuccess: (_r, vars) => refresh(vars.id),
-      }),
-      accept: useMutation({
-        mutationFn: ({ id, signer_name, note }: { id: string; signer_name: string; note?: string }) =>
-          unwrap<QuoteRecord>(api.post(`${BASE}/${id}/accept`, { signer_name, ...(note ? { note } : {}) })),
-        onSuccess: (_q, vars) => refresh(vars.id),
-      }),
-      reject: useMutation({
-        mutationFn: ({ id, reason, signer_name }: { id: string; reason: string; signer_name?: string }) =>
-          unwrap<QuoteRecord>(api.post(`${BASE}/${id}/reject`, { reason, ...(signer_name ? { signer_name } : {}) })),
-        onSuccess: (_q, vars) => refresh(vars.id),
-      }),
-      convert: useMutation({
-        mutationFn: (id: string) => unwrap<QuoteRecord>(api.post(`${BASE}/${id}/convert`, {})),
-        onSuccess: (_q, id) => refresh(id),
+      accept: transition<{ id: string; signer_name: string; note?: string }>(({ id, signer_name, note }) =>
+        unwrap<QuoteRecord>(api.post(`${BASE}/${id}/accept`, { signer_name, ...(note ? { note } : {}) })),
+      ),
+      reject: transition<{ id: string; reason: string; signer_name?: string }>(({ id, reason, signer_name }) =>
+        unwrap<QuoteRecord>(api.post(`${BASE}/${id}/reject`, { reason, ...(signer_name ? { signer_name } : {}) })),
+      ),
+      convert: useCacheWriteMutation<QuoteRecord, string>({
+        mutationFn: (id) => unwrap<QuoteRecord>(api.post(`${BASE}/${id}/convert`, {})),
+        targets: (id) => record(id),
+        invalidate: (id) => derived(id),
       }),
       /** Server preview of a draft's totals (nothing is written). */
-      calculate: useMutation({
+      calculate: useMutation({ // noc-allow: invalidate-only — a preview: it writes nothing on the server and reads/changes no cached query
         mutationFn: (body: Pick<QuoteInput, 'lines' | 'discount_cents'>) => unwrap<QuoteCalculation>(api.post(`${BASE}/calculate`, body)),
       }),
     };
@@ -185,17 +203,17 @@ export function createQuotesPublicHooks(apiOrBase: OrganApi | string, opts: { ap
     return signals(q);
   }
 
+  /** The server answers a decision with the refreshed public view: it replaces the cached one at once. */
   function usePublicDecision(token: string) {
-    const qc = useQueryClient();
-    const settle = (view: QuotePublicView) => qc.setQueryData(quotesKeys.public(token), view);
+    const targets = [{ queryKey: quotesKeys.public(token), commit: (_old: QuotePublicView | undefined, view: QuotePublicView) => view }];
     return {
-      accept: useMutation({
-        mutationFn: (body: { name: string; agree: boolean }) => unwrap<QuotePublicView>(api.post(`${PUBLIC_BASE}/${token}/accept`, body)),
-        onSuccess: settle,
+      accept: useCacheWriteMutation<QuotePublicView, { name: string; agree: boolean }>({
+        mutationFn: (body) => unwrap<QuotePublicView>(api.post(`${PUBLIC_BASE}/${token}/accept`, body)),
+        targets,
       }),
-      reject: useMutation({
-        mutationFn: (body: { name?: string; reason?: string }) => unwrap<QuotePublicView>(api.post(`${PUBLIC_BASE}/${token}/reject`, body)),
-        onSuccess: settle,
+      reject: useCacheWriteMutation<QuotePublicView, { name?: string; reason?: string }>({
+        mutationFn: (body) => unwrap<QuotePublicView>(api.post(`${PUBLIC_BASE}/${token}/reject`, body)),
+        targets,
       }),
     };
   }

@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderHook, waitFor, act, cleanup } from '@testing-library/react';
 import { createItemsHooks, itemsKeys, apiFieldError, importRowErrors } from './hooks';
-import { item, makeApi, makeClient, page, wrapperFor } from './testUtils';
+import { category, item, makeApi, makeClient, page, wrapperFor } from './testUtils';
 import { ApiError } from '../api';
 
 afterEach(cleanup);
@@ -158,5 +158,85 @@ describe('error helpers', () => {
     const err = new ApiError(422, 'x', { error: { code: 'importacao_invalida', details: { errors: rows, error_count: 3 } } });
     expect(importRowErrors(err)).toEqual({ rows, total: 3 });
     expect(importRowErrors(new ApiError(422, 'x', { error: { code: 'outro' } }))).toBeNull();
+  });
+});
+
+describe('cache writes (KB § PATTERNS/frontend/mutation-cache-writes.md)', () => {
+  const deferred = () => {
+    let resolve!: (v: unknown) => void;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const key = [...itemsKeys.list, { page: 1 }];
+
+  it('update commits the server row into the page AND the detail without waiting for a refetch', async () => {
+    const api = makeApi();
+    const d = deferred();
+    api.patch.mockReturnValue(d.promise);
+    api.get.mockReturnValue(new Promise(() => undefined)); // any refetch stays pending: the cache must already be right
+    const client = makeClient();
+    client.setQueryData(key, page([item({ id: 'i1', name: 'Velho' }), item({ id: 'i2' })]));
+    client.setQueryData(itemsKeys.item('i1'), item({ id: 'i1', name: 'Velho' }));
+    const { result } = renderHook(() => createItemsHooks(api).useItemMutations(), { wrapper: wrapperFor(client) });
+
+    act(() => void result.current.update.mutate({ id: 'i1', name: 'Novo' }));
+    await act(async () => d.resolve({ data: item({ id: 'i1', name: 'Novo', price_cents: 999 }) }));
+    await waitFor(() => expect(client.getQueryData<{ data: { name: string }[] }>(key)?.data[0].name).toBe('Novo'));
+    expect(client.getQueryData<{ name: string; price_cents: number }>(itemsKeys.item('i1'))?.price_cents).toBe(999);
+    expect(client.getQueryData<{ data: unknown[] }>(key)?.data).toHaveLength(2);
+  });
+
+  it('archive draws is_active=false on the click, while the request is in flight', async () => {
+    const api = makeApi();
+    const d = deferred();
+    api.post.mockReturnValue(d.promise);
+    api.get.mockReturnValue(new Promise(() => undefined));
+    const client = makeClient();
+    client.setQueryData(key, page([item({ id: 'i1', is_active: true })]));
+    const { result } = renderHook(() => createItemsHooks(api).useItemMutations(), { wrapper: wrapperFor(client) });
+
+    act(() => void result.current.archive.mutate('i1'));
+    await waitFor(() => expect(client.getQueryData<{ data: { is_active: boolean }[] }>(key)?.data[0].is_active).toBe(false));
+    await act(async () => d.resolve({ data: item({ id: 'i1', is_active: false }) }));
+  });
+
+  it('a failed archive rolls the drawing back', async () => {
+    const api = makeApi();
+    api.post.mockRejectedValue(new ApiError(500, 'x', {}));
+    api.get.mockReturnValue(new Promise(() => undefined));
+    const client = makeClient();
+    client.setQueryData(key, page([item({ id: 'i1', is_active: true })]));
+    const { result } = renderHook(() => createItemsHooks(api).useItemMutations(), { wrapper: wrapperFor(client) });
+
+    await act(async () => void (await result.current.archive.mutateAsync('i1').catch(() => undefined)));
+    expect(client.getQueryData<{ data: { is_active: boolean }[] }>(key)?.data[0].is_active).toBe(true);
+  });
+
+  it('create seeds the new item detail from the server answer', async () => {
+    const api = makeApi();
+    api.post.mockResolvedValue({ data: item({ id: 'new', sku: 'N' }) });
+    api.get.mockReturnValue(new Promise(() => undefined));
+    const client = makeClient();
+    const { result } = renderHook(() => createItemsHooks(api).useItemMutations(), { wrapper: wrapperFor(client) });
+    await act(async () => void (await result.current.create.mutateAsync({ sku: 'N', name: 'N' })));
+    expect(client.getQueryData<{ sku: string }>(itemsKeys.item('new'))?.sku).toBe('N');
+  });
+
+  it('category create appends the server row; remove draws the removal on the click', async () => {
+    const api = makeApi();
+    const d = deferred();
+    api.post.mockResolvedValue({ data: category({ id: 'c2', name: 'Nova' }) });
+    api.delete.mockReturnValue(d.promise);
+    api.get.mockReturnValue(new Promise(() => undefined));
+    const client = makeClient();
+    client.setQueryData(itemsKeys.categories, [category({ id: 'c1' })]);
+    const { result } = renderHook(() => createItemsHooks(api).useItemCategoryMutations(), { wrapper: wrapperFor(client) });
+
+    await act(async () => void (await result.current.create.mutateAsync({ name: 'Nova' })));
+    expect(client.getQueryData<{ id: string }[]>(itemsKeys.categories)?.map((c) => c.id)).toEqual(['c1', 'c2']);
+
+    act(() => void result.current.remove.mutate('c1'));
+    await waitFor(() => expect(client.getQueryData<{ id: string }[]>(itemsKeys.categories)?.map((c) => c.id)).toEqual(['c2']));
+    await act(async () => d.resolve(undefined));
   });
 });

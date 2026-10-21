@@ -582,3 +582,112 @@ describe('W8 hooks: model catalog + processing', () => {
     expect(get).toHaveBeenCalledWith('/api/edicao-fotos/modelos/catalogo/gpt-image-2/versoes', { kind: 'image_edit' });
   });
 });
+
+// ── cache writes (KB § PATTERNS/frontend/mutation-cache-writes.md) ─────────────
+describe('cache writes: the server answer / the click lands in the cache before any refetch', () => {
+  const never = () => new Promise<never>(() => undefined); // a refetch that never answers: the cache must already be right
+  const client = () => new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const wrap = (c: QueryClient) =>
+    function W({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={c}>{children}</QueryClientProvider>;
+    };
+  const foto = (over: Record<string, unknown> = {}) => ({ id: 'f1', url_antes: 'a', url_depois: 'd', estado: 'aguardando_decisao', decisao: null, comentario: null, ...over });
+
+  it('a decision is drawn on the click (review grid + batch detail), then replaced by the server row; a refusal rolls it back', async () => {
+    let reject!: (e: unknown) => void;
+    const post = vi.fn().mockReturnValueOnce(new Promise((_r, j) => (reject = j))).mockResolvedValueOnce(foto({ decisao: 'aprovar', estado: 'aprovada' }));
+    const api = makeApi({ post, get: vi.fn(never) });
+    const c = client();
+    c.setQueryData(['edicao-fotos', 'revisao', 'l1'], [foto(), foto({ id: 'f2' })]);
+    c.setQueryData(['edicao-fotos', 'lote', 'l1'], { id: 'l1', nome: 'L', fotos: [foto()] });
+    const { result } = renderHook(() => createEdicaoFotosHooks(api).useDecidirFoto('l1'), { wrapper: wrap(c) });
+
+    act(() => void result.current.mutate({ fotoId: 'f1', body: { decisao: 'rejeitar', comentario: 'escuro' } }));
+    await waitFor(() => expect((c.getQueryData(['edicao-fotos', 'revisao', 'l1']) as { decisao: string }[])[0].decisao).toBe('rejeitar'));
+    expect((c.getQueryData(['edicao-fotos', 'lote', 'l1']) as { fotos: { comentario: string }[] }).fotos[0].comentario).toBe('escuro');
+    await act(async () => reject(new Error('422')));
+    await waitFor(() => expect((c.getQueryData(['edicao-fotos', 'revisao', 'l1']) as { decisao: unknown }[])[0].decisao).toBeNull());
+
+    await act(async () => void (await result.current.mutateAsync({ fotoId: 'f1', body: { decisao: 'aprovar', comentario: null } })));
+    expect((c.getQueryData(['edicao-fotos', 'revisao', 'l1']) as { estado: string }[])[0].estado).toBe('aprovada');
+  });
+
+  it('a new reference pair is drawn at the top of page 1 (and the total); archiving removes it from the active lists on the click', async () => {
+    const par = (id: string) => ({ id, antes_url: 'a', depois_url: 'd', comodo: 'sala', tipos_edicao: [], nota: null });
+    const page = (items: unknown[], total: number, no = 1) => ({ items, page: no, page_size: 2, total, pool: {}, opcoes: {} });
+    const upload = vi.fn().mockResolvedValue(par('novo'));
+    const del = vi.fn(never);
+    const api = makeApi({ upload, delete: del, get: vi.fn(never) });
+    const c = client();
+    const key = (inc: boolean, no: number) => ['edicao-fotos', 'referencias', inc, no, 2];
+    c.setQueryData(key(false, 1), page([par('a'), par('b')], 5));
+    c.setQueryData(key(false, 2), page([par('c'), par('d')], 5, 2));
+    c.setQueryData(key(true, 1), page([par('a'), par('b')], 5));
+    const hooks = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => ({ criar: hooks.useCriarReferencia(), arquivar: hooks.useArquivarReferencia() }), { wrapper: wrap(c) });
+
+    await act(async () => void (await result.current.criar.mutateAsync({ antes: new File(['a'], 'a.jpg'), depois: new File(['d'], 'd.jpg'), comodo: 'sala', tipos_edicao: [] })));
+    const p1 = c.getQueryData(key(false, 1)) as { items: { id: string }[]; total: number };
+    expect(p1.items.map((r) => r.id)).toEqual(['novo', 'a']); // trimmed to page_size
+    expect(p1.total).toBe(6);
+    expect((c.getQueryData(key(false, 2)) as { items: unknown[] }).items).toHaveLength(2); // later pages shift server-side: left for the settle
+
+    act(() => void result.current.arquivar.mutate('a'));
+    await waitFor(() => expect((c.getQueryData(key(false, 1)) as { items: { id: string }[] }).items.map((r) => r.id)).toEqual(['novo']));
+    expect((c.getQueryData(key(true, 1)) as { items: { arquivada_em?: string }[] }).items.find((r) => (r as { id: string }).id === 'a')?.arquivada_em).toBeTruthy();
+  });
+
+  it('a decided rule moves between the status lists on the server answer; a manual rule joins the approved list', async () => {
+    const regra = (id: string, status: string) => ({ id, texto: id, status });
+    const post = vi.fn().mockResolvedValue(regra('r1', 'aprovada'));
+    const api = makeApi({ post, get: vi.fn(never) });
+    const c = client();
+    c.setQueryData(['edicao-fotos', 'regras', null], { items: [regra('r1', 'proposta')], total: 1 });
+    c.setQueryData(['edicao-fotos', 'regras', 'proposta'], { items: [regra('r1', 'proposta')], total: 1 });
+    c.setQueryData(['edicao-fotos', 'regras', 'aprovada'], { items: [], total: 0 });
+    const { result } = renderHook(() => createEdicaoFotosHooks(api).useAprovarRegra(), { wrapper: wrap(c) });
+    await act(async () => void (await result.current.mutateAsync('r1')));
+    expect((c.getQueryData(['edicao-fotos', 'regras', null]) as { items: { status: string }[] }).items[0].status).toBe('aprovada');
+    expect(c.getQueryData(['edicao-fotos', 'regras', 'proposta'])).toEqual({ items: [], total: 0 });
+    expect((c.getQueryData(['edicao-fotos', 'regras', 'aprovada']) as { items: unknown[]; total: number })).toMatchObject({ total: 1 });
+  });
+
+  it('settings / notification preference are drawn on the click; the curator roster and the probe result are written', async () => {
+    let resolve!: (v: unknown) => void;
+    const put = vi.fn().mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const post = vi.fn().mockResolvedValueOnce({ user_id: 'u2', nome: 'B' }).mockResolvedValueOnce({ status: 'ok', mensagem: 'ok', verificado_em: null, modelo: null, http_status: 200 });
+    const del = vi.fn(never);
+    const api = makeApi({ put, post, delete: del, get: vi.fn(never) });
+    const c = client();
+    c.setQueryData(['edicao-fotos', 'notificacoes-preferencias'], { ativo: false, whatsapp_number: null });
+    c.setQueryData(['edicao-fotos', 'curadores'], { items: [{ user_id: 'u1' }], total: 1 });
+    c.setQueryData(['edicao-fotos', 'processamento'], { ativo: true, sonda: null });
+    const hooks = createEdicaoFotosHooks(api);
+    const { result } = renderHook(
+      () => ({ pref: hooks.useAtualizarNotificacaoPreferencia(), add: hooks.useAdicionarCurador(), rem: hooks.useRemoverCurador(), sonda: hooks.useSondarOpenAI() }),
+      { wrapper: wrap(c) },
+    );
+
+    act(() => void result.current.pref.mutate({ ativo: true, whatsapp_number: '5511' }));
+    await waitFor(() => expect(c.getQueryData(['edicao-fotos', 'notificacoes-preferencias'])).toEqual({ ativo: true, whatsapp_number: '5511' }));
+    await act(async () => resolve({ ativo: true, whatsapp_number: '5511' }));
+
+    await act(async () => void (await result.current.add.mutateAsync({ user_id: 'u2' } as never)));
+    expect(c.getQueryData(['edicao-fotos', 'curadores'])).toMatchObject({ total: 2 });
+    act(() => void result.current.rem.mutate('u1'));
+    await waitFor(() => expect((c.getQueryData(['edicao-fotos', 'curadores']) as { items: { user_id: string }[] }).items.map((i) => i.user_id)).toEqual(['u2']));
+
+    await act(async () => void (await result.current.sonda.mutateAsync()));
+    expect((c.getQueryData(['edicao-fotos', 'processamento']) as { sonda: { status: string } }).sonda.status).toBe('ok');
+  });
+
+  it('submitting a batch replaces its row on the list page', async () => {
+    const post = vi.fn().mockResolvedValue({ id: 'l1', nome: 'L', estado_agregado: 'processando' });
+    const api = makeApi({ post, get: vi.fn(never) });
+    const c = client();
+    c.setQueryData(['edicao-fotos', 'lotes', 1, 50], { items: [{ id: 'l1', nome: 'L', estado_agregado: 'rascunho' }], page: 1, page_size: 50, total: 1 });
+    const { result } = renderHook(() => createEdicaoFotosHooks(api).useSubmeterLote(), { wrapper: wrap(c) });
+    await act(async () => void (await result.current.mutateAsync('l1')));
+    expect((c.getQueryData(['edicao-fotos', 'lotes', 1, 50]) as { items: { estado_agregado: string }[] }).items[0].estado_agregado).toBe('processando');
+  });
+});
