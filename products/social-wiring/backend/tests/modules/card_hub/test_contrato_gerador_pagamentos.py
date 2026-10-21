@@ -346,9 +346,20 @@ class TestOnusPorBoleto:
             "30 (trinta) dias corridos para realizar a quitação e apresentar o comprovante de pagamento."
         ) in texto
 
-    def test_the_prazo_is_required(self):
+    def test_the_prazo_is_optional_and_the_clause_prints_without_it(self):
         d = fp.onus_por_boleto()
         d = replace(d, termos=replace(d.termos, onus_prazo_dias=None))
+        assert "negociacao.onus_prazo_dias" not in [f["campo"] for f in _avaliar(d, 1).faltando]
+        assert "negociacao.onus_quitacao" not in [f["campo"] for f in _avaliar(d, 1).faltando]
+        texto = "\n".join(_paragrafos(d, 1))
+        assert (
+            "que deverá ser quitado pelo VENDEDOR através de boleto bancário, "
+            "emitido pela Instituição Bancária competente."
+        ) in texto
+        assert "prazo de até" not in texto
+
+    def test_compradores_prazo_still_requires_the_prazo(self):
+        d = fx._saldo_devedor(fx.variante(1), "compradores_prazo", onus_prazo_dias=None)
         assert "negociacao.onus_prazo_dias" in [f["campo"] for f in _avaliar(d, 1).faltando]
 
 

@@ -351,9 +351,9 @@ export const ONUS_QUITACOES: OnusQuitacao[] = [
   "vendedores_boleto",
 ];
 
-/** The quitação forms whose clause names a deadline — `onus_prazo_dias`
- *  required. */
-export const ONUS_QUITACOES_COM_PRAZO: OnusQuitacao[] = ["compradores_prazo", "vendedores_boleto"];
+/** The quitação forms whose clause REQUIRES a deadline — `onus_prazo_dias`.
+ *  `vendedores_boleto` is optional (deal 857 signed without one). */
+export const ONUS_QUITACOES_COM_PRAZO: OnusQuitacao[] = ["compradores_prazo"];
 export const CORRETAGEM_CONTRATANTES: CorretagemContratantes[] = [
   "vendedores",
   "compradores",

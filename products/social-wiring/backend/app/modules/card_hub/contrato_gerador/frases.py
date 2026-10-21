@@ -1029,7 +1029,7 @@ def pendencia_certidao(tipo: str, nome: str) -> str:
 # ─── ônus / posse / rescisão / tributos (spec §2.6–2.9) ───────────────────
 
 #: [Migration 192] The seller pays the lien off by bank slip within
-#: `Termos.onus_prazo_dias` — 2 signed contracts (catalog §4).
+#: `Termos.onus_prazo_dias` when given (optional, 2026-10-21) — 2 signed contracts (catalog §4).
 QUITACAO_ONUS_VENDEDORES_BOLETO = "vendedores_boleto"
 
 QUITACOES_ONUS: tuple[str, ...] = (
@@ -1199,9 +1199,16 @@ def onus_quitacao_texto(
         # ser quitado através de boleto bancário emitido pela instituição
         # financeira responsável, onde OS VENDEDORES terão o prazo de até N
         # dias corridos para realizar a quitação e apresentar o comprovante
-        # de pagamento." Gated: `V` + `negociacao.onus_prazo_dias`.
-        if V is None or not prazo_dias:
-            raise ValueError("onus_quitacao_texto: boleto exige V e prazo_dias (o gate garante)")
+        # de pagamento." Gated: `V`. The prazo is OPTIONAL (owner decision
+        # 2026-10-21, deal 857: "que deverá ser quitado pelo VENDEDOR através de boleto
+        # bancário, emitido pela Instituição Bancária competente." — no deadline).
+        if V is None:
+            raise ValueError("onus_quitacao_texto: boleto exige V (o gate garante)")
+        if not prazo_dias:
+            return (
+                f"que deverá ser quitado {V.pelos} {negrito(V.NOME)} através de boleto bancário, "
+                "emitido pela Instituição Bancária competente"
+            )
         return (
             "o qual deverá ser quitado através de boleto bancário emitido pela instituição financeira "
             f"responsável, onde {V.ART} {negrito(V.NOME)} {V.pl('terá', 'terão')} o prazo de até "

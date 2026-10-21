@@ -2024,12 +2024,7 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             av.bloqueia("ONUS_QUITACAO_INVALIDA", f"Forma de quitação desconhecida: {termos.onus_quitacao}.")
         elif termos.onus_quitacao == "compradores_prazo" and not termos.onus_prazo_dias:
             av.falta("negociacao.onus_prazo_dias", "Prazo (dias) para os compradores quitarem o saldo", "negociacao")
-        elif termos.onus_quitacao == frases.QUITACAO_ONUS_VENDEDORES_BOLETO and not termos.onus_prazo_dias:
-            av.falta(
-                "negociacao.onus_prazo_dias",
-                "Prazo (dias) para os vendedores quitarem o saldo por boleto",
-                "negociacao",
-            )
+        # vendedores_boleto: the prazo is optional (deal 857 signed without one).
         elif termos.onus_quitacao == "parcela" and not any(p.tipo == "saldo" for p in d.parcelas):
             av.bloqueia("ONUS_QUITACAO_SEM_PARCELA_SALDO", "A quitação do ônus é por parcela, mas não há parcela de saldo.")
 

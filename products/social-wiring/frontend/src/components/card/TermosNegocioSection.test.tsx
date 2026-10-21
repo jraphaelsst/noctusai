@@ -168,11 +168,19 @@ describe("grupos condicionais", () => {
     expect(getByTestId("termos-confissao")).toBeTruthy();
   });
 
-  it("🔴 'vendedores_boleto' (migração 192) é oferecido e pede o prazo", async () => {
-    const { getByTestId, getByText } = await render(
+  it("🔴 'vendedores_boleto' (migração 192) é oferecido e o prazo é opcional", async () => {
+    const { getByTestId, getByText, queryByTestId } = await render(
       aggregate({ termos: { ...termosVazios(), onus_quitacao: "vendedores_boleto" } as any }),
     );
     expect(getByText("Vendedores quitam por boleto, em prazo")).toBeTruthy();
+    expect(queryByTestId("termos-onus-prazo-obrigatorio")).toBeNull();
+    expect((getByTestId("negest-termos-salvar") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("🔴 'compradores_prazo' continua exigindo o prazo", async () => {
+    const { getByTestId } = await render(
+      aggregate({ termos: { ...termosVazios(), onus_quitacao: "compradores_prazo" } as any }),
+    );
     expect(getByTestId("termos-onus-prazo-obrigatorio")).toBeTruthy();
   });
 
