@@ -218,6 +218,7 @@ from workspace import resolve_caller_root
 from . import _catalog_scope_guard
 from . import ledger_checksums as _ledger_checksums
 from . import toolkit_freshness as _toolkit_freshness
+from . import _transient_retry
 
 logger = logging.getLogger(__name__)
 
@@ -599,9 +600,13 @@ class SupabaseMgmtExecutor:
     endpoint, same auth header, same response parsing.
     """
 
-    def __init__(self, *, access_token: str, project_ref: str) -> None:
+    def __init__(self, *, access_token: str, project_ref: str, retry_ambiguous: bool = True) -> None:
         self._token = access_token
         self._ref = project_ref
+        # Transport-level retries (paced 1s/3s/9s) live HERE -- the one chokepoint every
+        # Management-API toolkit tool shares. retry_ambiguous=False: a request that may
+        # have executed (read timeout / reset / 5xx) is not re-sent (non-idempotent writes).
+        self._retry_ambiguous = retry_ambiguous
 
     def execute(self, sql: str) -> dict[str, Any]:
         url = f"{_SUPABASE_MGMT_BASE}/v1/projects/{self._ref}/database/query"
@@ -612,13 +617,16 @@ class SupabaseMgmtExecutor:
             "User-Agent": _UA,
         }
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        try:
+        def _once() -> bytes:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = resp.read()
-                rows = json.loads(raw) if raw else []
-                if not isinstance(rows, list):
-                    rows = [rows] if isinstance(rows, dict) else []
-                return {"ok": True, "rows": rows, "error": None}
+                return resp.read()
+
+        try:
+            raw = _transient_retry.call_with_transient_retry(_once, retry_ambiguous=self._retry_ambiguous)
+            rows = json.loads(raw) if raw else []
+            if not isinstance(rows, list):
+                rows = [rows] if isinstance(rows, dict) else []
+            return {"ok": True, "rows": rows, "error": None}
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
@@ -631,14 +639,20 @@ class SupabaseMgmtExecutor:
                 exc.reason,
                 detail[:300],
             )
-            return {
+            out: dict[str, Any] = {
                 "ok": False,
                 "rows": None,
                 "error": f"HTTP {exc.code} {exc.reason}: {detail[:200]}",
             }
+            if _transient_retry.is_transient(exc):  # 429/502/503/504 still failing after the retries
+                out["transient"] = True
+            return out
         except Exception as exc:
             logger.error("migrate_product: network error — %s", exc)
-            return {"ok": False, "rows": None, "error": str(exc)}
+            out = {"ok": False, "rows": None, "error": str(exc)}
+            if _transient_retry.is_transient(exc):  # retries exhausted: a hand-back, not a verdict
+                out["transient"] = True
+            return out
 
 
 def _resolve_access_token(access_token: str | None = None) -> str:
@@ -683,6 +697,7 @@ def make_sql_executor(
     *,
     access_token: str | None = None,
     project_ref: str = "nyplttplcoyiiqjrvtiw",
+    retry_ambiguous: bool = True,
 ) -> SqlExecutor | None:
     """Factory — returns the Real executor when credentials are present.
 
@@ -693,7 +708,7 @@ def make_sql_executor(
     token = _resolve_access_token(access_token)
     if not token:
         return None
-    return SupabaseMgmtExecutor(access_token=token, project_ref=project_ref)
+    return SupabaseMgmtExecutor(access_token=token, project_ref=project_ref, retry_ambiguous=retry_ambiguous)
 
 
 # ---------------------------------------------------------------------------
@@ -1337,7 +1352,7 @@ def migrate_product(
 
     # ── Resolve executor ──────────────────────────────────────────────────────
     if executor is None:
-        executor = make_sql_executor(project_ref=project_ref)
+        executor = make_sql_executor(project_ref=project_ref, retry_ambiguous=False)  # writes: never re-send a maybe-executed request
     if executor is None:
         # NOC-REMEDIATE[credentials]: no supabase_access_token resolved.
         # Store it DB-first (preferred): platform_settings['supabase_access_token']
@@ -1712,7 +1727,7 @@ def repair_schema_migrations_ledger(
         return _result("no_op")
 
     if executor is None:
-        executor = make_sql_executor(project_ref=project_ref)
+        executor = make_sql_executor(project_ref=project_ref, retry_ambiguous=False)  # writes: never re-send a maybe-executed request
     if executor is None:
         return _result(
             "not_configured",

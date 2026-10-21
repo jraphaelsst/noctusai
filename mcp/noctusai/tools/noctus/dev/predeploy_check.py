@@ -1057,13 +1057,16 @@ def _default_run_check(
                 "noctus.dev.verify_db_guards's DEFAULT_REGISTRY or organ-derived probes."
             )
         result = _vdg.verify_db_guards(registry=scoped)
-        if result["status"] in ("not_configured", "error", "unverified"):
+        if result["status"] in ("not_configured", "error", "unverified", "unverified_transient"):
             return False, (
                 f"db_guards BLOCKED ({result['status']}) — "
                 f"{result.get('error') or 'one or more guard probes could not be verified'}: "
                 + "; ".join(
-                    f"{f['probe_id']}: {f['detail']}" for f in result.get("failures", [])[:5]
+                    f"{f['probe_id']}: {f['detail']}"
+                    for f in (result.get("failures", []) + result.get("transient", []))[:5]
                 )
+                + (f" — transient only: re-run noctus.dev.verify_db_guards probe_ids={result['retry_probe_ids'][:10]}"
+                   if result.get("retry_probe_ids") else "")
             )
         if result["status"] == "violations_found":
             details = "; ".join(

@@ -430,6 +430,14 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--deploy-image-allow-inactive")
         return argv
 
+    if tool_name == "verify_db_guards":
+        argv = ["--verify-db-guards"]
+        if kwargs.get("probe_ids"):
+            argv.append(f"--verify-db-guards-probe-ids={','.join(str(p) for p in kwargs['probe_ids'])}")
+        if kwargs.get("project_ref"):
+            argv.append(f"--verify-db-guards-project-ref={kwargs['project_ref']}")
+        return argv
+
     if tool_name == "task_branch":
         argv = [f"--task-branch={kwargs.get('action') or 'status'}"]
         if kwargs.get("slug"):
@@ -485,6 +493,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "skip_ancestry_check", "skip_boot_smoke", "allow_inactive",
         "skip_compose_drift_check",
     }),
+    "verify_db_guards": frozenset({"project_ref", "probe_ids"}),
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",

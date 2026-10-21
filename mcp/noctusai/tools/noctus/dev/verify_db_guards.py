@@ -287,6 +287,16 @@ def run_probe(probe: GuardProbe, executor: "_mp.SqlExecutor") -> dict[str, Any]:
 
     error = result.get("error") or ""
     m = _SENTINEL_RE.search(error)
+    if not m and result.get("transient"):
+        # Transport failure that survived the executor's paced retries: no verdict was produced. Distinct from
+        # a real failure; re-run just these via `probe_ids` (the retry button).
+        return {
+            **base,
+            "status": "unverified_transient",
+            "outcome": None,
+            "severity": "info",
+            "detail": f"transient transport failure after automatic retries: {error[:300]}",
+        }
     if not m:
         return {
             **base,
@@ -10634,6 +10644,7 @@ def verify_db_guards(
     registry: tuple[GuardProbe, ...] | None = None,
     ledger_lookup: Any = None,
     migration_declared: Any = None,
+    probe_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run every probe in `registry` (default `DEFAULT_REGISTRY`) against
     the live database, inside its own rollback-only transaction. Never
@@ -10646,7 +10657,9 @@ def verify_db_guards(
     `status`: `'clean'` (every probe `pass`) | `'violations_found'`
     (>=1 `finding` — a guard did not fire) | `'unverified'` (>=1 `failure`,
     no findings) | `'not_configured'` (no credentials) | `'error'` (empty
-    registry / bad input).
+    registry / bad input) | `'unverified_transient'` (no findings/failures, but >=1 probe hit a transport
+    failure that survived the automatic paced retries -- re-run ONLY `retry_probe_ids` via `probe_ids=`).
+    `probe_ids` restricts the run to those probe ids (unknown ids -> `status='error'`).
     """
 
     def _result(status: str, **overrides: Any) -> dict[str, Any]:
@@ -10658,6 +10671,8 @@ def verify_db_guards(
             "findings": [],
             "failures": [],
             "pending": [],
+            "transient": [],
+            "retry_probe_ids": [],
             "error": None,
         }
         base.update(overrides)
@@ -10666,6 +10681,13 @@ def verify_db_guards(
     reg = registry if registry is not None else full_registry()
     if not reg:
         return _result("error", error="verify_db_guards: empty probe registry")
+    if probe_ids is not None:
+        wanted = list(dict.fromkeys(probe_ids))
+        known = {p.id for p in reg}
+        unknown = [i for i in wanted if i not in known]
+        if unknown:
+            return _result("error", error=f"verify_db_guards: unknown probe_ids {unknown[:10]}")
+        reg = tuple(p for p in reg if p.id in set(wanted))
 
     if executor is None:
         executor = _mp.make_sql_executor(project_ref=project_ref)
@@ -10687,6 +10709,7 @@ def verify_db_guards(
     findings: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
+    transient: list[dict[str, Any]] = []
     for probe in reg:
         waiting = _pending_migrations(probe, lookup, declared)
         if waiting:
@@ -10710,11 +10733,15 @@ def verify_db_guards(
             findings.append(r)
         elif r["status"] == "failure":
             failures.append(r)
+        elif r["status"] == "unverified_transient":
+            transient.append(r)
 
     if findings:
         status = "violations_found"
     elif failures:
         status = "unverified"
+    elif transient:
+        status = "unverified_transient"
     else:
         status = "clean"
 
@@ -10725,6 +10752,8 @@ def verify_db_guards(
         findings=findings,
         failures=failures,
         pending=pending,
+        transient=transient,
+        retry_probe_ids=[r["probe_id"] for r in transient],
     )
 
 
@@ -10747,12 +10776,15 @@ def register(server) -> None:
             "platform-wide zero-public-storage-buckets state assertion, and "
             "core.audit_logs's append-only guard (UPDATE always refused, "
             "DELETE refused outside purge_expired_audit_logs). "
-            "Returns {status, checked, results, findings, failures, error}. "
+            "Transport failures (DNS/timeout/reset/429/502-504) are retried automatically (paced 1s/3s/9s); "
+            "any that still fail come back status='unverified_transient' with `retry_probe_ids` -- pass them as "
+            "`probe_ids` to re-run ONLY those probes. "
+            "Returns {status, checked, results, findings, failures, transient, retry_probe_ids, error}. "
             "KB § PATTERNS/common/methodology-execution-discipline.md § 8."
         ),
     )
-    def _verify_db_guards(project_ref: str = DEFAULT_PROJECT_REF) -> dict:
-        return verify_db_guards(project_ref=project_ref)
+    def _verify_db_guards(project_ref: str = DEFAULT_PROJECT_REF, probe_ids: list[str] | None = None) -> dict:
+        return verify_db_guards(project_ref=project_ref, probe_ids=probe_ids)
 
 
 __all__ = [

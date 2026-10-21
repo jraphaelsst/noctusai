@@ -398,6 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-skip-compose-drift-check", action="store_true", help="With --deploy-image: bypass the VPS compose-drift precheck (VPS checkout behind the image's deploy/fleet/) — run noctus.dev.deploy_pull instead; recorded in the result.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
+    parser.add_argument("--verify-db-guards", action="store_true", help="Run the behaviour probes proving each declared DB guard refuses what it claims (rollback-only, against prod). Transport failures are retried automatically; any that still fail come back status='unverified_transient' with retry_probe_ids. MCP: noctus.dev.verify_db_guards.")
+    parser.add_argument("--verify-db-guards-probe-ids", default=None, help="With --verify-db-guards: comma-separated probe ids to run ONLY (the retry button for retry_probe_ids).")
+    parser.add_argument("--verify-db-guards-project-ref", default=None, help="With --verify-db-guards: Supabase project ref (default: the platform project).")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
     parser.add_argument("--deploy-verify-products", default=None, help="With --deploy-verify: comma-separated product slugs to check deliberately (bypasses the catalog — every named slug is treated as actionable, including an inactive one). Default: the catalog-derived live roster.")
     parser.add_argument("--release", metavar="STAGE", choices=["status", "manifest", "bless", "promote", "backmerge"], help="The dev→main (bless) / main→prod (promote) release gates. DRY-RUN unless --release-confirm. MCP: noctus.dev.release. Also the R4 (release-no-freeze) fresh-subprocess target: a stale primary MCP server re-execs a confirm=True release call here, against the current on-disk code.")
@@ -3352,6 +3355,16 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.verify_db_guards:
+        from tools.noctus.dev.verify_db_guards import verify_db_guards
+        raw = getattr(args, "verify_db_guards_probe_ids", None)
+        kw = {"probe_ids": [p.strip() for p in raw.split(",") if p.strip()]} if raw else {}
+        if getattr(args, "verify_db_guards_project_ref", None):
+            kw["project_ref"] = args.verify_db_guards_project_ref
+        r = verify_db_guards(**kw)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.deploy_verify:
         from tools.noctus.dev.deploy_verify import deploy_verify

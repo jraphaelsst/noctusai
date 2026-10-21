@@ -419,6 +419,9 @@ def _register_all_gated_tools() -> dict[str, Callable]:
     _mp_mod.register(srv)
     _di_mod.register(srv)
     _tb_mod.register(srv)
+    from tools.noctus.dev import verify_db_guards as _vdg_mod
+
+    _vdg_mod.register(srv)
     return srv.captured
 
 
@@ -437,6 +440,7 @@ def test_every_register_wrapper_param_is_in_mapped_params():
         "migrate_product": captured["noctus.dev.migrate_product"],
         "deploy_image": captured["noctus.dev.deploy_image"],
         "task_branch": captured["noctus.dev.task_branch"],
+        "verify_db_guards": captured["noctus.dev.verify_db_guards"],
     }
     for tool_name, wrapper_fn in checks.items():
         wrapper_params = set(_inspect.signature(wrapper_fn).parameters) - {"allow_stale_toolkit"}
@@ -476,6 +480,9 @@ def test_every_wired_tools_argv_parses_cleanly_through_cli_argparse():
                          "verbose": True},
          {"task_branch": "cleanup", "task_branch_slug": "feat-x",
           "task_branch_confirm": True, "task_branch_verbose": True}),
+        ("verify_db_guards", {"probe_ids": ["a.b", "c.d"], "project_ref": "ref1"},
+         {"verify_db_guards": True, "verify_db_guards_probe_ids": "a.b,c.d",
+          "verify_db_guards_project_ref": "ref1"}),
     ]
     for tool_name, kwargs, expect_attrs in cases:
         argv = TF._tool_cli_argv(tool_name, kwargs)
