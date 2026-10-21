@@ -32,6 +32,8 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 5. `python mcp/noctusai/cli.py --lower-mutation-invalidate-only-baseline` — re-derives the ratchet downward. On a rebase CONFLICT in `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`: take either side, re-run this flag, stage. Never hand-merge it.
 6. Gates: product `tsc --noEmit`, `vitest run`, `vite build`; `--check-mutation-invalidate-only` clean.
 
+- **Settle is background, never awaited.** `onSettled` fires the invalidations (`void`), it never returns them: TanStack awaits a returned promise, which would keep `isPending` true (buttons stuck on "Adicionando…") until the refetches finish. Don't write a plain `useMutation` whose `onSettled` returns `invalidateQueries`.
+
 ## Op reference (seed `@noctusai/lib/cache-writes`) — v1.4.0
 - `listOps` — `append/prepend/replace/patch/remove/update/insertSorted/merge/within`. Rows by `id` or the trailing `idKey` arg (`'hostname'`, `'slug'`); ids may be `string | number`. `insertSorted(list, row, compare)` lands a create where the server's sort puts it (never append-then-re-sort).
 - **Nested edit** (a row inside a row): `listOps.update(list, parentId, (p) => ({ ...p, children: listOps.prepend(p.children, c) }))`; in an envelope wrap with `listOps.within(old, 'items', (l) => listOps.update(l, ...))`. Decision: a one-line `update` beats nested map lambdas; no dedicated "nested" op.

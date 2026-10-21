@@ -81,6 +81,8 @@ The caller's `onSuccess` and `onError` still run after the cache work, so toasts
 - **Invalidate a derived view** (funnel counts, dashboards) instead of recomputing it client-side.
 - **Genuinely can't place it** (the server regroups the whole view): keep the invalidate, but mark the `useMutation(` line with `// noc-allow: invalidate-only — <why>`. That is a declared exception, not the default.
 
+- **Settle never holds the mutation pending.** `useCacheWriteMutation` fires the settle invalidations without returning them; a returned promise from `onSettled` is awaited by TanStack, so `isPending` would stay true (and `isSuccess` false) until every refetch landed. Regression-tested with a deferred refetch.
+
 ## Seed ops (additive gap-closing, 2026-10-21)
 
 - `listOps` addresses rows by `id` or a trailing `idKey`; ids are `string | number`. `listOps.update(list, id, fn)` is the nested-edit idiom (a row inside a row, with `within` for envelopes); `listOps.insertSorted(list, row, compare)` places a create where the server's sort would.

@@ -20,7 +20,7 @@
  * 2. **commit** (per target) — the SERVER's answer is written into the
  *    cache as soon as it arrives (replacing the optimistic stand-in), so the
  *    screen is correct after one round trip even without optimism.
- * 3. **settle** — every target (plus `invalidate`) is invalidated in the
+ * 3. **settle** (never awaited — `isPending` ends at the commit, not after the refetch) — every target (plus `invalidate`) is invalidated in the
  *    background so derived/server-computed fields converge. The data on
  *    screen is already right; this refetch only refreshes it
  *    (`isFetching && !!data` — never a skeleton).
@@ -157,7 +157,11 @@ export function useCacheWriteMutation<TData, TVars>(
     },
     onSettled: (_data, _error, vars) => {
       const keys = [...resolveTargets(vars).map((t) => t.queryKey), ...resolveInvalidate(vars)];
-      return Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
+      // Fire and forget: TanStack awaits whatever onSettled returns before leaving `isPending`, so
+      // returning this promise would hold every "Adicionando…" button until the refetches finish.
+      // invalidateQueries does not reject (a failed refetch lands in the query's own error state
+      // unless `throwOnError` is set, which we never do), so there is nothing to swallow.
+      void Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
     },
   });
 }

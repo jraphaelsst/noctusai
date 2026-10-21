@@ -76,6 +76,8 @@ export function useUpdateConsent() {
     // Always invalidate on settle so granted_at/revoked_at refresh from
     // the server (we don't synthesize them client-side; LGPD audit trail
     // requires server timestamps).
-    onSettled: () => qc.invalidateQueries({ queryKey: CONSENTS_QUERY_KEY }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: CONSENTS_QUERY_KEY }); // background — never hold isPending
+    },
   });
 }

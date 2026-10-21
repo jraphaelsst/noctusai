@@ -251,3 +251,23 @@ describe('listOps.insertSorted', () => {
     expect(listOps.insertSorted(undefined, l[0], byName)).toBeUndefined();
   });
 });
+
+describe('settle is background — never holds the mutation pending', () => {
+  it('reaches isSuccess before the invalidation refetch resolves', async () => {
+    const { qc, wrapper } = setup([]);
+    const refetch = deferred<Note[]>();
+    qc.setQueryDefaults(KEY, { queryFn: () => refetch.promise });
+    renderHook(() => qc && null, { wrapper }); // keep wrapper warm
+    const obs = qc.getQueryCache().find({ queryKey: KEY })!;
+    const unsub = new (await import('@tanstack/react-query')).QueryObserver(qc, { queryKey: KEY, queryFn: () => refetch.promise }).subscribe(() => {});
+    const { result } = renderHook(() => useAddNote(async (text) => ({ id: 's1', text })), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync('hi');
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.isPending).toBe(false);
+    expect(obs.state.fetchStatus).toBe('fetching'); // refetch still in flight
+    refetch.resolve([]);
+    unsub();
+  });
+});
