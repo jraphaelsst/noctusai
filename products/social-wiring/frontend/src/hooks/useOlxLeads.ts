@@ -8,11 +8,13 @@
  * belongs to, so it is sitting in the inbox waiting for a human rather
  * than being guessed into someone's CRM.
  *
- * 🔴 Loading is gated on `isPending || isFetching`, never `isLoading`.
- * Under TanStack v5 `isLoading` is false during a background refetch, so
- * an `isEmpty` branch renders "no deliveries yet" over deliveries that
- * exist — which here would read as "the integration is dead" at exactly
- * the moment it is working. Keeper: `check_lying_loading_state`.
+ * 🔴 Loading is two signals off `data`, never `isLoading` and never a bare
+ * `isFetching`: `showSkeleton = isPending && !data` (first load only) and
+ * `isRefreshing = isFetching && !!data` (indicator only — the list stays
+ * mounted). `isLoading` is false during a refetch, so an empty branch
+ * would paint "no deliveries yet" over deliveries that exist; and gating
+ * the list on `isFetching` would unmount it on every settle.
+ * Keeper: `check_lying_loading_state`. KB § PATTERNS/frontend/lying-loading-state.md
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
@@ -79,8 +81,9 @@ export function useOlxEvents(limit = 50) {
     counts,
     stuck,
     /** See the module header — NOT `isLoading`. */
-    loading: query.isPending || query.isFetching,
-    isEmpty: !query.isPending && !query.isFetching && events.length === 0,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+    isEmpty: !query.isPending && events.length === 0,
   };
 }
 

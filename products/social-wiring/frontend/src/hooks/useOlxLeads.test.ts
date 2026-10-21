@@ -2,9 +2,9 @@
  * Tests for the Grupo OLX portal-lead hooks.
  *
  * The two that matter:
- *   · `loading` is `isPending || isFetching`, never `isLoading` — a card
- *     that renders "no deliveries yet" during a background refetch reads
- *     as "the integration is dead" at the moment it is working.
+ *   · loading is two signals off `data` (`showSkeleton` / `isRefreshing`),
+ *     never `isLoading` and never a bare `isFetching` — a refetch must not
+ *     unmount the list nor paint "no deliveries yet" over it.
  *   · `stuck` names the statuses an operator must act on (`unresolved`
  *     and `error`), because an unresolved lead is a real enquiry nobody
  *     has been told about.
@@ -90,20 +90,23 @@ describe("useOlxEvents", () => {
     expect(mockGet).toHaveBeenCalledWith("/api/portals/olx/events?limit=25");
   });
 
-  it("reports loading during a background refetch, not just the first load", () => {
-    // The lying-loading-state trap: isPending false, isFetching true.
-    queryState({ isPending: false, isFetching: true, data: { events: [], counts: {} } });
+  it("a background refetch is a refresh indicator, never a skeleton", () => {
+    queryState({ isPending: false, isFetching: true, data: { events: [event()], counts: {} } });
 
     const hook = useOlxEvents() as any;
 
-    expect(hook.loading).toBe(true);
+    expect(hook.showSkeleton).toBe(false);
+    expect(hook.isRefreshing).toBe(true);
     expect(hook.isEmpty).toBe(false);
   });
 
-  it("reports loading on the first load", () => {
+  it("shows the skeleton only on the first load (no data yet)", () => {
     queryState({ isPending: true, isFetching: true });
 
-    expect((useOlxEvents() as any).loading).toBe(true);
+    const hook = useOlxEvents() as any;
+
+    expect(hook.showSkeleton).toBe(true);
+    expect(hook.isRefreshing).toBe(false);
   });
 
   it("is empty only when settled with no events", () => {
@@ -112,7 +115,7 @@ describe("useOlxEvents", () => {
     const hook = useOlxEvents() as any;
 
     expect(hook.isEmpty).toBe(true);
-    expect(hook.loading).toBe(false);
+    expect(hook.showSkeleton).toBe(false);
   });
 
   it("counts unresolved and error deliveries as stuck", () => {

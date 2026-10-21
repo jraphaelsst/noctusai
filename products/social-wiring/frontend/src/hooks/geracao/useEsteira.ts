@@ -19,7 +19,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { boardOps, listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
@@ -85,15 +85,8 @@ function useInvalidateEsteira() {
 }
 
 
-/** The board cache entry is the bare `colunas` array; stage-list entries share the prefix and carry no `cards`. */
-type Colunas = EsteiraColuna[] | undefined;
-const emColunas = (old: Colunas, fn: (cards: PostCard[]) => PostCard[] | undefined): Colunas =>
-  Array.isArray(old) && old.every((c) => Array.isArray(c?.cards))
-    ? old.map((c) => {
-        const cards = fn(c.cards);
-        return cards ? { ...c, cards, total: c.total + (cards.length - c.cards.length) } : c;
-      })
-    : old;
+/** The board cache entry is the bare `colunas` array; stage-list entries share the prefix and carry no `cards` (boardOps skips them). */
+const board = boardOps<PostCard>(() => 0);
 
 /** Keys refreshed in the background after any post write (badge on the Geração libraries, §5.3). */
 const POST_SETTLE = [[ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY, GERACAO_KEY];
@@ -199,7 +192,7 @@ function postTargets(id: string) {
       queryKey: [ESTEIRA_PIPELINE_KEY],
       match: "prefix" as const,
       commit: (old: EsteiraColuna[] | undefined, saved: PostDetalhe) =>
-        emColunas(old, (cards) => listOps.patch(cards, id, saved)),
+        board.patchCard(old, id, saved),
     },
   ];
 }
@@ -225,7 +218,7 @@ export function useExcluirPost() {
       {
         queryKey: [ESTEIRA_PIPELINE_KEY],
         match: "prefix",
-        optimistic: (old: EsteiraColuna[] | undefined) => emColunas(old, (cards) => listOps.remove(cards, id)),
+        optimistic: (old: EsteiraColuna[] | undefined) => board.removeCard(old, id),
       },
     ],
     invalidate: POST_SETTLE,
@@ -262,7 +255,7 @@ function desvincularTargets(postId: string, campo: "headline" | "roteiro") {
       queryKey: [ESTEIRA_PIPELINE_KEY],
       match: "prefix" as const,
       optimistic: (old: EsteiraColuna[] | undefined) =>
-        emColunas(old, (cards) => listOps.patch(cards, postId, { [campo]: null })),
+        board.patchCard(old, postId, { [campo]: null }),
     },
   ];
 }

@@ -240,6 +240,24 @@ describe("infiniteOps", () => {
     await act(async () => d.resolve());
   });
 
+  it("totals move on EVERY loaded page, so a list reading the last page's total stays right", async () => {
+    const { qc, wrapper } = setup();
+    const key = [...CEREBRO_KEY, "m1", "extracoes", { q: "" }];
+    qc.setQueryData(key, infinite({ items: [{ id: "e0" }], total: 2 }, { items: [{ id: "e9" }], total: 2 }));
+    mockPost.mockResolvedValue({ data: { id: "e1", name: "Nova" } });
+    const { result } = renderHook(() => ({ criar: useCriarExtracao(), excluir: useExcluirExtracao() }), { wrapper });
+    const totals = () => (qc.getQueryData(key) as { pages: { total: number }[] }).pages.map((p) => p.total);
+    await act(async () => {
+      await result.current.criar.mutateAsync({ marca_id: "m1", name: "Nova", brain_ids: [], text: "t" });
+    });
+    expect(totals()).toEqual([3, 3]);
+    const d = deferred<void>();
+    mockDelete.mockReturnValue(d.promise);
+    act(() => result.current.excluir.mutate("e9"));
+    await waitFor(() => expect(totals()).toEqual([2, 2]));
+    await act(async () => d.resolve());
+  });
+
   it("useCriarConversa heads the first page of the conversas infinite list", async () => {
     const { qc, wrapper } = setup();
     const k = [...CHAT_KEY, "conversas", "m1", "roteirista"];

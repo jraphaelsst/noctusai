@@ -47,7 +47,8 @@ function state(over: Record<string, unknown> = {}) {
     events: [],
     counts: {},
     stuck: [],
-    loading: false,
+    showSkeleton: false,
+    isRefreshing: false,
     isEmpty: false,
     isError: false,
     error: null,
@@ -75,7 +76,7 @@ describe("OlxWebhookCard", () => {
   });
 
   it("renders the loading state", () => {
-    state({ loading: true });
+    state({ showSkeleton: true });
 
     render(<OlxWebhookCard />);
 
@@ -137,6 +138,16 @@ describe("OlxWebhookCard", () => {
     const list = screen.getByTestId("olx-events-list");
     expect(list.textContent).toContain("lead-1");
     expect(list.textContent).toContain("a40171");
+  });
+
+  it("keeps the list mounted (no skeleton) while refreshing", () => {
+    state({ events: [event()], counts: { processed: 1 }, isRefreshing: true });
+
+    render(<OlxWebhookCard />);
+
+    expect(screen.queryByTestId("olx-events-loading")).toBeNull();
+    expect(screen.getByTestId("olx-events-list")).toBeTruthy();
+    expect(screen.getByTestId("olx-webhook-card").getAttribute("aria-busy")).toBe("true");
   });
 
   it("never renders the empty state while data is present", () => {

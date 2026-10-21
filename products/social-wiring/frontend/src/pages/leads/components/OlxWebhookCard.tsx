@@ -41,7 +41,7 @@ function formatWhen(value: string | null): string {
 }
 
 export default function OlxWebhookCard() {
-  const { events, counts, stuck, loading, isEmpty, isError, error, refetch } =
+  const { events, counts, stuck, showSkeleton, isRefreshing, isEmpty, isError, error, refetch } =
     useOlxEvents(50);
   const backfill = useOlxBackfill();
   const [copied, setCopied] = useState(false);
@@ -78,6 +78,7 @@ export default function OlxWebhookCard() {
     <div
       className="rounded-lg border border-border p-4 space-y-4"
       data-testid="olx-webhook-card"
+      aria-busy={isRefreshing}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -125,7 +126,7 @@ export default function OlxWebhookCard() {
         </div>
       </div>
 
-      {loading ? (
+      {showSkeleton ? (
         <div className="space-y-2" data-testid="olx-events-loading">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-16 w-full" />
