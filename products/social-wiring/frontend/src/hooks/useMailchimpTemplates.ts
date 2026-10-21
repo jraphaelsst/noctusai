@@ -7,10 +7,9 @@
  * Built on @tanstack/react-query v5. queryFns never return undefined.
  */
 import {
-  useMutation,
   useQuery,
-  useQueryClient,
 } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -75,27 +74,56 @@ export function useMailchimpTemplate(templateId: number | null) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+/** Mailchimp ids are numbers, so the list edits go through `listOps.within` (untyped rows). */
 export function useMailchimpTemplateMutations() {
-  const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
-
-  const create = useMutation<TemplateOut, unknown, CreateTemplateBody>({
+  const create = useCacheWriteMutation<TemplateOut, CreateTemplateBody>({
     mutationFn: (body) => api.post<TemplateOut>(BASE, body),
-    onSuccess: invalidateFamily,
+    // The default (param-less) list; paged / offset lists settle.
+    targets: [
+      {
+        queryKey: [...TEMPLATES_KEY, undefined],
+        commit: (old: TemplatesOut | undefined, saved) => {
+          if (!old?.items || old.items.some((t) => t.id === saved.id)) return old;
+          const next = listOps.within(old, "items", (l) => [...l, saved]);
+          return next ? { ...next, total: next.total + 1 } : old;
+        },
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
-  const update = useMutation<
-    TemplateOut,
-    unknown,
-    { id: number; body: UpdateTemplateBody }
-  >({
+  const update = useCacheWriteMutation<TemplateOut, { id: number; body: UpdateTemplateBody }>({
     mutationFn: ({ id, body }) => api.patch<TemplateOut>(`${BASE}/${id}`, body),
-    onSuccess: invalidateFamily,
+    // One prefix reaches every cached list page AND this template's detail.
+    targets: ({ id }) => [
+      {
+        queryKey: TEMPLATES_KEY,
+        match: "prefix",
+        commit: (old: TemplatesOut | TemplateOut | undefined, saved) => {
+          if (old && "items" in old) {
+            return listOps.within(old, "items", (l) => l.map((t) => (t.id === id ? { ...t, ...saved } : t)));
+          }
+          return old && (old as TemplateOut).id === id ? { ...(old as TemplateOut), ...saved } : old;
+        },
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
-  const remove = useMutation<unknown, unknown, number>({
+  const remove = useCacheWriteMutation<unknown, number>({
     mutationFn: (id) => api.delete(`${BASE}/${id}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      {
+        queryKey: TEMPLATES_KEY,
+        match: "prefix",
+        optimistic: (old: TemplatesOut | TemplateOut | undefined) => {
+          if (!old || !("items" in old) || !old.items.some((t) => t.id === id)) return old;
+          const next = listOps.within(old, "items", (l) => l.filter((t) => t.id !== id));
+          return next ? { ...next, total: Math.max(0, next.total - 1) } : old;
+        },
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
   return { create, update, remove };

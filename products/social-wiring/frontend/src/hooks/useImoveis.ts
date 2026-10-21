@@ -338,7 +338,7 @@ export function useSyncImoveis() {
   // Variables typed explicitly: a defaulted `mutationFn` parameter makes
   // TanStack infer the variable type as `void`, so `mutateAsync(true)` then
   // fails to compile.
-  return useMutation<SyncResult, Error, boolean>({
+  return useMutation<SyncResult, Error, boolean>({ // noc-allow: invalidate-only — vendor bulk sync: the answer is counts, every imóvel/filter/amenity read is recomputed server-side
     mutationFn: async (withDetalhes) =>
       api.post<SyncResult>(
         `/api/imoveis/sync?with_detalhes=${withDetalhes}`,

@@ -26,14 +26,21 @@ vi.mock("@tanstack/react-query", () => {
     _enabled: enabled,
     _queryKey: queryKey,
   }));
-  const useMutation = vi.fn(({ mutationFn, onSuccess }: any) => ({
+  const useMutation = vi.fn(({ mutationFn, onSuccess, onSettled }: any) => ({
     mutateAsync: async (vars: unknown) => {
       const r = await mutationFn(vars);
       await onSuccess?.(r, vars);
+      await onSettled?.(r, null, vars);
       return r;
     },
   }));
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    getQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+    setQueryData: vi.fn(),
+    cancelQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 

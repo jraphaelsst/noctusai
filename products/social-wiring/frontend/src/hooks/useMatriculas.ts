@@ -24,10 +24,11 @@
  * the status column live without a websocket.
  */
 import { prepareImageForUpload } from '@noctusai/lib/imageUpload';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 import { jobPolling } from '@noctusai/lib';
+import { listOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 
 /**
  * `noctusai_lib.integrations.documents.formatting.FormatRange` on the wire —
@@ -168,6 +169,29 @@ export function useMatriculaExtracao(id?: string) {
   });
 }
 
+const EXTRACOES_KEY = ['matricula-extracoes'] as const;
+const EXTRACAO_KEY = ['matricula-extracao'] as const;
+const extracoesKey = (codigo: string | null = null, busca: string | null = null, semImovel: boolean | null = null) =>
+  [...EXTRACOES_KEY, codigo, busca, semImovel] as const;
+
+/** A freshly-created extraction: heads the unfiltered list and its imóvel's list (newest first; filtered lists settle). */
+const extracaoCriada = (codigo?: string | null) => [
+  {
+    queryKey: extracoesKey(),
+    commit: (old: MatriculaExtracao[] | undefined, saved: MatriculaExtracao) =>
+      listOps.replace(old, saved.id, saved, 'prepend'),
+  },
+  ...(codigo
+    ? [
+        {
+          queryKey: extracoesKey(codigo),
+          commit: (old: MatriculaExtracao[] | undefined, saved: MatriculaExtracao) =>
+            listOps.replace(old, saved.id, saved, 'prepend'),
+        },
+      ]
+    : []),
+];
+
 export interface UploadMatriculaInput {
   file: File;
   /** When set, the PDF is KEPT as that imóvel's `matricula` document and the
@@ -176,10 +200,8 @@ export interface UploadMatriculaInput {
 }
 
 export function useUploadMatricula() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (input: File | UploadMatriculaInput): Promise<MatriculaExtracao> => {
+  return useCacheWriteMutation<MatriculaExtracao, File | UploadMatriculaInput>({
+    mutationFn: async (input) => {
       // Accepts a bare `File` too — every existing call site (`Matriculas.tsx`
       // pre-this-feature) passes one, and widening the signature must not
       // break them.
@@ -190,8 +212,9 @@ export function useUploadMatricula() {
       const result = await api.upload('/api/matriculas/extrair', formData);
       return result.data as MatriculaExtracao;
     },
+    targets: (input) => extracaoCriada(input instanceof File ? undefined : input.codigo),
+    invalidate: [EXTRACOES_KEY],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
       toast.success('PDF enviado! Extraindo texto...');
     },
     onError: (error: Error) => {
@@ -207,21 +230,17 @@ export function useUploadMatricula() {
  * own message rather than a generic one, since it names which extraction.
  */
 export function useCriarExtracaoDeDocumento() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (input: {
-      codigo: string;
-      imovelDocumentoId: string;
-    }): Promise<MatriculaExtracao> => {
+  return useCacheWriteMutation<MatriculaExtracao, { codigo: string; imovelDocumentoId: string }>({
+    mutationFn: async (input) => {
       const result = await api.post('/api/matriculas/extracoes/de-documento', {
         codigo: input.codigo,
         imovel_documento_id: input.imovelDocumentoId,
       });
       return result.data as MatriculaExtracao;
     },
+    targets: (input) => extracaoCriada(input.codigo),
+    invalidate: [EXTRACOES_KEY],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
       toast.success('Transcrição iniciada!');
     },
     onError: (error: Error) => {
@@ -237,18 +256,17 @@ export function useCriarExtracaoDeDocumento() {
  * is no I/O-bound step, so the returned row is already the finished one.
  */
 export function useCriarExtracaoManual() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (input: { codigo: string; texto: string }): Promise<MatriculaExtracao> => {
+  return useCacheWriteMutation<MatriculaExtracao, { codigo: string; texto: string }>({
+    mutationFn: async (input) => {
       const result = await api.post('/api/matriculas/extracoes/manual', {
         codigo: input.codigo,
         texto: input.texto,
       });
       return result.data as MatriculaExtracao;
     },
+    targets: (input) => extracaoCriada(input.codigo),
+    invalidate: [EXTRACOES_KEY],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
       toast.success('Transcrição manual criada!');
     },
     onError: (error: Error) => {
@@ -270,30 +288,40 @@ export function useCriarExtracaoManual() {
  * surface the server's own sentence, same as every other mutation here.
  */
 export function useVincularExtracaoImovel() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (input: {
-      extracaoId: string;
-      codigo: string;
-      substituir?: boolean;
-    }): Promise<MatriculaExtracao> => {
+  return useCacheWriteMutation<
+    MatriculaExtracao,
+    { extracaoId: string; codigo: string; substituir?: boolean }
+  >({
+    mutationFn: async (input) => {
       const result = await api.put(`/api/matriculas/extracoes/${input.extracaoId}/imovel`, {
         codigo: input.codigo,
         ...(input.substituir ? { substituir: true } : {}),
       });
       return result.data as MatriculaExtracao;
     },
-    onSuccess: async (data) => {
-      // Every list this could now appear in/disappear from: the codigo-scoped
-      // list it just joined, the unlinked list it just left (same
-      // `matricula-extracoes` prefix), and its own single-extraction cache.
-      // AWAITED so the item has moved before the mutation settles — a
-      // fire-and-forget refetch left it listed under a success toast.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] }),
-        queryClient.invalidateQueries({ queryKey: ['matricula-extracao', data.id] }),
-      ]);
+    // The item moves at once: updated in place wherever it is listed, added to its imóvel's list, and gone
+    // from the "sem imóvel" list; its own detail takes the server row.
+    targets: (input) => [
+      {
+        queryKey: EXTRACOES_KEY,
+        match: 'prefix',
+        commit: (old: MatriculaExtracao[] | undefined, saved) => listOps.patch(old, input.extracaoId, saved),
+      },
+      {
+        queryKey: extracoesKey(input.codigo),
+        commit: (old: MatriculaExtracao[] | undefined, saved) => listOps.replace(old, saved.id, saved, 'prepend'),
+      },
+      {
+        queryKey: extracoesKey(null, null, true),
+        commit: (old: MatriculaExtracao[] | undefined) => listOps.remove(old, input.extracaoId),
+      },
+      {
+        queryKey: [...EXTRACAO_KEY, input.extracaoId],
+        commit: (_old: MatriculaExtracao | null | undefined, saved) => saved,
+      },
+    ],
+    invalidate: [EXTRACOES_KEY, EXTRACAO_KEY],
+    onSuccess: () => {
       toast.success('Matrícula vinculada ao imóvel!');
     },
     onError: (error: Error) => {
@@ -303,15 +331,19 @@ export function useVincularExtracaoImovel() {
 }
 
 export function useDeleteExtracao() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`/api/matriculas/extracoes/${id}`);
     },
+    targets: (id) => [
+      {
+        queryKey: EXTRACOES_KEY,
+        match: 'prefix',
+        optimistic: (old: MatriculaExtracao[] | undefined) => listOps.remove(old, id),
+      },
+    ],
+    invalidate: [EXTRACOES_KEY, EXTRACAO_KEY],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracao'] });
       toast.success('Extração excluída!');
     },
     onError: (error: Error) => {
@@ -329,16 +361,24 @@ export function useDeleteExtracao() {
  * re-run from (a pre-135 extraction) — the server's own sentence names that.
  */
 export function useRetranscreverExtracao() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string): Promise<MatriculaExtracao> => {
+  return useCacheWriteMutation<MatriculaExtracao, string>({
+    mutationFn: async (id) => {
       const result = await api.post(`/api/matriculas/extracoes/${id}/retranscrever`);
       return result.data as MatriculaExtracao;
     },
+    // Supersedes: in every list that holds the old row it is marked replaced and the new row heads it.
+    targets: (id) => [
+      {
+        queryKey: EXTRACOES_KEY,
+        match: 'prefix',
+        commit: (old: MatriculaExtracao[] | undefined, saved) =>
+          Array.isArray(old) && old.some((e) => e.id === id)
+            ? listOps.replace(listOps.patch(old, id, { substituida_por: saved.id }), saved.id, saved, 'prepend')
+            : old,
+      },
+    ],
+    invalidate: [EXTRACOES_KEY, EXTRACAO_KEY],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
-      queryClient.invalidateQueries({ queryKey: ['matricula-extracao'] });
       toast.success('Retranscrição iniciada!');
     },
     onError: (error: Error) => {
@@ -355,7 +395,7 @@ export function useRetranscreverExtracao() {
  * extraction kept no source (a pre-135 row).
  */
 export function useArquivoOriginalExtracao() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — mints a short-TTL signed URL on click: nothing is written or cached
     mutationFn: async (id: string): Promise<{ url: string; expires_at: string }> => {
       const result = await api.get(`/api/matriculas/extracoes/${id}/arquivo-original`);
       return result.data as { url: string; expires_at: string };

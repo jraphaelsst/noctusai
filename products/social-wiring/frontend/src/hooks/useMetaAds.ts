@@ -449,7 +449,7 @@ export function useLeadRecords(
 /** Trigger a lead ingest (pull forms + records from Meta → upsert to the
  *  DB). Background job — returns a `job_id` to poll via `useSyncJob`. */
 export function useLeadSync() {
-  return useMutation<AdsSyncStarted, Error, void>({
+  return useMutation<AdsSyncStarted, Error, void>({ // noc-allow: invalidate-only — starts a server-side lead-ingest job (the answer is a job id) and caches nothing; the lead reads refresh when the job is polled
     mutationFn: () => api.post<AdsSyncStarted>("/api/meta/ads/leads/sync", {}),
   });
 }
@@ -470,7 +470,7 @@ export function useSyncJob(jobId: string | null) {
  *  `/sync/{job_id}` separately if you need progress. */
 export function useAdsSync() {
   const qc = useQueryClient();
-  return useMutation<AdsSyncStarted, Error, "incremental" | "backfill" | undefined>({
+  return useMutation<AdsSyncStarted, Error, "incremental" | "backfill" | undefined>({ // noc-allow: invalidate-only — starts a server-side sync job (the answer is a job id): every ads read is refreshed by that job, not by this response
     mutationFn: (mode = "incremental") =>
       api.post<AdsSyncStarted>("/api/meta/ads/sync", { mode }),
     onSuccess: () => {

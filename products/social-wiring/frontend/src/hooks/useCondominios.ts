@@ -14,6 +14,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export type StatusValidacao = "sugerido" | "validado" | "descartado";
 export type TipoCondominio = "horizontal" | "vertical" | "loteamento" | "misto";
@@ -136,71 +137,103 @@ export function useCondominio(id: string | null) {
   });
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ROOT });
-}
+const LISTAS_KEY = [...ROOT, "lista"] as const;
+const detalheKey = (id: string) => [...ROOT, "detalhe", id] as const;
+
+/** A saved `Condominio` row: patched into every cached list and merged into its detail. */
+const rowTargets = (id: string) => [
+  {
+    queryKey: LISTAS_KEY,
+    match: "prefix" as const,
+    commit: (old: Condominio[] | undefined, saved: Condominio) => listOps.patch(old, id, saved),
+  },
+  {
+    queryKey: detalheKey(id),
+    commit: (old: CondominioDetalhe | undefined, saved: Condominio) => listOps.merge(old, saved),
+  },
+];
 
 export function useSugerirCondominios() {
-  const invalidar = useInvalidar();
-  return useMutation({
+  const qc = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — rebuilds suggestions server-side; the answer is counts, the new rows are only known by refetching
     mutationFn: () => api.post<SugestaoResultado>(`${BASE}/sugerir`, {}),
-    onSuccess: invalidar,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ROOT }),
   });
 }
 
 export function useAtualizarCondominio() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: CondominioPayload }) =>
-      api.patch<Condominio>(`${BASE}/${id}`, body),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Condominio, { id: string; body: CondominioPayload }>({
+    mutationFn: ({ id, body }) => api.patch<Condominio>(`${BASE}/${id}`, body),
+    targets: ({ id }) => rowTargets(id),
+    invalidate: [ROOT],
   });
 }
 
 export type AcaoStatus = "validar" | "descartar" | "reabrir" | "desfazer-fusao";
 
 export function useAcaoCondominio() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, acao }: { id: string; acao: AcaoStatus }) =>
-      api.post<Condominio>(`${BASE}/${id}/${acao}`, {}),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Condominio, { id: string; acao: AcaoStatus }>({
+    mutationFn: ({ id, acao }) => api.post<Condominio>(`${BASE}/${id}/${acao}`, {}),
+    targets: ({ id }) => rowTargets(id),
+    invalidate: [ROOT],
   });
 }
 
 export function useRenomearCondominio() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, nome }: { id: string; nome: string }) =>
-      api.post<Condominio>(`${BASE}/${id}/renomear`, { nome }),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<Condominio, { id: string; nome: string }>({
+    mutationFn: ({ id, nome }) => api.post<Condominio>(`${BASE}/${id}/renomear`, { nome }),
+    targets: ({ id }) => [
+      {
+        ...rowTargets(id)[0],
+        optimistic: (old: Condominio[] | undefined, vars: { id: string; nome: string }) =>
+          listOps.patch(old, vars.id, { nome: vars.nome }),
+      },
+      rowTargets(id)[1],
+    ],
+    invalidate: [ROOT],
   });
 }
 
 export function useFundirCondominio() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, destinoId }: { id: string; destinoId: string }) =>
+  return useCacheWriteMutation<{ aliases_movidos: number }, { id: string; destinoId: string }>({
+    mutationFn: ({ id, destinoId }) =>
       api.post<{ aliases_movidos: number }>(`${BASE}/${id}/fundir`, { destino_id: destinoId }),
-    onSuccess: invalidar,
+    // The merged-away condomínio leaves the lists; the destination's aliases/counts settle.
+    targets: ({ id }) => [
+      {
+        queryKey: LISTAS_KEY,
+        match: "prefix",
+        commit: (old: Condominio[] | undefined) => listOps.remove(old, id),
+      },
+    ],
+    invalidate: [ROOT],
   });
 }
 
 export function useAdicionarAlias() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, alias }: { id: string; alias: string }) =>
-      api.post<CondominioAlias>(`${BASE}/${id}/aliases`, { alias }),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<CondominioAlias, { id: string; alias: string }>({
+    mutationFn: ({ id, alias }) => api.post<CondominioAlias>(`${BASE}/${id}/aliases`, { alias }),
+    targets: ({ id }) => [
+      {
+        queryKey: detalheKey(id),
+        commit: (old: CondominioDetalhe | undefined, saved) =>
+          listOps.within(old, "aliases", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+    invalidate: [ROOT],
   });
 }
 
 export function useRemoverAlias() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: ({ id, aliasId }: { id: string; aliasId: string }) =>
-      api.delete<unknown>(`${BASE}/${id}/aliases/${aliasId}`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<unknown, { id: string; aliasId: string }>({
+    mutationFn: ({ id, aliasId }) => api.delete<unknown>(`${BASE}/${id}/aliases/${aliasId}`),
+    targets: ({ id, aliasId }) => [
+      {
+        queryKey: detalheKey(id),
+        optimistic: (old: CondominioDetalhe | undefined) =>
+          listOps.within(old, "aliases", (l) => listOps.remove(l, aliasId)),
+      },
+    ],
+    invalidate: [ROOT],
   });
 }

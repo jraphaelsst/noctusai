@@ -59,7 +59,7 @@ export function useEnvioRegras() {
 }
 export function useSalvarEnvioRegras() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, RegrasEnvioSalvar>({
+  return useMutation<unknown, unknown, RegrasEnvioSalvar>({ // noc-allow: invalidate-only — the PUT answer is not the read shape: the server normalises the rules (per-operation fallback, derived `diferenciar`)
     mutationFn: (body) => api.put("/api/julia/envio/regras", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ENVIO_KEY }),
   });
@@ -86,7 +86,7 @@ export function useEnvioPoliticas() {
 }
 export function useSalvarEnvioPoliticas() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, Politicas>({
+  return useMutation<unknown, unknown, Politicas>({ // noc-allow: invalidate-only — the PUT answer is not the read shape (`{data: Politicas}`): the server normalises and clamps the policies
     mutationFn: (body) => api.put("/api/julia/envio/politicas", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ENVIO_KEY }),
   });

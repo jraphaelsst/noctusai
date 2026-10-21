@@ -7,11 +7,12 @@
  * Built on @tanstack/react-query v5. queryFns never return undefined.
  */
 import {
-  keepPreviousData,
   useMutation,
-  useQuery,
   useQueryClient,
+  keepPreviousData,
+  useQuery,
 } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -108,48 +109,83 @@ export function useMailchimpSegmentMembers(
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+/** Mailchimp ids are numbers, so these edits go through `listOps.within` (untyped rows) instead of the string-id ops. */
 export function useMailchimpSegmentMutations() {
   const qc = useQueryClient();
-  const invalidateFamily = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
+  const segmentos = (edit: (l: SegmentOut[]) => SegmentOut[], totalDelta = 0) =>
+    (old: SegmentsOut | undefined) => {
+      const next = listOps.within(old, "items", edit);
+      return next && totalDelta ? { ...next, total: Math.max(0, next.total + totalDelta) } : next;
+    };
 
-  const create = useMutation<SegmentOut, unknown, CreateSegmentBody>({
+  const create = useCacheWriteMutation<SegmentOut, CreateSegmentBody>({
     mutationFn: (body) => api.post<SegmentOut>(BASE, body),
-    onSuccess: invalidateFamily,
+    // The default (param-less) list; paged / offset lists settle.
+    targets: [
+      {
+        queryKey: [...SEGMENTS_KEY, undefined],
+        commit: (old: SegmentsOut | undefined, saved) =>
+          old?.items?.some((s) => s.id === saved.id) ? old : segmentos((l) => [...l, saved], 1)(old),
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
-  const update = useMutation<
-    SegmentOut,
-    unknown,
-    { id: number; body: UpdateSegmentBody }
-  >({
-    mutationFn: ({ id, body }) =>
-      api.patch<SegmentOut>(`${BASE}/${id}`, body),
-    onSuccess: invalidateFamily,
+  const update = useCacheWriteMutation<SegmentOut, { id: number; body: UpdateSegmentBody }>({
+    mutationFn: ({ id, body }) => api.patch<SegmentOut>(`${BASE}/${id}`, body),
+    targets: ({ id }) => [
+      {
+        queryKey: SEGMENTS_KEY,
+        match: "prefix",
+        commit: (old: SegmentsOut | undefined, saved) =>
+          segmentos((l) => l.map((s) => (s.id === id ? { ...s, ...saved } : s)))(old),
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
-  const remove = useMutation<unknown, unknown, number>({
+  const remove = useCacheWriteMutation<unknown, number>({
     mutationFn: (id) => api.delete(`${BASE}/${id}`),
-    onSuccess: invalidateFamily,
+    targets: (id) => [
+      {
+        queryKey: SEGMENTS_KEY,
+        match: "prefix",
+        optimistic: (old: SegmentsOut | undefined) =>
+          old?.items?.some((s) => s.id === id) ? segmentos((l) => l.filter((s) => s.id !== id), -1)(old) : old,
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
-  const addMember = useMutation<
-    unknown,
-    unknown,
-    { segmentId: number; email: string }
-  >({
+  const addMember = useMutation<unknown, unknown, { segmentId: number; email: string }>({ // noc-allow: invalidate-only — the answer carries no member row: name/status of the added contact come from Mailchimp via a refetch
     mutationFn: ({ segmentId, email }) =>
       api.post(`${BASE}/${segmentId}/members`, { email }),
-    onSuccess: invalidateFamily,
+    onSuccess: () => qc.invalidateQueries({ queryKey: FAMILY_KEY }),
   });
 
-  const removeMember = useMutation<
-    unknown,
-    unknown,
-    { segmentId: number; email: string }
-  >({
+  const removeMember = useCacheWriteMutation<unknown, { segmentId: number; email: string }>({
     mutationFn: ({ segmentId, email }) =>
       api.delete(`${BASE}/${segmentId}/members/${encodeURIComponent(email)}`),
-    onSuccess: invalidateFamily,
+    targets: ({ segmentId, email }) => [
+      {
+        queryKey: [...SEGMENTS_KEY, segmentId, "members"],
+        match: "prefix",
+        optimistic: (old: SegmentMembersOut | undefined) => {
+          if (!old?.items?.some((m) => m.email === email)) return old;
+          const next = listOps.within(old, "items", (l) => l.filter((m) => m.email !== email));
+          return next ? { ...next, total: Math.max(0, next.total - 1) } : old;
+        },
+      },
+      {
+        queryKey: SEGMENTS_KEY,
+        match: "prefix",
+        optimistic: (old: SegmentsOut | undefined) =>
+          segmentos((l) =>
+            l.map((s) => (s.id === segmentId ? { ...s, member_count: Math.max(0, s.member_count - 1) } : s)),
+          )(old),
+      },
+    ],
+    invalidate: [FAMILY_KEY],
   });
 
   return { create, update, remove, addMember, removeMember };

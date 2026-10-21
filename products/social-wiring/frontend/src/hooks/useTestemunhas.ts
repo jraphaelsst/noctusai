@@ -9,8 +9,9 @@
  * selected for one. `rg` stays on the type only for the 2 legacy rows that
  * still carry one (no longer collected on the form, never printed).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export interface Testemunha {
   id: string;
@@ -63,28 +64,43 @@ export function useTestemunhas() {
   });
 }
 
+type TestemunhasCache = { items: Testemunha[]; total: number };
+
 export function useCreateTestemunha() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: TestemunhaCreate) =>
-      api.post<Testemunha>(BASE, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: TESTEMUNHAS_KEY }),
+  return useCacheWriteMutation<Testemunha, TestemunhaCreate>({
+    mutationFn: (payload) => api.post<Testemunha>(BASE, payload),
+    targets: [
+      {
+        queryKey: TESTEMUNHAS_KEY,
+        commit: (old: TestemunhasCache | undefined, saved) => {
+          if (!old?.items || old.items.some((t) => t.id === saved.id)) return old;
+          return { ...old, items: [...old.items, saved], total: old.total + 1 };
+        },
+      },
+    ],
   });
 }
 
 export function useUpdateTestemunha() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: TestemunhaPatch }) =>
-      api.patch<Testemunha>(`${BASE}/${id}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: TESTEMUNHAS_KEY }),
+  return useCacheWriteMutation<Testemunha, { id: string; patch: TestemunhaPatch }>({
+    mutationFn: ({ id, patch }) => api.patch<Testemunha>(`${BASE}/${id}`, patch),
+    targets: ({ id }) => [
+      {
+        queryKey: TESTEMUNHAS_KEY,
+        commit: (old: TestemunhasCache | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
   });
 }
 
 export function useDeleteTestemunha() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: TESTEMUNHAS_KEY }),
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${BASE}/${id}`),
+    targets: (id) => [
+      {
+        queryKey: TESTEMUNHAS_KEY,
+        optimistic: (old: TestemunhasCache | undefined) => pageOps.remove(old, id),
+      },
+    ],
   });
 }

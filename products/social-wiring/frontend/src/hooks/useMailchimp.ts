@@ -18,8 +18,9 @@
  *     body { api_key, server_prefix?, audience_id?, client_id }
  *     → upserts the marca's connection; returns the same shape.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types (mirror the BE contract) ─────────────────────────────────────────
 
@@ -71,13 +72,15 @@ export function useMailchimpConnection(marcaId: string | null) {
  * that marca on success so the grid reflects the new connected state.
  */
 export function useUpsertMailchimpConnection() {
-  const qc = useQueryClient();
-  return useMutation<MailchimpConnection, unknown, UpsertMailchimpConnectionInput>({
+  return useCacheWriteMutation<MailchimpConnection, UpsertMailchimpConnectionInput>({
     mutationFn: (payload) =>
       api.put<MailchimpConnection>("/api/mailchimp/connection", payload),
-    onSuccess: (res, variables) => {
-      const marcaId = (res as MailchimpConnection)?.marca_id ?? variables.marca_id;
-      qc.invalidateQueries({ queryKey: CONNECTION_KEY(marcaId) });
-    },
+    // The answer IS the connection read: the grid shows the new state after one round trip.
+    targets: (variables) => [
+      {
+        queryKey: CONNECTION_KEY(variables.marca_id),
+        commit: (_old: MailchimpConnection | undefined, res) => res,
+      },
+    ],
   });
 }

@@ -2,8 +2,9 @@
  * Imóveis linked to an atendimento (§3.1–3.4). Own file — `useCardHub.ts` is
  * frozen for this project.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
   AtendimentoImovel,
@@ -37,23 +38,45 @@ export function useAtendimentoImoveis(clienteId: string | null, atendimentoId?: 
 }
 
 export function useAtendimentoImoveisMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: KEY_ROOT(clienteId) });
-
-  const adicionar = useMutation({
-    mutationFn: (body: AtendimentoImovelCreateBody) =>
-      api.post<AtendimentoImovel>(base(clienteId), body),
-    onSuccess: invalidate,
+  const adicionar = useCacheWriteMutation<AtendimentoImovel, AtendimentoImovelCreateBody>({
+    mutationFn: (body) => api.post<AtendimentoImovel>(base(clienteId), body),
+    // The link joins the list of the atendimento it was added to (`principal` flips on its siblings settle).
+    targets: (body) => [
+      {
+        queryKey: KEY(clienteId, body.atendimento_id),
+        commit: (old: AtendimentoImoveisResponse | undefined, saved) => {
+          if (!old?.items || old.items.some((i) => i.id === saved.id)) return old;
+          const next = listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved));
+          return next ? { ...next, total: old.total + 1 } : old;
+        },
+      },
+    ],
+    invalidate: [KEY_ROOT(clienteId)],
   });
-  const definirPrincipal = useMutation({
-    mutationFn: ({ id }: { id: string }) =>
+  const definirPrincipal = useCacheWriteMutation<AtendimentoImovel, { id: string }>({
+    mutationFn: ({ id }) =>
       api.put<AtendimentoImovel>(`${base(clienteId)}/${encodeURIComponent(id)}/principal`),
-    onSuccess: invalidate,
+    // Exactly one principal per list: drawn at once on every cached atendimento list.
+    targets: ({ id }) => [
+      {
+        queryKey: KEY_ROOT(clienteId),
+        match: "prefix",
+        optimistic: (old: AtendimentoImoveisResponse | undefined) =>
+          old?.items?.some((i) => i.id === id)
+            ? { ...old, items: old.items.map((i) => ({ ...i, principal: i.id === id })) }
+            : old,
+      },
+    ],
   });
-  const remover = useMutation({
-    mutationFn: ({ id }: { id: string }) =>
-      api.delete(`${base(clienteId)}/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+  const remover = useCacheWriteMutation<unknown, { id: string }>({
+    mutationFn: ({ id }) => api.delete(`${base(clienteId)}/${encodeURIComponent(id)}`),
+    targets: ({ id }) => [
+      {
+        queryKey: KEY_ROOT(clienteId),
+        match: "prefix",
+        optimistic: (old: AtendimentoImoveisResponse | undefined) => pageOps.remove(old, id),
+      },
+    ],
   });
   return { adicionar, definirPrincipal, remover };
 }

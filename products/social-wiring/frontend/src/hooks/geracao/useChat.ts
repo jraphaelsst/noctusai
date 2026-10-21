@@ -6,7 +6,7 @@
  *
  * Loading rule (lying-loading-state.md): query hooks return
  * `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`,
- * never `isLoading`. Mutations invalidate the `["sw","geracao"]` family.
+ * never `isLoading`. Mutations write the server row into the cached reads, then settle by invalidating.
  *
  * Streaming (#45) is a `fetch` + the seed `readSseStream`; frames:
  * `meta` -> `delta`... -> (`truncated`) -> `done` | `error`. Pre-stream refusals
@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { readSseStream } from "@noctusai/lib";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 
 import { FILTROS_VAZIOS } from "@/components/geracao/biblioteca/filtros";
@@ -64,31 +65,63 @@ export function useConversas(marcaId: string | null, agente: Agente) {
   };
 }
 
+type ConversasCache = { pages: { items: Conversa[]; tem_mais: boolean }[]; pageParams: unknown[] };
+/** An infinite `conversas` cache with `edit` applied to each page's `items`. */
+const inPages = (old: ConversasCache | undefined, edit: (items: Conversa[]) => Conversa[] | undefined) =>
+  old?.pages ? { ...old, pages: old.pages.map((p) => listOps.within(p, "items", edit) ?? p) } : old;
+const CONVERSAS_KEY = [...CHAT_KEY, "conversas"] as const;
+
 export function useCriarConversa() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; agente: Agente; titulo?: string }) =>
-      unwrap(await api.post<Envelope<Conversa>>(`${BASE}/conversas`, v)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...CHAT_KEY, "conversas"] }),
+  return useCacheWriteMutation<Conversa, { marca_id: string; agente: Agente; titulo?: string }>({
+    mutationFn: async (v) => unwrap(await api.post<Envelope<Conversa>>(`${BASE}/conversas`, v)),
+    // The list is newest-activity first: the new conversa heads the first page.
+    targets: (v) => [
+      {
+        queryKey: [...CONVERSAS_KEY, v.marca_id, v.agente],
+        commit: (old: ConversasCache | undefined, saved) =>
+          old?.pages?.length
+            ? {
+                ...old,
+                pages: old.pages.map((p, i) =>
+                  i === 0 ? (listOps.within(p, "items", (l) => listOps.replace(l, saved.id, saved, "prepend")) ?? p) : p,
+                ),
+              }
+            : old,
+      },
+    ],
   });
 }
 
 export function useRenomearConversa() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { id: string; titulo: string }) =>
+  return useCacheWriteMutation<Conversa, { id: string; titulo: string }>({
+    mutationFn: async (v) =>
       unwrap(await api.patch<Envelope<Conversa>>(`${BASE}/conversas/${enc(v.id)}`, { titulo: v.titulo })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...CHAT_KEY, "conversas"] }),
+    targets: (v) => [
+      {
+        queryKey: CONVERSAS_KEY,
+        match: "prefix",
+        optimistic: (old: ConversasCache | undefined, vars) =>
+          inPages(old, (l) => listOps.patch(l, vars.id, { titulo: vars.titulo })),
+        commit: (old: ConversasCache | undefined, saved) => inPages(old, (l) => listOps.patch(l, v.id, saved)),
+      },
+    ],
   });
 }
 
 export function useApagarConversa() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`${BASE}/conversas/${enc(id)}`);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: CHAT_KEY }),
+    targets: (id) => [
+      {
+        queryKey: CONVERSAS_KEY,
+        match: "prefix",
+        optimistic: (old: ConversasCache | undefined) => inPages(old, (l) => listOps.remove(l, id)),
+      },
+    ],
+    // Messages / contexto of the deleted conversa live under the same family.
+    invalidate: [CHAT_KEY],
   });
 }
 
@@ -176,22 +209,32 @@ export function useMemorias(marcaId: string | null, enabled = true) {
   };
 }
 
+const MEMORIAS_KEY = [...CHAT_KEY, "memorias"] as const;
+
 export function useAdicionarMemoria() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; texto: string }) =>
-      unwrap(await api.post<Envelope<Memoria>>(`${BASE}/memorias`, v)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...CHAT_KEY, "memorias"] }),
+  return useCacheWriteMutation<Memoria, { marca_id: string; texto: string }>({
+    mutationFn: async (v) => unwrap(await api.post<Envelope<Memoria>>(`${BASE}/memorias`, v)),
+    targets: (v) => [
+      {
+        queryKey: [...MEMORIAS_KEY, v.marca_id],
+        commit: (old: Memoria[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
   });
 }
 
 export function useRemoverMemoria() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<void, string>({
+    mutationFn: async (id) => {
       await api.delete(`${BASE}/memorias/${enc(id)}`);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...CHAT_KEY, "memorias"] }),
+    targets: (id) => [
+      {
+        queryKey: MEMORIAS_KEY,
+        match: "prefix",
+        optimistic: (old: Memoria[] | undefined) => listOps.remove(old, id),
+      },
+    ],
   });
 }
 
@@ -215,11 +258,17 @@ export async function resolverViralPorCodigo(marcaId: string, codigo: number): P
 // ─── Salvar headline (#29) ──────────────────────────────────────────────────
 
 export function useSalvarHeadline() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; texto: string }) =>
+  return useCacheWriteMutation<Headline, { marca_id: string; texto: string }>({
+    mutationFn: async (v) =>
       unwrap(await api.post<Envelope<Headline>>("/api/media-creation/headlines", { ...v, favoritar: true })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
+    // Saved as favorita: it heads the marca's default favoritas list (server sorts newest first).
+    targets: (v) => [
+      {
+        queryKey: [...GERACAO_KEY, "headlines", v.marca_id, "lista", "favoritas", "", "", 0],
+        commit: (old: unknown, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 

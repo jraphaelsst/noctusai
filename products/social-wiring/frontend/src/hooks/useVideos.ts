@@ -244,7 +244,7 @@ export function useVideoSync(onComplete?: () => void) {
 export function useUpdateVideo(options?: { onSuccess?: (updated: Video) => void }) {
   const storeAccountId = useActiveAccountId("youtube");
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the video catalog lives in component state (useState), not the query cache: callers apply the answer through options.onSuccess
     mutationFn: async ({
       youtubeVideoId,
       body,
@@ -300,7 +300,7 @@ export interface DeleteVideoOptions {
 export function useDeleteVideo(options?: { onSuccess?: () => void }) {
   const storeAccountId = useActiveAccountId("youtube");
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the video catalog lives in component state (useState), not the query cache: callers drop the row through options.onSuccess
     mutationFn: async ({ youtubeVideoId, purgeRemote = false }: DeleteVideoOptions): Promise<boolean> => {
       const params = new URLSearchParams();
       if (storeAccountId) params.set("account_id", storeAccountId);

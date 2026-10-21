@@ -14,8 +14,9 @@
  * (so a card can show "14 toques" without a second request) and rendered as
  * "—" rather than a lying zero if the live response omits them.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { canonicoIdentificador } from "@noctusai/lib/identificador";
 
 // ─── Types (§4 schema — `clientes` table) ──────────────────────────────────
@@ -257,16 +258,37 @@ export function useClientesBusca(termoDebounced: string) {
 
 export function useClienteMutations() {
   const qc = useQueryClient();
-  const invalidateAll = () => qc.invalidateQueries({ queryKey: FAMILY_KEY });
 
-  const update = useMutation<Cliente, unknown, { id: string; body: ClientePatchBody }>({
+  const update = useCacheWriteMutation<Cliente, { id: string; body: ClientePatchBody }>({
     mutationFn: ({ id, body }) =>
       api.patch<Cliente>(`${BASE}/${encodeURIComponent(id)}`, body),
-    onSuccess: invalidateAll,
+    // The board / typeahead rows take the name and flag at once (`ativo` moving a card between tabs settles).
+    targets: ({ id }) => [
+      {
+        queryKey: FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: ClientesPage | undefined, vars) => pageOps.patch(old, id, vars.body),
+        commit: (old: ClientesPage | undefined, saved) => pageOps.patch(old, id, saved),
+      },
+    ],
   });
 
-  const remove = useMutation<ClienteDeleteOut, unknown, string>({
+  const remove = useCacheWriteMutation<ClienteDeleteOut, string>({
     mutationFn: (id) => api.delete<ClienteDeleteOut>(`${BASE}/${encodeURIComponent(id)}`),
+    // Only the board / typeahead lists are written and settled here: invalidating the whole FAMILY would
+    // refetch the deleted id's own mounted queries (see the note below).
+    targets: (id) => [
+      {
+        queryKey: [...FAMILY_KEY, "board"],
+        match: "prefix",
+        optimistic: (old: ClientesPage | undefined) => pageOps.remove(old, id),
+      },
+      {
+        queryKey: [...FAMILY_KEY, "busca"],
+        match: "prefix",
+        optimistic: (old: ClientesPage | undefined) => pageOps.remove(old, id),
+      },
+    ],
     // The deleted cliente's atendimentos are gone server-side too (the
     // service explicitly removes them — see `clientes_service.py
     // ::excluir_cliente`'s docstring on the funil-orphan guard), so the
@@ -285,7 +307,9 @@ export function useClienteMutations() {
       const doomed = (q: { queryKey: readonly unknown[] }) =>
         q.queryKey[0] === "sw" && q.queryKey.includes(id);
       void qc.cancelQueries({ predicate: doomed });
-      qc.invalidateQueries({ queryKey: FAMILY_KEY, predicate: (q) => !doomed(q) });
+      // board / busca lists are settled by the mutation itself (its targets): refetching them twice would double the load.
+      const settled = (q: { queryKey: readonly unknown[] }) => q.queryKey[2] === "board" || q.queryKey[2] === "busca";
+      qc.invalidateQueries({ queryKey: FAMILY_KEY, predicate: (q) => !doomed(q) && !settled(q) });
       qc.invalidateQueries({ queryKey: PESSOA_ROOT_KEY, predicate: (q) => !doomed(q) });
       qc.invalidateQueries({ queryKey: ["sw-funil"] });
       setTimeout(() => qc.removeQueries({ predicate: doomed }), 0);
@@ -403,14 +427,20 @@ export function useClientesExcluidos(enabled = true) {
 }
 
 export function useRestaurarClienteExcluido() {
-  const qc = useQueryClient();
-  return useMutation<ClienteRestauradoOut, unknown, string>({
+  return useCacheWriteMutation<ClienteRestauradoOut, string>({
     mutationFn: (clienteId) =>
       api.post<ClienteRestauradoOut>(
         `${BASE}/excluidos/${encodeURIComponent(clienteId)}/restaurar`,
         {},
       ),
+    // The tombstone leaves the excluídos list at once; the rebuilt cliente on the board is server-built.
+    targets: (clienteId) => [
+      {
+        queryKey: EXCLUIDOS_KEY,
+        optimistic: (old: ClientesExcluidosOut | undefined) => pageOps.remove(old, clienteId, "cliente_id"),
+      },
+    ],
     // FAMILY_KEY covers both the excluídos list and the board.
-    onSuccess: () => qc.invalidateQueries({ queryKey: FAMILY_KEY }),
+    invalidate: [FAMILY_KEY],
   });
 }

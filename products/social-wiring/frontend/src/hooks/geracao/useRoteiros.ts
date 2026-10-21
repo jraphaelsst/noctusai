@@ -14,9 +14,10 @@
  * a run reach a terminal status.
  */
 import { useEffect, useRef } from "react";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
@@ -37,14 +38,24 @@ const listaKey = (marcaId: string | null, q: string, offset: number) =>
   [...GERACAO_KEY, "roteiros", marcaId, "lista", q, offset] as const;
 const detalheKey = (id: string | null) => [...GERACAO_KEY, "roteiros", "detalhe", id] as const;
 
-function useInvalidateGeracao() {
-  const qc = useQueryClient();
-  return () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: GERACAO_KEY }),
-      qc.invalidateQueries({ queryKey: [ESTEIRA_PIPELINE_KEY] }),
-      qc.invalidateQueries({ queryKey: ESTEIRA_KEY }),
-    ]);
+/** Settled in the background after every roteiro write (post cards carry the roteiro status chip). */
+const INVALIDATE = [GERACAO_KEY, [ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY];
+const ROTEIROS_KEY = [...GERACAO_KEY, "roteiros"] as const;
+
+/** Roteiro write whose answer is the full row: detail replaced, summary fields patched on every cached page. */
+function roteiroTargets(id: string) {
+  return [
+    {
+      queryKey: detalheKey(id),
+      commit: (_old: Roteiro | undefined, saved: Roteiro) => saved,
+    },
+    {
+      queryKey: ROTEIROS_KEY,
+      match: "prefix" as const,
+      commit: (old: unknown, saved: Roteiro) =>
+        pageOps.patch(old, id, { nome: saved.nome, status: saved.status, post: saved.post }),
+    },
+  ];
 }
 
 /** True while any visible roteiro is still being produced (drives the poll). */
@@ -127,83 +138,105 @@ export interface CriarRoteiroInput {
 }
 
 export function useCriarRoteiro() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: CriarRoteiroInput) => unwrap(await api.post<Envelope<Roteiro>>(BASE, v)),
-    onSuccess: invalidate,
+  return useCacheWriteMutation<Roteiro, CriarRoteiroInput>({
+    mutationFn: async (v) => unwrap(await api.post<Envelope<Roteiro>>(BASE, v)),
+    // The default (unfiltered, first page) list shows the new roteiro at once; the server sorts newest first.
+    targets: (v) => [
+      {
+        queryKey: listaKey(v.marca_id, "", 0),
+        commit: (old: unknown, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: INVALIDATE,
   });
 }
 
 export function useResponderPerguntas() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: { id: string; respostas: { id: string; resposta: string }[] }) =>
+  return useCacheWriteMutation<Roteiro, { id: string; respostas: { id: string; resposta: string }[] }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.put<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(v.id)}/perguntas`, {
           respostas: v.respostas,
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => roteiroTargets(v.id),
+    invalidate: INVALIDATE,
   });
 }
 
 export function useGerarRoteiro() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: { id: string; pular_perguntas?: boolean }) =>
+  return useCacheWriteMutation<Roteiro, { id: string; pular_perguntas?: boolean }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.post<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(v.id)}/gerar`, {
           pular_perguntas: !!v.pular_perguntas,
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => roteiroTargets(v.id),
+    invalidate: INVALIDATE,
   });
 }
 
 /** #37 — a stale `expected_versao` answers 409 (callers show "O roteiro mudou; recarregue"). */
 export function useSalvarRoteiro() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: { id: string; nome?: string; conteudo?: string; expected_versao: number }) => {
+  return useCacheWriteMutation<
+    Roteiro,
+    { id: string; nome?: string; conteudo?: string; expected_versao: number }
+  >({
+    mutationFn: async (v) => {
       const { id, ...corpo } = v;
       return unwrap(await api.put<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(id)}`, corpo));
     },
-    onSuccess: invalidate,
+    targets: (v) => roteiroTargets(v.id),
+    invalidate: INVALIDATE,
   });
 }
 
 export function useFeedbackRoteiro() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: { id: string; feedback: "gostei" | "nao_gostei"; motivo?: string }) =>
+  return useCacheWriteMutation<Roteiro, { id: string; feedback: "gostei" | "nao_gostei"; motivo?: string }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.post<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(v.id)}/feedback`, {
           feedback: v.feedback,
           ...(v.motivo ? { motivo: v.motivo } : {}),
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => [
+      {
+        queryKey: detalheKey(v.id),
+        optimistic: (old: Roteiro | undefined, vars) =>
+          old ? { ...old, feedback: vars.feedback, feedback_motivo: vars.motivo ?? null } : old,
+        commit: (_old: Roteiro | undefined, saved) => saved,
+      },
+    ],
+    invalidate: INVALIDATE,
   });
 }
 
 export function useReprocessarRoteiro() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (v: { id: string; instrucoes_adicionais?: string }) =>
+  return useCacheWriteMutation<Roteiro, { id: string; instrucoes_adicionais?: string }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.post<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(v.id)}/reprocessar`, {
           ...(v.instrucoes_adicionais ? { instrucoes_adicionais: v.instrucoes_adicionais } : {}),
         }),
       ),
-    onSuccess: invalidate,
+    targets: (v) => roteiroTargets(v.id),
+    invalidate: INVALIDATE,
   });
 }
 
 export function useExcluirRoteiros() {
-  const invalidate = useInvalidateGeracao();
-  return useMutation({
-    mutationFn: async (ids: string[]) =>
+  return useCacheWriteMutation<{ excluidos: number }, string[]>({
+    mutationFn: async (ids) =>
       unwrap(await api.post<Envelope<{ excluidos: number }>>(`${BASE}/excluir`, { ids })),
-    onSuccess: invalidate,
+    targets: (ids) => [
+      {
+        queryKey: ROTEIROS_KEY,
+        match: "prefix",
+        optimistic: (old: unknown) => ids.reduce((acc: unknown, id) => pageOps.remove(acc, id), old),
+      },
+    ],
+    invalidate: INVALIDATE,
   });
 }

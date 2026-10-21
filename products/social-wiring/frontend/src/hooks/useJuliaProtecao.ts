@@ -12,6 +12,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 export type ChaveLimite =
@@ -70,7 +71,7 @@ export function useConfigProtecao(enabled = true) {
 
 export function useSalvarConfigProtecao() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, ConfigEntrada>({
+  return useMutation<unknown, unknown, ConfigEntrada>({ // noc-allow: invalidate-only — the PUT answer is not the read shape: `padrao`, `faixas`, `atualizado_em` and clamped values are server-computed
     mutationFn: (campos) => api.put(`${BASE}/config`, campos),
     onSettled: () => qc.invalidateQueries({ queryKey: [...PROTECAO_KEY, "config"] }),
   });
@@ -85,23 +86,28 @@ export function useBloqueios(historico: boolean, enabled = true) {
   return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
 }
 
-function useInvalidarBloqueios() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: [...PROTECAO_KEY, "bloqueios"] });
-}
-
 export function useBloquearNumero() {
-  const inv = useInvalidarBloqueios();
-  return useMutation<unknown, unknown, { numero: string; motivo: string; duracao_min?: number }>({
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, { numero: string; motivo: string; duracao_min?: number }>({ // noc-allow: invalidate-only — the answer carries no row: the bloqueio id, expiry, origin and notification status are server-assigned
     mutationFn: (corpo) => api.post(`${BASE}/bloqueios`, corpo),
-    onSettled: inv,
+    onSettled: () => qc.invalidateQueries({ queryKey: [...PROTECAO_KEY, "bloqueios"] }),
   });
 }
 
 export function useDesbloquearNumero() {
-  const inv = useInvalidarBloqueios();
-  return useMutation<unknown, unknown, { id: string }>({
+  return useCacheWriteMutation<unknown, { id: string }>({
     mutationFn: ({ id }) => api.post(`${BASE}/bloqueios/${encodeURIComponent(id)}/desbloquear`, {}),
-    onSettled: inv,
+    targets: ({ id }) => [
+      {
+        // The active list drops it; the history list keeps it, no longer active.
+        queryKey: [...PROTECAO_KEY, "bloqueios", false],
+        optimistic: (old: Bloqueio[] | undefined) => listOps.remove(old, id),
+      },
+      {
+        queryKey: [...PROTECAO_KEY, "bloqueios", true],
+        optimistic: (old: Bloqueio[] | undefined) => listOps.patch(old, id, { ativo: false }),
+      },
+    ],
+    invalidate: [[...PROTECAO_KEY, "bloqueios"]],
   });
 }

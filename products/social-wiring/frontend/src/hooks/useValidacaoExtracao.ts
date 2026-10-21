@@ -192,7 +192,7 @@ export function useValidacaoExtracaoMutations(clienteId: string, contratoId: str
     },
   });
 
-  const salvarManual = useMutation({
+  const salvarManual = useMutation({ // noc-allow: invalidate-only — a PATCH on a manual-field route (untyped answer): the pendentes/conflitos situation is recomputed server-side
     mutationFn: ({ edicao, valor }: { edicao: EdicaoManual; valor: string }) =>
       api.patch<unknown>(edicao.rota, { [edicao.campo]: valor }),
     onSuccess: () => {

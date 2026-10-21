@@ -11,6 +11,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 const BASE = "/api/email-marketing";
 const FAMILY = ["sw", "email-marketing"] as const;
@@ -301,53 +302,98 @@ export interface EmCampaignInput {
   remetente_email?: string | null;
 }
 
+const CAMPAIGNS_KEY = [...FAMILY, "campaigns"] as const;
+/** A campaign row's targets: every cached status list is patched, and the detail is merged. */
+const campaignTargets = (id: string) => [
+  {
+    queryKey: CAMPAIGNS_KEY,
+    match: "prefix" as const,
+    commit: (old: EmCampaign[] | undefined, res: Envelope<EmCampaign>) => {
+      const row = unwrap<EmCampaign | null>(res, null);
+      return row ? listOps.patch(old, id, row) : old;
+    },
+  },
+  {
+    queryKey: emKeys.campaign(id),
+    commit: (old: EmCampaign | null | undefined, res: Envelope<EmCampaign>) => {
+      const row = unwrap<EmCampaign | null>(res, null);
+      return row && old ? listOps.merge(old, row) : old;
+    },
+  },
+];
+/** Status-only transitions the route accepts without returning the row: drawn at once, settled by the refetch. */
+const campaignStatusTarget = (id: string, status: CampaignStatus, extra: Partial<EmCampaign> = {}) => [
+  {
+    queryKey: CAMPAIGNS_KEY,
+    match: "prefix" as const,
+    optimistic: (old: EmCampaign[] | undefined) => listOps.patch(old, id, { status, ...extra }),
+  },
+  {
+    queryKey: emKeys.campaign(id),
+    optimistic: (old: EmCampaign | null | undefined) => (old ? listOps.merge(old, { status, ...extra }) : old),
+  },
+];
+
 export function useEmCampaignMutations() {
-  const qc = useQueryClient();
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: [...FAMILY, "campaigns"] });
-    qc.invalidateQueries({ queryKey: emKeys.dashboard() });
-  };
+  const dash = [emKeys.dashboard()];
 
   return {
-    create: useMutation({
-      mutationFn: (body: EmCampaignInput) =>
-        api.post<Envelope<EmCampaign>>(`${BASE}/campaigns`, body),
-      onSuccess: invalidate,
+    create: useCacheWriteMutation<Envelope<EmCampaign>, EmCampaignInput>({
+      mutationFn: (body) => api.post<Envelope<EmCampaign>>(`${BASE}/campaigns`, body),
+      // Newest campaign first in the unfiltered list; status-filtered lists converge on the settle.
+      targets: [
+        {
+          queryKey: emKeys.campaigns(),
+          commit: (old: EmCampaign[] | undefined, res) => {
+            const row = unwrap<EmCampaign | null>(res, null);
+            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+          },
+        },
+      ],
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    update: useMutation({
-      mutationFn: ({ id, body }: { id: string; body: Partial<EmCampaignInput> }) =>
+    update: useCacheWriteMutation<Envelope<EmCampaign>, { id: string; body: Partial<EmCampaignInput> }>({
+      mutationFn: ({ id, body }) =>
         api.patch<Envelope<EmCampaign>>(
           `${BASE}/campaigns/${encodeURIComponent(id)}`,
           body,
         ),
-      onSuccess: invalidate,
+      targets: ({ id }) => campaignTargets(id),
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/campaigns/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/campaigns/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: CAMPAIGNS_KEY,
+          match: "prefix",
+          optimistic: (old: EmCampaign[] | undefined) => listOps.remove(old, id),
+        },
+      ],
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    schedule: useMutation({
-      mutationFn: ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
+    schedule: useCacheWriteMutation<unknown, { id: string; scheduledAt: string }>({
+      mutationFn: ({ id, scheduledAt }) =>
         api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/schedule`, {
           scheduled_at: scheduledAt,
         }),
-      onSuccess: invalidate,
+      targets: ({ id, scheduledAt }) => campaignStatusTarget(id, "agendada", { scheduled_at: scheduledAt }),
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    send: useMutation({
-      mutationFn: (id: string) =>
-        api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/send`, {}),
-      onSuccess: invalidate,
+    send: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/send`, {}),
+      targets: (id) => campaignStatusTarget(id, "enviando"),
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    pause: useMutation({
-      mutationFn: (id: string) =>
-        api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/pause`, {}),
-      onSuccess: invalidate,
+    pause: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/pause`, {}),
+      targets: (id) => campaignStatusTarget(id, "pausada"),
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
-    cancel: useMutation({
-      mutationFn: (id: string) =>
-        api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/cancel`, {}),
-      onSuccess: invalidate,
+    cancel: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.post(`${BASE}/campaigns/${encodeURIComponent(id)}/cancel`, {}),
+      targets: (id) => campaignStatusTarget(id, "cancelada"),
+      invalidate: [CAMPAIGNS_KEY, ...dash],
     }),
   };
 }
@@ -375,32 +421,59 @@ export interface EmContactInput {
   tags?: string[];
 }
 
+const CONTACTS_KEY = [...FAMILY, "contacts"] as const;
+
 export function useEmContactMutations() {
   const qc = useQueryClient();
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: [...FAMILY, "contacts"] });
+    qc.invalidateQueries({ queryKey: CONTACTS_KEY });
     qc.invalidateQueries({ queryKey: emKeys.dashboard() });
   };
   return {
-    create: useMutation({
-      mutationFn: (body: EmContactInput) =>
-        api.post<Envelope<EmContact>>(`${BASE}/contacts`, body),
-      onSuccess: invalidate,
+    create: useCacheWriteMutation<Envelope<EmContact>, EmContactInput>({
+      mutationFn: (body) => api.post<Envelope<EmContact>>(`${BASE}/contacts`, body),
+      // Unfiltered list only (search / status lists would need the server's filter); the rest settle.
+      targets: [
+        {
+          queryKey: emKeys.contacts(),
+          commit: (old: EmContact[] | undefined, res) => {
+            const row = unwrap<EmContact | null>(res, null);
+            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+          },
+        },
+      ],
+      invalidate: [CONTACTS_KEY, emKeys.dashboard()],
     }),
-    update: useMutation({
-      mutationFn: ({ id, body }: { id: string; body: Partial<EmContactInput> }) =>
+    update: useCacheWriteMutation<Envelope<EmContact>, { id: string; body: Partial<EmContactInput> }>({
+      mutationFn: ({ id, body }) =>
         api.patch<Envelope<EmContact>>(
           `${BASE}/contacts/${encodeURIComponent(id)}`,
           body,
         ),
-      onSuccess: invalidate,
+      targets: ({ id }) => [
+        {
+          queryKey: CONTACTS_KEY,
+          match: "prefix",
+          commit: (old: EmContact[] | undefined, res) => {
+            const row = unwrap<EmContact | null>(res, null);
+            return row ? listOps.patch(old, id, row) : old;
+          },
+        },
+      ],
+      invalidate: [CONTACTS_KEY, emKeys.dashboard()],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/contacts/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/contacts/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: CONTACTS_KEY,
+          match: "prefix",
+          optimistic: (old: EmContact[] | undefined) => listOps.remove(old, id),
+        },
+      ],
+      invalidate: [CONTACTS_KEY, emKeys.dashboard()],
     }),
-    importMany: useMutation({
+    importMany: useMutation({ // noc-allow: invalidate-only — bulk import: the answer is {imported,total} counts, the new contacts only exist server-side
       mutationFn: ({ contacts, doubleOptIn }: { contacts: EmContactInput[]; doubleOptIn: boolean }) =>
         api.post<Envelope<EmImportResult>>(`${BASE}/contacts/import`, {
           contacts,
@@ -408,7 +481,7 @@ export function useEmContactMutations() {
         }),
       onSuccess: invalidate,
     }),
-    resendConfirmation: useMutation({
+    resendConfirmation: useMutation({ // noc-allow: invalidate-only — fire-and-forget email send: no cached read changes
       mutationFn: (id: string) =>
         api.post<Envelope<{ confirmation: EmConfirmationOutcome }>>(
           `${BASE}/contacts/${encodeURIComponent(id)}/resend-confirmation`,
@@ -452,35 +525,68 @@ export function useEmListMutations() {
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: [...FAMILY, "lists"] });
   return {
-    create: useMutation({
-      mutationFn: (body: EmListInput) =>
-        api.post<Envelope<EmList>>(`${BASE}/lists`, body),
-      onSuccess: invalidate,
+    create: useCacheWriteMutation<Envelope<EmList>, EmListInput>({
+      mutationFn: (body) => api.post<Envelope<EmList>>(`${BASE}/lists`, body),
+      targets: [
+        {
+          queryKey: emKeys.lists(),
+          commit: (old: EmList[] | undefined, res) => {
+            const row = unwrap<EmList | null>(res, null);
+            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+          },
+        },
+      ],
     }),
-    update: useMutation({
-      mutationFn: ({ id, body }: { id: string; body: Partial<EmListInput> }) =>
+    update: useCacheWriteMutation<Envelope<EmList>, { id: string; body: Partial<EmListInput> }>({
+      mutationFn: ({ id, body }) =>
         api.patch<Envelope<EmList>>(`${BASE}/lists/${encodeURIComponent(id)}`, body),
-      onSuccess: invalidate,
+      targets: ({ id }) => [
+        {
+          queryKey: emKeys.lists(),
+          commit: (old: EmList[] | undefined, res) => {
+            const row = unwrap<EmList | null>(res, null);
+            return row ? listOps.patch(old, id, row) : old;
+          },
+        },
+      ],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/lists/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/lists/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: emKeys.lists(),
+          optimistic: (old: EmList[] | undefined) => listOps.remove(old, id),
+        },
+      ],
     }),
-    addMembers: useMutation({
+    addMembers: useMutation({ // noc-allow: invalidate-only — the answer carries no rows: the member contacts and the list's contact_count come from a refetch
       mutationFn: ({ id, contactIds }: { id: string; contactIds: string[] }) =>
         api.post(`${BASE}/lists/${encodeURIComponent(id)}/members`, {
           contact_ids: contactIds,
         }),
       onSuccess: invalidate,
     }),
-    removeMembers: useMutation({
+    removeMembers: useCacheWriteMutation<unknown, { id: string; contactIds: string[] }>({
       // DELETE with a body — the route declares `ListMembersRemove`.
-      mutationFn: ({ id, contactIds }: { id: string; contactIds: string[] }) =>
+      mutationFn: ({ id, contactIds }) =>
         api.delete(`${BASE}/lists/${encodeURIComponent(id)}/members`, {
           contact_ids: contactIds,
         }),
-      onSuccess: invalidate,
+      targets: ({ id, contactIds }) => [
+        {
+          queryKey: emKeys.listContacts(id),
+          optimistic: (old: EmContact[] | undefined) =>
+            contactIds.reduce((acc: EmContact[] | undefined, cid) => listOps.remove(acc, cid), old),
+        },
+        {
+          queryKey: emKeys.lists(),
+          optimistic: (old: EmList[] | undefined, vars) =>
+            old?.map((l) =>
+              l.id === id ? { ...l, contact_count: Math.max(0, l.contact_count - vars.contactIds.length) } : l,
+            ),
+        },
+      ],
+      invalidate: [[...FAMILY, "lists"]],
     }),
   };
 }
@@ -517,29 +623,48 @@ export interface EmTemplateInput {
 }
 
 export function useEmTemplateMutations() {
-  const qc = useQueryClient();
-  const invalidate = () =>
-    qc.invalidateQueries({ queryKey: [...FAMILY, "templates"] });
   return {
-    create: useMutation({
-      mutationFn: (body: EmTemplateInput) =>
-        api.post<Envelope<EmTemplate>>(`${BASE}/templates`, body),
-      onSuccess: invalidate,
+    create: useCacheWriteMutation<Envelope<EmTemplate>, EmTemplateInput>({
+      mutationFn: (body) => api.post<Envelope<EmTemplate>>(`${BASE}/templates`, body),
+      targets: [
+        {
+          queryKey: emKeys.templates(),
+          commit: (old: EmTemplate[] | undefined, res) => {
+            const row = unwrap<EmTemplate | null>(res, null);
+            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+          },
+        },
+      ],
+      invalidate: [[...FAMILY, "templates"]],
     }),
-    update: useMutation({
-      mutationFn: ({ id, body }: { id: string; body: Partial<EmTemplateInput> }) =>
+    update: useCacheWriteMutation<Envelope<EmTemplate>, { id: string; body: Partial<EmTemplateInput> }>({
+      mutationFn: ({ id, body }) =>
         api.patch<Envelope<EmTemplate>>(
           `${BASE}/templates/${encodeURIComponent(id)}`,
           body,
         ),
-      onSuccess: invalidate,
+      targets: ({ id }) => [
+        {
+          queryKey: [...FAMILY, "templates"],
+          match: "prefix",
+          commit: (old: EmTemplate[] | undefined, res) => {
+            const row = unwrap<EmTemplate | null>(res, null);
+            return row ? listOps.patch(old, id, row) : old;
+          },
+        },
+      ],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/templates/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/templates/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: [...FAMILY, "templates"],
+          match: "prefix",
+          optimistic: (old: EmTemplate[] | undefined) => listOps.remove(old, id),
+        },
+      ],
     }),
-    preview: useMutation({
+    preview: useMutation({ // noc-allow: invalidate-only — a render-only call: nothing is written, no cached read
       mutationFn: ({
         id,
         variaveis,
@@ -607,46 +732,71 @@ export interface EmAutomationInput {
   trigger_config?: Record<string, unknown>;
 }
 
+const AUTOMATIONS_KEY = [...FAMILY, "automations"] as const;
+const automationStatus = (id: string, status: AutomationStatus) => [
+  {
+    queryKey: AUTOMATIONS_KEY,
+    match: "prefix" as const,
+    optimistic: (old: EmAutomation[] | undefined) => listOps.patch(old, id, { status }),
+  },
+];
+
 export function useEmAutomationMutations() {
   const qc = useQueryClient();
   const invalidate = () =>
-    qc.invalidateQueries({ queryKey: [...FAMILY, "automations"] });
+    qc.invalidateQueries({ queryKey: AUTOMATIONS_KEY });
   return {
-    create: useMutation({
-      mutationFn: (body: EmAutomationInput) =>
-        api.post<Envelope<EmAutomation>>(`${BASE}/automations`, body),
-      onSuccess: invalidate,
+    create: useCacheWriteMutation<Envelope<EmAutomation>, EmAutomationInput>({
+      mutationFn: (body) => api.post<Envelope<EmAutomation>>(`${BASE}/automations`, body),
+      targets: [
+        {
+          queryKey: emKeys.automations(),
+          commit: (old: EmAutomation[] | undefined, res) => {
+            const row = unwrap<EmAutomation | null>(res, null);
+            return row ? listOps.replace(old, row.id, row, "prepend") : old;
+          },
+        },
+      ],
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    update: useMutation({
-      mutationFn: ({
-        id,
-        body,
-      }: {
-        id: string;
-        body: Partial<EmAutomationInput>;
-      }) =>
+    update: useCacheWriteMutation<Envelope<EmAutomation>, { id: string; body: Partial<EmAutomationInput> }>({
+      mutationFn: ({ id, body }) =>
         api.patch<Envelope<EmAutomation>>(
           `${BASE}/automations/${encodeURIComponent(id)}`,
           body,
         ),
-      onSuccess: invalidate,
+      targets: ({ id }) => [
+        {
+          queryKey: AUTOMATIONS_KEY,
+          match: "prefix",
+          commit: (old: EmAutomation[] | undefined, res) => {
+            const row = unwrap<EmAutomation | null>(res, null);
+            return row ? listOps.patch(old, id, row) : old;
+          },
+        },
+      ],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/automations/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/automations/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: AUTOMATIONS_KEY,
+          match: "prefix",
+          optimistic: (old: EmAutomation[] | undefined) => listOps.remove(old, id),
+        },
+      ],
     }),
-    activate: useMutation({
-      mutationFn: (id: string) =>
-        api.post(`${BASE}/automations/${encodeURIComponent(id)}/activate`, {}),
-      onSuccess: invalidate,
+    activate: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.post(`${BASE}/automations/${encodeURIComponent(id)}/activate`, {}),
+      targets: (id) => automationStatus(id, "ativa"),
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    pause: useMutation({
-      mutationFn: (id: string) =>
-        api.post(`${BASE}/automations/${encodeURIComponent(id)}/pause`, {}),
-      onSuccess: invalidate,
+    pause: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.post(`${BASE}/automations/${encodeURIComponent(id)}/pause`, {}),
+      targets: (id) => automationStatus(id, "pausada"),
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    addStep: useMutation({
+    addStep: useMutation({ // noc-allow: invalidate-only — the answer is untyped and the step's id/posicao are server-assigned: the steps list comes from a refetch
       mutationFn: ({
         id,
         tipo,
@@ -662,38 +812,54 @@ export function useEmAutomationMutations() {
         }),
       onSuccess: invalidate,
     }),
-    updateStep: useMutation({
-      mutationFn: ({
-        id,
-        stepId,
-        body,
-      }: {
-        id: string;
-        stepId: string;
-        body: { tipo?: string; config?: Record<string, unknown> };
-      }) =>
+    updateStep: useCacheWriteMutation<
+      unknown,
+      { id: string; stepId: string; body: { tipo?: string; config?: Record<string, unknown> } }
+    >({
+      mutationFn: ({ id, stepId, body }) =>
         api.patch(
           `${BASE}/automations/${encodeURIComponent(id)}/steps/${encodeURIComponent(stepId)}`,
           body,
         ),
-      onSuccess: invalidate,
+      targets: ({ id, stepId }) => [
+        {
+          queryKey: emKeys.steps(id),
+          optimistic: (old: EmAutomationStep[] | undefined, vars) => listOps.patch(old, stepId, vars.body),
+        },
+      ],
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    removeStep: useMutation({
-      mutationFn: ({ id, stepId }: { id: string; stepId: string }) =>
+    removeStep: useCacheWriteMutation<unknown, { id: string; stepId: string }>({
+      mutationFn: ({ id, stepId }) =>
         api.delete(
           `${BASE}/automations/${encodeURIComponent(id)}/steps/${encodeURIComponent(stepId)}`,
         ),
-      onSuccess: invalidate,
+      targets: ({ id, stepId }) => [
+        {
+          queryKey: emKeys.steps(id),
+          optimistic: (old: EmAutomationStep[] | undefined) => listOps.remove(old, stepId),
+        },
+      ],
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    reorderSteps: useMutation({
-      mutationFn: ({ id, stepIds }: { id: string; stepIds: string[] }) =>
+    reorderSteps: useCacheWriteMutation<unknown, { id: string; stepIds: string[] }>({
+      mutationFn: ({ id, stepIds }) =>
         api.post(
           `${BASE}/automations/${encodeURIComponent(id)}/steps/reorder`,
           { step_ids: stepIds },
         ),
-      onSuccess: invalidate,
+      targets: ({ id, stepIds }) => [
+        {
+          queryKey: emKeys.steps(id),
+          optimistic: (old: EmAutomationStep[] | undefined) =>
+            old
+              ? [...old].sort((a, b) => stepIds.indexOf(a.id) - stepIds.indexOf(b.id))
+              : old,
+        },
+      ],
+      invalidate: [AUTOMATIONS_KEY],
     }),
-    enroll: useMutation({
+    enroll: useMutation({ // noc-allow: invalidate-only — enrollments are rows the server creates per contact; the answer carries none
       mutationFn: ({ id, contactIds }: { id: string; contactIds: string[] }) =>
         api.post(`${BASE}/automations/${encodeURIComponent(id)}/enroll`, {
           contact_ids: contactIds,
@@ -717,25 +883,42 @@ export function useEmDomains() {
 }
 
 export function useEmDomainMutations() {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: emKeys.domains() });
   return {
-    add: useMutation({
-      mutationFn: (domain: string) =>
-        api.post<Envelope<EmDomain>>(`${BASE}/settings/domains`, { domain }),
-      onSuccess: invalidate,
+    add: useCacheWriteMutation<Envelope<EmDomain>, string>({
+      mutationFn: (domain) => api.post<Envelope<EmDomain>>(`${BASE}/settings/domains`, { domain }),
+      targets: [
+        {
+          queryKey: emKeys.domains(),
+          commit: (old: EmDomain[] | undefined, res) => {
+            const row = unwrap<EmDomain | null>(res, null);
+            return row ? listOps.replace(old, row.id, row) : old;
+          },
+        },
+      ],
     }),
-    verify: useMutation({
-      mutationFn: (id: string) =>
+    verify: useCacheWriteMutation<Envelope<EmDomain>, string>({
+      mutationFn: (id) =>
         api.get<Envelope<EmDomain>>(
           `${BASE}/settings/domains/${encodeURIComponent(id)}/verify`,
         ),
-      onSuccess: invalidate,
+      targets: (id) => [
+        {
+          queryKey: emKeys.domains(),
+          commit: (old: EmDomain[] | undefined, res) => {
+            const row = unwrap<EmDomain | null>(res, null);
+            return row ? listOps.patch(old, id, row) : old;
+          },
+        },
+      ],
     }),
-    remove: useMutation({
-      mutationFn: (id: string) =>
-        api.delete(`${BASE}/settings/domains/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+    remove: useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/settings/domains/${encodeURIComponent(id)}`),
+      targets: (id) => [
+        {
+          queryKey: emKeys.domains(),
+          optimistic: (old: EmDomain[] | undefined) => listOps.remove(old, id),
+        },
+      ],
     }),
   };
 }
@@ -744,46 +927,46 @@ export function useEmDomainMutations() {
 
 export function useEmAi() {
   return {
-    subjects: useMutation({
+    subjects: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: (campaignSummary: string) =>
         api.post<Envelope<{ subjects?: string[] }>>(`${BASE}/ai/subjects`, {
           campaign_summary: campaignSummary,
         }),
     }),
-    templateDraft: useMutation({
+    templateDraft: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: (prompt: string) =>
         api.post<Envelope<Record<string, unknown>>>(`${BASE}/ai/template-draft`, {
           prompt,
         }),
     }),
-    reengagement: useMutation({
+    reengagement: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: (context: string) =>
         api.post<Envelope<Record<string, unknown>>>(`${BASE}/ai/reengagement`, {
           context,
         }),
     }),
-    deliverability: useMutation({
+    deliverability: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: ({ html, subject }: { html: string; subject?: string }) =>
         api.post<Envelope<Record<string, unknown>>>(`${BASE}/ai/deliverability`, {
           html,
           subject: subject ?? null,
         }),
     }),
-    translate: useMutation({
+    translate: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: ({ html, targetLang }: { html: string; targetLang: string }) =>
         api.post<Envelope<Record<string, unknown>>>(`${BASE}/ai/translate`, {
           html,
           target_lang: targetLang,
         }),
     }),
-    segmentContacts: useMutation({
+    segmentContacts: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: (body: Record<string, unknown>) =>
         api.post<Envelope<Record<string, unknown>>>(
           `${BASE}/ai/segment-contacts`,
           body,
         ),
     }),
-    sendDebrief: useMutation({
+    sendDebrief: useMutation({ // noc-allow: invalidate-only — AI call: computes a result for the caller, writes nothing cached
       mutationFn: (campaignId: string) =>
         api.post<Envelope<unknown>>(
           `${BASE}/ai/campaigns/${encodeURIComponent(campaignId)}/debrief/send`,
@@ -832,7 +1015,7 @@ export function useEmUnsubscribeInfo(token: string | undefined) {
 }
 
 export function useEmConfirmUnsubscribe(token: string | undefined) {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — public token page (no session, no cached read)
     mutationFn: () =>
       api.post<{ ok: boolean; already?: boolean; message?: string }>(
         `${EM_UNSUBSCRIBE}/${encodeURIComponent(token!)}`,
@@ -864,7 +1047,7 @@ export function useEmConfirmEmailInfo(token: string | undefined) {
 }
 
 export function useEmConfirmEmail(token: string | undefined) {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — public token page (no session, no cached read)
     mutationFn: () =>
       api.post<{ ok: boolean; already?: boolean; email?: string; message?: string }>(
         `${EM_CONFIRM}/${encodeURIComponent(token!)}`,

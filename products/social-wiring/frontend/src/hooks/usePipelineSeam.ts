@@ -22,7 +22,7 @@ interface AceitarPropostaResult {
 export function useAceitarProposta() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the board/processo views are server-built (the card moves between pipelines and a processo is created): the accepted atendimento alone cannot place them
     mutationFn: async (atendimentoId: string) => {
       const result: any = await api.post(
         `/api/atendimentos-venda/${atendimentoId}/aceitar-proposta`,

@@ -2,8 +2,9 @@
  * usePropriedades — imóveis a cliente OWNS (proprietários, CONTRACT §4.2).
  * Person-keyed ⇒ no `placeholderData` (see `usePessoa.ts`).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { pessoaKey } from "@/hooks/usePessoa";
 import type { ItemsTotal, PropriedadeItem } from "@/types/interesses";
@@ -21,20 +22,34 @@ export function usePropriedades(clienteId: string | undefined) {
   });
 }
 
+/** Add / remove. Both write the list at once and refresh the person payload (`contagens`, server-computed). */
 export function usePropriedadeMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: pessoaKey(clienteId) });
-
-  const add = useMutation({
-    mutationFn: (codigo: string) =>
+  const add = useCacheWriteMutation<PropriedadeItem, string>({
+    mutationFn: (codigo) =>
       api.post<PropriedadeItem>(`${base(clienteId)}/propriedades`, { codigo }),
-    onSuccess: invalidate,
+    targets: [
+      {
+        queryKey: propriedadesKey(clienteId),
+        commit: (old: ItemsTotal<PropriedadeItem> | undefined, saved) => {
+          if (!old?.items || old.items.some((i) => i.id === saved.id)) return old;
+          const next = listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved));
+          return next ? { ...next, total: old.total + 1 } : old;
+        },
+      },
+    ],
+    invalidate: [pessoaKey(clienteId)],
   });
 
-  const remove = useMutation({
-    mutationFn: (id: string) =>
+  const remove = useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) =>
       api.delete(`${base(clienteId)}/propriedades/${encodeURIComponent(id)}`),
-    onSuccess: invalidate,
+    targets: (id) => [
+      {
+        queryKey: propriedadesKey(clienteId),
+        optimistic: (old: ItemsTotal<PropriedadeItem> | undefined) => pageOps.remove(old, id),
+      },
+    ],
+    invalidate: [pessoaKey(clienteId)],
   });
 
   return { add, remove };

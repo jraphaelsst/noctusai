@@ -29,6 +29,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { Cliente } from "@/hooks/useClientes";
 
@@ -164,9 +165,11 @@ export function useRevisaoMutations() {
   const invalidateQueue = () => qc.invalidateQueries({ queryKey: QUEUE_FAMILY_KEY });
   const invalidateBoard = () => qc.invalidateQueries({ queryKey: BOARD_FAMILY_KEY });
 
-  const merge = useMutation<
+  // The group leaves every cached page of the queue the moment it is resolved
+  // (rows are keyed by `chave_canonica`, which is the `grupoId` the routes take);
+  // the board (clientes absorbed by a merge) is server-computed and just settles.
+  const merge = useCacheWriteMutation<
     RevisaoMergeResult,
-    unknown,
     { grupoId: string; sobreviventeId?: string }
   >({
     mutationFn: ({ grupoId, sobreviventeId }) =>
@@ -174,20 +177,29 @@ export function useRevisaoMutations() {
         `${REVISAO_BASE}/${encodeURIComponent(grupoId)}/merge`,
         sobreviventeId ? { sobrevivente_id: sobreviventeId } : undefined,
       ),
-    onSuccess: () => {
-      invalidateQueue();
-      invalidateBoard();
-    },
+    targets: ({ grupoId }) => [
+      {
+        queryKey: QUEUE_FAMILY_KEY,
+        match: "prefix",
+        commit: (old: RevisaoPage | undefined) => pageOps.remove(old, grupoId, "chave_canonica"),
+      },
+    ],
+    invalidate: [BOARD_FAMILY_KEY],
   });
 
-  const manterSeparados = useMutation<unknown, unknown, string>({
+  const manterSeparados = useCacheWriteMutation<unknown, string>({
     mutationFn: (grupoId) =>
       api.post(`${REVISAO_BASE}/${encodeURIComponent(grupoId)}/manter-separados`),
-    onSuccess: invalidateQueue,
+    targets: (grupoId) => [
+      {
+        queryKey: QUEUE_FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: RevisaoPage | undefined) => pageOps.remove(old, grupoId, "chave_canonica"),
+      },
+    ],
   });
 
-  /** D3 — undo a merge. `mergeId` is `RevisaoMergeResult.merge_id`. */
-  const desfazer = useMutation<unknown, unknown, string>({
+  const desfazer = useMutation<unknown, unknown, string>({ // noc-allow: invalidate-only — undoing a merge re-creates groups and clientes server-side; the response carries neither
     mutationFn: (mergeId) =>
       api.post(`${MERGES_BASE}/${encodeURIComponent(mergeId)}/desfazer`),
     onSuccess: () => {
@@ -230,7 +242,7 @@ export function useRevisaoSegurosCount() {
 /** Apply every unambiguous merge in one press. */
 export function useMergeSeguros() {
   const qc = useQueryClient();
-  return useMutation<MergeSegurosResult, unknown, void>({
+  return useMutation<MergeSegurosResult, unknown, void>({ // noc-allow: invalidate-only — bulk server-side merge; the answer is counts, which groups vanished is only known by refetching
     mutationFn: () =>
       api.post<MergeSegurosResult>("/api/clientes/revisao/merge-seguros"),
     onSuccess: () => {
@@ -314,17 +326,8 @@ export function useRevisaoCpfFila(filtros: RevisaoCpfFiltros = {}) {
 }
 
 export function useRevisaoCpfMutations() {
-  const qc = useQueryClient();
-  const invalidateQueue = () => qc.invalidateQueries({ queryKey: CPF_QUEUE_FAMILY_KEY });
-  const invalidateBoard = () => qc.invalidateQueries({ queryKey: BOARD_FAMILY_KEY });
-
-  /** §1's `POST .../revisao-cpf/{grupo}/merge` — UNLIKE the identity axis,
-   *  this one REQUIRES the survivor explicitly (`cliente_id_sobrevivente`):
-   *  the contract names no "adopt the longest name" default for this axis,
-   *  so the operator picks who survives. */
-  const merge = useMutation<
+  const merge = useCacheWriteMutation<
     RevisaoCpfMergeResult,
-    unknown,
     { grupoId: string; clienteIdSobrevivente: string }
   >({
     mutationFn: ({ grupoId, clienteIdSobrevivente }) =>
@@ -332,18 +335,28 @@ export function useRevisaoCpfMutations() {
         `${REVISAO_CPF_BASE}/${encodeURIComponent(grupoId)}/merge`,
         { cliente_id_sobrevivente: clienteIdSobrevivente },
       ),
-    onSuccess: () => {
-      invalidateQueue();
-      invalidateBoard();
-    },
+    targets: ({ grupoId }) => [
+      {
+        queryKey: CPF_QUEUE_FAMILY_KEY,
+        match: "prefix",
+        commit: (old: RevisaoCpfPage | undefined) => pageOps.remove(old, grupoId, "chave_canonica"),
+      },
+    ],
+    invalidate: [BOARD_FAMILY_KEY],
   });
 
-  const manterSeparados = useMutation<RevisaoCpfManterSeparadosResult, unknown, string>({
+  const manterSeparados = useCacheWriteMutation<RevisaoCpfManterSeparadosResult, string>({
     mutationFn: (grupoId) =>
       api.post<RevisaoCpfManterSeparadosResult>(
         `${REVISAO_CPF_BASE}/${encodeURIComponent(grupoId)}/manter-separados`,
       ),
-    onSuccess: invalidateQueue,
+    targets: (grupoId) => [
+      {
+        queryKey: CPF_QUEUE_FAMILY_KEY,
+        match: "prefix",
+        optimistic: (old: RevisaoCpfPage | undefined) => pageOps.remove(old, grupoId, "chave_canonica"),
+      },
+    ],
   });
 
   return { merge, manterSeparados };

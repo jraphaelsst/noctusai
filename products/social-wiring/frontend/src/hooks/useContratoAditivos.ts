@@ -16,8 +16,9 @@
  * contract-level invalidation (status, new version, review) also refreshes
  * the aditivos it amends.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import {
   contratosQueryKey,
@@ -269,38 +270,54 @@ export function useAditivoGeracao(
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useAditivoMutations(clienteId: string, contratoId: string) {
-  const qc = useQueryClient();
-  /** The list AND every aditivo's readiness (nested under the list key) — a
-   *  saved amendment / a new version moves what `geracao` reports. */
-  const invalidarLista = () => qc.invalidateQueries({ queryKey: ADITIVOS_KEY(clienteId, contratoId) });
+  /** The list key; every aditivo's readiness (`geracao`) is nested under it, so each settle
+   *  also refreshes it — a saved amendment / a new version moves what `geracao` reports. */
+  const listaKey = ADITIVOS_KEY(clienteId, contratoId);
 
-  const criar = useMutation({
-    mutationFn: (body: AditivoCreateBody) =>
-      api.post<AditivoOut>(base(clienteId, contratoId), body),
-    onSuccess: invalidarLista,
+  const criar = useCacheWriteMutation<AditivoOut, AditivoCreateBody>({
+    mutationFn: (body) => api.post<AditivoOut>(base(clienteId, contratoId), body),
+    // Aditivos are listed by ordinal ascending: the new one is last.
+    targets: [
+      {
+        queryKey: listaKey,
+        commit: (old: AditivoOut[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
   });
 
-  const atualizar = useMutation({
-    mutationFn: ({ aditivoId, patch }: { aditivoId: string; patch: AditivoPatchBody }) =>
+  const atualizar = useCacheWriteMutation<AditivoOut, { aditivoId: string; patch: AditivoPatchBody }>({
+    mutationFn: ({ aditivoId, patch }) =>
       api.patch<AditivoOut>(itemUrl(clienteId, contratoId, aditivoId), patch),
-    onSuccess: invalidarLista,
+    targets: ({ aditivoId }) => [
+      {
+        queryKey: listaKey,
+        commit: (old: AditivoOut[] | undefined, saved) => listOps.patch(old, aditivoId, saved),
+      },
+    ],
   });
 
-  /** `POST …/gerar` — a new version, always `revisao_juridica: aguardando`.
-   *  Errors come back as `ContratoGeracaoError` (400 `ADITIVO_INCOMPLETO`,
-   *  422 `CONTRATO_LINT` / `CONTRATO_PDF_NAO_GERADO`). */
-  const gerar = useMutation({
-    mutationFn: ({ aditivoId, assinaturaData }: { aditivoId: string; assinaturaData?: string }) =>
+  const gerar = useCacheWriteMutation<GerarAditivoResult, { aditivoId: string; assinaturaData?: string }>({
+    mutationFn: ({ aditivoId, assinaturaData }) =>
       postGeracao<GerarAditivoResult>(
         `${itemUrl(clienteId, contratoId, aditivoId)}/gerar`,
         assinaturaData ? { assinatura_data: assinaturaData } : {},
       ),
-    onSuccess: invalidarLista,
+    // The new version becomes current; the status transition the generation causes is the server's call (settle).
+    targets: ({ aditivoId }) => [
+      {
+        queryKey: listaKey,
+        commit: (old: AditivoOut[] | undefined, res) =>
+          listOps.patch(old, aditivoId, {
+            versao_atual: res.versao,
+            versoes: [
+              res.versao,
+              ...(old?.find((a) => a.id === aditivoId)?.versoes ?? []).filter((v) => v.id !== res.versao.id),
+            ],
+          }),
+      },
+    ],
   });
 
-  /** 🔴 Only on an explicit "Abrir"/"Baixar" click — the URL is short-lived
-   *  and its minting is LGPD-logged. `impressao` = the FINAL copy, refused
-   *  (409) while the legal review waits. */
   const getUrl = useMutation({
     mutationFn: ({
       aditivoId,
@@ -321,13 +338,18 @@ export function useAditivoMutations(clienteId: string, contratoId: string) {
   });
 
   /** Admin/owner only server-side (403 otherwise). Returns the aditivo. */
-  const aprovarRevisaoJuridica = useMutation({
-    mutationFn: ({ aditivoId, versaoId }: { aditivoId: string; versaoId: string }) =>
+  const aprovarRevisaoJuridica = useCacheWriteMutation<AditivoOut, { aditivoId: string; versaoId: string }>({
+    mutationFn: ({ aditivoId, versaoId }) =>
       api.post<AditivoOut>(
         `${itemUrl(clienteId, contratoId, aditivoId)}/versoes/${encodeURIComponent(versaoId)}/revisao-juridica`,
         {},
       ),
-    onSuccess: invalidarLista,
+    targets: ({ aditivoId }) => [
+      {
+        queryKey: listaKey,
+        commit: (old: AditivoOut[] | undefined, saved) => listOps.patch(old, aditivoId, saved),
+      },
+    ],
   });
 
   return { criar, atualizar, gerar, getUrl, aprovarRevisaoJuridica };

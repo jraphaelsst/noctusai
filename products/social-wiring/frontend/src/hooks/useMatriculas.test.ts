@@ -44,7 +44,9 @@ vi.mock("@tanstack/react-query", () => {
       mutationFn,
       onSuccess,
       onError,
-    }: {
+    onSettled,
+      }: {
+      onSettled?: (...a: unknown[]) => unknown;
       mutationFn: (v: unknown) => unknown;
       onSuccess?: (r: unknown, v: unknown) => void;
       onError?: (e: unknown) => void;
@@ -56,6 +58,7 @@ vi.mock("@tanstack/react-query", () => {
         Promise.resolve(mutationFn(vars))
           .then((result) => {
             onSuccess?.(result, vars);
+        void onSettled?.(result, null, vars);
             opts?.onSuccess?.(result);
           })
           .catch((err) => {
@@ -67,7 +70,13 @@ vi.mock("@tanstack/react-query", () => {
       _mutationFn: mutationFn,
     }),
   );
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    getQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+    setQueryData: vi.fn(),
+    cancelQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 

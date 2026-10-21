@@ -14,6 +14,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 
 export const TIPOS_NOTIFICACAO = [
@@ -74,14 +75,28 @@ export function useJuliaNotificacoes(f: NotificacoesFiltro) {
 }
 
 export function useMarcarLidas() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { ids: string[] } | { todas: true }) => api.post("/api/julia/notificacoes/lidas", body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: KEY });
-      qc.invalidateQueries({ queryKey: ["notificacoes"] });
-      qc.invalidateQueries({ queryKey: ["notificacoes-contagem"] });
-    },
+  return useCacheWriteMutation<unknown, { ids: string[] } | { todas: true }>({
+    mutationFn: (body) => api.post("/api/julia/notificacoes/lidas", body),
+    // Read state is drawn at once on every cached page (the preferences entry has no `items` and passes through);
+    // the bell badge / counters are other families and settle.
+    targets: [
+      {
+        queryKey: KEY,
+        match: "prefix",
+        optimistic: (old: NotificacoesPage | undefined, vars) => {
+          if (!old?.items) return old;
+          const todas = "todas" in vars;
+          const ids = "ids" in vars ? new Set(vars.ids) : new Set<string>();
+          const agora = old.items.filter((n) => !n.is_read && (todas || ids.has(n.id))).length;
+          return {
+            ...old,
+            items: old.items.map((n) => (todas || ids.has(n.id) ? { ...n, is_read: true } : n)),
+            nao_lidas: todas ? 0 : Math.max(0, old.nao_lidas - agora),
+          };
+        },
+      },
+    ],
+    invalidate: [["notificacoes"], ["notificacoes-contagem"]],
   });
 }
 

@@ -4,8 +4,9 @@
  * Person-keyed ⇒ no `placeholderData` (see `usePessoa.ts`): another person's
  * interests must never flash under this person's name.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { pessoaKey } from "@/hooks/usePessoa";
 import type { InteresseCriarBody, InteresseItem, ItemsTotal } from "@/types/interesses";
@@ -23,21 +24,33 @@ export function useInteresses(clienteId: string | undefined) {
   });
 }
 
-/** Add / remove. Both refresh the list AND the person payload (`contagens`). */
+/** Add / remove. Both write the list at once and refresh the person payload (`contagens`, server-computed). */
 export function useInteresseMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: pessoaKey(clienteId) });
-
-  const add = useMutation({
-    mutationFn: (body: InteresseCriarBody) =>
-      api.post<InteresseItem>(`${base(clienteId)}/interesses`, body),
-    onSuccess: invalidate,
+  const add = useCacheWriteMutation<InteresseItem, InteresseCriarBody>({
+    mutationFn: (body) => api.post<InteresseItem>(`${base(clienteId)}/interesses`, body),
+    targets: [
+      {
+        queryKey: interessesKey(clienteId),
+        commit: (old: ItemsTotal<InteresseItem> | undefined, saved) => {
+          if (!old?.items || old.items.some((i) => i.id === saved.id)) return old;
+          const next = listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved));
+          return next ? { ...next, total: old.total + 1 } : old;
+        },
+      },
+    ],
+    invalidate: [pessoaKey(clienteId)],
   });
 
-  const remove = useMutation({
-    mutationFn: (interesseId: string) =>
+  const remove = useCacheWriteMutation<unknown, string>({
+    mutationFn: (interesseId) =>
       api.delete(`${base(clienteId)}/interesses/${encodeURIComponent(interesseId)}`),
-    onSuccess: invalidate,
+    targets: (interesseId) => [
+      {
+        queryKey: interessesKey(clienteId),
+        optimistic: (old: ItemsTotal<InteresseItem> | undefined) => pageOps.remove(old, interesseId),
+      },
+    ],
+    invalidate: [pessoaKey(clienteId)],
   });
 
   return { add, remove };

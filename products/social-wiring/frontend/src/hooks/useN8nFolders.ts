@@ -6,9 +6,12 @@
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { useActiveAccountId } from "@/state/useActiveAccount";
-import type { N8nFolderOut } from "@/hooks/useN8nWorkflows";
+import type { N8nFolderOut, N8nWorkflowListResponse } from "@/hooks/useN8nWorkflows";
+
+const WORKFLOWS_PREFIX = ["sw", "n8n", "workflows"] as const;
 
 function invalidateAllWorkflowLists(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["sw", "n8n", "workflows"] });
@@ -25,7 +28,7 @@ export interface N8nFolderCreateBody {
 export function useCreateFolder() {
   const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — workflow lists are keyed by account × scope × archived: a prefix commit would put the new folder into other accounts' cached lists
     mutationFn: ({ body, accountId }: { body: N8nFolderCreateBody; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
       return api.post<N8nFolderOut>("/api/n8n/folders", {
@@ -47,11 +50,18 @@ export interface N8nFolderUpdateBody {
 
 /** PATCH /api/n8n/folders/{id} */
 export function useUpdateFolder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ folderId, body }: { folderId: string; body: N8nFolderUpdateBody }) =>
+  return useCacheWriteMutation<N8nFolderOut, { folderId: string; body: N8nFolderUpdateBody }>({
+    mutationFn: ({ folderId, body }) =>
       api.patch<N8nFolderOut>(`/api/n8n/folders/${encodeURIComponent(folderId)}`, body),
-    onSuccess: () => invalidateAllWorkflowLists(qc),
+    // Folder ids are globally unique, so the prefix only changes the lists that hold this folder.
+    targets: ({ folderId }) => [
+      {
+        queryKey: WORKFLOWS_PREFIX,
+        match: "prefix",
+        commit: (old: N8nWorkflowListResponse | undefined, saved) =>
+          listOps.within(old, "folders", (l) => listOps.patch(l, folderId, saved) ?? l),
+      },
+    ],
   });
 }
 
@@ -68,12 +78,27 @@ export function useUpdateFolder() {
  * encoding exactly.
  */
 export function useDeleteFolder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ folderId, reassignTo }: { folderId: string; reassignTo: string | null }) => {
+  return useCacheWriteMutation<void, { folderId: string; reassignTo: string | null }>({
+    mutationFn: ({ folderId, reassignTo }) => {
       const qs = reassignTo !== null ? `?reassign_to=${encodeURIComponent(reassignTo)}` : "";
       return api.delete<void>(`/api/n8n/folders/${encodeURIComponent(folderId)}${qs}`);
     },
-    onSuccess: () => invalidateAllWorkflowLists(qc),
+    // The folder leaves every cached list; its workflows and child folders land where the caller said.
+    targets: ({ folderId, reassignTo }) => [
+      {
+        queryKey: WORKFLOWS_PREFIX,
+        match: "prefix",
+        optimistic: (old: N8nWorkflowListResponse | undefined) => {
+          if (!old?.folders?.some((f) => f.id === folderId)) return old;
+          return {
+            ...old,
+            folders: old.folders
+              .filter((f) => f.id !== folderId)
+              .map((f) => (f.parent_id === folderId ? { ...f, parent_id: reassignTo } : f)),
+            workflows: old.workflows.map((w) => (w.folder_id === folderId ? { ...w, folder_id: reassignTo } : w)),
+          };
+        },
+      },
+    ],
   });
 }

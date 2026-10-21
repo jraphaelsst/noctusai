@@ -41,19 +41,26 @@ vi.mock("@tanstack/react-query", () => {
     _queryFn: queryFn,
   }));
   const useMutation = vi.fn(
-    ({ mutationFn, onSuccess }: { mutationFn: (v: unknown) => unknown; onSuccess?: (r: unknown, v: unknown) => void }) => ({
+    ({ mutationFn, onSuccess, onSettled }: { mutationFn: (v: unknown) => unknown; onSuccess?: (r: unknown, v: unknown) => void; onSettled?: (...a: unknown[]) => unknown }) => ({
       // Simulate react-query's flow: run mutationFn, THEN onSuccess (where the
       // hooks invalidate query keys) — so onSuccess side effects are testable.
       mutateAsync: async (vars: unknown) => {
         const result = await mutationFn(vars);
         onSuccess?.(result, vars);
+        void onSettled?.(result, null, vars);
         return result;
       },
       isPending: false,
       _mutationFn: mutationFn,
     })
   );
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    getQueryData: vi.fn(),
+    getQueriesData: vi.fn(() => []),
+    setQueryData: vi.fn(),
+    cancelQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 

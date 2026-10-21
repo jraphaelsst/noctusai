@@ -10,8 +10,9 @@
  *
  * API contract: all endpoints return bare arrays/objects (NO envelope).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -162,30 +163,51 @@ export function useIntegrationAccount(id: string) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+/** A row that exists server-side now: into the unfiltered list and the list of its provider (filtered ones settle). */
+const accountAdded = (provider?: string | null) => [
+  {
+    queryKey: ACCOUNTS_KEY(),
+    commit: (old: IntegrationAccount[] | undefined, row: IntegrationAccount | null) =>
+      row ? listOps.replace(old, row.id, row) : old,
+  },
+  ...(provider
+    ? [
+        {
+          queryKey: ACCOUNTS_KEY(provider),
+          commit: (old: IntegrationAccount[] | undefined, row: IntegrationAccount | null) =>
+            row ? listOps.replace(old, row.id, row) : old,
+        },
+      ]
+    : []),
+];
+
+/** An existing account the server answered with: patched into every cached list, replaced in its detail. */
+const accountSaved = (id: string) => [
+  {
+    queryKey: ACCOUNTS_KEY(),
+    match: "prefix" as const,
+    commit: (old: IntegrationAccount[] | undefined, row: IntegrationAccount) => listOps.patch(old, id, row),
+  },
+  {
+    queryKey: ACCOUNT_KEY(id),
+    commit: (_old: IntegrationAccount | undefined, row: IntegrationAccount) => row,
+  },
+];
+
 export function useCreateAccount() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: CreateAccountInput) =>
-      api.post<IntegrationAccount>("/api/integrations/accounts", payload),
-    onSuccess: (res, variables) => {
-      // res is a bare account; fall back to variables.provider
-      const provider = (res as any)?.provider ?? variables.provider;
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
-    },
+  return useCacheWriteMutation<IntegrationAccount, CreateAccountInput>({
+    mutationFn: (payload) => api.post<IntegrationAccount>("/api/integrations/accounts", payload),
+    // res is a bare account; fall back to variables.provider
+    targets: (variables) => accountAdded(variables.provider),
   });
 }
 
 export function useUpdateAccount() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...payload }: UpdateAccountInput & { id: string }) =>
+  return useCacheWriteMutation<IntegrationAccount, UpdateAccountInput & { id: string }>({
+    mutationFn: ({ id, ...payload }) =>
       api.patch<IntegrationAccount>(`/api/integrations/accounts/${id}`, payload),
-    onSuccess: (res) => {
-      const provider = (res as any)?.provider;
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
-    },
+    targets: ({ id }) => accountSaved(id),
+    invalidate: [ACCOUNTS_KEY()],
   });
 }
 
@@ -199,25 +221,25 @@ export function useUpdateAccount() {
  * harder to find. Do not delete without a separate decision.
  */
 export function useSetDefaultAccount() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
+  return useCacheWriteMutation<IntegrationAccount, string>({
+    mutationFn: (id) =>
       api.patch<IntegrationAccount>(`/api/integrations/accounts/${id}/set-default`, {}),
-    onSuccess: (res) => {
-      const provider = (res as any)?.provider;
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
-    },
+    targets: (id) => accountSaved(id),
+    // Setting a default flips the previous default's flag too: that is the server's call.
+    invalidate: [ACCOUNTS_KEY()],
   });
 }
 
 export function useDeleteAccount() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/integrations/accounts/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-    },
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`/api/integrations/accounts/${id}`),
+    targets: (id) => [
+      {
+        queryKey: ACCOUNTS_KEY(),
+        match: "prefix",
+        optimistic: (old: IntegrationAccount[] | undefined) => listOps.remove(old, id),
+      },
+    ],
   });
 }
 
@@ -226,21 +248,15 @@ export function useDeleteAccount() {
 /**
  * useSyncAccount — triggers POST /api/integrations/accounts/{id}/sync which
  * refreshes channel_info + status on the backend and returns the updated account.
- * Invalidates the full accounts query key so all listing hooks re-fetch.
+ * The returned account is written into every cached list + its detail, then the
+ * full accounts key settles.
  */
 export function useSyncAccount() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
+  return useCacheWriteMutation<IntegrationAccount, string>({
+    mutationFn: (id) =>
       api.post<IntegrationAccount>(`/api/integrations/accounts/${id}/sync`, {}),
-    onSuccess: (res) => {
-      const provider = (res as any)?.provider;
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
-      if ((res as any)?.id) {
-        qc.invalidateQueries({ queryKey: ACCOUNT_KEY((res as any).id) });
-      }
-    },
+    targets: (id) => accountSaved(id),
+    invalidate: [ACCOUNTS_KEY()],
   });
 }
 
@@ -252,17 +268,14 @@ export function useSyncAccount() {
  * there's nothing to adopt.
  */
 export function useAdoptLegacy(provider: string) {
-  const qc = useQueryClient();
-  return useMutation({
+  return useCacheWriteMutation<IntegrationAccount | null, void>({
     mutationFn: () =>
       api.post<IntegrationAccount | null>(
         `/api/integrations/accounts/${provider}/adopt-legacy`,
         {}
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
-    },
+    targets: accountAdded(provider),
+    invalidate: [ACCOUNTS_KEY(), ACCOUNTS_KEY(provider)],
   });
 }
 
@@ -316,7 +329,7 @@ export interface YouTubeOAuthStartOptions {
 }
 
 export function useStartYouTubeOAuth() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — only opens the OAuth tab: the account is created by the callback, nothing cached to write
     mutationFn: async (options?: YouTubeOAuthStartOptions) => {
       const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
@@ -353,7 +366,7 @@ export interface ProviderOAuthStartOptions {
  *   oauthStart.mutate({ clientId: client.id });
  */
 export function useStartProviderOAuth(provider: string) {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — only opens the OAuth tab: the account is created by the callback, nothing cached to write
     mutationFn: async (options?: ProviderOAuthStartOptions) => {
       const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
@@ -390,18 +403,15 @@ export interface SubmitInstagramTokenInput {
  *   submitToken.mutate({ access_token, client_id: client.id });
  */
 export function useSubmitInstagramToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (payload: SubmitInstagramTokenInput) => {
+  return useCacheWriteMutation<IntegrationAccount, SubmitInstagramTokenInput>({
+    mutationFn: async (payload) => {
       const res = await api.post<IntegrationAccount>(
         "/api/integrations/accounts/instagram/token",
         payload,
       );
       return res;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY("instagram") });
-    },
+    targets: accountAdded("instagram"),
+    invalidate: [ACCOUNTS_KEY(), ACCOUNTS_KEY("instagram")],
   });
 }

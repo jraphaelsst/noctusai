@@ -6,8 +6,9 @@
  *
  * Contract: products/social-wiring/projects/signing-companies/CONTRACT.md.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 /** The fields a contract REQUIRES of its signing company (`faltando` subset). */
 export type ImobiliariaCampoObrigatorio =
@@ -85,39 +86,59 @@ export function useImobiliarias() {
   });
 }
 
+type ImobiliariasCache = { items: Imobiliaria[]; total: number };
+
 /** A registry change can alter any card's resolved company (`unica`) and its
  *  `faltando` — so every per-contract selection is invalidated with it. */
-function useInvalidarImobiliarias() {
+function useInvalidarSelecoes() {
   const qc = useQueryClient();
-  return () => {
-    qc.invalidateQueries({ queryKey: IMOBILIARIAS_KEY });
+  return () =>
     qc.invalidateQueries({
       predicate: (q) => q.queryKey[0] === "sw" && q.queryKey.includes("imobiliaria"),
     });
-  };
 }
 
 export function useCreateImobiliaria() {
-  const invalidar = useInvalidarImobiliarias();
-  return useMutation({
-    mutationFn: (payload: ImobiliariaCreate) => api.post<Imobiliaria>(BASE, payload),
-    onSuccess: invalidar,
+  const invalidarSelecoes = useInvalidarSelecoes();
+  return useCacheWriteMutation<Imobiliaria, ImobiliariaCreate>({
+    mutationFn: (payload) => api.post<Imobiliaria>(BASE, payload),
+    targets: [
+      {
+        queryKey: IMOBILIARIAS_KEY,
+        commit: (old: ImobiliariasCache | undefined, saved) => {
+          if (!old?.items || old.items.some((r) => r.id === saved.id)) return old;
+          return { ...old, items: [...old.items, saved], total: old.total + 1 };
+        },
+      },
+    ],
+    onSuccess: invalidarSelecoes,
   });
 }
 
 export function useUpdateImobiliaria() {
-  const invalidar = useInvalidarImobiliarias();
-  return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: ImobiliariaPatch }) =>
-      api.patch<Imobiliaria>(`${BASE}/${id}`, patch),
-    onSuccess: invalidar,
+  const invalidarSelecoes = useInvalidarSelecoes();
+  return useCacheWriteMutation<Imobiliaria, { id: string; patch: ImobiliariaPatch }>({
+    mutationFn: ({ id, patch }) => api.patch<Imobiliaria>(`${BASE}/${id}`, patch),
+    targets: ({ id }) => [
+      {
+        queryKey: IMOBILIARIAS_KEY,
+        commit: (old: ImobiliariasCache | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
+    onSuccess: invalidarSelecoes,
   });
 }
 
 export function useDeleteImobiliaria() {
-  const invalidar = useInvalidarImobiliarias();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
-    onSuccess: invalidar,
+  const invalidarSelecoes = useInvalidarSelecoes();
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: (id) => api.delete(`${BASE}/${id}`),
+    targets: (id) => [
+      {
+        queryKey: IMOBILIARIAS_KEY,
+        optimistic: (old: ImobiliariasCache | undefined) => pageOps.remove(old, id),
+      },
+    ],
+    onSuccess: invalidarSelecoes,
   });
 }

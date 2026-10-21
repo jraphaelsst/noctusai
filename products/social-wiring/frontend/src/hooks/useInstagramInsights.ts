@@ -216,7 +216,7 @@ export function useInstagramMediaHistory(
  */
 export function useInstagramSync(accountId: string | null) {
   const qc = useQueryClient();
-  return useMutation<InstagramSyncResult, unknown, { force?: boolean } | void>({
+  return useMutation<InstagramSyncResult, unknown, { force?: boolean } | void>({ // noc-allow: invalidate-only — a sync pulls profile, trend and media from Instagram server-side; the answer is a run summary, not those reads
     mutationFn: async (opts) => {
       try {
         return await api.post<InstagramSyncResult>(

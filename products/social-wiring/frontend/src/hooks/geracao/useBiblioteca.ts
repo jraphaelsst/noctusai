@@ -6,10 +6,12 @@
  * Loading rule (lying-loading-state.md): every query hook returns
  * `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`,
  * with `placeholderData` on key changes — never `isLoading`. Mutations
- * invalidate the whole `["sw","geracao"]` family.
+ * write the server row into the cached reads and settle by invalidating the
+ * whole `["sw","geracao"]` family.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { FiltrosViral } from "@/components/geracao/biblioteca/filtros";
 import type {
@@ -157,52 +159,69 @@ export function useContasDescoberta() {
   });
 }
 
-function useInvalidar() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: GERACAO_KEY });
-}
+const PERFIS_KEY = [...BIB_KEY, "perfis"] as const;
+const REFS_KEY = [...BIB_KEY, "referencias"] as const;
+const OPTOUTS_KEY = [...BIB_KEY, "optouts"] as const;
 
 export function useSolicitarPerfil() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: async (v: { marca_id: string; handle: string; conta_descoberta_id?: string }) =>
-      unwrap(await api.post<Envelope<PerfilMonitorado>>(`${BASE}/perfis`, v)),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<PerfilMonitorado, { marca_id: string; handle: string; conta_descoberta_id?: string }>({
+    mutationFn: async (v) => unwrap(await api.post<Envelope<PerfilMonitorado>>(`${BASE}/perfis`, v)),
+    // The unfiltered profile list gets the new profile at once; filtered ones converge on the settle.
+    targets: [
+      {
+        queryKey: [...PERFIS_KEY, ""],
+        commit: (old: PerfilMonitorado[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
 export function useSincronizarPerfil() {
-  const invalidar = useInvalidar();
-  return useMutation({
+  const qc = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — a sync trigger: the POST starts a background job and returns no row to commit
     mutationFn: async (id: string) =>
       api.post(`${BASE}/perfis/${encodeURIComponent(id)}/sincronizar`),
-    onSuccess: invalidar,
+    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
   });
 }
 
 export function useAtualizarPerfil() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: async (v: { id: string; status: "ativo" | "pausado" }) =>
+  return useCacheWriteMutation<PerfilMonitorado, { id: string; status: "ativo" | "pausado" }>({
+    mutationFn: async (v) =>
       unwrap(
         await api.patch<Envelope<PerfilMonitorado>>(
           `${BASE}/perfis/${encodeURIComponent(v.id)}`,
           { status: v.status },
         ),
       ),
-    onSuccess: invalidar,
+    targets: (v) => [
+      {
+        queryKey: PERFIS_KEY,
+        match: "prefix",
+        optimistic: (old: PerfilMonitorado[] | undefined, vars) => listOps.patch(old, vars.id, { status: vars.status }),
+        commit: (old: PerfilMonitorado[] | undefined, saved) => listOps.patch(old, v.id, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
 export function useRemoverPerfil() {
-  const invalidar = useInvalidar();
-  return useMutation({
+  return useCacheWriteMutation<unknown, { id: string; marca_id: string | null }>({
     // marca_id resolves the 409 "used by another marca" (BE: delete_perfil).
-    mutationFn: async (v: { id: string; marca_id: string | null }) =>
+    mutationFn: async (v) =>
       api.delete(
         `${BASE}/perfis/${encodeURIComponent(v.id)}${v.marca_id ? `?marca_id=${encodeURIComponent(v.marca_id)}` : ""}`,
       ),
-    onSuccess: invalidar,
+    targets: [
+      {
+        queryKey: PERFIS_KEY,
+        match: "prefix",
+        optimistic: (old: PerfilMonitorado[] | undefined, vars) => listOps.remove(old, vars.id),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
@@ -230,8 +249,8 @@ export type NovaReferencia =
   | { marca_id: string; modo: "video"; viral_ids: string[] };
 
 export function useCriarReferencias() {
-  const invalidar = useInvalidar();
-  return useMutation({
+  const qc = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — the answer is {criadas, ja_existentes} counts, not the Referencia rows (the server expands perfil → videos)
     mutationFn: async (v: NovaReferencia) =>
       unwrap(
         await api.post<Envelope<{ criadas: number; ja_existentes: number }>>(
@@ -239,36 +258,45 @@ export function useCriarReferencias() {
           v,
         ),
       ),
-    onSuccess: invalidar,
+    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
   });
 }
 
 export function useRemoverReferencia() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: async (id: string) =>
-      api.delete(`${BASE}/referencias/${encodeURIComponent(id)}`),
-    onSuccess: invalidar,
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: async (id) => api.delete(`${BASE}/referencias/${encodeURIComponent(id)}`),
+    targets: (id) => [
+      {
+        queryKey: REFS_KEY,
+        match: "prefix",
+        optimistic: (old: Referencia[] | undefined) => listOps.remove(old as (Referencia & { id: string })[] | undefined, id),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
 /** "Gerar headline" from a viral (#20, origem 'biblioteca'). */
 export function useGerarHeadlineViral() {
-  const invalidar = useInvalidar();
-  return useMutation({
-    mutationFn: async (v: {
-      marca_id: string;
-      viral_id: string;
-      assunto_ids?: string[];
-      assunto_livre?: string;
-    }) =>
+  return useCacheWriteMutation<
+    HeadlineLote,
+    { marca_id: string; viral_id: string; assunto_ids?: string[]; assunto_livre?: string }
+  >({
+    mutationFn: async (v) =>
       unwrap(
         await api.post<Envelope<HeadlineLote>>("/api/media-creation/headlines/lotes", {
           ...v,
           origem: "biblioteca",
         }),
       ),
-    onSuccess: invalidar,
+    // The new batch heads the marca's default lotes list (server sorts newest first).
+    targets: (v) => [
+      {
+        queryKey: [...GERACAO_KEY, "headlines", v.marca_id, "lotes", "", 0],
+        commit: (old: unknown, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: [GERACAO_KEY],
   });
 }
 
@@ -311,18 +339,28 @@ export function useOptoutsAdmin(enabled = true) {
 
 /** Register an opt-out: purges the handle's data in every org NOW. */
 export function useRegistrarOptout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (v: { handle: string; motivo?: string; origem: OptoutOrigem }) =>
+  return useCacheWriteMutation<RegistrarOptoutResultado, { handle: string; motivo?: string; origem: OptoutOrigem }>({
+    mutationFn: async (v) =>
       unwrap(await api.post<Envelope<RegistrarOptoutResultado>>(`${BASE}/admin/optouts`, v)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
+    targets: [
+      {
+        queryKey: OPTOUTS_KEY,
+        commit: (old: PerfilOptout[] | undefined, res) => listOps.replace(old, res.optout.id, res.optout, "prepend"),
+      },
+    ],
+    // The purge removes profiles/virais across the whole family.
+    invalidate: [GERACAO_KEY],
   });
 }
 
 export function useRemoverOptout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => api.delete(`${BASE}/admin/optouts/${encodeURIComponent(id)}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...BIB_KEY, "optouts"] }),
+  return useCacheWriteMutation<unknown, string>({
+    mutationFn: async (id) => api.delete(`${BASE}/admin/optouts/${encodeURIComponent(id)}`),
+    targets: (id) => [
+      {
+        queryKey: OPTOUTS_KEY,
+        optimistic: (old: PerfilOptout[] | undefined) => listOps.remove(old, id),
+      },
+    ],
   });
 }

@@ -10,6 +10,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
@@ -83,7 +84,7 @@ export function useVisitasConfig() {
 
 export function useSalvarVisitasConfig() {
   const qc = useQueryClient();
-  return useMutation<unknown, unknown, VisitasConfig>({
+  return useMutation<unknown, unknown, VisitasConfig>({ // noc-allow: invalidate-only — the PUT answer is not the read shape: the server normalises the weekly grid and limits
     mutationFn: (body) => api.put("/api/julia/visitas/config", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: VISITAS_KEY }),
   });
@@ -108,13 +109,20 @@ export type VisitaAcao =
   | { id: string; acao: "cancelar"; motivo: string };
 
 export function useAcaoVisita() {
-  const qc = useQueryClient();
-  return useMutation<Visita, unknown, VisitaAcao>({
+  return useCacheWriteMutation<Visita, VisitaAcao>({
     mutationFn: async (a) => {
       const { id, acao, ...body } = a;
       return (await api.post<{ data: Visita }>(`/api/julia/visitas/${id}/${acao}`, body)).data;
     },
-    // 409 transicao_invalida means someone else moved it: refresh either way.
-    onSettled: () => qc.invalidateQueries({ queryKey: VISITAS_KEY }),
+    // The visit changes in place on every cached window; a remarcar that moves it out of the window settles.
+    targets: ({ id }) => [
+      {
+        queryKey: [...VISITAS_KEY, "lista"],
+        match: "prefix",
+        commit: (old: Visita[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+    ],
+    // 409 transicao_invalida means someone else moved it: refresh either way (settle).
+    invalidate: [VISITAS_KEY],
   });
 }

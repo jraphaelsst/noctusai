@@ -171,7 +171,7 @@ export function useImovelWebCallbackConfig() {
 
 export function useRegisterImovelWebCallback() {
   const qc = useQueryClient();
-  return useMutation<
+  return useMutation< // noc-allow: invalidate-only — the register answer is not the callback read shape (config + subscriptions + problems are server-computed)
     ImovelWebRegisterResult,
     unknown,
     { publicBaseUrl?: string; language?: string; events?: string[] }
@@ -192,7 +192,7 @@ export function useRegisterImovelWebCallback() {
 
 export function useImovelWebBackfill() {
   const qc = useQueryClient();
-  return useMutation<ImovelWebBackfillResult, unknown, void>({
+  return useMutation<ImovelWebBackfillResult, unknown, void>({ // noc-allow: invalidate-only — bulk backfill into leads: the answer is counts, the rows are only known by refetching
     mutationFn: () => api.post<ImovelWebBackfillResult>(`${BASE}/backfill`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: IMOVELWEB_FAMILY_KEY });
@@ -204,7 +204,7 @@ export function useImovelWebBackfill() {
 
 export function useImovelWebReconcile() {
   const qc = useQueryClient();
-  return useMutation<ImovelWebReconcileResult, unknown, void>({
+  return useMutation<ImovelWebReconcileResult, unknown, void>({ // noc-allow: invalidate-only — bulk reconcile into leads: the answer is counts, the rows are only known by refetching
     mutationFn: () => api.post<ImovelWebReconcileResult>(`${BASE}/reconcile`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: IMOVELWEB_FAMILY_KEY });
