@@ -395,6 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-tag", default="latest", help="With --deploy-image: the image tag to swap to (default 'latest').")
     parser.add_argument("--deploy-image-skip-boot-smoke", action="store_true", help="With --deploy-image: bypass the in-image boot smoke run before the swap — almost always wrong.")
     parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
+    parser.add_argument("--deploy-image-skip-compose-drift-check", action="store_true", help="With --deploy-image: bypass the VPS compose-drift precheck (VPS checkout behind the image's deploy/fleet/) — run noctus.dev.deploy_pull instead; recorded in the result.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
@@ -3344,6 +3345,7 @@ def main():
             source=getattr(args, "deploy_image_source", "pull"),
             confirm=bool(getattr(args, "deploy_image_confirm", False)),
             skip_ancestry_check=bool(getattr(args, "deploy_image_skip_ancestry_check", False)),
+            skip_compose_drift_check=bool(getattr(args, "deploy_image_skip_compose_drift_check", False)),
             skip_boot_smoke=bool(getattr(args, "deploy_image_skip_boot_smoke", False)),
             allow_inactive=bool(getattr(args, "deploy_image_allow_inactive", False)),
             allow_stale_toolkit=bool(getattr(args, "deploy_image_allow_stale_toolkit", False)),
