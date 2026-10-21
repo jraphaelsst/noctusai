@@ -3422,6 +3422,54 @@ def _confere_com_entrada(row: dict, entrada: dict) -> bool:
     )
 
 
+def _aplicar_fatos_do_casal(
+    client: Any, org_id: UUID, doc: dict, dono: UUID, alvo: UUID
+) -> list[dict]:
+    """A certidão de casamento describes BOTH spouses: its estado civil, regime
+    de bens and data do casamento are the COUPLE's, not one person's.
+
+    Applied to `alvo` — the cliente LINKED as `dono`'s cônjuge — when the
+    certidão is what set `dono`'s estado civil (`estado_civil_origem =
+    'certidao_casamento'` with this `documento_id`): then the marriage the
+    certidão records is, by the card's own link, the one the two share. Same D1
+    mechanics as every other apply (fill-empty, a differing value opens a
+    conflict, a manual value is never overwritten), `origem =
+    'certidao_casamento'`. Per-person facts (name, CPF, birth, ...) are NOT
+    carried here — without an attributed entry nothing says which printed
+    person is `alvo`. Idempotent.
+    """
+    pessoas = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,conjuge_cliente_id,estado_civil_origem,estado_civil_documento_id")
+        .eq("org_id", str(org_id))
+        .in_("id", [str(dono), str(alvo)])
+        .execute()
+    ).data or []
+    linha_dono = next((r for r in pessoas if str(r["id"]) == str(dono)), None)
+    linha_alvo = next((r for r in pessoas if str(r["id"]) == str(alvo)), None)
+    if linha_dono is None or linha_alvo is None:
+        return []
+    ligados = str(alvo) in (
+        str(linha_dono.get("conjuge_cliente_id") or ""),
+    ) or str(dono) == str(linha_alvo.get("conjuge_cliente_id") or "")
+    if not ligados:
+        return []
+    if (
+        linha_dono.get("estado_civil_origem") != "certidao_casamento"
+        or str(linha_dono.get("estado_civil_documento_id") or "") != str(doc["id"])
+    ):
+        return []
+    lidos = _lidos_da_entrada_conjuge({}, doc)
+    # Couple-level only: the empty entry above carries no person.
+    _, abertos = aplicar_campos_ao_cliente(
+        client, org_id, alvo, "certidao_casamento", lidos,
+        documento_id=UUID(str(doc["id"])),
+        fonte_tabela=DOCUMENTOS_TABLE,
+        fonte_id=UUID(str(doc["id"])),
+    )
+    return abertos
+
+
 def aplicar_certidao_casamento_ao_conjuge(
     client: Any, org_id: UUID, cliente_a: UUID, cliente_b: UUID
 ) -> list[dict]:
@@ -3458,8 +3506,14 @@ def aplicar_certidao_casamento_ao_conjuge(
         alvo = ids[1] if dono == ids[0] else ids[0]
         entradas = _entradas_conjuges(doc)
         nao_titulares = [e for e in entradas if not e.get("titular")]
+        if not nao_titulares:
+            # The certidão never attributed the other spouse (a single-entry
+            # read): she still shares the COUPLE's facts — see
+            # `_aplicar_fatos_do_casal`.
+            conflitos += _aplicar_fatos_do_casal(client, org_id, doc, UUID(dono), UUID(alvo))
+            continue
         if len(nao_titulares) != 1:
-            continue  # absent or ambiguous: nothing to attribute
+            continue  # ambiguous: nothing to attribute
         entrada = nao_titulares[0]
         rows = (
             _t(client, CLIENTES_TABLE)
@@ -5299,11 +5353,48 @@ async def extrair_identidade(
                         "nacionalidade": c.nacionalidade,
                         "profissao": c.profissao,
                         "genero": c.genero,
+                        # What the page prints about THIS spouse's identity
+                        # card (SP "ANOTAÇÕES DE CADASTRO"). Evidence on the
+                        # document row only: a certidão is not the
+                        # authoritative source of RG (`autoridade`, owner rule
+                        # 2026-10-13), so these never reach `clientes`.
+                        "rg": c.rg,
+                        "rg_orgao": c.rg_orgao,
                         "titular": bool(c.titular),
                         "cliente_id": alvo,
                     }
                 )
             _marcar(client, documento_id, extracao_conjuges=registro_conjuges)
+
+        # The certidão describes BOTH spouses: when the other spouse was not
+        # attributed above but is ALREADY linked to this cliente (added by hand
+        # on the card), she gets the couple's facts all the same.
+        if (
+            tipo == "certidao_casamento"
+            and not fields.leitura_comprometida
+            and not any(e.get("cliente_id") and not e.get("titular") for e in registro_conjuges)
+        ):
+            proprio = (
+                _t(client, CLIENTES_TABLE)
+                .select("conjuge_cliente_id")
+                .eq("org_id", str(org_id))
+                .eq("id", str(cliente_id))
+                .limit(1)
+                .execute()
+            ).data or []
+            ligado = proprio[0].get("conjuge_cliente_id") if proprio else None
+            doc_atual = (
+                _t(client, DOCUMENTOS_TABLE)
+                .select("*")
+                .eq("org_id", str(org_id))
+                .eq("id", str(documento_id))
+                .limit(1)
+                .execute()
+            ).data or []
+            if ligado and doc_atual:
+                conflitos += _aplicar_fatos_do_casal(
+                    client, org_id, doc_atual[0], cliente_id, UUID(str(ligado))
+                )
 
         # 🔴 R1 — RE-RESOLUTION ON NEW EVIDENCE (owner directive, 2026-09-30:
         # "the system must work by itself and humans are to intervene only

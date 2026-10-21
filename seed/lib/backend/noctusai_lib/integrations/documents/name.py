@@ -609,6 +609,21 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
                 candidates.append((par[0], label))
                 candidates.append((par[1], label))
             else:
+                # 🔴 ONE name on the label's own line is a holder too — real,
+                # measured (live prod, deal 857, 2026-10-21): the SP Registro
+                # Civil standard prints `NOMES: <spouse 1>` / `CPF: ...` /
+                # `NOMES: <spouse 2>` / `CPF: ...` — the label repeated per
+                # spouse, each carrying its OWN name. `nomes_em_par` (two names
+                # on one line) failed and the walk below starts at the NEXT
+                # line, so the same-line name was dropped: the first spouse
+                # vanished, the second was read as the only holder, and the
+                # titular got the OTHER spouse's name.
+                # AS PRINTED, never comma-cut: `NOMES COMPLETOS DE SOLTEIRO,
+                # DATAS DE NASCIMENTO, ...` is a COLUMN HEADER whose first
+                # comma-delimited chunk is name-shaped — not a holder.
+                unico = tail.strip(_SEPARATORS).strip() if tail else ""
+                if unico and looks_like_a_name(unico):
+                    candidates.append((unico, label))
                 candidates.extend(_coleta_titulares_multiplos(lines, idx + 1, label))
             idx += 1
             continue

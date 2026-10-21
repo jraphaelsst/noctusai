@@ -49,6 +49,7 @@ from noctusai_lib.integrations.documents.birthdate import find_birthdate
 from noctusai_lib.integrations.documents.cpf import _CPF_RE, format_cpf, is_valid
 from noctusai_lib.integrations.documents.gender import FEMININO, MASCULINO
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
+from noctusai_lib.integrations.documents.nacionalidade import canonico as canonico_nacionalidade
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import (
     find_name_conflitos,
@@ -57,6 +58,7 @@ from noctusai_lib.integrations.documents.name import (
     nomes_em_par,
 )
 from noctusai_lib.integrations.documents.profession import find_profissao
+from noctusai_lib.integrations.documents.rg import rg_shape_valido
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 
 #: How far past a spouse's name its CPF may sit when no second name bounds it.
@@ -64,6 +66,7 @@ _CPF_JANELA = 200
 #: How long a qualification paragraph may run before it is cut.
 _SEGMENTO_MAX = 700
 
+_NASCIDO_RE = re.compile(r"\bNASCID[OA]\b")
 _MARCAS_MASC = re.compile(r"\b(?:NASCIDO|FILHO|PORTADOR|INSCRITO|DOMICILIADO)\b")
 _MARCAS_FEM = re.compile(r"\b(?:NASCIDA|FILHA|PORTADORA|INSCRITA|DOMICILIADA)\b")
 
@@ -96,6 +99,15 @@ class ConjugeLido:
     #: certidão de casamento prints no SEXO field, so every gender here is
     #: DERIVED from grammatical agreement — a hint, never a reading.
     genero_derivado: bool = False
+    #: This spouse's OWN identity number and issuer, read from the certidão's
+    #: "ANOTAÇÕES DE CADASTRO: Conjuge1: RG 99.999.999-9/SSP/SP. Conjuge2: ..."
+    #: line (SP Registro Civil standard) — see `_rgs_das_anotacoes`.
+    #: Attributed by POSITION (Conjuge1 = the first spouse in document order),
+    #: so never above `media`.
+    rg: Optional[str] = None
+    rg_confianca: str = "nenhuma"
+    rg_orgao: Optional[str] = None
+    rg_orgao_confianca: str = "nenhuma"
     #: Set by the extractor (never by this module) when the caller's
     #: `TitularEsperado` hint selected this spouse.
     titular: bool = False
@@ -113,6 +125,70 @@ def _padrao_nome(nome: str) -> re.Pattern[str]:
     words (a line break inside a long name is common in a scan)."""
     palavras = strip_accents_upper(nome).split()
     return re.compile(r"\b" + r"\s+".join(re.escape(p) for p in palavras) + r"\b")
+
+
+#: The gentílico that opens a spouse's qualification clause — "NAME, brasileiro,
+#: natural de São Paulo, nascido ..." (SP Registro Civil standard). The seed's
+#: `find_nacionalidade` reads a gentílico only next to a `NACIONALIDADE` label
+#: (an unlabelled "brasileira" in prose is not evidence — `nacionalidade.py`),
+#: but HERE the position is the label: the word right after the spouse's name,
+#: before the first comma-delimited attribute, IS that person's nationality.
+_GENTILICO_ABRE_QUALIFICACAO_RE = re.compile(r"^\s*([A-Z][A-Z-]{3,20})\b")
+
+
+def _nacionalidade_da_qualificacao(segmento_orig: str) -> tuple[Optional[str], str]:
+    """`(canonical gentílico, "media")` when the clause opens with one."""
+    m = _GENTILICO_ABRE_QUALIFICACAO_RE.match(strip_accents_upper(segmento_orig).lstrip(" ,"))
+    if m is None:
+        return (None, "nenhuma")
+    valor = canonico_nacionalidade(m.group(1))
+    return (valor, "media") if valor else (None, "nenhuma")
+
+
+#: `Conjuge1: RG 36.964.037-8/SSP/SP.` — the SP Registro Civil's "ANOTAÇÕES DE
+#: CADASTRO" line. Number, then `/ORGÃO[/UF]`.
+_RG_ANOTACAO_RE = re.compile(
+    r"\bCONJUGE\s*([12])\s*[:\-]?\s*(?:RG|R\.G\.|IDENTIDADE)\s*(?:N[O]?\.?\s*)?[:\-]?\s*"
+    r"([0-9][0-9.\-]{3,}[0-9X])"
+    r"(?:\s*/\s*([A-Z]{2,10})(?:\s*/\s*([A-Z]{2}))?)?"
+)
+
+
+def _rgs_das_anotacoes(norm: str) -> dict[int, tuple[str, Optional[str]]]:
+    """`{0|1: (rg as printed, "ORGAO/UF" | None)}` from the certidão's
+    cadastro-annotation line. Empty unless the shape is the closed one above."""
+    achados: dict[int, tuple[str, Optional[str]]] = {}
+    for m in _RG_ANOTACAO_RE.finditer(norm):
+        idx = int(m.group(1)) - 1
+        rg = m.group(2).rstrip(".-")
+        if idx in achados or not rg_shape_valido(rg):
+            continue
+        orgao = m.group(3)
+        if orgao and m.group(4):
+            orgao = f"{orgao}/{m.group(4)}"
+        achados[idx] = (rg, orgao)
+    return achados
+
+
+def _com_rgs(text: str, conjuges: tuple["ConjugeLido", ...]) -> tuple["ConjugeLido", ...]:
+    """Attach each spouse's annotation RG — only for a two-spouse read (the
+    ordinal "Conjuge1/2" is the document's own order of the two names)."""
+    if len(conjuges) != 2:
+        return conjuges
+    norm, _ = normalized_with_offsets(text or "")
+    rgs = _rgs_das_anotacoes(norm)
+    if not rgs:
+        return conjuges
+    out = []
+    for i, c in enumerate(conjuges):
+        if i in rgs and not c.rg:
+            rg, orgao = rgs[i]
+            c = replace(
+                c, rg=rg, rg_confianca="media",
+                rg_orgao=orgao, rg_orgao_confianca="media" if orgao else "nenhuma",
+            )
+        out.append(c)
+    return tuple(out)
 
 
 def _genero(segmento_norm: str) -> tuple[Optional[str], str]:
@@ -761,6 +837,13 @@ def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
                 seg_orig = text[origem[a] : origem[fim - 1] + 1]
                 seg_norm = norm[a:fim]
                 d, d_conf, _ = find_birthdate(seg_orig)
+                if d is not None and d_conf == "baixa" and _NASCIDO_RE.search(seg_norm):
+                    # "nascido(a) no dia <por extenso> (dd/mm/aaaa)" inside THIS
+                    # spouse's own clause: the clause is the label, the
+                    # numeric echo is the checkable value. `birthdate.py`'s
+                    # label window is too short to see "nascido" past the
+                    # spelled-out words, so it scored the date unlabelled.
+                    d_conf = "media"
                 # 🔴 P1/883 (2026-09-25) — NOT restricted to a labelled read
                 # here, and that took a real test failure to confirm rather
                 # than assumed. The MAINLINE certidão phrasing spells the
@@ -790,6 +873,8 @@ def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
                 # done here (see the delivery report: `civil_status.py` is
                 # outside this branch's edit scope).
                 nac, nac_conf, _ = find_nacionalidade(seg_orig)
+                if nac is None:
+                    nac, nac_conf = _nacionalidade_da_qualificacao(seg_orig)
                 prof, prof_conf, _ = find_profissao(seg_orig)
                 gen, gen_conf = _genero(seg_norm)
                 dados = dict(
@@ -1231,7 +1316,7 @@ def find_conjuges(
     exactly the historical behaviour on every document whose label-driven
     read has no such conflict to notice.
     """
-    return _finalizar(_find_conjuges_bruto(text, esperados=esperados))
+    return _com_rgs(text, _finalizar(_find_conjuges_bruto(text, esperados=esperados)))
 
 
 def _find_conjuges_bruto(

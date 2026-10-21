@@ -129,6 +129,25 @@ Extraction is its own process, measured separately from contract generation (own
   card or the deal's "Info PP" sheet.
 - **RG (SP)** — front: "Número registro", "Número documento"; verso: "REGISTRO GERAL: nn.nnn.nnn-d"
   (the real RG) under the "CARTEIRA DE IDENTIDADE" heading next to "LEI Nº 7.116".
+- **Certidão de casamento, SP Registro Civil standard (scan, deal 857, 2026-10-21)** — the `NOMES:`
+  label is REPEATED once per spouse (`NOMES: <spouse 1>` / `CPF: …` / `NOMES: <spouse 2>` /
+  `CPF: …`); `name._candidatos` read only the lines BELOW a `NOMES` label, so the first spouse's
+  same-line name was dropped, the second looked like the ONLY holder, and the titular received the
+  other spouse's name (the two model reads then "diverged" on `nome` → `campos_nucleo_ausentes`).
+  A same-line value is now a holder too — **as printed, never comma-cut** (`NOMES COMPLETOS DE
+  SOLTEIRO, DATAS …` is a column header). Per-spouse qualification paragraph opens with the
+  gentílico ("<Nome>, brasileiro, natural de …, nascido no dia <extenso> (dd/mm/aaaa), filho de
+  …"): the word after the name IS the nationality (`conjuges._nacionalidade_da_qualificacao`,
+  `media`), the numeric echo in parens is the birthdate (`media` inside the own "nascido(a)"
+  clause). RGs come from "ANOTAÇÕES DE CADASTRO: Conjuge1: RG nn.nnn.nnn-d/SSP/SP. Conjuge2: …"
+  — attributed by ordinal (Conjuge1 = first name), so `media` at most, recorded per spouse on the
+  `extracao_conjuges` entry (`rg`, `rg_orgao`) and **never written to `clientes`** (a certidão
+  is not the authoritative source of CPF/RG — `autoridade.AUTORIDADE`, owner rule 2026-10-13).
+  naturalidade and filiação are printed but `IdentityFields` carries neither yet.
+  The certidão describes BOTH spouses: when the other spouse is already linked as cônjuge but was
+  not attributed an entry, she still receives estado civil / regime / data do casamento
+  (`identidade_extracao_service._aplicar_fatos_do_casal`: only when the certidão is what set the
+  titular's estado civil; fill-empty-or-conflict, `origem=certidao_casamento`).
 - **Certidão de casamento, CNJ standardized model** (most recent deals): "Primeiro Cônjuge: …" /
   "Segundo Cônjuge: …" blocks; each block's "Estado Civil" is the status **before** the wedding
   (the document's own verdict is *casado* unless an averbação says otherwise); "Nome que o
