@@ -1405,7 +1405,7 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     worktree. Lazy import (mirrors `_default_migration_collision_check`).
 
     Each gate gets its OWN declared budget (`gate_budget.resolve_gate_budget`,
-    sized from observed durations: SW 480s, seed/lib 360s, mcp full 300s...),
+    sized from observed durations: SW 1100s, seed/lib 700s, mcp full 900s...; one retry on timeout),
     and gates run in parallel, so wall-clock ~ the largest budget. `timeout`
     is only the runaway CEILING over the whole phase (the pre-2026-10-19
     flat 90s shared deadline timed out every big suite and integrated them
@@ -1414,15 +1414,27 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     (`_timed_out_in_scope_gates`)."""
     from .gate_sweep import gate_sweep  # lazy import
 
-    return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
-                      run_gate=_deadline_boxed_run_gate(timeout))
+    attempts: dict[str, dict[str, Any]] = {}
+    res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
+                     run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
+    if isinstance(res, dict):
+        # per-gate attempt counts + durations/budgets, so wall-clock is visible
+        res["gate_attempts"] = attempts
+    return res
 
 
-def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None):
+def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None,
+                             attempts_log: dict[str, dict[str, Any]] | None = None):
     """gate_sweep `run_gate` seam: per-gate budget (`resolve_gate_budget`,
     capped by what is left of the overall ceiling `timeout`). A gate that
     would start after the ceiling reports `exit_code=None` (never ran)
-    instead of silently blowing the time-box."""
+    instead of silently blowing the time-box.
+
+    A gate that TIMED OUT (no verdict) is retried ONCE with the extended limit
+    (`gate_budget.retry_budget`, still capped by the remaining ceiling); a gate
+    that FAILED (non-zero exit) is never retried. Two timeouts stay a timeout
+    (`exit_code=None`) - never green. Per-gate attempts are recorded in
+    `attempts_log[gate] = {attempts, durations_s, budgets_s, timed_out_final}`."""
     import time as _time
 
     from .gate_sweep import _default_run_gate  # lazy import
@@ -1430,11 +1442,29 @@ def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None
     deadline = _time.time() + max(1, timeout)
 
     def _boxed_run_gate(spec):
+        rec = {"attempts": 0, "durations_s": [], "budgets_s": []}
+        if attempts_log is not None:
+            attempts_log[spec.gate] = rec
         remaining = deadline - _time.time()
         if remaining <= 0:
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
         budget = _gate_budget.resolve_gate_budget(spec.gate, budgets)
-        return _default_run_gate(spec, timeout=max(1, int(min(budget, remaining))))
+        res = None
+        for attempt in (1, 2):
+            if attempt == 2:
+                remaining = deadline - _time.time()
+                if remaining < 1:
+                    break
+                budget = _gate_budget.retry_budget(budget)
+            limit = max(1, int(min(budget, remaining)))
+            res = _default_run_gate(spec, timeout=limit)
+            rec["attempts"] += 1
+            rec["durations_s"].append(round(float(res[2]), 2))
+            rec["budgets_s"].append(limit)
+            if not (res[0] is None and _gate_budget.is_timeout_summary(res[1])):
+                break  # a verdict (pass OR fail), or a non-timeout harness fault: no retry
+        rec["timed_out_final"] = bool(res and res[0] is None and _gate_budget.is_timeout_summary(res[1]))
+        return res
 
     return _boxed_run_gate
 
@@ -1510,7 +1540,8 @@ def _gate_product_slugs(gate_names: list[str]) -> set[str]:
 
 def _default_merged_tip_baseline(
     gate_names: list[str], dev_ref: str, *, run, fs: "FsOps", primary_root: str,
-    worktrees_dir: str = ".claude/worktrees", timeout: int = 90, run_gates=None,
+    worktrees_dir: str = ".claude/worktrees", timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S,
+    run_gates=None,
 ) -> dict[str, Any]:
     """Re-run ONLY `gate_names` against `dev_ref` in ONE ephemeral detached
     worktree (shared by all gates), env-wired with the scoped wiring
@@ -1543,7 +1574,10 @@ def _default_merged_tip_baseline(
         out["wire_skipped"] = len(skipped) + len(failed)
         if run_gates is None:
             from .gate_sweep import run_gates_named as run_gates  # lazy import
-        res = run_gates(wt, list(gate_names), run_gate=_deadline_boxed_run_gate(timeout))
+        attempts: dict[str, dict[str, Any]] = {}
+        res = run_gates(wt, list(gate_names),
+                        run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
+        out["gate_attempts"] = attempts
         by_name = {g["gate"]: g for g in res.get("gates", [])}
         for n in gate_names:
             outcome, why = _baseline_outcome(by_name.get(n))
@@ -2963,8 +2997,9 @@ def register(server) -> None:
             "its worktree + merged branch (result['auto_cleanup']; skipped if "
             "dirty) - the caller's cwd is gone afterwards; keep_worktree=True "
             "opts out. MERGED-TIP GATES (2026-10-19): each gate has its own "
-            "declared budget (gate_budget.py: SW 480s, seed/lib 360s, mcp full "
-            "300s), run in parallel; an IN-SCOPE gate that times out BLOCKS "
+            "declared budget (gate_budget.py: SW 1100s, seed/lib 700s, mcp full "
+            "900s; env-tunable, one retry of a TIMED-OUT gate at x1.5, "
+            "result['merged_tip_check']['gate_attempts']), run in parallel; an IN-SCOPE gate that times out BLOCKS "
             "(status 'gate_timeout') unless accept_unmeasured=[gate...] plus "
             "accept_unmeasured_reason (>=10 chars) is passed - recorded in "
             "result['merged_tip_accepted_unmeasured'] and the branch pointer. "

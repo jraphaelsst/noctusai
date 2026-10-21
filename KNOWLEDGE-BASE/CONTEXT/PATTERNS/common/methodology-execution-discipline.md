@@ -222,6 +222,26 @@ that still rides the 120s default is reported as `budget_defaulted` on the
 integrate result. MCP integrate already moves to the
 background after 120s, so the longer gates do not stall the caller.
 
+**2026-10-21 — gate budgets loosened ~3x + ONE retry of a timed-out gate.** The
+2026-10-19 budgets (SW 480 s, seed/lib 360 s, mcp 300/240 s) still produced
+repeated `gate_timeout` blocks on a loaded laptop for suites that pass when run
+directly (mcp scoped: ~6 s quiet, >240 s under load - collection alone ~5 min).
+Now (all in `tools/noctus/dev/gate_budget.py`, the ONE config point): budgets are
+~3x the observed p90 (pytest:social-wiring 314-373 s -> 1100; seed/lib/backend
+198-233 -> 700; pytest:* generic 600 (agents 79-123); e2e:* 600 (SW 27-52);
+mcp_toolkit_tests 900 / :scoped 720; vitest:seed 300; default 300), per-attempt
+cap 1800 s, overall ceiling 3600 s. A gate that TIMED OUT (no verdict) is retried
+ONCE at budget x1.5 (still capped by the remaining ceiling); a gate that FAILED
+is never retried; two timeouts stay `gate_timeout`/unmeasured - never green.
+Env knobs: `NOCTUS_GATE_BUDGET_SCALE` (multiply all), `NOCTUS_GATE_BUDGETS_JSON`
+(per-gate), `NOCTUS_GATE_RETRY_FACTOR`, `NOCTUS_GATE_MAX_BUDGET_S`,
+`NOCTUS_GATE_OVERALL_CEILING_S`. The integrate result carries
+`merged_tip_check.gate_attempts` (`attempts`, `durations_s`, `budgets_s`,
+`timed_out_final` per gate) so wall-clock stays visible; the dev-baseline re-run
+uses the same boxed runner (`merged_tip_baseline.gate_attempts`). The
+fresh-subprocess wrapper timeout is raised to 5400 s to cover it. The
+`accept_unmeasured` audit path is unchanged.
+
 **2026-10-09 — a red on a directly-touched product needs a DEV BASELINE, and
 a load-starved Playwright timeout is a harness fault.** `_merged_tip_red_is_new`
 has no baseline for a product the branch touched, so it always said "new":

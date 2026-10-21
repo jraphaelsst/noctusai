@@ -3662,19 +3662,80 @@ class TestMergedTipGateBudgets:
         monkeypatch.setattr(gs, "_default_run_gate",
                             lambda spec, timeout=300: seen.setdefault(spec.gate, timeout) and (0, "ok", 0.1))
         from types import SimpleNamespace as NS
-        run = T._deadline_boxed_run_gate(900)
+        run = T._deadline_boxed_run_gate(3600)
         run(NS(gate="pytest:social-wiring"))
         run(NS(gate="kb_sync_verify"))
-        assert seen["pytest:social-wiring"] == 480 and seen["kb_sync_verify"] == 120
+        assert seen["pytest:social-wiring"] == 1100 and seen["kb_sync_verify"] == 300
         seen.clear()
         capped = T._deadline_boxed_run_gate(60)
         capped(NS(gate="pytest:social-wiring"))
         assert 1 <= seen["pytest:social-wiring"] <= 60
 
+    def test_env_scale_and_json_override_resolution(self, monkeypatch):
+        from tools.noctus.dev import gate_budget as gb
+        monkeypatch.setenv("NOCTUS_GATE_BUDGET_SCALE", "2")
+        assert gb.resolve_gate_budget("pytest:core") == 2 * gb.GATE_BUDGETS_S["pytest:"]
+        monkeypatch.setenv("NOCTUS_GATE_BUDGETS_JSON", '{"pytest:core": 11}')
+        assert gb.resolve_gate_budget("pytest:core") == 22
+        monkeypatch.setenv("NOCTUS_GATE_BUDGET_SCALE", "1000")
+        assert gb.resolve_gate_budget("pytest:core") == gb.MAX_GATE_BUDGET_S
+        monkeypatch.setenv("NOCTUS_GATE_BUDGET_SCALE", "abc")
+        with pytest.raises(ValueError):
+            gb.resolve_gate_budget("pytest:core")
+
+    def test_retry_budget_extends_and_is_capped(self):
+        from tools.noctus.dev import gate_budget as gb
+        assert gb.retry_budget(100) == int(round(100 * gb.RETRY_FACTOR)) > 100
+        assert gb.retry_budget(gb.MAX_GATE_BUDGET_S) == gb.MAX_GATE_BUDGET_S
+
+    def _boxed(self, monkeypatch, results, ceiling=3600):
+        import tools.noctus.dev.gate_sweep as gs
+        calls = []
+        it = iter(results)
+
+        def fake(spec, timeout=300):
+            calls.append(timeout)
+            return next(it)
+        monkeypatch.setattr(gs, "_default_run_gate", fake)
+        log = {}
+        return T._deadline_boxed_run_gate(ceiling, attempts_log=log), calls, log
+
+    def test_timeout_is_retried_once_with_extended_limit_and_can_pass(self, monkeypatch):
+        from types import SimpleNamespace as NS
+        run, calls, log = self._boxed(monkeypatch, [(None, "timeout after 300s", 300.0), (0, "ok", 9.0)])
+        res = run(NS(gate="pytest:core"))
+        assert res[0] == 0
+        assert len(calls) == 2 and calls[1] > calls[0]
+        assert log["pytest:core"]["attempts"] == 2 and log["pytest:core"]["timed_out_final"] is False
+
+    def test_double_timeout_stays_unmeasured_never_green(self, monkeypatch):
+        from types import SimpleNamespace as NS
+        run, calls, log = self._boxed(monkeypatch, [(None, "timeout after 300s", 300.0)] * 3)
+        res = run(NS(gate="pytest:core"))
+        assert res[0] is None and len(calls) == 2
+        assert log["pytest:core"]["timed_out_final"] is True
+
+    def test_failure_is_never_retried(self, monkeypatch):
+        from types import SimpleNamespace as NS
+        run, calls, log = self._boxed(monkeypatch, [(1, "1 failed", 5.0), (0, "ok", 1.0)])
+        assert run(NS(gate="pytest:core"))[0] == 1
+        assert len(calls) == 1 and log["pytest:core"]["attempts"] == 1
+
+    def test_non_timeout_harness_fault_is_not_retried(self, monkeypatch):
+        from types import SimpleNamespace as NS
+        run, calls, _ = self._boxed(monkeypatch, [(None, "could not run 'x'", 0.0), (0, "ok", 1.0)])
+        assert run(NS(gate="pytest:core"))[0] is None and len(calls) == 1
+
+    def test_retry_capped_by_remaining_ceiling(self, monkeypatch):
+        from types import SimpleNamespace as NS
+        run, calls, _ = self._boxed(monkeypatch, [(None, "timeout after 30s", 30.0)] * 2, ceiling=60)
+        run(NS(gate="pytest:core"))
+        assert all(c <= 60 for c in calls)
+
     def test_default_ceiling_is_not_the_old_flat_90s(self):
         import inspect
         sig = inspect.signature(T.task_branch)
-        assert sig.parameters["merged_tip_timeout"].default >= 480
+        assert sig.parameters["merged_tip_timeout"].default >= 1800
 
 
 class TestEveryEmittableGateHasADeclaredBudget:

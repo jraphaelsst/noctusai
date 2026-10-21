@@ -130,7 +130,7 @@ REMEDY = "Restart the MCP server (Claude Code: run `/mcp`) so it re-imports mcp/
 # a rare, real "something is actually stuck" signal, not a routine hazard;
 # `_run_via_fresh_subprocess` additionally NEVER treats a timeout as
 # evidence nothing happened (see `status='fresh_subprocess_outcome_unknown'`).
-_FRESH_SUBPROCESS_TIMEOUT_S = 1800.0
+_FRESH_SUBPROCESS_TIMEOUT_S = 5400.0  # 2026-10-21: merged-tip gates may run up to 3600 s (budget + one retry)
 
 # F2: the read-only/dry-run verification step named in an "outcome unknown"
 # result — the caller's next move to find out what actually happened.
