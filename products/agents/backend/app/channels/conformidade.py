@@ -524,6 +524,9 @@ def sinal_alegacao(mensagens_lead: Sequence[str], regra: RegraConfig | None) -> 
 #: The ``escala_seguranca`` defaults (the rule's ``parametros`` override them; the migration CHECKs the shape).
 LIMIAR_SUSPEITO_PADRAO = 2
 LIMIAR_HANDOFF_PADRAO = 3
+#: Range a stored threshold may take (migration 044 CHECK `conformidade_regras_escala_limiares_check`).
+LIMIAR_MIN = 1
+LIMIAR_MAX = 20
 
 
 def _inteiro(valor: Any, padrao: int) -> int:

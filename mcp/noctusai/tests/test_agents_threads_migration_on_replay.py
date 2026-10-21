@@ -87,7 +87,7 @@ END $t$;"""),
     _step("message_role_check_accepts_humano_and_evento_and_refuses_the_rest", f"""
 DO $t$ BEGIN
   INSERT INTO agents.messages (org_id, conversation_id, role, texto, autor_user_id) VALUES ('{_A}', '{_C1}', 'humano', 'atendente', '{_A}');
-  INSERT INTO agents.messages (org_id, conversation_id, role, texto) VALUES ('{_A}', '{_C1}', 'evento', 'handoff');
+  INSERT INTO agents.messages (org_id, conversation_id, role, texto) VALUES ('{_A}', '{_C1}', 'evento', 'handoff:pedido');
   DELETE FROM agents.messages WHERE role IN ('humano', 'evento');
 END $t$;"""
           + _expect_refused(

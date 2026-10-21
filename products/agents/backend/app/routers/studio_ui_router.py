@@ -24,7 +24,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.channels.conformidade import SHINGLE_MAX, SHINGLE_MIN
+from app.channels.conformidade import LIMIAR_MAX, LIMIAR_MIN, SHINGLE_MAX, SHINGLE_MIN
 from app.dependencies import (
     get_conformidade_store_dep,
     get_conversation_store_dep,
@@ -144,6 +144,22 @@ class ResumoConformidadeOut(BaseModel):
 
 
 _MAX_PARAMETROS_BYTES = 8000
+
+
+def _validar_limiares_escala(parametros: dict[str, Any]) -> None:
+    """The same rule as the DB CHECK ``conformidade_regras_escala_limiares_check`` (migration 044): each threshold
+    an integer in [LIMIAR_MIN, LIMIAR_MAX], and hand-off strictly above restricted mode -- refused here as 422,
+    never left to the DB as a 500."""
+    limiares: dict[str, int] = {}
+    for campo in ("limiar_suspeito", "limiar_handoff"):
+        v = parametros.get(campo)
+        if v is None:
+            continue
+        if isinstance(v, bool) or not isinstance(v, int) or not LIMIAR_MIN <= v <= LIMIAR_MAX:
+            raise http_error(422, "invalid_field", f"Campo inválido: parametros.{campo}")
+        limiares[campo] = v
+    if len(limiares) == 2 and limiares["limiar_suspeito"] >= limiares["limiar_handoff"]:
+        raise http_error(422, "invalid_field", "Campo inválido: parametros.limiar_handoff")
 _MAX_VIOLACOES_LIDAS = 1000
 
 
@@ -207,6 +223,8 @@ async def definir_regra(
         st = payload.parametros.get("shingle_tokens")
         if st is not None and (isinstance(st, bool) or not isinstance(st, int) or not SHINGLE_MIN <= st <= SHINGLE_MAX):
             raise http_error(422, "invalid_field", "Campo inválido: parametros.shingle_tokens")
+        if regra == "escala_seguranca":
+            _validar_limiares_escala(payload.parametros)
     alvo_org, agent = _agente_alvo(store, ctx, key, org_id)
     antes = conformidade.regras(alvo_org, agent.id)[regra]
     novo = conformidade.definir_regra(

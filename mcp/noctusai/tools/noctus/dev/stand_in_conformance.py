@@ -129,6 +129,14 @@ _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
     "social-wiring/imovel_registry/imovel_registry_vinculo_nao_a_si_mesmo": (
         "vincular() links a manual row to a Vista row only (imovel_nao_manual refusal); DB guard probed"
     ),
+    # Reviewed 2026-10-21 (agents migration 044, Julia guardrails B4). Ranges + an inequality inside one JSONB
+    # column (`parametros`), regex-typed, so not a conditional-presence shape and not compilable by sql_check.
+    # Refused above the DB by `studio_ui_router._validar_limiares_escala` (422, tested in
+    # test_a_rt2_ui_backend.py); the runtime also repairs a malformed pair (`conformidade.py`); the DB refusal is
+    # proven by the `verify_db_guards` probes `conformidade_regras.escala_limiares_ordem` / `_faixa`.
+    "agents/conformidade_regras/conformidade_regras_escala_limiares_check": (
+        "JSONB-internal ranges + ordering; refused by the rule PUT route (422), DB guard probed"
+    ),
 }
 
 

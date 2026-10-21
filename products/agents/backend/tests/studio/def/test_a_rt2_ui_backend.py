@@ -109,6 +109,22 @@ class TestConformidade:
         _julia(studio)
         assert studio.put(self._url(), json=body).status_code == 422
 
+    @pytest.mark.parametrize("parametros", [
+        {"limiar_suspeito": 0}, {"limiar_handoff": 21}, {"limiar_suspeito": "3"}, {"limiar_handoff": True},
+        {"limiar_suspeito": 3, "limiar_handoff": 3}, {"limiar_suspeito": 5, "limiar_handoff": 4},
+    ])
+    def test_escalation_thresholds_outside_the_db_check_are_422(self, studio, parametros):
+        # mirrors conformidade_regras_escala_limiares_check (044): refused here, never a 500 from the DB
+        _julia(studio)
+        assert studio.put(self._url("escala_seguranca"), json={"parametros": parametros}).status_code == 422
+
+    def test_valid_escalation_thresholds_are_stored(self, studio):
+        agent = _julia(studio)
+        put = studio.put(self._url("escala_seguranca"), json={"parametros": {"limiar_suspeito": 2, "limiar_handoff": 20}})
+        assert put.status_code == 200, put.text
+        assert studio.conformidade.regras(DEFAULT_ORG_ID, agent.id)["escala_seguranca"].parametros == {
+            "limiar_suspeito": 2, "limiar_handoff": 20}
+
     def test_unknown_rule_is_404(self, studio):
         _julia(studio)
         assert studio.get(self._url("inventada")).status_code == 404
