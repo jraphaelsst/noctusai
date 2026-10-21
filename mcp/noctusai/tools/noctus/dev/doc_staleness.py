@@ -102,7 +102,10 @@ _PATH_ROOTS = (
     "KNOWLEDGE-BASE/", "projects/", "core/", "docs/", "templates/",
 )
 _PLACEHOLDER = frozenset("<>{}*$|()[]!?, ")
-_PRODUCT_ROOT_RE = re.compile(r"products/[^/]+")
+#: A product root or one of its app roots (`products/<slug>`, `.../backend`, `.../backend/app`,
+#: `.../frontend`, `.../frontend/src`): what the product README/MASTER-PROMPT cover. As a CONTRACT
+#: citation any of them coupled the contract to every change in that half of the product.
+_PRODUCT_ROOT_RE = re.compile(r"products/[^/]+(?:/backend(?:/app)?|/frontend(?:/src)?)?")
 _RELATIVE_BASE_RE = re.compile(r"[Pp]aths are relative to `([^`\n]+)`")
 _SCAFFOLD_CLAIM_RE = re.compile(
     r"scaffold(?:ed)?\s+only|only\s+scaffold|domain code is planned,?\s+not built"
@@ -239,8 +242,8 @@ def doc_coverage(root: Path, doc: Doc) -> list[str]:
     if name == "CONTRACT.md":
         existing, _ = _cited_code_paths(root, doc)
         for p in existing + _relative_cited_paths(root, doc):
-            # A bare product root (`products/<slug>`) is what the product README/MASTER-PROMPT
-            # cover; as a CONTRACT citation it coupled the contract to EVERY change in the product.
+            # A product (app) root is what the product README/MASTER-PROMPT cover (see
+            # _PRODUCT_ROOT_RE); as a CONTRACT citation it coupled the contract to EVERY change.
             if p.endswith(".md") or _PRODUCT_ROOT_RE.fullmatch(p):
                 continue
             g = f"{p}/**" if (root / p).is_dir() else p

@@ -64,6 +64,21 @@ def test_contract_citing_its_product_root_does_not_cover_the_whole_product(repo)
     assert cov == ["products/acme/backend/app/services/b.py"]  # the relative citation, resolved
 
 
+@pytest.mark.parametrize("cited", ["products/acme/backend/", "products/acme/backend/app",
+                                   "products/acme/frontend", "products/acme/frontend/src/"])
+def test_contract_citing_a_product_app_root_does_not_cover_that_half(repo, cited):
+    # agents' agent-packages CONTRACT cited `products/agents/backend/` and was flagged on every
+    # agents backend change (3x on 2026-10-21) -- an app root is the README's scope, not a contract's.
+    _write(repo, "products/acme/frontend/src/x.ts", "export {}\n")
+    doc = ds.Doc(rel="products/acme/projects/p/CONTRACT.md", text=f"Code lives in `{cited}`.\n")
+    assert ds.doc_coverage(repo, doc) == []
+
+
+def test_contract_citing_a_folder_below_an_app_root_still_covers_it(repo):
+    doc = ds.Doc(rel="products/acme/projects/p/CONTRACT.md", text="`products/acme/backend/app/routers/`\n")
+    assert ds.doc_coverage(repo, doc) == ["products/acme/backend/app/routers/**"]
+
+
 def test_contract_relative_citation_that_is_not_built_is_not_a_cover(repo):
     doc = ds.Doc(rel="products/acme/projects/p/CONTRACT.md",
                  text="Paths are relative to `products/acme/`.\n`backend/app/services/nao_existe.py`\n")
