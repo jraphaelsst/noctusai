@@ -100,7 +100,8 @@ class World:
         self.sw.set_table_data("julia_agente_chats_preexistentes", [])
         self.sw.set_table_data("julia_aviso_privacidade", [])
         self.sw.set_table_data("whatsapp_connections", [])
-        for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos", "julia_solicitacoes_titular"):
+        for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos", "julia_solicitacoes_titular",
+                  "julia_staff", "julia_protecao_config", "julia_numeros_bloqueados"):
             self.sw.set_table_data(t, [])
         # the platform default texts are DATA (migration julia_v2_espelhos): this is the migration's row, asserted equal to the SQL in
         # tests/services/test_julia_v2_espelhos_migration.py
@@ -200,7 +201,8 @@ class World:
         return LeadDeps(**args)
 
 
-def buffer_lead(world: World, chat_id: str, texts: list[str], *, ids: list[str] | None = None, start: int = 1) -> str:
+def buffer_lead(world: World, chat_id: str, texts: list[str], *, ids: list[str] | None = None, start: int = 1,
+                midias: list[dict | None] | None = None) -> str:
     """Put inbound messages on the lead buffer key exactly as the webhook does."""
     from noctusai_lib.domain.chatbot import QueuedConversationMessage
 
@@ -211,6 +213,6 @@ def buffer_lead(world: World, chat_id: str, texts: list[str], *, ids: list[str] 
         world.buffer.buffer_inbound(QueuedConversationMessage(
             conversation_id=key, text=text, direction="inbound",
             provider_message_id=(ids[i] if ids else f"m{start + i}"),
-            metadata={"push_name": "Ana"},
+            metadata={"push_name": "Ana", **({"midia": midias[i]} if midias and midias[i] else {})},
         ))
     return key

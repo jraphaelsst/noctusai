@@ -351,8 +351,8 @@ def _entrega(client: Any, org_id: UUID | str, contato_id: Any, gatilho: str, sta
             "org_id": str(org_id), "contato_id": str(contato_id), "gatilho": gatilho, "status": status,
             "erro": erro[:ERRO_MAX] if erro else None, "lead_id": lead_id,
         }).execute()
-    except Exception:
-        logger.exception("julia envio: could not write the entrega ledger row (org=%s contato=%s)", org_id, contato_id)
+    except Exception as exc:
+        logger.error("julia envio: could not write the entrega ledger row (org=%s contato=%s) (%s)", org_id, contato_id, type(exc).__name__)
 
 
 def _falhar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, erro: str) -> None:
@@ -374,8 +374,8 @@ def _atribuir_antes_de_notificar(client: Any, org_id: UUID | str, contato: dict[
 
             core = get_core_client()
         julia_equipes_service.atribuir_responsavel(client, core, org_id, contato, "envio")
-    except Exception:
-        logger.exception("julia envio: attendant distribution failed (org=%s contato=%s) -- lead sent unassigned", org_id, contato.get("id"))
+    except Exception as exc:
+        logger.error("julia envio: attendant distribution failed (org=%s contato=%s) -- lead sent unassigned (%s)", org_id, contato.get("id"), type(exc).__name__)
 
 
 def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: str, *, agora: Optional[datetime] = None) -> dict[str, Any]:
@@ -421,7 +421,7 @@ def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: st
     except AppException:
         raise
     except Exception as exc:
-        logger.exception("julia envio: send failed (org=%s contato=%s gatilho=%s)", org_id, contato.get("id"), gatilho)
+        logger.error("julia envio: send failed (org=%s contato=%s gatilho=%s) (%s)", org_id, contato.get("id"), gatilho, type(exc).__name__)
         _falhar(client, org_id, contato, gatilho, f"envio_falhou: {type(exc).__name__}")
         raise AppException("envio_falhou", "Não foi possível enviar ao SW. Tente novamente.", status_code=502) from exc
     return {"status_envio": status, "lead_id": lead_id, "ja_enviado": False, "criado": criado}
@@ -495,8 +495,8 @@ async def reagir_ao_estagio(
         return await enviar_por_estagio(
             client, org_id, contato, estagio=resumo.estagio, score=resumo.score, ordem=tuple(resumo.estagios or ()),
         )
-    except Exception:
-        logger.exception("julia envio: stage trigger failed (org=%s contato=%s)", org_id, contato.get("id"))
+    except Exception as exc:
+        logger.error("julia envio: stage trigger failed (org=%s contato=%s) (%s)", org_id, contato.get("id"), type(exc).__name__)
         return None
 
 

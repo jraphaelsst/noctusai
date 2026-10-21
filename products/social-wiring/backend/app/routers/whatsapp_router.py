@@ -98,6 +98,7 @@ from app.routers.julia_agente_router import get_agents_client_factory
 from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services import julia_agente_service as julia
+from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_conversas_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
@@ -551,10 +552,10 @@ async def _handle_lead_message(
     except Exception as exc:
         # Eligibility is a PRIVACY decision (11.1): when it cannot be made, the chat is
         # not Julia's. Logged, never swallowed into a "yes".
-        logger.error("Julia eligibility check failed for chat=%s (%s) — treated as NOT eligible", chat_id, type(exc).__name__)
+        logger.error("Julia eligibility check failed for chat=%s (%s) — treated as NOT eligible", ref_log(chat_id), type(exc).__name__)
         return False
     if not elegibilidade.elegivel:
-        logger.info("Julia: chat %s not eligible (%s) — unchanged behaviour", chat_id, elegibilidade.motivo)
+        logger.info("Julia: chat %s not eligible (%s) — unchanged behaviour", ref_log(chat_id), elegibilidade.motivo)
         return False
 
     # Conversas v2: a BLOCKED number is dropped; an ARCHIVED contato goes back to Julia (un-paused). A data request
@@ -564,7 +565,7 @@ async def _handle_lead_message(
         org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
     )
     if politica == "bloqueado":
-        logger.info("Julia: chat %s is blocked — inbound dropped", chat_id)
+        logger.info("Julia: chat %s is blocked — inbound dropped", ref_log(chat_id))
         return True
     if politica == "devolvido":
         state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
@@ -573,7 +574,7 @@ async def _handle_lead_message(
 
     module = get_conversation_module()
     if module is None:
-        logger.error("Julia: conversation module unavailable — lead message for %s NOT processed", chat_id)
+        logger.error("Julia: conversation module unavailable — lead message for %s NOT processed", ref_log(chat_id))
         return True
     module.buffer.buffer_inbound(
         QueuedConversationMessage(
@@ -584,20 +585,21 @@ async def _handle_lead_message(
             metadata={"push_name": push_name, "sender": sender, **({"midia": midia} if midia else {})},
         )
     )
-    logger.info("Julia: lead message buffered chat=%s debounce=%ss", chat_id, cfg.message_debounce_seconds)
+    logger.info("Julia: lead message buffered chat=%s debounce=%ss", ref_log(chat_id), cfg.message_debounce_seconds)
     return True
 
 
 async def _triar_remetente(connection, *, chat_id: str, sender: str, cfg):
     """GUARDRAILS B5: the first question about an inbound on a Julia line, asked BEFORE any media AI call or agents call. Returns
-    None for a sender that is not a lead candidate (an operator number, or a person on the org staff list); else the
-    `Triagem` (blocklist, per-number rate limit). A staff member is decided later (the routing split) -- here they only skip the
-    lead limits."""
+    a `Triagem`: `equipe` for a person on the org staff list (they skip the lead limits and every media AI call; the routing
+    split below decides what happens to their message), else the blocklist / per-number rate-limit verdict."""
     client = get_scoped_admin_client("social_wiring")
     try:
         formas = julia_staff_service.formas_do_remetente(chat_id, sender)
         if formas and julia_staff_service.buscar_por_telefone(client, connection.org_id, formas) is not None:
-            return None
+            # a colleague, not a stranger: no lead limits, but NO media AI either (they are never a lead; the routing split below
+            # stores the message and notices the admins)
+            return julia_protecao_service.Triagem("equipe", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
         redis = make_redis_client(cfg.redis_url, decode_responses=True)
         return julia_protecao_service.triar_entrada(client, redis, get_core_client(), connection, chat_id=chat_id, sender=sender)
     except Exception as exc:
@@ -700,10 +702,10 @@ async def _apply_human_takeover(
         ):
             logger.debug("Julia: fromMe echo of her own bubble (id=%s) — no takeover", provider_message_id)
             return
-    except Exception:
+    except Exception as exc:
         # Cannot tell her echo from a human: do NOT pause (a wrongly-paused chat
         # silences a lead; agents re-checks on every turn anyway).
-        logger.exception("Julia: own-echo check failed — takeover skipped for chat=%s", chat_id)
+        logger.error("Julia: own-echo check failed — takeover skipped for chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
         return
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
@@ -719,17 +721,17 @@ async def _apply_human_takeover(
             autor={"nome": autor["nome"], "papel": autor["papel"]} if autor else None,
         )
     except Exception as exc:
-        logger.error("Julia: could not record the human takeover of chat=%s (%s)", chat_id, type(exc).__name__)
+        logger.error("Julia: could not record the human takeover of chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
         return
     if resultado != "pausado":
-        logger.info("Julia: human message in chat %s — nothing to pause at agents (%s)", chat_id, resultado)
+        logger.info("Julia: human message in chat %s — nothing to pause at agents (%s)", ref_log(chat_id), resultado)
         return
-    logger.info("Julia: human takeover — agent paused in chat %s at agents (conn=%s)", chat_id, connection.id)
+    logger.info("Julia: human takeover — agent paused in chat %s at agents (conn=%s)", ref_log(chat_id), connection.id)
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
         payload = {**summary.as_dict(), "agente_pausado": True} if summary else {"chat_id": chat_id, "agente_pausado": True}
-    except Exception:
-        logger.exception("Julia: chat read for the pause event failed chat=%s", chat_id)
+    except Exception as exc:
+        logger.error("Julia: chat read for the pause event failed chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
         payload = {"chat_id": chat_id, "agente_pausado": True}
     await publish_whatsapp_event(
         get_whatsapp_bus(cfg.redis_url), connection_id=connection.id,
@@ -896,13 +898,13 @@ async def _process_waha_body(
         and not julia_protecao_service.eh_numero_da_lista(connection.authorized_numbers, sender)
     ):
         triagem = await _triar_remetente(connection, chat_id=payload.chat_id or sender, sender=sender, cfg=cfg)
-    if media_url and not from_me and triagem is not None:
+    if media_url and not from_me and triagem is not None and triagem.estado != "equipe":
         midia_lead = await _resolver_midia_do_lead(
             triagem, chat_id=payload.chat_id or sender, url=media_url, mimetype=media_mimetype, filename=media_filename,
             legenda=legenda_original, cfg=cfg,
         )
         message_body = midia_lead.exibicao()  # SW's own inbox line (masked); agents gets `midia`, never this string
-    elif media_url and cfg.openai_api_key and not from_me:
+    elif media_url and cfg.openai_api_key and not from_me and triagem is None:
         try:
             media_service = make_media_service()
             resolved_media = await media_service.resolve_inbound(

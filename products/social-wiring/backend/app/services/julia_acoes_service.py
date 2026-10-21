@@ -149,9 +149,9 @@ async def fechar_interacao(
             out = hook(client, org_id, contato, fechada, origem)
             if inspect.isawaitable(out):
                 await out
-        except Exception:
+        except Exception as exc:
             # a policy hook (wave 13: the Google review ask) must never undo the close
-            logger.exception("julia: pos-fechar hook %s failed (org=%s)", getattr(hook, "__name__", "?"), org_id)
+            logger.error("julia: pos-fechar hook %s failed (org=%s) (%s)", getattr(hook, "__name__", "?"), org_id, type(exc).__name__)
     return fechada
 
 
@@ -166,8 +166,7 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
     # gen + 1 first: every job queued for this contato is now stale (contract 0.2).
     contatos.bump_gen(ctx.client, ctx.contato["id"], encerrado_at=agora.isoformat())
     if pediu_parar:
-        logger.info("julia: lead asked to stop (agents recorded the opt-out) org=%s contato=%s -- follow-ups stopped",
-                    ctx.org_id, ctx.contato["id"])
+        logger.info("julia: lead asked to stop (agents recorded the opt-out) org=%s contato=%s -- follow-ups stopped", ctx.org_id, ctx.contato["id"])
         eventos.emitir(ctx.client, ctx.org_id, "lead_opt_out", ctx.contato["id"],
                        {"origem": "agente", "motivo": MOTIVO_ENCERRAR_PEDIU_PARAR,
                         "interacao_id": str(ctx.interacao["id"]) if ctx.interacao else None})
@@ -181,9 +180,9 @@ async def _h_encerrar(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
     for hook in tuple(POS_ENCERRAR):
         try:
             hook(ctx, motivo)
-        except Exception:
+        except Exception as exc:
             # a policy hook (wave 3: WhatsApp invalido -> send to the SW) must never undo the close
-            logger.exception("julia: pos-encerrar hook %s failed (org=%s)", getattr(hook, "__name__", "?"), ctx.org_id)
+            logger.error("julia: pos-encerrar hook %s failed (org=%s) (%s)", getattr(hook, "__name__", "?"), ctx.org_id, type(exc).__name__)
     return {"motivo": motivo, "interacao_id": str(ctx.interacao["id"]) if ctx.interacao else None,
             "desfecho": (fechada or {}).get("desfecho")}
 
@@ -257,8 +256,8 @@ def _ledger(client: Any) -> Any:
 def _atualizar_resultado(client: Any, org_id: Any, lote_hash: str, seq: int, resultado: Optional[dict[str, Any]]) -> None:
     try:
         _ledger(client).update({"resultado": resultado}).eq("org_id", str(org_id)).eq("lote_hash", lote_hash).eq("seq", seq).execute()
-    except Exception:
-        logger.exception("julia: could not store the result of action seq=%s lote=%s", seq, lote_hash[:12])
+    except Exception as exc:
+        logger.error("julia: could not store the result of action seq=%s lote=%s (%s)", seq, lote_hash[:12], type(exc).__name__)
 
 
 async def aplicar(
@@ -287,9 +286,9 @@ async def aplicar(
                 connection_id=connection_id, chat_id=chat_id,
                 handlers=HANDLERS if handlers is None else handlers,
             ))
-        except Exception:
+        except Exception as exc:
             # The ledger insert itself failed (DB down): the reply is already sent, so report, don't raise.
-            logger.exception("julia: action %s seq=%s could not be applied (org=%s)", acao.type, acao.seq, org_id)
+            logger.error("julia: action %s seq=%s could not be applied (org=%s) (%s)", acao.type, acao.seq, org_id, type(exc).__name__)
             resumo.append({"seq": acao.seq, "tipo": acao.type, "estado": "falhou"})
     return resumo
 
@@ -332,7 +331,7 @@ async def _aplicar_uma(
         if inspect.isawaitable(out):
             out = await out
     except Exception as exc:
-        logger.exception("julia: handler for %s seq=%s failed (org=%s)", acao.type, acao.seq, org_id)
+        logger.error("julia: handler for %s seq=%s failed (org=%s) (%s)", acao.type, acao.seq, org_id, type(exc).__name__)
         eventos.emitir(client, org_id, "acao_falhou", contato_id, {"tipo": acao.type, "seq": acao.seq, "erro": type(exc).__name__})
         _atualizar_resultado(client, org_id, lote_hash, acao.seq, {"erro": type(exc).__name__})
         return {"seq": acao.seq, "tipo": acao.type, "estado": "falhou"}
@@ -341,8 +340,8 @@ async def _aplicar_uma(
             res = hook(ctx, acao.payload, out)
             if inspect.isawaitable(res):
                 await res
-        except Exception:
-            logger.exception("julia: pos-acao hook %s for %s failed (org=%s)", getattr(hook, "__name__", "?"), acao.type, org_id)
+        except Exception as exc:
+            logger.error("julia: pos-acao hook %s for %s failed (org=%s) (%s)", getattr(hook, "__name__", "?"), acao.type, org_id, type(exc).__name__)
     _atualizar_resultado(client, org_id, lote_hash, acao.seq, out or {})
     return {"seq": acao.seq, "tipo": acao.type, "estado": "aplicada"}
 

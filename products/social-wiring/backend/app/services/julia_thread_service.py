@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+from app.services.identidade_mascara import ref as ref_log
 from app.clients.agents import (
     MAX_MESSAGE_CHARS,
     AgentsClient,
@@ -57,8 +58,8 @@ def espelhar(chat_store: Any, *, connection_id: UUID, chat_id: str, thread_id: O
         return
     try:
         chat_store.set_agente_espelho(connection_id=connection_id, chat_id=chat_id, thread_id=thread_id, estado=estado)
-    except Exception:
-        logger.exception("julia: could not mirror the agent state onto the chat conn=%s (agents has it)", connection_id)
+    except Exception as exc:
+        logger.error("julia: could not mirror the agent state onto the chat conn=%s (agents has it) (%s)", connection_id, type(exc).__name__)
 
 
 async def resolver_thread_id(
@@ -68,8 +69,8 @@ async def resolver_thread_id(
     thread, i.e. it never served this lead). A lookup failure is logged and reads as None."""
     try:
         state = chat_store.get_agente_state(connection_id=connection_id, chat_id=chat_id)
-    except Exception:
-        logger.exception("julia: chat state read failed conn=%s", connection_id)
+    except Exception as exc:
+        logger.error("julia: chat state read failed conn=%s (%s)", connection_id, type(exc).__name__)
         state = None
     tid = thread_id_do_estado(state)
     if tid or client is None:

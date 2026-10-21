@@ -63,6 +63,7 @@ from app.clients.agents import (
 from app.config import settings as _default_settings
 from app.modules.supervisao import alertas as supervisao_alertas
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
+from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_protecao_service as protecao
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_espelho_service, julia_thread_service
@@ -113,8 +114,8 @@ def _default_job_repository() -> Any:
         return None
     try:
         return make_job_repository(supabase_client=admin, schema_name="social_wiring")
-    except Exception:
-        logger.exception("julia: could not build the job repository -- re-engagement timers will not be armed")
+    except Exception as exc:
+        logger.error("julia: could not build the job repository -- re-engagement timers will not be armed (%s)", type(exc).__name__)
         return None
 
 
@@ -267,14 +268,14 @@ class LeadSender:
             )
         except DuplicateMessage:
             logger.info("julia: outbound echo already recorded (id=%s)", provider_message_id)
-        except Exception:
-            logger.exception("julia: outbound record failed conn=%s chat=%s", self._c.id, sender)
+        except Exception as exc:
+            logger.error("julia: outbound record failed conn=%s chat=%s (%s)", self._c.id, ref_log(sender), type(exc).__name__)
         try:
             summary = self._d.chat_store_factory(self._c.org_id).record_message(
                 connection_id=self._c.id, chat_id=sender, direction="outbound", body=text, created_at=now,
             )
-        except Exception:
-            logger.exception("julia: chat row update failed conn=%s chat=%s", self._c.id, sender)
+        except Exception as exc:
+            logger.error("julia: chat row update failed conn=%s chat=%s (%s)", self._c.id, ref_log(sender), type(exc).__name__)
             summary = None
         if stored is not None:
             await publish_whatsapp_event(
@@ -292,8 +293,8 @@ async def publish_pause(deps: LeadDeps, *, connection: WhatsAppConnectionRecord,
     """`chat.upsert` carrying `agente_pausado`, so Conversas flips its chip live."""
     try:
         summary = deps.chat_store_factory(connection.org_id).get_chat(connection_id=connection.id, chat_id=chat_id)
-    except Exception:
-        logger.exception("julia: chat read for pause event failed conn=%s chat=%s", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: chat read for pause event failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
         summary = None
     payload = {**summary.as_dict(), "agente_pausado": pausado} if summary else {"chat_id": chat_id, "agente_pausado": pausado}
     await publish_whatsapp_event(deps.bus, connection_id=connection.id, event=EVENT_CHAT_UPSERT, payload=payload)
@@ -323,8 +324,8 @@ def _registrar_resposta_de_disparo(deps: LeadDeps, org_id: Any, contato: dict[st
         from app.services import julia_disparos_service
 
         julia_disparos_service.registrar_resposta(deps.scoped, org_id, tel)
-    except Exception:
-        logger.exception("julia: disparo reply bookkeeping failed org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: disparo reply bookkeeping failed org=%s (%s)", org_id, type(exc).__name__)
 
 
 async def _preparar_julia(
@@ -358,8 +359,8 @@ async def _preparar_julia(
         contexto = julia_contexto_service.montar(deps.scoped, org_id, contato, interacao=interacao)
         recesso = julia_conhecimento_service.mensagem_recesso_primeiro_turno(deps.scoped, org_id, contato, interacao)
         return JuliaTurn(contato=contato, contexto=contexto, avisos=[recesso] if recesso else [], novo=anterior is None)
-    except Exception:
-        logger.exception("julia: foundation prep failed conn=%s chat=%s -- no turn is sent (no lead identity)", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: foundation prep failed conn=%s chat=%s -- no turn is sent (no lead identity) (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
         return None
 
 
@@ -380,8 +381,8 @@ async def _pos_turno(
             conversation_id=result.thread or result.conversation_id, agents_client=agents_client,
             core_client=deps.core_client, connection_id=connection.id, chat_id=chat_id,
         )
-    except Exception:
-        logger.exception("julia: post-turn bookkeeping failed conn=%s chat=%s", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: post-turn bookkeeping failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     try:
         # the mirror reads the contato fresh: an action above (encerrar) may have changed it
         fresco = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id) or julia_turn.contato
@@ -393,8 +394,8 @@ async def _pos_turno(
             deps.scoped, connection.org_id, fresco, resumo, agents_client=agents_client,
             ja_enviado_por_acao=any(a.type == "lead_pronto" for a in result.julia_actions),
         )
-    except Exception:
-        logger.exception("julia: qualification mirror / stage trigger failed conn=%s chat=%s", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: qualification mirror / stage trigger failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     if enviou:
         await _armar_reengajamento(deps, connection=connection, chat_id=chat_id)
 
@@ -410,8 +411,8 @@ async def _armar_reengajamento(deps: LeadDeps, *, connection: WhatsAppConnection
         fresh = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id)
         if fresh is not None:
             await julia_reengajamento_service.agendar_apos_outbound(deps.scoped, deps.jobs, connection.org_id, fresh)
-    except Exception:
-        logger.exception("julia: could not arm the re-engagement timers conn=%s chat=%s", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: could not arm the re-engagement timers conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
 
 
 # ── the worker entry point ──────────────────────────────────────────────────
@@ -476,11 +477,11 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     try:
         politica = julia_conversas_service.aplicar_politica_inbound(
             deps.scoped, chat_store, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
-    except Exception:  # the foundation never stops Julia answering (page-0 contract); the webhook is the primary drop
-        logger.exception("julia: block/archive policy check failed conn=%s chat=%s -- turn proceeds", connection.id, chat_id)
+    except Exception as exc:  # the foundation never stops Julia answering (page-0 contract); the webhook is the primary drop
+        logger.error("julia: block/archive policy check failed conn=%s chat=%s -- turn proceeds (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
         politica = "ok"
     if politica == "bloqueado":
-        logger.info("julia: chat %s is blocked -- batch dropped", chat_id)
+        logger.info("julia: chat %s is blocked -- batch dropped", ref_log(chat_id))
         close_run(deps.buffer, key, run)
         return
     if politica == "devolvido":
@@ -506,7 +507,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
 
     if not julia.permitir_turno(deps.buffer.redis, connection_id=connection.id, chat_id=chat_id, cfg=deps.cfg):
-        logger.warning("julia: rate limit hit conn=%s chat=%s -- turn dropped (M4)", connection.id, chat_id)
+        logger.warning("julia: rate limit hit conn=%s chat=%s -- turn dropped (M4)", connection.id, ref_log(chat_id))
         close_run(deps.buffer, key, run)
         return
 
@@ -551,14 +552,14 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         messages=tuple(mensagem_do_turno(m) for m in batch if m.get("provider_message_id")),
     )
     if not req.messages:
-        logger.error("julia: batch for %s carries no provider_message_id -- dropped", chat_id)
+        logger.error("julia: batch for %s carries no provider_message_id -- dropped", ref_log(chat_id))
         close_run(deps.buffer, key, run)
         return
 
     try:
         result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
     except asyncio.TimeoutError:
-        logger.error("julia: agents turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
+        logger.error("julia: agents turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, ref_log(chat_id))
         _clear_attempts(deps, key)
         close_run(deps.buffer, key, run)
         return
@@ -570,6 +571,11 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         return
     _clear_attempts(deps, key)
     julia.limpar_erro_link(org_id, cfg=deps.cfg)
+    if result.atendeu:
+        await _redigir_identificacao_guardada(
+            deps, connection=connection, chat_id=chat_id, chat_store=chat_store, agents_client=client,
+            lead_ref=str(julia_turn.contato["id"]), batch=batch,
+        )
 
     if result.status in STATUS_SEM_ATENDIMENTO:
         await _tratar_sem_atendimento(
@@ -586,6 +592,32 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         lote_hash=julia_acoes_service.lote_hash_de(result.thread or result.conversation_id, [m.provider_message_id for m in req.messages]),
         fluxo=julia_envio_gate.Fluxo.RESPOSTA,
     )
+
+
+async def _redigir_identificacao_guardada(
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, chat_store: Any, agents_client: AgentsClient,
+    lead_ref: str, batch: list[dict[str, Any]],
+) -> None:
+    """GUARDRAILS B8.4: when this batch carried a CPF / RG / CNH number AND agents now holds the lead's identification (its
+    masked read is non-empty), mask the numbers in SW's stored copy of those messages. Never raises: a failure is logged by type
+    and the stored text simply stays as typed (the retention window still applies).
+
+    Agents would need the same for `agents.messages` (its own store); this is SW's half."""
+    from app.services.identidade_mascara import mascarar_identificadores
+
+    ids = [str(m["provider_message_id"]) for m in batch
+           if m.get("provider_message_id") and mascarar_identificadores(str(m.get("text") or "")) != str(m.get("text") or "")]
+    if not ids:
+        return
+    try:
+        registrada = await agents_client.identificacao_mascarada(lead_ref)
+        if not registrada:
+            return
+        n = deps.message_store_factory(connection.org_id).redigir_identificacao(
+            connection_id=connection.id, chat_id=chat_id, provider_message_ids=ids)
+        logger.info("julia: identity numbers masked in %s stored message(s) conn=%s", n, connection.id)
+    except Exception as exc:
+        logger.error("julia: identity redaction failed conn=%s (%s)", connection.id, type(exc).__name__)
 
 
 async def _registrar_opt_in(client: AgentsClient, contato_id: Any) -> None:
@@ -612,7 +644,7 @@ async def _tratar_sem_atendimento(
       * a lead agents refused (`novo_lead_recusado` / `agente_desligado` with NO thread): the contato SW created for this
         very batch is erased -- a lead Julia never served is not kept (Q5, LGPD data minimisation)."""
     contato = julia_turn.contato if julia_turn else None
-    logger.info("julia: agents did not serve the turn (%s) conn=%s chat=%s -- nothing sent", result.status, connection.id, chat_id)
+    logger.info("julia: agents did not serve the turn (%s) conn=%s chat=%s -- nothing sent", result.status, connection.id, ref_log(chat_id))
     if contato is not None:
         julia_eventos_service.emitir(deps.scoped, connection.org_id, "agente_nao_atendeu", contato.get("id"),
                                      {"status": result.status})
@@ -632,8 +664,8 @@ async def _tratar_sem_atendimento(
                 removidos = julia_contatos_service.apagar_do_chat(
                     deps.scoped, connection.org_id, connection.id, sorted(julia.chat_aliases(chat_id)))
                 logger.info("julia: lead refused by agents (%s) -- %s SW contato(s) not kept", result.status, removidos)
-            except Exception:
-                logger.exception("julia: could not drop the contato of a refused lead conn=%s chat=%s", connection.id, chat_id)
+            except Exception as exc:
+                logger.error("julia: could not drop the contato of a refused lead conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     if result.status in STATUS_LIMITE_PARA_HUMANO:
         await _contar_abuso(deps, connection=connection, chat_id=chat_id, status=result.status)
         await _encaminhar_limite(deps, connection=connection, chat_id=chat_id, status=result.status, contato=contato,
@@ -641,8 +673,8 @@ async def _tratar_sem_atendimento(
     if result.status == "lead_opt_out" and contato is not None:
         try:
             julia_contatos_service.bump_gen(deps.scoped, contato["id"], encerrado_at=datetime.now(timezone.utc).isoformat())
-        except Exception:
-            logger.exception("julia: gen bump on opt-out failed conn=%s chat=%s", connection.id, chat_id)
+        except Exception as exc:
+            logger.error("julia: gen bump on opt-out failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
 
 
 async def _contar_abuso(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, status: str) -> None:
@@ -689,23 +721,23 @@ async def _encaminhar_limite(
     if status == "loop_detectado" and contato is not None:  # agents paused + handed off: every queued job is stale
         try:
             julia_contatos_service.bump_gen(deps.scoped, contato["id"])
-        except Exception:
-            logger.exception("julia: gen bump on loop_detectado failed conn=%s chat=%s", connection.id, chat_id)
+        except Exception as exc:
+            logger.error("julia: gen bump on loop_detectado failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     try:
         novo = deps.buffer.redis.set(f"julia:limite:{connection.id}:{chat_id}:{status}", "1", nx=True, ex=LIMITE_DEDUPE_S)
-    except Exception:
-        logger.exception("julia: limit dedupe unavailable conn=%s chat=%s -- notifying (better twice than never)", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: limit dedupe unavailable conn=%s chat=%s -- notifying (better twice than never) (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
         novo = True
     if not novo:
-        logger.info("julia: %s for chat=%s already routed to the operators within the hour", status, chat_id)
+        logger.info("julia: %s for chat=%s already routed to the operators within the hour", status, ref_log(chat_id))
         return
     responsavel: Optional[str] = None
     try:
         if contato is not None:
             atribuido = julia_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
             responsavel = atribuido["user_id"] if atribuido else None
-    except Exception:
-        logger.exception("julia: attendant distribution failed for %s conn=%s chat=%s", status, connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: attendant distribution failed for %s conn=%s chat=%s (%s)", status, connection.id, ref_log(chat_id), type(exc).__name__)
     notificado = False
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
@@ -715,8 +747,8 @@ async def _encaminhar_limite(
             motivo=MOTIVOS_LIMITE[status], responsavel_user_id=responsavel, registro=None, agente_nome=nome_agente,
         )
         notificado = True
-    except Exception:
-        logger.exception("julia: operator notice for %s failed conn=%s chat=%s", status, connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: operator notice for %s failed conn=%s chat=%s (%s)", status, connection.id, ref_log(chat_id), type(exc).__name__)
     julia_eventos_service.emitir(
         deps.scoped, connection.org_id, "limite_para_humano", (contato or {}).get("id"),
         {"status": status, "motivo_codigo": status, "notificado": notificado},
@@ -729,8 +761,7 @@ def _alertar_contrato_invalido(
     """A 422 / replay-409 from agents is an integration bug on OUR side (we sent a shape its schema rejects), and
     the lead gets no reply: never a quiet log line. ERROR + an owner-visible `julia_eventos`/notification
     (`agents_contrato_invalido`, deduped per org/code/day). Ids only, no PII."""
-    logger.error("julia: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s -- the lead got NO reply",
-                 type(exc).__name__, exc.code, connection_id, chat_id)
+    logger.error("julia: agents rejected the turn as a client bug (%s: %s) conn=%s chat=%s -- the lead got NO reply", type(exc).__name__, exc.code, connection_id, ref_log(chat_id))
     julia_eventos_service.emitir(
         deps.scoped, org_id, "agents_contrato_invalido", None,
         {"codigo": str(exc.code or type(exc).__name__), "dia": julia_notificacoes_service.dia_sp(),
@@ -753,23 +784,23 @@ async def _handle_turn_error(
         if _attempts(deps, key) < MAX_REQUEUE_IN_PROGRESS:
             _bump_attempts(deps, key)
             _requeue(deps, key, REQUEUE_IN_PROGRESS_S)
-            logger.warning("julia: agents control unavailable -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, chat_id)
+            logger.warning("julia: agents control unavailable -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, ref_log(chat_id))
             return
-        logger.error("julia: agents control unavailable after the re-queue -- batch dropped, nothing sent (chat=%s)", chat_id)
+        logger.error("julia: agents control unavailable after the re-queue -- batch dropped, nothing sent (chat=%s)", ref_log(chat_id))
     elif isinstance(exc, TurnInProgress):
         if _attempts(deps, key) < MAX_REQUEUE_IN_PROGRESS:
             _bump_attempts(deps, key)
             _requeue(deps, key, REQUEUE_IN_PROGRESS_S)
-            logger.info("julia: turn_in_progress -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, chat_id)
+            logger.info("julia: turn_in_progress -- batch re-queued once in %ss (chat=%s)", REQUEUE_IN_PROGRESS_S, ref_log(chat_id))
             return
-        logger.error("julia: turn_in_progress persisted after the re-queue -- batch dropped (chat=%s)", chat_id)
+        logger.error("julia: turn_in_progress persisted after the re-queue -- batch dropped (chat=%s)", ref_log(chat_id))
     elif isinstance(exc, CapacityExceeded):
         if _attempts(deps, key) < MAX_REQUEUE_CAPACITY:
             _bump_attempts(deps, key)
             _requeue(deps, key, exc.retry_after)
-            logger.warning("julia: capacidade -- batch re-queued in %ss (chat=%s)", exc.retry_after, chat_id)
+            logger.warning("julia: capacidade -- batch re-queued in %ss (chat=%s)", exc.retry_after, ref_log(chat_id))
             return
-        logger.error("julia: capacidade persisted after %s re-queues -- routed to a human (chat=%s)", MAX_REQUEUE_CAPACITY, chat_id)
+        logger.error("julia: capacidade persisted after %s re-queues -- routed to a human (chat=%s)", MAX_REQUEUE_CAPACITY, ref_log(chat_id))
         if connection is not None:
             await _encaminhar_limite(
                 deps, connection=connection, chat_id=chat_id, status="capacidade", contato=contato, chat_store=chat_store,
@@ -790,9 +821,9 @@ async def _handle_turn_error(
     elif isinstance(exc, (AgentsBadRequest, IdempotencyConflict)):
         _alertar_contrato_invalido(deps, exc, org_id=org_id, connection_id=connection_id, chat_id=chat_id)
     elif isinstance(exc, (AgentsUpstreamError, AgentsTimeout)):
-        logger.error("julia: agents upstream failure (%s) conn=%s chat=%s -- no reply", type(exc).__name__, connection_id, chat_id)
+        logger.error("julia: agents upstream failure (%s) conn=%s chat=%s -- no reply", type(exc).__name__, connection_id, ref_log(chat_id))
     else:  # an AgentsClientError subclass we do not know: never reply, never loop
-        logger.error("julia: unhandled agents error %s conn=%s chat=%s", type(exc).__name__, connection_id, chat_id)
+        logger.error("julia: unhandled agents error %s conn=%s chat=%s", type(exc).__name__, connection_id, ref_log(chat_id))
     _clear_attempts(deps, key)
     close_run(deps.buffer, key, run)
 
@@ -869,8 +900,8 @@ async def _deliver(
             disclosure = julia.mensagem_inicial_pronta(
                 julia_aviso_service.obter_ou_criar(deps.scoped, deps.core_client, connection.org_id), nome_agente,
             )
-        except Exception:
-            logger.exception("julia: cannot build the privacy disclosure for org=%s -- reply NOT sent", connection.org_id)
+        except Exception as exc:
+            logger.error("julia: cannot build the privacy disclosure for org=%s -- reply NOT sent (%s)", connection.org_id, type(exc).__name__)
             close_run(deps.buffer, key, run)
             return False
         partes.insert(0, disclosure)
@@ -883,8 +914,8 @@ async def _deliver(
                 await deps.sleep(delay)
             await send_paragraphs(intake=sender, sender=chat_id, text=parte, delay_seconds=0, split=False)
             enviadas += 1
-    except Exception:
-        logger.exception("julia: WAHA send failed after %s/%s bubbles conn=%s chat=%s", enviadas, len(partes), connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: WAHA send failed after %s/%s bubbles conn=%s chat=%s (%s)", enviadas, len(partes), connection.id, ref_log(chat_id), type(exc).__name__)
     finally:
         julia.encerrar_envio(deps.redis, connection.id, chat_id)
 
@@ -927,8 +958,8 @@ def _registrar_primeira_resposta(deps: LeadDeps, org_id: Any, contato: dict[str,
     undoes the reply -- a failure raises a visible `supervisao_falha` alert (G4), not just a log line."""
     try:
         julia_contatos_service.registrar_primeira_resposta(deps.scoped, org_id, contato["id"], por="agente")
-    except Exception:
-        logger.exception("julia: primeira_resposta_agente_at not stamped org=%s contato=%s (the reply IS out)", org_id, contato.get("id"))
+    except Exception as exc:
+        logger.error("julia: primeira_resposta_agente_at not stamped org=%s contato=%s (the reply IS out) (%s)", org_id, contato.get("id"), type(exc).__name__)
         supervisao_alertas.alertar(deps.scoped, org_id, "primeira_resposta_agente", {"contato_id": contato.get("id")})
 
 
@@ -978,13 +1009,13 @@ async def run_reengajamento_turn(
     try:
         result = await asyncio.wait_for(client.run_turn(req), timeout=deps.turn_timeout_s)
     except asyncio.TimeoutError:
-        logger.error("julia: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, chat_id)
+        logger.error("julia: re-engagement turn timed out (>%ss) conn=%s chat=%s", deps.turn_timeout_s, connection.id, ref_log(chat_id))
         return False
     except AgentsClientError as exc:
         if isinstance(exc, (AgentsBadRequest, IdempotencyConflict)):
             _alertar_contrato_invalido(deps, exc, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
         else:
-            logger.error("julia: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, chat_id)
+            logger.error("julia: re-engagement turn failed (%s) conn=%s chat=%s", type(exc).__name__, connection.id, ref_log(chat_id))
         return False
     julia_turn = JuliaTurn(contato=contato, contexto=contexto)
     if result.status in STATUS_SEM_ATENDIMENTO:
@@ -1020,8 +1051,8 @@ async def _apply_handoff(
         chat_store, connection_id=connection.id, chat_id=chat_id, thread_id=result.thread, estado=estado)
     try:  # contract 0.2: a handoff invalidates every job queued for this contato
         julia_contatos_service.bump_gen_do_chat(deps.scoped, connection.org_id, connection.id, chat_id)
-    except Exception:
-        logger.exception("julia: gen bump on handoff failed conn=%s chat=%s", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: gen bump on handoff failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     await publish_pause(deps, connection=connection, chat_id=chat_id, pausado=estado == "pausado")
     responsavel: Optional[str] = None
     contato: Optional[dict[str, Any]] = None
@@ -1030,8 +1061,8 @@ async def _apply_handoff(
         if contato is not None:
             atribuido = julia_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
             responsavel = atribuido["user_id"] if atribuido else None
-    except Exception:
-        logger.exception("julia: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned)", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: attendant distribution failed conn=%s chat=%s (the handoff proceeds unassigned) (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     # maya-blocks: the reason as a CLOSED code. agents now sends a typed `motivo_codigo` (labels live in its DB); an older
     # build sends free text, mapped by the legacy matcher. `handoff` is outside the notification fan-out, so this cannot
     # double-notify; `emitir` never raises.
@@ -1046,8 +1077,7 @@ async def _apply_handoff(
             registros = await agents_client.listar_handoffs(result.thread)
             registro = registros[-1] if registros else None
         except AgentsClientError as exc:
-            logger.error("julia: hand-off note not readable (%s) thread=%s -- notifying with the reason only",
-                         type(exc).__name__, result.thread)
+            logger.error("julia: hand-off note not readable (%s) thread=%s -- notifying with the reason only", type(exc).__name__, result.thread)
         nome_agente = await julia.nome_do_agente(agents_client)
     try:
         summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
@@ -1058,8 +1088,8 @@ async def _apply_handoff(
         )
         julia_eventos_service.emitir(deps.scoped, connection.org_id, "handoff_recebido", (contato or {}).get("id"),
                                      {"handoff_id": registro.id if registro else None, "motivo_codigo": codigo})
-    except Exception:
-        logger.exception("julia: handoff notification failed conn=%s chat=%s (the conversation IS handed over)", connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: handoff notification failed conn=%s chat=%s (the conversation IS handed over) (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
 
 
 __all__ = [

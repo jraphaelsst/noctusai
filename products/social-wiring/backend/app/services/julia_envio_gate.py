@@ -173,8 +173,7 @@ def exigir(
     if motivo is None:
         return Liberacao(org_id=str(org_id), connection_id=str(connection_id), fluxo=fluxo, selo=_SELO, bloco=bloco)
     logger.warning(
-        "julia: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s bloco=%s", fluxo.value, motivo, org_id, connection_id, contato_id, bloco,
-    )
+        "julia: envio %s BLOQUEADO (%s) org=%s conn=%s contato=%s bloco=%s", fluxo.value, motivo, org_id, connection_id, contato_id, bloco)
     payload = {"fluxo": fluxo.value, "motivo": motivo, "connection_id": str(connection_id) if connection_id else None}
     if bloco != BLOCO_SDR:
         payload["bloco"] = bloco

@@ -260,13 +260,13 @@ async def executar_analise(client: Any, org_id: UUID | str, analise_id: UUID | s
         provider = resolver_provider(org_id, config)
         resultado = await provider.analisar(consulta)
     except CreditoNaoConfigurado as exc:
-        logger.warning("julia credito: provider not configured (org=%s): %s", org_id, exc.motivo)
+        logger.warning("julia credito: provider not configured (org=%s): %s", org_id, exc.motivo)  # log-ok: a closed reason code of the typed domain error
         return _finalizar(client, org_id, analise, "erro", exc.motivo)
-    except CreditoProviderErro:
-        logger.exception("julia credito: provider failed (org=%s analise=%s)", org_id, analise["id"])
+    except CreditoProviderErro as exc:
+        logger.error("julia credito: provider failed (org=%s analise=%s) (%s)", org_id, analise["id"], type(exc).__name__)
         return _finalizar(client, org_id, analise, "erro", "falha na consulta ao provedor")
-    except Exception:
-        logger.exception("julia credito: unexpected provider failure (org=%s analise=%s)", org_id, analise["id"])
+    except Exception as exc:
+        logger.error("julia credito: unexpected provider failure (org=%s analise=%s) (%s)", org_id, analise["id"], type(exc).__name__)
         return _finalizar(client, org_id, analise, "erro", "falha na consulta ao provedor")
     return _finalizar(client, org_id, analise, resultado.status, resultado.resumo)
 

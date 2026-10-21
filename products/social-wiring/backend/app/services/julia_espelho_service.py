@@ -105,8 +105,8 @@ def registrar_estagio(client: Any, contato_id: UUID | str, resumo: Optional[Qual
             logger=logger,
         )
         return out.get("id") is not None
-    except Exception:
-        logger.exception("julia: could not mirror the stage into ai_outputs contato=%s", contato_id)
+    except Exception as exc:
+        logger.error("julia: could not mirror the stage into ai_outputs contato=%s (%s)", contato_id, type(exc).__name__)
         return False
 
 
@@ -136,8 +136,7 @@ async def espelhar_apos_turno(
             try:
                 estado: Optional[QualificacaoEstado] = await agents_client.qualificacao(str(contato["id"]))
             except AgentsClientError as exc:
-                logger.warning("julia: qualification read failed (%s) contato=%s -- mirror keeps its last values",
-                               type(exc).__name__, contato.get("id"))
+                logger.warning("julia: qualification read failed (%s) contato=%s -- mirror keeps its last values", type(exc).__name__, contato.get("id"))
                 estado = None
             if estado is not None:
                 valores = estado.valores
@@ -147,8 +146,8 @@ async def espelhar_apos_turno(
         if valores is not None:
             aplicar_valores(client, org_id, contato, valores, interacao)
         registrar_estagio(client, contato["id"], resumo)
-    except Exception:
-        logger.exception("julia: qualification mirror failed contato=%s (the reply IS out)", contato.get("id"))
+    except Exception as exc:
+        logger.error("julia: qualification mirror failed contato=%s (the reply IS out) (%s)", contato.get("id"), type(exc).__name__)
     return resumo
 
 
@@ -169,8 +168,7 @@ async def qualificacao_do_contato(
             if estado is not None:
                 rotulos = {e.chave: e.rotulo for e in await agents_client.estagios("julia")}
         except AgentsClientError as exc:
-            logger.warning("julia: qualification read failed (%s) contato=%s -- falling back to the mirror",
-                           type(exc).__name__, contato.get("id"))
+            logger.warning("julia: qualification read failed (%s) contato=%s -- falling back to the mirror", type(exc).__name__, contato.get("id"))
     if estado is not None and estado.estagio:
         qualificacao = {"estagio": estado.estagio, "rotulo": rotulos.get(estado.estagio), "score": estado.score, "fonte": "agents"}
         dados = {"valores": slots_do_espelho(estado.valores), "faltando": list(estado.faltando), "fonte": "agents"}
@@ -181,8 +179,8 @@ async def qualificacao_do_contato(
         if ultimos and ultimos[0].get("label"):
             qualificacao = {"estagio": ultimos[0]["label"], "rotulo": rotulos.get(ultimos[0]["label"]),
                             "score": ultimos[0].get("score"), "fonte": "espelho"}
-    except Exception:
-        logger.exception("julia: could not read the mirrored stage contato=%s", contato.get("id"))
+    except Exception as exc:
+        logger.error("julia: could not read the mirrored stage contato=%s (%s)", contato.get("id"), type(exc).__name__)
     slots = contato.get("slots") or {}
     dados = {"valores": dict(slots), "faltando": [], "fonte": "espelho"} if slots else None
     return qualificacao, dados

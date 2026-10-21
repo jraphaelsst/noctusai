@@ -412,6 +412,17 @@ class TestAuthorizedNumbersPatch:
         r = admin.tc.patch(self.URL, json={"authorized_numbers": ["+5511977770000"]}, headers=H)
         assert r.status_code == 200 and admin.conn()["authorized_numbers"] == ["+5511977770000"]
 
+    def test_the_patch_is_written_through_the_org_staff_list(self, admin):
+        """Owner 2026-10-21: staff is THE per-org list; `authorized_numbers` is its mirror, not a second list to edit."""
+        admin.w.seed_connection()
+        admin.w.sw.set_table_data("julia_staff", [])
+        admin.w.sw.set_table_data("julia_numeros_bloqueados", [])
+        r = admin.tc.patch(self.URL, json={"authorized_numbers": ["+55 11 97777-0000"]}, headers=H)
+        assert r.status_code == 200
+        linhas = admin.w.rows("julia_staff")
+        assert [(x["telefone"], x["papel"], x["ativo"]) for x in linhas] == [("5511977770000", "operador", True)]
+        assert admin.conn()["authorized_numbers"] == ["+5511977770000"]
+
     def test_with_julia_off_an_empty_list_is_still_writable_it_means_nobody(self, admin):
         _off_connection(admin.w)
         assert admin.tc.patch(self.URL, json={"authorized_numbers": []}, headers=H).status_code == 200

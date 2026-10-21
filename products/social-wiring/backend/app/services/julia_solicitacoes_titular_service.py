@@ -88,7 +88,7 @@ def notificar_admins(client: Any, core: Any, org_id: UUID | str, linha: dict[str
         )
         patch = {"notificacao_status": "enviada", "notificacao_erro": None, "notificado_em": _agora().isoformat()}
     except Exception as exc:  # recorded on the row + logged: a notice that did not land must be visible to an admin
-        logger.exception("julia: data-subject request %s: admin notice failed", linha.get("id"))
+        logger.error("julia: data-subject request %s: admin notice failed (%s)", linha.get("id"), type(exc).__name__)
         patch = {"notificacao_status": "falhou", "notificacao_erro": f"{type(exc).__name__}: {exc}"[:ERRO_MAX]}
     client.table(T).update({**patch, "updated_at": _agora().isoformat()}).eq("id", str(linha["id"])).execute()
     return {**linha, **patch}

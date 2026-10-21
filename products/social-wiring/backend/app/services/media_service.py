@@ -31,7 +31,7 @@ import httpx
 from urllib.parse import urlparse
 
 from app.config import settings
-from app.services.identidade_mascara import mascarar_identificadores
+from app.services.identidade_mascara import mascarar_identificadores, ref as ref_log
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,10 @@ class MediaService:
         openai_api_key: str,
         audio_model: str = "gpt-4o-mini-transcribe",
         vision_model: str = "gpt-4o-mini",
+        transport: Optional[httpx.AsyncBaseTransport] = None,
     ):
+        # `transport` is the HTTP seam (tests inject `httpx.MockTransport`; production leaves it None = the real network).
+        self._transport = transport
         self._waha_base_url = waha_base_url.rstrip("/")
         self._waha_api_key = waha_api_key
         self._openai_api_key = openai_api_key
@@ -302,8 +305,8 @@ class MediaService:
         transcript text; never raises — returns "" on failure."""
         try:
             return await self._call_whisper(audio_bytes, filename=filename)
-        except Exception:
-            logger.exception("transcribe_audio failed")
+        except Exception as exc:
+            logger.error("transcribe_audio failed (%s)", type(exc).__name__)
             return ""
 
     async def describe_image(
@@ -316,8 +319,8 @@ class MediaService:
         """Public re-entry for image-bytes-in-hand callers."""
         try:
             return await self._call_vision(image_bytes, mimetype=mimetype, prompt=prompt or _IMAGE_PROMPT)
-        except Exception:
-            logger.exception("describe_image failed")
+        except Exception as exc:
+            logger.error("describe_image failed (%s)", type(exc).__name__)
             return ""
 
     # ─── Resolvers per media family ────────────────────────────────────
@@ -410,8 +413,8 @@ class MediaService:
                 self._transcribe_video_audio(video_bytes, input_ext=input_ext),
                 return_exceptions=False,
             )
-        except Exception:
-            logger.exception("video resolve: parallel extraction failed")
+        except Exception as exc:
+            logger.error("video resolve: parallel extraction failed (%s)", type(exc).__name__)
 
         # Compose the enriched text from whichever signals worked.
         parts: list[str] = []
@@ -459,8 +462,8 @@ class MediaService:
             return await self.transcribe_audio(
                 video_bytes, filename=f"video{input_ext}"
             )
-        except Exception:
-            logger.exception("video audio transcription failed")
+        except Exception as exc:
+            logger.error("video audio transcription failed (%s)", type(exc).__name__)
             return ""
 
     async def _describe_video_scene(self, video_bytes: bytes, *, input_ext: str) -> str:
@@ -473,8 +476,8 @@ class MediaService:
             return ""
         try:
             return await self._call_vision_multi(frames, prompt=_VIDEO_FRAMES_PROMPT)
-        except Exception:
-            logger.exception("video scene description failed")
+        except Exception as exc:
+            logger.error("video scene description failed (%s)", type(exc).__name__)
             return ""
 
     async def _resolve_document(
@@ -504,11 +507,7 @@ class MediaService:
         we get something useful; otherwise we acknowledge politely.
         """
         logger.info(
-            "document resolve: start filename=%r mimetype=%r size=%d",
-            filename,
-            mimetype,
-            len(doc_bytes),
-        )
+            "document resolve: start filename=%r mimetype=%r size=%d", filename, mimetype, len(doc_bytes))
         extracted_text = ""
         try:
             if mimetype == "application/pdf":
@@ -533,8 +532,8 @@ class MediaService:
                 extracted_text = strip_provenance_stamps(
                     _extract_pdf_text(doc_bytes)
                 )
-        except Exception:
-            logger.exception("document resolve: pdf text extraction failed")
+        except Exception as exc:
+            logger.error("document resolve: pdf text extraction failed (%s)", type(exc).__name__)
 
         # Tier 2: rasterize + vision when text is empty or thin (<200
         # chars suggests OCR-less scan).
@@ -544,8 +543,8 @@ class MediaService:
             rasterize_attempted = True
             try:
                 page_images = _rasterize_pdf_pages(doc_bytes, max_pages=3, max_width=1024)
-            except Exception:
-                logger.exception("document resolve: pdf rasterization failed")
+            except Exception as exc:
+                logger.error("document resolve: pdf rasterization failed (%s)", type(exc).__name__)
                 page_images = []
             if page_images:
                 # Filename gives the model a strong prior. e.g. "CNH..."
@@ -559,8 +558,8 @@ class MediaService:
                     rasterized_summary = await self._call_vision_multi(
                         page_images, prompt=contextual_prompt
                     )
-                except Exception:
-                    logger.exception("document resolve: vision summary failed")
+                except Exception as exc:
+                    logger.error("document resolve: vision summary failed (%s)", type(exc).__name__)
                 # Retry once with a more forceful directive when the model
                 # returns a refusal shape ("não foi possível extrair"
                 # etc.). Most refusals come from the model being too
@@ -586,28 +585,20 @@ class MediaService:
                         )
                         if retry and not _looks_like_refusal(retry):
                             rasterized_summary = retry
-                    except Exception:
-                        logger.exception("document resolve: retry vision failed")
+                    except Exception as exc:
+                        logger.error("document resolve: retry vision failed (%s)", type(exc).__name__)
 
         # Tier 1 summary (only when text was substantial).
         text_summary = ""
         if extracted_text.strip() and len(extracted_text.strip()) >= 200:
             text_summary = await self._summarize_document_text(extracted_text)
             logger.info(
-                "document resolve: text-summary chars=%d (refusal=%s)",
-                len(text_summary),
-                _looks_like_refusal(text_summary),
-            )
+                "document resolve: text-summary chars=%d (refusal=%s)", len(text_summary), _looks_like_refusal(text_summary))
         else:
             logger.info(
-                "document resolve: text extraction too thin (chars=%d); skipping text-summary path",
-                len(extracted_text.strip()),
-            )
+                "document resolve: text extraction too thin (chars=%d); skipping text-summary path", len(extracted_text.strip()))
         logger.info(
-            "document resolve: rasterized_summary chars=%d (refusal=%s)",
-            len(rasterized_summary),
-            _looks_like_refusal(rasterized_summary),
-        )
+            "document resolve: rasterized_summary chars=%d (refusal=%s)", len(rasterized_summary), _looks_like_refusal(rasterized_summary))
 
         # If text summary came back as a refusal, fall through to the
         # rasterized output (which used vision and may have worked).
@@ -881,7 +872,7 @@ class MediaService:
         """
         resolved_url = self._rewrite_waha_url(url)
         headers = self._waha_headers() if self._e_host_do_waha(resolved_url) else {}
-        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False, transport=self._transport) as client:
             async with client.stream("GET", resolved_url, headers=headers) as response:
                 response.raise_for_status()
                 declared = response.headers.get("content-length")
@@ -1185,7 +1176,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
     """
     try:
         import fitz  # type: ignore  # PyMuPDF
-    except ImportError:
+    except ImportError as exc:
         logger.info("PyMuPDF not installed; trying pdfminer.six")
         try:
             from pdfminer.high_level import extract_text  # type: ignore
@@ -1194,14 +1185,14 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
         except ImportError:
             logger.info("pdfminer.six not installed either; text extraction skipped")
             return ""
-        except Exception:
-            logger.exception("pdfminer extraction failed")
+        except Exception as exc:
+            logger.error("pdfminer extraction failed (%s)", type(exc).__name__)
             return ""
 
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception:
-        logger.exception("fitz: failed to open document")
+    except Exception as exc:
+        logger.error("fitz: failed to open document (%s)", type(exc).__name__)
         return ""
     parts: list[str] = []
     try:
@@ -1210,8 +1201,8 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
                 text = page.get_text().strip()
                 if text:
                     parts.append(text)
-            except Exception:
-                logger.exception("fitz: page text extraction failed")
+            except Exception as exc:
+                logger.error("fitz: page text extraction failed (%s)", type(exc).__name__)
                 continue
     finally:
         try:
@@ -1220,10 +1211,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
             pass
     extracted = "\n\n".join(parts)
     logger.info(
-        "PDF text extraction: %d pages with text, %d chars total",
-        len(parts),
-        len(extracted),
-    )
+        "PDF text extraction: %d pages with text, %d chars total", len(parts), len(extracted))
     return extracted
 
 
@@ -1247,8 +1235,8 @@ def _rasterize_pdf_pages(
         return []
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception:
-        logger.exception("PyMuPDF: failed to open document")
+    except Exception as exc:
+        logger.error("PyMuPDF: failed to open document (%s)", type(exc).__name__)
         return []
     images: list[bytes] = []
     try:

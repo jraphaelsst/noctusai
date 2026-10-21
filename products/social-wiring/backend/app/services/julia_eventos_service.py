@@ -99,16 +99,16 @@ def emitir(
     }
     try:
         res = client.table(TABLE).insert(row).execute()
-    except Exception:
-        logger.exception("julia: could not write event %s (org=%s contato=%s)", tipo, org_id, contato_id)
+    except Exception as exc:
+        logger.error("julia: could not write event %s (org=%s contato=%s) (%s)", tipo, org_id, contato_id, type(exc).__name__)
         return None
     data = res.data or []
     stored = data[0] if data else row
     for sink in tuple(_SINKS):
         try:
             sink(client, stored)
-        except Exception:
-            logger.exception("julia: event sink %s failed for %s (org=%s)", getattr(sink, "__name__", sink), tipo, org_id)
+        except Exception as exc:
+            logger.error("julia: event sink %s failed for %s (org=%s) (%s)", getattr(sink, "__name__", sink), tipo, org_id, type(exc).__name__)
     return stored
 
 

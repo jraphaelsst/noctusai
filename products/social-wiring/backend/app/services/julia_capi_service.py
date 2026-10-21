@@ -190,8 +190,8 @@ def registrar_token_resolver(fn: Optional[Callable[[], Optional[str]]]) -> None:
 def _token() -> Optional[str]:
     try:
         return _token_resolver()
-    except Exception:
-        logger.exception("julia capi: could not resolve the Meta token")
+    except Exception as exc:
+        logger.error("julia capi: could not resolve the Meta token (%s)", type(exc).__name__)
         return None
 
 
@@ -212,8 +212,8 @@ async def registrar_evento(
     pendente | erro."""
     try:
         return await _registrar(db, org_id, contato_id, evento, referencia, agora or datetime.now(timezone.utc))
-    except Exception:
-        logger.exception("julia capi: could not record %s (org=%s contato=%s)", evento, org_id, contato_id)
+    except Exception as exc:
+        logger.error("julia capi: could not record %s (org=%s contato=%s) (%s)", evento, org_id, contato_id, type(exc).__name__)
         return {"estado": "erro", "erro": "falha_interna"}
 
 
@@ -256,8 +256,8 @@ async def registrar_resposta(
         ultimo = avaliacoes.mais_recente(
             avaliacoes.linhas(db, T_EVENTOS, "id, created_at", org_id=org_id, contato_id=contato["id"], tipo="reengajamento"), "created_at",
         )
-    except Exception:
-        logger.exception("julia capi: could not read the reengajamento events (org=%s)", org_id)
+    except Exception as exc:
+        logger.error("julia capi: could not read the reengajamento events (org=%s) (%s)", org_id, type(exc).__name__)
         return {"estado": "erro", "erro": "falha_interna"}
     evs = [ultimo] if ultimo else []
     if not evs:
@@ -299,7 +299,7 @@ async def executar_envio(
     try:
         await provider.enviar(cfg["capi_pixel_id"], evento)
     except Exception as exc:
-        logger.exception("julia capi: send failed (org=%s evento=%s)", org_id, evento_id)
+        logger.error("julia capi: send failed (org=%s evento=%s) (%s)", org_id, evento_id, type(exc).__name__)
         _atualizar(client, evento_id, {"status": "erro", "erro": type(exc).__name__})
         return f"erro:{type(exc).__name__}"
     _atualizar(client, evento_id, {"status": "enviado", "enviado_at": (agora or datetime.now(timezone.utc)).isoformat(), "erro": None})

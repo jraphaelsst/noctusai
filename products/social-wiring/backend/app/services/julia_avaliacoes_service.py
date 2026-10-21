@@ -263,7 +263,7 @@ async def executar_pedido(
     try:
         await enviar(contato, texto, liberacao)
     except Exception as exc:
-        logger.exception("julia avaliacoes: review ask failed (org=%s contato=%s)", org_id, contato_id)
+        logger.error("julia avaliacoes: review ask failed (org=%s contato=%s) (%s)", org_id, contato_id, type(exc).__name__)
         _registrar_pedido(client, org_id, contato_id, p.get("interacao_id"), "erro", type(exc).__name__, agora)
         return f"erro:{type(exc).__name__}"
     _registrar_pedido(client, org_id, contato_id, p.get("interacao_id"), "enviado", None, agora)
@@ -336,7 +336,7 @@ async def sincronizar(
     except ReviewsNaoConfigurado:
         return {"estado": "nao_configurado", "novas": 0}
     except Exception as exc:  # a provider failure (incl. ReviewsErro) must not break the page
-        logger.exception("julia avaliacoes: GBP sync failed (org=%s): %s", org_id, type(exc).__name__)
+        logger.error("julia avaliacoes: GBP sync failed (org=%s): %s (%s)", org_id, type(exc).__name__, type(exc).__name__)
         return {"estado": "erro", "novas": 0}
     existentes = {r["external_id"] for r in linhas(db, T_CACHE, "id, external_id", org_id=org_id)}
     novas = sum(1 for r in reviews if r.external_id not in existentes)

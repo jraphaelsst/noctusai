@@ -204,6 +204,30 @@ class MessageStore:
             return None
         return self._to_stored_message(rows[0])
 
+    def redigir_identificacao(self, *, connection_id: UUID, chat_id: str, provider_message_ids: list[str]) -> int:
+        """GUARDRAILS B8.4 (data minimisation): once the Julia agent has REGISTERED the lead's identification, the CPF / RG / CNH
+        numbers the lead typed are masked (`***`) in the stored INBOUND text of those messages (`identidade_mascara`). Idempotent
+        (a masked body is unchanged); returns how many rows were rewritten. Only the listed provider ids of this chat are touched,
+        never an outbound row, never another chat."""
+        from app.services.identidade_mascara import mascarar_identificadores
+
+        ids = [str(i) for i in provider_message_ids if i]
+        if not ids:
+            return 0
+        rows = (
+            self._admin.schema(_SCHEMA).table(_TABLE).select("id, body")
+            .eq("org_id", str(self._org_id)).eq("connection_id", str(connection_id)).eq("chat_id", chat_id)
+            .eq("direction", "inbound").in_("provider_message_id", ids).execute().data or []
+        )
+        alterados = 0
+        for row in rows:
+            corpo = str(row.get("body") or "")
+            novo = mascarar_identificadores(corpo)
+            if novo != corpo:
+                self._admin.schema(_SCHEMA).table(_TABLE).update({"body": novo}).eq("id", str(row["id"])).eq("org_id", str(self._org_id)).execute()
+                alterados += 1
+        return alterados
+
     @staticmethod
     def _to_stored_message(row: dict[str, Any]) -> StoredMessage:
         raw_cid = row.get("connection_id")

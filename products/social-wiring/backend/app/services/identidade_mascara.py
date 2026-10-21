@@ -16,6 +16,7 @@ text is rewritten with the SAME masking, and with any explicit values the caller
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Iterable
 
@@ -58,4 +59,10 @@ def redigir_valores(texto: str, valores: Iterable[str] = ()) -> str:
     return out
 
 
-__all__ = ["MASCARA", "mascarar_identificadores", "redigir_valores"]
+def ref(valor: str) -> str:
+    """A log-safe reference for a number / chat id / LID: 10 hex chars of its SHA-256 (never the identifier). GUARDRAILS B10:
+    the Julia / media modules log this, never the identifier."""
+    return hashlib.sha256((valor or "").encode("utf-8")).hexdigest()[:10]
+
+
+__all__ = ["MASCARA", "mascarar_identificadores", "redigir_valores", "ref"]

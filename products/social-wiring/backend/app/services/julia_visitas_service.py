@@ -283,9 +283,9 @@ def forcar_envio_sw(org_id: Any, contato: dict[str, Any], visita: dict[str, Any]
 def _chamar_hook(fn: Callable[..., Any], org_id: Any, contato: dict[str, Any], visita: dict[str, Any]) -> None:
     try:
         fn(org_id, contato, visita)
-    except Exception:
+    except Exception as exc:
         # a wave-3 hook must never undo a visit that is already stored
-        logger.exception("julia visitas: hook %s failed (org=%s visita=%s)", getattr(fn, "__name__", "?"), org_id, visita.get("id"))
+        logger.error("julia visitas: hook %s failed (org=%s visita=%s) (%s)", getattr(fn, "__name__", "?"), org_id, visita.get("id"), type(exc).__name__)
 
 
 # ── action handler: pedido_visita ───────────────────────────────────────────
@@ -499,8 +499,8 @@ async def avisar_lead(client: Any, org_id: UUID | str, visita: dict[str, Any], t
             return False
         waha = waha_factory(base_url=record.base_url or None, api_key=record.api_key, session=record.session_name)
         await waha.send_text(contato["chat_id"], texto)
-    except Exception:
-        logger.exception("julia visitas: could not message the lead (visita=%s)", visita.get("id"))
+    except Exception as exc:
+        logger.error("julia visitas: could not message the lead (visita=%s) (%s)", visita.get("id"), type(exc).__name__)
         return False
     return True
 

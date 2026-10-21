@@ -154,8 +154,8 @@ async def startup_hook() -> None:
     """`ModuleRegistration.startup`: a failure is logged at ERROR and never aborts startup."""
     try:
         await start_worker()
-    except Exception:
-        logger.exception("julia reengajamento: worker NÃO iniciado — os timers ficam na fila.")
+    except Exception as exc:
+        logger.error("julia reengajamento: worker NÃO iniciado — os timers ficam na fila. (%s)", type(exc).__name__)
 
 
 __all__ = ["build_worker", "is_running", "start_worker", "startup_hook", "stop_worker"]

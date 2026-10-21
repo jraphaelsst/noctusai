@@ -77,13 +77,13 @@ class LeadTurnDispatcher:
                     if self._reload is not None:
                         try:
                             current = self._reload(key) or memory
-                        except Exception:
-                            logger.exception("lead dispatcher: memory reload failed for %s", key)
+                        except Exception as exc:
+                            logger.error("lead dispatcher: memory reload failed for %s (%s)", key, type(exc).__name__)
                     await asyncio.wait_for(self._run(key, current), timeout=self._timeout_s)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("conv=%s: lead dispatch failed", key)
+        except Exception as exc:
+            logger.error("conv=%s: lead dispatch failed (%s)", key, type(exc).__name__)
         finally:
             self._pending[key] -= 1
             if self._pending[key] <= 0:

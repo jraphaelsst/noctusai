@@ -376,8 +376,8 @@ def mensagem_recesso_primeiro_turno(
         if inicio is not None and ultimo is not None and ultimo >= inicio:
             return None
         vigente = recesso_vigente(ler_secoes(client, org_id), _hoje(agora))
-    except Exception:
-        logger.exception("julia: recesso check failed org=%s -- no recesso message", org_id)
+    except Exception as exc:
+        logger.error("julia: recesso check failed org=%s -- no recesso message (%s)", org_id, type(exc).__name__)
         return None
     return texto_recesso(vigente) if vigente else None
 
@@ -525,8 +525,8 @@ def politica_endereco_iptu(client: Any, org_id: UUID | str) -> dict[str, bool]:
     """`{endereco_completo, usar_iptu}`; BOTH false when never saved or unreadable (privacy-safe)."""
     try:
         d = ler_secoes(client, org_id)["endereco_iptu"]["dados"]
-    except Exception:
-        logger.exception("julia: endereco_iptu read failed org=%s -- address/IPTU withheld", org_id)
+    except Exception as exc:
+        logger.error("julia: endereco_iptu read failed org=%s -- address/IPTU withheld (%s)", org_id, type(exc).__name__)
         return {"endereco_completo": False, "usar_iptu": False}
     return {"endereco_completo": bool(d.get("endereco_completo")), "usar_iptu": bool(d.get("usar_iptu"))}
 
@@ -555,8 +555,8 @@ def link_imovel_fn(client: Any, org_id: UUID | str) -> Callable[[str], Optional[
     logged (a link is a convenience; the listing data still goes out)."""
     try:
         d = ler_secoes(client, org_id)["perfil_whatsapp"]["dados"] or {}
-    except Exception:
-        logger.exception("julia: perfil_whatsapp read failed org=%s -- listings go out without a link", org_id)
+    except Exception as exc:
+        logger.error("julia: perfil_whatsapp read failed org=%s -- listings go out without a link (%s)", org_id, type(exc).__name__)
         return lambda _codigo: None
     modelo = d.get("link_imovel", LINK_IMOVEL_PADRAO)
     site = d.get("site") or ""

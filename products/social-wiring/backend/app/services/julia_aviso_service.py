@@ -131,8 +131,8 @@ def nome_da_org(core_client: Any, org_id: UUID) -> str | None:
             core_client.table("organizations")
             .select("nome").eq("id", str(org_id)).limit(1).execute()
         )
-    except Exception:
-        logger.exception("julia_aviso: organization name lookup failed org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia_aviso: organization name lookup failed org=%s (%s)", org_id, type(exc).__name__)
         return None
     rows = resp.data or []
     return (rows[0].get("nome") or None) if rows else None

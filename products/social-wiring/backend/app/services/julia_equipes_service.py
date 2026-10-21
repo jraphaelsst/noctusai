@@ -316,8 +316,8 @@ def _estado_atendente(ctx: julia_contexto_service.ContextoCtx) -> dict[str, Any]
     """`estado.atendente_nome` (None when there is no responsável): a failure is logged and the turn goes without it."""
     try:
         return {"atendente_nome": _nome_do_responsavel(ctx)}
-    except Exception:
-        logger.exception("julia: could not resolve atendente_nome (org=%s) -- estado goes without it", ctx.org_id)
+    except Exception as exc:
+        logger.error("julia: could not resolve atendente_nome (org=%s) -- estado goes without it (%s)", ctx.org_id, type(exc).__name__)
         return {}
 
 

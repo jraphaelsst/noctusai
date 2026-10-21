@@ -399,8 +399,8 @@ def registrar_consulta(client: Any, org_id: UUID, nome: str, args: dict[str, Any
                 .eq("id", str(interacao_id)).limit(1).execute().data or []
             )
             contato_id = rows[0]["contato_id"] if rows else None
-        except Exception:
-            logger.exception("julia: could not resolve the contato of interacao for a lookup event (org=%s)", org_id)
+        except Exception as exc:
+            logger.error("julia: could not resolve the contato of interacao for a lookup event (org=%s) (%s)", org_id, type(exc).__name__)
     julia_eventos_service.emitir(
         client, org_id, "imovel_consultado", contato_id,
         {"ferramenta": nome, "codigos": codigos, "interacao_id": str(interacao_id) if interacao_id else None},

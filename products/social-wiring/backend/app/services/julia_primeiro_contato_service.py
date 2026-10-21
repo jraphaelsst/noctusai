@@ -167,8 +167,8 @@ async def iniciar(
         motivo = str(resultado.get("motivo") or "transporte_indisponivel")
         _registrar(client, org_id, contato["id"], motivo, decisao=decisao)
         return {"status": motivo, "contato_id": contato["id"]}
-    except Exception:
-        logger.exception("julia: meta lead intake failed (org=%s) -- the lead is stored; Julia did not take it", org_id)
+    except Exception as exc:
+        logger.error("julia: meta lead intake failed (org=%s) -- the lead is stored; Julia did not take it (%s)", org_id, type(exc).__name__)
         return {"status": "erro"}
 
 
@@ -194,8 +194,8 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[
             get_scoped_admin_client("social_wiring"), org, lead, store=store,
             transporte_factory=julia_transporte.transporte_da_conexao, contexto=contexto, agents=agents,
         )
-    except Exception:
-        logger.exception("julia: could not wire the meta lead intake (org=%s)", org_id)
+    except Exception as exc:
+        logger.error("julia: could not wire the meta lead intake (org=%s) (%s)", org_id, type(exc).__name__)
         return {"status": "erro"}
 
 

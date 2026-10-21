@@ -284,8 +284,8 @@ async def _chamar_lead_frio(client: Any, org_id: UUID | str, contato: dict[str, 
         out = _lead_frio(client, org_id, contato)
         if inspect.isawaitable(out):
             await out
-    except Exception:
-        logger.exception("julia: cold-lead hook failed org=%s contato=%s", org_id, contato.get("id"))
+    except Exception as exc:
+        logger.error("julia: cold-lead hook failed org=%s contato=%s (%s)", org_id, contato.get("id"), type(exc).__name__)
 
 
 # ── scheduling ──────────────────────────────────────────────────────────────

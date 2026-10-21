@@ -19,6 +19,7 @@ implementation of each rule:
 from __future__ import annotations
 
 import html
+from app.services.identidade_mascara import ref as ref_log
 import logging
 import re
 import time
@@ -221,22 +222,22 @@ def _link_key(org_id: UUID | str) -> str:
 def registrar_erro_link(org_id: UUID | str, codigo: str, *, cfg: Any) -> None:
     try:
         _redis(cfg).set(_link_key(org_id), codigo, ex=_LINK_ERROR_TTL_S)
-    except Exception:
-        logger.exception("julia: could not record the link error for org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: could not record the link error for org=%s (%s)", org_id, type(exc).__name__)
 
 
 def limpar_erro_link(org_id: UUID | str, *, cfg: Any) -> None:
     try:
         _redis(cfg).delete(_link_key(org_id))
-    except Exception:
-        logger.exception("julia: could not clear the link error for org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: could not clear the link error for org=%s (%s)", org_id, type(exc).__name__)
 
 
 def ler_erro_link(org_id: UUID | str, *, cfg: Any) -> Optional[str]:
     try:
         codigo = _redis(cfg).get(_link_key(org_id))
-    except Exception:
-        logger.exception("julia: could not read the link error for org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: could not read the link error for org=%s (%s)", org_id, type(exc).__name__)
         return None
     return LINK_ERROR_MESSAGES.get(codigo or "") if codigo else None
 
@@ -250,8 +251,8 @@ def julia_ativa_em_alguma_conexao(client: Any) -> bool:
             client.table("whatsapp_connections").select("id")
             .eq("agente_leads_ativo", True).limit(1).execute().data
         )
-    except Exception:
-        logger.exception("julia: cannot tell whether Julia is on anywhere — failing closed")
+    except Exception as exc:
+        logger.error("julia: cannot tell whether Julia is on anywhere — failing closed (%s)", type(exc).__name__)
         return True
     return bool(rows)
 
@@ -332,8 +333,8 @@ def usuario_e_admin_da_org(core_client: Any, org_id: UUID | str, user_id: UUID |
     member of THIS org with core role owner/admin."""
     try:
         membership = resolve_org_membership(core_client, str(user_id))
-    except Exception:
-        logger.exception("julia: org membership lookup failed for user=%s", user_id)
+    except Exception as exc:
+        logger.error("julia: org membership lookup failed for user=%s (%s)", user_id, type(exc).__name__)
         return False
     return bool(
         membership
@@ -362,8 +363,8 @@ def dono_da_org(core_client: Any, org_id: UUID | str) -> Optional[UUID]:
             core_client.table("noctus_users").select("id,org_role,created_at").eq("org_id", str(org_id))
             .eq("org_role", "owner").execute().data or []
         )
-    except Exception:
-        logger.exception("julia: org owner lookup failed org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: org owner lookup failed org=%s (%s)", org_id, type(exc).__name__)
         return None
     if not rows:
         return None
@@ -380,9 +381,7 @@ def destinatario_do_handoff(core_client: Any, connection: Any) -> UUID:
         if usuario_e_admin_da_org(core_client, connection.org_id, configurado):
             return configurado
         logger.error(
-            "julia: handoff target %s is no longer owner/admin of org %s (connection %s) -- notifying the org owner instead",
-            configurado, connection.org_id, connection.id,
-        )
+            "julia: handoff target %s is no longer owner/admin of org %s (connection %s) -- notifying the org owner instead", configurado, connection.org_id, connection.id)
     dono = dono_da_org(core_client, connection.org_id)
     if dono is not None:
         return dono
@@ -726,7 +725,7 @@ async def apagar_dados_do_chat(
     agents_ok, agents_apagou = True, False
     if agents_client is None:
         agents_ok = False
-        logger.error("julia: deletion for chat=%s -- no agents client; agents half NOT done", chat_id)
+        logger.error("julia: deletion for chat=%s -- no agents client; agents half NOT done", ref_log(chat_id))
     else:
         refs = [
             str(c["id"]) for c in (
@@ -745,9 +744,9 @@ async def apagar_dados_do_chat(
                     DeletionRequest(agent_key=agent_key, connection_id=str(connection.id), chat_id=chat_id)
                 )
                 agents_apagou = res.deleted
-        except AgentsClientError:
+        except AgentsClientError as exc:
             agents_ok = False
-            logger.exception("julia: agents deletion failed for chat=%s", chat_id)
+            logger.error("julia: agents deletion failed for chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
 
     removed = 0
     for col in ("chat_id", "raw_sender"):
@@ -780,9 +779,7 @@ async def apagar_dados_do_chat(
             buffer.clear_conversation(lead_key(connection.id, a))
 
     logger.info(
-        "julia: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s julia_contatos=%s agents_ok=%s",
-        connection.id, chat_id, removed, contatos, julia_contatos, agents_ok,
-    )
+        "julia: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s julia_contatos=%s agents_ok=%s", connection.id, ref_log(chat_id), removed, contatos, julia_contatos, agents_ok)
     return ResultadoApagar(removed, contatos, agents_ok, agents_apagou, julia_contatos)
 
 

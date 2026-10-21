@@ -442,8 +442,8 @@ def prefixar_atendente(client: Any, org_id: UUID | str, user: Any, texto: str) -
     """`*{nome}*:\\n{texto}` when the org enabled Conhecimento `exibir_atendente` and the sender has a name."""
     try:
         ativo = bool(julia_conhecimento_service.ler_secoes(client, org_id)["exibir_atendente"]["dados"].get("ativo"))
-    except Exception:
-        logger.exception("julia: could not read exibir_atendente org=%s -- sending without the prefix", org_id)
+    except Exception as exc:
+        logger.error("julia: could not read exibir_atendente org=%s -- sending without the prefix (%s)", org_id, type(exc).__name__)
         return texto
     nome = nome_do_atendente(user) if ativo else None
     return f"*{nome}*:\n{texto}" if nome else texto

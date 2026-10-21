@@ -145,8 +145,8 @@ def org_tem_token_ferramentas(client: Any, org_id: UUID | str, *, agora: Optiona
             client.table("api_tokens").select("scopes, issuer, expires_at, revoked_at")
             .eq("org_id", str(org_id)).eq("label", TOOLS_TOKEN_LABEL).execute().data or []
         )
-    except Exception:
-        logger.exception("julia: could not read the tools token state for org=%s", org_id)
+    except Exception as exc:
+        logger.error("julia: could not read the tools token state for org=%s (%s)", org_id, type(exc).__name__)
         return False
     for r in rows:
         if r.get("revoked_at") or r.get("issuer") != TOOLS_TOKEN_ISSUER:
@@ -209,8 +209,8 @@ def montar(
     for nome, fn in (PROVIDERS if providers is None else providers):
         try:
             parcial = fn(ctx) or {}
-        except Exception:
-            logger.exception("julia: contexto provider %r failed (org=%s) -- contributes nothing", nome, org_id)
+        except Exception as exc:
+            logger.error("julia: contexto provider %r failed (org=%s) -- contributes nothing (%s)", nome, org_id, type(exc).__name__)
             continue
         for chave, valor in parcial.items():
             if chave not in out:
@@ -223,9 +223,8 @@ def montar(
     for fn_estado in tuple(ESTADO_EXTRAS):
         try:
             out["estado"] = {**out["estado"], **(fn_estado(ctx) or {})}
-        except Exception:
-            logger.exception("julia: contexto estado extra %r failed (org=%s) -- contributes nothing",
-                             getattr(fn_estado, "__name__", "?"), org_id)
+        except Exception as exc:
+            logger.error("julia: contexto estado extra %r failed (org=%s) -- contributes nothing (%s)", getattr(fn_estado, "__name__", "?"), org_id, type(exc).__name__)
     out["estado"] = _estado_para_agents(out["estado"], org_id)
 
     out["agora"] = agora.isoformat()

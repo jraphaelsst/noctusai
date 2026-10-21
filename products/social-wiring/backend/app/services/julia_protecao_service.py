@@ -20,7 +20,6 @@ Logs carry ids and counts only -- a chat id is HASHED (`ref`), never the number.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 import uuid
@@ -32,6 +31,7 @@ from uuid import UUID
 from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.primitives.exceptions import AppException
 
+from app.services.identidade_mascara import ref
 from app.services.julia_agente_service import SlidingWindowLimiter, phone_digits, is_lid
 from app.services.julia_notificacoes_service import admins_da_org
 
@@ -74,9 +74,6 @@ def _agora() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def ref(valor: str) -> str:
-    """A log-safe reference for a number / chat id / LID: 10 hex chars of its SHA-256 (never the identifier)."""
-    return hashlib.sha256((valor or "").encode("utf-8")).hexdigest()[:10]
 
 
 def _parse(valor: Any) -> Optional[datetime]:
@@ -287,8 +284,8 @@ def registrar_infracao(
         redis.delete(key)
         logger.warning("julia: automatic temporary block org=%s ref=%s trigger=%s signals=%s", org_id, ref(chave), gatilho, total)
         return notificar_bloqueio(client, core, org_id, res[0])
-    except Exception:
-        logger.exception("julia: abuse infraction bookkeeping failed org=%s ref=%s", org_id, ref(chave))
+    except Exception as exc:
+        logger.error("julia: abuse infraction bookkeeping failed org=%s ref=%s (%s)", org_id, ref(chave), type(exc).__name__)
         return None
 
 
@@ -305,13 +302,13 @@ def notificar_bloqueio(client: Any, core: Any, org_id: UUID | str, linha: dict[s
             metadata={"product": "social-wiring", "link": LINK_PROTECAO, "bloqueio_id": str(linha["id"])},
         )
         status = "enviada"
-    except Exception:
-        logger.exception("julia: automatic-block notice failed org=%s block=%s", org_id, linha.get("id"))
+    except Exception as exc:
+        logger.error("julia: automatic-block notice failed org=%s block=%s (%s)", org_id, linha.get("id"), type(exc).__name__)
         status = "falhou"
     try:
         client.table(T_BLOQUEIOS).update({"notificacao_status": status}).eq("id", str(linha["id"])).execute()
-    except Exception:
-        logger.exception("julia: automatic-block notice status not stored block=%s", linha.get("id"))
+    except Exception as exc:
+        logger.error("julia: automatic-block notice status not stored block=%s (%s)", linha.get("id"), type(exc).__name__)
     return {**linha, "notificacao_status": status}
 
 

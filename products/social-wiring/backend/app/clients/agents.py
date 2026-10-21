@@ -721,6 +721,7 @@ class FakeAgentsClient:
         self._default_partes = tuple(default_partes)
         self._replays: dict[tuple[str, ...], TurnResult] = {}
         self.turns: list[TurnRequest] = []
+        self.identificacoes: dict[str, dict[str, Any]] = {}  # lead_ref -> the MASKED identity agents holds (empty = nothing registered)
         self.status_calls: list[str] = []
         self.deletions: list[DeletionRequest] = []
         self.resumos: list[tuple[str, ResumoRequest]] = []
@@ -1045,7 +1046,7 @@ class FakeAgentsClient:
 
     async def identificacao_mascarada(self, lead_ref: str) -> Optional[dict[str, Any]]:
         self._maybe_fail("identificacao_mascarada")
-        return None
+        return self.identificacoes.get(lead_ref)
 
     async def feedback_mensagem(
         self, message_id: str, *, nota: str, user_id: str, comentario: Optional[str] = None,
