@@ -270,6 +270,26 @@ class WhatsAppChatStore:
             )
         return refreshed
 
+    def redigir_preview(self, *, connection_id: UUID, chat_id: str, textos: list[str]) -> bool:
+        """GUARDRAILS B8.4: the chat's ``last_message_preview`` is a stored copy of the last message's text. When it is the
+        preview of one of ``textos`` (the raw inbound texts of the turn just served) it is rewritten from the MASKED text
+        (identity numbers -> ``***``, `identidade_mascara`); a preview that has moved on to another message is left alone,
+        and so is every other chat. Idempotent (a masked preview no longer equals the preview of the raw text). Returns
+        whether the row was rewritten."""
+        from app.services.identidade_mascara import mascarar_identificadores
+
+        chat = self.get_chat(connection_id=connection_id, chat_id=chat_id)
+        if chat is None or not chat.last_message_preview:
+            return False
+        for texto in textos:
+            mascarado = mascarar_identificadores(texto)
+            if mascarado != texto and chat.last_message_preview == _preview(texto):
+                self._admin.schema(_SCHEMA).table(_CHATS).update(
+                    {"last_message_preview": _preview(mascarado), "updated_at": _utc_now_iso()}
+                ).eq("connection_id", str(connection_id)).eq("org_id", str(self._org_id)).eq("chat_id", chat_id).execute()
+                return True
+        return False
+
     def mark_read(
         self,
         *,

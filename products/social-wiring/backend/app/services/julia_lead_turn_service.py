@@ -600,13 +600,15 @@ async def _redigir_identificacao_guardada(
 ) -> None:
     """GUARDRAILS B8.4: when this batch carried a CPF / RG / CNH number AND agents now holds the lead's identification (its
     masked read is non-empty), mask the numbers in SW's stored copy of those messages. Never raises: a failure is logged by type
-    and the stored text simply stays as typed (the retention window still applies).
+    and the stored text simply stays as typed (the retention window still applies). Covers every SW copy of the typed text:
+    the message rows and the chat's `last_message_preview` (the only other column that copies a lead message's text).
 
     Agents masks `agents.messages` itself (its own store); this is SW's half, including the realtime stream."""
     from app.services.identidade_mascara import mascarar_identificadores
 
-    ids = [str(m["provider_message_id"]) for m in batch
-           if m.get("provider_message_id") and mascarar_identificadores(str(m.get("text") or "")) != str(m.get("text") or "")]
+    com_numero = [m for m in batch
+                  if m.get("provider_message_id") and mascarar_identificadores(str(m.get("text") or "")) != str(m.get("text") or "")]
+    ids = [str(m["provider_message_id"]) for m in com_numero]
     if not ids:
         return
     try:
@@ -616,9 +618,14 @@ async def _redigir_identificacao_guardada(
         n = deps.message_store_factory(connection.org_id).redigir_identificacao(
             connection_id=connection.id, chat_id=chat_id, provider_message_ids=ids)
         logger.info("julia: identity numbers masked in %s stored message(s) conn=%s", n, connection.id)
-        await _purgar_stream_identificacao(deps, connection=connection, chat_id=chat_id)
     except Exception as exc:
         logger.error("julia: identity redaction failed conn=%s (%s)", connection.id, type(exc).__name__)
+    try:
+        if chat_store.redigir_preview(connection_id=connection.id, chat_id=chat_id, textos=[str(m["text"]) for m in com_numero]):
+            logger.info("julia: identity number masked in the chat preview conn=%s", connection.id)
+    except Exception as exc:
+        logger.error("julia: chat preview redaction failed conn=%s (%s)", connection.id, type(exc).__name__)
+    await _purgar_stream_identificacao(deps, connection=connection, chat_id=chat_id)
 
 
 async def _purgar_stream_identificacao(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str) -> None:

@@ -187,3 +187,69 @@ class TestIdentityRedactionAtRest:
         k = buffer_lead(world, LEAD_CHAT, ["quero visitar o AP 1234"], ids=["m1"])
         await _run(world, k)
         assert calls == []
+
+
+class TestChatPreviewRedactionAtRest:
+    """GUARDRAILS B8.4: `whatsapp_chats.last_message_preview` is a stored copy of the last message's text."""
+
+    CPF = "meu cpf é 529.982.247-25"
+
+    def _registrar(self, world):
+        original = world.agents.run_turn
+
+        async def run_turn(req):
+            world.agents.identificacoes[req.lead_ref] = {"cpf": "***.982.247-**"}
+            return await original(req)
+
+        world.agents.run_turn = run_turn  # a Fake that registers identification as agents' tool would; the guard is SW's
+
+    def _preparar(self, world, preview):
+        world.sw.set_table_data("whatsapp_chats", [])
+        world.seed_chat(LEAD_CHAT, last_message_preview=preview)
+        world.seed_chat("outro@c.us", last_message_preview=self.CPF)
+        world.agents = FakeAgentsClient([_ok()])
+        self._registrar(world)
+
+    async def test_the_preview_of_the_served_message_is_masked_and_only_that_chat(self, world):
+        self._preparar(world, self.CPF)
+        await _run(world, buffer_lead(world, LEAD_CHAT, [self.CPF], ids=["m1"]))
+        assert "529.982.247-25" not in world.chat_row()["last_message_preview"]
+        assert "***" in world.chat_row()["last_message_preview"]
+        assert world.chat_row("outro@c.us")["last_message_preview"] == self.CPF
+
+    async def test_a_preview_that_moved_on_to_a_newer_message_is_left_alone(self, world):
+        self._preparar(world, "bom dia, tudo bem?")
+        await _run(world, buffer_lead(world, LEAD_CHAT, [self.CPF], ids=["m1"]))
+        assert world.chat_row()["last_message_preview"] == "bom dia, tudo bem?"
+
+    async def test_without_a_registered_identification_the_preview_is_left_as_typed(self, world):
+        world.sw.set_table_data("whatsapp_chats", [])
+        world.seed_chat(LEAD_CHAT, last_message_preview=self.CPF)
+        world.agents = FakeAgentsClient([_ok()])
+        await _run(world, buffer_lead(world, LEAD_CHAT, [self.CPF], ids=["m1"]))
+        assert world.chat_row()["last_message_preview"] == self.CPF
+
+    def test_masking_the_preview_is_idempotent(self, world):
+        from app.services.whatsapp_chat_store import WhatsAppChatStore
+
+        self._preparar(world, self.CPF)
+        store = WhatsAppChatStore(admin_supabase=world.admin, org_id=ORG_ID)
+        assert store.redigir_preview(connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, textos=[self.CPF]) is True
+        masked = world.chat_row()["last_message_preview"]
+        assert store.redigir_preview(connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, textos=[self.CPF]) is False
+        assert world.chat_row()["last_message_preview"] == masked
+
+    async def test_a_failing_preview_write_is_logged_by_type_only_and_never_blocks_the_rest(self, world, caplog):
+        from app.services.whatsapp_chat_store import WhatsAppChatStore
+
+        class Falha(WhatsAppChatStore):
+            def redigir_preview(self, **kw):
+                raise RuntimeError("boom 529.982.247-25")
+
+        self._preparar(world, self.CPF)
+        deps = world.deps(chat_store_factory=lambda org_id: Falha(admin_supabase=world.admin, org_id=org_id))
+        k = buffer_lead(world, LEAD_CHAT, [self.CPF], ids=["m1"])
+        with caplog.at_level("ERROR"):
+            await process_lead_batch(k, world.buffer.memory_for(k), deps=deps)
+        assert any("chat preview redaction failed" in r.getMessage() and "RuntimeError" in r.getMessage() for r in caplog.records)
+        assert not any("529.982.247-25" in r.getMessage() for r in caplog.records)
