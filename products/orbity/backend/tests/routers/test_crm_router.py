@@ -147,3 +147,37 @@ class TestPublicCapture:
             json={"name": "Lead"},
         )
         assert resp.status_code == 422
+
+
+class TestLeadSoftDeleteRoutes:
+    """Authenticated paths over the mock: delete stamps (never removes), a deleted lead is a 404 everywhere."""
+
+    ORG = "test-org-123"
+
+    def _lead(self, deleted_at=None):
+        from app.dependencies import coerce_org_uuid
+
+        return {"id": "l-1", "org_id": str(coerce_org_uuid(self.ORG)), "name": "A", "deleted_at": deleted_at,
+                "custom_fields": {}, "tags": [], "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}
+
+    def test_delete_soft_deletes_and_cancels_automations(self, client):
+        client.mock_supabase.set_table_data("leads", [self._lead()])
+        client.mock_supabase.set_table_data("automation_executions", [
+            {"id": "e-1", "org_id": self._lead()["org_id"], "lead_id": "l-1", "status": "running"}])
+        client.mock_supabase.set_table_data("automation_pending_actions", [])
+        resp = client.delete("/api/crm/leads/l-1")
+        assert resp.status_code == 200, resp.text
+        assert client.mock_supabase.table("leads").updated_payloads[-1]["deleted_at"]
+        assert client.mock_supabase.table("automation_executions").updated_payloads[-1]["status"] == "canceled"
+
+    def test_delete_of_a_deleted_or_unknown_lead_is_404(self, client):
+        client.mock_supabase.set_table_data("leads", [self._lead("2026-10-01T00:00:00+00:00")])
+        assert client.delete("/api/crm/leads/l-1").status_code == 404
+        assert client.delete("/api/crm/leads/ghost").status_code == 404
+
+    def test_get_and_activities_of_a_deleted_lead_are_404(self, client):
+        client.mock_supabase.set_table_data("leads", [self._lead("2026-10-01T00:00:00+00:00")])
+        client.mock_supabase.set_table_data("lead_activities", [
+            {"id": "a-1", "org_id": self._lead()["org_id"], "lead_id": "l-1", "type": "note"}])
+        assert client.get("/api/crm/leads/l-1").status_code == 404
+        assert client.get("/api/crm/leads/l-1/activities").status_code == 404

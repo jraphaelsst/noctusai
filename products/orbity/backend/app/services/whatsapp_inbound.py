@@ -56,6 +56,7 @@ def find_lead_by_phone(db: Any, org_id: str, raw_phone: str | None) -> dict[str,
         db.table("leads")
         .select("id, name, phone")
         .eq("org_id", org_id)
+        .is_("deleted_at", "null")
         .in_("phone", candidates)
         .order("created_at", desc=True)
         .limit(1)

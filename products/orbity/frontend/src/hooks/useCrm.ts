@@ -239,6 +239,7 @@ export function useDeleteLead() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: crmKeys.funil() });
       qc.invalidateQueries({ queryKey: ["crm", "leads"] });
+      qc.invalidateQueries({ queryKey: ["orbity-lead-options"] });
       toast.success("Lead removido");
     },
     onError: () => {

@@ -19,7 +19,7 @@ Endpoints:
   POST   /api/crm/leads                      create lead → 201
   GET    /api/crm/leads/{id}                 lead detail
   PATCH  /api/crm/leads/{id}                 update lead
-  DELETE /api/crm/leads/{id}                 delete lead
+  DELETE /api/crm/leads/{id}                 soft-delete lead (history kept)
   PATCH  /api/crm/leads/{id}/stage           move stage
   GET    /api/crm/leads/{id}/activities      list activities
   POST   /api/crm/leads/{id}/activities      add activity → 201
@@ -58,6 +58,7 @@ from app.schemas.crm import (
     StageMoveRequest,
 )
 from app.rate_limit import limiter
+from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
 from app.services.crm_service import CRMService
 
@@ -263,10 +264,19 @@ async def delete_lead(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
 ) -> dict:
-    _user, token, raw_org = auth
+    """Soft delete (``deleted_at``/``deleted_by``): history stays in the DB for audit. The lead's
+    running automations are cancelled FIRST (idempotent), then the lead is stamped, so a failure
+    at either step leaves a state the same call can finish."""
+    user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
+    crm = _crm(token, org_id)
     try:
-        ok = _crm(token, org_id).delete_lead(lead_id)
+        if crm.get_lead(lead_id) is None:
+            raise HTTPException(status_code=404, detail="Lead não encontrado")
+        AutomationService(get_user_client(token), org_id=org_id).cancel_for_removed_lead(lead_id)
+        ok = crm.delete_lead(lead_id, deleted_by=str(user.id) if hasattr(user, "id") else None)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.delete_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar lead")
@@ -322,8 +332,13 @@ async def list_activities(
 ) -> list:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
+    crm = _crm(token, org_id)
     try:
-        return _crm(token, org_id).list_activities(lead_id)
+        if crm.get_lead(lead_id) is None:  # a deleted lead's history stays in the DB, not on the API
+            raise HTTPException(status_code=404, detail="Lead não encontrado")
+        return crm.list_activities(lead_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.list_activities failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao listar atividades")

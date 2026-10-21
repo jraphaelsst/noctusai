@@ -257,6 +257,7 @@ class ReportsService:
                 self._t("leads")
                 .select("id, temperature")
                 .eq("org_id", self._org_id)
+                .is_("deleted_at", "null")
                 .gte("created_at", period_start)
                 .lte("created_at", period_end + "T23:59:59+00:00")
             )

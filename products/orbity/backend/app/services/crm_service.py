@@ -174,6 +174,7 @@ class CRMService:
             self._t("leads")
             .select("*", count="exact")
             .eq("org_id", self._org_id)
+            .is_("deleted_at", "null")
             .order("created_at", desc=True)
             .range(offset, offset + page_size - 1)
         )
@@ -199,6 +200,13 @@ class CRMService:
             "page_size": page_size,
         }
 
+    def first_stage_id(self) -> str | None:
+        """The org's first pipeline stage (lowest ``position``) -- the stage a brand-new lead
+        lands in. Same ordering as ``list_stages`` (what the Funil's "Novo lead" dialog uses as
+        its default: ``stages[0]``). None when the org has no stage at all."""
+        stages = self.list_stages()
+        return str(stages[0]["id"]) if stages else None
+
     def get_stage(self, stage_id: str) -> dict[str, Any] | None:
         try:
             res = (
@@ -221,6 +229,7 @@ class CRMService:
                 .select("*")
                 .eq("org_id", self._org_id)
                 .eq("id", lead_id)
+                .is_("deleted_at", "null")
                 .execute()
             )
         except Exception:
@@ -255,6 +264,7 @@ class CRMService:
                 .update(payload)
                 .eq("org_id", self._org_id)
                 .eq("id", lead_id)
+                .is_("deleted_at", "null")
                 .execute()
             )
         except Exception:
@@ -263,13 +273,20 @@ class CRMService:
         rows = result.data or []
         return rows[0] if rows else None
 
-    def delete_lead(self, lead_id: str) -> bool:
+    def delete_lead(self, lead_id: str, *, deleted_by: str | None = None) -> bool:
+        """Soft delete: stamp ``deleted_at``/``deleted_by``. The row, its activities and its
+        automation executions stay in the database (audit); every read path here filters
+        ``deleted_at IS NULL``. False when the lead does not exist (or is already deleted)."""
+        patch: dict[str, Any] = {"deleted_at": datetime.now(timezone.utc).isoformat()}
+        if deleted_by:
+            patch["deleted_by"] = deleted_by
         try:
             result = (
                 self._t("leads")
-                .delete()
+                .update(patch)
                 .eq("org_id", self._org_id)
                 .eq("id", lead_id)
+                .is_("deleted_at", "null")
                 .execute()
             )
         except Exception:
@@ -416,6 +433,7 @@ class CRMService:
                         "qualification_score, value, owner_id, next_contact, tags, "
                         "custom_fields, created_at, updated_at")
                 .eq("org_id", self._org_id)
+                .is_("deleted_at", "null")
                 .order("created_at", desc=False)
                 .execute()
             )
@@ -531,7 +549,7 @@ class CRMService:
             self._t("leads").update({
                 "temperature": computed["qualification"],
                 "qualification_score": computed["score_total"],
-            }).eq("org_id", self._org_id).eq("id", lead_id).execute()
+            }).eq("org_id", self._org_id).eq("id", lead_id).is_("deleted_at", "null").execute()
         except Exception:
             logger.exception("crm.score_lead: stamp lead failed org=%s id=%s", self._org_id, lead_id)
             raise
@@ -563,6 +581,19 @@ class CRMService:
         }
         if row.get("phone"):
             row["phone"] = _normalize_br_phone(row["phone"])
+
+        # O80: a captured lead lands in the org's first stage (else it never shows in the Funil).
+        # A soft-deleted lead with the same phone/email is NOT resurrected: capture always inserts
+        # a fresh row (there is no dedup), so the removed one stays removed.
+        if not row.get("stage_id"):
+            first = self.first_stage_id()
+            if first:
+                row["stage_id"] = first
+            else:
+                logger.warning(
+                    "crm.capture_lead: org=%s has no lead stage -- lead stored without stage_id "
+                    "(invisible in the Funil until stages are seeded)", self._org_id,
+                )
 
         try:
             result = self._t("leads").insert(row).execute()

@@ -355,7 +355,9 @@ class AutomationService:
         """
         subject_type = execution.get("subject_type") or "lead"
         if subject_type == "lead":
-            return self._fetch_one("leads", str(execution["lead_id"])) or {}
+            lead = self._fetch_one("leads", str(execution["lead_id"])) or {}
+            # A soft-deleted lead has no snapshot: the engine then has no phone to send to.
+            return {} if lead.get("deleted_at") else lead
 
         subject_id = str(execution.get("subject_id") or "")
         custom: dict[str, Any] = {}
@@ -507,6 +509,38 @@ class AutomationService:
         except Exception:
             logger.exception("automation.run_due failed org=%s", self._org_id)
             raise
+
+    def cancel_for_removed_lead(self, lead_id: str) -> dict[str, int]:
+        """The lead was soft-deleted: cancel its running executions and skip their pending
+        actions, keeping every row (audit) -- the reason lands on ``error_detail``."""
+        reason = "Lead removido"
+        try:
+            running = (
+                self._t("automation_executions")
+                .select("id")
+                .eq("org_id", self._org_id)
+                .eq("lead_id", lead_id)
+                .eq("status", "running")
+                .execute()
+            ).data or []
+            skipped = 0
+            for ex in running:
+                self._t("automation_executions").update(
+                    {"status": "canceled", "error_detail": reason, "next_action_at": None}
+                ).eq("org_id", self._org_id).eq("id", str(ex["id"])).execute()
+                pend = (
+                    self._t("automation_pending_actions")
+                    .update({"status": "skipped", "error_detail": reason})
+                    .eq("org_id", self._org_id)
+                    .eq("execution_id", str(ex["id"]))
+                    .eq("status", "pending")
+                    .execute()
+                ).data or []
+                skipped += len(pend)
+        except Exception:
+            logger.exception("automation.cancel_for_removed_lead failed lead=%s", lead_id)
+            raise
+        return {"canceled": len(running), "actions_skipped": skipped}
 
     def stop_on_reply(self, lead_id: str) -> int:
         """The lead answered on WhatsApp. For its RUNNING executions: cancel those
