@@ -48,6 +48,12 @@ know about our domain, it goes here.
   `extrair_cns`). The ONE implementation of the CPF/CNPJ/SP-RG check
   digits; never invents data. Mirrored by `@noctusai/lib/identificador`
   and `seed/lib/sql/identificador.sql` against one case table.
+- `identificador_redacao.py` — `redigir_valores`, `redigir_estrutura`,
+  `contem_valores`: mask KNOWN identity values (a registered CPF / RG,
+  compared on digits/letters, separators optional, case-insensitive,
+  min 5 chars, idempotent) in text / JSON-like structures. Lifted from
+  agents + social-wiring near-copies; used by `RealtimeBus.redact`
+  callers to purge the retained stream.
 - `tasks.py` — `schedule_coro(coro, *, logger=None, name=None)` +
   `NoRunningLoopError`. Canonical fire-and-forget helper that
   schedules a coroutine on the running loop and logs exceptions

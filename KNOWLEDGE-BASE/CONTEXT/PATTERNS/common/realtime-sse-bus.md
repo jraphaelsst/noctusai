@@ -72,6 +72,11 @@ the stream's `maxlen` window.
   `maxlen` silently loses the oldest entries — same trade-off Redis Streams
   always make; a consumer that needs stronger durability persists messages
   to its own DB table and treats the bus as delivery, not storage.
+- **`redact(scope, predicate)` purges the retained window** (data minimisation
+  after the fact): deletes matching entries (Redis: bounded `XRANGE` + `XDEL`;
+  never a masked re-append, which would change ids/order for resuming clients).
+  Idempotent; the persisted row is the source of truth. See
+  `KB § 04-SHARED-LIBRARY.md` (`redact_values`).
 - **Reuses the fleet's one Redis** (`noctusai_lib.integrations.redis`) — the
   same client shape `dedup.RedisWebhookDedup` / `buffer.ConversationBufferService`
   already use. No second client path, no second `REDIS_URL`.

@@ -217,3 +217,81 @@ def test_factory_returns_fake_without_redis_real_with_redis() -> None:
     assert isinstance(
         get_realtime_bus(redis_client=make_fake_redis_client()), RedisRealtimeBus
     )
+
+
+# ── redact: purge a value from the retained window (data minimisation) ──────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_bus", BUS_FACTORIES, ids=BUS_IDS)
+async def test_redact_removes_matching_events_resume_stays_ordered(make_bus) -> None:
+    from noctusai_lib.realtime import redact_values
+
+    bus = make_bus()
+    scope = "agents:conv:redact"
+    first = await bus.publish(scope, "message.new", {"texto": "oi"})
+    await bus.publish(scope, "message.new", {"texto": "meu cpf 123.456.789-09", "meta": {"x": ["12345678909"]}})
+    third = await bus.publish(scope, "message.new", {"texto": "obrigado"})
+
+    removed = await redact_values(bus, scope, ["12345678909"])
+    assert removed == 1
+
+    # a reconnecting client resuming from before the purge never sees the raw number
+    resumed = await _collect(bus, scope, 1, last_event_id=first)
+    assert [e.id for e in resumed] == [third]
+    # ... nor does one resuming from the very start of the stream
+    everything = await _collect(bus, scope, 2, last_event_id="0-0")
+    assert [e.payload["texto"] for e in everything] == ["oi", "obrigado"]
+    assert "123" not in str([e.payload for e in everything])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_bus", BUS_FACTORIES, ids=BUS_IDS)
+async def test_redact_is_idempotent_scoped_and_honours_where(make_bus) -> None:
+    from noctusai_lib.realtime import redact_values
+
+    bus = make_bus()
+    await bus.publish("a", "message.new", {"chat_id": "1", "texto": "cpf 12345678909"})
+    await bus.publish("a", "message.new", {"chat_id": "2", "texto": "cpf 12345678909"})
+    await bus.publish("b", "message.new", {"chat_id": "1", "texto": "cpf 12345678909"})
+
+    where = lambda e: e.payload.get("chat_id") == "1"  # noqa: E731
+    assert await redact_values(bus, "a", ["12345678909"], where=where) == 1
+    assert await redact_values(bus, "a", ["12345678909"], where=where) == 0  # idempotent
+    assert await redact_values(bus, "a", ["123"]) == 0  # below the minimum length: never masks
+    assert await redact_values(bus, "empty-scope", ["12345678909"]) == 0
+    assert len(await _collect(bus, "a", 1, last_event_id="0-0")) == 1
+    assert len(await _collect(bus, "b", 1, last_event_id="0-0")) == 1  # another scope untouched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_bus", BUS_FACTORIES, ids=BUS_IDS)
+async def test_redact_failure_is_logged_by_type_and_never_raised(make_bus, caplog) -> None:
+    from noctusai_lib.realtime import redact_values
+
+    bus = make_bus()
+
+    async def boom(scope, predicate):
+        raise RuntimeError("redis down: 12345678909")
+
+    bus.redact = boom  # type: ignore[method-assign]
+    with caplog.at_level("ERROR"):
+        assert await redact_values(bus, "s", ["12345678909"]) == 0
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "RuntimeError" in log and "12345678909" not in log
+
+
+@pytest.mark.asyncio
+async def test_redis_redact_reads_only_the_bounded_window() -> None:
+    class _R(_RecordingRedis):
+        def __init__(self) -> None:
+            super().__init__()
+            self.xrange_calls: list[dict] = []
+
+        def xrange(self, name, min="-", max="+", count=None):
+            self.xrange_calls.append({"name": name, "count": count})
+            return []
+
+    redis = _R()
+    bus = RedisRealtimeBus(redis, maxlen=300)
+    assert await bus.redact("s", lambda e: True) == 0
+    assert redis.xrange_calls == [{"name": "rt:s", "count": 500}]

@@ -602,7 +602,7 @@ async def _redigir_identificacao_guardada(
     masked read is non-empty), mask the numbers in SW's stored copy of those messages. Never raises: a failure is logged by type
     and the stored text simply stays as typed (the retention window still applies).
 
-    Agents would need the same for `agents.messages` (its own store); this is SW's half."""
+    Agents masks `agents.messages` itself (its own store); this is SW's half, including the realtime stream."""
     from app.services.identidade_mascara import mascarar_identificadores
 
     ids = [str(m["provider_message_id"]) for m in batch
@@ -616,8 +616,28 @@ async def _redigir_identificacao_guardada(
         n = deps.message_store_factory(connection.org_id).redigir_identificacao(
             connection_id=connection.id, chat_id=chat_id, provider_message_ids=ids)
         logger.info("julia: identity numbers masked in %s stored message(s) conn=%s", n, connection.id)
+        await _purgar_stream_identificacao(deps, connection=connection, chat_id=chat_id)
     except Exception as exc:
         logger.error("julia: identity redaction failed conn=%s (%s)", connection.id, type(exc).__name__)
+
+
+async def _purgar_stream_identificacao(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str) -> None:
+    """The inbox stream retains (and replays on reconnect) the `message.new` / `chat.upsert` published with the raw number
+    before it was masked: remove, from the connection's scope, this chat's events that still carry an identity number.
+    Delete, not rewrite (a stream entry cannot be edited; clients re-fetch the masked row). Bounded to the retained window,
+    never raises (type only in the log)."""
+    from app.services.identidade_mascara import contem_identificadores
+    from app.services.whatsapp_realtime import whatsapp_scope
+
+    try:
+        n = await deps.bus.redact(
+            whatsapp_scope(connection.id),
+            lambda e: e.payload.get("chat_id") == chat_id and contem_identificadores(e.payload),
+        )
+        if n:
+            logger.info("julia: identity numbers purged from %s realtime event(s) conn=%s", n, connection.id)
+    except Exception as exc:
+        logger.error("julia: realtime purge failed conn=%s (%s)", connection.id, type(exc).__name__)
 
 
 async def _registrar_opt_in(client: AgentsClient, contato_id: Any) -> None:

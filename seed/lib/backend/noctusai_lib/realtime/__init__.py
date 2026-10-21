@@ -22,6 +22,7 @@ from noctusai_lib.realtime.bus import (
     RedisRealtimeBus,
     StreamRedis,
     get_realtime_bus,
+    redact_values,
 )
 from noctusai_lib.realtime.sse import (
     AuthDependency,
@@ -38,6 +39,7 @@ __all__ = [
     "RedisRealtimeBus",
     "ScopeResolver",
     "StreamRedis",
+    "redact_values",
     "create_sse_router",
     "get_realtime_bus",
     "sse_event_stream",

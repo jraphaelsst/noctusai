@@ -10,9 +10,9 @@ from uuid import UUID
 
 import pytest
 from noctusai_lib.integrations.llm import FakeProvider
+from noctusai_lib.primitives.identificador_redacao import redigir_estrutura, redigir_valores
 
 from app.channels import turno as turno_mod
-from app.qualificacao.identificacao import redigir_estrutura, redigir_valores
 from tests.channels.conftest import turn_body
 from tests.channels.test_julia_v2_e2e import (  # noqa: F401 -- ``mundo`` is the fixture
     CPF, RG, call, ctx_campanha, imovel, mundo, say, step,
@@ -163,8 +163,6 @@ class TestFailureIsVisible:
 
 
 class TestNoSurfaceReturnsTheRawNumber:
-    # NOT covered here: the realtime stream's replay window still holds the ``message.new`` the lead's text was
-    # published as BEFORE the registration (the bus has no redact/delete; see the delivery note).
     def test_thread_read_conversation_read_and_handoff_carry_no_raw_number(self, mundo):
         chan = mundo
         _ate_a_identificacao(chan, [
@@ -182,3 +180,55 @@ class TestNoSurfaceReturnsTheRawNumber:
             resp = chan.rt.get(path)
             assert resp.status_code == 200, (path, resp.text)
             assert "***" in resp.text and CPF not in resp.text and CPF_DIGITOS not in resp.text, path
+
+
+class TestRealtimeStreamIsPurged:
+    def test_a_reconnecting_subscriber_never_receives_the_raw_number(self, mundo):
+        import asyncio
+
+        chan = mundo
+        _ate_a_identificacao(chan, [
+            step(call("registrar_identificacao", campo="cpf", valor=CPF)),
+            say("Anotado."),
+        ])
+        r = _turno_identificacao(chan, f"Meu CPF é {CPF}")
+        tid = r["thread_id"]
+        assert r["identificacao_registrada"] is True
+        retained = json.dumps([e.payload for e in chan.events(tid)], default=str, ensure_ascii=False)
+        assert CPF not in retained and CPF_DIGITOS not in retained
+
+        from app.realtime import conversation_scope
+        from noctusai_lib.realtime import RealtimeEvent  # noqa: F401
+
+        async def reconectar():
+            sub = chan.rt.stores.bus.subscribe(conversation_scope(UUID(tid)), last_event_id="0-0")
+            vistos = []
+            try:
+                while len(vistos) < len(chan.events(tid)):
+                    vistos.append(await asyncio.wait_for(sub.__anext__(), timeout=2))
+            finally:
+                await sub.aclose()
+            return vistos
+
+        replay = json.dumps([e.payload for e in asyncio.run(reconectar())], default=str, ensure_ascii=False)
+        assert CPF not in replay and CPF_DIGITOS not in replay
+        # the assistant's own message.new (published AFTER registration) is still there
+        assert any(e.event == "message.new" for e in chan.events(tid))
+
+    def test_a_bus_failure_never_blocks_the_reply_and_logs_type_only(self, mundo, caplog):
+        chan = mundo
+        _ate_a_identificacao(chan, [
+            step(call("registrar_identificacao", campo="cpf", valor=CPF)),
+            say("Anotado."),
+        ])
+
+        async def quebra(scope, predicate):
+            raise RuntimeError(f"redis down {CPF_DIGITOS}")
+
+        chan.rt.stores.bus.redact = quebra
+        with caplog.at_level(logging.ERROR):
+            r = _turno_identificacao(chan, f"Meu CPF é {CPF}")
+        assert r["status"] == "respondido" and r["identificacao_registrada"] is True
+        log = "\n".join(rec.getMessage() for rec in caplog.records)
+        assert "realtime.redact_failed" in log and "RuntimeError" in log and CPF_DIGITOS not in log
+        assert CPF not in _blob(_linhas(chan, r))  # the store was still masked

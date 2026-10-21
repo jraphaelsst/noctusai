@@ -94,6 +94,20 @@ The ONE accent fold (2026-10-10; replaced ~25 private `_sem_acento` / `_deaccent
 
 Keeper `check_private_accent_fold` (pre-commit, blocking): no `unicodedata.normalize("NFKD"|"NFD", …)` in seed lib or an awake product's backend `app/` outside this module and the named exceptions.
 
+### `primitives/identificador_redacao.py` — Masking known identity values
+
+The ONE value-masking (2026-10-21; lifted from the agents `qualificacao.identificacao` and social-wiring `identidade_mascara` near-copies, N=2). Used once a product has REGISTERED a lead's CPF / RG: every stored copy of the number the lead typed is rewritten with `***`. Label / pattern masking (an unknown number after "CPF", "CNH") is NOT here — that is Julia-lead policy and stays in social-wiring (`identidade_mascara.mascarar_identificadores`, composed over this primitive by its `redigir_valores`).
+
+| Symbol | Purpose |
+|---|---|
+| `redigir_valores(texto, valores) -> str` | Each value compared on digits/letters only (`123.456.789-09` ≡ `12345678909`), a separator may sit between any two characters, case-insensitive (RG `…X`), values under `MIN_CHAVE`=5 chars never masked, only the given values touched, idempotent. |
+| `redigir_estrutura(valor, valores)` | Same over every string of a dict/list structure (keys kept), returns a new value. |
+| `contem_valores(valor, valores) -> bool` | Would masking change it — the predicate for stream purging. |
+
+### `realtime.RealtimeBus.redact` / `redact_values` — Purging the retained stream
+
+The bus retains (`maxlen`, default 1000) and replays on reconnect, so a value published before it was registered as sensitive stays replayable. `bus.redact(scope, predicate) -> int` removes from the scope's retained window every event the predicate matches (Fake: filter the buffer; Real: bounded `XRANGE` of `maxlen` + 200 slack, then `XDEL`). **Delete, not rewrite**: a stream entry cannot be edited, and a re-appended masked copy gets a new id (a duplicate for clients that hold the original, out of order for a resuming one); a resuming subscriber just never receives the removed event, ordering of the rest is intact, and the persisted (masked) row is what a client re-fetches — the bus is delivery, never storage. Idempotent; events a live subscriber already got are not recalled. `redact_values(bus, scope, valores, *, where=None)` composes it with `contem_valores`, never raises (logs the exception TYPE only, returns 0) — a redaction failure must not block a reply. `StreamRedis` gained `xrange` / `xdel` (redis-py and fakeredis satisfy them). Consumers: agents (`channels/turno.py::_redigir_identificacao`, thread scope) and social-wiring (`julia_lead_turn_service._purgar_stream_identificacao`, connection scope, this chat's events matching its pattern masker).
+
 ### `primitives/content_disposition.py` — Download filenames
 
 `attachment_disposition(filename, *, fallback="download")` — the RFC 6266 `Content-Disposition: attachment` value: ASCII-folded `filename=` (quotes stripped; an all-non-ASCII name falls back) plus percent-encoded UTF-8 `filename*=`. A raw accented `filename="João.zip"` is not latin-1-safe and 500s the response inside Starlette. Formalized at N=3 (SW certidões + matrículas).

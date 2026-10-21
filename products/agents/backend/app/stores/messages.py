@@ -178,7 +178,7 @@ class MessageStore(Protocol):
 
 def _redigido(row: dict[str, Any], valores: Sequence[str]) -> dict[str, Any]:
     """The columns of ``row`` (``texto`` / ``blocks`` / ``meta``) that change once ``valores`` are masked, or ``{}``."""
-    from app.qualificacao.identificacao import redigir_estrutura
+    from noctusai_lib.primitives.identificador_redacao import redigir_estrutura
 
     novo: dict[str, Any] = {}
     for coluna in ("texto", "blocks", "meta"):

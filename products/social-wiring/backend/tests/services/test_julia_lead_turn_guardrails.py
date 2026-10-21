@@ -128,6 +128,45 @@ class TestIdentityRedactionAtRest:
         await _run(world, k)
         assert "529.982.247-25" not in world.messages()[0]["body"] and "***" in world.messages()[0]["body"]
 
+    async def test_the_inbox_stream_is_purged_of_the_typed_cpf_for_that_chat_only(self, world):
+        import asyncio
+
+        from app.services.whatsapp_realtime import whatsapp_scope
+
+        world.agents = FakeAgentsClient([_ok("Obrigada!")])
+        self._stored(world, "meu cpf é 529.982.247-25")
+        scope = whatsapp_scope(CONNECTION_ID)
+        bus = world.deps().bus
+        await bus.publish(scope, "message.new", {"chat_id": LEAD_CHAT, "message": {"body": "meu cpf é 529.982.247-25"}})
+        await bus.publish(scope, "chat.upsert", {"chat_id": LEAD_CHAT, "last_message_preview": "meu cpf é 529.982.247-25"})
+        await bus.publish(scope, "message.new", {"chat_id": "outro@c.us", "message": {"body": "cpf 529.982.247-25"}})
+        await bus.publish(scope, "message.new", {"chat_id": LEAD_CHAT, "message": {"body": "bom dia"}})
+        k = buffer_lead(world, LEAD_CHAT, ["meu cpf é 529.982.247-25"], ids=["m1"])
+        original = world.agents.run_turn
+
+        async def run_turn(req):
+            world.agents.identificacoes[req.lead_ref] = {"cpf": "***.982.247-**"}
+            return await original(req)
+
+        world.agents.run_turn = run_turn
+        await _run(world, k)
+
+        async def replay():
+            sub = bus.subscribe(scope, last_event_id="0-0")
+            vistos = []
+            try:
+                while True:
+                    vistos.append(await asyncio.wait_for(sub.__anext__(), timeout=0.2))
+            except asyncio.TimeoutError:
+                return vistos
+            finally:
+                await sub.aclose()
+
+        corpos = [str(e.payload) for e in await replay()]
+        assert any("outro@c.us" in c for c in corpos)  # another chat's line is not this purge's business
+        assert any("bom dia" in c for c in corpos)
+        assert not any(c for c in corpos if LEAD_CHAT in c and "529.982.247-25" in c)
+
     async def test_without_a_registered_identification_the_stored_text_is_left_as_typed(self, world):
         world.agents = FakeAgentsClient([_ok("Obrigada!")])
         self._stored(world, "meu cpf é 529.982.247-25")

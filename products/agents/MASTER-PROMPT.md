@@ -93,7 +93,10 @@ products/agents/backend/app/
   `registrar_identificacao` stores a CPF/RG, the turn replaces exactly that value (digits/letters, any separator) by
   `***` in `texto`, `blocks` and `meta` (incl. `midia.texto_extraido`) of every row of the thread - also when the turn
   aborts. Other numbers are left alone. A failure is logged by type only and booked as the `identificacao:redacao_falhou`
-  event; the reply is never blocked. The turn response carries `identificacao_registrada` (any field registered in the turn).
+  event; the reply is never blocked. The thread's realtime scope is purged too (`noctusai_lib.realtime.redact_values`: the
+  lead's `message.new` published before the registration is deleted from the retained window, so a reconnecting subscriber
+  never replays the number; failure logged by type only). The masking itself is `noctusai_lib.primitives.identificador_redacao`.
+  The turn response carries `identificacao_registrada` (any field registered in the turn).
 - A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
   seeded earlier gets 409 `conteudo_incompleto`, never a default string.
 - Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /

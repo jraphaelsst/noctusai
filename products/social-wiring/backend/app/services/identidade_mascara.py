@@ -12,17 +12,18 @@ What is masked (replaced by `***`, the label kept):
     its shape -- a CNH has no public check-digit rule, the label is the signal.
 
 `redigir_valores` is the storage counterpart (GUARDRAILS B8.4): once agents has registered an identification, the stored message
-text is rewritten with the SAME masking, and with any explicit values the caller knows.
+text is rewritten with the SAME masking, and with any explicit values the caller knows (value masking itself is the shared lib
+primitive; the label / pattern masking above stays here: it is Julia-lead policy).
 """
 from __future__ import annotations
 
 import hashlib
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 from noctusai_lib.primitives.identificador import cpf_dv_valido
+from noctusai_lib.primitives.identificador_redacao import MASCARA, redigir_valores as _redigir_valores_lib
 
-MASCARA = "***"
 _CPF_FORMATADO = re.compile(r"(?<![\d.])\d{3}\.\d{3}\.\d{3}-\d{2}(?![\d])")
 _RG_FORMATADO = re.compile(r"(?<![\d.])\d{1,2}\.\d{3}\.\d{3}-?[0-9xX](?![\d])")
 _ONZE_DIGITOS = re.compile(r"(?<!\d)\d{11}(?!\d)")
@@ -47,16 +48,21 @@ def mascarar_identificadores(texto: str) -> str:
 
 
 def redigir_valores(texto: str, valores: Iterable[str] = ()) -> str:
-    """The storage redaction: the pattern masking above, plus every explicit `valor` (compared on digits/letters only, so
-    `123.456.789-09` and `12345678909` are the same value)."""
-    out = mascarar_identificadores(texto)
-    for v in valores:
-        chave = re.sub(r"[^0-9A-Za-z]", "", str(v or ""))
-        if len(chave) < 5:
-            continue
-        padrao = r"[.\-/ ]?".join(re.escape(c) for c in chave)
-        out = re.sub(padrao, MASCARA, out)
-    return out
+    """The storage redaction: the pattern masking above, plus every explicit `valor` (the shared lib primitive
+    `noctusai_lib.primitives.identificador_redacao`)."""
+    return _redigir_valores_lib(mascarar_identificadores(texto), valores)
+
+
+def contem_identificadores(valor: Any) -> bool:
+    """True when pattern masking would change any string of `valor` (a string or JSON-like structure) -- the predicate
+    for purging the realtime stream's retained window, where the raw values are not known to SW."""
+    if isinstance(valor, str):
+        return mascarar_identificadores(valor) != valor
+    if isinstance(valor, dict):
+        return any(contem_identificadores(v) for v in valor.values())
+    if isinstance(valor, list):
+        return any(contem_identificadores(v) for v in valor)
+    return False
 
 
 def ref(valor: str) -> str:
@@ -65,4 +71,4 @@ def ref(valor: str) -> str:
     return hashlib.sha256((valor or "").encode("utf-8")).hexdigest()[:10]
 
 
-__all__ = ["MASCARA", "mascarar_identificadores", "redigir_valores", "ref"]
+__all__ = ["MASCARA", "contem_identificadores", "mascarar_identificadores", "redigir_valores", "ref"]

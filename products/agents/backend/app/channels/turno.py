@@ -41,7 +41,8 @@ from app.channels.tool_registry import (
 from app.config import settings
 from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.prompt import qualificacao_data
-from app.realtime import publish_event
+from app.realtime import conversation_scope, get_bus, publish_event
+from noctusai_lib.realtime import redact_values
 from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores.conformidade import SINAIS_SEGURANCA, Impressao, Violacao
@@ -496,7 +497,7 @@ async def executar(
                 else:
                     texto_final = "\n\n".join(x for x in t2.textos if x and x.strip())
     except BaseException:  # an aborted turn (deadline, provider refusal) may already hold a registered CPF / RG
-        await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id)
+        await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id, bus)
         raise
 
     # ── settle: blocked twice, safe stop, deterministic escalations ──
@@ -524,7 +525,7 @@ async def executar(
     blocks = [b for t in tentativas for b in t.blocks]
     final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus, tag)
     identificacao_registrada = turno.identificacao_registrada
-    await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id)
+    await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id, bus)
 
     for v in violacoes:
         try:
@@ -562,14 +563,19 @@ EVENTO_REDACAO_FALHOU = "identificacao:redacao_falhou"
 
 
 async def _redigir_identificacao(
-    svc: ServicosCanal, turno: Any, org_id: UUID, thread_id: UUID, agent_id: UUID, lead_ref_id: UUID,
+    svc: ServicosCanal, turno: Any, org_id: UUID, thread_id: UUID, agent_id: UUID, lead_ref_id: UUID, bus: Any = None,
 ) -> None:
     """Guardrails B8.4: once this turn registered a CPF / RG, mask exactly those values in the thread's stored rows
     (the lead's text, the text extracted from its media). A failure never reaches the lead -- it is LOGGED (type
-    only: no text, no number) and booked as a thread event the operator can see; the next registration retries."""
+    only: no text, no number) and booked as a thread event the operator can see; the next registration retries.
+
+    The realtime stream is purged too: the lead's text went out as ``message.new`` BEFORE the registration and the
+    bus retains (and replays on reconnect) its window, so the events carrying the number are removed from the
+    thread's scope (``redact_values``: delete, bounded, never raises). The masked row is what a client re-fetches."""
     valores = list(dict.fromkeys(turno.identificacoes_registradas))
     if not valores:
         return
+    await redact_values(bus if bus is not None else get_bus(), conversation_scope(thread_id), valores)
     try:
         await asyncio.to_thread(svc.messages.redigir_identificacao, org_id, thread_id, valores)
     except Exception as exc:  # noqa: BLE001 -- the reply to the lead must not depend on the masking: seen, not silent

@@ -30,10 +30,14 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Protocol, runtime_checkable
+import logging
+from typing import Any, AsyncIterator, Callable, Iterable, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_KEY_PREFIX = "rt:"
 _DEFAULT_STREAM_MAXLEN = 1000
+_REDACT_SLACK = 200  # Redis approximate-MAXLEN overshoot allowance for `redact`
 _DEFAULT_POLL_BLOCK_MS = 20_000  # XREAD BLOCK per poll — bounds the leaked
 # background thread on disconnect (see RedisRealtimeBus docstring) while
 # staying well under typical proxy/LB idle timeouts.
@@ -81,6 +85,31 @@ class RealtimeBus(Protocol):
         with `id > last_event_id` (the reconnect gap), then continues
         live. No duplicates, no loss, as long as the gap is still inside
         the stream's `maxlen` window.
+        """
+        ...
+
+    async def redact(
+        self, scope: str, predicate: Callable[["RealtimeEvent"], bool]
+    ) -> int:
+        """Remove from `scope`'s RETAINED window every event for which
+        `predicate(event)` is true; returns how many were removed.
+
+        Purpose: data minimisation after the fact (a value that must not
+        stay replayable, e.g. an identity number the lead typed before it
+        was registered). Semantics, identical in Fake and Real:
+
+        - **Delete, not rewrite.** A stream cannot edit an entry in place,
+          and re-appending a masked copy would give it a NEW id: a client
+          that already holds the original would see a duplicate, and a
+          resuming client would see it out of order. A resuming subscriber
+          therefore simply never receives a removed event (the cursor is an
+          id; `id > cursor` stays correct, no gap in ordering of the rest).
+          Callers must treat the bus as supplementary: the persisted row is
+          the source of truth and is re-fetched on reconnect.
+        - **Bounded.** Only the retained window (at most `maxlen` plus
+          Redis's approximate-trim slack) is inspected. Never an unbounded scan.
+        - **Idempotent.** A second call with the same predicate removes 0.
+        - Events a live subscriber already received are not recalled.
         """
         ...
 
@@ -165,6 +194,20 @@ class FakeRealtimeBus:
             cond.notify_all()
         return event_id
 
+    async def redact(
+        self, scope: str, predicate: Callable[[RealtimeEvent], bool]
+    ) -> int:
+        cond = self._condition_for(scope)
+        async with cond:
+            buf = self._streams.get(scope)
+            if not buf:
+                return 0
+            keep = [e for e in buf if not predicate(e)]
+            removed = len(buf) - len(keep)
+            if removed:
+                self._streams[scope] = keep
+            return removed
+
     async def subscribe(
         self, scope: str, *, last_event_id: str | None = None
     ) -> AsyncIterator[RealtimeEvent]:
@@ -210,6 +253,12 @@ class StreamRedis(Protocol):
         count: int | None = None,
         block: int | None = None,
     ) -> Any: ...
+
+    def xrange(
+        self, name: str, min: str = "-", max: str = "+", count: int | None = None
+    ) -> Any: ...
+
+    def xdel(self, name: str, *ids: str) -> Any: ...
 
 
 def _decode(value: Any) -> str:
@@ -275,6 +324,31 @@ class RedisRealtimeBus:
         )
         return _decode(raw_id)
 
+    async def redact(
+        self, scope: str, predicate: Callable[[RealtimeEvent], bool]
+    ) -> int:
+        key = self._key(scope)
+        # Bounded: XADD MAXLEN ~ is approximate (trims by whole macro-nodes,
+        # so the stream may overshoot `maxlen` slightly); read at most that
+        # window plus slack, never the whole keyspace.
+        entries = await asyncio.to_thread(
+            self._redis.xrange, key, "-", "+", count=self._maxlen + _REDACT_SLACK
+        )
+        doomed: list[str] = []
+        for raw_id, raw_fields in entries or []:
+            fields = {_decode(k): _decode(v) for k, v in dict(raw_fields).items()}
+            event = RealtimeEvent(
+                id=_decode(raw_id),
+                event=fields["event"],
+                payload=json.loads(fields["payload"]),
+            )
+            if predicate(event):
+                doomed.append(event.id)
+        if not doomed:
+            return 0
+        removed = await asyncio.to_thread(self._redis.xdel, key, *doomed)
+        return int(removed)
+
     async def subscribe(
         self, scope: str, *, last_event_id: str | None = None
     ) -> AsyncIterator[RealtimeEvent]:
@@ -303,6 +377,37 @@ class RedisRealtimeBus:
                         event=fields["event"],
                         payload=json.loads(fields["payload"]),
                     )
+
+
+async def redact_values(
+    bus: RealtimeBus,
+    scope: str,
+    valores: Iterable[str],
+    *,
+    where: Callable[[RealtimeEvent], bool] | None = None,
+) -> int:
+    """Remove from `scope`'s retained window every event whose payload
+    carries any of the identity `valores` (see
+    `noctusai_lib.primitives.identificador_redacao`), optionally limited
+    to events passing `where`. Never raises: a failure is logged (type
+    only, never payload text) and returns 0, so a redaction problem can
+    never block a reply."""
+    from noctusai_lib.primitives.identificador_redacao import contem_valores
+
+    alvo = [v for v in valores if v]
+    if not alvo:
+        return 0
+
+    def _predicate(event: RealtimeEvent) -> bool:
+        if where is not None and not where(event):
+            return False
+        return contem_valores(event.payload, alvo)
+
+    try:
+        return await bus.redact(scope, _predicate)
+    except Exception as exc:  # noqa: BLE001 -- best-effort by contract: seen (type only), never raised
+        logger.error("realtime.redact_failed scope=%s erro=%s", scope, type(exc).__name__)
+        return 0
 
 
 def get_realtime_bus(
