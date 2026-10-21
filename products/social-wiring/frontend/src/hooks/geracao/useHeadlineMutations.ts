@@ -9,6 +9,7 @@ import { api } from "@noctusai/seed/infra";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { Headline } from "@/types/geracao";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;
@@ -17,7 +18,6 @@ interface Envelope<T> {
 const unwrap = <T>(res: Envelope<T>): T => res.data;
 
 const BASE = "/api/media-creation/headlines";
-export const GERACAO_KEY = ["sw", "geracao"] as const;
 
 const HEAD_KEY = [...GERACAO_KEY, "headlines"] as const;
 

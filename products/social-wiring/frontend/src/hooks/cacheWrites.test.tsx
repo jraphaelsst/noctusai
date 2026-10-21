@@ -11,7 +11,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
 
-import { GERACAO_KEY, useFavoritarHeadline } from "./geracao/useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
+import { useFavoritarHeadline } from "./geracao/useHeadlineMutations";
 import { useDeleteTestemunha, useCreateTestemunha } from "./useTestemunhas";
 import { useInteresseMutations, interessesKey } from "./useInteresses";
 import { useAdicionarAlias } from "./useCondominios";

@@ -54,7 +54,7 @@ import { API_KEYS_QUERY_KEY, useSaveApiKey } from "./useSettings";
 import { useToggleAutoReply } from "./useWhatsAppConnections";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import { useExcluirMembro, useExcluirPost } from "./geracao/useEsteira";
-import { GERACAO_KEY } from "./geracao/useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 import { useCriarLote } from "./geracao/useHeadlines";
 
 function defer<T = unknown>() {

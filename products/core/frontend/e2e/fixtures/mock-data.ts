@@ -176,6 +176,18 @@ export const mockInvitations = [
   },
 ];
 
+/** What `POST /api/team/invite` answers: the new pending invitation, secret token included. */
+export const mockCreatedInvitation = {
+  id: 'inv-002',
+  email: 'novo@empresa.com',
+  role: 'member',
+  status: 'pending',
+  invited_by: 'user-001',
+  expires_at: '2026-03-22T00:00:00Z',
+  created_at: '2026-02-22T00:00:00Z',
+  token: 'e2e-invite-token',
+};
+
 export const mockRoles = [
   { id: 'role-001', name: 'Proprietário', slug: 'owner', permissions: ['*'], is_system: true },
   { id: 'role-002', name: 'Administrador', slug: 'admin', permissions: ['manage_team', 'manage_billing'], is_system: true },

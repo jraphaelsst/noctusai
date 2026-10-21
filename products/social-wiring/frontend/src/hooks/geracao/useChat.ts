@@ -23,7 +23,7 @@ import { apiUrl } from "@/lib/apiBase";
 import { uploadMultipart } from "@/hooks/useCardHub";
 import type { Agente, Conversa, Headline, Memoria, Mencao, MencaoTipo, Mensagem, ViralCard } from "@/types/geracao";
 import { viraisParams, type ViraisPage } from "./useBiblioteca";
-import { GERACAO_KEY } from "./useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;

@@ -8,6 +8,7 @@ import {
   mockCheckoutUrl,
   mockTeamMembers,
   mockInvitations,
+  mockCreatedInvitation,
   mockRoles,
   mockOnboardingStatus,
   mockAdminStats,
@@ -42,7 +43,9 @@ export async function mockTeamAPIs(page: Page) {
 
   await page.route(path('/invitations'), jsonResponse({ data: mockInvitations }));
   await page.route(path('/invitations/[^/?]+'), okResponse());
-  await page.route(path('/invite'), okResponse('Convite enviado'));
+  // The real route answers the created invitation as `{ data }` (core routers/team.py); the
+  // invite hook commits that row into the pending list, so a `{ message }` mock breaks it.
+  await page.route(path('/invite'), jsonResponse({ data: mockCreatedInvitation }));
   await page.route(path('/[^/?]+/role'), okResponse());
   await page.route('**/api/roles', jsonResponse({ data: mockRoles }));
 }

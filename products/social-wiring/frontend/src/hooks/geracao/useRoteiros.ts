@@ -22,7 +22,7 @@ import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type { Roteiro, RoteiroResumo } from "@/types/geracao";
-import { GERACAO_KEY } from "./useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;

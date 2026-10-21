@@ -31,7 +31,7 @@ import type {
   PostDetalhe,
   PostUpdate,
 } from "@/types/esteira";
-import { GERACAO_KEY } from "./useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;

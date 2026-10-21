@@ -12,7 +12,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 import type { DashboardCriacao } from "@/types/geracao";
-import { GERACAO_KEY } from "./useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;

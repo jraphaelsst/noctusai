@@ -16,7 +16,7 @@ import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
 import type { Criatividade, Headline, HeadlineLote, HeadlineLoteDetalhe } from "@/types/geracao";
-import { GERACAO_KEY } from "./useHeadlineMutations";
+import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
   success?: boolean;
