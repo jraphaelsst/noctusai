@@ -115,7 +115,10 @@ def _fields(**overrides) -> CrednetFields:
         protesto_estadual=SEM_OCORRENCIA,
         cheques_sem_fundo=SEM_OCORRENCIA,
         participacoes=(),
-        confiancas={"nome_oficial": ALTA, "cpf": ALTA, "data_nascimento": ALTA, "nome_mae": ALTA},
+        # Keyed like the seed reader (`serasa_crednet.parse_crednet`): "nome", not
+        # the cliente column "nome_oficial" -- the old key hid a name that never
+        # got its confidence (deal 857, 2026-10-21).
+        confiancas={"nome": ALTA, "cpf": ALTA, "data_nascimento": ALTA, "nome_mae": ALTA},
         rotulos={},
     )
     base.update(overrides)
@@ -146,6 +149,7 @@ class TestDocumentMarkedFirst:
         assert doc["extracao_nome"] == "FULANA DE TESTE"
         assert doc["extracao_cpf"] == CPF_VALIDO
         assert doc["extracao_nome_mae"] == "CICLANA DE TESTE"
+        assert doc["extracao_nome_confianca"] == "alta"
         assert doc["extracao_crednet"]["protocolo"] == "1234567"
         assert doc["extracao_crednet"]["ocorrencias_constam"] is False
 

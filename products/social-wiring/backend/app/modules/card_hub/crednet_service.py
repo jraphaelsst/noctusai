@@ -110,7 +110,7 @@ def _lidos(fields: Any) -> dict[str, tuple[Any, str, Optional[str], bool]]:
     nascimento_ok = fields.data_nascimento is not None
     mae_ok = bool(fields.nome_mae)
     return {
-        "nome_oficial": (fields.nome, _confianca_de(fields, "nome_oficial"), _rotulo_de(fields, "nome_oficial"), nome_ok),
+        "nome_oficial": (fields.nome, _confianca_de(fields, "nome"), _rotulo_de(fields, "nome"), nome_ok),
         "cpf": (fields.cpf, _confianca_de(fields, "cpf"), _rotulo_de(fields, "cpf"), cpf_ok),
         "data_nascimento": (
             fields.data_nascimento.isoformat() if fields.data_nascimento else None,
@@ -414,8 +414,8 @@ async def aplicar_leitura(
             extracao_erro=None,
             extracao_em=_now(),
             extracao_nome=fields.nome,
-            extracao_nome_confianca=_confianca_de(fields, "nome_oficial"),
-            extracao_nome_rotulo=_rotulo_de(fields, "nome_oficial"),
+            extracao_nome_confianca=_confianca_de(fields, "nome"),
+            extracao_nome_rotulo=_rotulo_de(fields, "nome"),
             extracao_cpf=fields.cpf,
             extracao_cpf_confianca=_confianca_de(fields, "cpf"),
             extracao_cpf_rotulo=_rotulo_de(fields, "cpf"),
