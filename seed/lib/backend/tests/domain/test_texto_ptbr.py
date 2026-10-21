@@ -213,3 +213,11 @@ class TestPrazosDatasPercentuais:
     )
     def test_percentual(self, valor, esperado):
         assert percentual_por_extenso(Decimal(valor)) == esperado
+
+
+def test_mes_ano_por_extenso():
+    from datetime import date
+
+    from noctusai_lib.domain.texto_ptbr import mes_ano_por_extenso
+
+    assert mes_ano_por_extenso(date(2027, 5, 1)) == "maio de 2027"

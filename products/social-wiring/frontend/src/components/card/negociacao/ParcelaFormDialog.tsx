@@ -92,6 +92,7 @@ export interface ParcelaEditavel {
   tipo: ParcelaTipo;
   valor: string | null;
   vencimento: string | null;
+  vencimento_precisao?: "dia" | "mes";
   evento: string | null;
   forma_pagamento: string | null;
   favorecido_id: string | null;
@@ -112,6 +113,9 @@ interface ParcelaDraft {
   tipo: ParcelaTipo;
   valorTexto: string;
   vencimento: string;
+  /** "mes" ⇒ the deadline is a month ("até maio de 2027"); `vencimento`
+   *  then holds `YYYY-MM-01`. */
+  precisao: "dia" | "mes";
   evento: EventoEstado;
   forma_pagamento: string;
   favorecido_id: string;
@@ -138,6 +142,7 @@ function toParcelaDraft(p: ParcelaEditavel | null): ParcelaDraft {
     // form opens with an empty field rather than throwing on `.trim()`.
     valorTexto: p && p.valor != null ? formatarValorEditavel(p.valor) : "",
     vencimento: p?.vencimento ?? "",
+    precisao: p?.vencimento_precisao === "mes" ? "mes" : "dia",
     evento: lerEvento(p?.evento),
     forma_pagamento: p?.forma_pagamento ?? "",
     favorecido_id: p?.favorecido_id ?? "",
@@ -173,6 +178,9 @@ export interface ParcelaFormDialogProps {
   /** The negociação's migration-114 switch — off for the aditivo schedule,
    *  which has no such column. Default `true`. */
   mostrarDisparaCorretagem?: boolean;
+  /** Migration 294 (negociação only): offer "Até o mês de…" next to the exact
+   *  date. Default `false` (the aditivo schedule has no precision column). */
+  permiteVencimentoMes?: boolean;
   /** Migration 192 (negociação only — the aditivo schedule has neither
    *  column): offer the split among several favorecidos on a divisible tipo,
    *  and `valor_fgts` on the financing parcela. Default `false`. */
@@ -190,6 +198,7 @@ export function ParcelaFormDialog({
   permutaAtivos,
   mostrarDisparaCorretagem = true,
   permitePagamentoDetalhado = false,
+  permiteVencimentoMes = false,
   onSubmit,
   saving,
   error,
@@ -223,6 +232,9 @@ export function ParcelaFormDialog({
       favorecido_id: draft.favorecido_id || null,
       confissao_divida: draft.confissao_divida,
     };
+    if (permiteVencimentoMes) {
+      payload.vencimento_precisao = draft.vencimento && draft.precisao === "mes" ? "mes" : "dia";
+    }
     if (mostrarDisparaCorretagem) payload.dispara_corretagem = draft.dispara_corretagem;
     if (permitePermuta) {
       payload.permuta_ativo_ids = draft.tipo === "permuta" ? draft.permuta_ativo_ids : [];
@@ -362,14 +374,44 @@ export function ParcelaFormDialog({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="parc-venc">Vencimento</Label>
-              <Input
-                id="parc-venc"
-                data-testid="parc-venc"
-                type="date"
-                value={draft.vencimento}
-                onChange={(e) => setDraft((d) => ({ ...d, vencimento: e.target.value }))}
-              />
+              <Label htmlFor="parc-venc">{draft.precisao === "mes" ? "Até o mês de…" : "Vencimento"}</Label>
+              {draft.precisao === "mes" ? (
+                <Input
+                  id="parc-venc"
+                  data-testid="parc-venc-mes"
+                  type="month"
+                  value={draft.vencimento.slice(0, 7)}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, vencimento: e.target.value ? `${e.target.value}-01` : "" }))
+                  }
+                />
+              ) : (
+                <Input
+                  id="parc-venc"
+                  data-testid="parc-venc"
+                  type="date"
+                  value={draft.vencimento}
+                  onChange={(e) => setDraft((d) => ({ ...d, vencimento: e.target.value }))}
+                />
+              )}
+              {permiteVencimentoMes && (
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Checkbox
+                    data-testid="parc-venc-ate-mes"
+                    checked={draft.precisao === "mes"}
+                    onCheckedChange={(v) =>
+                      setDraft((d) => ({
+                        ...d,
+                        precisao: v === true ? "mes" : "dia",
+                        // keep the month when switching to "mes"; a month is
+                        // stored as the 1st
+                        vencimento: v === true && d.vencimento ? `${d.vencimento.slice(0, 7)}-01` : d.vencimento,
+                      }))
+                    }
+                  />
+                  Prazo máximo até o mês de… (sem dia exato)
+                </label>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="parc-evento">Evento</Label>

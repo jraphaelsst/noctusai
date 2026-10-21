@@ -16,6 +16,7 @@ from noctusai_lib.domain.texto_ptbr import (
     data_por_extenso,
     dias_por_extenso,
     formatar_data_br,
+    mes_ano_por_extenso,
     formatar_inteiro_br,
     numero_com_extenso,
     percentual_por_extenso,
@@ -644,6 +645,8 @@ def _evento_e_do_financiamento(evento: str) -> bool:
 def _momento_parcela(p: Parcela, *, tem_financiamento: bool, ref_financiamento: str) -> str:
     """WHEN a parcela is paid — its date, the financing contract (an
     intermediária in a financed deal), or the agreed evento."""
+    if p.vencimento and p.vencimento_precisao == "mes":
+        return f"com prazo máximo de pagamento até {mes_ano_por_extenso(p.vencimento)}"
     if p.vencimento:
         return f"com vencimento em {formatar_data_br(p.vencimento)}"
     evento = (p.evento or "").strip()

@@ -56,6 +56,8 @@ FE note: `frontend/src/types/negociacaoEstruturada.ts` still documents `fgts` as
 
 ## 4. Readiness codes (`/contrato/.../geracao` bloqueios / faltando)
 
+**Month-precision deadline (Migration 294).** A negociação parcela carries `vencimento_precisao` (`dia` default | `mes`). With `mes`, `vencimento` is stored as the 1st of the month and the generator prints "com prazo máximo de pagamento até maio de 2027" (`frases._momento_parcela`) instead of "com vencimento em DD/MM/AAAA"; readiness accepts it as the parcela's moment, and ordering / past-date checks compare the END of that month (`Parcela.vencimento_limite`). The aditivo's restated schedule has no such column (exact dates only).
+
 **Removed from the contract gate (now generated instead):** `MAIS_DE_UM_SINAL`, `MAIS_DE_UMA_PARCELA_PERMUTA`, `PARCELA_FGTS_SEPARADA`. `MAIS_DE_UM_SINAL` (and the fgts parcela's own vencimento/evento falta) still come out of the **aditivo**'s restated-schedule evaluation, because the aditivo prints one line per stored parcela and does not fold tranches yet (`derivacao._negociacao(..., agrupar_parcelas=False)`, the default).
 
 **New bloqueios:**

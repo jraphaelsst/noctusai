@@ -234,3 +234,37 @@ describe("ParcelaFormDialog — evento vocabulary", () => {
     expect(b.screen.getByTestId("parc-evento-previa").textContent).toContain("Contrato de Financiamento Imobiliário");
   });
 });
+
+describe("ParcelaFormDialog — prazo por mês (Migration 294)", () => {
+  it("🔴 'Até o mês de…' sends the month as the 1st + vencimento_precisao: 'mes'", async () => {
+    const { screen, fireEvent, onSubmit } = await render({
+      parcela: parcela({ tipo: "direta", evento: null }),
+      permiteVencimentoMes: true,
+    });
+    fireEvent.click(screen.getByTestId("parc-venc-ate-mes"));
+    fireEvent.change(screen.getByTestId("parc-venc-mes"), { target: { value: "2027-05" } });
+    fireEvent.click(screen.getByTestId("negest-parcela-salvar"));
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.vencimento).toBe("2027-05-01");
+    expect(payload.vencimento_precisao).toBe("mes");
+  });
+
+  it("reopens a stored month-precision parcela in month mode; an exact date stays 'dia'", async () => {
+    const a = await render({
+      parcela: parcela({ vencimento: "2027-05-01", vencimento_precisao: "mes", evento: null }),
+      permiteVencimentoMes: true,
+    });
+    expect((a.screen.getByTestId("parc-venc-mes") as HTMLInputElement).value).toBe("2027-05");
+    a.cleanup();
+    const b = await render({ parcela: parcela({ vencimento: "2027-05-31", evento: null }), permiteVencimentoMes: true });
+    b.fireEvent.click(b.screen.getByTestId("negest-parcela-salvar"));
+    expect(b.onSubmit.mock.calls[0][0].vencimento_precisao).toBe("dia");
+  });
+
+  it("is not offered (and not sent) without the feature (aditivo schedule)", async () => {
+    const { screen, fireEvent, onSubmit } = await render({ parcela: parcela() });
+    expect(screen.queryByTestId("parc-venc-ate-mes")).toBeNull();
+    fireEvent.click(screen.getByTestId("negest-parcela-salvar"));
+    expect("vencimento_precisao" in onSubmit.mock.calls[0][0]).toBe(false);
+  });
+});

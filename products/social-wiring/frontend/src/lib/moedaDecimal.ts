@@ -36,6 +36,22 @@ export function lerValorDigitado(entrada: string): string {
   return limpo;
 }
 
+/** `("2027-05-01", "mes")` → "até maio de 2027"; otherwise `exibirData`. */
+const MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+  "agosto", "setembro", "outubro", "novembro", "dezembro"];
+export function exibirVencimento(
+  v: string | null | undefined,
+  precisao?: "dia" | "mes",
+): string | null {
+  if (!v) return null;
+  if (precisao === "mes") {
+    const [ano, mes] = v.split("-");
+    const nome = MESES_PT[Number(mes) - 1];
+    if (ano && nome) return `até ${nome} de ${ano}`;
+  }
+  return exibirData(v);
+}
+
 /** `YYYY-MM-DD` → `DD/MM/YYYY`; anything else is returned as-is. */
 export function exibirData(v: string | null | undefined): string | null {
   if (!v) return null;

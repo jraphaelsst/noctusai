@@ -81,6 +81,9 @@ export interface NegociacaoParcela {
    *  a value. Render `null` as "—, falta", never as "—" alone. */
   valor: string | null;
   vencimento: string | null;
+  /** Migration 294. `"mes"` = only the month of `vencimento` counts ("até
+   *  maio de 2027"). Optional for a pre-294 backend ⇒ read as `"dia"`. */
+  vencimento_precisao?: "dia" | "mes";
   evento: string | null;
   forma_pagamento: string | null;
   favorecido_id: string | null;
@@ -418,6 +421,8 @@ export interface ParcelaCreate {
   tipo: ParcelaTipo;
   valor: string;
   vencimento?: string | null;
+  /** Migration 294. Only sent when the caller offers month precision. */
+  vencimento_precisao?: "dia" | "mes";
   evento?: string | null;
   forma_pagamento?: string | null;
   favorecido_id?: string | null;

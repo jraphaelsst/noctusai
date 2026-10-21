@@ -2268,9 +2268,10 @@ def _negociacao(
         if p.confissao_divida and p.tipo != "direta":
             av.bloqueia("CONFISSAO_EM_PARCELA_NAO_DIRETA", f"Só parcelas diretas entram na confissão de dívida ({rot}).")
         if p.vencimento:
-            if ultimo_venc is not None and p.vencimento <= ultimo_venc:
+            limite = p.vencimento_limite
+            if ultimo_venc is not None and limite <= ultimo_venc:
                 av.bloqueia("VENCIMENTOS_FORA_DE_ORDEM", f"O vencimento da {rot} não é posterior ao da parcela anterior.")
-            ultimo_venc = p.vencimento
+            ultimo_venc = limite
 
     # [Q15] Σ parcelas must equal the price — the sample-contract errors were
     # data. The permuta value is one of the parcelas now (114), so it is in
@@ -2296,7 +2297,7 @@ def _negociacao(
                 continue
             if not p.vencimento:
                 av.falta(f"negociacao.parcela.{p.id}.vencimento", f"Vencimento da Parcela {num2(i)} (confissão de dívida)", "negociacao")
-            elif p.vencimento <= assinatura:
+            elif p.vencimento_limite <= assinatura:
                 av.bloqueia("CONFISSAO_VENCIMENTO_PASSADO", f"A Parcela {num2(i)} da confissão vence antes da assinatura.")
 
 

@@ -279,6 +279,19 @@ class Parcela:
     #: [Migration 192] The parcela split among >= 2 favorecidos, in order;
     #: empty when it is paid to `favorecido_id` alone.
     divisao: tuple[DivisaoFavorecido, ...] = ()
+    #: [Migration 294] 'mes' = `vencimento` is the 1st of the deadline month
+    #: ("prazo máximo de pagamento até maio de 2027"); 'dia' = exact date.
+    vencimento_precisao: str = "dia"
+
+    @property
+    def vencimento_limite(self) -> Optional[date]:
+        """The latest day the parcela may be paid (end of the month for a
+        month-precision deadline) — what ordering/past checks compare."""
+        if self.vencimento is None or self.vencimento_precisao != "mes":
+            return self.vencimento
+        import calendar
+        v = self.vencimento
+        return v.replace(day=calendar.monthrange(v.year, v.month)[1])
 
 
 @dataclass

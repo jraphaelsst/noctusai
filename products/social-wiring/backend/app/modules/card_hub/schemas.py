@@ -481,6 +481,9 @@ class ParcelaCreateBody(StrictHttpModel):
     ]
     valor: Decimal = Field(ge=0)
     vencimento: Optional[str] = Field(default=None, max_length=10)
+    #: [Migration 294] 'mes' = only year+month of `vencimento` is meaningful
+    #: ("prazo máximo de pagamento até maio de 2027").
+    vencimento_precisao: Optional[Literal["dia", "mes"]] = None
     evento: Optional[str] = Field(default=None, max_length=200)
     forma_pagamento: Optional[str] = Field(
         default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH
@@ -515,6 +518,9 @@ class ParcelaPatchBody(StrictHttpModel):
     ] = None
     valor: Optional[Decimal] = Field(default=None, ge=0)
     vencimento: Optional[str] = Field(default=None, max_length=10)
+    #: [Migration 294] 'mes' = only year+month of `vencimento` is meaningful
+    #: ("prazo máximo de pagamento até maio de 2027").
+    vencimento_precisao: Optional[Literal["dia", "mes"]] = None
     evento: Optional[str] = Field(default=None, max_length=200)
     forma_pagamento: Optional[str] = Field(
         default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH

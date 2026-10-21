@@ -776,6 +776,7 @@ def carregar(
             tipo=p["tipo"],
             valor=_dec(p.get("valor")),
             vencimento=_data(p.get("vencimento")),
+            vencimento_precisao=p.get("vencimento_precisao") or "dia",
             evento=p.get("evento"),
             forma_pagamento=p.get("forma_pagamento"),
             favorecido_id=_id(p.get("favorecido_id")),

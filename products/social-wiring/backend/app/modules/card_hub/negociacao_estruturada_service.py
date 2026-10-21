@@ -126,7 +126,7 @@ FORMAS_PAGAMENTO_SUGERIDAS: tuple[str, ...] = (
 )
 
 _PARCELA_CAMPOS_EDITAVEIS: tuple[str, ...] = (
-    "tipo", "valor", "vencimento", "evento", "forma_pagamento",
+    "tipo", "valor", "vencimento", "vencimento_precisao", "evento", "forma_pagamento",
     "favorecido_id", "confissao_divida", "ordem", "dispara_corretagem",
     # Migration 192 — the FGTS portion of a financiamento parcela.
     "valor_fgts",
@@ -1016,6 +1016,29 @@ def _validar_valor_fgts(tipo: str, valor: Optional[Decimal], valor_fgts: Optiona
 # ─── parcelas ─────────────────────────────────────────────────────────────
 
 
+def _normalizar_vencimento(
+    vencimento: Optional[str], precisao: Optional[str]
+) -> tuple[Optional[str], str]:
+    """(vencimento, precisao) as stored. [Migration 294] 'mes' needs a date and
+    keeps only year+month (normalised to the 1st); no date => always 'dia'."""
+    precisao = precisao or "dia"
+    if precisao not in ("dia", "mes"):
+        raise ValidationError_("precisão de vencimento inválida", field="vencimento_precisao")
+    if not vencimento:
+        if precisao == "mes":
+            raise ValidationError_(
+                "informe o mês do prazo", field="vencimento"
+            )
+        return None, "dia"
+    try:
+        d = date.fromisoformat(vencimento)
+    except ValueError:
+        raise ValidationError_("vencimento inválido", field="vencimento") from None
+    if precisao == "mes":
+        d = d.replace(day=1)
+    return d.isoformat(), precisao
+
+
 def _parcela_out(
     row: dict, links: dict[str, list[str]],
     divisao: Optional[dict[str, list[dict]]] = None,
@@ -1032,6 +1055,7 @@ def _parcela_out(
         # deal worth nothing.
         "valor": None if valor is None else str(valor),
         "vencimento": row.get("vencimento"),
+        "vencimento_precisao": row.get("vencimento_precisao") or "dia",
         "evento": row.get("evento"),
         "forma_pagamento": row.get("forma_pagamento"),
         "favorecido_id": row.get("favorecido_id"),
@@ -1109,6 +1133,10 @@ def criar_parcela(
         entradas=list(valores.get("favorecidos_divisao") or []),
     )
 
+    venc, precisao = _normalizar_vencimento(
+        valores.get("vencimento"), valores.get("vencimento_precisao")
+    )
+
     # 🔴 `ordem` is ALWAYS server-computed on create — same "next slot after
     # the current max" rule `dividir_saldo_em_parcelas` already uses for its
     # batch insert (`ordem_base = max(existing) + 1`). Every parcela created
@@ -1127,7 +1155,8 @@ def criar_parcela(
         "atendimento_id": str(atendimento_id),
         "tipo": tipo,
         "valor": str(_dec(valores["valor"])),
-        "vencimento": valores.get("vencimento"),
+        "vencimento": venc,
+        "vencimento_precisao": precisao,
         "evento": valores.get("evento"),
         "forma_pagamento": valores.get("forma_pagamento"),
         "favorecido_id": (
@@ -1216,8 +1245,20 @@ def atualizar_parcela(
             )
 
     patch: dict = {}
+    if "vencimento" in valores or "vencimento_precisao" in valores:
+        venc_final = valores["vencimento"] if "vencimento" in valores else atual.get("vencimento")
+        if "vencimento_precisao" in valores:
+            precisao_pedida = valores["vencimento_precisao"]
+        elif "vencimento" in valores:
+            precisao_pedida = "dia"  # a new date without a precision is an exact date
+        else:
+            precisao_pedida = atual.get("vencimento_precisao")
+        venc_n, precisao_n = _normalizar_vencimento(
+            str(venc_final) if venc_final else None, precisao_pedida
+        )
+        patch["vencimento"], patch["vencimento_precisao"] = venc_n, precisao_n
     for campo in _PARCELA_CAMPOS_EDITAVEIS:
-        if campo not in valores:
+        if campo not in valores or campo in ("vencimento", "vencimento_precisao"):
             continue
         if campo == "valor":
             patch[campo] = str(_dec(valores[campo]))

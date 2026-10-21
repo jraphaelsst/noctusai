@@ -118,7 +118,7 @@ import {
   ordenarPorOrdem,
 } from "@/components/card/negociacao/parcelaOrdem";
 import { mensagemErroServidor } from "@/lib/erroServidor";
-import { exibirData, exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
+import { exibirMoeda, exibirVencimento, lerValorDigitado } from "@/lib/moedaDecimal";
 
 type NegociacaoSubtab =
   | "parcelas"
@@ -173,7 +173,7 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 // ─── Money / date display helpers — READING ONLY, never re-composed ────────
-// `exibirMoeda` / `lerValorDigitado` / `exibirData` live in `@/lib/moedaDecimal`
+// `exibirMoeda` / `lerValorDigitado` / `exibirVencimento` live in `@/lib/moedaDecimal`
 // (shared with the aditivo schedule editor).
 
 /** DISPLAY-ONLY preview of "X% do valor do imóvel" — mirrors `contexto.py`'s
@@ -715,7 +715,7 @@ function ParcelasSection({
                       />
                     </div>
                   </TableCell>
-                  <TableCell>{exibirData(p.vencimento) ?? p.evento ?? "—"}</TableCell>
+                  <TableCell>{exibirVencimento(p.vencimento, p.vencimento_precisao) ?? p.evento ?? "—"}</TableCell>
                   <TableCell>
                     {(p.favorecidos_divisao?.length ?? 0) > 0 ? (
                       <ul className="space-y-0.5 text-xs" data-testid={`parcela-divisao-${p.id}`}>
@@ -785,6 +785,7 @@ function ParcelasSection({
         parcela={editando}
         favorecidos={data.favorecidos}
         permutaAtivos={permutaAtivos.data ?? []}
+        permiteVencimentoMes
         permitePagamentoDetalhado
         saving={criar.isPending || atualizar.isPending}
         error={formError}

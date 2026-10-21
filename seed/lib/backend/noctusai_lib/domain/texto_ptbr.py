@@ -254,6 +254,11 @@ def data_por_extenso(d: date) -> str:
     return f"{d.day:02d} de {_MESES[d.month - 1]} de {d.year:04d}"
 
 
+def mes_ano_por_extenso(d: date) -> str:
+    """`date(2027, 5, 1)` -> "maio de 2027" (lowercase month, no day)."""
+    return f"{_MESES[d.month - 1]} de {d.year:04d}"
+
+
 def formatar_data_br(d: date) -> str:
     """`date(2026, 9, 5)` -> "05/09/2026" — four-digit year, always."""
     return f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
@@ -289,6 +294,7 @@ __all__ = [
     "dias_por_extenso",
     "formatar_brl",
     "formatar_data_br",
+    "mes_ano_por_extenso",
     "formatar_inteiro_br",
     "inteiro_por_extenso",
     "numero_com_extenso",
