@@ -43,7 +43,7 @@ from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import is_org_admin_for, require_org_admin_for
@@ -58,6 +58,10 @@ from app.dependencies import (
 from app.modules.card_hub.deps import BUCKET, get_storage_backend
 from app.services import clientes_backfill_job
 from app.services import clientes_service as svc
+from app.services.estado_civil_canonico import (
+    estado_civil_canonico,
+    regime_bens_canonico,
+)
 from app.services import identidade_service as ident
 
 logger = logging.getLogger(__name__)
@@ -306,6 +310,19 @@ class ClientePatchBody(StrictHttpModel):
     #: (CC art. 1.647), so this is not a preference field.
     estado_civil: Optional[str] = None
     regime_bens: Optional[str] = None
+
+    #: Both are stored as the canonical TOKEN, never a display label — a known
+    #: label is mapped, an unknown value is a 422 (`estado_civil_canonico`).
+    @field_validator("estado_civil")
+    @classmethod
+    def _estado_civil_token(cls, v: Optional[str]) -> Optional[str]:
+        return estado_civil_canonico(v)
+
+    @field_validator("regime_bens")
+    @classmethod
+    def _regime_bens_token(cls, v: Optional[str]) -> Optional[str]:
+        return regime_bens_canonico(v)
+
     #: Migration 117 (contract F6). The marriage CELEBRATION date — the
     #: office's generated instrument cites Lei 6.515/77 differently depending
     #: on which side of 26/12/1977 it falls. `data_casamento_origem` is NOT

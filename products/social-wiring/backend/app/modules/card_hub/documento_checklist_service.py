@@ -38,10 +38,11 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.integrations.documents import ESTADO_CIVIL_VALORES, looks_like_a_name
+from noctusai_lib.integrations.documents import looks_like_a_name
 from noctusai_lib.integrations.documents.rg import mesmo_rg, only_alnum
 
 from app.modules.card_hub import documentos_service as docs_svc
+from app.services.estado_civil_canonico import estado_civil_canonico
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.services import (
     _now,
@@ -361,14 +362,30 @@ _ESCOPOS: dict[str, dict[str, Any]] = {
 }
 
 
-#: Columns read for DISPLAY beside the checklist but never used to derive a
-#: tick.
+#: Columns read for DISPLAY / EDITING beside the checklist but never used to
+#: derive a tick.
 #:
-#: Empty since 2026-08-24: `nome_oficial` was its only member and is now a real
-#: derivation input for `nome_completo` (see the ITENS docstring). Kept rather
-#: than deleted because the DISTINCTION is still meaningful — the next
-#: extracted-but-not-required field belongs here, not in an item.
-_CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = ()
+#: 🔴 These are the `DadosPessoais` form columns that are NOT checklist items
+#: (nacionalidade, endereço, the estado-civil detail). `valores_editaveis` is the
+#: ONE seed of that form for titular, cônjuge and vendedor; without them the
+#: party panels reopened "Dados pessoais" empty and a re-save nulled the saved
+#: columns (data loss found live in prod, deal 857, 2026-10-21). The next
+#: extracted-but-not-required field the form edits belongs here, not in an item.
+_CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = (
+    "estado_civil",
+    "regime_bens",
+    "data_casamento",
+    "convive_uniao_estavel",
+    "certidao_estado_civil_emitida_em",
+    "nacionalidade",
+    "endereco_cep",
+    "endereco_logradouro",
+    "endereco_numero",
+    "endereco_complemento",
+    "endereco_bairro",
+    "endereco_cidade",
+    "endereco_uf",
+)
 
 #: Columns the derivation reads. Selected explicitly rather than `*` so adding
 #: a column to `clientes` cannot silently widen what this module pulls.
@@ -940,6 +957,10 @@ def valores_editaveis(cliente: Optional[dict]) -> dict:
         for col in item.get("campos_todos", ()):
             valor = (cliente or {}).get(col)
             valores[col] = valor if _preenchido(valor) else None
+    # Form-only columns (no checklist item). `setdefault`: a column an item
+    # already emits keeps the item's normalised value.
+    for col in _CLIENTE_COLUNAS_EXIBICAO:
+        valores.setdefault(col, (cliente or {}).get(col))
     return valores
 
 
@@ -1084,29 +1105,10 @@ _ENDERECO_CAMPOS_OBRIGATORIOS: tuple[str, ...] = (
 #: requirement below key off this same set.
 _ESTADOS_QUE_EXIGEM_CONJUGE: frozenset[str] = frozenset({"casado", "uniao_estavel"})
 
-#: `clientes.estado_civil` is unconstrained TEXT (migration 097) and
-#: `ClientePatchBody.estado_civil` accepts any string, so a value typed
-#: through an OLDER version of the qualificação form — before this field's
-#: vocabulary was the extractor's closed snake_case set,
-#: `noctusai_lib.integrations.documents.civil_status.ESTADO_CIVIL_VALORES` —
-#: may still read "Casado(a)" rather than "casado". Mapped ON READ, here,
-#: rather than rewritten in the database: rewriting stored data was out of
-#: scope for this pass (existing rows may already disagree with each other
-#: in ways a blind rewrite would paper over), so every reader that needs the
-#: CANONICAL token goes through `_estado_civil_normalizado` instead of
-#: repeating this table.
-_ESTADO_CIVIL_LEGADO: dict[str, str] = {
-    "CASADO": "casado", "CASADO(A)": "casado", "CASADA": "casado",
-    "SOLTEIRO": "solteiro", "SOLTEIRO(A)": "solteiro", "SOLTEIRA": "solteiro",
-    "DIVORCIADO": "divorciado", "DIVORCIADO(A)": "divorciado",
-    "DIVORCIADA": "divorciado",
-    "VIUVO": "viuvo", "VIUVO(A)": "viuvo", "VIUVA": "viuvo",
-    "VIÚVO": "viuvo", "VIÚVO(A)": "viuvo", "VIÚVA": "viuvo",
-    "SEPARADO": "separado_judicialmente", "SEPARADO(A)": "separado_judicialmente",
-    "SEPARADO JUDICIALMENTE": "separado_judicialmente",
-    "UNIAO ESTAVEL": "uniao_estavel", "UNIÃO ESTÁVEL": "uniao_estavel",
-    "UNIAO_ESTAVEL": "uniao_estavel",
-}
+#: Rows written before the write path normalised (2026-10-21) may still read
+#: "Casado(a)"; mapped ON READ through `estado_civil_canonico` — the single
+#: label->token table, shared with the PATCH write path — by
+#: `_estado_civil_normalizado` below.
 
 #: Explicit column list for the contract-completeness read — decoupled from
 #: `_CLIENTE_COLUNAS` (which is DERIVED from `ITENS` and must stay that way)
@@ -1138,9 +1140,10 @@ def _estado_civil_normalizado(valor: Optional[str]) -> Optional[str]:
     """
     if not valor:
         return None
-    if valor in ESTADO_CIVIL_VALORES:
-        return valor
-    return _ESTADO_CIVIL_LEGADO.get(valor.strip().upper())
+    try:
+        return estado_civil_canonico(valor)
+    except ValueError:
+        return None
 
 
 def _cliente_row_qualificacao(

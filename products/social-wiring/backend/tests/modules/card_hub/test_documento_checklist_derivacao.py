@@ -249,6 +249,28 @@ class TestIdentidadeValoresEditaveis:
         assert valores["cpf"] is None
         assert "identidade" not in valores
 
+    def test_form_only_columns_are_seeded(self):
+        """Nacionalidade / endereço are not checklist items but the form edits
+        them: omitting them reopened the form empty and a re-save nulled them
+        (prod data loss, deal 857, 2026-10-21)."""
+        cliente = {
+            "nacionalidade": "brasileira",
+            "endereco_cep": "05000-000",
+            "endereco_logradouro": "Rua A",
+            "endereco_numero": "10",
+            "endereco_complemento": "ap 2",
+            "endereco_bairro": "Centro",
+            "endereco_cidade": "São Paulo",
+            "endereco_uf": "SP",
+            "estado_civil": "Casado(a)",
+            "convive_uniao_estavel": False,
+        }
+        valores = svc.valores_editaveis(cliente)
+        for col, esperado in cliente.items():
+            assert valores[col] == esperado
+        assert valores["regime_bens"] is None
+        assert set(svc._CLIENTE_COLUNAS_EXIBICAO) <= set(svc._CLIENTE_COLUNAS)
+
 
 class TestCelularEEmailReadTheRegistrationKey:
     """🔴 `chave_canonica` holds a phone OR an email, and `chave_tipo` decides.

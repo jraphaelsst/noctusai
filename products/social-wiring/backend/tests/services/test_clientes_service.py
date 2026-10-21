@@ -1090,7 +1090,7 @@ class TestEdicaoManualDeCampoDocumental:
         assert c["campo"] == "estado_civil"
         assert c["valor_anterior"] == "Casado(a)"
         assert c["origem_anterior"] == "certidao_casamento"
-        assert c["valor_proposto"] == "Solteiro(a)"
+        assert c["valor_proposto"] == "solteiro"
         assert c["origem_proposto"] == "manual"
         assert c["status"] == "pendente"
         assert c["decidido_por"] is None
@@ -1117,10 +1117,10 @@ class TestEdicaoManualDeCampoDocumental:
             is_admin=True, acting_user_id=admin_id,
             estado_civil="Solteiro(a)",
         )
-        assert resultado["estado_civil"] == "Solteiro(a)"
+        assert resultado["estado_civil"] == "solteiro"
         assert resultado["pendente_confirmacao"] == []
         row = _clientes(client)[0]
-        assert row["estado_civil"] == "Solteiro(a)"
+        assert row["estado_civil"] == "solteiro"
         assert row["estado_civil_origem"] == "manual"
 
         conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
@@ -1129,7 +1129,7 @@ class TestEdicaoManualDeCampoDocumental:
         assert c["status"] == "aceito"
         assert c["valor_anterior"] == "Casado(a)"
         assert c["origem_anterior"] == "certidao_casamento"
-        assert c["valor_proposto"] == "Solteiro(a)"
+        assert c["valor_proposto"] == "solteiro"
         assert c["decidido_por"] == admin_id
         assert c["decidido_em"] is not None
 
@@ -1145,7 +1145,7 @@ class TestEdicaoManualDeCampoDocumental:
         resultado = svc.update_cliente(
             client, ORG, cid, is_admin=False, estado_civil="Casado(a)",
         )
-        assert resultado["estado_civil"] == "Casado(a)"
+        assert resultado["estado_civil"] == "casado"
         assert resultado["pendente_confirmacao"] == []
         assert not client.table("cliente_campo_conflitos").select("*").execute().data
 
@@ -1159,7 +1159,7 @@ class TestEdicaoManualDeCampoDocumental:
         resultado2 = svc.update_cliente(
             client, ORG, cid2, is_admin=False, estado_civil="Divorciado(a)",
         )
-        assert resultado2["estado_civil"] == "Divorciado(a)"
+        assert resultado2["estado_civil"] == "divorciado"
         assert resultado2["pendente_confirmacao"] == []
 
     def test_rg_orgao_expedidor_rides_with_a_deferred_rg(self):
@@ -1290,7 +1290,7 @@ class TestEdicaoManualDeCampoDocumental:
         assert conflitos[pendente_id]["decidido_por"] == admin_id
         novo = [c for c in conflitos.values() if c["id"] != pendente_id][0]
         assert novo["status"] == "aceito"
-        assert novo["valor_proposto"] == "Divorciado(a)"
+        assert novo["valor_proposto"] == "divorciado"
 
 
 # ─── PostgREST 1 000-row cap — the bug class the shared mock cannot see ────

@@ -123,9 +123,8 @@ describe("DadosPessoaisForm", () => {
       const { onSave, fireEvent, screen } = await abrir({ valores: { estado_civil: "Divorciado(a)" } });
       fireEvent.click(screen.getByTestId("dados-pessoais-convive-uniao-estavel-checkbox"));
       fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ estado_civil: "Divorciado(a)", convive_uniao_estavel: true }),
-      );
+      // Only the change is sent: the untouched estado civil is not.
+      expect(onSave).toHaveBeenCalledWith({ convive_uniao_estavel: true });
     });
 
     it("is not offered beside Casado(a) or União estável", async () => {
@@ -203,13 +202,13 @@ describe("DadosPessoaisForm", () => {
     );
   });
 
-  it("🔴 saving without touching gênero sends null, never Masculino", async () => {
+  it("🔴 saving without touching gênero never sends it (no Masculino default)", async () => {
     // `genero: null` — the realistic shape a record with no gênero ever
     // recorded arrives in (a DB column, not an absent JS key).
     const { onSave, fireEvent, screen } = await abrir({ valores: { genero: null } });
     fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
     expect(onSave).toHaveBeenCalledTimes(1);
-    expect(onSave.mock.calls[0][0].genero).toBeNull();
+    expect("genero" in onSave.mock.calls[0][0]).toBe(false);
   });
 
   it("keeps an already-saved gênero rather than resetting it to the default", async () => {
@@ -220,7 +219,8 @@ describe("DadosPessoaisForm", () => {
       "Feminino",
     );
     fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
-    expect(onSave.mock.calls[0][0].genero).toBe("Feminino");
+    // Kept = not re-sent (an untouched field is never in the PATCH).
+    expect(onSave.mock.calls[0][0]).toEqual({});
   });
 
   it("sends an emptied field as null, not as an empty string", async () => {
@@ -379,5 +379,77 @@ describe("DadosPessoaisForm — pendente de confirmação do administrador (owne
     const { screen } = await abrir();
     expect(screen.queryByTestId("dados-pessoais-pendente-resumo")).toBeNull();
     expect(screen.queryByTestId("dados-pessoais-cpf-pendente")).toBeNull();
+  });
+
+  describe("🔴 seed + diff-only save (prod data loss, deal 857, 2026-10-21)", () => {
+    const SALVO = {
+      nome_completo: "Ana Souza",
+      nacionalidade: "brasileira",
+      endereco_cep: "05000-000",
+      endereco_logradouro: "Rua A",
+      endereco_numero: "10",
+      endereco_complemento: "ap 2",
+      endereco_bairro: "Centro",
+      endereco_cidade: "São Paulo",
+      endereco_uf: "SP",
+    };
+
+    it("reopening shows the saved nacionalidade and endereço", async () => {
+      const { screen } = await abrir({ valores: SALVO });
+      const val = (id: string) =>
+        (screen.getByTestId(`dados-pessoais-${id}`) as HTMLInputElement).value;
+      expect(val("nacionalidade")).toBe("brasileira");
+      expect(val("cep")).toBe("05000-000");
+      expect(val("logradouro")).toBe("Rua A");
+      expect(val("cidade")).toBe("São Paulo");
+      expect(val("uf")).toBe("SP");
+    });
+
+    it("saving after touching ONE field sends only that field", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: SALVO });
+      fireEvent.change(screen.getByTestId("dados-pessoais-nome"), {
+        target: { value: "Ana Souza Lima" },
+      });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({ nome_completo: "Ana Souza Lima" });
+    });
+
+    it("a stale/missing seed can never null a column: untouched => nothing sent", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: {} });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({});
+    });
+
+    it("explicitly clearing a field sends null", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: SALVO });
+      fireEvent.change(screen.getByTestId("dados-pessoais-nacionalidade"), {
+        target: { value: "" },
+      });
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({ nacionalidade: null });
+    });
+
+    it("a legacy LABEL in the seed shows selected and is not re-sent untouched", async () => {
+      const { onSave, fireEvent, screen } = await abrir({
+        valores: { estado_civil: "Casado(a)" },
+      });
+      expect(screen.getByTestId("dados-pessoais-estado-civil").textContent).toContain(
+        "Casado(a)",
+      );
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith({});
+    });
+
+    it("estado civil / regime options submit the canonical TOKEN, show the label", async () => {
+      const { ESTADOS_CIVIS, REGIMES_BENS } = await import("./DadosPessoaisForm");
+      expect(ESTADOS_CIVIS.find((e) => e.valor === "casado")?.rotulo).toBe("Casado(a)");
+      expect(REGIMES_BENS.find((r) => r.valor === "comunhao_parcial")?.rotulo).toBe(
+        "Comunhão parcial de bens",
+      );
+      expect(ESTADOS_CIVIS.map((e) => e.valor)).toContain("uniao_estavel");
+      for (const o of [...ESTADOS_CIVIS, ...REGIMES_BENS]) {
+        expect(o.valor).toMatch(/^[a-z_]+$/);
+      }
+    });
   });
 });

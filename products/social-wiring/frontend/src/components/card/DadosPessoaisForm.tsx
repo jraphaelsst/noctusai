@@ -48,6 +48,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  ESTADO_CIVIL_LABELS,
+  REGIME_BENS_LABELS,
   estadoCivilExigeConjuge,
   estadoCivilExigeDataCasamento,
   ehCin,
@@ -184,31 +186,33 @@ export function apenasDadosPessoais(valores: DadosPessoais): DadosPessoais {
 }
 
 /**
- * Offered for `estado_civil`. Unconstrained TEXT in the database on purpose
- * (migration 097) — the taxonomy is a product decision, so it lives here
- * beside the dropdown rather than as a CHECK that makes each addition a
- * migration.
+ * Offered for `estado_civil` / `regime_bens`: the select VALUE is the canonical
+ * TOKEN the database and the contract generator branch on, the visible text is
+ * its label. 🔴 The form used to submit the labels ("Casado(a)"), which broke
+ * the contract (prod, 2026-10-21; `derivacao.py` refuses a regime outside
+ * `REGIME_EXTENSO`). The vocabularies are `qualificacaoCompletude`'s —
+ * the same token->label maps every other surface renders with, no second list;
+ * the backend (`estado_civil_canonico`) refuses anything that is not a token
+ * or a known label.
  */
-export const ESTADOS_CIVIS = [
-  "Solteiro(a)",
-  "Casado(a)",
-  "Divorciado(a)",
-  "Viúvo(a)",
-  "Separado(a)",
-  "União estável",
-] as const;
+export const ESTADOS_CIVIS = Object.entries(ESTADO_CIVIL_LABELS).map(
+  ([valor, rotulo]) => ({ valor, rotulo }),
+);
+export const REGIMES_BENS = Object.entries(REGIME_BENS_LABELS).map(
+  ([valor, rotulo]) => ({ valor, rotulo }),
+);
 
-/** Regimes de bens. Only meaningful alongside a married state — the form
- *  shows the field regardless rather than hiding it, because an operator
- *  filling a card top-to-bottom should not have a field appear and disappear
- *  under the cursor. */
-export const REGIMES_BENS = [
-  "Comunhão parcial de bens",
-  "Comunhão universal de bens",
-  "Separação total de bens",
-  "Separação obrigatória de bens",
-  "Participação final nos aquestos",
-] as const;
+/** A stored value as the select's TOKEN: a row saved before the fix holds the
+ *  label ("Casado(a)"); show it selected rather than blank. Unknown values
+ *  pass through (the select then shows nothing, and is not sent unless the
+ *  operator changes it). */
+function comoToken(
+  valor: string | null | undefined,
+  opcoes: ReadonlyArray<{ valor: string; rotulo: string }>,
+): string | null {
+  if (!valor) return null;
+  return opcoes.find((o) => o.valor === valor || o.rotulo === valor)?.valor ?? valor;
+}
 
 /** Sentinel for "not set" in a Select. Radix treats `value=""` as
  *  uncontrolled, so a real token is needed and is mapped back to null on
@@ -306,10 +310,20 @@ export function DadosPessoaisForm({
   }
 
   function submit() {
-    // No field here is ever defaulted — `draft` carries exactly what the
-    // operator typed or picked. A null `genero` (never touched) is sent as
-    // null, same as any other untouched field.
-    onSave(draft);
+    // 🔴 Only what the operator CHANGED is sent (data loss found live in prod,
+    // 2026-10-21: a seed missing nacionalidade/endereço made a plain re-save
+    // PATCH those columns to null). An untouched field is never in the body, so
+    // a stale or incomplete `valores` can never null a column. Clearing a
+    // field is a change (value -> null) and is sent as null; absent and null
+    // are the same "empty", so typing then deleting is not a change either.
+    // No field is ever defaulted.
+    const alterados: DadosPessoais = {};
+    for (const k of Object.keys(draft) as Array<keyof DadosPessoais>) {
+      const atual = draft[k] ?? null;
+      const original = valores[k] ?? null;
+      if (atual !== original) (alterados as Record<string, unknown>)[k] = atual;
+    }
+    onSave(alterados);
     setAberto(false);
   }
 
@@ -520,7 +534,7 @@ export function DadosPessoaisForm({
       <div className="grid grid-cols-2 gap-2">
         <Campo rotulo="Estado civil" htmlFor={`${testId}-estado-civil`}>
           <Select
-            value={draft.estado_civil ?? NAO_INFORMADO}
+            value={comoToken(draft.estado_civil, ESTADOS_CIVIS) ?? NAO_INFORMADO}
             onValueChange={(v) => {
               campo("estado_civil", v === NAO_INFORMADO ? "" : v);
               // A marriage / união estável estado civil already pairs the
@@ -539,8 +553,8 @@ export function DadosPessoaisForm({
             <SelectContent>
               <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
               {ESTADOS_CIVIS.map((e) => (
-                <SelectItem key={e} value={e}>
-                  {e}
+                <SelectItem key={e.valor} value={e.valor}>
+                  {e.rotulo}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -560,7 +574,7 @@ export function DadosPessoaisForm({
         {estadoCivilExigeConjuge(draft.estado_civil) && (
           <Campo rotulo="Regime de bens" htmlFor={`${testId}-regime-bens`}>
             <Select
-              value={draft.regime_bens ?? NAO_INFORMADO}
+              value={comoToken(draft.regime_bens, REGIMES_BENS) ?? NAO_INFORMADO}
               onValueChange={(v) =>
                 campo("regime_bens", v === NAO_INFORMADO ? "" : v)
               }
@@ -574,8 +588,8 @@ export function DadosPessoaisForm({
               <SelectContent>
                 <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
                 {REGIMES_BENS.map((r) => (
-                  <SelectItem key={r} value={r}>
-                    {r}
+                  <SelectItem key={r.valor} value={r.valor}>
+                    {r.rotulo}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -761,6 +761,26 @@ class TestPatchCliente:
         )
         assert resp.status_code == 422, resp.text
 
+    def test_patch_stores_tokens_and_refuses_unknown_estado_civil_regime(
+        self, client, scoped
+    ):
+        """A display label is mapped to its canonical token; an unknown value
+        is a 422 (prod incident 2026-10-21: labels broke the contract)."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"estado_civil": "Casado(a)", "regime_bens": "Comunhão parcial de bens"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        payload = scoped.table("clientes").updated_payloads[-1]
+        assert payload["estado_civil"] == "casado"
+        assert payload["regime_bens"] == "comunhao_parcial"
+        for body in ({"estado_civil": "complicado"}, {"regime_bens": "xyz"}):
+            r = client.patch(f"/api/clientes/{a1}", json=body, headers=_auth())
+            assert r.status_code == 422, r.text
+
     def test_patch_certidao_estado_civil_emitida_em_is_accepted(
         self, client, scoped
     ):
@@ -894,7 +914,7 @@ class TestPatchAdminConfirmation:
         )
         assert len(conflitos) == 1
         assert conflitos[0]["status"] == "pendente"
-        assert conflitos[0]["valor_proposto"] == "Solteiro(a)"
+        assert conflitos[0]["valor_proposto"] == "solteiro"
 
     def test_admin_edit_of_a_document_sourced_field_applies_immediately(
         self, admin_client
@@ -910,7 +930,7 @@ class TestPatchAdminConfirmation:
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["estado_civil"] == "Solteiro(a)"
+        assert body["estado_civil"] == "solteiro"
         assert body["pendente_confirmacao"] == []
 
         conflitos = (

@@ -93,6 +93,10 @@ from app.services import chat_cliente_link
 from app.services import identidade_service as ident
 from app.services import identificadores as idf
 from app.services import table_reads
+from app.services.estado_civil_canonico import (
+    estado_civil_canonico,
+    regime_bens_canonico,
+)
 from app.services.identidade_service import SourceRow
 
 logger = logging.getLogger(__name__)
@@ -2082,6 +2086,18 @@ def update_cliente(
         "convive_uniao_estavel",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
+    # Canonical TOKENS only (never a display label) — the choke point every
+    # caller shares, whatever its transport. Mirrors `updates` like the
+    # identifier canonisation below, so a queued conflict proposes the token.
+    for _campo_civil, _canon in (
+        ("estado_civil", estado_civil_canonico),
+        ("regime_bens", regime_bens_canonico),
+    ):
+        if _campo_civil in payload:
+            try:
+                payload[_campo_civil] = updates[_campo_civil] = _canon(payload[_campo_civil])
+            except ValueError as exc:
+                raise ValidationError_(str(exc), field=_campo_civil) from exc
     if not payload:
         return {**_require_cliente(client, org_id, cliente_id), "pendente_confirmacao": []}
 
