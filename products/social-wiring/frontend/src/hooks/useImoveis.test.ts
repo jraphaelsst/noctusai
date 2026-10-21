@@ -128,7 +128,7 @@ describe("caracteristicasAusentes", () => {
 // ─── useImovel — Bug A: a 404 on the Vista mirror never retries ────────────
 
 describe("useImovel — 404 does not retry, and does not toast", () => {
-  it("does not retry a 404 — a manually-registered código's stable mirror-miss", async () => {
+  it("inherits the seed policy (404 never retried) — a manually-registered código's stable mirror-miss", async () => {
     const capturedOptions: Array<{
       retry?: (failureCount: number, error: unknown) => boolean;
       meta?: { suppressErrorToastStatuses?: number[] };
@@ -151,19 +151,17 @@ describe("useImovel — 404 does not retry, and does not toast", () => {
     useImovel("AP1234");
     const { retry, meta } = capturedOptions[capturedOptions.length - 1];
 
-    expect(retry?.(0, new ApiError(404, "não encontrado"))).toBe(false);
-    expect(retry?.(2, new ApiError(404, "não encontrado"))).toBe(false);
-
-    // Any other status still gets react-query's normal (default 3) retry —
-    // only a 404 is treated as a stable, non-transient state.
-    expect(retry?.(0, new ApiError(500, "erro"))).toBe(true);
-    expect(retry?.(2, new ApiError(500, "erro"))).toBe(true);
-    expect(retry?.(3, new ApiError(500, "erro"))).toBe(false);
-
-    // A non-ApiError failure (network drop, `safeFetch`'s own throw shape)
-    // also keeps the default retry — the 404 carve-out is specific to a
-    // real HTTP 404, never a blanket "stop retrying on any error".
-    expect(retry?.(0, new Error("network"))).toBe(true);
+    // No per-hook override: the hook inherits the seed query-client's
+    // canonical policy (2026-10-21), which never retries a 404 and paces
+    // up to 3 retries for a transient failure.
+    expect(retry).toBeUndefined();
+    const { shouldAutoRetry } = await import("@noctusai/lib");
+    expect(shouldAutoRetry(0, new ApiError(404, "não encontrado"))).toBe(false);
+    expect(shouldAutoRetry(0, new ApiError(500, "erro"))).toBe(true);
+    expect(shouldAutoRetry(2, new ApiError(500, "erro"))).toBe(true);
+    expect(shouldAutoRetry(3, new ApiError(500, "erro"))).toBe(false);
+    // A transport failure (no response) is transient too.
+    expect(shouldAutoRetry(0, new ApiError(null, "rede", undefined, null, "network"))).toBe(true);
 
     // Bug 1: the same 404 also opts out of the global error toast
     // (`query-client.ts`'s `suppressErrorToastStatuses`) — a genuinely

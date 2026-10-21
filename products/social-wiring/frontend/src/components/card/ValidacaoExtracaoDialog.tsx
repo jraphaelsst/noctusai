@@ -27,10 +27,11 @@ import {
   ExternalLink,
   FileText,
   Loader2,
-  RefreshCw,
   Sparkles,
   X,
 } from "lucide-react";
+
+import { RetryableError } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,11 @@ interface Props {
   isRefreshing: boolean;
   isError: boolean;
   onRetry: () => void;
+  /** The validation query's failure / attempt count / in-flight retry —
+   *  fed to the seed `RetryableError`. */
+  error?: unknown;
+  failureCount?: number;
+  isRetrying?: boolean;
   /** A decision request is in flight — every accept/reject button waits. */
   decidindo: boolean;
   onDecidir: (decisoes: { chave: string; decisao: Decisao }[]) => void;
@@ -144,6 +150,9 @@ export default function ValidacaoExtracaoDialog({
   isRefreshing,
   isError,
   onRetry,
+  error,
+  failureCount,
+  isRetrying,
   decidindo,
   onDecidir,
   rejeitados,
@@ -177,18 +186,15 @@ export default function ValidacaoExtracaoDialog({
     );
   } else if (isError && !pendentes) {
     corpo = (
-      <div
-        className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+      <RetryableError
+        variant="inline"
+        title="Não foi possível carregar os dados extraídos para validação."
+        error={error}
+        attempts={failureCount}
+        isRetrying={isRetrying}
+        onRetry={onRetry}
         data-testid="validacao-erro"
-      >
-        <span className="text-destructive">
-          Não foi possível carregar os dados extraídos para validação.
-        </span>
-        <Button type="button" size="sm" variant="outline" onClick={onRetry}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          Tentar novamente
-        </Button>
-      </div>
+      />
     );
   } else if (nadaPendente && conflitos.length === 0) {
     corpo = (

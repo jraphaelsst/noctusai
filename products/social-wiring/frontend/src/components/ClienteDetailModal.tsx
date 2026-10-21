@@ -30,7 +30,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
-import { isOrgAdmin } from "@noctusai/lib";
+import {
+  isOrgAdmin,
+  isRetrySafeForWrite,
+  isTransientError,
+  useRetryableAction,
+} from "@noctusai/lib";
 
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
@@ -68,7 +73,7 @@ import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import { VisitadasLista } from "@/components/card/VisitadasLista";
 import { useResponderFeedbackRoteiro } from "@/hooks/useRoteirosFeedback";
 import type { CardSubpageKey } from "@/components/card/cardSubpages";
-import { baixarArquivo } from "@noctusai/lib/components";
+import { baixarArquivo, toastRetryableError } from "@noctusai/lib/components";
 import {
   AdicionarCompradorDialog,
   type AdicionarCompradorValues,
@@ -246,6 +251,39 @@ export function ClienteDetailModal({
   const isAdmin =
     isOrgAdmin(ssoCtx);
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
+  // Owner request 2026-10-21 — automatic, paced retries for the card's
+  // document upload + re-read (seed `useRetryableAction`), then a toast with
+  // "Tentar novamente" that re-runs the SAME call. Uploads are writes: only
+  // failures where the server provably did not act are re-sent
+  // (`isRetrySafeForWrite`); a timeout/500 goes straight to the button so a
+  // document is never filed twice. A non-transient refusal (400 naming the
+  // size/type limit) keeps the server's own copy — retrying cannot fix it.
+  const falhaDoDocumento =
+    (fallback: string) =>
+    (err: unknown, ctx: { attempts: number; retry: () => void }) => {
+      if (isTransientError(err)) {
+        toastRetryableError({ title: fallback, error: err, attempts: ctx.attempts, onRetry: ctx.retry });
+      } else {
+        toastServerError(err, fallback);
+      }
+    };
+  const uploadChecklist = useRetryableAction(
+    (vars: { file: File; tipoDocumento: string }) => documentoMutations.upload.mutateAsync(vars),
+    { isRetryable: isRetrySafeForWrite, onError: falhaDoDocumento("Não foi possível enviar o documento.") },
+  );
+  const uploadAnexo = useRetryableAction(
+    (vars: { file: File; tipoDocumento: string }) => documentoMutations.upload.mutateAsync(vars),
+    { isRetryable: isRetrySafeForWrite, onError: falhaDoDocumento("Não foi possível enviar o anexo.") },
+  );
+  // Re-queueing a read is safe to repeat (the server refuses a request that
+  // races an in-flight job), so it takes the full transient policy.
+  const reextrairDocumento = useRetryableAction(
+    (documentoId: string) => documentoMutations.reextrair.mutateAsync(documentoId),
+    { onError: falhaDoDocumento("Não foi possível reenviar o documento para leitura.") },
+  );
+  // The row whose re-read is running (incl. a toast-triggered retry, which
+  // re-runs the same id) — spins only while the action is in flight.
+  const [reextrairAlvo, setReextrairAlvo] = useState<string | null>(null);
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
   const compradores = useCompradores(id);
@@ -650,13 +688,7 @@ export function ClienteDetailModal({
       // it the catalogue's first type, which is right for a loose attachment
       // and wrong for an identity document.
       onUploadDocumentoChecklist={(_item, file, tipoDocumento) =>
-        documentoMutations.upload.mutate(
-          { file, tipoDocumento },
-          {
-            onError: (err) =>
-              toastServerError(err, "Não foi possível enviar o documento."),
-          },
-        )
+        void uploadChecklist.run({ file, tipoDocumento })
       }
       // Discards the FILE. The row stays — the mandatory list is server-defined
       // and there is no such thing as deleting "CPF" from it. The reason
@@ -747,31 +779,23 @@ export function ClienteDetailModal({
       documentosRefreshing={documentos.isFetching && !!documentos.data}
       tiposDocumento={tiposDocumento.data ?? []}
       onUploadDocumento={(file, tipoDocumento) =>
-        documentoMutations.upload.mutate(
-          { file, tipoDocumento },
-          {
-            // The 400 naming the exact limit/type it hit (contract §3) —
-            // never a client-side guess at the ceiling, which is a
-            // platform constant subject to change out from under this UI.
-            onError: (err) => toastServerError(err, "Não foi possível enviar o anexo."),
-          },
-        )
+        // A 400 naming the exact limit/type it hit (contract §3) still shows
+        // the server's own copy — see `falhaDoDocumento`.
+        void uploadAnexo.run({ file, tipoDocumento })
       }
-      uploadingDocumento={documentoMutations.upload.isPending}
+      // `isRunning` spans the waits BETWEEN automatic attempts too, so the
+      // button cannot fire a second upload while one is still being retried.
+      uploadingDocumento={
+        documentoMutations.upload.isPending || uploadChecklist.isRunning || uploadAnexo.isRunning
+      }
       // Gap 3/4 — re-queues a document stuck in `erro` (or never queued at
       // all) without deleting and re-uploading it, which would destroy the
       // LGPD access log.
-      onReextrairDocumento={(documentoId) =>
-        documentoMutations.reextrair.mutate(documentoId, {
-          onError: (err) =>
-            toastServerError(err, "Não foi possível reenviar o documento para leitura."),
-        })
-      }
-      reextraindoDocumentoId={
-        documentoMutations.reextrair.isPending
-          ? (documentoMutations.reextrair.variables ?? null)
-          : null
-      }
+      onReextrairDocumento={(documentoId) => {
+        setReextrairAlvo(documentoId);
+        void reextrairDocumento.run(documentoId);
+      }}
+      reextraindoDocumentoId={reextrairDocumento.isRunning ? reextrairAlvo : null}
       // 🔴 MERGED, in this order — `card.data?.cliente` is the FULL `clientes`
       // row (`select("*")`, already fetched for the header/sidebar), the
       // baseline for every qualificação civil field the checklist does not

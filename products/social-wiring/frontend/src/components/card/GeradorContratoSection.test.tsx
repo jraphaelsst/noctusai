@@ -100,6 +100,28 @@ describe("GeradorContratoSection", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
+  it("after the automatic attempts: seed RetryableError with the reason class + attempt count, never server text", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    const { screen } = await render({
+      status: undefined,
+      isError: true,
+      error: new ApiError(502, "<html>Bad Gateway</html>"),
+      failureCount: 4,
+    });
+    const erro = screen.getByTestId("gerador-contrato-erro");
+    expect(erro.getAttribute("role")).toBe("alert");
+    expect(erro.textContent).toContain("Não foi possível verificar os dados para gerar o contrato.");
+    expect(erro.textContent).toContain("O servidor está instável no momento.");
+    expect(erro.textContent).toContain("Tentamos 4 vezes automaticamente.");
+    expect(erro.textContent).not.toContain("Bad Gateway");
+  });
+
+  it("while the manual retry runs, the button spins and is disabled", async () => {
+    const { screen } = await render({ status: undefined, isError: true, isRetrying: true });
+    const botao = screen.getByRole("button", { name: /Tentando/ });
+    expect(botao.hasAttribute("disabled")).toBe(true);
+  });
+
   it("🔴 'Pronto para gerar' badge, and the Gerar button is enabled", async () => {
     const { screen } = await render({ status: status({ pronto: true }) });
     expect(screen.getByTestId("gerador-contrato-pronto")).toBeTruthy();

@@ -358,6 +358,71 @@ describe("ImovelDetalhes — not found", () => {
     const { getByText } = await renderDetalhes();
     expect(getByText("Imóvel AP1234 não encontrado.")).toBeTruthy();
   });
+
+  it("a 404 still offers 'Tentar novamente' (refetch) next to 'Voltar aos imóveis'", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    const refetch = vi.fn();
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      isError: true,
+      failureCount: 1,
+      error: new ApiError(404, "Imóvel não encontrado"),
+      refetch,
+    });
+    const { getByRole, getByText, queryByText, fireEvent } = await renderDetalhes();
+    expect(getByText("Voltar aos imóveis")).toBeTruthy();
+    // A 404 is never auto-retried, so the copy never claims it was.
+    expect(queryByText(/automaticamente/)).toBeNull();
+    fireEvent.click(getByRole("button", { name: /Tentar novamente/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ImovelDetalhes — transient failure after the automatic attempts", () => {
+  it("a 5xx is NOT reported as 'não encontrado': it says it could not load, with the attempts and a retry", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    const refetch = vi.fn();
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      isError: true,
+      failureCount: 4,
+      error: new ApiError(503, "upstream connect error"),
+      refetch,
+    });
+    const { getByTestId, getByRole, queryByText, fireEvent } = await renderDetalhes();
+    const erro = getByTestId("imovel-erro");
+    expect(erro.textContent).toContain("Não foi possível carregar o imóvel AP1234.");
+    expect(erro.textContent).toContain("Tentamos 4 vezes automaticamente.");
+    expect(erro.textContent).not.toContain("upstream");
+    expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
+    fireEvent.click(getByRole("button", { name: /Tentar novamente/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("the documents list failing to load shows the retry, never 'Nenhum documento enviado'", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    const refetch = vi.fn();
+    mockUseImovel.mockReturnValue({ data: makeImovel(), isPending: false, isError: false });
+    mockUseImovelDocumentos.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      isError: true,
+      failureCount: 4,
+      error: new ApiError(null, "x", undefined, null, "network"),
+      refetch,
+    });
+    const { getByTestId, queryByText, fireEvent } = await renderDetalhes();
+    const erro = getByTestId("imovel-documentos-erro");
+    expect(erro.textContent).toContain("Sem conexão com o servidor.");
+    expect(queryByText(/Nenhum documento enviado/)).toBeNull();
+    fireEvent.click(getByTestId("imovel-documentos-erro-retry"));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ImovelDetalhes — S6 referências + manual imóvel", () => {

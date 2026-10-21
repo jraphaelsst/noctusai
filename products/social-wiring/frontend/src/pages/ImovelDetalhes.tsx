@@ -26,7 +26,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  AlertCircle,
   ArrowLeft,
   Megaphone,
   Mail,
@@ -34,6 +33,9 @@ import {
   Star,
   Sparkles,
 } from "lucide-react";
+
+import { ApiError } from "@noctusai/lib";
+import { QueryErrorState, RetryableError } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -126,22 +128,42 @@ export default function ImovelDetalhes() {
   const imovelAusente = query.isError || !imovel;
 
   if (imovelAusente) {
+    // A 404 (or an empty answer) is "not synced yet" — a STABLE state the
+    // query client never auto-retries. Anything else (5xx, network, timeout)
+    // already went through the seed's automatic, paced attempts before
+    // landing here. Both end on the seed `RetryableError`: the button re-runs
+    // the same fetch, so a slow/flaky moment no longer needs a page reload.
+    const naoEncontrado =
+      !query.isError || (query.error instanceof ApiError && query.error.status === 404);
     return (
       <div className="p-6">
         <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-            <AlertCircle className="h-10 w-10 text-destructive" />
-            <p className="font-medium">Imóvel {codigo} não encontrado.</p>
-            <p className="max-w-md text-sm text-muted-foreground">
-              Ele pode não ter sido sincronizado ainda. Volte ao catálogo e
-              execute uma sincronização.
-            </p>
-            <Button asChild variant="outline">
-              <Link to="/imoveis">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Voltar aos imóveis
-              </Link>
-            </Button>
+          <CardContent className="py-6">
+            <RetryableError
+              title={
+                naoEncontrado
+                  ? `Imóvel ${codigo} não encontrado.`
+                  : `Não foi possível carregar o imóvel ${codigo}.`
+              }
+              description={
+                naoEncontrado
+                  ? "Ele pode não ter sido sincronizado ainda. Tente novamente ou volte ao catálogo e execute uma sincronização."
+                  : undefined
+              }
+              error={query.error ?? undefined}
+              attempts={query.isFetching ? undefined : query.failureCount}
+              isRetrying={query.isFetching}
+              onRetry={() => query.refetch()}
+              actions={
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/imoveis">
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Voltar aos imóveis
+                  </Link>
+                </Button>
+              }
+              data-testid="imovel-erro"
+            />
           </CardContent>
         </Card>
       </div>
@@ -462,6 +484,16 @@ export default function ImovelDetalhes() {
             codigo={codigo}
             documentos={documentosQuery.data ?? []}
             loading={documentosQuery.isPending && !documentosQuery.data}
+            erroLista={
+              documentosQuery.isError && !documentosQuery.data ? (
+                <QueryErrorState
+                  query={documentosQuery}
+                  variant="inline"
+                  title="Não foi possível carregar os documentos do imóvel."
+                  data-testid="imovel-documentos-erro"
+                />
+              ) : undefined
+            }
             uploading={documentoMutations.upload.isPending}
             removing={documentoMutations.remove.isPending}
             reextraindoId={

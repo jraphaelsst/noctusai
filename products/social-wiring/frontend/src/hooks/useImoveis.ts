@@ -16,7 +16,6 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
-import { ApiError } from "@noctusai/lib";
 import type { CondominioResumo } from "@/hooks/useCondominios";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -277,15 +276,12 @@ export function useImovel(codigo: string | null) {
       return res ? normalizarImovel(res) : res;
     },
     enabled: Boolean(codigo),
-    // A 404 here means "this código was never synced from Vista" — a
-    // manually-registered imóvel (`useRegistrarImovelManual`) is the common
-    // case, and it is a STABLE state, not a transient failure. Retrying it
-    // 3x just stretches the skeleton for an answer that will not change;
-    // `ImovelDetalhes` reads `useImovelRegistro` to tell that state apart
-    // from a genuinely unknown código. Any other status (5xx, network) still
-    // gets react-query's normal retry.
-    retry: (failureCount, error) =>
-      error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
+    // Retry: the seed query-client default (`@noctusai/lib` retry policy) —
+    // a 404 here means "this código was never synced from Vista" (a
+    // manually-registered imóvel is the common case), a STABLE state the
+    // policy never retries; a 5xx/network/timeout gets the paced automatic
+    // attempts (1s/3s/9s), then `ImovelDetalhes` shows the "Tentar
+    // novamente" button. No per-hook override needed any more.
     // Same reasoning extends to the global error toast (`query-client.ts`):
     // this specific 404 is an expected, already-handled state — not a
     // failure the user needs to be told about. A genuine 5xx/network error
@@ -306,8 +302,8 @@ export function useImovelRegistro(codigo: string | null) {
     queryKey: IMOVEL_REGISTRO_KEY(codigo ?? ""),
     queryFn: async () => api.get<ImovelRegistro>(`/api/imoveis/${codigo}/registro`),
     enabled: Boolean(codigo),
-    retry: (failureCount, error) =>
-      error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
+    // Retry: the seed default (404 never retried; transient paced) — see
+    // `useImovel`.
     // A genuinely unknown código (neither mirror nor registry has ever
     // seen it) is the SAME expected/handled 404 shape `useImovel` opts out
     // of — see its comment and `query-client.ts`.

@@ -15,13 +15,14 @@ import {
   Check,
   CheckCircle2,
   Loader2,
-  RefreshCw,
   ShieldAlert,
   Sparkles,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+
+import { RetryableError } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -667,6 +668,13 @@ interface Props {
   isRefreshing: boolean;
   isError: boolean;
   onRetry: () => void;
+  /** The status query's failure — only its reason CLASS is shown. */
+  error?: unknown;
+  /** Attempts the last run made (the query's `failureCount`) — feeds the
+   *  "Tentamos N vezes automaticamente" line of the seed `RetryableError`. */
+  failureCount?: number;
+  /** The retry is in flight (`isFetching`) — spinner on the button. */
+  isRetrying?: boolean;
   assinaturaData: string;
   onAssinaturaDataChange: (value: string) => void;
   gerando: boolean;
@@ -697,6 +705,9 @@ export default function GeradorContratoSection({
   isRefreshing,
   isError,
   onRetry,
+  error,
+  failureCount,
+  isRetrying,
   assinaturaData,
   onAssinaturaDataChange,
   gerando,
@@ -721,19 +732,19 @@ export default function GeradorContratoSection({
   }
 
   if (isError || !status) {
+    // Seed `RetryableError` (KB § PATTERNS/frontend/lying-loading-state.md):
+    // reached only after the query client's automatic, paced attempts ran
+    // out; the button re-runs the same check.
     return (
-      <div
-        className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+      <RetryableError
+        variant="inline"
+        title="Não foi possível verificar os dados para gerar o contrato."
+        error={error}
+        attempts={failureCount}
+        isRetrying={isRetrying}
+        onRetry={onRetry}
         data-testid="gerador-contrato-erro"
-      >
-        <span className="text-destructive">
-          Não foi possível verificar os dados para gerar o contrato.
-        </span>
-        <Button type="button" size="sm" variant="outline" onClick={onRetry}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          Tentar novamente
-        </Button>
-      </div>
+      />
     );
   }
 

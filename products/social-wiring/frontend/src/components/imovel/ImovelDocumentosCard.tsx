@@ -30,7 +30,7 @@
  * backend requires a non-empty motivo for the LGPD access log, and a fixed
  * string is a real one.
  */
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 /** DOM id of this card — the SAME string `contrato_gerador.derivacao.
  *  ALVO_DOCUMENTOS_DO_IMOVEL` emits as a readiness `destino.alvo`. */
@@ -89,6 +89,10 @@ interface Props {
   reextraindoId?: string | null;
   removing?: boolean;
   error?: string | null;
+  /** The LIST failed to load (after the query client's automatic attempts)
+   *  — rendered in place of the empty state, so a failed read never claims
+   *  "Nenhum documento enviado". The page passes the seed `QueryErrorState`. */
+  erroLista?: ReactNode;
   onUpload: (file: File, tipoDocumento: string) => void;
   /** `codigo` = the document's OWN código (path of the action). */
   onRemove: (documentoId: string, motivo: string, codigo?: string) => void;
@@ -134,6 +138,7 @@ export default function ImovelDocumentosCard({
   reextraindoId,
   removing,
   error,
+  erroLista,
   onUpload,
   onRemove,
   onOpen,
@@ -218,6 +223,8 @@ export default function ImovelDocumentosCard({
             (KB § PATTERNS/frontend/lying-loading-state.md). */}
         {loading && documentos.length === 0 ? (
           <p className="text-sm text-muted-foreground">Carregando…</p>
+        ) : erroLista && documentos.length === 0 ? (
+          erroLista
         ) : documentos.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Nenhum documento enviado. Envie a matrícula e o número será lido

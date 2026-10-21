@@ -250,6 +250,9 @@ export function GeradorContratoContainer({
         isRefreshing={isRefreshing}
         isError={query.isError && !query.data}
         onRetry={() => query.refetch()}
+        error={query.error}
+        failureCount={query.failureCount}
+        isRetrying={query.isFetching}
         assinaturaData={assinaturaData}
         onAssinaturaDataChange={setAssinaturaDigitada}
         gerando={gerar.isPending || verificar.isPending}
@@ -274,6 +277,9 @@ export function GeradorContratoContainer({
         isRefreshing={validacaoRefreshing}
         isError={validacao.isError && !validacao.data}
         onRetry={() => validacao.refetch()}
+        error={validacao.error}
+        failureCount={validacao.failureCount}
+        isRetrying={validacao.isFetching}
         decidindo={decidir.isPending}
         onDecidir={handleDecidir}
         rejeitados={rejeitados}

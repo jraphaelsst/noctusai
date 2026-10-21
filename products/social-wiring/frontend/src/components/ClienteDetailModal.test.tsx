@@ -79,9 +79,15 @@ vi.mock("@noctusai/seed/infra", () => ({
   useAuthStore: () => ({ user: { user_metadata: {} } }),
 }));
 
-vi.mock("@noctusai/lib", async () => ({
-  // Real seed helper over the stubbed resolveSSOContext below.
-  isOrgAdmin: (await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")).isOrgAdmin,
+vi.mock("@noctusai/lib", async () => {
+  const actual = await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib");
+  return {
+  // Real seed helpers over the stubbed resolveSSOContext below — incl. the
+  // canonical retry policy the document upload/re-read actions run through.
+  isOrgAdmin: actual.isOrgAdmin,
+  isTransientError: actual.isTransientError,
+  isRetrySafeForWrite: actual.isRetrySafeForWrite,
+  useRetryableAction: actual.useRetryableAction,
   resolveSSOContext: (metadata: any) => {
     const m = metadata || {};
     return {
@@ -89,9 +95,11 @@ vi.mock("@noctusai/lib", async () => ({
       org: { role: m.org_role ?? "member" },
     };
   },
-}));
+  };
+});
 
-const { mockCreate, mockUpdate, mockCardResumo, mockDocumentoChecklist } = vi.hoisted(() => ({
+const { mockCreate, mockUpdate, mockCardResumo, mockDocumentoChecklist, mockUploadAsync } = vi.hoisted(() => ({
+  mockUploadAsync: vi.fn(),
   mockCreate: { mutate: vi.fn(), isPending: false },
   mockUpdate: { mutate: vi.fn(), isPending: false },
   mockCardResumo: vi.fn(),
@@ -213,7 +221,7 @@ vi.mock("@/hooks/useCardHub", () => ({
     removeItem: { mutate: vi.fn() },
   }),
   useDocumentoMutations: () => ({
-    upload: { mutate: vi.fn(), isPending: false },
+    upload: { mutate: vi.fn(), mutateAsync: mockUploadAsync, isPending: false },
     remove: { mutate: vi.fn() },
     getUrl: { mutate: vi.fn() },
     reextrair: { mutate: vi.fn(), isPending: false, variables: undefined },
@@ -261,6 +269,15 @@ vi.mock("@/components/card/ClienteCardDialog", async () => {
           { "data-testid": "post-comentario", onClick: () => props.onPostComentario("um comentário") },
           "post",
         ),
+        React.createElement(
+          "button",
+          {
+            "data-testid": "upload-anexo",
+            onClick: () => props.onUploadDocumento(new File(["x"], "rg.pdf"), "rg"),
+          },
+          "upload",
+        ),
+        React.createElement("span", { "data-testid": "uploading-probe" }, String(!!props.uploadingDocumento)),
         React.createElement("span", { "data-testid": "descricao-corpo" }, props.descricaoCorpo),
         React.createElement(
           "span",
@@ -576,5 +593,69 @@ describe("ClienteDetailModal — mounts the per-party certidões tab and feeds t
   it("hands the Roteiros tab the cliente and atendimento (it mounts the interest list itself)", async () => {
     const { getByTestId } = await render({ atendimentoId: "atd-9" });
     expect(getByTestId("roteiros-ids-probe").textContent).toBe(JSON.stringify(["cl1", "atd-9"]));
+  });
+});
+
+describe("ClienteDetailModal — document upload: automatic paced retries, then a retry button", () => {
+  const resumo = {
+    data: {
+      cliente: { nome: "Maria Silva" },
+      tags: [],
+      membros: [],
+      descricao: null,
+      datas: {},
+      badges: {},
+      atendimentos: [],
+    },
+    isPending: false,
+    isFetching: false,
+    isError: false,
+  };
+
+  it("re-sends a 503 upload 3 times (1s/3s/9s), then toasts with 'Tentar novamente' that re-runs the same upload", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib");
+    mockCardResumo.mockReturnValue(resumo);
+    mockUploadAsync.mockRejectedValue(new ApiError(503, "Service Unavailable"));
+    vi.useFakeTimers();
+    try {
+      const { getByTestId } = await render();
+      const { fireEvent, act } = await import("@testing-library/react");
+      fireEvent.click(getByTestId("upload-anexo"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mockUploadAsync).toHaveBeenCalledTimes(1);
+      // Between attempts the card still reads as uploading — no double send.
+      expect(getByTestId("uploading-probe").textContent).toBe("true");
+      await act(async () => { await vi.advanceTimersByTimeAsync(13_000); });
+      expect(mockUploadAsync).toHaveBeenCalledTimes(4);
+      expect(getByTestId("uploading-probe").textContent).toBe("false");
+
+      expect(toastError).toHaveBeenCalledTimes(1);
+      const [titulo, opts] = toastError.mock.calls[0];
+      expect(titulo).toBe("Não foi possível enviar o anexo.");
+      expect(opts.description).toContain("Tentamos 4 vezes automaticamente.");
+      expect(opts.description).not.toContain("Service Unavailable");
+
+      mockUploadAsync.mockResolvedValueOnce({ id: "doc-1" });
+      await act(async () => {
+        opts.action.onClick();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mockUploadAsync).toHaveBeenCalledTimes(5);
+      expect(mockUploadAsync.mock.calls[4][0]).toMatchObject({ tipoDocumento: "rg" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a 400 (size/type limit) is not retried and keeps the server's own message", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib");
+    mockCardResumo.mockReturnValue(resumo);
+    mockUploadAsync.mockRejectedValue(new ApiError(400, "Arquivo maior que 20 MB."));
+    const { getByTestId } = await render();
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    fireEvent.click(getByTestId("upload-anexo"));
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    expect(mockUploadAsync).toHaveBeenCalledTimes(1);
+    expect(String(toastError.mock.calls[0][0])).toContain("Arquivo maior que 20 MB.");
   });
 });
