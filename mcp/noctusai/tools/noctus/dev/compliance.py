@@ -12701,6 +12701,69 @@ def check_secdef_migration_revokes_execute(repo_root: Path | None = None) -> lis
     return issues
 
 
+_GUC_GUARD_BASELINE_PATH = Path(__file__).resolve().parents[3] / "tests" / "guc_carveout_guard_baseline.json"
+_GUC_GUARD_MARKER = "guc-carveout-guard: rendered by"
+_TRIGGER_FN_RE = re.compile(r"RETURNS\s+TRIGGER", re.IGNORECASE)
+_GUC_READ_RE = re.compile(
+    r"current_setting\(\s*'[A-Za-z_]+\.[A-Za-z_]+'\s*,\s*true\s*\)\s*(?:=|<>|!=|IS\s+DISTINCT\s+FROM)\s*'on'",
+    re.IGNORECASE,
+)
+
+
+def check_guc_carveout_guard_hand_written(repo_root: Path | None = None) -> list[dict]:
+    """Flag a NEW migration hand-writing a GUC carve-out guard trigger function.
+
+    A trigger function that reads a transaction-local GUC (``current_setting('<ns>.<flag>', true)``)
+    is the "append-only table with one narrow mutation" shape, which exists as
+    ``noctusai_lib.domain.sql_templates.guc_carveout_guard_sql`` (6 hand-written copies before it).
+    Accepted: a file carrying the helper's rendered marker comment, or a legacy
+    ``<file>::<function>`` entry in ``guc_carveout_guard_baseline.json`` (ratchet: never grows).
+    KB § PATTERNS/backend/database-rls.md § GUC carve-out guard.
+    """
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return []
+    try:
+        legacy = set(json.loads(_GUC_GUARD_BASELINE_PATH.read_text(encoding="utf-8")).get("legacy", []))
+    except (OSError, ValueError) as exc:
+        logger.warning("compliance: guc carve-out baseline unreadable (%s) — treating as empty", exc)
+        legacy = set()
+    issues: list[dict] = []
+    for path in _migration_sql_files(root):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        if not _GUC_READ_RE.search(raw) or _GUC_GUARD_MARKER in raw:
+            continue
+        text = _sql_strip_comments(raw)
+        creates = list(_SECDEF_CREATE_FN_RE.finditer(text))
+        rel = str(path.relative_to(root))
+        for i, m in enumerate(creates):
+            end = creates[i + 1].start() if i + 1 < len(creates) else len(text)
+            body = text[m.start():end]
+            if not (_TRIGGER_FN_RE.search(body) and _GUC_READ_RE.search(body)):
+                continue
+            name = m.group(1).replace('"', "").split(".")[-1].lower()
+            if f"{rel}::{name}" in legacy:
+                continue
+            line_no = text.count("\n", 0, m.start()) + 1
+            issues.append({
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{line_no}` hand-writes GUC carve-out guard trigger `{name}` "
+                    f"(reads a transaction-local flag via current_setting). Render it with "
+                    f"`noctusai_lib.domain.sql_templates.guc_carveout_guard_sql(...)` "
+                    f"(or `noctus.dev.scaffold_migration with_guc_guard=[...]`) — the output "
+                    f"carries the marker this keeper accepts. Per "
+                    f"`KB § PATTERNS/backend/database-rls.md` § GUC carve-out guard."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
 def check_migration_untyped_empty_array(repo_root: Path | None = None) -> list[dict]:
     """Flag ``ARRAY[]`` with no ``::type`` cast in migration SQL (42P18 on apply).
 

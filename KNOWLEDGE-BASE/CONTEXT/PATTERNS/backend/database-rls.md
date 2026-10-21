@@ -316,6 +316,21 @@ print(rls_subquery_policy(
 
 Existing migration files (the replay log) are NOT rewritten; they stay authoritative per the MCP-migrations-mirror-the-file rule. The helpers exist for migrations being authored fresh + the scaffold tool that bootstraps new product schemas.
 
+### GUC carve-out guard — `guc_carveout_guard_sql` (2026-10-21)
+
+"Append-only / immutable table whose `BEFORE` row trigger allows exactly ONE narrow mutation while a **transaction-local GUC** is on, set only by a SECURITY DEFINER function" recurred 6× by hand before it was formalized. Use `noctusai_lib.domain.sql_templates.guc_carveout_guard_sql(schema=, table=, guc=, ...)` (or `noctus.dev.scaffold_migration with_guc_guard=[{table, guc, ...}]`); `guc_carveout_set_config_sql(guc, on)` renders the matching `PERFORM set_config('<guc>', 'on', true)` for the SECDEF side (wrap the one permitted statement between `on` and `off`).
+
+| Variation point | Parameter | Instances |
+|---|---|---|
+| Op the flag unlocks | `allow_ops=("DELETE",)` (default) | purge / erasure: 012, 032, 053 |
+| Writes only via the function, DELETE never | `allow_ops=("INSERT","UPDATE")` | 018 `editorial.in_transition` |
+| One column non-NULL → NULL (FK `ON DELETE SET NULL` on an audit table) | `allow_ops=("UPDATE",)`, `null_only_column=`, `frozen_columns=` (all other columns) | 048 `agents.agent_delete` |
+| GUC / error text / errcode / `SET search_path` | `guc`, `error_message`, `errcode`, `search_path` (verbatim, e.g. 053's `public, pg_temp`) | all |
+
+**Provenance (the six hand-written copies):** agents `012` `agents.compiled_prompt_erasure`; agents `018` `editorial.in_transition` (+ `knowledge_publish_sync`, which also carries business rules — hand-written on purpose); agents `032` `agents.erasing_lead_qualificacao`; agents `048` `agents.agent_delete`; core `053` `core.audit_log_purge`. Existing migrations are replay logs and stay verbatim.
+
+**Gate:** keeper `check_guc_carveout_guard_hand_written` (`--check-guc-carveout-guard-hand-written`, pre-commit with the migration-SQL gates) flags a migration that hand-writes a trigger function gating on `current_setting('<ns>.<flag>', true) = 'on'` unless the file carries the helper's rendered marker; the six legacy copies are baselined in `mcp/noctusai/tests/guc_carveout_guard_baseline.json` (ratchet: never grows). Prove the guard behaves (not just exists) with a `verify_db_guards` probe.
+
 ### Authoring-ergonomic wrappers — `noctusai_lib.sql` (2026-05-10)
 
 Sits on top of `noctusai_lib.domain.sql_templates` — same canonical strings, more ergonomic API for direct authoring + the scaffold tool. Drift would surface in tests at BOTH layers simultaneously (delegation, not fork).

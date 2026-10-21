@@ -248,6 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
     parser.add_argument("--check-no-authenticated-grant-on-content-tables", action="store_true", help="Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
+    parser.add_argument("--check-guc-carveout-guard-hand-written", action="store_true", help="Keeper: a NEW migration may not hand-write a trigger function that gates a table mutation on a transaction-local flag (current_setting('<ns>.<flag>', true) = 'on'); render it with noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (marker comment accepted). Six legacy copies baselined (guc_carveout_guard_baseline.json). Severity high; blocking. KB § PATTERNS/backend/database-rls.md.")
     parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
     parser.add_argument("--check-postgrest-unbounded-query", action="store_true", help="Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 000 leads instead of 13 255, a backfill silently repointed 1 000 of 1 365 negociações, a review queue dropped 177 of 1 177 rows. A second shape: `.in_(col, values)` rides in the URL query string, so an unbatched ~1 000-item collection is a bare 400 (\"JSON could not be generated\") with no hint about length. Flags a `.select(...).execute()` chain with no `.range()`/`.single()`/`.maybe_single()`/in-cap-`.limit()`/PK-`.eq(\"id\",...)` on it (severity `info` — risk is a function of a row count this keeper cannot see), and an `.in_()` fed a collection with no provable bound and no `_batched`-style loop (severity `warning` — structurally risky regardless of table cardinality, and the shape that actually took `/clientes/revisao` down). Deliberately heuristic (no table-cardinality knowledge) — non-blocking at either tier, observe-first (promote the `.in_()`-shape to blocking once a fleet sweep shows its false-positive rate is low). Escape hatch: `postgrest-unbounded-ok: <why>` comment (must state a reason, not just cite the keeper). KB § PATTERNS/backend/postgrest-row-cap.md.")
     parser.add_argument("--check-license-gate-by-construction", action="store_true", help="Keeper (round 2, 2026-10-06): the license gate holds BY CONSTRUCTION — no active product hand-rolls an org dependency that skips the seed trusted resolver, opts out (enforce_license=False / own configure_license_gate / license_checker=), and NO `role == 'admin'` branch bypasses a license check (public.licenses is the single source of truth; the platform org holds every license via core 068); the seed wiring must stay in place. Severity critical. KB § PATTERNS/backend/tenancy-license-gate.md.")
@@ -1913,6 +1914,17 @@ def main():
             print(f"  {GREEN}✓ secdef-migration-revokes-execute: clean (every new SECURITY DEFINER function revokes caller EXECUTE).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} SECURITY DEFINER function(s) callable by anon/authenticated:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_guc_carveout_guard_hand_written:
+        from tools.noctus.dev.compliance import check_guc_carveout_guard_hand_written
+        issues = check_guc_carveout_guard_hand_written()
+        if not issues:
+            print(f"  {GREEN}✓ guc-carveout-guard-hand-written: clean (every new GUC carve-out guard is rendered by the helper).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} hand-written GUC carve-out guard(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)

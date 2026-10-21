@@ -46,6 +46,8 @@ from workspace import resolve_caller_root
 # the test harness installs; in the running MCP server, `noctusai_lib` is
 # already importable because the server's venv has it installed.
 from noctusai_lib.domain.sql_templates import (
+    guc_carveout_guard_sql,
+    guc_carveout_set_config_sql,
     rls_subquery_policy,
     set_search_path,
     updated_at_function,
@@ -390,6 +392,28 @@ def _build_updated_at_block(schema: str, tables: list[str]) -> str:
     return "\n\n".join(sections)
 
 
+def _build_guc_guard_block(schema: str, guards: list[dict]) -> str:
+    """One guard function+trigger per entry + the SECDEF-side ``set_config`` snippet.
+
+    Entries are :func:`guc_carveout_guard_sql` kwargs (``table`` + ``guc``
+    required; ``schema`` defaults to the migration's). A bad entry raises
+    ``ValueError`` — surfaced by the caller, never swallowed.
+    """
+    sections: list[str] = []
+    for g in guards:
+        kw = {"schema": schema, **g}
+        sections.append(
+            f"-- ----- GUC carve-out guard: {kw['schema']}.{kw['table']} "
+            f"(flag {kw['guc']}) -----\n"
+            + guc_carveout_guard_sql(**kw)
+            + "\n\n-- In the ONLY SECURITY DEFINER function allowed to mutate it:\n"
+            f"--   {guc_carveout_set_config_sql(kw['guc'], True)}\n"
+            "--   <the one permitted statement>\n"
+            f"--   {guc_carveout_set_config_sql(kw['guc'], False)}"
+        )
+    return "\n\n".join(sections)
+
+
 def _build_sql(
     *,
     migration_name: str,
@@ -397,6 +421,7 @@ def _build_sql(
     with_table: str | None,
     with_updated_at: list[str] | None,
     today_str: str,
+    with_guc_guard: list[dict] | None = None,
 ) -> str:
     """Build the full SQL body for the new migration file."""
     header = (
@@ -413,6 +438,7 @@ def _build_sql(
         "-- TODO: Add your DDL here. Patterns available:\n"
         "--   updated_at_function(schema)     -- emit once per schema\n"
         "--   updated_at_trigger(schema, table) -- per table that has updated_at\n"
+        "--   guc_carveout_guard_sql(...)     -- append-only table w/ one GUC-gated carve-out\n"
         "--   rls_subquery_policy(table, ...)  -- per RLS-enabled table\n"
         "-- See seed/lib/backend/noctusai_lib/domain/sql_templates.py\n"
         "-- ======================================================="
@@ -423,6 +449,8 @@ def _build_sql(
         parts.append(_build_with_table_block(schema, with_table))
     if with_updated_at:
         parts.append(_build_updated_at_block(schema, with_updated_at))
+    if with_guc_guard:
+        parts.append(_build_guc_guard_block(schema, with_guc_guard))
     return "\n\n".join(parts) + "\n"
 
 
@@ -433,6 +461,7 @@ def scaffold_migration(
     schema: str | None = None,
     with_table: str | None = None,
     with_updated_at: list[str] | None = None,
+    with_guc_guard: list[dict] | None = None,
     worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     skip_fetch: bool = False,
@@ -458,6 +487,11 @@ def scaffold_migration(
             triggers attach to each named table. Convenient when adding
             ``updated_at`` auto-touch to several existing tables in one
             migration.
+        with_guc_guard: Optional list of dicts (``table``, ``guc`` + any other
+            :func:`noctusai_lib.domain.sql_templates.guc_carveout_guard_sql`
+            kwarg). Emits the append-only / immutable-table guard with ONE
+            GUC-gated carve-out instead of hand-writing it (6 hand-written
+            copies by 2026-10-21 — KB § PATTERNS/backend/database-rls.md).
         worktree_path: **Caller-aware path resolution.** When set, the
             migration is emitted under the given worktree's
             ``products/<slug>/backend/migrations/`` instead of the MCP
@@ -486,6 +520,15 @@ def scaffold_migration(
         return {"error": "product_slug must be a non-empty string"}
     if not migration_name:
         return {"error": "migration_name must be a non-empty string"}
+    if with_guc_guard is not None:
+        if not isinstance(with_guc_guard, list) or any(
+            not isinstance(g, dict) or not g.get("table") or not g.get("guc")
+            for g in with_guc_guard
+        ):
+            return {
+                "error": "with_guc_guard must be a list of dicts each with 'table' and 'guc'"
+            }
+
     if with_updated_at is not None:
         if not isinstance(with_updated_at, list):
             return {
@@ -541,13 +584,17 @@ def scaffold_migration(
         # silently overwriting (no-silent-errors rule).
         return {"error": f"Refusing to overwrite existing file at {target}"}
 
-    sql_body = _build_sql(
-        migration_name=migration_name,
-        schema=resolved_schema,
-        with_table=with_table,
-        with_updated_at=with_updated_at,
-        today_str=date.today().isoformat(),
-    )
+    try:
+        sql_body = _build_sql(
+            migration_name=migration_name,
+            schema=resolved_schema,
+            with_table=with_table,
+            with_updated_at=with_updated_at,
+            today_str=date.today().isoformat(),
+            with_guc_guard=with_guc_guard,
+        )
+    except ValueError as exc:
+        return {"error": f"with_guc_guard invalid: {exc}"}
 
     try:
         target.write_text(sql_body)
@@ -583,7 +630,10 @@ def register(server) -> None:
             "2026-08-13). Pass `worktree_path` when calling from inside a "
             "git worktree so the migration lands in the worktree, not the "
             "MCP server's startup workspace. `skip_fetch=True` for a fast "
-            "offline-safe scaffold (skips the origin/dev fetch)."
+            "offline-safe scaffold (skips the origin/dev fetch). "
+            "`with_guc_guard=[{table, guc, ...}]` emits the append-only table "
+            "guard with one GUC-gated carve-out (guc_carveout_guard_sql) — "
+            "never hand-write that shape."
         ),
     )
     def _scaffold_migration(
@@ -592,6 +642,7 @@ def register(server) -> None:
         schema: str | None = None,
         with_table: str | None = None,
         with_updated_at: list[str] | None = None,
+        with_guc_guard: list[dict] | None = None,
         worktree_path: str | None = None,
         skip_fetch: bool = False,
     ) -> dict:
@@ -601,6 +652,7 @@ def register(server) -> None:
             schema=schema,
             with_table=with_table,
             with_updated_at=with_updated_at,
+            with_guc_guard=with_guc_guard,
             worktree_path=worktree_path,
             skip_fetch=skip_fetch,
         )

@@ -869,3 +869,26 @@ def test_scaffold_rejects_hostile_slug_and_schema(tmp_path):
     assert "Invalid product slug" in r["error"]
     r = scaffold_migration("demo", "x", schema="erp; drop", products_dir=products)
     assert "Invalid schema" in r["error"]
+
+
+class TestGucGuardBlock:
+    def test_with_guc_guard_emits_guard_and_set_config_snippet(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+        result = sm.scaffold_migration(
+            "demo", "lock_audit", schema="demo", skip_fetch=True, products_dir=products,
+            with_guc_guard=[{"table": "audit", "guc": "demo.audit_purge"}],
+        )
+        body = Path(result["path"]).read_text()
+        assert "current_setting('demo.audit_purge', true) = 'on'" in body
+        assert "BEFORE UPDATE OR DELETE ON demo.audit" in body
+        assert "set_config('demo.audit_purge', 'on', true)" in body
+
+    def test_bad_guard_entry_is_an_error_not_a_crash(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+        r = sm.scaffold_migration(
+            "demo", "x", schema="demo", skip_fetch=True, products_dir=products,
+            with_guc_guard=[{"table": "t", "guc": "noflag", "allow_ops": ["DELETE"]}],
+        )
+        assert "error" in r

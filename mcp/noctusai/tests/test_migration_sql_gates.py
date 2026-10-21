@@ -104,3 +104,34 @@ class TestCheckMigrationUntypedEmptyArray:
     def test_real_repo_is_clean(self):
         from tools.noctus.dev.compliance import REPO_ROOT
         assert check_migration_untyped_empty_array(REPO_ROOT) == []
+
+
+class TestCheckGucCarveoutGuardHandWritten:
+    HAND = """CREATE OR REPLACE FUNCTION demo.guard_t() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND current_setting('demo.purge', true) = 'on' THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'append_only' USING ERRCODE = 'P0001';
+END; $$;
+"""
+
+    def test_hand_written_guard_flags(self):
+        from tools.noctus.dev.compliance import check_guc_carveout_guard_hand_written
+
+        issues = check_guc_carveout_guard_hand_written(_repo(self.HAND))
+        assert len(issues) == 1 and "guc_carveout_guard_sql" in issues[0]["issue"]
+
+    def test_helper_rendered_guard_passes(self):
+        from noctusai_lib.domain.sql_templates import guc_carveout_guard_sql
+        from tools.noctus.dev.compliance import check_guc_carveout_guard_hand_written
+
+        sql = guc_carveout_guard_sql(schema="demo", table="t", guc="demo.purge")
+        assert check_guc_carveout_guard_hand_written(_repo(sql)) == []
+
+    def test_non_carveout_current_setting_not_flagged(self):
+        from tools.noctus.dev.compliance import check_guc_carveout_guard_hand_written
+
+        sql = (
+            "CREATE OR REPLACE FUNCTION demo.audit() RETURNS TRIGGER LANGUAGE plpgsql AS $$\n"
+            "BEGIN NEW.actor := current_setting('demo.actor', true); RETURN NEW; END; $$;\n"
+        )
+        assert check_guc_carveout_guard_hand_written(_repo(sql)) == []

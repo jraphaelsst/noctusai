@@ -1032,3 +1032,146 @@ def editorial_tables(schema: str, workflow: object | None = None) -> str:
     ):
         out = out.replace(key, value)
     return out.strip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# GUC carve-out guard — "append-only / immutable table with ONE narrow mutation"
+# ---------------------------------------------------------------------------
+
+#: First line of every rendered guard — the keeper `check_guc_carveout_guard_hand_written`
+#: accepts a migration only when this marker is present (or it is baselined).
+GUC_GUARD_MARKER = "-- guc-carveout-guard: rendered by noctusai_lib.domain.sql_templates.guc_carveout_guard_sql"
+_GUC_OPS = ("INSERT", "UPDATE", "DELETE")
+
+
+def _ident(value: str, what: str) -> str:
+    import re
+
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", value or ""):
+        raise ValueError(f"invalid {what} {value!r}")
+    return value
+
+
+def guc_carveout_set_config_sql(guc: str, on: bool = True) -> str:
+    """The SECURITY DEFINER side: ``PERFORM set_config('<guc>', 'on'|'off', true);``.
+
+    ``true`` = transaction-local, so the flag can never leak past the carve-out's
+    own transaction. Wrap the one permitted statement between an ``on`` and an
+    ``off`` call inside the (only) function allowed to mutate the table.
+    """
+    if "." not in guc:
+        raise ValueError(f"guc {guc!r} must be namespaced '<ns>.<name>'")
+    return f"PERFORM set_config('{guc}', '{'on' if on else 'off'}', true);"
+
+
+def guc_carveout_guard_sql(
+    *,
+    schema: str,
+    table: str,
+    guc: str,
+    function: str | None = None,
+    trigger: str | None = None,
+    error_message: str = "append_only",
+    errcode: str = "P0001",
+    allow_ops: Iterable[str] = ("DELETE",),
+    trigger_ops: Iterable[str] | None = None,
+    null_only_column: str | None = None,
+    frozen_columns: Iterable[str] = (),
+    search_path: Iterable[str] | None = None,
+) -> str:
+    """Emit the guard function + trigger for a table that is write-protected
+    except for ONE narrow mutation, enabled by a transaction-local GUC flag.
+
+    The shape recurs (KB § PATTERNS/backend/database-rls.md § GUC carve-out
+    guard): a ``BEFORE`` row trigger raises unless ``current_setting(guc, true)
+    = 'on'`` AND the operation is in ``allow_ops``; a SECURITY DEFINER function
+    is the only thing that sets the flag (see :func:`guc_carveout_set_config_sql`).
+
+    Parameters
+    ----------
+    allow_ops
+        Operations the flag unlocks. ``("DELETE",)`` = retention purge / erasure
+        (UPDATE and everything else always refused). ``("INSERT", "UPDATE")`` =
+        "writes only through the transition function; DELETE never".
+    trigger_ops
+        Events the trigger fires on. Defaults to ``UPDATE OR DELETE`` ∪
+        ``allow_ops`` (in INSERT/UPDATE/DELETE order).
+    null_only_column
+        Narrows an allowed UPDATE to exactly "this column goes non-NULL → NULL"
+        (an ``ON DELETE SET NULL`` FK on an append-only audit table). ``UPDATE``
+        must be in ``allow_ops``; every column in ``frozen_columns`` (list ALL
+        other columns of the table) must be unchanged.
+    search_path
+        Verbatim ``SET search_path`` entries (053 pins ``public, pg_temp``);
+        default ``<schema>, public`` via :func:`set_search_path`.
+
+    Deliberately NOT modelled: guards that also carry other business rules
+    (e.g. agents 018's transition legality — those live in the transition
+    function, not the guard) — hand-write those.
+    """
+    schema = _ident(schema, "schema")
+    table = _ident(table, "table")
+    function = _ident(function or f"guard_{table}_append_only", "function")
+    trigger = _ident(trigger or f"guard_{table}_append_only", "trigger")
+    ops = tuple(o.upper() for o in allow_ops)
+    if not ops or any(o not in _GUC_OPS for o in ops):
+        raise ValueError(f"allow_ops must be a non-empty subset of {_GUC_OPS}")
+    events = (
+        tuple(o.upper() for o in trigger_ops)
+        if trigger_ops is not None
+        else tuple(o for o in _GUC_OPS if o in ops or o in ("UPDATE", "DELETE"))
+    )
+    if any(o not in _GUC_OPS for o in events) or not set(ops) <= set(events):
+        raise ValueError("trigger_ops must be valid and cover every allow_ops entry")
+    frozen = tuple(_ident(c, "column") for c in frozen_columns)
+    if null_only_column is not None:
+        _ident(null_only_column, "column")
+        if "UPDATE" not in ops:
+            raise ValueError("null_only_column requires UPDATE in allow_ops")
+    elif frozen:
+        raise ValueError("frozen_columns only applies with null_only_column")
+    if "'" in error_message or "'" in guc:
+        raise ValueError("error_message/guc must not contain a quote")
+    _ident(errcode.lower(), "errcode")
+    sp = (
+        "SET search_path = " + ", ".join(_ident(x, "search_path entry") for x in search_path)
+        if search_path
+        else set_search_path(schema)
+    )
+
+    def _cond(op: str) -> str:
+        if op == "UPDATE" and null_only_column:
+            lines = [
+                f"TG_OP = 'UPDATE'",
+                f"current_setting('{guc}', true) = 'on'",
+                f"OLD.{null_only_column} IS NOT NULL AND NEW.{null_only_column} IS NULL",
+                *(f"NEW.{c} IS NOT DISTINCT FROM OLD.{c}" for c in frozen),
+            ]
+            return "\n       AND ".join(lines)
+        return f"TG_OP = '{op}' AND current_setting('{guc}', true) = 'on'"
+
+    blocks = []
+    for op in ops:
+        ret = "OLD" if op == "DELETE" else "NEW"
+        keyword = "IF" if not blocks else "ELSIF"
+        blocks.append(f"    {keyword} {_cond(op)} THEN\n        RETURN {ret};")
+    body = "\n".join(blocks) + "\n    END IF;"
+    fn = f"{schema}.{function}"
+    return (
+        f"{GUC_GUARD_MARKER}\n"
+        f"CREATE OR REPLACE FUNCTION {fn}()\n"
+        "RETURNS TRIGGER\n"
+        f"LANGUAGE plpgsql SECURITY DEFINER {sp}\n"
+        "AS $$\n"
+        "BEGIN\n"
+        f"{body}\n"
+        f"    RAISE EXCEPTION '{error_message}' USING ERRCODE = '{errcode}';\n"
+        "END;\n"
+        "$$;\n\n"
+        f"REVOKE ALL ON FUNCTION {fn}() FROM PUBLIC, anon, authenticated;\n"
+        f"GRANT EXECUTE ON FUNCTION {fn}() TO service_role;\n\n"
+        f"DROP TRIGGER IF EXISTS {trigger} ON {schema}.{table};\n"
+        f"CREATE TRIGGER {trigger}\n"
+        f"    BEFORE {' OR '.join(events)} ON {schema}.{table}\n"
+        f"    FOR EACH ROW EXECUTE FUNCTION {fn}();"
+    )

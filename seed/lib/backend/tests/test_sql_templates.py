@@ -316,3 +316,88 @@ class TestAiTablesTemplates:
 
         with pytest.raises(ValueError):
             ai_outputs_table_sql("x; DROP SCHEMA public")
+
+
+# ---------------------------------------------------------------------------
+# guc_carveout_guard_sql — reproduces the hand-written instances semantically
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+from noctusai_lib.domain.sql_templates import (  # noqa: E402
+    guc_carveout_guard_sql,
+    guc_carveout_set_config_sql,
+)
+
+
+def _norm(sql: str) -> str:
+    return re.sub(r"\s+", " ", sql).strip()
+
+
+class TestGucCarveoutGuard:
+    def test_core_audit_logs_purge_053(self):
+        sql = guc_carveout_guard_sql(
+            schema="public", table="audit_logs", guc="core.audit_log_purge",
+            error_message="audit_logs_append_only", search_path=("public", "pg_temp"),
+        )
+        n = _norm(sql)
+        assert "SECURITY DEFINER SET search_path = public, pg_temp" in n
+        assert (
+            "IF TG_OP = 'DELETE' AND current_setting('core.audit_log_purge', true) = 'on' THEN RETURN OLD;"
+            in n
+        )
+        assert "RAISE EXCEPTION 'audit_logs_append_only' USING ERRCODE = 'P0001';" in n
+        assert "BEFORE UPDATE OR DELETE ON public.audit_logs" in n
+        assert "REVOKE ALL ON FUNCTION public.guard_audit_logs_append_only() FROM PUBLIC, anon, authenticated;" in n
+
+    def test_compiled_prompt_erasure_012(self):
+        n = _norm(guc_carveout_guard_sql(
+            schema="agents", table="compiled_prompts", guc="agents.compiled_prompt_erasure",
+            function="guard_compiled_prompt_immutable", trigger="guard_compiled_prompts_immutable",
+            error_message="compiled_prompt_immutable",
+        ))
+        assert "current_setting('agents.compiled_prompt_erasure', true) = 'on' THEN RETURN OLD;" in n
+        assert "CREATE TRIGGER guard_compiled_prompts_immutable BEFORE UPDATE OR DELETE ON agents.compiled_prompts" in n
+
+    def test_agent_delete_048_null_only_update(self):
+        n = _norm(guc_carveout_guard_sql(
+            schema="agents", table="agent_audit_log", guc="agents.agent_delete",
+            function="guard_audit_log_append_only", trigger="guard_agent_audit_log_append_only",
+            error_message="audit_log_append_only", allow_ops=("UPDATE",),
+            null_only_column="agent_id",
+            frozen_columns=("id", "org_id", "actor", "acao", "antes", "depois", "created_at", "agent_key", "agent_nome"),
+        ))
+        assert "IF TG_OP = 'UPDATE' AND current_setting('agents.agent_delete', true) = 'on'" in n
+        assert "AND OLD.agent_id IS NOT NULL AND NEW.agent_id IS NULL" in n
+        assert "AND NEW.id IS NOT DISTINCT FROM OLD.id" in n
+        assert "AND NEW.agent_nome IS NOT DISTINCT FROM OLD.agent_nome THEN RETURN NEW;" in n
+        assert "BEFORE UPDATE OR DELETE ON agents.agent_audit_log" in n
+
+    def test_write_only_via_function_018_style(self):
+        n = _norm(guc_carveout_guard_sql(
+            schema="agents", table="editorial_items", guc="editorial.in_transition",
+            allow_ops=("INSERT", "UPDATE"), error_message="editorial_write_via_transition_only",
+        ))
+        assert "IF TG_OP = 'INSERT' AND current_setting('editorial.in_transition', true) = 'on' THEN RETURN NEW; ELSIF TG_OP = 'UPDATE'" in n
+        assert "BEFORE INSERT OR UPDATE OR DELETE ON agents.editorial_items" in n
+
+    def test_set_config_snippet(self):
+        assert guc_carveout_set_config_sql("agents.agent_delete") == "PERFORM set_config('agents.agent_delete', 'on', true);"
+        assert guc_carveout_set_config_sql("agents.agent_delete", on=False).endswith("'off', true);")
+
+    @pytest.mark.parametrize("kwargs", [
+        {"allow_ops": ()},
+        {"allow_ops": ("TRUNCATE",)},
+        {"frozen_columns": ("a",)},
+        {"allow_ops": ("DELETE",), "null_only_column": "x"},
+        {"table": "bad name"},
+    ])
+    def test_rejects_bad_input(self, kwargs):
+        base = dict(schema="s", table="t", guc="s.flag")
+        base.update(kwargs)
+        with pytest.raises(ValueError):
+            guc_carveout_guard_sql(**base)
+
+    def test_guc_must_be_namespaced(self):
+        with pytest.raises(ValueError):
+            guc_carveout_set_config_sql("flag")

@@ -1160,6 +1160,11 @@ if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
         echo "[pre-commit] REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated in the same migration. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2
         exit 1
     fi
+    if ! "$PY" "$CLI" --check-guc-carveout-guard-hand-written --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] GUC-CARVEOUT-GUARD-HAND-WRITTEN check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Render it: noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (or scaffold_migration with_guc_guard). See KB § PATTERNS/backend/database-rls.md § GUC carve-out guard." >&2
+        exit 1
+    fi
     if ! "$PY" "$CLI" --check-migration-untyped-empty-array --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] MIGRATION-UNTYPED-EMPTY-ARRAY check FAILED. Commit aborted." >&2
         echo "[pre-commit] Cast the literal: ARRAY[]::text[]. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2

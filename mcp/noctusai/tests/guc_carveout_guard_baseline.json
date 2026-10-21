@@ -1,0 +1,11 @@
+{
+ "_doc": "Legacy hand-written GUC carve-out guard trigger functions that predate noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (2026-10-21). Migrations are immutable so this never grows. KB \u00a7 PATTERNS/backend/database-rls.md \u00a7 GUC carve-out guard",
+ "legacy": [
+  "products/agents/backend/migrations/012_agent_studio_definitions.sql::guard_compiled_prompt_immutable",
+  "products/agents/backend/migrations/018_editorial_workflow.sql::editorial_guard_via_transition",
+  "products/agents/backend/migrations/018_editorial_workflow.sql::knowledge_guard_governed",
+  "products/agents/backend/migrations/032_julia_v2_qualificacao.sql::guard_lead_qualificacao_append_only",
+  "products/agents/backend/migrations/048_agent_lifecycle_delete.sql::guard_audit_log_append_only",
+  "products/core/backend/migrations/053_audit_trail_expansion.sql::guard_audit_logs_append_only"
+ ]
+}
