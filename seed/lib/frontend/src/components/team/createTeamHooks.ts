@@ -22,7 +22,8 @@
  * Same injection pattern as `createApiKeysHooks`: the product passes its own
  * authenticated api client.
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../../cache-writes';
 import { toast } from 'sonner';
 import type { ApiClient } from '../../api';
 
@@ -139,9 +140,15 @@ export function createTeamHooks(api: TeamApi) {
    * invitation exists, but nobody was told about it.
    */
   function useInviteMember() {
-    const qc = useQueryClient();
-    return useMutation<TeamInviteResponse, unknown, TeamInviteBody>({
+    return useCacheWriteMutation<TeamInviteResponse, TeamInviteBody>({
       mutationFn: (body) => api.post<TeamInviteResponse>('/api/team/invite', body),
+      // The server assigns id/status/expiry: commit the created invitation into the pending list.
+      targets: [
+        {
+          queryKey: TEAM_QUERY_KEYS.invitations,
+          commit: (old: TeamInvitation[] | undefined, res) => listOps.replace(old, res.data.id, res.data, 'prepend'),
+        },
+      ],
       onSuccess: (res, body) => {
         if (res.email_enviado) {
           toast.success(`Convite enviado para ${body.email}.`);
@@ -150,7 +157,6 @@ export function createTeamHooks(api: TeamApi) {
             description: `${res.email_motivo ?? 'Motivo desconhecido'}. O convite aparece em "Convites pendentes".`,
           });
         }
-        void qc.invalidateQueries({ queryKey: TEAM_QUERY_KEYS.invitations });
       },
       onError: (err) => {
         toast.error('Erro ao enviar convite', {
@@ -161,12 +167,16 @@ export function createTeamHooks(api: TeamApi) {
   }
 
   function useCancelInvitation() {
-    const qc = useQueryClient();
-    return useMutation<unknown, unknown, string>({
+    return useCacheWriteMutation<unknown, string>({
       mutationFn: (id) => api.delete(`/api/team/invitations/${encodeURIComponent(id)}`),
+      targets: [
+        {
+          queryKey: TEAM_QUERY_KEYS.invitations,
+          optimistic: (old: TeamInvitation[] | undefined, id) => listOps.remove(old, id),
+        },
+      ],
       onSuccess: () => {
         toast.success('Convite cancelado.');
-        void qc.invalidateQueries({ queryKey: TEAM_QUERY_KEYS.invitations });
       },
       onError: (err) => {
         toast.error('Erro ao cancelar convite', {

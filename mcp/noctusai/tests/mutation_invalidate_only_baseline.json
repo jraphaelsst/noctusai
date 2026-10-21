@@ -249,24 +249,10 @@
     "products/therapy-platform/frontend/src/hooks/useTherapyMatching.ts": 1,
     "products/therapy-platform/frontend/src/hooks/useWallet.ts": 2,
     "seed/lib/frontend/src/commerce/hooks.ts": 32,
-    "seed/lib/frontend/src/components/StatusPaginaPanel.tsx": 1,
-    "seed/lib/frontend/src/components/api-keys/createApiKeysHooks.ts": 3,
-    "seed/lib/frontend/src/components/card-hub/createCardHubHooks.ts": 23,
-    "seed/lib/frontend/src/components/pipeline/createPipelineHooks.ts": 2,
-    "seed/lib/frontend/src/components/team/createTeamHooks.ts": 2,
-    "seed/lib/frontend/src/contracts/hooks.ts": 7,
-    "seed/lib/frontend/src/design-system/ai/useAIFeedback.ts": 1,
-    "seed/lib/frontend/src/finance/hooks.ts": 28,
-    "seed/lib/frontend/src/finance/reminderHooks.ts": 6,
     "seed/lib/frontend/src/inventory/hooks.ts": 7,
     "seed/lib/frontend/src/items/hooks.ts": 9,
-    "seed/lib/frontend/src/llm.ts": 2,
-    "seed/lib/frontend/src/notifications.ts": 2,
-    "seed/lib/frontend/src/org-selection.ts": 1,
-    "seed/lib/frontend/src/parties/hooks.ts": 7,
     "seed/lib/frontend/src/photo-editing/hooks.ts": 26,
     "seed/lib/frontend/src/purchasing/hooks.ts": 7,
-    "seed/lib/frontend/src/quotes/hooks.ts": 11,
-    "seed/lib/frontend/src/whatsapp.ts": 9
+    "seed/lib/frontend/src/quotes/hooks.ts": 11
   }
 }

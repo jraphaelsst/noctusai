@@ -13,7 +13,9 @@
  * Errors are never swallowed: queries expose `error`, mutations reject with `ApiError` so the
  * caller renders it (409 `documento_duplicado`, 409 `parceiro_em_uso`, 422 `documento_invalido`...).
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCacheWriteMutation } from '../cache-writes';
+import { envelopeOps } from '../organ-kit/cacheOps';
 import { ApiError, type ApiClient } from '../api';
 import { apiErrorCode, errorMessage, keep, signals } from '../organ-kit/query';
 import type {
@@ -59,10 +61,19 @@ export function listQuery(params: PartiesListParams): Record<string, string | nu
 export function createPartiesHooks(api: PartiesApi) {
   const unwrap = async <T,>(p: Promise<PartiesEnvelope<T>>): Promise<T> => (await p).data;
 
-  function useInvalidate() {
-    const qc = useQueryClient();
-    return (...keys: QueryKey[]) => Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
-  }
+  /**
+   * The server's answer for ONE party goes into its detail and into every cached list page that already
+   * shows it. Whether a NEW party belongs on a given filtered/paged list is the server's call, so a create
+   * only seeds its detail and the settle refetch places it in the lists.
+   */
+  const savedTargets = (id: string) => [
+    {
+      queryKey: partiesKeys.lists,
+      match: 'prefix' as const,
+      commit: (old: any, saved: Party) => envelopeOps.patch(old, id, saved),
+    },
+    { queryKey: partiesKeys.detail(id), commit: (old: Party | undefined, saved: Party) => (old === undefined ? undefined : saved) },
+  ];
 
   function useParties(params: PartiesListParams = {}) {
     const q = useQuery<PartiesPaginated<Party>>({
@@ -84,63 +95,68 @@ export function createPartiesHooks(api: PartiesApi) {
   }
 
   function useCreateParty() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: (body: PartyInput) => unwrap<Party>(api.post(BASE, body)),
-      onSuccess: () => inv(partiesKeys.lists),
+    const qc = useQueryClient();
+    return useCacheWriteMutation<Party, PartyInput>({
+      mutationFn: (body) => unwrap<Party>(api.post(BASE, body)),
+      // Placement in a filtered / paged list is the server's call: lists converge on the settle refetch.
+      targets: [{ queryKey: partiesKeys.lists, match: 'prefix' }],
+      // The new party's detail is known now — opening it needs no round trip.
+      onSuccess: (saved) => {
+        qc.setQueryData(partiesKeys.detail(saved.id), saved);
+      },
     });
   }
 
   function useUpdateParty() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: ({ id, ...body }: { id: string } & PartyPatch) => unwrap<Party>(api.patch(`${BASE}/${id}`, body)),
-      onSuccess: (_party, vars) => inv(partiesKeys.lists, partiesKeys.detail(vars.id)),
+    return useCacheWriteMutation<Party, { id: string } & PartyPatch>({
+      mutationFn: ({ id, ...body }) => unwrap<Party>(api.patch(`${BASE}/${id}`, body)),
+      targets: ({ id }) => savedTargets(id),
     });
   }
 
   function useSetRoles() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: ({ id, roles }: { id: string; roles: PartyRole[] }) => unwrap<Party>(api.put(`${BASE}/${id}/roles`, { roles })),
-      onSuccess: (_party, vars) => inv(partiesKeys.lists, partiesKeys.detail(vars.id)),
+    return useCacheWriteMutation<Party, { id: string; roles: PartyRole[] }>({
+      mutationFn: ({ id, roles }) => unwrap<Party>(api.put(`${BASE}/${id}/roles`, { roles })),
+      targets: ({ id }) => savedTargets(id),
     });
   }
 
   function useArchiveParty() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: ({ id, restore }: { id: string; restore: boolean }) =>
-        unwrap<Party>(api.post(`${BASE}/${id}/${restore ? 'restore' : 'archive'}`, {})),
-      onSuccess: (_party, vars) => inv(partiesKeys.lists, partiesKeys.detail(vars.id)),
+    return useCacheWriteMutation<Party, { id: string; restore: boolean }>({
+      mutationFn: ({ id, restore }) => unwrap<Party>(api.post(`${BASE}/${id}/${restore ? 'restore' : 'archive'}`, {})),
+      // Archiving moves the party between the active / archived lists: the server's row lands in every
+      // page that shows it, the settle refetch re-filters the lists.
+      targets: ({ id }) => savedTargets(id),
     });
   }
 
   function useDeleteParty() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
-      onSuccess: (_r, id) => inv(partiesKeys.lists, partiesKeys.detail(id)),
+    return useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/${id}`),
+      targets: (id) => [
+        { queryKey: partiesKeys.lists, match: 'prefix', optimistic: (old: any) => envelopeOps.remove(old, id) },
+        { queryKey: partiesKeys.detail(id) },
+      ],
     });
   }
 
   /** `POST /import` (multipart). `dryRun` validates without writing. Resolves with the row-level report. */
   function useImportParties() {
-    const inv = useInvalidate();
-    return useMutation({
+    const qc = useQueryClient();
+    return useMutation({ // noc-allow: invalidate-only — a bulk import returns a row-level report, not the created parties; the server decides which rows land in which filtered / paged list
       mutationFn: ({ file, dryRun }: { file: File; dryRun?: boolean }) => {
         const form = new FormData();
         form.append('file', file);
         form.append('dry_run', dryRun ? 'true' : 'false');
         return unwrap<PartiesImportResult>(api.upload(`${BASE}/import`, form));
       },
-      onSuccess: (result) => (result.dry_run ? undefined : inv(partiesKeys.lists)),
+      onSuccess: (result) => (result.dry_run ? undefined : qc.invalidateQueries({ queryKey: partiesKeys.lists })),
     });
   }
 
   /** `GET /export.csv` with the same filters as the list. Resolves with the CSV `Blob`. */
   function useExportParties() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a CSV download: it reads and writes nothing any cached query shows
       mutationFn: (params: PartiesListParams = {}) => {
         const { page: _page, page_size: _size, ...filters } = listQuery(params) as Record<string, string | number | boolean>;
         const qs = new URLSearchParams(Object.entries(filters).map(([k, v]) => [k, String(v)])).toString();

@@ -32,6 +32,7 @@
  * `CreateConnectionDialog`, `ConnectionDetailDialog`).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from './cache-writes';
 import type { ApiClient } from './api';
 
 // ---------------------------------------------------------------------------
@@ -185,21 +186,22 @@ export function createWhatsAppConnectionsHooks(
   }
 
   function useConnectionMutations() {
-    const qc = useQueryClient();
-    const invalidate = () => qc.invalidateQueries({ queryKey: KEY });
-
-    const create = useMutation<
+    // The server derives base_url / session_name / webhook_url, so a create only commits (no optimistic stand-in).
+    const create = useCacheWriteMutation<
       WhatsAppConnectionLine,
-      unknown,
       CreateWhatsAppConnectionBody
     >({
       mutationFn: (body) => api.post<WhatsAppConnectionLine>(basePath, body),
-      onSuccess: invalidate,
+      targets: [
+        {
+          queryKey: KEY,
+          commit: (old: WhatsAppConnectionLine[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+        },
+      ],
     });
 
-    const update = useMutation<
+    const update = useCacheWriteMutation<
       WhatsAppConnectionLine,
-      unknown,
       { id: string; body: UpdateWhatsAppConnectionBody }
     >({
       mutationFn: ({ id, body }) =>
@@ -207,13 +209,26 @@ export function createWhatsAppConnectionsHooks(
           `${basePath}/${encodeURIComponent(id)}`,
           body,
         ),
-      onSuccess: invalidate,
+      // `api_key` is write-only rotation and never echoes back: only the label is drawn on click.
+      targets: ({ id }) => [
+        {
+          queryKey: KEY,
+          optimistic: (old: WhatsAppConnectionLine[] | undefined, { body }) =>
+            body.label === undefined ? old : listOps.patch(old, id, { label: body.label }),
+          commit: (old: WhatsAppConnectionLine[] | undefined, saved) => listOps.patch(old, id, saved),
+        },
+      ],
     });
 
-    const remove = useMutation<unknown, unknown, string>({
+    const remove = useCacheWriteMutation<unknown, string>({
       mutationFn: (id) =>
         api.delete(`${basePath}/${encodeURIComponent(id)}`),
-      onSuccess: invalidate,
+      targets: [
+        {
+          queryKey: KEY,
+          optimistic: (old: WhatsAppConnectionLine[] | undefined, id) => listOps.remove(old, id),
+        },
+      ],
     });
 
     return { create, update, remove };
@@ -271,35 +286,26 @@ export function createWhatsAppConnectionsHooks(
   }
 
   function useConnectionActions() {
-    const qc = useQueryClient();
-    const invalidate = (id: string) => {
-      qc.invalidateQueries({ queryKey: [...KEY, id, 'status'] });
-      qc.invalidateQueries({ queryKey: [...KEY, id, 'qr'] });
-    };
+    // Each action answers with the line's NEW session status: it goes straight into the status read
+    // (so the badge flips on the answer, not on the next poll); the QR is a different read and only refreshes.
+    const useAction = (verb: 'start' | 'restart' | 'logout') =>
+      useCacheWriteMutation<WhatsAppConnectionStatus, string>({
+        mutationFn: (id) =>
+          api.post<WhatsAppConnectionStatus>(
+            `${basePath}/${encodeURIComponent(id)}/${verb}`,
+          ),
+        targets: (id) => [
+          {
+            queryKey: [...KEY, id, 'status'],
+            commit: (_old: WhatsAppConnectionStatus | undefined, saved) => saved,
+          },
+        ],
+        invalidate: (id) => [[...KEY, id, 'qr']],
+      });
 
-    const start = useMutation<WhatsAppConnectionStatus, unknown, string>({
-      mutationFn: (id) =>
-        api.post<WhatsAppConnectionStatus>(
-          `${basePath}/${encodeURIComponent(id)}/start`,
-        ),
-      onSuccess: (_d, id) => invalidate(id),
-    });
-
-    const restart = useMutation<WhatsAppConnectionStatus, unknown, string>({
-      mutationFn: (id) =>
-        api.post<WhatsAppConnectionStatus>(
-          `${basePath}/${encodeURIComponent(id)}/restart`,
-        ),
-      onSuccess: (_d, id) => invalidate(id),
-    });
-
-    const logout = useMutation<WhatsAppConnectionStatus, unknown, string>({
-      mutationFn: (id) =>
-        api.post<WhatsAppConnectionStatus>(
-          `${basePath}/${encodeURIComponent(id)}/logout`,
-        ),
-      onSuccess: (_d, id) => invalidate(id),
-    });
+    const start = useAction('start');
+    const restart = useAction('restart');
+    const logout = useAction('logout');
 
     return { start, restart, logout };
   }
@@ -313,23 +319,27 @@ export function createWhatsAppConnectionsHooks(
    * `logout` remain individually callable via `useConnectionActions`.
    */
   function useRecoverConnection() {
-    const qc = useQueryClient();
-    return useMutation<WhatsAppConnectionRecoverResult, unknown, string>({
+    return useCacheWriteMutation<WhatsAppConnectionRecoverResult, string>({
       mutationFn: (id) =>
         api.post<WhatsAppConnectionRecoverResult>(
           `${basePath}/${encodeURIComponent(id)}/recover`,
           {},
         ),
-      onSuccess: (_data, id) => {
-        qc.invalidateQueries({ queryKey: [...KEY, id, 'status'] });
-        qc.invalidateQueries({ queryKey: [...KEY, id, 'qr'] });
-      },
+      // The converged state (status + paired) is merged into the cached session status.
+      targets: (id) => [
+        {
+          queryKey: [...KEY, id, 'status'],
+          commit: (old: WhatsAppConnectionStatus | undefined, saved) =>
+            old ? { ...old, status: saved.status, paired: saved.paired } : old,
+        },
+      ],
+      invalidate: (id) => [[...KEY, id, 'qr']],
     });
   }
 
   function useConfigureConnectionWebhook() {
     const qc = useQueryClient();
-    return useMutation<
+    return useMutation< // noc-allow: invalidate-only — the result echoes the registered url, but the line's `webhook_url` is the auto-minted public inbound URL that only the list/get read carries
       WhatsAppConnectionWebhookResult,
       unknown,
       { id: string; body: ConfigureWhatsAppConnectionWebhookBody }
@@ -402,7 +412,7 @@ export function createWhatsAppIntakeHooks(api: ApiClient) {
 
   function useCancelConversation() {
     const qc = useQueryClient();
-    return useMutation<IntakeCancelResult, unknown, string>({
+    return useMutation<IntakeCancelResult, unknown, string>({ // noc-allow: invalidate-only — cancelling resets the conversation inside the server's state machine (state + the non-idle-first ordering); the result is only `{ cleared }`
       mutationFn: (sessionId) =>
         api.post(
           `/api/whatsapp/intake/conversations/${encodeURIComponent(

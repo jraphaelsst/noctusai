@@ -278,7 +278,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     placeholderData: (prev) => prev,
   });
 
-  const chooseM = useMutation({
+  const chooseM = useMutation({ // noc-allow: invalidate-only — the choice is followed by a full page reload (the org swap), so no cache outlives it and there is nothing to place
     mutationFn: (orgId: string) => api.put<MeAccess>('/api/me/org-choice', { org_id: orgId }),
   });
   const choose = useCallback(async (orgId: string) => {

@@ -9,7 +9,8 @@
  *   const submit = useSubmitAIFeedback();
  *   await submit.mutateAsync({ output_ref: "ai_output:abc", rating: 1 });
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useCacheWriteMutation } from '../../cache-writes';
 import { api } from '@noctusai/seed/infra';
 
 export type AIFeedbackRating = 1 | -1;
@@ -54,14 +55,18 @@ export interface SubmitFeedbackInput {
 }
 
 export function useSubmitAIFeedback() {
-  const qc = useQueryClient();
-  return useMutation<AIFeedbackRow, Error, SubmitFeedbackInput>({
+  return useCacheWriteMutation<AIFeedbackRow, SubmitFeedbackInput>({
     mutationFn: async (input) => {
       const result = (await api.post('/api/ai/feedback', input)) as FeedbackResponse;
       return (result?.data as AIFeedbackRow) ?? { ...input };
     },
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ['ai_feedback', vars.output_ref] });
-    },
+    // The rating the user just gave IS the feedback on screen: draw it, then keep the server's row.
+    targets: ({ output_ref }) => [
+      {
+        queryKey: ['ai_feedback', output_ref],
+        optimistic: (old: AIFeedbackRow | null | undefined, input) => ({ ...(old ?? {}), ...input }),
+        commit: (_old: AIFeedbackRow | null | undefined, saved) => saved,
+      },
+    ],
   });
 }

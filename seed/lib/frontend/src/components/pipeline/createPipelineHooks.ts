@@ -16,8 +16,10 @@
  *
  * Once is enough.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
+
+import { listOps, useCacheWriteMutation } from '../../cache-writes';
 
 import type {
   PipelineApi,
@@ -121,10 +123,8 @@ export function createPipelineHooks<TCard>(
    * Omit it and this hook's behaviour is byte-identical to before.
    */
   function useMoveCard(options?: { onError?: (error: Error, vars: MoveVariables) => void }) {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-      mutationFn: async (vars: MoveVariables) => {
+    return useCacheWriteMutation<TCard | null, MoveVariables>({
+      mutationFn: async (vars) => {
         const result = await api.post(`${moveEndpoint}/${vars.cardId}/mover-etapa`, {
           para_etapa_id: vars.toStageId,
           novo_indice: vars.toIndex,
@@ -134,21 +134,16 @@ export function createPipelineHooks<TCard>(
         return unwrap<TCard | null>(result, null);
       },
 
-      onMutate: async (vars) => {
-        // Optimistic move so the card lands under the cursor immediately.
-        await queryClient.cancelQueries({ queryKey: [queryKey] });
-
-        // getQueriesData, NOT getQueryData: the key carries the active filters
-        // (`[queryKey, filtros]`), so reading the bare key returns an entry
-        // that is usually empty — the optimistic move would appear to do
-        // nothing until the refetch landed, and the rollback would restore a
-        // snapshot of nothing.
-        const previous = queryClient.getQueriesData({ queryKey: [queryKey] });
-
-        queryClient.setQueriesData(
-          { queryKey: [queryKey] },
-          (old: PipelineColumn<TCard>[] | undefined) => {
-            if (!old) return old;
+      // Optimistic move so the card lands under the cursor immediately. `match: 'prefix'` (not the bare
+      // key): the board key carries the active filters (`[queryKey, filtros]`), so a bare read would
+      // snapshot an empty entry and the rollback would silently restore nothing. The server's answer is
+      // only the moved card (totals/ordering are the server's), so there is no commit: settle refetches.
+      targets: [
+        {
+          queryKey: [queryKey],
+          match: 'prefix',
+          optimistic: (old: PipelineColumn<TCard>[] | undefined, vars) => {
+            if (!Array.isArray(old)) return old;
 
             const card = old
               .flatMap((c) => c.cards)
@@ -180,27 +175,16 @@ export function createPipelineHooks<TCard>(
               ),
             }));
           },
-        );
+        },
+      ],
+      invalidate: invalidateOnSettle.map((k) => [k]),
 
-        return { previous };
-      },
-
-      onError: (error: Error, vars, context) => {
-        context?.previous?.forEach(([key, data]) => {
-          queryClient.setQueryData(key, data);
-        });
+      onError: (error, vars) => {
         if (options?.onError) {
           options.onError(error, vars);
         } else {
           toast.error(`Erro ao mover ${entityLabel}`, { description: error.message });
         }
-      },
-
-      onSettled: () => {
-        queryClient.invalidateQueries({ queryKey: [queryKey] });
-        invalidateOnSettle.forEach((k) =>
-          queryClient.invalidateQueries({ queryKey: [k] }),
-        );
       },
     });
   }
@@ -208,109 +192,107 @@ export function createPipelineHooks<TCard>(
   // ---- Stage CRUD -------------------------------------------------------
 
   /**
-   * Invalidate the board too, not just the stage list.
+   * The board is invalidated too, not just the stage list.
    *
    * A rename changes what every COLUMN HEADER says, and column definitions
    * arrive with the board payload. Refreshing only the stage list leaves the
    * board rendering the old label until something else happens to refetch it,
    * which reads as "the rename didn't work".
    */
-  function useStageRefresh() {
-    const queryClient = useQueryClient();
-    return () => {
-      queryClient.invalidateQueries({ queryKey: stagesKey });
-      queryClient.invalidateQueries({ queryKey: [queryKey] });
-    };
-  }
+  const boardKey: QueryKey[] = [[queryKey]];
 
   function useCreateStage() {
-    const refresh = useStageRefresh();
-    return useMutation({
-      mutationFn: async (input: StageCreateInput) => {
+    return useCacheWriteMutation<PipelineStage | null, StageCreateInput>({
+      mutationFn: async (input) => {
         const result = await api.post(stagesEndpoint!, input);
         return unwrap<PipelineStage | null>(result, null);
       },
+      // The server assigns id + posicao: commit the created stage into the list (no stand-in).
+      targets: [
+        {
+          queryKey: stagesKey,
+          commit: (old: PipelineStage[] | undefined, stage) =>
+            stage ? listOps.replace(old, stage.id, stage) : old,
+        },
+      ],
+      invalidate: boardKey,
       onSuccess: (stage) => {
         toast.success(`Etapa "${stage?.label ?? ''}" criada`);
-        refresh();
       },
-      onError: (error: Error) =>
+      onError: (error) =>
         toast.error('Erro ao criar etapa', { description: error.message }),
     });
   }
 
   function useUpdateStage() {
-    const queryClient = useQueryClient();
-    const refresh = useStageRefresh();
-    return useMutation({
-      mutationFn: async (vars: { id: string; input: StageUpdateInput }) => {
+    // Optimistic: a rename in `PipelineStagesManager` is cheap + exactly rollbackable (we know precisely
+    // what changed), so waiting a round trip to see the new label reads as unresponsive.
+    //
+    // `StageUpdateInput.cor` is a plain `string` (the raw value out of a colour picker, unvalidated) while
+    // `PipelineStage.cor` is the narrower `StageColor` union — the cast is safe because this merge is a
+    // TRANSIENT optimistic snapshot, confirmed by the server's row on answer or rolled back on error.
+    const patch = (s: PipelineStage, id: string, input: StageUpdateInput) =>
+      s.id === id ? ({ ...s, ...input } as PipelineStage) : s;
+    return useCacheWriteMutation<PipelineStage | null, { id: string; input: StageUpdateInput }>({
+      mutationFn: async (vars) => {
         const result = await api.patch(`${stagesEndpoint}/${vars.id}`, vars.input);
         return unwrap<PipelineStage | null>(result, null);
       },
-      // Optimistic: a rename in `PipelineStagesManager` is cheap + exactly
-      // rollbackable (we know precisely what changed), so waiting a round
-      // trip to see the new label reads as unresponsive. Rollback discipline
-      // mirrors `products/social-wiring/frontend/src/hooks/useCardHub.ts`'s
-      // `useSetClienteTagsMutation`: cancel in-flight reads of this key,
-      // snapshot, patch, restore the snapshot on error.
-      onMutate: async (vars) => {
-        await queryClient.cancelQueries({ queryKey: stagesKey });
-        await queryClient.cancelQueries({ queryKey: [queryKey] });
-        const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
-        // `StageUpdateInput.cor` is a plain `string` (the raw value out of a
-        // colour picker, unvalidated) while `PipelineStage.cor` is the narrower
-        // `StageColor` union — the cast is safe because this merge is a
-        // TRANSIENT optimistic snapshot, immediately either confirmed by the
-        // settle-time refetch or rolled back via `context` on error; it never
-        // persists as-is.
-        const patch = (s: PipelineStage) =>
-          s.id === vars.id ? ({ ...s, ...vars.input } as PipelineStage) : s;
-        if (previous) {
-          queryClient.setQueryData<PipelineStage[]>(stagesKey, previous.map(patch));
-        }
-        // The BOARD too: column headers read `coluna.stage`, so a rename or
-        // recolour made from a column header (`editableHeaders`) must land on
-        // the header immediately, not one round trip later. Same
-        // getQueriesData discipline as `useMoveCard` — the board key carries
-        // the filters.
-        const previousBoard = queryClient.getQueriesData({ queryKey: [queryKey] });
-        queryClient.setQueriesData(
-          { queryKey: [queryKey] },
-          (old: PipelineColumn<TCard>[] | undefined) =>
-            old?.map((coluna) =>
-              coluna.stage && coluna.stage.id === vars.id
-                ? { ...coluna, stage: patch(coluna.stage) }
-                : coluna,
-            ),
-        );
-        return { previous, previousBoard };
-      },
-      onError: (error: Error, _vars, context) => {
-        if (context?.previous) {
-          queryClient.setQueryData(stagesKey, context.previous);
-        }
-        context?.previousBoard?.forEach(([key, data]) => {
-          queryClient.setQueryData(key, data);
-        });
+      targets: ({ id, input }) => [
+        {
+          queryKey: stagesKey,
+          optimistic: (old: PipelineStage[] | undefined) => old?.map((s) => patch(s, id, input)),
+          commit: (old: PipelineStage[] | undefined, stage) =>
+            stage ? listOps.patch(old, id, stage) : old,
+        },
+        // The BOARD too: column headers read `coluna.stage`, so a rename or recolour made from a column
+        // header (`editableHeaders`) must land on the header immediately, not one round trip later.
+        // `match: 'prefix'` for the same reason as `useMoveCard` — the board key carries the filters.
+        {
+          queryKey: [queryKey],
+          match: 'prefix',
+          optimistic: (old: PipelineColumn<TCard>[] | undefined) =>
+            Array.isArray(old)
+              ? old.map((coluna) =>
+                  coluna.stage && coluna.stage.id === id
+                    ? { ...coluna, stage: patch(coluna.stage, id, input) }
+                    : coluna,
+                )
+              : old,
+          commit: (old: PipelineColumn<TCard>[] | undefined, stage) =>
+            Array.isArray(old) && stage
+              ? old.map((coluna) =>
+                  coluna.stage && coluna.stage.id === id ? { ...coluna, stage: { ...coluna.stage, ...stage } } : coluna,
+                )
+              : old,
+        },
+      ],
+      onError: (error) => {
         toast.error('Erro ao atualizar etapa', { description: error.message });
       },
       onSuccess: (stage) => {
         toast.success(`Etapa "${stage?.label ?? ''}" atualizada`);
-        refresh();
       },
     });
   }
 
   function useDeleteStage() {
-    const refresh = useStageRefresh();
-    return useMutation({
-      mutationFn: async (vars: { id: string; reassignTo?: string }) => {
+    return useCacheWriteMutation<{ cards_movidos?: number } | null, { id: string; reassignTo?: string }>({
+      mutationFn: async (vars) => {
         const result = await api.delete(
           `${stagesEndpoint}/${vars.id}`,
           vars.reassignTo ? { reassign_to: vars.reassignTo } : undefined,
         );
         return unwrap<{ cards_movidos?: number } | null>(result, null);
       },
+      // The stage leaves the list on click; where its cards went is the server's call, so the board refetches.
+      targets: ({ id }) => [
+        {
+          queryKey: stagesKey,
+          optimistic: (old: PipelineStage[] | undefined) => listOps.remove(old, id),
+        },
+      ],
+      invalidate: boardKey,
       onSuccess: (result) => {
         const moved = result?.cards_movidos ?? 0;
         toast.success(
@@ -320,70 +302,54 @@ export function createPipelineHooks<TCard>(
               }`
             : 'Etapa excluída',
         );
-        refresh();
       },
-      onError: (error: Error) =>
+      onError: (error) =>
         toast.error('Erro ao excluir etapa', { description: error.message }),
     });
   }
 
   function useReorderStages() {
-    const queryClient = useQueryClient();
-    const refresh = useStageRefresh();
-    return useMutation({
-      mutationFn: async (ordem: string[]) => {
+    return useCacheWriteMutation<PipelineStage[], string[]>({
+      mutationFn: async (ordem) => {
         const result = await api.post(`${stagesEndpoint}/reordenar`, { ordem });
         return unwrap<PipelineStage[]>(result, []);
       },
-      // Optimistic: `PipelineStagesManager`'s up/down buttons should move
-      // the row on click, not on round-trip. `ordem` (the full new id
-      // order) IS the exact new `posicao` assignment, so — same rollback
-      // discipline as `useUpdateStage` above — the snapshot restore on
-      // error is exact, not a guess.
-      onMutate: async (ordem: string[]) => {
-        await queryClient.cancelQueries({ queryKey: stagesKey });
-        await queryClient.cancelQueries({ queryKey: [queryKey] });
-        const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
+      // Optimistic: `PipelineStagesManager`'s up/down buttons should move the row on click, not on
+      // round-trip. `ordem` (the full new id order) IS the exact new `posicao` assignment, so the
+      // snapshot restore on error is exact, not a guess.
+      targets: (ordem) => {
         const posicaoById = new Map(ordem.map((id, index) => [id, index]));
-        if (previous) {
-          queryClient.setQueryData<PipelineStage[]>(
-            stagesKey,
-            previous.map((s) =>
-              posicaoById.has(s.id) ? { ...s, posicao: posicaoById.get(s.id)! } : s,
-            ),
-          );
-        }
-        // The BOARD's column order too, so a column dragged on the board
-        // (`PipelineBoard reorderableColumns`) stays where it was dropped
-        // instead of snapping back until the refetch lands. Columns the order
-        // does not mention keep their relative place at the end.
-        const previousBoard = queryClient.getQueriesData({ queryKey: [queryKey] });
-        queryClient.setQueriesData(
-          { queryKey: [queryKey] },
-          (old: PipelineColumn<TCard>[] | undefined) => {
-            if (!old) return old;
-            const rank = (c: PipelineColumn<TCard>) =>
-              posicaoById.get(c.etapa) ?? Number.MAX_SAFE_INTEGER;
-            return old
-              .map((coluna, index) => ({ coluna, index }))
-              .sort((a, b) => rank(a.coluna) - rank(b.coluna) || a.index - b.index)
-              .map(({ coluna }) => coluna);
+        return [
+          {
+            queryKey: stagesKey,
+            optimistic: (old: PipelineStage[] | undefined) =>
+              old?.map((s) =>
+                posicaoById.has(s.id) ? { ...s, posicao: posicaoById.get(s.id)! } : s,
+              ),
           },
-        );
-        return { previous, previousBoard };
+          // The BOARD's column order too, so a column dragged on the board (`PipelineBoard
+          // reorderableColumns`) stays where it was dropped instead of snapping back until the refetch
+          // lands. Columns the order does not mention keep their relative place at the end.
+          {
+            queryKey: [queryKey],
+            match: 'prefix' as const,
+            optimistic: (old: PipelineColumn<TCard>[] | undefined) => {
+              if (!Array.isArray(old)) return old;
+              const rank = (c: PipelineColumn<TCard>) =>
+                posicaoById.get(c.etapa) ?? Number.MAX_SAFE_INTEGER;
+              return old
+                .map((coluna, index) => ({ coluna, index }))
+                .sort((a, b) => rank(a.coluna) - rank(b.coluna) || a.index - b.index)
+                .map(({ coluna }) => coluna);
+            },
+          },
+        ];
       },
-      onError: (error: Error, _vars, context) => {
-        if (context?.previous) {
-          queryClient.setQueryData(stagesKey, context.previous);
-        }
-        context?.previousBoard?.forEach(([key, data]) => {
-          queryClient.setQueryData(key, data);
-        });
+      onError: (error) => {
         toast.error('Erro ao reordenar etapas', { description: error.message });
       },
       onSuccess: () => {
         toast.success('Ordem das etapas atualizada');
-        refresh();
       },
     });
   }

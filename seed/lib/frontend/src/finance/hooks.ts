@@ -21,6 +21,8 @@ import {
   type QueryKey,
 } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
+import { envelopeOps } from '../organ-kit/cacheOps';
 import { createFetchTransport, errorMessage, keep, signals } from '../organ-kit/query';
 import { buildQuery } from './format';
 import type {
@@ -44,6 +46,7 @@ import type {
   FinanceCategory,
   FinanceEntry,
   FinanceEntryDetail,
+  Settlement,
   FinancePaginated,
   GatewaySyncResult,
   MatchResult,
@@ -165,10 +168,51 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
 
   const data = async <T,>(promise: Promise<{ data: T }>): Promise<T> => (await promise).data;
 
+  /** For the mutations that cannot place their answer (see each `noc-allow`): refresh by key. */
   function useInvalidate() {
     const qc = useQueryClient();
     return (...keys: QueryKey[]) => Promise.all(keys.map((k) => qc.invalidateQueries({ queryKey: k })));
   }
+
+  /** Insert-or-replace by id: the server's row lands where the cached list already has it, else at the end. */
+  const upsert = <T extends { id: string }>(old: T[] | undefined, row: T): T[] | undefined => listOps.replace(old, row.id, row);
+
+  /** Prefix of every cached entries LIST page (details and attachments share the `entries` family but not this). */
+  const entriesLists = [...financeKeys.entries, 'list'] as const;
+  const entryDetails = [...financeKeys.entries, 'detail'] as const;
+  /** Prefix of every cached statement-lines page. */
+  const statementLines = [...financeKeys.statements, 'lines'] as const;
+
+  /** A detail object is the only non-array under the `detail` prefix whose `id` can match. */
+  const isEntryDetail = (old: unknown, id: string): old is FinanceEntryDetail =>
+    !!old && typeof old === 'object' && !Array.isArray(old) && (old as { id?: unknown }).id === id;
+
+  /**
+   * One server-answered entry goes into every cached list page that shows it AND the cached detail
+   * (merged: the detail keeps its settlements/attachments). Whether a NEW entry belongs on a page of a
+   * filtered / paged list is the server's call — creates and bulk imports are the only places that cannot
+   * be placed (see their `noc-allow`).
+   */
+  const entryCommitTargets = <TData,>(pick: (r: TData) => FinanceEntry, settlementOf?: (r: TData) => Settlement) => [
+    {
+      queryKey: entriesLists,
+      match: 'prefix' as const,
+      commit: (old: any, r: TData) => {
+        const e = pick(r);
+        return envelopeOps.patch(old, e.id, e);
+      },
+    },
+    {
+      queryKey: entryDetails,
+      match: 'prefix' as const,
+      commit: (old: any, r: TData) => {
+        const e = pick(r);
+        if (!isEntryDetail(old, e.id)) return old;
+        const st = settlementOf?.(r);
+        return { ...old, ...e, ...(st ? { settlements: upsert(old.settlements, st) } : {}) };
+      },
+    },
+  ];
 
   // ---- accounts ----------------------------------------------------------
   function useAccounts(params: { active?: boolean } = {}) {
@@ -199,22 +243,30 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     });
   }
   function useAccountMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.accounts, ['finance', 'balance'], financeKeys.reports);
+    // Balances and reports are derived views: they refresh, the account lists are written.
+    const derived = [['finance', 'balance'], financeKeys.reports] as QueryKey[];
     return {
-      create: useMutation({
-        mutationFn: (b: AccountInput) => data<FinanceAccount>(api.post(p('/accounts'), b)),
-        onSuccess: done,
+      // The unfiltered list (`useAccounts()` with no params) gets the server's row; a list filtered by
+      // `active` can't know whether it belongs, so it converges on the settle refetch.
+      create: useCacheWriteMutation<FinanceAccount, AccountInput>({
+        mutationFn: (b) => data<FinanceAccount>(api.post(p('/accounts'), b)),
+        targets: [{ queryKey: [...financeKeys.accounts, {}], commit: (old: FinanceAccount[] | undefined, saved) => upsert(old, saved) }],
+        invalidate: [financeKeys.accounts, ...derived],
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: AccountPatch & { id: string }) =>
-          data<FinanceAccount>(api.patch(p(`/accounts/${id}`), b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<FinanceAccount, AccountPatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<FinanceAccount>(api.patch(p(`/accounts/${id}`), b)),
+        targets: ({ id }) => [
+          { queryKey: financeKeys.accounts, match: 'prefix', commit: (old: FinanceAccount[] | undefined, saved) => listOps.patch(old, id, saved) },
+        ],
+        invalidate: derived,
       }),
       /** Hard delete: only an account nothing references; otherwise 409 `conta_em_uso` (deactivate instead). */
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(p(`/accounts/${id}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(p(`/accounts/${id}`)),
+        targets: (id) => [
+          { queryKey: financeKeys.accounts, match: 'prefix', optimistic: (old: FinanceAccount[] | undefined) => listOps.remove(old, id) },
+        ],
+        invalidate: derived,
       }),
     };
   }
@@ -228,21 +280,26 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useCategoryMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.categories, financeKeys.reports);
+    const derived = [financeKeys.reports] as QueryKey[];
     return {
-      create: useMutation({
-        mutationFn: (b: FinanceCategoryInput) => data<FinanceCategory>(api.post(p('/categories'), b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<FinanceCategory, FinanceCategoryInput>({
+        mutationFn: (b) => data<FinanceCategory>(api.post(p('/categories'), b)),
+        targets: [{ queryKey: financeKeys.categories, commit: (old: FinanceCategory[] | undefined, saved) => upsert(old, saved) }],
+        invalidate: derived,
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: FinanceCategoryPatch & { id: string }) =>
-          data<FinanceCategory>(api.patch(p(`/categories/${id}`), b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<FinanceCategory, FinanceCategoryPatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<FinanceCategory>(api.patch(p(`/categories/${id}`), b)),
+        targets: ({ id }) => [
+          { queryKey: financeKeys.categories, commit: (old: FinanceCategory[] | undefined, saved) => listOps.patch(old, id, saved) },
+        ],
+        invalidate: derived,
       }),
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(p(`/categories/${id}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(p(`/categories/${id}`)),
+        targets: (id) => [
+          { queryKey: financeKeys.categories, optimistic: (old: FinanceCategory[] | undefined) => listOps.remove(old, id) },
+        ],
+        invalidate: derived,
       }),
     };
   }
@@ -256,17 +313,16 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useCostCenterMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.costCenters);
     return {
-      create: useMutation({
-        mutationFn: (b: CostCenterInput) => data<CostCenter>(api.post(p('/cost-centers'), b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<CostCenter, CostCenterInput>({
+        mutationFn: (b) => data<CostCenter>(api.post(p('/cost-centers'), b)),
+        targets: [{ queryKey: financeKeys.costCenters, commit: (old: CostCenter[] | undefined, saved) => upsert(old, saved) }],
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: CostCenterPatch & { id: string }) =>
-          data<CostCenter>(api.patch(p(`/cost-centers/${id}`), b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<CostCenter, CostCenterPatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<CostCenter>(api.patch(p(`/cost-centers/${id}`), b)),
+        targets: ({ id }) => [
+          { queryKey: financeKeys.costCenters, commit: (old: CostCenter[] | undefined, saved) => listOps.patch(old, id, saved) },
+        ],
       }),
     };
   }
@@ -294,37 +350,43 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     const inv = useInvalidate();
     return () => inv(financeKeys.entries, ['finance', 'balance'], financeKeys.reports, financeKeys.statements);
   }
+  /** Anything that changes money refreshes the derived views: balances, every report, the reconciliation. */
+  const moneyDerived = [financeKeys.entries, ['finance', 'balance'], financeKeys.reports, financeKeys.statements] as QueryKey[];
+  const settleTargets = entryCommitTargets<SettleResult>((r) => r.entry, (r) => r.settlement);
   function useEntryMutations() {
-    const done = useMoneyInvalidate();
+    const moneyDone = useMoneyInvalidate();
     return {
       /** Always answers a LIST (one element, or the whole installment group). */
-      create: useMutation({
+      create: useMutation({ // noc-allow: invalidate-only — a new entry (or a whole installment group) lands on whichever page of whichever filtered / paged list the SERVER orders it into; the answer carries no list position
         mutationFn: (b: EntryInput) => data<FinanceEntry[]>(api.post(p('/entries'), b)),
-        onSuccess: done,
+        onSuccess: moneyDone,
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: EntryPatch & { id: string }) =>
-          data<FinanceEntry>(api.patch(p(`/entries/${id}`), b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<FinanceEntry, EntryPatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<FinanceEntry>(api.patch(p(`/entries/${id}`), b)),
+        targets: entryCommitTargets<FinanceEntry>((e) => e),
+        invalidate: moneyDerived,
       }),
-      cancel: useMutation({
-        mutationFn: (id: string) => data<FinanceEntry>(api.post(p(`/entries/${id}/cancel`), {})),
-        onSuccess: done,
+      cancel: useCacheWriteMutation<FinanceEntry, string>({
+        mutationFn: (id) => data<FinanceEntry>(api.post(p(`/entries/${id}/cancel`), {})),
+        targets: entryCommitTargets<FinanceEntry>((e) => e),
+        invalidate: moneyDerived,
       }),
       /** Hard delete ("lançado por engano"): only when the detail says `deletable`; else 409 (cancel instead). */
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(p(`/entries/${id}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(p(`/entries/${id}`)),
+        targets: (id) => [{ queryKey: entriesLists, match: 'prefix', optimistic: (old: any) => envelopeOps.remove(old, id) }],
+        invalidate: moneyDerived,
       }),
-      settle: useMutation({
-        mutationFn: ({ id, ...b }: SettleInput & { id: string }) =>
-          data<SettleResult>(api.post(p(`/entries/${id}/settlements`), b)),
-        onSuccess: done,
+      settle: useCacheWriteMutation<SettleResult, SettleInput & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<SettleResult>(api.post(p(`/entries/${id}/settlements`), b)),
+        targets: settleTargets,
+        invalidate: moneyDerived,
       }),
-      reverse: useMutation({
-        mutationFn: ({ settlementId, reason }: { settlementId: string; reason: string }) =>
+      reverse: useCacheWriteMutation<SettleResult, { settlementId: string; reason: string }>({
+        mutationFn: ({ settlementId, reason }) =>
           data<SettleResult>(api.post(p(`/settlements/${settlementId}/reverse`), { reason })),
-        onSuccess: done,
+        targets: settleTargets,
+        invalidate: moneyDerived,
       }),
     };
   }
@@ -339,20 +401,24 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useAttachmentMutations(entryId: string) {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.attachments(entryId), financeKeys.entry(entryId));
+    // The entry detail carries a trimmed attachments summary: it refreshes, the attachments list is written.
+    const derived = [financeKeys.entry(entryId)] as QueryKey[];
     return {
-      upload: useMutation({
-        mutationFn: (file: File) => {
+      upload: useCacheWriteMutation<FinanceAttachment, File>({
+        mutationFn: (file) => {
           const form = new FormData();
           form.append('file', file);
           return data<FinanceAttachment>(api.upload(p(`/entries/${entryId}/attachments`), form));
         },
-        onSuccess: done,
+        targets: [{ queryKey: financeKeys.attachments(entryId), commit: (old: FinanceAttachment[] | undefined, saved) => upsert(old, saved) }],
+        invalidate: derived,
       }),
-      remove: useMutation({
-        mutationFn: (attachmentId: string) => api.delete(p(`/attachments/${attachmentId}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (attachmentId) => api.delete(p(`/attachments/${attachmentId}`)),
+        targets: (attachmentId) => [
+          { queryKey: financeKeys.attachments(entryId), optimistic: (old: FinanceAttachment[] | undefined) => listOps.remove(old, attachmentId) },
+        ],
+        invalidate: derived,
       }),
     };
   }
@@ -366,23 +432,22 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useRecurrenceMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.recurrences);
     return {
-      create: useMutation({
-        mutationFn: (b: RecurrenceInput) => data<Recurrence>(api.post(p('/recurrences'), b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<Recurrence, RecurrenceInput>({
+        mutationFn: (b) => data<Recurrence>(api.post(p('/recurrences'), b)),
+        targets: [{ queryKey: financeKeys.recurrences, commit: (old: Recurrence[] | undefined, saved) => upsert(old, saved) }],
       }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: RecurrencePatchInput & { id: string }) =>
-          data<Recurrence>(api.patch(p(`/recurrences/${id}`), b)),
-        onSuccess: done,
+      update: useCacheWriteMutation<Recurrence, RecurrencePatchInput & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<Recurrence>(api.patch(p(`/recurrences/${id}`), b)),
+        targets: ({ id }) => [
+          { queryKey: financeKeys.recurrences, commit: (old: Recurrence[] | undefined, saved) => listOps.patch(old, id, saved) },
+        ],
       }),
     };
   }
   function useTransfer() {
     const done = useMoneyInvalidate();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a transfer books two ledger rows and moves two balances; the answer is the transfer group, not a cached row, and balances / entries / reports are derived views
       mutationFn: (b: TransferInput) => data<TransferResult>(api.post(p('/transfers'), b)),
       onSuccess: done,
     });
@@ -438,22 +503,26 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useDreSettingsMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.reports);
+    // The answer IS the settings read; the DRE and the accountant checklist derive from it and refresh.
+    const settingsKey = [...financeKeys.reports, 'dre-settings'] as QueryKey;
+    const targets = [{ queryKey: settingsKey, commit: (_old: DreSettings | undefined, saved: DreSettings) => saved }];
+    const derived = [financeKeys.reports];
     return {
-      save: useMutation({
-        mutationFn: (b: DreSettingsInput) => data<DreSettings>(api.put(p('/dre-settings'), b)),
-        onSuccess: done,
+      save: useCacheWriteMutation<DreSettings, DreSettingsInput>({
+        mutationFn: (b) => data<DreSettings>(api.put(p('/dre-settings'), b)),
+        targets,
+        invalidate: derived,
       }),
       /** Confirm (or un-confirm) choices: the backend has no /confirm route, it is `PUT` with `confirmations`. */
-      confirm: useMutation({
-        mutationFn: ({ fields, note, confirmed = true }: DreConfirmInput) =>
+      confirm: useCacheWriteMutation<DreSettings, DreConfirmInput>({
+        mutationFn: ({ fields, note, confirmed = true }) =>
           data<DreSettings>(
             api.put(p('/dre-settings'), {
               confirmations: Object.fromEntries(fields.map((f) => [f, { confirmed, note: note ?? null }])),
             }),
           ),
-        onSuccess: done,
+        targets,
+        invalidate: derived,
       }),
     };
   }
@@ -468,16 +537,27 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
     return signals(q);
   }
   function useBudgetMutations() {
-    const inv = useInvalidate();
-    const done = () => inv(financeKeys.reports);
+    // The budget report is a derived view (it refreshes); the budgets lists are keyed by period, so the
+    // saved rows are merged into every cached period list that already holds that month.
+    const derived = [financeKeys.reports];
+    const budgetLists = [...financeKeys.reports, 'budgets'] as QueryKey;
     return {
-      save: useMutation({
-        mutationFn: (items: BudgetItemInput[]) => data<Budget[]>(api.put(p('/budgets'), { items })),
-        onSuccess: done,
+      save: useCacheWriteMutation<Budget[], BudgetItemInput[]>({
+        mutationFn: (items) => data<Budget[]>(api.put(p('/budgets'), { items })),
+        targets: [
+          {
+            queryKey: budgetLists,
+            match: 'prefix',
+            commit: (old: Budget[] | undefined, saved) =>
+              Array.isArray(old) ? saved.reduce<Budget[]>((acc, b) => (acc.some((x) => x.id === b.id) ? listOps.patch(acc, b.id, b)! : acc), old) : old,
+          },
+        ],
+        invalidate: derived,
       }),
-      remove: useMutation({
-        mutationFn: (id: string) => api.delete(p(`/budgets/${id}`)),
-        onSuccess: done,
+      remove: useCacheWriteMutation<unknown, string>({
+        mutationFn: (id) => api.delete(p(`/budgets/${id}`)),
+        targets: (id) => [{ queryKey: budgetLists, match: 'prefix', optimistic: (old: Budget[] | undefined) => listOps.remove(old, id) }],
+        invalidate: derived,
       }),
     };
   }
@@ -529,8 +609,16 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
   }
   function useReconciliationMutations() {
     const done = useMoneyInvalidate();
+    const lineTarget = (pick: (r: any) => StatementLine) => ({
+      queryKey: statementLines,
+      match: 'prefix' as const,
+      commit: (old: any, r: any) => {
+        const l = pick(r);
+        return envelopeOps.patch(old, l.id, l);
+      },
+    });
     return {
-      importStatement: useMutation({
+      importStatement: useMutation({ // noc-allow: invalidate-only — a statement import creates an import record plus N lines and suggestions the server computes; the answer is a count summary, not rows
         mutationFn: ({ account_id, file, format, column_map }: StatementImportInput) => {
           const form = new FormData();
           form.append('account_id', account_id);
@@ -541,16 +629,19 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
         },
         onSuccess: done,
       }),
-      match: useMutation({
-        mutationFn: ({ lineId, entryId }: { lineId: string; entryId: string }) =>
+      // The matched line and the entry it now settles come back: both land in the cached pages.
+      match: useCacheWriteMutation<MatchResult, { lineId: string; entryId: string }>({
+        mutationFn: ({ lineId, entryId }) =>
           data<MatchResult>(api.post(p(`/statement-lines/${lineId}/match`), { entry_id: entryId })),
-        onSuccess: done,
+        targets: [lineTarget((r: MatchResult) => r.line), ...entryCommitTargets<MatchResult>((r) => r.entry)],
+        invalidate: moneyDerived,
       }),
-      ignore: useMutation({
-        mutationFn: (lineId: string) => data<StatementLine>(api.post(p(`/statement-lines/${lineId}/ignore`), {})),
-        onSuccess: done,
+      ignore: useCacheWriteMutation<StatementLine, string>({
+        mutationFn: (lineId) => data<StatementLine>(api.post(p(`/statement-lines/${lineId}/ignore`), {})),
+        targets: [lineTarget((l: StatementLine) => l)],
+        invalidate: moneyDerived,
       }),
-      gatewaySync: useMutation({
+      gatewaySync: useMutation({ // noc-allow: invalidate-only — a gateway sync books fees / transfers in bulk and returns a review summary, not the booked rows
         mutationFn: ({ accountId, since }: { accountId: string; since?: string }) =>
           data<GatewaySyncResult>(api.post(p(`/accounts/${accountId}/gateway-sync`), since ? { since } : {})),
         onSuccess: done,
@@ -560,7 +651,7 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
 
   // ---- exports (admin or the accountant read grant) ---------------------------------------------------
   function useExport() {
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — a file download: it reads and writes nothing any cached query shows
       mutationFn: async ({ path, params, filename }: DownloadInput) => {
         const blob = await api.download(`${path}${buildQuery(params)}`);
         saveBlob(blob, filename);

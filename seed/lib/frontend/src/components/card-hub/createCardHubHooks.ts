@@ -38,9 +38,10 @@
  * mutation.
  */
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { QueryClient } from "@tanstack/react-query";
+import type { InfiniteData } from "@tanstack/react-query";
 
 import type { ApiClient } from "../../api";
+import { listOps, useCacheWriteMutation } from "../../cache-writes";
 import { prepareImageForUpload } from "../../imageUpload";
 import type {
   Acesso,
@@ -131,19 +132,54 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
 
   const entityBase = (id: string) => `${basePath}/${encodeURIComponent(id)}`;
 
-  function invalidateEverything(qc: QueryClient) {
-    return qc.invalidateQueries({ queryKey: ROOT_KEY });
+  /** Renaming/recolouring/deleting a tag changes what ANY open card shows (its `tags` are a snapshot at
+   *  fetch time) — the whole root settles. */
+  const everything = [ROOT_KEY] as const;
+
+  /** A checklist edit changes the checklists, the card's badges (item counts) and the timeline (the
+   *  activity entry) — nothing else. The derived reads are refreshed; the checklists read is written. */
+  const checklistDerived = (id: string) => [keys.card(id), keys.timelineAll(id)];
+
+  // ─── Cache edits shared by the writes below ──────────────────────────────
+
+  type TimelineData = InfiniteData<TimelinePage>;
+  const hasPages = (d: unknown): d is TimelineData => !!d && Array.isArray((d as TimelineData).pages);
+
+  /** Put an entry at the top of the newest page of a (cached) timeline. */
+  function timelinePrepend(old: TimelineData | undefined, entry: TimelineEntry): TimelineData | undefined {
+    if (!hasPages(old) || old.pages.length === 0) return old;
+    const [first, ...rest] = old.pages;
+    const items = [entry, ...first.items.filter((e) => e.id !== entry.id)];
+    return { ...old, pages: [{ ...first, items, total: first.total + (items.length - first.items.length) }, ...rest] };
   }
 
-  /** A checklist edit changes the checklists, the card's badges (item counts)
-   *  and the timeline (the activity entry) — nothing else. */
-  function invalidateChecklistFamily(qc: QueryClient, id: string) {
-    return Promise.all([
-      qc.invalidateQueries({ queryKey: keys.checklists(id) }),
-      qc.invalidateQueries({ queryKey: keys.card(id) }),
-      qc.invalidateQueries({ queryKey: keys.timelineAll(id) }),
-    ]);
+  /** Merge `changes` into the entry `entryId` wherever it sits in a (cached) timeline. */
+  function timelinePatch(old: TimelineData | undefined, entryId: string, changes: Record<string, unknown>): TimelineData | undefined {
+    if (!hasPages(old)) return old;
+    return {
+      ...old,
+      pages: old.pages.map((pg) => ({
+        ...pg,
+        items: pg.items.map((e) => (e.id === entryId ? ({ ...e, ...changes } as TimelineEntry) : e)),
+      })),
+    };
   }
+
+  /** A comentario as the timeline renders it. */
+  const notaEntry = (n: Nota): TimelineEntry => ({
+    id: n.id,
+    kind: "nota",
+    ocorrido_em: new Date().toISOString(),
+    ator: n.autor,
+    corpo: n.corpo,
+    autor: n.autor,
+    editado_em: n.editado_em,
+    deleted_at: n.deleted_at,
+  });
+
+  /** Patch the cached card summary; an uncached card stays uncached. */
+  const patchCard = (old: TResumo | undefined, fn: (card: TResumo) => Partial<TResumo>): TResumo | undefined =>
+    old ? { ...old, ...fn(old) } : old;
 
   // ─── Card summary ────────────────────────────────────────────────────────
 
@@ -184,29 +220,85 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
    * callers MUST surface `err.message`, never read it as a network failure.
    */
   function useNotaMutations(id: string) {
-    const qc = useQueryClient();
-    const invalidate = () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: keys.card(id) }),
-        qc.invalidateQueries({ queryKey: keys.timelineAll(id) }),
-      ]);
-
-    const create = useMutation({
-      mutationFn: ({ corpo, tipo = "comentario" }: { corpo: string; tipo?: NotaTipo }) =>
+    // The timeline cached WITHOUT a kinds filter gets the nota itself; filtered timelines converge on settle.
+    const create = useCacheWriteMutation<Nota, { corpo: string; tipo?: NotaTipo }>({
+      mutationFn: ({ corpo, tipo = "comentario" }) =>
         api.post<Nota>(`${entityBase(id)}/notas`, { corpo, tipo }),
-      onSuccess: invalidate,
+      // The author comes from the server, so this commits (no stand-in): the note is on screen after ONE
+      // round trip, not write + two refetches.
+      targets: ({ tipo = "comentario" }) => [
+        {
+          queryKey: keys.card(id),
+          commit: (old: TResumo | undefined, nota) =>
+            patchCard(old, (c) =>
+              tipo === "descricao"
+                ? ({
+                    descricao: { id: nota.id, corpo: nota.corpo, editado_em: nota.editado_em },
+                    badges: { ...c.badges, tem_descricao: true },
+                  } as Partial<TResumo>)
+                : ({ badges: { ...c.badges, notas: c.badges.notas + 1 } } as Partial<TResumo>),
+            ),
+        },
+        ...(tipo === "descricao"
+          ? []
+          : [
+              {
+                queryKey: keys.timeline(id),
+                commit: (old: TimelineData | undefined, nota: Nota) => timelinePrepend(old, notaEntry(nota)),
+              },
+            ]),
+      ],
+      invalidate: [keys.timelineAll(id)],
     });
 
-    const update = useMutation({
-      mutationFn: ({ notaId, corpo }: { notaId: string; corpo: string }) =>
+    const update = useCacheWriteMutation<Nota, { notaId: string; corpo: string }>({
+      mutationFn: ({ notaId, corpo }) =>
         api.patch<Nota>(`${entityBase(id)}/notas/${encodeURIComponent(notaId)}`, { corpo }),
-      onSuccess: invalidate,
+      targets: ({ notaId, corpo }) => [
+        {
+          queryKey: keys.card(id),
+          optimistic: (old: TResumo | undefined) =>
+            patchCard(old, (c) =>
+              c.descricao?.id === notaId ? ({ descricao: { ...c.descricao, corpo } } as Partial<TResumo>) : {},
+            ),
+          commit: (old: TResumo | undefined, nota) =>
+            patchCard(old, (c) =>
+              c.descricao?.id === notaId
+                ? ({ descricao: { ...c.descricao, corpo: nota.corpo, editado_em: nota.editado_em } } as Partial<TResumo>)
+                : {},
+            ),
+        },
+        {
+          queryKey: keys.timeline(id),
+          optimistic: (old: TimelineData | undefined) => timelinePatch(old, notaId, { corpo }),
+          commit: (old: TimelineData | undefined, nota) =>
+            timelinePatch(old, notaId, { corpo: nota.corpo, editado_em: nota.editado_em }),
+        },
+      ],
+      invalidate: [keys.timelineAll(id)],
     });
 
-    const remove = useMutation({
-      mutationFn: (notaId: string) =>
-        api.delete(`${entityBase(id)}/notas/${encodeURIComponent(notaId)}`),
-      onSuccess: invalidate,
+    const remove = useCacheWriteMutation<unknown, string>({
+      mutationFn: (notaId) => api.delete(`${entityBase(id)}/notas/${encodeURIComponent(notaId)}`),
+      // A deleted comentario keeps its timeline slot as a tombstone (`deleted_at`); a deleted descricao
+      // empties the card's description. Either way the badge follows.
+      targets: (notaId) => [
+        {
+          queryKey: keys.card(id),
+          optimistic: (old: TResumo | undefined) =>
+            patchCard(old, (c) =>
+              c.descricao?.id === notaId
+                ? ({ descricao: null, badges: { ...c.badges, tem_descricao: false } } as Partial<TResumo>)
+                : ({ badges: { ...c.badges, notas: Math.max(0, c.badges.notas - 1) } } as Partial<TResumo>),
+            ),
+        },
+        {
+          queryKey: keys.timeline(id),
+          optimistic: (old: TimelineData | undefined) =>
+            timelinePatch(old, notaId, { deleted_at: new Date().toISOString() }),
+        },
+      ],
+      invalidate: [keys.timelineAll(id)],
     });
 
     return { create, update, remove };
@@ -225,25 +317,32 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
   }
 
   function useTagCatalogMutations() {
-    const qc = useQueryClient();
-    // Renaming/recolouring/deleting a tag changes what ANY open card shows
-    // (its `tags` are a snapshot at fetch time) — invalidate the whole root.
-    const invalidate = () => invalidateEverything(qc);
-
-    const create = useMutation({
-      mutationFn: (body: { nome: string; cor: string }) => api.post<Tag>(`${basePath}/tags`, body),
-      onSuccess: invalidate,
+    // Renaming/recolouring/deleting a tag changes what ANY open card shows (its `tags` are a snapshot at
+    // fetch time) — the catalogue is written, the whole root settles.
+    const create = useCacheWriteMutation<Tag, { nome: string; cor: string }>({
+      mutationFn: (body) => api.post<Tag>(`${basePath}/tags`, body),
+      targets: [{ queryKey: keys.tags, commit: (old: Tag[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
+      invalidate: [...everything],
     });
 
-    const update = useMutation({
-      mutationFn: ({ tagId, body }: { tagId: string; body: { nome?: string; cor?: string } }) =>
-        api.patch<Tag>(`${basePath}/tags/${encodeURIComponent(tagId)}`, body),
-      onSuccess: invalidate,
+    const update = useCacheWriteMutation<Tag, { tagId: string; body: { nome?: string; cor?: string } }>({
+      mutationFn: ({ tagId, body }) => api.patch<Tag>(`${basePath}/tags/${encodeURIComponent(tagId)}`, body),
+      targets: ({ tagId, body }) => [
+        {
+          queryKey: keys.tags,
+          optimistic: (old: Tag[] | undefined) => listOps.patch(old, tagId, body),
+          commit: (old: Tag[] | undefined, saved) => listOps.patch(old, tagId, saved),
+        },
+      ],
+      invalidate: [...everything],
     });
 
-    const remove = useMutation({
-      mutationFn: (tagId: string) => api.delete(`${basePath}/tags/${encodeURIComponent(tagId)}`),
-      onSuccess: invalidate,
+    const remove = useCacheWriteMutation<unknown, string>({
+      mutationFn: (tagId) => api.delete(`${basePath}/tags/${encodeURIComponent(tagId)}`),
+      targets: (tagId) => [
+        { queryKey: keys.tags, optimistic: (old: Tag[] | undefined) => listOps.remove(old, tagId) },
+      ],
+      invalidate: [...everything],
     });
 
     return { create, update, remove };
@@ -256,24 +355,19 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
    */
   function useSetTagsMutation(id: string) {
     const qc = useQueryClient();
-
-    return useMutation({
-      mutationFn: (tagIds: string[]) =>
-        api.put<ItemsEnvelope<Tag>>(`${entityBase(id)}/tags`, { tag_ids: tagIds }),
-      onMutate: async (tagIds: string[]) => {
-        await qc.cancelQueries({ queryKey: keys.card(id) });
-        const previous = qc.getQueryData<TResumo>(keys.card(id));
-        if (previous) {
-          const allTags = qc.getQueryData<Tag[]>(keys.tags) ?? previous.tags;
-          const optimisticTags = allTags.filter((t) => tagIds.includes(t.id));
-          qc.setQueryData<TResumo>(keys.card(id), { ...previous, tags: optimisticTags });
-        }
-        return { previous };
-      },
-      onError: (_err, _vars, context) => {
-        if (context?.previous) qc.setQueryData(keys.card(id), context.previous);
-      },
-      onSettled: () => qc.invalidateQueries({ queryKey: keys.card(id) }),
+    return useCacheWriteMutation<ItemsEnvelope<Tag>, string[]>({
+      mutationFn: (tagIds) => api.put<ItemsEnvelope<Tag>>(`${entityBase(id)}/tags`, { tag_ids: tagIds }),
+      targets: (tagIds) => [
+        {
+          queryKey: keys.card(id),
+          optimistic: (old: TResumo | undefined) => {
+            if (!old) return old;
+            const allTags = qc.getQueryData<Tag[]>(keys.tags) ?? old.tags;
+            return { ...old, tags: allTags.filter((t) => tagIds.includes(t.id)) };
+          },
+          commit: (old: TResumo | undefined, res) => (old ? { ...old, tags: res?.items ?? old.tags } : old),
+        },
+      ],
     });
   }
 
@@ -295,17 +389,19 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
    * (SW: `lead_corretor_ids`) — `memberIdsField`, default `membro_ids`.
    */
   function useSetMembrosMutation(id: string, memberIdsField = "membro_ids") {
-    const qc = useQueryClient();
-    return useMutation({
-      mutationFn: (memberIds: string[]) =>
+    return useCacheWriteMutation<ItemsEnvelope<Membro>, string[]>({
+      mutationFn: (memberIds) =>
         api.put<ItemsEnvelope<Membro>>(`${entityBase(id)}/membros`, {
           [memberIdsField]: memberIds,
         }),
-      onSuccess: () =>
-        Promise.all([
-          qc.invalidateQueries({ queryKey: keys.card(id) }),
-          qc.invalidateQueries({ queryKey: keys.membros(id) }),
-        ]),
+      // The server resolves ids to members (name, colour): commit its answer into the card and the roster.
+      targets: [
+        {
+          queryKey: keys.card(id),
+          commit: (old: TResumo | undefined, res) => (old && res?.items ? { ...old, membros: res.items } : old),
+        },
+        { queryKey: keys.membros(id), commit: (old: Membro[] | undefined, res) => (old && res?.items ? res.items : old) },
+      ],
     });
   }
 
@@ -323,36 +419,47 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
   }
 
   /**
-   * NOT optimistic (like `useChecklistExtraMutations`): create/edit/delete
-   * each touch a server-assigned row the badges/timeline never derive from,
-   * so a narrow invalidate of the lembretes list alone is enough — no
-   * snapshot to roll back if the request fails.
+   * Create/edit/delete touch a row the badges/timeline never derive from, so only the lembretes list
+   * is written: create commits the server's row (it assigns the id), edit draws the plain fields,
+   * delete leaves on click. Each rolls back on failure.
    */
   function useLembreteMutations(id: string) {
-    const qc = useQueryClient();
     const base = `${entityBase(id)}/lembretes`;
-    const invalidate = () => qc.invalidateQueries({ queryKey: keys.lembretes(id) });
 
-    const criar = useMutation({
-      mutationFn: (body: { titulo: string; dispara_em: string; responsavel_id?: string | null }) =>
-        api.post<Lembrete>(base, body),
-      onSuccess: invalidate,
+    const criar = useCacheWriteMutation<Lembrete, { titulo: string; dispara_em: string; responsavel_id?: string | null }>({
+      mutationFn: (body) => api.post<Lembrete>(base, body),
+      // The server assigns the id and resolves the responsavel: commit its row (no stand-in).
+      targets: [{ queryKey: keys.lembretes(id), commit: (old: Lembrete[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
     });
 
-    const atualizar = useMutation({
-      mutationFn: ({
-        lembreteId,
-        body,
-      }: {
+    const atualizar = useCacheWriteMutation<
+      Lembrete,
+      {
         lembreteId: string;
         body: { titulo?: string; dispara_em?: string; responsavel_id?: string | null; concluido?: boolean };
-      }) => api.patch<Lembrete>(`${base}/${encodeURIComponent(lembreteId)}`, body),
-      onSuccess: invalidate,
+      }
+    >({
+      mutationFn: ({ lembreteId, body }) => api.patch<Lembrete>(`${base}/${encodeURIComponent(lembreteId)}`, body),
+      targets: ({ lembreteId, body }) => [
+        {
+          queryKey: keys.lembretes(id),
+          // Only the plain fields are drawn on click: `responsavel_id` needs the server's member lookup,
+          // and `dispara_em` the server's UTC normalisation.
+          optimistic: (old: Lembrete[] | undefined) =>
+            listOps.patch(old, lembreteId, {
+              ...(body.titulo !== undefined ? { titulo: body.titulo } : {}),
+              ...(body.concluido !== undefined ? { concluido: body.concluido } : {}),
+            }),
+          commit: (old: Lembrete[] | undefined, saved) => listOps.patch(old, lembreteId, saved),
+        },
+      ],
     });
 
-    const remover = useMutation({
-      mutationFn: (lembreteId: string) => api.delete(`${base}/${encodeURIComponent(lembreteId)}`),
-      onSuccess: invalidate,
+    const remover = useCacheWriteMutation<unknown, string>({
+      mutationFn: (lembreteId) => api.delete(`${base}/${encodeURIComponent(lembreteId)}`),
+      targets: (lembreteId) => [
+        { queryKey: keys.lembretes(id), optimistic: (old: Lembrete[] | undefined) => listOps.remove(old, lembreteId) },
+      ],
     });
 
     return { criar, atualizar, remover };
@@ -372,138 +479,116 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
   }
 
   function useChecklistMutations(id: string) {
-    const qc = useQueryClient();
-    const invalidate = () => invalidateChecklistFamily(qc, id);
     const base = entityBase(id);
     const itemPath = (checklistId: string, itemId: string) =>
       `${base}/checklists/${encodeURIComponent(checklistId)}/itens/${encodeURIComponent(itemId)}`;
-
-    const createChecklist = useMutation({
-      mutationFn: (titulo: string) => api.post<Checklist>(`${base}/checklists`, { titulo }),
-      onSuccess: invalidate,
+    /** Edit one checklist inside the cached list. */
+    const onChecklist = (old: Checklist[] | undefined, checklistId: string, fn: (c: Checklist) => Checklist) =>
+      Array.isArray(old) ? old.map((c) => (c.id === checklistId ? fn(c) : c)) : old;
+    /** `concluidos` / `total_itens` are served, but follow from the items the click just changed. */
+    const recount = (c: Checklist): Checklist => ({
+      ...c,
+      total_itens: c.itens.length,
+      concluidos: c.itens.filter((i) => i.concluido).length,
     });
 
-    const renameChecklist = useMutation({
-      mutationFn: ({ checklistId, titulo }: { checklistId: string; titulo: string }) =>
+    const createChecklist = useCacheWriteMutation<Checklist, string>({
+      mutationFn: (titulo) => api.post<Checklist>(`${base}/checklists`, { titulo }),
+      targets: [{ queryKey: keys.checklists(id), commit: (old: Checklist[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
+      invalidate: checklistDerived(id),
+    });
+
+    const renameChecklist = useCacheWriteMutation<Checklist, { checklistId: string; titulo: string }>({
+      mutationFn: ({ checklistId, titulo }) =>
         api.patch<Checklist>(`${base}/checklists/${encodeURIComponent(checklistId)}`, { titulo }),
-      onSuccess: invalidate,
+      targets: ({ checklistId, titulo }) => [
+        {
+          queryKey: keys.checklists(id),
+          optimistic: (old: Checklist[] | undefined) => listOps.patch(old, checklistId, { titulo }),
+          commit: (old: Checklist[] | undefined, saved) => listOps.patch(old, checklistId, { titulo: saved.titulo }),
+        },
+      ],
+      invalidate: checklistDerived(id),
     });
 
-    const removeChecklist = useMutation({
-      mutationFn: (checklistId: string) =>
-        api.delete(`${base}/checklists/${encodeURIComponent(checklistId)}`),
-      onSuccess: invalidate,
+    const removeChecklist = useCacheWriteMutation<unknown, string>({
+      mutationFn: (checklistId) => api.delete(`${base}/checklists/${encodeURIComponent(checklistId)}`),
+      targets: (checklistId) => [
+        { queryKey: keys.checklists(id), optimistic: (old: Checklist[] | undefined) => listOps.remove(old, checklistId) },
+      ],
+      invalidate: checklistDerived(id),
     });
 
-    /** Optimistic — a namespaced temporary id, whole list rolled back on failure. */
-    const addItem = useMutation({
-      mutationFn: ({ checklistId, texto }: { checklistId: string; texto: string }) =>
+    /** Optimistic — a namespaced temporary id; the settle refetch brings the server's item (the POST
+     *  answer is not typed, so there is no commit). Whole list rolled back on failure. */
+    const addItem = useCacheWriteMutation<unknown, { checklistId: string; texto: string }>({
+      mutationFn: ({ checklistId, texto }) =>
         api.post(`${base}/checklists/${encodeURIComponent(checklistId)}/itens`, { texto }),
-      onMutate: async ({ checklistId, texto }) => {
-        await qc.cancelQueries({ queryKey: keys.checklists(id) });
-        const previous = qc.getQueryData<Checklist[]>(keys.checklists(id));
-        if (previous) {
-          qc.setQueryData<Checklist[]>(
-            keys.checklists(id),
-            previous.map((c) =>
-              c.id === checklistId
-                ? {
-                    ...c,
-                    itens: [
-                      ...c.itens,
-                      {
-                        id: `optimistic:${checklistId}:${c.itens.length}`,
-                        texto,
-                        concluido: false,
-                        concluido_em: null,
-                        concluido_por: null,
-                        posicao: c.itens.length,
-                      },
-                    ],
-                  }
-                : c,
-            ),
-          );
-        }
-        return { previous };
-      },
-      onError: (_err, _vars, context) => {
-        if (context?.previous) qc.setQueryData(keys.checklists(id), context.previous);
-      },
-      onSettled: invalidate,
+      targets: ({ checklistId, texto }) => [
+        {
+          queryKey: keys.checklists(id),
+          optimistic: (old: Checklist[] | undefined, _vars, { tempId }) =>
+            onChecklist(old, checklistId, (c) => ({
+              ...c,
+              itens: [
+                ...c.itens,
+                {
+                  id: `${tempId}:${checklistId}:${c.itens.length}`,
+                  texto,
+                  concluido: false,
+                  concluido_em: null,
+                  concluido_por: null,
+                  posicao: c.itens.length,
+                },
+              ],
+            })),
+        },
+      ],
+      invalidate: checklistDerived(id),
     });
 
     /** Optimistic — the checkbox flips the instant it is clicked. */
-    const toggleItem = useMutation({
-      mutationFn: ({
-        checklistId,
-        itemId,
-        concluido,
-      }: {
-        checklistId: string;
-        itemId: string;
-        concluido: boolean;
-      }) => api.patch(itemPath(checklistId, itemId), { concluido }),
-      onMutate: async ({ checklistId, itemId, concluido }) => {
-        await qc.cancelQueries({ queryKey: keys.checklists(id) });
-        const previous = qc.getQueryData<Checklist[]>(keys.checklists(id));
-        if (previous) {
-          qc.setQueryData<Checklist[]>(
-            keys.checklists(id),
-            previous.map((cl) =>
-              cl.id !== checklistId
-                ? cl
-                : {
-                    ...cl,
-                    itens: cl.itens.map((it) => (it.id === itemId ? { ...it, concluido } : it)),
-                    concluidos: cl.itens.filter((it) =>
-                      it.id === itemId ? concluido : it.concluido,
-                    ).length,
-                  },
-            ),
-          );
-        }
-        return { previous };
-      },
-      onError: (_err, _vars, context) => {
-        if (context?.previous) qc.setQueryData(keys.checklists(id), context.previous);
-      },
-      onSettled: invalidate,
+    const toggleItem = useCacheWriteMutation<unknown, { checklistId: string; itemId: string; concluido: boolean }>({
+      mutationFn: ({ checklistId, itemId, concluido }) => api.patch(itemPath(checklistId, itemId), { concluido }),
+      targets: ({ checklistId, itemId, concluido }) => [
+        {
+          queryKey: keys.checklists(id),
+          optimistic: (old: Checklist[] | undefined) =>
+            onChecklist(old, checklistId, (cl) => ({
+              ...cl,
+              itens: cl.itens.map((it) => (it.id === itemId ? { ...it, concluido } : it)),
+              concluidos: cl.itens.filter((it) => (it.id === itemId ? concluido : it.concluido)).length,
+            })),
+        },
+      ],
+      invalidate: checklistDerived(id),
     });
 
-    const updateItemText = useMutation({
-      mutationFn: ({
-        checklistId,
-        itemId,
-        texto,
-      }: {
-        checklistId: string;
-        itemId: string;
-        texto: string;
-      }) => api.patch(itemPath(checklistId, itemId), { texto }),
-      onSuccess: invalidate,
+    const updateItemText = useCacheWriteMutation<unknown, { checklistId: string; itemId: string; texto: string }>({
+      mutationFn: ({ checklistId, itemId, texto }) => api.patch(itemPath(checklistId, itemId), { texto }),
+      targets: ({ checklistId, itemId, texto }) => [
+        {
+          queryKey: keys.checklists(id),
+          optimistic: (old: Checklist[] | undefined) =>
+            onChecklist(old, checklistId, (c) => ({
+              ...c,
+              itens: c.itens.map((it) => (it.id === itemId ? { ...it, texto } : it)),
+            })),
+        },
+      ],
+      invalidate: checklistDerived(id),
     });
 
-    const removeItem = useMutation({
-      mutationFn: ({ checklistId, itemId }: { checklistId: string; itemId: string }) =>
-        api.delete(itemPath(checklistId, itemId)),
-      onMutate: async ({ checklistId, itemId }) => {
-        await qc.cancelQueries({ queryKey: keys.checklists(id) });
-        const previous = qc.getQueryData<Checklist[]>(keys.checklists(id));
-        if (previous) {
-          qc.setQueryData<Checklist[]>(
-            keys.checklists(id),
-            previous.map((c) =>
-              c.id === checklistId ? { ...c, itens: c.itens.filter((i) => i.id !== itemId) } : c,
-            ),
-          );
-        }
-        return { previous };
-      },
-      onError: (_err, _vars, context) => {
-        if (context?.previous) qc.setQueryData(keys.checklists(id), context.previous);
-      },
-      onSettled: invalidate,
+    const removeItem = useCacheWriteMutation<unknown, { checklistId: string; itemId: string }>({
+      mutationFn: ({ checklistId, itemId }) => api.delete(itemPath(checklistId, itemId)),
+      targets: ({ checklistId, itemId }) => [
+        {
+          queryKey: keys.checklists(id),
+          optimistic: (old: Checklist[] | undefined) =>
+            onChecklist(old, checklistId, (c) => recount({ ...c, itens: c.itens.filter((i) => i.id !== itemId) })),
+        },
+      ],
+      invalidate: checklistDerived(id),
     });
 
     return {
@@ -559,41 +644,42 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
    * `documentoInvalidates` — never the whole family.
    */
   function useDocumentoMutations(id: string) {
-    const qc = useQueryClient();
-    const invalidate = () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: keys.documentos(id) }),
-        qc.invalidateQueries({ queryKey: keys.card(id) }),
-        ...documentoInvalidates.map((sub) =>
-          qc.invalidateQueries({ queryKey: [...keys.family(id), sub] }),
-        ),
-        qc.invalidateQueries({ queryKey: keys.timelineAll(id) }),
-      ]);
+    // Derived reads (the card's badge, the timeline entry, the product's own sub-keys) only refresh;
+    // the documentos list is the one the write places.
+    const derived = () => [
+      keys.card(id),
+      ...documentoInvalidates.map((sub) => [...keys.family(id), sub] as readonly unknown[]),
+      keys.timelineAll(id),
+    ];
     const base = entityBase(id);
 
     // Multipart through the seed client's `upload` — never `post`, which
     // would JSON-stringify the FormData into `{}`.
-    const upload = useMutation({
-      mutationFn: async ({ file, tipoDocumento }: { file: File; tipoDocumento: string }) => {
+    const upload = useCacheWriteMutation<Documento, { file: File; tipoDocumento: string }>({
+      mutationFn: async ({ file, tipoDocumento }) => {
         const formData = new FormData();
         formData.append("file", await prepareImageForUpload(file));
         formData.append("tipo_documento", tipoDocumento);
         return api.upload<Documento>(`${base}/documentos`, formData);
       },
-      onSuccess: invalidate,
+      targets: [{ queryKey: keys.documentos(id), commit: (old: Documento[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
+      invalidate: derived(),
     });
 
     // `motivo` travels as a REQUIRED query param (LGPD access log), not a body.
-    const remove = useMutation({
-      mutationFn: ({ documentoId, motivo }: { documentoId: string; motivo: string }) =>
+    const remove = useCacheWriteMutation<unknown, { documentoId: string; motivo: string }>({
+      mutationFn: ({ documentoId, motivo }) =>
         api.delete(
           `${base}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
         ),
-      onSuccess: invalidate,
+      targets: ({ documentoId }) => [
+        { queryKey: keys.documentos(id), optimistic: (old: Documento[] | undefined) => listOps.remove(old, documentoId) },
+      ],
+      invalidate: derived(),
     });
 
     // 🔴 Each call is a RECORDED access — never call it speculatively.
-    const getUrl = useMutation({
+    const getUrl = useMutation({ // noc-allow: invalidate-only — a read-through: it records an LGPD access and returns a signed URL, it writes nothing any cached read shows
       mutationFn: ({
         documentoId,
         intent = "view",
@@ -608,10 +694,16 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
 
     // Re-queues a stuck/never-run extraction — never delete + re-upload,
     // which would destroy the LGPD access log.
-    const reextrair = useMutation({
-      mutationFn: (documentoId: string) =>
+    const reextrair = useCacheWriteMutation<Documento, string>({
+      mutationFn: (documentoId) =>
         api.post<Documento>(`${base}/documentos/${encodeURIComponent(documentoId)}/extrair`),
-      onSuccess: invalidate,
+      targets: (documentoId) => [
+        {
+          queryKey: keys.documentos(id),
+          commit: (old: Documento[] | undefined, saved) => listOps.patch(old, documentoId, saved),
+        },
+      ],
+      invalidate: derived(),
     });
 
     return { upload, remove, getUrl, reextrair };
@@ -633,49 +725,61 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
   }
 
   /**
-   * NOT optimistic: these create/destroy rows whose ids the server assigns.
-   * Discarding a row's FILE (`DELETE .../{extraId}/documento`) keeps the row;
-   * `DELETE .../{extraId}` removes the row. Invalidates ONLY the extras list.
+   * Create/update/upload commit the SERVER's row (it assigns ids and order and derives `concluido`);
+   * deletes leave on click. Discarding a row's FILE (`DELETE .../{extraId}/documento`) keeps the row;
+   * `DELETE .../{extraId}` removes the row. Only the extras list is touched.
    */
   function useChecklistExtraMutations(id: string) {
-    const qc = useQueryClient();
     const base = `${entityBase(id)}/checklist-extras`;
-    const invalidate = () => qc.invalidateQueries({ queryKey: keys.checklistExtras(id) });
+    const extras = keys.checklistExtras(id);
 
-    const criar = useMutation({
-      mutationFn: (body: { label: string; tipo: ChecklistExtraTipo }) =>
-        api.post<ChecklistExtra>(base, body),
-      onSuccess: invalidate,
+    const criar = useCacheWriteMutation<ChecklistExtra, { label: string; tipo: ChecklistExtraTipo }>({
+      mutationFn: (body) => api.post<ChecklistExtra>(base, body),
+      // The server assigns the id and the order: commit its row (no stand-in).
+      targets: [{ queryKey: extras, commit: (old: ChecklistExtra[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
     });
 
-    const atualizar = useMutation({
-      mutationFn: ({
-        extraId,
-        body,
-      }: {
-        extraId: string;
-        body: { label?: string; valor_texto?: string | null; ordem?: number };
-      }) => api.patch<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}`, body),
-      onSuccess: invalidate,
+    const atualizar = useCacheWriteMutation<
+      ChecklistExtra,
+      { extraId: string; body: { label?: string; valor_texto?: string | null; ordem?: number } }
+    >({
+      mutationFn: ({ extraId, body }) => api.patch<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}`, body),
+      // `concluido` is DERIVED from the value, so the server's row (not a guess) is what lands.
+      targets: ({ extraId }) => [
+        { queryKey: extras, commit: (old: ChecklistExtra[] | undefined, saved) => listOps.patch(old, extraId, saved) },
+      ],
     });
 
-    const remover = useMutation({
-      mutationFn: (extraId: string) => api.delete(`${base}/${encodeURIComponent(extraId)}`),
-      onSuccess: invalidate,
+    const remover = useCacheWriteMutation<unknown, string>({
+      mutationFn: (extraId) => api.delete(`${base}/${encodeURIComponent(extraId)}`),
+      targets: (extraId) => [
+        { queryKey: extras, optimistic: (old: ChecklistExtra[] | undefined) => listOps.remove(old, extraId) },
+      ],
     });
 
-    const uploadDocumento = useMutation({
-      mutationFn: async ({ extraId, file }: { extraId: string; file: File }) => {
+    const uploadDocumento = useCacheWriteMutation<ChecklistExtra, { extraId: string; file: File }>({
+      mutationFn: async ({ extraId, file }) => {
         const formData = new FormData();
         formData.append("file", await prepareImageForUpload(file));
         return api.upload<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}/documento`, formData);
       },
-      onSuccess: invalidate,
+      targets: ({ extraId }) => [
+        { queryKey: extras, commit: (old: ChecklistExtra[] | undefined, saved) => listOps.patch(old, extraId, saved) },
+      ],
     });
 
-    const removerDocumento = useMutation({
-      mutationFn: (extraId: string) => api.delete(`${base}/${encodeURIComponent(extraId)}/documento`),
-      onSuccess: invalidate,
+    const removerDocumento = useCacheWriteMutation<unknown, string>({
+      mutationFn: (extraId) => api.delete(`${base}/${encodeURIComponent(extraId)}/documento`),
+      // The row stays; its file goes, and a file row's tick follows from the file.
+      targets: (extraId) => [
+        {
+          queryKey: extras,
+          optimistic: (old: ChecklistExtra[] | undefined) =>
+            Array.isArray(old)
+              ? old.map((r) => (r.id === extraId && r.documento ? { ...r, documento: null, concluido: false } : r))
+              : old,
+        },
+      ],
     });
 
     return { criar, atualizar, remover, uploadDocumento, removerDocumento };

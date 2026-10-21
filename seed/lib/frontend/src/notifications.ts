@@ -20,10 +20,10 @@
 import {
   keepPreviousData,
   useQuery,
-  useMutation,
-  useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
+import { useCacheWriteMutation } from './cache-writes';
+import { envelopeOps } from './organ-kit/cacheOps';
 import { toast } from 'sonner';
 import type { ApiClient } from './api';
 import { useAuthReady } from './auth';
@@ -100,30 +100,46 @@ export function createNotificationHooks(
   }
 
   function useMarcarComoLida() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-      mutationFn: async (notificacaoId: string) => {
+    return useCacheWriteMutation<Notificacao, string>({
+      mutationFn: async (notificacaoId) => {
         const result = await api.patch(`/api/notificacoes/${notificacaoId}/ler`);
         return result.data as Notificacao;
       },
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['notificacoes'] });
-        queryClient.invalidateQueries({ queryKey: ['notificacoes-contagem'] });
-      },
+      // Read on click in every cached page (a page filtered to "unread only" re-filters on the settle
+      // refetch); the unread count is a derived view, so it only refreshes.
+      targets: (id) => [
+        {
+          queryKey: ['notificacoes'],
+          match: 'prefix',
+          optimistic: (old: any) => envelopeOps.patch<Notificacao>(old, id, { is_read: true }),
+          commit: (old: any, saved: Notificacao) => envelopeOps.patch<Notificacao>(old, id, saved),
+        },
+      ],
+      invalidate: [['notificacoes-contagem']],
     });
   }
 
   function useMarcarTodasComoLidas() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
+    return useCacheWriteMutation<unknown, void>({
       mutationFn: async () => {
         return api.post('/api/notificacoes/ler-todas');
       },
+      // Everything is read afterwards: draw it on click (every cached page, and the badge at zero).
+      targets: [
+        {
+          queryKey: ['notificacoes'],
+          match: 'prefix',
+          optimistic: (old: any) =>
+            old && Array.isArray(old.data)
+              ? { ...old, data: old.data.map((n: Notificacao) => (n.is_read ? n : { ...n, is_read: true })) }
+              : old,
+        },
+        {
+          queryKey: ['notificacoes-contagem'],
+          optimistic: (old: ContagemNaoLidas | undefined) => (old ? { ...old, nao_lidas: 0 } : old),
+        },
+      ],
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['notificacoes'] });
-        queryClient.invalidateQueries({ queryKey: ['notificacoes-contagem'] });
         toast.success('Todas as notificações marcadas como lidas');
       },
     });

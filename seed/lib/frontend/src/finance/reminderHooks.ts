@@ -5,6 +5,7 @@
  * reject with `ApiError` so the caller renders the server's pt-BR message.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { createFetchTransport, keep, signals, type OrganApi } from '../organ-kit/query';
 import type {
   ReminderLogRow,
@@ -42,11 +43,12 @@ export function createFinanceReminderHooks(apiOrBase: string | OrganApi) {
     return signals(useQuery<ReminderSettings>({ queryKey: reminderKeys.settings, queryFn: () => data(api.get(p('/settings'))) }));
   }
   function useSaveReminderSettings() {
-    const qc = useQueryClient();
-    return useMutation({
-      mutationFn: (b: { enabled?: boolean; timezone?: string }) => data<ReminderSettings>(api.put(p('/settings'), b)),
-      // Enabling for the first time seeds the default rules, and flips what the preview returns.
-      onSuccess: () => qc.invalidateQueries({ queryKey: reminderKeys.all }),
+    return useCacheWriteMutation<ReminderSettings, { enabled?: boolean; timezone?: string }>({
+      mutationFn: (b) => data<ReminderSettings>(api.put(p('/settings'), b)),
+      // The answer IS the settings read. Enabling for the first time also seeds the default rules and
+      // flips what the preview returns: those are server-derived, so the whole family settles.
+      targets: [{ queryKey: reminderKeys.settings, commit: (_old: ReminderSettings | undefined, saved) => saved }],
+      invalidate: [reminderKeys.all],
     });
   }
 
@@ -54,16 +56,42 @@ export function createFinanceReminderHooks(apiOrBase: string | OrganApi) {
     return signals(useQuery<ReminderRule[]>({ queryKey: reminderKeys.rules, queryFn: () => data(api.get(p('/rules'))) }));
   }
   function useReminderRuleMutations() {
-    const qc = useQueryClient();
-    const done = () => Promise.all([qc.invalidateQueries({ queryKey: reminderKeys.rules }), qc.invalidateQueries({ queryKey: reminderKeys.preview })]);
+    // The preview (who would be reminded) derives from the rules: it refreshes, the rules list is written.
+    const derived = [reminderKeys.preview];
     return {
-      create: useMutation({ mutationFn: (b: ReminderRuleInput) => data<ReminderRule>(api.post(p('/rules'), b)), onSuccess: done }),
-      update: useMutation({
-        mutationFn: ({ id, ...b }: ReminderRulePatch & { id: string }) => data<ReminderRule>(api.patch(p(`/rules/${id}`), b)),
-        onSuccess: done,
+      create: useCacheWriteMutation<ReminderRule, ReminderRuleInput>({
+        mutationFn: (b) => data<ReminderRule>(api.post(p('/rules'), b)),
+        targets: [{ queryKey: reminderKeys.rules, commit: (old: ReminderRule[] | undefined, saved) => listOps.replace(old, saved.id, saved) }],
+        invalidate: derived,
       }),
-      remove: useMutation({ mutationFn: (id: string) => api.delete(p(`/rules/${id}`)), onSuccess: done }),
-      addDefaults: useMutation({ mutationFn: () => data<ReminderRule[]>(api.post(p('/rules/defaults'))), onSuccess: done }),
+      update: useCacheWriteMutation<ReminderRule, ReminderRulePatch & { id: string }>({
+        mutationFn: ({ id, ...b }) => data<ReminderRule>(api.patch(p(`/rules/${id}`), b)),
+        targets: ({ id }) => [
+          { queryKey: reminderKeys.rules, commit: (old: ReminderRule[] | undefined, saved) => listOps.patch(old, id, saved) },
+        ],
+        invalidate: derived,
+      }),
+      remove: useCacheWriteMutation<void, string>({
+        mutationFn: async (id) => {
+          await api.delete(p(`/rules/${id}`));
+        },
+        targets: (id) => [
+          { queryKey: reminderKeys.rules, optimistic: (old: ReminderRule[] | undefined) => listOps.remove(old, id) },
+        ],
+        invalidate: derived,
+      }),
+      // The server seeds whichever defaults are missing and answers with the rules it created.
+      addDefaults: useCacheWriteMutation<ReminderRule[], void>({
+        mutationFn: () => data<ReminderRule[]>(api.post(p('/rules/defaults'))),
+        targets: [
+          {
+            queryKey: reminderKeys.rules,
+            commit: (old: ReminderRule[] | undefined, created) =>
+              Array.isArray(old) ? created.reduce<ReminderRule[]>((acc, r) => listOps.replace(acc, r.id, r) ?? acc, old) : old,
+          },
+        ],
+        invalidate: derived,
+      }),
     };
   }
 
@@ -89,7 +117,7 @@ export function createFinanceReminderHooks(apiOrBase: string | OrganApi) {
 
   function useReceivableOptOut() {
     const qc = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — the preview is a server-computed view of who would be reminded; the answer is just the opt-out flag, not a row of that view
       mutationFn: ({ entryId, optOut }: { entryId: string; optOut: boolean }) =>
         data<{ entry_id: string; reminders_opt_out: boolean }>(api.put(p(`/receivables/${entryId}/opt-out`), { opt_out: optOut })),
       onSuccess: () => qc.invalidateQueries({ queryKey: reminderKeys.preview }),

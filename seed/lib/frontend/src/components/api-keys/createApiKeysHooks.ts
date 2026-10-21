@@ -30,7 +30,8 @@
  * Same injection pattern as `createLLMHooks` / `createWhatsAppConnectionsHooks`:
  * the product passes its own authenticated `createApiClient()`.
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useCacheWriteMutation } from '../../cache-writes';
 import { toast } from 'sonner';
 import type { ApiClient } from '../../api';
 
@@ -110,6 +111,12 @@ export function createApiKeysHooks(
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
   const QUERY_KEY = ['api-keys', basePath] as const;
 
+  /** The write answered with the re-resolved status of ONE key: put it in the status list. */
+  const commitStatus = (old: ApiKeysStatus | undefined, saved: ApiKeyStatus): ApiKeysStatus | undefined =>
+    old && Array.isArray(old.items)
+      ? { ...old, items: old.items.map((k) => (k.key === saved.key ? saved : k)) }
+      : old;
+
   /**
    * GET {basePath}. Read is intentionally ungated here — the SAME split
    * social-wiring's backend uses (read open to any authenticated org
@@ -140,13 +147,13 @@ export function createApiKeysHooks(
    * re-populate from the response.
    */
   function useSaveApiKey() {
-    const qc = useQueryClient();
-    return useMutation<ApiKeyStatus, unknown, ApiKeySave>({
+    return useCacheWriteMutation<ApiKeyStatus, ApiKeySave>({
       mutationFn: ({ key, value }) =>
         api.put<ApiKeyStatus>(`${basePath}/${encodeURIComponent(key)}`, { value }),
+      // The server computes hint/source/configured — commit its answer, no optimistic guess.
+      targets: [{ queryKey: QUERY_KEY, commit: (old: ApiKeysStatus | undefined, saved) => commitStatus(old, saved) }],
       onSuccess: (data) => {
         toast.success(`${data.label} salva com sucesso.`);
-        void qc.invalidateQueries({ queryKey: QUERY_KEY });
       },
       onError: (err: any) => {
         toast.error(
@@ -165,10 +172,11 @@ export function createApiKeysHooks(
    * claiming it was removed.
    */
   function useRemoveApiKey() {
-    const qc = useQueryClient();
-    return useMutation<ApiKeyStatus, unknown, string>({
+    return useCacheWriteMutation<ApiKeyStatus, string>({
       mutationFn: (key) =>
         api.delete<ApiKeyStatus>(`${basePath}/${encodeURIComponent(key)}`),
+      // The response is the RE-RESOLVED status (a platform/env tier may still answer).
+      targets: [{ queryKey: QUERY_KEY, commit: (old: ApiKeysStatus | undefined, saved) => commitStatus(old, saved) }],
       onSuccess: (data) => {
         if (data.configured) {
           toast.success(
@@ -177,7 +185,6 @@ export function createApiKeysHooks(
         } else {
           toast.success(`${data.label} removida.`);
         }
-        void qc.invalidateQueries({ queryKey: QUERY_KEY });
       },
       onError: (err: any) => {
         toast.error(
@@ -196,7 +203,7 @@ export function createApiKeysHooks(
    * (`success: false` + a message to render inline), not a thrown error.
    */
   function useTestApiKey() {
-    return useMutation<ApiKeyTestResult, unknown, string>({
+    return useMutation<ApiKeyTestResult, unknown, string>({ // noc-allow: invalidate-only — fire-and-forget live probe: it writes nothing and no cached read depends on its result
       mutationFn: (key) =>
         api.post<ApiKeyTestResult>(`${basePath}/${encodeURIComponent(key)}/test`, {}),
       onSuccess: (data) => {

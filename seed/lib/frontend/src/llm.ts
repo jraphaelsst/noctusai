@@ -12,6 +12,7 @@
  * `createCrudHooks`.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCacheWriteMutation } from './cache-writes';
 import type { ApiClient } from './api';
 
 // ---------------------------------------------------------------------------
@@ -85,12 +86,15 @@ export function createLLMHooks(api: ApiClient) {
   }
 
   function useUpdateLLMPreferences() {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: (body: LLMPreferences) => api.put('/api/llm/preferences', body),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['llm', 'preferences'] });
-      },
+    // The saved preferences ARE the request body: draw them on click; the settle refetch converges.
+    return useCacheWriteMutation<unknown, LLMPreferences>({
+      mutationFn: (body) => api.put('/api/llm/preferences', body),
+      targets: [
+        {
+          queryKey: ['llm', 'preferences'],
+          optimistic: (_old: LLMPreferences | undefined, body) => ({ ...body }),
+        },
+      ],
     });
   }
 
@@ -120,7 +124,7 @@ export function createLLMCredentialsHooks(coreApi: ApiClient) {
 
   function useUpdateLLMCredentials() {
     const queryClient = useQueryClient();
-    return useMutation({
+    return useMutation({ // noc-allow: invalidate-only — the credentials read is server-masked (`masked` hint + scope tier) and the provider `configured` flags derive from it; the client cannot compute either from the write-only keys it sent
       mutationFn: (body: SetCredentialsBody) =>
         coreApi.put('/api/platform/credentials', body),
       onSuccess: () => {

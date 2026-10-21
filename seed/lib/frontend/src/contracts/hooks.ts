@@ -11,7 +11,9 @@
  * Errors are never swallowed: queries expose `error`, mutations reject with `ApiError` (409 `aviso_previo_nao_cumprido`,
  * 409 `contrato_vigente_use_aditivo`, 422 ...) so the caller renders it.
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCacheWriteMutation, type CacheWriteTarget } from '../cache-writes';
+import { envelopeOps } from '../organ-kit/cacheOps';
 import { apiErrorCode, errorMessage, keep, signals, type OrganApi } from '../organ-kit/query';
 import type {
   Contract, ContractBillingPreviewData, ContractBillingRecord, ContractInput, ContractPatch, ContractReadjustResult,
@@ -52,16 +54,19 @@ export function listQuery(params: ContractsListParams): Record<string, string | 
 export function createContractsHooks(api: ContractsApi) {
   const unwrap = async <T,>(p: Promise<ContractsEnvelope<T>>): Promise<T> => (await p).data;
 
-  function useInvalidate() {
-    const qc = useQueryClient();
-    return (...keys: QueryKey[]) => Promise.all(keys.map((queryKey) => qc.invalidateQueries({ queryKey })));
-  }
+  /** Every other read of one contract (versions, preview, billing, usage) goes stale after a lifecycle mutation. */
+  const derivedKeys = (id: string) => [
+    ['contracts', 'versions', id], ['contracts', 'preview', id], contractsKeys.billings(id), contractsKeys.usage(id),
+  ];
 
-  /** Every read of one contract (detail, versions, billing) goes stale after a lifecycle mutation. */
-  function useAfterChange() {
-    const inv = useInvalidate();
-    return (id: string) => inv(contractsKeys.lists, contractsKeys.detail(id), ['contracts', 'versions', id], ['contracts', 'preview', id], contractsKeys.billings(id), contractsKeys.usage(id));
-  }
+  /**
+   * A lifecycle write answers with the refreshed contract: it goes into the detail and into every cached list
+   * page that shows it (the lists re-filter on the settle refetch); the derived reads are only invalidated.
+   */
+  const contractTargets = (id: string): CacheWriteTarget<Contract, any, any>[] => [
+    { queryKey: contractsKeys.lists, match: 'prefix', commit: (old: any, saved: Contract) => envelopeOps.patch(old, id, saved) },
+    { queryKey: contractsKeys.detail(id), commit: (old: Contract | undefined, saved: Contract) => (old === undefined ? undefined : saved) },
+  ];
 
   function useContracts(params: ContractsListParams = {}) {
     return signals(useQuery<ContractsPaginated<Contract>>({
@@ -112,35 +117,42 @@ export function createContractsHooks(api: ContractsApi) {
   }
 
   function useCreateContract() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: (body: ContractInput) => unwrap<Contract>(api.post(BASE, body)),
-      onSuccess: () => inv(contractsKeys.lists),
+    const qc = useQueryClient();
+    return useCacheWriteMutation<Contract, ContractInput>({
+      mutationFn: (body) => unwrap<Contract>(api.post(BASE, body)),
+      // Placement in a filtered / paged list is the server's call: lists converge on the settle refetch.
+      targets: [{ queryKey: contractsKeys.lists, match: 'prefix' }],
+      // The new contract's detail is known now — opening it needs no round trip.
+      onSuccess: (saved) => {
+        qc.setQueryData(contractsKeys.detail(saved.id), saved);
+      },
     });
   }
 
   function useUpdateContract() {
-    const after = useAfterChange();
-    return useMutation({
-      mutationFn: ({ id, ...body }: { id: string } & ContractPatch) => unwrap<Contract>(api.patch(`${BASE}/${id}`, body)),
-      onSuccess: (_c, vars) => after(vars.id),
+    return useCacheWriteMutation<Contract, { id: string } & ContractPatch>({
+      mutationFn: ({ id, ...body }) => unwrap<Contract>(api.patch(`${BASE}/${id}`, body)),
+      targets: ({ id }) => contractTargets(id),
+      invalidate: ({ id }) => derivedKeys(id),
     });
   }
 
   function useDeleteContract() {
-    const inv = useInvalidate();
-    return useMutation({
-      mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
-      onSuccess: (_r, id) => inv(contractsKeys.lists, contractsKeys.detail(id)),
+    return useCacheWriteMutation<unknown, string>({
+      mutationFn: (id) => api.delete(`${BASE}/${id}`),
+      targets: (id) => [
+        { queryKey: contractsKeys.lists, match: 'prefix', optimistic: (old: any) => envelopeOps.remove(old, id) },
+        { queryKey: contractsKeys.detail(id) },
+      ],
     });
   }
 
   /** Lifecycle actions share one shape: POST `/{id}/<action>` -> the refreshed contract. */
   function useAction<TBody extends object | undefined = undefined>(action: string) {
-    const after = useAfterChange();
-    return useMutation({
-      mutationFn: ({ id, body }: { id: string; body?: TBody }) => unwrap<Contract>(api.post(`${BASE}/${id}/${action}`, body ?? {})),
-      onSuccess: (_c, vars) => after(vars.id),
+    return useCacheWriteMutation<Contract, { id: string; body?: TBody }>({
+      mutationFn: ({ id, body }) => unwrap<Contract>(api.post(`${BASE}/${id}/${action}`, body ?? {})),
+      targets: ({ id }) => contractTargets(id),
+      invalidate: ({ id }) => derivedKeys(id),
     });
   }
 
@@ -154,30 +166,49 @@ export function createContractsHooks(api: ContractsApi) {
     useAction<{ signers: { name: string; email: string; cpf: string; role?: string; order?: number }[]; message?: string | null }>('signature');
 
   function useAmendContract() {
-    const after = useAfterChange();
-    return useMutation({
-      mutationFn: ({ id, summary, changes, effective_on }: { id: string; summary: string; changes: ContractTermChanges; effective_on?: string | null }) =>
+    return useCacheWriteMutation<Contract, { id: string; summary: string; changes: ContractTermChanges; effective_on?: string | null }>({
+      mutationFn: ({ id, summary, changes, effective_on }) =>
         unwrap<Contract>(api.post(`${BASE}/${id}/amendments`, { summary, changes, effective_on })),
-      onSuccess: (_c, vars) => after(vars.id),
+      targets: ({ id }) => contractTargets(id),
+      invalidate: ({ id }) => derivedKeys(id),
     });
   }
 
   /** `apply=false` simulates (nothing is written); `apply=true` writes a `readjustment` version. */
   function useReadjustContract() {
-    const after = useAfterChange();
-    return useMutation({
-      mutationFn: ({ id, ...body }: { id: string; percent_bp?: number | null; index?: string | null; apply?: boolean; effective_on?: string | null }) =>
-        unwrap<ContractReadjustResult>(api.post(`${BASE}/${id}/readjust`, body)),
-      onSuccess: (result, vars) => (result.applied ? after(vars.id) : undefined),
+    return useCacheWriteMutation<ContractReadjustResult, { id: string; percent_bp?: number | null; index?: string | null; apply?: boolean; effective_on?: string | null }>({
+      mutationFn: ({ id, ...body }) => unwrap<ContractReadjustResult>(api.post(`${BASE}/${id}/readjust`, body)),
+      // Only an APPLIED readjustment changes the contract; a simulation leaves every cached read as it was.
+      // The result is a diff, not the contract, so its new amounts are written onto the cached rows.
+      targets: ({ id, apply }) => {
+        if (!apply) return [];
+        const changes = (r: ContractReadjustResult): Partial<Contract> => ({
+          amount_cents: r.amount_cents_after,
+          excess_rate_cents: r.excess_rate_cents_after,
+          readjustment_percent_bp: r.percent_bp,
+        });
+        return [
+          {
+            queryKey: contractsKeys.lists,
+            match: 'prefix',
+            commit: (old: any, r: ContractReadjustResult) => (r.applied ? envelopeOps.patch(old, id, changes(r)) : old),
+          },
+          {
+            queryKey: contractsKeys.detail(id),
+            commit: (old: Contract | undefined, r: ContractReadjustResult) => (old && r.applied ? { ...old, ...changes(r) } : old),
+          },
+        ];
+      },
+      invalidate: ({ id, apply }) => (apply ? derivedKeys(id) : []),
     });
   }
 
   function useAddUsage() {
-    const after = useAfterChange();
-    return useMutation({
-      mutationFn: ({ id, ...body }: { id: string; minutes: number; period?: string | null; description?: string | null }) =>
-        unwrap<unknown>(api.post(`${BASE}/${id}/usage`, body)),
-      onSuccess: (_r, vars) => after(vars.id),
+    return useCacheWriteMutation<unknown, { id: string; minutes: number; period?: string | null; description?: string | null }>({
+      mutationFn: ({ id, ...body }) => unwrap<unknown>(api.post(`${BASE}/${id}/usage`, body)),
+      // The response is not the usage row and the months are server-aggregated: the usage read refetches.
+      targets: ({ id }) => [{ queryKey: contractsKeys.usage(id) }],
+      invalidate: ({ id }) => [contractsKeys.detail(id), contractsKeys.lists, ...derivedKeys(id)],
     });
   }
 

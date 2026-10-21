@@ -7,3 +7,5 @@ export { Field, FormError, EmptyState, ErrorState, Select, Textarea, Card, Input
 export { formatCents, parseMoneyToCents, centsToInput } from './money';
 export { signals, keep, createFetchTransport, errorMessage, apiErrorCode, apiErrorStatus } from './query';
 export type { OrganApi } from './query';
+export { envelopeOps } from './cacheOps';
+export type { DataEnvelope } from './cacheOps';

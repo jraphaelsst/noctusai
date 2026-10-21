@@ -32,7 +32,8 @@
  * relies on).
  */
 import * as React from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { toast } from 'sonner';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 
@@ -157,7 +158,6 @@ export function StatusPaginaPanel(
     onError,
   } = props;
 
-  const queryClient = useQueryClient();
 
   const query = useQuery<StatusPaginaRow[]>({
     queryKey: STATUS_PAGINAS_QUERY_KEY,
@@ -165,15 +165,21 @@ export function StatusPaginaPanel(
     enabled,
   });
 
-  const mutation = useMutation<
+  const mutation = useCacheWriteMutation<
     StatusPaginaRow,
-    unknown,
     { id: string; status: StatusPaginaStatus }
   >({
     mutationFn: ({ id, status }) =>
       api.patch<StatusPaginaRow>(`/api/status-paginas/${id}`, { status }),
+    // The selector flips on click; the server's row (updated_at, ...) replaces the draw on answer.
+    targets: ({ id }) => [
+      {
+        queryKey: STATUS_PAGINAS_QUERY_KEY,
+        optimistic: (old: StatusPaginaRow[] | undefined, { status }) => listOps.patch(old, id, { status }),
+        commit: (old: StatusPaginaRow[] | undefined, row) => listOps.patch(old, id, row),
+      },
+    ],
     onSuccess: (row) => {
-      void queryClient.invalidateQueries({ queryKey: STATUS_PAGINAS_QUERY_KEY });
       toast.success(
         `Página "${row.nome_pagina}" agora está em ${STATUS_META[row.status].label}.`,
       );
