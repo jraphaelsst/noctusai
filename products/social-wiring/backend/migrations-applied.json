@@ -32,6 +32,18 @@
     "283_lais_proprietarios_preco_tipo.sql": "2cc53a3e2af56db7258a225616f29797ed6b3aa9e4dd6db13f8790b6eb65d1ca",
     "284_simec.sql": "b2330fa8b9179e77a1443434690e90716dfb4ac31d24cfffe4007bb604d93aa5",
     "285_intermediario_representante_creci.sql": "1905dcdf92657d6fdb340e68fb00c34dff0f956ad3708be07d1cc2e1e8e679c5",
-    "286_atendimento_blocos_supervisao.sql": "a082e84c2cccc60e022206eb31eaf581dde9512ea9fde6c6788c6331570286df"
+    "286_atendimento_blocos_supervisao.sql": "a082e84c2cccc60e022206eb31eaf581dde9512ea9fde6c6788c6331570286df",
+    "287_rename_lais_to_julia.sql": "b939581b4c5277dc374b9f188f0260dae3bb8fec910152891fd5a91a9ac43f9b",
+    "288_julia_v2_supervisao.sql": "2329ed4964f33e952cc1521fe016913d41e9b95d96d3e76af2e31129603367a1",
+    "289_julia_db_lockdown.sql": "94dfe9b3097cd7ede7c06ca3c35ffc13470ba4768ed5123d070e30a78ad3b5d2",
+    "290_julia_v2_espelhos.sql": "3bdf6ae93cdfe6821d121630172fe9fc9b7a6aa988a52ae68109817addd9b7a1",
+    "291_conflito_protege_correcao.sql": "1819152c642ea73c2cbf19dc682915a7c3504dd44a74abfc50ac31ba9b0b9bac",
+    "292_estado_civil_regime_tokens.sql": "b34207daed02cef84316421d51086d6b8f0bca67517df7258536914be2891e16",
+    "293_backfill_corretor_do_lead_como_membro.sql": "b7379869c68d1eecb69669b3058ae56c3f1cd4a3bd02ef601582ed35685b3294",
+    "294_parcela_vencimento_precisao.sql": "77885da2e15c5c01733b45d0202a3c93d82dcec071fdc2a2c65aaeb9dcb2c475",
+    "295_atendimento_certidoes_opcionais.sql": "4588938ca21026a3806a536c47bce479a594e83868bf6bb6ac51d48f92426785",
+    "296_clientes_filiacao_naturalidade.sql": "294070288093eb625dfb26d9995b18f1dfee316402970c0f01eeaac919a2f21c",
+    "297_julia_solicitacoes_titular.sql": "bf68968ad21be467c91708e91489d97187de8880cb83ec3a81b85a601ce04807",
+    "298_julia_staff_protecao_bloqueio.sql": "86ecb306b4ed55788ba5188bc85b9f6d135f4644bcf6ff5c69b3750e945af5da"
   }
 }
