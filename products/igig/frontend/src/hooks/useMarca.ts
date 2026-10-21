@@ -9,10 +9,9 @@
  * with a server-side log, and caching it would defeat both.
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, rowOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
-import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/marca.py) ───────────────────────
 export interface CorPaleta {

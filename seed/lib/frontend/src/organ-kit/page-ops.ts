@@ -15,21 +15,22 @@
  * KB § PATTERNS/frontend/mutation-cache-writes.md
  */
 type Row = Record<string, unknown>;
-type PageLike = { data?: unknown; items?: unknown; total?: unknown; pagination?: Record<string, unknown> } & Row;
+type PageLike = { data?: unknown; items?: unknown; itens?: unknown; total?: unknown; pagination?: Record<string, unknown> } & Row;
 
 /** Which property holds the rows (`data` or `items`), or null when `v` is not a page. */
-function rowsKey(v: unknown): 'data' | 'items' | null {
+function rowsKey(v: unknown): 'data' | 'items' | 'itens' | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const p = v as PageLike;
   if (Array.isArray(p.data)) return 'data';
   if (Array.isArray(p.items)) return 'items';
+  if (Array.isArray(p.itens)) return 'itens';
   return null;
 }
 
-const rowsOf = (page: PageLike, key: 'data' | 'items') => page[key] as Row[];
+const rowsOf = (page: PageLike, key: 'data' | 'items' | 'itens') => page[key] as Row[];
 
 /** `page` with its rows replaced and its total moved by `delta` (wherever the envelope keeps it). */
-function withRows<P>(page: P, key: 'data' | 'items', rows: Row[], delta = 0): P {
+function withRows<P>(page: P, key: 'data' | 'items' | 'itens', rows: Row[], delta = 0): P {
   const p = page as unknown as PageLike;
   const next: PageLike = { ...p, [key]: rows };
   if (delta !== 0) {
@@ -65,6 +66,18 @@ export const pageOps = {
     const rows = rowsOf(page as PageLike, key);
     if (!has(rows, id, idKey)) return page;
     return withRows(page, key, rows.filter((r) => r[idKey] !== id), -1);
+  },
+  /**
+   * Add a NEW row to the rows of a page (end or start) and one to the total; a row already there is left
+   * alone (a refetch may have won the race). For small, unpaginated envelopes (`{ itens, total }`) where the
+   * row certainly belongs; for paginated newest-first lists use `prependNewest`.
+   */
+  add<P>(page: P | undefined, row: object, where: 'append' | 'prepend' = 'append', idKey = 'id'): P | undefined {
+    const key = rowsKey(page);
+    if (!key) return page;
+    const rows = rowsOf(page as PageLike, key);
+    if (has(rows, (row as Row)[idKey], idKey)) return page;
+    return withRows(page, key, where === 'prepend' ? [row as Row, ...rows] : [...rows, row as Row], 1);
   },
   /**
    * Put a NEW row first on page 1 of a newest-first list (and add one to the total, trimming to `page_size`).

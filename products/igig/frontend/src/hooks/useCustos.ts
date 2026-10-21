@@ -11,10 +11,9 @@
  * would leave the other showing a stale `custo_hora_efetivo`.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
-import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 export const CUSTOS_QUERY_KEY = ["igig", "custos"] as const;
 

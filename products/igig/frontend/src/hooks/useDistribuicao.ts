@@ -9,10 +9,9 @@
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@noctusai/lib";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
-import { addTo, patchById } from "@/lib/cacheOps";
 import { INTEGRACOES_QUERY_KEY } from "@/hooks/useIntegracoes";
 
 export type Canal = "instagram" | "facebook" | "tiktok" | "linkedin";

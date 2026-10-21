@@ -18,10 +18,9 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPipelineHooks } from "@noctusai/lib/components";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { boardOps, listOps, patchById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, unwrapData } from "@/lib/api";
-import { boardOps, patchById } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/esteira.py + esteira_quadro.quadro) ──
 /** A tarefa as the board serves it — the row plus what a phone needs to read it. */

@@ -10,10 +10,9 @@
  * it reconciles with the server value on save.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, rowOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
-import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 
 export type Formato = "feed" | "carrossel" | "reels" | "story" | "artigo" | "video";
 export type Funil = "topo" | "meio" | "fundo";

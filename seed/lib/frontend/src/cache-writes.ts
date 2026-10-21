@@ -215,3 +215,5 @@ export const listOps = {
 
 /** Paginated-envelope edits (rows + total). One home for every cache edit: import from `cache-writes`. */
 export { pageOps } from './organ-kit/page-ops';
+/** Row / board edits for list-or-envelope-or-detail caches + the target builders built on them. */
+export { rowOps, boardOps, patchById, removeById, addTo } from './organ-kit/row-ops';

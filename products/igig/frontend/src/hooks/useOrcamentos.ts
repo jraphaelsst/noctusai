@@ -22,10 +22,9 @@
  * and the clientes list go stale too.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, rowOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import { addTo, patchById, removeById, rowOps } from "@/lib/cacheOps";
 import { COMERCIAL_BOARD_KEY } from "@/lib/pipelines";
 import type {
   AceiteResultado,

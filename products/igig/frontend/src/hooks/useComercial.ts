@@ -12,10 +12,9 @@
  * orçamento lifecycle is `/api/orcamentos/*` now.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { boardOps, patchById, rowOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, unwrapData } from "@/lib/api";
-import { boardOps, patchById, rowOps } from "@/lib/cacheOps";
 import { COMERCIAL_BOARD_KEY } from "@/lib/pipelines";
 import type { AssistenteAcao, LeadManualInput, Negocio } from "@/types/crm";
 

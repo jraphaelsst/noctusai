@@ -17,10 +17,9 @@
  * keeper blocks.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
-import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 // ─── Types (mirror backend app/schemas/cliente.py) ─────────────────────
 export type StatusCliente = "prospect" | "ativo" | "inativo" | "inadimplente";

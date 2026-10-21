@@ -14,10 +14,9 @@
  * `app/schemas/automacoes.py` — see `AcaoParams` below.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import { addTo, patchById, removeById } from "@/lib/cacheOps";
 
 export type PipelineAutomacao = "comercial" | "esteira";
 export type Gatilho = "entrada_etapa" | "sla";

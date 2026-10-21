@@ -8,10 +8,9 @@
  * client a number that does not match the lines.
  */
 import { useQuery } from "@tanstack/react-query";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, listOps, patchById, rowOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import { addTo, patchById, rowOps } from "@/lib/cacheOps";
 
 export type StatusFatura = "aberta" | "enviada" | "paga" | "vencida" | "cancelada";
 export type TipoItem = "mensalidade" | "excedente" | "desconto" | "avulso";

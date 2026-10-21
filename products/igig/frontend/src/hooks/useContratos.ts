@@ -13,10 +13,9 @@
  * key (`["igig", "contratos"]`).
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { patchById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import { patchById } from "@/lib/cacheOps";
 import type { ModalidadeAssinatura } from "@/types/crm";
 
 export type ContratoStatus = "rascunho" | "aguardando_assinatura" | "ativo" | "encerrado";

@@ -19,7 +19,7 @@
 import { keepPreviousData, useQuery, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
-import { listOps, useCacheWriteMutation } from '../../cache-writes';
+import { boardOps, listOps, useCacheWriteMutation } from '../../cache-writes';
 
 import type {
   PipelineApi,
@@ -142,39 +142,8 @@ export function createPipelineHooks<TCard>(
         {
           queryKey: [queryKey],
           match: 'prefix',
-          optimistic: (old: PipelineColumn<TCard>[] | undefined, vars) => {
-            if (!Array.isArray(old)) return old;
-
-            const card = old
-              .flatMap((c) => c.cards)
-              .find((c) => getCardId(c) === vars.cardId);
-            if (!card) return old;
-
-            const withoutCard = old.map((coluna) => ({
-              ...coluna,
-              cards: coluna.cards.filter((c) => getCardId(c) !== vars.cardId),
-            }));
-
-            const destino = withoutCard.find((c) => c.etapa === vars.toStageId);
-            if (destino) {
-              if (vars.toIndex !== undefined) {
-                destino.cards.splice(vars.toIndex, 0, card);
-              } else {
-                destino.cards.unshift(card);
-              }
-            }
-
-            // Recompute on EVERY column: the card left one and joined another,
-            // so the source column's count and total changed too.
-            return withoutCard.map((coluna) => ({
-              ...coluna,
-              total: coluna.cards.length,
-              valorTotal: coluna.cards.reduce(
-                (sum, c) => sum + Number(getCardValue(c) || 0),
-                0,
-              ),
-            }));
-          },
+          optimistic: (old: PipelineColumn<TCard>[] | undefined, vars) =>
+            boardOps<TCard>(getCardValue, getCardId).moveCard(old, vars.cardId, vars.toStageId, vars.toIndex),
         },
       ],
       invalidate: invalidateOnSettle.map((k) => [k]),

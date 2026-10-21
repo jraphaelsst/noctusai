@@ -10,10 +10,9 @@
  * computed HERE so no consumer re-derives them.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { addTo, patchById, removeById, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import { addTo, patchById, removeById } from "@/lib/cacheOps";
 import type { ProdutoServico, ProdutoServicoInput, ProdutoServicoRemovido, Secao } from "@/types/crm";
 
 export const PRODUTOS_QUERY_KEY = ["igig", "produtos-servicos"] as const;
