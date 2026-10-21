@@ -653,7 +653,23 @@ _NAO_NOME = frozenset(
         # TRANSMITENTE narrative fallback (`_partes`) walks across before
         # reaching the first party's own numbered/semicolon-delimited block.
         "POR", "PELO", "PELA", "CONFORME",
+        # A role word / clause opener is not a party ("responsabilidade do
+        # comprador pela implantação de tanque séptico" read as an adquirente
+        # of an AV de construção — live deal 857, 2026-10-21).
+        "COMPRADOR", "COMPRADORA", "VENDEDOR", "VENDEDORA", "RESPONSABILIDADE", "OBRIGACAO",
     }
+)
+
+#: Words that mark PROSE inside a candidate name — a party's name never
+#: carries a clause verb / preposition like these ("… pela implantação de …").
+_PALAVRAS_DE_PROSA = frozenset(
+    {"PELA", "PELO", "PELAS", "PELOS", "PARA", "QUE", "SERA", "DEVERA", "RESPONSABILIDADE", "IMPLANTACAO"}
+)
+
+#: A creditor institution's name — what an ônus act's "adquirente" really is.
+_INSTITUICAO_FINANCEIRA = re.compile(
+    r"\b(?:BANCO|BANK|CAIXA\s+ECONOMICA|FINANCEIRA|COOPERATIVA|SICOOB|SICREDI|CREDITO|"
+    r"BRADESCO|ITAU|SANTANDER|BRB|BNB|BNDES|HABITACIONAL|SECURITIZADORA|CONSORCIO)\b"
 )
 
 
@@ -663,6 +679,8 @@ def _nome_valido(nome_norm: str, *, minimo_palavras: int = 2) -> bool:
         return False
     palavras = valor.split()
     if not (1 <= len(palavras) <= 12) or palavras[0] in _NAO_NOME:
+        return False
+    if _PALAVRAS_DE_PROSA.intersection(palavras):
         return False
     letras = [p for p in palavras if re.search(r"[A-Z]{2}", p)]
     if len(palavras) < minimo_palavras and not (letras and len(letras[0]) >= 4):
@@ -951,6 +969,39 @@ def _credor(
         _doc, ok = _documento(t.norm, fim, corte.start() if corte else len(t.norm))
         return nome, (ALTA if ok else BAIXA)
     return None, NENHUMA
+
+
+def _credor_nao_adquirente(
+    natureza: Optional[str],
+    adquirentes: tuple[Parte, ...],
+    adq_conf: str,
+    credor: Optional[str],
+    credor_conf: str,
+) -> tuple[tuple[Parte, ...], str, Optional[str], str]:
+    """In an ônus act (hipoteca / alienação fiduciária) the bank is the
+    CREDOR (fiduciário), never an adquirente: "alienou fiduciariamente … ao
+    BANCO X" / "Adquirente/Fiduciário: BANCO X" is read by the narrative
+    machinery as a buyer (live deal 857). A party that is a financial
+    institution moves to `credor` (when no credor was read) and leaves
+    `adquirentes`; one the credor already names is just dropped."""
+    if natureza not in NATUREZAS_COM_CREDOR or not adquirentes:
+        return adquirentes, adq_conf, credor, credor_conf
+    restantes: list[Parte] = []
+    for parte in adquirentes:
+        banco = bool(_INSTITUICAO_FINANCEIRA.search(normalize(parte.nome)))
+        mesmo_credor = credor is not None and normalize(parte.nome) == normalize(credor)
+        if mesmo_credor:
+            continue
+        if banco and credor is None:
+            credor = parte.nome
+            credor_conf = adq_conf if parte.cpf_cnpj else BAIXA
+            continue
+        if banco:
+            continue
+        restantes.append(parte)
+    if not restantes:
+        adq_conf = NENHUMA
+    return tuple(restantes), adq_conf, credor, credor_conf
 
 
 # ─── instrumento ──────────────────────────────────────────────────────────
@@ -1243,6 +1294,9 @@ def extrair_detalhes_ato(
     blocos = _blocos_rotulados(t, corpo)
     transmitentes, trans_conf, adquirentes, adq_conf = _partes(t, corpo, blocos, natureza)
     credor, credor_conf = _credor(t, corpo, natureza, blocos)
+    adquirentes, adq_conf, credor, credor_conf = _credor_nao_adquirente(
+        natureza, adquirentes, adq_conf, credor, credor_conf
+    )
     instrumento, inst_conf = _instrumento(t, corpo, blocos)
     referidos, ref_conf = _atos_referidos(t, corpo, proprio, sufixo_proprio)
 

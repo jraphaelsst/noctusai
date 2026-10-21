@@ -346,6 +346,7 @@ def _pessoa(
         convive_uniao_estavel=bool(row.get("convive_uniao_estavel")),
         regime_bens=row.get("regime_bens"),
         profissao=row.get("profissao"),
+        profissao_origem=row.get("profissao_origem"),
         cpf=row.get("cpf"),
         rg=row.get("rg"),
         rg_orgao=row.get("rg_orgao_expedidor"),

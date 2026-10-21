@@ -165,6 +165,9 @@ class Pessoa:
     convive_uniao_estavel: bool = False
     regime_bens: Optional[str] = None
     profissao: Optional[str] = None
+    #: `clientes.profissao_origem` — 'manual' = typed by the operator (printed
+    #: as typed, never blocked); anything else = machine-read.
+    profissao_origem: Optional[str] = None
     cpf: Optional[str] = None
     rg: Optional[str] = None
     rg_orgao: Optional[str] = None

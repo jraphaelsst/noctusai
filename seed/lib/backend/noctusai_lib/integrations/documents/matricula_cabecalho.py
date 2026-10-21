@@ -68,7 +68,13 @@ _FIM_CABECALHO = re.compile(
 
 #: A continuation line that completes a split heading ("DA COMARCA DE SÃO
 #: PAULO/SP", "DE COTIA - SP").
-_CONTINUACAO = re.compile(r"^(?:DA|DE|DO|DOS|DAS)\s+[A-Z]")
+#: Also the SP "ARISP" two-line heading ("REGISTRO DE IMÓVEIS, TÍTULOS E
+#: DOCUMENTOS" / "E CIVIL DE PESSOAS JURÍDICAS DE EMBU DAS ARTES" — live
+#: deal 857, 2026-10-21): the second line opens with the office's other
+#: attributions and carries the city at its tail.
+_CONTINUACAO = re.compile(
+    r"^(?:(?:DA|DE|DO|DOS|DAS)\s+[A-Z]|E\s+(?:CIVIL|DOCUMENTOS|TITULOS|PESSOAS?)\b)"
+)
 
 #: A registry cell that names NO locality — the generic "SERVENTIA DO
 #: REGISTRO DE IMÓVEIS" heading whose city sits on a LATER line (live prod,

@@ -1590,9 +1590,10 @@ def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
 
     - an RG órgão expedidor without its UF ("SSP" for "SSP/SP") prints the
       órgão alone (`frases.rg_texto` never invents a UF) and warns;
-    - a profissão outside the vocabulary (`profissoes.reconhecida`; e.g. the
-      misread "aposentanda") is a `falta` — it would go into the deed
-      verbatim."""
+    - a MACHINE-read profissão outside the vocabulary (`profissoes.reconhecida`;
+      e.g. the misread "aposentanda") is a `falta` — it would go into the deed
+      verbatim; one the operator TYPED (`profissao_origem == 'manual'`) only
+      warns and prints as typed."""
     if frases.rg_orgao_sem_uf(p):
         av.avisa(
             "RG_ORGAO_SEM_UF",
@@ -1601,6 +1602,14 @@ def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
         )
     profissao = (p.profissao or "").strip()
     if profissao and not profissoes.reconhecida(profissao):
+        if (p.profissao_origem or "").strip().lower() == "manual":
+            # The operator typed it: the guard exists for machine misreads
+            # ("aposentanda"), not for a human's own wording.
+            av.avisa(
+                "PROFISSAO_DIGITADA_FORA_DO_VOCABULARIO",
+                f"Profissão de {_nome(p)} digitada pelo operador ('{profissao}') — sai exatamente como digitada.",
+            )
+            return
         av.falta(
             "qualificacao.profissao",
             f"Profissão de {_nome(p)} não reconhecida: '{profissao}'",

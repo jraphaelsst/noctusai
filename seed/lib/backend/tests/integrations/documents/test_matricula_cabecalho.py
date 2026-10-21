@@ -177,3 +177,20 @@ class TestFindInscricaoMunicipal:
 
     def test_nao_consta(self):
         assert find_inscricao_municipal("Não consta.") == (None, "nenhuma")
+
+
+def test_cartorio_arisp_two_line_heading_keeps_the_city():
+    """SP ARISP "Visualização de matrícula": the heading wraps and the city
+    sits at the tail of the SECOND line, which opens "E CIVIL DE PESSOAS…"
+    (live deal 857, 2026-10-21). Synthetic text."""
+    from noctusai_lib.integrations.documents.matricula_cabecalho import find_cartorio
+
+    texto = (
+        "LIVRO Nº 2\nREGISTRO GERAL\n\n"
+        "REGISTRO DE IMÓVEIS, TÍTULOS E DOCUMENTOS\n"
+        "E CIVIL DE PESSOAS JURÍDICAS DE CIDADE EXEMPLO\n"
+        "Cidade Exemplo, 07 de fevereiro de 2018\nIMÓVEL: TERRENO"
+    )
+    valor, conf, _ = find_cartorio(texto)
+    assert conf == "alta"
+    assert valor.upper().endswith("DE CIDADE EXEMPLO")

@@ -936,3 +936,30 @@ def test_b4_an_executado_of_a_penhora_is_still_nobodys_seller():
         "EXEMPLO SILVA."
     )
     assert d.transmitentes == ()
+
+
+def test_onus_bank_is_the_credor_never_an_adquirente():
+    """Live deal 857: "alienou fiduciariamente … ao BANCO X" came back with the
+    bank as adquirente and credor=None. Synthetic text."""
+    from noctusai_lib.integrations.documents.matricula_ato_detalhes import extrair_detalhes_ato
+
+    r = extrair_detalhes_ato(
+        "R.6 - em 10 de março de 2020. ALIENAÇÃO FIDUCIÁRIA. Pelo instrumento particular, "
+        "a proprietária MARIA DA SILVA SOUZA, CPF 111.444.777-35, alienou fiduciariamente o "
+        "imóvel ao BANCO EXEMPLO (BRASIL) S.A., CNPJ 90.400.888/0001-42, com sede em São Paulo, "
+        "para garantia da dívida de R$ 200.000,00."
+    )
+    assert r.natureza == "alienacao_fiduciaria"
+    assert r.adquirentes == ()
+    assert r.credor == "BANCO EXEMPLO"
+    assert [p.nome for p in r.transmitentes] == ["MARIA DA SILVA SOUZA"]
+
+
+def test_prose_is_not_an_adquirente_of_an_averbacao():
+    from noctusai_lib.integrations.documents.matricula_ato_detalhes import extrair_detalhes_ato
+
+    r = extrair_detalhes_ato(
+        "AV.1 - CONSTRUÇÃO. Averba-se a construção. Adquirente: responsabilidade do comprador "
+        "pela implantação de tanque séptico."
+    )
+    assert r.adquirentes == ()
