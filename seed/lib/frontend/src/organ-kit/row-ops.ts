@@ -87,6 +87,9 @@ export function addTo<TData extends Row, TVars>(
 
 type Column = { etapa: string; total?: number; valorTotal?: number; cards: Array<{ id: string }> };
 
+/** A board cache is an array of columns that all carry `cards`; stage-list entries sharing the prefix are not boards. */
+const isBoard = (old: unknown): old is Column[] => Array.isArray(old) && old.every((c) => Array.isArray(c?.cards));
+
 /** Move a column's aggregates, only those it actually has (a board without `valorTotal` must not grow a NaN). */
 const adj = (col: Column, dTotal: number, dValor: number): Column => ({
   ...col,
@@ -100,7 +103,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
   const id = (c: unknown) => idOf(c as TCard);
   return {
     patchCard<T>(old: T | undefined, cardId: string, changes: object): T | undefined {
-      if (!Array.isArray(old)) return old;
+      if (!isBoard(old)) return old;
       return (old as Column[]).map((col) => {
         const at = col.cards.findIndex((c) => id(c) === cardId);
         if (at === -1) return col;
@@ -111,7 +114,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
       }) as T;
     },
     removeCard<T>(old: T | undefined, cardId: string): T | undefined {
-      if (!Array.isArray(old)) return old;
+      if (!isBoard(old)) return old;
       return (old as Column[]).map((col) => {
         const card = col.cards.find((c) => id(c) === cardId);
         if (!card) return col;
@@ -120,7 +123,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
     },
     /** Put `card` on top of the column of stage `etapaId` (no-op when absent or the stage is not on this board). */
     addCard<T>(old: T | undefined, etapaId: string, card: TCard): T | undefined {
-      if (!Array.isArray(old)) return old;
+      if (!isBoard(old)) return old;
       const cols = old as Column[];
       if (cols.some((c) => c.cards.some((x) => id(x) === id(card))) || !cols.some((c) => c.etapa === etapaId)) return old;
       return cols.map((col) =>
@@ -133,7 +136,7 @@ export function boardOps<TCard>(valueOf: (card: TCard) => number, idOf: (card: T
      * is not on this board.
      */
     moveCard<T>(old: T | undefined, cardId: string, toEtapa: string, toIndex?: number): T | undefined {
-      if (!Array.isArray(old)) return old;
+      if (!isBoard(old)) return old;
       const cols = old as Column[];
       const from = cols.find((c) => c.cards.some((x) => id(x) === cardId));
       if (!from || !cols.some((c) => c.etapa === toEtapa)) return old;

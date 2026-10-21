@@ -122,15 +122,15 @@ function empresaFamilyKeys(clienteId: string | null, empresaId?: string, comDocu
   ];
 }
 
-/** Edit ONE empresa row of the card's list. `items` rows are keyed by `empresa.id`, not `id`. */
+/** `items` rows are keyed by `empresa.id`, not `id`. */
+const empresaIdOf = (i: EmpresaCardItem) => i.empresa.id;
+
+/** Edit ONE empresa row of the card's list. */
 const naEmpresa = (
   old: EmpresasDoCardResponse | undefined,
   empresaId: string,
   edit: (item: EmpresaCardItem) => EmpresaCardItem,
-) =>
-  old && Array.isArray(old.items)
-    ? { ...old, items: old.items.map((i) => (i.empresa.id === empresaId ? edit(i) : i)) }
-    : old;
+) => listOps.within(old, "items", (l) => listOps.update(l, empresaId, edit, empresaIdOf));
 
 function invalidateEmpresaFamily(
   qc: ReturnType<typeof useQueryClient>,
@@ -157,9 +157,9 @@ export function useAdicionarEmpresa(clienteId: string) {
       {
         queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
         commit: (old: EmpresasDoCardResponse | undefined, saved) =>
-          old && Array.isArray(old.items) && !old.items.some((i) => i.empresa.id === saved.empresa.id)
-            ? { ...old, items: [...old.items, saved] }
-            : old,
+          listOps.within(old, "items", (l) =>
+            l.some((i) => i.empresa.id === saved.empresa.id) ? l : listOps.append(l, saved),
+          ),
       },
     ],
   });
@@ -183,20 +183,10 @@ function comDecisao(
   { empresaId, body }: DecidirParticipacaoVars,
   decisao: ParticipacaoDecidida,
 ): EmpresasDoCardResponse | undefined {
-  if (!old) return old;
-  return {
-    ...old,
-    items: old.items.map((item) =>
-      item.empresa.id !== empresaId
-        ? item
-        : {
-            ...item,
-            owners: item.owners.map((o) =>
-              o.cliente_id !== body.participante_cliente_id ? o : { ...o, ...decisao },
-            ),
-          },
-    ),
-  };
+  return naEmpresa(old, empresaId, (item) => ({
+    ...item,
+    owners: item.owners.map((o) => (o.cliente_id !== body.participante_cliente_id ? o : { ...o, ...decisao })),
+  }));
 }
 
 /** `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao`
@@ -271,9 +261,7 @@ export function useRemoverEmpresa(clienteId: string) {
       {
         queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
         optimistic: (old: EmpresasDoCardResponse | undefined) =>
-          old && Array.isArray(old.items)
-            ? { ...old, items: old.items.filter((i) => i.empresa.id !== empresaId) }
-            : old,
+          listOps.within(old, "items", (l) => listOps.remove(l, empresaId, empresaIdOf)),
       },
     ],
   });

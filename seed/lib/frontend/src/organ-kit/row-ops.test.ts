@@ -101,3 +101,14 @@ describe('boardOps — columns without aggregates', () => {
     expect((ops.patchCard(board, '1', { z: 1 }) as any[])[0]).not.toHaveProperty('valorTotal');
   });
 });
+
+describe('boardOps — shared-prefix entries that are not boards', () => {
+  it('a stage list (no cards) passes through untouched', () => {
+    const ops = boardOps<{ id: string }>(() => 0);
+    const stages = [{ etapa: 'a' }, { etapa: 'b' }];
+    expect(ops.patchCard(stages, '1', {})).toBe(stages);
+    expect(ops.removeCard(stages, '1')).toBe(stages);
+    expect(ops.moveCard(stages, '1', 'b')).toBe(stages);
+    expect(ops.addCard(stages, 'a', { id: '1' })).toBe(stages);
+  });
+});
