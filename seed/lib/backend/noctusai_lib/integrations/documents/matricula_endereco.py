@@ -20,7 +20,8 @@ confidently matched yields nothing, never a guess" contract those two share.
 The abertura names the street (and often the lote/quadra/loteamento) but not
 always the número — a loteamento is frequently opened "s/nº" (sem número),
 with the número OFFICIALISED later by a specific averbação ("para ficar
-constando a oficialização do nº 535"). A property can carry SEVERAL
+constando a oficialização do nº 535", or a construction averbação "...um
+prédio ... o qual recebeu o número 08 da Rua X"). A property can carry SEVERAL
 numbering averbações over its life (prefeitura renumbering, a later
 subdivision, ...): this module always prefers the HIGHEST-numbered averbação
 that states one — later averbações supersede earlier ones, and taking the
@@ -93,6 +94,15 @@ _LOGRADOURO = re.compile(
 #: the house number (876, 2026-10).
 _OFICIALIZACAO = re.compile(
     r"OFICIALIZA\w*\s+(?:D?[OA]S?\s+)?(?:N[ºO°]|NUMERO)\.?\s*(\d[\w/-]*)"
+)
+
+#: A construction/numbering averbação — "... construído sobre o terreno desta
+#: matrícula um prédio ... o qual recebeu o número 08 da Rua X" (deal 857,
+#: 2026-10): the registry attributing the street número to the building. The
+#: número must follow "recebeu" DIRECTLY, same decree-vs-número guard as
+#: `_OFICIALIZACAO`; the street is the abertura's (a loteamento opens "s/nº").
+_RECEBEU_NUMERO = re.compile(
+    r"RECEBEU\s+(?:D?[OA]S?\s+)?(?:N[ºO°]|NUMERO)\.?\s*(\d[\w/-]*)"
 )
 
 #: A rectification averbação — "faz frente para a Estrada X, nº 2.530 e não
@@ -178,7 +188,7 @@ def derivar_endereco(texto_imovel: str, texto_atos: str = "") -> EnderecoMatricu
         for ato in averbacoes:
             corpo = texto_atos[ato.start : ato.end]
             norm_ato, orig_ato = normalized_with_offsets(corpo)
-            mo = _OFICIALIZACAO.search(norm_ato)
+            mo = _OFICIALIZACAO.search(norm_ato) or _RECEBEU_NUMERO.search(norm_ato)
             if mo:
                 achado = _fatiar(corpo, norm_ato, orig_ato, mo, 1)
                 if achado:

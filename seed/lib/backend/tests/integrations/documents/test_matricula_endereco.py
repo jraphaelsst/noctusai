@@ -193,3 +193,39 @@ class TestNumeroComMilhar:
 def test_a_line_break_inside_the_street_is_layout():
     e = derivar_endereco("IMÓVEL: casa situada na Rua\nExemplar, nº 10, Cotia.")
     assert e.logradouro == "Rua Exemplar"
+
+
+class TestNumeroPorAverbacaoDeConstrucao:
+    """Deal 857 (2026-10): the abertura names the street, a later AV says the
+    building "recebeu o número N da Rua X" — street + número combine."""
+
+    ABERTURA = (
+        "IMÓVEL: TERRENO situado na Rua Inventada Exemplar, constituído pelo "
+        "lote 01 da quadra B, nesta cidade."
+    )
+    ATOS = (
+        "R.1/9.999 - Prot. 500 - Por escritura pública, transmitido a FULANO.\n"
+        "AV.2/9.999 - Prot. 600 - Fica averbado que foi construído sobre o terreno "
+        "desta matrícula um prédio residencial, o qual recebeu o número 08 da Rua "
+        "Inventada Exemplar.\n"
+    )
+
+    def test_street_from_abertura_and_number_from_construction_av(self):
+        e = derivar_endereco(self.ABERTURA, self.ATOS)
+        assert (e.logradouro, e.numero) == ("Rua Inventada Exemplar", "08")
+        assert e.numero_confirmado_ausente is False
+
+    def test_without_the_av_the_number_stays_unresolved(self):
+        e = derivar_endereco(self.ABERTURA, self.ATOS.split("AV.2")[0])
+        assert (e.logradouro, e.numero) == ("Rua Inventada Exemplar", None)
+
+    def test_recebeu_without_a_digit_is_not_a_number(self):
+        atos = self.ATOS.replace("o número 08", "o número de ordem")
+        assert derivar_endereco(self.ABERTURA, atos).numero is None
+
+    def test_highest_av_wins_when_renumbered(self):
+        atos = self.ATOS + (
+            "AV.4/9.999 - Prot. 700 - Renumerado: o prédio recebeu o número 12 da Rua "
+            "Inventada Exemplar.\n"
+        )
+        assert derivar_endereco(self.ABERTURA, atos).numero == "12"
