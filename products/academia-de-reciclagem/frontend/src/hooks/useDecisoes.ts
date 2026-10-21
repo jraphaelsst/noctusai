@@ -4,7 +4,7 @@
  * Append-only entity: no update/delete hooks exist (the contract has no
  * PUT/DELETE for decisions — only create and supersede).
  */
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
@@ -59,12 +59,22 @@ export interface DecisaoCreateInput {
 }
 
 export function useCreateDecisao() {
-  const qc = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — decisions are listed by a server-side order and filtered by estado; where the new decision lands in each cached list is the server's call
-    mutationFn: (data: DecisaoCreateInput) => api.post<Decision>("/api/decisions", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: decisoesKeys.all });
-    },
+  // Decisions are listed by codigo and the server allocates codes sequentially, so the new one
+  // is the last row of every unpaginated list its estado belongs to ("todas" and its own estado).
+  return useCacheWriteMutation<Decision, DecisaoCreateInput>({
+    mutationFn: (data) => api.post<Decision>("/api/decisions", data),
+    targets: [
+      {
+        queryKey: decisoesKeys.all,
+        match: "prefix",
+        commit: (old: Envelope<Decision> | undefined, saved, _vars, _ctx, queryKey) => {
+          const [, kind, estado] = queryKey ?? [];
+          return kind === "list" && (estado === "todas" || estado === saved.estado)
+            ? pageOps.add(old, saved, "append", "codigo")
+            : old;
+        },
+      },
+    ],
   });
 }
 

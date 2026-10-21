@@ -1,7 +1,7 @@
 /**
  * Open-questions data hooks — contract §A.3, §B.3.
  */
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
@@ -48,12 +48,22 @@ export interface PerguntaCreateInput {
 }
 
 export function useCreatePergunta() {
-  const qc = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — the questions list order is server-side and the list is filtered by estado; where the new question falls is the server's call
-    mutationFn: (data: PerguntaCreateInput) => api.post<OpenQuestion>("/api/questions", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: perguntasKeys.all });
-    },
+  // Questions are listed by codigo and the server allocates codes sequentially, so the new one
+  // is the last row of every unpaginated list its estado belongs to ("todas" and its own estado).
+  return useCacheWriteMutation<OpenQuestion, PerguntaCreateInput>({
+    mutationFn: (data) => api.post<OpenQuestion>("/api/questions", data),
+    targets: [
+      {
+        queryKey: perguntasKeys.all,
+        match: "prefix",
+        commit: (old: Envelope<OpenQuestion> | undefined, saved, _vars, _ctx, queryKey) => {
+          const [, kind, estado] = queryKey ?? [];
+          return kind === "list" && (estado === "todas" || estado === saved.estado)
+            ? pageOps.add(old, saved, "append", "codigo")
+            : old;
+        },
+      },
+    ],
   });
 }
 

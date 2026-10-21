@@ -1,7 +1,7 @@
 /**
  * Roadmap + tasks data hooks — contract §A.4, §A.5, §B.4.
  */
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
@@ -101,13 +101,24 @@ export interface TaskCreateInput {
 }
 
 export function useCreateTask() {
-  const qc = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — tasks are listed in a server-side order under fase/estado filters; where the new task falls in each cached list is the server's call
-    mutationFn: (data: TaskCreateInput) => api.post<Task>("/api/tasks", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: roadmapKeys.tasksAll });
-      qc.invalidateQueries({ queryKey: roadmapKeys.sessionPrep });
-    },
+  // Tasks are listed by codigo and the server allocates codes sequentially, so the new one is the
+  // last row of every unpaginated list whose fase/estado filter it satisfies. Session-prep is a
+  // server-computed digest: it settles instead.
+  return useCacheWriteMutation<Task, TaskCreateInput>({
+    mutationFn: (data) => api.post<Task>("/api/tasks", data),
+    targets: [
+      {
+        queryKey: roadmapKeys.tasksAll,
+        match: "prefix",
+        commit: (old: Envelope<Task> | undefined, saved, _vars, _ctx, queryKey) => {
+          const f = (queryKey?.[2] ?? {}) as TaskListParams;
+          return (!f.fase || f.fase === saved.fase) && (!f.estado || f.estado === saved.estado)
+            ? pageOps.add(old, saved, "append", "codigo")
+            : old;
+        },
+      },
+    ],
+    invalidate: [roadmapKeys.sessionPrep],
   });
 }
 

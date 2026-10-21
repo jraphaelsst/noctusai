@@ -116,7 +116,7 @@ export interface KbCreateInput {
 
 export function useCreateKb() {
   const qc = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — KB lists are search/filter/paged and ordered by slug server-side; whether and where a new entry falls in each cached window is the server's call
+  return useMutation({ // noc-allow: invalidate-only — KB lists are full-text searched (ilike on titulo/resumo/corpo_md), paged by offset and ordered by the database's slug collation; the client cannot reproduce match or placement, so whether and where a new entry falls in each cached window is the server's call
     mutationFn: (data: KbCreateInput) => api.post<KbEntry>("/api/kb", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: kbKeys.all });
