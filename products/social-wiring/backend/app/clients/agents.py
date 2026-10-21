@@ -144,7 +144,13 @@ STATUS_RESPONDEU = ("respondido", "silencio", "handoff", "encerrado", "concluido
 STATUS_SEM_ATENDIMENTO = (
     "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
     "conversa_com_outro_agente", "controle_indisponivel", "lead_opt_out", "reengajamento_ignorado", "limite_atingido",
+    "limite_taxa", "novo_lead_limitado", "loop_detectado",
 )
+#: The not-served statuses that mean "a LIMIT stopped a real person": never silence -- SW routes each to a human
+#: (`julia_lead_turn_service._encaminhar_limite`). `limite_taxa` = per-lead rate limit; `novo_lead_limitado` = the
+#: per-agent new-lead admission cap (agents stored NOTHING, thread null); `loop_detectado` = a flood/echo loop (agents
+#: paused the participant and handed off `seguranca`).
+STATUS_LIMITE_PARA_HUMANO = ("limite_taxa", "novo_lead_limitado", "loop_detectado")
 STATUS_TURNO = STATUS_RESPONDEU + STATUS_SEM_ATENDIMENTO
 
 #: Who triggered a lead-level opt-out (agents' `origem`): the agent itself on the lead's request, a human operator,
@@ -1724,7 +1730,7 @@ __all__ = [
     "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
     "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadDesconhecido", "LeadSemQualificacao", "LlmNotConfigured",
     "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",
-    "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO",
+    "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO", "STATUS_LIMITE_PARA_HUMANO",
     "STATUS_TURNO", "ThreadInfo", "ThreadNotFound", "TransicaoInvalida", "TurnInProgress",
     "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status", "parse_consent",
     "parse_controle", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",

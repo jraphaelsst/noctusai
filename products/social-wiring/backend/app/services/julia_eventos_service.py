@@ -51,9 +51,11 @@ TIPOS_ALERTA_DONO: frozenset[str] = frozenset({"agents_contrato_invalido", "supe
 #: enviado}` -- no slot values); `intencao_visita` = the lead wants to visit a listing (`{codigo, preferencia_horario}`);
 #: `agente_nao_atendeu` = agents did not serve a turn (`{status}`: a control decision, never an error); `handoff_recebido`
 #: = the hand-off note reached its human target. None notifiable by vocabulary: each already has its own sink/page.
+#: `limite_para_humano` = agents did not serve a turn because a LIMIT stopped the lead (`limite_taxa` / `novo_lead_limitado` /
+#: `loop_detectado`) and SW routed it to the org's operators (payload `{status, motivo_codigo, notificado}`; once per lead/hour).
 #: `lead_opt_out` = the lead asked to stop and agents recorded the lead-level opt-out (payload `{origem, motivo,
 #: interacao_id}`): SW's own timeline record -- agents notifies the org admins itself, so it is NOT notifiable here.
-TIPOS_JULIA_V2: frozenset[str] = frozenset({"lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out"})
+TIPOS_JULIA_V2: frozenset[str] = frozenset({"lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out", "limite_para_humano"})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
     | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2

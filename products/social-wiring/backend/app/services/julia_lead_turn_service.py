@@ -10,8 +10,10 @@ answers with a `status`:
 
   served      respondido | silencio | handoff | encerrado | concluido     -> send the bubbles, apply the actions
   not served  agente_desligado | novo_lead_recusado | conversa_pausada | conversa_com_outro_responsavel |
-              conversa_com_outro_agente | controle_indisponivel | lead_opt_out | reengajamento_ignorado
+              conversa_com_outro_agente | controle_indisponivel | lead_opt_out | reengajamento_ignorado |
+              limite_atingido | limite_taxa | novo_lead_limitado | loop_detectado
                                                                          -> NOTHING is sent, no action is applied
+              (the last three LIMIT statuses are never silence for a real person: they are routed to the org's operators)
 
 and any error or timeout is also "nothing sent" (fail closed). `whatsapp_chats.agente_pausado` is a display mirror, not a
 gate. What a not-served turn leaves behind (Q5): the lead's messages are appended to the thread (idempotent) when the
@@ -34,6 +36,7 @@ from noctusai_lib.domain.chatbot import QueuedConversationMessage
 from noctusai_lib.integrations.redis import make_redis_client
 
 from app.clients.agents import (
+    STATUS_LIMITE_PARA_HUMANO,
     GATILHO_REENGAJAMENTO,
     MAX_BATCH_MESSAGES,
     MAX_MESSAGE_CHARS,
@@ -597,11 +600,71 @@ async def _tratar_sem_atendimento(
                 logger.info("julia: lead refused by agents (%s) -- %s SW contato(s) not kept", result.status, removidos)
             except Exception:
                 logger.exception("julia: could not drop the contato of a refused lead conn=%s chat=%s", connection.id, chat_id)
+    if result.status in STATUS_LIMITE_PARA_HUMANO:
+        await _encaminhar_limite(deps, connection=connection, chat_id=chat_id, result=result, contato=contato,
+                                 chat_store=chat_store, agents_client=agents_client)
     if result.status == "lead_opt_out" and contato is not None:
         try:
             julia_contatos_service.bump_gen(deps.scoped, contato["id"], encerrado_at=datetime.now(timezone.utc).isoformat())
         except Exception:
             logger.exception("julia: gen bump on opt-out failed conn=%s chat=%s", connection.id, chat_id)
+
+
+#: Operator-facing reason per limit status (the closed `motivo_codigo` is the status itself). UI copy for staff, never sent to
+#: the lead.
+MOTIVOS_LIMITE: dict[str, str] = {
+    "limite_taxa": "O lead enviou mensagens rápido demais e o agente não respondeu (limite por lead).",
+    "novo_lead_limitado": "O limite de novos leads do agente foi atingido: nada foi guardado no agente. As mensagens do lead estão aqui no SW, responda a ele.",
+    "loop_detectado": "O agente detectou um loop de mensagens (flood/eco), pausou o atendimento e passou a conversa para uma pessoa.",
+}
+LIMITE_DEDUPE_S = 3600  # one operator notice per lead, per status, per hour: a flood must not flood the operators either
+
+
+async def _encaminhar_limite(
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, result: TurnResult, contato: Optional[dict[str, Any]],
+    chat_store: Any, agents_client: Optional[AgentsClient],
+) -> None:
+    """A LIMIT (rate / new-lead cap / loop) stopped a real person: never silence. The org's operators are notified through
+    the same in-app path a `handoff` uses (target = the chat's attendant, else the configured/owner target), a
+    `limite_para_humano` timeline event is recorded, deduped per lead+status per hour. The lead's messages stay in SW (the
+    webhook stored them; for `novo_lead_limitado` agents kept nothing, so SW's copy IS the only one -- the contato is
+    NOT dropped). A failure here is logged, never raised."""
+    status = result.status
+    if status == "loop_detectado" and contato is not None:  # agents paused + handed off: every queued job is stale
+        try:
+            julia_contatos_service.bump_gen(deps.scoped, contato["id"])
+        except Exception:
+            logger.exception("julia: gen bump on loop_detectado failed conn=%s chat=%s", connection.id, chat_id)
+    try:
+        novo = deps.buffer.redis.set(f"julia:limite:{connection.id}:{chat_id}:{status}", "1", nx=True, ex=LIMITE_DEDUPE_S)
+    except Exception:
+        logger.exception("julia: limit dedupe unavailable conn=%s chat=%s -- notifying (better twice than never)", connection.id, chat_id)
+        novo = True
+    if not novo:
+        logger.info("julia: %s for chat=%s already routed to the operators within the hour", status, chat_id)
+        return
+    responsavel: Optional[str] = None
+    try:
+        if contato is not None:
+            atribuido = julia_equipes_service.atribuir_responsavel(deps.scoped, deps.core_client, connection.org_id, contato, "handoff")
+            responsavel = atribuido["user_id"] if atribuido else None
+    except Exception:
+        logger.exception("julia: attendant distribution failed for %s conn=%s chat=%s", status, connection.id, chat_id)
+    notificado = False
+    try:
+        summary = chat_store.get_chat(connection_id=connection.id, chat_id=chat_id)
+        nome_agente = await julia.nome_do_agente(agents_client) if agents_client is not None else None
+        julia.notificar_handoff(
+            deps.core_client, connection=connection, chat_id=chat_id, titulo_chat=summary.title if summary else None,
+            motivo=MOTIVOS_LIMITE[status], responsavel_user_id=responsavel, registro=None, agente_nome=nome_agente,
+        )
+        notificado = True
+    except Exception:
+        logger.exception("julia: operator notice for %s failed conn=%s chat=%s", status, connection.id, chat_id)
+    julia_eventos_service.emitir(
+        deps.scoped, connection.org_id, "limite_para_humano", (contato or {}).get("id"),
+        {"status": status, "motivo_codigo": status, "notificado": notificado},
+    )
 
 
 def _alertar_contrato_invalido(

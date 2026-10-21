@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 #: exists and must keep one end-to-end context. Idempotent: a message the turn already stored is `duplicado`.
 STATUS_ANEXAR_LEAD = frozenset({
     "conversa_pausada", "conversa_com_outro_responsavel", "conversa_com_outro_agente", "agente_desligado",
+    "limite_taxa", "loop_detectado",  # a thread exists; `novo_lead_limitado` has none (agents stored nothing)
 })
 
 

@@ -492,6 +492,74 @@ class TestLeadMessageNeverDeletes:
             assert not hasattr(julia, nome)
 
 
+# ── a LIMIT is never silence for a real person (owner rule) ─────────────────
+class TestLimitesVaoParaUmHumano:
+    @pytest.mark.parametrize("status", ["limite_taxa", "novo_lead_limitado", "loop_detectado"])
+    async def test_nothing_is_sent_to_the_lead_but_the_operators_are_told_and_the_timeline_records_it(self, world, status):
+        world.agents = FakeAgentsClient([_ok(status=status)])
+        k = buffer_lead(world, LEAD_CHAT, ["oi, quero um apê"], ids=["m1"])
+        await _run(world, k)
+        assert world.sent_texts() == [], "the lead gets no automatic text"
+        avisos = [n for n in world.notifications() if (n.get("metadata") or {}).get("tipo") == julia.HANDOFF_KIND]
+        assert len(avisos) == 1 and avisos[0]["user_id"] == OWNER_ID
+        assert avisos[0]["metadata"]["chat_id"] == LEAD_CHAT and "Motivo" in avisos[0]["message"]
+        [ev] = [e for e in world.rows("julia_eventos") if e["tipo"] == "limite_para_humano"]
+        assert ev["payload"] == {"status": status, "motivo_codigo": status, "notificado": True}
+        assert world.chat_row() is not None and world.contato() is not None  # nothing of the lead is dropped
+
+    async def test_novo_lead_limitado_keeps_the_contato_and_the_message_in_sw_because_agents_kept_nothing(self, world):
+        world.agents = FakeAgentsClient([_ok(status="novo_lead_limitado", cid="")])
+        k = buffer_lead(world, LEAD_CHAT, ["oi"], ids=["m1"])
+        await _run(world, k)
+        # the webhook stores every inbound in SW BEFORE buffering it (tests/routers/test_julia_agente_routing); here the worker
+        # must not drop the contato nor the chat (the refused-lead cleanup is for `novo_lead_recusado` only)
+        assert world.contato() is not None and world.chat_row() is not None
+        assert world.agents.appended == [] and world.agents.leads_apagados == []
+
+    async def test_a_flood_notifies_once_per_lead_per_hour_but_each_turn_is_still_on_the_timeline(self, world):
+        world.agents = FakeAgentsClient([_ok(status="limite_taxa"), _ok(status="limite_taxa")])
+        k = buffer_lead(world, LEAD_CHAT, ["a"], ids=["m1"])
+        await _run(world, k)
+        buffer_lead(world, LEAD_CHAT, ["b"], ids=["m2"])
+        await _run(world, k)
+        avisos = [n for n in world.notifications() if (n.get("metadata") or {}).get("tipo") == julia.HANDOFF_KIND]
+        assert len(avisos) == 1
+        assert len([e for e in world.rows("julia_eventos") if e["tipo"] == "agente_nao_atendeu"]) == 2
+        assert len([e for e in world.rows("julia_eventos") if e["tipo"] == "limite_para_humano"]) == 1
+
+    async def test_a_different_status_for_the_same_lead_is_a_new_notice(self, world):
+        world.agents = FakeAgentsClient([_ok(status="limite_taxa"), _ok(status="loop_detectado")])
+        k = buffer_lead(world, LEAD_CHAT, ["a"], ids=["m1"])
+        await _run(world, k)
+        buffer_lead(world, LEAD_CHAT, ["b"], ids=["m2"])
+        await _run(world, k)
+        assert len([n for n in world.notifications() if (n.get("metadata") or {}).get("tipo") == julia.HANDOFF_KIND]) == 2
+
+    async def test_loop_detected_invalidates_the_queued_followups(self, world):
+        world.agents = FakeAgentsClient([_ok(status="loop_detectado")])
+        k = buffer_lead(world, LEAD_CHAT, ["a"], ids=["m1"])
+        await _run(world, k)
+        gen_antes = world.contato()["gen"]
+        assert gen_antes >= 2  # the inbound bump + the loop bump
+
+    async def test_a_notification_failure_is_logged_recorded_and_never_raised(self, world, monkeypatch):
+        def boom(*a, **kw):
+            raise RuntimeError("notifications down")
+
+        monkeypatch.setattr(julia, "notificar_handoff", boom)
+        world.agents = FakeAgentsClient([_ok(status="limite_taxa")])
+        k = buffer_lead(world, LEAD_CHAT, ["a"], ids=["m1"])
+        await _run(world, k)
+        [ev] = [e for e in world.rows("julia_eventos") if e["tipo"] == "limite_para_humano"]
+        assert ev["payload"]["notificado"] is False
+
+    def test_the_client_knows_the_three_statuses(self):
+        from app.clients.agents import STATUS_LIMITE_PARA_HUMANO, STATUS_SEM_ATENDIMENTO
+
+        assert set(STATUS_LIMITE_PARA_HUMANO) == {"limite_taxa", "novo_lead_limitado", "loop_detectado"}
+        assert set(STATUS_LIMITE_PARA_HUMANO) <= set(STATUS_SEM_ATENDIMENTO)
+
+
 # ── static guard: the lead path never touches the operator stack ────────────
 class TestOperatorIsolation:
     @pytest.mark.parametrize("module", ["julia_lead_turn_service", "julia_agente_service"])
