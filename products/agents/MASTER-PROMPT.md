@@ -236,6 +236,11 @@ routes, studio thread state/results).
   mint and revoke are audited. The Studio home (`/studio`) carries the platform-admin "Token de conteúdo (MCP)"
   section: "Gerar token" dialog (label, days or "Nunca expira" with a warning), the secret shown once with where to
   put it (`NOCTUS_AGENTS_CONTENT_TOKEN=` in `~/.config/noctus/agents.env`), the list and a confirmed "Revogar".
+  The mint dialog's "Permitir excluir agentes" checkbox (`permitir_exclusao`) adds scope `studio:agent-delete`;
+  such tokens carry a badge in the list. The agent list (platform admins) has "Criar agente" (`CriarAgentePlataformaDialog`:
+  a key -> `POST /plataforma/agents`, an empty shell; a creation-mode seam `MODOS_CRIACAO` for the coming AI-generated
+  draft) and a per-row "Excluir" (`ExcluirAgenteDialog`: type the key to confirm; 409 reasons from the flat error body
+  mapped to hints in `lib/agentLifecycle.ts`). Hooks: `hooks/studio/useAgentLifecycle.ts` (cache writes, no invalidate-only).
   Scope: the token is org-bound to the platform org, so it reaches every platform-defined agent registered there
   (today only Julia) through the draft routes only; it never publishes.
 - Agent lifecycle (S1, migration 048): an agent can be DELETED and created EMPTY. `DELETE /api/studio/agents/{key}`
