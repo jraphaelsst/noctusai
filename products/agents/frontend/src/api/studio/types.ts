@@ -96,6 +96,8 @@ export interface AgentSummary {
   definition_scope?: "org" | "plataforma" | "instancia";
   /** Julia v2: `linhas` (every compiler string is a DB row) | `legado`. Absent = `legado`. */
   conteudo_modo?: "linhas" | "legado";
+  /** Optional: filled vs required texts of the (possibly empty) agent. Absent = show nothing. */
+  conteudo_status?: { preenchidos: number; exigidos: number };
 }
 
 export interface AgentListResponse {

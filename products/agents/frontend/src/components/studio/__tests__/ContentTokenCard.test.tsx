@@ -106,4 +106,20 @@ describe("ContentTokenCard", () => {
     fireEvent.click(screen.getByTestId("content-token-revoke-confirm"));
     await waitFor(() => expect(revoke.mutateAsync).toHaveBeenCalledWith("t1"));
   });
+  it("sends permitir_exclusao only when the checkbox is ticked", async () => {
+    mint.mutateAsync.mockResolvedValue({ id: "t1", token: "pk_x", prefix: "pk_x", expires_at: null, scopes: [] });
+    render(<ContentTokenCard />);
+    fireEvent.click(screen.getByTestId("content-token-new"));
+    fireEvent.change(screen.getByTestId("content-token-label"), { target: { value: "chat" } });
+    fireEvent.click(screen.getByTestId("content-token-permitir-exclusao"));
+    fireEvent.click(screen.getByTestId("content-token-mint"));
+    await waitFor(() => expect(mint.mutateAsync).toHaveBeenCalledWith({ label: "chat", expira_em_dias: 30, permitir_exclusao: true }));
+  });
+
+  it("badges a token that carries studio:agent-delete", () => {
+    mockTokens.mockReturnValue(view({ data: { itens: [row({ scopes: ["studio:content-write", "studio:agent-delete"] }), row({ id: "t2" })] } }));
+    render(<ContentTokenCard />);
+    expect(screen.getByTestId("content-token-exclusao-t1")).toBeTruthy();
+    expect(screen.queryByTestId("content-token-exclusao-t2")).toBeNull();
+  });
 });

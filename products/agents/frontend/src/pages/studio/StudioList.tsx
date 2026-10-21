@@ -6,11 +6,13 @@
  */
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Plus, Upload } from "lucide-react";
+import { Boxes, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 import { SLUG_RE, type AgentSummary } from "@/api/studio/types";
 import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { CriarAgentePlataformaDialog } from "@/components/studio/CriarAgentePlataformaDialog";
+import { ExcluirAgenteDialog } from "@/components/studio/ExcluirAgenteDialog";
 import { ContentTokenCard } from "@/components/studio/ContentTokenCard";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
@@ -200,6 +202,8 @@ export default function StudioList() {
   const { data: agents, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgents();
   const [novoOpen, setNovoOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [criarOpen, setCriarOpen] = useState(false);
+  const [excluir, setExcluir] = useState<AgentSummary | null>(null);
   const navigate = useNavigate();
 
   return (
@@ -218,6 +222,11 @@ export default function StudioList() {
             <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="studio-importar-pacote">
               <Upload className="mr-1 h-4 w-4" /> Importar pacote
             </Button>
+            {isPlatformAdmin && (
+              <Button variant="outline" onClick={() => setCriarOpen(true)} data-testid="studio-criar-agente">
+                <Plus className="mr-1 h-4 w-4" /> Criar agente
+              </Button>
+            )}
             <Button variant="primary" onClick={() => setNovoOpen(true)} data-testid="studio-novo-agente">
               <Plus className="mr-1 h-4 w-4" /> Novo agente
             </Button>
@@ -245,6 +254,7 @@ export default function StudioList() {
                 <th className="px-4 py-2 font-medium">Ativo</th>
                 <th className="px-4 py-2 font-medium">Versão ativa</th>
                 <th className="px-4 py-2 font-medium">Rascunho</th>
+                {isPlatformAdmin && <th className="px-4 py-2 font-medium">Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -282,7 +292,21 @@ export default function StudioList() {
                   <td className="px-4 py-3 tabular-nums">{a.versao_ativa !== null ? `v${a.versao_ativa}` : "—"}</td>
                   <td className="px-4 py-3">
                     {a.tem_rascunho ? <Badge variant="outline">Rascunho</Badge> : <span className="text-muted-foreground">—</span>}
+                    {a.conteudo_status && (
+                      <p className="mt-1 text-xs text-muted-foreground tabular-nums" data-testid={`studio-conteudo-${a.key}`}>
+                        {a.conteudo_status.preenchidos} de {a.conteudo_status.exigidos} textos
+                      </p>
+                    )}
                   </td>
+                  {isPlatformAdmin && (
+                    <td className="px-4 py-3">
+                      {a.definition_mode === "studio" && (
+                        <Button size="sm" variant="outline" onClick={() => setExcluir(a)} data-testid={`studio-excluir-${a.key}`}>
+                          <Trash2 className="mr-1 h-3.5 w-3.5" /> Excluir
+                        </Button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -292,6 +316,10 @@ export default function StudioList() {
 
       {isPlatformAdmin && <ContentTokenCard />}
 
+      {isPlatformAdmin && criarOpen && <CriarAgentePlataformaDialog onClose={() => setCriarOpen(false)} />}
+      {isPlatformAdmin && excluir && (
+        <ExcluirAgenteDialog agentKey={excluir.key} nome={excluir.nome} onClose={() => setExcluir(null)} />
+      )}
       {isAdmin && <NovoAgenteDialog open={novoOpen} onClose={() => setNovoOpen(false)} />}
       {isAdmin && importOpen && (
         <ImportBundleDialog

@@ -40,6 +40,8 @@ export interface ContentTokenMintInput {
   label: string;
   /** `null` = never expires. */
   expira_em_dias: number | null;
+  /** Adds scope `studio:agent-delete`. Omitted = false. */
+  permitir_exclusao?: boolean;
 }
 
 export function useContentTokens() {

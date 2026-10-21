@@ -38,6 +38,7 @@ function MintDialog({ onClose }: { onClose: () => void }) {
   const [label, setLabel] = useState("");
   const [nunca, setNunca] = useState(false);
   const [dias, setDias] = useState(String(CONTENT_TOKEN_DEFAULT_DAYS));
+  const [permitirExclusao, setPermitirExclusao] = useState(false);
   // Held ONLY here; unmounting the dialog discards it.
   const [minted, setMinted] = useState<ContentTokenMinted | null>(null);
 
@@ -47,7 +48,9 @@ function MintDialog({ onClose }: { onClose: () => void }) {
 
   async function handleMint() {
     try {
-      setMinted(await mint.mutateAsync({ label: label.trim(), expira_em_dias: nunca ? null : diasNum }));
+      setMinted(await mint.mutateAsync({ label: label.trim(), expira_em_dias: nunca ? null : diasNum,
+        ...(permitirExclusao ? { permitir_exclusao: true } : {}),
+      }));
     } catch (err) {
       toast.error(errorMessage(err));
     }
@@ -125,6 +128,21 @@ function MintDialog({ onClose }: { onClose: () => void }) {
                 </p>
               )}
             </fieldset>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={permitirExclusao}
+                onChange={(e) => setPermitirExclusao(e.target.checked)}
+                data-testid="content-token-permitir-exclusao"
+              />
+              <span>
+                Permitir excluir agentes
+                <span className="block text-xs text-muted-foreground">
+                  Além de editar rascunhos, o token poderá excluir agentes (só os que o servidor permitir: sem versão publicada,
+                  conversas, instâncias ou canal).
+                </span>
+              </span>
+            </label>
           </div>
         )}
       </DialogBody>
@@ -203,6 +221,11 @@ export function ContentTokenCard() {
                   <Badge variant={t.status === "ativo" ? "default" : "muted"} data-testid={`content-token-status-${t.id}`}>
                     {STATUS_LABEL[t.status]}
                   </Badge>
+                  {t.scopes?.includes("studio:agent-delete") && (
+                    <Badge variant="outline" data-testid={`content-token-exclusao-${t.id}`}>
+                      Pode excluir agentes
+                    </Badge>
+                  )}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   <span className="font-mono">{t.prefix}…</span> · criado em {fmt(t.created_at)}
