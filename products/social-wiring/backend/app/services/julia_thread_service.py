@@ -24,6 +24,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from app.clients.agents import (
+    MAX_MESSAGE_CHARS,
     AgentsClient,
     AgentsClientError,
     ParticipanteInfo,
@@ -91,9 +92,13 @@ def _message_id(provider_message_id: Optional[str]) -> str:
 async def encaminhar_humano(
     client: Optional[AgentsClient], chat_store: Any, *, connection_id: UUID, chat_id: str, texto: str,
     provider_message_id: Optional[str], autor_user_id: Optional[str | UUID], at: Optional[datetime] = None,
+    autor: Optional[dict[str, Any]] = None,
 ) -> str:
     """Forward a HUMAN attendant's outbound message to the thread (Q5). Returns `enviado` | `duplicado` | `sem_thread`
-    | `sem_autor` | `sem_cliente` | `erro`; never raises."""
+    | `sem_autor` | `sem_cliente` | `erro`; never raises.
+
+    `autor` is `{nome, papel}` from the org STAFF list (`autor_para`): the ONLY route that may carry it is this staff append
+    (agents' provenance slice rejects `autor` on a lead turn / lead append), so a lead can never claim a staff identity."""
     if client is None:
         return "sem_cliente"
     if not (texto or "").strip():
@@ -106,8 +111,9 @@ async def encaminhar_humano(
         return "sem_thread"  # a lead Julia never served is never stored (Q5)
     try:
         out = await client.anexar_mensagem(
-            tid, role="humano", texto=texto[:8000], provider_message_id=_message_id(provider_message_id),
+            tid, role="humano", texto=texto[:MAX_MESSAGE_CHARS], provider_message_id=_message_id(provider_message_id),
             at=at or datetime.now(timezone.utc), autor_user_id=str(autor_user_id),
+            autor={"nome": autor["nome"], "papel": autor["papel"]} if autor else None,
         )
     except AgentsClientError as exc:
         logger.error("julia: human message not forwarded (%s) conn=%s", type(exc).__name__, connection_id)
@@ -125,7 +131,7 @@ async def encaminhar_lead(
     novas = 0
     for texto, pid, at in mensagens:
         try:
-            out = await client.anexar_mensagem(thread_id, role="user", texto=texto[:8000],
+            out = await client.anexar_mensagem(thread_id, role="user", texto=texto[:MAX_MESSAGE_CHARS],
                                                provider_message_id=_message_id(pid), at=at)
         except AgentsClientError as exc:
             logger.error("julia: lead message not appended (%s) thread=%s", type(exc).__name__, thread_id)
@@ -135,32 +141,68 @@ async def encaminhar_lead(
 
 
 # ── a human takes the conversation over (typed on the phone / sent from the inbox) ──────────
+def _candidatos_a_autor(scoped: Any, core: Any, connection: Any, chat_id: str) -> list[UUID]:
+    """The users who may have typed a human line this chat: the attendant assigned to the contato, the line's configured hand-off
+    target, the org owner, the line's owner (in that order)."""
+    from app.services import julia_agente_service as julia
+    from app.services import julia_contatos_service
+
+    try:
+        contato = julia_contatos_service.buscar_contato(scoped, connection.org_id, connection.id, chat_id)
+    except Exception as exc:
+        logger.error("julia: contato read failed while resolving the human author conn=%s (%s)", connection.id, type(exc).__name__)
+        contato = None
+    out: list[UUID] = []
+    for cand in ((contato or {}).get("responsavel_user_id"), getattr(connection, "agente_handoff_notificar_user_id", None)):
+        if cand:
+            out.append(UUID(str(cand)))
+    dono = julia.dono_da_org(core, connection.org_id)
+    if dono is not None:
+        out.append(dono)
+    if getattr(connection, "user_id", None):
+        out.append(UUID(str(connection.user_id)))
+    return out
+
+
 def autor_humano(
     scoped: Any, core: Any, connection: Any, chat_id: str,
 ) -> Optional[UUID]:
     """The SW user agents records as the author of a human message whose sender SW cannot see (typed on the phone): the
     attendant assigned to the contato, else the line's configured hand-off target, else the org owner, else the line's owner.
     All are real org users (agents requires an `autor_user_id`). None only when none resolves (logged by the caller)."""
-    from app.services import julia_agente_service as julia
-    from app.services import julia_contatos_service
+    candidatos = _candidatos_a_autor(scoped, core, connection, chat_id)
+    return candidatos[0] if candidatos else None
+
+
+def autor_para(scoped: Any, core: Any, org_id: UUID | str, user_id: Optional[str | UUID]) -> Optional[dict[str, Any]]:
+    """`{user_id, nome, papel}` of a SW user for the staff append: the org STAFF list first (its name and role), else the user's
+    core role. None when the user is not a member of the org (then nothing is attributed)."""
+    from app.services import julia_staff_service as staff
 
     try:
-        contato = julia_contatos_service.buscar_contato(scoped, connection.org_id, connection.id, chat_id)
-    except Exception:
-        logger.exception("julia: contato read failed while resolving the human author conn=%s", connection.id)
-        contato = None
-    for cand in ((contato or {}).get("responsavel_user_id"), getattr(connection, "agente_handoff_notificar_user_id", None)):
-        if cand:
-            return UUID(str(cand))
-    dono = julia.dono_da_org(core, connection.org_id)
-    if dono is not None:
-        return dono
-    return UUID(str(connection.user_id)) if getattr(connection, "user_id", None) else None
+        return staff.autor_de_usuario(scoped, core, org_id, user_id)
+    except Exception as exc:
+        logger.error("julia: could not resolve the staff author org=%s (%s)", org_id, type(exc).__name__)
+        return None
+
+
+def autor_humano_info(scoped: Any, core: Any, connection: Any, chat_id: str) -> Optional[dict[str, Any]]:
+    """`autor_humano` with the staff list applied: the first candidate that IS on the staff list wins (its registered name and
+    role); otherwise the first candidate, described by its core role."""
+    primeiro: Optional[dict[str, Any]] = None
+    for cand in _candidatos_a_autor(scoped, core, connection, chat_id):
+        info = autor_para(scoped, core, connection.org_id, cand)
+        if info is None:
+            continue
+        if info.get("na_lista"):
+            return info
+        primeiro = primeiro or info
+    return primeiro
 
 
 async def tomada_humana(
     client: Optional[AgentsClient], chat_store: Any, *, connection_id: UUID, chat_id: str, agent_key: str, texto: str,
-    provider_message_id: Optional[str], autor_user_id: Optional[str | UUID],
+    provider_message_id: Optional[str], autor_user_id: Optional[str | UUID], autor: Optional[dict[str, Any]] = None,
 ) -> str:
     """A human attendant wrote in the chat (L3): append the message to the thread (Q5) and PAUSE the agent in that
     conversation through agents (the actor recorded), mirroring agents' answer. SW sets NO local pause. Returns
@@ -179,7 +221,7 @@ async def tomada_humana(
         return "sem_autor"
     await encaminhar_humano(
         client, chat_store, connection_id=connection_id, chat_id=chat_id, texto=texto,
-        provider_message_id=provider_message_id, autor_user_id=autor_user_id,
+        provider_message_id=provider_message_id, autor_user_id=autor_user_id, autor=autor,
     )
     try:
         part = await client.set_participante(
@@ -279,6 +321,6 @@ async def estado_da_conversa(
 
 
 __all__ = [
-    "ConversaSemThread", "STATUS_ANEXAR_LEAD", "alternar_conversa", "autor_humano", "devolver_a_julia", "encaminhar_humano",
+    "ConversaSemThread", "STATUS_ANEXAR_LEAD", "alternar_conversa", "autor_humano", "autor_humano_info", "autor_para", "devolver_a_julia", "encaminhar_humano",
     "encaminhar_lead", "espelhar", "estado_da_conversa", "resolver_thread_id", "thread_id_do_estado", "tomada_humana",
 ]

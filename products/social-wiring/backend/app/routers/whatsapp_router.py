@@ -98,7 +98,7 @@ from app.routers.julia_agente_router import get_agents_client_factory
 from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services import julia_agente_service as julia
-from app.services import julia_conversas_service, julia_thread_service
+from app.services import julia_conversas_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
@@ -106,7 +106,7 @@ from noctusai_lib.integrations.vista import (
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
 )
-from app.services.media_service import ResolvedMedia, make_media_service
+from app.services.media_service import MidiaLead, ResolvedMedia, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.waha_response_registry import record_waha_sample
@@ -526,13 +526,17 @@ async def _lid_alias_phone(*, intake, connection, lid: str, cfg=None, waha_facto
 async def _handle_lead_message(
     *, connection, intake, chat_id: str, sender: str, message_body: str,
     provider_message_id: str, push_name: str | None, cfg, waha_factory=None,
+    midia: dict | None = None,
 ) -> bool:
     """The lead path for ONE inbound. Returns True when the message was handled here
     (enqueued for Julia, or deliberately held because a human has the chat), False
     when the chat is NOT Julia's (11.1) so the caller keeps today's behaviour.
 
     Never calls ChatbotService or any operator tool — it only buffers; the worker
-    (`julia_lead_turn_service`) owns the turn."""
+    (`julia_lead_turn_service`) owns the turn.
+
+    `message_body` is what the lead TYPED (or the media caption). The media they sent travels in `midia` (structured, masked,
+    already resolved under the lead-path caps) and is buffered beside the text, never merged into it (GUARDRAILS B2)."""
 
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
@@ -544,10 +548,10 @@ async def _handle_lead_message(
                 intake=intake, connection=connection, lid=lid, cfg=cfg, waha_factory=waha_factory
             ),
         )
-    except Exception:
+    except Exception as exc:
         # Eligibility is a PRIVACY decision (11.1): when it cannot be made, the chat is
         # not Julia's. Logged, never swallowed into a "yes".
-        logger.exception("Julia eligibility check failed for chat=%s — treated as NOT eligible", chat_id)
+        logger.error("Julia eligibility check failed for chat=%s (%s) — treated as NOT eligible", chat_id, type(exc).__name__)
         return False
     if not elegibilidade.elegivel:
         logger.info("Julia: chat %s not eligible (%s) — unchanged behaviour", chat_id, elegibilidade.motivo)
@@ -577,11 +581,100 @@ async def _handle_lead_message(
             text=message_body,
             direction="inbound",
             provider_message_id=provider_message_id or f"sw-{uuid4().hex}",
-            metadata={"push_name": push_name, "sender": sender},
+            metadata={"push_name": push_name, "sender": sender, **({"midia": midia} if midia else {})},
         )
     )
     logger.info("Julia: lead message buffered chat=%s debounce=%ss", chat_id, cfg.message_debounce_seconds)
     return True
+
+
+async def _triar_remetente(connection, *, chat_id: str, sender: str, cfg):
+    """GUARDRAILS B5: the first question about an inbound on a Julia line, asked BEFORE any media AI call or agents call. Returns
+    None for a sender that is not a lead candidate (an operator number, or a person on the org staff list); else the
+    `Triagem` (blocklist, per-number rate limit). A staff member is decided later (the routing split) -- here they only skip the
+    lead limits."""
+    client = get_scoped_admin_client("social_wiring")
+    try:
+        formas = julia_staff_service.formas_do_remetente(chat_id, sender)
+        if formas and julia_staff_service.buscar_por_telefone(client, connection.org_id, formas) is not None:
+            return None
+        redis = make_redis_client(cfg.redis_url, decode_responses=True)
+        return julia_protecao_service.triar_entrada(client, redis, get_core_client(), connection, chat_id=chat_id, sender=sender)
+    except Exception as exc:
+        logger.error("Julia: inbound triage unavailable conn=%s (%s) -- media AI refused for this inbound", connection.id, type(exc).__name__)
+        return julia_protecao_service.Triagem("erro", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
+
+
+async def _resolver_midia_do_lead(
+    triagem, *, chat_id: str, url, mimetype, filename, legenda: str, cfg,
+) -> MidiaLead:
+    """The LEAD-path media resolution (GUARDRAILS B2/B5/B8): refused without an AI call for a blocked / over-limit / unreadable
+    triage, for a missing OpenAI key, or an exhausted media budget; otherwise streamed under the lead caps and read with the org's
+    lead document prompt."""
+    codigo = {"bloqueado": "bloqueado", "limitado": "limite_entrada", "erro": "falhou"}.get(triagem.estado)
+    if codigo is None and not cfg.openai_api_key:
+        codigo = "falhou"
+    if codigo is not None:
+        return midia_recusada(mimetype, filename, codigo, legenda=legenda)
+    try:
+        redis = make_redis_client(cfg.redis_url, decode_responses=True)
+        return await make_media_service().resolve_inbound_lead(
+            url=url, mimetype=mimetype, filename=filename, legenda=legenda,
+            reservar=lambda: triagem.reservar_midia(redis, chat_id),
+            prompt_documento=triagem.config.get("prompt_documento_lead"),
+        )
+    except Exception as exc:  # resolve_inbound_lead never raises; this is the Redis / factory seam
+        logger.error("Julia: lead media resolution unavailable (%s)", type(exc).__name__)
+        return midia_recusada(mimetype, filename, "falhou", legenda=legenda)
+
+
+async def _staff_na_linha(*, connection, intake, chat_id: str, sender: str, cfg, waha_factory=None):
+    """The org STAFF row of whoever wrote on a Julia line, or None (=> a lead, always). Decided by the sender's NUMBER only, against
+    the staff list (never by anything the message says); a LID is resolved to its phone first."""
+    client = get_scoped_admin_client("social_wiring")
+    extras = [chat_id, sender]
+    # a LID costs a WAHA round-trip to resolve: only worth it when the org has staff with a number at all
+    if (julia.is_lid(sender) or julia.is_lid(chat_id)) and julia_staff_service.existe_staff_com_telefone(client, connection.org_id):
+        resolvido = await _lid_alias_phone(intake=intake, connection=connection, lid=chat_id if julia.is_lid(chat_id) else sender,
+                                           cfg=cfg, waha_factory=waha_factory)
+        if resolvido:
+            extras.append(resolvido)
+    try:
+        return julia_staff_service.buscar_por_telefone(client, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
+    except Exception as exc:
+        # cannot tell staff from a stranger: the safe reading is "a lead" (never operator tools), and it is logged
+        logger.error("Julia: staff lookup failed conn=%s (%s) -- the sender is treated as a lead", connection.id, type(exc).__name__)
+        return None
+
+
+def _avisar_staff_na_linha_publica(*, connection, staff_row, cfg) -> None:
+    """A staff member wrote on Julia's PUBLIC line and is not an operator (or could not be resolved as one): the message is
+    stored in the inbox, never enters the lead flow, and the org admins get ONE in-app notice an hour per person. Never raises."""
+    from noctusai_lib.domain.notifications import write_in_app
+
+    from app.services.julia_notificacoes_service import admins_da_org
+
+    logger.info("Julia: staff message on the public line org=%s role=%s -- not a lead, not an operator", connection.org_id, staff_row.get("papel"))
+    try:
+        redis = make_redis_client(cfg.redis_url, decode_responses=True)
+        if not redis.set(f"julia:staff_linha:{connection.org_id}:{staff_row['id']}", "1", nx=True, ex=3600):
+            return
+    except Exception as exc:
+        logger.error("Julia: staff notice dedupe unavailable (%s) -- notifying", type(exc).__name__)
+    try:
+        core = get_core_client()
+        admins = admins_da_org(core, connection.org_id)
+        if not admins:
+            raise RuntimeError("sem_destinatarios")
+        write_in_app(
+            core, user_ids=admins, kind="julia_staff_na_linha_publica", org_id=connection.org_id,
+            title="Mensagem da equipe na linha pública da Julia",
+            message=f"{staff_row.get('nome')} ({staff_row.get('papel')}) escreveu para a linha pública. A mensagem não entrou no atendimento da Julia; ela está na conversa.",
+            metadata={"product": "social-wiring", "link": "/julia/conversas", "staff_id": str(staff_row["id"])},
+        )
+    except Exception as exc:
+        logger.error("Julia: staff notice failed org=%s (%s)", connection.org_id, type(exc).__name__)
+
 
 
 async def _apply_human_takeover(
@@ -615,15 +708,18 @@ async def _apply_human_takeover(
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
         client = (agents_client_factory or (lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg)))(connection.org_id)
-        autor = julia_thread_service.autor_humano(
+        # the author comes from the org STAFF list (name + role); the route that appends it is the staff append, the only one
+        # agents lets carry `autor`
+        autor = julia_thread_service.autor_humano_info(
             get_scoped_admin_client("social_wiring"), get_core_client(), connection, chat_id)
         resultado = await julia_thread_service.tomada_humana(
             client, chat_store, connection_id=connection.id, chat_id=chat_id,
             agent_key=connection.agente_leads_key or julia.DEFAULT_AGENT_KEY, texto=texto,
-            provider_message_id=provider_message_id or None, autor_user_id=autor,
+            provider_message_id=provider_message_id or None, autor_user_id=autor["user_id"] if autor else None,
+            autor={"nome": autor["nome"], "papel": autor["papel"]} if autor else None,
         )
-    except Exception:
-        logger.exception("Julia: could not record the human takeover of chat=%s", chat_id)
+    except Exception as exc:
+        logger.error("Julia: could not record the human takeover of chat=%s (%s)", chat_id, type(exc).__name__)
         return
     if resultado != "pausado":
         logger.info("Julia: human message in chat %s — nothing to pause at agents (%s)", chat_id, resultado)
@@ -775,6 +871,9 @@ async def _process_waha_body(
     # "audio recebido — não suportado" and "[Audio transcrito] ola tudo
     # bem? gostaria de saber sobre o ONE5555".
     resolved_media: ResolvedMedia | None = None
+    midia_lead: MidiaLead | None = None
+    triagem = None
+    legenda_original = message_body
     media_url = None
     media_mimetype = None
     media_filename = None
@@ -790,7 +889,20 @@ async def _process_waha_body(
         media_filename = getattr(payload.media, "filename", None) or (
             payload.media.get("filename") if isinstance(payload.media, dict) else None
         )
-    if media_url and cfg.openai_api_key and not from_me:
+    # GUARDRAILS B5/B8: on a Julia line a stranger's media is triaged (blocklist, per-number rate limit) BEFORE any AI call and
+    # resolved under the LEAD caps; a staff / operator sender keeps the operator path below unchanged.
+    if (
+        not from_me and not is_group and connection is not None and connection.agente_leads_ativo
+        and not julia_protecao_service.eh_numero_da_lista(connection.authorized_numbers, sender)
+    ):
+        triagem = await _triar_remetente(connection, chat_id=payload.chat_id or sender, sender=sender, cfg=cfg)
+    if media_url and not from_me and triagem is not None:
+        midia_lead = await _resolver_midia_do_lead(
+            triagem, chat_id=payload.chat_id or sender, url=media_url, mimetype=media_mimetype, filename=media_filename,
+            legenda=legenda_original, cfg=cfg,
+        )
+        message_body = midia_lead.exibicao()  # SW's own inbox line (masked); agents gets `midia`, never this string
+    elif media_url and cfg.openai_api_key and not from_me:
         try:
             media_service = make_media_service()
             resolved_media = await media_service.resolve_inbound(
@@ -804,8 +916,8 @@ async def _process_waha_body(
                 message_body = f"{resolved_media.text}\n\nLegenda do usuario: {message_body}"
             else:
                 message_body = resolved_media.text or message_body
-        except Exception:
-            logger.exception("media resolution failed for %s", sender)
+        except Exception as exc:
+            logger.error("media resolution failed (%s)", type(exc).__name__)
 
     if not message_body and media_url:
         # Media with no caption and no resolvable text (e.g. no OpenAI key):
@@ -849,7 +961,7 @@ async def _process_waha_body(
             provider_message_id=provider_message_id or None,
             authorized=True,
             structured_payload=_payload_com_anexo(
-                resolved_media.structured_payload if resolved_media else None,
+                resolved_media.structured_payload if resolved_media else (midia_lead.structured_payload if midia_lead else None),
                 media_url=media_url, mimetype=media_mimetype, filename=media_filename,
             ),
             connection_id=connection.id if connection is not None else None,
@@ -1028,10 +1140,30 @@ async def _process_waha_body(
         # B3: `intake.is_authorized` (phone/LID-aware), not raw list membership. An
         # uncached operator LID falls to Julia — safe: she has no operator tools.
         if not intake.is_authorized(sender):
-            if await _handle_lead_message(
+            # Owner 2026-10-21: only a number on the org STAFF list is staff; anyone else is a lead, always. A staff member on
+            # the public line never enters the lead flow: an operator-role person goes to the One Chat path, every other
+            # role is stored + logged + noticed. Decided by the NUMBER (LIDs resolved), never by what the message says.
+            lead = True
+            staff_row = await _staff_na_linha(
+                connection=connection, intake=intake, chat_id=chat_id, sender=sender, cfg=cfg, waha_factory=waha_factory)
+            if staff_row is not None:
+                lead = False
+                if julia_staff_service.e_operador(staff_row.get("papel")):
+                    digitos = staff_row.get("telefone")
+                    if digitos and julia.is_lid(sender):  # an operator's LID was not cached yet: teach it, then the normal path works
+                        intake.remember_lid_for_phone(sender, f"+{digitos}")
+                if not (julia_staff_service.e_operador(staff_row.get("papel")) and intake.is_authorized(sender)):
+                    _avisar_staff_na_linha_publica(connection=connection, staff_row=staff_row, cfg=cfg)
+                    return Response(status_code=status.HTTP_200_OK)
+            elif triagem is not None and triagem.estado in ("bloqueado", "limitado"):
+                # recorded above (it is in the inbox); never reaches agents or an AI call (GUARDRAILS B5)
+                return Response(status_code=status.HTTP_200_OK)
+            if lead and await _handle_lead_message(
                 connection=connection, intake=intake, chat_id=chat_id, sender=sender,
-                message_body=message_body, provider_message_id=provider_message_id,
+                message_body=legenda_original if midia_lead is not None else message_body,
+                provider_message_id=provider_message_id,
                 push_name=getattr(payload, "pushName", None), cfg=cfg, waha_factory=waha_factory,
+                midia=midia_lead.para_agents() if midia_lead is not None else None,
             ):
                 return Response(status_code=status.HTTP_200_OK)
             # Not eligible (pre-existing chat): fall through to the unchanged

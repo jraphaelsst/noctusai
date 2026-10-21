@@ -9610,6 +9610,67 @@ _SW_JULIA_CREDITO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_JULIA_STAFF_PROT = "298_julia_staff_protecao_bloqueio.sql"
+_T_JULIA_STAFF_PROT = (f"{_S}.julia_staff", f"{_S}.julia_numeros_bloqueados")
+
+
+def _staff_prot_probe(probe_id: str, guard: str, rationale: str, ops_sql: str, cond: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"julia_staff_protecao.{probe_id}", guard_name=guard, migration=_M_JULIA_STAFF_PROT, rationale=rationale,
+        fixtures=("registry",), ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_JULIA_STAFF_PROT,
+    )
+
+
+def _staff_ins(cols: str = "", vals: str = "") -> str:
+    extra_c = f", {cols}" if cols else ""
+    extra_v = f", {vals}" if vals else ""
+    return f"    INSERT INTO {_S}.julia_staff (org_id, nome, papel{extra_c})\n    VALUES (v_org, 'noc_probe', 'operador'{extra_v});"
+
+
+def _bloq_ins(cols: str, vals: str, numero: str = "'5511999990000'") -> str:
+    return (
+        f"    INSERT INTO {_S}.julia_numeros_bloqueados (org_id, numero, motivo, {cols})\n"
+        f"    VALUES (v_org, {numero}, 'noc_probe', {vals});"
+    )
+
+
+#: Migration 298 -- Julia on a public number: org staff list + blocklist. Unapplied guards read `no_fixture`, `refused` once applied.
+_SW_JULIA_STAFF_PROT_PROBES: tuple[GuardProbe, ...] = (
+    _staff_prot_probe(
+        "staff_identificavel", "julia_staff_identificavel",
+        "A staff entry with neither a number nor a user identifies no one: it could never match an inbound nor author a human line.",
+        _staff_ins(), _CHECK, "a julia_staff row with neither telefone nor user_id",
+    ),
+    _staff_prot_probe(
+        "staff_telefone_unico", "julia_staff_org_telefone_uk",
+        "One staff row per WhatsApp number per org: two rows would give one sender two roles.",
+        _staff_ins("telefone", "'5511999990000'") + "\n" + _staff_ins("telefone", "'5511999990000'"), _UNIQ,
+        "two julia_staff rows for the same (org, telefone)",
+    ),
+    _staff_prot_probe(
+        "bloqueio_auto_expira", "julia_numeros_bloqueados_auto_expira",
+        "An automatic block is always TEMPORARY; one with no expiry would lock a number out forever with nobody having decided it.",
+        _bloq_ins("origem, gatilho, expira_em", "'automatico', 'limite_taxa', NULL"), _CHECK,
+        "an automatic block with no expira_em",
+    ),
+    _staff_prot_probe(
+        "bloqueio_origem_gatilho", "julia_numeros_bloqueados_origem_gatilho",
+        "A manual block is by a user (gatilho manual) and an automatic one has a trigger: the mix would misreport why a number is blocked.",
+        _bloq_ins("origem, gatilho", "'manual', 'limite_taxa'"), _CHECK, "a manual block carrying an automatic trigger",
+    ),
+    _staff_prot_probe(
+        "bloqueio_desbloqueio", "julia_numeros_bloqueados_desbloqueio",
+        "A lifted block must record when it was lifted: the rows are the audit history.",
+        _bloq_ins("origem, ativo", "'manual', false"), _CHECK, "an inactive block with no desbloqueado_em",
+    ),
+    _staff_prot_probe(
+        "bloqueio_ativo_unico", "julia_numeros_bloqueados_ativo_uk",
+        "One ACTIVE block per number per org: a duplicate would make the unblock leave the number blocked.",
+        _bloq_ins("origem, ativo", "'manual', true") + "\n" + _bloq_ins("origem, ativo", "'manual', true"), _UNIQ, "two active blocks for the same (org, numero)",
+    ),
+)
+
+
 _M_JULIA_AVAL = "280_lais_avaliacoes_capi.sql"
 _T_JULIA_AVAL = (
     f"{_S}.julia_contatos", f"{_S}.julia_avaliacao_config", f"{_S}.julia_avaliacao_pedidos",
@@ -10376,6 +10437,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
+    *_SW_JULIA_STAFF_PROT_PROBES,
     *_SW_JULIA_AVALIACOES_PROBES,
     *_SW_SIMEC_PROBES,
     *_SW_MAYA_BLOCOS_PROBES,

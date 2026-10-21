@@ -63,6 +63,7 @@ from app.clients.agents import (
 from app.config import settings as _default_settings
 from app.modules.supervisao import alertas as supervisao_alertas
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
+from app.services import julia_protecao_service as protecao
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_espelho_service, julia_thread_service
 from app.services import julia_agente_service as julia
@@ -177,7 +178,7 @@ def unprocessed_run(memory: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         i for i in memory
         if i.get("direction") == "inbound" and str(i.get("provider_message_id") or "") not in processed
-        and str(i.get("text") or "").strip()
+        and (str(i.get("text") or "").strip() or (i.get("metadata") or {}).get("midia"))
     ]
 
 
@@ -192,8 +193,9 @@ def close_run(buffer: Any, key: str, run: list[dict[str, Any]]) -> None:
 
 
 def trim_batch(run: list[dict[str, Any]], *, max_chars: int) -> list[dict[str, Any]]:
-    """Newest-first: at most 20 messages, each cut to 8000 chars, total <= `max_chars`
-    (contract 10.1 M4: a batch is capped at 16k). Dropped ones are the OLDEST."""
+    """Newest-first: at most 20 messages, each cut to 2000 chars, total <= `max_chars` (agents' caps, GUARDRAILS B5: 2000 per
+    message, 6000 per batch). Dropped ones are the OLDEST. SW cuts to agents' caps so the lead is never answered with a 422 (agents sets
+    `truncado` itself)."""
     kept: list[dict[str, Any]] = []
     total = 0
     for item in reversed(run):
@@ -204,6 +206,27 @@ def trim_batch(run: list[dict[str, Any]], *, max_chars: int) -> list[dict[str, A
         total += len(text)
     kept.reverse()
     return kept
+
+
+def mensagem_do_turno(item: dict[str, Any]) -> TurnMessage:
+    """One buffered inbound -> the wire message. The media the lead sent rides in the STRUCTURED `midia` field (GUARDRAILS B2),
+    never as a bracketed prefix inside `texto`."""
+    midia = (item.get("metadata") or {}).get("midia")
+    return TurnMessage(
+        texto=item["text"], provider_message_id=str(item["provider_message_id"]), at=_as_datetime(item.get("timestamp")),
+        midia=dict(midia) if isinstance(midia, dict) and midia else None,
+    )
+
+
+def texto_para_anexar(item: dict[str, Any]) -> str:
+    """What a lead message agents did NOT answer is appended to the thread as (plain `user` text, no `midia` on that route):
+    the caption / typed text, else a short SW-owned label of the media kind. The extraction stays in SW's own inbox."""
+    texto = str(item.get("text") or "").strip()
+    if texto:
+        return texto
+    midia = (item.get("metadata") or {}).get("midia") or {}
+    tipo = {"audio": "um áudio", "imagem": "uma imagem", "video": "um vídeo", "documento": "um documento"}.get(str(midia.get("tipo")), "um arquivo")
+    return f"(o lead enviou {tipo})"
 
 
 def _as_datetime(ts: Any) -> datetime:
@@ -467,6 +490,17 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
             ator_user_id=julia_thread_service.autor_humano(deps.scoped, deps.core_client, connection, chat_id),
         )
 
+    # GUARDRAILS B5: a number on the org's blocklist (manual, or the automatic temporary one) never gets a turn, even for messages
+    # buffered before the block landed. The webhook already drops its inbound; this is the defence in depth.
+    try:
+        chave = protecao.chave_numero(chat_id)
+        if chave and protecao.bloqueio_ativo(deps.scoped, org_id, [chave]) is not None:
+            logger.info("julia: number %s is on the org blocklist -- batch dropped", protecao.ref(chave))
+            close_run(deps.buffer, key, run)
+            return
+    except Exception as exc:  # fail OPEN here on purpose: the webhook gate is the primary one and a lookup glitch must not silence leads
+        logger.error("julia: blocklist check failed conn=%s (%s) -- turn proceeds", connection.id, type(exc).__name__)
+
     # julia-v2: NO local pause gate. `whatsapp_chats.agente_pausado` is a display mirror; agents decides on every turn
     # (controls, per-conversation pause, another agent's thread, opt-out) and a not-served status sends nothing.
     state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
@@ -514,10 +548,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         contexto=julia_turn.contexto,
         lead_ref=str(julia_turn.contato["id"]),
         crm_lead_id=str(julia_turn.contato["lead_id"]) if julia_turn.contato.get("lead_id") else None,
-        messages=tuple(
-            TurnMessage(texto=m["text"], provider_message_id=str(m["provider_message_id"]), at=_as_datetime(m.get("timestamp")))
-            for m in batch if m.get("provider_message_id")
-        ),
+        messages=tuple(mensagem_do_turno(m) for m in batch if m.get("provider_message_id")),
     )
     if not req.messages:
         logger.error("julia: batch for %s carries no provider_message_id -- dropped", chat_id)
@@ -532,7 +563,10 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         close_run(deps.buffer, key, run)
         return
     except AgentsClientError as exc:
-        _handle_turn_error(deps, exc, key=key, run=run, org_id=org_id, connection_id=connection.id, chat_id=chat_id)
+        await _handle_turn_error(
+            deps, exc, key=key, run=run, org_id=org_id, connection_id=connection.id, chat_id=chat_id,
+            connection=connection, contato=julia_turn.contato, chat_store=chat_store, agents_client=client,
+        )
         return
     _clear_attempts(deps, key)
     julia.limpar_erro_link(org_id, cfg=deps.cfg)
@@ -541,7 +575,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         await _tratar_sem_atendimento(
             deps, connection=connection, chat_id=chat_id, result=result, state=state, chat_store=chat_store,
             julia_turn=julia_turn, agents_client=client, mensagens=[
-                (m.texto, m.provider_message_id, m.at) for m in req.messages],
+                (texto_para_anexar({"text": m.texto, "metadata": {"midia": m.midia}}), m.provider_message_id, m.at) for m in req.messages],
         )
         close_run(deps.buffer, key, run)
         return
@@ -601,7 +635,8 @@ async def _tratar_sem_atendimento(
             except Exception:
                 logger.exception("julia: could not drop the contato of a refused lead conn=%s chat=%s", connection.id, chat_id)
     if result.status in STATUS_LIMITE_PARA_HUMANO:
-        await _encaminhar_limite(deps, connection=connection, chat_id=chat_id, result=result, contato=contato,
+        await _contar_abuso(deps, connection=connection, chat_id=chat_id, status=result.status)
+        await _encaminhar_limite(deps, connection=connection, chat_id=chat_id, status=result.status, contato=contato,
                                  chat_store=chat_store, agents_client=agents_client)
     if result.status == "lead_opt_out" and contato is not None:
         try:
@@ -610,26 +645,47 @@ async def _tratar_sem_atendimento(
             logger.exception("julia: gen bump on opt-out failed conn=%s chat=%s", connection.id, chat_id)
 
 
+async def _contar_abuso(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, status: str) -> None:
+    """GUARDRAILS B5: agents' `limite_taxa` / `loop_detectado` are abuse signals. Each counts toward the org's AUTOMATIC TEMPORARY
+    BLOCK (threshold, window and duration are the org's data); a number that reaches it is blocked, the admins are notified and
+    nothing more reaches agents or an AI call from it until an admin lifts it or it expires. `capacidade` / `novo_lead_limitado`
+    are about OUR capacity, not the lead's behaviour, so they never count. Never raises."""
+    if status not in protecao.GATILHOS_AUTO:
+        return
+    try:
+        chave = protecao.chave_numero(chat_id)
+        if not chave:
+            return
+        config = protecao.obter_config(deps.scoped, connection.org_id)
+        protecao.registrar_infracao(
+            deps.buffer.redis, deps.scoped, deps.core_client, config, org_id=connection.org_id, connection_id=connection.id,
+            chave=chave, gatilho=status,
+        )
+    except Exception as exc:
+        logger.error("julia: abuse counting failed conn=%s (%s)", connection.id, type(exc).__name__)
+
+
 #: Operator-facing reason per limit status (the closed `motivo_codigo` is the status itself). UI copy for staff, never sent to
 #: the lead.
 MOTIVOS_LIMITE: dict[str, str] = {
     "limite_taxa": "O lead enviou mensagens rápido demais e o agente não respondeu (limite por lead).",
     "novo_lead_limitado": "O limite de novos leads do agente foi atingido: nada foi guardado no agente. As mensagens do lead estão aqui no SW, responda a ele.",
     "loop_detectado": "O agente detectou um loop de mensagens (flood/eco), pausou o atendimento e passou a conversa para uma pessoa.",
+    "capacidade": "O agente estava sem capacidade para responder (limite de uso da organização) e a mensagem do lead não foi atendida: responda a ele.",
 }
 LIMITE_DEDUPE_S = 3600  # one operator notice per lead, per status, per hour: a flood must not flood the operators either
 
 
 async def _encaminhar_limite(
-    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, result: TurnResult, contato: Optional[dict[str, Any]],
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, status: str, contato: Optional[dict[str, Any]],
     chat_store: Any, agents_client: Optional[AgentsClient],
 ) -> None:
     """A LIMIT (rate / new-lead cap / loop) stopped a real person: never silence. The org's operators are notified through
     the same in-app path a `handoff` uses (target = the chat's attendant, else the configured/owner target), a
     `limite_para_humano` timeline event is recorded, deduped per lead+status per hour. The lead's messages stay in SW (the
     webhook stored them; for `novo_lead_limitado` agents kept nothing, so SW's copy IS the only one -- the contato is
-    NOT dropped). A failure here is logged, never raised."""
-    status = result.status
+    NOT dropped). A failure here is logged, never raised. `status` is an agents limit status or `capacidade` (agents answered 429
+    until SW's re-queues ran out)."""
     if status == "loop_detectado" and contato is not None:  # agents paused + handed off: every queued job is stale
         try:
             julia_contatos_service.bump_gen(deps.scoped, contato["id"])
@@ -682,11 +738,14 @@ def _alertar_contrato_invalido(
     )
 
 
-def _handle_turn_error(
+async def _handle_turn_error(
     deps: LeadDeps, exc: AgentsClientError, *, key: str, run: list[dict[str, Any]],
     org_id: UUID, connection_id: UUID, chat_id: str,
+    connection: Optional[WhatsAppConnectionRecord] = None, contato: Optional[dict[str, Any]] = None,
+    chat_store: Any = None, agents_client: Optional[AgentsClient] = None,
 ) -> None:
-    """The section 3.1 error table, one branch per row. No branch sends the lead anything (fail closed)."""
+    """The section 3.1 error table, one branch per row. No branch sends the lead anything (fail closed). The capacity branch,
+    once its re-queues are spent, is NEVER a drop: the conversation goes to a human (`motivo_codigo` `capacidade`)."""
     if isinstance(exc, ControleIndisponivel):
         # agents could not read its OWN control: it will not guess and neither does SW. One short retry (the read is
         # transient), then the batch is dropped -- a late reply to a lead is worse than none.
@@ -710,7 +769,12 @@ def _handle_turn_error(
             _requeue(deps, key, exc.retry_after)
             logger.warning("julia: capacidade -- batch re-queued in %ss (chat=%s)", exc.retry_after, chat_id)
             return
-        logger.error("julia: capacidade persisted after %s re-queues -- batch dropped (chat=%s)", MAX_REQUEUE_CAPACITY, chat_id)
+        logger.error("julia: capacidade persisted after %s re-queues -- routed to a human (chat=%s)", MAX_REQUEUE_CAPACITY, chat_id)
+        if connection is not None:
+            await _encaminhar_limite(
+                deps, connection=connection, chat_id=chat_id, status="capacidade", contato=contato, chat_store=chat_store,
+                agents_client=agents_client,
+            )
     elif isinstance(exc, (AgentsTokenInvalid, AgentsNotConfigured)):
         julia.registrar_erro_link(org_id, "token_invalido" if isinstance(exc, AgentsTokenInvalid) else "nao_configurado", cfg=deps.cfg)
         logger.error("julia: agents token rejected (code=%s) org=%s -- no reply", exc.code, org_id)
@@ -738,7 +802,7 @@ async def _resolve_lid_phone(deps: LeadDeps, connection: WhatsAppConnectionRecor
         waha = deps.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
         pn = await waha.get_lid_phone(lid)
     except Exception:
-        logger.warning("julia: LID->phone lookup failed for %s", lid, exc_info=True)
+        logger.warning("julia: LID->phone lookup failed for %s", protecao.ref(lid))
         return None
     d = julia.phone_digits(pn) if pn else None
     return f"+{d}" if d else None

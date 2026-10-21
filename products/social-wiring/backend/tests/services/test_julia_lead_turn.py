@@ -398,16 +398,17 @@ class TestLimits:
             await _run(world, buffer_lead(world, chat, ["oi"], ids=[f"c{n}"]))
         assert len(world.agents.turns) == 2
 
-    async def test_batch_is_capped_at_20_messages_and_16k_chars_dropping_the_OLDEST(self, world):
+    async def test_batch_is_capped_at_20_messages_and_6k_chars_dropping_the_OLDEST(self, world):
         texts = [f"{i:02d}" + "x" * 998 for i in range(25)]  # 25 x 1000 chars
         await _run(world, buffer_lead(world, LEAD_CHAT, texts))
         sent = world.agents.turns[0].messages
-        assert len(sent) == 16 and sum(len(m.texto) for m in sent) <= 16000
-        assert sent[-1].texto.startswith("24") and sent[0].texto.startswith("09")
+        assert len(sent) == 6 and sum(len(m.texto) for m in sent) <= 6000
+        assert sent[-1].texto.startswith("24") and sent[0].texto.startswith("19")
 
-    async def test_a_single_huge_message_is_cut_to_8000_chars(self, world):
+    async def test_a_single_huge_message_is_cut_to_2000_chars(self, world):
         await _run(world, buffer_lead(world, LEAD_CHAT, ["y" * 20000]))
-        assert len(world.agents.turns[0].messages[0].texto) == 8000
+        m = world.agents.turns[0].messages[0]
+        assert len(m.texto) == 2000
 
     async def test_more_than_20_short_messages_keep_the_newest_20_in_order(self, world):
         await _run(world, buffer_lead(world, LEAD_CHAT, [str(i) for i in range(30)]))
@@ -415,8 +416,9 @@ class TestLimits:
 
     def test_trim_batch_is_pure_and_keeps_provider_ids(self):
         run = [{"text": "a" * 9000, "provider_message_id": "1"}, {"text": "b", "provider_message_id": "2"}]
-        out = trim_batch(run, max_chars=16000)
-        assert [i["provider_message_id"] for i in out] == ["1", "2"] and len(out[0]["text"]) == 8000
+        out = trim_batch(run, max_chars=6000)
+        assert [i["provider_message_id"] for i in out] == ["1", "2"] and len(out[0]["text"]) == 2000
+        assert len(out[0]["text"]) <= 2000
 
 
 # ── B2: run semantics ───────────────────────────────────────────────────────

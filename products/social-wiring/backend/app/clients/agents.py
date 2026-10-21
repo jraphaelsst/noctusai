@@ -50,7 +50,7 @@ DEFAULT_RETRY_AFTER_S = 30
 
 #: Hard shape limits of section 3.1 -- the lead path trims to these BEFORE the call.
 MAX_BATCH_MESSAGES = 20
-MAX_MESSAGE_CHARS = 8000
+MAX_MESSAGE_CHARS = 2000  # agents' MESSAGE_MAX_CHARS (GUARDRAILS B5): it truncates, SW trims first so the cut is SW's and visible
 
 
 # ── wire types ──────────────────────────────────────────────────────────────
@@ -59,6 +59,10 @@ class TurnMessage:
     texto: str
     provider_message_id: str
     at: datetime
+    #: Media the lead sent, STRUCTURED (GUARDRAILS B2): `{tipo: audio|imagem|video|documento, texto_extraido <= 2000, legenda?}`.
+    #: The extraction NEVER rides inside `texto` (a typed "[Audio transcrito] ..." is just lead text). `texto` may be empty when
+    #: `midia` is set. None = a plain text message.
+    midia: Optional[dict[str, Any]] = None
 
 
 #: `gatilho` of a turn: a lead message, or a re-engagement the SW timers fire (no lead message).
@@ -104,15 +108,18 @@ class TurnRequest:
             "contact": {"phone_e164": self.phone_e164, "display_name": self.display_name},
             "gatilho": self.gatilho,
             "messages": [
-                {
-                    "texto": m.texto,
-                    "provider_message_id": m.provider_message_id,
-                    "at": m.at.isoformat(),
-                }
+                _mensagem_wire(m)
                 for m in self.messages
             ],
         }
         return wire
+
+
+def _mensagem_wire(m: "TurnMessage") -> dict[str, Any]:
+    out: dict[str, Any] = {"texto": m.texto, "provider_message_id": m.provider_message_id, "at": m.at.isoformat()}
+    if m.midia:
+        out["midia"] = dict(m.midia)
+    return out
 
 
 @dataclass(frozen=True)
@@ -612,7 +619,7 @@ class AgentsClient(Protocol):
 
     async def anexar_mensagem(
         self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
-        autor_user_id: Optional[str] = None,
+        autor_user_id: Optional[str] = None, autor: Optional[dict[str, Any]] = None,
     ) -> AppendResult: ...
 
     async def set_participante(
@@ -884,18 +891,21 @@ class FakeAgentsClient:
 
     async def anexar_mensagem(
         self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
-        autor_user_id: Optional[str] = None,
+        autor_user_id: Optional[str] = None, autor: Optional[dict[str, Any]] = None,
     ) -> AppendResult:
         self._maybe_fail("anexar_mensagem")
         if role == "humano" and not autor_user_id:
             raise AgentsBadRequest("autor_user_id required", code="invalid_field")
+        if role != "humano" and (autor or autor_user_id):
+            # the lead turn / lead append route rejects `autor` (agents' provenance slice): only the staff append may carry it
+            raise AgentsBadRequest("autor only on a humano append", code="invalid_field")
         if provider_message_id in self._appended_ids:
             return AppendResult(message_id=None, duplicado=True)
         mid = str(uuid.uuid5(_NAMESPACE, f"msg|{thread_id}|{provider_message_id}"))
         self._appended_ids[provider_message_id] = mid
         self.appended.append({
             "thread_id": thread_id, "role": role, "texto": texto, "provider_message_id": provider_message_id,
-            "autor_user_id": autor_user_id, "at": at,
+            "autor_user_id": autor_user_id, "autor": autor, "at": at,
         })
         return AppendResult(message_id=mid, duplicado=False)
 
@@ -1567,17 +1577,22 @@ class HttpAgentsClient:
 
     async def anexar_mensagem(
         self, thread_id: str, *, role: str, texto: str, provider_message_id: str, at: Optional[datetime] = None,
-        autor_user_id: Optional[str] = None,
+        autor_user_id: Optional[str] = None, autor: Optional[dict[str, Any]] = None,
     ) -> AppendResult:
         """`POST /api/channels/threads/{id}/mensagens`: append WITHOUT a turn (a human attendant's message, or a lead
-        message agents will not answer). Idempotent by `provider_message_id`."""
+        message agents will not answer). Idempotent by `provider_message_id`. `autor` (`{nome, papel}`, the staff list's name and
+        role) is accepted ONLY with `role="humano"` -- agents' lead routes reject it (provenance cannot be claimed by a lead)."""
         if role not in ("user", "humano"):
             raise ValueError("role is 'user' or 'humano'")
+        if autor is not None and role != "humano":
+            raise ValueError("autor only with role='humano'")
         body: dict[str, Any] = {"role": role, "texto": texto, "provider_message_id": provider_message_id}
         if at is not None:
             body["at"] = at.isoformat()
         if autor_user_id is not None:
             body["autor_user_id"] = str(autor_user_id)
+        if autor is not None:
+            body["autor"] = {"nome": str(autor.get("nome") or "")[:120], "papel": str(autor.get("papel") or "")}
         out = await self._send("POST", f"/api/channels/threads/{quote(thread_id, safe='')}/mensagens", json=body)
         return AppendResult(message_id=_opt_str(out, "message_id"), duplicado=bool(out.get("duplicado")))
 
