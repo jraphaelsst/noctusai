@@ -8,6 +8,8 @@
     "020_content_plans.sql": "b0bdf893daddf230b875bd6c3152a2c972be7265ae47d5870ca51fb3a2de991f",
     "021_contracts.sql": "3ccdc906de0c566713ff4d4d6f0acc6f2a34768c23513531fc54896cd78f3901",
     "023_billing_on_seed_organs.sql": "bc1313b49dacffc472613db9419ce152857d98adde7d2eb940a41017a5ed89da",
-    "024_finance_reminders.sql": "b97d19e26f72d4d330b73c562b41a09b8ee9b8754587ca54c24befbc07c41ae6"
+    "024_finance_reminders.sql": "b97d19e26f72d4d330b73c562b41a09b8ee9b8754587ca54c24befbc07c41ae6",
+    "025_soft_delete_leads_clients.sql": "2c24cbaa0ee3a5e0d3f1589dd6c4396b023de9a4f281310d306bd3d5a6144f56",
+    "026_backfill_lead_stage.sql": "d970c6e376193aefe4f27e31ba71ef9a0551f52ef743bba3d0146dab5af0a474"
   }
 }
