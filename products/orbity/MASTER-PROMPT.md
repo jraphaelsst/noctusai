@@ -26,8 +26,8 @@ Orbity domain code.
 ## Key Domains
 
 ### CRM
-- **clients** -- agency client roster (CRUD), `clients_router.py` / `clients_service.py`
-- **crm** -- leads, funil kanban stages, stage moves, activities, lead scoring + scoring-rules CRUD, and public lead capture (`crm_router.py` / `crm_service.py`; `capture_router` is the unauthenticated `/api/capture/{org_id}` half of the same router file). `lead_scoring.py` holds the scoring algorithm.
+- **clients** -- agency client roster (CRUD), `clients_router.py` / `clients_service.py`. `DELETE /api/clients/{id}` (org admin) is a SOFT delete (`deleted_at`/`deleted_by`, migration 025): 409 `cliente_com_pendencias` while an active/suspended contract or open charge exists (`offboarding.deletion_blockers`); deleted clients are filtered out of list/get/update
+- **crm** -- leads, funil kanban stages, stage moves, activities, lead scoring + scoring-rules CRUD, and public lead capture (leads are SOFT-deleted: `deleted_at`/`deleted_by`, activities + automation executions kept, running executions cancelled, every read path filters `deleted_at IS NULL`; captured leads get the org's first stage via `CRMService.first_stage_id()`, migration 026 backfills old ones) (`crm_router.py` / `crm_service.py`; `capture_router` is the unauthenticated `/api/capture/{org_id}` half of the same router file). `lead_scoring.py` holds the scoring algorithm.
 
 ### Financial
 - **financial** -- contracts, expenses, revenues, and monthly cash-flow summary (`financial_router.py` / `financial_service.py`)

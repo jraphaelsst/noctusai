@@ -20,8 +20,8 @@ NoctusAI seed framework (`noctusai_lib` + `noctusai_seed` backend,
 
 ## Modules
 
-- **Clientes** — agency client roster (CRUD)
-- **CRM / Funil** — leads, funil kanban, activities, lead scoring, public capture form
+- **Clientes** — agency client roster (CRUD); admin "Excluir cliente" is a soft delete, refused (409) while a live contract or open charge exists
+- **CRM / Funil** — leads, funil kanban, activities, lead scoring, public capture form (captured leads land in the org's first stage; deleting a lead is a soft delete — history kept)
 - **Financeiro** — contracts, expenses, revenues, monthly cash-flow
 - **Tarefas / Agenda / Rotinas** — tasks, calendar events (+ GCal sync seam), recurring routines
 - **Tráfego** — Meta Ads accounts, campaigns, metrics, spend-vs-leads aggregate
