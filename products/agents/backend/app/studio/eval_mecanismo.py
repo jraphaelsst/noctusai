@@ -321,9 +321,10 @@ class Traco:
 # ── deterministic detectors over the bubbles ─────────────────────────────────────────────────────────────
 
 _TLDS = ("com", "net", "org", "edu", "gov", "info", "biz", "io", "app", "dev", "me", "tv", "co", "ly", "link", "site", "online", "xyz", "top", "club", "shop", "store", "br", "pt", "ar", "us", "uk")
+_TLD_ALT = "|".join(_TLDS)
 _URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"')\]]+")
 _DOMINIO_RE = re.compile(
-    rf"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:{"|".join(_TLDS)})(?![a-z0-9-])(?:/[^\s<>\"')\]]*)?")
+    rf"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:{_TLD_ALT})(?![a-z0-9-])(?:/[^\s<>\"')\]]*)?")
 _CPF_RE = re.compile(r"(?<![\d.\-/])\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2}(?![\d]|[.\-/]\d)")
 _CNPJ_RE = re.compile(r"(?<![\d.\-/])\d{2}[.\s]?\d{3}[.\s]?\d{3}[/\s]?\d{4}[-\s]?\d{2}(?![\d]|[.\-/]\d)")
 _RG_RE = re.compile(
