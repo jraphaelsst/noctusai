@@ -72,6 +72,12 @@ products/agents/backend/app/
   with the DB text, else silence + hand-off + a flagged row), the deterministic escalations (rule data), the
   extraction-attempt signal. Migration 037 also closes `qual-lead-ref-fk` (cascade erasure) and lets a hand-off end
   `concluido`.
+- Public-line guardrails (migration 044; threat model + build order in `projects/julia-v2/GUARDRAILS.md`): reply
+  filters `link_nao_permitido` / `contato_nao_permitido` / `pii_na_resposta` / `formato_suspeito` / `padroes_proibidos`
+  block by default (patterns are rule data; allow-lists come from org specs `dominios_permitidos`, `contatos_oficiais`,
+  `cnpj_oficial`); `proteger_args` scans the staff-facing tool args for prompt text; `alegacao_identidade` +
+  extraction signals feed `escala_seguranca` (24h per thread: restricted tool set, then handoff `seguranca`).
+  Invariant (keeper-tested): a detector or a claim can only REMOVE capabilities, never add one.
 - A new required text key must be seeded as data BEFORE the code that needs it deploys (`textos_registry`); an org
   seeded earlier gets 409 `conteudo_incompleto`, never a default string.
 - Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /
