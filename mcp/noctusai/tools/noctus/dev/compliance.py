@@ -8679,6 +8679,126 @@ def check_agent_prompt_text_in_code(repo_root: Path | None = None) -> list[dict]
 
 
 # ---------------------------------------------------------------------------
+# `check_mutation_invalidate_only` — a TanStack mutation must put what it
+# knows into the cache, not only ask the server again (2026-10-21).
+#
+# Live finding: orbity's lead note appeared ~2 s after "Atividade
+# registrada" — the hook threw the POST's answer away and invalidated, so
+# the screen waited for write + full refetch (prod p50 450 ms each). On that
+# day 982 of the fleet's 1,049 `useMutation({...})` blocks had that shape.
+# The canonical answer is the seed primitive `useCacheWriteMutation`
+# (`@noctusai/lib/cache-writes`: optimistic → commit the server row →
+# background settle). A raw `useMutation({...})` that neither draws
+# (`onMutate`) nor writes (`setQueryData`) is "invalidate-only".
+#
+# RATCHET: the count per file is baselined in
+# `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`; a file may
+# carry fewer, never more, and a lowered count must lower the baseline in
+# the same change. Escape for a write whose result genuinely cannot be
+# placed (e.g. the server regroups the whole view):
+# `// noc-allow: invalidate-only — why` on the `useMutation(` line.
+# KB § PATTERNS/frontend/mutation-cache-writes.md
+# ---------------------------------------------------------------------------
+
+_MIO_BASELINE_REL = ("mcp", "noctusai", "tests", "mutation_invalidate_only_baseline.json")
+_MIO_ROOTS = ("products/*/frontend/src", "seed/lib/frontend/src", "seed/framework/frontend/src")
+_MIO_CALL = re.compile(r"\buseMutation(?:<[^()]*?>)?\(\s*\{")
+
+
+def _mio_block(text: str, open_brace: int) -> str:
+    """The `{...}` options object starting at ``open_brace`` (brace-balanced; strings are not special-cased)."""
+    depth = 0
+    for i in range(open_brace, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace : i + 1]
+    return text[open_brace:]
+
+
+def mutation_invalidate_only_hits(text: str) -> list[int]:
+    """1-based line numbers of the invalidate-only `useMutation({...})` blocks in one module."""
+    lines = text.splitlines()
+    hits: list[int] = []
+    for m in _MIO_CALL.finditer(text):
+        line_no = text.count("\n", 0, m.start()) + 1
+        if "noc-allow: invalidate-only" in lines[line_no - 1]:
+            continue
+        body = _mio_block(text, m.end() - 1)
+        if "onMutate" in body or "setQueryData" in body:
+            continue
+        hits.append(line_no)
+    return hits
+
+
+def _mio_files(root: Path) -> Iterator[Path]:
+    for pattern in _MIO_ROOTS:
+        for src in sorted(root.glob(pattern)):
+            for f in sorted(src.rglob("*.ts*")):
+                rel = f.relative_to(root).as_posix()
+                if f.suffix not in (".ts", ".tsx") or "node_modules" in rel or "__tests__" in rel or ".test." in f.name:
+                    continue
+                yield f
+
+
+def mutation_invalidate_only_counts(repo_root: Path | None = None) -> dict[str, int]:
+    """``{repo-relative file: invalidate-only count}`` for every file with at least one (the baseline's shape)."""
+    root = repo_root or REPO_ROOT
+    counts: dict[str, int] = {}
+    for f in _mio_files(root):
+        try:
+            n = len(mutation_invalidate_only_hits(f.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if n:
+            counts[f.relative_to(root).as_posix()] = n
+    return counts
+
+
+def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
+    """A `useMutation({...})` that neither draws its change (`onMutate`) nor writes the server's
+    answer (`setQueryData`) makes the screen wait for write + refetch. Ratchet against the per-file
+    baseline `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`: a file may carry fewer,
+    never more; a lowered count must lower the baseline. Use `useCacheWriteMutation` from
+    `@noctusai/lib/cache-writes`. Severity `high`. KB § PATTERNS/frontend/mutation-cache-writes.md."""
+    root = repo_root or REPO_ROOT
+    baseline_path = root.joinpath(*_MIO_BASELINE_REL)
+    baseline_rel = "/".join(_MIO_BASELINE_REL)
+    try:
+        baseline: dict[str, int] = json.loads(baseline_path.read_text(encoding="utf-8")).get("arquivos", {})
+    except (OSError, ValueError):
+        baseline = {}
+    issues: list[dict] = []
+    current = mutation_invalidate_only_counts(root)
+    for rel in sorted(set(current) | set(baseline)):
+        have, allowed = current.get(rel, 0), int(baseline.get(rel, 0))
+        product = rel.split("/")[1] if rel.startswith("products/") else "seed"
+        if have > allowed:
+            lines = ", ".join(str(n) for n in mutation_invalidate_only_hits((root / rel).read_text(encoding="utf-8")))
+            issues.append({
+                "product": product, "file": rel, "severity": "high",
+                "issue": (
+                    f"{have} invalidate-only useMutation block(s) (line {lines}), baseline allows {allowed}. "
+                    "The screen waits for the write AND a refetch — use useCacheWriteMutation from "
+                    "@noctusai/lib/cache-writes (optimistic and/or commit the server's answer). "
+                    "KB § PATTERNS/frontend/mutation-cache-writes.md"
+                ),
+            })
+        elif have < allowed:
+            issues.append({
+                "product": product, "file": rel, "severity": "high",
+                "issue": (
+                    f"{have} invalidate-only mutation(s) left but the baseline still allows {allowed}: lower "
+                    f"`{rel}` in {baseline_rel} (the ratchet only shrinks)."
+                ),
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_stand_in_conformance` — thin delegating shim. The real
 # implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
 # separate file by design — this detector composes a per-product subprocess
@@ -17630,6 +17750,9 @@ def check_all_products() -> tuple[int, list]:
     # Private unique-violation predicate (2026-10-10) — one canonical home.
     all_issues.extend(check_private_unique_violation_predicate())
     all_issues.extend(check_private_accent_fold())
+    # mutation-cache-writes (2026-10-21) — ratchet: invalidate-only
+    # useMutation blocks may only go down. KB § PATTERNS/frontend/mutation-cache-writes.md.
+    all_issues.extend(check_mutation_invalidate_only())
     # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
     # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
     # halves of one contract in two languages across N+1 files. Divergence is

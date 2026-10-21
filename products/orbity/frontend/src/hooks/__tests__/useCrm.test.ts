@@ -203,3 +203,81 @@ describe("useAddActivity", () => {
     });
   });
 });
+
+// ─── Cache writes: what the user sees, not just which URL was called ────────
+// Regression for the live finding of 2026-10-21: a saved note appeared ~2 s
+// late because the hook only invalidated (POST, then a full GET). The screen
+// must change on the click and settle on the server's row — never wait for a
+// refetch. KB § PATTERNS/frontend/mutation-cache-writes.md
+
+function clientAndWrapper() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const w = ({ children }: { children: React.ReactNode }) =>
+    React.createElement(QueryClientProvider, { client: qc }, children);
+  return { qc, w };
+}
+
+describe("cache writes", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("a new note is in the list while the POST is still in flight, then becomes the server row", async () => {
+    const { qc, w } = clientAndWrapper();
+    qc.setQueryData(["crm", "activities", "l1"], []);
+    let answer!: (v: unknown) => void;
+    mockPost.mockReturnValue(new Promise((res) => (answer = res)));
+    mockGet.mockReturnValue(new Promise(() => {})); // a refetch must not be needed
+    const { useAddActivity } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useAddActivity(), { wrapper: w });
+
+    result.current.mutate({ leadId: "l1", payload: { type: "nota", note: "ligar amanhã" } });
+    await waitFor(() =>
+      expect(qc.getQueryData<{ note: string }[]>(["crm", "activities", "l1"])).toEqual([
+        expect.objectContaining({ note: "ligar amanhã" }),
+      ])
+    );
+
+    const saved = { id: "a1", org_id: "o1", lead_id: "l1", type: "nota", note: "ligar amanhã", created_by: "u1", created_at: "2026-10-21T18:00:00Z" };
+    answer(saved);
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.getQueryData(["crm", "activities", "l1"])).toEqual([saved]);
+  });
+
+  it("a failed note save takes the stand-in back out", async () => {
+    const { qc, w } = clientAndWrapper();
+    qc.setQueryData(["crm", "activities", "l1"], []);
+    mockPost.mockRejectedValue(new Error("500"));
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { useAddActivity } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useAddActivity(), { wrapper: w });
+    result.current.mutate({ leadId: "l1", payload: { type: "nota", note: "x" } });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(qc.getQueryData(["crm", "activities", "l1"])).toEqual([]);
+  });
+
+  it("a removed lead leaves the funil on the click", async () => {
+    const { qc, w } = clientAndWrapper();
+    qc.setQueryData(["crm", "funil"], [{ stage: mockStage, leads: [mockLead] }]);
+    mockDelete.mockReturnValue(new Promise(() => {}));
+    const { useDeleteLead } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useDeleteLead(), { wrapper: w });
+    result.current.mutate("l1");
+    await waitFor(() =>
+      expect(qc.getQueryData(["crm", "funil"])).toEqual([{ stage: mockStage, leads: [] }])
+    );
+  });
+
+  it("an edited lead is written into the funil from the PATCH answer", async () => {
+    const { qc, w } = clientAndWrapper();
+    qc.setQueryData(["crm", "funil"], [{ stage: mockStage, leads: [mockLead] }]);
+    mockPatch.mockResolvedValue({ ...mockLead, name: "João S." });
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { useUpdateLead } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useUpdateLead(), { wrapper: w });
+    result.current.mutate({ id: "l1", data: { name: "João S." } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const funil = qc.getQueryData<{ leads: { name: string }[] }[]>(["crm", "funil"]);
+    expect(funil?.[0].leads[0].name).toBe("João S.");
+  });
+});

@@ -959,6 +959,20 @@ if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater. Mutation invalidate-only gate (blocking, ratchet) ──
+# Keeper `check_mutation_invalidate_only` (2026-10-21): a useMutation that neither draws its change nor
+# writes the server's answer makes the screen wait for write + refetch. Baselined per file in
+# mcp/noctusai/tests/mutation_invalidate_only_baseline.json; only NEW ones block.
+STAGED_MIO=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/src/.*\.tsx?|seed/(lib|framework)/frontend/src/.*\.tsx?|mcp/noctusai/tests/mutation_invalidate_only_baseline\.json)$' || true)
+if [[ -n "$STAGED_MIO" ]] && have_py; then
+    echo "[pre-commit] frontend source staged — checking invalidate-only mutations..."
+    if ! "$PY" "$CLI" --check-mutation-invalidate-only --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] MUTATION-INVALIDATE-ONLY check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Use useCacheWriteMutation (@noctusai/lib/cache-writes). If you REMOVED some, lower the file in mcp/noctusai/tests/mutation_invalidate_only_baseline.json. See KB § PATTERNS/frontend/mutation-cache-writes.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-ter. Agent prompt-text-in-code gate (blocking, ratchet) ──
 # Keeper `check_agent_prompt_text_in_code` (Julia v2 D3): every string a model reads is an agents DB
 # row, never code. Fires when agents backend app code under channels/studio/runtime (or the channels

@@ -16,6 +16,7 @@
  *   POST   /api/crm/leads/{id}/activities → ActivityOut 201
  */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 
@@ -113,6 +114,32 @@ export const crmKeys = {
   activities: (leadId: string) => ["crm", "activities", leadId] as const,
 };
 
+// ─── Funil cache edits (used by the lead mutations below) ───────────────────
+
+/** Apply `edit` to the lead `id` wherever it sits in the funil; `null` drops it. */
+function editFunilLead(
+  funil: FunilStage[] | undefined,
+  id: string,
+  edit: (lead: Lead) => Lead | null
+): FunilStage[] | undefined {
+  return funil?.map((fs) => ({
+    ...fs,
+    leads: fs.leads.flatMap((l) => {
+      if (l.id !== id) return [l];
+      const next = edit(l);
+      return next ? [next] : [];
+    }),
+  }));
+}
+
+/** Put `lead` in its stage's column (removing it from any other column first). */
+function placeFunilLead(funil: FunilStage[] | undefined, lead: Lead): FunilStage[] | undefined {
+  const without = editFunilLead(funil, lead.id, () => null);
+  return without?.map((fs) =>
+    fs.stage.id === lead.stage_id ? { ...fs, leads: [...fs.leads, lead] } : fs
+  );
+}
+
 // ─── Funil (kanban) ──────────────────────────────────────────────────────────
 
 export function useFunil() {
@@ -196,13 +223,18 @@ export function useLead(id?: string) {
 // ─── Create lead ─────────────────────────────────────────────────────────────
 
 export function useCreateLead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: LeadCreate) =>
-      api.post<Lead>("/api/crm/leads", payload),
+  // The server picks the stage when none is sent (the org's first stage), so the
+  // card is placed from the server's answer, not drawn optimistically.
+  return useCacheWriteMutation<Lead, LeadCreate>({
+    mutationFn: (payload) => api.post<Lead>("/api/crm/leads", payload),
+    targets: [
+      {
+        queryKey: crmKeys.funil(),
+        commit: (old: FunilStage[] | undefined, lead) => placeFunilLead(old, lead),
+      },
+    ],
+    invalidate: [["crm", "leads"], ["orbity-lead-options"]],
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
-      qc.invalidateQueries({ queryKey: ["crm", "leads"] });
       toast.success("Lead criado com sucesso");
     },
     onError: () => {
@@ -214,13 +246,20 @@ export function useCreateLead() {
 // ─── Update lead ─────────────────────────────────────────────────────────────
 
 export function useUpdateLead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: LeadUpdate }) =>
-      api.patch<Lead>(`/api/crm/leads/${id}`, data),
-    onSuccess: (_result, variables) => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
-      qc.invalidateQueries({ queryKey: crmKeys.lead(variables.id) });
+  return useCacheWriteMutation<Lead, { id: string; data: LeadUpdate }>({
+    mutationFn: ({ id, data }) => api.patch<Lead>(`/api/crm/leads/${id}`, data),
+    targets: ({ id }) => [
+      {
+        queryKey: crmKeys.funil(),
+        commit: (old: FunilStage[] | undefined, lead) => placeFunilLead(old, lead),
+      },
+      {
+        queryKey: crmKeys.lead(id),
+        commit: (_old: Lead | undefined, lead) => lead,
+      },
+    ],
+    invalidate: [["crm", "leads"], ["orbity-lead-options"]],
+    onSuccess: () => {
       toast.success("Lead atualizado");
     },
     onError: () => {
@@ -232,14 +271,16 @@ export function useUpdateLead() {
 // ─── Delete lead ─────────────────────────────────────────────────────────────
 
 export function useDeleteLead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      api.delete<{ ok: boolean; id: string }>(`/api/crm/leads/${id}`),
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: (id) => api.delete<{ ok: boolean; id: string }>(`/api/crm/leads/${id}`),
+    targets: [
+      {
+        queryKey: crmKeys.funil(),
+        optimistic: (old: FunilStage[] | undefined, id) => editFunilLead(old, id, () => null),
+      },
+    ],
+    invalidate: [["crm", "leads"], ["orbity-lead-options"]],
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
-      qc.invalidateQueries({ queryKey: ["crm", "leads"] });
-      qc.invalidateQueries({ queryKey: ["orbity-lead-options"] });
       toast.success("Lead removido");
     },
     onError: () => {
@@ -251,53 +292,30 @@ export function useDeleteLead() {
 // ─── Move stage (kanban drag) ────────────────────────────────────────────────
 
 export function useMoveLeadStage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, stage_id }: { id: string; stage_id: string }) =>
-      api.patch<Lead>(`/api/crm/leads/${id}/stage`, { stage_id }),
-    // Optimistic — a kanban drag must land instantly; without this the card
-    // snaps back to its old column for a full round-trip before the funil
-    // refetch lands. Rollback restores the pre-drag funil snapshot on
-    // failure. Mirrors the onMutate/onError discipline in
-    // products/social-wiring/frontend/src/hooks/useCardHub.ts.
-    onMutate: async ({ id, stage_id }) => {
-      await qc.cancelQueries({ queryKey: crmKeys.funil() });
-      const previousFunil = qc.getQueryData<FunilStage[]>(crmKeys.funil());
-      if (previousFunil) {
-        let movedLead: Lead | undefined;
-        const withoutLead = previousFunil.map((fs) => {
-          const stillHere = fs.leads.filter((l) => {
-            if (l.id === id) {
-              movedLead = l;
-              return false;
-            }
-            return true;
-          });
-          return { ...fs, leads: stillHere };
-        });
-        if (movedLead) {
-          const moved = { ...movedLead, stage_id };
-          qc.setQueryData<FunilStage[]>(
-            crmKeys.funil(),
-            withoutLead.map((fs) =>
-              fs.stage.id === stage_id ? { ...fs, leads: [...fs.leads, moved] } : fs
-            )
-          );
-        }
-      }
-      return { previousFunil };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previousFunil) {
-        qc.setQueryData(crmKeys.funil(), context.previousFunil);
-      }
-      toast.error("Falha ao mover lead");
-    },
+  // Optimistic — a kanban drag must land instantly; without this the card
+  // snaps back to its old column for a full round-trip before the funil
+  // refetch lands. A failure rolls the funil back to its pre-drag snapshot.
+  return useCacheWriteMutation<Lead, { id: string; stage_id: string }>({
+    mutationFn: ({ id, stage_id }) => api.patch<Lead>(`/api/crm/leads/${id}/stage`, { stage_id }),
+    targets: ({ id }) => [
+      {
+        queryKey: crmKeys.funil(),
+        optimistic: (old: FunilStage[] | undefined, { stage_id }) => {
+          const lead = old?.flatMap((fs) => fs.leads).find((l) => l.id === id);
+          return lead ? placeFunilLead(old, { ...lead, stage_id }) : old;
+        },
+        commit: (old: FunilStage[] | undefined, lead) => placeFunilLead(old, lead),
+      },
+      {
+        queryKey: crmKeys.lead(id),
+        commit: (_old: Lead | undefined, lead) => lead,
+      },
+    ],
     onSuccess: () => {
       toast.success("Lead movido");
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
+    onError: () => {
+      toast.error("Falha ao mover lead");
     },
   });
 }
@@ -319,23 +337,30 @@ export function useLeadActivities(leadId?: string) {
 }
 
 export function useAddActivity() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      leadId,
-      payload,
-    }: {
-      leadId: string;
-      payload: ActivityCreate;
-    }) =>
-      api.post<Activity>(
-        `/api/crm/leads/${leadId}/activities`,
-        payload
-      ),
-    onSuccess: (_result, variables) => {
-      qc.invalidateQueries({
-        queryKey: crmKeys.activities(variables.leadId),
-      });
+  // The note shows the instant it is saved and is swapped for the server's row
+  // when the POST answers — never a list that says "Nenhuma atividade" under a
+  // toast that says "Atividade registrada".
+  return useCacheWriteMutation<Activity, { leadId: string; payload: ActivityCreate }>({
+    mutationFn: ({ leadId, payload }) =>
+      api.post<Activity>(`/api/crm/leads/${leadId}/activities`, payload),
+    targets: ({ leadId }) => [
+      {
+        queryKey: crmKeys.activities(leadId),
+        optimistic: (old: Activity[] | undefined, { payload }, { tempId }) =>
+          listOps.append(old, {
+            id: tempId,
+            org_id: "",
+            lead_id: leadId,
+            type: payload.type,
+            note: payload.note ?? null,
+            created_by: null,
+            created_at: new Date().toISOString(),
+          }),
+        commit: (old: Activity[] | undefined, saved, _vars, { tempId }) =>
+          listOps.replace(old, tempId, saved),
+      },
+    ],
+    onSuccess: () => {
       toast.success("Atividade registrada");
     },
     onError: () => {

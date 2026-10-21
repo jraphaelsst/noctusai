@@ -102,6 +102,7 @@ def _detect(
         check_hand_copied_org_admin,                   # org-admin-ux-gate 2026-10-09
         check_private_unique_violation_predicate,      # postgrest-errors 2026-10-10
         check_private_accent_fold,                     # accents 2026-10-10
+        check_mutation_invalidate_only,                # mutation-cache-writes 2026-10-21
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -144,6 +145,7 @@ def _detect(
         issues.extend(check_hand_copied_org_admin())         # org-admin-ux-gate 2026-10-09
         issues.extend(check_private_unique_violation_predicate())  # postgrest-errors 2026-10-10
         issues.extend(check_private_accent_fold())  # accents 2026-10-10
+        issues.extend(check_mutation_invalidate_only())  # mutation-cache-writes 2026-10-21
     return products, issues
 
 
