@@ -11,6 +11,7 @@
  *   RoutineCadence: "daily" | "weekly" | "monthly"
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { listOps, pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 
@@ -138,15 +139,21 @@ export function useTask(id?: string) {
 }
 
 export function useCreateTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: TaskCreateData) => {
+  // Tasks are listed newest first (created_at desc): the new task goes on top of the
+  // unfiltered list; filtered lists converge on the settle.
+  return useCacheWriteMutation<Task, TaskCreateData>({
+    mutationFn: async (data) => {
       const result = await api.post('/api/tasks', data);
       return result as Task;
     },
+    targets: [
+      {
+        queryKey: ['orbity-tasks', undefined],
+        commit: (old: TaskListResponse | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+      { queryKey: ['orbity-tasks'], match: 'prefix' },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
       toast.success('Tarefa criada com sucesso!');
     },
     onError: (error: Error) => {
@@ -156,16 +163,20 @@ export function useCreateTask() {
 }
 
 export function useUpdateTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: { id: string } & TaskUpdateData) => {
+  return useCacheWriteMutation<Task, { id: string } & TaskUpdateData>({
+    mutationFn: async ({ id, ...data }) => {
       const result = await api.patch(`/api/tasks/${id}`, data);
       return result as Task;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['orbity-task', data.id] });
+    targets: ({ id }) => [
+      {
+        queryKey: ['orbity-tasks'],
+        match: 'prefix',
+        commit: (old: TaskListResponse | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+      { queryKey: ['orbity-task', id], commit: (_old: Task | null | undefined, saved) => saved },
+    ],
+    onSuccess: () => {
       toast.success('Tarefa atualizada!');
     },
     onError: (error: Error) => {
@@ -175,66 +186,48 @@ export function useUpdateTask() {
 }
 
 export function useUpdateTaskStatus() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: TaskStatus }) => {
+  // Optimistic — a status-select change lands instantly on the card instead of
+  // waiting a round-trip; a failure rolls every touched '['orbity-tasks', ...]'
+  // filter variant plus the single-task cache back to their snapshots.
+  return useCacheWriteMutation<Task, { id: string; status: TaskStatus }>({
+    mutationFn: async ({ id, status }) => {
       const result = await api.patch(`/api/tasks/${id}/status`, { status });
       return result as Task;
     },
-    // Optimistic — a status-select change should land instantly on the card
-    // instead of waiting a round-trip; a failure rolls every touched
-    // '['orbity-tasks', ...]' filter variant plus the single-task cache back
-    // to their pre-change snapshots. Mirrors the onMutate/onError rollback
-    // discipline in products/social-wiring/frontend/src/hooks/useCardHub.ts.
-    onMutate: async ({ id, status }) => {
-      await queryClient.cancelQueries({ queryKey: ['orbity-tasks'] });
-      await queryClient.cancelQueries({ queryKey: ['orbity-task', id] });
-
-      const previousLists = queryClient.getQueriesData<TaskListResponse>({
+    targets: ({ id, status }) => [
+      {
         queryKey: ['orbity-tasks'],
-      });
-      previousLists.forEach(([key, page]) => {
-        if (!page) return;
-        queryClient.setQueryData<TaskListResponse>(key, {
-          ...page,
-          items: page.items.map((t) => (t.id === id ? { ...t, status } : t)),
-        });
-      });
-
-      const previousTask = queryClient.getQueryData<Task>(['orbity-task', id]);
-      if (previousTask) {
-        queryClient.setQueryData<Task>(['orbity-task', id], { ...previousTask, status });
-      }
-
-      return { previousLists, previousTask };
-    },
-    onError: (error: Error, variables, context) => {
-      context?.previousLists?.forEach(([key, page]) => {
-        queryClient.setQueryData(key, page);
-      });
-      if (context?.previousTask) {
-        queryClient.setQueryData(['orbity-task', variables.id], context.previousTask);
-      }
+        match: 'prefix',
+        optimistic: (old: TaskListResponse | undefined) => pageOps.patch(old, id, { status }),
+        commit: (old: TaskListResponse | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+      {
+        queryKey: ['orbity-task', id],
+        optimistic: (old: Task | null | undefined) => (old ? listOps.merge(old, { status }) : undefined),
+        commit: (_old: Task | null | undefined, saved) => saved,
+      },
+    ],
+    onError: (error: Error) => {
       toast.error('Erro ao atualizar status', { description: error.message });
-    },
-    onSettled: (data, _error, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['orbity-task', data?.id ?? variables.id] });
     },
   });
 }
 
 export function useDeleteTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (id) => {
       await api.delete(`/api/tasks/${id}`);
       return id;
     },
+    targets: (id) => [
+      {
+        queryKey: ['orbity-tasks'],
+        match: 'prefix',
+        optimistic: (old: TaskListResponse | undefined) => pageOps.remove(old, id),
+      },
+      { queryKey: ['orbity-task', id] },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
       toast.success('Tarefa excluída!');
     },
     onError: (error: Error) => {
@@ -267,7 +260,7 @@ export function useRoutines(activeOnly?: boolean) {
 export function useCreateRoutine() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — routines are ordered by next_run, which the server computes from the cadence; the new routine's position is not knowable client-side
     mutationFn: async (data: RoutineCreateData) => {
       const result = await api.post('/api/routines', data);
       return result as Routine;
@@ -283,15 +276,21 @@ export function useCreateRoutine() {
 }
 
 export function useUpdateRoutine() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: { id: string } & RoutineUpdateData) => {
+  return useCacheWriteMutation<Routine, { id: string } & RoutineUpdateData>({
+    mutationFn: async ({ id, ...data }) => {
       const result = await api.patch(`/api/routines/${id}`, data);
       return result as Routine;
     },
+    // In place: a cadence change moves next_run (and so the sort position) — the
+    // settle refetch re-sorts, the row is already correct meanwhile.
+    targets: ({ id }) => [
+      {
+        queryKey: ['orbity-routines'],
+        match: 'prefix',
+        commit: (old: Routine[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-routines'] });
       toast.success('Rotina atualizada!');
     },
     onError: (error: Error) => {
@@ -301,15 +300,19 @@ export function useUpdateRoutine() {
 }
 
 export function useDeleteRoutine() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (id) => {
       await api.delete(`/api/routines/${id}`);
       return id;
     },
+    targets: [
+      {
+        queryKey: ['orbity-routines'],
+        match: 'prefix',
+        optimistic: (old: Routine[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-routines'] });
       toast.success('Rotina excluída!');
     },
     onError: (error: Error) => {
@@ -321,7 +324,7 @@ export function useDeleteRoutine() {
 export function useRunDueRoutines() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — run-due spawns tasks and advances each routine's next_run server-side; which routines moved (and where they re-sort) is not knowable client-side
     mutationFn: async () => {
       const result = await api.post('/api/routines/run-due', {});
       return result as { spawned: number; tasks: Task[] };

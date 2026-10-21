@@ -15,6 +15,7 @@
  * `api` is imported from `@/lib/api` (the local seam).
  */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -160,14 +161,23 @@ export function useFlows(activeOnly = false) {
 }
 
 export function useCreateFlow() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: FlowCreate) => {
+  // Flows come back oldest-first (created_at asc): the new flow goes last, in the
+  // unfiltered list and — when it is active — in the active-only one.
+  return useCacheWriteMutation<Flow, FlowCreate>({
+    mutationFn: async (data) => {
       return api.post<Flow>("/api/automation/flows", data);
     },
+    targets: [
+      {
+        queryKey: ["automation-flows", false],
+        commit: (old: Flow[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+      {
+        queryKey: ["automation-flows", true],
+        commit: (old: Flow[] | undefined, saved) => (saved.active ? listOps.replace(old, saved.id, saved) : old),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-flows"] });
       toast.success("Fluxo criado com sucesso!");
     },
     onError: (error: Error) => {
@@ -177,14 +187,21 @@ export function useCreateFlow() {
 }
 
 export function useUpdateFlow() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: FlowUpdate & { id: string }) => {
+  return useCacheWriteMutation<Flow, FlowUpdate & { id: string }>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<Flow>(`/api/automation/flows/${id}`, data);
     },
+    // Every cached flows list gets the server's row; an active-only list that
+    // the edit pushed out of (or into) the filter converges on the settle.
+    targets: [
+      {
+        queryKey: ["automation-flows"],
+        match: "prefix",
+        commit: (old: Flow[] | undefined, saved) =>
+          Array.isArray(old) && old.some((f) => f.id === saved.id) ? listOps.replace(old, saved.id, saved) : old,
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-flows"] });
       toast.success("Fluxo atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -194,17 +211,22 @@ export function useUpdateFlow() {
 }
 
 export function useDeleteFlow() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(
         `/api/automation/flows/${id}`,
       );
     },
+    targets: [
+      {
+        queryKey: ["automation-flows"],
+        match: "prefix",
+        optimistic: (old: Flow[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
+    // The flow's executions go with it — a derived view the client does not recompute.
+    invalidate: [["automation-executions"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-flows"] });
-      queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success("Fluxo removido com sucesso!");
     },
     onError: (error: Error) => {
@@ -231,14 +253,19 @@ export function useSteps(flowId: string | null) {
 }
 
 export function useCreateStep(flowId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: StepCreate) => {
+  return useCacheWriteMutation<Step, StepCreate>({
+    mutationFn: async (data) => {
       return api.post<Step>(`/api/automation/flows/${flowId}/steps`, data);
     },
+    // Steps are listed by `ord` ascending: the new step lands at its ord.
+    targets: [
+      {
+        queryKey: ["automation-steps", flowId],
+        commit: (old: Step[] | undefined, saved) =>
+          listOps.replace(old, saved.id, saved)?.sort((a, b) => a.ord - b.ord),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-steps", flowId] });
       toast.success("Passo adicionado!");
     },
     onError: (error: Error) => {
@@ -248,20 +275,18 @@ export function useCreateStep(flowId: string) {
 }
 
 export function useUpdateStep() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      stepId,
-      flowId,
-      ...data
-    }: StepUpdate & { stepId: string; flowId: string }) => {
+  return useCacheWriteMutation<Step, StepUpdate & { stepId: string; flowId: string }>({
+    mutationFn: async ({ stepId, flowId: _flowId, ...data }) => {
       return api.patch<Step>(`/api/automation/steps/${stepId}`, data);
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["automation-steps", variables.flowId],
-      });
+    targets: ({ flowId }) => [
+      {
+        queryKey: ["automation-steps", flowId],
+        commit: (old: Step[] | undefined, saved) =>
+          listOps.replace(old, saved.id, saved)?.sort((a, b) => a.ord - b.ord),
+      },
+    ],
+    onSuccess: () => {
       toast.success("Passo atualizado!");
     },
     onError: (error: Error) => {
@@ -271,24 +296,19 @@ export function useUpdateStep() {
 }
 
 export function useDeleteStep() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      stepId,
-      flowId,
-    }: {
-      stepId: string;
-      flowId: string;
-    }) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, { stepId: string; flowId: string }>({
+    mutationFn: async ({ stepId }) => {
       return api.delete<{ ok: boolean; id: string }>(
         `/api/automation/steps/${stepId}`,
       );
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["automation-steps", variables.flowId],
-      });
+    targets: ({ flowId }) => [
+      {
+        queryKey: ["automation-steps", flowId],
+        optimistic: (old: Step[] | undefined, { stepId }) => listOps.remove(old, stepId),
+      },
+    ],
+    onSuccess: () => {
       toast.success("Passo removido!");
     },
     onError: (error: Error) => {
@@ -302,20 +322,26 @@ export function useDeleteStep() {
 // ---------------------------------------------------------------------------
 
 export function useTriggerFlow() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      flowId,
-      ...payload
-    }: TriggerRequest & { flowId: string }) => {
+  // Executions are listed newest first (started_at desc): the new run goes on top
+  // of the unfiltered list and of the triggering lead's list.
+  return useCacheWriteMutation<Execution, TriggerRequest & { flowId: string }>({
+    mutationFn: async ({ flowId, ...payload }) => {
       return api.post<Execution>(
         `/api/automation/flows/${flowId}/trigger`,
         payload,
       );
     },
+    targets: ({ lead_id }) => [
+      {
+        queryKey: ["automation-executions", undefined],
+        commit: (old: Execution[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+      {
+        queryKey: ["automation-executions", lead_id],
+        commit: (old: Execution[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success("Fluxo disparado com sucesso!");
     },
     onError: (error: Error) => {
@@ -345,16 +371,21 @@ export function useExecutions(leadId?: string) {
 }
 
 export function useCancelExecution() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (executionId: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (executionId) => {
       return api.delete<{ ok: boolean; id: string }>(
         `/api/automation/executions/${executionId}`,
       );
     },
+    targets: [
+      {
+        queryKey: ["automation-executions"],
+        match: "prefix",
+        optimistic: (old: Execution[] | undefined, executionId) =>
+          listOps.patch(old, executionId, { status: "canceled" }),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success("Execução cancelada!");
     },
     onError: (error: Error) => {
@@ -370,7 +401,7 @@ export function useCancelExecution() {
 export function useRunDue() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — run-due executes whatever is due server-side and returns only counters; which executions changed is unknown to the client
     mutationFn: async () => {
       return api.post<RunDueResult>("/api/automation/run-due", {});
     },

@@ -15,7 +15,7 @@
  *   GET    /api/crm/leads/{id}/activities → ActivityOut[]
  *   POST   /api/crm/leads/{id}/activities → ActivityOut 201
  */
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -169,13 +169,14 @@ export function useStages() {
 // ─── Seed default stages (self-serve empty-state action) ───────────────────
 
 export function useSeedDefaultStages() {
-  const qc = useQueryClient();
-  return useMutation({
+  return useCacheWriteMutation<Stage[], void>({
     mutationFn: () =>
       api.post<Stage[]>("/api/crm/stages/seed-defaults"),
+    // The stages list is exactly what the server answers with; the funil (stages with
+    // their leads) is a derived view and refreshes in the background.
+    targets: [{ queryKey: crmKeys.stages(), commit: (_old: Stage[] | undefined, stages) => stages }],
+    invalidate: [crmKeys.funil()],
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
-      qc.invalidateQueries({ queryKey: crmKeys.stages() });
       toast.success("Etapas padrão criadas");
     },
     onError: () => {

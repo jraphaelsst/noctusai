@@ -14,6 +14,7 @@
  * Requires status_pagina rows with those page_key values.
  */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -187,14 +188,19 @@ export function useAdAccounts(filters?: AdAccountFilters) {
 }
 
 export function useCreateAdAccount() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: AdAccountCreate) => {
+  // Ad accounts are listed newest first (connected_at desc).
+  return useCacheWriteMutation<AdAccount, AdAccountCreate>({
+    mutationFn: async (data) => {
       return api.post<AdAccount>("/api/meta-ads/ad-accounts", data);
     },
+    targets: [
+      {
+        queryKey: ["meta-ads-accounts", undefined],
+        commit: (old: ListResponse<AdAccount> | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+      { queryKey: ["meta-ads-accounts"], match: "prefix" },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-accounts"] });
       toast.success("Conta de anúncio cadastrada com sucesso!");
     },
     onError: (error: Error) => {
@@ -206,14 +212,18 @@ export function useCreateAdAccount() {
 }
 
 export function useUpdateAdAccount() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: AdAccountUpdate) => {
+  return useCacheWriteMutation<AdAccount, AdAccountUpdate>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<AdAccount>(`/api/meta-ads/ad-accounts/${id}`, data);
     },
+    targets: ({ id }) => [
+      {
+        queryKey: ["meta-ads-accounts"],
+        match: "prefix",
+        commit: (old: ListResponse<AdAccount> | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-accounts"] });
       toast.success("Conta de anúncio atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -225,16 +235,20 @@ export function useUpdateAdAccount() {
 }
 
 export function useDeleteAdAccount() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(
         `/api/meta-ads/ad-accounts/${id}`,
       );
     },
+    targets: [
+      {
+        queryKey: ["meta-ads-accounts"],
+        match: "prefix",
+        optimistic: (old: ListResponse<AdAccount> | undefined, id) => pageOps.remove(old, id),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-accounts"] });
       toast.success("Conta de anúncio removida com sucesso!");
     },
     onError: (error: Error) => {
@@ -271,15 +285,21 @@ export function useCampaigns(filters?: CampaignFilters) {
 }
 
 export function useCreateCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: CampaignCreate) => {
+  // Campaigns are listed newest first (created_at desc). The spend/leads aggregate
+  // is server-computed, so it only refreshes in the background.
+  return useCacheWriteMutation<Campaign, CampaignCreate>({
+    mutationFn: async (data) => {
       return api.post<Campaign>("/api/meta-ads/campaigns", data);
     },
+    targets: [
+      {
+        queryKey: ["meta-ads-campaigns", undefined],
+        commit: (old: ListResponse<Campaign> | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+      { queryKey: ["meta-ads-campaigns"], match: "prefix" },
+    ],
+    invalidate: [["meta-ads-aggregate"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-campaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-aggregate"] });
       toast.success("Campanha criada com sucesso!");
     },
     onError: (error: Error) => {
@@ -289,15 +309,19 @@ export function useCreateCampaign() {
 }
 
 export function useUpdateCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: CampaignUpdate) => {
+  return useCacheWriteMutation<Campaign, CampaignUpdate>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<Campaign>(`/api/meta-ads/campaigns/${id}`, data);
     },
+    targets: ({ id }) => [
+      {
+        queryKey: ["meta-ads-campaigns"],
+        match: "prefix",
+        commit: (old: ListResponse<Campaign> | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
+    invalidate: [["meta-ads-aggregate"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-campaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-aggregate"] });
       toast.success("Campanha atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -307,17 +331,21 @@ export function useUpdateCampaign() {
 }
 
 export function useDeleteCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(
         `/api/meta-ads/campaigns/${id}`,
       );
     },
+    targets: [
+      {
+        queryKey: ["meta-ads-campaigns"],
+        match: "prefix",
+        optimistic: (old: ListResponse<Campaign> | undefined, id) => pageOps.remove(old, id),
+      },
+    ],
+    invalidate: [["meta-ads-aggregate"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-campaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-aggregate"] });
       toast.success("Campanha removida com sucesso!");
     },
     onError: (error: Error) => {
@@ -327,23 +355,22 @@ export function useDeleteCampaign() {
 }
 
 export function useUpdateSituation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      id,
-      situation,
-    }: {
-      id: string;
-      situation: SituationLiteral;
-    }) => {
+  return useCacheWriteMutation<Campaign, { id: string; situation: SituationLiteral }>({
+    mutationFn: async ({ id, situation }) => {
       return api.patch<Campaign>(
         `/api/meta-ads/campaigns/${id}/situation`,
         { situation },
       );
     },
+    targets: ({ id, situation }) => [
+      {
+        queryKey: ["meta-ads-campaigns"],
+        match: "prefix",
+        optimistic: (old: ListResponse<Campaign> | undefined) => pageOps.patch(old, id, { situation }),
+        commit: (old: ListResponse<Campaign> | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-campaigns"] });
       toast.success("Situação da campanha atualizada!");
     },
     onError: (error: Error) => {
@@ -359,7 +386,7 @@ export function useUpdateSituation() {
 export function useSyncCampaigns() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the sync pulls campaign/metric changes from Meta server-side and answers with counters only; which rows changed is unknown to the client
     mutationFn: async (adAccountId: string) => {
       return api.post<SyncCampaignsResponse>("/api/meta-ads/sync", {
         ad_account_id: adAccountId,
@@ -441,18 +468,24 @@ export function useCampaignMetrics(campaignId: string | null) {
  * (migration 009) minus campaign_id, which the path carries.
  */
 export function useUpsertCampaignMetric(campaignId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: CampaignMetricUpsertData) => {
+  // Metrics are listed newest first (date desc): the saved day replaces its row (or
+  // is inserted at its date). The spend/leads aggregate is server-computed.
+  return useCacheWriteMutation<CampaignMetric, CampaignMetricUpsertData>({
+    mutationFn: async (data) => {
       return api.put<CampaignMetric>(
         `/api/meta-ads/campaigns/${campaignId}/metrics`,
         data,
       );
     },
+    targets: [
+      {
+        queryKey: ["meta-ads-metrics", campaignId],
+        commit: (old: CampaignMetric[] | undefined, saved) =>
+          listOps.replace(old, saved.id, saved)?.sort((a, b) => b.date.localeCompare(a.date)),
+      },
+    ],
+    invalidate: [["meta-ads-aggregate"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-metrics", campaignId] });
-      queryClient.invalidateQueries({ queryKey: ["meta-ads-aggregate"] });
       toast.success("Métricas salvas");
     },
     onError: (error: Error) => {

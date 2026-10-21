@@ -16,7 +16,8 @@
  *
  * status_pagina key: "relatorios"
  */
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -135,14 +136,19 @@ export function useReport(id: string | null) {
 // ---------------------------------------------------------------------------
 
 export function useCreateReport() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: ReportCreate) => {
+  // Reports are listed newest first (created_at desc).
+  return useCacheWriteMutation<Report, ReportCreate>({
+    mutationFn: async (data) => {
       return api.post<Report>("/api/reports", data);
     },
+    targets: [
+      {
+        queryKey: ["reports", undefined],
+        commit: (old: Report[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+      { queryKey: ["reports"], match: "prefix" },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
       toast.success("Relatório criado com sucesso!");
     },
     onError: (error: Error) => {
@@ -156,14 +162,21 @@ export function useCreateReport() {
 // ---------------------------------------------------------------------------
 
 export function useUpdateReport() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: ReportUpdate) => {
+  return useCacheWriteMutation<Report, ReportUpdate>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<Report>(`/api/reports/${id}`, data);
     },
+    targets: ({ id }) => [
+      // Every cached list (any filter) holding the report gets the server's row;
+      // the detail entry shares the prefix and is non-array, so it is untouched here.
+      {
+        queryKey: ["reports"],
+        match: "prefix",
+        commit: (old: Report[] | undefined, saved) => listOps.patch(old, id, saved),
+      },
+      { queryKey: ["reports", id], commit: (_old: Report | undefined, saved) => saved },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
       toast.success("Relatório atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -177,14 +190,18 @@ export function useUpdateReport() {
 // ---------------------------------------------------------------------------
 
 export function useDeleteReport() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(`/api/reports/${id}`);
     },
+    targets: [
+      {
+        queryKey: ["reports"],
+        match: "prefix",
+        optimistic: (old: Report[] | undefined, id) => listOps.remove(old, id),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
       toast.success("Relatório removido com sucesso!");
     },
     onError: (error: Error) => {
@@ -215,15 +232,20 @@ export function useReportSnapshots(reportId: string | null) {
 // ---------------------------------------------------------------------------
 
 export function useGenerateSnapshot() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (reportId: string) => {
+  // Snapshots are listed newest first (generated_at desc).
+  return useCacheWriteMutation<ReportSnapshot, string>({
+    mutationFn: async (reportId) => {
       return api.post<ReportSnapshot>(`/api/reports/${reportId}/generate`, {});
     },
-    onSuccess: (_data, reportId) => {
-      queryClient.invalidateQueries({ queryKey: ["report-snapshots", reportId] });
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    targets: (reportId) => [
+      {
+        queryKey: ["report-snapshots", reportId],
+        commit: (old: ReportSnapshot[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
+    // The report's own row (last generated / status) is server-owned.
+    invalidate: [["reports"]],
+    onSuccess: () => {
       toast.success("Snapshot gerado com sucesso!");
     },
     onError: (error: Error) => {

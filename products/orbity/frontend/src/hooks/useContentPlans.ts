@@ -9,6 +9,7 @@
  * Hooks are the ONLY place useQuery/useMutation appears (never in pages).
  */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -164,80 +165,161 @@ export function useContentPlans(filters?: PlanFilters) {
   });
 }
 
-function useInvalidatingMutation<TVars, TData>(
-  fn: (vars: TVars) => Promise<TData>,
-  opts: { success?: string; error: string; also?: string[] },
-) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
+type PlansPage = ListResponse<ContentPlan>;
+const PLANS = { queryKey: [KEY], match: "prefix" as const };
+
+export function useCreatePlan() {
+  return useCacheWriteMutation<ContentPlan, PlanCreate>({
+    mutationFn: (data) => api.post<ContentPlan>("/api/content/plans", data),
+    // Plans are listed newest first (created_at desc); only the unfiltered list is
+    // known to contain the new plan — filtered lists converge on the settle.
+    targets: [
+      {
+        queryKey: [KEY, undefined],
+        commit: (old: PlansPage | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+    ],
+    invalidate: [[KEY]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [KEY] });
-      for (const k of opts.also ?? []) queryClient.invalidateQueries({ queryKey: [k] });
-      if (opts.success) toast.success(opts.success);
+      toast.success("Planejamento criado!");
     },
     onError: (error: Error) => {
-      toast.error(opts.error, { description: error.message });
+      toast.error("Erro ao criar planejamento", { description: error.message });
     },
   });
 }
 
-export function useCreatePlan() {
-  return useInvalidatingMutation(
-    (data: PlanCreate) => api.post<ContentPlan>("/api/content/plans", data),
-    { success: "Planejamento criado!", error: "Erro ao criar planejamento" },
-  );
-}
-
 export function useUpdatePlan() {
-  return useInvalidatingMutation(
-    ({ id, ...data }: PlanUpdate) => api.patch<ContentPlan>(`/api/content/plans/${id}`, data),
-    { success: "Planejamento atualizado!", error: "Erro ao atualizar planejamento" },
-  );
+  return useCacheWriteMutation<ContentPlan, PlanUpdate>({
+    mutationFn: ({ id, ...data }) => api.patch<ContentPlan>(`/api/content/plans/${id}`, data),
+    targets: ({ id }) => [
+      { ...PLANS, commit: (old: PlansPage | undefined, saved) => pageOps.replace(old, id, saved) },
+    ],
+    onSuccess: () => {
+      toast.success("Planejamento atualizado!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar planejamento", { description: error.message });
+    },
+  });
 }
 
 export function useDeletePlan() {
-  return useInvalidatingMutation(
-    (id: string) => api.delete<{ deleted: boolean }>(`/api/content/plans/${id}`),
-    { success: "Planejamento removido!", error: "Erro ao remover planejamento" },
-  );
+  return useCacheWriteMutation<{ deleted: boolean }, string>({
+    mutationFn: (id) => api.delete<{ deleted: boolean }>(`/api/content/plans/${id}`),
+    targets: [
+      { ...PLANS, optimistic: (old: PlansPage | undefined, id) => pageOps.remove(old, id) },
+    ],
+    onSuccess: () => {
+      toast.success("Planejamento removido!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao remover planejamento", { description: error.message });
+    },
+  });
 }
 
+// The item mutations answer with the item(s) only; each commits them into the plan
+// that nests them, in every cached plans list.
+
 export function useAppendPlanItems() {
-  return useInvalidatingMutation(
-    ({ planId, items }: { planId: string; items: PlanItemInput[] }) =>
+  return useCacheWriteMutation<PlanItem[], { planId: string; items: PlanItemInput[] }>({
+    mutationFn: ({ planId, items }) =>
       api.post<PlanItem[]>(`/api/content/plans/${planId}/items`, { items }),
-    { error: "Erro ao adicionar conteúdos" },
-  );
+    targets: ({ planId }) => [
+      {
+        ...PLANS,
+        commit: (old: PlansPage | undefined, added) =>
+          listOps.within(old, "items", (plans) =>
+            plans.map((p: ContentPlan) => (p.id === planId ? { ...p, items: [...p.items, ...added] } : p)),
+          ),
+      },
+    ],
+    onError: (error: Error) => {
+      toast.error("Erro ao adicionar conteúdos", { description: error.message });
+    },
+  });
 }
 
 export function useUpdatePlanItem() {
-  return useInvalidatingMutation(
-    ({ planId, itemId, ...data }: { planId: string; itemId: string } & Partial<PlanItemInput> & { status?: ItemStatus }) =>
+  return useCacheWriteMutation<
+    PlanItem,
+    { planId: string; itemId: string } & Partial<PlanItemInput> & { status?: ItemStatus }
+  >({
+    mutationFn: ({ planId, itemId, ...data }) =>
       api.patch<PlanItem>(`/api/content/plans/${planId}/items/${itemId}`, data),
-    { error: "Erro ao atualizar conteúdo" },
-  );
+    targets: ({ planId, itemId }) => [
+      {
+        ...PLANS,
+        commit: (old: PlansPage | undefined, saved) =>
+          listOps.within(old, "items", (plans) =>
+            plans.map((p: ContentPlan) =>
+              p.id === planId ? { ...p, items: listOps.replace(p.items, itemId, saved) ?? p.items } : p,
+            ),
+          ),
+      },
+    ],
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar conteúdo", { description: error.message });
+    },
+  });
 }
 
 export function useDeletePlanItem() {
-  return useInvalidatingMutation(
-    ({ planId, itemId }: { planId: string; itemId: string }) =>
+  return useCacheWriteMutation<
+    { deleted: boolean; discarded: boolean },
+    { planId: string; itemId: string }
+  >({
+    mutationFn: ({ planId, itemId }) =>
       api.delete<{ deleted: boolean; discarded: boolean }>(`/api/content/plans/${planId}/items/${itemId}`),
-    { error: "Erro ao remover conteúdo" },
-  );
+    // The server either deletes the item or keeps it as "discarded" (it already has a
+    // task/post) — only its answer says which, so this commits instead of drawing.
+    targets: ({ planId, itemId }) => [
+      {
+        ...PLANS,
+        commit: (old: PlansPage | undefined, res) =>
+          listOps.within(old, "items", (plans) =>
+            plans.map((p: ContentPlan) =>
+              p.id !== planId
+                ? p
+                : {
+                    ...p,
+                    items: res.discarded
+                      ? (listOps.patch(p.items, itemId, { status: "discarded" as ItemStatus }) ?? p.items)
+                      : (listOps.remove(p.items, itemId) ?? p.items),
+                  },
+            ),
+          ),
+      },
+    ],
+    onError: (error: Error) => {
+      toast.error("Erro ao remover conteúdo", { description: error.message });
+    },
+  });
 }
 
 export function useReorderPlanItems() {
-  return useInvalidatingMutation(
-    ({ planId, ids }: { planId: string; ids: string[] }) =>
+  return useCacheWriteMutation<PlanItem[], { planId: string; ids: string[] }>({
+    mutationFn: ({ planId, ids }) =>
       api.put<PlanItem[]>(`/api/content/plans/${planId}/items/order`, { ids }),
-    { error: "Erro ao reordenar conteúdos" },
-  );
+    targets: ({ planId }) => [
+      {
+        ...PLANS,
+        commit: (old: PlansPage | undefined, ordered) =>
+          listOps.within(old, "items", (plans) =>
+            plans.map((p: ContentPlan) => (p.id === planId ? { ...p, items: ordered } : p)),
+          ),
+      },
+    ],
+    onError: (error: Error) => {
+      toast.error("Erro ao reordenar conteúdos", { description: error.message });
+    },
+  });
 }
 
 export function useCreateTasksFromItems() {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — the answer is only counters + task ids; which items became tasks (and their new status) is decided server-side per item
     mutationFn: ({ planId, itemIds }: { planId: string; itemIds: string[] }) =>
       api.post<{ created: number; skipped: number; failed: number; task_ids: string[] }>(
         `/api/content/plans/${planId}/tasks`,
@@ -263,16 +345,34 @@ export function useCreateTasksFromItems() {
 }
 
 export function usePromoteItemToPost() {
-  return useInvalidatingMutation(
-    ({ planId, itemId }: { planId: string; itemId: string }) =>
+  return useCacheWriteMutation<Post, { planId: string; itemId: string }>({
+    mutationFn: ({ planId, itemId }) =>
       api.post<Post>(`/api/content/plans/${planId}/items/${itemId}/post`, {}),
-    { success: "Post criado como rascunho — siga em Posts para enviar à aprovação.", error: "Erro ao criar post", also: ["content-posts"] },
-  );
+    targets: ({ planId, itemId }) => [
+      {
+        ...PLANS,
+        commit: (old: PlansPage | undefined, post) =>
+          listOps.within(old, "items", (plans) =>
+            plans.map((p: ContentPlan) =>
+              p.id === planId ? { ...p, items: listOps.patch(p.items, itemId, { post_id: post.id }) ?? p.items } : p,
+            ),
+          ),
+      },
+    ],
+    // The new draft post appears in the posts lists, whose order/filters the server owns.
+    invalidate: [["content-posts"]],
+    onSuccess: () => {
+      toast.success("Post criado como rascunho — siga em Posts para enviar à aprovação.");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao criar post", { description: error.message });
+    },
+  });
 }
 
 /** Preview only — the backend persists nothing; the caller appends the chosen items. */
 export function useGenerateAIItems() {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — preview only: the backend persists nothing, so there is no cached read to write
     mutationFn: ({ planId, params }: { planId: string; params: AIGenerateParams }) =>
       api.post<{ items: AIGeneratedItem[] }>(`/api/content/plans/${planId}/ai-items`, params),
   });

@@ -10,6 +10,7 @@
  *   GCal sync: POST /api/agenda/events/{id}/sync-gcal
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { pageOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 
@@ -116,16 +117,19 @@ export function useAgendaEvent(id?: string) {
   });
 }
 
+const EVENTS_KEY = ['orbity-agenda-events'];
+const eventKey = (id: string) => ['orbity-agenda-event', id];
+
 export function useCreateAgendaEvent() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — events lists are range/type/assignee-filtered and ordered by the server; where (or whether) a new event belongs in each cached window is the server's call
     mutationFn: async (data: AgendaEventCreateData) => {
       const result = await api.post('/api/agenda/events', data);
       return result as AgendaEvent;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-events'] });
+      queryClient.invalidateQueries({ queryKey: EVENTS_KEY });
       toast.success('Evento criado com sucesso!');
     },
     onError: (error: Error) => {
@@ -135,16 +139,20 @@ export function useCreateAgendaEvent() {
 }
 
 export function useUpdateAgendaEvent() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: { id: string } & AgendaEventUpdateData) => {
+  return useCacheWriteMutation<AgendaEvent, { id: string } & AgendaEventUpdateData>({
+    mutationFn: async ({ id, ...data }) => {
       const result = await api.patch(`/api/agenda/events/${id}`, data);
       return result as AgendaEvent;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-events'] });
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-event', data.id] });
+    targets: ({ id }) => [
+      {
+        queryKey: EVENTS_KEY,
+        match: 'prefix',
+        commit: (old, saved) => pageOps.replace(old, id, saved),
+      },
+      { queryKey: eventKey(id), commit: (_old, saved) => saved },
+    ],
+    onSuccess: () => {
       toast.success('Evento atualizado!');
     },
     onError: (error: Error) => {
@@ -154,15 +162,20 @@ export function useUpdateAgendaEvent() {
 }
 
 export function useDeleteAgendaEvent() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<string, string>({
+    mutationFn: async (id) => {
       await api.delete(`/api/agenda/events/${id}`);
       return id;
     },
+    targets: (id) => [
+      {
+        queryKey: EVENTS_KEY,
+        match: 'prefix',
+        optimistic: (old, vars) => pageOps.remove(old, vars),
+      },
+      { queryKey: eventKey(id) },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-events'] });
       toast.success('Evento excluído!');
     },
     onError: (error: Error) => {
@@ -178,16 +191,20 @@ export function useDeleteAgendaEvent() {
  * NOC-REMEDIATE[orbity-agenda-gcal]: real adapter requires credential wiring. — 2026-06-03
  */
 export function useSyncGcal() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (eventId: string) => {
+  return useCacheWriteMutation<AgendaEvent, string>({
+    mutationFn: async (eventId) => {
       const result = await api.post(`/api/agenda/events/${eventId}/sync-gcal`, {});
       return result as AgendaEvent;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-events'] });
-      queryClient.invalidateQueries({ queryKey: ['orbity-agenda-event', data.id] });
+    targets: (eventId) => [
+      {
+        queryKey: EVENTS_KEY,
+        match: 'prefix',
+        commit: (old, saved) => pageOps.replace(old, eventId, saved),
+      },
+      { queryKey: eventKey(eventId), commit: (_old, saved) => saved },
+    ],
+    onSuccess: () => {
       toast.success('Sincronização simulada', {
         description: 'Google Calendar não conectado — nada foi enviado à agenda real.',
       });

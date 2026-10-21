@@ -7,10 +7,11 @@
  * is never overwritten silently (an explicit "Usar" button).
  */
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, Field, Input, Select } from "@noctusai/lib/design-system";
 import { api } from "@/lib/api";
+import type { ClientOption } from "@/hooks/useClients";
 import { clientPayload, documentDigits, isCnpj } from "@/lib/clientPayload";
 
 export interface ClientFormValues {
@@ -76,7 +77,6 @@ interface CnpjFound {
 }
 
 export function ClientForm({ open, initial, onClose, onSaved }: { open: boolean; initial: ClientFormValues; onClose: () => void; onSaved: () => void }) {
-  const queryClient = useQueryClient();
   const [form, setForm] = useState<ClientFormValues>(initial);
   const [found, setFound] = useState<CnpjFound | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -85,13 +85,27 @@ export function ClientForm({ open, initial, onClose, onSaved }: { open: boolean;
   const set = <K extends keyof ClientFormValues>(key: K, value: ClientFormValues[K]) => setForm((f) => ({ ...f, [key]: value }));
   const legalMissing = form.legal_name.trim() === "";
 
-  const save = useMutation({
+  // The saved client goes straight into the picker options (active clients, newest
+  // first): a new one on top, an edit in place, an inactivated one out.
+  const save = useCacheWriteMutation<ClientOption, void>({
     mutationFn: async () => {
       const payload = clientPayload({ ...form });
-      return editing ? api.patch(`/api/clients/${initial.id}`, payload) : api.post("/api/clients", payload);
+      return editing
+        ? api.patch<ClientOption>(`/api/clients/${initial.id}`, payload)
+        : api.post<ClientOption>("/api/clients", payload);
     },
+    targets: [
+      {
+        queryKey: ["orbity-client-options"],
+        commit: (old: ClientOption[] | undefined, saved) =>
+          saved.active === false
+            ? listOps.remove(old, saved.id)
+            : editing
+              ? listOps.patch(old, saved.id, saved)
+              : listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orbity-client-options"] });
       toast.success(editing ? "Cliente atualizado" : "Cliente criado");
       onSaved();
     },

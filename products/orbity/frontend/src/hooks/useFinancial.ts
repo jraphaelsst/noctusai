@@ -12,6 +12,7 @@
  * (never `isLoading`: it is false mid-refetch, so an empty branch would lie over data that exists).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { financeKeys } from "@noctusai/lib";
 import { api } from "@/lib/api";
@@ -138,22 +139,23 @@ export function useCharges(filters?: ChargeFilters) {
 // Mutations
 // ---------------------------------------------------------------------------
 
-function useRefreshAfterChange() {
-  const queryClient = useQueryClient();
-  return () => {
-    queryClient.invalidateQueries({ queryKey: ["financial-charges"] });
-    queryClient.invalidateQueries({ queryKey: ["financial-cash-flow"] });
-    queryClient.invalidateQueries({ queryKey: financeKeys.all });
-  };
-}
+// Settle also refreshes what the charge change moves but the client cannot compute:
+// the month cash-flow summary and the finance organ's receivables/DRE views.
+const DERIVED = [["financial-cash-flow"], [...financeKeys.all]];
 
 /** Send a skipped/failed charge to the gateway (after the operator fixed what blocked it). */
 export function useRequeueCharge() {
-  const refresh = useRefreshAfterChange();
-  return useMutation({
-    mutationFn: async (entryId: string) => api.post<Charge>(`/api/financial/charges/${entryId}/generate`, {}),
+  return useCacheWriteMutation<Charge, string>({
+    mutationFn: async (entryId) => api.post<Charge>(`/api/financial/charges/${entryId}/generate`, {}),
+    targets: (entryId) => [
+      {
+        queryKey: ["financial-charges"],
+        match: "prefix",
+        commit: (old: ChargeList | undefined, saved) => pageOps.replace(old, entryId, saved, "entry_id"),
+      },
+    ],
+    invalidate: DERIVED,
     onSuccess: () => {
-      refresh();
       toast.success("Cobrança enviada para a fila do gateway");
     },
     onError: (error: Error) => {
@@ -163,11 +165,12 @@ export function useRequeueCharge() {
 }
 
 export function useCreateExtraCharge() {
-  const refresh = useRefreshAfterChange();
-  return useMutation({
+  const queryClient = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — charges are cached per generation_status filter + page; whether the new (queued) charge belongs in a given cached window is the server's call
     mutationFn: async (data: ExtraChargeCreate) => api.post<Charge>("/api/financial/charges", data),
     onSuccess: () => {
-      refresh();
+      queryClient.invalidateQueries({ queryKey: ["financial-charges"] });
+      for (const queryKey of DERIVED) queryClient.invalidateQueries({ queryKey });
       toast.success("Cobrança criada");
     },
     onError: (error: Error) => {

@@ -9,6 +9,7 @@
  * `api` is imported from `@/lib/api` (the local seam, not seed directly).
  */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -116,14 +117,20 @@ export function useCampaigns(filters?: CampaignFilters) {
 }
 
 export function useCreateCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: CampaignCreate) => {
+  // Campaigns are listed newest first (created_at desc); the new one goes on top of
+  // the unfiltered list, filtered lists converge on the settle.
+  return useCacheWriteMutation<Campaign, CampaignCreate>({
+    mutationFn: async (data) => {
       return api.post<Campaign>("/api/content/campaigns", data);
     },
+    targets: [
+      {
+        queryKey: ["content-campaigns", undefined],
+        commit: (old: ListResponse<Campaign> | undefined, saved) => pageOps.prependNewest(old, saved),
+      },
+      { queryKey: ["content-campaigns"], match: "prefix" },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-campaigns"] });
       toast.success("Campanha criada com sucesso!");
     },
     onError: (error: Error) => {
@@ -133,14 +140,18 @@ export function useCreateCampaign() {
 }
 
 export function useUpdateCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: CampaignUpdate) => {
+  return useCacheWriteMutation<Campaign, CampaignUpdate>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<Campaign>(`/api/content/campaigns/${id}`, data);
     },
+    targets: ({ id }) => [
+      {
+        queryKey: ["content-campaigns"],
+        match: "prefix",
+        commit: (old: ListResponse<Campaign> | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-campaigns"] });
       toast.success("Campanha atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -150,15 +161,20 @@ export function useUpdateCampaign() {
 }
 
 export function useDeleteCampaign() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(`/api/content/campaigns/${id}`);
     },
+    targets: [
+      {
+        queryKey: ["content-campaigns"],
+        match: "prefix",
+        optimistic: (old: ListResponse<Campaign> | undefined, id) => pageOps.remove(old, id),
+      },
+    ],
+    // The campaign's posts lose their campaign — a derived view the server owns.
+    invalidate: [["content-posts"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-campaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["content-posts"] });
       toast.success("Campanha removida com sucesso!");
     },
     onError: (error: Error) => {
@@ -227,7 +243,7 @@ export function usePosts(filters?: PostFilters) {
 export function useCreatePost() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — posts are ordered by scheduled_for and filtered by campaign/client/platform/status; where a new post falls in each cached window is the server's call
     mutationFn: async (data: PostCreate) => {
       return api.post<Post>("/api/content/posts", data);
     },
@@ -242,14 +258,20 @@ export function useCreatePost() {
 }
 
 export function useUpdatePost() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, ...data }: PostUpdate) => {
+  return useCacheWriteMutation<Post, PostUpdate>({
+    mutationFn: async ({ id, ...data }) => {
       return api.patch<Post>(`/api/content/posts/${id}`, data);
     },
+    // A reschedule or status change can move the post between windows; the settle
+    // refetch re-sorts, the row is correct in place meanwhile.
+    targets: ({ id }) => [
+      {
+        queryKey: ["content-posts"],
+        match: "prefix",
+        commit: (old: ListResponse<Post> | undefined, saved) => pageOps.replace(old, id, saved),
+      },
+    ],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-posts"] });
       toast.success("Post atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -259,15 +281,19 @@ export function useUpdatePost() {
 }
 
 export function useDeletePost() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (id: string) => {
+  return useCacheWriteMutation<{ ok: boolean; id: string }, string>({
+    mutationFn: async (id) => {
       return api.delete<{ ok: boolean; id: string }>(`/api/content/posts/${id}`);
     },
+    targets: [
+      {
+        queryKey: ["content-posts"],
+        match: "prefix",
+        optimistic: (old: ListResponse<Post> | undefined, id) => pageOps.remove(old, id),
+      },
+    ],
+    invalidate: [["content-approvals"]],
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["content-posts"] });
-      queryClient.invalidateQueries({ queryKey: ["content-approvals"] });
       toast.success("Post removido com sucesso!");
     },
     onError: (error: Error) => {
@@ -301,23 +327,27 @@ export function useApprovals(postId?: string) {
 }
 
 export function useCreateApproval() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      postId,
-      expires_in_days = 7,
-    }: {
-      postId: string;
-      expires_in_days?: number;
-    }) => {
+  // Approvals are listed newest first (created_at desc): the new link goes on top of
+  // the post's list and of the all-approvals list.
+  return useCacheWriteMutation<Approval, { postId: string; expires_in_days?: number }>({
+    mutationFn: async ({ postId, expires_in_days = 7 }) => {
       return api.post<Approval>(`/api/content/posts/${postId}/approvals`, {
         expires_in_days,
       });
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["content-approvals", variables.postId] });
-      queryClient.invalidateQueries({ queryKey: ["content-posts"] });
+    targets: ({ postId }) => [
+      {
+        queryKey: ["content-approvals", postId],
+        commit: (old: Approval[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+      {
+        queryKey: ["content-approvals", undefined],
+        commit: (old: Approval[] | undefined, saved) => listOps.replace(old, saved.id, saved, "prepend"),
+      },
+    ],
+    // The post's status changes with the approval request — server-owned.
+    invalidate: [["content-posts"]],
+    onSuccess: () => {
       toast.success("Link de aprovação criado!");
     },
     onError: (error: Error) => {
@@ -374,7 +404,7 @@ export function usePublicApproval(token: string | null) {
 }
 
 export function useDecideApproval(token: string | null) {
-  return useMutation({
+  return useMutation({ // noc-allow: invalidate-only — public token-gated decision by the client (no JWT); it touches no authed cache entry, the team sees the outcome through the approvals/posts refetch
     mutationFn: async (payload: DecideApprovalPayload) => {
       return api.post<{ ok: boolean; approval_id: string; status: string; team_notified: number }>(
         `/api/content/approve/${token}`,
