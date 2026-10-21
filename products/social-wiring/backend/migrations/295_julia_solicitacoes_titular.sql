@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 293 -- social_wiring: data-subject requests are RECORDED for a human (owner decision 2026-10-21)
+-- Migration 295 -- social_wiring: data-subject requests are RECORDED for a human (owner decision 2026-10-21)
 -- ============================================================================
 -- WHY
 -- ---
@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS julia_solicitacoes_titular_org_idx
     ON social_wiring.julia_solicitacoes_titular (org_id, status, prazo_em);
 
 COMMENT ON TABLE social_wiring.julia_solicitacoes_titular IS
-    'Data-subject requests (LGPD) a lead made, registered by Julia through her tool and DECIDED by an org admin (migration 293). '
+    'Data-subject requests (LGPD) a lead made, registered by Julia through her tool and DECIDED by an org admin (migration 295). '
     'prazo_em = recebida_em + 15 days. Nothing is deleted because of a lead message. Backend-only.';
 
 ALTER TABLE social_wiring.julia_solicitacoes_titular ENABLE ROW LEVEL SECURITY;

@@ -4,7 +4,7 @@ Julia answers on a public number, so a lead's message must never delete anything
 any other type of destructive actions". No keyword creates a request either. JULIA (the model) registers it through her tool
 `registrar_solicitacao_titular` -> `POST /api/julia/ferramentas/solicitacao-titular` -> `registrar` here:
 
-  * stores the request (`julia_solicitacoes_titular`, migration 293): org, lead (`contato_id` == agents' `lead_ref`), chat,
+  * stores the request (`julia_solicitacoes_titular`, migration 295): org, lead (`contato_id` == agents' `lead_ref`), chat,
     the LGPD `tipo`, a <=500-char excerpt of what the lead said, `recebida_em`, `prazo_em = recebida_em + 15 days`, `aberta`;
   * notifies the org admins in-app (`write_in_app`, product `social-wiring`, link to the Opt-outs page). A failed notice is
     RECORDED on the row (`notificacao_status='falhou'` + the error) and logged -- never swallowed.
