@@ -4,7 +4,7 @@
  * yet, so the key is a text input (with the registered key `julia` suggested); the server's 422
  * `chave_nao_registrada` is surfaced verbatim.
  */
-import { useState, type FormEvent } from "react";
+import React, { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
@@ -14,10 +14,19 @@ import { lifecycleError } from "@/lib/agentLifecycle";
 const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
 
+/**
+ * Creation modes. Only `vazio` exists today; a follow-up adds `ia` ("Gerar com IA": objetivo, público, canal, tom…)
+ * by appending an entry here and a fields component to `CAMPOS_POR_MODO` — the submit path stays the same.
+ */
+export type ModoCriacao = "vazio";
+export const MODOS_CRIACAO: { id: ModoCriacao; label: string }[] = [{ id: "vazio", label: "Agente vazio" }];
+const CAMPOS_POR_MODO: Record<ModoCriacao, (() => React.ReactElement) | null> = { vazio: null };
+
 export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }) {
   const create = useCreatePlatformAgent();
   const navigate = useNavigate();
   const [key, setKey] = useState("");
+  const [modo, setModo] = useState<ModoCriacao>("vazio");
   const [erro, setErro] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
@@ -61,6 +70,19 @@ export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }
               O agente nasce vazio — nenhum conteúdo é exigido para criar. Só a publicação exige os textos completos.
             </p>
           </div>
+          {MODOS_CRIACAO.length > 1 && (
+            <div role="radiogroup" aria-label="Modo de criação" className="flex gap-3 text-sm">
+              {MODOS_CRIACAO.map((m) => (
+                <label key={m.id} className="flex items-center gap-1">
+                  <input type="radio" checked={modo === m.id} onChange={() => setModo(m.id)} /> {m.label}
+                </label>
+              ))}
+            </div>
+          )}
+          {(() => {
+            const Campos = CAMPOS_POR_MODO[modo];
+            return Campos ? <Campos /> : null;
+          })()}
           {erro && (
             <p className="text-sm text-destructive" data-testid="criar-agente-erro">
               {erro}
