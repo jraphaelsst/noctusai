@@ -15,6 +15,7 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { uploadMultipart } from "@/hooks/useCardHub";
 import type { DocumentoUrlResponse } from "@/types/cardHub";
@@ -22,6 +23,7 @@ import type {
   AdicionarEmpresaBody,
   AtualizarEmpresaBody,
   AtualizarEmpresaResponse,
+  DecidirParticipacaoBody,
   EmpresaCardItem,
   EmpresaChecklistResponse,
   EmpresaDocumento,
@@ -133,6 +135,75 @@ export function useAdicionarEmpresa(clienteId: string) {
         body,
       ),
     onSuccess: () => invalidateEmpresaFamily(qc, clienteId),
+  });
+}
+
+/** `cliente_empresa_participacoes`' decision columns as the PATCH below
+ *  returns them (the updated row). */
+interface ParticipacaoDecidida {
+  confirmado_em: string | null;
+  descartado_em: string | null;
+}
+
+interface DecidirParticipacaoVars {
+  empresaId: string;
+  body: DecidirParticipacaoBody;
+}
+
+/** One owner's decision written into the card's cached empresas list. */
+function comDecisao(
+  old: EmpresasDoCardResponse | undefined,
+  { empresaId, body }: DecidirParticipacaoVars,
+  decisao: ParticipacaoDecidida,
+): EmpresasDoCardResponse | undefined {
+  if (!old) return old;
+  return {
+    ...old,
+    items: old.items.map((item) =>
+      item.empresa.id !== empresaId
+        ? item
+        : {
+            ...item,
+            owners: item.owners.map((o) =>
+              o.cliente_id !== body.participante_cliente_id ? o : { ...o, ...decisao },
+            ),
+          },
+    ),
+  };
+}
+
+/** `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao`
+ *  (migration 299) — confirm / dismiss ("Não é do vendedor") / reopen a
+ *  Serasa-Crednet participação of a person on this card. A confirmed one
+ *  enters the generated contract with its company's certidões. The decision
+ *  is drawn on the owner's row at once and committed from the server's
+ *  answer; the list then re-reads in the background (the E1 verdict /
+ *  `certificando` are server-computed). */
+export function useDecidirParticipacao(clienteId: string) {
+  return useCacheWriteMutation<ParticipacaoDecidida, DecidirParticipacaoVars>({
+    mutationFn: ({ empresaId, body }) =>
+      api.patch<ParticipacaoDecidida>(
+        `${clienteEmpresaBase(clienteId, empresaId)}/participacao`,
+        body,
+      ),
+    targets: [
+      {
+        queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
+        optimistic: (old: EmpresasDoCardResponse | undefined, vars) => {
+          const agora = new Date().toISOString();
+          const { decisao } = vars.body;
+          return comDecisao(old, vars, {
+            confirmado_em: decisao === "confirmar" ? agora : null,
+            descartado_em: decisao === "descartar" ? agora : null,
+          });
+        },
+        commit: (old: EmpresasDoCardResponse | undefined, result, vars) =>
+          comDecisao(old, vars, {
+            confirmado_em: result?.confirmado_em ?? null,
+            descartado_em: result?.descartado_em ?? null,
+          }),
+      },
+    ],
   });
 }
 

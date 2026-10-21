@@ -283,6 +283,11 @@ export interface NegociacaoTermos {
    *  exactly. Optional for a pre-206 backend (read as `true`). */
   sinal_primeira_parcela?: boolean;
   obrigacoes_vendedor: string | null;
+  /** Migration 299 — where the contract prints `obrigacoes_vendedor`:
+   *  `"onus"` (default — a paragraph of the ÔNUS clause) or `"certidoes"`
+   *  (lettered "a) …; b) …" inside DAS CERTIDÕES E DOCUMENTOS, after the
+   *  certidão groups). Optional for a pre-299 backend (read as `"onus"`). */
+  obrigacoes_vendedor_local?: ObrigacoesVendedorLocal;
 
   onus_quitacao: OnusQuitacao | null;
   onus_prazo_dias: number | null;
@@ -343,6 +348,9 @@ export interface TermosOpcoes {
  *  distinct alias so a future read-only addition to `NegociacaoTermos` does
  *  not silently widen what a PUT is allowed to send. */
 export type TermosNegocioPut = NegociacaoTermos;
+
+/** Migration 299 — `atendimento_negociacao_termos.obrigacoes_vendedor_local`. */
+export type ObrigacoesVendedorLocal = "onus" | "certidoes";
 
 export const POSSE_MARCOS: PosseMarco[] = ["assinatura", "parcela", "protocolo_registro"];
 export const POSSE_MARCOS_IMOVEL: PosseMarcoImovel[] = [...POSSE_MARCOS, "data_fixa"];

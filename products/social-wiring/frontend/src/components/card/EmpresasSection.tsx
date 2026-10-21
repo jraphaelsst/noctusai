@@ -42,6 +42,7 @@ import { useCardResumo, useCompradores } from "@/hooks/useCardHub";
 import {
   useAdicionarEmpresa,
   useAtualizarEmpresa,
+  useDecidirParticipacao,
   useEmpresaChecklist,
   useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
@@ -57,8 +58,10 @@ import { formatIdentificador } from "@noctusai/lib/identificador";
 import { SITUACAO_CADASTRAL_LABELS } from "@/types/certidoesEstruturadas";
 import type {
   AtualizarEmpresaBody,
+  DecisaoParticipacao,
   EmpresaCardItem,
   EmpresaMotivo,
+  EmpresaOwner,
 } from "@/types/empresas";
 
 /** pt-BR copy for the E1 verdict (contract §F/§E.1) — the ONE place a
@@ -98,6 +101,14 @@ function motivoVariant(item: EmpresaCardItem): "default" | "secondary" | "outlin
  *  `sem_cartao_cnpj` read as a decision nobody actually made. */
 function motivoIndecidido(motivo: EmpresaMotivo): boolean {
   return motivo === "sem_cartao_cnpj";
+}
+
+/** Migration 299 — a MACHINE-read participação (Serasa Crednet, or the
+ *  certidão-consulta backfill) nobody has decided on yet: it stays out of
+ *  the generated contract until someone confirms it. A manual link was
+ *  typed by a human and needs no decision. */
+function participacaoPendente(o: EmpresaOwner): boolean {
+  return o.origem !== "manual" && !o.confirmado_em && !o.descartado_em;
 }
 
 export interface EmpresasSectionProps {
@@ -277,6 +288,11 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
           {empresa.data_situacao_cadastral && ` — ${formatDate(empresa.data_situacao_cadastral)}`}
         </Badge>
       )}
+      {owners.some(participacaoPendente) && (
+        <Badge variant="secondary" data-testid={`${testId}-participacao-pendente`}>
+          Participação a confirmar
+        </Badge>
+      )}
       <Badge variant={motivoVariant(item)} data-testid={`${testId}-motivo`}>
         {exige_certidoes
           ? MOTIVO_LABEL[motivo]
@@ -330,13 +346,14 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
             )}
 
             {owners.length > 0 && (
-              <div className="flex flex-wrap gap-1.5" data-testid={`${testId}-owners`}>
+              <div className="space-y-1.5" data-testid={`${testId}-owners`}>
                 {owners.map((o) => (
-                  <Badge key={o.cliente_id} variant="secondary">
-                    {o.nome}
-                    {o.participacao_pct != null && ` (${o.participacao_pct}%)`}
-                    {o.certificando && " ★"}
-                  </Badge>
+                  <ParticipacaoLinha
+                    key={o.cliente_id}
+                    owner={o}
+                    empresaId={empresa.id}
+                    clienteId={clienteId}
+                  />
                 ))}
               </div>
             )}
@@ -372,6 +389,91 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
           remover.mutate(empresa.id, { onSuccess: () => setConfirmRemoverOpen(false) })
         }
       />
+    </div>
+  );
+}
+
+// ─── One owner's participação (+ the Crednet confirm/dismiss decision) ────
+
+/** Migration 299 — a Serasa-Crednet participação reaches the generated
+ *  contract (with the company's certidões) only once a human confirms it;
+ *  "Não é do vendedor" rules it out for good (a later Crednet re-read keeps
+ *  the decision). Either is undoable. A manual link shows no actions. */
+function ParticipacaoLinha({
+  owner: o,
+  empresaId,
+  clienteId,
+}: {
+  owner: EmpresaOwner;
+  empresaId: string;
+  clienteId: string;
+}) {
+  const decidir = useDecidirParticipacao(clienteId);
+  const testId = `empresa-participacao-${empresaId}-${o.cliente_id}`;
+  const enviar = (decisao: DecisaoParticipacao) =>
+    decidir.mutate({ empresaId, body: { participante_cliente_id: o.cliente_id, decisao } });
+  const rotuloDescartar = o.lado === "comprador" ? "Não é do comprador" : "Não é do vendedor";
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid={testId}>
+      <Badge variant="secondary">
+        {o.nome}
+        {o.participacao_pct != null && ` (${o.participacao_pct}%)`}
+        {o.certificando && " ★"}
+      </Badge>
+      {o.origem !== "manual" && o.confirmado_em && (
+        <Badge variant="outline" data-testid={`${testId}-confirmada`}>
+          Participação confirmada
+        </Badge>
+      )}
+      {o.origem !== "manual" && o.descartado_em && (
+        <Badge variant="outline" className="line-through" data-testid={`${testId}-descartada`}>
+          {rotuloDescartar}
+        </Badge>
+      )}
+      {participacaoPendente(o) && (
+        <>
+          <span className="text-xs text-amber-700" data-testid={`${testId}-pendente`}>
+            Lida do Serasa Crednet — fora do contrato até ser confirmada.
+          </span>
+          <Button
+            size="sm"
+            onClick={() => enviar("confirmar")}
+            disabled={decidir.isPending}
+            data-testid={`${testId}-confirmar`}
+          >
+            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+            Confirmar participação
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => enviar("descartar")}
+            disabled={decidir.isPending}
+            data-testid={`${testId}-descartar`}
+          >
+            <X className="mr-1.5 h-3.5 w-3.5" />
+            {rotuloDescartar}
+          </Button>
+        </>
+      )}
+      {o.origem !== "manual" && (o.confirmado_em || o.descartado_em) && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => enviar("reabrir")}
+          disabled={decidir.isPending}
+          data-testid={`${testId}-reabrir`}
+        >
+          Desfazer
+        </Button>
+      )}
+      {decidir.isError && (
+        <span className="text-xs text-destructive" data-testid={`${testId}-erro`}>
+          {(decidir.error as { message?: string } | null)?.message ??
+            "Não foi possível registrar a decisão."}
+        </span>
+      )}
     </div>
   );
 }

@@ -50,6 +50,13 @@ export interface EmpresaOwner {
   /** `'serasa_crednet' | 'manual' | 'certidao_consulta'` — the
    *  `cliente_empresa_participacoes.origem` CHECK vocabulary (§A.2). */
   origem: string;
+  /** Migration 299 — the human decision on a machine-read (Serasa Crednet)
+   *  participação. Confirmed ⇒ the company enters the generated contract;
+   *  dismissed ("Não é do vendedor") ⇒ it never does, and the owner is not a
+   *  `certificando` of it. Both null ⇒ undecided (the contract gate names
+   *  it as an aviso). Optional for a pre-299 backend. */
+  confirmado_em?: string | null;
+  descartado_em?: string | null;
   /** Whether THIS owner is one of the people the contract requires
    *  certidões for — vendedor, their cônjuge, or a comprador (+cônjuge)
    *  when `tem_permuta`. `exige_certidoes` on the parent item is
@@ -111,6 +118,16 @@ export interface EmpresasDoCardResponse {
   atendimento_id: string | null;
   referencia: string; // YYYY-MM-DD
   items: EmpresaCardItem[];
+}
+
+/** Migration 299 — `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/
+ *  participacao`: `reabrir` undoes either decision. */
+export type DecisaoParticipacao = "confirmar" | "descartar" | "reabrir";
+
+export interface DecidirParticipacaoBody {
+  /** The person on THIS card whose participação is decided. */
+  participante_cliente_id: string;
+  decisao: DecisaoParticipacao;
 }
 
 /** `POST /api/clientes/{cliente_id}/empresas` (§D.2) — manual link. */

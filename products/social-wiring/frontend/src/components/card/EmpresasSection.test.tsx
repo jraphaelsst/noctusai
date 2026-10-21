@@ -474,4 +474,123 @@ describe("EmpresasSection", () => {
       );
     });
   });
+
+  // Migration 299 — confirming / dismissing a Serasa-Crednet participação.
+  describe("participação lida do Crednet — confirmar / não é do vendedor", () => {
+    function crednetItem(ownerOver: Partial<EmpresaCardItem["owners"][number]> = {}) {
+      return empresaItem({
+        owners: [
+          {
+            cliente_id: "cli-2",
+            nome: "Maria Vendedora",
+            lado: "vendedor",
+            papel: "proprietario",
+            participacao_pct: null,
+            origem: "serasa_crednet",
+            confirmado_em: null,
+            descartado_em: null,
+            certificando: true,
+            ...ownerOver,
+          },
+        ],
+      });
+    }
+
+    async function expandir() {
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+    }
+
+    it("an undecided Crednet participação is flagged on the row and offers both decisions", async () => {
+      mockRoutes(empresasResponse([crednetItem()]));
+      await expandir();
+
+      expect(screen.getByTestId("empresa-row-emp-1-participacao-pendente").textContent).toBe(
+        "Participação a confirmar",
+      );
+      expect(screen.getByTestId("empresa-participacao-emp-1-cli-2-confirmar").textContent).toContain(
+        "Confirmar participação",
+      );
+      expect(screen.getByTestId("empresa-participacao-emp-1-cli-2-descartar").textContent).toContain(
+        "Não é do vendedor",
+      );
+    });
+
+    it("'Confirmar participação' PATCHes the decision and refreshes the card's empresas", async () => {
+      mockRoutes(empresasResponse([crednetItem()]));
+      mockPatch.mockResolvedValue({});
+      const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+      await expandir();
+
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-confirmar"));
+
+      await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+      expect(mockPatch).toHaveBeenCalledWith(
+        "/api/clientes/cli-1/empresas/emp-1/participacao",
+        { participante_cliente_id: "cli-2", decisao: "confirmar" },
+      );
+      await waitFor(() =>
+        expect(invalidateSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ["sw", "clientes", "cli-1", "empresas"] }),
+        ),
+      );
+    });
+
+    it("the decision is drawn at once, before the server answers", async () => {
+      mockRoutes(empresasResponse([crednetItem()]));
+      mockPatch.mockReturnValue(new Promise(() => {}));
+      await expandir();
+
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-confirmar"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("empresa-participacao-emp-1-cli-2-confirmada")).toBeTruthy(),
+      );
+      expect(screen.queryByTestId("empresa-row-emp-1-participacao-pendente")).toBeNull();
+    });
+
+    it("'Não é do vendedor' sends descartar", async () => {
+      mockRoutes(empresasResponse([crednetItem()]));
+      mockPatch.mockResolvedValue({});
+      await expandir();
+
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-descartar"));
+
+      await waitFor(() =>
+        expect(mockPatch).toHaveBeenCalledWith(
+          "/api/clientes/cli-1/empresas/emp-1/participacao",
+          { participante_cliente_id: "cli-2", decisao: "descartar" },
+        ),
+      );
+    });
+
+    it("a decided participação shows its state and only 'Desfazer'", async () => {
+      mockRoutes(empresasResponse([crednetItem({ descartado_em: "2026-10-21T10:00:00Z", certificando: false })]));
+      mockPatch.mockResolvedValue({});
+      await expandir();
+
+      expect(screen.queryByTestId("empresa-row-emp-1-participacao-pendente")).toBeNull();
+      expect(screen.getByTestId("empresa-participacao-emp-1-cli-2-descartada").textContent).toBe(
+        "Não é do vendedor",
+      );
+      expect(screen.queryByTestId("empresa-participacao-emp-1-cli-2-confirmar")).toBeNull();
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-reabrir"));
+      await waitFor(() =>
+        expect(mockPatch).toHaveBeenCalledWith(
+          "/api/clientes/cli-1/empresas/emp-1/participacao",
+          { participante_cliente_id: "cli-2", decisao: "reabrir" },
+        ),
+      );
+    });
+
+    it("a manual link asks for no decision", async () => {
+      mockRoutes(empresasResponse([crednetItem({ origem: "manual" })]));
+      await expandir();
+
+      expect(screen.queryByTestId("empresa-row-emp-1-participacao-pendente")).toBeNull();
+      expect(screen.queryByTestId("empresa-participacao-emp-1-cli-2-confirmar")).toBeNull();
+      expect(screen.queryByTestId("empresa-participacao-emp-1-cli-2-reabrir")).toBeNull();
+    });
+  });
 });

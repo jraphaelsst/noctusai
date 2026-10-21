@@ -64,6 +64,7 @@ import {
   type NegociacaoEstruturada,
   type NegociacaoParcela,
   type NegociacaoTermos,
+  type ObrigacoesVendedorLocal,
   type OnusQuitacao,
   type PosseMarco,
   type PosseMarcoImovel,
@@ -101,6 +102,8 @@ interface TermosDraft {
   /** Migration 206 — default ON. */
   sinal_primeira_parcela: boolean;
   obrigacoes_vendedor: string;
+  /** Migration 299 — default "onus". */
+  obrigacoes_vendedor_local: ObrigacoesVendedorLocal;
 
   onus_quitacao: OnusQuitacao | "";
   onus_prazo_dias: string;
@@ -141,6 +144,7 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
     ad_corpus: t.ad_corpus == null ? "" : t.ad_corpus ? "sim" : "nao",
     sinal_primeira_parcela: t.sinal_primeira_parcela !== false,
     obrigacoes_vendedor: t.obrigacoes_vendedor ?? "",
+    obrigacoes_vendedor_local: t.obrigacoes_vendedor_local ?? "onus",
 
     onus_quitacao: t.onus_quitacao ?? "",
     onus_prazo_dias: t.onus_prazo_dias == null ? "" : String(t.onus_prazo_dias),
@@ -223,6 +227,7 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
     ad_corpus: d.ad_corpus === "" ? null : d.ad_corpus === "sim",
     sinal_primeira_parcela: d.sinal_primeira_parcela,
     obrigacoes_vendedor: textoOuNulo(d.obrigacoes_vendedor),
+    obrigacoes_vendedor_local: d.obrigacoes_vendedor_local,
 
     onus_quitacao: d.onus_quitacao || null,
     onus_prazo_dias: inteiroOuNulo(d.onus_prazo_dias),
@@ -685,6 +690,18 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
               onChange={(e) =>
                 setDraft((d) => ({ ...d, obrigacoes_vendedor: e.target.value }))
               }
+            />
+            {/* Migration 299 — the clause these print in. One item per line
+                either way; in the certidões clause they become "a) …; b) …". */}
+            <EscolhaExplicita<ObrigacoesVendedorLocal>
+              id="termos-obrigacoes-vendedor-local"
+              rotulo="Onde imprimir no contrato"
+              opcoes={[
+                { valor: "onus", rotulo: "Cláusula do ônus" },
+                { valor: "certidoes", rotulo: "Cláusula das certidões (a, b, c…)" },
+              ]}
+              valor={draft.obrigacoes_vendedor_local}
+              onChange={(v) => setDraft((d) => ({ ...d, obrigacoes_vendedor_local: v }))}
             />
           </div>
         </section>

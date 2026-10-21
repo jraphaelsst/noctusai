@@ -251,7 +251,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 22 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 23 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -274,6 +274,7 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "ad_corpus",
         "sinal_primeira_parcela",
         "obrigacoes_vendedor",
+        "obrigacoes_vendedor_local",
         "onus_quitacao",
         "onus_prazo_dias",
         "onus_baixa_protocolo_em",
@@ -308,6 +309,30 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
     fireEvent.click(box);
     fireEvent.click(getByTestId("negest-termos-salvar"));
     expect(mockAtualizarTermos.mock.calls[1][0].sinal_primeira_parcela).toBe(false);
+  });
+
+  it("obrigações do vendedor: cláusula do ônus por padrão, certidões pelo mesmo PUT (migração 299)", async () => {
+    const { getByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    expect(
+      getByTestId("termos-obrigacoes-vendedor-local-onus").getAttribute("aria-checked"),
+    ).toBe("true");
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].obrigacoes_vendedor_local).toBe("onus");
+
+    fireEvent.click(getByTestId("termos-obrigacoes-vendedor-local-certidoes"));
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[1][0].obrigacoes_vendedor_local).toBe("certidoes");
+  });
+
+  it("o local salvo é relido como tal", async () => {
+    const { getByTestId } = await render(
+      aggregate({ termos: { ...termosVazios(), obrigacoes_vendedor_local: "certidoes" } }),
+    );
+    expect(
+      getByTestId("termos-obrigacoes-vendedor-local-certidoes").getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
   it("campos preenchidos chegam com os valores digitados", async () => {
