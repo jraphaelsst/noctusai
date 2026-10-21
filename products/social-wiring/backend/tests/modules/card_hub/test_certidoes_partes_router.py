@@ -123,7 +123,7 @@ class TestGetPartes:
         assert resp.status_code == 200
         body = resp.json()
         assert "data" not in body
-        assert set(body) == {"atendimento_id", "data_referencia", "max_dias", "linhas", "partes"}
+        assert set(body) == {"atendimento_id", "data_referencia", "max_dias", "linhas", "partes", "exigencias"}
         assert body["atendimento_id"] == aid
         assert [p["rotulo"] for p in body["partes"]] == ["COMP 1", "VEND 1"]
         assert all("automatico" in l for l in body["linhas"])

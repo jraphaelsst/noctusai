@@ -1047,13 +1047,25 @@ def certidao_unica_sp_vale(c: Optional[Certidao]) -> bool:
     return bool(c.resultado or c.numero or c.emitida_em)
 
 
-def tipos_exigidos(tipo_documento: str, idx: Optional[dict[str, Certidao]] = None) -> list[str]:
+TIPO_CRF_FGTS = "fgts_regularidade"
+
+
+def tipos_exigidos(
+    tipo_documento: str, idx: Optional[dict[str, Certidao]] = None, *, exigir_fgts: bool = False,
+) -> list[str]:
     """The certidão tipos required (and printed, in office order) for one
     consulta kind. With `idx` (`indice_certidoes`), a valid Certidão Única
     de Débitos (SP) takes the place of the two legacy SP certidões it
     replaced — ONE line where they stood."""
     coluna = 3 if tipo_documento == "cpf" else 4
     tipos = [c[0] for c in frases.CERTIDOES if c[coluna]]
+    # Owner 2026-10-21: the company CRF/FGTS is optional — listed only when
+    # the deal requires it, or when one is on file ("present or required").
+    if tipo_documento == "cnpj" and (
+        exigir_fgts or (idx is not None and (idx.get(TIPO_CRF_FGTS) or None) is not None
+                        and bool(idx[TIPO_CRF_FGTS].resultado))
+    ):
+        tipos = [*tipos, TIPO_CRF_FGTS]
     if idx is None or not certidao_unica_sp_vale(idx.get(frases.CERTIDAO_UNICA_SP)):
         return tipos
     substituidas = frases.CERTIDOES_SUBSTITUIDAS_PELA_UNICA_SP
@@ -1385,6 +1397,7 @@ def antigos_no_contrato(d: DadosContrato, assinatura: date, politica: Politica) 
     never prints antigos the gate never checked (name, gênero, certidões)."""
     return (
         bool(exige_antigo_proprietario(d, assinatura, politica))
+        and d.exigir_certidoes_antigos  # optional by default (owner 2026-10-21)
         and not d.processo_legado
         and not d.antigos_dispensados
     )
@@ -2754,6 +2767,8 @@ def _certidoes(
             "destino": av.destinos.para("certidoes", parte_id=parte_id),
         })
 
+    fgts_opcional: list[str] = []
+
     def conferir(
         parte_id: Optional[str], certs: list[Certidao], tipo_documento: str, nome_grupo: str,
         *, antigo: bool = False,
@@ -2775,7 +2790,11 @@ def _certidoes(
                     alvo=alvo,
                 )
         idx = indice_certidoes(certs, tipo_documento)
-        for tipo in tipos_exigidos(tipo_documento, idx):
+        if tipo_documento == "cnpj" and not d.exigir_crf_fgts and not (
+            idx.get(TIPO_CRF_FGTS) and idx[TIPO_CRF_FGTS].resultado
+        ):
+            fgts_opcional.append(nome_grupo)
+        for tipo in tipos_exigidos(tipo_documento, idx, exigir_fgts=d.exigir_crf_fgts):
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
             if c is None or not c.resultado:
@@ -3003,6 +3022,19 @@ def _certidoes(
                 f"{politica.antigo_proprietario_janela_anos} anos, mas as certidões deles não entram "
                 "no contrato.",
             )
+        elif exige and not d.exigir_certidoes_antigos:
+            # [Owner 2026-10-21] Optional by default ("depends on the case"):
+            # an aviso naming who the matrícula says, never a falta. The deal
+            # opts in with `exigir_certidoes_antigos` (Certidões tab).
+            nomes = ", ".join(d.imovel.ultima_transferencia_transmitentes)
+            quem = f" ({nomes})" if nomes else ""
+            av.avisa(
+                "ANTIGO_PROPRIETARIO_OPCIONAL",
+                f"A última transferência foi registrada há menos de "
+                f"{politica.antigo_proprietario_janela_anos} anos: considere exigir as certidões "
+                f"dos antigos proprietários{quem}. Não são obrigatórias por padrão — ative "
+                "\"Exigir certidões dos antigos proprietários\" na aba Certidões se o caso pedir.",
+            )
         elif exige:
             if not antigos and not antigos_pj:
                 nomes = ", ".join(d.imovel.ultima_transferencia_transmitentes)
@@ -3056,6 +3088,13 @@ def _certidoes(
                 "anos ou mais; as certidões do(s) antigo(s) proprietário(s) não entram no contrato.",
             )
 
+    if fgts_opcional:
+        av.avisa(
+            "CRF_FGTS_OPCIONAL",
+            "O Certificado de Regularidade do FGTS (CRF) das empresas não é obrigatório por padrão: "
+            "considere exigi-lo (" + "; ".join(fgts_opcional) + "). Ative \"Exigir CRF/FGTS da "
+            "empresa\" na aba Certidões se o caso pedir.",
+        )
     if com_apontamento:
         av.avisa(
             "CERTIDOES_POSITIVAS",

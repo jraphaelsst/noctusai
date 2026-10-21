@@ -98,6 +98,45 @@ describe("CertidoesPartesTab — failed first load is an error, never a skeleton
   );
 });
 
+describe("CertidoesPartesTab — certidões opcionais (owner 2026-10-21)", () => {
+  const linhasFgts = [...linhas, { tipo: "fgts_regularidade", chave: "fgts_regularidade", id: null, linha: "5.13", rotulo: "Regularidade do FGTS (empresas)", custom: false }];
+  const empresa = (opcional: boolean) => parte({
+    chave: "e:emp-1", kind: "empresa", tipo_pessoa: "PJ", rotulo: "EMP 1", lado: null, grupo: "comprador", nome: "Acme",
+    cliente_id: null, empresa_id: "emp-1", titular: false,
+    celulas: { cnd_federal: cel(), serasa: cel({ tipo: "serasa", status: "na", texto: "N/A" }), fgts_regularidade: cel({ tipo: "fgts_regularidade", opcional }) },
+  });
+
+  it("shows FGTS as 'Opcional' (not 'Pendente') when the deal does not require it", async () => {
+    mockGet.mockResolvedValue({ ...resp([empresa(true)]), linhas: linhasFgts, exigencias: { exigir_certidoes_antigos: false, exigir_crf_fgts: false } });
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-e:emp-1");
+    open("e:emp-1");
+    expect(screen.getByTestId("parte-chip-e:emp-1-fgts_regularidade").textContent).toContain("Opcional");
+    expect(screen.getByTestId("parte-chip-e:emp-1-cnd_federal").textContent).toContain("Pendente");
+  });
+
+  it("shows FGTS as 'Pendente' once the deal requires it", async () => {
+    mockGet.mockResolvedValue({ ...resp([empresa(false)]), linhas: linhasFgts, exigencias: { exigir_certidoes_antigos: false, exigir_crf_fgts: true } });
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-e:emp-1");
+    open("e:emp-1");
+    expect(screen.getByTestId("parte-chip-e:emp-1-fgts_regularidade").textContent).toContain("Pendente");
+    expect((screen.getByTestId("exigencia-exigir_crf_fgts") as HTMLElement).getAttribute("data-state")).toBe("checked");
+  });
+
+  it("the switches PUT the deal's opt-in (CRF/FGTS and antigos)", async () => {
+    mockGet.mockResolvedValue({ ...resp([parte()]), exigencias: { exigir_certidoes_antigos: false, exigir_crf_fgts: false } });
+    mockPut.mockResolvedValue({ atendimento_id: "at-1", exigencias: { exigir_certidoes_antigos: false, exigir_crf_fgts: true } });
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("certidoes-exigencias");
+    expect((screen.getByTestId("exigencia-exigir_certidoes_antigos") as HTMLElement).getAttribute("data-state")).toBe("unchecked");
+    fireEvent.click(screen.getByTestId("exigencia-exigir_crf_fgts"));
+    await waitFor(() => expect(mockPut).toHaveBeenCalledWith(
+      "/api/clientes/cli-1/certidoes/exigencias", { exigir_crf_fgts: true, atendimento_id: "at-1" },
+    ));
+  });
+});
+
 describe("CertidoesPartesTab", () => {
   it("renders one section per party, all collapsed by default", async () => {
     mockGet.mockResolvedValue(resp([parte(), parte({ chave: "c:cli-2", rotulo: "VEND 1", lado: "vendedor", titular: false, nome: "João", parte_id: "p-2", cliente_id: "cli-2" })]));

@@ -492,7 +492,7 @@ def montar_contexto(
     for pj in pj_certificandas(d, sw):
         idx = indice_certidoes(pj.certidoes, "cnpj")
         nome_pj = pj.razao_social or pj.cnpj or ""
-        tipos = tipos_exigidos("cnpj", idx)
+        tipos = tipos_exigidos("cnpj", idx, exigir_fgts=d.exigir_crf_fgts)
         itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
         if not itens:
             continue
@@ -507,7 +507,7 @@ def montar_contexto(
     for pj in antigos_pj:
         idx = indice_certidoes(pj.certidoes, "cnpj")
         nome_pj = pj.razao_social or pj.cnpj or ""
-        tipos = tipos_exigidos("cnpj", idx)
+        tipos = tipos_exigidos("cnpj", idx, exigir_fgts=d.exigir_crf_fgts)
         itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
         if not itens:
             continue
@@ -525,7 +525,7 @@ def montar_contexto(
             continue  # already printed as the party's own group above
         idx = indice_certidoes(e.certidoes, "cnpj")
         nome_pj = e.razao_social or e.cnpj
-        tipos = tipos_exigidos("cnpj", idx)
+        tipos = tipos_exigidos("cnpj", idx, exigir_fgts=d.exigir_crf_fgts)
         itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
         if not itens:
             continue

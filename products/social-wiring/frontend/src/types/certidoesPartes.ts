@@ -59,6 +59,10 @@ export interface CertidaoParteCelula {
    *  Dívida Ativa SP needs the office's GOV.BR login; `erro_mensagem` carries the
    *  pt-BR text. The cell stays uploadable (Enviar PDF). */
   pendencia?: "credencial_govbr" | null;
+  /** Empty AND optional for this deal (owner 2026-10-21: CRF/FGTS and the
+   *  antigos proprietários' certidões are not required unless the deal opts
+   *  in). Optional for older payloads. */
+  opcional?: boolean;
 }
 
 export type CampoEstruturado = "numero" | "emitida_em" | "validade_ate" | "resultado";
@@ -111,6 +115,14 @@ export interface CertidaoParteTotais {
   constam: number;
   pendente: number;
   vencidas: number;
+  /** Empty cells that are optional for this deal — not counted as pendentes. */
+  opcionais?: number;
+}
+
+/** The deal's opt-in switches for the OPTIONAL certidões (migration 295). */
+export interface ExigenciasCertidoes {
+  exigir_certidoes_antigos: boolean;
+  exigir_crf_fgts: boolean;
 }
 
 export type CertidaoGrupo = "comprador" | "vendedor" | "antigo_proprietario";
@@ -147,6 +159,8 @@ export interface CertidoesPartesResponse {
   max_dias: number;
   linhas: CertidaoParteLinha[];
   partes: CertidaoParte[];
+  /** Absent on an older payload ⇒ both optional. */
+  exigencias?: ExigenciasCertidoes;
 }
 
 export interface EmissaoResponse {
@@ -222,6 +236,8 @@ export interface AntigosEstado {
     ja_no_card: boolean;
   }[];
   dispensado: { em: string; por: { id: string; nome: string | null }; motivo: string } | null;
+  /** The deal opted in (`exigir_certidoes_antigos`); `exigido` is only the matrícula's window verdict. */
+  exigencia_ativa?: boolean;
   sincronizacao_pendente: number;
 }
 
@@ -237,7 +253,7 @@ export interface AntigosSincronizacao {
   criados: { parte_id: string; nome: string; tipo_pessoa: "PF" | "PJ" }[];
   ja_no_card: { nome: string; documento_mascarado: string | null }[];
   emissoes: AntigosEmissao[];
-  ignorado: "dispensado" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais" | null;
+  ignorado: "dispensado" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais" | "nao_exigido" | null;
 }
 
 /** Person `{nome, cpf}` XOR company `{cnpj, razao_social?}`. */

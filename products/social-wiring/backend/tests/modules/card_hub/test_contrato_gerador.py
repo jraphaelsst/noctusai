@@ -998,10 +998,12 @@ class TestVendedorCertidoesExigidas:
 
 
 class TestQ9AntigoProprietario:
-    def _transferido_em(self, quando, *antigos):
+    def _transferido_em(self, quando, *antigos, exigir=True):
+        # Owner 2026-10-21: the previous owners are optional by default; these
+        # tests pin the REQUIRED behaviour, so the deal opts in.
         d = fx.variante(1)
         return replace(d, imovel=replace(d.imovel, ultima_transferencia_em=quando),
-                       vendedores=d.vendedores + list(antigos))
+                       vendedores=d.vendedores + list(antigos), exigir_certidoes_antigos=exigir)
 
     def test_unknown_last_transfer_is_missing(self):
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(None))
@@ -1035,6 +1037,21 @@ class TestQ9AntigoProprietario:
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15)))
         assert _campos(av) == [("partes.antigo_proprietario", None)]
 
+    def test_default_is_optional_an_aviso_naming_the_sellers_never_a_falta(self):
+        """Owner 2026-10-21: not required by default, "depends on the case"."""
+        d = self._transferido_em(date(2021, 9, 15), exigir=False)
+        d = replace(d, imovel=replace(d.imovel, ultima_transferencia_transmitentes=["Sandra Exemplo"]))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert not any(f["campo"].startswith("partes.antigo") for f in av.faltando)
+        aviso = next(a for a in av.avisos if a["codigo"] == "ANTIGO_PROPRIETARIO_OPCIONAL")
+        assert "Sandra Exemplo" in aviso["mensagem"] and "considere exigir" in aviso["mensagem"]
+
+    def test_opt_in_with_a_previous_owner_on_file_prints_them_and_default_does_not(self):
+        antiga = fx.antiga_proprietaria()
+        assert "ANTIGA DONA" in _texto(1, self._transferido_em(date(2021, 9, 15), antiga))
+        assert "ANTIGA DONA" not in _texto(1, self._transferido_em(date(2021, 9, 15), antiga, exigir=False))
+
     def test_a_transfer_exactly_five_years_ago_does_not(self):
         antiga = fx.antiga_proprietaria()
         d = self._transferido_em(date(2021, 9, 14), antiga)
@@ -1064,6 +1081,38 @@ class TestQ9AntigoProprietario:
                                  "333444555", "77.777.777-7"))
         texto = _texto(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria(), dois))
         assert "O VENDEDOR e os antigos proprietários apresentam" in texto
+
+
+class TestCrfFgtsOpcional:
+    """Owner 2026-10-21 (migration 295): the company FGTS regularity
+    certificate is optional unless the deal opts in."""
+
+    def _com_empresa(self, **extra):
+        d = fx.variante(1)
+        dono = d.vendedores[0]
+        e = fx.empresa("e1", "11444777000161", "Empresa Exemplo Ltda", "ativa", owners=[dono])
+        return replace(d, empresas=[e], **extra)
+
+    def test_default_is_an_aviso_never_a_falta(self):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa())
+        assert not any("fgts" in f["campo"] for f in av.faltando)
+        aviso = next(a for a in av.avisos if a["codigo"] == "CRF_FGTS_OPCIONAL")
+        assert "Empresa Exemplo Ltda" in aviso["mensagem"]
+
+    def test_required_when_the_deal_opts_in(self):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(exigir_crf_fgts=True))
+        assert "certidao.fgts_regularidade" in {f["campo"] for f in av.faltando}
+        assert "CRF_FGTS_OPCIONAL" not in _codigos(av.avisos)
+
+    def test_listed_in_the_contract_only_when_present_or_required(self):
+        from app.modules.card_hub.contrato_gerador.derivacao import tipos_exigidos
+        from app.modules.card_hub.contrato_gerador.dados import Certidao
+        assert "fgts_regularidade" not in tipos_exigidos("cnpj", {})
+        assert "fgts_regularidade" in tipos_exigidos("cnpj", {}, exigir_fgts=True)
+        crf = Certidao(tipo="fgts_regularidade", resultado="negativa", numero="1", emitida_em=date(2026, 9, 1),
+                       validade_ate=date(2026, 12, 1), consulta_tipo_documento="cnpj")
+        assert "fgts_regularidade" in tipos_exigidos("cnpj", {"fgts_regularidade": crf})
+        assert "fgts_regularidade" not in tipos_exigidos("cpf", {}, exigir_fgts=True)
 
 
 class TestQ10IdadeDasCertidoes:
@@ -1314,7 +1363,8 @@ class TestProcessoLegado:
         """Regression: the downgrade never applies to an ordinary contract —
         only `processo_legado=True` triggers it."""
         d = fx.variante(1)
-        d = replace(d, imovel=replace(d.imovel, ultima_transferencia_em=date(2021, 9, 15)))
+        d = replace(d, imovel=replace(d.imovel, ultima_transferencia_em=date(2021, 9, 15)),
+                    exigir_certidoes_antigos=True)
         _d, _pol, _sw, av = _avaliar(1, d)
         assert _campos(av) == [("partes.antigo_proprietario", None)]
         assert "ANTIGO_PROPRIETARIO_PROCESSO_LEGADO" not in _codigos(av.avisos)

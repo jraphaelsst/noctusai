@@ -72,6 +72,7 @@ class AntigosEstadoOut(BaseModel):
     origem_dados: Optional[str] = None
     transmitentes: list[TransmitenteOut]
     dispensado: Optional[DispensaOut] = None
+    exigencia_ativa: bool = False
     sincronizacao_pendente: int
 
 

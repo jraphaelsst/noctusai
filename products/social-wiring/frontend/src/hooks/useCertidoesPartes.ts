@@ -24,6 +24,7 @@ import type {
   CienciaPcenResult,
   CertidaoParteCelula,
   CertidoesPartesResponse,
+  ExigenciasCertidoes,
   EmissaoResponse,
   RelerCertidoesResponse,
   DigitarCelulaInput,
@@ -450,5 +451,25 @@ export function useDispensaAntigos(clienteId: string, atendimentoId?: string | n
       toast.success(input ? "Antigos proprietários dispensados neste negócio." : "Exigência reativada.");
       void invalidate();
     },
+  });
+}
+
+/** `PUT …/certidoes/exigencias` — the deal's opt-in switches for the optional
+ *  certidões (owner 2026-10-21). Turning the antigos switch ON also runs the
+ *  matrícula sync, so the group (and its automatic emissions) appears at once. */
+export function useDefinirExigencias(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartesEAntigos(clienteId);
+  const sincronizar = useSincronizarAntigos(clienteId, atendimentoId);
+  return useMutation({
+    mutationFn: (input: Partial<ExigenciasCertidoes>) =>
+      api.put<{ atendimento_id: string; exigencias: ExigenciasCertidoes }>(
+        `${clienteBase(clienteId)}/certidoes/exigencias`,
+        { ...input, atendimento_id: atendimentoId ?? null },
+      ),
+    onSuccess: (_r, input) => {
+      void invalidate();
+      if (input.exigir_certidoes_antigos) sincronizar.mutate();
+    },
+    onError: (e) => toast.error("Não foi possível salvar a exigência", { description: erroMsg(e) }),
   });
 }

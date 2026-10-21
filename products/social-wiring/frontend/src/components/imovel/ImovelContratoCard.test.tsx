@@ -337,7 +337,7 @@ describe("ImovelContratoCard — antigos proprietários", () => {
     // The office rule: a sale registered less than five years ago.
     const { getByTestId } = await render();
     const aviso = getByTestId("imovel-antigos-exige-certidoes");
-    expect(aviso.textContent).toContain("obrigatórias");
+    expect(aviso.textContent).toContain("obrigatórias por padrão");
     expect(aviso.textContent).toContain("5 anos");
   });
 

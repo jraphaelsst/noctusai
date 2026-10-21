@@ -9,6 +9,13 @@ All paths are under `/api/clientes/{cliente_id}`; raw-dict responses (card conve
 The card's **Certidões** tab (`CertidoesPartesTab`) gets **subtabs**, one per `grupo`:
 `comprador` · `vendedor` (sellers + the sellers' companies) · `antigo_proprietario` (previous owners + their companies).
 The previous owners are **never** in `GET …/partes` nor `GET …/compradores` (they sign nothing, are never qualified).
+> **Update 2026-10-21 (owner, migration 295):** previous owners' certidões are **optional by default**; the deal opts in with
+> `atendimentos.exigir_certidoes_antigos` (`PUT /certidoes/exigencias {exigir_certidoes_antigos?, exigir_crf_fgts?, atendimento_id?}`,
+> echoed as `exigencias` in `GET …/partes`; estado gains `exigencia_ativa`). Off ⇒ `sincronizar` returns `ignorado:"nao_exigido"`
+> (no group, no billed emission), readiness warns `ANTIGO_PROPRIETARIO_OPCIONAL` instead of `partes.antigo_proprietario`, the
+> instrument omits them, and empty antigos cells read `opcional:true` ("Opcional"). On ⇒ everything below applies as written.
+> The same switch family covers the company CRF/FGTS (`exigir_crf_fgts`, aviso `CRF_FGTS_OPCIONAL`).
+
 The antigos subtab header carries: the "required (last transfer < 5 years)" notice, **Dispensar / Reativar**, and
 **Adicionar / Remover** (manual). Rows get the same per-cell emission / upload / re-read actions as any party.
 
@@ -48,7 +55,7 @@ is unchanged and works on antigos rows.
  "criados":  [{"parte_id": "uuid", "nome": "…", "tipo_pessoa": "PF|PJ"}],
  "ja_no_card": [{"nome": "…", "documento_mascarado": "…"}],
  "emissoes": [{"parte_id": "uuid", "status": "solicitada|nao_iniciada", "codigo": null|"DOCUMENTO_AUSENTE"|"CREDENCIAIS_AUSENTES", "consulta_id": "uuid|null"}],
- "ignorado": null | "dispensado" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais"}
+ "ignorado": null | "dispensado" | "nao_exigido" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais"}
 ```
 Creates (only what is missing, matched by CPF/CNPJ) a party row `papel=antigo_proprietario, lado=vendedor, origem=matricula`
 for each seller of the last transfer, **only** when the deal is not dispensed, the matrícula names them and the transfer is

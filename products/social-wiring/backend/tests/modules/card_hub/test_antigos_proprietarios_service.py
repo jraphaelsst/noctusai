@@ -45,7 +45,7 @@ def _card(scoped):
     for t in ("atendimento_negociacao", "atendimento_negociacao_termos", "organizacao_negociacao_defaults"):
         scoped.set_table_data(t, [])
     scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular", cpf="39053344705")])
-    scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+    scoped.set_table_data("atendimentos", [{**_atendimento(aid, cid), "exigir_certidoes_antigos": True}])
     scoped.set_table_data("atendimento_negociacao", [
         {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid, "imovel_codigo": "AP0001"},
     ])
@@ -94,6 +94,15 @@ class TestSincronizar:
         again = _sync(scoped, cid, info)
         assert again["criados"] == [] and again["emissoes"] == []
         assert len(again["ja_no_card"]) == 1
+
+    def test_optional_by_default_creates_nothing_and_bills_nothing(self, scoped):
+        """Owner 2026-10-21 (migration 295): without the deal's opt-in no group
+        is built and no automatic emission is requested."""
+        cid, aid = _card(scoped)
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])  # flag absent ⇒ false
+        out = _sync(scoped, cid, _info(("Antigo Dono Exemplo", CPF_A)))
+        assert out["ignorado"] == "nao_exigido"
+        assert out["criados"] == [] and out["emissoes"] == []
 
     def test_dispensed_deal_creates_nothing(self, scoped):
         cid, _aid = _card(scoped)

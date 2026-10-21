@@ -198,7 +198,7 @@ class TestMontar:
         cid, aid, [vid] = _card(scoped)
         out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
 
-        assert set(out) == {"atendimento_id", "data_referencia", "max_dias", "linhas", "partes"}
+        assert set(out) == {"atendimento_id", "data_referencia", "max_dias", "linhas", "partes", "exigencias"}
         assert out["atendimento_id"] == aid
         assert out["data_referencia"] == "2026-10-01"
         assert out["max_dias"] == POLITICA_PADRAO.certidao_max_dias
@@ -210,12 +210,12 @@ class TestMontar:
             "chave", "kind", "tipo_pessoa", "rotulo", "lado", "grupo", "papel", "titular", "nome",
             "documento", "cliente_id", "empresa_id", "parte_id", "totais", "celulas",
         }
-        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "vencidas"}
+        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "vencidas", "opcionais"}
         assert set(parte["celulas"]["cnd_federal"]) == {
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
             "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem",
-            "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia",
+            "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia", "opcional",
         }
 
     def test_titular_e_comp_1_e_partes_numeradas_por_lado(self, scoped):
@@ -287,13 +287,50 @@ class TestMontar:
               "empresa_id": None, "parte_id": None}
         pj = {**pf, "tipo_pessoa": "PJ", "cliente_id": None, "empresa_id": "e", "documento": CNPJ}
         linhas_fmt = [svc._linha(l) for l in linhas]
-        col_pf = svc.montar_parte(pf, linhas_fmt, [], HOJE, 30)
-        col_pj = svc.montar_parte(pj, linhas_fmt, [], HOJE, 30)
+        exigindo = {"exigir_crf_fgts": True}
+        col_pf = svc.montar_parte(pf, linhas_fmt, [], HOJE, 30, exigindo)
+        col_pj = svc.montar_parte(pj, linhas_fmt, [], HOJE, 30, exigindo)
         assert col_pf["celulas"]["fgts_regularidade"]["status"] == "na"
         assert col_pj["celulas"]["serasa"]["status"] == "na"
         # 13 lines minus the one N/A each; all absent ⇒ pendente.
-        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0}
-        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0}
+        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0, "opcionais": 0}
+        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0, "opcionais": 0}
+
+    def test_crf_fgts_e_opcional_por_padrao_e_pendente_quando_exigido(self):
+        """Owner 2026-10-21: an EMPTY FGTS cell reads optional unless the deal opts in."""
+        linhas_fmt = [svc._linha(l) for l in svc.montar_linhas.__globals__["MATRIZ_LINHAS"]]
+        pj = {"tipo_pessoa": "PJ", "rotulo": "EMP 1", "lado": None, "papel": "", "titular": False,
+              "nome": "E", "documento": CNPJ, "cliente_id": None, "grupo": "vendedor",
+              "empresa_id": "e", "parte_id": None}
+        padrao = svc.montar_parte(pj, linhas_fmt, [], HOJE, 30)
+        assert padrao["celulas"]["fgts_regularidade"]["opcional"] is True
+        assert padrao["celulas"]["cnd_federal"]["opcional"] is False
+        assert padrao["totais"]["opcionais"] == 1 and padrao["totais"]["pendente"] == 11
+        exigido = svc.montar_parte(pj, linhas_fmt, [], HOJE, 30, {"exigir_crf_fgts": True})
+        assert exigido["celulas"]["fgts_regularidade"]["opcional"] is False
+        assert exigido["totais"]["opcionais"] == 0 and exigido["totais"]["pendente"] == 12
+
+    def test_antigos_sao_opcionais_por_padrao_e_pendentes_quando_exigidos(self):
+        linhas_fmt = [svc._linha(l) for l in svc.montar_linhas.__globals__["MATRIZ_LINHAS"]]
+        pf = {"tipo_pessoa": "PF", "rotulo": "ANT 1", "lado": "vendedor", "papel": "antigo_proprietario",
+              "titular": False, "nome": "A", "documento": CPF, "cliente_id": "c",
+              "grupo": "antigo_proprietario", "empresa_id": None, "parte_id": "p"}
+        padrao = svc.montar_parte(pf, linhas_fmt, [], HOJE, 30)
+        assert all(c["opcional"] for c in padrao["celulas"].values() if c["status"] == "pendente")
+        assert padrao["totais"]["pendente"] == 0 and padrao["totais"]["opcionais"] == 12
+        exigido = svc.montar_parte(pf, linhas_fmt, [], HOJE, 30, {"exigir_certidoes_antigos": True})
+        assert exigido["totais"]["pendente"] == 12 and exigido["totais"]["opcionais"] == 0
+
+    def test_exigencias_vao_na_resposta_e_o_put_so_grava_o_que_veio(self, scoped):
+        cid, aid, _ = _card(scoped)
+        assert svc.montar(scoped, ORG_ID, cid, hoje=HOJE)["exigencias"] == {
+            "exigir_certidoes_antigos": False, "exigir_crf_fgts": False,
+        }
+        out = svc.definir_exigencias(
+            scoped, ORG_ID, cid, exigir_certidoes_antigos=None, exigir_crf_fgts=True, atendimento_id=None,
+        )
+        assert out["exigencias"] == {"exigir_certidoes_antigos": False, "exigir_crf_fgts": True}
+        assert svc.montar(scoped, ORG_ID, cid, hoje=HOJE)["exigencias"]["exigir_crf_fgts"] is True
 
     def test_linhas_automatico_derivado_do_registry(self):
         automaticas = {l["tipo"] for l in map(svc._linha, svc.montar_linhas.__globals__["MATRIZ_LINHAS"])

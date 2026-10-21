@@ -117,7 +117,9 @@ export function AntigosProprietariosPainel(props: {
         <p data-testid="antigos-estado" className="font-medium">
           {data.dispensado
             ? "Dispensado neste negócio"
-            : data.exigido === true
+            : data.exigido === true && !data.exigencia_ativa
+              ? "Certidões dos antigos proprietários opcionais (não exigidas neste negócio)"
+              : data.exigido === true
               ? "Certidões dos antigos proprietários exigidas"
               : data.exigido === false
                 ? "Certidões dos antigos proprietários não exigidas"

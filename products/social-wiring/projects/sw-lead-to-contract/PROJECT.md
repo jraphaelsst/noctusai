@@ -48,7 +48,7 @@ Collision rules: noc-3 (noctusai-ba) owns seed FE/core auth, so nothing here tou
 6. The visited list shows 2 imóveis with "Gerar proposta"; generate a proposta for one; card moves to **Proposta recebida**; the proposta card is on Geral.
 7. Edit the proposta in the modal (valor, parcelas, termos, imobiliária = Tangerino, testemunhas); save; reload; values persist.
 8. Recusar a second proposta (reason recorded). Aceitar the first: negociação materialized, contract draft created with imobiliária + testemunhas preset, funnel → processos_venda at elaboração de contrato.
-9. Post-aceite (S5): certidões start emitting for every vendedor and their companies, the matrícula is extracted (or flagged missing), and antigos proprietários are certified when the purchase is < 5 years. `GET …/geracao` then shows what is still missing.
+9. Post-aceite (S5): certidões start emitting for every vendedor and their companies, the matrícula is extracted (or flagged missing), and antigos proprietários are certified when the purchase is < 5 years AND the deal opted in (optional by default, owner 2026-10-21). `GET …/geracao` then shows what is still missing.
 
 ## Open owner questions (asked as we reach them, never assumed)
 - Q1: on Aceitar, should the atendimento close into **processos_venda** (today's `aceitar-proposta` behavior), or stay on the funil until the contract is signed? (CONTRACT §5.4 assumes today's behavior.)

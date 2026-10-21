@@ -44,6 +44,7 @@ from uuid import UUID
 from noctusai_lib.integrations.documents.formatting import ranges_from_json
 
 from app.modules.card_hub import antigos_proprietarios_service as antigos_svc
+from app.modules.card_hub import certidoes_exigencias_service as exig_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as checklist_svc
@@ -925,6 +926,8 @@ def carregar(
         processo_legado=bool(contrato.get("processo_legado")),
         # Migration 203.
         antigos_dispensados=_antigos_dispensados(client, org_id, atendimento_id),
+        # Migration 295.
+        **exig_svc.ler(client, org_id, str(atendimento_id)),
         # Migration 157.
         modalidade_assinatura=contrato.get("modalidade_assinatura") or "digital",
     )

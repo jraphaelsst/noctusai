@@ -38,6 +38,7 @@ from uuid import UUID
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 
+from app.modules.card_hub import certidoes_exigencias_service as exig_svc
 from app.modules.card_hub import compradores_service as comp_svc
 from app.modules.card_hub import partes_service
 from app.modules.card_hub.certidoes_matriz_service import (
@@ -392,21 +393,41 @@ def _aplicavel(linha: dict, parte: dict) -> bool:
     return aplicavel_a_tipo_documento(tipo, "cpf" if parte["tipo_pessoa"] == "PF" else "cnpj")
 
 
+#: Owner decision 2026-10-21 (migration 295): the matriz row whose certidão is
+#: optional unless the deal opts in (`exigir_crf_fgts`).
+TIPO_CRF_FGTS = "fgts_regularidade"
+
+
+def _opcional(
+    parte: dict, tipo: Optional[str], status: str, exigencias: dict
+) -> bool:
+    """Is this EMPTY cell optional for the deal? Only a cell with nothing on
+    file can be "Opcional" — a certidão that exists is data, never hidden."""
+    if status != "pendente":
+        return False
+    if parte.get("grupo") == GRUPO_ANTIGO and not exigencias.get("exigir_certidoes_antigos"):
+        return True
+    return tipo == TIPO_CRF_FGTS and not exigencias.get("exigir_crf_fgts")
+
+
 def montar_parte(
-    parte: dict, linhas: list[dict], resultados: list[dict], hoje: date, limite: int
+    parte: dict, linhas: list[dict], resultados: list[dict], hoje: date, limite: int,
+    exigencias: Optional[dict] = None,
 ) -> dict:
+    exigencias = exigencias or {}
     por_tipo, por_linha = indexar_vencedores(resultados)
     celulas: dict[str, dict] = {}
-    totais = {**{k: 0 for k in _TOTAL_CHAVES}, "vencidas": 0}
+    totais = {**{k: 0 for k in _TOTAL_CHAVES}, "vencidas": 0, "opcionais": 0}
     for linha in linhas:
         chave = linha["chave"]
         if not _aplicavel(linha, parte):
-            celulas[chave] = _na(linha.get("tipo"))
+            celulas[chave] = {**_na(linha.get("tipo")), "opcional": False}
             continue
         row = por_linha.get(chave) if linha["custom"] else por_tipo.get(chave)
         celula = montar_celula(linha.get("tipo"), row, hoje, limite)
+        celula["opcional"] = _opcional(parte, linha.get("tipo"), celula["status"], exigencias)
         celulas[chave] = celula
-        totais[celula["status"]] += 1
+        totais["opcionais" if celula["opcional"] else celula["status"]] += 1
         if celula["stale_para_contrato"]:
             totais["vencidas"] += 1
     return {
@@ -437,6 +458,7 @@ def _vazio(hoje: date) -> dict:
         "max_dias": max_dias(),
         "linhas": [_linha(l) for l in MATRIZ_LINHAS],
         "partes": [],
+        "exigencias": exig_svc.da_linha({}),
     }
 
 
@@ -494,13 +516,15 @@ def montar(
         empresa_ids=[p["empresa_id"] for p in partes if p["empresa_id"]],
     )
     limite = max_dias()
+    exigencias = exig_svc.ler(client, org_id, alvo)
     return {
         "atendimento_id": alvo,
+        "exigencias": exigencias,
         "data_referencia": hoje.isoformat(),
         "max_dias": limite,
         "linhas": linhas,
         "partes": [
-            montar_parte(p, linhas, resultados.get(_chave(p), []), hoje, limite)
+            montar_parte(p, linhas, resultados.get(_chave(p), []), hoje, limite, exigencias)
             for p in partes
         ],
     }
@@ -852,6 +876,27 @@ def registrar_ciencia_pcen(
         "acao": acao,
         "pcen": _bloco_pcen({**row, **patch}, validade, hoje),
         "suporte": _suporte_da_org(client, org_id),
+    }
+
+
+def definir_exigencias(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    exigir_certidoes_antigos: Optional[bool],
+    exigir_crf_fgts: Optional[bool],
+    atendimento_id: Optional[UUID],
+) -> dict:
+    """`PUT …/certidoes/exigencias` — owner decision 2026-10-21 (migration 295)."""
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
+    return {
+        "atendimento_id": alvo,
+        "exigencias": exig_svc.definir(
+            client, org_id, alvo,
+            exigir_certidoes_antigos=exigir_certidoes_antigos, exigir_crf_fgts=exigir_crf_fgts,
+        ),
     }
 
 

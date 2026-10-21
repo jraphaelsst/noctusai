@@ -616,12 +616,13 @@ export default function ImovelContratoCard({
 
                   {antigos.exige_certidoes && (
                     <p
-                      className="flex items-start gap-1.5 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+                      className="flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
                       data-testid="imovel-antigos-exige-certidoes"
                     >
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      Certidões dos antigos proprietários são obrigatórias: a transferência foi
-                      registrada há menos de {ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS} anos.
+                      A transferência foi registrada há menos de {ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS}{" "}
+                      anos: considere exigir as certidões dos antigos proprietários. Não são
+                      obrigatórias por padrão — ative no negócio (aba Certidões).
                     </p>
                   )}
                 </>

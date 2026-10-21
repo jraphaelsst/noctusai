@@ -128,7 +128,7 @@ def _construtora(**extra) -> ParteJuridica:
 def _transferido_em(quando, pj: ParteJuridica | None = None):
     d = fx.variante(1)
     return replace(d, imovel=replace(d.imovel, ultima_transferencia_em=quando),
-                   partes_pj=[pj] if pj is not None else [])
+                   partes_pj=[pj] if pj is not None else [], exigir_certidoes_antigos=True)
 
 
 class TestAntigoProprietarioPJ:

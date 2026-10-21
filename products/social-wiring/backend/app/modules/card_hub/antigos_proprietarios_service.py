@@ -258,7 +258,10 @@ def estado(
     else:
         exigido, motivo = False, "transferencia_5_anos_ou_mais"
     pendentes = 0
-    if exigido and not row.get("antigos_dispensados_em") and (info or {}).get("origem") in _ORIGENS_MATRICULA:
+    if (
+        exigido and row.get("exigir_certidoes_antigos") and not row.get("antigos_dispensados_em")
+        and (info or {}).get("origem") in _ORIGENS_MATRICULA
+    ):
         pendentes = sum(1 for t in transmitentes if not t["ja_no_card"])
     return {
         "atendimento_id": alvo,
@@ -269,6 +272,9 @@ def estado(
         "origem_dados": (info or {}).get("origem"),
         "transmitentes": transmitentes,
         "dispensado": _dispensa_saida(row),
+        # Migration 295: the deal's opt-in. `exigido` stays the matrícula's
+        # window verdict; the group is only REQUIRED when both hold.
+        "exigencia_ativa": bool(row.get("exigir_certidoes_antigos")),
         "sincronizacao_pendente": pendentes,
     }
 
@@ -346,6 +352,10 @@ def sincronizar(
     vazio = {"atendimento_id": alvo, "criados": [], "ja_no_card": [], "emissoes": [], "ignorado": None}
     if esta_dispensado(client, org_id, alvo):
         return {**vazio, "ignorado": "dispensado"}
+    # Owner 2026-10-21 (migration 295): optional by default — no group, and
+    # above all no billed automatic emission, unless the deal opted in.
+    if not _atendimento_row(client, org_id, alvo).get("exigir_certidoes_antigos"):
+        return {**vazio, "ignorado": "nao_exigido"}
     info = _info_matricula(client, org_id, cliente_id, user_id, ler_antigos)
     if info is None:
         return {**vazio, "ignorado": "sem_imovel"}

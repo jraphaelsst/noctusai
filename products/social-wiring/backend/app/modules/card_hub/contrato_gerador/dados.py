@@ -717,6 +717,15 @@ class DadosContrato:
     #: `aviso` instead of a `falta`, and the antigos do not enter the
     #: instrument. Exactly the stored stamp, nothing derived.
     antigos_dispensados: bool = False
+    #: Migration 295 (owner 2026-10-21). `atendimentos.exigir_certidoes_antigos`
+    #: — the deal OPTED IN to requiring the previous owners' certidões. The
+    #: default is optional: readiness warns, the antigos do not enter the
+    #: instrument. Exactly the stored column, nothing derived.
+    exigir_certidoes_antigos: bool = False
+    #: Migration 295. `atendimentos.exigir_crf_fgts` — the deal opted in to
+    #: requiring the company FGTS regularity certificate (CRF). Off: optional
+    #: (a CRF already on file is still printed).
+    exigir_crf_fgts: bool = False
     #: Migration 157. `atendimento_contratos.modalidade_assinatura` —
     #: 'digital' (e-signature; the instrument carries the DA ASSINATURA
     #: DIGITAL clause) or 'fisica' (printed, signed by hand: no digital

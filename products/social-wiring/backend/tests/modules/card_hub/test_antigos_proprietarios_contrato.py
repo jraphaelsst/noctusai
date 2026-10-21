@@ -33,6 +33,8 @@ def _campos(av):
 
 def _card(quando, *antigos, empresas=(), **extra):
     d = fx.variante(1)
+    # Owner 2026-10-21: optional by default; these tests pin the required path.
+    extra.setdefault("exigir_certidoes_antigos", True)
     return replace(
         d, imovel=replace(d.imovel, ultima_transferencia_em=quando),
         vendedores=d.vendedores + list(antigos), empresas=list(empresas), **extra,

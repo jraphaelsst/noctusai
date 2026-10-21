@@ -33,6 +33,11 @@ export interface ChipInfo {
 /** Pendente / Processando / Negativa / Positiva / Erro / N/A (+ "Não emitida"). */
 export function chipDaCelula(c: CertidaoParteCelula): ChipInfo {
   if (c.status === "na") return { rotulo: "N/A", tom: "na" };
+  // Owner 2026-10-21: optional for this deal (CRF/FGTS, antigos proprietários)
+  // and nothing on file — not a pendência. A result on file never reads "Opcional".
+  if (c.opcional && c.status === "pendente" && !c.resultado && !c.status_processamento) {
+    return { rotulo: "Opcional", tom: "na" };
+  }
   if (c.status_processamento === "processando" || c.status_processamento === "na_fila") {
     return { rotulo: "Processando", tom: "processando" };
   }
@@ -104,11 +109,12 @@ export function linkDeSuporte(
 
 /** "9/13 ok · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped. */
 export function resumoDaParte(p: CertidaoParte): string {
-  const { nao_constam, constam, pendente, vencidas } = p.totais;
+  const { nao_constam, constam, pendente, vencidas, opcionais } = p.totais;
   const total = nao_constam + constam + pendente;
   const partes = [`${nao_constam}/${total} ok`];
   if (constam) partes.push(`${constam} com apontamento`);
   if (pendente) partes.push(`${pendente} ${pendente === 1 ? "pendente" : "pendentes"}`);
+  if (opcionais) partes.push(`${opcionais} ${opcionais === 1 ? "opcional" : "opcionais"}`);
   if (vencidas) partes.push(`${vencidas} ${vencidas === 1 ? "vencida" : "vencidas"} p/ contrato`);
   return partes.join(" · ");
 }

@@ -29,6 +29,7 @@ from app.modules.card_hub.certidoes_partes_schemas import (
     CelulaBody,
     CienciaPcenBody,
     EmissaoBody,
+    ExigenciasBody,
     ReemitirBody,
     RelerBody,
 )
@@ -53,6 +54,24 @@ async def get_certidoes_partes_route(
 ) -> dict:
     _user, org_id = auth_parts(auth)
     return svc.montar(client, org_id, cliente_id, atendimento_id=atendimento_id, hoje=date.today())
+
+
+@router.put("/{cliente_id}/certidoes/exigencias")
+async def definir_exigencias_route(
+    cliente_id: UUID,
+    body: ExigenciasBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """The deal's opt-in switches for the optional certidões (antigos
+    proprietários / CRF-FGTS) — owner decision 2026-10-21."""
+    _user, org_id = auth_parts(auth)
+    return svc.definir_exigencias(
+        client, org_id, cliente_id,
+        exigir_certidoes_antigos=body.exigir_certidoes_antigos,
+        exigir_crf_fgts=body.exigir_crf_fgts,
+        atendimento_id=body.atendimento_id,
+    )
 
 
 @router.post("/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/emissao", status_code=201)

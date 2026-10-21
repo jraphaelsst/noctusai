@@ -53,3 +53,12 @@ class CelulaBody(StrictHttpModel):
 
 
 __all__ = ["CelulaBody", "CienciaPcenBody", "EmissaoBody", "ReemitirBody", "RelerBody"]
+
+
+class ExigenciasBody(StrictHttpModel):
+    """`PUT …/certidoes/exigencias` (migration 295, owner 2026-10-21) — the
+    deal's opt-in for the OPTIONAL certidões. Only the switches sent change."""
+
+    exigir_certidoes_antigos: Optional[bool] = None
+    exigir_crf_fgts: Optional[bool] = None
+    atendimento_id: Optional[UUID] = None

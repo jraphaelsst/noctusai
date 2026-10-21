@@ -19,12 +19,13 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
-  useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
+  useCertidoesPartes, useCienciaPcen, useDefinirExigencias, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
   useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
@@ -65,6 +66,7 @@ export function CertidoesPartesTab(props: {
   const remover = useRemoverLinhaPartes(clienteId);
   const invalidar = useInvalidatePartes(clienteId);
   const removerAntigo = useRemoverAntigo(clienteId, atendimentoId);
+  const exigencias = useDefinirExigencias(clienteId, atendimentoId);
   const [removendoAntigo, setRemovendoAntigo] = useState<CertidaoParte | null>(null);
   // Controlled so the deep link (`destino.alvo = certidoes-subtab-<grupo>`)
   // can activate a subtab: the trigger's DOM id IS the alvo, and
@@ -148,6 +150,26 @@ export function CertidoesPartesTab(props: {
           )}
         </div>
       )}
+      <div className="flex flex-wrap gap-x-6 gap-y-2 rounded border p-3 text-sm" data-testid="certidoes-exigencias">
+        <p className="w-full text-xs text-muted-foreground">
+          Opcionais por padrão ("depende do caso"): ative para exigir neste negócio.
+        </p>
+        {([
+          ["exigir_certidoes_antigos", "Exigir certidões dos antigos proprietários"],
+          ["exigir_crf_fgts", "Exigir CRF/FGTS da empresa"],
+        ] as const).map(([campo, rotulo]) => (
+          <div key={campo} className="flex items-center gap-2">
+            <Switch
+              id={`exigencia-${campo}`}
+              checked={!!data.exigencias?.[campo]}
+              disabled={exigencias.isPending || !data.atendimento_id}
+              onCheckedChange={(v) => exigencias.mutate({ [campo]: v })}
+              data-testid={`exigencia-${campo}`}
+            />
+            <Label htmlFor={`exigencia-${campo}`}>{rotulo}</Label>
+          </div>
+        ))}
+      </div>
       <TooltipProvider delayDuration={200}>
         <Tabs value={subtab} onValueChange={(v) => setSubtab(v as GrupoCertidoes)}>
           <TabsList data-testid="certidoes-subtabs">

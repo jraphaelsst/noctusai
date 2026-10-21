@@ -852,6 +852,10 @@ CERTIDOES: tuple[tuple[str, str, str, bool, bool, Optional[str]], ...] = (
     ("divida_ativa_sp", "Certidão {R} de Débitos Tributários da Dívida Ativa do Estado de São Paulo", "nº", True, True, None),
     # Not required on its own (PF/PJ False): it REPLACES the two lines above
     # when present — `derivacao.tipos_exigidos(..., idx)`.
+    # Optional by default (owner 2026-10-21, migration 295): PF/PJ False so it
+    # is NOT in the fixed set; `derivacao.tipos_exigidos` adds it for a CNPJ
+    # when the deal requires it (`exigir_crf_fgts`) or one is on file.
+    ("fgts_regularidade", "Certificado de Regularidade do FGTS (CRF)", "nº", False, False, None),
     ("certidao_unica_sp", "Certidão Única de Débitos do Estado de São Paulo", "nº", False, False, None),
 )
 
