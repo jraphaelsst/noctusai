@@ -33,6 +33,22 @@ afterEach(() => {
 
 const parteJ = { tipo_pessoa: "PJ", empresa_id: "emp-1", cliente_id: null, parte_id: "p1" };
 
+describe("useAdicionarParte — settles on the create, not on the refetches", () => {
+  it("resolves (isSuccess) while the card-family invalidation is still pending", async () => {
+    mockPost.mockResolvedValueOnce(parteJ);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // A refetch that never finishes — the mutation must not wait on it.
+    vi.spyOn(qc, "invalidateQueries").mockReturnValue(new Promise(() => {}));
+    const w = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useAdicionarParte("c1"), { wrapper: w });
+    result.current.mutate({ cnpj: "11222333000181", razao_social: "X", lado: "vendedor" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["sw", "cardHub"] });
+  });
+});
+
 describe("useAdicionarParte", () => {
   it("PJ: posts the body verbatim, no emission unless asked", async () => {
     mockPost.mockResolvedValueOnce(parteJ);

@@ -6,6 +6,8 @@
  */
 import { CalendarClock, History, RefreshCw } from "lucide-react";
 
+import { formatDate } from "@/lib/utils";
+
 import Fact from "./Fact";
 import SectionCard from "./SectionCard";
 
@@ -25,8 +27,8 @@ export default function ImovelMetadadosSection({
 
   const atualizacaoValor = dataAtualizacao
     ? diasDesdeAtualizacao !== null
-      ? `${new Date(dataAtualizacao).toLocaleDateString("pt-BR")} (há ${diasDesdeAtualizacao} dia${diasDesdeAtualizacao === 1 ? "" : "s"})`
-      : new Date(dataAtualizacao).toLocaleDateString("pt-BR")
+      ? `${formatDate(dataAtualizacao)} (há ${diasDesdeAtualizacao} dia${diasDesdeAtualizacao === 1 ? "" : "s"})`
+      : formatDate(dataAtualizacao)
     : null;
 
   return (
@@ -39,7 +41,7 @@ export default function ImovelMetadadosSection({
         <Fact
           icon={<CalendarClock className="h-4 w-4" />}
           label="Cadastrado em"
-          value={new Date(dataCadastro).toLocaleDateString("pt-BR")}
+          value={formatDate(dataCadastro)}
         />
       )}
       {atualizacaoValor && (

@@ -3,6 +3,7 @@
  * docblock in `./utils.ts` for the full root-cause narrative.
  */
 import { describe, expect, it } from "vitest";
+import { formatDate } from "@noctusai/lib/utils";
 import { dataOnlyFromPossibleUtcMidnight, formatarDocumento, limparDocumento } from "./utils";
 
 describe("dataOnlyFromPossibleUtcMidnight", () => {
@@ -16,6 +17,11 @@ describe("dataOnlyFromPossibleUtcMidnight", () => {
 
   it("strips a UTC-midnight timestamp with fractional seconds", () => {
     expect(dataOnlyFromPossibleUtcMidnight("2026-09-23T00:00:00.000Z")).toBe("2026-09-23");
+  });
+
+  it("strips Postgres-style space-separated / +00 / +0000 UTC-midnight shapes", () => {
+    expect(dataOnlyFromPossibleUtcMidnight("2026-10-21 00:00:00+00")).toBe("2026-10-21");
+    expect(dataOnlyFromPossibleUtcMidnight("2026-10-21T00:00:00+0000")).toBe("2026-10-21");
   });
 
   it("leaves a non-midnight timestamp untouched — a real event, not a date-only fact", () => {
@@ -80,5 +86,14 @@ describe("formatarDocumento", () => {
 
   it("returns an empty string for empty input", () => {
     expect(formatarDocumento("")).toBe("");
+  });
+});
+
+describe("formatDate with a date-only value (no timezone shift, no invented time)", () => {
+  it("renders the calendar date as-is", () => {
+    expect(formatDate("2026-10-21")).toBe("21/10/2026");
+  });
+  it("does not append an invented 00:00 time of day", () => {
+    expect(formatDate("2026-10-21", true)).toBe("21/10/2026");
   });
 });

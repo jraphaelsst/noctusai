@@ -453,3 +453,39 @@ describe("DadosPessoaisForm — pendente de confirmação do administrador (owne
     });
   });
 });
+
+describe("DadosPessoaisForm — CEP lookup and pencil placement", () => {
+  const END = { logradouro: "Avenida Paulista", bairro: "Bela Vista", cidade: "São Paulo", uf: "SP" };
+
+  it("fills only the EMPTY address fields once a full CEP is typed", async () => {
+    const buscarCep = vi.fn().mockResolvedValue(END);
+    const { fireEvent, screen } = await abrir({
+      valores: { endereco_logradouro: "Rua que o operador digitou" },
+      buscarCep,
+    });
+    fireEvent.change(screen.getByTestId("dados-pessoais-cep"), { target: { value: "01310-100" } });
+    const { waitFor } = await import("@testing-library/react");
+    await waitFor(() =>
+      expect((screen.getByTestId("dados-pessoais-cidade") as HTMLInputElement).value).toBe("São Paulo"),
+    );
+    expect(buscarCep).toHaveBeenCalledWith("01310100");
+    expect((screen.getByTestId("dados-pessoais-bairro") as HTMLInputElement).value).toBe("Bela Vista");
+    expect((screen.getByTestId("dados-pessoais-uf") as HTMLInputElement).value).toBe("SP");
+    expect((screen.getByTestId("dados-pessoais-logradouro") as HTMLInputElement).value).toBe(
+      "Rua que o operador digitou",
+    );
+  });
+
+  it("does not look up a partial CEP", async () => {
+    const buscarCep = vi.fn();
+    const { fireEvent, screen } = await abrir({ buscarCep });
+    fireEvent.change(screen.getByTestId("dados-pessoais-cep"), { target: { value: "0131" } });
+    expect(buscarCep).not.toHaveBeenCalled();
+  });
+
+  it("keeps the collapsed 'Editar dados' pencil right-aligned, clear of the left rail", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<DadosPessoaisForm valores={{}} onSave={vi.fn()} />);
+    expect(screen.getByTestId("dados-pessoais-editar-wrap").className).toContain("justify-end");
+  });
+});

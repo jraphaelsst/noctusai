@@ -64,7 +64,8 @@ export function formatDate(dateString: string | null | undefined, includeTime: b
   const yyyy = date.getFullYear();
   const formatted = `${dd}/${mm}/${yyyy}`;
 
-  if (includeTime) {
+  // A date-only value has no time of day: appending "às 00:00" would invent one.
+  if (includeTime && !dateOnlyRegex.test(dateString)) {
     const hh = String(date.getHours()).padStart(2, '0');
     const min = String(date.getMinutes()).padStart(2, '0');
     return `${formatted} \u00e0s ${hh}:${min}`;

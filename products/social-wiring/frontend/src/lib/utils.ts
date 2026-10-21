@@ -35,7 +35,7 @@ export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from "@
  * (`Timeline.tsx`'s `SW_TIMELINE_RENDERERS` docblock — "the one kind only
  * SW's backend gathers"), never blindly to every timeline entry.
  */
-const UTC_MIDNIGHT_RE = /^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?(?:Z|\+00:00)$/;
+const UTC_MIDNIGHT_RE = /^(\d{4}-\d{2}-\d{2})[T ]00:00:00(?:\.0+)?(?:Z|\+00(?::?00)?)$/;
 
 export function dataOnlyFromPossibleUtcMidnight(value: string): string {
   const match = UTC_MIDNIGHT_RE.exec(value);

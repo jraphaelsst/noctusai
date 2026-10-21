@@ -129,13 +129,17 @@ export function useAdicionarParte(clienteId: string) {
         };
       }
     },
-    onSuccess: () =>
-      Promise.all([
-        // The card family (compradores/vendedores lists, card summary,
-        // qualificação) lives under the seed's `["sw","cardHub"]` root.
-        qc.invalidateQueries({ queryKey: ["sw", "cardHub"] }),
-        qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] }),
-      ]),
+    // 🔴 NOT returned: react-query awaits an `onSuccess` promise before the mutation
+    // settles, so returning the invalidations kept `isPending` true (and the add dialog
+    // on "Adicionando…") for as long as the card family's refetches took (~10s in prod,
+    // 2026-10-21) — long after the new row was already on screen. The create has
+    // succeeded; the refetches are refresh work, not part of it.
+    onSuccess: () => {
+      // The card family (compradores/vendedores lists, card summary,
+      // qualificação) lives under the seed's `["sw","cardHub"]` root.
+      void qc.invalidateQueries({ queryKey: ["sw", "cardHub"] });
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] });
+    },
   });
 }
 

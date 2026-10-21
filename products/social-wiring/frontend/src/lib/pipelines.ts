@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { createPipelineHooks } from "@noctusai/lib/components";
 
 import { ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
+import { FUNIL_PIPELINE_KEY } from "@/lib/funilKeys";
 import type { PostCard } from "@/types/esteira";
 import type { Atendimento, ProcessoVenda } from "@/types/pipeline";
 
@@ -22,7 +23,7 @@ import type { Atendimento, ProcessoVenda } from "@/types/pipeline";
  */
 export const funilPipeline = createPipelineHooks<Atendimento>(
   {
-    queryKey: "sw-funil",
+    queryKey: FUNIL_PIPELINE_KEY,
     boardEndpoint: "/api/funil",
     stagesEndpoint: "/api/funil/etapas",
     moveEndpoint: "/api/atendimentos-venda",

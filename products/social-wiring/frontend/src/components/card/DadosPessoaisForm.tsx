@@ -36,10 +36,11 @@
  * genero, exactly like Estado civil/Regime de bens below it, and nothing is
  * ever defaulted — only what the operator explicitly picks is sent.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Pencil, X } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import { cepOitoDigitos, consultarCep, preencherEnderecoVazio, type BuscarCep } from "@/lib/cep";
 import {
   Select,
   SelectContent,
@@ -252,6 +253,8 @@ export interface DadosPessoaisFormProps {
   /** Disambiguates the testids when several of these are on screen at once —
    *  one per party on the Documentos tab. */
   testId?: string;
+  /** CEP -> address lookup; injectable so tests never hit the network. */
+  buscarCep?: BuscarCep;
 }
 
 function texto(v: string | null | undefined): string {
@@ -266,6 +269,7 @@ export function DadosPessoaisForm({
   pendenteConfirmacao,
   temCin = false,
   testId = "dados-pessoais",
+  buscarCep = consultarCep,
 }: DadosPessoaisFormProps) {
   const [aberto, setAberto] = useState(false);
   const [draft, setDraft] = useState<DadosPessoais>(valores);
@@ -309,6 +313,19 @@ export function DadosPessoaisForm({
     setDraft((d) => ({ ...d, [k]: v === "" ? null : v }));
   }
 
+  // A complete CEP fills the address fields that are still EMPTY (never what the
+  // operator typed). Advisory: a failed/unresolved lookup changes nothing.
+  const ultimoCepBuscado = useRef<string | null>(null);
+  function aoDigitarCep(v: string) {
+    campo("endereco_cep", v);
+    const cep = cepOitoDigitos(v);
+    if (!cep || cep === ultimoCepBuscado.current) return;
+    ultimoCepBuscado.current = cep;
+    void buscarCep(cep).then((end) => {
+      if (end) setDraft((d) => preencherEnderecoVazio(d, end));
+    });
+  }
+
   function submit() {
     // 🔴 Only what the operator CHANGED is sent (data loss found live in prod,
     // 2026-10-21: a seed missing nacionalidade/endereço made a plain re-save
@@ -350,16 +367,21 @@ export function DadosPessoaisForm({
         )}
         {/* Icon-only, caption on hover — and the SAME string on `aria-label`,
             because a hover caption is invisible to a screen reader. */}
-        <TooltipIconButton
-          label="Editar dados"
-          icon={Pencil}
-          variant="outline"
-          testId={`${testId}-editar-btn`}
-          onClick={() => {
-            setDraft(valores);
-            setAberto(true);
-          }}
-        />
+        {/* Right-aligned on purpose: the card's left rail expands over the first
+            ~14rem of the content column on hover, so a pencil at the left edge
+            sits under it and a real click lands on the "Vendedor" tab. */}
+        <div className="flex justify-end" data-testid={`${testId}-editar-wrap`}>
+          <TooltipIconButton
+            label="Editar dados"
+            icon={Pencil}
+            variant="outline"
+            testId={`${testId}-editar-btn`}
+            onClick={() => {
+              setDraft(valores);
+              setAberto(true);
+            }}
+          />
+        </div>
       </div>
     );
   }
@@ -660,7 +682,7 @@ export function DadosPessoaisForm({
           <Input
             id={`${testId}-cep`}
             value={texto(draft.endereco_cep)}
-            onChange={(e) => campo("endereco_cep", e.target.value)}
+            onChange={(e) => aoDigitarCep(e.target.value)}
             placeholder="05407-002"
             data-testid={`${testId}-cep`}
           />

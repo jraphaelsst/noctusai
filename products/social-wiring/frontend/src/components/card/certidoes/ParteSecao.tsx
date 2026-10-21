@@ -6,6 +6,16 @@
 import { Fragment, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, FileSearch, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -74,6 +84,8 @@ export function ParteSecao(p: ParteSecaoProps) {
   const { parte, linhas } = p;
   const [aberta, setAberta] = useState(false);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  // An emission is PAID (InfoSimples) — every request goes through this confirmation first.
+  const [pedido, setPedido] = useState<{ input: SolicitarEmissaoInput; nomes: string[]; daSelecao: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const alvoUpload = useRef<string | null>(null);
   const mint = useMintResultadoUrl();
@@ -81,6 +93,17 @@ export function ParteSecao(p: ParteSecaoProps) {
   const alvoId = (parte.kind === "empresa" ? parte.empresa_id : parte.cliente_id) as string;
   const semDocumento = !parte.documento;
   const vencidas = parte.totais.vencidas;
+  const pedirEmissao = (input: SolicitarEmissaoInput, daSelecao = false) => {
+    const alvo = input.tipos;
+    const nomes = linhas
+      .filter((l) =>
+        alvo === null
+          ? tipoAutomatico(l.tipo) && parte.celulas[l.chave]?.status !== "na"
+          : !!l.tipo && alvo.includes(l.tipo),
+      )
+      .map((l) => l.rotulo);
+    setPedido({ input, nomes, daSelecao });
+  };
   const toggle = (tipo: string) =>
     setSelecionadas((prev) => {
       const n = new Set(prev);
@@ -140,15 +163,14 @@ export function ParteSecao(p: ParteSecaoProps) {
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" disabled={semDocumento || p.emissaoPendente}
                 title={semDocumento ? "Informe o CPF/CNPJ da parte antes de solicitar certidões." : undefined}
-                onClick={() => p.onSolicitar({ kind: parte.kind, alvoId, tipos: null })}
+                onClick={() => pedirEmissao({ kind: parte.kind, alvoId, tipos: null })}
                 data-testid={`parte-solicitar-todas-${parte.chave}`}>
                 {p.emissaoPendente && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
                 Solicitar emissão (todas)
               </Button>
               <Button size="sm" variant="outline" disabled={semDocumento || p.emissaoPendente || selecionadas.size === 0}
                 onClick={() => {
-                  p.onSolicitar({ kind: parte.kind, alvoId, tipos: [...selecionadas] });
-                  setSelecionadas(new Set());
+                  pedirEmissao({ kind: parte.kind, alvoId, tipos: [...selecionadas] }, true);
                 }}
                 data-testid={`parte-solicitar-selecionadas-${parte.chave}`}>
                 Solicitar selecionadas ({selecionadas.size})
@@ -277,7 +299,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                             )}
                             {auto && !c.resultado_id && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={semDocumento || p.emissaoPendente}
-                                onClick={() => p.onSolicitar({ kind: parte.kind, alvoId, tipos: [linha.tipo as string] })}
+                                onClick={() => pedirEmissao({ kind: parte.kind, alvoId, tipos: [linha.tipo as string] })}
                                 data-testid={`parte-solicitar-${parte.chave}-${linha.chave}`}>
                                 Solicitar
                               </Button>
@@ -366,6 +388,42 @@ export function ParteSecao(p: ParteSecaoProps) {
           </div>
         </div>
       </CollapsibleContent>
+      <AlertDialog open={pedido !== null} onOpenChange={(o) => !o && setPedido(null)}>
+        <AlertDialogContent data-testid={`parte-confirmar-emissao-${parte.chave}`}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Solicitar emissão paga?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Esta é uma emissão <strong>paga</strong> (InfoSimples): cada certidão solicitada gera
+                  cobrança para {parte.nome}.
+                </p>
+                {pedido && pedido.nomes.length > 0 && (
+                  <ul className="list-disc pl-5" data-testid={`parte-confirmar-emissao-lista-${parte.chave}`}>
+                    {pedido.nomes.map((n) => (
+                      <li key={n}>{n}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid={`parte-confirmar-emissao-cancelar-${parte.chave}`}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid={`parte-confirmar-emissao-ok-${parte.chave}`}
+              onClick={() => {
+                if (!pedido) return;
+                p.onSolicitar(pedido.input);
+                if (pedido.daSelecao) setSelecionadas(new Set());
+                setPedido(null);
+              }}
+            >
+              Confirmar e emitir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Collapsible>
   );
 }

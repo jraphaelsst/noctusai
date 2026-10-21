@@ -239,4 +239,19 @@ describe("useLeadMutations", () => {
     await waitFor(() => expect(result.current.remove.isSuccess).toBe(true));
     expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["leads"] }));
   });
+
+  it("creating a lead invalidates the Funil board so its new card shows up", async () => {
+    mockApiPost.mockResolvedValueOnce({ data: { id: "lead-9" } });
+    const { qc, Wrapper } = makeWrapper();
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useLeadMutations(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.create.mutate({ nome: "Novo" } as never);
+    });
+
+    await waitFor(() => expect(result.current.create.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sw-funil"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sw-funil-stages"] });
+  });
 });

@@ -13,6 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { FUNIL_PIPELINE_KEY } from "@/lib/funilKeys";
 import {
   buildLeadsQueryParams,
   leadsFiltersQueryKey,
@@ -94,7 +95,16 @@ export function useLeadMutations() {
       const res = await api.post<SuccessEnvelope<Lead>>(BASE, body);
       return res.data;
     },
-    onSuccess: invalidateFamily,
+    // A new lead gets its funil card from a DB trigger, so the Funil board (and its
+    // stage totals) must refetch too — otherwise the card only appears once a search
+    // changes the board's query key (prod, 2026-10-21).
+    // Not returned (fire-and-forget): the create has succeeded, so the dialog must not
+    // wait on the board refetch.
+    onSuccess: () => {
+      void invalidateFamily();
+      void qc.invalidateQueries({ queryKey: [FUNIL_PIPELINE_KEY] });
+      void qc.invalidateQueries({ queryKey: [`${FUNIL_PIPELINE_KEY}-stages`] });
+    },
   });
 
   const update = useMutation<Lead, unknown, { id: string; body: LeadUpdateInput }>({

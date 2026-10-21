@@ -258,16 +258,33 @@ describe("CertidoesPartesTab", () => {
     });
   });
 
-  it("solicitar todas / selecionadas post to the emissao path", async () => {
+  it("solicitar todas / selecionadas post to the emissao path ONLY after the paid-emission confirmation", async () => {
     mockGet.mockResolvedValue(resp([parte()]));
     render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
     await screen.findByTestId("parte-secao-c:cli-1");
     open("c:cli-1");
     fireEvent.click(screen.getByTestId("parte-solicitar-todas-c:cli-1"));
+    // The dialog names the paid nature and the certidões; nothing was sent yet.
+    const dlg = await screen.findByTestId("parte-confirmar-emissao-c:cli-1");
+    expect(dlg.textContent).toMatch(/paga/);
+    expect(screen.getByTestId("parte-confirmar-emissao-lista-c:cli-1").textContent).toContain("Receita Federal");
+    expect(mockPost).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("parte-confirmar-emissao-ok-c:cli-1"));
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/partes/pessoa/cli-1/emissao", { tipos: null, atendimento_id: "at-1" }));
     fireEvent.click(screen.getByLabelText("Selecionar Receita Federal"));
     fireEvent.click(screen.getByTestId("parte-solicitar-selecionadas-c:cli-1"));
+    fireEvent.click(await screen.findByTestId("parte-confirmar-emissao-ok-c:cli-1"));
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/partes/pessoa/cli-1/emissao", { tipos: ["cnd_federal"], atendimento_id: "at-1" }));
+  });
+
+  it("cancelling the paid-emission confirmation sends nothing", async () => {
+    mockGet.mockResolvedValue(resp([parte()]));
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    fireEvent.click(screen.getByTestId("parte-solicitar-todas-c:cli-1"));
+    fireEvent.click(await screen.findByTestId("parte-confirmar-emissao-cancelar-c:cli-1"));
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("upload ensures the cell then uses the existing upload route", async () => {
