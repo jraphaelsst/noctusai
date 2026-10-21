@@ -23,6 +23,7 @@
  * there (`GET/PUT .../extracoes/{id}/fontes`); a badge that links to the
  * matrícula page is the whole feature, not a placeholder for a bigger one.
  */
+import CondominioSelector from "@/components/imovel/CondominioSelector";
 import VinculoLegalMarca from "@/components/imovel/VinculoLegalMarca";
 import { useEffect, useState } from "react";
 import { Landmark, Link2, Loader2, ScrollText } from "lucide-react";
@@ -42,25 +43,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import type { CondominioResumo } from "@/hooks/useCondominios";
 import type { ImovelDados, ImovelDadosPatch } from "@/hooks/useImovelDados";
 import { origemLabel } from "@/hooks/useImovelDados";
 import type { Member } from "@/hooks/useTeam";
 
+/** Readiness "Resolver" target — `derivacao.ALVO_CONDOMINIO_DO_IMOVEL`. */
+const ALVO_CONDOMINIO = "imovel-condominio";
+
 /** Sentinel for "no captador". Radix `SelectItem` refuses an empty string. */
-/** Migration 202 — "is this imóvel in a condomínio?" Three states: not stated
- *  (the contract defaults to the condomínio wording), yes, explicitly no. */
-const COND_NAO_INFORMADO = "__nao_informado__";
-const COND_SIM = "sim";
-const COND_NAO = "nao";
-
-function condToDraft(v: boolean | null | undefined): string {
-  return v === true ? COND_SIM : v === false ? COND_NAO : COND_NAO_INFORMADO;
-}
-
-function condFromDraft(v: string): boolean | null {
-  return v === COND_SIM ? true : v === COND_NAO ? false : null;
-}
-
 const SEM_CAPTADOR = "__sem_captador__";
 
 interface Props {
@@ -93,8 +84,9 @@ interface Draft {
   onus_observacoes: string;
   onus_certidao_em: string;
   empreendimento_manual: string;
-  /** Three-state, as a token (Radix Select cannot hold null): see `COND_*`. */
-  em_condominio: string;
+  /** Migration 300 — attached condomínio OR casa de rua (exclusive). */
+  condominio: CondominioResumo | null;
+  casa_de_rua: boolean;
 }
 
 /** Sentinel for "not assessed" — Radix treats `value=""` as uncontrolled, so
@@ -134,7 +126,8 @@ function toDraft(dados: ImovelDados | undefined): Draft {
     onus_observacoes: dados?.onus_observacoes ?? "",
     onus_certidao_em: dados?.onus_certidao_em ?? "",
     empreendimento_manual: dados?.empreendimento_manual ?? "",
-    em_condominio: condToDraft(dados?.em_condominio),
+    condominio: dados?.condominio ?? null,
+    casa_de_rua: dados?.casa_de_rua === true,
   };
 }
 
@@ -164,10 +157,11 @@ export default function ImovelCartorioCard({
     dados?.onus_observacoes,
     dados?.onus_certidao_em,
     dados?.empreendimento_manual,
-    dados?.em_condominio,
+    dados?.condominio_id,
+    dados?.casa_de_rua,
   ]);
 
-  const set = (k: keyof Draft) => (v: string) =>
+  const set = (k: Exclude<keyof Draft, "condominio" | "casa_de_rua">) => (v: string) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
   function submit() {
@@ -186,7 +180,10 @@ export default function ImovelCartorioCard({
       onus_observacoes: blank(draft.onus_observacoes),
       onus_certidao_em: blank(draft.onus_certidao_em),
       empreendimento_manual: blank(draft.empreendimento_manual),
-      em_condominio: condFromDraft(draft.em_condominio),
+      // Migration 300 — both keys always sent; the pair is exclusive by
+      // construction (the selector clears one when the other is set).
+      condominio_id: draft.casa_de_rua ? null : (draft.condominio?.id ?? null),
+      casa_de_rua: draft.casa_de_rua,
     });
   }
 
@@ -267,13 +264,22 @@ export default function ImovelCartorioCard({
           />
         </div>
 
+        <CondominioSelector
+          id={ALVO_CONDOMINIO}
+          value={{ condominio: draft.condominio, casaDeRua: draft.casa_de_rua }}
+          onChange={(v) =>
+            setDraft((d) => ({ ...d, condominio: v.condominio, casa_de_rua: v.casaDeRua }))
+          }
+          disabled={loading || saving}
+          legadoEmCondominio={dados?.em_condominio_legado}
+        />
+
         <div className="space-y-1.5">
           {/* Migration 158. Feeds `contrato_gerador.contexto.titulo_curto`
-              ("EMPREENDIMENTO – endereço") — the only input for it on a
-              manually registered imóvel, which has no Vista mirror row and
-              therefore no `imoveis.empreendimento` at all. */}
+              ("EMPREENDIMENTO – endereço") ONLY when no condomínio is attached
+              (migration 300: attached condomínio > this text > CRM). */}
           <Label htmlFor="empreendimento-manual">
-            Empreendimento / condomínio
+            Nome do empreendimento no contrato (texto livre)
             {mirror?.empreendimento ? ` (CRM: ${mirror.empreendimento})` : ""}
           </Label>
           <Input
@@ -285,34 +291,8 @@ export default function ImovelCartorioCard({
             data-testid="imovel-empreendimento-manual"
           />
           <p className="text-xs text-muted-foreground">
-            Usado no título do contrato. Deixe em branco para usar o nome do CRM,
-            quando houver.
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          {/* Migration 202. Read by `contrato_gerador.contexto`: the vistoria
-              clause uses the condomínio wording unless this says "Não". */}
-          <Label htmlFor="em-condominio">O imóvel fica em condomínio?</Label>
-          <Select
-            value={draft.em_condominio}
-            onValueChange={set("em_condominio")}
-            disabled={loading}
-          >
-            <SelectTrigger id="em-condominio" data-testid="imovel-em-condominio">
-              <SelectValue placeholder="Selecione" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={COND_NAO_INFORMADO}>
-                Não informado (o contrato usa o texto de condomínio)
-              </SelectItem>
-              <SelectItem value={COND_SIM}>Sim, em condomínio</SelectItem>
-              <SelectItem value={COND_NAO}>Não, fora de condomínio</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Define o texto da cláusula de vistoria prévia. Só &quot;Não&quot; remove a menção
-            às áreas de uso comum do condomínio.
+            Usado no título do contrato quando nenhum condomínio está vinculado. Deixe em
+            branco para usar o nome do CRM, quando houver.
           </p>
         </div>
 

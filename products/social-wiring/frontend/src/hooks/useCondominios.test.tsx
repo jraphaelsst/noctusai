@@ -9,7 +9,14 @@ const { get, post, patch, del } = vi.hoisted(() => ({
 }));
 vi.mock("@noctusai/seed/infra", () => ({ api: { get, post, patch, delete: del } }));
 
-import { useAcaoCondominio, useCondominios, useFundirCondominio } from "./useCondominios";
+import {
+  buscaCondominiosKey,
+  useAcaoCondominio,
+  useCondominioBusca,
+  useCondominios,
+  useCriarCondominio,
+  useFundirCondominio,
+} from "./useCondominios";
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -61,5 +68,37 @@ describe("mutations", () => {
     const { result } = renderHook(() => useFundirCondominio(), { wrapper });
     await result.current.mutateAsync({ id: "a", destinoId: "b" });
     expect(post).toHaveBeenCalledWith("/api/condominios/a/fundir", { destino_id: "b" });
+  });
+});
+
+describe("imóvel-page picker (migration 300)", () => {
+  it("busca encodes the term and stays idle while empty", async () => {
+    get.mockResolvedValue({ items: [{ id: "c-1", nome: "Vila Verde" }], total: 1 });
+    const { wrapper } = setup();
+    const vazio = renderHook(() => useCondominioBusca("  "), { wrapper });
+    expect(vazio.result.current.fetchStatus).toBe("idle");
+    const { result } = renderHook(() => useCondominioBusca(" vila verde "), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual([{ id: "c-1", nome: "Vila Verde" }]));
+    expect(get).toHaveBeenCalledWith("/api/condominios/buscar?q=vila%20verde");
+  });
+
+  it("criar writes the server's answer into the typed term's search cache", async () => {
+    const criado = {
+      id: "c-9", nome: "Reserva", cidade: null, bairro: null, status_validacao: "sugerido", criado: true,
+    };
+    post.mockResolvedValue(criado);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(buscaCondominiosKey("Reserva"), [{ id: "c-1", nome: "Reserva Antiga" }]);
+    const set = vi.spyOn(qc, "setQueryData");
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCriarCondominio(), { wrapper });
+    await result.current.mutateAsync({ nome: "Reserva" });
+    expect(post).toHaveBeenCalledWith("/api/condominios", { nome: "Reserva" });
+    expect(set).toHaveBeenCalledWith(buscaCondominiosKey("Reserva"), [
+      { id: "c-9", nome: "Reserva", cidade: null, bairro: null, status_validacao: "sugerido" },
+      { id: "c-1", nome: "Reserva Antiga" },
+    ]);
   });
 });

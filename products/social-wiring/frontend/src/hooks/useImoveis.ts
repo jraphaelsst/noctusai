@@ -17,6 +17,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { ApiError } from "@noctusai/lib";
+import type { CondominioResumo } from "@/hooks/useCondominios";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,11 @@ export interface Imovel {
   vinculo?: { manual_codigo: string; vista_codigo: string } | null;
   /** List items only. */
   possivel_duplicado?: boolean;
-  /** Both returned for every imóvel (S6). */
+  /** Migration 300 — the condomínio answer, returned for every imóvel.
+   *  `em_condominio` is DERIVED (attached → true, casa de rua → false). */
+  condominio_id?: string | null;
+  condominio?: CondominioResumo | null;
+  casa_de_rua?: boolean;
   em_condominio?: boolean | null;
   codigo: string;
   codigo_imobiliaria: string | null;

@@ -19,6 +19,13 @@ vi.mock("@/hooks/useImovelManual", async (importOriginal) => {
   };
 });
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Migration 300 — the condomínio picker's data layer, mocked at the hook seam.
+const { mockBusca } = vi.hoisted(() => ({ mockBusca: vi.fn() }));
+vi.mock("@/hooks/useCondominios", () => ({
+  useCondominioBusca: mockBusca,
+  useCriarCondominio: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+}));
+vi.mock("@/hooks/useDebouncedValue", () => ({ useDebouncedValue: (v: string) => v }));
 
 import ImovelManualModal, { parseNumero } from "./ImovelManualModal";
 import type { Imovel } from "@/hooks/useImoveis";
@@ -26,6 +33,8 @@ import type { Imovel } from "@/hooks/useImoveis";
 beforeEach(() => {
   criar.mockReset();
   atualizar.mockReset();
+  mockBusca.mockReset();
+  mockBusca.mockReturnValue({ data: undefined, isPending: false, isFetching: false, isError: false });
 });
 afterEach(cleanup);
 
@@ -103,6 +112,10 @@ describe("ImovelManualModal — create", () => {
       dormitorios: 3,
       suites: null,
       processo_atual_numero: "876",
+      // Migration 300 — an untouched control is NOT an explicit "não": the
+      // old checkbox defaulted to false and saved "fora de condomínio".
+      condominio_id: null,
+      casa_de_rua: false,
       drive_folder_url:
         "https://drive.google.com/drive/folders/1vfD3HHF7jN8EiMwhcHkKYrvuxz5GDlEK",
       endereco: {
@@ -156,6 +169,9 @@ describe("ImovelManualModal — edit", () => {
     uf: "SP",
     cep: "06700-000",
     empreendimento: "Reserva do Vianna",
+    condominio_id: "c-1",
+    condominio: { id: "c-1", nome: "Reserva do Vianna", cidade: "Cotia", bairro: null, status_validacao: "validado" },
+    casa_de_rua: false,
     em_condominio: true,
     valor_venda: 1250000,
     valor_locacao: null,
@@ -187,9 +203,28 @@ describe("ImovelManualModal — edit", () => {
     expect(
       (getByTestId("imovel-manual-processo") as HTMLInputElement).value,
     ).toBe("876");
-    expect(
-      (getByTestId("imovel-manual-em_condominio") as HTMLInputElement).checked,
-    ).toBe(true);
+    expect(getByTestId("imovel-condominio-chip").textContent).toContain("Reserva do Vianna");
+  });
+
+  it("checking 'Casa de rua' on edit PATCHes the detach + flag only", async () => {
+    atualizar.mockResolvedValue({ codigo: "SW-0001" });
+    const { getByTestId, queryByTestId } = render(
+      <ImovelManualModal open onOpenChange={vi.fn()} imovel={imovel} />,
+    );
+    fireEvent.click(getByTestId("imovel-casa-de-rua"));
+    expect(queryByTestId("imovel-condominio-chip")).toBeNull();
+    fireEvent.click(getByTestId("imovel-manual-salvar"));
+    await waitFor(() => expect(atualizar).toHaveBeenCalledTimes(1));
+    expect(atualizar.mock.calls[0][0]).toEqual({ condominio_id: null, casa_de_rua: true });
+  });
+
+  it("an imóvel with no answer opens unanswered (never 'fora de condomínio')", () => {
+    const semResposta = { ...imovel, condominio_id: null, condominio: null, em_condominio: null } as Imovel;
+    const { getByTestId } = render(
+      <ImovelManualModal open onOpenChange={vi.fn()} imovel={semResposta} />,
+    );
+    expect(getByTestId("imovel-casa-de-rua").getAttribute("data-state")).toBe("unchecked");
+    expect(getByTestId("imovel-condominio-pendente")).toBeTruthy();
   });
 
   it("PATCHes only the changed fields (emptied → null)", async () => {

@@ -8,6 +8,8 @@
  *   PATCH  /api/condominios/{id}         attributes (any member)
  *   POST   /api/condominios/{id}/{validar|descartar|reabrir|desfazer-fusao|renomear|fundir|aliases}
  *   DELETE /api/condominios/{id}/aliases/{aliasId}
+ *   GET    /api/condominios/buscar?q=     imóvel-page picker (migration 300)
+ *   POST   /api/condominios               create from the picker (deduped by name)
  *
  * Admin-only actions are 403 on the server (TRUSTED role row); the page only
  * hides the buttons.
@@ -107,6 +109,75 @@ export interface CondominioFiltros {
 
 const BASE = "/api/condominios";
 const ROOT = ["sw", "condominios"] as const;
+
+// ─── Imóvel-page picker (migration 300) ─────────────────────────────────────
+
+/** What an imóvel carries about its attached condomínio (`dados.condominio`,
+ *  `Imovel.condominio`) and what the picker search returns per item. */
+export interface CondominioResumo {
+  id: string;
+  nome: string;
+  cidade: string | null;
+  bairro: string | null;
+  status_validacao: StatusValidacao;
+}
+
+/** `POST /api/condominios` — `criado: false` when a same-name one existed
+ *  (the server returns it instead of forking a duplicate). */
+export interface CondominioCriado extends CondominioResumo {
+  criado: boolean;
+}
+
+export interface CondominioNovo {
+  nome: string;
+  cidade?: string | null;
+  bairro?: string | null;
+}
+
+export const buscaCondominiosKey = (q: string) => [...ROOT, "busca", q.trim()] as const;
+
+/** Search-as-you-type. `q` is expected already debounced by the caller.
+ *  Keeps the previous term's items on screen while the next loads
+ *  (lying-loading-state: `isPending && !data` is the only skeleton). */
+export function useCondominioBusca(q: string) {
+  const termo = q.trim();
+  return useQuery({
+    queryKey: buscaCondominiosKey(termo),
+    queryFn: async () => {
+      const res = await api.get<{ items: CondominioResumo[]; total: number }>(
+        `${BASE}/buscar?q=${encodeURIComponent(termo)}`,
+      );
+      return res.items ?? [];
+    },
+    enabled: termo.length > 0,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** "Cadastrar condomínio “<texto>”". The server's answer is written straight
+ *  into the search cache of the typed term (the dropdown shows it at once);
+ *  the master list refreshes in the background. */
+export function useCriarCondominio() {
+  return useCacheWriteMutation<CondominioCriado, CondominioNovo>({
+    mutationFn: (body) => api.post<CondominioCriado>(BASE, body),
+    targets: (vars) => [
+      {
+        queryKey: buscaCondominiosKey(vars.nome),
+        commit: (old: CondominioResumo[] | undefined, criado: CondominioCriado) => {
+          const resumo: CondominioResumo = {
+            id: criado.id,
+            nome: criado.nome,
+            cidade: criado.cidade,
+            bairro: criado.bairro,
+            status_validacao: criado.status_validacao,
+          };
+          return [resumo, ...(old ?? []).filter((c) => c.id !== resumo.id)];
+        },
+      },
+    ],
+    invalidate: [[...ROOT, "lista"]],
+  });
+}
 
 export function useCondominios(filtros: CondominioFiltros = {}) {
   const status = filtros.status || null;

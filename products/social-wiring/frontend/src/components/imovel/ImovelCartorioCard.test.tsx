@@ -8,6 +8,14 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Migration 300 — the condomínio picker's data layer, mocked at the hook seam.
+const { mockBusca, mockCriar } = vi.hoisted(() => ({ mockBusca: vi.fn(), mockCriar: vi.fn() }));
+vi.mock("@/hooks/useCondominios", () => ({
+  useCondominioBusca: mockBusca,
+  useCriarCondominio: () => ({ mutate: mockCriar, isPending: false, isError: false, error: null }),
+}));
+vi.mock("@/hooks/useDebouncedValue", () => ({ useDebouncedValue: (v: string) => v }));
+
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
@@ -48,7 +56,11 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     empreendimento_manual: null,
     empreendimento_manual_confirmado_por: null,
     empreendimento_manual_confirmado_em: null,
+    condominio_id: null,
+    condominio: null,
+    casa_de_rua: false,
     em_condominio: null,
+    em_condominio_legado: null,
     padrao_construtivo: null,
     estado_conservacao: null,
     area_terreno_m2: null,
@@ -154,7 +166,7 @@ describe("ImovelCartorioCard — empreendimento manual override (migration 158)"
     const { screen } = await render(undefined, {
       mirror: { empreendimento: "Edifício Exemplo" },
     });
-    expect(screen.getByText(/Empreendimento \/ condomínio/)).toBeTruthy();
+    expect(screen.getByText(/Nome do empreendimento no contrato/)).toBeTruthy();
     expect(screen.getByText(/\(CRM: Edifício Exemplo\)/)).toBeTruthy();
     const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
     expect(input.getAttribute("placeholder")).toBe("Edifício Exemplo");
@@ -207,33 +219,60 @@ describe("ImovelCartorioCard — prefeitura_cadastro_imobiliario field label", (
   });
 });
 
-describe("ImovelCartorioCard — em_condominio (migration 202)", () => {
-  it("renders the control, defaulting to 'não informado'", async () => {
-    const { screen } = await render();
-    const trigger = screen.getByTestId("imovel-em-condominio");
-    expect(trigger.textContent).toContain("Não informado");
+const VILA = {
+  id: "c-1",
+  nome: "Vila Verde",
+  cidade: "Cotia",
+  bairro: null,
+  status_validacao: "validado" as const,
+};
+
+describe("ImovelCartorioCard — condomínio (migration 300)", () => {
+  function semResultados() {
+    mockBusca.mockReturnValue({ data: undefined, isPending: false, isFetching: false, isError: false });
+  }
+
+  it("renders the control under the readiness alvo id; unanswered saves neither", async () => {
+    semResultados();
+    const onSave = vi.fn();
+    const { screen, fireEvent, container } = await render(undefined, { onSave });
+    expect(container.querySelector("#imovel-condominio")).toBeTruthy();
+    expect(screen.getByTestId("imovel-condominio-pendente")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ condominio_id: null, casa_de_rua: false }),
+    );
+    expect(onSave.mock.calls[0][0]).not.toHaveProperty("em_condominio");
   });
 
-  it("an unset answer is saved as null — never invented as true or false", async () => {
+  it("attaching from the dropdown saves the condomínio id", async () => {
+    mockBusca.mockReturnValue({ data: [VILA], isPending: false, isFetching: false, isError: false });
     const onSave = vi.fn();
     const { screen, fireEvent } = await render(undefined, { onSave });
+    fireEvent.change(screen.getByTestId("imovel-condominio-busca"), { target: { value: "vila" } });
+    fireEvent.click(screen.getByTestId("imovel-condominio-item-c-1"));
+    expect(screen.getByTestId("imovel-condominio-chip").textContent).toContain("Vila Verde");
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: null }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ condominio_id: "c-1", casa_de_rua: false }),
+    );
   });
 
-  it("pre-fills and re-saves an explicit 'not in a condomínio' as false", async () => {
+  it("checking 'Casa de rua' detaches and saves casa_de_rua=true", async () => {
+    semResultados();
     const onSave = vi.fn();
-    const { screen, fireEvent } = await render({ em_condominio: false }, { onSave });
-    expect(screen.getByTestId("imovel-em-condominio").textContent).toContain("fora de condomínio");
+    const { screen, fireEvent } = await render(
+      { condominio_id: "c-1", condominio: VILA, em_condominio: true },
+      { onSave },
+    );
+    expect(screen.getByTestId("imovel-condominio-chip")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("imovel-casa-de-rua"));
+    expect(screen.queryByTestId("imovel-condominio-chip")).toBeNull();
+    expect(screen.queryByTestId("imovel-condominio-busca")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: false }));
-  });
-
-  it("pre-fills and re-saves 'in a condomínio' as true", async () => {
-    const onSave = vi.fn();
-    const { screen, fireEvent } = await render({ em_condominio: true }, { onSave });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: true }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ condominio_id: null, casa_de_rua: true }),
+    );
   });
 });
 

@@ -32,12 +32,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import CondominioSelector from "@/components/imovel/CondominioSelector";
 import ImovelEnderecoFields, {
   ENDERECO_VAZIO,
   validarEndereco,
   type EnderecoDraft,
   type EnderecoErros,
 } from "@/components/imovel/ImovelEnderecoFields";
+import type { CondominioResumo } from "@/hooks/useCondominios";
 import type { Imovel } from "@/hooks/useImoveis";
 import {
   driveUrlValida,
@@ -88,7 +90,11 @@ export interface ImovelDraft extends Record<NumKey, string> {
   descricao_web: string;
   observacoes: string;
   empreendimento: string;
-  em_condominio: boolean;
+  /** Migration 300 — attached condomínio OR casa de rua; neither = not
+   *  answered (NEVER a default "não": an unchecked box used to be saved as an
+   *  explicit "fora de condomínio" and printed the wrong contract clause). */
+  condominio: CondominioResumo | null;
+  casa_de_rua: boolean;
   processo_atual_numero: string;
   drive_folder_url: string;
   endereco: EnderecoDraft;
@@ -111,7 +117,8 @@ const VAZIO: ImovelDraft = {
   descricao_web: "",
   observacoes: "",
   empreendimento: "",
-  em_condominio: false,
+  condominio: null,
+  casa_de_rua: false,
   processo_atual_numero: "",
   drive_folder_url: "",
   endereco: ENDERECO_VAZIO,
@@ -138,7 +145,8 @@ export function draftDoImovel(i?: Imovel | null): ImovelDraft {
     descricao_web: s(i.descricao_web),
     observacoes: s(i.observacoes),
     empreendimento: s(i.empreendimento),
-    em_condominio: i.em_condominio === true,
+    condominio: i.condominio ?? null,
+    casa_de_rua: i.casa_de_rua === true,
     processo_atual_numero: s(i.referencias?.processo_atual_numero),
     drive_folder_url: s(i.referencias?.drive_folder_url),
     endereco: {
@@ -217,7 +225,8 @@ export function corpoCriacao(d: ImovelDraft): ImovelManualBody {
     descricao_web: txt(d.descricao_web),
     observacoes: txt(d.observacoes),
     empreendimento: txt(d.empreendimento),
-    em_condominio: d.em_condominio,
+    condominio_id: d.casa_de_rua ? null : (d.condominio?.id ?? null),
+    casa_de_rua: d.casa_de_rua,
     processo_atual_numero: txt(d.processo_atual_numero),
     drive_folder_url: txt(d.drive_folder_url),
     endereco: enderecoBody(d.endereco),
@@ -436,7 +445,7 @@ export default function ImovelManualModal({
             <div className="grid gap-3 sm:grid-cols-2">
               <Campo
                 id="imovel-manual-empreendimento"
-                label="Empreendimento / condomínio"
+                label="Nome do empreendimento (texto livre)"
               >
                 <Input
                   id="imovel-manual-empreendimento"
@@ -446,17 +455,16 @@ export default function ImovelManualModal({
                   data-testid="imovel-manual-empreendimento"
                 />
               </Campo>
-              <label className="flex items-center gap-2 self-end pb-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={draft.em_condominio}
-                  onChange={(e) => set("em_condominio", e.target.checked)}
-                  disabled={salvando}
-                  data-testid="imovel-manual-em_condominio"
-                />
-                Em condomínio
-              </label>
             </div>
+            <CondominioSelector
+              id="imovel-manual-condominio"
+              value={{ condominio: draft.condominio, casaDeRua: draft.casa_de_rua }}
+              onChange={(v) => {
+                set("condominio", v.condominio);
+                set("casa_de_rua", v.casaDeRua);
+              }}
+              disabled={salvando}
+            />
           </Grupo>
 
           <Grupo titulo="Endereço">

@@ -52,7 +52,9 @@ export interface ImovelManualBody {
   observacoes?: string | null;
   endereco: ImovelManualEndereco;
   empreendimento?: string | null;
-  em_condominio?: boolean | null;
+  /** Migration 300 — exclusive with `casa_de_rua: true` (422). */
+  condominio_id?: string | null;
+  casa_de_rua?: boolean;
   processo_atual_numero?: string | null;
   drive_folder_url?: string | null;
 }

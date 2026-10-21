@@ -69,7 +69,10 @@ Julia pages live in `pages/julia/`, components in `components/julia/`, hooks `us
 
 ### Database
 
-Schema `social_wiring`, RLS own-org plus service role on every table. A new Julia page needs its
+Schema `social_wiring`, RLS own-org plus service role on every table. An imóvel's condomínio is the FK
+`imovel_dados.condominio_id` → `condominios` (migration 300) or `casa_de_rua = true` — never both, never a
+free boolean (`em_condominio` is legacy read-only; read the derived value). The contract generator
+(`carregador._empreendimento` / `_em_condominio`, `derivacao._condominio_do_imovel`) reads the link. A new Julia page needs its
 `status_pagina` row in a migration, its entry in `JULIA_PAGES`, and its route in `App.tsx`.
 
 ## Seed seams consumed (do NOT re-implement product-locally)

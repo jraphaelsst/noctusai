@@ -15,6 +15,7 @@ import { api, supabase } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
 import { apiUrl } from "@/lib/apiBase";
+import type { CondominioResumo } from "@/hooks/useCondominios";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -140,10 +141,17 @@ export interface ImovelDados {
   empreendimento_manual: string | null;
   empreendimento_manual_confirmado_por: Ator | null;
   empreendimento_manual_confirmado_em: string | null;
-  // Migration 202 — explicit "is this imóvel in a condomínio?" answer.
-  // `null` = not stated (the contract's vistoria clause then defaults to the
-  // condomínio wording); `false` = explicitly NOT in a condomínio.
+  // Migration 300 — the condomínio answer: attached to ONE master-list
+  // condomínio (`condominio_id` + its `condominio` summary) OR explicitly a
+  // "casa de rua"; neither = not answered (the contract readiness asks).
+  condominio_id: string | null;
+  condominio: CondominioResumo | null;
+  casa_de_rua: boolean;
+  // DERIVED from the pair above (attached → true, casa de rua → false,
+  // neither → null). Read-only.
   em_condominio: boolean | null;
+  // The pre-300 free flag (migration 202), read-only, dropped next release.
+  em_condominio_legado: boolean | null;
 
   // ─── Valuation characteristics (migration 264) ─────────────────────────
   // Physical attributes the price evaluator reads, authored by brokers on the
@@ -219,7 +227,9 @@ export interface ImovelDadosPatch {
   onus_certidao_em?: string | null;
   onus_documento_id?: string | null;
   empreendimento_manual?: string | null;
-  em_condominio?: boolean | null;
+  /** Migration 300 — exclusive with `casa_de_rua: true` (422). */
+  condominio_id?: string | null;
+  casa_de_rua?: boolean;
   padrao_construtivo?: PadraoConstrutivo | null;
   estado_conservacao?: EstadoConservacao | null;
   area_terreno_m2?: number | null;

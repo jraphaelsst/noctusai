@@ -43,6 +43,13 @@ vi.mock("@/hooks/useImovelManual", async (importOriginal) => {
 });
 
 const mockToastInfo = vi.fn();
+// Migration 300 — the condomínio picker (CondominioSelector) queries on its own;
+// this suite has no QueryClient, so its data layer is stubbed at the hook seam.
+vi.mock("@/hooks/useCondominios", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useCondominios")>()),
+  useCondominioBusca: () => ({ data: undefined, isPending: false, isFetching: false, isError: false }),
+  useCriarCondominio: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+}));
 vi.mock("sonner", () => ({
   toast: {
     info: (...a: unknown[]) => mockToastInfo(...a),
