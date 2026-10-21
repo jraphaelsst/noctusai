@@ -58,6 +58,8 @@ class Handoff:
     para: str
     #: ``agente`` | ``humano`` | ``papel``
     tipo: str = "humano"
+    #: the ``motivo_codigo`` the model passed to ``handoff`` (a code, never free text)
+    motivo_codigo: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,11 +99,17 @@ class TurnOutcome:
     bolhas: tuple[str, ...] = ()
     ferramentas: tuple[ToolCall, ...] = ()
     acoes: tuple[str, ...] = ()
+    #: the same actions WITH their args (``{"type": "encerrar", "motivo": ...}``), same order as ``acoes``
+    acoes_detalhe: tuple[dict[str, Any], ...] = ()
     estado: Estado = field(default_factory=Estado)
     handoff: Handoff | None = None
     violacoes: tuple[Violation, ...] = ()
     #: cost of THIS turn in USD (``None`` => unknown; the runner counts it as 0 and reports it)
     custo_usd: float | None = None
+    #: the agent participant's state AFTER the turn (ativo | pausado | encerrado | ...); ``None`` => unknown
+    participante_estado: str | None = None
+    #: synthetic third-party values (``[[cpf_sintetico_terceiro]]``) this execution generated; ``sem_pii`` forbids them
+    valores_terceiros: tuple[str, ...] = ()
 
 
 @runtime_checkable

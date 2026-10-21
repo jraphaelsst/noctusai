@@ -362,13 +362,24 @@ class LiveEvalTurnDriver:
             bolhas=tuple(_bolhas(res.partes_texto)),
             ferramentas=tuple(m.diario.chamadas),
             acoes=tuple(a["type"] for a in res.actions),
+            acoes_detalhe=tuple(dict(a) for a in res.actions),
+            participante_estado=self._participante_estado(m, th),
+            valores_terceiros=m.sinteticos.terceiros(),
             estado=self._estado(m),
             handoff=(
-                Handoff(para=h.para.papel or str(h.para.agent_id or h.para.user_id), tipo=h.para.tipo)
+                Handoff(
+                    para=h.para.papel or str(h.para.agent_id or h.para.user_id), tipo=h.para.tipo,
+                    motivo_codigo=h.motivo_codigo)
                 if h is not None else None),
             violacoes=tuple(Violation(v.regra, "bloqueada" if v.bloqueada else v.politica) for v in res.violacoes),
             custo_usd=res.usage.get("custo_usd"),
         )
+
+    @staticmethod
+    def _participante_estado(m: _Mundo, th: Any) -> str | None:
+        """The agent's participant state in the thread AFTER the turn (read from the thread store)."""
+        p = m.threads.get_participante(m.org_id, th.id, m.agent.id)
+        return p.estado if p is not None else None
 
     def _estado(self, m: _Mundo) -> Estado:
         """The estado AFTER the turn, read from the engine's stores (never from what the model said)."""

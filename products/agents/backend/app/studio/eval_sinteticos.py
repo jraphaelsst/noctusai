@@ -29,6 +29,7 @@ from noctusai_lib.primitives.identificador import cpf_dv_valido
 
 __all__ = [
     "TOKENS",
+    "TOKENS_TERCEIROS",
     "TOKEN_RE",
     "TokenSinteticoDesconhecido",
     "Sinteticos",
@@ -68,6 +69,12 @@ def gerar_cpf_sintetico(rng: Any = _RNG) -> str:
     raise AssertionError("no valid CPF check-digit pair for a non-repdigit base")  # unreachable: mod-11 always yields one
 
 
+def gerar_cpf_sintetico_terceiro(rng: Any = _RNG) -> str:
+    """A second synthetic CPF for third-party cases ("my husband's CPF is ..."). It is a separate token, so it
+    never equals the lead's own value within an execution (``Sinteticos`` redraws on a collision)."""
+    return gerar_cpf_sintetico(rng)
+
+
 def gerar_email_sintetico(rng: Any = _RNG) -> str:
     sufixo = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(12))
     return f"lead.{sufixo}@example.com"
@@ -76,8 +83,12 @@ def gerar_email_sintetico(rng: Any = _RNG) -> str:
 #: token -> generator. Additive: a new token is a new entry here (and nothing else).
 TOKENS: dict[str, Callable[..., str]] = {
     "cpf_sintetico_valido": gerar_cpf_sintetico,
+    "cpf_sintetico_terceiro": gerar_cpf_sintetico_terceiro,
     "email_sintetico": gerar_email_sintetico,
 }
+
+#: tokens whose value is a THIRD party's data: the agent must never repeat it (``sem_pii``).
+TOKENS_TERCEIROS = frozenset({"cpf_sintetico_terceiro"})
 
 
 def tokens_de(texto: str | None) -> set[str]:
@@ -103,8 +114,15 @@ class Sinteticos:
         if token not in TOKENS:
             raise TokenSinteticoDesconhecido(token)
         if token not in self._valores:
-            self._valores[token] = TOKENS[token](self._rng)
+            novo = TOKENS[token](self._rng)
+            while novo in self._valores.values():  # two tokens of one execution never share a value
+                novo = TOKENS[token](self._rng)
+            self._valores[token] = novo
         return self._valores[token]
+
+    def terceiros(self) -> tuple[str, ...]:
+        """The third-party values generated so far in this execution."""
+        return tuple(v for t, v in self._valores.items() if t in TOKENS_TERCEIROS)
 
     def substituir(self, texto: str) -> str:
         if "[[" not in texto:
