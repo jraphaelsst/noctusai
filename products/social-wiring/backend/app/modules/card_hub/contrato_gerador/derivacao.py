@@ -1119,6 +1119,35 @@ def _empresas_de_certificandos(
     (from `empresa.owners`) the readiness report attributes it to — one
     pair per `Empresa` (E4; `d.empresas` already carries one row per
     DISTINCT company, `owners` holding every participant)."""
+    ids, ids_antigos = _ids_donos_certificandos(d, sw, politica, assinatura)
+    pares: list[tuple[Empresa, Pessoa]] = []
+    for e in d.empresas:
+        dono = next((o for o in e.owners if o.cliente_id in ids), None)
+        if dono is not None:
+            pares.append((e, dono))
+    if ids_antigos:
+        ja = {e.id for e, _ in pares}
+        for e in d.empresas:
+            if e.id in ja:
+                continue
+            dono = next((o for o in e.owners if o.cliente_id in ids_antigos), None)
+            if dono is not None:
+                pares.append((e, dono))
+    return pares
+
+
+def _ids_donos_certificandos(
+    d: DadosContrato,
+    sw: dict[str, bool],
+    politica: Politica = POLITICA_PADRAO,
+    assinatura: Optional[date] = None,
+) -> tuple[set[str], set[str]]:
+    """Whose companies the contract certifies — `(ids, ids_antigos)`: the
+    certificandos + their non-dispensed cônjuges, and (only when the antigos
+    enter the contract) the PREVIOUS owners. The one rule both
+    `_empresas_de_certificandos` (the companies IN the contract) and the
+    unconfirmed-Crednet aviso (the companies that WOULD be, once confirmed)
+    read, so the two can never disagree on whose company counts."""
     certificandos = signatarios_certificandos(d, sw, politica)
     # [Owner 2026-10-05] An anuente (signs, owns nothing) is never certified
     # — nor are their companies, even when they are the registered cônjuge of
@@ -1132,26 +1161,14 @@ def _empresas_de_certificandos(
         p.conjuge_cliente_id for p in certificandos
         if p.conjuge_cliente_id and p.conjuge_cliente_id not in dispensados
     }
-    pares: list[tuple[Empresa, Pessoa]] = []
-    for e in d.empresas:
-        dono = next((o for o in e.owners if o.cliente_id in ids), None)
-        if dono is not None:
-            pares.append((e, dono))
     # [Owner 2026-10-05] The companies of the PREVIOUS owners are certified
     # with the SAME rule as the sellers' (ATIVA/INAPTA any stake; baixada < 5
     # years; older baixadas omitted) — whenever the antigos enter the
-    # contract. `_empresas_de_certificandos` is the one place that rule is
-    # applied; an antigo is simply one more certificando here.
+    # contract. An antigo is simply one more certificando here.
+    ids_antigos: set[str] = set()
     if assinatura is not None and antigos_no_contrato(d, assinatura, politica):
         ids_antigos = {p.cliente_id for p in antigos_proprietarios(d)}
-        ja = {e.id for e, _ in pares}
-        for e in d.empresas:
-            if e.id in ja:
-                continue
-            dono = next((o for o in e.owners if o.cliente_id in ids_antigos), None)
-            if dono is not None:
-                pares.append((e, dono))
-    return pares
+    return ids, ids_antigos
 
 
 def _conjuges_sem_pessoa(d: DadosContrato, sw: dict[str, bool]) -> list[Pessoa]:
@@ -2953,8 +2970,38 @@ def _certidoes(
                 "contrato não pede certidões de empresas dele(a).",
             )
 
+    def conferir_crednet_nao_confirmadas() -> None:
+        """[Migration 299] A certificando's company read off the Serasa
+        Crednet that nobody has confirmed nor dismissed on the card's
+        Empresas section stays OUT of the contract (`carregador.
+        _participacao_vale`) — named here, per person and company, never a
+        silent drop (deal 857: the seller's real company never reached the
+        contract). NON-blocking: the office may well be right that the
+        company is not the seller's. Skipped when the company's certidões
+        would be dispensed anyway (an old baixada — `PJ_OMITIDO`)."""
+        ids, ids_antigos = _ids_donos_certificandos(d, sw, politica, assinatura)
+        donos_validos = ids | ids_antigos
+        por_id = {p.cliente_id: p for p in d.vendedores + d.compradores}
+        for pnc in d.participacoes_nao_confirmadas:
+            if pnc.cliente_id not in donos_validos:
+                continue
+            codigo = classificar_situacao_pj(
+                pnc.situacao_cadastral, pnc.data_situacao_cadastral, hoje,
+                politica.pj_baixada_janela_anos,
+            )
+            if codigo == PJ_OMITIDO:
+                continue
+            dono = por_id.get(pnc.cliente_id)
+            nome_dono = _nome(dono) if dono is not None else "um certificando"
+            av.avisa(
+                "EMPRESA_CREDNET_NAO_CONFIRMADA",
+                f"Empresa {pnc.razao_social or pnc.cnpj} lida do Serasa Crednet de {nome_dono} não "
+                "confirmada — confirme na seção Empresas para incluir as certidões dela no contrato.",
+            )
+
     conferir_empresas()
     conferir_crednet()
+    conferir_crednet_nao_confirmadas()
     conferir_pj()
     conferir_conjuges_ausentes()
     for p in signatarios_certificados:
@@ -3435,6 +3482,13 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     # paragraph of the ÔNUS clause (deal 859), the permuta delivery inside
     # the permuta posse clause (deal 873) — and recorded as a legal-review
     # item: wording the office never standardised gets a lawyer's eye.
+    # [Migration 299] The seller's obligations may sit in the certidões clause
+    # instead (deal 857) — still the same legal-review item either way.
+    if d.termos.obrigacoes_vendedor_local not in frases.OBRIGACOES_VENDEDOR_LOCAIS:
+        av.bloqueia(
+            "OBRIGACOES_VENDEDOR_LOCAL_INVALIDO",
+            f"Local desconhecido para as obrigações do vendedor: {d.termos.obrigacoes_vendedor_local}.",
+        )
     for valor, codigo, titulo, ligado in (
         (d.termos.obrigacoes_vendedor, "OBRIGACOES_VENDEDOR_TEXTO_LIVRE",
          "Obrigações/declarações do vendedor (texto digitado)", True),

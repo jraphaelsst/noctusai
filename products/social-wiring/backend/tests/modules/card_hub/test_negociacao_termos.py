@@ -170,6 +170,8 @@ class TestTermosRoundTrip:
         assert body["termos"].pop("sinal_primeira_parcela") is True
         # Migration 207: the other non-null default — no special conditions.
         assert body["termos"].pop("clausulas_extras") == {}
+        # Migration 299: the seller's obligations print in the ÔNUS clause.
+        assert body["termos"].pop("obrigacoes_vendedor_local") == "onus"
         assert all(v is None for v in body["termos"].values())
         assert "posse" in body["completude"]["faltando"]
 
@@ -297,6 +299,21 @@ class TestTermosRoundTrip:
         assert r.status_code == 200, r.text
         assert r.json()["termos"]["sinal_primeira_parcela"] is False
         assert _estruturada(client, cid)["termos"]["sinal_primeira_parcela"] is False
+
+    def test_obrigacoes_vendedor_local_defaults_to_onus_and_round_trips(self, client, scoped):
+        """Migration 299 — NOT NULL DEFAULT 'onus': absent = 'onus' (never a
+        null into the NOT NULL column); 'certidoes' sticks; anything else is
+        refused by the body's Literal."""
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, obrigacoes_vendedor="x")
+        assert r.status_code == 200, r.text
+        assert r.json()["termos"]["obrigacoes_vendedor_local"] == "onus"
+        linha = scoped.table("atendimento_negociacao_termos").select("*").execute().data[0]
+        assert linha["obrigacoes_vendedor_local"] == "onus"
+        r = _put_termos(client, cid, obrigacoes_vendedor="x", obrigacoes_vendedor_local="certidoes")
+        assert r.status_code == 200, r.text
+        assert _estruturada(client, cid)["termos"]["obrigacoes_vendedor_local"] == "certidoes"
+        assert _put_termos(client, cid, obrigacoes_vendedor_local="rodape").status_code == 422
 
     def test_confirming_no_itens_integrantes_round_trips(self, client, scoped):
         cid, _aid = _seed(scoped)

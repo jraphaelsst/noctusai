@@ -106,6 +106,10 @@ ONUS_QUITACOES: tuple[str, ...] = (
     "vendedores_boleto",
 )
 CORRETAGEM_CONTRATANTES: tuple[str, ...] = ("vendedores", "compradores", "partes")
+#: Migration 299 — the clause `obrigacoes_vendedor` prints in: the ÔNUS
+#: clause (default, deal 859) or lettered inside DAS CERTIDÕES (deal 857).
+OBRIGACOES_VENDEDOR_LOCAIS: tuple[str, ...] = ("onus", "certidoes")
+OBRIGACOES_VENDEDOR_LOCAL_PADRAO = "onus"
 
 #: The only `permuta_ativos.natureza` that is payment currency — a property
 #: BROUGHT to the deal (101). A catalog `imovel` or an automobile is not.
@@ -171,6 +175,8 @@ TERMOS_CAMPOS: tuple[str, ...] = (
     # Migration 206 — NOT NULL DEFAULT true; absent/null reads as true.
     "sinal_primeira_parcela",
     "obrigacoes_vendedor",
+    # Migration 299 — NOT NULL DEFAULT 'onus'; absent/null reads as 'onus'.
+    "obrigacoes_vendedor_local",
     "onus_quitacao", "onus_prazo_dias",
     # Migration 193 — 'ja_quitado': the baixa request's filing date.
     "onus_baixa_protocolo_em",
@@ -1577,6 +1583,10 @@ def _termos_out(row: Optional[dict]) -> dict:
     out["posse_data"] = None if posse_data is None else str(posse_data)[:10]
     # Migration 206: no row yet / a null = the default, ON.
     out["sinal_primeira_parcela"] = row.get("sinal_primeira_parcela") is not False
+    # Migration 299: no row yet / a null = the default clause, ÔNUS.
+    out["obrigacoes_vendedor_local"] = (
+        row.get("obrigacoes_vendedor_local") or OBRIGACOES_VENDEDOR_LOCAL_PADRAO
+    )
     juros = _dec(row.get("confissao_juros_am"))
     out["confissao_juros_am"] = None if juros is None else str(juros)
     # Migration 207: NOT NULL DEFAULT '{}' — no row yet reads as no extras.
@@ -1761,6 +1771,11 @@ def atualizar_termos(
             field="sinal_primeira_parcela",
         )
 
+    # Migration 299 — `NOT NULL DEFAULT 'onus'`: an absent key (a PUT stores
+    # it as null) means the default clause, never a 500 on the NOT NULL.
+    if termos["obrigacoes_vendedor_local"] is None:
+        termos["obrigacoes_vendedor_local"] = OBRIGACOES_VENDEDOR_LOCAL_PADRAO
+
     # 🔴 Migration 163 made this column `NOT NULL DEFAULT FALSE`, but a PUT
     # stores an ABSENT key as null — so every save from a client that does
     # not send it (every client before this control existed) would write NULL
@@ -1789,6 +1804,7 @@ def atualizar_termos(
         ("permuta_posse_marco", POSSE_MARCOS),
         ("onus_quitacao", ONUS_QUITACOES),
         ("corretagem_contratantes", CORRETAGEM_CONTRATANTES),
+        ("obrigacoes_vendedor_local", OBRIGACOES_VENDEDOR_LOCAIS),
     ):
         if termos[campo] is not None and termos[campo] not in permitidos:
             raise ValidationError_(

@@ -72,6 +72,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     PactoAntenupcial,
     Parcela,
     ParteJuridica,
+    ParticipacaoNaoConfirmada,
     PermutaImovel,
     Pessoa,
     Termos,
@@ -184,13 +185,24 @@ def _participacao_vale(row: dict) -> bool:
     typed by a human in the first place (`origem='manual'`). A machine
     (Crednet) participação nobody confirmed is NOT a fact about the seller —
     the Crednet lists every company a CPF ever appeared in (owner, 2026-10-13:
-    "SPEDIREXPRESS" reached a contract this way)."""
-    # NOC-REMEDIATE[empresa-participacao-confirmar]: there is no action yet
-    # to CONFIRM a Crednet participação (`empresas.dados_service.
-    # criar_ou_vincular_manual` on an existing row only fills `pct`), so a
-    # seller's real company read off the Crednet stays out of the contract
-    # until that action exists on the card's Empresas section.
+    "SPEDIREXPRESS" reached a contract this way). The card's Empresas section
+    confirms or dismisses one (`card_hub.empresas_service.
+    decidir_participacao`, migration 299); a dismissed one never counts."""
+    if row.get("descartado_em"):
+        return False
     return bool(row.get("confirmado_em")) or row.get("origem") == "manual"
+
+
+def _aguarda_decisao(row: dict) -> bool:
+    """[Migration 299] A machine-read participação nobody has confirmed NOR
+    dismissed — the readiness gate names it (non-blocking) so the operator
+    decides on the Empresas section instead of the company silently staying
+    out of the contract."""
+    return (
+        row.get("origem") != "manual"
+        and not row.get("confirmado_em")
+        and not row.get("descartado_em")
+    )
 
 
 def _empresas(
@@ -201,7 +213,7 @@ def _empresas(
     *,
     empresas_parte: Iterable[str] = (),
     cnpjs_parte: Iterable[str] = (),
-) -> list[Empresa]:
+) -> tuple[list[Empresa], list[ParticipacaoNaoConfirmada]]:
     """[E1/E3/E4/E6] The DISTINCT companies (migration 167) a certificando
     holds a Crednet participação in — `cliente_empresa_participacoes` ->
     `empresas`, read directly off the tables (contract §A) rather than
@@ -222,15 +234,18 @@ def _empresas(
     (`empresas_parte`, `atendimento_partes.empresa_id`) or a PJ
     intermediário (`cnpjs_parte`, digits). An unconfirmed Crednet
     participação never enters the contract, nor therefore its legal-review
-    list (`validacao_extracao.coletar` reads `dados.empresas`)."""
+    list (`validacao_extracao.coletar` reads `dados.empresas`). It is
+    returned instead in the second list (migration 299) — undecided
+    participações of a company NOT already in the contract — for the
+    gate's non-blocking `EMPRESA_CREDNET_NAO_CONFIRMADA` aviso."""
     ids = sorted({str(i) for i in certificando_ids if i})
     if not ids:
-        return []
+        return [], []
     participacoes = table_reads.in_batched_rows(
         client, "cliente_empresa_participacoes", org_id, "cliente_id", ids
     )
     if not participacoes:
-        return []
+        return [], []
     por_empresa: dict[str, list[dict]] = {}
     for row in participacoes:
         por_empresa.setdefault(str(row["empresa_id"]), []).append(row)
@@ -238,6 +253,7 @@ def _empresas(
     partes = {str(e) for e in empresas_parte if e}
     cnpjs = {re.sub(r"\D", "", str(c)) for c in cnpjs_parte if c}
     saida: list[Empresa] = []
+    nao_confirmadas: list[ParticipacaoNaoConfirmada] = []
     for empresa_id, participantes in por_empresa.items():
         row = linhas_empresa.get(empresa_id)
         if row is None:
@@ -249,6 +265,18 @@ def _empresas(
             if str(r["cliente_id"]) in pessoas_por_id and (e_parte or _participacao_vale(r))
         ]
         if not donos:
+            nao_confirmadas.extend(
+                ParticipacaoNaoConfirmada(
+                    empresa_id=empresa_id,
+                    cnpj=row.get("cnpj") or "",
+                    cliente_id=str(r["cliente_id"]),
+                    razao_social=row.get("razao_social"),
+                    situacao_cadastral=row.get("situacao_cadastral"),
+                    data_situacao_cadastral=_data(row.get("data_situacao_cadastral")),
+                )
+                for r in participantes
+                if str(r["cliente_id"]) in pessoas_por_id and _aguarda_decisao(r)
+            )
             continue
         saida.append(
             Empresa(
@@ -263,7 +291,8 @@ def _empresas(
                 certidoes=[_certidao(r) for r in _certidoes_da_empresa(client, org_id, empresa_id)],
             )
         )
-    return saida
+    nao_confirmadas.sort(key=lambda p: (p.cliente_id, p.cnpj, p.empresa_id))
+    return saida, nao_confirmadas
 
 
 #: `cliente_documentos.tipo_documento` of the Serasa Crednet report — the
@@ -608,6 +637,8 @@ def _termos(bruto: dict) -> Termos:
         ad_corpus=bruto.get("ad_corpus"),
         sinal_primeira_parcela=bruto.get("sinal_primeira_parcela") is not False,
         obrigacoes_vendedor=bruto.get("obrigacoes_vendedor"),
+        # Migration 299 — absent (un-migrated row / no termos yet) = 'onus'.
+        obrigacoes_vendedor_local=bruto.get("obrigacoes_vendedor_local") or "onus",
         onus_quitacao=bruto.get("onus_quitacao"),
         onus_prazo_dias=_int(bruto.get("onus_prazo_dias")),
         # Migration 193.
@@ -827,7 +858,7 @@ def carregar(
     }
     certificando_ids -= {p.cliente_id for p in anuentes(vendedores)}
     pessoas_por_id = {p.cliente_id: p for p in vendedores + compradores}
-    empresas = _empresas(
+    empresas, participacoes_nao_confirmadas = _empresas(
         client, org_id, certificando_ids, pessoas_por_id,
         empresas_parte=[pj.empresa_id for pj in partes_pj],
         cnpjs_parte=[
@@ -846,6 +877,7 @@ def carregar(
         atendimento_id=str(atendimento_id),
         partes_pj=partes_pj,
         clientes_com_crednet=clientes_com_crednet,
+        participacoes_nao_confirmadas=participacoes_nao_confirmadas,
         modelo=contrato["modelo"],
         vendedores=vendedores,
         compradores=compradores,

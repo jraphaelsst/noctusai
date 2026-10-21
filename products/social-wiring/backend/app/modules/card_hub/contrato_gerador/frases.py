@@ -48,7 +48,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Pessoa,
 )
 from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
-from app.modules.card_hub.contrato_gerador.numeracao import juntar
+from app.modules.card_hub.contrato_gerador.numeracao import juntar, letra
 
 # ─── documentos / endereços ────────────────────────────────────────────────
 
@@ -1167,6 +1167,26 @@ def paragrafos_livres(texto: Optional[str]) -> list[str]:
     """Operator-typed obligations, VERBATIM, one paragraph per non-blank line
     (a Word paragraph cannot hold a line break of the template's own)."""
     return [linha.strip() for linha in (texto or "").splitlines() if linha.strip()]
+
+#: [Migration 299] `Termos.obrigacoes_vendedor_local` — the ÔNUS clause
+#: (default; deal 859) or DAS CERTIDÕES E DOCUMENTOS (deal 857).
+OBRIGACOES_VENDEDOR_ONUS = "onus"
+OBRIGACOES_VENDEDOR_CERTIDOES = "certidoes"
+OBRIGACOES_VENDEDOR_LOCAIS: tuple[str, ...] = (OBRIGACOES_VENDEDOR_ONUS, OBRIGACOES_VENDEDOR_CERTIDOES)
+
+
+def obrigacoes_letradas(paragrafos: Sequence[str]) -> str:
+    """[Migration 299] The seller's typed obligations as signed deal 857
+    prints them inside DAS CERTIDÕES E DOCUMENTOS, after the certidão
+    groups: ONE paragraph, one lettered item per typed line — "a) …; b) …;
+    c) …." Each line's own closing ";"/"." is dropped so the separators are
+    the template's, never doubled; the text itself stays verbatim. Empty
+    input is an empty string (the template omits the paragraph)."""
+    itens = [p.rstrip().rstrip(";.").rstrip() for p in paragrafos]
+    itens = [i for i in itens if i]
+    if not itens:
+        return ""
+    return "; ".join(f"{letra(n)}) {item}" for n, item in enumerate(itens)) + "."
 
 #: 🔴 THE STORAGE VOCABULARY, VERBATIM (`atendimento_negociacao_termos.
 #: posse_marco`, migration 114). The generator used to say

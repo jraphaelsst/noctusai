@@ -35,7 +35,7 @@ documento_checklist_service` uses for its own Serasa-slot visibility check.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -307,7 +307,15 @@ def listar(
                     "papel": pessoa["papel"],
                     "participacao_pct": part.get("participacao_pct"),
                     "origem": part.get("origem"),
-                    "certificando": pessoa["certificando"],
+                    # [Migration 299] The human decision on a machine-read
+                    # participação — the Empresas section's "Confirmar
+                    # participação" / "Não é do vendedor" (`decidir_
+                    # participacao`). A dismissed one is NOT the person's
+                    # company, so it never makes the owner a certificando
+                    # of it (the matriz/partes columns follow suit).
+                    "confirmado_em": part.get("confirmado_em"),
+                    "descartado_em": part.get("descartado_em"),
+                    "certificando": pessoa["certificando"] and not part.get("descartado_em"),
                 }
             )
         if not owners:
@@ -443,4 +451,111 @@ def remover(
     )
 
 
-__all__ = ["adicionar_manual", "listar", "pessoas_do_card", "remover"]
+#: [Migration 299] `decidir_participacao`'s vocabulary — `reabrir` undoes
+#: either decision (un-confirm, or "it IS the seller's after all").
+DECISAO_CONFIRMAR = "confirmar"
+DECISAO_DESCARTAR = "descartar"
+DECISAO_REABRIR = "reabrir"
+DECISOES_PARTICIPACAO: tuple[str, ...] = (DECISAO_CONFIRMAR, DECISAO_DESCARTAR, DECISAO_REABRIR)
+
+
+def decidir_participacao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    empresa_id: UUID,
+    *,
+    participante_cliente_id: UUID,
+    decisao: str,
+    acting_user_id: Optional[Any] = None,
+) -> dict:
+    """`PATCH /{cliente_id}/empresas/{empresa_id}/participacao` (migration
+    299) — a human's decision on a MACHINE-read participação (Serasa
+    Crednet, or the certidão-consulta backfill): `confirmar` (the company is
+    the person's — it enters the contract, `contrato_gerador.carregador.
+    _participacao_vale`), `descartar` ("Não é do vendedor" — it never does,
+    and the readiness aviso stops naming it) or `reabrir` (undo either).
+    The two decisions are mutually exclusive; each stamps WHO and WHEN
+    (`confirmado_por/_em` | `descartado_por/_em`), and the request itself is
+    recorded by the platform AuditMiddleware like every mutating route.
+
+    A dismissal is a row state, never a delete: `crednet_service.
+    _upsert_participacao` leaves an existing row's decision alone, so the
+    next Crednet re-read cannot resurrect a company the office ruled out.
+
+    Refused: a participant who is not on THIS card (`pessoas_do_card` —
+    titular, partes of both lados, registered imóvel owners, vendedores'
+    cônjuges; 404, same posture `adicionar_manual` takes), a participação
+    that does not exist (404), and a MANUAL one (400 — a human typed it, so
+    there is nothing to confirm; unlink it with DELETE instead)."""
+    if decisao not in DECISOES_PARTICIPACAO:
+        raise ValidationError_(
+            f"decisao inválida: {decisao!r}. Permitidas: {', '.join(DECISOES_PARTICIPACAO)}",
+            field="decisao",
+        )
+    ensure_cliente(client, org_id, cliente_id)
+    try:
+        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
+    except AmbiguousAtendimento:
+        raise NotFoundError(ATENDIMENTOS_TABLE, str(cliente_id)) from None
+    rows = (
+        _t(client, ATENDIMENTOS_TABLE)
+        .select("id, cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(atendimento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(ATENDIMENTOS_TABLE, str(atendimento_id))
+    participantes = {p["cliente_id"] for p in pessoas_do_card(client, org_id, rows[0])}
+    if str(participante_cliente_id) not in participantes:
+        raise NotFoundError(PARTES_TABLE, str(participante_cliente_id))
+
+    existentes = (
+        _t(client, PARTICIPACOES_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(participante_cliente_id))
+        .eq("empresa_id", str(empresa_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not existentes:
+        raise NotFoundError(PARTICIPACOES_TABLE, str(empresa_id))
+    participacao = existentes[0]
+    if participacao.get("origem") == "manual":
+        raise ValidationError_(
+            "Esta participação foi cadastrada manualmente e já vale para o contrato — "
+            "para desfazê-la, remova o vínculo da empresa.",
+            field="decisao",
+        )
+
+    agora = datetime.now(timezone.utc).isoformat()
+    quem = str(acting_user_id) if acting_user_id else None
+    patch: dict[str, Any] = {
+        "confirmado_por": None, "confirmado_em": None,
+        "descartado_por": None, "descartado_em": None,
+    }
+    if decisao == DECISAO_CONFIRMAR:
+        patch.update(confirmado_por=quem, confirmado_em=agora)
+    elif decisao == DECISAO_DESCARTAR:
+        patch.update(descartado_por=quem, descartado_em=agora)
+    atualizados = (
+        _t(client, PARTICIPACOES_TABLE)
+        .update(patch)
+        .eq("id", str(participacao["id"]))
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return atualizados[0] if atualizados else {**participacao, **patch}
+
+
+__all__ = [
+    "DECISOES_PARTICIPACAO",
+    "adicionar_manual",
+    "decidir_participacao",
+    "listar",
+    "pessoas_do_card",
+    "remover",
+]

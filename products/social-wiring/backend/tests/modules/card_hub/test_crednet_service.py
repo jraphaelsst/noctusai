@@ -345,6 +345,30 @@ class TestEmpresasUpsert:
         assert {p["cliente_id"] for p in participacoes} == {cid1, cid2}
 
     @pytest.mark.asyncio
+    async def test_a_re_read_never_resets_a_human_decision(self, client):
+        """[Migration 299] A participação the office DISMISSED ("Não é do
+        vendedor") or confirmed survives the next Crednet read — the upsert
+        only fills empty pct/desde, it never re-creates or resets a row."""
+        cid, did = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
+        participacao = ParticipacaoCrednet(
+            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+        )
+        await _aplicar(client, cid, did, _fields(participacoes=(participacao,)))
+        linha = client.table("cliente_empresa_participacoes").select("*").execute().data[0]
+        client.table("cliente_empresa_participacoes").update(
+            {"descartado_em": "2026-10-21T10:00:00+00:00", "descartado_por": str(uuid4())}
+        ).eq("id", linha["id"]).execute()
+
+        await _aplicar(client, cid, did, _fields(participacoes=(participacao,)))
+
+        linhas = client.table("cliente_empresa_participacoes").select("*").execute().data
+        assert len(linhas) == 1
+        assert linhas[0]["descartado_em"] == "2026-10-21T10:00:00+00:00"
+        assert linhas[0]["confirmado_em"] is None
+
+    @pytest.mark.asyncio
     async def test_two_different_cnpjs_create_two_empresas(self, client):
         cid, did = str(uuid4()), str(uuid4())
         client.table("clientes").insert(_cliente(cid)).execute()

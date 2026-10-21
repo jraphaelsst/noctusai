@@ -42,7 +42,10 @@ all — the gate reports the gap. A parcela split among several favorecidos
 (`p.subitens`, composed in `frases.subitem_divisao`). [Migration 193]
 Operator-typed obligations (`obrigacoes_vendedor`, `permuta_obrigacoes`)
 print VERBATIM, one paragraph per typed line, where the signed corpus places
-them (ÔNUS / permuta posse).
+them (ÔNUS / permuta posse). [Migration 299] `obrigacoes_vendedor` may
+instead sit inside DAS CERTIDÕES, after the certidão groups, as ONE lettered
+paragraph "a) …; b) …." (`certidoes.obrigacoes_vendedor`, deal 857) — it
+carries no `par()` label, so neither clause's paragraph numbering counts it.
 """
 from __future__ import annotations
 
@@ -199,6 +202,9 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {{ g.num }}.{{ loop.index }} – {{ i }}{{ '.' if loop.last else ';' }}
 {%p endfor %}
 {%p endfor %}
+{%p if certidoes.obrigacoes_vendedor %}
+{{ certidoes.obrigacoes_vendedor }}
+{%p endif %}
 {%p if tem_permuta %}
 **{{ par('certidoes') }}** Caso as certidões acima mencionadas, apresentem fatos positivos para {{ V.art }} **{{ V.NOME }}** ou para {{ C.art }} **{{ C.NOME }}**, deverão ser apresentados os devidos esclarecimentos, provando que tais apontamentos não colocam em risco a presente transação, no prazo máximo de {{ prazo_esclarecimentos }} dias a contar da presente assinatura.
 **{{ par('certidoes') }}** As "Partes" se comprometem ainda a apresentar as certidões e documentos abaixo relacionados, e as eventualmente "PENDENTES" no prazo máximo de {{ prazo_pendencias }} dias a contar da assinatura do presente, sendo certo que as contas de consumo, IPTU e condomínio deverão ser quitadas por ambas as partes dos dois imóveis referenciados neste contrato, até a entrega de cada chave à respectiva parte, de acordo com a {{ cl.posse.ref|lower }} que trata da posse sobre os imóveis:

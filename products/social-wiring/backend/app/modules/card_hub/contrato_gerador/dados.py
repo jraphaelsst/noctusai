@@ -245,6 +245,25 @@ class Empresa:
 
 
 @dataclass
+class ParticipacaoNaoConfirmada:
+    """[Migration 299] A machine-read (Serasa Crednet) participação of a
+    certificando that no human has confirmed NOR dismissed — so it stays OUT
+    of `DadosContrato.empresas` (`carregador._participacao_vale`), and the
+    gate names it as a non-blocking aviso instead of silently dropping the
+    company. Only when the company is not already in the contract through
+    another, confirmed owner (its certidões are in either way). The
+    situação fields let the gate skip a company whose certidões would be
+    dispensed anyway (an old baixada)."""
+
+    empresa_id: str
+    cnpj: str
+    cliente_id: str
+    razao_social: Optional[str] = None
+    situacao_cadastral: Optional[str] = None
+    data_situacao_cadastral: Optional[date] = None
+
+
+@dataclass
 class DivisaoFavorecido:
     """[Migration 192] One share of a parcela paid to several favorecidos —
     a `valor` OR a `percentual` of the parcela. `favorecido_id` is `None`
@@ -632,6 +651,10 @@ class Termos:
     #: [Migration 193] Printed VERBATIM as a paragraph of the ÔNUS clause
     #: (corpus deal 859's position) and recorded as a legal-review item.
     obrigacoes_vendedor: Optional[str] = None
+    #: [Migration 299] Where `obrigacoes_vendedor` prints: 'onus' (default —
+    #: the paragraph above) or 'certidoes' (lettered "a) …; b) …" inside DAS
+    #: CERTIDÕES E DOCUMENTOS, after the certidão groups — signed deal 857).
+    obrigacoes_vendedor_local: str = "onus"
     #: 'compradores_prazo' | 'interveniente_quitante' | 'parcela' | 'ja_quitado'
     onus_quitacao: Optional[str] = None
     onus_prazo_dias: Optional[int] = None
@@ -690,6 +713,11 @@ class DadosContrato:
     #: the gate names (`EMPRESAS_NAO_VERIFICADAS`) instead of silently
     #: demanding nothing. `None` = not loaded (unit fixtures): no check.
     clientes_com_crednet: Optional[tuple[str, ...]] = None
+    #: [Migration 299] The certificandos' Crednet participações nobody has
+    #: confirmed or dismissed yet (and whose company is not in `empresas`
+    #: anyway) — `derivacao` names each as the non-blocking
+    #: `EMPRESA_CREDNET_NAO_CONFIRMADA` aviso. Sorted (snapshot hash).
+    participacoes_nao_confirmadas: list[ParticipacaoNaoConfirmada] = field(default_factory=list)
     #: [Q11] Per-contract pendências prazo (days), overriding the office's
     #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
     prazo_pendencias_dias: Optional[int] = None

@@ -690,6 +690,10 @@ class TermosNegocioPutBody(StrictHttpModel):
     #: `ordem` exactly. Absent/null = the default (`True`), never "off".
     sinal_primeira_parcela: Optional[bool] = None
     obrigacoes_vendedor: Optional[str] = Field(default=None, max_length=4000)
+    #: [Migration 299] Where `obrigacoes_vendedor` prints: the ÔNUS clause
+    #: (default — absent/null reads as 'onus') or lettered inside DAS
+    #: CERTIDÕES E DOCUMENTOS, after the certidão groups (signed deal 857).
+    obrigacoes_vendedor_local: Optional[Literal["onus", "certidoes"]] = None
 
     onus_quitacao: Optional[
         Literal[
@@ -732,6 +736,17 @@ class EmpresaManualCreateBody(StrictHttpModel):
     participante_cliente_id: UUID
     razao_social: Optional[str] = None
     participacao_pct: Optional[Decimal] = None
+
+
+class EmpresaParticipacaoDecisaoBody(StrictHttpModel):
+    """`PATCH /{cliente_id}/empresas/{empresa_id}/participacao` (migration
+    299) — a human's decision on a machine-read (Serasa Crednet)
+    participação: `confirmar` | `descartar` ("Não é do vendedor") |
+    `reabrir` (undo). `participante_cliente_id` must be a person on THIS
+    card — validated server-side (`empresas_service.decidir_participacao`)."""
+
+    participante_cliente_id: UUID
+    decisao: Literal["confirmar", "descartar", "reabrir"]
 
 
 class LinhaMatrizCreateBody(StrictHttpModel):

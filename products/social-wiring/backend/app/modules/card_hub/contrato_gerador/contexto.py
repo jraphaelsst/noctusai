@@ -578,6 +578,13 @@ def montar_contexto(
         pendencias.append(frases.PENDENCIA_IPTU)
     if sw["tem_saldo_devedor"]:
         # gated: `imovel.situacao_onus` (tem_saldo_devedor ⇒ an ONUS_COM_SALDO value)
+        #
+        # 'vendedores_boleto' KEEPS this pendência — checked 2026-10-21 against
+        # both signed boleto contracts and they DISAGREE: 857 lists no
+        # quitação pendência at all, 884 lists one of its own ("Termo de
+        # Quitação, emitido pelo <banco>, com prazo de entrega de até 5 dias
+        # úteis, contados da quitação do financiamento"). N=2 split 1/1 is no
+        # corpus rule, so the behaviour stays until more signed deals settle it.
         pendencias.append(frases.pendencia_baixa_onus(im.situacao_onus or ""))
     pendencias += pendentes_cert
 
@@ -612,6 +619,15 @@ def montar_contexto(
         "grupos": grupos,
         "grupos_imovel": grupos_imovel,
         "pendencias": [{"letra": letra(i), "texto": t} for i, t in enumerate(pendencias)],
+        # [Migration 299] The seller's typed obligations, when the deal puts
+        # them HERE (after the certidão groups, before the pendências
+        # paragraph — signed deal 857) instead of the ÔNUS clause. Empty
+        # string = not here (the template omits the paragraph).
+        "obrigacoes_vendedor": (
+            frases.obrigacoes_letradas(frases.paragrafos_livres(termos.obrigacoes_vendedor))
+            if termos.obrigacoes_vendedor_local == frases.OBRIGACOES_VENDEDOR_CERTIDOES
+            else ""
+        ),
     }
 
     # ── ônus / posse / permuta ──
@@ -808,8 +824,14 @@ def montar_contexto(
         "A_NOME": A_NOME,
         "A_signatarios": [frases.signatario_linha(p) for p in anu],
         "A_assinantes_fisicos": [frases.assinante_fisico(p) for p in anu],
-        # [Migration 193] Operator-typed obligations, VERBATIM.
-        "obrigacoes_vendedor": frases.paragrafos_livres(termos.obrigacoes_vendedor),
+        # [Migration 193] Operator-typed obligations, VERBATIM — in the ÔNUS
+        # clause unless the deal moved them to the certidões clause
+        # (migration 299, `certidoes.obrigacoes_vendedor` above).
+        "obrigacoes_vendedor": (
+            []
+            if termos.obrigacoes_vendedor_local == frases.OBRIGACOES_VENDEDOR_CERTIDOES
+            else frases.paragrafos_livres(termos.obrigacoes_vendedor)
+        ),
         "permuta_obrigacoes": (
             frases.paragrafos_livres(termos.permuta_obrigacoes_entrega) if sw["tem_permuta"] else []
         ),

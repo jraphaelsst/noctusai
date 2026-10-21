@@ -111,6 +111,7 @@ from app.modules.empresas.deps import (
 from app.modules.card_hub.schemas import (
     ContratoPatchBody,
     EmpresaManualCreateBody,
+    EmpresaParticipacaoDecisaoBody,
     FinanciamentoPatchBody,
     LinhaMatrizCreateBody,
     LinhaMatrizPatchBody,
@@ -1110,6 +1111,28 @@ async def create_empresa_route(
         razao_social=body.razao_social,
         participacao_pct=body.participacao_pct,
         confirmado_por=getattr(user, "id", None),
+    )
+
+
+@router.patch("/{cliente_id}/empresas/{empresa_id}/participacao")
+async def decidir_participacao_empresa_route(
+    cliente_id: UUID,
+    empresa_id: UUID,
+    body: EmpresaParticipacaoDecisaoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Confirm / dismiss ("Não é do vendedor") / reopen a Serasa-Crednet
+    participação of a person on this card (migration 299) — a confirmed one
+    enters the generated contract with its company's certidões. Org-scoped
+    like the sibling empresas routes; see `empresas_service.
+    decidir_participacao`."""
+    user, org_id = _auth_parts(auth)
+    return empresas_svc.decidir_participacao(
+        client, org_id, cliente_id, empresa_id,
+        participante_cliente_id=body.participante_cliente_id,
+        decisao=body.decisao,
+        acting_user_id=getattr(user, "id", None),
     )
 
 

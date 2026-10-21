@@ -534,3 +534,104 @@ class TestHttpDelete:
         r = client.delete(f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth())
 
         assert r.status_code == 404
+
+
+# ─── Migration 299 — a human decides a Crednet participação ───────────────
+
+
+class TestHttpDecidirParticipacao:
+    """`PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao`:
+    confirm / dismiss ("Não é do vendedor") / reopen a machine-read
+    participação of a person on THIS card. Synthetic names only."""
+
+    def _card(self, scoped, **part_over):
+        cid, aid, vendedor_id = str(uuid4()), str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"), cliente_row(vendedor_id, nome="Vendedor Ficticio"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+            "cliente_id": vendedor_id, "lado": "vendedor", "papel": "proprietario",
+            "ordem": 0, "observacao": None, "created_at": "2026-01-01T00:00:00+00:00",
+            "created_by": None, "updated_at": None,
+        }])
+        empresa = _empresa(situacao_cadastral="ativa")
+        scoped.set_table_data("empresas", [empresa])
+        part = _participacao(
+            vendedor_id, empresa["id"],
+            **{"origem": "serasa_crednet", "descartado_por": None, "descartado_em": None, **part_over},
+        )
+        scoped.set_table_data("cliente_empresa_participacoes", [part])
+        return cid, vendedor_id, empresa
+
+    def _patch(self, client, cid, empresa_id, participante, decisao):
+        return client.patch(
+            f"/api/clientes/{cid}/empresas/{empresa_id}/participacao", headers=_auth(),
+            json={"participante_cliente_id": participante, "decisao": decisao},
+        )
+
+    def _linha(self, scoped):
+        return scoped.table("cliente_empresa_participacoes").select("*").execute().data[0]
+
+    def test_confirmar_stamps_who_and_when(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped)
+        r = self._patch(client, cid, empresa["id"], vendedor_id, "confirmar")
+        assert r.status_code == 200, r.text
+        linha = self._linha(scoped)
+        assert linha["confirmado_em"] and linha["confirmado_por"] == str(TEST_USER_ID)
+        assert linha["descartado_em"] is None
+
+    def test_descartar_clears_a_confirmation_and_the_owner_stops_being_certificando(
+        self, client, scoped,
+    ):
+        cid, vendedor_id, empresa = self._card(
+            scoped, confirmado_em="2026-10-20T10:00:00+00:00", confirmado_por=str(uuid4()),
+        )
+        r = self._patch(client, cid, empresa["id"], vendedor_id, "descartar")
+        assert r.status_code == 200, r.text
+        linha = self._linha(scoped)
+        assert linha["descartado_em"] and linha["descartado_por"] == str(TEST_USER_ID)
+        assert linha["confirmado_em"] is None and linha["confirmado_por"] is None
+
+        item = svc.listar(scoped, ORG_ID, cid)["items"][0]
+        dono = item["owners"][0]
+        assert dono["descartado_em"] == linha["descartado_em"]
+        assert dono["certificando"] is False
+        assert (item["exige_certidoes"], item["motivo"]) == (False, "sem_socio_certificando")
+
+    def test_reabrir_undoes_either_decision(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped, descartado_em="2026-10-20T10:00:00+00:00")
+        r = self._patch(client, cid, empresa["id"], vendedor_id, "reabrir")
+        assert r.status_code == 200, r.text
+        linha = self._linha(scoped)
+        assert linha["descartado_em"] is None and linha["confirmado_em"] is None
+
+    def test_a_manual_participacao_is_refused(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped)
+        scoped.table("cliente_empresa_participacoes").update({"origem": "manual"}).execute()
+        r = self._patch(client, cid, empresa["id"], vendedor_id, "confirmar")
+        assert r.status_code == 400, r.text
+
+    def test_a_person_not_on_the_card_is_404(self, client, scoped):
+        cid, _vendedor_id, empresa = self._card(scoped)
+        r = self._patch(client, cid, empresa["id"], str(uuid4()), "confirmar")
+        assert r.status_code == 404, r.text
+
+    def test_an_unknown_participacao_is_404(self, client, scoped):
+        cid, vendedor_id, _empresa_row = self._card(scoped)
+        r = self._patch(client, cid, str(uuid4()), vendedor_id, "confirmar")
+        assert r.status_code == 404, r.text
+
+    def test_an_unknown_decisao_is_422(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped)
+        r = self._patch(client, cid, empresa["id"], vendedor_id, "aprovar")
+        assert r.status_code == 422, r.text
+
+    def test_listar_reports_the_confirmation(self, scoped):
+        cid, _vendedor_id, _empresa_row = self._card(scoped, confirmado_em="2026-10-20T10:00:00+00:00")
+        dono = svc.listar(scoped, ORG_ID, cid)["items"][0]["owners"][0]
+        assert dono["confirmado_em"] == "2026-10-20T10:00:00+00:00"
+        assert dono["descartado_em"] is None
+        assert dono["certificando"] is True
