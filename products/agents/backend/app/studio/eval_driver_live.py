@@ -334,13 +334,17 @@ class LiveEvalTurnDriver:
             m.lead_ref_id = th.lead_ref_id
             self._semear(m, thread.estado)
         if not ctl.prosseguir or th is None:
-            return TurnOutcome(estado=self._estado(m), violacoes=(Violation("sem_turno", ctl.status),))
+            return TurnOutcome(
+                estado=self._estado(m), violacoes=(Violation("sem_turno", ctl.status),),
+                participante_estado=self._participante_estado(m, th), valores_terceiros=m.sinteticos.terceiros())
 
         m.messages.add(m.org_id, th.id, "user", mensagem_lead, lead_ref_id=th.lead_ref_id)
         m.conversations.touch_lead_message(m.org_id, th.id)
         tripped = turno_mod.limite_atingido(m.svc, m.org_id, th.id, m.agent.id, agora)
         if tripped is not None:
-            return TurnOutcome(estado=self._estado(m), violacoes=(Violation("limite_atingido", tripped),))
+            return TurnOutcome(
+                estado=self._estado(m), violacoes=(Violation("limite_atingido", tripped),),
+                participante_estado=self._participante_estado(m, th), valores_terceiros=m.sinteticos.terceiros())
 
         prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs)
         await m.runtime.preflight(prep.spec.provider, m.org_id)
@@ -377,7 +381,10 @@ class LiveEvalTurnDriver:
 
     @staticmethod
     def _participante_estado(m: _Mundo, th: Any) -> str | None:
-        """The agent's participant state in the thread AFTER the turn (read from the thread store)."""
+        """The agent's participant state in the thread AFTER any turn outcome, served or not (read from the
+        thread store). ``None`` only when no thread exists (a control that refuses before one is created)."""
+        if th is None:
+            return None
         p = m.threads.get_participante(m.org_id, th.id, m.agent.id)
         return p.estado if p is not None else None
 

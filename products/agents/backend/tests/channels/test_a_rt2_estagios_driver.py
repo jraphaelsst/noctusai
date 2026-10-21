@@ -114,6 +114,7 @@ class TestLiveDriver:
         assert out.estado.lotes == (("B1", "B2", "B3"),)
         assert out.estado.estagio == "qualificado" and out.estado.criterios["operacao"] == "compra"
         assert out.bolhas and out.handoff is None and out.violacoes == ()
+        assert out.participante_estado == "ativo" and out.valores_terceiros == ()
         assert out.custo_usd and out.custo_usd > 0
         # the SW the tools talked to is the fixture one: nothing reached a real tenant
         assert [n for n, _a in driver._mundo.sw.chamadas] == ["buscar_imoveis"]
@@ -206,6 +207,8 @@ class TestLiveDriverRealConformance:
         segundo = asyncio.run(driver.executar_turno(ThreadState(), "quero comprar"))
         assert primeiro.violacoes == () and primeiro.bolhas
         assert [v.regra for v in segundo.violacoes] == ["limite_atingido"] and segundo.bolhas == ()
+        # the participant state is read after a blocked turn too, so blocked/flood cases can assert it
+        assert primeiro.participante_estado == "ativo" and segundo.participante_estado == "ativo"
 
     def test_without_a_real_store_the_code_defaults_apply(self, chan):
         chan.seed_agent(publish=False)
@@ -246,6 +249,13 @@ class TestSyntheticIdentityTokens:
         email = re.search(r"\S+@example\.com", primeiro).group(0)
         assert validar_cpf(cpf)[0] and validar_email(email)[0]
         assert cpf in segundo  # one execution, one synthetic person
+
+    def test_third_party_values_are_reported_on_the_outcome(self, chan):
+        chan.seed_agent(publish=False)
+        driver = _driver(chan, FakeProvider(tool_responses=[say("Ok.")]))
+        out = asyncio.run(driver.executar_turno(ThreadState(), "o cpf do meu marido: [[cpf_sintetico_terceiro]]"))
+        (terceiro,) = out.valores_terceiros
+        assert terceiro in self._textos_do_lead(driver)[0]
 
     def test_the_cpf_is_generated_never_a_fixed_constant(self):
         from app.studio.eval_sinteticos import Sinteticos
