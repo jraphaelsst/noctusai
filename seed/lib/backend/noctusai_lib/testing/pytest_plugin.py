@@ -116,3 +116,20 @@ def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
             type(exc).__name__,
             exc,
         )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_license_gate():
+    """Snapshot the process-global license gate before every test and restore it after.
+
+    ``configure_license_gate`` installs process state (product slug, checker, selection store,
+    core-client accessor). A test that configures it and does not reset it leaks an ENFORCING gate
+    into whichever test runs next -- invisible in file order, a random red under ``pytest-randomly``
+    (2026-10-22: ``test_shell_endpoint_latency`` imported a helper that configures the gate without
+    the owning module's reset fixture, failing organ/team/trusted-auth tests at random). Restoring
+    the snapshot (not ``None``) keeps a gate a product configured at import (``app.main``)."""
+    from noctusai_lib.domain.licensing import get_license_gate, restore_license_gate
+
+    before = get_license_gate()
+    yield
+    restore_license_gate(before)

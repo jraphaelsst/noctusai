@@ -342,6 +342,16 @@ def get_license_gate() -> Optional[LicenseGate]:
     return _gate
 
 
+def restore_license_gate(gate: Optional[LicenseGate]) -> None:
+    """Put back a gate previously read with :func:`get_license_gate` (``None`` removes it).
+
+    The process gate is global mutable state; a test harness snapshots it before each test and
+    restores it after, so a test that configures it cannot leak into whichever test runs next
+    (order-dependent failures under ``pytest-randomly``)."""
+    global _gate
+    _gate = gate
+
+
 def enforce_license(org_id: Any, org_role: Optional[str], *, allow_customer: bool = False) -> None:
     """Raise 403 ``org_sem_licenca`` (or 503 on a lookup outage) unless
     ``org_id`` may use this product. No gate configured / core ⇒ no-op.
@@ -422,5 +432,6 @@ __all__ = [
     "org_has_license_for_product_id",
     "org_has_product_license",
     "org_sem_licenca",
+    "restore_license_gate",
     "product_accepts_customers",
 ]
