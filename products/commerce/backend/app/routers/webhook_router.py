@@ -73,7 +73,7 @@ async def _resolve_example_secret(request: Request, body: bytes) -> ResolvedSecr
 
 @router.post("/example")
 @limiter.limit(settings.webhook_rate_limit)
-async def example_webhook(
+def example_webhook(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_example_secret,
