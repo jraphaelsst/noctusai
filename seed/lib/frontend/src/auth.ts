@@ -273,7 +273,31 @@ export function useSupabaseAuthInit(
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
+    } = supabase.auth.onAuthStateChange((event: any, session: any) => {
+      if (event === 'SIGNED_OUT' && !session) {
+        // Never a silent redirect to Landing (2026-10-22, prod: an admin active for ~1h
+        // was signed out mid-session). supabase-js emits SIGNED_OUT both for a real
+        // sign-out and when a background refresh is refused (reuse race between
+        // tabs/clients). Log it, and re-read the shared storage slot first: if another
+        // tab already holds a rotated live session, adopt it instead of dropping.
+        // eslint-disable-next-line no-console
+        console.warn('[auth] SIGNED_OUT event received — confirming against the stored session before leaving');
+        void (async () => {
+          let stored: any = null;
+          try { stored = (await supabase.auth.getSession())?.data?.session ?? null; } catch { /* treat as gone */ }
+          if (disposed) return;
+          if (stored?.user) {
+            // eslint-disable-next-line no-console
+            console.warn('[auth] SIGNED_OUT ignored: a live session is still stored (rotated by another tab)');
+            setUser(stored.user);
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[auth] SIGNED_OUT confirmed: no stored session — returning to Landing');
+            setUser(null);
+          }
+        })();
+        return;
+      }
       setUser(session?.user ?? null);
     });
 
