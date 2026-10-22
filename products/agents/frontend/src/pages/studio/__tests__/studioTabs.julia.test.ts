@@ -17,7 +17,7 @@ describe("studioTier", () => {
 
 describe("visibleTabsFor", () => {
   it("platform definition: every content tab for the platform admin", () => {
-    const tabs = ids({ definition_scope: "plataforma", kind: "runtime", key: "agente-x" }, true, true);
+    const tabs = ids({ definition_scope: "plataforma", kind: "runtime" }, true, true);
     for (const t of ["prompt", "textos", "ferramentas", "decisoes", "qualificacao", "biblioteca", "especificacoes", "conformidade", "conversas", "versoes", "compilado"]) {
       expect(tabs).toContain(t);
     }
@@ -25,7 +25,7 @@ describe("visibleTabsFor", () => {
   });
 
   it("org instance, org admin: specs form, controls, conversations — and NO prompt/ferramentas/qualificação/textos/decisões", () => {
-    const tabs = ids({ definition_scope: "instancia", kind: "runtime", key: "agente-x" }, true, false);
+    const tabs = ids({ definition_scope: "instancia", kind: "runtime" }, true, false);
     expect(tabs).toEqual(["visao-geral", "especificacoes-org", "controles", "conversas"]);
     for (const t of ["prompt", "ferramentas", "qualificacao", "textos", "decisoes", "compilado", "biblioteca", "conformidade"]) {
       expect(tabs).not.toContain(t);
@@ -41,7 +41,7 @@ describe("visibleTabsFor", () => {
   });
 
   it("legacy / org-scope agents keep the pre-v2 set and never see Julia tabs", () => {
-    const tabs = ids({ definition_scope: "org", kind: "runtime", key: "outro" }, true, true);
+    const tabs = ids({ definition_scope: "org", kind: "runtime" }, true, true);
     expect(tabs).toContain("clientes");
     for (const t of ["textos", "ferramentas", "decisoes", "qualificacao", "biblioteca", "especificacoes", "especificacoes-org", "controles", "conversas", "conformidade"]) {
       expect(tabs).not.toContain(t);
