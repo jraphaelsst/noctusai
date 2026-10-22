@@ -24,7 +24,7 @@ import type { CardSubpageKey } from "@/components/card/cardSubpages";
 import { useImobiliarias } from "@/hooks/useImobiliarias";
 import { useProposta, usePropostaMutations } from "@/hooks/usePropostas";
 import { useTestemunhas } from "@/hooks/useTestemunhas";
-import { exibirMoeda, formatarValorEditavel, lerValorDigitado } from "@/lib/moedaDecimal";
+import { exibirMoeda, formatarValorEditavel, lerDecimalBR, lerValorDigitado } from "@/lib/moedaDecimal";
 import {
   propostaEditavel,
   type AceiteResponse,
@@ -86,7 +86,7 @@ function paraEnvio(d: Draft): PropostaPatch {
       ...Object.fromEntries(IDS_REAIS_TERMOS.map((k) => [k, null])),
     },
     valor_proposto: vazioNulo(d.valor_proposto),
-    pct_comissao: vazioNulo(d.pct_comissao),
+    pct_comissao: d.pct_comissao == null || d.pct_comissao.trim() === "" ? null : (lerDecimalBR(d.pct_comissao) ?? d.pct_comissao),
     parcelas: d.parcelas.map((p) => ({
       ...p,
       valor: lerValorDigitado(p.valor),
@@ -171,6 +171,10 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
 
   async function salvar(): Promise<boolean> {
     if (!draft) return false;
+    if (lerDecimalBR(draft.pct_comissao) === null) {
+      toast.error("Comissão (%): use um número, ex.: 6,5.");
+      return false;
+    }
     try {
       await m.salvar.mutateAsync({ id: propostaId, patch: paraEnvio(draft) });
       setSujo(false);
@@ -316,6 +320,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
                 <div className="space-y-1">
                   <Label htmlFor="pp-comissao" className="text-xs">Comissão (%)</Label>
                   <Input id="pp-comissao" disabled={!editavel} className={campoInvalido(campos, "pct_comissao") ? "border-destructive ring-1 ring-destructive" : ""} value={draft.pct_comissao ?? ""} onChange={(e) => alterar({ pct_comissao: e.target.value })} />
+                  {lerDecimalBR(draft.pct_comissao) === null && <p className="text-xs text-destructive" data-testid="pp-comissao-invalida">Use um número, ex.: 6,5</p>}
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="pp-validade" className="text-xs">Validade</Label>

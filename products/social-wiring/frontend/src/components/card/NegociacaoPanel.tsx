@@ -44,6 +44,7 @@ import { ehImovelManual } from "@/components/imovel/ImovelManualBadge";
 import { useEffect, useState } from "react";
 
 import { preverCalculo } from "@/lib/negociacaoPreview";
+import { lerDecimalBR } from "@/lib/moedaDecimal";
 import { AlertCircle, Building2, Handshake, Loader2, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -196,15 +197,29 @@ export default function NegociacaoPanel({
   const set = <K extends keyof Draft>(k: K) => (v: Draft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
+  // pt-BR "6,26" → wire "6.26"; null = not a number (inline error, no submit).
+  const PCTS = ["pct_comissao", "pct_parceria", "pct_agencia", "pct_agentes", "pct_captador"] as const;
+  const pctLido = (k: (typeof PCTS)[number]) => lerDecimalBR(draft[k]);
+  const pctInvalido = (k: (typeof PCTS)[number]) =>
+    pctLido(k) === null && !(k === "pct_parceria" && !draft.tem_parceria);
+  const algumPctInvalido = PCTS.some(pctInvalido);
+  const pctErro = (k: (typeof PCTS)[number]) =>
+    pctInvalido(k) ? (
+      <p className="text-xs text-destructive" data-testid={`negociacao-${k}-invalido`}>
+        Use um número, ex.: 6,5
+      </p>
+    ) : null;
   const somaInterna =
-    Number(draft.pct_agencia || 0) +
-    Number(draft.pct_agentes || 0) +
-    Number(draft.pct_captador || 0);
+    Number(pctLido("pct_agencia") || 0) +
+    Number(pctLido("pct_agentes") || 0) +
+    Number(pctLido("pct_captador") || 0);
   // The backend refuses this too (and so does a CHECK constraint). Surfacing
   // it here turns a round-trip rejection into an answer while they type.
-  const splitInvalido = Math.abs(somaInterna - 100) > 0.0001;
+  const splitInvalido =
+    !algumPctInvalido && Math.abs(somaInterna - 100) > 0.0001;
 
   function submit() {
+    if (algumPctInvalido) return;
     const blank = (v: unknown) => {
       const t = text(v).trim();
       return t === "" ? null : t;
@@ -212,12 +227,12 @@ export default function NegociacaoPanel({
     onSave({
       imovel_codigo: blank(draft.imovel_codigo),
       valor_negociado: blank(draft.valor_negociado),
-      pct_comissao: blank(draft.pct_comissao),
+      pct_comissao: blank(pctLido("pct_comissao")),
       tem_parceria: draft.tem_parceria,
-      pct_parceria: draft.pct_parceria,
-      pct_agencia: draft.pct_agencia,
-      pct_agentes: draft.pct_agentes,
-      pct_captador: draft.pct_captador,
+      pct_parceria: pctLido("pct_parceria") ?? draft.pct_parceria,
+      pct_agencia: pctLido("pct_agencia") ?? draft.pct_agencia,
+      pct_agentes: pctLido("pct_agentes") ?? draft.pct_agentes,
+      pct_captador: pctLido("pct_captador") ?? draft.pct_captador,
       formas_pagamento: blank(draft.formas_pagamento),
       parcelas: blank(draft.parcelas),
       financiamento: draft.financiamento,
@@ -241,12 +256,12 @@ export default function NegociacaoPanel({
   // preview on screen. The stored value is never computed here.
   const previa = preverCalculo({
     valor_negociado: draft.valor_negociado,
-    pct_comissao: draft.pct_comissao,
+    pct_comissao: pctLido("pct_comissao") ?? "",
     tem_parceria: draft.tem_parceria,
-    pct_parceria: draft.pct_parceria,
-    pct_agencia: draft.pct_agencia,
-    pct_agentes: draft.pct_agentes,
-    pct_captador: draft.pct_captador,
+    pct_parceria: pctLido("pct_parceria") ?? "",
+    pct_agencia: pctLido("pct_agencia") ?? "",
+    pct_agentes: pctLido("pct_agentes") ?? "",
+    pct_captador: pctLido("pct_captador") ?? "",
   });
   const salvo = toDraft(negociacao);
   const alterado =
@@ -320,7 +335,9 @@ export default function NegociacaoPanel({
                 onChange={(e) => set("pct_comissao")(e.target.value)}
                 placeholder="6"
                 disabled={loading}
+                aria-invalid={pctInvalido("pct_comissao") || undefined}
               />
+              {pctErro("pct_comissao")}
             </div>
           </div>
 
@@ -345,7 +362,9 @@ export default function NegociacaoPanel({
                   value={draft.pct_parceria}
                   onChange={(e) => set("pct_parceria")(e.target.value)}
                   disabled={loading}
+                  aria-invalid={pctInvalido("pct_parceria") || undefined}
                 />
+                {pctErro("pct_parceria")}
                 <p className="text-xs text-muted-foreground">
                   Padrão 50%. A nossa metade é o que a divisão interna reparte.
                 </p>
@@ -366,7 +385,9 @@ export default function NegociacaoPanel({
                   value={draft.pct_agencia}
                   onChange={(e) => set("pct_agencia")(e.target.value)}
                   disabled={loading}
+                  aria-invalid={pctInvalido("pct_agencia") || undefined}
                 />
+                {pctErro("pct_agencia")}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="pct-agentes" className="text-xs">Agentes</Label>
@@ -376,7 +397,9 @@ export default function NegociacaoPanel({
                   value={draft.pct_agentes}
                   onChange={(e) => set("pct_agentes")(e.target.value)}
                   disabled={loading}
+                  aria-invalid={pctInvalido("pct_agentes") || undefined}
                 />
+                {pctErro("pct_agentes")}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="pct-captador" className="text-xs">Captador</Label>
@@ -386,7 +409,9 @@ export default function NegociacaoPanel({
                   value={draft.pct_captador}
                   onChange={(e) => set("pct_captador")(e.target.value)}
                   disabled={loading}
+                  aria-invalid={pctInvalido("pct_captador") || undefined}
                 />
+                {pctErro("pct_captador")}
               </div>
             </div>
             {splitInvalido && (
@@ -455,7 +480,7 @@ export default function NegociacaoPanel({
 
           <Button
             onClick={submit}
-            disabled={loading || saving || splitInvalido}
+            disabled={loading || saving || splitInvalido || algumPctInvalido}
             className="w-full"
             data-testid="negociacao-salvar"
           >

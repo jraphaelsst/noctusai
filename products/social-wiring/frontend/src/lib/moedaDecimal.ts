@@ -36,6 +36,21 @@ export function lerValorDigitado(entrada: string): string {
   return limpo;
 }
 
+/**
+ * Reads a pt-BR PERCENT/decimal a person typed: `6,26`, `6.26`, `6`, ` 6,5 ` →
+ * the canonical wire string (`"6.26"`, `"6.26"`, `"6"`, `"6.5"`). Blank → `""`.
+ * Anything else (`abc`, `6,2,6`, `1.234,5`) → `null`: INVALID, so the caller can
+ * show an inline error instead of sending garbage (the backend answers 422) or
+ * silently dropping it. Unlike money, a lone dot is a decimal point here — a
+ * percentage has no thousands separator.
+ */
+export function lerDecimalBR(entrada: string | null | undefined): string | null {
+  const t = (entrada ?? "").trim();
+  if (t === "") return "";
+  const canon = t.replace(",", ".");
+  return /^\d+(\.\d+)?$/.test(canon) ? canon : null;
+}
+
 /** `("2027-05-01", "mes")` → "até maio de 2027"; otherwise `exibirData`. */
 const MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
   "agosto", "setembro", "outubro", "novembro", "dezembro"];

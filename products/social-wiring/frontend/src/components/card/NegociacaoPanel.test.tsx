@@ -223,6 +223,24 @@ describe("NegociacaoPanel — o dinheiro na tela", () => {
     expect(campo.value).toBe("850.000,50");
   });
 
+  it("F41: % comissão em pt-BR (6,26) vai como 6.26 e a prévia calcula", async () => {
+    const { getByTestId, fireEvent, onSave, container } = await render(undefined);
+    fireEvent.change(getByTestId("negociacao-valor"), { target: { value: "100000" } });
+    fireEvent.change(getByTestId("negociacao-pct-comissao"), { target: { value: " 6,26 " } });
+    expect(container.textContent).not.toContain("informe valor negociado");
+    expect(container.textContent).toContain("6.260,00");
+    fireEvent.click(getByTestId("negociacao-salvar"));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ pct_comissao: "6.26" }));
+  });
+
+  it("F41: percentual inválido mostra erro inline e não salva", async () => {
+    const { getByTestId, fireEvent, onSave } = await render(undefined);
+    fireEvent.change(getByTestId("negociacao-pct-comissao"), { target: { value: "abc" } });
+    expect(getByTestId("negociacao-pct_comissao-invalido")).toBeTruthy();
+    fireEvent.click(getByTestId("negociacao-salvar"));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("calcula a divisão enquanto a pessoa digita, antes de salvar", async () => {
     // Esta era a tela cuja única razão de existir ficava muda até salvar.
     const { getByTestId, container, fireEvent } = await render({
