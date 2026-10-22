@@ -58,7 +58,19 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
                 t.gte.return_value = t
                 t.lte.return_value = t
                 t.limit.return_value = t
-                rows = (usage_by_schema or {}).get(name, [])
+                t.order.return_value = t
+                # The spend read is paged (`.order("id").range(a, b)`), so the fake honours the
+                # inclusive range the way PostgREST does; rows get ids to order by.
+                rows = [
+                    {"id": f"{i:06d}", **r}
+                    for i, r in enumerate((usage_by_schema or {}).get(name, []))
+                ]
+
+                def _range(start, end):
+                    t.execute.return_value = MagicMock(data=rows[start : end + 1])
+                    return t
+
+                t.range.side_effect = _range
                 t.execute.return_value = MagicMock(data=rows)
                 return t
 
