@@ -57,6 +57,12 @@ class FakeProvider:
         # `ChatToolsResponse`, a `str` (a final text turn), or a list/tuple of
         # `ToolCall` (a tool-calling turn). Exhausted ⇒ a deterministic text turn.
         tool_responses: Optional[Iterable[Union[ChatToolsResponse, str, Sequence[ToolCall]]]] = None,
+        # Scripted usage of `chat_completion` calls, aligned by call order: `(prompt_tokens, completion_tokens)`.
+        # Real providers record a `UsageEvent` per call; the fake does too, but ONLY when scripted
+        # (`usage_provider` names the provider/catalog the cost is priced against), so every existing
+        # caller keeps the no-usage behaviour.
+        chat_usage: Optional[Iterable[tuple[int, int]]] = None,
+        usage_provider: Optional[str] = None,
     ) -> None:
         self._chat: Deque[str] = deque(chat_responses or [])
         self._embeddings: Deque[List[float]] = deque(embedding_responses or [])
@@ -68,6 +74,8 @@ class FakeProvider:
         self._streams: Deque[List[str]] = deque(stream_responses or [])
         self._stream_truncated: Deque[bool] = deque(stream_truncated or [])
         self._tool_turns: Deque[Union[ChatToolsResponse, str, Sequence[ToolCall]]] = deque(tool_responses or [])
+        self._chat_usage: Deque[tuple[int, int]] = deque(chat_usage or [])
+        self._usage_provider = usage_provider
 
         # Call log — tests can inspect what was called, with what args.
         self.calls: list[dict] = []
@@ -95,6 +103,15 @@ class FakeProvider:
             max_tokens=max_tokens,
             response_format=response_format,
         )
+        if self._usage_provider is not None:
+            from ..usage import record_usage
+
+            prompt, completion = self._chat_usage.popleft() if self._chat_usage else (0, 0)
+            await record_usage(
+                provider=self._usage_provider, model=model, operation="chat",
+                prompt_tokens=prompt, completion_tokens=completion, total_tokens=prompt + completion,
+                org_id=kwargs.get("org_id"),
+            )
         if self._chat:
             return self._chat.popleft()
         return f"[FAKE] default chat response for model={model}"

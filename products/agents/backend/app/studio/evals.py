@@ -32,13 +32,10 @@ of 160 cases cost ~$20 with nothing recording it):
 * **Generator cost** comes straight off the Claude Agent SDK's
   ``ResultMessage`` (``total_cost_usd`` + ``usage``), surfaced through
   ``run_turn``'s final ``session.status`` event — no pricing lookup on this
-  side. **Judge cost** is captured via a small process-local usage-sink
-  wrapper around the ONE ``noctusai_lib.integrations.llm.chat_completion``
-  call the judge makes (see :func:`_call_with_usage`) — that module reports
-  usage to a sink, never back through its own return value, and this
-  product configures no sink of its own (``get_llm_config().usage_sink`` is
-  ``None`` by default), so nothing else in this product's ``chat_completion``
-  traffic shares that sink.
+  side. **Judge cost** comes from the seed's
+  ``chat_completion_with_usage`` (the SAME usage events the configured sink
+  receives, collected per call through ``coletar_uso()`` — no global sink
+  is installed and concurrent judge calls never see each other's events).
 * Both legs are summed into ``eval_results.custo_usd``/``tokens_*``
   (:func:`_combine_cost`) and rolled into ``eval_runs.custo_usd`` via
   ``_CostTracker`` — a plain (un-locked) accumulator: every read/write of it
@@ -303,86 +300,17 @@ def score_case(verdict: JudgeVerdict) -> tuple[bool, float]:
     return oks == total, round(oks / total, 3)
 
 
-class _CapturingUsageSink:
-    """Wraps whatever ``noctusai_lib`` ``usage_sink`` is already configured
-    (contract §L) — forwards every event to it unchanged, so composing this
-    in NEVER silently drops a real production sink — and also buffers every
-    event here for :func:`_call_with_usage` to drain. Nothing else in this
-    product calls ``chat_completion`` (only :class:`LlmJudge` does), so in
-    practice this product configures no sink of its own and ``_inner`` is
-    ``None``."""
-
-    def __init__(self, inner: Any) -> None:
-        self._inner = inner
-        self.events: list[Any] = []
-
-    async def record(self, event: Any) -> None:
-        if self._inner is not None:
-            await self._inner.record(event)
-        self.events.append(event)
-
-
-_usage_capture_lock = asyncio.Lock()
-_installed_usage_sink: _CapturingUsageSink | None = None
-
-
-def _ensure_usage_capture_sink() -> _CapturingUsageSink:
-    """Installs (once) or reuses :data:`_installed_usage_sink` as
-    ``get_llm_config().usage_sink``. MUST be called only from inside
-    :func:`_call_with_usage`'s lock — mutating the process-wide
-    ``LLMConfig.usage_sink`` is not itself safe to race."""
-    global _installed_usage_sink
-    from noctusai_lib.integrations.llm import get_llm_config
-
-    config = get_llm_config()
-    if _installed_usage_sink is None or config.usage_sink is not _installed_usage_sink:
-        _installed_usage_sink = _CapturingUsageSink(config.usage_sink)
-        config.usage_sink = _installed_usage_sink
-    return _installed_usage_sink
-
-
-async def _call_with_usage(
-    call: Callable[[], Any], *, provider: str, model: str, org_id: UUID,
-) -> tuple[str, TurnCost]:
-    """Runs ONE ``chat_completion``-shaped ``call()`` and returns
-    ``(text, TurnCost)`` — ``chat_completion`` itself only ever returns
-    text (contract §L module docstring), so this is the seam that recovers
-    the ``UsageEvent`` a provider records for the call.
-
-    Serialized process-wide (:data:`_usage_capture_lock`): the buffer is
-    shared across every concurrent judge call (``EVAL_CONCURRENCY=2``), and
-    correctness of the per-call cost attribution matters more than judge
-    calls running fully in parallel — the generator turns (the actually
-    slow part of a case) still run concurrently; only this one short LLM
-    call gets serialized. Missing/ambiguous usage (no event, or more than
-    one — a sink some OTHER caller shares, defensively handled even though
-    nothing else in this product calls ``chat_completion`` today) is
-    logged and treated as ``TurnCost()`` (every field ``None``), never a
-    silent 0 or a crashed case."""
-    async with _usage_capture_lock:
-        sink = _ensure_usage_capture_sink()
-        text = await call()
-        events, sink.events = sink.events, []
-        matches = [e for e in events if e.provider == provider and e.model == model]
-        if not matches:
-            logger.warning(
-                "agents.eval.judge_usage_missing org_id=%s provider=%s model=%s",
-                org_id, provider, model,
-            )
-            return text, TurnCost()
-        if len(matches) > 1:
-            logger.warning(
-                "agents.eval.judge_usage_ambiguous org_id=%s provider=%s model=%s count=%d — "
-                "using the last event",
-                org_id, provider, model, len(matches),
-            )
-        event = matches[-1]
-        return text, TurnCost(
-            custo_usd=event.cost_estimate_usd,
-            tokens_entrada=event.prompt_tokens,
-            tokens_saida=event.completion_tokens,
-            tokens_cache_leitura=None,  # Anthropic usage doesn't surface this leg via UsageEvent today.
-        )
+def _turn_cost_of(usage: Any, *, org_id: UUID, provider: str, model: str) -> TurnCost:
+    """The judge call's :class:`TurnCost` from the seed's ``chat_completion_with_usage`` result. Missing usage
+    (the provider recorded no event) is logged and stays ``TurnCost()`` (every field ``None``), never a silent 0
+    or a crashed case."""
+    if usage is None:
+        logger.warning("agents.eval.judge_usage_missing org_id=%s provider=%s model=%s", org_id, provider, model)
+        return TurnCost()
+    return TurnCost(
+        custo_usd=usage.cost_usd, tokens_entrada=usage.prompt_tokens, tokens_saida=usage.completion_tokens,
+        tokens_cache_leitura=None,  # Anthropic usage doesn't surface this leg via UsageEvent today.
+    )
 
 
 class LlmJudge:
@@ -400,14 +328,13 @@ class LlmJudge:
         self, *, org_id: UUID, entrada: str, contexto: str | None, criterios: list[Criterion],
         rubrica: str | None, saida: str,
     ) -> JudgeVerdict:
-        from noctusai_lib.integrations.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion_with_usage
 
         messages, _nonce = build_judge_messages(
             entrada=entrada, contexto=contexto, criterios=criterios, rubrica=rubrica, saida=saida
         )
-
-        def _call() -> Any:
-            return chat_completion(
+        try:
+            result = await chat_completion_with_usage(
                 messages,
                 model=self._model,
                 provider=self._provider,
@@ -416,14 +343,11 @@ class LlmJudge:
                 response_format={"type": "json_object"},
                 cache=False,
             )
-
-        try:
-            raw, custo = await _call_with_usage(
-                _call, provider=self._provider, model=self._model, org_id=org_id,
-            )
         except Exception as exc:
             logger.warning("agents.eval.judge_call_failed org_id=%s", org_id, exc_info=True)
             raise JudgeError("falha ao chamar o avaliador") from exc
+        raw = result.text
+        custo = _turn_cost_of(result.usage, org_id=org_id, provider=self._provider, model=self._model)
         verdict = parse_judge_output(raw, criterios)
         return replace(verdict, custo=custo)
 

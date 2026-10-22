@@ -48,6 +48,7 @@ from .chat import (
     chat_completion,
     chat_completion_stream,
 )
+from .chat_usage import ChatCompletionResult, ChatUsage, chat_completion_with_usage
 from .client import (
     configure_llm,
     get_llm_config,
@@ -205,6 +206,9 @@ __all__ = [
     # High-level entry points (what product services call)
     "chat_completion",
     "chat_completion_stream",
+    "chat_completion_with_usage",
+    "ChatCompletionResult",
+    "ChatUsage",
     # Provider-neutral tool calling (Lais S0)
     "chat_with_tools",
     "run_tool_loop",
