@@ -316,6 +316,10 @@ _RESUMO_ROTULOS: dict[str, str] = {
     "PENDENCIA FINANCEIRA": "pendencias_financeiras",
     "PENDENCIA REFIN": "pendencias_financeiras",
     "PENDENCIAS REFIN": "pendencias_financeiras",
+    "PENDENCIA PEFIN": "pendencias_financeiras",
+    "PENDENCIAS PEFIN": "pendencias_financeiras",
+    "PENDENCIA PEFIN/REFIN": "pendencias_financeiras",
+    "PENDENCIAS FINANCEIRAS (PEFIN/REFIN)": "pendencias_financeiras",
     "PROTESTO ESTADUAL": "protesto_estadual",
     "PROTESTOS ESTADUAIS": "protesto_estadual",
     "CHEQUES SEM FUNDO BACEN": "cheques_sem_fundo",
@@ -347,6 +351,66 @@ def _resumo_identidade(celulas: list[str]) -> Optional[tuple[str, str, str, str]
             if _DATA_CELULA_RE.fullmatch(nasc):
                 return c, nome, mae, nasc
     return None
+
+
+#: Row labels for the SINGLE-SPACED flat text layer (no 2+-space cells at all):
+#: found by regex inside the summary block, each row running to the next label.
+_RESUMO_ROTULO_PLANO_RE = re.compile(
+    r"PENDENCIAS?\s+INTERNAS?"
+    r"|PENDENCIAS?\s+FINANCEIRAS?(?:\s*\(?\s*(?:PEFIN|REFIN)(?:\s*/\s*REFIN)?\s*\)?)?"
+    r"|PENDENCIAS?\s+(?:PEFIN|REFIN)(?:\s*/\s*REFIN)?"
+    r"|PROTESTOS?\s+ESTADUA(?:L|IS)"
+    r"|CHEQUES?\s+SEM\s+FUNDO\s+BACEN"
+)
+_RESUMO_ACERTO_RE = re.compile(
+    r"(?P<q>\d+)\s+(?P<v>R\$\s*[\d.]+,\d{2})\s+(?P<u>\d{2}/\d{4}|\d{2}/\d{2}/\d{4})"
+)
+
+
+def _resumo_ocorrencias_planas(norm: str) -> dict[str, "OcorrenciaCrednet"]:
+    """Rows of the summary when the text layer prints the whole table with
+    single spaces ("Pendência Pefin 1 R$ 35,42 12/2023 Protesto Estadual
+    NAO CONSTAM OCORRENCIAS - -"). A row reads as a hit only on the full
+    "<n> R$ <valor> <mm/aaaa>" shape, as clean only on "NAO CONSTA…"."""
+    ini = _RESUMO_INICIO_RE.search(norm)
+    if ini is None:
+        return {}
+    bloco = norm[ini.end():]
+    fim = _RESUMO_FIM_RE.search(bloco)
+    if fim is not None:
+        bloco = bloco[: fim.start()]
+    marcas = list(_RESUMO_ROTULO_PLANO_RE.finditer(bloco))
+    out: dict[str, "OcorrenciaCrednet"] = {}
+    for i, mk in enumerate(marcas):
+        rotulo = re.sub(r"\s+", " ", mk.group(0)).strip()
+        rotulo = re.sub(r"\s*([()/])\s*", r"\1", rotulo).replace("(", " (", 1)
+        campo = _RESUMO_ROTULOS.get(rotulo)
+        if campo is None:
+            low = rotulo
+            if "INTERN" in low:
+                campo = "pendencias_internas"
+            elif "PEFIN" in low or "REFIN" in low or "FINANCEIRA" in low:
+                campo = "pendencias_financeiras"
+            elif "PROTESTO" in low:
+                campo = "protesto_estadual"
+            elif "CHEQUE" in low:
+                campo = "cheques_sem_fundo"
+            else:
+                continue
+        fim_i = marcas[i + 1].start() if i + 1 < len(marcas) else len(bloco)
+        resto = bloco[mk.end():fim_i]
+        if campo in out and out[campo].constam is not None:
+            continue
+        if "NAO CONSTA" in resto or "NADA CONSTA" in resto:
+            out[campo] = OcorrenciaCrednet(constam=False)
+            continue
+        a = _RESUMO_ACERTO_RE.search(resto)
+        if a is None:
+            continue
+        out[campo] = _ocorrencia(
+            "X  " + "  ".join((a.group("q"), a.group("v"), a.group("u"))), "X"
+        )
+    return out
 
 
 def _resumo_ocorrencias(celulas: list[str]) -> dict[str, "OcorrenciaCrednet"]:
@@ -618,7 +682,10 @@ def parse_crednet(text: str, source: TextSource) -> CrednetFields:
             confiancas["cpf_situacao"] = ExtractionConfidence.ALTA
             rotulos["cpf_situacao"] = "SITUACAO DO CPF/CNPJ EM"
 
-    por_resumo = _resumo_ocorrencias(celulas)
+    por_resumo = _resumo_ocorrencias_planas(norm)
+    por_resumo.update(
+        {k: v for k, v in _resumo_ocorrencias(celulas).items() if v.constam is not None}
+    )
 
     def _linha(campo: str) -> "OcorrenciaCrednet":
         # The summary table's own row first (it is the authoritative one in

@@ -562,3 +562,46 @@ class TestResumoDaConsultaTextLayerVariant:
         assert refin.ultimo_registro == date(2026, 5, 1)
         assert f.ocorrencias_constam() is True
         assert f.cpf_situacao == "REGULAR"
+
+
+class TestResumoSingleSpacedPefinRow:
+    """Deal 799 shape: whole summary on one line, row "Pendência Pefin" with a
+    "<n> R$ <valor> <mm/aaaa>" hit. Synthetic values."""
+
+    @staticmethod
+    def _txt(linha2: str) -> str:
+        return (
+            "Crednet 21 de Outubro de 2026 10:15:00 Resumo da consulta "
+            "CPF NOME NOME DA MÃE DATA NASCIMENTO Ocorrências Quantidade Valor "
+            "Último Registro Pendências Internas NAO CONSTAM OCORRENCIAS - - "
+            f"{linha2} Protesto Estadual NAO CONSTAM OCORRENCIAS - - "
+            "Cheques Sem Fundo BACEN NAO CONSTAM OCORRENCIAS - - "
+            "Detalhes do documento Situação do CPF/CNPJ em 02/10/2026: REGULAR"
+        )
+
+    @pytest.mark.parametrize(
+        "rotulo",
+        ["Pendência Pefin", "Pendências Pefin", "Pendência Refin",
+         "Pendências Financeiras (Pefin/Refin)"],
+    )
+    def test_hit_row_is_recognised(self, rotulo):
+        r = parse_crednet(self._txt(f"{rotulo} 2 R$ 1.234,56 03/2024"), TextSource.TEXT_LAYER)
+        pf = r.pendencias_financeiras
+        assert pf.constam is True
+        assert pf.quantidade == 2
+        assert pf.valor == Decimal("1234.56")
+        assert pf.ultimo_registro == date(2024, 3, 1)
+        assert r.ocorrencias_constam() is True
+
+    def test_negative_layout_stays_clean(self):
+        r = parse_crednet(
+            self._txt("Pendências Financeiras NAO CONSTAM OCORRENCIAS - -"),
+            TextSource.TEXT_LAYER,
+        )
+        assert r.pendencias_financeiras.constam is False
+        assert r.ocorrencias_constam() is False
+
+    def test_unreadable_row_stays_none(self):
+        r = parse_crednet(self._txt("Pendência Pefin ??? ???"), TextSource.TEXT_LAYER)
+        assert r.pendencias_financeiras.constam is None
+        assert r.ocorrencias_constam() is None
