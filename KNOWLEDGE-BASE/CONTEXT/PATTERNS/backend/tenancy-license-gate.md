@@ -182,6 +182,21 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
   header does NOT mount org-scoped widgets (notification bell, AI/LLM badges) nor the
   enrichment "Carregando" state while it is true, so nothing fetches behind the picker; logo,
   sidebar shell and avatar/name stay. Non-staff: unchanged.
+  **Shell access waterfall (2026-10-22):** the gate blocked every tab's FIRST entry until
+  `/api/me/access` answered, so page queries started ~300 ms late (orbity prod trace). Only
+  the "no picker applies" fact is knowable early, so the seed FE (`org-access-hint.ts`) keeps
+  exactly that: `localStorage['noctus:org-access-hint:<slug>']` = `{v,u:<user id>,ts}`, written
+  from every access answer with `available=false` (dropped on any other answer), honoured only
+  for the SAME user id the shell reports (`useOrgHintIdentity(user?.id)` in the layout; unknown
+  id = no hint), TTL 24 h, cleared on logout (`endOrgSelectionBestEffort`) and
+  `clearLocalIdentity`, every access try/catch (unreadable = no hint = blocked as before). With
+  a hint, `contentBlocked`'s "entry + access pending" term is off, so page queries run in
+  PARALLEL with access. STILL blocked (unchanged): no hint (first ever entry, new user, expired,
+  cookie-session products with no user id, storage off); and always, once access says
+  `available` (staff / member with >=2 orgs): entry handshake, `ended`, `required`. Contradiction
+  (user became staff / multi-org): the answer re-blocks the content via those same rules; any
+  request fired meanwhile without a pin gets `409 org_selection_required`, handled by the api
+  client as before; the hint is dropped. Within a visit (marker present) nothing was ever blocked.
   **Cross-tab rule (owner 1A, 2026-10-12; fix 2026-10-13):** one org per product per login, so
   choosing in a 2nd tab must make the 1st tab RE-PROMPT, never silently adopt. The marker
   therefore stores the org THIS tab chose (`markOrgVisit(orgId)`; non-staff store the sentinel

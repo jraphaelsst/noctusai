@@ -83,3 +83,135 @@ describe('useOrgSelection pin vs org swap', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shell access waterfall: the first entry of a tab renders while access revalidates
+// ONLY when a per-user "no picker" hint exists.
+// ---------------------------------------------------------------------------
+import {
+  clearOrgAccessHint, hasOrgAccessHint, resetOrgAccessHint, setOrgHintUser, writeOrgAccessHint,
+  ORG_ACCESS_HINT_TTL_MS,
+} from './org-access-hint';
+import { endOrgSelectionBestEffort } from './org-selection';
+
+const solo = { has_access: true, product_slug: 'p', org: X, org_selection: undefined };
+const picker = (required: boolean) => ({
+  has_access: true, product_slug: 'p', org: X,
+  org_selection: {
+    available: true, required, mfa_required: false, acting: false,
+    org: X, home_org: X, selection_id: null, manage_any_org: true,
+  },
+});
+
+const memStore = (): Storage => {
+  const m = new Map<string, string>();
+  return {
+    get length() { return m.size; }, clear: () => m.clear(), key: (i: number) => [...m.keys()][i] ?? null,
+    getItem: (k: string) => m.get(k) ?? null, removeItem: (k: string) => { m.delete(k); },
+    setItem: (k: string, v: string) => { m.set(k, String(v)); },
+  };
+};
+
+describe('useOrgSelection early render from the no-picker hint', () => {
+  const realLocal = Object.getOwnPropertyDescriptor(window, 'localStorage');
+  let qc: QueryClient;
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  const pending = () => new Promise(() => {});
+  beforeEach(() => {
+    apiGet.mockReset();
+    resetOrgSelectionPage(); setOrgPin(null);
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: memStore() });
+    window.sessionStorage.clear(); resetOrgAccessHint();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+  afterEach(() => { cleanup(); window.sessionStorage.clear(); resetOrgAccessHint();
+    if (realLocal) Object.defineProperty(window, 'localStorage', realLocal);
+  });
+
+  it('no hint: an entry stays blocked while access is pending (unchanged)', () => {
+    apiGet.mockReturnValue(pending());
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    expect(result.current.contentBlocked).toBe(true);
+  });
+
+  it('hint for the current user: entry renders at once, access still pending', () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    apiGet.mockReturnValue(pending());
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    expect(result.current.contentBlocked).toBe(false);
+    expect(result.current.showSkeleton).toBe(true);
+  });
+
+  it('hint is never reused by another user (and is dropped)', () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    setOrgHintUser('u2');
+    expect(hasOrgAccessHint()).toBe(false);
+    setOrgHintUser('u1');
+    expect(hasOrgAccessHint()).toBe(false); // gone, not parked
+  });
+
+  it('hint for an unknown user is ignored', () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    setOrgHintUser(null);
+    expect(hasOrgAccessHint()).toBe(false);
+  });
+
+  it('an expired hint is ignored', () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    const now = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now + ORG_ACCESS_HINT_TTL_MS + 1);
+    expect(hasOrgAccessHint()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('unavailable storage reads as no hint', () => {
+    setOrgHintUser('u1');
+    const spy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    expect(hasOrgAccessHint()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('contradiction (staff, first entry): content re-blocks and the hint is dropped', async () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    apiGet.mockResolvedValue(picker(true));
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    expect(result.current.contentBlocked).toBe(false); // optimistic, before the answer
+    await waitFor(() => expect(result.current.contentBlocked).toBe(true));
+    expect(result.current.pickerRequired).toBe(true);
+    await waitFor(() => expect(hasOrgAccessHint()).toBe(false));
+  });
+
+  it('staff / multi-org first entry with no hint never renders before the picker', async () => {
+    apiGet.mockResolvedValue(picker(false));
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    expect(result.current.contentBlocked).toBe(true);
+    await waitFor(() => expect(result.current.access).toBeDefined());
+    expect(result.current.contentBlocked).toBe(true);
+  });
+
+  it('a single-org answer writes the hint for the current user and marks the visit', async () => {
+    setOrgHintUser('u1');
+    apiGet.mockResolvedValue(solo);
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    await waitFor(() => expect(result.current.entryPhase).toBe('visit'));
+    expect(hasOrgAccessHint()).toBe(true);
+    expect(result.current.contentBlocked).toBe(false);
+  });
+
+  it('no user id known: nothing is written', async () => {
+    apiGet.mockResolvedValue(solo);
+    const { result } = renderHook(() => useOrgSelection(), { wrapper });
+    await waitFor(() => expect(result.current.entryPhase).toBe('visit'));
+    setOrgHintUser('u1');
+    expect(hasOrgAccessHint()).toBe(false);
+  });
+
+  it('logout clears the hint', async () => {
+    setOrgHintUser('u1'); writeOrgAccessHint();
+    await endOrgSelectionBestEffort();
+    expect(hasOrgAccessHint()).toBe(false);
+    clearOrgAccessHint();
+  });
+});

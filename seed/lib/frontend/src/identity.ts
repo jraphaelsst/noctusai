@@ -12,6 +12,7 @@
  *    previous user, so an account switch cannot leak the old identity.
  */
 import { env } from './env';
+import { clearOrgAccessHint } from './org-access-hint';
 import { setOrgPin } from './org-pin';
 import { ACTIVITY_REFRESH_STORAGE_KEY } from './design-system/useActivityRefresh';
 
@@ -53,6 +54,7 @@ export async function dropProductCookieSession(keepSessionId?: string | null): P
 /** Clear SPA state scoped to the previous user (pin + per-user localStorage). */
 export function clearLocalIdentity(): void {
   setOrgPin(null);
+  clearOrgAccessHint();
   try {
     localStorage.removeItem(ACTIVITY_REFRESH_STORAGE_KEY);
   } catch {

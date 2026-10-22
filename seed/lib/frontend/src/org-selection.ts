@@ -33,6 +33,7 @@ import {
   setOrgEntryPhase, subscribeOrgEntryPhase,
 } from './org-visit';
 import type { OrgEntryPhase } from './org-visit';
+import { clearOrgAccessHint, useOrgAccessHint, writeOrgAccessHint } from './org-access-hint';
 
 export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 
@@ -127,7 +128,9 @@ export interface UseOrgSelectionResult {
   /**
    * The product's routes/children must NOT render: an entry whose access is still
    * pending, an entry handshake in flight, or a required picker. No picker
-   * (non-staff with <2 eligible orgs) within a visit: always `false`.
+   * (non-staff with <2 eligible orgs) within a visit: always `false`. An entry whose access
+   * is still pending is NOT blocked when a fresh per-user "no picker" hint exists
+   * (`org-access-hint.ts`): the page's queries then run in parallel with `/api/me/access`.
    */
   contentBlocked: boolean;
   /** This page load's entry phase (see `org-visit.ts`). */
@@ -188,6 +191,9 @@ export function useOrgSelection():UseOrgSelectionResult {
 
   const accessQ = useMeAccess();
   const selection = orgSelectionOf(accessQ.data);
+  // Early-render hint (org-access-hint.ts): this user is known to hold NO picker. Only ever
+  // consulted while access is still pending on an entry; the answer replaces it.
+  const noPickerHint = useOrgAccessHint();
 
   // Pin the org the server says we are in. The FIRST pin of a page load is
   // adopted silently; after that `pageOrg` (the org this page's React-Query
@@ -197,6 +203,14 @@ export function useOrgSelection():UseOrgSelectionResult {
   const accessOrgId = selection.available && selection.selection_id && selection.org
     ? selection.org.id : null;
   const accessLoaded = accessQ.data !== undefined;
+
+  // Keep the hint equal to the latest server answer: "no picker" is remembered, anything
+  // else (picker applies, no licence, MFA wall) drops it so the next entry waits for access.
+  useEffect(() => {
+    if (accessQ.data === undefined) return;
+    if (!selection.available && accessQ.data.has_access !== false) writeOrgAccessHint();
+    else clearOrgAccessHint();
+  }, [accessQ.data, selection.available]);
 
   // Entry handshake -- runs once per page load (module-level phase; every hook
   // instance sees the same transition). Whenever the picker applies (staff, or a member
@@ -301,7 +315,7 @@ export function useOrgSelection():UseOrgSelectionResult {
   const entering = isEntry(entryPhase);
   const pickerRequired = selection.available && (selection.required || entering);
   const contentBlocked =
-    (entryPhase === 'entry' && accessQ.isPending && !accessQ.data)
+    (entryPhase === 'entry' && accessQ.isPending && !accessQ.data && !noPickerHint)
     || (selection.available && (entryPhase === 'entry' || entryPhase === 'ending'))
     || pickerRequired;
 
@@ -345,6 +359,7 @@ export async function endOrgSelectionBestEffort(): Promise<void> {
   } finally {
     pageOrg = null;
     setOrgPin(null);
+    clearOrgAccessHint(); // the next user must not inherit this one's hint
     clearOrgVisitMarker(); // the next load after a logout is an entry
   }
 }

@@ -35,6 +35,7 @@ export { OrgSelectionGate, OrgContentGate, useOrgEntryPending } from "./componen
 export { OrgSwitcher, OrgSwitcherView } from "./components/OrgSwitcher";
 export type { OrgSwitcherViewProps } from "./components/OrgSwitcher";
 export { useOrgSelection, useMeAccess, endOrgSelectionBestEffort, ME_ACCESS_QUERY_KEY, ORG_CHOICES_QUERY_KEY } from "../org-selection";
+export { useOrgHintIdentity } from "../org-access-hint";
 export type { UseOrgSelectionResult } from "../org-selection";
 export { useIsOrgAdmin } from "../use-is-org-admin";
 export { useEffectiveSSOContext } from "../use-effective-sso-context";

@@ -159,6 +159,7 @@ export const OrgContentGate: React.FC<{ children?: React.ReactNode }> = ({ child
 export const OrgSwitcher: React.FC = () => <span data-testid="org-switcher-stub" />;
 /** Harness switch: tests flip it to simulate a required picker / pending entry. */
 export const orgEntryState = { pending: false };
+export const useOrgHintIdentity = (_userId?: string | null): void => {};
 export const useOrgEntryPending = (): boolean => orgEntryState.pending;
 /** Call log so layout tests can assert the logout path ends the selection first. */
 export const orgSelectionCalls: string[] = [];

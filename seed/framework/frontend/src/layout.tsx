@@ -42,6 +42,7 @@ import {
   OrgContentGate,
   OrgSwitcher,
   useOrgEntryPending,
+  useOrgHintIdentity,
   useMeAccess,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
@@ -372,6 +373,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
     // Staff behind the org picker (or a pending entry): org-scoped header widgets are not
     // mounted (no bell / AI-badge fetches) and the enrichment "Carregando" state is moot.
     const orgEntryPending = useOrgEntryPending();
+    // Per-user key of the "no picker" hint that lets a single-org member's entry render
+    // while /api/me/access is still in flight (lib org-access-hint.ts).
+    useOrgHintIdentity(user?.id);
     // The EFFECTIVE org of this visit (multi-org S5b): after a member/staff org switch the
     // subtitle, role label and nav role follow `/api/me/access`, not the SSO token (which
     // names the org that admitted the user). The token stands in only until access answers.
