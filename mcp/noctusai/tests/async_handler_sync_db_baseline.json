@@ -41,7 +41,7 @@
     "seed/framework/backend/noctusai_seed/ai_feedback_router.py": 2,
     "seed/framework/backend/noctusai_seed/auth_router.py": 4,
     "seed/framework/backend/noctusai_seed/llm_router.py": 3,
-    "seed/framework/backend/noctusai_seed/routers.py": 5,
+    "seed/framework/backend/noctusai_seed/routers.py": 1,
     "seed/framework/backend/noctusai_seed/status_pagina_router.py": 2
   }
 }

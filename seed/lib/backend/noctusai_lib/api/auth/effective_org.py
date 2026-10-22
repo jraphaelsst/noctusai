@@ -54,6 +54,7 @@ from typing import Any, Callable, Optional
 from fastapi import HTTPException
 
 from noctusai_lib.api.audit.types import AuditActor
+from noctusai_lib.api.auth._blocking import run_parallel
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
 from noctusai_lib.primitives.roles import is_customer_role
 
@@ -319,13 +320,18 @@ def _resolve_member(
             return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
         return _pinned(home)
     session_id, _aal = read_session_claims(token, user_id=user_id)
-    sel = selection_store.live(user_id, product_slug) if session_id else None
 
     def licensed(org_id: Any) -> bool:
         return license_checker is None or bool(license_checker.has_license(org_id, product_slug))
 
-    active = {str(m.org_id): m for m in selection_store.memberships(user_id)}
-    blocked = selection_store.blocked_orgs(user_id, product_slug)
+    # Three independent fresh reads (revocation by recheck: still never cached) issued
+    # together -- one round trip of wall time instead of three.
+    memberships, blocked, sel = run_parallel(
+        lambda: selection_store.memberships(user_id),
+        lambda: selection_store.blocked_orgs(user_id, product_slug),
+        lambda: selection_store.live(user_id, product_slug) if session_id else None,
+    )
+    active = {str(m.org_id): m for m in memberships}
     eligible = {
         org: m for org, m in active.items()
         if not is_customer_role(m.org_role) and org not in blocked and licensed(org)

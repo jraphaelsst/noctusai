@@ -45,6 +45,7 @@ from noctusai_lib.domain.org import (
     sync_org_metadata,
 )
 from noctusai_lib.api.auth import make_get_current_user_org
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.integrations.email.templates import (
@@ -100,6 +101,9 @@ def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRoute
 
 
 def _create_notificacoes_router(deps) -> APIRouter:
+    """Shell endpoints (the bell polls them on every page): the auth dependency already runs off
+    the loop, and so does each handler's single PostgREST call (``run_blocking``) -- a sync
+    ``.execute()`` inside ``async def`` would park the event loop and serialize concurrent requests."""
     router = APIRouter(prefix="/api/notificacoes", tags=["Notificacoes"])
 
     @router.get("")
@@ -111,14 +115,18 @@ def _create_notificacoes_router(deps) -> APIRouter:
         user, token = await deps.get_current_user(authorization)
         core = deps.get_core_client()
         offset = (page - 1) * page_size
-        result = (
-            core.table("notifications")
-            .select("*", count="exact")
-            .eq("user_id", str(user.id))
-            .order("created_at", desc=True)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
+
+        def _query():
+            return (
+                core.table("notifications")
+                .select("*", count="exact")
+                .eq("user_id", str(user.id))
+                .order("created_at", desc=True)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+
+        result = await run_blocking(_query)
         items = [map_notification_to_pt(n) for n in (result.data or [])]
         return {"data": items, "total": result.count or 0, "page": page, "page_size": page_size}
 
@@ -126,27 +134,38 @@ def _create_notificacoes_router(deps) -> APIRouter:
     async def contagem(authorization: Optional[str] = Header(None)):
         user, token = await deps.get_current_user(authorization)
         core = deps.get_core_client()
-        result = (
-            core.table("notifications")
-            .select("id", count="exact")
-            .eq("user_id", str(user.id))
-            .eq("read", False)
-            .execute()
-        )
+
+        def _query():
+            return (
+                core.table("notifications")
+                .select("id", count="exact")
+                .eq("user_id", str(user.id))
+                .eq("read", False)
+                .limit(1)
+                .execute()
+            )
+
+        result = await run_blocking(_query)
         return {"nao_lidas": result.count or 0}
 
     @router.patch("/{notificacao_id}/ler")
     async def marcar_lida(notificacao_id: str, authorization: Optional[str] = Header(None)):
         user, _ = await deps.get_current_user(authorization)
         core = deps.get_core_client()
-        core.table("notifications").update({"read": True}).eq("id", notificacao_id).eq("user_id", str(user.id)).execute()
+        await run_blocking(
+            lambda: core.table("notifications").update({"read": True})
+            .eq("id", notificacao_id).eq("user_id", str(user.id)).execute()
+        )
         return {"ok": True}
 
     @router.post("/ler-todas")
     async def marcar_todas_lidas(authorization: Optional[str] = Header(None)):
         user, _ = await deps.get_current_user(authorization)
         core = deps.get_core_client()
-        core.table("notifications").update({"read": True}).eq("user_id", str(user.id)).eq("read", False).execute()
+        await run_blocking(
+            lambda: core.table("notifications").update({"read": True})
+            .eq("user_id", str(user.id)).eq("read", False).execute()
+        )
         return {"ok": True}
 
     return router

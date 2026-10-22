@@ -44,6 +44,7 @@ from noctusai_lib.api.auth.effective_org import (
     platform_staff_role,
     resolve_effective_org_for_request,
 )
+from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
 from noctusai_lib.api.auth.org_selection import OrgSelectionError
 from noctusai_lib.domain.licensing import (
@@ -90,14 +91,17 @@ def _org_names(core_client: Any, org_ids: list[str]) -> dict[str, Optional[str]]
     return {str(r["id"]): r.get("nome") for r in rows}
 
 
-def _manageable_orgs(core_client: Any, user_id: Any) -> list[dict]:
-    """The caller's ACTIVE owner/admin memberships, ``[{id, nome, org_role}]`` by name."""
-    rows = (
+def _manageable_rows(core_client: Any, user_id: Any) -> list[dict]:
+    """The caller's ACTIVE owner/admin memberships, ``[{org_id, org_role}]`` (one query)."""
+    return (
         core_client.table("org_memberships").select("org_id, org_role")
         .eq("user_id", str(user_id)).eq("status", "active")
         .in_("org_role", list(MANAGER_ORG_ROLES)).execute().data or []
     )
-    names = _org_names(core_client, [r["org_id"] for r in rows])
+
+
+def _manageable_orgs(rows: list[dict], names: dict[str, Optional[str]]) -> list[dict]:
+    """``[{id, nome, org_role}]`` by name, from the membership rows + the shared name map."""
     out = [{"id": str(r["org_id"]), "nome": names.get(str(r["org_id"])), "org_role": r.get("org_role")}
            for r in rows]
     return sorted(out, key=lambda o: (o.get("nome") or "").lower())
@@ -107,13 +111,18 @@ class OrgChoiceBody(StrictHttpModel):
     org_id: UUID
 
 
-def _selection_block(core: Any, eff: Optional[EffectiveOrg]) -> dict:
-    home = _org_dto(core, eff.home_org_id) if eff is not None else None
-    effective = _org_dto(core, eff.org_id) if eff is not None else None
+def _selection_block(names: dict[str, Optional[str]], eff: Optional[EffectiveOrg]) -> dict:
+    """The picker block. ``names`` is the ONE ``{org_id: nome}`` map the caller fetched for every
+    org the response mentions (home, effective, eligible, manageable) -- no per-org lookups."""
+
+    def _dto(org_id: Optional[str]) -> Optional[dict]:
+        return {"id": str(org_id), "nome": names.get(str(org_id))} if org_id else None
+
+    home = _dto(eff.home_org_id) if eff is not None else None
+    effective = _dto(eff.org_id) if eff is not None else None
     is_staff = bool(eff is not None and eff.is_staff)
     can_select = bool(eff is not None and eff.member_can_select)
     eligible = list(eff.eligible) if eff is not None else []
-    names = _org_names(core, [org for org, _role in eligible])
     home_id = str(eff.home_org_id) if eff is not None and eff.home_org_id else None
     eligible_orgs = sorted(
         ({"id": org, "nome": names.get(org), "org_role": role, "is_home": org == home_id}
@@ -139,19 +148,40 @@ def create_me_router(deps) -> APIRouter:
     router = APIRouter(prefix="/api/me", tags=["me"])
 
     def _access_body(core: Any, user_id: Any, token: str) -> dict:
-        try:
-            # Ungated picker bootstrap: staff without a selection get the home
-            # snapshot + `required`, never the gated 409 org_selection_required.
-            eff = resolve_effective_org_for_request(
-                core, user_id, token=token, require_selection=False
-            )
-        except HTTPException:
-            raise
-        except LicenseCheckUnavailable:
-            raise HTTPException(status_code=503, detail="Falha ao verificar a licença da organização")
-        except Exception:
-            logger.error("me_access_lookup_error user_id=%s", user_id, exc_info=True)
-            raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+        """SYNC (worker thread). Round trips: the effective-org resolve (noctus_users, then its
+        memberships / blocks / live-selection reads in parallel), the platform-staff check and the
+        manageable memberships run CONCURRENTLY with it, then ONE organizations name lookup for
+        every org the body mentions (was ~11 sequential calls)."""
+
+        def _resolve():
+            try:
+                # Ungated picker bootstrap: staff without a selection get the home
+                # snapshot + `required`, never the gated 409 org_selection_required.
+                return resolve_effective_org_for_request(
+                    core, user_id, token=token, require_selection=False
+                )
+            except HTTPException:
+                raise
+            except LicenseCheckUnavailable:
+                raise HTTPException(status_code=503, detail="Falha ao verificar a licença da organização")
+            except Exception:
+                logger.error("me_access_lookup_error user_id=%s", user_id, exc_info=True)
+                raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+
+        def _guarded(fn):
+            def run():
+                try:
+                    return fn()
+                except Exception:
+                    logger.error("me_access_manageable_lookup_error user_id=%s", user_id, exc_info=True)
+                    raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+            return run
+
+        eff, platform_role, manage_rows = run_parallel(
+            _resolve,
+            _guarded(lambda: platform_staff_role(core, user_id)),
+            _guarded(lambda: _manageable_rows(core, user_id)),
+        )
         gate = get_license_gate()
         slug = gate.product_slug if gate else None
         has_access = False
@@ -162,16 +192,14 @@ def create_me_router(deps) -> APIRouter:
             except HTTPException as exc:
                 if exc.status_code != 403:
                     raise
-        block = _selection_block(core, eff)
-        try:
-            platform_role = platform_staff_role(core, user_id)
-            manageable = _manageable_orgs(core, user_id)
-        except Exception:
-            logger.error("me_access_manageable_lookup_error user_id=%s", user_id, exc_info=True)
-            raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+        wanted = [o for o in (eff.home_org_id, eff.org_id) if o] if eff is not None else []
+        wanted += [org for org, _role in (eff.eligible if eff is not None else ())]
+        wanted += [str(r["org_id"]) for r in manage_rows]
+        names = _org_names(core, wanted)
+        block = _selection_block(names, eff)
         block["platform_role"] = platform_role
         block["manage_any_org"] = platform_role is not None
-        block["manageable_orgs"] = manageable
+        block["manageable_orgs"] = _manageable_orgs(manage_rows, names)
         return {
             "has_access": has_access,
             "product_slug": slug,
@@ -213,14 +241,16 @@ def create_me_router(deps) -> APIRouter:
     @router.get("/access")
     async def me_access(auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, token = auth
-        return _access_body(deps.get_core_client(), user.id, token)
+        return await run_blocking(_access_body, deps.get_core_client(), user.id, token)
 
     @router.get("/org-choices")
     async def org_choices(response: Response, auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, token = auth
-        core = deps.get_core_client()
-        slug, store, _sid, is_staff = _picker_ctx(core, user, token)
         response.headers["Cache-Control"] = "no-store"
+        return await run_blocking(_org_choices, deps.get_core_client(), user, token)
+
+    def _org_choices(core: Any, user, token: str) -> dict:
+        slug, store, _sid, is_staff = _picker_ctx(core, user, token)
         try:
             eff = resolve_effective_org_for_request(core, user.id)  # home (no token)
             licensed = store.licensed_orgs(slug)
@@ -256,6 +286,9 @@ def create_me_router(deps) -> APIRouter:
     async def put_org_choice(body: OrgChoiceBody, auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, token = auth
         core = deps.get_core_client()
+        return await run_blocking(_put_org_choice, core, user, token, body)
+
+    def _put_org_choice(core: Any, user, token: str, body: OrgChoiceBody) -> dict:
         slug, store, session_id, _is_staff_caller = _picker_ctx(core, user, token)
         if not session_id:
             raise _err(403, "Sessão sem identificador.", MFA_REQUIRED)
