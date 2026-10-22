@@ -45,6 +45,7 @@
     "296_clientes_filiacao_naturalidade.sql": "294070288093eb625dfb26d9995b18f1dfee316402970c0f01eeaac919a2f21c",
     "297_julia_solicitacoes_titular.sql": "bf68968ad21be467c91708e91489d97187de8880cb83ec3a81b85a601ce04807",
     "298_julia_staff_protecao_bloqueio.sql": "86ecb306b4ed55788ba5188bc85b9f6d135f4644bcf6ff5c69b3750e945af5da",
-    "299_participacao_decisao_obrigacoes_local.sql": "00c6cba9741c806458543d0c1c380e07dccb660f40deb913637053f127e1647d"
+    "299_participacao_decisao_obrigacoes_local.sql": "00c6cba9741c806458543d0c1c380e07dccb660f40deb913637053f127e1647d",
+    "300_imovel_condominio_fk.sql": "fd2d98b1fc9dfd8e6f084ea78c0917c02ce929d0626a4944a93ba695afe08747"
   }
 }
