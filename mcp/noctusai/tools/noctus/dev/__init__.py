@@ -140,6 +140,7 @@ def register_all(server) -> None:
     from . import supabase_advisors
     from . import divergencia_calibrar
     from . import contract_score
+    from . import contract_e2e_pack
     from . import sync_seed_template
     from . import surface_to_tech_lead
     from . import list_pending_surfaces
@@ -295,6 +296,7 @@ def register_all(server) -> None:
     supabase_advisors.register(server)
     divergencia_calibrar.register(server)
     contract_score.register(server)
+    contract_e2e_pack.register(server)
     sync_seed_template.register(server)
     surface_to_tech_lead.register(server)
     list_pending_surfaces.register(server)
