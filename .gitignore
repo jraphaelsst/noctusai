@@ -226,3 +226,6 @@ products/*/projects/lais/
 products/*/projects/**/corestudio-*.json
 **/bubble-definition-dump*
 _private-studies/
+
+# perf-probe captures (third-party app data must never enter git)
+.noc-perf/

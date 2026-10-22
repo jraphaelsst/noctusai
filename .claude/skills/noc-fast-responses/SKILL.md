@@ -22,6 +22,7 @@ shell / `/api/me*` / notifications **150 ms** · reads **300 ms** · writes **50
 ## Measuring
 - Every response carries `Server-Timing: app;dur=<ms>` (browser devtools) and logs a `req_timing` line with the ROUTE TEMPLATE (`RequestTimingMiddleware`, in every product by construction).
 - **After deploy**: `noctus.dev.latency_report product=<slug>` (CLI `--latency-report <slug>`). `over_budget` = fix before walking away. `inconclusive` (no data) is not a pass: browse the product, re-run. The new route must appear in the report.
+- **Client view** (what the browser lived through: waterfalls, duplicates, edge time): `noctus.dev.perf_probe` - capture before/after labels and `compare`. Skill `noc-perf-probe`.
 - Pin the mechanism in tests (round-trip count via a counting fake client, concurrency overlap, cache eviction), not wall-clock numbers.
 
 ## Guardrails

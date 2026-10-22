@@ -40,6 +40,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/document-extraction-learnings.md
   - CONTEXT/PATTERNS/common/outbound-rate-limiting.md
   - CONTEXT/PATTERNS/common/realtime-sse-bus.md
+  - CONTEXT/PATTERNS/common/performance-analysis.md
   - CONTEXT/backend/01-CORE.md
   - CONTEXT/backend/02-ERP.md
   - CONTEXT/backend/03-PF.md
@@ -120,6 +121,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.
+**Performance (client view)** → `KB § PATTERNS/common/performance-analysis.md` (`noctus.dev.perf_probe`; skill `noc-perf-probe`).
 **Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § GUIDES/matricula-source-recovery.md`.
 
 ## Composes-with (commons + cross-domain)

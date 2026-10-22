@@ -60,4 +60,6 @@ Server-side p95 budgets live in ONE file, `deploy/fleet/latency-budgets.json` (s
 
 Do not trust a green unit run alone: time one authenticated endpoint with 3 concurrent requests before/after (`serial` = sum, `parallel` ≈ max). The tests pin the mechanism (`test_token_cache.py`, `test_database_pooling.py` — incl. a real local keep-alive server — and `test_request_path_latency.py`).
 
-Cross-links: skill `noc-fast-responses` · `mutation-cache-writes.md` (the perceived-latency half) · `admin-client-schema-pinning.md` · `postgrest-row-cap.md` · `tenancy-license-gate.md`.
+**Client view.** This doc is the server half. What the browser actually waited for (page data-ready, waterfalls, duplicate calls, edge vs app time, before/after deltas) is `noctus.dev.perf_probe` -> `KB § PATTERNS/common/performance-analysis.md`.
+
+Cross-links: skill `noc-perf-probe` · skill `noc-fast-responses` · `mutation-cache-writes.md` (the perceived-latency half) · `admin-client-schema-pinning.md` · `postgrest-row-cap.md` · `tenancy-license-gate.md`.
