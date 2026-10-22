@@ -7,6 +7,8 @@ admin a 403, a content token WITHOUT ``studio:agent-delete`` a 403 ``scope_missi
 """
 from __future__ import annotations
 
+from tests.julia_body import JULIA_BODY
+
 from uuid import UUID
 
 import pytest
@@ -171,13 +173,13 @@ class TestEmptyShellCreation:
     def test_the_content_token_creates_an_empty_platform_definition_and_audits_it_once(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         raw = _token(studio, ["studio:content-write"])
-        first = raw.post(f"{PLAT}/agents", json={"key": "julia"})
+        first = raw.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert first.status_code == 201, first.text
         assert first.json()["definition_scope"] == "plataforma"
         agent = studio.store.get_agent(DEFAULT_ORG_ID, "julia")
         draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
         assert studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == [], "no text is required to create"
-        again = raw.post(f"{PLAT}/agents", json={"key": "julia"})
+        again = raw.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert again.status_code == 201 and again.json()["id"] == first.json()["id"]
         criado = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "agente_criado"]
         assert len(criado) == 1, "audited when it creates, not on the idempotent hit"
@@ -185,11 +187,11 @@ class TestEmptyShellCreation:
     def test_a_token_without_the_scope_cannot_create(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         raw = _token(studio, ["studio:publish"])
-        resp = raw.post(f"{PLAT}/agents", json={"key": "julia"})
+        resp = raw.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert resp.status_code == 403 and resp.json()["code"] == "scope_missing"
 
     def test_unauthenticated_is_strict_401(self, studio):
-        assert studio.raw.post(f"{PLAT}/agents", json={"key": "julia"}).status_code == 401
+        assert studio.raw.post(f"{PLAT}/agents", json=JULIA_BODY).status_code == 401
 
 
 class TestMintWithDelete:

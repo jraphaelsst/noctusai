@@ -66,7 +66,7 @@ def resolve_agent_for_org(
 
     ``versao``: ``"ativa"`` (default — what a live turn runs), ``"rascunho"`` (the definition's
     draft — Studio previews it per org) or an explicit version id. Raises :class:`NotFound` when
-    the org has no such agent (an instance row is created by ``ensure_julia`` / the admin)."""
+    the org has no such agent (an instance row is created by ``plataforma.ensure_instancia`` / the admin)."""
     instancia = store.get_agent(org_id, key)
     if instancia.definition_scope == "instancia":
         definicao = store.get_agent_by_id(instancia.definition_agent_id)

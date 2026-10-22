@@ -206,7 +206,7 @@ class LiveEvalTurnDriver:
     """
 
     def __init__(
-        self, *, studio_store: Any, catalog: Any, padroes: Any, agent_key: str = "julia",
+        self, *, studio_store: Any, catalog: Any, padroes: Any, agent_key: str | None = None,
         key_resolver: Callable[[str, UUID], str | None] | None = None, provider_impl: Any | None = None,
         skills_factory: Any | None = None, tools_factory: Callable[[Any, Any], Any] | None = None,
         daily_cap_usd: float = 0.0, conformidade: Any | None = None,
@@ -225,6 +225,11 @@ class LiveEvalTurnDriver:
         self._conformidade = conformidade
         self._mundo: _Mundo | None = None
 
+    def definir_agente(self, agent_key: str) -> None:
+        """The agent this run evaluates (the suite route sets it from its path -- no agent key lives in code); a
+        fixture's own ``agent_key`` still wins per thread."""
+        self._agent_key = agent_key
+
     @property
     def tipo(self) -> str:
         return "live" if self._provider_impl is None else "fake"
@@ -236,7 +241,10 @@ class LiveEvalTurnDriver:
     # ── world construction ──
 
     def _montar(self, thread: ThreadState) -> _Mundo:
-        key = str(thread.fixture.get("agent_key") or self._agent_key)
+        key = thread.fixture.get("agent_key") or self._agent_key
+        if not key:
+            raise turno_mod.TurnoRecusado(409, "agente_nao_informado", "A avaliação não indica qual agente executar.")
+        key = str(key)
         definicao = self._studio.get_platform_definition(key)
         if definicao is None:
             raise turno_mod.TurnoRecusado(409, "agente_nao_encontrado", "O agente da avaliação não existe.")
@@ -395,7 +403,7 @@ class LiveEvalTurnDriver:
         r = turno_mod.resolve_agent_for_org(m.svc.studio_store, m.org_id, m.agent.key, versao=m.version_id)
         padrao = turno_mod.padrao_do_turno(m.svc, r)
         e = m.svc.qual.avaliar(
-            m.org_id, m.lead_ref_id, padrao.id, turno_mod.escopo_de(m.agent.key), turno_mod.LeadSinais())
+            m.org_id, m.lead_ref_id, padrao.id, turno_mod.escopo_de(m.agent), turno_mod.LeadSinais())
         lotes: dict[int, list[str]] = {}
         for ev in m.svc.qual.eventos(m.org_id, m.lead_ref_id):
             if ev.evento == "oferecido" and ev.lote is not None:

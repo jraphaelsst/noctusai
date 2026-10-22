@@ -105,9 +105,8 @@ class PlataformaTextosRequest(StrictHttpModel):
     itens: dict[str, str]
 
 
-class PlataformaAgentCreateRequest(StrictHttpModel):
-    key: str = Field(..., min_length=1, max_length=64)
-
+# NOTE: ``PlataformaAgentCreateRequest`` / ``PlataformaAgentUpdateRequest`` / ``PlataformaAgentOut`` live in
+# ``app.schemas.studio_plataforma`` (they embed the generation schemas, which import this module).
 
 # ── outputs ─────────────────────────────────────────────────────────────────
 

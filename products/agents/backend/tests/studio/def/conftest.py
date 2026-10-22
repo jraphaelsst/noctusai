@@ -35,6 +35,7 @@ from app.routers.studio_agents_router import (
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
+from app.routers.studio_geracoes_router import router as studio_geracoes_router
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
 from app.routers.studio_package_sync_router import router as studio_package_sync_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
@@ -119,6 +120,7 @@ def _build_app() -> FastAPI:
     app.include_router(studio_agents_router)
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
+    app.include_router(studio_geracoes_router)
     app.include_router(skills_biblioteca_router)
 
     app.include_router(studio_padrao_router)

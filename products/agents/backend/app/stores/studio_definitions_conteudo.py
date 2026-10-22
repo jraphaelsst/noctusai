@@ -287,6 +287,11 @@ class ConteudoStore(Protocol):
         """The ``definition_scope='plataforma'`` row of ``key`` (at most one), or ``None``."""
         ...
 
+    def list_platform_definitions(self) -> list[Any]:
+        """Every ``definition_scope='plataforma'`` row (the platform org's), newest key order. The data-driven
+        replacement of the old code registry: org-instance creation iterates this."""
+        ...
+
     def append_audit(
         self, org_id: UUID, agent_id: UUID, actor: UUID | None, acao: str,
         antes: dict[str, Any] | None, depois: dict[str, Any] | None,
@@ -350,6 +355,9 @@ class FakeConteudoMixin:
             if rec.key == key and rec.definition_scope == "plataforma":
                 return rec
         return None
+
+    def list_platform_definitions(self):
+        return sorted((r for r in self._agents.values() if r.definition_scope == "plataforma"), key=lambda r: r.key)
 
     def append_audit(self, org_id, agent_id, actor, acao, antes, depois) -> None:
         self._agent_by_id(org_id, agent_id)
@@ -520,6 +528,13 @@ class SupabaseConteudoMixin:
         )
         rows = resp.data or []
         return self._agent(rows[0]) if rows else None
+
+    def list_platform_definitions(self):
+        rows = self._paged(
+            lambda: self._t("agents").select("*").eq("definition_scope", "plataforma"),
+            label="platform definitions", order=("key",),
+        )
+        return [self._agent(r) for r in rows]
 
     def append_audit(self, org_id, agent_id, actor, acao, antes, depois) -> None:
         self._exec(self._t("agent_audit_log").insert({

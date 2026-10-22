@@ -69,7 +69,7 @@ class PinRequest(StrictHttpModel):
 
 
 def _chave_do_padrao(agent) -> str:
-    chave = padrao_de(agent.key)
+    chave = padrao_de(agent)
     if chave is None:
         raise http_error(409, "sem_padrao", "Este agente não tem padrão de qualificação.")
     return chave
@@ -115,7 +115,7 @@ def estampar_padrao_no_rascunho(store, padroes: PadraoStore, org_id: UUID, agent
     already-pinned draft keeps its pin -- the indicator tells the admin a newer one exists). Returns the draft
     (re-read when stamped). An agent with no standard is left alone; a standard with no published version
     refuses the publish (409 ``qualificacao_indisponivel``): a turn could not run on it."""
-    chave = padrao_de(agent.key)
+    chave = padrao_de(agent)
     if chave is None or draft.qualificacao_versao_id is not None:
         return draft
     try:

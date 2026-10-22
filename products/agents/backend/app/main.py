@@ -79,6 +79,7 @@ from app.routers.studio_agents_router import (
 from app.routers.studio_agents_router import router as studio_agents_router
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
+from app.routers.studio_geracoes_router import router as studio_geracoes_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
 from app.routers.studio_import_router import router as studio_import_router
@@ -179,7 +180,17 @@ async def on_startup() -> None:
         failed = varrer_runs_orfas(get_mecanismo_store(settings))
         logger.info("agents.startup.orphaned_mecanismo_runs_failed count=%s", failed)
 
+    async def fail_orphan_geracoes() -> None:
+        import asyncio
+
+        from app.stores.studio_geracoes import get_geracao_store
+        from app.studio.geracao import varrer_geracoes_orfas
+
+        failed = await asyncio.to_thread(varrer_geracoes_orfas, get_geracao_store(settings))
+        logger.info("agents.startup.orphaned_geracoes_failed count=%s", failed)
+
     await _startup_step("fail_orphan_eval_runs", fail_orphan_eval_runs, failures)
+    await _startup_step("fail_orphan_geracoes", fail_orphan_geracoes, failures)
     await _startup_step("fail_orphan_mecanismo_runs", fail_orphan_mecanismo_runs, failures)
 
     # Daily credential maintenance (expiry notifications + §D ring prune).
@@ -240,6 +251,7 @@ app = create_product_app(
         studio_agents_router,
         studio_clients_router,
         studio_conteudo_router,
+        studio_geracoes_router,  # S3a: AI-generated first drafts
         studio_padrao_router,
         studio_ui_router,
         studio_knowledge_router,

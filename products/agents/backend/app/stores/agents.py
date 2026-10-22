@@ -37,12 +37,10 @@ RUNTIMES = ("claude_sdk", "external")
 
 #: The two rows `ensure_default_agents` seeds, per org. Never inserted by
 #: the migration itself (org_id is per-org) — the migration header notes
-#: this; this module is the idempotent seeding path.
-#: Also reserves `julia` (Lais A2): seeded per org by
-#: `app.studio.julia.ensure_julia` (a studio agent on the `llm`
-#: runtime, not by this store) — a studio agent squatting the key would stop
-#: the seed and leave the channel API without its agent.
-DEFAULT_AGENT_KEYS = ("bia", "one-chat", "julia")
+#: this; this module is the idempotent seeding path. Platform-defined agents are NOT here: they are data
+#: (``definition_scope='plataforma'`` rows); a key that is a platform definition is refused for an org agent by the
+#: create route (``store.get_platform_definition``).
+DEFAULT_AGENT_KEYS = ("bia", "one-chat")
 
 
 @dataclass(frozen=True)

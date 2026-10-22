@@ -86,7 +86,7 @@ def qualificacao_da_versao(agent: StudioAgentRecord, version: VersionRecord):
     from app.qualificacao.prompt import qualificacao_data
     from app.studio.plataforma import padrao_de
 
-    chave = padrao_de(agent.key)
+    chave = padrao_de(agent)
     if chave is None:
         return None
     pin = getattr(version, "qualificacao_versao_id", None)

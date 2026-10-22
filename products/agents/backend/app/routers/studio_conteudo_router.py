@@ -25,7 +25,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+import anyio.to_thread
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.dependencies import (
     ADMIN_ROLES,
@@ -70,7 +71,6 @@ from app.schemas.studio_conteudo import (
     OrgStatusOut,
     OrgSpecsUpdateRequest,
     OrgSpecValorOut,
-    PlataformaAgentCreateRequest,
     PlataformaTextoOut,
     PlataformaTextosOut,
     PlataformaTextosRequest,
@@ -81,6 +81,12 @@ from app.schemas.studio_conteudo import (
     TextosOut,
     TextosReplaceRequest,
 )
+from app.schemas.studio_plataforma import (
+    PlataformaAgentCreateRequest,
+    PlataformaAgentOut,
+    PlataformaAgentUpdateRequest,
+)
+from app.stores._db_errors import StudioConflict
 from app.stores.errors import NotFound
 from app.stores.studio_definitions_conteudo import (
     DecisaoInput,
@@ -89,7 +95,9 @@ from app.stores.studio_definitions_conteudo import (
     TextoInput,
 )
 from app.studio.especificacoes import conflitos_com_regras_fixas, validar_valor
-from app.studio.plataforma import chaves_de_plataforma, ensure_definicao
+from app.routers.studio_geracoes_router import get_geracao_agendador_dep, get_geracao_deps_dep
+from app.studio import geracao as engine
+from app.studio.plataforma import ensure_definicao
 from app.studio.resolucao import compile_for_org, conteudo_status, resolve_agent_for_org
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin, require_scopes
@@ -593,23 +601,111 @@ def revoke_content_token(
     )
 
 
-@router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED)
-def create_platform_definition(
-    payload: PlataformaAgentCreateRequest, ctx: AuthContext = Depends(require_content_write),
+def _flat(status_code: int, code: str, message: str, detail: Any = None) -> HTTPException:
+    """The product's flat error body ``{code, message, detail}`` (as ``DELETE /agents/{key}``)."""
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message, "detail": detail if detail is not None else message})
+
+
+def _definicao_out(agent, geracao=None) -> PlataformaAgentOut:
+    return PlataformaAgentOut(
+        id=agent.id, key=agent.key, org_id=agent.org_id, nome=agent.nome, descricao=agent.descricao,
+        definition_scope=agent.definition_scope, conteudo_modo=agent.conteudo_modo, runtime=agent.runtime,
+        owner_product=agent.owner_product, usa_canais=agent.usa_canais,
+        escopo_qualificacao=agent.escopo_qualificacao, padrao_qualificacao=agent.padrao_qualificacao,
+        rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, geracao=geracao,
+    )
+
+
+def _definicao_ou_404(store, key: str):
+    agent = store.get_platform_definition(key)
+    if agent is None:
+        raise _flat(404, "agente_nao_encontrado", "Definição da plataforma não encontrada.")
+    return agent
+
+
+def _conflict_flat(exc: StudioConflict) -> HTTPException:
+    return _flat(409, exc.code, str(exc))
+
+
+@router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED, response_model=PlataformaAgentOut)
+async def create_platform_definition(
+    payload: PlataformaAgentCreateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
+    store=Depends(get_studio_definition_store_dep), deps: engine.Dependencias = Depends(get_geracao_deps_dep),
+    schedule=Depends(get_geracao_agendador_dep),
+) -> PlataformaAgentOut:
+    """Create the platform DEFINITION of ``payload.key`` in the caller's org (which must be the platform org) with an
+    EMPTY draft -- a shell grows over time; only PUBLISH is gated by completeness. ANY valid key is accepted: a
+    platform definition is a DB row, never a code registry entry, and what used to be registered in code (runtime,
+    owner product, qualification scope/standard, first-draft settings, role) is the body. ``nome`` is required for a
+    new key. Idempotent (an existing definition is returned unchanged); audits ``agente_criado`` only when it creates.
+    With ``briefing`` an AI generation of the draft starts (202-style: ``geracao`` is the booked run)."""
+    ator = actor_id(ctx)
+
+    def _criar():
+        existing = store.get_platform_definition(payload.key)
+        if existing is not None:
+            return existing
+        if not payload.nome:
+            raise _flat(422, "nome_obrigatorio", "Informe o nome do agente para criar uma nova definição.")
+        try:
+            return ensure_definicao(
+                ctx.org_id, payload.key, studio_store=store, created_by=ator, nome=payload.nome,
+                descricao=payload.descricao, runtime=payload.runtime, owner_product=payload.owner_product,
+                escopo_qualificacao=payload.escopo_qualificacao, padrao_qualificacao=payload.padrao_qualificacao,
+                rascunho_padrao=payload.rascunho_padrao, instanciavel=payload.instanciavel, papel=payload.papel,
+            )
+        except StudioConflict as exc:
+            raise _conflict_flat(exc) from exc
+        except ValueError as exc:
+            raise _flat(422, "invalid_field", str(exc)) from exc
+
+    agent = await anyio.to_thread.run_sync(_criar)
+    if payload.briefing is None:
+        return _definicao_out(agent)
+    try:
+        rec, alvo, areas = await anyio.to_thread.run_sync(lambda: engine.iniciar(
+            deps, org_id=ctx.org_id, key=agent.key, briefing=payload.briefing, areas=None, forcar=False,
+            limite_usd=payload.limite_usd, ator=ator))
+    except engine.GeracaoErro as exc:
+        raise _flat(exc.status, exc.code, exc.message, exc.detail) from exc
+    schedule(engine.executar(deps, org_id=rec.org_id, geracao_id=rec.id, agent_id=alvo.id, areas=areas))
+    geracao = (await anyio.to_thread.run_sync(lambda: engine.montar_saida(deps, alvo, [rec])))[0]
+    return _definicao_out(agent, geracao)
+
+
+@router.get("/plataforma/agents/{key}", response_model=PlataformaAgentOut)
+def get_platform_definition_config(
+    key: str, ctx: AuthContext = Depends(require_platform_content_admin), store=Depends(get_studio_definition_store_dep),
+) -> PlataformaAgentOut:
+    """The DATA a platform definition carries (runtime, owner product, qualification scope/standard, first-draft
+    settings, role, instantiability). Every mechanism reads these from the row."""
+    return _definicao_out(_definicao_ou_404(store, key))
+
+
+@router.patch("/plataforma/agents/{key}", response_model=PlataformaAgentOut)
+def update_platform_definition_config(
+    key: str, payload: PlataformaAgentUpdateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
-) -> dict[str, Any]:
-    """Create the platform DEFINITION of a registered key in the caller's org (which must be the platform
-    org) with an EMPTY draft (structure only -- no text is required: a shell grows over time; only PUBLISH
-    is gated by completeness). A platform admin OR the ``studio:content-write`` token. Idempotent; audits
-    ``agente_criado`` only when it actually creates."""
-    if payload.key not in chaves_de_plataforma():
-        raise http_error(422, "chave_nao_registrada", f"'{payload.key}' não é um agente definido pela plataforma.")
-    with store_errors():
-        agent = ensure_definicao(ctx.org_id, payload.key, studio_store=store, created_by=actor_id(ctx))
-    return {
-        "id": str(agent.id), "key": agent.key, "org_id": str(agent.org_id),
-        "definition_scope": agent.definition_scope, "conteudo_modo": agent.conteudo_modo,
-    }
+) -> PlataformaAgentOut:
+    """Partial update of that DATA (``exclude_unset``; an explicit ``null`` clears an optional attribute). Existing
+    org instances keep the runtime / owner product they were created with; a new instance copies the current ones."""
+    agent = _definicao_ou_404(store, key)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
+    for obrig in ("nome", "runtime", "instanciavel"):
+        if obrig in fields and fields[obrig] is None:
+            raise _flat(422, "invalid_field", f"{obrig} não pode ser nulo")
+    try:
+        updated = store.update_definicao(agent.org_id, key, fields)
+    except StudioConflict as exc:
+        raise _conflict_flat(exc) from exc
+    except ValueError as exc:
+        raise _flat(422, "invalid_field", str(exc)) from exc
+    if ctx.caller_kind == "product" and fields:
+        store.append_audit(
+            agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
+            {"kind": "definicao", "campos": sorted(fields)}, {"kind": "definicao", "campos": sorted(fields)},
+        )
+    return _definicao_out(updated)
 
 
 __all__ = ["router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE"]

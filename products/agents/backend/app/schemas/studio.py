@@ -68,6 +68,12 @@ class AgentSummaryOut(BaseModel):
     definition_scope: str = "org"
     #: ``linhas`` (every compiler string is a row) | ``legado`` (the pre-v2 strings).
     conteudo_modo: str = "legado"
+    #: How the agent runs + which product owns its transport (platform definitions: DATA, 049).
+    runtime: str = "claude_sdk"
+    owner_product: str | None = None
+    #: The agent runs on a channel transport (WhatsApp...): ``owner_product`` set on an ``llm`` runtime. DERIVED
+    #: from that data, never from a key -- the UI shows its "canais" tab off this.
+    usa_canais: bool = False
 
 
 class AgentListOut(BaseModel):
@@ -91,8 +97,18 @@ class VersionSummaryOut(BaseModel):
     package_sha: str | None = None
 
 
+class ConteudoStatusOut(BaseModel):
+    """Completeness of the agent's system texts against the registry slots that apply to it."""
+
+    textos_preenchidos: int
+    textos_total: int
+    obrigatorios_faltando: list[str]
+
+
 class AgentDetailOut(AgentSummaryOut):
     versoes: list[VersionSummaryOut]
+    #: ``None`` for a ``legado`` agent (its texts live in the compiler) or an org instance.
+    conteudo_status: ConteudoStatusOut | None = None
 
 
 # ── versions ────────────────────────────────────────────────────────────────

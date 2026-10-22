@@ -132,6 +132,16 @@ DRAFT_DEFAULTS = {
 }
 
 _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
+#: 049: what a platform DEFINITION carries as data (the former code registry): settable through
+#: :meth:`StudioDefinitionStore.update_definicao` only -- never through the org-scope ``update_agent``.
+_DEFINICAO_FIELDS = (
+    "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao",
+    "rascunho_padrao", "instanciavel", "papel",
+)
+PAPEIS = ("gerador", "exemplar")
+_SLUG_ATTR_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+#: The draft settings a definition's ``rascunho_padrao`` may carry (the version columns a fresh draft starts with).
+_RASCUNHO_PADRAO_FIELDS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
 _DRAFT_FIELDS = (
     "notas", "provider", "model", "effort", "max_turns", "idioma", "tool_policy",
     # 017 (Agent Packages §C4): the package identity the importer stamps.
@@ -155,7 +165,7 @@ AUDIT_ACOES = (
     "limiar_alterado", "publicado", "publicado_override", "rascunho_descartado",
     "conteudo_editado_mcp", "specs_org_editadas", "definicao_lida",
     "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
-    "agente_excluido", "agente_criado",
+    "agente_excluido", "agente_criado", "agente_gerado",
 )
 #: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
 EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")
@@ -201,6 +211,23 @@ class StudioAgentRecord:
     definition_agent_id: UUID | None = None
     #: 031: ``linhas`` = every compiler string is a row; ``legado`` = the pre-v2 strings.
     conteudo_modo: str = "legado"
+    #: 049: what a platform DEFINITION carries as data (all NULL on every other row). The qualification SCOPE the
+    #: agent works (a criterion's ``escopo`` is empty or equal to it; ``None`` = every scope), the qualification
+    #: STANDARD key it works, and the settings its first draft starts with.
+    escopo_qualificacao: str | None = None
+    padrao_qualificacao: str | None = None
+    rascunho_padrao: dict[str, Any] | None = None
+    #: 049: a PUBLISHED definition is instantiated in every org only when this is true.
+    instanciavel: bool = True
+    #: 049: ``gerador`` | ``exemplar`` | ``None`` -- the role a platform definition plays for a mechanism.
+    papel: str | None = None
+
+    @property
+    def usa_canais(self) -> bool:
+        """The agent runs on a channel transport (WhatsApp...): an ``llm`` runtime whose transport is owned by a
+        product. The SAME rule the compiler (``canal = owner_product is not None``) and the channel API
+        (``runtime == 'llm'``) apply -- derived from the definition's data, never from a key."""
+        return self.owner_product is not None and self.runtime == "llm"
 
 
 @dataclass(frozen=True)
@@ -388,6 +415,30 @@ def _validate_agent_fields(fields: dict[str, Any]) -> None:
             raise ValueError(f"publicacao_limiar must be between {PUBLICACAO_LIMIAR_MIN} and 1")
 
 
+def _validate_definicao_fields(fields: dict[str, Any]) -> None:
+    _check_fields(fields, _DEFINICAO_FIELDS, "definition")
+    if "runtime" in fields and fields["runtime"] not in STUDIO_RUNTIMES:
+        raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {fields['runtime']!r}")
+    for k in ("escopo_qualificacao", "padrao_qualificacao"):
+        v = fields.get(k)
+        if v is not None and not _SLUG_ATTR_RE.match(str(v)):
+            raise ValueError(f"{k} must match {_SLUG_ATTR_RE.pattern}")
+    if fields.get("rascunho_padrao") is not None:
+        validar_rascunho_padrao(fields["rascunho_padrao"])
+    if fields.get("papel") is not None and fields["papel"] not in PAPEIS:
+        raise ValueError(f"papel must be one of {PAPEIS}")
+    if "instanciavel" in fields and not isinstance(fields["instanciavel"], bool):
+        raise ValueError("instanciavel must be a boolean")
+
+
+def validar_rascunho_padrao(settings: Any) -> None:
+    """The first-draft settings of a definition: only version setting names, each valid for a version."""
+    if not isinstance(settings, dict):
+        raise ValueError("rascunho_padrao must be an object")
+    _check_fields(settings, _RASCUNHO_PADRAO_FIELDS, "rascunho_padrao")
+    _validate_draft_fields(dict(settings))
+
+
 def _validate_section(s: "SectionInput") -> None:
     _check_cap(s.conteudo, "section.conteudo", "section conteudo")
 
@@ -519,11 +570,21 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
+        escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
     ) -> StudioAgentRecord:
         """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
         ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
         seeded provider-neutral agents), ``kind`` (017; immutable afterwards).
         Raises ``StudioConflict('key_taken')``."""
+        ...
+    def is_platform_org(self, org_id: UUID) -> bool:
+        """``organizations.is_platform`` of ``org_id`` (where platform definitions live)."""
+        ...
+    def update_definicao(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord:
+        """Write the DATA a platform definition carries (:data:`_DEFINICAO_FIELDS`: nome / descricao / runtime /
+        owner_product / escopo + padrao de qualificação / first-draft settings / instanciavel). Only a
+        ``definition_scope='plataforma'`` row; anything else raises ``ValueError``."""
         ...
     def update_agent(
         self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
@@ -775,13 +836,16 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         """Test helper: flag ``org_id`` as the platform org (``organizations.is_platform``)."""
         self._platform_orgs.add(org_id)
 
+    def is_platform_org(self, org_id: UUID) -> bool:
+        return org_id in self._platform_orgs
+
     def add_legacy_agent(self, org_id: UUID, key: str, nome: str) -> StudioAgentRecord:
         return self.seed_agent(org_id, key, nome=nome, definition_mode="legacy", ativo=False)
 
     def seed_agent(
         self, org_id: UUID, key: str, *, agent_id: UUID | None = None, nome: str | None = None,
         definition_mode: str = "studio", ativo: bool = True, publicacao_limiar: float = 0.8,
-        kind: str = "runtime",
+        kind: str = "runtime", conteudo_modo: str = "legado", definition_scope: str = "org",
     ) -> StudioAgentRecord:
         """Test helper: an ``agents.agents`` row with explicit columns (the
         knowledge/eval router suites resolve agents through this store)."""
@@ -790,6 +854,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             id=agent_id or uuid4(), org_id=org_id, key=key, nome=nome or key, descricao=None,
             definition_mode=definition_mode, runtime="claude_sdk", ativo=ativo,
             publicacao_limiar=publicacao_limiar, created_at=now, updated_at=now, kind=kind,
+            conteudo_modo=conteudo_modo, definition_scope=definition_scope,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -810,12 +875,21 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
+        escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         modo = _validate_scope(definition_scope, definition_agent_id)
+        attrs = {
+            "escopo_qualificacao": escopo_qualificacao, "padrao_qualificacao": padrao_qualificacao,
+            "rascunho_padrao": rascunho_padrao, "papel": papel,
+        }
+        if definition_scope != "plataforma" and any(v is not None for v in attrs.values()):
+            raise ValueError("escopo/padrao de qualificação and rascunho_padrao belong to a platform definition")
+        _validate_definicao_fields({k: v for k, v in attrs.items() if v is not None})
         if (org_id, key) in self._agents:
             raise StudioConflict("key_taken", f"agent key {key!r} already exists")
         # 031 `guard_agent_definition_scope`
@@ -835,7 +909,23 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             publicacao_limiar=0.8, created_at=now, updated_at=now, kind=kind,
             owner_product=owner_product, definition_scope=definition_scope,
             definition_agent_id=definition_agent_id, conteudo_modo=modo,
+            escopo_qualificacao=escopo_qualificacao, padrao_qualificacao=padrao_qualificacao,
+            rascunho_padrao=dict(rascunho_padrao) if rascunho_padrao is not None else None,
+            instanciavel=instanciavel, papel=papel,
         )
+        self._agents[(org_id, key)] = rec
+        return rec
+
+    def update_definicao(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord:
+        _validate_definicao_fields(fields)
+        before = self.get_agent(org_id, key)
+        if before.definition_scope != "plataforma":
+            raise ValueError("only a platform definition carries these fields")
+        if fields.get("papel") == "gerador" and any(
+            d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
+        ):
+            raise StudioConflict("gerador_ja_existe", "another platform definition already is the generator")
+        rec = replace(before, **fields, updated_at=self._now())
         self._agents[(org_id, key)] = rec
         return rec
 
@@ -1456,6 +1546,10 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             definition_scope=row.get("definition_scope") or "org",
             definition_agent_id=_uuid_or_none(row.get("definition_agent_id")),
             conteudo_modo=row.get("conteudo_modo") or "legado",
+            escopo_qualificacao=row.get("escopo_qualificacao"),
+            padrao_qualificacao=row.get("padrao_qualificacao"),
+            rascunho_padrao=dict(row["rascunho_padrao"]) if row.get("rascunho_padrao") is not None else None,
+            instanciavel=bool(row.get("instanciavel", True)), papel=row.get("papel"),
         )
 
     @staticmethod
@@ -1548,20 +1642,50 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
+        escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         modo = _validate_scope(definition_scope, definition_agent_id)
+        attrs = {
+            "escopo_qualificacao": escopo_qualificacao, "padrao_qualificacao": padrao_qualificacao,
+            "rascunho_padrao": rascunho_padrao, "papel": papel,
+        }
+        if definition_scope != "plataforma" and any(v is not None for v in attrs.values()):
+            raise ValueError("escopo/padrao de qualificação and rascunho_padrao belong to a platform definition")
+        _validate_definicao_fields({k: v for k, v in attrs.items() if v is not None})
         payload = {
             "org_id": str(org_id), "key": key, "nome": nome, "descricao": descricao,
             "runtime": runtime, "definition_mode": "studio", "ativo": False, "kind": kind,
             "owner_product": owner_product, "definition_scope": definition_scope,
             "definition_agent_id": str(definition_agent_id) if definition_agent_id else None,
-            "conteudo_modo": modo,
+            "conteudo_modo": modo, "escopo_qualificacao": escopo_qualificacao,
+            "padrao_qualificacao": padrao_qualificacao, "rascunho_padrao": rascunho_padrao,
+            "instanciavel": instanciavel, "papel": papel,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
+        return self._agent(self._one(resp, f"agent {key!r}"))
+
+    def is_platform_org(self, org_id: UUID) -> bool:
+        resp = self._client.schema("public").table("organizations").select("is_platform").eq("id", str(org_id)).execute()
+        rows = resp.data or []
+        return bool(rows and rows[0].get("is_platform"))
+
+    def update_definicao(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord:
+        _validate_definicao_fields(fields)
+        before = self.get_agent(org_id, key)
+        if before.definition_scope != "plataforma":
+            raise ValueError("only a platform definition carries these fields")
+        if fields.get("papel") == "gerador" and any(
+            d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
+        ):
+            raise StudioConflict("gerador_ja_existe", "another platform definition already is the generator")
+        if not fields:
+            return before
+        resp = self._exec(self._t("agents").update(fields).eq("org_id", str(org_id)).eq("key", key))
         return self._agent(self._one(resp, f"agent {key!r}"))
 
     def update_agent(

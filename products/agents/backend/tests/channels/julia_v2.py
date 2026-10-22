@@ -15,12 +15,18 @@ from app.channels.tool_registry import TOOLS
 from app.qualificacao.models import CriterioDef
 from app.stores.studio_definitions import SectionInput
 from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput, TextoInput
-from app.studio.julia import JULIA_DEFINICAO, JULIA_KEY
 from app.studio.textos_registry import TEXTOS, chaves_exigidas
 from tests.qualificacao.fixture_v1 import versao_v1
 from tests.qualificacao.harness import ADMIN
 
 PLAT_ORG = UUID(int=2)
+
+#: TEST DATA (not a code registry): the key + first-draft settings + qualification attributes of the world's agent.
+JULIA_KEY = "julia"
+JULIA_RASCUNHO = {
+    "provider": "openai", "model": "gpt-5.6-terra", "effort": "medium", "max_turns": 8,
+    "tool_policy": {"web_search": False, "knowledge": False},
+}
 
 #: ``parametros`` of the tools whose enums carry labels (the rows hold every word of them).
 _PARAMETROS: dict[str, dict[str, str]] = {
@@ -97,10 +103,11 @@ def montar_julia_v2(
     studio.mark_platform_org(PLAT_ORG)
     d = studio.create_studio_agent(
         PLAT_ORG, JULIA_KEY, "Julia", None, runtime="llm", owner_product="social-wiring",
-        definition_scope="plataforma",
+        definition_scope="plataforma", escopo_qualificacao="sdr", padrao_qualificacao="imob-lead",
+        rascunho_padrao=JULIA_RASCUNHO, instanciavel=True,
     )
     draft = studio.create_draft(PLAT_ORG, d.id, None, d.id)
-    studio.update_draft(PLAT_ORG, draft.id, dict(JULIA_DEFINICAO.rascunho))
+    studio.update_draft(PLAT_ORG, draft.id, dict(JULIA_RASCUNHO))
     studio.replace_sections(PLAT_ORG, draft.id, [SectionInput("persona", "Persona", 10, "Persona do teste.")])
     for nome in ("qualificar-lead", "ofertar-imoveis"):
         studio.create_skill(PLAT_ORG, draft.id, nome=nome, descricao=f"skill {nome}", corpo=f"corpo de {nome}")

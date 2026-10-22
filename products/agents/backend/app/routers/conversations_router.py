@@ -78,7 +78,7 @@ from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
     resolve_agent,
 )
-from app.studio.julia import canonical_channel_agent_key
+from app.channels.chaves_legadas import canonical_channel_agent_key
 from app.studio.spec import StudioSpecError, build_studio_spec
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role_for
 from noctusai_lib.realtime import create_sse_router

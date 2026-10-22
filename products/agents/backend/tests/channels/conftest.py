@@ -60,8 +60,7 @@ from app.stores.channel_inbound import FakeChannelInboundStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.threads import FakeThreadStore
 from app.studio.catalog import StoreKnowledgeCatalog
-from app.studio.julia import JULIA_KEY
-from tests.channels.julia_v2 import montar_julia_v2, publicar_padrao
+from tests.channels.julia_v2 import JULIA_KEY, montar_julia_v2, publicar_padrao
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, agents_client  # noqa: F401 — fixture
 from tests.studio.rt.conftest import RtHarness, rt  # noqa: F401 — fixtures
 

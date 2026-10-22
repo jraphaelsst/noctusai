@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.stores.agents import DEFAULT_AGENT_KEYS
-from app.studio.julia import JULIA_KEY, canonical_channel_agent_key
+from app.channels.chaves_legadas import canonical_channel_agent_key
 
 SQL = Path(__file__).resolve().parents[1].joinpath("migrations").glob("*rename_bia_julia_agents.sql")
 SQL = next(SQL).read_text(encoding="utf-8")
@@ -36,8 +36,8 @@ def test_key_bearing_leftovers_are_moved_too():
 
 
 def test_python_side_matches_the_migration():
-    assert DEFAULT_AGENT_KEYS == ("bia", "one-chat", "julia")
-    assert JULIA_KEY == "julia"
+    # platform-defined agents are DATA, not reserved code keys (049)
+    assert DEFAULT_AGENT_KEYS == ("bia", "one-chat")
     # NOC-REMEDIATE[drop-lead-imob-alias]: the old SDR key stays an alias for one release.
     assert canonical_channel_agent_key("lead-imob") == "julia"
     assert canonical_channel_agent_key("julia") == "julia"

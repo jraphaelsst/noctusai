@@ -204,8 +204,18 @@ routes, studio thread state/results).
 ### Platform-defined agents and org specs (Julia v2 — `app/studio/`)
 
 - `definition_scope`: `org` (default — owns its versions) · `plataforma` (THE definition of a key, in the
-  platform org, one per key) · `instancia` (an org's instance: no versions). Opt-in per key through
-  `plataforma.py` (`julia` today). `conteudo_modo='linhas'` (always for plataforma/instancia): every
+  platform org, one per key) · `instancia` (an org's instance: no versions). A platform definition is ANY
+  `definition_scope='plataforma'` row — there is NO code registry and no agent key is known to the code (migration
+  049): what a registry used to carry is DATA on the row (`runtime`, `owner_product`, `escopo_qualificacao`,
+  `padrao_qualificacao`, `rascunho_padrao` = the first draft's settings, `instanciavel`, `papel`), written through
+  `POST/PATCH /api/studio/plataforma/agents[/{key}]` (platform admin or the content token; `GET` reads it) and read by
+  every mechanism from the definition record (`plataforma.escopo_de/padrao_de`, compile, the channel turn, org-instance
+  creation). `usa_canais` (on the agent summary/detail) is DERIVED from that data (`owner_product` set on an `llm`
+  runtime — the compiler's own `canal` rule), so the UI shows the channels tab off it, not off a key.
+  An org gets an instance of every PUBLISHED, `instanciavel` definition on first list (`plataforma.ensure_instancias`)
+  and of a channel agent on first channel use (`ensure_instancia`). A key that is a platform definition is refused as an
+  org agent (`key_taken`); the only legacy key knowledge left is `channels/chaves_legadas.py`
+  (`NOC-REMEDIATE[drop-lead-imob-alias]`). `conteudo_modo='linhas'` (always for plataforma/instancia): every
   compiler string is a row of `agent_version_textos`, the tools block lists `agent_version_ferramentas`,
   decisions are `agent_version_decisoes`, the `{{org.x}}` placeholders are declared in `agent_version_specs`;
   the org's values live in `agent_org_specs`. The registry (`textos_registry.py`, `ferramentas_registry.py`)
@@ -241,8 +251,8 @@ routes, studio thread state/results).
   a key -> `POST /plataforma/agents`, an empty shell; a creation-mode seam `MODOS_CRIACAO` for the coming AI-generated
   draft) and a per-row "Excluir" (`ExcluirAgenteDialog`: type the key to confirm; 409 reasons from the flat error body
   mapped to hints in `lib/agentLifecycle.ts`). Hooks: `hooks/studio/useAgentLifecycle.ts` (cache writes, no invalidate-only).
-  Scope: the token is org-bound to the platform org, so it reaches every platform-defined agent registered there
-  (today only Julia) through the draft routes only; it never publishes.
+  Scope: the token is org-bound to the platform org, so it reaches every platform-defined agent there through the
+  draft routes only; it never publishes.
 - Agent lifecycle (S1, migration 048): an agent can be DELETED and created EMPTY. `DELETE /api/studio/agents/{key}`
   (204; platform admin, or the content token minted with `permitir_exclusao` = extra scope `studio:agent-delete`,
   `require_agent_delete`; a plain content token is 403 `scope_missing`) runs `agents.excluir_agente` (SECURITY
@@ -254,9 +264,33 @@ routes, studio thread state/results).
   `agent_audit_log.agent_id` is nullable (FK ON DELETE SET NULL), `agent_key`/`agent_nome` are snapshotted on every
   row (BEFORE INSERT trigger), the append-only guard permits exactly one mutation (`agent_id` -> NULL, only while the
   transaction-local flag `agents.agent_delete` is on) and the RPC writes an `agente_excluido` tombstone (agent_id NULL).
-  `POST /api/studio/plataforma/agents {key}` (registered keys; platform admin OR the content token) creates the EMPTY
-  platform definition (no text required: only publish is gated by completeness) and audits `agente_criado` once.
-  MCP: `noctus.agents.content` actions `criar_agente` / `excluir_agente` (dry-run unless `confirm=True`).
+  `POST /api/studio/plataforma/agents {key, nome, ...}` (ANY valid key `^[a-z0-9][a-z0-9-]{1,62}$`; `nome` required for
+  a new key, 422 `nome_obrigatorio`; platform admin OR the content token) creates the EMPTY platform definition (no text
+  required: only publish is gated by completeness) and audits `agente_criado` once; the 201 body carries the definition's
+  data + `geracao` (see below). MCP: `noctus.agents.content` actions `criar_agente` / `configurar_agente` / `definicao` /
+  `excluir_agente` / `gerar` / `geracao` (writes are dry-run unless `confirm=True`).
+- AI-generated first drafts (S3a, migration 049; `app/studio/geracao.py` + `geracao_itens.py`,
+  `routers/studio_geracoes_router.py`, `stores/studio_geracoes.py`, seed `chat_completion_with_usage`).
+  `NOC-REMEDIATE[ai-draft-generation-seed]` (N=1, agents-only). A short creation form (`Briefing`) becomes a DRAFT starting
+  point — sections, system texts, tool descriptions, decisions, org-spec declarations, library-skill pins and initial
+  settings — never a published version. The generator is a platform agent found by ROLE (`papel='gerador'`; its
+  PUBLISHED version: sections -> system prompt, `planejamento` + `area-<area>` sections = the instructions, model/provider
+  = the version's, priced from the seed catalog or `409 gerador_indisponivel`); `papel='exemplar'` definitions give the
+  STRUCTURE the output imitates (their verbatim text only when the target is in the platform org; otherwise the leak
+  check — fingerprint, `GuardaVazamento` — blocks an output that reproduces it). No instruction text lives in code:
+  the call carries `{instrucao, briefing, plano, diretriz, contexto, exemplar, schema_saida}` as JSON data.
+  Routes (all `require_platform_content_admin`, flat `{code, message, detail}` errors): `POST /agents/{key}/geracoes`
+  (202; one `pendente|executando` run per agent; `forcar`; `limite_usd` 0..5.00, DB-capped), `GET .../geracoes[/{id}]`,
+  `POST .../geracoes/{id}/areas/{area}/repetir`, `POST .../cancelar`. Pipeline: 1 planning call + 1 call per area
+  (<= 2 parallel, background task like the eval runs; startup sweep marks stale runs `falhou`/`interrompida`). Cost: a
+  worst-case estimate (input chars/2.5 + max_tokens x price) must fit the remaining budget BEFORE each call, else the area
+  is `pulado` (`limite_de_custo`); unmeasured usage is charged at the estimate. Each area's JSON is validated by a BE
+  schema (the same item models the manual routes use) and MERGED into the draft through the same store functions the draft
+  routers use (rows a previous generation wrote are replaced, the author's rows are kept). Item identity is a hash stored
+  at write time; `gerado` vs `editado` is recomputed at read time, and a re-generation without `forcar` is 409
+  `conteudo_editado` (`detail` = the area names). On the FIRST publish after a generation the per-area
+  generated-vs-published diff is stored in `geracoes.aprendizado`. Audit `agente_gerado`. `GET /agents/{key}` carries
+  `conteudo_status {textos_preenchidos, textos_total, obrigatorios_faltando}` (null for legado agents / instances).
 
 ## Lead qualification standard (Julia v2, `app/qualificacao/`)
 

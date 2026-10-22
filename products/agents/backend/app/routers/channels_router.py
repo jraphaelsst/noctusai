@@ -96,7 +96,7 @@ from app.schemas.channels import (
 )
 from app.stores.channel_inbound import ChannelInboundRecord
 from app.stores.errors import Conflict, NotFound
-from app.studio.julia import canonical_channel_agent_key
+from app.channels.chaves_legadas import canonical_channel_agent_key
 from app.studio.resolucao import compile_for_org, resolve_agent_for_org
 from noctusai_lib.api.auth.session import AuthContext
 

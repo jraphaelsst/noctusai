@@ -129,7 +129,7 @@ def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
     try:
         if pin is not None:
             return svc.padroes.obter_versao(pin)
-        chave = padrao_de(r.definicao.key)
+        chave = padrao_de(r.definicao)
         if chave is None:
             raise TurnoRecusado(409, "qualificacao_indisponivel", "O agente não tem padrão de qualificação.")
         return svc.padroes.obter_versao_publicada(chave)
@@ -220,7 +220,7 @@ def preparar(
     )
     k = conf.shingle_tokens_da_regra(svc.conformidade.regras(org_id, agent.id).get("vazamento_prompt"))
     impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled, k)
-    return Preparado(r, padrao, compiled, marca, spec, can, impressao, escopo_de(r.definicao.key), marcador)
+    return Preparado(r, padrao, compiled, marca, spec, can, impressao, escopo_de(r.definicao), marcador)
 
 
 # ── the result ──────────────────────────────────────────────────────────────

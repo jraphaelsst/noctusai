@@ -394,6 +394,29 @@ async def require_admin_or_content_token(ctx: AuthContext = Depends(_admin_or_co
     return ctx
 
 
+def get_skills_store_dep():
+    """DI seam over ``get_skills_store`` (the shared skill library): the skills router, the AI draft generation and
+    the agent page's completeness signal all read through it, so ONE override reaches every consumer."""
+    from app.stores.skills_biblioteca import get_skills_store
+
+    return get_skills_store(settings)
+
+
+def get_geracao_store_dep():
+    """DI seam over ``get_geracao_store`` (the AI draft generation runs)."""
+    from app.stores.studio_geracoes import get_geracao_store
+
+    return get_geracao_store(settings)
+
+
+def get_geracao_chat_dep():
+    """DI seam over the generator's LLM call: the seed's ``chat_completion_with_usage`` (tests inject a wrapper over
+    the seed ``FakeProvider``)."""
+    from noctusai_lib.integrations.llm import chat_completion_with_usage
+
+    return chat_completion_with_usage
+
+
 def get_credential_service_dep():
     """DI seam over ``app.credentials.build_credential_service`` — tests
     override it with a service over Fake store/admin/prober."""
@@ -642,6 +665,9 @@ __all__ = [
     "get_admin_client",
     "get_agent_runtime_dep",
     "get_agent_store_dep",
+    "get_skills_store_dep",
+    "get_geracao_store_dep",
+    "get_geracao_chat_dep",
     "get_llm_runtime_dep",
     "get_approval_broker_dep",
     "get_approval_store_dep",

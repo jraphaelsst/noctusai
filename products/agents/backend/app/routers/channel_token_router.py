@@ -43,7 +43,8 @@ from app.routers.channels_router import CHANNEL_STUDIO_RUNTIME
 from app.routers.studio_agents_router import get_studio_definition_store_dep
 from app.schemas.channels import ChannelTokenCreateRequest, ChannelTokenOut
 from app.stores.errors import NotFound
-from app.studio.julia import JULIA_KEY, canonical_channel_agent_key, ensure_julia
+from app.channels.chaves_legadas import canonical_channel_agent_key
+from app.studio.plataforma import ensure_instancia
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin
 
 logger = logging.getLogger(__name__)
@@ -61,9 +62,9 @@ def _err(status_code: int, code: str, detail: str) -> HTTPException:
 
 def _channel_agent(studio_store, ctx: AuthContext, agent_key: str):
     agent_key = canonical_channel_agent_key(agent_key)
-    if agent_key == JULIA_KEY:
-        # First use for this org: seed the draft agent so there is something to bind to.
-        ensure_julia(ctx.org_id, studio_store=studio_store, created_by=ctx.user_id)
+    # First use for this org: an instance of the platform definition of this key (if one exists and is
+    # instantiable), so there is something to bind to. Data-driven: any platform-defined agent works.
+    ensure_instancia(ctx.org_id, agent_key, studio_store=studio_store)
     try:
         agent = studio_store.get_agent(ctx.org_id, agent_key)
     except NotFound as exc:

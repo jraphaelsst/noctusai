@@ -69,6 +69,14 @@ CONTENT_WRITE_ROUTES = {
     ("PUT", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
     # agent lifecycle (S1): the same MCP tool creates the EMPTY platform definition of a registered key
     ("POST", "/api/studio/plataforma/agents"),
+    ("GET", "/api/studio/plataforma/agents/{key}"),
+    ("PATCH", "/api/studio/plataforma/agents/{key}"),
+    # S3a: AI-generated first drafts (the UI and the chat use the SAME routes)
+    ("POST", "/api/studio/agents/{key}/geracoes"),
+    ("GET", "/api/studio/agents/{key}/geracoes"),
+    ("GET", "/api/studio/agents/{key}/geracoes/{geracao_id}"),
+    ("POST", "/api/studio/agents/{key}/geracoes/{geracao_id}/areas/{area}/repetir"),
+    ("POST", "/api/studio/agents/{key}/geracoes/{geracao_id}/cancelar"),
 }
 
 #: Deleting an agent: reachable ONLY with the dedicated `studio:agent-delete` scope (minted with

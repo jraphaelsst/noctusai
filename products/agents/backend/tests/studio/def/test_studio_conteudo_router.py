@@ -6,6 +6,8 @@ strict (``== 403`` / ``== 404`` / ``== 409``).
 """
 from __future__ import annotations
 
+from tests.julia_body import JULIA_BODY
+
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 import pytest
@@ -60,7 +62,7 @@ def plat(studio):
     """The platform org is the default org; ``julia``'s definition exists with its (empty) draft."""
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     _platform_admin(studio)
-    resp = studio.post(f"{PLAT}/agents", json={"key": "julia"})
+    resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
     assert resp.status_code == 201, resp.text
     studio.as_role("owner")
     return studio
@@ -91,10 +93,10 @@ class TestPlatformDefinition:
     def test_platform_admin_creates_it_once_in_the_platform_org(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        first = studio.post(f"{PLAT}/agents", json={"key": "julia"})
+        first = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert first.status_code == 201
         assert first.json()["definition_scope"] == "plataforma" and first.json()["conteudo_modo"] == "linhas"
-        again = studio.post(f"{PLAT}/agents", json={"key": "julia"})
+        again = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert again.json()["id"] == first.json()["id"]
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(first.json()["id"]))
         assert draft.versao == 1 and studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == []
@@ -102,18 +104,50 @@ class TestPlatformDefinition:
     def test_an_org_owner_is_not_a_platform_admin(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         studio.as_org_admin_only()
-        resp = studio.post(f"{PLAT}/agents", json={"key": "julia"})
+        resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
         assert studio.get(f"{PLAT}/textos").status_code == 403
 
-    def test_only_registered_keys(self, studio):
+    def test_any_valid_key_is_a_platform_definition_and_a_new_key_needs_a_name(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        resp = studio.post(f"{PLAT}/agents", json={"key": "qualquer"})
-        assert resp.status_code == 422 and resp.json()["code"] == "chave_nao_registrada"
+        sem_nome = studio.post(f"{PLAT}/agents", json={"key": "qualquer"})
+        assert sem_nome.status_code == 422 and sem_nome.json()["code"] == "nome_obrigatorio"
+        ok = studio.post(f"{PLAT}/agents", json={"key": "qualquer", "nome": "Qualquer"})
+        assert ok.status_code == 201 and ok.json()["geracao"] is None
+        assert studio.post(f"{PLAT}/agents", json={"key": "Chave Ruim", "nome": "x"}).status_code == 422
+
+    def test_the_definition_carries_its_data_and_it_is_readable_and_writable(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        body = {
+            "key": "sdr-teste", "nome": "SDR", "runtime": "llm", "owner_product": "social-wiring",
+            "escopo_qualificacao": "sdr", "padrao_qualificacao": "imob-lead", "instanciavel": True,
+            "rascunho_padrao": {"provider": "openai", "model": "gpt-5.6-terra", "max_turns": 8},
+        }
+        made = studio.post(f"{PLAT}/agents", json=body).json()
+        assert (made["runtime"], made["owner_product"], made["usa_canais"]) == ("llm", "social-wiring", True)
+        assert (made["escopo_qualificacao"], made["padrao_qualificacao"], made["instanciavel"]) == ("sdr", "imob-lead", True)
+        draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(made["id"]))
+        assert (draft.provider, draft.model, draft.max_turns) == ("openai", "gpt-5.6-terra", 8)
+        got = studio.get(f"{PLAT}/agents/sdr-teste").json()
+        assert got["padrao_qualificacao"] == "imob-lead"
+        upd = studio.patch(f"{PLAT}/agents/sdr-teste", json={"padrao_qualificacao": None, "owner_product": None})
+        assert upd.status_code == 200
+        assert (upd.json()["padrao_qualificacao"], upd.json()["owner_product"], upd.json()["usa_canais"]) == (None, None, False)
+        assert studio.patch(f"{PLAT}/agents/sdr-teste", json={"runtime": None}).json()["code"] == "invalid_field"
+        assert studio.patch(f"{PLAT}/agents/nao-existe", json={"instanciavel": True}).status_code == 404
+
+    def test_there_is_at_most_one_generator(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        assert studio.post(f"{PLAT}/agents", json={"key": "gerador-a", "nome": "A", "papel": "gerador"}).status_code == 201
+        dup = studio.post(f"{PLAT}/agents", json={"key": "gerador-b", "nome": "B", "papel": "gerador"})
+        assert dup.status_code == 409 and dup.json()["code"] == "gerador_ja_existe"
 
     def test_a_non_platform_org_cannot_hold_the_definition(self, studio):
         _platform_admin(studio)  # not flagged as the platform org
-        resp = studio.post(f"{PLAT}/agents", json={"key": "julia"})
+        resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert resp.status_code == 409 and resp.json()["code"] == "definition_not_platform"
 
     def test_platform_texts_round_trip(self, studio):

@@ -45,6 +45,8 @@ from app.channels.conformidade import garantir_impressao
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.dependencies import (
     get_conformidade_store_dep,
+    get_geracao_store_dep,
+    get_skills_store_dep,
     require_admin,
     require_admin_or_content_token,
     require_agent_delete,
@@ -104,7 +106,7 @@ from app.studio.eval_mecanismo_service import (
     concluir_suite_mecanismo,
     iniciar_suite_mecanismo,
 )
-from app.studio.julia import ensure_julia
+from app.studio.plataforma import ensure_instancias
 from app.studio.models import (
     CompiledPrompt,
     EvalGate,
@@ -397,6 +399,7 @@ def _summary(store, org_id: UUID, agent: StudioAgentRecord) -> AgentSummaryOut:
         publicacao_limiar=agent.publicacao_limiar, versao_ativa=versao_ativa,
         tem_rascunho=tem_rascunho, kind=agent.kind,
         definition_scope=agent.definition_scope, conteudo_modo=agent.conteudo_modo,
+        runtime=agent.runtime, owner_product=agent.owner_product, usa_canais=agent.usa_canais,
     )
 
 
@@ -464,9 +467,9 @@ def list_studio_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentListOut:
-    # Julia v2: the org's `julia` INSTANCE of the platform definition is created on first use
-    # (structure only; nothing when the platform definition does not exist yet).
-    ensure_julia(ctx.org_id, studio_store=store, created_by=ctx.user_id)
+    # Julia v2: the org gets an INSTANCE of every published, instantiable platform definition on first use
+    # (structure only; data-driven -- no agent key is known to the code).
+    ensure_instancias(ctx.org_id, studio_store=store)
     return AgentListOut(items=[_summary(store, ctx.org_id, a) for a in store.list_agents(ctx.org_id)])
 
 
@@ -481,6 +484,9 @@ def create_studio_agent(
         # Reserved: `ensure_default_agents` seeds these per org lazily — a
         # studio agent squatting the key would hijack the legacy row.
         raise http_error(409, "key_taken", f"A chave '{payload.key}' é reservada.")
+    if store.get_platform_definition(payload.key) is not None:
+        # A platform-defined key is the platform's: an org agent squatting it would shadow the org's instance.
+        raise http_error(409, "key_taken", f"A chave '{payload.key}' é reservada.")
     with store_errors():
         agent = store.create_studio_agent(ctx.org_id, payload.key, payload.nome, payload.descricao)
         draft = store.create_draft(ctx.org_id, agent.id, None, ctx.user_id)
@@ -494,6 +500,7 @@ def get_studio_agent(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
+    skills=Depends(get_skills_store_dep),
 ) -> AgentDetailOut:
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     summary = _summary(store, ctx.org_id, agent)
@@ -506,7 +513,9 @@ def get_studio_agent(
             VersionSummaryOut(**_version_summary(v, _score_of(gate, ctx.org_id, v)))
             for v in store.list_versions(ctx.org_id, agent.id)
         ]
-    return AgentDetailOut(**summary.model_dump(), versoes=versoes)
+    from app.studio.geracao import conteudo_status
+
+    return AgentDetailOut(**summary.model_dump(), versoes=versoes, conteudo_status=conteudo_status(store, skills, agent))
 
 
 #: 409 ``code`` -> the pt-BR message of ``DELETE /agents/{key}`` (the DB function's guard codes, 048).
@@ -939,6 +948,8 @@ def publish_draft(
     catalog=Depends(get_knowledge_catalog_dep),
     conformidade=Depends(get_conformidade_store_dep),
     padroes=Depends(get_padrao_store_dep),
+    geracoes=Depends(get_geracao_store_dep),
+    skills=Depends(get_skills_store_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -1037,6 +1048,15 @@ def publish_draft(
         get_marcador_store(settings).garantir(ctx.org_id, published.id)
     except Exception:  # noqa: BLE001 -- the first turn of the version creates it; the failure must be seen
         logger.exception("agents.studio.publish.marcador_nao_gerado version_id=%s", published.id)
+    # S3a learning: the FIRST publish after an AI generation stores generated-vs-published per area. Never undoes
+    # the publish.
+    try:
+        from app.studio.geracao import Dependencias, registrar_aprendizado
+
+        registrar_aprendizado(
+            Dependencias(studio=store, geracoes=geracoes, skills=skills, catalog=catalog, chat=None), agent, published)
+    except Exception:  # noqa: BLE001 -- learning is advisory; the failure must be seen
+        logger.exception("agents.studio.publish.aprendizado_nao_registrado version_id=%s", published.id)
     return _version_detail(store, gate, ctx.org_id, published)
 
 
@@ -1118,6 +1138,8 @@ async def run_mecanismo_suite(
         raise http_error(409, "compile_blocked", "O prompt compilado tem avisos bloqueantes.")
     if driver is None:
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.")
+    if hasattr(driver, "definir_agente"):
+        driver.definir_agente(agent.key)
     limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():

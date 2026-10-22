@@ -75,7 +75,7 @@ def _roteiro_catalogo():
 def _driver(chan, provider):
     return LiveEvalTurnDriver(
         studio_store=chan.rt.studio, catalog=StoreKnowledgeCatalog(chan.rt.knowledge), padroes=chan.padroes,
-        key_resolver=lambda provider_name, org: ORG_KEY, provider_impl=provider)
+        agent_key="julia", key_resolver=lambda provider_name, org: ORG_KEY, provider_impl=provider)
 
 
 PERFIL = [
@@ -145,6 +145,17 @@ class TestLiveDriver:
         with pytest.raises(TurnoRecusado) as exc:
             asyncio.run(driver.executar_turno(ThreadState(), "oi"))
         assert exc.value.codigo == "no_draft"
+
+    def test_a_driver_told_no_agent_refuses_with_a_typed_error_not_a_default_key(self, chan):
+        chan.seed_agent()
+        from app.channels.turno import TurnoRecusado
+
+        driver = LiveEvalTurnDriver(studio_store=chan.rt.studio, catalog=None, padroes=chan.padroes, provider_impl=FakeProvider())
+        with pytest.raises(TurnoRecusado) as exc:
+            asyncio.run(driver.executar_turno(ThreadState(), "oi"))
+        assert exc.value.codigo == "agente_nao_informado"
+        driver.definir_agente("julia")  # what the suite route does from its path
+        assert driver._agent_key == "julia"
 
     def test_the_factory_registers_through_the_eval_seam(self, chan):
         chan.seed_agent(publish=False)

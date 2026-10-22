@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from noctusai_lib.integrations.llm import ChatToolsResponse, FakeProvider, LLMUsage, ToolCall
 
-from app.studio.julia import JULIA_KEY
+from tests.channels.julia_v2 import JULIA_KEY
 from tests.channels.conftest import OTHER_ORG, turn_body
 
 URL = f"/api/channels/agents/{JULIA_KEY}/decisoes/abordagem-meta"

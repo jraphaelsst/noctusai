@@ -11,38 +11,46 @@ from noctusai_lib.api.auth.session import hash_token
 from app.config import settings
 from app.dependencies import CHANNEL_TOKEN_SCOPES, MINTABLE_TOKEN_SCOPES
 from app.stores.studio_definitions import MODELS_BY_PROVIDER
-from app.studio.julia import (
-    JULIA_MODEL,
-    JULIA_PROVIDER,
-    ensure_julia,
-)
-from app.studio.plataforma import ensure_definicao
+from app.studio.plataforma import ensure_definicao, ensure_instancia, ensure_instancias
 from tests.channels.conftest import OTHER_ORG
 from tests.routers.conftest import DEFAULT_USER_ID, seed_org_role
 
 PLATFORM_ORG = UUID(int=900001)
 
 
-def _platform_definition(rt):
-    """The one ``julia`` platform definition, in the (fake) platform org."""
+def _platform_definition(rt, **kw):
+    """A platform definition (TEST DATA: key + settings are passed in, never registered in code)."""
     rt.studio.mark_platform_org(PLATFORM_ORG)
-    return ensure_definicao(PLATFORM_ORG, "julia", studio_store=rt.studio, created_by=DEFAULT_USER_ID)
+    params = dict(
+        nome="Julia", runtime="llm", owner_product="social-wiring", instanciavel=True,
+        escopo_qualificacao="sdr", padrao_qualificacao="imob-lead",
+        rascunho_padrao={"provider": "openai", "model": "gpt-5.6-terra", "tool_policy": {"web_search": False, "knowledge": False}},
+    )
+    params.update(kw)
+    return ensure_definicao(PLATFORM_ORG, "julia", studio_store=rt.studio, created_by=DEFAULT_USER_ID, **params)
 
 
-class TestJuliaSeed:
-    """Julia v2: ONE platform definition + an instance per org. ``ensure_julia`` is structure only."""
+class TestPlatformDefinitionsAreData:
+    """A platform definition is a DB row: ONE per key + an instance per org. Structure only; no code registry."""
 
     def test_without_a_platform_definition_nothing_is_created(self, rt):
-        assert ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID) is None
+        assert ensure_instancia(rt.org_id, "julia", studio_store=rt.studio) is None
+        assert ensure_instancias(rt.org_id, studio_store=rt.studio) == []
         assert rt.studio.list_agents(rt.org_id) == []
 
-    def test_the_definition_is_created_once_with_settings_only(self, rt):
+    def test_a_new_key_needs_a_name(self, rt):
+        rt.studio.mark_platform_org(PLATFORM_ORG)
+        with pytest.raises(ValueError):
+            ensure_definicao(PLATFORM_ORG, "qualquer", studio_store=rt.studio)
+
+    def test_the_definition_is_created_once_with_the_given_data_and_settings_only(self, rt):
         d = _platform_definition(rt)
         assert (d.key, d.nome, d.runtime, d.owner_product) == ("julia", "Julia", "llm", "social-wiring")
         assert (d.definition_scope, d.conteudo_modo, d.ativo) == ("plataforma", "linhas", False)
+        assert (d.escopo_qualificacao, d.padrao_qualificacao, d.usa_canais) == ("sdr", "imob-lead", True)
         draft = rt.studio.get_draft(PLATFORM_ORG, d.id)
         assert draft.versao == 1 and draft.status == "rascunho"
-        assert (draft.provider, draft.model) == (JULIA_PROVIDER, JULIA_MODEL) == ("openai", "gpt-5.6-terra")
+        assert (draft.provider, draft.model) == ("openai", "gpt-5.6-terra")
         assert draft.model in MODELS_BY_PROVIDER["openai"]
         assert draft.tool_policy == {"web_search": False, "knowledge": False}
         # STRUCTURE only: not one prompt row.
@@ -53,30 +61,52 @@ class TestJuliaSeed:
 
     def test_an_org_gets_an_instance_without_versions_or_text(self, rt):
         d = _platform_definition(rt)
-        agent = ensure_julia(rt.org_id, studio_store=rt.studio, created_by=DEFAULT_USER_ID)
+        agent = ensure_instancia(rt.org_id, "julia", studio_store=rt.studio)
         assert (agent.definition_scope, agent.definition_agent_id, agent.conteudo_modo) == ("instancia", d.id, "linhas")
         assert (agent.key, agent.runtime, agent.owner_product, agent.ativo) == ("julia", "llm", "social-wiring", False)
         assert rt.studio.list_versions(rt.org_id, agent.id) == []
 
+    def test_a_non_instantiable_definition_is_never_instantiated(self, rt):
+        _platform_definition(rt, instanciavel=False)
+        assert ensure_instancia(rt.org_id, "julia", studio_store=rt.studio) is None
+
     def test_is_idempotent_and_per_org(self, rt):
         _platform_definition(rt)
-        a = ensure_julia(rt.org_id, studio_store=rt.studio)
-        assert ensure_julia(rt.org_id, studio_store=rt.studio).id == a.id
-        b = ensure_julia(OTHER_ORG, studio_store=rt.studio)
+        a = ensure_instancia(rt.org_id, "julia", studio_store=rt.studio)
+        assert ensure_instancia(rt.org_id, "julia", studio_store=rt.studio).id == a.id
+        b = ensure_instancia(OTHER_ORG, "julia", studio_store=rt.studio)
         assert a.id != b.id and a.org_id != b.org_id and a.definition_agent_id == b.definition_agent_id
         assert [x.key for x in rt.studio.list_agents(rt.org_id)] == ["julia"]
 
-    def test_the_studio_list_gives_an_org_its_instance_on_first_use(self, rt):
+    def test_the_studio_list_gives_an_org_an_instance_of_every_published_instantiable_definition(self, rt):
+        from tests.studio.rt.fakes import publish
+
         assert rt.get("/api/studio/agents").json()["items"] == []  # no definition yet: nothing stranded
-        _platform_definition(rt)
+        d = _platform_definition(rt)
+        # a DRAFT-only definition is not instantiated by the list (nothing to run yet)
+        assert rt.get("/api/studio/agents").json()["items"] == []
+        draft = rt.studio.get_draft(PLATFORM_ORG, d.id)
+        publish(rt.studio, PLATFORM_ORG, d, draft.id, DEFAULT_USER_ID, catalog=None)
+        other = _platform_definition_other(rt)  # published? no -> never instantiated
         body = rt.get("/api/studio/agents").json()
         assert [a["key"] for a in body["items"]] == ["julia"]
         assert body["items"][0]["definition_scope"] == "instancia"
+        assert body["items"][0]["usa_canais"] is True
         assert len(rt.get("/api/studio/agents").json()["items"]) == 1  # still one
+        assert other.key not in [a["key"] for a in body["items"]]
 
-    def test_the_key_is_reserved_against_squatting(self, rt):
+    def test_a_key_that_is_a_platform_definition_is_refused_for_an_org_agent(self, rt):
+        _platform_definition(rt)
         resp = rt.post("/api/studio/agents", json={"key": "julia", "nome": "Falso"})
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
+
+    def test_the_legacy_default_keys_stay_reserved(self, rt):
+        resp = rt.post("/api/studio/agents", json={"key": "bia", "nome": "Falso"})
+        assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
+
+
+def _platform_definition_other(rt):
+    return ensure_definicao(PLATFORM_ORG, "outro-agente", studio_store=rt.studio, nome="Outro", instanciavel=True)
 
 
 class TestTheV2World:

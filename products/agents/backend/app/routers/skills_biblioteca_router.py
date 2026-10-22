@@ -25,7 +25,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import Field
 
-from app.dependencies import require_platform_content_admin
+from app.dependencies import get_skills_store_dep, require_platform_content_admin
 from app.routers.studio_agents_router import (
     _refresh_draft_hash,
     actor_id,
@@ -52,13 +52,6 @@ router = APIRouter(tags=["skills-biblioteca"])
 
 _CHAVE = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 _TOOL_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
-
-
-def get_skills_store_dep() -> SkillsBibliotecaStore:
-    from app.config import settings
-    from app.stores.skills_biblioteca import get_skills_store
-
-    return get_skills_store(settings)
 
 
 # ── schemas (request: strict; response: explicit allowlists) ────────────────

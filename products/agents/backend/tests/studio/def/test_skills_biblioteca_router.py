@@ -6,6 +6,8 @@ Skill text below is TEST DATA ONLY: app/ carries no skill content (D3). Auth ass
 """
 from __future__ import annotations
 
+from tests.julia_body import JULIA_BODY
+
 from uuid import UUID
 
 import pytest
@@ -39,7 +41,7 @@ def lib(studio):
     previous = configure_skill_refs_provider(lambda: skills)
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     _platform_admin(studio)
-    assert studio.post(f"{PLAT}/agents", json={"key": "julia"}).status_code == 201
+    assert studio.post(f"{PLAT}/agents", json=JULIA_BODY).status_code == 201
     try:
         yield studio
     finally:
