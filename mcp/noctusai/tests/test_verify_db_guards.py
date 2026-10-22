@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "seed" / "lib" / "backend"))
 
 from tools.noctus.dev.verify_db_guards import (  # noqa: E402
+    _AGENTS_GERACAO_PROBES,
     _AGENTS_JULIA_V2_PROBES,
     DEFAULT_REGISTRY,
     REGISTERED_GUARD_NAMES,
@@ -625,6 +626,7 @@ class TestAgentsStudioProbes:
             and not p.id.startswith(("agents.content_tables.", "agents.status_pagina."))
             # Julia v2 031-040: own group, proven on the real chain in test_agents_julia_v2_probes_on_replay.py
             and p not in _AGENTS_JULIA_V2_PROBES
+            and p not in _AGENTS_GERACAO_PROBES
         ]
 
     def test_every_studio_guard_has_a_probe(self):

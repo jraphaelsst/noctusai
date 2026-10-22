@@ -87,8 +87,24 @@ def _handler(state: FakeAgents):
         do_PATCH = lambda self: self._go("PATCH")  # noqa: E731
         do_DELETE = lambda self: self._go("DELETE")  # noqa: E731
 
+        def _geracao_route(self, m: str, path: str, b):
+            """The S3a subset: definition config + generation runs (what the tool calls)."""
+            if path == "/api/studio/plataforma/agents/novo" and m in ("GET", "PATCH"):
+                return self._send(200, {"key": "novo", "papel": (b or {}).get("papel"), "runtime": "llm"})
+            if m == "POST" and path.endswith("/geracoes"):
+                if "/julia/" not in path:
+                    return self._err(404, "agente_nao_encontrado")
+                return self._send(202, {"id": "11111111-1111-4111-8111-111111111111", "status": "pendente", "agent_key": "julia"})
+            if m == "GET" and path.endswith("/geracoes"):
+                return self._send(200, {"items": [{"id": "11111111-1111-4111-8111-111111111111", "status": "concluida"}]})
+            if m == "GET" and "/geracoes/" in path:
+                return self._send(200, {"id": path.rsplit("/", 1)[1], "status": "executando", "areas": []})
+            return self._err(404, "nao_encontrado")
+
         def _route(self, m: str, path: str, b):
             A = r"/api/studio/agents/julia"
+            if path.startswith("/api/studio/plataforma/agents/") or "/geracoes" in path:
+                return self._geracao_route(m, path, b)
             if m == "POST" and path == "/api/studio/plataforma/agents":
                 return self._send(201, {"id": str(uuid.uuid4()), "key": b["key"], "definition_scope": "plataforma", "conteudo_modo": "linhas"})
             mo = re.fullmatch(r"/api/studio/agents/([A-Za-z0-9_.-]+)", path)
@@ -546,3 +562,61 @@ class TestAgentLifecycle:
         monkeypatch.delenv(C.ENV_TOKEN)
         assert C.content("criar_agente", agent="julia", base_url=srv.url, confirm=True)["codigo"] == "nao_configurado"
         assert srv.log == []
+
+
+BRIEFING = {"nome": "Atendente", "objetivo": "Atender clientes de uma loja.", "publico": "Ciclistas", "canal": "web",
+            "exemplos": "NUNCA-ECOAR-ESTE-TEXTO"}
+
+
+class TestGeracao:
+    """criar_agente (data payload) / configurar_agente / definicao / gerar / geracao: dry-run makes NO request."""
+
+    def test_gerar_is_a_dry_run_that_makes_no_request_and_never_echoes_the_briefing(self, srv, private):
+        out = run(srv, private, {"briefing": BRIEFING, "limite_usd": 2.0}, action="gerar", agent="julia")
+        assert out["status"] == "planned" and out["dry_run"] is True and srv.log == []
+        assert out["requisicao"] == "POST /api/studio/agents/julia/geracoes"
+        assert out["campos"] == ["briefing", "limite_usd"] and "NUNCA-ECOAR" not in json.dumps(out)
+
+    def test_gerar_posts_the_payload_when_confirmed_and_never_publishes(self, srv, private):
+        out = run(srv, private, {"briefing": BRIEFING, "areas": ["secoes"], "forcar": True}, action="gerar", agent="julia", confirm=True)
+        assert out["status"] == "started" and out["geracao"]["status"] == "pendente" and TOKEN not in json.dumps(out)
+        [(method, path, body, _a)] = srv.log
+        assert (method, path) == ("POST", "/api/studio/agents/julia/geracoes")
+        assert body == {"briefing": BRIEFING, "areas": ["secoes"], "forcar": True}
+        assert not [p for _m, p, _b, _a in srv.log if p.endswith(("/publish", "/publicar"))]
+
+    def test_gerar_needs_a_briefing_and_known_fields_and_a_payload_outside_git(self, srv, private):
+        assert run(srv, private, {"areas": ["secoes"]}, action="gerar", agent="julia")["codigo"] == "payload_invalido"
+        assert run(srv, private, {"briefing": BRIEFING, "modelo": "x"}, action="gerar", agent="julia")["codigo"] == "payload_invalido"
+        assert C.content("gerar", agent="julia", base_url=srv.url)["codigo"] == "payload_ausente"
+        assert srv.log == []
+
+    def test_a_server_refusal_keeps_its_code(self, srv, private):
+        out = run(srv, private, {"briefing": BRIEFING}, action="gerar", agent="desconhecido", confirm=True)
+        assert out["status"] == "error" and out["codigo"] == "agente_nao_encontrado"
+
+    def test_geracao_lists_or_reads_one_run(self, srv):
+        lst = C.content("geracao", agent="julia", base_url=srv.url)
+        assert lst["status"] == "ok" and lst["resultado"]["items"][0]["status"] == "concluida"
+        one = C.content("geracao", agent="julia", chave="22222222-2222-4222-8222-222222222222", base_url=srv.url)
+        assert one["resultado"]["status"] == "executando"
+        assert [(m, p) for m, p, _b, _a in srv.log] == [
+            ("GET", "/api/studio/agents/julia/geracoes"),
+            ("GET", "/api/studio/agents/julia/geracoes/22222222-2222-4222-8222-222222222222")]
+        assert C.content("geracao", agent="julia", chave="../x", base_url=srv.url)["codigo"] == "chave_invalida"
+
+    def test_criar_agente_carries_the_data_payload(self, srv, private):
+        body = {"nome": "Novo", "papel": "gerador", "rascunho_padrao": {"model": "claude-opus-5"}, "instanciavel": False}
+        out = run(srv, private, body, action="criar_agente", agent="novo-agente", confirm=True)
+        assert out["status"] == "created"
+        assert srv.log[0][2] == {"key": "novo-agente", **body}
+        assert run(srv, private, {"nome": "x", "inventado": 1}, action="criar_agente", agent="k")["codigo"] == "payload_invalido"
+
+    def test_configurar_agente_patches_and_definicao_reads(self, srv, private):
+        plan = run(srv, private, {"papel": "exemplar"}, action="configurar_agente", agent="novo")
+        assert plan["status"] == "planned" and srv.log == []
+        out = run(srv, private, {"papel": "exemplar"}, action="configurar_agente", agent="novo", confirm=True)
+        assert out["status"] == "updated" and out["agente"]["papel"] == "exemplar"
+        assert srv.log[-1][:3] == ("PATCH", "/api/studio/plataforma/agents/novo", {"papel": "exemplar"})
+        got = C.content("definicao", agent="novo", base_url=srv.url)
+        assert got["status"] == "ok" and got["resultado"]["key"] == "novo"

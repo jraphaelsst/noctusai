@@ -4422,6 +4422,65 @@ def _jv2_agent_insert(cols: str, vals: str) -> str:
             f"VALUES (v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'claude_sdk', 'studio', {vals});")
 
 
+# S3a (migration 049): AI draft generation + data-driven platform definitions. Proven on the real chain in
+# test_agents_geracao_probes_on_replay.py.
+_AGENTS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
+    _agents_studio_probe(
+        probe_id="geracoes.limite_usd_cap",
+        guard_name="geracoes_limite_check",
+        migrations=("049_agent_geracao.sql",),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracoes (org_id, agent_id, status, briefing, areas_solicitadas, modelo, "
+            "provider, limite_usd, criado_por) "
+            "VALUES (v_org, v_agent, 'pendente', '{}'::jsonb, ARRAY['secoes']::text[], 'claude-opus-5', 'anthropic', 5.01, v_org);"
+        ),
+        guard_fragment="geracoes_limite_check",
+        what="a generation run with a spend cap above US$ 5.00",
+        rationale=(
+            "The owner's cap on one AI draft generation (US$ 5.00) is enforced by the database as well as by the "
+            "pipeline: no caller that reaches the table can book a run that may spend more."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="geracoes.one_active_per_agent",
+        guard_name="geracoes_one_active_idx",
+        migrations=("049_agent_geracao.sql",),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracoes (org_id, agent_id, status, briefing, areas_solicitadas, modelo, "
+            "provider, limite_usd, criado_por) "
+            "VALUES (v_org, v_agent, 'pendente', '{}'::jsonb, ARRAY['secoes']::text[], 'claude-opus-5', 'anthropic', 1, v_org);\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracoes (org_id, agent_id, status, briefing, areas_solicitadas, modelo, "
+            "provider, limite_usd, criado_por) "
+            "VALUES (v_org, v_agent, 'executando', '{}'::jsonb, ARRAY['textos']::text[], 'claude-opus-5', 'anthropic', 1, v_org);"
+        ),
+        guard_fragment="geracoes_one_active_idx",
+        what="a second pendente|executando generation run for the same agent",
+        rationale=(
+            "At most one AI generation in flight per agent: two would write the same draft rows concurrently and "
+            "double the spend."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agents.definicao_attributes_only_on_platform_definitions",
+        guard_name="agents_definicao_atributos_check",
+        migrations=("049_agent_geracao.sql",),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    UPDATE {_AGENTS_SCHEMA}.agents SET padrao_qualificacao = 'noc-probe' WHERE id = v_agent;"
+        ),
+        guard_fragment="agents_definicao_atributos_check",
+        what="a qualification standard on an org-scope agent",
+        rationale=(
+            "What a platform definition carries as data (qualification scope/standard, first-draft settings, role) "
+            "exists only on definition_scope='plataforma' rows: an org agent or an instance carrying them would be "
+            "read by a mechanism that must find them on the definition."
+        ),
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -10527,6 +10586,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
     *_AGENTS_JULIA_V2_PROBES,
+    *_AGENTS_GERACAO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,

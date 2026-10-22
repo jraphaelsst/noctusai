@@ -282,6 +282,7 @@ class SupabaseGeracaoStore:
         return self._geracao(resp.data[0])
 
     def list_geracoes(self, org_id, agent_id, limit=20):
+        # postgrest-unbounded-ok: `.limit(limit)` bounds it (the routes ask for <= 20).
         resp = (
             self._t("geracoes").select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
             .order("created_at", desc=True).limit(limit).execute()
@@ -289,15 +290,17 @@ class SupabaseGeracaoStore:
         return [self._geracao(r) for r in resp.data or []]
 
     def list_areas(self, org_id, geracao_id):
+        # postgrest-unbounded-ok: at most len(AREAS)=7 rows per run (UNIQUE geracao_id, area).
         resp = (
             self._t("geracao_areas").select("*").eq("org_id", str(org_id)).eq("geracao_id", str(geracao_id)).execute()
-        )  # postgrest-unbounded-ok: at most len(AREAS)=7 rows per run (UNIQUE geracao_id, area)
+        )
         return _ordered([self._area(r) for r in resp.data or []])
 
     def update_geracao(self, org_id, geracao_id, fields, *, only_if_status=None):
         _check_fields(fields, _GERACAO_FIELDS, "geracao")
         q = self._t("geracoes").update(_jsonable(fields)).eq("org_id", str(org_id)).eq("id", str(geracao_id))
         if only_if_status is not None:
+            # postgrest-unbounded-ok: the `.in_()` list is the caller's constant status tuple (<= 6 values).
             q = q.in_("status", list(only_if_status))
         rows = exec_query(q, unique_code="geracao_em_andamento").data or []
         if rows:
@@ -312,6 +315,7 @@ class SupabaseGeracaoStore:
             .eq("geracao_id", str(geracao_id)).eq("area", area)
         )
         if only_if_status is not None:
+            # postgrest-unbounded-ok: the `.in_()` list is the caller's constant status tuple (<= 6 values).
             q = q.in_("status", list(only_if_status))
         rows = exec_query(q).data or []
         if rows:
@@ -323,12 +327,13 @@ class SupabaseGeracaoStore:
     def list_sem_aprendizado(self, org_id, agent_id):
         resp = (
             self._t("geracoes").select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
-            .in_("status", ["concluida", "parcial"]).is_("aprendizado", "null").order("created_at").limit(50).execute()
+            .in_("status", ["concluida", "parcial"]).is_("aprendizado", "null").order("created_at").limit(50).execute()  # postgrest-unbounded-ok: 2-element constant + .limit(50)
         )
         return [self._geracao(r) for r in resp.data or []]
 
     def fail_orphans(self, *, erro):
         now = utcnow_iso()
+        # postgrest-unbounded-ok: the `.in_()` list is the 2-element status constant.
         runs = exec_query(
             self._t("geracoes").update({"status": "falhou", "erro": erro, "concluido_em": now})
             .in_("status", list(ACTIVE_STATUSES))

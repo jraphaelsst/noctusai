@@ -50,8 +50,20 @@ is run here), and a rule applies from the next turn -- the dry-run diff is the r
 
 Lifecycle actions (no payload, no ``kind``; ``agent`` = the key; dry-run unless ``confirm=True``, like ``set``):
 
-* ``criar_agente`` -- ``POST /api/studio/plataforma/agents {key}``: the platform DEFINITION of a REGISTERED key, as an
-  EMPTY draft (an empty shell that grows over time; only publish is gated by completeness). Idempotent.
+* ``criar_agente`` -- ``POST /api/studio/plataforma/agents``: the platform DEFINITION of ANY valid key (a DB row, never
+  a code registry entry), as an EMPTY draft (an empty shell that grows over time; only publish is gated by
+  completeness). Idempotent. ``payload_path`` (a JSON file OUTSIDE git, optional) carries the rest of the body:
+  ``{nome (required for a NEW key), descricao?, runtime?, owner_product?, escopo_qualificacao?, padrao_qualificacao?,
+  rascunho_padrao? ({provider, model, effort, max_turns, idioma, tool_policy}), instanciavel?, papel?
+  (gerador|exemplar), briefing?, limite_usd?}``; with ``briefing`` an AI generation of the draft starts right away.
+* ``configurar_agente`` -- ``PATCH /api/studio/plataforma/agents/{key}`` with the same data fields as a payload
+  (runtime, owner product, qualification scope/standard, first-draft settings, role, instantiability); ``definicao``
+  reads them back. Everything the old code registry carried is DATA here, set the way the UI sets it.
+* ``gerar`` -- ``POST /api/studio/agents/{key}/geracoes``: an AI-generated first DRAFT from a briefing
+  (``payload_path`` = ``{briefing, areas?, forcar?, limite_usd?}``; at most US$ 5 per run; the generator is the
+  platform agent whose ``papel`` is ``gerador``). Dry-run makes NO request. Runs in the background; never publishes.
+  ``geracao`` (``chave`` = the run id, empty = the list of runs) reads progress: per-area status, cost, lacunas, and
+  which generated items are still ``gerado`` vs ``editado`` by the author.
 * ``excluir_agente`` -- ``DELETE /api/studio/agents/{key}``: needs the token minted with ``permitir_exclusao``
   (scope ``studio:agent-delete``); the server refuses (409 ``publicado`` / ``tem_instancias`` / ``tem_conversas`` /
   ``tem_canal`` / ``ativo``) anything that is published, in use or on. The audit rows survive the agent.
@@ -82,7 +94,13 @@ DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
-LIFECYCLE_ACTIONS = ("criar_agente", "excluir_agente")
+LIFECYCLE_ACTIONS = ("criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao")
+_DEFINICAO_CAMPOS = (
+    "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
+    "instanciavel", "papel",
+)
+_CRIAR_CAMPOS = (*_DEFINICAO_CAMPOS, "briefing", "limite_usd")
+_GERAR_CAMPOS = ("briefing", "areas", "forcar", "limite_usd")
 _AGENT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
@@ -673,7 +691,7 @@ def content(
     """List / get / set an agent's content rows in the target environment. See the module docstring."""
     try:
         if action in LIFECYCLE_ACTIONS:
-            return _lifecycle(action, agent, base_url, bool(confirm), _transport)
+            return _lifecycle(action, agent, base_url, bool(confirm), _transport, payload_path=payload_path, chave=chave)
         if action not in ACTIONS:
             raise ContentError(
                 "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS)} (esta ferramenta nunca publica).",
@@ -697,31 +715,75 @@ def content(
         return {"status": "error", "codigo": exc.codigo, "mensagem": exc.mensagem}
 
 
-def _lifecycle(action: str, agent: str | None, base_url: str | None, confirm: bool, transport: httpx.BaseTransport | None) -> dict[str, Any]:
-    """``criar_agente`` / ``excluir_agente``: one route each. The dry-run makes NO request -- the server's guards
-    (published / instances / conversations / channel / on) are re-checked in the database at the confirmed call, so a
-    pre-read here would only be a second, stale opinion."""
+def _only(payload: Any, allowed: tuple[str, ...], what: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ContentError("payload_invalido", f"O payload de {what} deve ser um objeto JSON.")
+    extra = sorted(set(payload) - set(allowed))
+    if extra:
+        raise ContentError("payload_invalido", f"Campos desconhecidos em {what}: {extra}. Permitidos: {list(allowed)}.")
+    return payload
+
+
+def _lifecycle(
+    action: str, agent: str | None, base_url: str | None, confirm: bool, transport: httpx.BaseTransport | None, *,
+    payload_path: str | None = None, chave: str | None = None,
+) -> dict[str, Any]:
+    """The agent lifecycle + AI generation actions: one route each. The dry-run makes NO request -- the server's guards
+    (published / instances / conversations / channel / on; the cap, the generator, edited content) are re-checked at the
+    confirmed call, so a pre-read here would only be a second, stale opinion."""
     if not agent or not _AGENT_KEY_RE.match(agent):
         raise ContentError("agent_invalido", "Informe 'agent' (a chave do agente: letras, digitos, '_', '-', '.').")
+    reading = action in ("definicao", "geracao")
+    body: Any = None
+    if action == "criar_agente":
+        body = {"key": agent, **(_only(_load_payload(payload_path), _CRIAR_CAMPOS, "criar_agente") if payload_path else {})}
+        method, path = "POST", "/api/studio/plataforma/agents"
+    elif action == "configurar_agente":
+        body = _only(_load_payload(payload_path), _DEFINICAO_CAMPOS, "configurar_agente")
+        method, path = "PATCH", f"/api/studio/plataforma/agents/{_q(agent)}"
+    elif action == "definicao":
+        method, path = "GET", f"/api/studio/plataforma/agents/{_q(agent)}"
+    elif action == "gerar":
+        body = _only(_load_payload(payload_path), _GERAR_CAMPOS, "gerar")
+        if not isinstance(body.get("briefing"), dict):
+            raise ContentError("payload_invalido", "O payload de gerar precisa de 'briefing' (objeto).")
+        method, path = "POST", f"/api/studio/agents/{_q(agent)}/geracoes"
+    elif action == "geracao":
+        if chave and not re.fullmatch(r"[0-9a-fA-F-]{36}", chave):
+            raise ContentError("chave_invalida", "chave deve ser o id (uuid) da geracao, ou vazia para listar.")
+        method, path = "GET", f"/api/studio/agents/{_q(agent)}/geracoes" + (f"/{chave}" if chave else "")
+    else:  # excluir_agente
+        method, path = "DELETE", f"/api/studio/agents/{_q(agent)}"
     base = _base_url(base_url)
     token = _token()
-    criar = action == "criar_agente"
-    method, path, body = ("POST", "/api/studio/plataforma/agents", {"key": agent}) if criar else ("DELETE", f"/api/studio/agents/{_q(agent)}", None)
     head = {"action": action, "agent": agent, "alvo": base, "requisicao": f"{method} {path}"}
-    if not confirm:
-        return {"status": "planned", **head, "dry_run": True,
-                "mensagem": "Nada foi feito. Repita com confirm=True. "
-                + ("Cria a definição vazia (rascunho sem texto)." if criar
-                   else "Exige token com permitir_exclusao (studio:agent-delete); o servidor recusa agente publicado, com instâncias, "
-                        "com conversas, com canal ativo ou ligado.")}
+    if not reading and not confirm:
+        planned = {
+            "criar_agente": "Cria a definição vazia (rascunho sem texto); com briefing no payload, também inicia a geração.",
+            "configurar_agente": "Atualiza os dados da definição (runtime, produto, padrão de qualificação, rascunho padrão, papel...).",
+            "gerar": "Inicia a geração por IA do RASCUNHO (no máximo US$ 5 por execução; roda em segundo plano; nada é publicado).",
+        }.get(action, "Exige token com permitir_exclusao (studio:agent-delete); o servidor recusa agente publicado, com instâncias, "
+                      "com conversas, com canal ativo ou ligado.")
+        out = {"status": "planned", **head, "dry_run": True, "mensagem": "Nada foi feito. Repita com confirm=True. " + planned}
+        if isinstance(body, dict) and body:
+            out["campos"] = sorted(body)  # the field NAMES only: a briefing / settings are not echoed
+        return out
     api = _Api(base, token, transport)
     try:
         result = api.call(method, path, body)
     finally:
         api.close()
-    if criar:
+    if reading:
+        return {"status": "ok", **head, "dry_run": False, "resultado": result}
+    if action == "criar_agente":
         return {"status": "created", **head, "dry_run": False, "agente": result,
                 "mensagem": "Definição criada como rascunho VAZIO (idempotente). Nada foi publicado."}
+    if action == "configurar_agente":
+        return {"status": "updated", **head, "dry_run": False, "agente": result,
+                "mensagem": "Dados da definição atualizados. Instâncias já criadas mantêm o runtime/produto com que nasceram."}
+    if action == "gerar":
+        return {"status": "started", **head, "dry_run": False, "geracao": result,
+                "mensagem": "Geração iniciada em segundo plano (rascunho; nada publicado). Acompanhe com action=geracao."}
     return {"status": "deleted", **head, "dry_run": False,
             "mensagem": "Agente excluído; a auditoria permanece (agent_id nulo + registro agente_excluido)."}
 
@@ -773,9 +835,13 @@ def register(server) -> None:
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
             "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo (mechanism eval cases) | "
             "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). Lifecycle: "
-            "action=criar_agente (agent=<registered key>: creates the EMPTY platform definition) | excluir_agente (agent=<key>: "
-            "deletes it; needs a token minted with permitir_exclusao; the server refuses published/in-use/on agents) - dry-run "
-            "unless confirm=True, no kind/payload. set reads a JSON payload from payload_path (a file "
+            "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
+            "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "
+            "also starts an AI generation) | configurar_agente (payload_path: the same data fields, PATCH) | definicao "
+            "(reads them) | gerar (payload_path = {briefing, areas?, forcar?, limite_usd? <= 5}: AI-generated first DRAFT, "
+            "background, never publishes) | geracao (chave = run id, empty = list: progress, cost, lacunas, gerado vs "
+            "editado) | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
+            "refuses published/in-use/on agents) - writes are dry-run unless confirm=True. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
             "(https, or http on loopback)."
