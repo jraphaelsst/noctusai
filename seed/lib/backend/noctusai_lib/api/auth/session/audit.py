@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 from uuid import UUID
 
+from noctusai_lib.api.auth._blocking import run_blocking
+
 logger = logging.getLogger(__name__)
 
 _TABLE = "api_token_audit"
@@ -97,20 +99,22 @@ class SupabaseApiTokenAuditWriter:
         status: int,
     ) -> None:
         try:
-            (
-                self._sb.schema(self._schema)
-                .table(_TABLE)
-                .insert(
-                    {
-                        "api_token_id": str(api_token_id),
-                        "org_id": str(org_id),
-                        "method": method,
-                        "path": path,
-                        "status": status,
-                        "at": datetime.now(timezone.utc).isoformat(),
-                    }
+            await run_blocking(
+                lambda: (
+                    self._sb.schema(self._schema)
+                    .table(_TABLE)
+                    .insert(
+                        {
+                            "api_token_id": str(api_token_id),
+                            "org_id": str(org_id),
+                            "method": method,
+                            "path": path,
+                            "status": status,
+                            "at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .execute()
                 )
-                .execute()
             )
         except Exception:
             logger.exception(

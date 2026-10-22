@@ -1,10 +1,14 @@
 {
-  "_doc": "Per-file count of async route handlers that call the sync supabase client directly (check_async_handler_sync_db). Ratchet: may only go down. KB § PATTERNS/backend/request-path-latency.md",
+  "_doc": "Per-file count of async route handlers + dependencies that call the sync supabase client (directly, or via a same-module sync helper / known blocking seed helper) (check_async_handler_sync_db). Ratchet: may only go down. KB § PATTERNS/backend/request-path-latency.md",
   "arquivos": {
+    "products/social-wiring/backend/app/routers/chat_router.py": 2,
+    "products/social-wiring/backend/app/routers/julia_agente_router.py": 3,
+    "products/social-wiring/backend/app/routers/julia_cloud_router.py": 5,
+    "products/social-wiring/backend/app/routers/julia_opt_outs_router.py": 3,
     "seed/framework/backend/noctusai_seed/ai_feedback_router.py": 2,
     "seed/framework/backend/noctusai_seed/auth_router.py": 4,
     "seed/framework/backend/noctusai_seed/llm_router.py": 3,
-    "seed/framework/backend/noctusai_seed/routers.py": 1,
+    "seed/framework/backend/noctusai_seed/routers.py": 2,
     "seed/framework/backend/noctusai_seed/status_pagina_router.py": 2
   }
 }

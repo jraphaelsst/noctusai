@@ -8894,10 +8894,73 @@ def _ahs_is_sync_db_call(call: ast.Call) -> bool:
     return False
 
 
+#: Seed helpers that run SYNC PostgREST round trips (the effective-org resolver chain). Called
+#: un-awaited from an async dependency they block the loop exactly like a direct `.execute()`.
+_AHS_BLOCKING_SEED_HELPERS = frozenset({
+    "resolve_effective_org", "resolve_effective_org_for_request", "resolve_effective_org_via",
+    "resolve_org_membership", "resolve_org_role", "resolve_org_role_for", "is_org_admin",
+    "is_org_admin_for", "require_org_admin_role", "require_org_admin_for",
+    "platform_staff_role", "is_platform_staff",
+})
+#: Files whose async defs are dependencies by construction (seed auth / organ factories).
+_AHS_DEPENDENCY_PATH = re.compile(r"(?:^|/)(?:noctusai_seed/organ[^/]*\.py|noctusai_lib/api/auth/.*\.py)$")
+
+
+def _ahs_call_name(call: ast.Call) -> str | None:
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    return None
+
+
+def _ahs_blocking_local_fns(tree: ast.AST) -> set[str]:
+    """Names of module-local SYNC functions (any nesting) that, transitively within the module, reach the
+    sync client or a known blocking seed helper. Name-based (a shadowed name is a rare false positive)."""
+    fns: dict[str, list[ast.FunctionDef]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            fns.setdefault(node.name, []).append(node)
+
+    def direct(fn: ast.FunctionDef, blocking: set[str]) -> bool:
+        for sub in ast.walk(fn):
+            if isinstance(sub, ast.Call):
+                if _ahs_is_sync_db_call(sub):
+                    return True
+                if _ahs_call_name(sub) in _AHS_BLOCKING_SEED_HELPERS | blocking:
+                    return True
+        return False
+
+    blocking: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, defs in fns.items():
+            if name not in blocking and any(direct(d, blocking) for d in defs):
+                blocking.add(name)
+                changed = True
+    return blocking
+
+
+def _ahs_depends_targets(tree: ast.AST) -> set[str]:
+    """Names passed to ``Depends(<name>)`` / ``Security(<name>)`` anywhere in the module."""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _ahs_call_name(node) in ("Depends", "Security") and node.args:
+            a = node.args[0]
+            if isinstance(a, ast.Name):
+                out.add(a.id)
+            elif isinstance(a, ast.Attribute):
+                out.add(a.attr)
+    return out
+
+
 class _AhsVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, blocking: frozenset[str] | set[str] = frozenset()) -> None:
         self.hits: list[int] = []
         self._awaited: set[int] = set()
+        self._blocking = blocking
 
     def visit_Await(self, node: ast.Await) -> None:  # noqa: N802
         if isinstance(node.value, ast.Call):
@@ -8905,7 +8968,10 @@ class _AhsVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-        if id(node) not in self._awaited and _ahs_is_sync_db_call(node):
+        if id(node) not in self._awaited and (
+            _ahs_is_sync_db_call(node)
+            or _ahs_call_name(node) in self._blocking
+        ):
             self.hits.append(node.lineno)
         self.generic_visit(node)
 
@@ -8918,20 +8984,29 @@ class _AhsVisitor(ast.NodeVisitor):
     visit_ClassDef = visit_FunctionDef  # noqa: N815
 
 
-def async_handler_sync_db_handlers(text: str) -> list[tuple[int, str]]:
-    """``[(line, handler name)]`` of async route handlers making a direct sync-DB call in one module."""
+def async_handler_sync_db_handlers(text: str, rel: str = "") -> list[tuple[int, str]]:
+    """``[(line, name)]`` of async route handlers / dependencies that block the loop in one module: a direct
+    sync-DB call, a call to a known blocking seed helper, or a call to a module-local sync function that
+    transitively reaches either (an un-awaited call; passing the function to ``run_blocking`` /
+    ``to_thread.run_sync`` is not a call). Dependencies = ``Depends(<name>)`` targets and every async def
+    in seed auth / organ factory files (``rel`` is the repo-relative path)."""
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return []
     lines = text.splitlines()
     found: list[tuple[int, str]] = []
+    blocking = _ahs_blocking_local_fns(tree)
+    dep_names = _ahs_depends_targets(tree)
+    dep_file = bool(_AHS_DEPENDENCY_PATH.search(rel))
     for node in ast.walk(tree):
-        if not isinstance(node, ast.AsyncFunctionDef) or not _ahs_is_route_handler(node):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        if not (_ahs_is_route_handler(node) or node.name in dep_names or dep_file):
             continue
         if _AHS_ALLOW.search(lines[node.lineno - 1]):
             continue
-        visitor = _AhsVisitor()
+        visitor = _AhsVisitor(blocking)
         for stmt in node.body:
             visitor.visit(stmt)
         if visitor.hits:
@@ -8953,9 +9028,12 @@ def async_handler_sync_db_counts(repo_root: Path | None = None) -> dict[str, int
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            if ".execute(" not in text and ".auth." not in text and ".storage." not in text:
+            if (
+                ".execute(" not in text and ".auth." not in text and ".storage." not in text
+                and not any(h in text for h in _AHS_BLOCKING_SEED_HELPERS)
+            ):
                 continue
-            n = len(async_handler_sync_db_handlers(text))
+            n = len(async_handler_sync_db_handlers(text, path.relative_to(root).as_posix()))
             if n:
                 counts[path.relative_to(root).as_posix()] = n
     return counts
@@ -8985,7 +9063,7 @@ def check_async_handler_sync_db(repo_root: Path | None = None) -> list[dict]:
         product = rel.split("/")[1] if rel.startswith("products/") else "seed"
         if have > allowed:
             names = ", ".join(
-                f"{name}:{line}" for line, name in async_handler_sync_db_handlers((root / rel).read_text(encoding="utf-8"))
+                f"{name}:{line}" for line, name in async_handler_sync_db_handlers((root / rel).read_text(encoding="utf-8"), rel)
             )
             issues.append({
                 "product": product, "file": rel, "severity": "high",

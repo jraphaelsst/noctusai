@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
+import anyio.to_thread
+
 
 @dataclass(frozen=True)
 class PermissionGrant:
@@ -202,7 +204,9 @@ class RealSupabasePermissionGrantRepository:
         awaitable (real async client). Mirrors
         `noctusai_lib.domain.jobs.repo.RealSupabaseJobRepository._execute`.
         """
-        result = builder.execute()
+        # `execute()` is the SYNC supabase round trip: run it in a worker thread so it never
+        # parks the event loop (KB § PATTERNS/backend/request-path-latency.md).
+        result = await anyio.to_thread.run_sync(builder.execute)
         if hasattr(result, "__await__"):
             return await result
         return result

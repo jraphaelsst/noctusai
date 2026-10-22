@@ -32,6 +32,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import Depends, HTTPException, Request, Response
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.session.scopes import resolve_org_role_for
 from noctusai_lib.api.auth.session.types import AuthContext
@@ -124,7 +125,7 @@ def require_platform_admin(
         request: Request = None,
         response: Response = None,
     ) -> AuthContext:
-        role = resolve_platform_admin_role(get_core_client(), ctx.user_id)
+        role = await run_blocking(resolve_platform_admin_role, get_core_client(), ctx.user_id)
         if role != "admin":
             raise HTTPException(
                 status_code=403,

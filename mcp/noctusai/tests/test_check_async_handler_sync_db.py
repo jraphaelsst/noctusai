@@ -217,3 +217,77 @@ class TestCodemod:
 
     def test_unknown_product_is_an_honest_error(self, tmp_path):
         assert async_handlers_to_def("nope", repo_root=tmp_path)["ok"] is False
+
+
+# -- indirect + dependency detection (organ_auth staircase, 2026-10-22) -------------------------------
+
+ORGAN_PATH = "seed/framework/backend/noctusai_seed/organ_auth.py"
+
+INDIRECT_DEP = '''
+from fastapi import Depends
+
+def make(auth_dependency, get_core_client):
+    def _is_admin(request, user):
+        return resolve_org_membership(get_core_client(), user.id)
+
+    async def auth(request, base=Depends(auth_dependency)):
+        return _is_admin(request, base[0])
+
+    return auth
+'''
+
+INDIRECT_DEP_OFFLOADED = INDIRECT_DEP.replace("return _is_admin(request, base[0])", "return await run_blocking(_is_admin, request, base[0])")
+
+TRANSITIVE_DEP = '''
+from fastapi import Depends
+
+def _inner(db):
+    return db.table("t").select("*").execute().data
+
+def _outer(db):
+    return _inner(db)
+
+async def dep(db, x=Depends(other)):
+    return _outer(db)
+'''
+
+
+def test_async_dependency_calling_a_sync_helper_that_reaches_the_client_is_counted():
+    assert [n for _l, n in async_handler_sync_db_handlers(INDIRECT_DEP, ORGAN_PATH)] == ["auth"]
+
+
+def test_offloading_the_helper_to_a_worker_thread_is_clean():
+    assert async_handler_sync_db_handlers(INDIRECT_DEP_OFFLOADED, ORGAN_PATH) == []
+
+
+def test_transitive_same_module_helpers_and_depends_targets_are_followed():
+    # not a seed auth/organ file: it is a dependency because `Depends(...)` is used on it? no -- because it is
+    # referenced as a Depends target in another declaration
+    text = TRANSITIVE_DEP + "\nfrom fastapi import APIRouter\nr = APIRouter()\nr.add_api_route('/x', lambda d=Depends(dep): 1)\n"
+    assert [n for _l, n in async_handler_sync_db_handlers(text, "products/demo/backend/app/deps.py")] == ["dep"]
+
+
+def test_plain_async_helper_outside_dependency_scope_is_not_counted():
+    text = "def _read(db):\n    return db.table('t').select('*').execute().data\n\nasync def util(db):\n    return _read(db)\n"
+    assert async_handler_sync_db_handlers(text, "products/demo/backend/app/services/x.py") == []
+
+
+def test_indirect_hit_flows_into_the_ratchet(tmp_path):
+    rel = ORGAN_PATH
+    f = tmp_path / rel
+    f.parent.mkdir(parents=True)
+    f.write_text(INDIRECT_DEP)
+    base = tmp_path / BASELINE
+    base.parent.mkdir(parents=True)
+    base.write_text(json.dumps({"arquivos": {}}))
+    assert async_handler_sync_db_counts(tmp_path) == {rel: 1}
+    assert any("auth" in i["issue"] for i in check_async_handler_sync_db(tmp_path))
+    f.write_text(INDIRECT_DEP_OFFLOADED)
+    assert check_async_handler_sync_db(tmp_path) == []
+
+
+def test_real_organ_auth_and_seed_auth_modules_are_clean():
+    for rel in (ORGAN_PATH, "seed/lib/backend/noctusai_lib/api/auth/session/scopes.py",
+                "seed/lib/backend/noctusai_lib/api/auth/platform.py"):
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        assert async_handler_sync_db_handlers(text, rel) == [], rel

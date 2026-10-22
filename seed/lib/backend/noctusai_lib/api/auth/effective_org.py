@@ -383,15 +383,32 @@ def resolve_effective_org_for_request(
     """:func:`resolve_effective_org` with the process license gate's product slug,
     selection store and license checker (what ``create_product_app`` configured).
     No gate configured / core => the home org. ``require_selection`` as there."""
+    from noctusai_lib.api.request_memo import memoize_for_request
     from noctusai_lib.domain.licensing import get_license_gate
 
     gate = get_license_gate()
     if gate is None or gate.exempt:
-        return resolve_effective_org(core_client, user_id, product_slug=None)
-    return resolve_effective_org(
-        core_client, user_id, product_slug=gate.product_slug, token=token,
-        acting_header=acting_header, selection_store=gate.selection_store,
-        license_checker=gate.checker, require_selection=require_selection,
+        slug = None
+
+        def _compute() -> Optional[EffectiveOrg]:
+            return resolve_effective_org(core_client, user_id, product_slug=None)
+    else:
+        slug = gate.product_slug
+
+        def _compute() -> Optional[EffectiveOrg]:
+            return resolve_effective_org(
+                core_client, user_id, product_slug=gate.product_slug, token=token,
+                acting_header=acting_header, selection_store=gate.selection_store,
+                license_checker=gate.checker, require_selection=require_selection,
+            )
+
+    # Per-request memo (never across requests): the base auth dep, the licence gate and the
+    # organ auth wrapper all ask this for the same request. Keyed on EVERY input that changes
+    # the answer; errors are never stored (memoize_for_request), so a failure re-fails closed.
+    return memoize_for_request(
+        ("effective_org", id(core_client), str(user_id), token, acting_header, slug,
+         bool(require_selection), gate is None or gate.exempt),
+        _compute,
     )
 
 

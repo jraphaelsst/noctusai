@@ -45,6 +45,7 @@ def make_organ_auth(
     *,
     context: str = "Esta ação",
 ) -> OrganAuthDeps:
+    from noctusai_lib.api.auth._blocking import run_blocking
     from noctusai_lib.api.auth.effective_org import acting_header_of
     from noctusai_lib.api.auth.session.scopes import (
         ADMIN_ORG_ROLES,
@@ -65,7 +66,8 @@ def make_organ_auth(
 
     async def auth(request: Request, base: Any = Depends(auth_dependency)) -> OrganAuth:
         user, token, org_id = base
-        return OrganAuth(base, _is_admin(request, user, token, org_id))
+        # Sync PostgREST round trips: off the event loop (else concurrent requests serialize).
+        return OrganAuth(base, await run_blocking(_is_admin, request, user, token, org_id))
 
     async def admin(request: Request, response: Response, a: OrganAuth = Depends(auth)) -> OrganAuth:
         if not a.is_admin:

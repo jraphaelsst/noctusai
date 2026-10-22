@@ -41,6 +41,7 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 
 from fastapi import Depends, HTTPException, Request, Response
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
 from noctusai_lib.api.auth.effective_org import (
     acting_header_of,
@@ -264,13 +265,15 @@ async def require_org_admin_role_assured(
     ``Request`` and the caller's ``aal`` (``AuthContext.aal`` or
     ``read_aal``) uses THIS twin; the 403 contract is unchanged."""
     acting = acting_header_of(request)
-    require_org_admin_role(
-        core_client, user_id, context, admin_roles=admin_roles,
+    # Sync PostgREST reads: off the event loop (the role is read once, in the worker).
+    role = await run_blocking(
+        resolve_org_role, core_client, user_id,
         org_id=org_id, token=token, acting_header=acting,
     )
+    if role not in admin_roles:
+        raise HTTPException(status_code=403, detail=f"{context} restrito a administradores.")
     await require_admin_assurance(
-        request, response, caller_kind="user", aal=aal, user_id=user_id,
-        role=resolve_org_role(core_client, user_id, org_id=org_id, token=token, acting_header=acting),
+        request, response, caller_kind="user", aal=aal, user_id=user_id, role=role,
     )
 
 
@@ -299,8 +302,8 @@ def make_require_org_admin(
     ) -> tuple:
         user, token, org_id = auth
         # B3: the role is decided IN the request's selected org (fail closed on mismatch).
-        if not is_org_admin(
-            get_core_client(), getattr(user, "id", None), admin_roles=admin_roles,
+        if not await run_blocking(
+            is_org_admin, get_core_client(), getattr(user, "id", None), admin_roles=admin_roles,
             org_id=org_id, token=token, acting_header=acting_header_of(request),
         ):
             raise HTTPException(status_code=403, detail=detail)
@@ -391,8 +394,8 @@ def require_scopes(
 
         # caller_kind == "user"
         membership = (
-            resolve_org_membership(
-                get_core_client(), ctx.user_id,
+            await run_blocking(
+                resolve_org_membership, get_core_client(), ctx.user_id,
                 token=ctx.raw_token,
                 acting_header=acting_header_of(request),
             )

@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.session.types import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -164,16 +165,18 @@ class SupabaseApiTokenResolver:
         digest = hash_token(token_secret)
 
         try:
-            response = (
-                self._sb.schema(self._schema)
-                .table("api_tokens")
-                .select(
-                    "id, org_id, scopes, revoked_at, expires_at, "
-                    "principal_agent_id, human_personal, minted_by, issuer"
+            response = await run_blocking(
+                lambda: (
+                    self._sb.schema(self._schema)
+                    .table("api_tokens")
+                    .select(
+                        "id, org_id, scopes, revoked_at, expires_at, "
+                        "principal_agent_id, human_personal, minted_by, issuer"
+                    )
+                    .eq("token_hash", digest)
+                    .limit(1)
+                    .execute()
                 )
-                .eq("token_hash", digest)
-                .limit(1)
-                .execute()
             )
         except Exception:
             logger.exception(
@@ -258,12 +261,14 @@ class SupabaseApiTokenResolver:
         # the auth path — log and continue.
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
-            (
-                self._sb.schema(self._schema)
-                .table("api_tokens")
-                .update({"last_used_at": now_iso})
-                .eq("id", str(token_id))
-                .execute()
+            await run_blocking(
+                lambda: (
+                    self._sb.schema(self._schema)
+                    .table("api_tokens")
+                    .update({"last_used_at": now_iso})
+                    .eq("id", str(token_id))
+                    .execute()
+                )
             )
         except Exception:
             logger.warning(
