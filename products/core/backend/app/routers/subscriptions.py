@@ -32,6 +32,7 @@ DELETE /api/subscriptions/{id}      — Cancel subscription (admin only)
 --   auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin')
 -- );
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
@@ -50,9 +51,9 @@ async def listar_subscriptions(authorization: Optional[str] = Header(None)):
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("subscriptions").select(
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").select(
         "*, organizations(id, nome, slug), plans(id, nome, slug)"
-    ).order("created_at", desc=True).execute()
+    ).order("created_at", desc=True).execute))
     return {"data": result.data or []}
 
 
@@ -63,9 +64,9 @@ async def get_my_subscription(authorization: Optional[str] = Header(None)):
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("subscriptions").select(
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").select(
         "*, plans(*)"
-    ).eq("org_id", org_id).eq("status", "active").execute()
+    ).eq("org_id", org_id).eq("status", "active").execute))
 
     subscription = result.data[0] if result.data else None
     return {"data": subscription}
@@ -77,9 +78,9 @@ async def get_org_subscription(org_id: str, authorization: Optional[str] = Heade
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("subscriptions").select(
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").select(
         "*, plans(*)"
-    ).eq("org_id", org_id).order("created_at", desc=True).execute()
+    ).eq("org_id", org_id).order("created_at", desc=True).execute))
     return {"data": result.data or []}
 
 
@@ -90,17 +91,17 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
     db = get_admin_client()
 
     # Verify org exists
-    org = db.table("organizations").select("id").eq("id", body.org_id).single().execute()
+    org = (await anyio.to_thread.run_sync(db.table("organizations").select("id").eq("id", body.org_id).single().execute))
     if not org.data:
         raise HTTPException(status_code=404, detail="Organização não encontrada")
 
     # Verify plan exists
-    plan = db.table("plans").select("id").eq("id", body.plan_id).single().execute()
+    plan = (await anyio.to_thread.run_sync(db.table("plans").select("id").eq("id", body.plan_id).single().execute))
     if not plan.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
 
     data = body.model_dump(mode="json", exclude_none=True)
-    result = db.table("subscriptions").insert(data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").insert(data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar assinatura")
 
@@ -152,7 +153,7 @@ async def atualizar_subscription(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("subscriptions").update(data).eq("id", subscription_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").update(data).eq("id", subscription_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Assinatura não encontrada")
 
@@ -190,9 +191,9 @@ async def cancelar_subscription(subscription_id: str, authorization: Optional[st
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("subscriptions").update({
+    result = (await anyio.to_thread.run_sync(db.table("subscriptions").update({
         "status": "canceled",
-    }).eq("id", subscription_id).execute()
+    }).eq("id", subscription_id).execute))
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Assinatura não encontrada")

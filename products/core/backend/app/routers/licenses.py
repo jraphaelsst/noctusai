@@ -8,6 +8,7 @@ POST   /api/licenses              — Grant access (admin)
 DELETE /api/licenses/{id}         — Revoke access (admin)
 GET    /api/licenses/check/{slug} — Check if current org has access to product
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
@@ -28,7 +29,7 @@ async def listar_licenses(authorization: Optional[str] = Header(None)):
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("licenses").select("*, products(*)").eq("org_id", org_id).order("fim", nullsfirst=True).order("created_at", desc=True).execute()
+    result = (await anyio.to_thread.run_sync(db.table("licenses").select("*, products(*)").eq("org_id", org_id).order("fim", nullsfirst=True).order("created_at", desc=True).execute))
     return {"data": result.data or []}
 
 
@@ -38,7 +39,7 @@ async def listar_all_licenses(authorization: Optional[str] = Header(None)):
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("licenses").select("*, products(*), organizations(*)").order("fim", nullsfirst=True).order("created_at", desc=True).execute()
+    result = (await anyio.to_thread.run_sync(db.table("licenses").select("*, products(*), organizations(*)").order("fim", nullsfirst=True).order("created_at", desc=True).execute))
     return {"data": result.data or []}
 
 
@@ -48,7 +49,7 @@ async def listar_licenses_por_produto(product_id: str, authorization: Optional[s
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("licenses").select("*, products(*), organizations(*)").eq("product_id", product_id).order("fim", nullsfirst=True).order("created_at", desc=True).execute()
+    result = (await anyio.to_thread.run_sync(db.table("licenses").select("*, products(*), organizations(*)").eq("product_id", product_id).order("fim", nullsfirst=True).order("created_at", desc=True).execute))
     return {"data": result.data or []}
 
 
@@ -106,14 +107,14 @@ async def check_access(product_slug: str, authorization: Optional[str] = Header(
     db = get_admin_client()
 
     # Find product by slug
-    product = db.table("products").select("id").eq("slug", product_slug).single().execute()
+    product = (await anyio.to_thread.run_sync(db.table("products").select("id").eq("slug", product_slug).single().execute))
     if not product.data:
         return {"has_access": False, "reason": "Produto não encontrado"}
 
     # Check license
-    license_check = db.table("licenses").select("id, status").eq(
+    license_check = (await anyio.to_thread.run_sync(db.table("licenses").select("id, status").eq(
         "org_id", org_id
-    ).eq("product_id", product.data["id"]).eq("status", "active").execute()
+    ).eq("product_id", product.data["id"]).eq("status", "active").execute))
 
     has_access = bool(license_check.data)
     return {"has_access": has_access, "org_id": org_id, "product_slug": product_slug}

@@ -38,6 +38,7 @@ GET    /api/settings/resolve/{key}     — Resolve: org → platform → None
 -- CREATE POLICY "org_members_manage_settings" ON org_settings
 --   FOR ALL USING (org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid()));
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
@@ -72,7 +73,7 @@ async def listar_platform_settings(authorization: Optional[str] = Header(None)):
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("platform_settings").select("*").order("key").execute()
+    result = (await anyio.to_thread.run_sync(db.table("platform_settings").select("*").order("key").execute))
     items = result.data or []
 
     for item in items:
@@ -92,7 +93,7 @@ async def upsert_platform_setting(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("platform_settings").upsert(
+    result = (await anyio.to_thread.run_sync(db.table("platform_settings").upsert(
         {
             "key": key,
             "value": body.value,
@@ -101,7 +102,7 @@ async def upsert_platform_setting(
             "updated_by": user.id,
         },
         on_conflict="key",
-    ).execute()
+    ).execute))
 
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao salvar configuração")
@@ -134,7 +135,7 @@ async def listar_org_settings(authorization: Optional[str] = Header(None)):
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("org_settings").select("*").eq("org_id", org_id).order("key").execute()
+    result = (await anyio.to_thread.run_sync(db.table("org_settings").select("*").eq("org_id", org_id).order("key").execute))
     items = result.data or []
 
     for item in items:
@@ -156,7 +157,7 @@ async def upsert_org_setting(
     await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
-    result = db.table("org_settings").upsert(
+    result = (await anyio.to_thread.run_sync(db.table("org_settings").upsert(
         {
             "org_id": org_id,
             "key": key,
@@ -164,7 +165,7 @@ async def upsert_org_setting(
             "is_secret": body.is_secret,
         },
         on_conflict="org_id,key",
-    ).execute()
+    ).execute))
 
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao salvar configuração")
@@ -216,24 +217,20 @@ async def resolver_setting(key: str, authorization: Optional[str] = Header(None)
         org_id = None
 
     if org_id:
-        org_result = (
-            db.table("org_settings")
+        org_result = (await anyio.to_thread.run_sync(db.table("org_settings")
             .select("value, is_secret")
             .eq("org_id", org_id)
             .eq("key", key)
             .limit(1)
-            .execute()
-        )
+            .execute))
         if org_result.data and org_result.data[0].get("value"):
             return {"data": {"key": key, "value": _visible_value(org_result.data[0]), "source": "org"}}
 
-    platform_result = (
-        db.table("platform_settings")
+    platform_result = (await anyio.to_thread.run_sync(db.table("platform_settings")
         .select("value, is_secret")
         .eq("key", key)
         .limit(1)
-        .execute()
-    )
+        .execute))
     if platform_result.data and platform_result.data[0].get("value"):
         return {"data": {"key": key, "value": _visible_value(platform_result.data[0]), "source": "platform"}}
 

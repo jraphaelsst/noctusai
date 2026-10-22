@@ -6,6 +6,7 @@ GET  /api/admin/usage/{org_id}     — Usage metrics for a specific org (admin)
 GET  /api/usage/me                 — Usage metrics for current user's org
 POST /api/admin/usage/snapshot     — Trigger a manual usage snapshot (admin)
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
@@ -23,9 +24,9 @@ async def get_all_usage(authorization: Optional[str] = Header(None)):
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("product_usage").select(
+    result = (await anyio.to_thread.run_sync(db.table("product_usage").select(
         "*, products(nome, slug), organizations(nome)"
-    ).order("recorded_at", desc=True).limit(100).execute()
+    ).order("recorded_at", desc=True).limit(100).execute))
 
     return {"data": result.data or []}
 
@@ -36,9 +37,9 @@ async def get_org_usage(org_id: str, authorization: Optional[str] = Header(None)
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("product_usage").select(
+    result = (await anyio.to_thread.run_sync(db.table("product_usage").select(
         "*, products(nome, slug)"
-    ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute()
+    ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute))
 
     return {"data": result.data or []}
 
@@ -50,9 +51,9 @@ async def get_my_usage(authorization: Optional[str] = Header(None)):
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("product_usage").select(
+    result = (await anyio.to_thread.run_sync(db.table("product_usage").select(
         "*, products(nome, slug)"
-    ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute()
+    ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute))
 
     return {"data": result.data or []}
 
@@ -64,7 +65,7 @@ async def trigger_snapshot(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     try:
-        db.rpc("snapshot_product_usage").execute()
+        (await anyio.to_thread.run_sync(db.rpc("snapshot_product_usage").execute))
         return {"status": "ok", "message": "Snapshot de uso executado com sucesso"}
     except Exception as e:
         logger.error(f"Failed to run usage snapshot: {e}")

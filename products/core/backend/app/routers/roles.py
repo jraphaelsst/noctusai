@@ -24,6 +24,7 @@ DELETE /api/roles/{id}     — Delete custom role (admin/owner only, can't delet
 --   (NULL, 'Membro', 'member', ARRAY['products:access', 'team:read'], true),
 --   (NULL, 'Visualizador', 'viewer', ARRAY['products:access:readonly', 'team:read'], true);
 """
+import anyio
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException
@@ -107,24 +108,20 @@ async def listar_roles(authorization: Optional[str] = Header(None)):
     org_id = profile["org_id"]
 
     # System roles (org_id is NULL)
-    system_roles = (
-        db.table("roles")
+    system_roles = (await anyio.to_thread.run_sync(db.table("roles")
         .select("*")
         .is_("org_id", "null")
         .eq("is_system", True)
         .order("created_at")
-        .execute()
-    )
+        .execute))
 
     # Org custom roles
-    org_roles = (
-        db.table("roles")
+    org_roles = (await anyio.to_thread.run_sync(db.table("roles")
         .select("*")
         .eq("org_id", org_id)
         .eq("is_system", False)
         .order("created_at")
-        .execute()
-    )
+        .execute))
 
     all_roles = (system_roles.data or []) + (org_roles.data or [])
     return {"data": all_roles}
@@ -158,30 +155,24 @@ async def criar_role(
         )
 
     # Ensure slug uniqueness within the org (and system roles)
-    existing = (
-        db.table("roles")
+    existing = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id")
         .eq("slug", body.slug)
-        .execute()
-    )
+        .execute))
     org_or_system = [
         r for r in (existing.data or [])
     ]
     # Check more specifically: system or same org
-    slug_check_system = (
-        db.table("roles")
+    slug_check_system = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id")
         .eq("slug", body.slug)
         .is_("org_id", "null")
-        .execute()
-    )
-    slug_check_org = (
-        db.table("roles")
+        .execute))
+    slug_check_org = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id")
         .eq("slug", body.slug)
         .eq("org_id", org_id)
-        .execute()
-    )
+        .execute))
     if (slug_check_system.data) or (slug_check_org.data):
         raise HTTPException(
             status_code=409,
@@ -196,7 +187,7 @@ async def criar_role(
         "is_system": False,
     }
 
-    result = db.table("roles").insert(role_data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("roles").insert(role_data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar papel")
 
@@ -217,13 +208,11 @@ async def atualizar_role(
     await _require_role_manage(user, db)
 
     # Fetch the role
-    role = (
-        db.table("roles")
+    role = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id, is_system, org_id")
         .eq("id", role_id)
         .single()
-        .execute()
-    )
+        .execute))
     if not role.data:
         raise HTTPException(status_code=404, detail="Papel não encontrado")
 
@@ -251,7 +240,7 @@ async def atualizar_role(
                 detail="A permissão coringa (*) é reservada para papéis de sistema",
             )
 
-    result = db.table("roles").update(data).eq("id", role_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("roles").update(data).eq("id", role_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Papel não encontrado")
 
@@ -275,13 +264,11 @@ async def deletar_role(
     org_id = profile["org_id"]
 
     # Fetch the role
-    role = (
-        db.table("roles")
+    role = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id, slug, is_system, org_id")
         .eq("id", role_id)
         .single()
-        .execute()
-    )
+        .execute))
     if not role.data:
         raise HTTPException(status_code=404, detail="Papel não encontrado")
 
@@ -296,13 +283,11 @@ async def deletar_role(
         raise HTTPException(status_code=403, detail="Sem permissão para este papel")
 
     # Check if any users in the org currently have this role
-    users_with_role = (
-        db.table("noctus_users")
+    users_with_role = (await anyio.to_thread.run_sync(db.table("noctus_users")
         .select("id")
         .eq("org_id", org_id)
         .eq("org_role", role.data["slug"])
-        .execute()
-    )
+        .execute))
     if users_with_role.data:
         raise HTTPException(
             status_code=409,
@@ -310,7 +295,7 @@ async def deletar_role(
                    "Altere seus papéis antes de excluir.",
         )
 
-    db.table("roles").delete().eq("id", role_id).execute()
+    (await anyio.to_thread.run_sync(db.table("roles").delete().eq("id", role_id).execute))
 
     logger.info(f"Role deleted: {role_id} ({role.data['slug']})")
     return {"message": "Papel excluído com sucesso"}

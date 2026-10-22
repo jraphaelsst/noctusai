@@ -7,6 +7,7 @@ GET /api/admin/analytics/tenants   — Tenant health (orgs with user count, subs
 
 All endpoints require platform admin role.
 """
+import anyio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -52,8 +53,8 @@ async def get_overview(authorization: Optional[str] = Header(None)):
     # MRR: what billing subscriptions actually pay per month (trials pay
     # nothing; yearly counts /12; paged past the 1 000-row cap). See
     # `app/services/billing_metrics.py` for the fix this replaced.
-    all_subs = billing_metrics.load_billing_subscriptions(db)
-    mrr_result = billing_metrics.compute_mrr(all_subs, billing_metrics.load_plan_prices(db))
+    all_subs = (await anyio.to_thread.run_sync(lambda: billing_metrics.load_billing_subscriptions(db)))
+    mrr_result = billing_metrics.compute_mrr(all_subs, (await anyio.to_thread.run_sync(lambda: billing_metrics.load_plan_prices(db))))
     mrr = float(mrr_result.as_dict()["mrr"])
     # Orgs with access through a subscription (trial included).
     active_orgs = len({
@@ -123,8 +124,8 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
     # MRR per month: every subscription that had started by that month and
     # had not been canceled yet, at what it pays per month. A row still in
     # trial/incomplete never paid, so it never counts.
-    history = billing_metrics.load_billing_subscriptions(db)
-    plan_prices = billing_metrics.load_plan_prices(db)
+    history = (await anyio.to_thread.run_sync(lambda: billing_metrics.load_billing_subscriptions(db)))
+    plan_prices = (await anyio.to_thread.run_sync(lambda: billing_metrics.load_plan_prices(db)))
     for key in sorted(months.keys()):
         month_mrr = 0.0
         for sub in history:
@@ -152,11 +153,11 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     # Get all organizations
-    orgs = _all(db, "organizations", "*")
+    orgs = (await anyio.to_thread.run_sync(lambda: _all(db, "organizations", "*")))
     orgs.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
 
     # Members per org = ACTIVE memberships (noctus_users.org_id is only a user's last-active org)
-    memberships = _all(db, "org_memberships", "id, org_id, status")
+    memberships = (await anyio.to_thread.run_sync(lambda: _all(db, "org_memberships", "id, org_id, status")))
     user_counts: dict = {}
     for u in memberships:
         oid = u.get("org_id")
@@ -164,7 +165,7 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
             user_counts[oid] = user_counts.get(oid, 0) + 1
 
     # Get subscriptions with plan info
-    subs = _all(db, "subscriptions", "id, org_id, status, started_at, plans(nome, slug)")
+    subs = (await anyio.to_thread.run_sync(lambda: _all(db, "subscriptions", "id, org_id, status, started_at, plans(nome, slug)")))
     sub_map: dict = {}
     for s in subs:
         oid = s.get("org_id")

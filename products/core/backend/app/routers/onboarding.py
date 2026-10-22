@@ -10,6 +10,7 @@ PATCH /api/onboarding/complete — Marks a step as completed
 -- ALTER TABLE organizations ADD COLUMN onboarding_steps jsonb NOT NULL DEFAULT
 --   '{"company_details": false, "choose_plan": false, "invite_team": false, "enable_product": false}';
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -42,9 +43,9 @@ async def get_onboarding_status(request: Request, authorization: Optional[str] =
     db = get_admin_client()
 
     # Get organization onboarding state
-    org = db.table("organizations").select(
+    org = (await anyio.to_thread.run_sync(db.table("organizations").select(
         "id, nome, onboarding_completed, onboarding_steps"
-    ).eq("id", org_id).single().execute()
+    ).eq("id", org_id).single().execute))
 
     if not org.data:
         raise HTTPException(status_code=404, detail="Organização não encontrada")
@@ -91,9 +92,9 @@ async def complete_onboarding_step(
     db = get_admin_client()
 
     # Get current onboarding state
-    org = db.table("organizations").select(
+    org = (await anyio.to_thread.run_sync(db.table("organizations").select(
         "id, onboarding_completed, onboarding_steps"
-    ).eq("id", org_id).single().execute()
+    ).eq("id", org_id).single().execute))
 
     if not org.data:
         raise HTTPException(status_code=404, detail="Organização não encontrada")
@@ -119,7 +120,7 @@ async def complete_onboarding_step(
             if n >= 1:
                 update_data["number_of_users"] = n
         if update_data:
-            db.table("organizations").update(update_data).eq("id", org_id).execute()
+            (await anyio.to_thread.run_sync(db.table("organizations").update(update_data).eq("id", org_id).execute))
 
     # Check if all steps are completed
     all_completed = all(steps.get(s, False) for s in VALID_STEPS)
@@ -129,7 +130,7 @@ async def complete_onboarding_step(
         "onboarding_completed": all_completed,
     }
 
-    result = db.table("organizations").update(update_payload).eq("id", org_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("organizations").update(update_payload).eq("id", org_id).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao atualizar onboarding")
 

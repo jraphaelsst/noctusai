@@ -32,6 +32,7 @@ GET    /api/admin/api-keys     — List ALL keys across orgs (admin only)
 --   auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin')
 -- );
 """
+import anyio
 import secrets
 import hashlib
 import logging
@@ -62,9 +63,9 @@ async def listar_api_keys(authorization: Optional[str] = Header(None)):
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("api_keys").select(
+    result = (await anyio.to_thread.run_sync(db.table("api_keys").select(
         "id, org_id, name, key_prefix, scopes, last_used_at, expires_at, is_active, created_by, created_at"
-    ).eq("org_id", org_id).eq("is_active", True).order("created_at", desc=True).execute()
+    ).eq("org_id", org_id).eq("is_active", True).order("created_at", desc=True).execute))
 
     return {"data": result.data or []}
 
@@ -93,7 +94,7 @@ async def criar_api_key(body: ApiKeyCreate, authorization: Optional[str] = Heade
     if body.expires_at:
         data["expires_at"] = body.expires_at
 
-    result = db.table("api_keys").insert(data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("api_keys").insert(data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar chave API")
 
@@ -133,7 +134,7 @@ async def atualizar_api_key(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("api_keys").update(data).eq("id", key_id).eq("org_id", org_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("api_keys").update(data).eq("id", key_id).eq("org_id", org_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Chave API não encontrada")
 
@@ -151,9 +152,9 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
     await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
-    result = db.table("api_keys").update(
+    result = (await anyio.to_thread.run_sync(db.table("api_keys").update(
         {"is_active": False}
-    ).eq("id", key_id).eq("org_id", org_id).execute()
+    ).eq("id", key_id).eq("org_id", org_id).execute))
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Chave API não encontrada")
@@ -179,8 +180,8 @@ async def admin_listar_api_keys(authorization: Optional[str] = Header(None)):
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("api_keys").select(
+    result = (await anyio.to_thread.run_sync(db.table("api_keys").select(
         "id, org_id, name, key_prefix, scopes, last_used_at, expires_at, is_active, created_by, created_at, organizations(id, nome)"
-    ).order("created_at", desc=True).execute()
+    ).order("created_at", desc=True).execute))
 
     return {"data": result.data or []}

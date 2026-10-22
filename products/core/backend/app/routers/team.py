@@ -32,6 +32,7 @@ member of it. Contract: roadmap multi-org-membership-2026-10 § S4b API contract
 -- );
 -- ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
 """
+import anyio
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -190,12 +191,10 @@ async def convidar_membro(
 
     # Ensure the email is not already a member of this org (the profile is only the identity
     # lookup -- membership of THIS org is the org_memberships row).
-    existing = (
-        db.table("noctus_users")
+    existing = (await anyio.to_thread.run_sync(db.table("noctus_users")
         .select("id")
         .eq("email", body.email)
-        .execute()
-    )
+        .execute))
     for row in existing.data or []:
         membership = team_memberships.get_membership(db, org_id, row["id"])
         if membership and membership.get("status") == "active":
@@ -210,12 +209,10 @@ async def convidar_membro(
             )
 
     # Validate that the target role exists
-    role_check = (
-        db.table("roles")
+    role_check = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id")
         .eq("slug", body.role)
-        .execute()
-    )
+        .execute))
     if not role_check.data:
         raise HTTPException(status_code=400, detail="Papel inválido")
 
@@ -259,9 +256,9 @@ async def convidar_membro(
     try:
         from app.services.email_service import send_invitation_email
         from app.config import settings
-        org = db.table("organizations").select("nome").eq("id", org_id).single().execute()
+        org = (await anyio.to_thread.run_sync(db.table("organizations").select("nome").eq("id", org_id).single().execute))
         org_name = org.data["nome"] if org.data else "NoctusAI"
-        inviter = db.table("noctus_users").select("nome").eq("id", user.id).single().execute()
+        inviter = (await anyio.to_thread.run_sync(db.table("noctus_users").select("nome").eq("id", user.id).single().execute))
         inviter_name = inviter.data["nome"] if inviter.data else "Um membro"
         send_invitation_email(
             to=body.email,
@@ -400,12 +397,10 @@ async def alterar_role_membro(
         raise HTTPException(status_code=400, detail="Você não pode alterar seu próprio papel")
 
     # Validate that the target role exists
-    role_check = (
-        db.table("roles")
+    role_check = (await anyio.to_thread.run_sync(db.table("roles")
         .select("id, slug")
         .eq("slug", body.role)
-        .execute()
-    )
+        .execute))
     if not role_check.data:
         raise HTTPException(status_code=400, detail="Papel inválido")
 
@@ -530,13 +525,11 @@ async def aceitar_convite(
     # PGRST116 on 0 rows, which the global handler turns into a bare 404 and every
     # first-time invitee was locked out (2026-10-12). maybe_single() may also return
     # None itself (postgrest-py 0 rows), hence the double guard.
-    existing_resp = (
-        db.table("noctus_users")
+    existing_resp = (await anyio.to_thread.run_sync(db.table("noctus_users")
         .select("id, org_id")
         .eq("id", user_id)
         .maybe_single()
-        .execute()
-    )
+        .execute))
     existing_data = existing_resp.data if existing_resp is not None else None
 
     # Multi-org: belonging to another org is no reason to refuse. What decides is the user's
@@ -603,7 +596,7 @@ async def mover_membro(
     user, _token = await get_current_user(authorization)
     db = get_admin_client()
 
-    if not db.table("roles").select("id").eq("slug", body.role).execute().data:
+    if not (await anyio.to_thread.run_sync(db.table("roles").select("id").eq("slug", body.role).execute)).data:
         raise HTTPException(status_code=400, detail="Papel inválido")
     if body.role == "owner" and platform_staff_role(db, user.id) is None:
         raise team_memberships.refusal("owner_grant_forbidden")
@@ -667,7 +660,7 @@ async def listar_acesso_produtos(
         "user_id": user_id, "org_id": org_id,
         "can_edit": manager == "owner",
         "target_is_staff": platform_staff_role(db, user_id) is not None,
-        "products": team_memberships.member_product_access(db, org_id, user_id),
+        "products": (await anyio.to_thread.run_sync(lambda: team_memberships.member_product_access(db, org_id, user_id))),
     }}
 
 

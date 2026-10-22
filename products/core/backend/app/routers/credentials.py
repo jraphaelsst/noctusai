@@ -18,6 +18,7 @@ Scope rules:
 All keys stored go into `{provider}_api_key` rows — matching the lookup key
 `noctusai_lib.credentials.resolve_credential` expects.
 """
+import anyio
 import logging
 from typing import Optional
 
@@ -87,7 +88,7 @@ async def obter_credentials(authorization: Optional[str] = Header(None)):
     user, _ = await get_current_user(authorization)
     db = get_admin_client()
 
-    org_id = _trusted_profile(db, user.id).get("org_id")
+    org_id = (await anyio.to_thread.run_sync(lambda: _trusted_profile(db, user.id))).get("org_id")
     out: dict = {}
     for provider in _LLM_PROVIDERS:
         key_name = f"{provider}_api_key"
@@ -121,7 +122,7 @@ async def salvar_credentials(
     user, _ = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = _trusted_profile(db, user.id)
+    profile = (await anyio.to_thread.run_sync(lambda: _trusted_profile(db, user.id)))
     org_role = profile.get("org_role")
     org_id = profile.get("org_id")
 
@@ -142,11 +143,11 @@ async def salvar_credentials(
     for provider, value in pairs:
         row = {"key": f"{provider}_api_key", "value": value, "is_secret": True}
         if is_platform_admin:
-            db.table("platform_settings").upsert(row, on_conflict="key").execute()
+            (await anyio.to_thread.run_sync(db.table("platform_settings").upsert(row, on_conflict="key").execute))
         else:
             row["org_id"] = org_id
-            db.table("org_settings").upsert(
+            (await anyio.to_thread.run_sync(db.table("org_settings").upsert(
                 row, on_conflict="org_id,key"
-            ).execute()
+            ).execute))
 
     return {"ok": True, "updated": [p for p, _ in pairs]}

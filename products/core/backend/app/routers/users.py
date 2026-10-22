@@ -6,6 +6,7 @@ GET    /api/admin/users/{user_id} — Get single user with org info
 PATCH  /api/admin/users/{user_id} — Update user fields, incl. org assign/revoke
 DELETE /api/admin/users/{user_id} — Delete user
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -59,7 +60,7 @@ async def listar_users(
     # `organization` (only GET /{user_id} attached it), so the column rendered
     # "—" for every row — a lying column that made org membership invisible
     # exactly where an admin goes to look at it.
-    _attach_organizations(db, rows)
+    (await anyio.to_thread.run_sync(lambda: _attach_organizations(db, rows)))
 
     return paginated_response(rows, total, validated_page, validated_page_size)
 
@@ -91,16 +92,16 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    user_result = db.table("noctus_users").select("*").eq("id", user_id).single().execute()
+    user_result = (await anyio.to_thread.run_sync(db.table("noctus_users").select("*").eq("id", user_id).single().execute))
     if not user_result.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
     # Fetch organization info if user has an org_id
     user_data = user_result.data
     if user_data.get("org_id"):
-        org_result = db.table("organizations").select("id, nome, slug, plano").eq(
+        org_result = (await anyio.to_thread.run_sync(db.table("organizations").select("id, nome, slug, plano").eq(
             "id", user_data["org_id"]
-        ).single().execute()
+        ).single().execute))
         user_data["organization"] = org_result.data
     else:
         user_data["organization"] = None
@@ -127,13 +128,11 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
     # Verify user exists (and capture the pre-change org for the guards + audit)
-    check = (
-        db.table("noctus_users")
+    check = (await anyio.to_thread.run_sync(db.table("noctus_users")
         .select("id, org_id, org_role")
         .eq("id", user_id)
         .single()
-        .execute()
-    )
+        .execute))
     if not check.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
@@ -143,24 +142,24 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
 
     moving_org = new_org_id is not None and new_org_id != current_org_id
     if moving_org:
-        _guard_org_reassignment(db, user_id, current_org_id, new_org_id, data, check.data)
+        (await anyio.to_thread.run_sync(lambda: _guard_org_reassignment(db, user_id, current_org_id, new_org_id, data, check.data)))
         resulting_role = data.pop("org_role", None) or check.data.get("org_role") or "member"
         # Metadata first (nothing else has changed yet, so a failure is a clean 502); then the
         # transactional move. A refused/failed move restores the metadata before re-raising.
-        _sync_org_to_auth_metadata(db, user_id, new_org_id)
+        (await anyio.to_thread.run_sync(lambda: _sync_org_to_auth_metadata(db, user_id, new_org_id)))
         try:
             team_memberships.move_member(
                 db, actor_id=admin_user.id, user_id=user_id, source_org_id=str(current_org_id),
                 target_org_id=new_org_id, role=resulting_role, mode="transfer",
             )
         except Exception:
-            _restore_auth_metadata(db, user_id, current_org_id)
+            (await anyio.to_thread.run_sync(lambda: _restore_auth_metadata(db, user_id, current_org_id)))
             raise
 
     if data:
-        result = db.table("noctus_users").update(data).eq("id", user_id).execute()
+        result = (await anyio.to_thread.run_sync(db.table("noctus_users").update(data).eq("id", user_id).execute))
     else:
-        result = db.table("noctus_users").select("*").eq("id", user_id).execute()
+        result = (await anyio.to_thread.run_sync(db.table("noctus_users").select("*").eq("id", user_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
@@ -299,9 +298,9 @@ async def deletar_user(user_id: str, authorization: Optional[str] = Header(None)
     db = get_admin_client()
 
     # DELETE pre-check
-    check = db.table("noctus_users").select("id").eq("id", user_id).single().execute()
+    check = (await anyio.to_thread.run_sync(db.table("noctus_users").select("id").eq("id", user_id).single().execute))
     if not check.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    db.table("noctus_users").delete().eq("id", user_id).execute()
+    (await anyio.to_thread.run_sync(db.table("noctus_users").delete().eq("id", user_id).execute))
     return ok_response("Usuário excluído com sucesso")

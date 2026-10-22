@@ -10,6 +10,7 @@ Token transport / redemption strictness is MIXED and catalog-derived: see
 ``app.sso_regime`` (strict = fragment + mandatory product_slug; legacy = query,
 slug optional, only for active dev-scope products on the old callback).
 """
+import anyio
 import logging
 import threading
 import time
@@ -178,6 +179,12 @@ def _set_bind_cookie(response: Response, jti: str, nonce: str) -> None:
 async def generate_sso_token(request: Request, response: Response, body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
     """Generate a short-lived SSO token to access a product."""
     user, token = await get_current_user(authorization)
+    # The rest is sync supabase I/O end to end: run it on the threadpool so it
+    # does not hold the event loop (KB PATTERNS/backend/request-path-latency.md).
+    return await anyio.to_thread.run_sync(_generate_sso_token_sync, response, body, user, token)
+
+
+def _generate_sso_token_sync(response: Response, body: SSOTokenRequest, user, token) -> SSOTokenResponse:
     db = get_admin_client()
 
     # Get user profile
@@ -238,7 +245,7 @@ async def generate_sso_token(request: Request, response: Response, body: SSOToke
 
 @router.post("/validate")
 @limiter.limit("20/minute")
-async def validate_sso_token(
+def validate_sso_token(
     request: Request,
     body: SSOValidateRequest,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -266,6 +273,10 @@ async def validate_sso_token(
 async def launch_product(request: Request, product_slug: str, authorization: Optional[str] = Header(None)):
     """Generate SSO token and redirect to the product URL."""
     user, token = await get_current_user(authorization)
+    return await anyio.to_thread.run_sync(_launch_product_sync, request, product_slug, user, token)
+
+
+def _launch_product_sync(request: Request, product_slug: str, user, token) -> RedirectResponse:
     db = get_admin_client()
 
     # Get user profile
@@ -523,7 +534,7 @@ def _release_sso_jti(db, jti: str) -> None:
 
 @router.post("/session", response_model=SSOSessionResponse)
 @limiter.limit("20/minute")
-async def sso_session(request: Request, response: Response, body: SSOSessionRequest):
+def sso_session(request: Request, response: Response, body: SSOSessionRequest):
     """Exchange an SSO token for a Supabase session.
 
     Called by product frontends directly. The Core is the sole owner of

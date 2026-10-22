@@ -22,6 +22,7 @@ They are separate endpoints rather than PATCH fields because each carries a
 transition rule that a generic field write cannot express. See
 `app/schemas/products.py` and migration 042 for the invariants.
 """
+import anyio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -106,7 +107,7 @@ async def deployment_status(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("products").select("*").eq("ativo", True).execute()
+    result = (await anyio.to_thread.run_sync(db.table("products").select("*").eq("ativo", True).execute))
     # Probe each container on its HOUSE port (products.house_port) — every
     # product serves on uvicorn `--port <house>`, NOT a uniform 8000.
     targets = {
@@ -123,10 +124,10 @@ async def get_product(product_id: str, authorization: Optional[str] = Header(Non
     db = get_admin_client()
 
     # Platform admins read the full row; everyone else the allowlisted columns.
-    profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
+    profile = (await anyio.to_thread.run_sync(db.table("noctus_users").select("role").eq("id", user.id).single().execute))
     is_admin = bool(profile.data) and profile.data.get("role") == "admin"
     columns = "*" if is_admin else PRODUCT_PUBLIC_COLUMNS
-    result = db.table("products").select(columns).eq("id", product_id).single().execute()
+    result = (await anyio.to_thread.run_sync(db.table("products").select(columns).eq("id", product_id).single().execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     return {"data": result.data}
@@ -139,14 +140,14 @@ async def criar_product(body: ProductCreate, authorization: Optional[str] = Head
     db = get_admin_client()
 
     # Check for duplicate slug
-    existing = db.table("products").select("id").eq("slug", body.slug).execute()
+    existing = (await anyio.to_thread.run_sync(db.table("products").select("id").eq("slug", body.slug).execute))
     if existing.data:
         raise HTTPException(status_code=409, detail="Já existe um produto com este slug")
 
     data = body.model_dump(mode="json", exclude_none=True)
     data["ativo"] = True
 
-    result = db.table("products").insert(data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("products").insert(data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar produto")
 
@@ -166,7 +167,7 @@ async def atualizar_product(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("products").update(data).eq("id", product_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("products").update(data).eq("id", product_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
@@ -265,12 +266,12 @@ async def definir_activation(
 
     # Read BEFORE the write — a deactivation's audit entry is only meaningful
     # if it records the scope the product was demoted FROM.
-    prior = db.table("products").select("*").eq("id", product_id).execute()
+    prior = (await anyio.to_thread.run_sync(db.table("products").select("*").eq("id", product_id).execute))
     if not prior.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     before = _guide_state(prior.data[0])
 
-    row = _apply_activation(db, product_id, body.ativo)
+    row = (await anyio.to_thread.run_sync(lambda: _apply_activation(db, product_id, body.ativo)))
     logger.info(
         "Product %s: %s (deploy_scope forced to dev)",
         product_id, "activated" if body.ativo else "deactivated",
@@ -308,7 +309,7 @@ async def definir_deploy_scope(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    current = db.table("products").select("*").eq("id", product_id).execute()
+    current = (await anyio.to_thread.run_sync(db.table("products").select("*").eq("id", product_id).execute))
     if not current.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     before = _guide_state(current.data[0])
@@ -340,12 +341,10 @@ async def definir_deploy_scope(
             )
         patch["sso_callback_verified_at"] = datetime.now(timezone.utc).isoformat()
 
-    result = (
-        db.table("products")
+    result = (await anyio.to_thread.run_sync(db.table("products")
         .update(patch)
         .eq("id", product_id)
-        .execute()
-    )
+        .execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
@@ -376,12 +375,12 @@ async def desativar_product(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    prior = db.table("products").select("*").eq("id", product_id).execute()
+    prior = (await anyio.to_thread.run_sync(db.table("products").select("*").eq("id", product_id).execute))
     if not prior.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     before = _guide_state(prior.data[0])
 
-    row = _apply_activation(db, product_id, False)
+    row = (await anyio.to_thread.run_sync(lambda: _apply_activation(db, product_id, False)))
     logger.info(f"Product deactivated: {product_id}")
     await _audit_guide_change(
         user, request,

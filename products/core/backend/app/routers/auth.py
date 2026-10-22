@@ -6,6 +6,7 @@ POST  /api/auth/login    — Email/password login
 GET   /api/auth/me       — Get current user profile + org
 POST  /api/auth/logout   — Invalidate session
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -78,11 +79,11 @@ async def signup(request: Request, body: SignupRequest):
 
     # 1. Create Supabase auth user
     try:
-        auth_response = db.auth.admin.create_user({
+        auth_response = (await anyio.to_thread.run_sync(lambda: db.auth.admin.create_user({
             "email": body.email,
             "password": body.password,
             "email_confirm": True,
-        })
+        })))
         user = auth_response.user
         if not user:
             raise HTTPException(status_code=400, detail="Erro ao criar usuário")
@@ -91,10 +92,10 @@ async def signup(request: Request, body: SignupRequest):
 
     # 2. Create organization with org_type, number_of_users, and prefixed slug.
     #    Slug format: 'indv_<base>' for individuals, 'comp_<base>' for companies.
-    org = org_provisioning.create_owned_org(
+    org = (await anyio.to_thread.run_sync(lambda: org_provisioning.create_owned_org(
         db, owner_id=user.id, nome=body.empresa.strip(), slug_base=body.empresa.strip(),
         org_type=body.org_type, category="normal", number_of_users=body.number_of_users,
-    )
+    )))
 
     # 3. Create user profile linked to org
     profile_data = {
@@ -105,11 +106,11 @@ async def signup(request: Request, body: SignupRequest):
         "role": "user",
         "org_role": "owner",  # Org creator is owner of their org
     }
-    db.table("noctus_users").insert(profile_data).execute()
+    (await anyio.to_thread.run_sync(db.table("noctus_users").insert(profile_data).execute))
 
     # 4. Sync org_id to auth user_metadata so product backends can read it
     try:
-        db.auth.admin.update_user_by_id(user.id, {"user_metadata": {"org_id": org["id"]}})
+        (await anyio.to_thread.run_sync(lambda: db.auth.admin.update_user_by_id(user.id, {"user_metadata": {"org_id": org["id"]}})))
     except Exception as e:
         logger.warning(
             "auth: user_metadata sync failed for user_id=%s (%s); request continues",
@@ -150,10 +151,10 @@ async def login(request: Request, body: LoginRequest):
     """Login with email/password. Returns Supabase session."""
     client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
-        response = client.auth.sign_in_with_password({
+        response = (await anyio.to_thread.run_sync(lambda: client.auth.sign_in_with_password({
             "email": body.email,
             "password": body.password,
-        })
+        })))
         if not response.session:
             raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
@@ -171,7 +172,7 @@ async def login(request: Request, body: LoginRequest):
         # Enforce concurrent session cap (best-effort)
         try:
             admin_db = get_admin_client()
-            admin_db.rpc("enforce_session_cap", {"p_user_id": str(response.user.id)}).execute()
+            (await anyio.to_thread.run_sync(admin_db.rpc("enforce_session_cap", {"p_user_id": str(response.user.id)}).execute))
         except Exception as exc:
             logger.warning("auth: enforce_session_cap RPC failed for user_id=%s (%s); login proceeds", response.user.id, exc)
 
@@ -201,7 +202,7 @@ async def get_me(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     # Get noctus user profile
-    profile_result = db.table("noctus_users").select("*").eq("id", user.id).single().execute()
+    profile_result = (await anyio.to_thread.run_sync(db.table("noctus_users").select("*").eq("id", user.id).single().execute))
     if not profile_result.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
@@ -209,14 +210,14 @@ async def get_me(authorization: Optional[str] = Header(None)):
     org_id = profile.get("org_id")
 
     # Get organization
-    org_result = db.table("organizations").select("*").eq("id", org_id).single().execute()
+    org_result = (await anyio.to_thread.run_sync(db.table("organizations").select("*").eq("id", org_id).single().execute))
 
     # Get licensed products for this org (checks expiry)
     from app.dependencies import get_licensed_product_ids
     licensed_product_ids = get_licensed_product_ids(db, org_id)
     # D5 (owner, 2026-10-14): a product the user is BLOCKED from in this org is not offered here.
     from app.services.team_memberships import blocked_product_ids
-    blocked_ids = blocked_product_ids(db, user.id, org_id) if org_id else set()
+    blocked_ids = (await anyio.to_thread.run_sync(lambda: blocked_product_ids(db, user.id, org_id))) if org_id else set()
 
     # Get all products (for the marketplace view).
     #
@@ -290,7 +291,7 @@ async def change_password(
 
     db = get_admin_client()
     try:
-        db.auth.admin.update_user_by_id(user.id, {"password": body.new_password})
+        (await anyio.to_thread.run_sync(lambda: db.auth.admin.update_user_by_id(user.id, {"password": body.new_password})))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -301,7 +302,7 @@ async def change_password(
     # caller (`other_sessions_revoked: false`) and logged at ERROR, never swallowed.
     other_sessions_revoked = True
     try:
-        db.auth.admin.sign_out(token, scope="others")
+        (await anyio.to_thread.run_sync(lambda: db.auth.admin.sign_out(token, scope="others")))
     except Exception:
         other_sessions_revoked = False
         logger.error(
@@ -333,7 +334,7 @@ async def refresh_token(request: Request, body: RefreshRequest):
     """Exchange a refresh token for a new access token."""
     client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
-        response = client.auth.refresh_session(body.refresh_token)
+        response = (await anyio.to_thread.run_sync(lambda: client.auth.refresh_session(body.refresh_token)))
         if not response.session:
             raise HTTPException(status_code=401, detail="Refresh token inválido")
 
@@ -341,9 +342,9 @@ async def refresh_token(request: Request, body: RefreshRequest):
         if response.user:
             try:
                 admin_db = get_admin_client()
-                admin_db.table("noctus_users").update(
+                (await anyio.to_thread.run_sync(admin_db.table("noctus_users").update(
                     {"last_active_at": "now()"}
-                ).eq("id", str(response.user.id)).execute()
+                ).eq("id", str(response.user.id)).execute))
             except Exception as exc:
                 logger.warning("auth: last_active_at update failed for user_id=%s (%s); refresh proceeds", response.user.id, exc)
 
@@ -389,7 +390,7 @@ async def update_profile(
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("noctus_users").update(update_data).eq("id", user.id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("noctus_users").update(update_data).eq("id", user.id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
@@ -408,7 +409,7 @@ async def logout(authorization: Optional[str] = Header(None)):
     """
     user, token = await get_current_user(authorization)
     try:
-        get_admin_client().auth.admin.sign_out(token, scope="global")
+        (await anyio.to_thread.run_sync(lambda: get_admin_client().auth.admin.sign_out(token, scope="global")))
     except Exception as exc:
         logger.error("auth: global sign_out failed user_id=%s", user.id, exc_info=True)
         if is_authoritative_token_rejection(exc):

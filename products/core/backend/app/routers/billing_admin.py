@@ -72,7 +72,7 @@ def _one(ctx: BillingContext, table: str, row_id: str) -> dict[str, Any]:
 
 
 @router.get("/summary")
-async def billing_summary(
+def billing_summary(
     _: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
 ):
@@ -95,7 +95,7 @@ async def billing_summary(
 
 
 @router.get("/plans")
-async def list_plans(
+def list_plans(
     _: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
 ):
@@ -116,7 +116,7 @@ async def list_plans(
 
 
 @router.post("/plans", status_code=201)
-async def create_plan(
+def create_plan(
     body: BillingPlanCreate,
     _: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -134,7 +134,7 @@ async def create_plan(
 
 
 @router.patch("/plans/{plan_id}")
-async def update_plan(
+def update_plan(
     plan_id: str,
     body: BillingPlanUpdate,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -152,7 +152,7 @@ async def update_plan(
 
 
 @router.post("/plans/{plan_id}/prices", status_code=201)
-async def create_price(
+def create_price(
     plan_id: str,
     body: PlanPriceCreate,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -181,7 +181,7 @@ async def create_price(
 
 
 @router.patch("/prices/{price_id}")
-async def update_price(
+def update_price(
     price_id: str,
     body: PlanPriceUpdate,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -203,7 +203,7 @@ async def update_price(
 
 
 @router.get("/settings")
-async def get_settings(
+def get_settings(
     _: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
 ):
@@ -211,7 +211,7 @@ async def get_settings(
 
 
 @router.put("/settings")
-async def update_settings(
+def update_settings(
     body: BillingSettingsUpdate,
     auth: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -245,7 +245,7 @@ async def update_settings(
 
 
 @router.put("/settings/secrets")
-async def update_secret(
+def update_secret(
     body: GatewaySecretUpdate,
     auth: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -269,7 +269,7 @@ async def update_secret(
 
 
 @router.post("/settings/test-connection")
-async def test_connection(
+def test_connection(
     body: GatewayTestRequest,
     _: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -291,7 +291,7 @@ async def test_connection(
 
 
 @router.get("/subscriptions")
-async def list_subscriptions(
+def list_subscriptions(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -311,7 +311,7 @@ async def list_subscriptions(
 
 
 @router.post("/subscriptions/manual", status_code=201)
-async def onboard_manual(
+def onboard_manual(
     body: ManualOnboardRequest,
     auth: AuthContext = Depends(require_platform_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -332,7 +332,7 @@ async def onboard_manual(
 
 
 @router.post("/subscriptions/{subscription_id}/renew")
-async def renew_manual(
+def renew_manual(
     subscription_id: str,
     body: ManualRenewRequest,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -348,7 +348,7 @@ async def renew_manual(
 
 
 @router.post("/subscriptions/{subscription_id}/cancel")
-async def cancel_subscription(
+def cancel_subscription(
     subscription_id: str,
     body: SubscriptionCancelRequest,
     _: AuthContext = Depends(require_platform_admin_dep),
@@ -368,7 +368,7 @@ async def cancel_subscription(
 
 
 @router.get("/payments")
-async def list_payments(
+def list_payments(
     org_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),

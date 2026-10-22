@@ -60,7 +60,7 @@ def _display_names() -> dict[str, str]:
 
 
 @router.get("")
-async def list_fleet(
+def list_fleet(
     admin=Depends(get_current_admin),
     controller: ContainerController = Depends(get_controller),
 ) -> dict:
@@ -77,7 +77,7 @@ async def list_fleet(
 
 
 @router.post("/{slug}/{verb}")
-async def act_on_product(
+def act_on_product(
     slug: str,
     verb: FleetVerb,
     admin=Depends(get_current_admin),

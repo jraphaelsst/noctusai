@@ -86,7 +86,7 @@ async def enviar_transcricao(
 
 # NOTE: `_stats` MUST be declared before `/{transcricao_id}` or it is shadowed.
 @router.get("/_stats")
-async def estatisticas(
+def estatisticas(
     _caller: Caller = Depends(_admin_caller),
     rt: TranscricaoRuntime = Depends(get_runtime),
 ):
@@ -94,7 +94,7 @@ async def estatisticas(
 
 
 @router.get("")
-async def listar_transcricoes(
+def listar_transcricoes(
     status: Optional[str] = None,
     limit: int = 20,
     cursor: Optional[str] = None,
@@ -105,7 +105,7 @@ async def listar_transcricoes(
 
 
 @router.get("/{transcricao_id}")
-async def obter_transcricao(
+def obter_transcricao(
     transcricao_id: str,
     caller: Caller = Depends(_read_caller),
     rt: TranscricaoRuntime = Depends(get_runtime),

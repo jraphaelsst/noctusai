@@ -11,6 +11,7 @@ The OAuth flow uses Supabase's built-in OAuth:
 4. Frontend extracts token, calls /api/auth/oauth/callback to ensure noctus_users profile exists
 5. If new user, creates organization and profile (like signup)
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -46,7 +47,7 @@ _make_org_slug = org_provisioning.make_org_slug
 
 
 @router.get("/providers")
-async def list_providers():
+def list_providers():
     """List available OAuth providers with their Supabase redirect URLs."""
     supabase_url = settings.supabase_url
     redirect_to = f"{settings.app_base_url}/login"
@@ -91,12 +92,12 @@ async def oauth_callback(
     email = user.email or ""
 
     # Check if noctus_users profile already exists
-    existing = db.table("noctus_users").select("id, org_id, role, nome").eq("id", user_id).execute()
+    existing = (await anyio.to_thread.run_sync(db.table("noctus_users").select("id, org_id, role, nome").eq("id", user_id).execute))
 
     if existing.data and len(existing.data) > 0:
         # Profile exists — return it with organization
         profile = existing.data[0]
-        org = db.table("organizations").select("*").eq("id", profile["org_id"]).single().execute()
+        org = (await anyio.to_thread.run_sync(db.table("organizations").select("*").eq("id", profile["org_id"]).single().execute))
 
         logger.info(f"OAuth login: existing user {email} via {body.provider}")
         return {
@@ -118,7 +119,7 @@ async def oauth_callback(
 
     # Create organization (append suffix if slug already taken).
     # OAuth signups default to 'individual' — user updates org_type in onboarding.
-    org = org_provisioning.create_owned_org(
+    org = (await anyio.to_thread.run_sync(lambda: org_provisioning.create_owned_org(
         db, owner_id=user_id, nome=f"Org de {nome}", slug_base=nome, org_type="individual",
         number_of_users=1,
         onboarding_completed=False,
@@ -128,17 +129,17 @@ async def oauth_callback(
             "invite_team": False,
             "enable_product": False,
         },
-    )
+    )))
 
     # Create noctus_users profile
-    profile_result = db.table("noctus_users").insert({
+    profile_result = (await anyio.to_thread.run_sync(db.table("noctus_users").insert({
         "id": user_id,
         "email": email,
         "nome": nome,
         "org_id": org["id"],
         "role": "user",
         "org_role": "owner",  # Org creator is owner of their org
-    }).execute()
+    }).execute))
 
     if not profile_result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar perfil de usuário")
@@ -146,17 +147,17 @@ async def oauth_callback(
     profile = profile_result.data[0]
 
     # Create free subscription for the new org
-    free_plan = db.table("plans").select("id").eq("slug", "free").execute()
+    free_plan = (await anyio.to_thread.run_sync(db.table("plans").select("id").eq("slug", "free").execute))
     if free_plan.data and len(free_plan.data) > 0:
-        db.table("subscriptions").insert({
+        (await anyio.to_thread.run_sync(db.table("subscriptions").insert({
             "org_id": org["id"],
             "plan_id": free_plan.data[0]["id"],
             "status": "active",
-        }).execute()
+        }).execute))
 
     # Sync org_id to auth user_metadata so product backends can read it
     try:
-        db.auth.admin.update_user_by_id(user_id, {"user_metadata": {"org_id": org["id"]}})
+        (await anyio.to_thread.run_sync(lambda: db.auth.admin.update_user_by_id(user_id, {"user_metadata": {"org_id": org["id"]}})))
     except Exception as e:
         logger.warning(f"Failed to sync org_id to user_metadata: {e}")
 

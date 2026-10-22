@@ -5,6 +5,7 @@
 admin only — a marketing user 403s).
 """
 from __future__ import annotations
+import anyio
 
 import csv
 import io
@@ -32,7 +33,7 @@ _ADMIN_ONLY_KEYS = ("site_enabled", "signup_enabled")
 async def get_admin_settings(authorization: Optional[str] = Header(None)):
     await get_website_editor(authorization)
     version, data = website_settings_service.get_current(use_cache=False)
-    history = website_settings_service.get_history(limit=1)
+    history = (await anyio.to_thread.run_sync(lambda: website_settings_service.get_history(limit=1)))
     created_at = history[0]["created_at"] if history and history[0]["version"] == version else None
     created_by = history[0]["created_by"] if history and history[0]["version"] == version else None
     return {"data": {"version": version, "settings": data, "created_at": created_at, "created_by": created_by}}
@@ -81,7 +82,7 @@ async def put_admin_settings(
 @router.get("/settings/history")
 async def get_settings_history(authorization: Optional[str] = Header(None)):
     await get_website_editor(authorization)
-    return {"data": website_settings_service.get_history(limit=50)}
+    return {"data": (await anyio.to_thread.run_sync(lambda: website_settings_service.get_history(limit=50)))}
 
 
 @router.post("/settings/rollback")
@@ -153,7 +154,7 @@ async def export_leads_csv(
 @router.get("/leads/{lead_id}")
 async def get_lead(lead_id: str, authorization: Optional[str] = Header(None)):
     await get_website_editor(authorization)
-    lead = website_leads_service.get_lead_with_activities(lead_id)
+    lead = (await anyio.to_thread.run_sync(lambda: website_leads_service.get_lead_with_activities(lead_id)))
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado")
     return {"data": lead}
@@ -177,7 +178,7 @@ async def create_lead_activity(
     lead_id: str, body: WebsiteLeadActivityCreate, authorization: Optional[str] = Header(None)
 ):
     user, _token, _role = await get_website_editor(authorization)
-    activity = website_leads_service.add_activity(lead_id, body.kind, body.body, actor=f"user:{user.id}")
+    activity = (await anyio.to_thread.run_sync(lambda: website_leads_service.add_activity(lead_id, body.kind, body.body, actor=f"user:{user.id}")))
     if not activity:
         raise HTTPException(status_code=404, detail="Lead não encontrado")
     return {"data": activity}

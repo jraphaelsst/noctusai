@@ -16,6 +16,7 @@ platform-wide gotcha, not code-review paranoia — see this file's
 (`auth.py`, `billing.py`, `team.py`, ...) already avoids the future import
 for the same reason, just never documented.
 """
+import anyio
 import json
 import logging
 from typing import Optional
@@ -70,13 +71,13 @@ def _whatsapp_url(public_settings: dict, locale: str) -> Optional[str]:
 
 
 @router.get("/settings")
-async def get_public_settings():
+def get_public_settings():
     version, data = website_settings_service.get_current()
     return {"data": website_settings_service.public_subset(data), "version": version}
 
 
 @router.get("/plans")
-async def get_public_plans():
+def get_public_plans():
     db = get_admin_client()
     result = (
         db.table("plans")
@@ -94,9 +95,9 @@ async def create_lead(request: Request, body: WebsiteLeadCreate, background_task
     await _verify_turnstile(body.turnstile_token, request)
 
     try:
-        lead, _created = website_leads_service.create_or_merge_lead(
+        lead, _created = (await anyio.to_thread.run_sync(lambda: website_leads_service.create_or_merge_lead(
             body, ip_hash=website_leads_service.hash_ip(_client_ip(request))
-        )
+        )))
     except website_leads_service.WebsiteLeadContactMissing as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -110,7 +111,7 @@ async def create_lead(request: Request, body: WebsiteLeadCreate, background_task
 
 @router.post("/events", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("60/minute")
-async def create_event(request: Request, body: WebsiteEventCreate):
+def create_event(request: Request, body: WebsiteEventCreate):
     props = body.props or {}
     if len(json.dumps(props, ensure_ascii=False).encode("utf-8")) > _MAX_EVENT_PROPS_BYTES:
         raise HTTPException(status_code=422, detail="props exceeds 2KB")

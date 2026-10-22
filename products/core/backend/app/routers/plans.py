@@ -9,6 +9,7 @@ DELETE /api/plans/{id}     — Soft delete plan (admin only)
 
 Schema is defined in products/core/backend/migrations/001_noctusai_core.sql.
 """
+import anyio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
@@ -27,7 +28,7 @@ async def listar_plans(authorization: Optional[str] = Header(None)):
     await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("plans").select("*").eq("ativo", True).order("price_monthly").execute()
+    result = (await anyio.to_thread.run_sync(db.table("plans").select("*").eq("ativo", True).order("price_monthly").execute))
     return {"data": result.data or []}
 
 
@@ -37,7 +38,7 @@ async def get_plan(plan_id: str, authorization: Optional[str] = Header(None)):
     await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("plans").select("*").eq("id", plan_id).single().execute()
+    result = (await anyio.to_thread.run_sync(db.table("plans").select("*").eq("id", plan_id).single().execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
     return {"data": result.data}
@@ -50,14 +51,14 @@ async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(Non
     db = get_admin_client()
 
     # Check for duplicate slug
-    existing = db.table("plans").select("id").eq("slug", body.slug).execute()
+    existing = (await anyio.to_thread.run_sync(db.table("plans").select("id").eq("slug", body.slug).execute))
     if existing.data:
         raise HTTPException(status_code=409, detail="Já existe um plano com este slug")
 
     data = body.model_dump(mode="json", exclude_none=True)
     data["ativo"] = True
 
-    result = db.table("plans").insert(data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("plans").insert(data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar plano")
 
@@ -75,7 +76,7 @@ async def atualizar_plan(plan_id: str, body: PlanUpdate, authorization: Optional
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("plans").update(data).eq("id", plan_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("plans").update(data).eq("id", plan_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
 
@@ -89,7 +90,7 @@ async def deletar_plan(plan_id: str, authorization: Optional[str] = Header(None)
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("plans").update({"ativo": False}).eq("id", plan_id).execute()
+    result = (await anyio.to_thread.run_sync(db.table("plans").update({"ativo": False}).eq("id", plan_id).execute))
     if not result.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
 

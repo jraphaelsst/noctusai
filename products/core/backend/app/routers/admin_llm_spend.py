@@ -11,6 +11,7 @@ audience (`useIsOrgAdmin`), so a platform-admin-only gate 403-toasted every
 org admin fleet-wide. The PUT stays platform-admin only.
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from typing import Any, Awaitable, Callable, Optional
@@ -110,14 +111,14 @@ async def update_budget(
     await get_current_admin(authorization)
     db = get_admin_client()
     try:
-        db.table("org_settings").upsert(
+        (await anyio.to_thread.run_sync(db.table("org_settings").upsert(
             {
                 "org_id": org_id,
                 "key": "monthly_llm_budget_brl",
                 "value": str(body.monthly_brl),
             },
             on_conflict="org_id,key",
-        ).execute()
+        ).execute))
     except Exception as e:
         logger.error("admin_llm_spend.update_budget failed for org=%s: %s", org_id, e)
         raise HTTPException(status_code=500, detail="Erro ao atualizar orçamento")

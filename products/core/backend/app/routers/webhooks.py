@@ -31,6 +31,7 @@ GET    /api/webhooks/{id}/deliveries   — List delivery log for an endpoint
 --   created_at timestamptz NOT NULL DEFAULT now()
 -- );
 """
+import anyio
 import secrets
 import logging
 from typing import Optional, List
@@ -81,9 +82,9 @@ async def listar_webhooks(authorization: Optional[str] = Header(None)):
     user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
-    result = db.table("webhook_endpoints").select(_ENDPOINT_PUBLIC_COLUMNS).eq(
+    result = (await anyio.to_thread.run_sync(db.table("webhook_endpoints").select(_ENDPOINT_PUBLIC_COLUMNS).eq(
         "org_id", org_id
-    ).order("created_at", desc=True).execute()
+    ).order("created_at", desc=True).execute))
 
     # Column list above already omits `secret`; strip again so the contract
     # holds even if the select is ever widened back to "*".
@@ -106,7 +107,7 @@ async def criar_webhook(body: WebhookCreate, authorization: Optional[str] = Head
         "is_active": body.is_active,
     }
 
-    result = db.table("webhook_endpoints").insert(data).execute()
+    result = (await anyio.to_thread.run_sync(db.table("webhook_endpoints").insert(data).execute))
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar webhook endpoint")
 
@@ -133,9 +134,9 @@ async def atualizar_webhook(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
     # Only update webhooks belonging to the user's org
-    result = db.table("webhook_endpoints").update(update_data).eq(
+    result = (await anyio.to_thread.run_sync(db.table("webhook_endpoints").update(update_data).eq(
         "id", webhook_id
-    ).eq("org_id", org_id).execute()
+    ).eq("org_id", org_id).execute))
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Webhook endpoint não encontrado")
@@ -169,9 +170,9 @@ async def listar_deliveries(
     db = get_admin_client()
 
     # Verify the endpoint belongs to the user's org
-    endpoint = db.table("webhook_endpoints").select("id").eq(
+    endpoint = (await anyio.to_thread.run_sync(db.table("webhook_endpoints").select("id").eq(
         "id", webhook_id
-    ).eq("org_id", org_id).execute()
+    ).eq("org_id", org_id).execute))
 
     if not endpoint.data:
         raise HTTPException(status_code=404, detail="Webhook endpoint não encontrado")
@@ -179,15 +180,15 @@ async def listar_deliveries(
     offset = (page - 1) * page_size
 
     # Get total count
-    count_result = db.table("webhook_deliveries").select(
+    count_result = (await anyio.to_thread.run_sync(db.table("webhook_deliveries").select(
         "id", count="exact"
-    ).eq("endpoint_id", webhook_id).execute()
+    ).eq("endpoint_id", webhook_id).execute))
     total = count_result.count if count_result.count is not None else len(count_result.data or [])
 
     # Get paginated deliveries
-    result = db.table("webhook_deliveries").select("*").eq(
+    result = (await anyio.to_thread.run_sync(db.table("webhook_deliveries").select("*").eq(
         "endpoint_id", webhook_id
-    ).order("created_at", desc=True).range(offset, offset + page_size - 1).execute()
+    ).order("created_at", desc=True).range(offset, offset + page_size - 1).execute))
 
     return {
         "data": result.data or [],
@@ -226,5 +227,5 @@ async def purge_expired_webhook_deliveries(
     """
     await get_current_admin(authorization)
     db = get_admin_client()
-    result = webhook_retention_service.run_retention_sweep(db)
+    result = (await anyio.to_thread.run_sync(lambda: webhook_retention_service.run_retention_sweep(db)))
     return {"data": result}

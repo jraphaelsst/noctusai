@@ -15,6 +15,7 @@ Webhook deliveries are recorded in `public.payment_events` (migration 050),
 which is also the idempotency inbox. `public.billing_events` (migration 029)
 is the pre-050 log; it is no longer written and stays as history.
 """
+import anyio
 import logging
 from typing import Any, Optional
 
@@ -64,13 +65,13 @@ async def create_checkout(body: CheckoutRequest, authorization: Optional[str] = 
     user, token = await get_current_user(authorization)
     org_id = await get_org_id(user)
 
-    checkout_url = billing_service.start_subscription(
+    checkout_url = (await anyio.to_thread.run_sync(lambda: billing_service.start_subscription(
         org_id=org_id,
         plan_id=body.plan_id,
         billing_cycle=body.billing_cycle,
         success_url=body.success_url,
         cancel_url=body.cancel_url,
-    )
+    )))
 
     return {"data": {"checkout_url": checkout_url}}
 
@@ -123,8 +124,8 @@ async def stripe_webhook(request: Request, ctx: BillingContext = Depends(get_bil
     if outcome.status == "processed" and event.event_type in _HANDLED_EVENTS:
         event_data = event.payload.get("data", {})
         if event.event_type == "invoice.payment_failed":
-            _notify_billing_event(event.event_type, event_data, ctx.db)
-        _dispatch_webhook(event.event_type, event_data, ctx.db)
+            (await anyio.to_thread.run_sync(lambda: _notify_billing_event(event.event_type, event_data, ctx.db)))
+        (await anyio.to_thread.run_sync(lambda: _dispatch_webhook(event.event_type, event_data, ctx.db)))
 
     # 200 for processed, ignored and duplicate alike: none should be retried.
     return {"received": True, "status": outcome.status}
@@ -162,7 +163,7 @@ async def asaas_webhook(request: Request, ctx: BillingContext = Depends(get_bill
 
 @router.get("/plans")
 @limiter.limit(DEFAULT_AUTH_RL)
-async def public_plans(request: Request, ctx: BillingContext = Depends(get_billing_context)):
+def public_plans(request: Request, ctx: BillingContext = Depends(get_billing_context)):
     """Sellable plans with their active prices + which gateways are offered.
 
     Public (the pricing page is shown before signup). Carries no secret and
@@ -208,7 +209,7 @@ def _safe_return_url(base_url: str, candidate: Optional[str], fallback_path: str
 
 
 @router.post("/subscribe")
-async def subscribe(
+def subscribe(
     body: SubscribeRequest,
     auth: AuthContext = Depends(require_org_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
@@ -235,7 +236,7 @@ async def subscribe(
 
 
 @router.get("/subscription")
-async def my_subscription(
+def my_subscription(
     auth: AuthContext = Depends(require_org_admin_dep),
     ctx: BillingContext = Depends(get_billing_context),
 ):
@@ -375,7 +376,7 @@ async def create_portal(body: PortalRequest, authorization: Optional[str] = Head
     org_id = await get_org_id(user)
 
     # Get the Stripe customer ID for this org
-    customer_id = billing_service.ensure_customer(org_id)
+    customer_id = (await anyio.to_thread.run_sync(lambda: billing_service.ensure_customer(org_id)))
 
     from app.config import settings
     return_url = body.return_url or f"{settings.app_base_url.rstrip('/')}/billing"
@@ -428,20 +429,24 @@ async def list_invoices(
     db = get_admin_client()
 
     # Get stripe customer id from subscription
-    sub = (
-        db.table("subscriptions")
-        .select("stripe_customer_id")
-        .eq("org_id", org_id)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
+    sub = await anyio.to_thread.run_sync(
+        lambda: (
+            db.table("subscriptions")
+            .select("stripe_customer_id")
+            .eq("org_id", org_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
     )
 
     customer_id = sub.data[0].get("stripe_customer_id") if sub.data else None
     if not customer_id:
         return {"data": []}
 
-    invoices = stripe_service.get_invoices(customer_id, limit=min(limit, 100))
+    invoices = await anyio.to_thread.run_sync(
+        lambda: stripe_service.get_invoices(customer_id, limit=min(limit, 100))
+    )
 
     # Transform to a leaner shape for the frontend
     invoice_list = [

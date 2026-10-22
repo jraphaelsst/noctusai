@@ -139,7 +139,7 @@ app.middleware("http")(website_html_middleware)
 
 
 @app.get("/")
-async def root():
+def root():
     return {
         "platform": "NoctusAI",
         "version": "1.0.0",

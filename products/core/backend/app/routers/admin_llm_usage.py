@@ -40,7 +40,7 @@ _PRODUCT_SCHEMAS: dict[str, str] = {
 
 
 @router.get("")
-async def aggregate_llm_usage(
+def aggregate_llm_usage(
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
     product: Optional[str] = Query(
