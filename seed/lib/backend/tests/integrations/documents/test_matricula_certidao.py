@@ -80,6 +80,18 @@ class TestKind:
         printout whose disclaimer the transcription lost."""
         assert classificar_documento_matricula("MATRÍCULA Nº 12.345\n" + ATOS) == (None, None)
 
+    def test_an_acts_own_selo_does_not_make_a_certidao(self):
+        """Deal 857: every act is signed "ESCREVENTE SELO DIGITAL Nº …"; a
+        vision read that lost the disclaimer was upgraded by it."""
+        texto = (
+            "MATRÍCULA Nº 12.345\n" + ATOS
+            + "FULANO EXEMPLO - ESCREVENTE SELO DIGITAL Nº 1234567890 R. 04\n"
+        )
+        assert classificar_documento_matricula(texto) == (None, None)
+
+    def test_a_certificates_own_selo_still_marks_a_certidao(self):
+        assert classificar_documento_matricula(ATOS + "Selo digital 1234AB.")[0] == "certidao"
+
     def test_vocabulary(self):
         assert TIPOS_DOCUMENTO_MATRICULA == ("certidao", "visualizacao")
 
@@ -177,6 +189,25 @@ class TestViewDate:
             + "Visualização gerada em 04/03/2024. Data da consulta: 05/03/2024.\n"
         )
         assert ler_certidao_matricula(texto).data_visualizacao is None
+
+    def test_the_stamp_only_in_the_text_layer_is_read_from_it(self):
+        """Deal 857: the vision transcription drops the ARISP stamp printed
+        as a text layer over the scan — the raw layer carries it."""
+        ocr = "VISUALIZAÇÃO DE MATRÍCULA\n" + ATOS
+        camada = "SOLICITADO POR: FULANO EXEMPLO - CPF/CNPJ: ***.123.456-** DATA:  29/06/2026 07:57:57"
+        assert ler_certidao_matricula(ocr).data_visualizacao is None
+        assert ler_certidao_matricula(ocr, texto_camada=camada).data_visualizacao == date(2026, 6, 29)
+
+    def test_the_text_layer_never_dates_a_certidao_or_changes_its_kind(self):
+        camada = "SOLICITADO POR: FULANO - DATA: 29/06/2026"
+        lida = ler_certidao_matricula(CERTIDAO, texto_camada=camada)
+        assert lida.tipo_documento_matricula == "certidao"
+        assert lida.data_visualizacao is None
+        assert lida.data_emissao == date(2026, 3, 1)
+
+    def test_the_transcription_stamp_wins_over_the_layer(self):
+        camada = "Consultado em 05/03/2024"
+        assert ler_certidao_matricula(VISUALIZACAO, texto_camada=camada).data_visualizacao == date(2024, 3, 4)
 
     def test_a_certidao_has_no_view_date(self):
         assert ler_certidao_matricula(CERTIDAO).data_visualizacao is None

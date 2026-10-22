@@ -1068,8 +1068,19 @@ def _impresso_vence(
     return {**via_ia, **impresso}
 
 
+def _texto_camada_pdf(conteudo: bytes, mimetype: Optional[str]) -> str:
+    """The PDF's RAW text layer, every page, substantive or not — where the
+    registry's view stamp lives on a scanned visualização (vision drops it).
+    `classify_pdf_text_layer` never raises; a non-PDF has no layer."""
+    if "pdf" not in (mimetype or "application/pdf").lower():
+        return ""
+    from noctusai_lib.integrations.media import classify_pdf_text_layer
+
+    return "\n\n".join(p.text for p in classify_pdf_text_layer(conteudo).pages if p.text)
+
+
 def _estrutura_da_matricula(
-    paginas: Sequence["PaginaLida"], via_ia: Optional[dict]
+    paginas: Sequence["PaginaLida"], via_ia: Optional[dict], texto_camada: str = ""
 ) -> dict:
     """🔴 P5 B1 (2026-10): the matrícula's `emitida_em` is decided by the
     SEED's deterministic read (`ler_certidao_matricula`), never by the
@@ -1094,7 +1105,9 @@ def _estrutura_da_matricula(
     Returns the three columns, always all three — a re-read must CLEAR a
     stale `emitida_em` an older read wrote, not leave it standing.
     """
-    leitura = ler_certidao_matricula("\n\n".join(p.texto for p in paginas))
+    leitura = ler_certidao_matricula(
+        "\n\n".join(p.texto for p in paginas), texto_camada=texto_camada
+    )
     if leitura.visualizacao:
         return {
             "emitida_em": (
@@ -1294,7 +1307,9 @@ async def extrair_estrutura(
                 if "inscricao_imobiliaria" in impresso:
                     inscricao_via_visao = inscricao_impressa_via_visao
             if tipo == "matricula":
-                matricula = _estrutura_da_matricula(paginas, via_ia)
+                matricula = _estrutura_da_matricula(
+                    paginas, via_ia, _texto_camada_pdf(blob.data, doc.get("mime_type"))
+                )
                 via_ia = {**(via_ia or {}), **matricula}
                 if matricula["emissao_motivo"]:
                     logger.info(

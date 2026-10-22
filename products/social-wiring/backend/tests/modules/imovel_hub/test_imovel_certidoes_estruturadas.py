@@ -971,6 +971,20 @@ class TestMatriculaVisualizacao:
         dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
         assert dados["onus_certidao_em"] is None
 
+    def test_the_view_stamp_in_the_pdf_text_layer_dates_an_ocr_read_visualizacao(self):
+        """Deal 857: vision transcribed every page and dropped the ARISP stamp
+        printed as a text layer over the scan — the layer still dates it."""
+        ocr = (documentos_service.PaginaLida(texto=_VISUALIZACAO_P5, via_visao=True),)
+        camada = "SOLICITADO POR: FULANO EXEMPLO - CPF/CNPJ: ***.123.456-** DATA:  29/06/2026 07:57:57"
+        sem = documentos_service._estrutura_da_matricula(ocr, None)
+        com = documentos_service._estrutura_da_matricula(ocr, None, camada)
+        assert sem["emitida_em"] is None
+        assert com["emitida_em"] == "2026-06-29"
+        assert com["tipo_documento_matricula"] == "visualizacao"
+
+    def test_a_non_pdf_has_no_text_layer(self):
+        assert documentos_service._texto_camada_pdf(b"\x89PNG", "image/png") == ""
+
     @pytest.mark.asyncio
     async def test_a_re_read_clears_the_act_date_an_older_read_wrote(
         self, client, scoped, fake_storage

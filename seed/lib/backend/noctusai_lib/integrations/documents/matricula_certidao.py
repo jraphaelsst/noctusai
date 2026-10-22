@@ -56,6 +56,10 @@ trusted:
    (signed corpus, deal 857). Never an act date: only a stamp-labelled date
    counts, it must clear the same chronology floor, and disagreeing stamps
    are absence. It is NOT an emission — `data_emissao` stays `None`.
+   The ARISP stamp is printed as a TEXT LAYER over the scanned page, and a
+   vision transcription of that page drops it (deal 857: four OCR pages, no
+   stamp) — so a caller holding the PDF passes its raw text layer as
+   `texto_camada`, read for the stamp only (never for kind or acts).
 
 All fixtures in this module's tests are synthetic; no real document text.
 """
@@ -107,13 +111,15 @@ _MARCAS_VISUALIZACAO = re.compile(
 
 #: Phrases only a certidão carries — it CERTIFIES. Bare "DOU FÉ" is NOT one:
 #: act texts end with it too, so it would upgrade a printout whose
-#: disclaimer the transcription lost.
+#: disclaimer the transcription lost. Same for an ACT's own selo: each act of
+#: a visualização is signed "… - ESCREVENTE SELO DIGITAL Nº …" (deal 857 — a
+#: vision read that lost the disclaimer was upgraded to a certidão by it).
 _MARCAS_CERTIDAO = re.compile(
     r"(?<![A-Z])CERTIFICO(?![A-Z])"
     r"|O\s+REFERIDO\s+E\s+VERDADE"
     r"|CERTIDAO\s+(?:DIGITAL|ELETRONICA|DE\s+INTEIRO\s+TEOR|EM\s+INTEIRO\s+TEOR|DE\s+ONUS"
     r"|D[AE]\s+MATRICULA|ATUALIZADA|EXPEDIDA|EMITIDA)"
-    r"|SELO\s+(?:DIGITAL|ELETRONICO|DE\s+FISCALIZACAO)"
+    r"|(?<!ESCREVENTE )(?<!ESCREVENTE - )SELO\s+(?:DIGITAL|ELETRONICO|DE\s+FISCALIZACAO)"
 )
 
 # ─── emission date ────────────────────────────────────────────────────────
@@ -276,18 +282,21 @@ def _candidatas(norm: str) -> tuple[list[tuple[date, str]], list[tuple[date, str
     return rotuladas, fechos[-1:]
 
 
-def ler_certidao_matricula(texto: str) -> CertidaoMatriculaLida:
+def ler_certidao_matricula(texto: str, texto_camada: str = "") -> CertidaoMatriculaLida:
     """Classify a matrícula document and read the certidão's own emission
-    date. Pure and deterministic; see module docstring."""
+    date. Pure and deterministic; see module docstring. `texto_camada` — the
+    PDF's raw text layer, a second source for the visualização's stamp only
+    (§3); the transcription's own stamp wins when both carry one."""
     tipo, tipo_rotulo = classificar_documento_matricula(texto)
     ultimo = data_ultimo_ato(texto)
     base = dict(
         tipo_documento_matricula=tipo, tipo_rotulo=tipo_rotulo, data_ultimo_ato=ultimo
     )
     if tipo == TIPO_VISUALIZACAO:
-        return CertidaoMatriculaLida(
-            **base, motivo=MOTIVO_VISUALIZACAO, data_visualizacao=data_da_visualizacao(texto, ultimo)
+        vista = data_da_visualizacao(texto, ultimo) or (
+            data_da_visualizacao(texto_camada, ultimo) if texto_camada else None
         )
+        return CertidaoMatriculaLida(**base, motivo=MOTIVO_VISUALIZACAO, data_visualizacao=vista)
 
     norm = normalize(texto or "")
     rotuladas, fechos = _candidatas(norm)
