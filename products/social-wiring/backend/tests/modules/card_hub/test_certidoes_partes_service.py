@@ -218,6 +218,28 @@ class TestMontar:
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia", "opcional",
         }
 
+    def test_idade_contra_assinatura_data_do_contrato_e_hoje_se_ausente(self, scoped):
+        """Same reference as the gate's "na data da assinatura": the signed
+        date when set (17 days -> OK), today only when unset (-> vencida)."""
+        cid, aid, [vid] = _card(scoped)
+        scoped.set_table_data("certidao_consultas", [_consulta("c1", cliente_id=vid)])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado("r1", "c1", "cnd_federal", status="sucesso", resultado="negativa",
+                       emitida_em="2026-02-10"),
+        ])
+        scoped.set_table_data("atendimento_contratos", [])
+        sem = svc.montar(scoped, ORG_ID, cid, hoje=date(2026, 10, 22))
+        c = next(x for x in sem["partes"] if x["rotulo"] == "VEND 1")["celulas"]["cnd_federal"]
+        assert (c["idade_dias"], c["stale_para_contrato"]) == (254, True)
+
+        scoped.set_table_data("atendimento_contratos", [
+            {"id": str(uuid4()), "org_id": str(ORG_ID), "atendimento_id": aid, "assinatura_data": "2026-02-27"},
+        ])
+        com = svc.montar(scoped, ORG_ID, cid, hoje=date(2026, 10, 22))
+        c = next(x for x in com["partes"] if x["rotulo"] == "VEND 1")["celulas"]["cnd_federal"]
+        assert (c["idade_dias"], c["stale_para_contrato"]) == (17, False)
+        assert com["data_referencia"] == "2026-02-27"
+
     def test_titular_e_comp_1_e_partes_numeradas_por_lado(self, scoped):
         cid, aid, [v1, v2] = _card(scoped, vendedores=2)
         comprador_id = str(uuid4())
@@ -655,6 +677,22 @@ class TestGarantirCelula:
         vend = next(p for p in out["partes"] if p["rotulo"] == "VEND 1")
         assert vend["celulas"]["serasa"]["origem"] == "manual"
         assert vend["celulas"]["serasa"]["resultado_id"] == body["resultado_id"]
+
+    def test_celula_serasa_aplica_crednet_ja_lido(self, scoped):
+        cid, aid, [vid] = _card(scoped)
+        cpf = next(c for c in _dados(scoped, "clientes") if c["id"] == vid)["cpf"]
+        scoped.set_table_data("cliente_documentos", [{
+            "id": str(uuid4()), "org_id": str(ORG_ID), "cliente_id": vid,
+            "tipo_documento": "serasa_crednet", "extracao_status": "ok", "deleted_at": None,
+            "storage_path": "x/serasa.pdf",
+            "extracao_crednet": {"cpf": cpf, "protocolo": "P-9", "consulta_em": "2026-10-20T10:00:00",
+                                 "ocorrencias_constam": False},
+        }])
+        svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "serasa"))
+        [resultado] = _dados(scoped, "certidao_resultados")
+        assert (resultado["status"], resultado["numero"], resultado["resultado"]) == (
+            "sucesso", "P-9", "negativa",
+        )
 
     def test_celula_existente_devolve_200_sem_criar(self, scoped):
         cid, aid, [vid] = _card(scoped)

@@ -492,6 +492,22 @@ def _titular_do(partes: list[dict]) -> str:
     return next(p["cliente_id"] for p in partes if p["titular"])
 
 
+def data_assinatura_do_atendimento(client: Any, org_id: UUID, atendimento_id: str) -> Optional[date]:
+    """The signing date stored on the deal's contract(s)
+    (`atendimento_contratos.assinatura_data`, migration 114) — the latest set
+    one. The contract gate (`contrato_gerador.service.data_assinatura`) ages
+    every certidão against it; the grid must use the same reference."""
+    rows = (
+        _t(client, "atendimento_contratos")
+        .select("assinatura_data")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(atendimento_id))
+        .execute()
+    ).data or []
+    datas = [d for d in (_iso_para_data(r.get("assinatura_data")) for r in rows) if d]
+    return max(datas) if datas else None
+
+
 def montar(
     client: Any,
     org_id: UUID,
@@ -517,6 +533,9 @@ def montar(
     )
     limite = max_dias()
     exigencias = exig_svc.ler(client, org_id, alvo)
+    # Age against the contract's signing date when set (same reference as the
+    # gate's "na data da assinatura"); today only when absent.
+    hoje = data_assinatura_do_atendimento(client, org_id, alvo) or hoje
     return {
         "atendimento_id": alvo,
         "exigencias": exigencias,
@@ -973,6 +992,11 @@ def garantir_celula(
     }).execute().data
     if not resultado:
         raise AppException(code="INTERNAL_ERROR", message="Erro ao criar resultado", status_code=500)
+    # The Serasa placeholder created here is the cell a Crednet uploaded
+    # BEFORE it existed has nobody else to fill (same deferral
+    # `_criar_consulta_automatica` closes): apply the reading on file now.
+    if placeholder.get("tipo") == "serasa":
+        certidoes_svc.aplicar_crednet_pendente(client, org_id, consulta[0])
     return {
         "resultado_id": resultado[0]["id"], "consulta_id": consulta[0]["id"], "criado": True,
     }, True
