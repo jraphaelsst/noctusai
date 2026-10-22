@@ -130,61 +130,61 @@ def make_finance_router(
 
     # ── accounts ──
     @router.get("/accounts", name="finance_list_accounts")
-    async def list_accounts_route(active: Optional[bool] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def list_accounts_route(active: Optional[bool] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(accounts_svc.list_accounts(scope(ctx), active=active))
 
     @router.post("/accounts", status_code=201, name="finance_create_account")
-    async def create_account_route(body: AccountBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_account_route(body: AccountBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(accounts_svc.create_account(scope(ctx), _dump(body)))
 
     @router.patch("/accounts/{account_id}", name="finance_update_account")
-    async def update_account_route(
+    def update_account_route(
         account_id: UUID, body: AccountPatch, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(accounts_svc.update_account(scope(ctx), account_id, _dump(body, exclude_unset=True)))
 
     @router.delete("/accounts/{account_id}", status_code=204, name="finance_delete_account")
-    async def delete_account_route(account_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+    def delete_account_route(account_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
         accounts_svc.delete_account(scope(ctx), account_id)
         return Response(status_code=204)
 
     @router.get("/accounts/{account_id}/balance", name="finance_account_balance")
-    async def account_balance_route(
+    def account_balance_route(
         account_id: UUID, on: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(accounts_svc.account_balance(scope(ctx), account_id, on))
 
     # ── categories ──
     @router.get("/categories", name="finance_list_categories")
-    async def list_categories_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def list_categories_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(categories_svc.list_categories(scope(ctx)))
 
     @router.post("/categories", status_code=201, name="finance_create_category")
-    async def create_category_route(body: CategoryBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_category_route(body: CategoryBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(categories_svc.create_category(scope(ctx), _dump(body)))
 
     @router.patch("/categories/{category_id}", name="finance_update_category")
-    async def update_category_route(
+    def update_category_route(
         category_id: UUID, body: CategoryPatch, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(categories_svc.update_category(scope(ctx), category_id, _dump(body, exclude_unset=True)))
 
     @router.delete("/categories/{category_id}", status_code=204, name="finance_delete_category")
-    async def delete_category_route(category_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+    def delete_category_route(category_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
         categories_svc.delete_category(scope(ctx), category_id)
         return Response(status_code=204)
 
     # ── cost centers ──
     @router.get("/cost-centers", name="finance_list_cost_centers")
-    async def list_cost_centers_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def list_cost_centers_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(categories_svc.list_cost_centers(scope(ctx)))
 
     @router.post("/cost-centers", status_code=201, name="finance_create_cost_center")
-    async def create_cost_center_route(body: CostCenterBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_cost_center_route(body: CostCenterBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(categories_svc.create_cost_center(scope(ctx), _dump(body)))
 
     @router.patch("/cost-centers/{cost_center_id}", name="finance_update_cost_center")
-    async def update_cost_center_route(
+    def update_cost_center_route(
         cost_center_id: UUID, body: CostCenterPatch, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(
@@ -193,7 +193,7 @@ def make_finance_router(
 
     # ── entries ──
     @router.get("/entries", name="finance_list_entries")
-    async def list_entries_route(
+    def list_entries_route(
         direction: Optional[str] = Query(None),
         status: Optional[str] = Query(None),
         overdue: Optional[bool] = Query(None),
@@ -216,7 +216,7 @@ def make_finance_router(
         )
 
     @router.post("/entries", status_code=201, name="finance_create_entry")
-    async def create_entry_route(body: EntryBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_entry_route(body: EntryBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         data = _dump(body)
         if data["source"] not in API_SOURCES:  # pragma: no cover - the Literal already forbids it
             raise invalid("source", "Origem reservada.", code="origem_reservada")
@@ -224,18 +224,18 @@ def make_finance_router(
         return success_response([entries_svc.present_entry(r, is_admin=ctx.is_admin) for r in rows])
 
     @router.get("/entries/{entry_id}", name="finance_get_entry")
-    async def get_entry_route(entry_id: UUID, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def get_entry_route(entry_id: UUID, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(entries_svc.present_entry(entries_svc.get_entry_detail(scope(ctx), entry_id), is_admin=ctx.is_admin))
 
     @router.patch("/entries/{entry_id}", name="finance_update_entry")
-    async def update_entry_route(
+    def update_entry_route(
         entry_id: UUID, body: EntryPatch, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         row = entries_svc.update_entry(scope(ctx), entry_id, _dump(body, exclude_unset=True))
         return success_response(entries_svc.present_entry(row, is_admin=ctx.is_admin))
 
     @router.post("/entries/{entry_id}/cancel", name="finance_cancel_entry")
-    async def cancel_entry_route(entry_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def cancel_entry_route(entry_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(entries_svc.present_entry(entries_svc.cancel_entry(scope(ctx), entry_id), is_admin=ctx.is_admin))
 
     @router.delete("/entries/{entry_id}", status_code=204, name="finance_delete_entry")
@@ -247,7 +247,7 @@ def make_finance_router(
 
     # ── settlements ──
     @router.post("/entries/{entry_id}/settlements", status_code=201, name="finance_settle_entry")
-    async def settle_entry_route(
+    def settle_entry_route(
         entry_id: UUID, body: SettleBody, response: Response, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         result = settlements_svc.settle_entry(scope(ctx), entry_id, _dump(body), user_id=ctx.user_id)
@@ -257,7 +257,7 @@ def make_finance_router(
         return success_response(result)
 
     @router.post("/settlements/{settlement_id}/reverse", name="finance_reverse_settlement")
-    async def reverse_settlement_route(
+    def reverse_settlement_route(
         settlement_id: UUID, body: ReverseBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         result = settlements_svc.reverse_settlement(scope(ctx), settlement_id, body.reason, user_id=ctx.user_id)
@@ -266,15 +266,15 @@ def make_finance_router(
 
     # ── recurrences ──
     @router.get("/recurrences", name="finance_list_recurrences")
-    async def list_recurrences_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def list_recurrences_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(recurrences_svc.list_recurrences(scope(ctx)))
 
     @router.post("/recurrences", status_code=201, name="finance_create_recurrence")
-    async def create_recurrence_route(body: RecurrenceBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_recurrence_route(body: RecurrenceBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(recurrences_svc.create_recurrence(scope(ctx), _dump(body)))
 
     @router.patch("/recurrences/{recurrence_id}", name="finance_update_recurrence")
-    async def update_recurrence_route(
+    def update_recurrence_route(
         recurrence_id: UUID, body: RecurrencePatch, _a=admin, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(
@@ -283,12 +283,12 @@ def make_finance_router(
 
     # ── transfers ──
     @router.post("/transfers", status_code=201, name="finance_create_transfer")
-    async def create_transfer_route(body: TransferBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def create_transfer_route(body: TransferBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(settlements_svc.create_transfer(scope(ctx), _dump(body)))
 
     # ── reports ──
     @router.get("/reports/cashflow", name="finance_report_cashflow")
-    async def cashflow_route(
+    def cashflow_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         account_id: Optional[UUID] = Query(None),
@@ -299,7 +299,7 @@ def make_finance_router(
         return success_response(reports_svc.cashflow(scope(ctx), start, end, account_id=account_id))
 
     @router.get("/reports/dre", name="finance_report_dre")
-    async def dre_route(
+    def dre_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         view: str = Query("statement", pattern="^(statement|managerial)$"),
@@ -311,7 +311,7 @@ def make_finance_router(
         return success_response(reports_svc.dre(scope(ctx), start, end, view=view, regime_prefill=prefill(ctx)))
 
     @router.get("/reports/simples-base", name="finance_report_simples_base")
-    async def simples_base_route(
+    def simples_base_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         _a=reader,
@@ -323,17 +323,17 @@ def make_finance_router(
 
     # ── DRE settings + accountant checklist (CONTRACT §10.4 / §10.5) ──
     @router.get("/dre-settings", name="finance_get_dre_settings")
-    async def get_dre_settings_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def get_dre_settings_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(dre_settings_svc.get_settings(scope(ctx), regime_prefill=prefill(ctx)))
 
     @router.put("/dre-settings", name="finance_put_dre_settings")
-    async def put_dre_settings_route(body: DreSettingsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def put_dre_settings_route(body: DreSettingsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(
             dre_settings_svc.update_settings(scope(ctx), _dump(body), user_id=ctx.user_id, regime_prefill=prefill(ctx))
         )
 
     @router.get("/accountant-checklist", name="finance_accountant_checklist")
-    async def accountant_checklist_route(_a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def accountant_checklist_route(_a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         links = {
             "dre_csv": f"{prefix}/exports/dre.csv",
             "entries_csv": f"{prefix}/exports/entries.csv",
@@ -347,7 +347,7 @@ def make_finance_router(
         return success_response(accountant_svc.build_checklist(scope(ctx), export_links=links, regime_prefill=prefill(ctx)))
 
     @router.get("/exports/dre.csv", name="finance_export_dre")
-    async def export_dre_route(
+    def export_dre_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         view: str = Query("statement", pattern="^(statement|managerial)$"),
@@ -366,7 +366,7 @@ def make_finance_router(
 
     # ── budget vs actual (E21) ──
     @router.get("/budgets", name="finance_list_budgets")
-    async def list_budgets_route(
+    def list_budgets_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         _a=reader,
@@ -377,16 +377,16 @@ def make_finance_router(
         return success_response(budgets_svc.list_budgets(scope(ctx), start, end))
 
     @router.put("/budgets", name="finance_put_budgets")
-    async def put_budgets_route(body: BudgetsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def put_budgets_route(body: BudgetsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(budgets_svc.upsert_budgets(scope(ctx), [_dump(i) for i in body.items]))
 
     @router.delete("/budgets/{budget_id}", status_code=204, name="finance_delete_budget")
-    async def delete_budget_route(budget_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+    def delete_budget_route(budget_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
         budgets_svc.delete_budget(scope(ctx), budget_id)
         return Response(status_code=204)
 
     @router.get("/reports/budget", name="finance_report_budget")
-    async def budget_report_route(
+    def budget_report_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         _a=reader,
@@ -402,7 +402,7 @@ def make_finance_router(
         return date_from or end.replace(day=1), end
 
     @router.get("/reports/livro-caixa", name="finance_report_livro_caixa")
-    async def livro_caixa_route(
+    def livro_caixa_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         page: int = Query(1, ge=1),
@@ -414,7 +414,7 @@ def make_finance_router(
         return success_response(livro_svc.page_of(livro_svc.livro_caixa(scope(ctx), start, end), page, page_size))
 
     @router.get("/exports/livro-caixa.csv", name="finance_export_livro_caixa_csv")
-    async def livro_caixa_csv_route(
+    def livro_caixa_csv_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         _a=reader,
@@ -425,7 +425,7 @@ def make_finance_router(
         return _download(body, "text/csv; charset=utf-8", "livro-caixa.csv")
 
     @router.get("/exports/livro-caixa.pdf", name="finance_export_livro_caixa_pdf")
-    async def livro_caixa_pdf_route(
+    def livro_caixa_pdf_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         _a=reader,
@@ -437,24 +437,24 @@ def make_finance_router(
 
     # ── MEI Relatório Mensal de Receitas Brutas (E21) ──
     @router.get("/reports/mei-monthly", name="finance_report_mei_monthly")
-    async def mei_monthly_route(
+    def mei_monthly_route(
         month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)
     ) -> dict:
         return success_response(mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx)))
 
     @router.get("/exports/mei-monthly.csv", name="finance_export_mei_csv")
-    async def mei_csv_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+    def mei_csv_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
         report = mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx))
         return _download(mei_svc.mei_monthly_csv(report), "text/csv; charset=utf-8", "relatorio-mensal-receitas-brutas.csv")
 
     @router.get("/exports/mei-monthly.pdf", name="finance_export_mei_pdf")
-    async def mei_pdf_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
+    def mei_pdf_route(month: Optional[date] = Query(None), _a=reader, ctx: FinanceContext = Depends(ctx_dep)) -> Response:
         report = mei_svc.mei_monthly(scope(ctx), month or today(), regime_prefill=prefill(ctx))
         return _download(mei_svc.mei_monthly_pdf(report), "application/pdf", "relatorio-mensal-receitas-brutas.pdf")
 
     # ── Domínio export (E16/E21) ──
     @router.get("/exports/dominio.txt", name="finance_export_dominio")
-    async def dominio_route(
+    def dominio_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
         cnpj: str = Query(..., min_length=11, max_length=18),
@@ -467,7 +467,7 @@ def make_finance_router(
         return _download(body, "text/plain; charset=us-ascii", "dominio.txt")
 
     @router.get("/reports/aging", name="finance_report_aging")
-    async def aging_route(as_of: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def aging_route(as_of: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(reports_svc.aging(scope(ctx), as_of=as_of, is_admin=ctx.is_admin))
 
     # ── attachments ──

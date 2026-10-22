@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from ._common import Scope, add_months, month_start, to_date, today
+from ._common import Scope, add_months, month_start, run_parallel, to_date, today
 from .entries import mask_doc
 from .errors import invalid
 from .types import EntryDirection, EntryStatus, LedgerDirection, LedgerOrigin
@@ -52,41 +52,48 @@ def _check_range(date_from: date, date_to: date) -> None:
 def cashflow(s: Scope, date_from: date, date_to: date, *, account_id: Optional[Any] = None) -> dict:
     """Realized (ledger) + projected (open entries by `due_date`), bucketed by month."""
     _check_range(date_from, date_to)
-    if account_id:
-        s.require_owned("accounts", account_id, what="Conta", field="account_id")
     acc = str(account_id) if account_id else None
 
     def ledger_filter(query):
         return query.eq("account_id", acc) if acc else query
 
+    # Five independent reads -> ONE wall-clock round trip (was 5 sequential: ~125 ms warm, 250 ms cold).
+    # `owned` is listed first so a foreign account id still raises its 422 before any data error.
+    _owned, all_accounts, before, period, open_entries = run_parallel(
+        (lambda: s.require_owned("accounts", account_id, what="Conta", field="account_id")) if acc else (lambda: None),
+        lambda: s.rows("accounts"),
+        lambda: s.rows("ledger", refine=lambda q: ledger_filter(q).lt("occurred_on", date_from.isoformat())),
+        lambda: s.rows(
+            "ledger",
+            refine=lambda q: ledger_filter(q).gte("occurred_on", date_from.isoformat()).lte("occurred_on", date_to.isoformat()),
+        ),
+        lambda: s.rows(
+            "entries",
+            # postgrest-unbounded-ok: two literal enum values
+            refine=lambda q: q.in_("status", list(_OPEN)).gte("due_date", date_from.isoformat()).lte("due_date", date_to.isoformat()),
+        ),
+    )
+
     # Opening balance: account openings (dated on/before the start) + ledger strictly before the period.
-    accounts = [a for a in s.rows("accounts") if acc is None or str(a["id"]) == acc]
+    accounts = [a for a in all_accounts if acc is None or str(a["id"]) == acc]
     opening = sum(
         int(a.get("opening_balance_cents") or 0)
         for a in accounts
         if to_date(a.get("opening_date")) is None or to_date(a.get("opening_date")) < date_from
     )
-    before = s.rows("ledger", refine=lambda q: ledger_filter(q).lt("occurred_on", date_from.isoformat()))
     opening += sum(
         int(r["amount_cents"]) if r["direction"] == LedgerDirection.IN.value else -int(r["amount_cents"]) for r in before
     )
 
     buckets = {m: {"month": m, "realized_in_cents": 0, "realized_out_cents": 0,
                    "projected_in_cents": 0, "projected_out_cents": 0} for m in _months(date_from, date_to)}
-    for r in s.rows(
-        "ledger",
-        refine=lambda q: ledger_filter(q).gte("occurred_on", date_from.isoformat()).lte("occurred_on", date_to.isoformat()),
-    ):
+    for r in period:
         if acc is None and r["origin"] == LedgerOrigin.TRANSFER.value:
             continue  # between the org's own accounts: nets to zero in the aggregate view
         key = "realized_in_cents" if r["direction"] == LedgerDirection.IN.value else "realized_out_cents"
         buckets[_month_key(r["occurred_on"])][key] += int(r["amount_cents"])
 
-    for e in s.rows(
-        "entries",
-        # postgrest-unbounded-ok: two literal enum values
-        refine=lambda q: q.in_("status", list(_OPEN)).gte("due_date", date_from.isoformat()).lte("due_date", date_to.isoformat()),
-    ):
+    for e in open_entries:
         if acc and e.get("expected_account_id") and str(e["expected_account_id"]) != acc:
             continue
         remaining = int(e["amount_cents"]) - int(e.get("settled_cents") or 0)

@@ -97,7 +97,7 @@ def make_finance_reconciliation_router(
         return success_response(result)
 
     @router.get("/statements", name="finance_list_statements")
-    async def list_statements_route(
+    def list_statements_route(
         account_id: Optional[UUID] = Query(None),
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
@@ -107,7 +107,7 @@ def make_finance_reconciliation_router(
         return paginated_response(rows, total, page, size)
 
     @router.get("/statements/{import_id}/lines", name="finance_list_statement_lines")
-    async def list_lines_route(
+    def list_lines_route(
         import_id: UUID,
         match_status: Optional[str] = Query(None),
         page: int = Query(1, ge=1),
@@ -120,18 +120,18 @@ def make_finance_reconciliation_router(
         return paginated_response(rows, total, page, size)
 
     @router.post("/statement-lines/{line_id}/match", name="finance_match_statement_line")
-    async def match_line_route(line_id: UUID, body: MatchBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def match_line_route(line_id: UUID, body: MatchBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         result = matching_svc.match_line(scope(ctx), line_id, body.entry_id, user_id=ctx.user_id)
         result["entry"] = present_entry(result["entry"], is_admin=ctx.is_admin)
         return success_response(result)
 
     @router.post("/statement-lines/{line_id}/ignore", name="finance_ignore_statement_line")
-    async def ignore_line_route(line_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+    def ignore_line_route(line_id: UUID, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
         return success_response(matching_svc.ignore_line(scope(ctx), line_id))
 
     # ── gateway sync ──
     @router.post("/accounts/{account_id}/gateway-sync", name="finance_gateway_sync")
-    async def gateway_sync_route(
+    def gateway_sync_route(
         account_id: UUID,
         response: Response,
         body: Optional[GatewaySyncBody] = None,
@@ -150,7 +150,7 @@ def make_finance_reconciliation_router(
 
     # ── exports ──
     @router.get("/exports/entries.csv", name="finance_export_entries")
-    async def export_entries_route(
+    def export_entries_route(
         direction: Optional[str] = Query(None),
         status: Optional[str] = Query(None),
         overdue: Optional[bool] = Query(None),
@@ -173,7 +173,7 @@ def make_finance_reconciliation_router(
         )
 
     @router.get("/exports/ledger.ofx", name="finance_export_ledger")
-    async def export_ledger_route(
+    def export_ledger_route(
         account_id: UUID = Query(...),
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),

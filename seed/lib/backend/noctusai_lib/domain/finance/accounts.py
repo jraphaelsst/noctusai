@@ -7,7 +7,7 @@ from typing import Any, Mapping, Optional
 
 from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, is_unique_violation
 
-from ._common import Scope, first, iso, new_id, now_iso, to_date, today
+from ._common import Scope, first, iso, new_id, now_iso, run_parallel, to_date, today
 from .errors import CONTA_COM_MOVIMENTO, CONTA_EM_USO, CONTA_GATEWAY_DUPLICADA, CONTA_INATIVA, conflict, invalid
 from .types import AccountKind, LedgerDirection
 
@@ -174,10 +174,13 @@ def signed_ledger_cents(rows: list[dict]) -> int:
 
 def account_balance(s: Scope, account_id: Any, on: Optional[date] = None) -> dict:
     """Balance of the account on day `on` (default today): opening + the ledger up to and including `on`."""
-    account = get_account(s, account_id)
     on = on or today()
     day = on.isoformat()
-    rows = s.rows(_LEDGER, eq={"account_id": str(account_id)}, refine=lambda q: q.lte("occurred_on", day))
+    # account lookup (404 guard, listed first) and ledger read are independent: one wall-clock round trip.
+    account, rows = run_parallel(
+        lambda: get_account(s, account_id),
+        lambda: s.rows(_LEDGER, eq={"account_id": str(account_id)}, refine=lambda q: q.lte("occurred_on", day)),
+    )
     opening_date = to_date(account.get("opening_date"))
     opening = int(account.get("opening_balance_cents") or 0) if opening_date is None or opening_date <= on else 0
     movement = signed_ledger_cents(rows)
