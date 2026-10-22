@@ -43,6 +43,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 import anyio.to_thread
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
+
 from .exceptions import LLMBudgetExceeded, LLMBudgetNotConfigured
 
 logger = logging.getLogger(__name__)
@@ -224,17 +226,23 @@ async def compute_spend_usd(
         total = 0.0
         for product, schema in _PRODUCT_SCHEMAS.items():
             try:
-                result = (
-                    db.schema(schema)
-                    .table("llm_usage")
-                    .select("cost_estimate_usd")
-                    .eq("org_id", org_id)
-                    .gte("at", start_iso)
-                    .lte("at", end_iso)
-                    .limit(50_000)
-                    .execute()
-                )
-                for row in result.data or []:
+                # Paged: PostgREST caps every response at 1 000 rows, so the old `.limit(50_000)`
+                # silently under-counted a busy month (KB § PATTERNS/backend/postgrest-row-cap.md).
+                def fetch_page(start: int, end: int, _schema: str = schema) -> Any:
+                    return (
+                        db.schema(_schema)
+                        .table("llm_usage")
+                        .select("id,cost_estimate_usd")
+                        .eq("org_id", org_id)
+                        .gte("at", start_iso)
+                        .lte("at", end_iso)
+                        .order("id")
+                        .range(start, end)
+                        .execute()
+                        .data
+                    )
+
+                for row in iter_paged_rows(fetch_page, label=f"llm spend {product}/{org_id}"):
                     total += float(row.get("cost_estimate_usd") or 0)
             except Exception as exc:
                 logger.warning(
