@@ -449,8 +449,24 @@ def _dentro_de_legenda_de_livro(zona: str, at: int) -> bool:
 _LIVRO_ANTES_RE = re.compile(r"\bLIVRO\s+[A-Z](?:\s+AUXILIAR)?\s*[(\-–:|=]?\s*$")
 
 
+#: 🔴 "COMUNHÃO DE BENS" with NO qualifier (real, deal 799, 2026-10-22: an
+#: SP 2ª via of a 1977-04-30 marriage). Before Lei 6.515/77 (in force
+#: 1977-12-26) the legal default regime was comunhão UNIVERSAL, and cartórios
+#: printed it as plain "comunhão de bens". From that date the default became
+#: comunhão PARCIAL, so an unqualified "comunhão de bens" on a later marriage
+#: is ambiguous (universal by pacto? parcial with the qualifier elided?).
+#: Rule: unqualified + marriage date strictly BEFORE 1977-12-26 -> universal;
+#: otherwise NO value (never a guess) with the reason in the label.
+_COMUNHAO_SEM_QUALIFICADOR_RE = re.compile(r"\bCOMUNHAO\s+DE\s+BENS\b")
+LEI_6515_VIGENCIA = date(1977, 12, 26)
+
+
 def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the marital property regime.
+
+    An unqualified "comunhão de bens" is resolved by the marriage date — see
+    :data:`_COMUNHAO_SEM_QUALIFICADOR_RE` (pre-Lei 6.515/77 -> universal;
+    otherwise absent, with the reason in the label).
 
     Returns `(value, confidence, matched_label)` — value one of
     :data:`REGIME_BENS_VALORES`, confidence one of `"alta"` / `"nenhuma"`
@@ -479,7 +495,17 @@ def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
         for m in padrao.finditer(norm):
             achados.append((m.start(), canonico, m.group(0)))
     if not achados:
-        return (None, "nenhuma", None)
+        bare = _COMUNHAO_SEM_QUALIFICADOR_RE.search(norm)
+        if bare is None:
+            return (None, "nenhuma", None)
+        casamento, conf_data, _ = find_data_casamento(text)
+        if casamento is not None and conf_data == "alta" and casamento < LEI_6515_VIGENCIA:
+            return ("comunhao_universal", "alta", f"{bare.group(0)} (anterior a Lei 6.515/77)")
+        motivo = (
+            "data do casamento nao lida" if casamento is None
+            else "casamento posterior a Lei 6.515/77"
+        )
+        return (None, "nenhuma", f"AMBIGUO: {bare.group(0)} sem qualificador ({motivo})")
 
     achados.sort(key=lambda a: a[0])
     distintos = {c for _, c, _ in achados}
@@ -518,6 +544,28 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
     if valor is not None and valor not in ESTADO_CIVIL_DOCUMENTAL:
         return (None, "nenhuma", None)
     return (valor, conf, rotulo)
+
+
+def find_estado_civil_certidao_casamento(text: str) -> tuple[Optional[str], str, Optional[str]]:
+    """`find_estado_civil` for a document the caller KNOWS is a certidão de
+    casamento: the certidão itself records the marriage, so with no
+    averbação event of any kind (divórcio, óbito, separação, ...) the
+    holder's status is `casado` — even when the regime is unreadable or
+    ambiguous (e.g. an unqualified "comunhão de bens" after Lei 6.515/77).
+    Any averbação event keyword at all (even a negated or conflicting one)
+    withholds the inference: that is `find_estado_civil`'s call, not ours."""
+    valor, conf, rotulo = find_estado_civil(text)
+    if valor is not None:
+        return (valor, conf, rotulo)
+    norm = normalize(text or "")
+    if not norm:
+        return (None, "nenhuma", None)
+    pos = _averbacao_start(norm)
+    if pos is not None:
+        zona = _sem_apendice_de_detalhamento(norm[pos:])
+        if any(p.search(zona) for p, _ in _AVERBACAO_EVENTOS):
+            return (None, "nenhuma", None)
+    return ("casado", "alta", "CERTIDAO_CASAMENTO sem averbacao de divorcio/obito")
 
 
 def _find_estado_civil_bruto(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -729,7 +777,7 @@ _SEMI_EXTENSO_DATE = re.compile(
 _EXTENSO_DATE = re.compile(
     r"\b(" + "|".join(sorted(_DIAS_POR_EXTENSO, key=len, reverse=True)) + r")"
     r"\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+"
-    r"([A-Z]+(?:\s+[A-Z]+){0,6})"
+    r"([A-Z]+(?:\s+[A-Z]+){0,9})"
 )
 #: 🔴 A FOURTH DATE SHAPE — real, measured (P2 corpus, 2026-09-28): a CNJ
 #: e-cartório table renders its own "Dia / Mês / Ano" column header WITH the
@@ -1012,6 +1060,7 @@ __all__ = [
     "find_data_casamento",
     "find_data_emissao",
     "find_estado_civil",
+    "find_estado_civil_certidao_casamento",
     "find_regime_bens",
     "normalize",
 ]

@@ -81,6 +81,7 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_data_casamento,
     find_data_emissao,
     find_estado_civil,
+    find_estado_civil_certidao_casamento,
     find_regime_bens,
 )
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
@@ -437,6 +438,7 @@ __all__ = [
     "find_data_casamento",
     "find_data_emissao",
     "find_estado_civil",
+    "find_estado_civil_certidao_casamento",
     "find_gender",
     "find_matricula",
     "find_nacionalidade",

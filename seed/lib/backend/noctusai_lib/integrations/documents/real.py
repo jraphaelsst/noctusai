@@ -48,6 +48,7 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_data_casamento,
     find_data_emissao,
     find_estado_civil,
+    find_estado_civil_certidao_casamento,
     find_regime_bens,
 )
 from noctusai_lib.integrations.documents.conjuges import ConjugeLido, find_conjuges
@@ -828,7 +829,13 @@ class LadderIdentityExtractor:
         # which an OCR misread can turn into a DIFFERENT valid vocabulary
         # token. It can only turn a real reading into nothing.
         estado_civil, estado_civil_conf, estado_civil_label = (
-            find_estado_civil(text) if pode("estado_civil") else nada3
+            (
+                find_estado_civil_certidao_casamento(text)
+                if tipo_norm == "CERTIDAO_CASAMENTO"
+                else find_estado_civil(text)
+            )
+            if pode("estado_civil")
+            else nada3
         )
         regime_bens, regime_bens_conf, regime_bens_label = (
             find_regime_bens(text) if pode("regime_bens") else nada3
