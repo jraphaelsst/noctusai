@@ -29,6 +29,7 @@ ERROR log — and reported in the response body; never swallowed.
 Runs on the igig service-role client (`get_portas_automacao_admin`); `org_id`
 comes from the verified token / Page and is filtered on every query.
 """
+import anyio
 # NOTE: deliberately NO `from __future__ import annotations` — the routes are
 # wrapped by `@limiter.limit(...)` (see esteira_router.py for the failure mode).
 import asyncio
@@ -125,7 +126,7 @@ async def waha_webhook(
     portas: PortasAutomacao = Depends(get_portas_automacao_admin),
 ) -> JSONResponse:
     org_id = _org_do_token(token)
-    row = canais_org.integracao(portas.db, org_id, "whatsapp") if org_id else None
+    row = (await anyio.to_thread.run_sync(lambda: canais_org.integracao(portas.db, org_id, "whatsapp"))) if org_id else None
     esperado = str(((row or {}).get("config") or {}).get("webhook_token") or "")
     if not row or not row.get("ativo") or not esperado or not hmac.compare_digest(esperado, token):
         # Never log the token — it is a routing credential.
@@ -155,8 +156,8 @@ async def waha_webhook(
         resultado = await fontes_lead.lead_do_whatsapp(portas, org_id, mensagem)
     except Exception as exc:  # noqa: BLE001 — recorded on the channel + logged; WAHA gets 200
         logger.exception("igig-waha-webhook: falha ao criar lead org=%s", org_id)
-        canais_org.registrar_erro(portas.db, org_id, "whatsapp",
-                                  f"Falha ao criar lead do WhatsApp: {type(exc).__name__}: {exc}")
+        (await anyio.to_thread.run_sync(lambda: canais_org.registrar_erro(portas.db, org_id, "whatsapp",
+                                  f"Falha ao criar lead do WhatsApp: {type(exc).__name__}: {exc}")))
         return JSONResponse({"status": "erro", "detalhe": f"{type(exc).__name__}"})
     return JSONResponse(resultado)
 
@@ -204,7 +205,7 @@ async def _segredo_meta(request: Request, body: bytes) -> ResolvedSecret:
 
 @router.get("/meta/leadgen", response_class=PlainTextResponse)
 @limiter.limit(settings.webhook_rate_limit)
-async def meta_leadgen_verificar(
+def meta_leadgen_verificar(
     request: Request,
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),

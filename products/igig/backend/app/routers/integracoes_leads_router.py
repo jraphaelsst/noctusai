@@ -88,7 +88,7 @@ def _whatsapp_out(row: dict | None, cfg: Any) -> dict:
 
 
 @router.get("/whatsapp")
-async def obter_whatsapp(
+def obter_whatsapp(
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
     cfg: Any = Depends(get_settings),
@@ -97,7 +97,7 @@ async def obter_whatsapp(
 
 
 @router.put("/whatsapp", dependencies=[Depends(exigir_admin_da_org)])
-async def salvar_whatsapp(
+def salvar_whatsapp(
     payload: LeadsWhatsappIn,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -132,7 +132,7 @@ async def salvar_whatsapp(
 
 
 @router.delete("/whatsapp", dependencies=[Depends(exigir_admin_da_org)])
-async def desconectar_whatsapp(
+def desconectar_whatsapp(
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
     cfg: Any = Depends(get_settings),
@@ -177,7 +177,7 @@ def _meta_out(row: dict | None, cfg: Any) -> dict:
 
 
 @router.get("/meta")
-async def obter_meta(
+def obter_meta(
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
     cfg: Any = Depends(get_settings),
@@ -186,7 +186,7 @@ async def obter_meta(
 
 
 @router.put("/meta", dependencies=[Depends(exigir_admin_da_org)])
-async def salvar_meta(
+def salvar_meta(
     payload: LeadsMetaIn,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -249,7 +249,7 @@ async def salvar_meta(
 
 
 @router.delete("/meta", dependencies=[Depends(exigir_admin_da_org)])
-async def desconectar_meta(
+def desconectar_meta(
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
     cfg: Any = Depends(get_settings),

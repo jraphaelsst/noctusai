@@ -14,6 +14,7 @@ live character counter; deriving it server-side means "what counts as a
 character" has ONE definition instead of one per screen, and the calendar's
 list view can flag an over-long legenda without re-implementing the rule.
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — this module has an upload
 # route and may grow a rate limiter; see esteira_router.py for the slowapi/PEP
 # 563 interaction that makes eager annotations the safe default here.
@@ -61,7 +62,7 @@ def _out(row: dict) -> PautaOut:
 
 
 @router.get("/calendario", response_model=CalendarioResponse)
-async def calendario(
+def calendario(
     inicio: str = Query(..., description="ISO-8601 inclusive"),
     fim: str = Query(..., description="ISO-8601 inclusive"),
     cliente_id: str | None = Query(default=None, description="Só as pautas deste cliente"),
@@ -81,7 +82,7 @@ async def calendario(
 
 
 @router.get("", response_model=list[PautaOut])
-async def listar_pautas(
+def listar_pautas(
     cliente_id: str | None = None,
     funil: str | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -98,7 +99,7 @@ async def listar_pautas(
 
 
 @router.post("", response_model=PautaOut, status_code=status.HTTP_201_CREATED)
-async def criar_pauta(
+def criar_pauta(
     payload: PautaCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -112,7 +113,7 @@ async def criar_pauta(
 
 
 @router.get("/{pauta_id}", response_model=PautaOut)
-async def obter_pauta(
+def obter_pauta(
     pauta_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -124,7 +125,7 @@ async def obter_pauta(
 
 
 @router.patch("/{pauta_id}", response_model=PautaOut)
-async def atualizar_pauta(
+def atualizar_pauta(
     pauta_id: str,
     payload: PautaUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -186,7 +187,7 @@ async def remover_pauta(
     # Read the peças BEFORE the cascading delete removes their rows.
     pecas = repos.peca.da_pauta(org_id, pauta_id)
 
-    if not repos.pauta.remover(org_id, pauta_id):
+    if not (await anyio.to_thread.run_sync(lambda: repos.pauta.remover(org_id, pauta_id))):
         raise HTTPException(status_code=404, detail="Pauta não encontrada")
 
     for peca in pecas:
@@ -287,7 +288,7 @@ async def remover_peca(
         raise HTTPException(status_code=404, detail="Peça não encontrada")
     if str(peca.get("pauta_id")) != pauta_id:
         raise HTTPException(status_code=404, detail="Peça não encontrada")
-    repos.peca.remover(org_id, peca_id)
+    (await anyio.to_thread.run_sync(lambda: repos.peca.remover(org_id, peca_id)))
     try:
         await storage.delete(bucket=settings.igig_storage_bucket, key=str(peca["storage_key"]))
     except Exception:  # noqa: BLE001 — the row delete already succeeded

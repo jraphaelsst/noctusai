@@ -32,7 +32,7 @@ def _org(auth: tuple) -> str:
 
 
 @router.get("")
-async def listar_produtos(
+def listar_produtos(
     secao: Literal["criacao_conteudo", "gestao_conta"] | None = None,
     ativo: bool | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -42,7 +42,7 @@ async def listar_produtos(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def criar_produto(
+def criar_produto(
     payload: ProdutoServicoCreate,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -54,7 +54,7 @@ async def criar_produto(
 
 
 @router.patch("/{produto_id}")
-async def atualizar_produto(
+def atualizar_produto(
     produto_id: str,
     payload: ProdutoServicoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -69,7 +69,7 @@ async def atualizar_produto(
 
 
 @router.delete("/{produto_id}")
-async def remover_produto(
+def remover_produto(
     produto_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),

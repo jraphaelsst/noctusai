@@ -39,6 +39,7 @@ those three: the portal keeps showing the read-only decided state
 (`ja_decidida=true`) until the link actually expires, on purpose — see
 `_resolver_link`'s docstring.
 """
+import anyio
 # NOTE: deliberately NO `from __future__ import annotations` here.
 # The public endpoints are wrapped by `@limiter.limit(...)`, and with
 # postponed annotations FastAPI cannot resolve the body model through the
@@ -141,7 +142,7 @@ def _usuario(auth: tuple) -> str:
 
 # ── AUTHED — the agency's team ──────────────────────────────────────
 @router.get("/board")
-async def obter_board(
+def obter_board(
     cliente_id: str | None = None,
     limite_por_etapa: int | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -157,7 +158,7 @@ async def obter_board(
 
 
 @router.patch("/stages/{stage_id}/papel", dependencies=[Depends(exigir_admin_do_quadro)])
-async def atribuir_papel_etapa(
+def atribuir_papel_etapa(
     stage_id: str,
     payload: PapelEtapaIn,
     auth: tuple = Depends(get_current_user_org),
@@ -185,7 +186,7 @@ async def atribuir_papel_etapa(
 
 
 @router.get("/tarefas/{tarefa_id}")
-async def obter_tarefa(
+def obter_tarefa(
     tarefa_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -235,7 +236,7 @@ async def criar_tarefa(
 
 
 @router.patch("/tarefas/{tarefa_id}", response_model=TarefaOut)
-async def atualizar_tarefa(
+def atualizar_tarefa(
     tarefa_id: str,
     payload: TarefaUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -269,7 +270,7 @@ async def atualizar_tarefa(
 
 
 @router.delete("/tarefas/{tarefa_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def excluir_tarefa(
+def excluir_tarefa(
     tarefa_id: str,
     confirmar_perda_horas: bool = False,
     auth: tuple = Depends(get_current_user_org),
@@ -317,7 +318,7 @@ async def mover_etapa(
 
 
 @router.get("/tarefas/{tarefa_id}/apontamentos", response_model=list[ApontamentoOut])
-async def listar_apontamentos(
+def listar_apontamentos(
     tarefa_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -327,7 +328,7 @@ async def listar_apontamentos(
 
 @router.post("/tarefas/{tarefa_id}/timer/iniciar", response_model=ApontamentoOut,
              status_code=status.HTTP_201_CREATED)
-async def iniciar_timer(
+def iniciar_timer(
     tarefa_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -360,7 +361,7 @@ async def iniciar_timer(
 
 
 @router.post("/tarefas/{tarefa_id}/timer/encerrar", response_model=ApontamentoOut)
-async def encerrar_timer(
+def encerrar_timer(
     tarefa_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -544,10 +545,10 @@ async def decidir_aprovacao_publica(
     pauta_para_bloqueio = repos.pauta.buscar(org_id, str(tarefa_para_bloqueio["pauta_id"]))
     _recusar_se_bloqueado(repos, org_id, str(pauta_para_bloqueio["cliente_id"]), cfg)
     try:
-        esteira_quadro.decidir_aprovacao(
+        (await anyio.to_thread.run_sync(lambda: esteira_quadro.decidir_aprovacao(
             db, org_id, tarefa_id=tarefa_id, decisao=payload.decisao,
             observacao=payload.observacao,
-        )
+        )))
     except RegraViolada as erro:
         raise http_de(erro) from erro
 

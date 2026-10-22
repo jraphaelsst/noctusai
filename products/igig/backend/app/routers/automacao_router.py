@@ -70,7 +70,7 @@ def _validar(db: Any, org_id: str, pipeline: str, stage_id: str, acao: dict) -> 
 
 
 @router.get("")
-async def listar_automacoes(
+def listar_automacoes(
     pipeline: str | None = None,
     stage_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -87,7 +87,7 @@ async def listar_automacoes(
 
 
 @router.get("/execucoes")
-async def listar_execucoes_automacoes(
+def listar_execucoes_automacoes(
     limit: int = Query(default=50, ge=1, le=200),
     automacao_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -98,7 +98,7 @@ async def listar_execucoes_automacoes(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(exigir_admin_da_org)])
-async def criar_automacao(
+def criar_automacao(
     payload: AutomacaoCreate,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -126,7 +126,7 @@ async def criar_automacao(
 
 
 @router.patch("/{automacao_id}", dependencies=[Depends(exigir_admin_da_org)])
-async def atualizar_automacao(
+def atualizar_automacao(
     automacao_id: str,
     payload: AutomacaoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -172,7 +172,7 @@ async def atualizar_automacao(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def remover_automacao(
+def remover_automacao(
     automacao_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),

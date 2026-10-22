@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api/clientes", tags=["clientes"])
 
 
 @router.get("", response_model=ClienteListResponse)
-async def listar_clientes(
+def listar_clientes(
     busca: str | None = Query(default=None, description="Filtro por nome (contém)"),
     status_filtro: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=200),
@@ -64,7 +64,7 @@ async def listar_clientes(
 
 
 @router.post("", response_model=ClienteOut, status_code=status.HTTP_201_CREATED)
-async def criar_cliente(
+def criar_cliente(
     payload: ClienteCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -78,7 +78,7 @@ async def criar_cliente(
 
 
 @router.get("/{cliente_id}", response_model=ClienteOut)
-async def obter_cliente(
+def obter_cliente(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -94,7 +94,7 @@ async def obter_cliente(
 
 
 @router.patch("/{cliente_id}", response_model=ClienteOut)
-async def atualizar_cliente(
+def atualizar_cliente(
     cliente_id: str,
     payload: ClienteUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -117,7 +117,7 @@ async def atualizar_cliente(
 
 
 @router.post("/{cliente_id}/ativar", response_model=ClienteOut)
-async def ativar_cliente(
+def ativar_cliente(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -138,7 +138,7 @@ async def ativar_cliente(
 
 @router.delete("/{cliente_id}", status_code=status.HTTP_200_OK,
               dependencies=[Depends(exigir_admin_da_org)])
-async def remover_cliente(
+def remover_cliente(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

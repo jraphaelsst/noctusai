@@ -29,6 +29,7 @@ This is the one endpoint in igig that spends real money per call (an
 Anthropic completion), so it gets its OWN limit rather than waiting on that
 seed fix.
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — this module IS rate-limited;
 # see esteira_router.py for the slowapi/PEP 563 interaction.
 import logging
@@ -87,7 +88,7 @@ async def assistente_negocio(
     gerador: assistente.GeradorTexto = Depends(get_gerador_texto),
 ) -> dict:
     org_id = str(coerce_org_uuid(auth[2]))
-    contexto = assistente.montar_contexto(db, admin_db, org_id, negocio_id)
+    contexto = (await anyio.to_thread.run_sync(lambda: assistente.montar_contexto(db, admin_db, org_id, negocio_id)))
     try:
         texto = await assistente.gerar(
             gerador, contexto, acao=payload.acao, canal=payload.canal, org_id=org_id

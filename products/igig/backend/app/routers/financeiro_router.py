@@ -21,6 +21,7 @@ The dunning sequence and the Módulo 4 portal block read
 `/inadimplentes` rather than being triggered here: blocking a client's
 approval portal is a business decision, not a side effect of running a report.
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers; see esteira_router.py.
 import logging
@@ -71,7 +72,7 @@ def _org(auth: tuple) -> str:
 
 # ── Faturas ─────────────────────────────────────────────────────────
 @router.get("/faturas", response_model=list[FaturaOut])
-async def listar_faturas(
+def listar_faturas(
     cliente_id: str | None = None,
     competencia: str | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -88,7 +89,7 @@ async def listar_faturas(
 
 
 @router.post("/faturas", response_model=FaturaOut, status_code=status.HTTP_201_CREATED)
-async def criar_fatura(
+def criar_fatura(
     payload: FaturaCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -130,7 +131,7 @@ async def criar_fatura(
 
 
 @router.get("/faturas/{fatura_id}/itens", response_model=list[FaturaItemOut])
-async def listar_itens(
+def listar_itens(
     fatura_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -140,7 +141,7 @@ async def listar_itens(
 
 @router.post("/faturas/{fatura_id}/itens", response_model=FaturaOut,
              status_code=status.HTTP_201_CREATED)
-async def adicionar_item(
+def adicionar_item(
     fatura_id: str,
     payload: FaturaItemCreate,
     auth: tuple = Depends(get_current_user_org),
@@ -221,7 +222,7 @@ def _item_da_fatura(repos: Repositorios, org_id: str, fatura_id: str, item_id: s
     "/faturas/{fatura_id}", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def editar_fatura(
+def editar_fatura(
     fatura_id: str,
     payload: FaturaUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -248,7 +249,7 @@ async def editar_fatura(
     "/faturas/{fatura_id}/itens/{item_id}", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def editar_item(
+def editar_item(
     fatura_id: str,
     item_id: str,
     payload: FaturaItemUpdate,
@@ -284,7 +285,7 @@ async def editar_item(
     "/faturas/{fatura_id}/itens/{item_id}", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def remover_item(
+def remover_item(
     fatura_id: str,
     item_id: str,
     auth: tuple = Depends(get_current_user_org),
@@ -313,7 +314,7 @@ async def remover_item(
     "/faturas/{fatura_id}/pagar", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def marcar_paga(
+def marcar_paga(
     fatura_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -348,7 +349,7 @@ async def marcar_paga(
     "/faturas/{fatura_id}/cancelar", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def cancelar_fatura(
+def cancelar_fatura(
     fatura_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -401,7 +402,7 @@ async def enviar_fatura_endpoint(
         atualizada, message_id = await enviar_fatura(
             repos, org_id, fatura_id,
             sender_factory=sender_factory, settings=cfg,
-            agencia=nome_da_agencia(core_db, org_id),
+            agencia=(await anyio.to_thread.run_sync(lambda: nome_da_agencia(core_db, org_id))),
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
@@ -412,7 +413,7 @@ async def enviar_fatura_endpoint(
     "/faturas/{fatura_id}/marcar-enviada", response_model=FaturaOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def marcar_fatura_enviada(
+def marcar_fatura_enviada(
     fatura_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -442,7 +443,7 @@ async def marcar_fatura_enviada(
     "/faturas/gerar-competencia", response_model=GerarCompetenciaOut,
     status_code=status.HTTP_200_OK, dependencies=[Depends(exigir_admin_da_org)],
 )
-async def gerar_competencia(
+def gerar_competencia(
     payload: GerarCompetenciaIn,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -468,7 +469,7 @@ async def gerar_competencia(
 
 
 @router.get("/resumo", response_model=ResumoFinanceiroOut)
-async def resumo(
+def resumo(
     competencia: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -484,7 +485,7 @@ async def resumo(
 
 # ── Excedentes ──────────────────────────────────────────────────────
 @router.get("/excedentes/{competencia}", response_model=list[ExcedenteOut])
-async def excedentes(
+def excedentes(
     competencia: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -505,7 +506,7 @@ async def excedentes(
 
 # ── DRE ─────────────────────────────────────────────────────────────
 @router.get("/dre", response_model=list[DREOut])
-async def dre(
+def dre(
     competencia: str | None = Query(default=None, description="Filtra a RECEITA"),
     custo_por_competencia: bool = Query(
         default=False,
@@ -543,7 +544,7 @@ async def dre(
 
 # ── Régua de cobrança ───────────────────────────────────────────────
 @router.get("/inadimplentes", response_model=list[InadimplenteOut])
-async def inadimplentes(
+def inadimplentes(
     hoje: str | None = Query(default=None, description="ISO date; padrão = hoje"),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

@@ -96,7 +96,7 @@ async def enviar_orcamento(
 
 
 @router.get("/{orcamento_id}/emails")
-async def listar_emails(
+def listar_emails(
     orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

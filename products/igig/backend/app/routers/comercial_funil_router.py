@@ -24,6 +24,8 @@ Board + move responses use the seed `{"data": ...}` envelope the seed
 import logging
 from typing import Any
 
+import anyio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.primitives.responses import success_response
@@ -73,7 +75,7 @@ def _usuario(auth: tuple) -> str:
 
 
 @router.patch("/pipeline/stages/{stage_id}/papel", dependencies=[Depends(exigir_admin_do_quadro)])
-async def atribuir_papel_etapa(
+def atribuir_papel_etapa(
     stage_id: str,
     payload: PapelEtapaIn,
     auth: tuple = Depends(get_current_user_org),
@@ -92,7 +94,7 @@ async def atribuir_papel_etapa(
 
 
 @router.get("/board")
-async def obter_board(
+def obter_board(
     limite_por_etapa: int | None = None,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -104,7 +106,7 @@ async def obter_board(
 
 
 @router.get("/negocios")
-async def listar_negocios(
+def listar_negocios(
     status_filtro: str | None = Query(default=None, alias="status"),
     q: str | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -116,7 +118,7 @@ async def listar_negocios(
 
 
 @router.get("/negocios/{negocio_id}")
-async def obter_negocio(
+def obter_negocio(
     negocio_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -126,16 +128,8 @@ async def obter_negocio(
     return success_response(comercial_funil.buscar_negocio(db, _org(auth), negocio_id))
 
 
-@router.post("/negocios", status_code=status.HTTP_201_CREATED)
-async def criar_negocio(
-    payload: NegocioCreate,
-    auth: tuple = Depends(get_current_user_org),
-    db: Any = Depends(get_db),
-    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao),
-) -> dict:
-    """Put a lead on the funnel — an existing `lead_id`, or a new `lead`
-    typed in by the agency (`origem='manual'`). Lands in the entry stage, on top."""
-    org_id = _org(auth)
+def _abrir_negocio_sync(db: Any, org_id: str, user_id: Any, payload: NegocioCreate) -> dict:
+    """Sync supabase I/O for `criar_negocio`, run on the threadpool."""
     lead_id = payload.lead_id
     if payload.lead is not None:
         criado = (
@@ -154,16 +148,31 @@ async def criar_negocio(
             valor_estimado=payload.valor_estimado,
             responsavel_id=payload.responsavel_id,
             cliente_id=payload.cliente_id,
-            user_id=_usuario(auth),
+            user_id=user_id,
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    return negocio
+
+
+@router.post("/negocios", status_code=status.HTTP_201_CREATED)
+async def criar_negocio(
+    payload: NegocioCreate,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao),
+) -> dict:
+    """Put a lead on the funnel — an existing `lead_id`, or a new `lead`
+    typed in by the agency (`origem='manual'`). Lands in the entry stage, on top."""
+    org_id = _org(auth)
+    user_id = _usuario(auth)
+    negocio = await anyio.to_thread.run_sync(_abrir_negocio_sync, db, org_id, user_id, payload)
     await automacoes.ao_entrar_etapa(portas, org_id, pipeline="comercial", card_id=negocio["id"], user_id=_usuario(auth))
     return success_response(negocio)
 
 
 @router.patch("/negocios/{negocio_id}")
-async def atualizar_negocio(
+def atualizar_negocio(
     negocio_id: str,
     payload: NegocioUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -199,14 +208,16 @@ async def mover_etapa(
     ganho and the Cliente created from the lead. See the service for every
     409 code."""
     try:
-        linha = comercial_funil.mover_negocio(
-            db, _org(auth),
-            negocio_id=negocio_id,
-            para_etapa_id=payload.para_etapa_id,
-            user_id=_usuario(auth),
-            novo_indice=payload.novo_indice,
-            motivo=payload.motivo,
-            orcamento_id=payload.orcamento_id,
+        linha = await anyio.to_thread.run_sync(
+            lambda: comercial_funil.mover_negocio(
+                db, _org(auth),
+                negocio_id=negocio_id,
+                para_etapa_id=payload.para_etapa_id,
+                user_id=_usuario(auth),
+                novo_indice=payload.novo_indice,
+                motivo=payload.motivo,
+                orcamento_id=payload.orcamento_id,
+            )
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
@@ -215,7 +226,7 @@ async def mover_etapa(
 
 
 @router.post("/negocios/{negocio_id}/perder")
-async def perder_negocio(
+def perder_negocio(
     negocio_id: str,
     payload: PerderNegocioIn,
     auth: tuple = Depends(get_current_user_org),

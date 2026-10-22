@@ -13,6 +13,7 @@ A contrato is CREATED from an accepted orçamento
 contrato is activated by the HMAC-signed signature webhook
 (`/api/comercial/assinatura/webhook`), never by hand.
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers; see esteira_router.py.
 import logging
@@ -49,7 +50,7 @@ def _org(auth: tuple) -> str:
 
 
 @router.get("")
-async def listar_contratos(
+def listar_contratos(
     cliente_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -64,8 +65,8 @@ async def url_contrato(
     db: Any = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ) -> dict:
-    contrato = qc.carregar(db, "contrato", _org(auth), contrato_id,
-                           select="id, documento_key, documento_assinado_key", rotulo="contrato")
+    contrato = (await anyio.to_thread.run_sync(lambda: qc.carregar(db, "contrato", _org(auth), contrato_id,
+                           select="id, documento_key, documento_assinado_key", rotulo="contrato")))
     if not contrato.get("documento_key"):
         raise http_de(RegraViolada(409, "pdf_nao_gerado", "Este contrato não tem documento gerado."))
     url = await storage.signed_url(bucket=settings.igig_storage_bucket,
@@ -129,7 +130,7 @@ class EditarContrato(BaseModel):
 
 
 @router.post("/{contrato_id}/encerrar", dependencies=[Depends(exigir_admin_da_org)])
-async def encerrar_contrato(
+def encerrar_contrato(
     contrato_id: str,
     body: EncerrarContrato,
     auth: tuple = Depends(get_current_user_org),
@@ -150,7 +151,7 @@ async def encerrar_contrato(
 
 
 @router.patch("/{contrato_id}", dependencies=[Depends(exigir_admin_da_org)])
-async def editar_contrato(
+def editar_contrato(
     contrato_id: str,
     body: EditarContrato,
     auth: tuple = Depends(get_current_user_org),

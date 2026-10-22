@@ -68,7 +68,7 @@ def _fallback_env(canal: str, cfg: Any) -> bool:
 
 
 @router.get("", response_model=list[IntegracaoStatus])
-async def listar_integracoes(
+def listar_integracoes(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
     cfg: Any = Depends(get_settings),
@@ -108,7 +108,7 @@ async def listar_integracoes(
     "/{canal}", response_model=IntegracaoStatus, status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def conectar_canal(
+def conectar_canal(
     canal: str,
     payload: ConectarCanal,
     auth: tuple = Depends(get_current_user_org),
@@ -139,7 +139,7 @@ async def conectar_canal(
     "/{canal}", status_code=status.HTTP_200_OK,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def desconectar_canal(
+def desconectar_canal(
     canal: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

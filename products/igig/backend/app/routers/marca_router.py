@@ -20,6 +20,7 @@ Two surfaces:
   * storing a password with no configured key is REFUSED rather than silently
     downgraded to plaintext (enforced in the repository).
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — see esteira_router.py. This
 # module is not rate-limited today, but the constraint travels with the file
 # the moment someone adds a decorator, and the cost of eager annotations is nil.
@@ -196,7 +197,7 @@ async def listar_marcas(
 
 
 @router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
-async def criar_marca(
+def criar_marca(
     payload: MarcaCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -269,7 +270,7 @@ async def obter_marca(
 
 
 @router.patch("/{marca_id}", response_model=MarcaOut)
-async def atualizar_marca(
+def atualizar_marca(
     marca_id: str,
     payload: MarcaUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -306,7 +307,7 @@ async def remover_marca(
         marca = repos.marca.buscar(org_id, marca_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
-    if not repos.marca.remover(org_id, marca_id):
+    if not (await anyio.to_thread.run_sync(lambda: repos.marca.remover(org_id, marca_id))):
         raise HTTPException(status_code=404, detail="Marca não encontrada")
     if marca.get("logo_key"):
         try:
@@ -364,7 +365,7 @@ async def enviar_logo(
     )
     url = await storage.signed_url(bucket=cfg.igig_storage_bucket, key=chave)
     # Persist the KEY only — never `logo_url` (see docstring above).
-    repos.marca.atualizar(org_id, marca_id, {"logo_key": chave})
+    (await anyio.to_thread.run_sync(lambda: repos.marca.atualizar(org_id, marca_id, {"logo_key": chave})))
     if chave_antiga and str(chave_antiga) != chave:
         try:
             await storage.delete(bucket=cfg.igig_storage_bucket, key=str(chave_antiga))
@@ -379,7 +380,7 @@ async def enviar_logo(
 
 # ── Cofre de Acessos ────────────────────────────────────────────────
 @router.get("/acessos/{cliente_id}", response_model=AcessosOut)
-async def listar_acessos(
+def listar_acessos(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -399,7 +400,7 @@ async def listar_acessos(
 
 
 @router.post("/acessos", response_model=AcessoOut, status_code=status.HTTP_201_CREATED)
-async def criar_acesso(
+def criar_acesso(
     payload: AcessoCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -424,7 +425,7 @@ async def criar_acesso(
 
 
 @router.patch("/acessos/{acesso_id}", response_model=AcessoOut)
-async def atualizar_acesso(
+def atualizar_acesso(
     acesso_id: str,
     payload: AcessoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -457,7 +458,7 @@ async def atualizar_acesso(
 
 
 @router.post("/acessos/{acesso_id}/revelar", response_model=SenhaRevelada)
-async def revelar_senha(
+def revelar_senha(
     acesso_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -488,7 +489,7 @@ async def revelar_senha(
 
 
 @router.delete("/acessos/{acesso_id}", status_code=status.HTTP_200_OK)
-async def remover_acesso(
+def remover_acesso(
     acesso_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

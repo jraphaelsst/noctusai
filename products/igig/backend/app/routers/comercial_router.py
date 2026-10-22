@@ -25,6 +25,7 @@ client to `ativo` and converts the originating lead. It is idempotent, because
 signing providers retry — and it is HMAC-verified before anything runs (smoke
 finding 2: it used to accept any caller holding a guessable id).
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — this module IS rate-limited;
 # see esteira_router.py for the slowapi/PEP 563 interaction.
 import logging
@@ -143,18 +144,18 @@ async def capturar_lead(
     """
     dados = payload.model_dump(mode="json", exclude_none=True)
     org_id = str(dados.pop("org_id"))
-    if not _org_existe(core_db, org_id):
+    if not (await anyio.to_thread.run_sync(lambda: _org_existe(core_db, org_id))):
         raise HTTPException(status_code=404, detail="Organização não encontrada.")
     como_conheceu = dados.pop("origem", None)
     linhas = (
-        db.table("lead").insert(
+        (await anyio.to_thread.run_sync(db.table("lead").insert(
             {**dados, "org_id": org_id, "origem": "formulario", "como_conheceu": como_conheceu}
-        ).execute().data or []
+        ).execute)).data or []
     )
     if not linhas:
         raise RuntimeError("insert de lead não retornou a linha criada")
     try:
-        negocio = comercial_funil.abrir_negocio(db, org_id, lead_id=str(linhas[0]["id"]))
+        negocio = (await anyio.to_thread.run_sync(lambda: comercial_funil.abrir_negocio(db, org_id, lead_id=str(linhas[0]["id"]))))
     except RegraViolada:
         # The lead IS stored; only its card could not be placed (an org that
         # deactivated every funnel stage). Loud, but the visitor's submission
@@ -171,7 +172,7 @@ async def capturar_lead(
 
 # ── Leads (authed) ──────────────────────────────────────────────────
 @router.get("/leads", response_model=list[LeadOut])
-async def listar_leads(
+def listar_leads(
     status_filtro: str | None = None,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -184,7 +185,7 @@ async def listar_leads(
 
 
 @router.get("/leads/{lead_id}", response_model=LeadOut)
-async def obter_lead(
+def obter_lead(
     lead_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -204,7 +205,7 @@ async def obter_lead(
 
 
 @router.patch("/leads/{lead_id}")
-async def atualizar_lead(
+def atualizar_lead(
     lead_id: str,
     payload: LeadPatchIn,
     auth: tuple = Depends(get_current_user_org),
@@ -260,10 +261,10 @@ async def reabrir_negocio(
     whenever `move_card` itself would have skipped one.
     """
     org_id = _org(auth)
-    negocio = qc.carregar(
+    negocio = (await anyio.to_thread.run_sync(lambda: qc.carregar(
         db, "negocio", org_id, negocio_id, select="id, status, etapa_id, perdido_stage_id",
         rotulo="negócio",
-    )
+    )))
     if negocio.get("status") != "perdido":
         raise HTTPException(
             status_code=409, detail="Só um negócio perdido pode ser reaberto."
@@ -291,10 +292,10 @@ async def reabrir_negocio(
         org_id=org_id,
     )
     if etapa_antes == destino_id:
-        qc.registrar_entrada(
+        (await anyio.to_thread.run_sync(lambda: qc.registrar_entrada(
             db, PIPELINE_COMERCIAL, org_id=org_id, card_id=negocio_id, etapa_id=destino_id,
             user_id=str(auth[0].id),
-        )
+        )))
     await automacoes.ao_entrar_etapa(
         portas, org_id, pipeline="comercial", card_id=negocio_id, user_id=str(auth[0].id)
     )
@@ -310,7 +311,7 @@ async def _segredo_assinatura(request: Request, body: bytes) -> ResolvedSecret:
 
 @router.post("/assinatura/webhook")
 @limiter.limit(settings.webhook_rate_limit)
-async def assinatura_webhook(
+def assinatura_webhook(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_segredo_assinatura,

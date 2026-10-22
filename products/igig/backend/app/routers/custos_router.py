@@ -74,7 +74,7 @@ def _com_taxa(repos: Repositorios, org_id: str, row: dict) -> ProfissionalOut:
 # ─── Funções ───────────────────────────────────────────────────────────────
 
 @router.get("/funcoes", response_model=list[FuncaoOut])
-async def listar_funcoes(
+def listar_funcoes(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> list[FuncaoOut]:
@@ -86,7 +86,7 @@ async def listar_funcoes(
     "/funcoes", response_model=FuncaoOut, status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def criar_funcao(
+def criar_funcao(
     payload: FuncaoCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -110,7 +110,7 @@ async def criar_funcao(
     "/funcoes/{funcao_id}", response_model=FuncaoOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def atualizar_funcao(
+def atualizar_funcao(
     funcao_id: str,
     payload: FuncaoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -135,7 +135,7 @@ async def atualizar_funcao(
     "/funcoes/{funcao_id}", status_code=status.HTTP_200_OK,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def remover_funcao(
+def remover_funcao(
     funcao_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -149,7 +149,7 @@ async def remover_funcao(
 # ─── Profissionais ─────────────────────────────────────────────────────────
 
 @router.get("/profissionais", response_model=list[ProfissionalOut])
-async def listar_profissionais(
+def listar_profissionais(
     apenas_ativos: bool = Query(default=False),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -167,7 +167,7 @@ async def listar_profissionais(
     "/profissionais", response_model=ProfissionalOut, status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def criar_profissional(
+def criar_profissional(
     payload: ProfissionalCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -185,7 +185,7 @@ async def criar_profissional(
     "/profissionais/{profissional_id}", response_model=ProfissionalOut,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def atualizar_profissional(
+def atualizar_profissional(
     profissional_id: str,
     payload: ProfissionalUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -208,7 +208,7 @@ async def atualizar_profissional(
     "/profissionais/{profissional_id}", status_code=status.HTTP_200_OK,
     dependencies=[Depends(exigir_admin_da_org)],
 )
-async def remover_profissional(
+def remover_profissional(
     profissional_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

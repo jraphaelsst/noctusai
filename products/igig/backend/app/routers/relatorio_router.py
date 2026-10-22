@@ -36,7 +36,7 @@ def _org(auth: tuple) -> str:
 
 
 @router.get("/{tipo}")
-async def obter_relatorio(
+def obter_relatorio(
     tipo: Literal["comercial", "financeiro"],
     inicio: date,
     fim: date,

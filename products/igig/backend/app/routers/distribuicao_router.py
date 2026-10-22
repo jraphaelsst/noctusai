@@ -61,7 +61,7 @@ def _org(auth: tuple) -> str:
 
 # ── Publicações ─────────────────────────────────────────────────────
 @router.get("/publicacoes", response_model=list[PublicacaoOut])
-async def listar_publicacoes(
+def listar_publicacoes(
     pauta_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -74,7 +74,7 @@ async def listar_publicacoes(
 
 
 @router.post("/publicacoes", response_model=PublicacaoOut, status_code=status.HTTP_201_CREATED)
-async def agendar_publicacao(
+def agendar_publicacao(
     payload: AgendarPublicacao,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -108,7 +108,7 @@ async def agendar_publicacao(
 
 
 @router.patch("/publicacoes/{publicacao_id}", response_model=PublicacaoOut)
-async def editar_publicacao(
+def editar_publicacao(
     publicacao_id: str,
     payload: EditarPublicacao,
     auth: tuple = Depends(get_current_user_org),
@@ -151,7 +151,7 @@ async def editar_publicacao(
 
 
 @router.post("/publicacoes/{publicacao_id}/executar", response_model=PublicacaoOut)
-async def executar_publicacao(
+def executar_publicacao(
     publicacao_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -268,7 +268,7 @@ async def executar_publicacao(
 
 
 @router.post("/publicacoes/{publicacao_id}/cancelar", response_model=PublicacaoOut)
-async def cancelar_publicacao(
+def cancelar_publicacao(
     publicacao_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -292,7 +292,7 @@ async def cancelar_publicacao(
 
 
 @router.get("/fila", response_model=list[PublicacaoOut])
-async def fila(
+def fila(
     ate: str | None = Query(default=None, description="ISO-8601; padrão = agora"),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -305,7 +305,7 @@ async def fila(
 # ── Métricas ────────────────────────────────────────────────────────
 @router.post("/publicacoes/{publicacao_id}/metricas", response_model=MetricaOut,
              status_code=status.HTTP_201_CREATED)
-async def registrar_metrica(
+def registrar_metrica(
     publicacao_id: str,
     payload: MetricaIn,
     auth: tuple = Depends(get_current_user_org),
@@ -325,7 +325,7 @@ async def registrar_metrica(
 
 
 @router.get("/publicacoes/{publicacao_id}/metricas", response_model=list[MetricaOut])
-async def listar_metricas(
+def listar_metricas(
     publicacao_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -336,7 +336,7 @@ async def listar_metricas(
 
 # ── BI de eficiência ────────────────────────────────────────────────
 @router.get("/bi/eficiencia", response_model=list[EficienciaOut])
-async def bi_eficiencia(
+def bi_eficiencia(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> list[EficienciaOut]:

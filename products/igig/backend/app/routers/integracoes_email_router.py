@@ -17,6 +17,7 @@ Google without a bearer token, so the org it writes to comes from the HMAC-
 signed ``state`` issued by ``/oauth/start`` (10-minute TTL), never from a
 query parameter the caller controls.
 """
+import anyio
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers (FastAPI resolves the dependency annotations at import).
 import logging
@@ -76,7 +77,7 @@ def _url_publica(cfg: EmailSettings) -> str:
 
 # ── SMTP ─────────────────────────────────────────────────────────────
 @router.get("/smtp")
-async def obter_smtp(
+def obter_smtp(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
     cfg: EmailSettings = Depends(get_email_settings),
@@ -85,7 +86,7 @@ async def obter_smtp(
 
 
 @router.put("/smtp", dependencies=[Depends(exigir_admin_da_org)])
-async def salvar_smtp(
+def salvar_smtp(
     payload: SmtpIn,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -104,7 +105,7 @@ async def salvar_smtp(
 
 
 @router.delete("/smtp", dependencies=[Depends(exigir_admin_da_org)])
-async def remover_smtp(
+def remover_smtp(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
     cfg: EmailSettings = Depends(get_email_settings),
@@ -146,7 +147,7 @@ async def testar_smtp(
 
 # ── Gmail ────────────────────────────────────────────────────────────
 @router.get("/gmail")
-async def obter_gmail(
+def obter_gmail(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
     cfg: EmailSettings = Depends(get_email_settings),
@@ -284,6 +285,6 @@ async def desconectar_gmail(
         except Exception:  # noqa: BLE001 — disconnect proceeds; the watch lapses in ≤7d
             logger.exception("gmail stop falhou org=%s — o watch expira sozinho em até 7 dias", org_id)
     erepos.watches.remover_da_org(org_id)
-    repos.integracao.desconectar(org_id, email_config.CANAL_GMAIL)
+    (await anyio.to_thread.run_sync(lambda: repos.integracao.desconectar(org_id, email_config.CANAL_GMAIL)))
     logger.info("gmail desconectado org=%s", org_id)
     return {"data": email_config.status_gmail(repos, erepos, org_id, cfg)}

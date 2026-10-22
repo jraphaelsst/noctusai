@@ -63,7 +63,7 @@ def _chave_pdf(org_id: str, orcamento: dict) -> str:
 
 
 @router.get("")
-async def listar_orcamentos(
+def listar_orcamentos(
     aba: Literal["ativos", "aceitos", "recusados"] | None = None,
     status_filtro: str | None = Query(default=None, alias="status"),
     negocio_id: str | None = None,
@@ -82,7 +82,7 @@ async def listar_orcamentos(
 
 
 @router.post("/calcular")
-async def calcular(
+def calcular(
     payload: CalcularIn,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -110,7 +110,7 @@ async def calcular(
 
 
 @router.get("/{orcamento_id}")
-async def obter_orcamento(
+def obter_orcamento(
     orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -119,7 +119,7 @@ async def obter_orcamento(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def criar_orcamento(
+def criar_orcamento(
     payload: OrcamentoCreate,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -136,7 +136,7 @@ async def criar_orcamento(
 
 
 @router.patch("/{orcamento_id}")
-async def atualizar_orcamento(
+def atualizar_orcamento(
     orcamento_id: str,
     payload: OrcamentoUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -159,7 +159,7 @@ async def atualizar_orcamento(
 
 
 @router.delete("/{orcamento_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def excluir_orcamento(
+def excluir_orcamento(
     orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -172,7 +172,7 @@ async def excluir_orcamento(
 
 
 @router.post("/{orcamento_id}/nova-versao", status_code=status.HTTP_201_CREATED)
-async def nova_versao(
+def nova_versao(
     orcamento_id: str,
     payload: NovaVersaoIn | None = None,
     auth: tuple = Depends(get_current_user_org),
@@ -192,7 +192,7 @@ async def nova_versao(
 
 
 @router.post("/{orcamento_id}/gerar-pautas")
-async def gerar_pautas(
+def gerar_pautas(
     orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
@@ -229,7 +229,7 @@ async def aceitar(
 
 
 @router.post("/{orcamento_id}/recusar")
-async def recusar(
+def recusar(
     orcamento_id: str,
     payload: RecusarIn,
     auth: tuple = Depends(get_current_user_org),
@@ -253,16 +253,16 @@ async def gerar_pdf(
     org_id = _org(auth)
     hoje = svc.hoje_local()
     orcamento = svc.obter(db, org_id, orcamento_id, hoje=hoje)
-    agencia = nome_da_agencia(core_db, org_id)
+    agencia = (await anyio.to_thread.run_sync(lambda: nome_da_agencia(core_db, org_id)))
     pdf = await anyio.to_thread.run_sync(
         lambda: renderizar_orcamento_pdf(orcamento, agencia=agencia, emitido_em=hoje)
     )
     chave = _chave_pdf(org_id, orcamento)
     await storage.put(bucket=settings.igig_storage_bucket, key=chave, data=pdf,
                       content_type="application/pdf")
-    db.table("orcamento").update({"pdf_key": chave}).eq("id", orcamento_id).eq(
+    (await anyio.to_thread.run_sync(db.table("orcamento").update({"pdf_key": chave}).eq("id", orcamento_id).eq(
         "org_id", org_id
-    ).execute()
+    ).execute))
     url = await storage.signed_url(bucket=settings.igig_storage_bucket, key=chave,
                                    expires_in_seconds=contratos_svc.URL_TTL_SEGUNDOS)
     logger.info("pdf de orcamento gerado org=%s orcamento=%s bytes=%d", org_id, orcamento_id, len(pdf))
@@ -276,7 +276,7 @@ async def url_pdf(
     db: Any = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ) -> dict:
-    orcamento = svc.carregar(db, _org(auth), orcamento_id)
+    orcamento = (await anyio.to_thread.run_sync(lambda: svc.carregar(db, _org(auth), orcamento_id)))
     if not orcamento.get("pdf_key"):
         raise http_de(RegraViolada(
             409, "pdf_nao_gerado", "O PDF deste orçamento ainda não foi gerado."
@@ -307,7 +307,7 @@ async def gerar_contrato(
             dia_vencimento=payload.dia_vencimento,
             vias=payload.vias,
             signatario_email=payload.signatario_email,
-            agencia=nome_da_agencia(core_db, org_id),
+            agencia=(await anyio.to_thread.run_sync(lambda: nome_da_agencia(core_db, org_id))),
             storage=storage,
             bucket=settings.igig_storage_bucket,
             hoje=svc.hoje_local(),
