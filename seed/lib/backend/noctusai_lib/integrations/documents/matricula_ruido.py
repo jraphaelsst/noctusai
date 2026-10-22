@@ -212,6 +212,80 @@ def _detectar_lado(
     return spans, escolhidos
 
 
+#: Furniture a registry prints with a fixed SHAPE (digits wildcarded to `#`
+#: by `_linha_normalizada`), recognised without any cross-page repetition.
+#: Needed because page 1 carries the full letterhead (livro, ofício, ficha,
+#: CNS inscription) while pages 2+ carry only the short "Mat. N - Página i/n"
+#: head — the repeated prefix is 1-2 lines, so the repetition rule leaves the
+#: rest of page 1's letterhead in the abertura (F44: it then printed into the
+#: contract's objeto clause).
+_MOBILIARIO_CONHECIDO = re.compile(
+    r"^(?:"
+    r"MAT(?:RICULA)?\.?\s*N?[O°]?\.?\s*[#.\s]+-\s*PAGINA\s*#+\s*/\s*#+.*"
+    r"|CNM\b\s*[:.]?\s*[#.\-\s]*"
+    r"|LIVRO\s+N[O°]?\.?\s*[#A-Z]*\s*-\s*REGISTRO\s+GERAL.*"
+    r"|(?:O\s+)?OFICIAL\s+DE\s+REGISTRO\s+DE\s+IMOVEIS\b.*"
+    r"|[-–—]+\s*MATRICULA\s*[-–—]+\s*[#.\s]+[-–—]+\s*FICHA\s*[-–—]*\s*[#.\s]*"
+    r"|INSCRICAO\s+N[O°]?\b.*SERVENTIAS.*"
+    r"|CODIGO\s+NACIONAL\s+DE\s+SERVENTIAS.*"
+    r"|\(?CONTINUA\s+(?:NO\s+VERSO|NA\s+PROXIMA\s+PAGINA|NA\s+FICHA\s+SEGUINTE)\)?\.?"
+    r")$"
+)
+
+
+def _detectar_mobiliario_conhecido(
+    com_offsets: Sequence[tuple[TranscribedPage, int, int]],
+) -> tuple[RuidoSpan, ...]:
+    """Known-shape furniture in each page's leading / trailing non-blank run
+    (never mid-page: a line must be CONTIGUOUS with the page boundary)."""
+    spans: list[RuidoSpan] = []
+    for page, inicio, _fim in com_offsets:
+        linhas = _linhas_com_spans(page.text)
+        for do_fim, kind in ((False, "cabecalho_pagina"), (True, "rodape_pagina")):
+            n = 0
+            for i in range(len(linhas)):
+                idx = len(linhas) - 1 - i if do_fim else i
+                conteudo = linhas[idx][2]
+                if not conteudo.strip() or not _MOBILIARIO_CONHECIDO.match(
+                    _linha_normalizada(conteudo)
+                ):
+                    break
+                n += 1
+            if n == 0 or n == len(linhas):
+                continue
+            primeira = linhas[len(linhas) - n] if do_fim else linhas[0]
+            ultima = linhas[-1] if do_fim else linhas[n - 1]
+            spans.append(
+                RuidoSpan(
+                    start=inicio + primeira[0],
+                    end=inicio + ultima[1],
+                    kind=kind,  # type: ignore[arg-type]
+                    paginas=(page.number,),
+                )
+            )
+    return tuple(spans)
+
+
+def _fundir(spans: Sequence[RuidoSpan]) -> tuple[RuidoSpan, ...]:
+    """Sorted, disjoint: overlapping/touching spans of the same kind are
+    unioned (offsets and pages)."""
+    resultado: list[RuidoSpan] = []
+    for sp in sorted(spans, key=lambda x: (x.start, x.end)):
+        if resultado and sp.start <= resultado[-1].end and sp.kind == resultado[-1].kind:
+            ant = resultado[-1]
+            resultado[-1] = RuidoSpan(
+                start=ant.start,
+                end=max(ant.end, sp.end),
+                kind=ant.kind,
+                paginas=tuple(sorted(set(ant.paginas) | set(sp.paginas))),
+            )
+        elif resultado and sp.start < resultado[-1].end:
+            continue
+        else:
+            resultado.append(sp)
+    return tuple(resultado)
+
+
 def detectar_ruido(pages: Sequence[TranscribedPage]) -> tuple[RuidoSpan, ...]:
     """Running header/footer spans as offsets into the same joined text
     `Transcription.text` produces. Sorted by start, non-overlapping.
@@ -224,8 +298,10 @@ def detectar_ruido(pages: Sequence[TranscribedPage]) -> tuple[RuidoSpan, ...]:
     bias this function is built to honour.
     """
     _, com_offsets = _paginas_com_offsets(pages)
-    if len(com_offsets) < 2:
+    if not com_offsets:
         return ()
+    if len(com_offsets) < 2:
+        return _fundir(_detectar_mobiliario_conhecido(com_offsets))
 
     linhas_por_pagina = {
         page.number: _linhas_com_spans(page.text) for page, _, _ in com_offsets
@@ -248,7 +324,9 @@ def detectar_ruido(pages: Sequence[TranscribedPage]) -> tuple[RuidoSpan, ...]:
         kind="rodape_pagina",
         reservas=reservas,
     )
-    return tuple(sorted((*cabecalhos, *rodapes), key=lambda s: s.start))
+    return _fundir(
+        (*cabecalhos, *rodapes, *_detectar_mobiliario_conhecido(com_offsets))
+    )
 
 
 def subtrair_ruido(

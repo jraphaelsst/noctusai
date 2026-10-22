@@ -310,3 +310,15 @@ class TestTheFake:
     async def test_it_still_refuses_empty_bytes(self):
         got = await FakeMatriculaExtractor().extract(b"")
         assert got.error == "empty_document"
+
+
+def test_closed_matricula_fields_never_persistable_or_suggestion():
+    from noctusai_lib.integrations.documents.matricula_extractor import MatriculaFields
+    from noctusai_lib.integrations.documents.types import ExtractionConfidence
+
+    for conf in (ExtractionConfidence.ALTA, ExtractionConfidence.BAIXA):
+        f = MatriculaFields(
+            numero_matricula="21748", numero_matricula_confianca=conf,
+            encerrada=True, matriculada_sob="11926",
+        )
+        assert not f.persistable and not f.sugestao

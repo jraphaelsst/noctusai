@@ -52,6 +52,7 @@ from typing import Optional, Protocol, runtime_checkable
 
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.matricula import find_matricula
+from noctusai_lib.integrations.documents.matricula_certidao import ler_encerramento
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     TextSource,
@@ -77,6 +78,11 @@ class MatriculaFields:
     #: The label the number was found next to, verbatim — what lets a human
     #: check the reasoning without re-opening the document.
     numero_matricula_rotulo: Optional[str] = None
+    #: The matrícula was CLOSED (property transferred to another registry) and
+    #: the number it lives under now. A closed matrícula's number is a
+    #: PREDECESSOR's: never persistable/suggested over the imóvel's current one.
+    encerrada: bool = False
+    matriculada_sob: Optional[str] = None
 
     source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
@@ -101,6 +107,7 @@ class MatriculaFields:
         """
         return (
             self.presente
+            and not self.encerrada
             and self.numero_matricula_confianca is ExtractionConfidence.ALTA
         )
 
@@ -109,6 +116,7 @@ class MatriculaFields:
         """Found, but not trusted enough to write without a human."""
         return (
             self.presente
+            and not self.encerrada
             and self.numero_matricula_confianca is ExtractionConfidence.BAIXA
         )
 
@@ -206,7 +214,10 @@ class LadderMatriculaExtractor:
             return MatriculaFields(source=source)
 
         numero, confianca, rotulo = find_matricula(text)
+        encerrada, sob = ler_encerramento(text)
         return MatriculaFields(
+            encerrada=encerrada,
+            matriculada_sob=sob,
             numero_matricula=numero,
             numero_matricula_confianca=ExtractionConfidence(
                 self._temper(confianca, source)

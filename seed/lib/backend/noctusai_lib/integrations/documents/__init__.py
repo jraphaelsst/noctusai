@@ -149,6 +149,7 @@ from noctusai_lib.integrations.documents.matricula_certidao import (
     CertidaoMatriculaLida,
     classificar_documento_matricula,
     ler_certidao_matricula,
+    ler_encerramento,
 )
 from noctusai_lib.integrations.documents.matricula_extractor import (
     FakeMatriculaExtractor,
@@ -426,6 +427,7 @@ __all__ = [
     "ato_hint_span",
     "classificar_documento_matricula",
     "ler_certidao_matricula",
+    "ler_encerramento",
     "classificar_campo",
     "classify_kind",
     "derivar_endereco",

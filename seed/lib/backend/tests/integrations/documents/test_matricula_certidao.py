@@ -263,3 +263,53 @@ class TestExternalCandidate:
 def test_data_ultimo_ato_is_the_latest_registration():
     assert data_ultimo_ato(ATOS) == date(2021, 2, 2)
     assert data_ultimo_ato("") is None
+
+
+# ─── F48b: ONR printout (stamp only in the page footer) ──────────────────
+
+from datetime import date as _date  # noqa: E402
+
+from noctusai_lib.integrations.documents.matricula_certidao import (  # noqa: E402
+    ler_encerramento,
+)
+
+
+class TestVisualizacaoOnr:
+    TEXTO = (
+        "CNM 123456.2.0001234-56\n"
+        "Matrícula 1.234\n"
+        "R-3 Compra e venda. Em 10/02/2020.\n"
+        "SOLICITADO POR: BELTRANO DE TESTE - CPF/CNPJ: ***.123.456-** "
+        "DATA: 09/03/2026 09:33:03"
+    )
+
+    def test_footer_stamp_classifies_as_visualizacao_and_dates_it(self):
+        r = ler_certidao_matricula(self.TEXTO)
+        assert r.visualizacao
+        assert r.data_emissao is None
+        assert r.data_visualizacao == _date(2026, 3, 9)
+
+    def test_stamp_only_in_text_layer_is_used(self):
+        r = ler_certidao_matricula(
+            "Matrícula 1.234 R-3 Venda. Em 10/02/2020. PARA SIMPLES CONSULTA", self.TEXTO
+        )
+        assert r.visualizacao and r.data_visualizacao == _date(2026, 3, 9)
+
+
+class TestEncerramento:
+    AV = (
+        "Av. 05/21.748 - Em 3 de maio de 2015. O imóvel objeto desta se encontra "
+        "atualmente matriculado sob nº 11.926 no Registro de Imóveis de Cidade Teste, "
+        "ficando consequentemente encerrada a presente matrícula."
+    )
+
+    def test_closed_matricula_exposes_successor(self):
+        assert ler_encerramento(self.AV) == (True, "11926")
+        r = ler_certidao_matricula(self.AV)
+        assert r.encerrada and r.matriculada_sob == "11926"
+
+    def test_citing_another_matricula_does_not_close(self):
+        assert ler_encerramento("Registro anterior: matriculado sob nº 5.000.") == (False, None)
+
+    def test_closed_without_number(self):
+        assert ler_encerramento("Fica encerrada a presente matrícula.") == (True, None)

@@ -340,3 +340,44 @@ class TestOffsetsSaoValidos:
             texto = _texto(pages)
             for s in detectar_ruido(pages):
                 assert 0 <= s.start <= s.end <= len(texto)
+
+
+class TestMobiliarioConhecido:
+    """F44: page-1 letterhead lines that no other page repeats."""
+
+    def _pages(self):
+        p1 = (
+            "Mat. 1234 - Página 1/3 - PROT. 10.000\n"
+            "CNM: 123456.2.0001234-56\n"
+            "LIVRO Nº 2 - REGISTRO GERAL\n"
+            "OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE CIDADE TESTE\n"
+            "— matrícula — 1.234 — ficha — 01\n"
+            "Inscrição nº 00.000-0 no Código Nacional de Serventias\n"
+            "IMÓVEL: Um terreno de teste com 100m2.\n"
+            "continua no verso"
+        )
+        p2 = (
+            "Mat. 1234 - Página 2/3 - PROT. 10.000\n"
+            "CNM: 123456.2.0001234-56\n"
+            "R-1 Venda a Fulano de Tal."
+        )
+        return [TranscribedPage(number=1, text=p1, source=TextSource.TEXT_LAYER), TranscribedPage(number=2, text=p2, source=TextSource.TEXT_LAYER)]
+
+    def test_letterhead_and_continua_are_noise_body_is_not(self):
+        pages = self._pages()
+        texto = Transcription(pages=tuple(pages)).text
+        ruido = detectar_ruido(pages)
+        limpo = "".join(
+            texto[a:b] for a, b in subtrair_ruido(0, len(texto), ruido)
+        )
+        for lixo in ("Página 1/3", "CNM", "REGISTRO GERAL", "COMARCA", "ficha", "Serventias", "continua no verso", "Página 2/3"):
+            assert lixo not in limpo
+        assert "IMÓVEL: Um terreno de teste" in limpo
+        assert "R-1 Venda a Fulano" in limpo
+
+    def test_single_page_letterhead_is_noise(self):
+        pages = self._pages()[:1]
+        texto = Transcription(pages=tuple(pages)).text
+        ruido = detectar_ruido(pages)
+        limpo = "".join(texto[a:b] for a, b in subtrair_ruido(0, len(texto), ruido))
+        assert "REGISTRO GERAL" not in limpo and "IMÓVEL: Um terreno" in limpo

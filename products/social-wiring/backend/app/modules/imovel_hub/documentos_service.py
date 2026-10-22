@@ -222,6 +222,9 @@ def _documento_out(row: dict, resolved: dict) -> dict:
         # and why its emitida_em is empty (P5 B1).
         "tipo_documento_matricula": row.get("tipo_documento_matricula"),
         "emissao_motivo": row.get("emissao_motivo"),
+        # Migration 301 — a CLOSED (transferred) matrícula and its successor.
+        "matricula_encerrada": bool(row.get("matricula_encerrada")),
+        "matriculada_sob": row.get("matriculada_sob"),
         "origem": row.get("origem"),
         "confirmado_por": table_reads.actor(resolved, row.get("confirmado_por")),
         "confirmado_em": row.get("confirmado_em"),
@@ -1108,8 +1111,13 @@ def _estrutura_da_matricula(
     leitura = ler_certidao_matricula(
         "\n\n".join(p.texto for p in paginas), texto_camada=texto_camada
     )
+    encerramento = {
+        "matricula_encerrada": leitura.encerrada,
+        "matriculada_sob": leitura.matriculada_sob,
+    }
     if leitura.visualizacao:
         return {
+            **encerramento,
             "emitida_em": (
                 leitura.data_visualizacao.isoformat() if leitura.data_visualizacao else None
             ),
@@ -1118,6 +1126,7 @@ def _estrutura_da_matricula(
         }
     if leitura.data_emissao is not None:
         return {
+            **encerramento,
             "emitida_em": leitura.data_emissao.isoformat(),
             "tipo_documento_matricula": leitura.tipo_documento_matricula,
             "emissao_motivo": None,
@@ -1127,6 +1136,7 @@ def _estrutura_da_matricula(
     candidata = date.fromisoformat(externa) if _data_valida(externa) else None
     if leitura.aceita_data_externa(candidata):
         return {
+            **encerramento,
             "emitida_em": externa,
             "tipo_documento_matricula": leitura.tipo_documento_matricula,
             "emissao_motivo": None,
@@ -1135,6 +1145,7 @@ def _estrutura_da_matricula(
     if candidata is not None:
         motivo = MOTIVO_ANTERIOR_AO_ULTIMO_ATO
     return {
+        **encerramento,
         "emitida_em": None,
         "tipo_documento_matricula": leitura.tipo_documento_matricula,
         "emissao_motivo": motivo or MOTIVO_NAO_ENCONTRADA,
@@ -1392,7 +1403,9 @@ async def extrair_estrutura(
         )
         return {"status": "sem_dados", "erro": "sem_texto"}
     if not via_ia or not any(
-        v is not None for k, v in via_ia.items() if k != "emissao_motivo"
+        v is not None
+        for k, v in via_ia.items()
+        if k not in ("emissao_motivo", "matricula_encerrada", "matriculada_sob")
     ):
         # A matrícula read that found nothing still WRITES its (null) fields
         # and reason — a stale emitida_em from an older read must not stand.
@@ -1628,11 +1641,23 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
     # [P5] A matrícula VISUALIZAÇÃO never hides a certidão on file: newest
     # certidão (or unclassified, pre-199) wins over a newer visualização — the
     # contract presents the certidão and only asks for one when none exists.
+    # A CLOSED (transferred) matrícula is a predecessor: it is never the
+    # current reading, however recently uploaded.
+    vigentes = [
+        r for r in rows
+        if not (r["tipo_documento"] == "matricula" and r.get("matricula_encerrada"))
+    ]
+    if len(vigentes) != len(rows):
+        por_tipo = {}
+        for row in vigentes:
+            tipo = row["tipo_documento"]
+            if tipo in CERTIDOES_TIPOS and tipo not in por_tipo:
+                por_tipo[tipo] = row
     atual = por_tipo.get("matricula")
     if atual is not None and atual.get("tipo_documento_matricula") == TIPO_VISUALIZACAO:
         certidao = next(
             (
-                r for r in rows
+                r for r in vigentes
                 if r["tipo_documento"] == "matricula"
                 and r.get("tipo_documento_matricula") != TIPO_VISUALIZACAO
             ),

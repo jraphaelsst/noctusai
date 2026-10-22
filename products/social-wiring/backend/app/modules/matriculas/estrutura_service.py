@@ -1438,7 +1438,7 @@ def _extracao_padrao_do_imovel(client: Any, org_id: UUID, codigo: str) -> Option
     helper — see the `if not todas` guard at its one call site)."""
     documentos = (
         _t(client, docs_svc.TABLE)
-        .select("id")
+        .select("id,matricula_encerrada")
         .eq("org_id", str(org_id))
         .eq("codigo", codigo)
         .eq("tipo_documento", "matricula")
@@ -1446,6 +1446,11 @@ def _extracao_padrao_do_imovel(client: Any, org_id: UUID, codigo: str) -> Option
         .execute()
     ).data or []
     for documento in documentos:
+        # A CLOSED (transferred) matrícula is a predecessor — upload order
+        # never makes it the imóvel's current reading (migration 301). It
+        # stays selectable explicitly (título aquisitivo chain source).
+        if documento.get("matricula_encerrada"):
+            continue
         extracoes = (
             _t(client, EXTRACOES_TABLE)
             .select("id")

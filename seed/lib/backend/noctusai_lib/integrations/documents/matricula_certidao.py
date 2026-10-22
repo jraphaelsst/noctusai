@@ -108,6 +108,11 @@ _MARCAS_VISUALIZACAO = re.compile(
     r"|(?:NAO|SEM)\s+(?:TEM|POSSUI|TENDO|POSSUINDO|CONSTITUI)?\s*(?:O\s+)?VALOR\s+DE\s+CERTIDAO"
     r"|NAO\s+(?:E|CONSTITUI|SUBSTITUI|VALE\s+COMO)\s+(?:A\s+|UMA\s+)?CERTIDAO"
     r"|PARA\s+(?:SIMPLES|MERA)\s+(?:CONSULTA|CONFERENCIA)"
+    # ONR (Operador Nacional do Registro Eletrônico) printout: the only
+    # constant trace may be the page footer "SOLICITADO POR: <nome> -
+    # CPF/CNPJ: <mascarado> DATA: dd/mm/aaaa hh:mm:ss" (the watermark is
+    # often lost in the transcription).
+    r"|SOLICITAD[OA]\s+POR\b.{0,160}?\bCPF(?:\s*/\s*CNPJ)?\b.{0,60}?\bDATA\s*[:\-–—]?\s*\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{4}\s+\d{1,2}\s*:\s*\d{2}"
 )
 
 #: Phrases only a certidão carries — it CERTIFIES. Bare "DOU FÉ" is NOT one:
@@ -166,6 +171,36 @@ _CABECA = 800
 _JANELA_ROTULO = 60
 
 
+# ─── closed matrícula (transferred to another registry) ──────────────────
+
+#: The averbação a registry writes when the property moves to another
+#: serventia: "… o imóvel objeto desta se encontra atualmente matriculado sob
+#: nº 11.926 no Registro de Imóveis de X … ficando consequentemente encerrada
+#: a presente matrícula". Matched on `normalize`d text.
+_ENCERRAMENTO = re.compile(
+    r"ENCERRAD[AO]S?\s+(?:A\s+)?(?:PRESENTE|ESTA|SUA)\s+MATRICULA"
+    r"|MATRICULA\s+(?:FICA\s+|FICANDO\s+)?ENCERRAD[AO]"
+    r"|ENCERRAMENTO\s+D[AE]\s+(?:PRESENTE\s+|ESTA\s+)?MATRICULA"
+)
+_MATRICULADO_SOB = re.compile(
+    r"(?:ATUALMENTE\s+)?MATRICULAD[OA]\s+SOB\s+(?:O\s+)?(?:N[O°.]*\s*)?(\d{1,3}(?:\.\d{3})+|\d{2,12})"
+)
+
+
+def ler_encerramento(texto: str) -> tuple[bool, Optional[str]]:
+    """`(encerrada, matriculada_sob)` — has this matrícula been CLOSED
+    (transferred to another registry), and under which number does the
+    property live now. `matriculada_sob` (digits only, thousands dots dropped)
+    is `None` when no single successor number is named. A document that only
+    cites ANOTHER matrícula "sob nº X" without closing itself is NOT
+    encerrada — the closing phrase is required."""
+    norm = normalize(texto or "")
+    if not _ENCERRAMENTO.search(norm):
+        return False, None
+    sucessoras = {m.group(1).replace(".", "") for m in _MATRICULADO_SOB.finditer(norm)}
+    return True, (next(iter(sucessoras)) if len(sucessoras) == 1 else None)
+
+
 @dataclass(frozen=True)
 class CertidaoMatriculaLida:
     """The kind of a matrícula document and the certidão's own emission date.
@@ -191,6 +226,10 @@ class CertidaoMatriculaLida:
     data_ultimo_ato: Optional[date] = None
     motivo: Optional[str] = None
     data_visualizacao: Optional[date] = None
+    #: This matrícula was closed (property now registered elsewhere) and the
+    #: successor number — see `ler_encerramento`.
+    encerrada: bool = False
+    matriculada_sob: Optional[str] = None
 
     @property
     def visualizacao(self) -> bool:
@@ -291,8 +330,13 @@ def ler_certidao_matricula(texto: str, texto_camada: str = "") -> CertidaoMatric
     (§3); the transcription's own stamp wins when both carry one."""
     tipo, tipo_rotulo = classificar_documento_matricula(texto)
     ultimo = data_ultimo_ato(texto)
+    encerrada, sob = ler_encerramento(texto)
     base = dict(
-        tipo_documento_matricula=tipo, tipo_rotulo=tipo_rotulo, data_ultimo_ato=ultimo
+        tipo_documento_matricula=tipo,
+        tipo_rotulo=tipo_rotulo,
+        data_ultimo_ato=ultimo,
+        encerrada=encerrada,
+        matriculada_sob=sob,
     )
     if tipo == TIPO_VISUALIZACAO:
         vista = data_da_visualizacao(texto, ultimo) or (
@@ -341,4 +385,5 @@ __all__ = [
     "data_da_visualizacao",
     "data_ultimo_ato",
     "ler_certidao_matricula",
+    "ler_encerramento",
 ]

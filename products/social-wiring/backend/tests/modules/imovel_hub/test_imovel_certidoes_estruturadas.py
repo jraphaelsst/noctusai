@@ -692,6 +692,31 @@ class TestCertidoesRoute:
             ("matricula", "certidao", "2026-07-01")
         ]
 
+    def test_a_newer_closed_predecessor_matricula_is_never_the_current_reading(
+        self, client, scoped
+    ):
+        """Migration 301: a matrícula closed by transfer (predecessor) uploaded
+        AFTER the current one must not take the slot."""
+        atual = str(uuid4())
+        seed(
+            scoped,
+            documentos=[
+                documento_row(
+                    atual, tipo_documento="matricula", emitida_em="2026-07-01",
+                    tipo_documento_matricula="certidao",
+                    created_at="2026-07-01T00:00:00+00:00",
+                ),
+                documento_row(
+                    str(uuid4()), tipo_documento="matricula", emitida_em="2026-09-01",
+                    tipo_documento_matricula="certidao",
+                    matricula_encerrada=True, matriculada_sob="11926",
+                    created_at="2026-09-01T00:00:00+00:00",
+                ),
+            ],
+        )
+        items = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()["items"]
+        assert [(i["documento_id"], i["emitida_em"]) for i in items] == [(atual, "2026-07-01")]
+
     def test_a_lone_visualizacao_is_returned_with_its_motivo(self, client, scoped):
         seed(
             scoped,
