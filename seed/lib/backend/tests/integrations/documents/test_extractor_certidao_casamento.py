@@ -287,3 +287,31 @@ class TestTitularHintSelectsTheCardHolder:
         assert out.nome is None
         assert out.cpf is None
         assert out.aviso == "titulares_multiplos"
+
+
+CERTIDAO_NASCIMENTO_SINTETICA = """REPÚBLICA FEDERATIVA DO BRASIL
+CERTIDÃO DE NASCIMENTO
+NOME
+JOAO CARLOS EXEMPLO DA SILVA
+DATA DE NASCIMENTO
+04/10/1990
+LOCAL DE NASCIMENTO
+São Paulo, SP
+SEXO
+Masculino
+FILIAÇÃO
+PEDRO EXEMPLO DA SILVA
+MARIA EXEMPLO DA SILVA
+"""
+
+
+class TestCertidaoNascimentoCompletaNaoReportaNucleoAusente:
+    @pytest.mark.asyncio
+    async def test_leitura_completa_sem_averbacao_nao_acusa_estado_civil(self):
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_NASCIMENTO_SINTETICA))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x", mimetype="image/png", tipo_documento="certidao_nascimento"
+        )
+        assert out.nome == "JOAO CARLOS EXEMPLO DA SILVA"
+        assert out.estado_civil is None
+        assert "campos_nucleo_ausentes" not in (out.aviso or "").split("+")

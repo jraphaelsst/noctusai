@@ -162,7 +162,7 @@ _TABELA_NUCLEO: dict[str, _RegraNucleo] = {
     "CERTIDAO_CASAMENTO": _RegraNucleo(
         campos=("estado_civil",), exige_dois_conjuges=True
     ),
-    "CERTIDAO_NASCIMENTO": _RegraNucleo(campos=("estado_civil",)),
+    "CERTIDAO_NASCIMENTO": _RegraNucleo(campos=("nome", "data_nascimento")),
 }
 
 

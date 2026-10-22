@@ -119,8 +119,20 @@ class TestDeveEscalar:
         assert deve_escalar(fields, "certidao_casamento") is True
 
     def test_certidao_nascimento_has_no_conjuge_expectation(self):
-        fields = IdentityFields(estado_civil="casado", source=TextSource.OCR)
+        fields = IdentityFields(
+            nome="FULANO EXEMPLO", data_nascimento=date(1990, 10, 4), source=TextSource.OCR
+        )
         assert campos_nucleo_faltando(fields, "certidao_nascimento") == ()
+
+    def test_certidao_nascimento_without_estado_civil_is_complete(self):
+        """Never-married registrado: no averbação, so no estado civil."""
+        fields = IdentityFields(
+            nome="FULANO EXEMPLO", data_nascimento=date(1990, 10, 4), source=TextSource.OCR
+        )
+        assert fields.estado_civil is None
+        assert campos_nucleo_faltando(fields, "certidao_nascimento") == ()
+        vazio = IdentityFields(source=TextSource.OCR)
+        assert campos_nucleo_faltando(vazio, "certidao_nascimento") == ("nome", "data_nascimento")
 
     def test_unlisted_tipo_never_triggers_on_missing_fields(self):
         fields = IdentityFields(source=TextSource.OCR)
