@@ -23,6 +23,23 @@ platform admins** (Studio / `noctus.agents.content`); each org has an *instance*
 name, regions, knowledge, ...) that the definition references as `{{org.chave}}`. An org admin sees and edits
 only its own specs and a readiness status — never the prompt, hashes, tool descriptions or rules. No prompt
 text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects/julia-v2/CONTRACT.md` §2.6.
+No agent KEY lives in code either (migration 049): a platform definition is any `plataforma` row, created
+with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATCH
+/api/studio/plataforma/agents/{key}` — `escopo_qualificacao`, `padrao_qualificacao`, `rascunho_padrao`
+(first-draft settings), `instanciavel` (published ⇒ instantiated in every org), `papel`
+(`gerador`/`exemplar`). `usa_canais` (derived: `owner_product` set and `runtime='llm'`) gates channel UI.
+The only key literal left is the `lead-imob`→`julia` token alias (`app/channels/chaves_legadas.py`,
+`NOC-REMEDIATE[drop-lead-imob-alias]`).
+
+**AI-generated first drafts** (migration 049, `app/studio/geracao.py`): `POST
+/api/studio/agents/{key}/geracoes {briefing, areas?, forcar?, limite_usd≤5}` → 202, background job (plan
+call + one call per area: secoes, textos, ferramentas, decisoes, specs, skills, configuracoes), polled via
+`GET .../geracoes[/{id}]`, per-area `repetir` and run `cancelar`. The generator is the published platform
+agent with `papel='gerador'` (its sections `planejamento` + `area-<area>` are the instructions); the
+structure exemplar is the published `papel='exemplar'` definition. Writes the DRAFT only, never publishes;
+cost cap checked before every call (over budget ⇒ area `pulado`); skills only from `skills_biblioteca`;
+generated-vs-published diff stored on first publish (`geracoes.aprendizado`). Chat path: MCP
+`noctus.agents.content` actions `gerar` / `geracao` / `configurar_agente` / `definicao`.
 Every agents table is **service-role only** (migration 036): the browser's Supabase session cannot read
 any of them over PostgREST, except `status_pagina` (read-only). All reads go through the API tiers above
 (keeper `check_no_authenticated_grant_on_content_tables`, DB probes `agents.content_tables.*`).
