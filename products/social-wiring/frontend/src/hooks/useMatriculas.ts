@@ -121,6 +121,15 @@ export interface MatriculaExtracoesFiltro {
    * router if this 422s).
    */
   semImovel?: boolean;
+  /**
+   * Scope to the matrículas of the imóveis linked to this card's atendimento
+   * ("Imóveis do atendimento"). The SERVER resolves the códigos (`cliente_id`
+   * param), so the API can never return another deal's matrículas for this
+   * use; a card with no linked imóvel gets an empty list.
+   */
+  clienteId?: string;
+  /** Hold the query until its scope is known (never fall back to org-wide). */
+  enabled?: boolean;
 }
 
 export function useMatriculaExtracoes(filtro?: MatriculaExtracoesFiltro) {
@@ -128,20 +137,23 @@ export function useMatriculaExtracoes(filtro?: MatriculaExtracoesFiltro) {
   const codigo = filtro?.codigo;
   const busca = filtro?.busca;
   const semImovel = filtro?.semImovel;
+  const clienteId = filtro?.clienteId;
+  const habilitado = filtro?.enabled ?? true;
 
   return useQuery({
     // `codigo`/`busca`/`semImovel` join the key so switching any of them
     // refetches instead of reusing a stale page cached under a different key.
-    queryKey: ['matricula-extracoes', codigo ?? null, busca ?? null, semImovel ?? null],
+    queryKey: ['matricula-extracoes', codigo ?? null, busca ?? null, semImovel ?? null, clienteId ?? null],
     queryFn: async () => {
       const result = await api.get('/api/matriculas/extracoes', {
         codigo,
         busca,
         ...(semImovel ? { sem_imovel: true } : {}),
+        ...(clienteId ? { cliente_id: clienteId } : {}),
       });
       return (result.data || []) as MatriculaExtracao[];
     },
-    enabled: !!user,
+    enabled: !!user && habilitado,
     staleTime: 30 * 1000,
     ...jobPolling(
       (data: MatriculaExtracao[] | undefined) => !!data?.some((e) => isInFlight(e.status)),

@@ -86,3 +86,36 @@ describe("MatriculaAtosContainer — current reading", () => {
     );
   });
 });
+
+describe("MatriculaAtosContainer — picker scope", () => {
+  function mountWith(props: { codigo?: string | null; clienteId?: string | null }) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MatriculaAtosContainer contratoId="k1" {...props} />
+      </QueryClientProvider>,
+    );
+  }
+
+  function extracaoCalls() {
+    return mockGet.mock.calls.filter(
+      ([url, params]) => url === "/api/matriculas/extracoes" && !(params as Record<string, unknown> | undefined)?.sem_imovel,
+    );
+  }
+
+  it("🔴 asks the SERVER to scope the picker to the card (cliente_id)", async () => {
+    fakeApi({ persistida: null });
+    mountWith({ codigo: "AP1", clienteId: "cli-1" });
+    await waitFor(() => expect(screen.getByTestId("matricula-atos-extracao-ext-nova")).toBeTruthy());
+    const [, params] = extracaoCalls()[0];
+    expect(params).toMatchObject({ cliente_id: "cli-1" });
+  });
+
+  it("🔴 with no card and no imóvel the org-wide pool is never fetched or shown", async () => {
+    fakeApi({ persistida: null });
+    mountWith({ codigo: null, clienteId: null });
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(extracaoCalls()).toHaveLength(0);
+    expect(screen.queryByTestId("matricula-atos-extracao-ext-nova")).toBeNull();
+  });
+});

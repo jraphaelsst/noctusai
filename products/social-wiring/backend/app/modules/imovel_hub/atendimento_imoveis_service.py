@@ -181,6 +181,24 @@ def codigos_por_atendimento(
     }
 
 
+def codigos_do_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]:
+    """Every live código linked to ANY of this cliente's atendimentos ("Imóveis
+    do atendimento"), de-duplicated, canonical. Empty ⇒ no imóvel linked.
+
+    Scopes the contract matrícula picker server-side: the API, not the FE
+    filter, decides which matrículas a deal may be shown.
+    """
+    ids = [str(a["id"]) for a in _atendimentos_do_cliente(client, org_id, cliente_id)]
+    if not ids:
+        return []
+    por = codigos_por_atendimento(client, org_id, ids)
+    vistos: dict[str, None] = {}
+    for lista in por.values():
+        for codigo in lista:
+            vistos.setdefault(busca_service.canonical(codigo), None)
+    return list(vistos)
+
+
 # ── user writes ────────────────────────────────────────────────────────
 
 

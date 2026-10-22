@@ -40,7 +40,7 @@ export interface MatriculaAtosContainerProps {
   contratoId: string;
   /** The imóvel código, when this contract is known to be about one — narrows
    *  the extraction picker to that imóvel's matrículas. `undefined`/`null`
-   *  offers every transcribed matrícula in the org instead. */
+   *  and no `clienteId` offers NOTHING (never the org-wide pool). */
   codigo?: string | null;
   /** The deal's cliente — the permuta ativos hang off the negociação
    *  estruturada, which is keyed by cliente. Omit it and the permuta sections
@@ -69,7 +69,14 @@ export function MatriculaAtosContainer({
   const [draftAtoIds, setDraftAtoIds] = useState<string[]>([]);
   const [permutaDrafts, setPermutaDrafts] = useState<Record<string, PermutaDraft>>({});
 
-  const extracoesQuery = useMatriculaExtracoes(codigo ? { codigo } : undefined);
+  // 🔴 The picker's source is SCOPED to the deal's imóveis (server-side,
+  // `cliente_id`), never org-wide: a pick feeds the contract's IMÓVEL
+  // description, so another deal's matrícula must not be offered. With neither
+  // a cliente nor a código there is no scope — the query is held, not widened.
+  const extracoesQuery = useMatriculaExtracoes({
+    ...(clienteId ? { clienteId } : codigo ? { codigo } : {}),
+    enabled: !!(clienteId || codigo),
+  });
   // Bug H — an existing transcription may predate this imóvel getting a
   // registry identity, or was uploaded standalone; the scoped query above
   // can never surface it (it has no `codigo` to match). Always fetched
@@ -193,7 +200,8 @@ export function MatriculaAtosContainer({
   // Two signals off `data`, never `isLoading` — false mid-refetch, so a
   // skeleton/error branch keyed off it would lie over data still good to
   // look at (`KB § PATTERNS/frontend/lying-loading-state.md`).
-  const extracoesLoading = extracoesQuery.isPending && !extracoesQuery.data;
+  const extracoesLoading =
+    !!(clienteId || codigo) && extracoesQuery.isPending && !extracoesQuery.data;
   const extracoesError = extracoesQuery.isError && !extracoesQuery.data;
   const extracoesSemImovelLoading =
     extracoesSemImovelQuery.isPending && !extracoesSemImovelQuery.data;

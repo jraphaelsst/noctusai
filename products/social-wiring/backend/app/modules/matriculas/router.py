@@ -100,6 +100,7 @@ from app.dependencies import (
     get_current_user_org,
     get_user_client,
 )
+from app.modules.imovel_hub import atendimento_imoveis_service as atendimento_imoveis_svc
 from app.modules.imovel_hub import dados_service as imovel_dados_svc
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as imovel_matricula_svc
@@ -452,6 +453,17 @@ def listar_extracoes(
             "then, never an error."
         ),
     ),
+    cliente_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "Scope to the matrículas of the imóveis linked to this card's "
+            "atendimento(s) (`atendimento_imoveis`). A card with no linked "
+            "imóvel gets an EMPTY list — never the org-wide pool. The contract "
+            "matrícula picker always sends it: selecting a matrícula feeds the "
+            "contract's IMÓVEL description, so another deal's file must not be "
+            "offered."
+        ),
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     auth=Depends(get_current_user_org),
@@ -470,7 +482,17 @@ def listar_extracoes(
     validated_page, validated_page_size, offset = calculate_pagination(page, page_size)
     codigo_canonico = (codigo or "").strip().upper() or None
 
+    codigos_do_card: Optional[list[str]] = None
+    if cliente_id is not None:
+        codigos_do_card = atendimento_imoveis_svc.codigos_do_cliente(
+            db, UUID(str(_org_id)), cliente_id
+        )
+        if not codigos_do_card:
+            return paginated_response([], 0, validated_page, validated_page_size)
+
     def _filtrar(query):
+        if codigos_do_card is not None:
+            query = query.in_("codigo", codigos_do_card)
         if busca:
             query = query.ilike("nome_arquivo", f"%{busca}%")
         if codigo_canonico:
