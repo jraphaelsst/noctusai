@@ -9,6 +9,7 @@ Own module so `card_hub/router.py` gains one include line. The send itself is
 the existing connection send path (`whatsapp_connections_router.send_message`).
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from typing import Any, Optional
@@ -57,7 +58,7 @@ def _sem_conversa() -> AppException:
 
 
 @router.get("/{cliente_id}/conversa")
-async def get_conversa_route(
+def get_conversa_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -84,7 +85,7 @@ async def pedir_documentos_route(
     no chat yet, the message opens the chat on the org's newest connection.
     """
     _user, org_id = auth_parts(auth)
-    cliente = svc._cliente(client, org_id, cliente_id)  # noqa: SLF001
+    cliente = (await anyio.to_thread.run_sync(lambda: svc._cliente(client, org_id, cliente_id)))  # noqa: SLF001
     try:
         chat, novo_chat_id = svc.resolver_destino(client, org_id, cliente)
     except svc.SemConversa:
@@ -119,18 +120,18 @@ async def pedir_documentos_route(
         )
 
     try:
-        chat_cliente_link.vincular_chat(client, org_id, connection_id, chat_id)
-        svc.patch_payload_da_mensagem(
+        (await anyio.to_thread.run_sync(lambda: chat_cliente_link.vincular_chat(client, org_id, connection_id, chat_id)))
+        (await anyio.to_thread.run_sync(lambda: svc.patch_payload_da_mensagem(
             client, org_id, enviada.id,
             {"evento": svc.EVENTO_DOCUMENTOS_SOLICITADOS, "itens": itens},
-        )
+        )))
     except Exception:
         logger.warning("pedir-documentos: sent, but link/timeline write failed", exc_info=True)
     return {"mensagem_id": enviada.id, "itens_solicitados": itens}
 
 
 @router.get("/{cliente_id}/documentos/a-classificar")
-async def listar_a_classificar_route(
+def listar_a_classificar_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -142,7 +143,7 @@ async def listar_a_classificar_route(
 
 
 @router.post("/{cliente_id}/documentos/{documento_id}/classificar")
-async def classificar_documento_route(
+def classificar_documento_route(
     cliente_id: UUID,
     documento_id: UUID,
     body: ClassificarBody,

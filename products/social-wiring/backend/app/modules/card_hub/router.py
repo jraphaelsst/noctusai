@@ -21,6 +21,7 @@ disambiguated by segment COUNT or a distinct 2nd-segment literal
 ordering constraint applies within this file.
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from typing import Any, Optional
@@ -258,7 +259,7 @@ _splice(
 
 
 @router.get("/{cliente_id}/documento-checklist")
-async def list_documento_checklist_route(
+def list_documento_checklist_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -268,7 +269,7 @@ async def list_documento_checklist_route(
 
 
 @router.patch("/{cliente_id}/documento-checklist/{item_key}")
-async def patch_documento_checklist_route(
+def patch_documento_checklist_route(
     cliente_id: UUID,
     item_key: str,
     body: DocumentoChecklistPatchBody,
@@ -308,7 +309,7 @@ async def patch_documento_checklist_route(
 
 
 @router.get("/{cliente_id}/qualificacao-completude")
-async def get_qualificacao_completude_route(
+def get_qualificacao_completude_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -351,7 +352,7 @@ _splice(
 
 
 @router.get("/{cliente_id}/agendamentos")
-async def list_agendamentos_route(
+def list_agendamentos_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -361,7 +362,7 @@ async def list_agendamentos_route(
 
 
 @router.post("/{cliente_id}/agendamentos", status_code=201)
-async def create_agendamento_route(
+def create_agendamento_route(
     cliente_id: UUID,
     body: AgendamentoCreateBody,
     auth=Depends(get_current_user_org),
@@ -383,7 +384,7 @@ async def create_agendamento_route(
 
 
 @router.patch("/{cliente_id}/agendamentos/{agendamento_id}")
-async def patch_agendamento_route(
+def patch_agendamento_route(
     cliente_id: UUID,
     agendamento_id: UUID,
     body: AgendamentoPatchBody,
@@ -405,7 +406,7 @@ async def patch_agendamento_route(
 
 
 @router.delete("/{cliente_id}/agendamentos/{agendamento_id}", status_code=204)
-async def delete_agendamento_route(
+def delete_agendamento_route(
     cliente_id: UUID,
     agendamento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -429,7 +430,7 @@ async def delete_agendamento_route(
 
 
 @router.get("/{cliente_id}/roteiros")
-async def list_roteiros_route(
+def list_roteiros_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -439,7 +440,7 @@ async def list_roteiros_route(
 
 
 @router.post("/{cliente_id}/roteiros", status_code=201)
-async def create_roteiro_route(
+def create_roteiro_route(
     cliente_id: UUID,
     body: RoteiroCreateBodyV2,
     auth=Depends(get_current_user_org),
@@ -463,7 +464,7 @@ async def create_roteiro_route(
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}")
-async def patch_roteiro_route(
+def patch_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: RoteiroPatchBodyV2,
@@ -484,7 +485,7 @@ async def patch_roteiro_route(
 
 
 @router.delete("/{cliente_id}/roteiros/{roteiro_id}", status_code=204)
-async def delete_roteiro_route(
+def delete_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     auth=Depends(get_current_user_org),
@@ -500,7 +501,7 @@ async def delete_roteiro_route(
 
 
 @router.put("/{cliente_id}/roteiros/{roteiro_id}/ordem")
-async def reorder_roteiro_route(
+def reorder_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: RoteiroOrdemBody,
@@ -526,7 +527,7 @@ async def roteiro_pdf_route(
     """
     _user, org_id = _auth_parts(auth)
     cliente = svc.ensure_cliente(client, org_id, cliente_id)
-    roteiro = roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)
+    roteiro = (await anyio.to_thread.run_sync(lambda: roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)))
     visitas = roteiro.get("visitas") or []
     # Photo download is blocking httpx I/O — off the event loop.
     fotos_por_codigo = await run_in_threadpool(
@@ -554,7 +555,7 @@ async def roteiro_pdf_route(
 
 
 @router.post("/{cliente_id}/roteiros/{roteiro_id}/visitas", status_code=201)
-async def create_visita_route(
+def create_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: VisitaCreateBody,
@@ -568,7 +569,7 @@ async def create_visita_route(
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}")
-async def patch_visita_route(
+def patch_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
@@ -590,7 +591,7 @@ async def patch_visita_route(
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}/proposta")
-async def patch_visita_proposta_route(
+def patch_visita_proposta_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
@@ -627,7 +628,7 @@ async def patch_visita_proposta_route(
 @router.delete(
     "/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}", status_code=204
 )
-async def delete_visita_route(
+def delete_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
@@ -717,7 +718,7 @@ async def upload_documento_route(
 
 
 @router.post("/{cliente_id}/documentos/{documento_id}/extrair")
-async def reextrair_documento_route(
+def reextrair_documento_route(
     cliente_id: UUID,
     documento_id: UUID,
     background: BackgroundTasks,
@@ -769,7 +770,7 @@ _splice(
 
 
 @router.post("/{cliente_id}/documentos/{documento_id}/extracao/confirmar")
-async def confirmar_extracao_route(
+def confirmar_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
     body: Optional[ExtracaoSugestaoBody] = None,
@@ -793,7 +794,7 @@ async def confirmar_extracao_route(
 
 
 @router.post("/{cliente_id}/documentos/{documento_id}/extracao/descartar")
-async def descartar_extracao_route(
+def descartar_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
     body: Optional[ExtracaoSugestaoBody] = None,
@@ -827,7 +828,7 @@ async def descartar_extracao_route(
 
 
 @router.get("/conflitos")
-async def listar_conflitos_route(
+def listar_conflitos_route(
     cliente_id: Optional[UUID] = Query(
         None,
         description=(
@@ -863,7 +864,7 @@ async def listar_conflitos_route(
 
 
 @router.post("/conflitos/resolver-automaticamente")
-async def backfill_resolver_conflitos_route(
+def backfill_resolver_conflitos_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     request: Request = None,
@@ -907,7 +908,7 @@ async def backfill_resolver_conflitos_route(
 
 
 @router.put("/conflitos/{conflito_id}/decidir")
-async def decidir_conflito_route(
+def decidir_conflito_route(
     conflito_id: UUID,
     body: DecidirConflitoBody,
     auth=Depends(get_current_user_org),
@@ -964,7 +965,7 @@ _splice(
 
 
 @router.get("/{cliente_id}/compradores")
-async def list_compradores_route(
+def list_compradores_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     lado: Optional[str] = None,
@@ -990,7 +991,7 @@ async def list_compradores_route(
 
 
 @router.post("/{cliente_id}/compradores", status_code=201)
-async def create_comprador_route(
+def create_comprador_route(
     cliente_id: UUID,
     body: ParteCreateBody,
     auth=Depends(get_current_user_org),
@@ -1022,7 +1023,7 @@ async def create_comprador_route(
 
 
 @router.patch("/{cliente_id}/compradores/{parte_id}")
-async def patch_comprador_route(
+def patch_comprador_route(
     cliente_id: UUID,
     parte_id: UUID,
     body: PartePapelPatchBody,
@@ -1049,7 +1050,7 @@ async def patch_comprador_route(
 
 
 @router.patch("/{cliente_id}/compradores/{parte_id}/contrato")
-async def patch_comprador_contrato_route(
+def patch_comprador_contrato_route(
     cliente_id: UUID,
     parte_id: UUID,
     body: ParteContratoPatchBody,
@@ -1067,7 +1068,7 @@ async def patch_comprador_contrato_route(
 
 
 @router.delete("/{cliente_id}/compradores/{parte_id}", status_code=204)
-async def delete_comprador_route(
+def delete_comprador_route(
     cliente_id: UUID,
     parte_id: UUID,
     auth=Depends(get_current_user_org),
@@ -1087,7 +1088,7 @@ async def delete_comprador_route(
 
 
 @router.get("/{cliente_id}/empresas")
-async def list_empresas_route(
+def list_empresas_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1097,7 +1098,7 @@ async def list_empresas_route(
 
 
 @router.post("/{cliente_id}/empresas", status_code=201)
-async def create_empresa_route(
+def create_empresa_route(
     cliente_id: UUID,
     body: EmpresaManualCreateBody,
     auth=Depends(get_current_user_org),
@@ -1115,7 +1116,7 @@ async def create_empresa_route(
 
 
 @router.patch("/{cliente_id}/empresas/{empresa_id}/participacao")
-async def decidir_participacao_empresa_route(
+def decidir_participacao_empresa_route(
     cliente_id: UUID,
     empresa_id: UUID,
     body: EmpresaParticipacaoDecisaoBody,
@@ -1165,10 +1166,10 @@ async def delete_empresa_route(
     user, org_id = _auth_parts(auth)
     require_org_admin_for(get_core_client(), auth, request, "Excluir empresa")
 
-    resultado = empresas_svc.remover(
+    resultado = (await anyio.to_thread.run_sync(lambda: empresas_svc.remover(
         client, org_id, cliente_id, empresa_id,
         acting_user_id=getattr(user, "id", None),
-    )
+    )))
 
     storage_falhas: list[str] = []
     for documento in resultado["documentos"]:
@@ -1201,7 +1202,7 @@ async def delete_empresa_route(
 
 
 @router.get("/{cliente_id}/certidoes/matriz")
-async def get_certidoes_matriz_route(
+def get_certidoes_matriz_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1211,7 +1212,7 @@ async def get_certidoes_matriz_route(
 
 
 @router.post("/{cliente_id}/certidoes/matriz/linhas", status_code=201)
-async def criar_linha_matriz_route(
+def criar_linha_matriz_route(
     cliente_id: UUID,
     body: LinhaMatrizCreateBody,
     auth=Depends(get_current_user_org),
@@ -1224,7 +1225,7 @@ async def criar_linha_matriz_route(
 
 
 @router.patch("/{cliente_id}/certidoes/matriz/linhas/{linha_id}")
-async def renomear_linha_matriz_route(
+def renomear_linha_matriz_route(
     cliente_id: UUID,
     linha_id: UUID,
     body: LinhaMatrizPatchBody,
@@ -1236,7 +1237,7 @@ async def renomear_linha_matriz_route(
 
 
 @router.delete("/{cliente_id}/certidoes/matriz/linhas/{linha_id}", status_code=204)
-async def remover_linha_matriz_route(
+def remover_linha_matriz_route(
     cliente_id: UUID,
     linha_id: UUID,
     auth=Depends(get_current_user_org),
@@ -1250,7 +1251,7 @@ async def remover_linha_matriz_route(
 
 
 @router.get("/{cliente_id}/negociacao")
-async def get_negociacao_route(
+def get_negociacao_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1260,7 +1261,7 @@ async def get_negociacao_route(
 
 
 @router.patch("/{cliente_id}/negociacao")
-async def patch_negociacao_route(
+def patch_negociacao_route(
     cliente_id: UUID,
     body: NegociacaoPatchBody,
     auth=Depends(get_current_user_org),
@@ -1291,7 +1292,7 @@ async def patch_negociacao_route(
 
 
 @router.get("/{cliente_id}/negociacao/conflitos")
-async def list_negociacao_conflitos_route(
+def list_negociacao_conflitos_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1305,7 +1306,7 @@ async def list_negociacao_conflitos_route(
 
 
 @router.post("/{cliente_id}/negociacao/conflitos/{conflito_id}/resolver")
-async def resolver_negociacao_conflito_route(
+def resolver_negociacao_conflito_route(
     cliente_id: UUID,
     conflito_id: UUID,
     body: ResolverConflitoNegociacaoBody,
@@ -1336,7 +1337,7 @@ async def resolver_negociacao_conflito_route(
 
 
 @router.get("/{cliente_id}/financiamento")
-async def get_financiamento_route(
+def get_financiamento_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1346,7 +1347,7 @@ async def get_financiamento_route(
 
 
 @router.patch("/{cliente_id}/financiamento")
-async def patch_financiamento_route(
+def patch_financiamento_route(
     cliente_id: UUID,
     body: FinanciamentoPatchBody,
     auth=Depends(get_current_user_org),
@@ -1405,7 +1406,7 @@ async def upload_financiamento_documento_route(
 
 
 @router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extrair")
-async def reextrair_financiamento_documento_route(
+def reextrair_financiamento_documento_route(
     cliente_id: UUID,
     documento_id: UUID,
     background: BackgroundTasks,
@@ -1441,7 +1442,7 @@ async def reextrair_financiamento_documento_route(
 
 
 @router.post("/{cliente_id}/financiamento/documentos/{documento_id}/reler")
-async def reler_financiamento_documento_route(
+def reler_financiamento_documento_route(
     cliente_id: UUID,
     documento_id: UUID,
     background: BackgroundTasks,
@@ -1476,7 +1477,7 @@ async def reler_financiamento_documento_route(
 
 
 @router.post("/{cliente_id}/negociacao/documentos/reler")
-async def reler_documentos_negociacao_route(
+def reler_documentos_negociacao_route(
     cliente_id: UUID,
     background: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -1506,7 +1507,7 @@ async def reler_documentos_negociacao_route(
 
 
 @router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extracao/confirmar")
-async def confirmar_financiamento_extracao_route(
+def confirmar_financiamento_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -1524,7 +1525,7 @@ async def confirmar_financiamento_extracao_route(
 
 
 @router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extracao/descartar")
-async def descartar_financiamento_extracao_route(
+def descartar_financiamento_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -1553,7 +1554,7 @@ async def get_financiamento_documento_url_route(
 
 
 @router.get("/{cliente_id}/financiamento/documentos/{documento_id}/acessos")
-async def list_financiamento_acessos_route(
+def list_financiamento_acessos_route(
     cliente_id: UUID,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -1566,7 +1567,7 @@ async def list_financiamento_acessos_route(
 @router.delete(
     "/{cliente_id}/financiamento/documentos/{documento_id}", status_code=204
 )
-async def delete_financiamento_documento_route(
+def delete_financiamento_documento_route(
     cliente_id: UUID,
     documento_id: UUID,
     # A required query param, not a body — the seed `ApiClient.delete()` has
@@ -1586,7 +1587,7 @@ async def delete_financiamento_documento_route(
 
 
 @router.get("/{cliente_id}/contratos")
-async def list_contratos_route(
+def list_contratos_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -1650,7 +1651,7 @@ async def create_contrato_versao_route(
 
 
 @router.patch("/{cliente_id}/contratos/{contrato_id}")
-async def patch_contrato_route(
+def patch_contrato_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: ContratoPatchBody,
@@ -1666,7 +1667,7 @@ async def patch_contrato_route(
 
 
 @router.put("/{cliente_id}/contratos/{contrato_id}/processo-legado")
-async def put_contrato_processo_legado_route(
+def put_contrato_processo_legado_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: ProcessoLegadoBody,
@@ -1728,7 +1729,7 @@ async def get_contrato_versao_url_route(
 @router.delete(
     "/{cliente_id}/contratos/{contrato_id}/versoes/{versao_id}", status_code=204
 )
-async def delete_contrato_versao_route(
+def delete_contrato_versao_route(
     cliente_id: UUID,
     contrato_id: UUID,
     versao_id: UUID,
@@ -1744,7 +1745,7 @@ async def delete_contrato_versao_route(
 
 
 @router.delete("/{cliente_id}/contratos/{contrato_id}", status_code=204)
-async def delete_contrato_route(
+def delete_contrato_route(
     cliente_id: UUID,
     contrato_id: UUID,
     motivo: str = Query(..., min_length=1, max_length=500),
@@ -1776,7 +1777,7 @@ defaults_router = APIRouter(prefix="/api/negociacao", tags=["negociacao"])
 
 
 @defaults_router.get("/defaults")
-async def get_negociacao_defaults_route(
+def get_negociacao_defaults_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
@@ -1785,7 +1786,7 @@ async def get_negociacao_defaults_route(
 
 
 @defaults_router.patch("/defaults")
-async def patch_negociacao_defaults_route(
+def patch_negociacao_defaults_route(
     body: NegociacaoDefaultsPatchBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),

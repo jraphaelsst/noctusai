@@ -67,7 +67,7 @@ class FavorecidoSelecaoBody(StrictHttpModel):
 
 
 @router.get("/api/card-hub/favorecidos")
-async def list_favorecidos_route(
+def list_favorecidos_route(
     q: Optional[str] = Query(default=None, max_length=120),
     ativo: Optional[bool] = None,
     auth=Depends(get_current_user_org),
@@ -78,7 +78,7 @@ async def list_favorecidos_route(
 
 
 @router.get("/api/card-hub/favorecidos/{favorecido_id}")
-async def get_favorecido_route(
+def get_favorecido_route(
     favorecido_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -90,7 +90,7 @@ async def get_favorecido_route(
 
 
 @router.post("/api/card-hub/favorecidos", status_code=201)
-async def create_favorecido_registro_route(
+def create_favorecido_registro_route(
     body: FavorecidoRegistroCreateBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -103,7 +103,7 @@ async def create_favorecido_registro_route(
 
 
 @router.patch("/api/card-hub/favorecidos/{favorecido_id}")
-async def patch_favorecido_registro_route(
+def patch_favorecido_registro_route(
     favorecido_id: UUID,
     body: FavorecidoRegistroPatchBody,
     auth=Depends(get_current_user_org),
@@ -120,7 +120,7 @@ async def patch_favorecido_registro_route(
 
 
 @router.delete("/api/card-hub/favorecidos/{favorecido_id}", status_code=204)
-async def delete_favorecido_registro_route(
+def delete_favorecido_registro_route(
     favorecido_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -133,7 +133,7 @@ async def delete_favorecido_registro_route(
 
 
 @router.put("/api/card-hub/atendimentos/{atendimento_id}/favorecidos/selecao")
-async def put_favorecido_selecao_route(
+def put_favorecido_selecao_route(
     atendimento_id: UUID,
     body: FavorecidoSelecaoBody,
     auth=Depends(get_current_user_org),

@@ -45,7 +45,7 @@ class RoteiroFeedbackBody(StrictHttpModel):
 
 
 @router.post("/{cliente_id}/roteiros/{roteiro_id}/feedback")
-async def feedback_route(
+def feedback_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: RoteiroFeedbackBody,
@@ -61,7 +61,7 @@ async def feedback_route(
 
 
 @router.get("/{cliente_id}/roteiros/{roteiro_id}/visitadas")
-async def visitadas_route(
+def visitadas_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     auth=Depends(get_current_user_org),
@@ -72,7 +72,7 @@ async def visitadas_route(
 
 
 @pendentes_router.get("/pendentes-feedback")
-async def pendentes_feedback_route(
+def pendentes_feedback_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> list[dict]:
@@ -81,7 +81,7 @@ async def pendentes_feedback_route(
 
 
 @metricas_router.get("/atendimentos")
-async def metricas_atendimentos_route(
+def metricas_atendimentos_route(
     de: Optional[date] = None,
     ate: Optional[date] = None,
     corretor_id: Optional[UUID] = None,

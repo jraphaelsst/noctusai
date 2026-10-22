@@ -50,7 +50,7 @@ def verify_token(token: str) -> dict | None:
 
 
 @router.get("/{token}")
-async def unsubscribe_page(token: str):
+def unsubscribe_page(token: str):
     """Render unsubscribe confirmation — returns token info for frontend to display."""
     data = verify_token(token)
     if not data:
@@ -59,7 +59,7 @@ async def unsubscribe_page(token: str):
 
 
 @router.post("/{token}")
-async def process_unsubscribe(token: str):
+def process_unsubscribe(token: str):
     """Process the unsubscribe — mark contact as unsubscribed, create audit record.
 
     Also the RFC 8058 one-click target: mail clients POST

@@ -32,7 +32,7 @@ _STATUS_KEPT = {"clicked", "bounced", "complained"}
 
 @router.get("/c/{token}")
 @limiter.limit(settings.webhook_rate_limit)
-async def click_redirect(request: Request, token: str, cfg=Depends(get_settings)):
+def click_redirect(request: Request, token: str, cfg=Depends(get_settings)):
     data = verify_token(cfg.jwt_secret, token)
     if not data:
         raise HTTPException(status_code=400, detail="Link inválido")

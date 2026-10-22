@@ -24,12 +24,12 @@ def raise_http(exc: PerfilError):
 
 
 @router.get("/taxonomias")
-async def get_taxonomias(auth=Depends(get_current_user_org)):
+def get_taxonomias(auth=Depends(get_current_user_org)):
     return success_response(taxonomias())
 
 
 @router.get("/perfil")
-async def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(perfil_service(auth).get(str(marca_id)))
     except PerfilError as exc:
@@ -37,7 +37,7 @@ async def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.put("/perfil")
-async def put_perfil(body: PerfilCriacaoUpdate, auth=Depends(get_current_user_org)):
+def put_perfil(body: PerfilCriacaoUpdate, auth=Depends(get_current_user_org)):
     try:
         fields = {k: getattr(body, k) for k in body.model_fields_set if k != "marca_id"}
         return success_response(perfil_service(auth).save(str(body.marca_id), **fields))

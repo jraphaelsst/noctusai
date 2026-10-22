@@ -31,19 +31,19 @@ def _raise(exc: TreinamentoError):
 
 
 @router.get("")
-async def listar_treinamentos(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
+def listar_treinamentos(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
     """Members see the active lessons; a platform admin also sees the inactive ones (``ativo: false``)."""
     return success_response(_svc(auth).listar(incluir_inativos=bool(is_admin(str(auth[0].id)))))
 
 
 @router.get("/admin")
-async def treinamentos_admin(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
+def treinamentos_admin(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
     """Whether the caller may edit (drives the FE edit controls; the writes enforce it themselves)."""
     return success_response({"is_admin": bool(is_admin(str(auth[0].id)))})
 
 
 @router.post("", status_code=201)
-async def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platform_admin)):
+def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platform_admin)):
     try:
         return success_response(_svc(auth).criar(**body.model_dump(mode="json")))
     except TreinamentoError as exc:
@@ -51,7 +51,7 @@ async def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platfo
 
 
 @router.put("/{treinamento_id}")
-async def atualizar_treinamento(
+def atualizar_treinamento(
     treinamento_id: uuid.UUID, body: TreinamentoUpdate, auth=Depends(require_platform_admin),
 ):
     patch = {k: getattr(body, k) for k in body.model_fields_set}
@@ -66,7 +66,7 @@ async def atualizar_treinamento(
 
 
 @router.delete("/{treinamento_id}", status_code=204)
-async def excluir_treinamento(treinamento_id: uuid.UUID, auth=Depends(require_platform_admin)):
+def excluir_treinamento(treinamento_id: uuid.UUID, auth=Depends(require_platform_admin)):
     try:
         _svc(auth).excluir(str(treinamento_id))
     except TreinamentoError as exc:

@@ -7,6 +7,7 @@ Auth is ``get_current_user_org`` on every route (strict 401 without a session). 
 marca, profile, viral or reference is a 404. ``ingestao_ativa`` (the kill switch state) rides on the
 profile payloads so the UI can say "a ingestão está desligada" instead of showing a silent spinner.
 """
+import anyio
 import logging
 import uuid
 from typing import Callable, Literal, Optional
@@ -250,7 +251,7 @@ async def delete_perfil(
 
 
 @router.get("/contas-descoberta")
-async def contas_descoberta(
+def contas_descoberta(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
@@ -316,7 +317,7 @@ async def patch_referencia(
 
 
 @router.delete("/referencias/{ref_id}", status_code=204)
-async def delete_referencia(
+def delete_referencia(
     ref_id: uuid.UUID,
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_biblioteca_storage),
@@ -340,7 +341,7 @@ def _optout_out(row: dict) -> dict:
 
 
 @router.get("/admin/optouts")
-async def list_optouts(auth=Depends(require_platform_admin)):
+def list_optouts(auth=Depends(require_platform_admin)):
     return success_response([_optout_out(r) for r in biblioteca_optout.listar(get_admin_client())])
 
 
@@ -354,7 +355,7 @@ async def criar_optout(
     the first row (``criado=false``) and re-runs the purge (a no-op once nothing is left)."""
     db = get_admin_client()
     user_id = str(getattr(auth[0], "id", "") or "") or None
-    row, criado = biblioteca_optout.registrar(db, body.handle, body.motivo, body.origem, user_id)
+    row, criado = (await anyio.to_thread.run_sync(lambda: biblioteca_optout.registrar(db, body.handle, body.motivo, body.origem, user_id)))
     purgados = await purgar_handle(db, storage, body.handle)
     logger.info(
         "biblioteca opt-out: criado=%s origem=%s perfis=%d virais=%d blobs_falhos=%d",
@@ -364,7 +365,7 @@ async def criar_optout(
 
 
 @router.delete("/admin/optouts/{optout_id}", status_code=204)
-async def remover_optout(optout_id: uuid.UUID, auth=Depends(require_platform_admin)):
+def remover_optout(optout_id: uuid.UUID, auth=Depends(require_platform_admin)):
     if not biblioteca_optout.remover(get_admin_client(), str(optout_id)):
         raise HTTPException(status_code=404, detail="Opt-out não encontrado")
     return Response(status_code=204)

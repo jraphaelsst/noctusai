@@ -26,6 +26,7 @@ live in production, so an unset secret must fail LOUDLY rather than silently
 disable verification.
 """
 from __future__ import annotations
+import anyio
 
 import json
 import logging
@@ -102,7 +103,7 @@ async def _resolve_meta_app_secret(request: Request, body: bytes) -> ResolvedSec
 # ─── public: GET handshake ───────────────────────────────────────────────
 @router.get("/webhook", response_class=PlainTextResponse)
 @limiter.limit(settings.webhook_rate_limit)
-async def leadgen_verify(
+def leadgen_verify(
     request: Request,
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
@@ -216,7 +217,7 @@ async def leadgen_receive(
     # qualification change can never be mistaken for a new lead submission.
     updates = parse_leadgen_update_webhook(payload)
     update_results = [
-        {"leadgen_id": u.leadgen_id, "status": svc.process_qualification_event(u)}
+        {"leadgen_id": u.leadgen_id, "status": (await anyio.to_thread.run_sync(lambda: svc.process_qualification_event(u)))}
         for u in updates
     ]
 
@@ -229,7 +230,7 @@ async def leadgen_receive(
     # "Arrived and we ignored it" must stay distinguishable from "never
     # arrived": those are opposite problems (our parser vs. the dashboard
     # subscription) and the inbox is the only thing that tells them apart.
-    recorded = svc.record_unhandled(payload)
+    recorded = (await anyio.to_thread.run_sync(lambda: svc.record_unhandled(payload)))
 
     if not events:
         return JSONResponse({
@@ -260,7 +261,7 @@ async def leadgen_receive(
     announce = StarletteBackgroundTasks()
     sweep_wanted = False
     for event in events:
-        is_new = svc.record_event(event)
+        is_new = (await anyio.to_thread.run_sync(lambda: svc.record_event(event)))
         if not is_new or not svc.claim(event.leadgen_id):
             results.append({"leadgen_id": event.leadgen_id, "status": "duplicate"})
             continue

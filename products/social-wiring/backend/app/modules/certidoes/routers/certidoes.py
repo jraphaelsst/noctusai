@@ -68,6 +68,7 @@ import zipfile
 from typing import Optional
 from uuid import UUID
 
+import anyio
 import httpx
 from fastapi import (
     APIRouter,
@@ -372,7 +373,7 @@ def _validar_cliente_id(db, org_id, cliente_id: str) -> None:
 
 
 @router.get("/tipos")
-async def listar_tipos_certidoes(_auth=Depends(get_current_user_org)):
+def listar_tipos_certidoes(_auth=Depends(get_current_user_org)):
     """List available certificate types."""
     return success_response(get_certidoes_tipos())
 
@@ -391,7 +392,7 @@ def busca_or_filter(busca: str) -> str:
 
 
 @router.get("/consultas")
-async def listar_consultas(
+def listar_consultas(
     busca: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
@@ -448,7 +449,7 @@ async def listar_consultas(
 
 
 @router.post("/consultas")
-async def criar_consulta(
+def criar_consulta(
     body: ConsultaCreate,
     background_tasks: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -532,7 +533,7 @@ async def criar_consulta(
 
 
 @router.post("/consultas/manual")
-async def criar_consulta_manual(
+def criar_consulta_manual(
     body: ConsultaManualCreate,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -709,7 +710,7 @@ async def criar_consulta_manual(
 
 
 @router.get("/consultas/{consulta_id}")
-async def obter_consulta(
+def obter_consulta(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -748,7 +749,7 @@ async def obter_consulta(
 
 
 @router.post("/consultas/{consulta_id}/reprocessar")
-async def reprocessar_consulta(
+def reprocessar_consulta(
     consulta_id: str,
     background_tasks: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -795,7 +796,7 @@ async def reprocessar_consulta(
 
 
 @router.post("/consultas/{consulta_id}/cancelar")
-async def cancelar_consulta_processamento(
+def cancelar_consulta_processamento(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -812,7 +813,7 @@ async def cancelar_consulta_processamento(
 
 
 @router.delete("/consultas/{consulta_id}")
-async def excluir_consulta(
+def excluir_consulta(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -857,7 +858,7 @@ async def excluir_consulta(
 
 
 @router.post("/consultas/{consulta_id}/restaurar")
-async def restaurar_consulta(
+def restaurar_consulta(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -909,13 +910,15 @@ async def download_certidao(
     org_id = coerce_org_uuid(raw_org)
 
     owned = (
-        db.table(RESULTADOS)
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("arquivo_url", url)
-        .is_("excluida_em", "null")
-        .limit(1)
-        .execute()
+        await anyio.to_thread.run_sync(
+            lambda: db.table(RESULTADOS)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("arquivo_url", url)
+            .is_("excluida_em", "null")
+            .limit(1)
+            .execute()
+        )
     ).data or []
     if not owned:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
@@ -947,16 +950,18 @@ async def download_consulta_zip(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    consulta = _get_consulta_or_404(
-        db, consulta_id, org_id, select="id, nome, documento"
+    consulta = await anyio.to_thread.run_sync(
+        lambda: _get_consulta_or_404(
+            db, consulta_id, org_id, select="id, nome, documento"
+        )
     )
 
     # One resultado per registry type per consulta: the fan-out in
     # `criar_consulta` inserts exactly `len(CERTIDOES_CONFIG)` of them and the
     # FK cascades with the consulta.
     # postgrest-unbounded-ok: bounded at 10 rows by that fan-out, not 1 000.
-    resultados = (
-        db.table(RESULTADOS)
+    resultados = await anyio.to_thread.run_sync(
+        lambda: db.table(RESULTADOS)
         .select("arquivo_url, arquivo_nome, nome_display")
         .eq("consulta_id", consulta_id)
         .eq("org_id", str(org_id))
@@ -1062,19 +1067,23 @@ async def upload_certidao_manual(
         )
 
     resultado_rows = (
-        db.table(RESULTADOS)
-        .select(
-            "id, consulta_id, tipo, nome_display, resultado_origem, confirmado_por"
+        await anyio.to_thread.run_sync(
+            lambda: db.table(RESULTADOS)
+            .select(
+                "id, consulta_id, tipo, nome_display, resultado_origem, confirmado_por"
+            )
+            .eq("id", resultado_id)
+            .eq("org_id", str(org_id))
+            .execute()
         )
-        .eq("id", resultado_id)
-        .eq("org_id", str(org_id))
-        .execute()
     ).data or []
     if not resultado_rows:
         raise HTTPException(status_code=404, detail="Resultado não encontrado")
     resultado = resultado_rows[0]
 
-    consulta = _get_consulta_or_404(db, resultado["consulta_id"], org_id)
+    consulta = await anyio.to_thread.run_sync(
+        lambda: _get_consulta_or_404(db, resultado["consulta_id"], org_id)
+    )
 
     pdf_bytes = await file.read()
     if not pdf_bytes:
@@ -1143,12 +1152,14 @@ async def reler_certidao(
     org_id = coerce_org_uuid(raw_org)
 
     resultado_rows = (
-        db.table(RESULTADOS)
-        .select(service.RELEITURA_COLUNAS)
-        .eq("id", resultado_id)
-        .eq("org_id", str(org_id))
-        .is_("excluida_em", "null")
-        .execute()
+        await anyio.to_thread.run_sync(
+            lambda: db.table(RESULTADOS)
+            .select(service.RELEITURA_COLUNAS)
+            .eq("id", resultado_id)
+            .eq("org_id", str(org_id))
+            .is_("excluida_em", "null")
+            .execute()
+        )
     ).data or []
     if not resultado_rows:
         raise HTTPException(status_code=404, detail="Resultado não encontrado")
@@ -1178,7 +1189,7 @@ async def reler_certidao(
 
 
 @router.get("/fila-tjsp")
-async def status_fila_tjsp(
+def status_fila_tjsp(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     svc: CertidoesService = Depends(get_certidoes_service),
@@ -1235,7 +1246,7 @@ async def status_fila_tjsp(
 
 
 @router.post("/consultas/{consulta_id}/vincular-parte")
-async def vincular_parte(
+def vincular_parte(
     consulta_id: str,
     body: VincularParteRequest,
     auth=Depends(get_current_user_org),
@@ -1302,7 +1313,7 @@ async def vincular_parte(
 
 
 @router.get("/partes/{atendimento_parte_id}/resultados")
-async def listar_resultados_por_parte(
+def listar_resultados_por_parte(
     atendimento_parte_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -1319,7 +1330,7 @@ async def listar_resultados_por_parte(
 
 
 @router.post("/consultas/{consulta_id}/vincular-cliente")
-async def vincular_cliente(
+def vincular_cliente(
     consulta_id: str,
     body: VincularClienteRequest,
     auth=Depends(get_current_user_org),
@@ -1381,7 +1392,7 @@ def _validar_empresa_id(db, org_id, empresa_id: str) -> dict:
 
 
 @router.post("/consultas/{consulta_id}/vincular-empresa")
-async def vincular_empresa(
+def vincular_empresa(
     consulta_id: str,
     body: VincularEmpresaRequest,
     auth=Depends(get_current_user_org),
@@ -1439,7 +1450,7 @@ async def vincular_empresa(
 
 
 @router.get("/empresas/{empresa_id}/resultados")
-async def listar_resultados_por_empresa(
+def listar_resultados_por_empresa(
     empresa_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -1454,7 +1465,7 @@ async def listar_resultados_por_empresa(
 
 
 @router.get("/clientes/{cliente_id}/resultados")
-async def listar_resultados_por_cliente(
+def listar_resultados_por_cliente(
     cliente_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -1472,7 +1483,7 @@ async def listar_resultados_por_cliente(
 
 
 @router.patch("/consultas/{consulta_id}/situacao-cadastral")
-async def atualizar_situacao_cadastral_route(
+def atualizar_situacao_cadastral_route(
     consulta_id: str,
     body: SituacaoCadastralPatch,
     auth=Depends(get_current_user_org),
@@ -1500,7 +1511,7 @@ async def atualizar_situacao_cadastral_route(
 
 
 @router.get("/resultados/{resultado_id}/transcricao")
-async def obter_transcricao(
+def obter_transcricao(
     resultado_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -1531,7 +1542,7 @@ async def obter_transcricao(
 
 
 @router.get("/resultados/{resultado_id}/transcricao/pdf")
-async def obter_transcricao_pdf(
+def obter_transcricao_pdf(
     resultado_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -1572,7 +1583,7 @@ async def obter_transcricao_pdf(
 
 
 @router.patch("/resultados/{resultado_id}")
-async def confirmar_ou_corrigir_resultado(
+def confirmar_ou_corrigir_resultado(
     resultado_id: str,
     body: ResultadoPatch,
     auth=Depends(get_current_user_org),

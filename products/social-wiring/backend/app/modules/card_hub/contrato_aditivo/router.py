@@ -16,6 +16,7 @@ tests override them via `app.dependency_overrides`, never a patch.
 Contract: `products/social-wiring/projects/contrato-aditivos-CONTRACT.md`.
 """
 from __future__ import annotations
+import anyio
 
 from typing import Optional
 from uuid import UUID
@@ -46,7 +47,7 @@ _BASE = "/{cliente_id}/contratos/{contrato_id}/aditivos"
 
 
 @router.get(_BASE)
-async def get_aditivos_route(
+def get_aditivos_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
@@ -57,7 +58,7 @@ async def get_aditivos_route(
 
 
 @router.post(_BASE, status_code=201)
-async def post_aditivo_route(
+def post_aditivo_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: AditivoCreateBody,
@@ -82,7 +83,7 @@ async def post_aditivo_route(
 
 
 @router.patch(_BASE + "/{aditivo_id}")
-async def patch_aditivo_route(
+def patch_aditivo_route(
     cliente_id: UUID,
     contrato_id: UUID,
     aditivo_id: UUID,
@@ -114,7 +115,7 @@ async def patch_aditivo_route(
 
 
 @router.get(_BASE + "/{aditivo_id}/geracao")
-async def get_aditivo_geracao_route(
+def get_aditivo_geracao_route(
     cliente_id: UUID,
     contrato_id: UUID,
     aditivo_id: UUID,
@@ -162,7 +163,7 @@ async def post_aditivo_gerar_route(
 
 
 @router.get(_BASE + "/{aditivo_id}/versoes")
-async def get_aditivo_versoes_route(
+def get_aditivo_versoes_route(
     cliente_id: UUID,
     contrato_id: UUID,
     aditivo_id: UUID,
@@ -192,10 +193,10 @@ async def get_aditivo_versao_url_route(
     while the version awaits the legal review; a plain view is not."""
     user, org_id = auth_parts(auth)
     store.contexto_contrato(client, org_id, cliente_id, contrato_id)
-    store.exigir_aditivo(client, org_id, contrato_id, aditivo_id)
+    (await anyio.to_thread.run_sync(lambda: store.exigir_aditivo(client, org_id, contrato_id, aditivo_id)))
     if impressao:
         contratos_svc.exigir_revisao_juridica(
-            store.VERSOES_STORE.exigir(client, org_id, aditivo_id, versao_id)
+            (await anyio.to_thread.run_sync(lambda: store.VERSOES_STORE.exigir(client, org_id, aditivo_id, versao_id)))
         )
     return await contratos_svc.url_artefato_versao(
         store.VERSOES_STORE,
@@ -211,7 +212,7 @@ async def get_aditivo_versao_url_route(
 
 
 @router.post(_BASE + "/{aditivo_id}/versoes/{versao_id}/revisao-juridica")
-async def post_aditivo_revisao_juridica_route(
+def post_aditivo_revisao_juridica_route(
     cliente_id: UUID,
     contrato_id: UUID,
     aditivo_id: UUID,

@@ -27,7 +27,7 @@ class InteresseCreateBody(StrictHttpModel):
 
 
 @router.get("/{cliente_id}/interesses")
-async def listar_route(
+def listar_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -37,7 +37,7 @@ async def listar_route(
 
 
 @router.post("/{cliente_id}/interesses", status_code=status.HTTP_201_CREATED)
-async def adicionar_route(
+def adicionar_route(
     cliente_id: UUID,
     body: InteresseCreateBody,
     auth=Depends(get_current_user_org),
@@ -58,7 +58,7 @@ async def adicionar_route(
     "/{cliente_id}/interesses/{interesse_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def remover_route(
+def remover_route(
     cliente_id: UUID,
     interesse_id: UUID,
     auth=Depends(get_current_user_org),

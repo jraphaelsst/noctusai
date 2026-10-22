@@ -36,7 +36,7 @@ class DefinirTestemunhasBody(StrictHttpModel):
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/testemunhas")
-async def get_contrato_testemunhas_route(
+def get_contrato_testemunhas_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
@@ -49,7 +49,7 @@ async def get_contrato_testemunhas_route(
 
 
 @router.put("/{cliente_id}/contratos/{contrato_id}/testemunhas")
-async def put_contrato_testemunhas_route(
+def put_contrato_testemunhas_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: DefinirTestemunhasBody,

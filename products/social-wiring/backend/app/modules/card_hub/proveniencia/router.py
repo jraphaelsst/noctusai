@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/proveniencia", tags=["proveniencia"])
 
 
 @router.get("/registro")
-async def get_proveniencia_registro_route(auth=Depends(get_current_user_org)) -> dict:
+def get_proveniencia_registro_route(auth=Depends(get_current_user_org)) -> dict:
     """Static JSON of `fontes.FONTES` + `fontes.MANUAL_APENAS`, reshaped for
     the FE's upload-channel hints — no org-scoped data, same answer for
     every caller; `auth` is required anyway (this catalog names internal

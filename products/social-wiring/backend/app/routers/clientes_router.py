@@ -35,6 +35,7 @@ FastAPI would try to parse the literal "revisao" as a UUID `cliente_id` and
 422 instead of matching the review-queue route.
 """
 from __future__ import annotations
+import anyio
 
 import logging
 import weakref
@@ -509,7 +510,7 @@ class RestaurarClienteOut(BaseModel):
 
 
 @router.get("", response_model=PageOut)
-async def list_clientes_route(
+def list_clientes_route(
     ativo: Optional[bool] = Query(True),
     q: Optional[str] = Query(None),
     corretor_id: Optional[UUID] = Query(None),
@@ -536,7 +537,7 @@ async def list_clientes_route(
 
 
 @router.get("/revisao", response_model=PageOut)
-async def list_revisao(
+def list_revisao(
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     auth=Depends(get_current_user_org),
@@ -569,7 +570,7 @@ async def list_revisao(
 
 
 @router.get("/revisao-cpf", response_model=PageOut)
-async def list_revisao_cpf(
+def list_revisao_cpf(
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     auth=Depends(get_current_user_org),
@@ -592,7 +593,7 @@ async def list_revisao_cpf(
 
 
 @router.post("/revisao-cpf/{grupo}/merge", response_model=MergeGrupoOut)
-async def merge_grupo_cpf(
+def merge_grupo_cpf(
     grupo: str,
     body: MergeGrupoBody,
     auth=Depends(get_current_user_org),
@@ -642,7 +643,7 @@ async def merge_grupo_cpf(
 
 
 @router.post("/revisao-cpf/{grupo}/manter-separados", response_model=ManterSeparadosCpfOut)
-async def manter_separados_cpf(
+def manter_separados_cpf(
     grupo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -702,7 +703,7 @@ def get_backfill_runner():
 # Declared BEFORE every `/{cliente_id}...` route so `/excluidos` is never
 # captured as a cliente id.
 @router.get("/excluidos", response_model=ClientesExcluidosOut)
-async def list_excluidos_route(
+def list_excluidos_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
     request: Request = None,
@@ -718,7 +719,7 @@ async def list_excluidos_route(
 
 
 @router.post("/excluidos/{cliente_id}/restaurar", response_model=RestaurarClienteOut)
-async def restaurar_excluido_route(
+def restaurar_excluido_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -781,7 +782,7 @@ def executar_backfill(
 
 
 @router.post("/revisao/merge-seguros", response_model=MergeSegurosOut)
-async def merge_seguros(
+def merge_seguros(
     simular: bool = Query(False),
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -862,7 +863,7 @@ async def merge_seguros(
 
 
 @router.post("/revisao/{grupo}/merge", response_model=MergeGrupoOut)
-async def merge_grupo(
+def merge_grupo(
     grupo: str,
     body: MergeGrupoBody,
     auth=Depends(get_current_user_org),
@@ -907,7 +908,7 @@ async def merge_grupo(
 
 
 @router.post("/revisao/{grupo}/manter-separados", response_model=ManterSeparadosOut)
-async def manter_separados(
+def manter_separados(
     grupo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -927,7 +928,7 @@ async def manter_separados(
 
 
 @router.post("/merges/{merge_id}/desfazer", response_model=DesfazerOut)
-async def desfazer_merge(
+def desfazer_merge(
     merge_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -945,7 +946,7 @@ async def desfazer_merge(
 
 
 @router.get("/{cliente_id}/touches", response_model=PageOut)
-async def get_touches_route(
+def get_touches_route(
     cliente_id: UUID,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -962,7 +963,7 @@ async def get_touches_route(
 
 
 @router.get("/{cliente_id}/negociacoes", response_model=ClienteNegociacoesOut)
-async def get_negociacoes_route(
+def get_negociacoes_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -1003,7 +1004,7 @@ async def get_negociacoes_route(
 
 
 @router.get("/{cliente_id}")
-async def get_cliente_route(
+def get_cliente_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
@@ -1057,7 +1058,7 @@ def _is_org_admin(auth: Any, request: Optional[Request] = None) -> bool:
 
 
 @router.patch("/{cliente_id}")
-async def update_cliente_route(
+def update_cliente_route(
     cliente_id: UUID,
     body: ClientePatchBody,
     auth=Depends(get_current_user_org),
@@ -1135,9 +1136,9 @@ async def excluir_cliente_route(
     require_org_admin_for(get_core_client(), auth, request, "Excluir cliente")
 
     try:
-        resultado = svc.excluir_cliente(
+        resultado = (await anyio.to_thread.run_sync(lambda: svc.excluir_cliente(
             client, org_id, cliente_id, excluido_por=getattr(_user, "id", None)
-        )
+        )))
     except svc.ClienteNotFound as exc:
         raise NotFoundError("clientes", str(cliente_id)) from exc
     except svc.ClienteEhSobreviventeDeMerge as exc:

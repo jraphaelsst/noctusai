@@ -130,7 +130,7 @@ def get_imovelweb_adapter() -> Any:
 
 @router.post("/leads")
 @limiter.limit(settings.webhook_rate_limit)
-async def receive_imovelweb_lead(
+def receive_imovelweb_lead(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_imovelweb_secret,

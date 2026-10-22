@@ -21,7 +21,7 @@ def _svc(org_id) -> PostService:
 
 
 @router.get("")
-async def list_posts(
+def list_posts(
     auth=Depends(get_current_user_org),
     status: Optional[str] = Query(None),
     brand_kit_id: Optional[str] = Query(None),
@@ -31,7 +31,7 @@ async def list_posts(
 
 
 @router.post("", status_code=201)
-async def create_post(body: PostCreate, auth=Depends(get_current_user_org)):
+def create_post(body: PostCreate, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _svc(org_id).create_post(body.model_dump(mode="json"), str(user.id))
     if not result:
@@ -40,7 +40,7 @@ async def create_post(body: PostCreate, auth=Depends(get_current_user_org)):
 
 
 @router.get("/{post_id}")
-async def get_post(post_id: str, auth=Depends(get_current_user_org)):
+def get_post(post_id: str, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _svc(org_id).get_post_detail(post_id)
     if not result:
@@ -49,7 +49,7 @@ async def get_post(post_id: str, auth=Depends(get_current_user_org)):
 
 
 @router.patch("/{post_id}")
-async def update_post(
+def update_post(
     post_id: str, body: PostUpdate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth
@@ -60,7 +60,7 @@ async def update_post(
 
 
 @router.delete("/{post_id}")
-async def delete_post(post_id: str, auth=Depends(get_current_user_org)):
+def delete_post(post_id: str, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     if not _svc(org_id).delete_post(post_id):
         raise HTTPException(

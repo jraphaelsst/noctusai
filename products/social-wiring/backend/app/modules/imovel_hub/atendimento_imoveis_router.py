@@ -38,7 +38,7 @@ class AtendimentoImovelCreateBody(StrictHttpModel):
 
 
 @router.get("/{cliente_id}/atendimento-imoveis")
-async def listar_route(
+def listar_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),
@@ -49,7 +49,7 @@ async def listar_route(
 
 
 @router.post("/{cliente_id}/atendimento-imoveis", status_code=status.HTTP_201_CREATED)
-async def adicionar_route(
+def adicionar_route(
     cliente_id: UUID,
     body: AtendimentoImovelCreateBody,
     auth=Depends(get_current_user_org),
@@ -69,7 +69,7 @@ async def adicionar_route(
 
 
 @router.put("/{cliente_id}/atendimento-imoveis/{item_id}/principal")
-async def principal_route(
+def principal_route(
     cliente_id: UUID,
     item_id: UUID,
     auth=Depends(get_current_user_org),
@@ -83,7 +83,7 @@ async def principal_route(
     "/{cliente_id}/atendimento-imoveis/{item_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def remover_route(
+def remover_route(
     cliente_id: UUID,
     item_id: UUID,
     auth=Depends(get_current_user_org),

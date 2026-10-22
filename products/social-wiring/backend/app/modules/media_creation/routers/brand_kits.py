@@ -23,13 +23,13 @@ def _svc(org_id) -> BrandKitService:
 
 
 @router.get("")
-async def list_brand_kits(auth=Depends(get_current_user_org)):
+def list_brand_kits(auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     return success_response(_svc(org_id).list_kits())
 
 
 @router.post("", status_code=201)
-async def create_brand_kit(body: BrandKitCreate, auth=Depends(get_current_user_org)):
+def create_brand_kit(body: BrandKitCreate, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _svc(org_id).create_kit(body.model_dump(mode="json"), str(user.id))
     if not result:
@@ -38,7 +38,7 @@ async def create_brand_kit(body: BrandKitCreate, auth=Depends(get_current_user_o
 
 
 @router.get("/{kit_id}")
-async def get_brand_kit(kit_id: str, auth=Depends(get_current_user_org)):
+def get_brand_kit(kit_id: str, auth=Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _svc(org_id).get_kit(kit_id)
     if not result:
@@ -47,7 +47,7 @@ async def get_brand_kit(kit_id: str, auth=Depends(get_current_user_org)):
 
 
 @router.patch("/{kit_id}")
-async def update_brand_kit(
+def update_brand_kit(
     kit_id: str, body: BrandKitUpdate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth

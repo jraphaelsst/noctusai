@@ -16,14 +16,14 @@ def _get_service(org_id) -> ListService:
 
 
 @router.get("")
-async def list_all(auth = Depends(get_current_user_org)):
+def list_all(auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     return success_response(svc.list_all())
 
 
 @router.post("")
-async def create_list(body: ListCreate, auth = Depends(get_current_user_org)):
+def create_list(body: ListCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.create_list(body.model_dump(mode="json"))
@@ -33,7 +33,7 @@ async def create_list(body: ListCreate, auth = Depends(get_current_user_org)):
 
 
 @router.get("/{list_id}")
-async def get_list(list_id: str, auth = Depends(get_current_user_org)):
+def get_list(list_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.get_list(list_id)
@@ -43,7 +43,7 @@ async def get_list(list_id: str, auth = Depends(get_current_user_org)):
 
 
 @router.patch("/{list_id}")
-async def update_list(list_id: str, body: ListUpdate, auth = Depends(get_current_user_org)):
+def update_list(list_id: str, body: ListUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     data = body.model_dump(mode="json", exclude_unset=True)
@@ -54,7 +54,7 @@ async def update_list(list_id: str, body: ListUpdate, auth = Depends(get_current
 
 
 @router.delete("/{list_id}")
-async def delete_list(list_id: str, auth = Depends(get_current_user_org)):
+def delete_list(list_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     svc.delete_list(list_id)
@@ -62,7 +62,7 @@ async def delete_list(list_id: str, auth = Depends(get_current_user_org)):
 
 
 @router.post("/{list_id}/members")
-async def add_members(list_id: str, body: ListMembersAdd, auth = Depends(get_current_user_org)):
+def add_members(list_id: str, body: ListMembersAdd, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.add_members(list_id, body.contact_ids)
@@ -70,7 +70,7 @@ async def add_members(list_id: str, body: ListMembersAdd, auth = Depends(get_cur
 
 
 @router.delete("/{list_id}/members")
-async def remove_members(list_id: str, body: ListMembersRemove, auth = Depends(get_current_user_org)):
+def remove_members(list_id: str, body: ListMembersRemove, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     svc.remove_members(list_id, body.contact_ids)
@@ -78,7 +78,7 @@ async def remove_members(list_id: str, body: ListMembersRemove, auth = Depends(g
 
 
 @router.get("/{list_id}/contacts")
-async def resolve_contacts(list_id: str, auth = Depends(get_current_user_org)):
+def resolve_contacts(list_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     contacts = svc.resolve_contacts(list_id)

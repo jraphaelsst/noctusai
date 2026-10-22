@@ -19,6 +19,7 @@ Envelope conventions (house): list responses are `{"items": [...],
 route is org-scoped and auth-required.
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from uuid import UUID
@@ -101,7 +102,7 @@ def _auth_parts(auth):
 
 
 @router.post("/manuais", status_code=status.HTTP_201_CREATED)
-async def criar_imovel_manual_route(
+def criar_imovel_manual_route(
     body: ImovelManualIn,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -116,7 +117,7 @@ async def criar_imovel_manual_route(
 
 
 @router.patch("/manuais/{codigo}")
-async def atualizar_imovel_manual_route(
+def atualizar_imovel_manual_route(
     codigo: str,
     body: ImovelManualPatch,
     auth=Depends(get_current_user_org),
@@ -135,7 +136,7 @@ async def atualizar_imovel_manual_route(
 
 
 @router.patch("/{codigo}/referencias")
-async def patch_referencias_route(
+def patch_referencias_route(
     codigo: str,
     body: ReferenciasPatchBody,
     auth=Depends(get_current_user_org),
@@ -156,7 +157,7 @@ async def patch_referencias_route(
 
 
 @router.post("/duplicatas/{duplicata_id}/descartar")
-async def descartar_duplicata_route(
+def descartar_duplicata_route(
     duplicata_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -186,9 +187,9 @@ async def vincular_duplicata_route(
     the link."""
     user, org_id = _auth_parts(auth)
     require_org_admin_for(get_core_client(), auth, request, "Vincular imóveis")
-    resultado = vinculo_svc.vincular(
+    resultado = (await anyio.to_thread.run_sync(lambda: vinculo_svc.vincular(
         client, org_id, duplicata_id, getattr(user, "id", None), legal=legal
-    )
+    )))
     # Conflicts the reconciliation opened are announced to the humans (best
     # effort inside `notificar`); the rows themselves are not part of the wire.
     novos = resultado.pop("novos_conflitos", [])
@@ -199,7 +200,7 @@ async def vincular_duplicata_route(
 
 
 @router.post("/{codigo}/desvincular")
-async def desvincular_imovel_route(
+def desvincular_imovel_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -220,7 +221,7 @@ async def desvincular_imovel_route(
 
 
 @router.get("/{codigo}/dados")
-async def get_dados_route(
+def get_dados_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -230,7 +231,7 @@ async def get_dados_route(
 
 
 @router.patch("/{codigo}/dados")
-async def patch_dados_route(
+def patch_dados_route(
     codigo: str,
     body: ImovelDadosPatchBody,
     auth=Depends(get_current_user_org),
@@ -251,7 +252,7 @@ async def patch_dados_route(
 
 
 @router.put("/{codigo}/endereco-manual")
-async def put_endereco_manual_route(
+def put_endereco_manual_route(
     codigo: str,
     body: EnderecoManualPatchBody,
     auth=Depends(get_current_user_org),
@@ -283,7 +284,7 @@ async def put_endereco_manual_route(
 
 
 @router.get("/{codigo}/endereco-manual/historico")
-async def get_endereco_manual_historico_route(
+def get_endereco_manual_historico_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -294,7 +295,7 @@ async def get_endereco_manual_historico_route(
 
 
 @router.post("/{codigo}/registrar")
-async def registrar_imovel_route(
+def registrar_imovel_route(
     codigo: str,
     body: RegistrarImovelBody,
     auth=Depends(get_current_user_org),
@@ -338,7 +339,7 @@ async def registrar_imovel_route(
 
 
 @router.get("/{codigo}/registro")
-async def obter_registro_route(
+def obter_registro_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -363,7 +364,7 @@ async def obter_registro_route(
 
 
 @router.get("/{codigo}/documentos")
-async def list_documentos_route(
+def list_documentos_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -461,13 +462,13 @@ async def upload_documento_route(
     # document is already stored by the time this runs.
     if tipo_documento == "matricula" and content_type == "application/pdf":
         try:
-            extracao = matriculas_estrutura_svc.criar_extracao_de_documento(
+            extracao = (await anyio.to_thread.run_sync(lambda: matriculas_estrutura_svc.criar_extracao_de_documento(
                 client,
                 org_id,
                 codigo=codigo,
                 imovel_documento_id=UUID(documento["id"]),
                 usuario_id=getattr(user, "id", None),
-            )
+            )))
         except (ValidationError_, ConflictError) as exc:
             logger.warning(
                 "imovel %s documento %s: matrícula transcription not queued: %s",
@@ -489,7 +490,7 @@ async def upload_documento_route(
 
 
 @router.post("/{codigo}/documentos/{documento_id}/extrair")
-async def reextrair_documento_route(
+def reextrair_documento_route(
     codigo: str,
     documento_id: UUID,
     background: BackgroundTasks,
@@ -566,7 +567,7 @@ async def get_documento_url_route(
 
 
 @router.get("/{codigo}/documentos/{documento_id}/acessos")
-async def list_documento_acessos_route(
+def list_documento_acessos_route(
     codigo: str,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -578,7 +579,7 @@ async def list_documento_acessos_route(
 
 
 @router.patch("/{codigo}/documentos/{documento_id}/extracao")
-async def patch_documento_extracao_route(
+def patch_documento_extracao_route(
     codigo: str,
     documento_id: UUID,
     body: ImovelDocumentoExtracaoPatchBody,
@@ -601,7 +602,7 @@ async def patch_documento_extracao_route(
 
 
 @router.get("/{codigo}/certidoes")
-async def list_certidoes_route(
+def list_certidoes_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -616,7 +617,7 @@ async def list_certidoes_route(
 
 
 @router.get("/conflitos/pendentes")
-async def list_conflitos_pendentes_org_route(
+def list_conflitos_pendentes_org_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
 ) -> dict:
@@ -633,7 +634,7 @@ async def list_conflitos_pendentes_org_route(
 
 
 @router.get("/{codigo}/conflitos")
-async def list_conflitos_route(
+def list_conflitos_route(
     codigo: str,
     todos: bool = Query(False, description="Include decided conflicts too."),
     auth=Depends(get_current_user_org),
@@ -648,7 +649,7 @@ async def list_conflitos_route(
 
 
 @router.put("/{codigo}/conflitos/{conflito_id}/decidir")
-async def decidir_conflito_route(
+def decidir_conflito_route(
     codigo: str,
     conflito_id: UUID,
     body: DecidirConflitoImovelBody,
@@ -683,7 +684,7 @@ async def decidir_conflito_route(
     "/{codigo}/documentos/{documento_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_documento_route(
+def delete_documento_route(
     codigo: str,
     documento_id: UUID,
     # A required QUERY param, not a body — same call the sibling

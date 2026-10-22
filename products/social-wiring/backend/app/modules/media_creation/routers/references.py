@@ -38,7 +38,7 @@ async def list_references(kit_id: str, auth=Depends(get_current_user_org)):
 
 
 @router.post("/brand-kits/{kit_id}/references", status_code=201)
-async def create_reference(
+def create_reference(
     kit_id: str, body: ReferenceCreate, auth=Depends(get_current_user_org)
 ):
     user, _, org_id = auth

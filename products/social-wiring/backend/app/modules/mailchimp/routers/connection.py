@@ -9,6 +9,7 @@ Manages the per-org Mailchimp API key + audience configuration.
   GET    /audiences        → AudienceListOut (audience picker)
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from typing import Any, Optional
@@ -77,7 +78,7 @@ def _validate_marca_ownership(
 
 
 @router.get("/connection", response_model=ConnectionOut)
-async def get_connection(
+def get_connection(
     marca_id: Optional[UUID] = Query(
         default=None,
         description="Scope to a cliente's connection; omit for the org default.",
@@ -139,13 +140,13 @@ async def put_connection(
 
     # 4. Encrypt+upsert
     try:
-        record = store.upsert_connection(
+        record = (await anyio.to_thread.run_sync(lambda: store.upsert_connection(
             org_id=org_id,
             api_key=api_key,
             server_prefix=server_prefix,
             audience_id=body.audience_id,
             marca_id=body.marca_id,
-        )
+        )))
     except CredentialStoreError as exc:
         raise AppException(
             code="mailchimp_not_configured",
@@ -157,7 +158,7 @@ async def put_connection(
 
 
 @router.patch("/connection", response_model=ConnectionOut)
-async def patch_connection(
+def patch_connection(
     body: ConnectionPatchBody,
     marca_id: Optional[UUID] = Query(
         default=None,
@@ -182,7 +183,7 @@ async def patch_connection(
 
 
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_connection(
+def delete_connection(
     marca_id: Optional[UUID] = Query(
         default=None,
         description="Scope to a cliente's connection; omit for the org default.",

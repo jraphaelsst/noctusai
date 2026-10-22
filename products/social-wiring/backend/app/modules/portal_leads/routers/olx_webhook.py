@@ -106,7 +106,7 @@ def get_olx_service_for_org(client: Any, org_id: UUID) -> OlxWebhookService:
 
 @router.post("/leads")
 @limiter.limit(settings.webhook_rate_limit)
-async def receive_olx_lead(
+def receive_olx_lead(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_olx_secret,
@@ -133,7 +133,7 @@ async def receive_olx_lead(
 
 @router.post("/leads/{receiver_token}")
 @limiter.limit(settings.webhook_rate_limit)
-async def receive_olx_lead_for_advertiser(
+def receive_olx_lead_for_advertiser(
     request: Request,
     receiver_token: str,
     verified: VerifiedWebhook = webhook_endpoint(

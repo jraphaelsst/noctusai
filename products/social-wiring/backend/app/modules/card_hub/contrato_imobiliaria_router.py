@@ -31,7 +31,7 @@ class DefinirImobiliariaBody(StrictHttpModel):
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/imobiliaria")
-async def get_contrato_imobiliaria_route(
+def get_contrato_imobiliaria_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
@@ -43,7 +43,7 @@ async def get_contrato_imobiliaria_route(
 
 
 @router.put("/{cliente_id}/contratos/{contrato_id}/imobiliaria")
-async def put_contrato_imobiliaria_route(
+def put_contrato_imobiliaria_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: DefinirImobiliariaBody,

@@ -89,7 +89,7 @@ async def criar_roteiro(
 
 
 @router.get("")
-async def listar_roteiros(
+def listar_roteiros(
     marca_id: uuid.UUID,
     q: Optional[str] = Query(None, max_length=200),
     limit: int = Query(20, ge=1, le=50),
@@ -104,7 +104,7 @@ async def listar_roteiros(
 
 
 @router.post("/excluir")
-async def excluir_roteiros(
+def excluir_roteiros(
     body: ExcluirRequest, auth=Depends(get_current_user_org), cfg=Depends(get_roteiro_settings),
 ):
     try:

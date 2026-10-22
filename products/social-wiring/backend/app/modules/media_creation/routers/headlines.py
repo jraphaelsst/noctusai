@@ -109,7 +109,7 @@ async def create_lote(
 
 
 @router.get("/lotes")
-async def list_lotes(
+def list_lotes(
     marca_id: uuid.UUID,
     post_id: Optional[uuid.UUID] = None,
     origem_in: Optional[list[str]] = Query(None),
@@ -131,7 +131,7 @@ async def list_lotes(
 
 
 @router.post("/lotes/excluir")
-async def excluir_lotes(body: IdsBody, auth=Depends(get_current_user_org)):
+def excluir_lotes(body: IdsBody, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).excluir_lotes([str(i) for i in body.ids]))
     except HeadlineError as exc:
@@ -171,7 +171,7 @@ async def reprocessar_lote(
 
 
 @router.get("/estruturas/contagem")
-async def contagem_estruturas(
+def contagem_estruturas(
     marca_id: uuid.UUID,
     variaveis: list[str] = Query(...),
     auth=Depends(get_current_user_org),
@@ -202,7 +202,7 @@ async def gerar_sugestoes_agora(
 
 
 @router.post("/excluir")
-async def excluir_headlines(body: IdsBody, auth=Depends(get_current_user_org)):
+def excluir_headlines(body: IdsBody, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).excluir_headlines([str(i) for i in body.ids]))
     except HeadlineError as exc:

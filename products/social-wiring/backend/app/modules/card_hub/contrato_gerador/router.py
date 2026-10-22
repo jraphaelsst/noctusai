@@ -59,7 +59,7 @@ class GerarContratoBody(StrictHttpModel):
 
 
 @router.post("/{cliente_id}/contratos/gerar", status_code=201)
-async def post_contrato_iniciar_route(
+def post_contrato_iniciar_route(
     cliente_id: UUID,
     response: Response,
     auth=Depends(get_current_user_org),
@@ -88,7 +88,7 @@ async def post_contrato_iniciar_route(
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/geracao")
-async def get_contrato_geracao_route(
+def get_contrato_geracao_route(
     cliente_id: UUID,
     contrato_id: UUID,
     assinatura_data: Optional[date] = None,
@@ -112,7 +112,7 @@ async def get_contrato_geracao_route(
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/validacao-extracao")
-async def get_validacao_extracao_route(
+def get_validacao_extracao_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
@@ -130,7 +130,7 @@ async def get_validacao_extracao_route(
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/proveniencia")
-async def get_contrato_proveniencia_route(
+def get_contrato_proveniencia_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
@@ -146,7 +146,7 @@ async def get_contrato_proveniencia_route(
 
 
 @router.post("/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes")
-async def post_validacao_extracao_decisoes_route(
+def post_validacao_extracao_decisoes_route(
     cliente_id: UUID,
     contrato_id: UUID,
     body: DecisoesValidacaoBody,
@@ -172,7 +172,7 @@ async def post_validacao_extracao_decisoes_route(
 
 
 @router.post("/{cliente_id}/contratos/{contrato_id}/versoes/{versao_id}/revisao-juridica")
-async def post_revisao_juridica_route(
+def post_revisao_juridica_route(
     cliente_id: UUID,
     contrato_id: UUID,
     versao_id: UUID,

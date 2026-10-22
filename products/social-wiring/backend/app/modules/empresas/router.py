@@ -55,7 +55,7 @@ class EmpresaPatchBody(StrictHttpModel):
 
 
 @router.get("/{empresa_id}")
-async def get_empresa_route(
+def get_empresa_route(
     empresa_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_empresas_client),
@@ -65,7 +65,7 @@ async def get_empresa_route(
 
 
 @router.patch("/{empresa_id}")
-async def update_empresa_route(
+def update_empresa_route(
     empresa_id: UUID,
     body: EmpresaPatchBody,
     auth=Depends(get_current_user_org),
@@ -87,7 +87,7 @@ async def update_empresa_route(
 
 
 @router.get("/{empresa_id}/checklist")
-async def get_empresa_checklist_route(
+def get_empresa_checklist_route(
     empresa_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_empresas_client),
@@ -97,7 +97,7 @@ async def get_empresa_checklist_route(
 
 
 @router.get("/{empresa_id}/documentos")
-async def list_documentos_route(
+def list_documentos_route(
     empresa_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_empresas_client),
@@ -139,7 +139,7 @@ async def upload_documento_route(
 
 
 @router.post("/{empresa_id}/documentos/{documento_id}/extrair")
-async def reextrair_documento_route(
+def reextrair_documento_route(
     empresa_id: UUID,
     documento_id: UUID,
     background: BackgroundTasks,
@@ -182,7 +182,7 @@ async def reextrair_documento_route(
 
 
 @router.post("/{empresa_id}/documentos/{documento_id}/extracao/confirmar")
-async def confirmar_extracao_route(
+def confirmar_extracao_route(
     empresa_id: UUID,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -198,7 +198,7 @@ async def confirmar_extracao_route(
 
 
 @router.post("/{empresa_id}/documentos/{documento_id}/extracao/descartar")
-async def descartar_extracao_route(
+def descartar_extracao_route(
     empresa_id: UUID,
     documento_id: UUID,
     auth=Depends(get_current_user_org),
@@ -228,7 +228,7 @@ async def get_documento_url_route(
 
 
 @router.delete("/{empresa_id}/documentos/{documento_id}", status_code=204)
-async def delete_documento_route(
+def delete_documento_route(
     empresa_id: UUID,
     documento_id: UUID,
     motivo: str = Query(..., min_length=1),

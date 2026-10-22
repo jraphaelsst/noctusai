@@ -34,14 +34,14 @@ def _verified(cfg, token: str) -> dict:
 
 @router.get("/{token}")
 @limiter.limit(settings.webhook_rate_limit)
-async def confirmation_info(request: Request, token: str, cfg=Depends(get_settings)):
+def confirmation_info(request: Request, token: str, cfg=Depends(get_settings)):
     data = _verified(cfg, token)
     return {"email": data["email"], "valid": True}
 
 
 @router.post("/{token}")
 @limiter.limit(settings.webhook_rate_limit)
-async def confirm_email(request: Request, token: str, cfg=Depends(get_settings)):
+def confirm_email(request: Request, token: str, cfg=Depends(get_settings)):
     data = _verified(cfg, token)
     outcome = ContactService(get_admin_client(), data["org_id"]).confirm_email(
         data["contact_id"], data["email"],

@@ -47,12 +47,12 @@ def _raise(exc: PesquisaError):
 
 
 @router.get("/variables")
-async def list_variables(auth=Depends(get_current_user_org)):
+def list_variables(auth=Depends(get_current_user_org)):
     return success_response(_svc(auth).list_variables())
 
 
 @router.get("/items")
-async def list_items(
+def list_items(
     marca_id: uuid.UUID,
     status: Literal["approved", "pending"] = "approved",
     variable_slug: str | None = None,
@@ -73,7 +73,7 @@ async def list_items(
 
 
 @router.get("/items/counts")
-async def items_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def items_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).counts(str(marca_id)))
     except PesquisaError as exc:
@@ -81,7 +81,7 @@ async def items_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.post("/items")
-async def create_items(body: ItemsCreate, auth=Depends(get_current_user_org)):
+def create_items(body: ItemsCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(
             _svc(auth).add_manual(str(body.marca_id), body.variable_slug, body.lines)
@@ -105,7 +105,7 @@ async def classify_items(
 
 
 @router.post("/items/bulk")
-async def bulk_items(body: ItemsBulk, auth=Depends(get_current_user_org)):
+def bulk_items(body: ItemsBulk, auth=Depends(get_current_user_org)):
     try:
         n = _svc(auth).bulk(str(body.marca_id), body.action, [str(i) for i in body.ids])
         return success_response({"affected": n})
@@ -114,7 +114,7 @@ async def bulk_items(body: ItemsBulk, auth=Depends(get_current_user_org)):
 
 
 @router.post("/items/empty")
-async def empty_items(body: ItemsEmpty, auth=Depends(get_current_user_org)):
+def empty_items(body: ItemsEmpty, auth=Depends(get_current_user_org)):
     try:
         return success_response({"deleted": _svc(auth).empty(str(body.marca_id))})
     except PesquisaError as exc:
@@ -122,7 +122,7 @@ async def empty_items(body: ItemsEmpty, auth=Depends(get_current_user_org)):
 
 
 @router.post("/items/{item_id}/approve")
-async def approve_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def approve_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).approve(str(item_id)))
     except PesquisaError as exc:
@@ -130,7 +130,7 @@ async def approve_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.post("/items/{item_id}/reject")
-async def reject_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def reject_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).reject(str(item_id)))
     except PesquisaError as exc:
@@ -138,7 +138,7 @@ async def reject_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.delete("/items/{item_id}", status_code=204)
-async def delete_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def delete_item(item_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         _svc(auth).delete(str(item_id))
     except PesquisaError as exc:

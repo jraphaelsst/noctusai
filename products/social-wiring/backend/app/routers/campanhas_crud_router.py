@@ -147,7 +147,7 @@ async def criar(
 
 
 @router.patch("/{campanha_id}")
-async def atualizar(
+def atualizar(
     campanha_id: str, payload: CampanhaPatchIn,
     auth=Depends(get_current_user_org), db=Depends(get_admin_client),
 ) -> Response:
@@ -165,7 +165,7 @@ async def atualizar(
 
 
 @router.delete("/{campanha_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def excluir(
+def excluir(
     campanha_id: str, auth=Depends(get_current_user_org), db=Depends(get_admin_client)
 ) -> Response:
     _user, _token, raw_org = auth

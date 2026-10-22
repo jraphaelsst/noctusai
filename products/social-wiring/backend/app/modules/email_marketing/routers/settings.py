@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, HTTPException, Depends
 from app.dependencies import get_current_user_org, get_admin_client, get_settings
 from noctusai_lib.integrations.resend import (
@@ -36,7 +37,7 @@ class SenderConfig(StrictHttpModel):
 
 
 @router.get("/domains")
-async def list_domains(auth = Depends(get_current_user_org)):
+def list_domains(auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     db = get_admin_client()
     result = db.table("sender_domains").select("*").eq("org_id", org_id).execute()
@@ -97,13 +98,15 @@ async def add_domain(
     except ResendDomainsError as exc:
         raise _resend_error(exc)
     db = get_admin_client()
-    result = db.table("sender_domains").insert({
-        "org_id": org_id,
-        "domain": domain,
-        "resend_domain_id": rec.id,
-        "dns_records": rec.records,
-        **_status_fields(rec),
-    }).execute()
+    result = await anyio.to_thread.run_sync(
+        lambda: db.table("sender_domains").insert({
+            "org_id": org_id,
+            "domain": domain,
+            "resend_domain_id": rec.id,
+            "dns_records": rec.records,
+            **_status_fields(rec),
+        }).execute()
+    )
     if not result.data:
         raise HTTPException(status_code=400, detail="Erro ao adicionar dominio")
     return success_response(result.data[0])
@@ -118,7 +121,9 @@ async def verify_domain(
     """Ask Resend to check the DNS records, then store the mapped status."""
     user, _, org_id = auth
     db = get_admin_client()
-    result = db.table("sender_domains").select("*").eq("id", domain_id).eq("org_id", org_id).execute()
+    result = await anyio.to_thread.run_sync(
+        lambda: db.table("sender_domains").select("*").eq("id", domain_id).eq("org_id", org_id).execute()
+    )
     if not result.data:
         raise HTTPException(status_code=404, detail="Dominio nao encontrado")
     row = result.data[0]
@@ -136,13 +141,15 @@ async def verify_domain(
         update["verified_at"] = row["verified_at"]  # keep the first verification time
     if rec.records:
         update["dns_records"] = rec.records
-    updated = (db.table("sender_domains").update(update)
-               .eq("id", domain_id).eq("org_id", org_id).execute())
+    updated = await anyio.to_thread.run_sync(
+        lambda: (db.table("sender_domains").update(update)
+                 .eq("id", domain_id).eq("org_id", org_id).execute())
+    )
     return success_response(updated.data[0] if updated.data else {**row, **update})
 
 
 @router.delete("/domains/{domain_id}")
-async def remove_domain(domain_id: str, auth = Depends(get_current_user_org)):
+def remove_domain(domain_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     db = get_admin_client()
     db.table("sender_domains").delete().eq("id", domain_id).eq("org_id", org_id).execute()

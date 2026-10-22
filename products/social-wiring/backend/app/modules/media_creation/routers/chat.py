@@ -51,7 +51,7 @@ def _raise(exc: ChatError):
 
 
 @router.get("/conversas")
-async def list_conversas(
+def list_conversas(
     marca_id: uuid.UUID,
     agente: Agente,
     limit: int = Query(15, ge=1, le=15),
@@ -65,7 +65,7 @@ async def list_conversas(
 
 
 @router.post("/conversas", status_code=201)
-async def create_conversa(body: ConversaCreate, auth=Depends(get_current_user_org)):
+def create_conversa(body: ConversaCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).create_conversa(str(body.marca_id), body.agente, body.titulo))
     except ChatError as exc:
@@ -73,7 +73,7 @@ async def create_conversa(body: ConversaCreate, auth=Depends(get_current_user_or
 
 
 @router.patch("/conversas/{conversa_id}")
-async def rename_conversa(conversa_id: uuid.UUID, body: ConversaRename, auth=Depends(get_current_user_org)):
+def rename_conversa(conversa_id: uuid.UUID, body: ConversaRename, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).rename_conversa(str(conversa_id), body.titulo))
     except ChatError as exc:
@@ -81,7 +81,7 @@ async def rename_conversa(conversa_id: uuid.UUID, body: ConversaRename, auth=Dep
 
 
 @router.delete("/conversas/{conversa_id}", status_code=204)
-async def delete_conversa(conversa_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def delete_conversa(conversa_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         _svc(auth).delete_conversa(str(conversa_id))
     except ChatError as exc:
@@ -90,7 +90,7 @@ async def delete_conversa(conversa_id: uuid.UUID, auth=Depends(get_current_user_
 
 
 @router.get("/conversas/{conversa_id}/mensagens")
-async def list_mensagens(
+def list_mensagens(
     conversa_id: uuid.UUID,
     antes: Optional[str] = None,
     limit: int = Query(50, ge=1, le=100),
@@ -126,7 +126,7 @@ async def enviar_mensagem(
 
 
 @router.get("/mencoes")
-async def listar_mencoes(
+def listar_mencoes(
     marca_id: uuid.UUID,
     tipo: MencaoTipo,
     q: Optional[str] = Query(None, max_length=100),
@@ -143,7 +143,7 @@ async def listar_mencoes(
 
 
 @router.get("/memorias")
-async def list_memorias(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def list_memorias(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).list_memorias(str(marca_id)))
     except ChatError as exc:
@@ -151,7 +151,7 @@ async def list_memorias(marca_id: uuid.UUID, auth=Depends(get_current_user_org))
 
 
 @router.post("/memorias", status_code=201)
-async def create_memoria(body: MemoriaCreate, auth=Depends(get_current_user_org)):
+def create_memoria(body: MemoriaCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).create_memoria(str(body.marca_id), body.texto))
     except ChatError as exc:
@@ -159,7 +159,7 @@ async def create_memoria(body: MemoriaCreate, auth=Depends(get_current_user_org)
 
 
 @router.delete("/memorias/{memoria_id}", status_code=204)
-async def delete_memoria(memoria_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def delete_memoria(memoria_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         _svc(auth).delete_memoria(str(memoria_id))
     except ChatError as exc:
@@ -168,7 +168,7 @@ async def delete_memoria(memoria_id: uuid.UUID, auth=Depends(get_current_user_or
 
 
 @router.get("/contexto")
-async def medir_contexto(conversa_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def medir_contexto(conversa_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).medir_contexto(str(conversa_id)))
     except ChatError as exc:

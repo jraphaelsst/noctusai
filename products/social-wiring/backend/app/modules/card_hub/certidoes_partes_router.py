@@ -46,7 +46,7 @@ router = APIRouter()
 
 
 @router.get("/{cliente_id}/certidoes/partes")
-async def get_certidoes_partes_route(
+def get_certidoes_partes_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),
@@ -57,7 +57,7 @@ async def get_certidoes_partes_route(
 
 
 @router.put("/{cliente_id}/certidoes/exigencias")
-async def definir_exigencias_route(
+def definir_exigencias_route(
     cliente_id: UUID,
     body: ExigenciasBody,
     auth=Depends(get_current_user_org),
@@ -75,7 +75,7 @@ async def definir_exigencias_route(
 
 
 @router.post("/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/emissao", status_code=201)
-async def solicitar_emissao_route(
+def solicitar_emissao_route(
     cliente_id: UUID,
     kind: str,
     alvo_id: UUID,
@@ -97,7 +97,7 @@ async def solicitar_emissao_route(
 
 
 @router.post("/{cliente_id}/certidoes/resultados/{resultado_id}/reemitir", status_code=201)
-async def reemitir_route(
+def reemitir_route(
     cliente_id: UUID,
     resultado_id: UUID,
     body: ReemitirBody,
@@ -117,7 +117,7 @@ async def reemitir_route(
 
 
 @router.post("/{cliente_id}/certidoes/resultados/{resultado_id}/ciencia-pcen")
-async def ciencia_pcen_route(
+def ciencia_pcen_route(
     cliente_id: UUID,
     resultado_id: UUID,
     body: CienciaPcenBody,
@@ -134,7 +134,7 @@ async def ciencia_pcen_route(
 
 
 @router.post("/{cliente_id}/certidoes/celulas")
-async def garantir_celula_route(
+def garantir_celula_route(
     cliente_id: UUID,
     body: CelulaBody,
     response: Response,

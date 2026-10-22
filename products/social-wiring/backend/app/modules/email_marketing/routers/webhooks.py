@@ -38,7 +38,7 @@ EVENT_MAP = {
 
 @router.post("/resend")
 @limiter.limit(settings.webhook_rate_limit)
-async def resend_webhook(
+def resend_webhook(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_resend_secret,

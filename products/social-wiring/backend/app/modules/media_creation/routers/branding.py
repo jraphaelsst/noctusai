@@ -65,7 +65,7 @@ def _http(exc: BrandingError) -> HTTPException:
 
 
 @router.get("")
-async def list_brandings(
+def list_brandings(
     auth=Depends(get_current_user_org), storage: StorageBackend = Depends(get_branding_storage)
 ):
     user, _, org_id = auth
@@ -141,7 +141,7 @@ async def update_branding(
 
 
 @router.delete("/components/{component_id}")
-async def delete_component(
+def delete_component(
     component_id: str,
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
@@ -169,7 +169,7 @@ async def delete_branding(
 
 
 @router.put("/{kit_id}/components")
-async def upsert_component(
+def upsert_component(
     kit_id: str,
     body: ComponentUpsert,
     auth=Depends(get_current_user_org),

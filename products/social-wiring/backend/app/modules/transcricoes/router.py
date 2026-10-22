@@ -94,7 +94,7 @@ async def transcricoes_stats(
 
 
 @router.get("/{transcricao_id}")
-async def get_transcricao(
+def get_transcricao(
     transcricao_id: uuid.UUID,
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_transcricao_storage),

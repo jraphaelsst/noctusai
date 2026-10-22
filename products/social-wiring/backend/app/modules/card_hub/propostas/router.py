@@ -77,7 +77,7 @@ def _resultado_aceite(client: Any, org_id: UUID, resultado: dict) -> dict:
 
 
 @router.get("/{cliente_id}/propostas")
-async def listar_propostas_route(
+def listar_propostas_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -87,7 +87,7 @@ async def listar_propostas_route(
 
 
 @router.post("/{cliente_id}/propostas", status_code=201)
-async def criar_proposta_route(
+def criar_proposta_route(
     cliente_id: UUID,
     body: PropostaCreateBody,
     auth=Depends(get_current_user_org),
@@ -98,7 +98,7 @@ async def criar_proposta_route(
 
 
 @router.get("/{cliente_id}/propostas/{proposta_id}")
-async def obter_proposta_route(
+def obter_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     auth=Depends(get_current_user_org),
@@ -109,7 +109,7 @@ async def obter_proposta_route(
 
 
 @router.patch("/{cliente_id}/propostas/{proposta_id}")
-async def atualizar_proposta_route(
+def atualizar_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     body: PropostaPatchBody,
@@ -123,7 +123,7 @@ async def atualizar_proposta_route(
 
 
 @router.post("/{cliente_id}/propostas/{proposta_id}/enviar")
-async def enviar_proposta_route(
+def enviar_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     auth=Depends(get_current_user_org),
@@ -134,7 +134,7 @@ async def enviar_proposta_route(
 
 
 @router.post("/{cliente_id}/propostas/{proposta_id}/recusar")
-async def recusar_proposta_route(
+def recusar_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     body: PropostaRecusarBody,
@@ -148,7 +148,7 @@ async def recusar_proposta_route(
 
 
 @router.post("/{cliente_id}/propostas/{proposta_id}/aceitar")
-async def aceitar_proposta_route(
+def aceitar_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     body: PropostaAceitarBody,
@@ -168,7 +168,7 @@ async def aceitar_proposta_route(
 
 
 @router.post("/{cliente_id}/propostas/{proposta_id}/pos-aceite")
-async def reexecutar_pos_aceite_route(
+def reexecutar_pos_aceite_route(
     cliente_id: UUID,
     proposta_id: UUID,
     body: PropostaAceitarBody,
@@ -189,7 +189,7 @@ async def reexecutar_pos_aceite_route(
 
 
 @router.delete("/{cliente_id}/propostas/{proposta_id}", status_code=204)
-async def excluir_proposta_route(
+def excluir_proposta_route(
     cliente_id: UUID,
     proposta_id: UUID,
     auth=Depends(get_current_user_org),

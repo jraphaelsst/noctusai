@@ -38,7 +38,7 @@ class PropriedadeCreateBody(StrictHttpModel):
 
 
 @router.get("/api/clientes/{cliente_id}/propriedades")
-async def listar_propriedades_cliente_route(
+def listar_propriedades_cliente_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -48,7 +48,7 @@ async def listar_propriedades_cliente_route(
 
 
 @router.post("/api/clientes/{cliente_id}/propriedades", status_code=status.HTTP_201_CREATED)
-async def adicionar_propriedade_cliente_route(
+def adicionar_propriedade_cliente_route(
     cliente_id: UUID,
     body: PropriedadeCreateBody,
     auth=Depends(get_current_user_org),
@@ -65,7 +65,7 @@ async def adicionar_propriedade_cliente_route(
     "/api/clientes/{cliente_id}/propriedades/{propriedade_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def remover_propriedade_cliente_route(
+def remover_propriedade_cliente_route(
     cliente_id: UUID,
     propriedade_id: UUID,
     auth=Depends(get_current_user_org),
@@ -79,7 +79,7 @@ async def remover_propriedade_cliente_route(
 
 
 @router.get("/api/empresas/{empresa_id}/propriedades")
-async def listar_propriedades_empresa_route(
+def listar_propriedades_empresa_route(
     empresa_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -89,7 +89,7 @@ async def listar_propriedades_empresa_route(
 
 
 @router.post("/api/empresas/{empresa_id}/propriedades", status_code=status.HTTP_201_CREATED)
-async def adicionar_propriedade_empresa_route(
+def adicionar_propriedade_empresa_route(
     empresa_id: UUID,
     body: PropriedadeCreateBody,
     auth=Depends(get_current_user_org),
@@ -106,7 +106,7 @@ async def adicionar_propriedade_empresa_route(
     "/api/empresas/{empresa_id}/propriedades/{propriedade_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def remover_propriedade_empresa_route(
+def remover_propriedade_empresa_route(
     empresa_id: UUID,
     propriedade_id: UUID,
     auth=Depends(get_current_user_org),
@@ -123,7 +123,7 @@ async def remover_propriedade_empresa_route(
 
 
 @router.get("/api/imoveis/{codigo}/proprietarios")
-async def proprietarios_do_imovel_route(
+def proprietarios_do_imovel_route(
     codigo: str,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
@@ -133,7 +133,7 @@ async def proprietarios_do_imovel_route(
 
 
 @router.get("/api/imoveis/{codigo}/interessados")
-async def interessados_route(
+def interessados_route(
     codigo: str,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -147,7 +147,7 @@ async def interessados_route(
 
 
 @router.get("/api/imoveis/{codigo}/similares")
-async def similares_route(
+def similares_route(
     codigo: str,
     limit: int = Query(default=similares_service.LIMITE_PADRAO, ge=1, le=similares_service.LIMITE_MAXIMO),
     score_minimo: float = Query(default=SCORE_MINIMO_PADRAO),

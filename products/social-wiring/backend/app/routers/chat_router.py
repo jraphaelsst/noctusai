@@ -155,7 +155,7 @@ def _ensure_web_session(session_id: str | None) -> str:
 
 # ─── POST /api/chat/upload-file — stage-only ───────────────────────────
 @router.post("/upload-file", response_model=FileStaged)
-async def stage_chat_file(
+def stage_chat_file(
     file: UploadFile = File(...),
     session_id: str = Form(""),
 ) -> FileStaged:
@@ -348,7 +348,7 @@ async def chat_message(
 
 # ─── GET /api/chat/history/{session_id} ────────────────────────────────
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
-async def chat_history(session_id: str) -> ChatHistoryResponse:
+def chat_history(session_id: str) -> ChatHistoryResponse:
     """Return the recent conversation memory for the platform UI to
     render after a refresh. Caps at MAX_MEMORY_ITEMS items (12)."""
     normalized = _ensure_web_session(session_id)

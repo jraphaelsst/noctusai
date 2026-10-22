@@ -23,7 +23,7 @@ _CEP_8_DIGITOS = re.compile(r"^\d{8}$")
 
 
 @router.get("/api/card-hub/cep/{cep}")
-async def consultar_cep_route(
+def consultar_cep_route(
     cep: str,
     _auth=Depends(get_current_user_org),
     adapter=Depends(get_cep_lookup_adapter),

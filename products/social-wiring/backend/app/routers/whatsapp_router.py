@@ -59,6 +59,7 @@ Two receiver routes are provided:
       when configured. Processing delegates to the shared
       ``_process_waha_body`` helper — identical pipeline, no forked logic.
 """
+import anyio
 # 🔴 NO `from __future__ import annotations` IN THIS FILE — deliberate.
 #
 # This module carries `@limiter.limit(...)` routes. slowapi resolves a
@@ -1348,7 +1349,7 @@ async def whatsapp_webhook(
     if not (cfg.waha_webhook_hmac_secret or "").strip():
         from app.dependencies import get_scoped_admin_client
 
-        if julia.julia_ativa_em_alguma_conexao(get_scoped_admin_client("social_wiring")):
+        if (await anyio.to_thread.run_sync(lambda: julia.julia_ativa_em_alguma_conexao(get_scoped_admin_client("social_wiring")))):
             logger.error("whatsapp-webhook: unsigned call refused — Julia is on and no HMAC secret is set")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
 
@@ -1429,7 +1430,7 @@ async def whatsapp_webhook_by_token(
         )
         return Response(status_code=status.HTTP_404_NOT_FOUND)
 
-    connection = store.get_by_webhook_token(token)
+    connection = (await anyio.to_thread.run_sync(lambda: store.get_by_webhook_token(token)))
     if connection is None:
         # Do NOT log the token value — it's a secret routing credential.
         logger.debug("whatsapp_webhook_by_token: unknown token (404)")

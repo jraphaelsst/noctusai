@@ -113,7 +113,7 @@ def _admin_rows() -> list[dict[str, Any]]:
 
 
 @router.get("/catalogo")
-async def list_catalogo_route(_actor: Actor = Depends(require_platform_admin)) -> dict:
+def list_catalogo_route(_actor: Actor = Depends(require_platform_admin)) -> dict:
     return {"items": _admin_rows()}
 
 

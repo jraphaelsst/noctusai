@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/edicao-fotos/painel", tags=["edicao-fotos"])
 
 
 @router.get("")
-async def painel_route(
+def painel_route(
     actor: Actor = Depends(require_org_admin),
     client: Any = Depends(get_painel_client),
     desde: Optional[date] = Query(default=None),

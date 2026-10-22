@@ -8,6 +8,7 @@ Errors (AppException envelope): 422 `limite_ativas` / `limite_qualificatorias` /
 `chave_desconhecida` / `selecao_invalida`; 409 `usada_em_criterio` (`details.criterios`); 404 `contato_nao_encontrado`.
 The org is always the caller's org from the auth tuple -- a contato of another org is a 404.
 """
+import anyio
 from typing import Any
 from uuid import UUID
 
@@ -68,12 +69,12 @@ async def get_contato(
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org_id = coerce_org_uuid(auth[2])
-    contato = julia_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)
+    contato = (await anyio.to_thread.run_sync(lambda: julia_contatos_service.buscar_contato(client, org_id, connection_id, chat_id)))
     if contato is None:
         raise AppException("contato_nao_encontrado", "Contato não encontrado.", status_code=404)
     julia_acesso.exigir_acesso(client, julia_acesso.contexto(auth, request), contato)  # A7: owner/admin only
     ativas = set(svc.selecao_org(client, org_id))
-    interacao = julia_contatos_service.interacao_aberta(client, contato["id"])
+    interacao = (await anyio.to_thread.run_sync(lambda: julia_contatos_service.interacao_aberta(client, contato["id"])))
     qualificacao, dados_lead = await julia_espelho_service.qualificacao_do_contato(
         client, org_id, contato, client_factory(org_id))
     return {"data": {

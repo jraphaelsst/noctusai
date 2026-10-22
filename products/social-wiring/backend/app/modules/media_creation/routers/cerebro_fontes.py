@@ -5,6 +5,7 @@ NOTE: no `from __future__ import annotations` here -- slowapi's @limiter.limit w
 makes FastAPI resolve string annotations in slowapi's globals, turning the multipart/body
 params into query params (422 "Field required").
 """
+import anyio
 import logging
 import uuid
 from typing import Optional
@@ -127,14 +128,14 @@ async def answer_audio(
         return erro_response(exc)
     # Link the new job to the answer NOW so a reload (or a failure) still shows it; the
     # completion hook only writes the text.
-    answer = CerebroService(get_admin_client(), svc.org_id, svc.user_id).link_transcricao(
+    answer = (await anyio.to_thread.run_sync(lambda: CerebroService(get_admin_client(), svc.org_id, svc.user_id).link_transcricao(
         str(brain_id), question_id, job["id"]
-    )
+    )))
     return success_response(answer)
 
 
 @router.post("/brains/{brain_id}/imports/youtube")
-async def import_youtube(
+def import_youtube(
     brain_id: uuid.UUID, body: YoutubeImportRequest, auth=Depends(get_current_user_org)
 ):
     # NOC-REMEDIATE[youtube-import]: phase 2 (cerebro-contract.md §10.3) — downloader needs
@@ -147,7 +148,7 @@ async def import_youtube(
 
 
 @router.get("/extracoes")
-async def list_extracoes(
+def list_extracoes(
     marca_id: uuid.UUID,
     q: Optional[str] = Query(None, max_length=120),
     limit: int = Query(20, ge=1, le=100),
@@ -163,7 +164,7 @@ async def list_extracoes(
 
 
 @router.post("/extracoes", status_code=201)
-async def create_extracao(body: ExtractionCreate, auth=Depends(get_current_user_org)):
+def create_extracao(body: ExtractionCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(
             _svc(auth).create_extraction(
@@ -175,7 +176,7 @@ async def create_extracao(body: ExtractionCreate, auth=Depends(get_current_user_
 
 
 @router.get("/extracoes/{extraction_id}")
-async def get_extracao(extraction_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def get_extracao(extraction_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).get_extraction(str(extraction_id)))
     except CerebroError as exc:
@@ -183,7 +184,7 @@ async def get_extracao(extraction_id: uuid.UUID, auth=Depends(get_current_user_o
 
 
 @router.patch("/extracoes/{extraction_id}")
-async def patch_extracao(
+def patch_extracao(
     extraction_id: uuid.UUID, body: ExtractionUpdate, auth=Depends(get_current_user_org)
 ):
     try:
@@ -198,7 +199,7 @@ async def patch_extracao(
 
 
 @router.post("/extracoes/{extraction_id}/apply")
-async def apply_extracao(
+def apply_extracao(
     extraction_id: uuid.UUID, body: ExtractionApply, auth=Depends(get_current_user_org)
 ):
     try:
@@ -213,7 +214,7 @@ async def apply_extracao(
 
 
 @router.delete("/extracoes/{extraction_id}", status_code=204)
-async def delete_extracao(extraction_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def delete_extracao(extraction_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         _svc(auth).delete_extraction(str(extraction_id))
     except CerebroError as exc:

@@ -102,7 +102,7 @@ async def post_assinatura_route(
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/assinatura")
-async def get_assinatura_route(
+def get_assinatura_route(
     cliente_id: UUID,
     contrato_id: UUID,
     auth=Depends(get_current_user_org),

@@ -144,7 +144,7 @@ def _require_connection(
 
 
 @router.get("/{connection_id}", response_model=OneChatStateOut)
-async def get_one_chat_state(
+def get_one_chat_state(
     connection_id: UUID,
     ctx: AuthContext = Depends(_require_read),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
@@ -160,7 +160,7 @@ async def get_one_chat_state(
 
 
 @router.put("/{connection_id}/auto-reply", response_model=AutoReplyToggleOut)
-async def toggle_one_chat_auto_reply(
+def toggle_one_chat_auto_reply(
     connection_id: UUID,
     body: AutoReplyToggleRequest,
     ctx: AuthContext = Depends(_require_toggle),

@@ -1,4 +1,5 @@
 """Campaigns router — CRUD, schedule, send, pause, cancel, stats."""
+import anyio
 import logging
 from typing import Optional
 
@@ -44,7 +45,7 @@ async def get_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
     result = svc.get_campaign(campaign_id)
     if not result:
         raise HTTPException(status_code=404, detail="Campanha nao encontrada")
-    stats = svc.get_stats(campaign_id)
+    stats = (await anyio.to_thread.run_sync(lambda: svc.get_stats(campaign_id)))
     result["stats"] = stats
     return success_response(result)
 
@@ -92,7 +93,7 @@ async def send_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
 
     # Queue all recipients
     send_svc = SendService(get_admin_client(), settings)
-    queued = send_svc.queue_campaign_sends(campaign_id, org_id)
+    queued = (await anyio.to_thread.run_sync(lambda: send_svc.queue_campaign_sends(campaign_id, org_id)))
 
     # Never a silent dry-run: the caller is told what will actually happen.
     return success_response({"campaign_id": campaign_id, "queued": queued,
@@ -100,7 +101,7 @@ async def send_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
 
 
 @router.post("/{campaign_id}/pause")
-async def pause_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+def pause_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.pause_campaign(campaign_id)
@@ -110,7 +111,7 @@ async def pause_campaign(campaign_id: str, auth = Depends(get_current_user_org))
 
 
 @router.post("/{campaign_id}/cancel")
-async def cancel_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+def cancel_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.cancel_campaign(campaign_id)

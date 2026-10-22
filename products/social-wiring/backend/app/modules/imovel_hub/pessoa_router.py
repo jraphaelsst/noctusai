@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/clientes", tags=["pessoa"])
 
 
 @router.get("/{cliente_id}/resumo")
-async def resumo_route(
+def resumo_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),

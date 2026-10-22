@@ -70,7 +70,7 @@ def _raise(exc: PesquisaError):
 
 
 @router.get("")
-async def list_assuntos(
+def list_assuntos(
     marca_id: uuid.UUID,
     status: Literal["approved", "pending"] = "approved",
     sort: Literal["plays", "recent"] = "plays",
@@ -87,7 +87,7 @@ async def list_assuntos(
 
 
 @router.get("/counts")
-async def assuntos_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def assuntos_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).counts(str(marca_id)))
     except PesquisaError as exc:
@@ -95,7 +95,7 @@ async def assuntos_counts(marca_id: uuid.UUID, auth=Depends(get_current_user_org
 
 
 @router.post("")
-async def create_assuntos(body: AssuntosCreate, auth=Depends(get_current_user_org)):
+def create_assuntos(body: AssuntosCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).add_manual(str(body.marca_id), body.topics))
     except PesquisaError as exc:
@@ -103,7 +103,7 @@ async def create_assuntos(body: AssuntosCreate, auth=Depends(get_current_user_or
 
 
 @router.post("/bulk")
-async def bulk_assuntos(body: AssuntosBulk, auth=Depends(get_current_user_org)):
+def bulk_assuntos(body: AssuntosBulk, auth=Depends(get_current_user_org)):
     try:
         n = _svc(auth).bulk(str(body.marca_id), body.action, [str(i) for i in body.ids])
         return success_response({"affected": n})
@@ -112,7 +112,7 @@ async def bulk_assuntos(body: AssuntosBulk, auth=Depends(get_current_user_org)):
 
 
 @router.post("/empty")
-async def empty_assuntos(body: AssuntosEmpty, auth=Depends(get_current_user_org)):
+def empty_assuntos(body: AssuntosEmpty, auth=Depends(get_current_user_org)):
     try:
         return success_response({"deleted": _svc(auth).empty(str(body.marca_id), body.status)})
     except PesquisaError as exc:
@@ -120,7 +120,7 @@ async def empty_assuntos(body: AssuntosEmpty, auth=Depends(get_current_user_org)
 
 
 @router.post("/{topic_id}/approve")
-async def approve_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def approve_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).approve(str(topic_id)))
     except PesquisaError as exc:
@@ -128,7 +128,7 @@ async def approve_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org
 
 
 @router.post("/{topic_id}/reject")
-async def reject_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def reject_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).reject(str(topic_id)))
     except PesquisaError as exc:
@@ -136,7 +136,7 @@ async def reject_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)
 
 
 @router.delete("/{topic_id}", status_code=204)
-async def delete_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def delete_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         _svc(auth).delete(str(topic_id))
     except PesquisaError as exc:
@@ -145,7 +145,7 @@ async def delete_assunto(topic_id: uuid.UUID, auth=Depends(get_current_user_org)
 
 
 @router.get("/{topic_id}/fontes")
-async def assunto_fontes(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def assunto_fontes(topic_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).list_sources(str(topic_id)))
     except PesquisaError as exc:

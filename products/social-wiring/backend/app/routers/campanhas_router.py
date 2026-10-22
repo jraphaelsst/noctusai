@@ -59,7 +59,7 @@ class SolicitacaoOut(BaseModel):
     response_model=SolicitacaoOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def criar_solicitacao(
+def criar_solicitacao(
     payload: SolicitacaoIn,
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
@@ -101,7 +101,7 @@ async def criar_solicitacao(
 
 
 @router.get("/solicitacoes")
-async def listar_solicitacoes(
+def listar_solicitacoes(
     situacao: Optional[str] = Query(
         None, description="pendente | aprovada | recusada | convertida",
     ),
@@ -117,7 +117,7 @@ async def listar_solicitacoes(
 # above, since FastAPI matches in declaration order and a bare path segment
 # is a valid código. Same ordering rule `imoveis_router` documents.
 @router.get("/solicitacoes/{codigo}")
-async def solicitacao_do_imovel(
+def solicitacao_do_imovel(
     codigo: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),

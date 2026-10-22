@@ -65,7 +65,7 @@ async def delete_template(template_id: str, auth = Depends(get_current_user_org)
 
 
 @router.post("/{template_id}/preview")
-async def preview_template(
+def preview_template(
     template_id: str,
     body: TemplatePreviewRequest,
     auth = Depends(get_current_user_org)):

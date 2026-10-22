@@ -12,6 +12,7 @@
 
 # NOC-REMEDIATE[seed-promotion]: per-org public privacy notice -- promote to the seed as `org_privacy_notice` (router + table + default template) when the 2nd consumer (store/igig) needs it — 2026-10-14
 """
+import anyio
 # No `from __future__ import annotations`: this module carries
 # `@limiter.limit` (check_slowapi_with_pep563).
 import logging
@@ -451,7 +452,7 @@ async def patch_chat_agente(
     except Exception:
         logger.exception("julia: gen bump on pause failed conn=%s chat=%s (agents HAS the new state)", connection_id, chat_id)
     pausado = parte.estado == "pausado"
-    summary = chat_store.get_chat(connection_id=connection_id, chat_id=chat_id)
+    summary = (await anyio.to_thread.run_sync(lambda: chat_store.get_chat(connection_id=connection_id, chat_id=chat_id)))
     event = {**summary.as_dict(), "agente_pausado": pausado, "agente_estado": parte.estado} if summary else {
         "chat_id": chat_id, "agente_pausado": pausado, "agente_estado": parte.estado,
     }

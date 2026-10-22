@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
+import anyio
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -300,18 +301,20 @@ async def extrair_matricula(
     # 🔴 `org_id` is deliberately absent: migration 092 defaults the column
     # to `public.current_org_id()`, the same trusted source RLS reads. The
     # app never names the org on a write, so it can never name the wrong one.
-    result = (
-        db.table(TABLE)
-        .insert(
-            {
-                "user_id": user.id,
-                "nome_arquivo": file.filename or "matricula.pdf",
-                "tamanho_bytes": len(pdf_bytes),
-                "status": "pendente",
-                **vinculo,
-            }
+    result = await anyio.to_thread.run_sync(
+        lambda: (
+            db.table(TABLE)
+            .insert(
+                {
+                    "user_id": user.id,
+                    "nome_arquivo": file.filename or "matricula.pdf",
+                    "tamanho_bytes": len(pdf_bytes),
+                    "status": "pendente",
+                    **vinculo,
+                }
+            )
+            .execute()
         )
-        .execute()
     )
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar extração")
@@ -367,7 +370,7 @@ async def extrair_matricula(
 
 
 @router.post("/extracoes/de-documento")
-async def extrair_de_documento(
+def extrair_de_documento(
     body: ExtracaoDeDocumentoBody,
     background_tasks: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -414,13 +417,13 @@ async def criar_extracao_manual_route(
     task): unlike a PDF, there is no I/O-bound step here — it is a plain
     Python segmentation of the text the request already carries."""
     user, _token, org_id = _auth_parts(auth)
-    extracao = estrutura_svc.criar_extracao_manual(
+    extracao = (await anyio.to_thread.run_sync(lambda: estrutura_svc.criar_extracao_manual(
         client,
         UUID(org_id),
         codigo=body.codigo,
         texto=body.texto,
         usuario_id=getattr(user, "id", None),
-    )
+    )))
     registrar_transcricao_manual(client, extracao["id"], org_id, body.texto)
     # Migration 154 — the pasted text feeds `imovel_dados` exactly like an
     # AI transcription's does (D1: fill empty, conflict otherwise).
@@ -431,12 +434,12 @@ async def criar_extracao_manual_route(
     # transcription gets.
     _rodar_autopiloto(client, org_id, extracao["id"])
     return success_response(
-        estrutura_svc.exigir_extracao(client, UUID(org_id), UUID(extracao["id"]))
+        (await anyio.to_thread.run_sync(lambda: estrutura_svc.exigir_extracao(client, UUID(org_id), UUID(extracao["id"]))))
     )
 
 
 @router.get("/extracoes")
-async def listar_extracoes(
+def listar_extracoes(
     busca: Optional[str] = Query(None),
     codigo: Optional[str] = Query(None, max_length=64),
     sem_imovel: Optional[bool] = Query(
@@ -493,7 +496,7 @@ async def listar_extracoes(
 
 
 @router.get("/extracoes/{extracao_id}")
-async def obter_extracao(
+def obter_extracao(
     extracao_id: str,
     auth=Depends(get_current_user_org),
     matriculas_client=Depends(get_matriculas_client),
@@ -530,7 +533,7 @@ async def obter_extracao(
 
 
 @router.get("/extracoes/{extracao_id}/pdf")
-async def baixar_extracao_pdf(
+def baixar_extracao_pdf(
     extracao_id: str,
     auth=Depends(get_current_user_org),
     matriculas_client=Depends(get_matriculas_client),
@@ -582,7 +585,7 @@ async def baixar_extracao_pdf(
 
 
 @router.delete("/extracoes/{extracao_id}")
-async def excluir_extracao(
+def excluir_extracao(
     extracao_id: str,
     auth=Depends(get_current_user_org),
     matriculas_client=Depends(get_matriculas_client),
@@ -598,7 +601,7 @@ async def excluir_extracao(
 
 
 @router.post("/extracoes/{extracao_id}/retranscrever")
-async def retranscrever_extracao(
+def retranscrever_extracao(
     extracao_id: str,
     background_tasks: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -681,7 +684,7 @@ async def vincular_imovel_route(
     canonico = (body.codigo or "").strip().upper()
     if not canonico:
         raise HTTPException(status_code=422, detail="Código do imóvel é obrigatório.")
-    if imovel_dados_svc.registro_status(client, UUID(org_id), canonico) is None:
+    if (await anyio.to_thread.run_sync(lambda: imovel_dados_svc.registro_status(client, UUID(org_id), canonico))) is None:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -689,14 +692,14 @@ async def vincular_imovel_route(
                 "(POST /api/imoveis/{codigo}/registrar) antes de vincular."
             ),
         )
-    vinculada = estrutura_svc.vincular_imovel(
+    vinculada = (await anyio.to_thread.run_sync(lambda: estrutura_svc.vincular_imovel(
         client,
         UUID(org_id),
         extracao_id,
         codigo=canonico,
         substituir=body.substituir,
         usuario_id=getattr(user, "id", None),
-    )
+    )))
     # Migration 154 — linked LATER is linked all the same: the imóvel gets
     # the same D1 fill a transcription uploaded with its código gets.
     # Idempotent (an already-linked re-link finds every field `igual`).
@@ -712,7 +715,7 @@ async def vincular_imovel_route(
 
 
 @router.get("/extracoes/{extracao_id}/atos")
-async def listar_atos_route(
+def listar_atos_route(
     extracao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -727,7 +730,7 @@ async def listar_atos_route(
 
 
 @router.get("/extracoes/{extracao_id}/fontes")
-async def obter_fontes_route(
+def obter_fontes_route(
     extracao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -740,7 +743,7 @@ async def obter_fontes_route(
 
 
 @router.put("/extracoes/{extracao_id}/fontes")
-async def definir_fontes_route(
+def definir_fontes_route(
     extracao_id: UUID,
     body: FontesMatriculaBody,
     auth=Depends(get_current_user_org),
@@ -769,7 +772,7 @@ async def definir_fontes_route(
 
 
 @router.get("/contratos/{contrato_id}/atos")
-async def obter_selecao_route(
+def obter_selecao_route(
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -784,7 +787,7 @@ async def obter_selecao_route(
 
 
 @router.put("/contratos/{contrato_id}/atos")
-async def definir_selecao_route(
+def definir_selecao_route(
     contrato_id: UUID,
     body: SelecaoAtosBody,
     auth=Depends(get_current_user_org),
@@ -812,7 +815,7 @@ _CODIGO = PathParam(..., min_length=1, max_length=64)
 
 
 @router.put("/atos/{ato_id}/detalhes")
-async def confirmar_detalhes_route(
+def confirmar_detalhes_route(
     ato_id: UUID,
     body: DetalhesAtoBody,
     auth=Depends(get_current_user_org),
@@ -860,7 +863,7 @@ async def confirmar_qualificacao_route(
 
 
 @router.put("/qualificacoes/{qualificacao_id}/descartar")
-async def descartar_qualificacao_route(
+def descartar_qualificacao_route(
     qualificacao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -875,7 +878,7 @@ async def descartar_qualificacao_route(
 
 
 @router.get("/imoveis/{codigo}/titulo-aquisitivo")
-async def obter_titulo_route(
+def obter_titulo_route(
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -888,7 +891,7 @@ async def obter_titulo_route(
 
 
 @router.put("/imoveis/{codigo}/titulo-aquisitivo")
-async def confirmar_titulo_route(
+def confirmar_titulo_route(
     body: TituloAquisitivoTextoBody,
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
@@ -904,7 +907,7 @@ async def confirmar_titulo_route(
 
 
 @router.get("/imoveis/{codigo}/endereco-registro")
-async def obter_endereco_registro_route(
+def obter_endereco_registro_route(
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -916,7 +919,7 @@ async def obter_endereco_registro_route(
 
 
 @router.put("/imoveis/{codigo}/endereco-registro")
-async def confirmar_endereco_registro_route(
+def confirmar_endereco_registro_route(
     body: EnderecoRegistroBody,
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
@@ -933,7 +936,7 @@ async def confirmar_endereco_registro_route(
 
 
 @router.get("/imoveis/{codigo}/onus-credor")
-async def obter_onus_credor_route(
+def obter_onus_credor_route(
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -948,7 +951,7 @@ async def obter_onus_credor_route(
 
 
 @router.put("/imoveis/{codigo}/onus-credor")
-async def confirmar_onus_credor_route(
+def confirmar_onus_credor_route(
     body: OnusCredorBody,
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
@@ -964,7 +967,7 @@ async def confirmar_onus_credor_route(
 
 
 @router.get("/imoveis/{codigo}/antigos-proprietarios")
-async def antigos_proprietarios_route(
+def antigos_proprietarios_route(
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
@@ -982,7 +985,7 @@ async def antigos_proprietarios_route(
 
 
 @router.put("/imoveis/{codigo}/ultima-transferencia")
-async def confirmar_ultima_transferencia_route(
+def confirmar_ultima_transferencia_route(
     body: UltimaTransferenciaManualBody,
     codigo: str = _CODIGO,
     auth=Depends(get_current_user_org),

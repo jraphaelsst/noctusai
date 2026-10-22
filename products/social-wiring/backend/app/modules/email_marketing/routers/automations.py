@@ -19,13 +19,13 @@ def _get_service(org_id) -> AutomationService:
 
 
 @router.get("")
-async def list_automations(auth = Depends(get_current_user_org), status: Optional[str] = Query(None)):
+def list_automations(auth = Depends(get_current_user_org), status: Optional[str] = Query(None)):
     user, _, org_id = auth
     return success_response(_get_service(org_id).list_automations(status=status))
 
 
 @router.post("")
-async def create_automation(body: AutomationCreate, auth = Depends(get_current_user_org)):
+def create_automation(body: AutomationCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).create_automation(body.model_dump(mode="json"), str(user.id))
     if not result:
@@ -34,7 +34,7 @@ async def create_automation(body: AutomationCreate, auth = Depends(get_current_u
 
 
 @router.get("/{automation_id}")
-async def get_automation(automation_id: str, auth = Depends(get_current_user_org)):
+def get_automation(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.get_automation(automation_id)
@@ -45,7 +45,7 @@ async def get_automation(automation_id: str, auth = Depends(get_current_user_org
 
 
 @router.patch("/{automation_id}")
-async def update_automation(automation_id: str, body: AutomationUpdate, auth = Depends(get_current_user_org)):
+def update_automation(automation_id: str, body: AutomationUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).update_automation(automation_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
@@ -54,7 +54,7 @@ async def update_automation(automation_id: str, body: AutomationUpdate, auth = D
 
 
 @router.delete("/{automation_id}")
-async def delete_automation(automation_id: str, auth = Depends(get_current_user_org)):
+def delete_automation(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     if not _get_service(org_id).delete_automation(automation_id):
         raise HTTPException(status_code=400, detail="Apenas rascunhos podem ser excluidos")
@@ -62,7 +62,7 @@ async def delete_automation(automation_id: str, auth = Depends(get_current_user_
 
 
 @router.post("/{automation_id}/activate")
-async def activate(automation_id: str, auth = Depends(get_current_user_org)):
+def activate(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).activate(automation_id)
     if not result:
@@ -71,7 +71,7 @@ async def activate(automation_id: str, auth = Depends(get_current_user_org)):
 
 
 @router.post("/{automation_id}/pause")
-async def pause(automation_id: str, auth = Depends(get_current_user_org)):
+def pause(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).pause(automation_id)
     if not result:
@@ -82,13 +82,13 @@ async def pause(automation_id: str, auth = Depends(get_current_user_org)):
 # -- Steps --
 
 @router.get("/{automation_id}/steps")
-async def list_steps(automation_id: str, auth = Depends(get_current_user_org)):
+def list_steps(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     return success_response(_get_service(org_id).list_steps(automation_id))
 
 
 @router.post("/{automation_id}/steps")
-async def add_step(automation_id: str, body: StepCreate, auth = Depends(get_current_user_org)):
+def add_step(automation_id: str, body: StepCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).add_step(automation_id, body.model_dump(mode="json"))
     if not result:
@@ -97,7 +97,7 @@ async def add_step(automation_id: str, body: StepCreate, auth = Depends(get_curr
 
 
 @router.patch("/{automation_id}/steps/{step_id}")
-async def update_step(automation_id: str, step_id: str, body: StepUpdate, auth = Depends(get_current_user_org)):
+def update_step(automation_id: str, step_id: str, body: StepUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).update_step(automation_id, step_id, body.model_dump(mode="json", exclude_unset=True))
     if not result:
@@ -106,14 +106,14 @@ async def update_step(automation_id: str, step_id: str, body: StepUpdate, auth =
 
 
 @router.delete("/{automation_id}/steps/{step_id}")
-async def delete_step(automation_id: str, step_id: str, auth = Depends(get_current_user_org)):
+def delete_step(automation_id: str, step_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     _get_service(org_id).delete_step(automation_id, step_id)
     return {"ok": True}
 
 
 @router.post("/{automation_id}/steps/reorder")
-async def reorder_steps(automation_id: str, body: StepReorder, auth = Depends(get_current_user_org)):
+def reorder_steps(automation_id: str, body: StepReorder, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).reorder_steps(automation_id, body.step_ids)
     return success_response(result)
@@ -122,13 +122,13 @@ async def reorder_steps(automation_id: str, body: StepReorder, auth = Depends(ge
 # -- Enrollments --
 
 @router.get("/{automation_id}/enrollments")
-async def list_enrollments(automation_id: str, auth = Depends(get_current_user_org)):
+def list_enrollments(automation_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     return success_response(_get_service(org_id).list_enrollments(automation_id))
 
 
 @router.post("/{automation_id}/enroll")
-async def enroll_contacts(automation_id: str, body: EnrollContacts, auth = Depends(get_current_user_org)):
+def enroll_contacts(automation_id: str, body: EnrollContacts, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     result = _get_service(org_id).enroll_contacts(automation_id, body.contact_ids)
     return success_response(result)

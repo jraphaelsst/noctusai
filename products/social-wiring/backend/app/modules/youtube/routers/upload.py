@@ -271,7 +271,7 @@ def _user_id(user) -> UUID | None:
     response_model=UploadJobCreated,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_video(
+def upload_video(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     metadata_json: str = Form(
@@ -427,7 +427,7 @@ async def upload_video_from_code(
     response_model=UploadJobCreated,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_from_drive(
+def upload_from_drive(
     payload: GdriveUploadRequest,
     background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org),
@@ -557,7 +557,7 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> BatchUploadCreated:
 
 # ─── GET /{id}/status ──────────────────────────────────────────────────
 @router.get("/{job_id}/status", response_model=UploadJobOut)
-async def get_upload_status(
+def get_upload_status(
     job_id: UUID,
     auth: tuple = Depends(get_current_user_org),
 cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobOut:
@@ -581,7 +581,7 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobOut:
     response_model=UploadJobOut,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def retry_upload(
+def retry_upload(
     job_id: UUID,
     background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org),
@@ -623,7 +623,7 @@ async def retry_upload(
 
 # ─── GET /batch/{batch_id} — aggregate status of a fan-out batch ──────
 @router.get("/batch/{batch_id}", response_model=BatchStatusOut)
-async def get_batch_status(
+def get_batch_status(
     batch_id: UUID,
     auth: tuple = Depends(get_current_user_org_unified),
 cfg: SocialWiringSettings = Depends(get_settings)) -> BatchStatusOut:
@@ -652,7 +652,7 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> BatchStatusOut:
 
 # ─── GET /history ──────────────────────────────────────────────────────
 @router.get("/history", response_model=list[UploadJobOut])
-async def list_upload_history(
+def list_upload_history(
     limit: int = 25,
     auth: tuple = Depends(get_current_user_org),
 cfg: SocialWiringSettings = Depends(get_settings)) -> list[UploadJobOut]:

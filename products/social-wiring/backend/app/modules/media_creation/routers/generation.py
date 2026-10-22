@@ -156,7 +156,7 @@ async def score_post(
 
 
 @router.post("/{post_id}/render")
-async def render_post(
+def render_post(
     post_id: str,
     body: RenderRequest | None = None,
     gen_svc: GenerationService = Depends(get_generation_service),
@@ -186,7 +186,7 @@ async def render_post(
 
 
 @router.post("/{post_id}/publish")
-async def publish_post(
+def publish_post(
     post_id: str,
     body: PublishRequest,
     auth=Depends(get_current_user_org),

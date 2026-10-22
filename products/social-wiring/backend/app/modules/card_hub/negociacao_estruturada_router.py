@@ -53,7 +53,7 @@ _auth_parts = auth_parts
 
 
 @router.get("/{cliente_id}/negociacao/estruturada")
-async def get_negociacao_estruturada_route(
+def get_negociacao_estruturada_route(
     cliente_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
@@ -66,7 +66,7 @@ async def get_negociacao_estruturada_route(
 
 
 @router.put("/{cliente_id}/negociacao/termos")
-async def put_termos_negocio_route(
+def put_termos_negocio_route(
     cliente_id: UUID,
     body: TermosNegocioPutBody,
     auth=Depends(get_current_user_org),
@@ -86,7 +86,7 @@ async def put_termos_negocio_route(
 
 
 @router.post("/{cliente_id}/negociacao/parcelas", status_code=201)
-async def create_parcela_route(
+def create_parcela_route(
     cliente_id: UUID,
     body: ParcelaCreateBody,
     auth=Depends(get_current_user_org),
@@ -100,7 +100,7 @@ async def create_parcela_route(
 
 
 @router.patch("/{cliente_id}/negociacao/parcelas/{parcela_id}")
-async def patch_parcela_route(
+def patch_parcela_route(
     cliente_id: UUID,
     parcela_id: UUID,
     body: ParcelaPatchBody,
@@ -116,7 +116,7 @@ async def patch_parcela_route(
 
 
 @router.delete("/{cliente_id}/negociacao/parcelas/{parcela_id}", status_code=204)
-async def delete_parcela_route(
+def delete_parcela_route(
     cliente_id: UUID,
     parcela_id: UUID,
     auth=Depends(get_current_user_org),
@@ -128,7 +128,7 @@ async def delete_parcela_route(
 
 
 @router.put("/{cliente_id}/negociacao/parcelas/ordem")
-async def reordenar_parcelas_route(
+def reordenar_parcelas_route(
     cliente_id: UUID,
     body: ParcelasReordenarBody,
     auth=Depends(get_current_user_org),
@@ -143,7 +143,7 @@ async def reordenar_parcelas_route(
     )
 
 @router.post("/{cliente_id}/negociacao/parcelas/dividir-saldo", status_code=201)
-async def dividir_saldo_route(
+def dividir_saldo_route(
     cliente_id: UUID,
     body: ParcelasDividirBody,
     auth=Depends(get_current_user_org),
@@ -165,7 +165,7 @@ async def dividir_saldo_route(
 
 
 @router.post("/{cliente_id}/negociacao/favorecidos", status_code=201)
-async def create_favorecido_route(
+def create_favorecido_route(
     cliente_id: UUID,
     body: FavorecidoCreateBody,
     auth=Depends(get_current_user_org),
@@ -179,7 +179,7 @@ async def create_favorecido_route(
 
 
 @router.patch("/{cliente_id}/negociacao/favorecidos/{favorecido_id}")
-async def patch_favorecido_route(
+def patch_favorecido_route(
     cliente_id: UUID,
     favorecido_id: UUID,
     body: FavorecidoPatchBody,
@@ -195,7 +195,7 @@ async def patch_favorecido_route(
 
 
 @router.delete("/{cliente_id}/negociacao/favorecidos/{favorecido_id}", status_code=204)
-async def delete_favorecido_route(
+def delete_favorecido_route(
     cliente_id: UUID,
     favorecido_id: UUID,
     auth=Depends(get_current_user_org),
@@ -209,7 +209,7 @@ async def delete_favorecido_route(
 
 
 @router.post("/{cliente_id}/negociacao/intermediarios", status_code=201)
-async def create_intermediario_route(
+def create_intermediario_route(
     cliente_id: UUID,
     body: IntermediarioCreateBody,
     auth=Depends(get_current_user_org),
@@ -223,7 +223,7 @@ async def create_intermediario_route(
 
 
 @router.patch("/{cliente_id}/negociacao/intermediarios/{intermediario_id}")
-async def patch_intermediario_route(
+def patch_intermediario_route(
     cliente_id: UUID,
     intermediario_id: UUID,
     body: IntermediarioPatchBody,
@@ -241,7 +241,7 @@ async def patch_intermediario_route(
 @router.delete(
     "/{cliente_id}/negociacao/intermediarios/{intermediario_id}", status_code=204
 )
-async def delete_intermediario_route(
+def delete_intermediario_route(
     cliente_id: UUID,
     intermediario_id: UUID,
     auth=Depends(get_current_user_org),

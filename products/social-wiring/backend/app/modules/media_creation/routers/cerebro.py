@@ -54,7 +54,7 @@ async def list_templates(auth=Depends(get_current_user_org)):
 
 
 @router.get("/brains")
-async def list_brains(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def list_brains(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).list_brains(str(marca_id)))
     except CerebroError as exc:
@@ -62,7 +62,7 @@ async def list_brains(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.post("/brains", status_code=201)
-async def create_brain(body: BrainCreate, auth=Depends(get_current_user_org)):
+def create_brain(body: BrainCreate, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).create_brain(str(body.marca_id), body.name))
     except CerebroError as exc:
@@ -70,7 +70,7 @@ async def create_brain(body: BrainCreate, auth=Depends(get_current_user_org)):
 
 
 @router.get("/brains/{brain_id}")
-async def get_brain(brain_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def get_brain(brain_id: uuid.UUID, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).get_brain(str(brain_id)))
     except CerebroError as exc:
@@ -78,7 +78,7 @@ async def get_brain(brain_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.patch("/brains/{brain_id}")
-async def rename_brain(brain_id: uuid.UUID, body: BrainRename, auth=Depends(get_current_user_org)):
+def rename_brain(brain_id: uuid.UUID, body: BrainRename, auth=Depends(get_current_user_org)):
     try:
         return success_response(_svc(auth).rename_brain(str(brain_id), body.name))
     except CerebroError as exc:
@@ -99,7 +99,7 @@ async def delete_brain(
 
 
 @router.put("/brains/{brain_id}/content")
-async def put_content(brain_id: uuid.UUID, body: ContentUpdate, auth=Depends(get_current_user_org)):
+def put_content(brain_id: uuid.UUID, body: ContentUpdate, auth=Depends(get_current_user_org)):
     try:
         return success_response(
             _svc(auth).update_content(str(brain_id), body.content, body.expected_version)
@@ -109,7 +109,7 @@ async def put_content(brain_id: uuid.UUID, body: ContentUpdate, auth=Depends(get
 
 
 @router.post("/brains/{brain_id}/answers/reset")
-async def reset_answers(brain_id: uuid.UUID, body: AnswersReset, auth=Depends(get_current_user_org)):
+def reset_answers(brain_id: uuid.UUID, body: AnswersReset, auth=Depends(get_current_user_org)):
     try:
         return success_response({"deleted": _svc(auth).reset_answers(str(brain_id))})
     except CerebroError as exc:
@@ -117,7 +117,7 @@ async def reset_answers(brain_id: uuid.UUID, body: AnswersReset, auth=Depends(ge
 
 
 @router.put("/brains/{brain_id}/answers/{question_id}")
-async def put_answer(
+def put_answer(
     brain_id: uuid.UUID, question_id: str, body: AnswerUpdate, auth=Depends(get_current_user_org)
 ):
     try:
@@ -127,7 +127,7 @@ async def put_answer(
 
 
 @router.post("/brains/{brain_id}/review", status_code=202)
-async def review(
+def review(
     brain_id: uuid.UUID,
     body: ReviewRequest,
     background: BackgroundTasks,
@@ -144,7 +144,7 @@ async def review(
 
 
 @router.post("/brains/{brain_id}/answers/{question_id}/suggestion")
-async def suggestion(
+def suggestion(
     brain_id: uuid.UUID, question_id: str, body: SuggestionAction, auth=Depends(get_current_user_org)
 ):
     try:
@@ -156,7 +156,7 @@ async def suggestion(
 
 
 @router.post("/brains/{brain_id}/synthesize", status_code=202)
-async def synthesize(
+def synthesize(
     brain_id: uuid.UUID,
     body: SynthesizeRequest,
     background: BackgroundTasks,
@@ -173,7 +173,7 @@ async def synthesize(
 
 
 @router.get("/brains/{brain_id}/imports")
-async def list_imports(
+def list_imports(
     brain_id: uuid.UUID,
     limit: int = Query(20, ge=1, le=50),
     auth=Depends(get_current_user_org),
@@ -185,7 +185,7 @@ async def list_imports(
 
 
 @router.get("/perfil")
-async def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
     # Delegates to the Meu Perfil service: the bio is ONE column (cs_marca_perfil.bio), two callers.
     try:
         p = perfil_service(auth).get(str(marca_id))
@@ -195,7 +195,7 @@ async def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
 
 
 @router.put("/perfil")
-async def put_perfil(body: PerfilUpdate, auth=Depends(get_current_user_org)):
+def put_perfil(body: PerfilUpdate, auth=Depends(get_current_user_org)):
     try:
         p = perfil_service(auth).save(str(body.marca_id), bio=body.bio)
         return success_response({k: p[k] for k in ("marca_id", "bio", "updated_at")})

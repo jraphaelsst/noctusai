@@ -30,7 +30,7 @@ def get_confirmation_sender(cfg=Depends(get_settings)):
 
 
 @router.get("")
-async def list_contacts(
+def list_contacts(
     auth = Depends(get_current_user_org), page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None),
@@ -62,7 +62,7 @@ async def create_contact(
 
 
 @router.get("/{contact_id}")
-async def get_contact(contact_id: str, auth = Depends(get_current_user_org)):
+def get_contact(contact_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     result = svc.get_contact(contact_id)
@@ -93,7 +93,7 @@ async def update_contact(
 
 
 @router.delete("/{contact_id}")
-async def delete_contact(contact_id: str, auth = Depends(get_current_user_org)):
+def delete_contact(contact_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
     svc = _get_service(org_id)
     svc.delete_contact(contact_id)

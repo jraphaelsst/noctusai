@@ -46,7 +46,7 @@ def _raise(exc: PesquisaError):
 
 
 @router.get("/fontes")
-async def list_fontes(
+def list_fontes(
     marca_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_extracao_settings),
 ):
     try:
@@ -56,7 +56,7 @@ async def list_fontes(
 
 
 @router.get("/fontes/posts")
-async def list_fonte_posts(
+def list_fonte_posts(
     marca_id: uuid.UUID,
     kind: Literal["instagram_media", "youtube_video", "mc_post"],
     account_id: Optional[uuid.UUID] = None,
@@ -78,7 +78,7 @@ async def list_fonte_posts(
 
 
 @router.get("/extracoes/limites")
-async def extracao_limites(
+def extracao_limites(
     marca_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_extracao_settings),
 ):
     try:
@@ -111,7 +111,7 @@ async def submit_extracao(
 
 
 @router.get("/extracoes")
-async def list_extracoes(
+def list_extracoes(
     marca_id: uuid.UUID,
     limit: int = Query(10, ge=1, le=20),
     auth=Depends(get_current_user_org),
@@ -124,7 +124,7 @@ async def list_extracoes(
 
 
 @router.get("/extracoes/{extracao_id}")
-async def get_extracao(
+def get_extracao(
     extracao_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_extracao_settings),
 ):
     try:
@@ -134,7 +134,7 @@ async def get_extracao(
 
 
 @router.post("/extracoes/{extracao_id}/cancel")
-async def cancel_extracao(
+def cancel_extracao(
     extracao_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_extracao_settings),
 ):
     try:

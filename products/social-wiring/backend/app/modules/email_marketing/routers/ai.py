@@ -1,5 +1,6 @@
 """Mailing AI wrappers router — M1/M2/M5/M6/M7 from ai-expansion Phase 14
 and M3 contact segmentation from Phase 8."""
+import anyio
 
 import logging
 from typing import Optional
@@ -140,34 +141,28 @@ async def segment_contacts_endpoint(
 
     # 1. Fetch contacts (RLS-scoped via the user-token-bound client).
     if body.list_id:
-        member_res = (
-            db.table("contact_list_members")
+        member_res = (await anyio.to_thread.run_sync(db.table("contact_list_members")
             .select("contact_id")
             .eq("list_id", body.list_id)
             .limit(500)
-            .execute()
-        )
+            .execute))
         if not member_res.data:
             raise HTTPException(
                 status_code=404,
                 detail="Lista vazia ou inexistente — não há contatos para segmentar.",
             )
         contact_ids = [m["contact_id"] for m in member_res.data]
-        contact_res = (
-            db.table("contacts")
+        contact_res = (await anyio.to_thread.run_sync(db.table("contacts")
             .select("id, email, nome, empresa, tags, custom_fields")
             .in_("id", contact_ids)
             .eq("status", "active")
-            .execute()
-        )
+            .execute))
     else:
-        contact_res = (
-            db.table("contacts")
+        contact_res = (await anyio.to_thread.run_sync(db.table("contacts")
             .select("id, email, nome, empresa, tags, custom_fields")
             .eq("status", "active")
             .limit(500)
-            .execute()
-        )
+            .execute))
     contacts = contact_res.data or []
 
     if not contacts:

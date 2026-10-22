@@ -10,7 +10,7 @@ router = APIRouter(prefix='/api/email-marketing/analytics', tags=["Analytics"])
 
 
 @router.get("/dashboard")
-async def dashboard_metrics(auth = Depends(get_current_user_org)):
+def dashboard_metrics(auth = Depends(get_current_user_org)):
     """Overview metrics: total contacts, total sent, open rate, click rate, bounces."""
     user, _, org_id = auth
     db = get_admin_client()
@@ -50,7 +50,7 @@ async def dashboard_metrics(auth = Depends(get_current_user_org)):
 
 
 @router.get("/campaigns/{campaign_id}")
-async def campaign_analytics(campaign_id: str, auth = Depends(get_current_user_org)):
+def campaign_analytics(campaign_id: str, auth = Depends(get_current_user_org)):
     """Detailed analytics for a specific campaign."""
     user, _, org_id = auth
     db = get_admin_client()

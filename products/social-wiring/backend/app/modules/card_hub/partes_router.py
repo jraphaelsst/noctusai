@@ -22,7 +22,7 @@ router = APIRouter()
 
 
 @router.get("/{cliente_id}/partes/lookup", response_model=LookupResponse)
-async def lookup_documento_route(
+def lookup_documento_route(
     cliente_id: UUID,
     documento: str = Query(..., min_length=1, max_length=32),
     atendimento_id: Optional[UUID] = None,
@@ -36,7 +36,7 @@ async def lookup_documento_route(
 
 
 @router.get("/{cliente_id}/partes", response_model=PartesResponse)
-async def listar_partes_route(
+def listar_partes_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),

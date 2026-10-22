@@ -186,7 +186,7 @@ def get_portal_roi_service():
 
 
 @router.get("/resumo", response_model=ResumoOut)
-async def get_resumo(
+def get_resumo(
     periodo_inicio: Optional[date] = Query(None),
     periodo_fim: Optional[date] = Query(None),
     auth=Depends(get_current_user_org),
@@ -198,7 +198,7 @@ async def get_resumo(
 
 
 @router.get("/campanhas", response_model=CampanhasOut)
-async def list_campanhas(
+def list_campanhas(
     origem_id: Optional[UUID] = Query(None),
     periodo_inicio: Optional[date] = Query(None),
     periodo_fim: Optional[date] = Query(None),
@@ -217,7 +217,7 @@ async def list_campanhas(
 
 
 @router.post("/campanhas", response_model=CampanhaOut, status_code=status.HTTP_201_CREATED)
-async def create_campanha(
+def create_campanha(
     body: LeadCampanhaCreate,
     auth=Depends(get_current_user_org),
     svc=Depends(get_portal_roi_service),
@@ -229,7 +229,7 @@ async def create_campanha(
 
 
 @router.patch("/campanhas/{campanha_id}", response_model=CampanhaOut)
-async def update_campanha(
+def update_campanha(
     campanha_id: UUID,
     body: LeadCampanhaUpdate,
     auth=Depends(get_current_user_org),
@@ -242,7 +242,7 @@ async def update_campanha(
 
 
 @router.delete("/campanhas/{campanha_id}", response_model=DeletedOut)
-async def delete_campanha(
+def delete_campanha(
     campanha_id: UUID,
     auth=Depends(get_current_user_org),
     svc=Depends(get_portal_roi_service),
@@ -256,7 +256,7 @@ async def delete_campanha(
 
 
 @router.get("/origens", response_model=OrigensOut)
-async def get_origens(
+def get_origens(
     auth=Depends(get_current_user_org),
     svc=Depends(get_portal_roi_service),
 ) -> OrigensOut:

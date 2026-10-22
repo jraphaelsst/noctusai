@@ -27,6 +27,7 @@
 Envelope `{"data": ...}` (errors: `AppException` -> `{"error": {...}}`); request models are strict. The org is the
 session's selected org (auth tuple), never a body field.
 """
+import anyio
 # No `from __future__ import annotations`: FastAPI resolves the body models from the real annotations.
 from datetime import datetime
 from typing import Any, Callable, Literal, Optional
@@ -195,7 +196,7 @@ async def aplicar_perfil(
     org_id = _admin(auth, request, "julia cloud perfil")
     conexao = _conexao(store, org_id, body.connection_id)
     julia_disparos_service.exigir_cloud(conexao)
-    secoes = julia_conhecimento_service.ler_secoes(db, org_id, nome_agente)
+    secoes = (await anyio.to_thread.run_sync(lambda: julia_conhecimento_service.ler_secoes(db, org_id, nome_agente)))
     perfil = secoes["perfil_whatsapp"]["dados"]
     nome = nome_agente or perfil.get("nome_exibicao") or julia_conhecimento_service.PERSONA_NOME
     try:
@@ -283,7 +284,7 @@ async def enviar_modelo_para_aprovacao(
     fabrica: Callable[[Any], julia_transporte.Transporte] = Depends(get_transporte_factory),
 ) -> dict[str, Any]:
     org_id = _admin(auth, request, "julia modelos")
-    julia_modelos_service.obter(db, org_id, modelo_id)  # 404 before the transport gate
+    (await anyio.to_thread.run_sync(lambda: julia_modelos_service.obter(db, org_id, modelo_id)))  # 404 before the transport gate
     conexao = _conexao(store, org_id, None)
     julia_disparos_service.exigir_cloud(conexao)
     return {"data": _modelo_out(await julia_modelos_service.enviar_para_aprovacao(db, org_id, modelo_id, transporte=fabrica(conexao)))}
@@ -364,7 +365,7 @@ async def primeiro_contato(
     conexao = _conexao(store, org_id, body.connection_id)
     julia_disparos_service.exigir_cloud(conexao)
     telefone = normalize_phone(body.telefone)
-    contato = julia_contatos_service.buscar_contato(db, org_id, conexao.id, chat_id_for_phone(telefone)) if telefone else None
+    contato = (await anyio.to_thread.run_sync(lambda: julia_contatos_service.buscar_contato(db, org_id, conexao.id, chat_id_for_phone(telefone)))) if telefone else None
     resultado = await julia_disparos_service.primeiro_contato_meta(
         db, org_id, connection=conexao, transporte=fabrica(conexao), telefone=body.telefone, nome=body.nome,
         abordagem=body.abordagem, contexto=_contexto_envio(db, org_id, nome_agente),
@@ -433,7 +434,7 @@ async def disparar_disparo(
     agents_factory: Any = Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org_id = _admin(auth, request, "julia disparos")
-    disparo = julia_disparos_service.obter(db, org_id, disparo_id)  # 404 before the transport gate
+    disparo = (await anyio.to_thread.run_sync(lambda: julia_disparos_service.obter(db, org_id, disparo_id)))  # 404 before the transport gate
     conexao = _conexao(store, org_id, UUID(disparo["connection_id"]) if disparo.get("connection_id") else None)
     julia_disparos_service.exigir_cloud(conexao)
     return {"data": _disparo_out(await julia_disparos_service.disparar(
@@ -498,7 +499,7 @@ async def solicitar_proprietario(
 ) -> dict[str, Any]:
     """Ask this owner to confirm status/price now (an approved Cloud template). 409 unless Cloud."""
     org_id = _admin(auth, request, "julia proprietarios")
-    p = julia_proprietarios_service.obter(db, org_id, pid)  # 404 before the transport gate
+    p = (await anyio.to_thread.run_sync(lambda: julia_proprietarios_service.obter(db, org_id, pid)))  # 404 before the transport gate
     conexao = _conexao(store, org_id, None)
     julia_disparos_service.exigir_cloud(conexao)
     return {"data": await julia_disparos_service.solicitar_proprietario(

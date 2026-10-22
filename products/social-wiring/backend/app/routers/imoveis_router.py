@@ -18,6 +18,7 @@ CRM, and it is the write path.
 """
 
 from __future__ import annotations
+import anyio
 
 import logging
 from typing import Any, Optional
@@ -136,7 +137,7 @@ async def list_imoveis(
 
 
 @router.get("/busca")
-async def buscar_imoveis(
+def buscar_imoveis(
     q: str = Query(..., min_length=busca_svc.TERMO_MINIMO),
     limit: int = Query(
         busca_svc.LIMITE_PADRAO, ge=1, le=busca_svc.LIMITE_MAXIMO
@@ -169,7 +170,7 @@ async def buscar_imoveis(
 
 
 @router.get("/busca/duplicatas")
-async def buscar_possiveis_duplicatas(
+def buscar_possiveis_duplicatas(
     q: str = Query(..., min_length=1),
     limit: int = Query(5, ge=1, le=busca_svc.LIMITE_MAXIMO),
     auth=Depends(get_current_user_org),
@@ -196,7 +197,7 @@ async def buscar_possiveis_duplicatas(
 # `/duplicatas/{id}/vincular`, `/{codigo}/desvincular`) are POSTs on 2-3 segments
 # and live in `imovel_hub/router.py`. A test pins both.
 @router.get("/duplicatas")
-async def list_duplicatas(
+def list_duplicatas(
     status_: str = Query("pendente", alias="status"),
     auth=Depends(get_current_user_org),
     hub=Depends(get_imovel_hub_client),
@@ -209,7 +210,7 @@ async def list_duplicatas(
 
 
 @router.get("/filtros", response_model=FiltrosOut)
-async def get_filtros(
+def get_filtros(
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
 ) -> FiltrosOut:
@@ -220,7 +221,7 @@ async def get_filtros(
 
 
 @router.get("/caracteristicas")
-async def get_caracteristicas(
+def get_caracteristicas(
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
 ) -> dict[str, int]:
@@ -306,14 +307,14 @@ async def get_imovel(
     imoveis = build_imoveis_service(db)
     row = imoveis.get(org_id, canonico)
     if row is not None:
-        dados = dados_svc.linha(hub, org_id, canonico)
+        dados = (await anyio.to_thread.run_sync(lambda: dados_svc.linha(hub, org_id, canonico)))
         row["fonte"] = "vista"
         row["referencias"] = dados_svc.referencias_da_linha(dados)
         # `empreendimento` is already the mirror's column; the condomínio
         # answer is ours (imovel_dados, migration 300) — on the shape for EVERY
         # imóvel so the edit modal needs no second query.
         row.update(captacao_svc.condominio_campos(dados))
-        row["condominio"] = dados_svc.condominio_resumo(hub, org_id, (dados or {}).get("condominio_id"))
+        row["condominio"] = (await anyio.to_thread.run_sync(lambda: dados_svc.condominio_resumo(hub, org_id, (dados or {}).get("condominio_id"))))
         return _com_vinculo(hub, org_id, canonico, row)
     manual = captacao_svc.obter_manual(hub, org_id, canonico)
     if manual is None:
@@ -321,7 +322,7 @@ async def get_imovel(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Imóvel {codigo} não encontrado.",
         )
-    vinculo = vinculo_svc.resolver_vinculo(hub, org_id, canonico)
+    vinculo = (await anyio.to_thread.run_sync(lambda: vinculo_svc.resolver_vinculo(hub, org_id, canonico)))
     if vinculo is not None and vinculo.manual_codigo == canonico:
         # LINKED (§8.7): the Vista listing's catalog data, the manual record's
         # own código / address / referências / condomínio.

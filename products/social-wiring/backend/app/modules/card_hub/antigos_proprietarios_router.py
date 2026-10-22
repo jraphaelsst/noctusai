@@ -110,7 +110,7 @@ def _agendar(background_tasks: BackgroundTasks, certidoes: CertidoesService, cli
 
 
 @router.get("/{cliente_id}/certidoes/antigos-proprietarios", response_model=AntigosEstadoOut)
-async def get_antigos_route(
+def get_antigos_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),
@@ -123,7 +123,7 @@ async def get_antigos_route(
 
 
 @router.post("/{cliente_id}/certidoes/antigos-proprietarios/sincronizar", response_model=SincronizarOut)
-async def sincronizar_antigos_route(
+def sincronizar_antigos_route(
     cliente_id: UUID,
     body: SincronizarBody,
     background_tasks: BackgroundTasks,
@@ -142,7 +142,7 @@ async def sincronizar_antigos_route(
 
 
 @router.post("/{cliente_id}/certidoes/antigos-proprietarios", status_code=201)
-async def adicionar_antigo_route(
+def adicionar_antigo_route(
     cliente_id: UUID,
     body: AntigoCreateBody,
     background_tasks: BackgroundTasks,
@@ -162,7 +162,7 @@ async def adicionar_antigo_route(
 
 
 @router.put("/{cliente_id}/certidoes/antigos-proprietarios/dispensa", response_model=AntigosEstadoOut)
-async def dispensar_antigos_route(
+def dispensar_antigos_route(
     cliente_id: UUID,
     body: DispensaBody,
     auth=Depends(get_current_user_org),
@@ -180,7 +180,7 @@ async def dispensar_antigos_route(
 
 
 @router.delete("/{cliente_id}/certidoes/antigos-proprietarios/dispensa", response_model=AntigosEstadoOut)
-async def reativar_antigos_route(
+def reativar_antigos_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
     auth=Depends(get_current_user_org),
@@ -195,7 +195,7 @@ async def reativar_antigos_route(
 
 
 @router.delete("/{cliente_id}/certidoes/antigos-proprietarios/{parte_id}", status_code=204)
-async def remover_antigo_route(
+def remover_antigo_route(
     cliente_id: UUID,
     parte_id: UUID,
     auth=Depends(get_current_user_org),

@@ -16,6 +16,7 @@ The opt-out itself lives in AGENTS (the leads are the org's, not the platform's)
 Errors are typed codes: 503 `agents_nao_configurado`, 502 `agents_token_invalido` / `agents_indisponivel`, 409 `sem_opt_out_ativo`,
 404 `lead_desconhecido` / `opt_out_nao_encontrado`, 422 `motivo_obrigatorio`.
 """
+import anyio
 # No `from __future__ import annotations`: FastAPI body/param models are resolved from the signature.
 import logging
 from typing import Any, Literal, Optional
@@ -123,7 +124,7 @@ async def estado_do_lead(
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org = _org(auth)
-    contato = julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)
+    contato = (await anyio.to_thread.run_sync(lambda: julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)))
     return {"data": await svc.estado_do_contato(client_factory(org), str(contato["id"]))}
 
 
@@ -138,7 +139,7 @@ async def nao_contatar(
 ) -> dict[str, Any]:
     _admin(auth, request, "Marcar um lead como não contatar")
     org = _org(auth)
-    contato = julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)
+    contato = (await anyio.to_thread.run_sync(lambda: julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)))
     agents = svc.exigir_agents(client_factory, org)
     return {"data": await svc.marcar_nao_contatar(client, agents, org, contato, motivo=corpo.motivo, ator_user_id=_uid(auth))}
 
@@ -154,7 +155,7 @@ async def reativar(
 ) -> dict[str, Any]:
     _admin(auth, request, "A reativação do atendimento de um lead")
     org = _org(auth)
-    contato = julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)
+    contato = (await anyio.to_thread.run_sync(lambda: julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)))
     agents = svc.exigir_agents(client_factory, org)
     return {"data": await svc.reativar(agents, contato, motivo=corpo.motivo, ator_user_id=_uid(auth))}
 
@@ -170,7 +171,7 @@ async def estado_da_conversa(
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
     org = _org(auth)
-    contato = svc.contato_da_conversa(client, org, connection_id, chat_id)
+    contato = (await anyio.to_thread.run_sync(lambda: svc.contato_da_conversa(client, org, connection_id, chat_id)))
     if contato is not None:
         julia_acesso.exigir_acesso(client, julia_acesso.contexto(auth, request), contato)
     return {"data": await svc.estado_do_contato(client_factory(org), str(contato["id"]) if contato else None)}

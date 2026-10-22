@@ -50,6 +50,7 @@ pattern``). ``user_id`` is written at creation as provenance and is never a
 scoping predicate. DI seams over patching per ``KB § PATTERNS/di-test-seam.md``.
 """
 from __future__ import annotations
+import anyio
 
 import asyncio
 import base64
@@ -335,7 +336,7 @@ def _status_from_session(
 
 # ─── CRUD ──────────────────────────────────────────────────────────────────
 @router.get("", response_model=list[WhatsAppConnectionOut])
-async def list_connections(
+def list_connections(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     # Migration 017 — optional ?marca_id= filter (was `client_id` until 046).
@@ -465,7 +466,7 @@ async def create_connection(
 
 
 @router.patch("/{connection_id}", response_model=WhatsAppConnectionOut)
-async def update_connection(
+def update_connection(
     connection_id: UUID,
     body: WhatsAppConnectionUpdate,
     auth: tuple = Depends(get_current_user_org),
@@ -527,7 +528,7 @@ async def update_connection(
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_connection(
+def delete_connection(
     connection_id: UUID,
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
@@ -573,7 +574,7 @@ async def get_connection_status(
 
 
 @router.get("/{connection_id}/api-key", response_model=WhatsAppConnectionApiKeyOut)
-async def reveal_connection_api_key(
+def reveal_connection_api_key(
     connection_id: UUID,
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
@@ -783,9 +784,9 @@ async def configure_connection_webhook(
             detail=f"WAHA webhook config failed: {exc}",
         ) from exc
     # Persist the last-wired webhook so the line remembers it across reloads.
-    store.update_connection(
+    (await anyio.to_thread.run_sync(lambda: store.update_connection(
         connection_id=connection_id, org_id=org_id, webhook_url=url
-    )
+    )))
     waha_status = result.get("status") if isinstance(result, dict) else None
     return WhatsAppWebhookResultOut(
         connection_id=connection_id,
@@ -956,11 +957,11 @@ async def mark_chat_read(
 
     chat_store: WhatsAppChatStore = chat_store_factory(org_id)
     try:
-        summary = chat_store.mark_read(
+        summary = (await anyio.to_thread.run_sync(lambda: chat_store.mark_read(
             connection_id=connection_id,
             chat_id=chat_id,
             up_to_message_id=body.up_to_message_id,
-        )
+        )))
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -1000,7 +1001,7 @@ async def _fire_send_seen(client: Any, *, chat_id: str, connection_id: UUID) -> 
 @router.get(
     "/{connection_id}/chats/{chat_id:path}/messages", response_model=MessagesPage
 )
-async def list_messages(
+def list_messages(
     connection_id: UUID,
     chat_id: str,
     limit: int = Query(default=50, ge=1, le=200),
@@ -1150,13 +1151,13 @@ async def send_message(
     # would not move until the echo webhook arrived — and on a connection whose
     # webhook is misconfigured, never.
     chat_store: WhatsAppChatStore = chat_store_factory(org_id)
-    summary = chat_store.record_message(
+    summary = (await anyio.to_thread.run_sync(lambda: chat_store.record_message(
         connection_id=connection_id,
         chat_id=chat_id,
         direction="outbound",
         body=texto,
         created_at=sent_at,
-    )
+    )))
 
     if getattr(record, "agente_leads_ativo", False):
         # maya-blocks / julia-v2 G1: a human's reply from the inbox on a Julia line can be the episode's first HUMAN
@@ -1213,7 +1214,7 @@ async def send_message(
 
 
 @router.put("/{connection_id}/auto-reply", response_model=AutoReplyToggleOut)
-async def toggle_auto_reply(
+def toggle_auto_reply(
     connection_id: UUID,
     body: AutoReplyToggleRequest,
     auth: tuple = Depends(get_current_user_org),

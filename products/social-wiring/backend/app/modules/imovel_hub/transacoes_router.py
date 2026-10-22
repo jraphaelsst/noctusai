@@ -37,7 +37,7 @@ def _admin(auth, request: Optional[Request], context: str):
 
 
 @router.get("")
-async def listar_route(
+def listar_route(
     vinculo_status: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -50,7 +50,7 @@ async def listar_route(
 
 
 @router.post("/{transacao_id}/confirmar")
-async def confirmar_route(
+def confirmar_route(
     transacao_id: UUID,
     body: ConfirmarBody,
     auth=Depends(get_current_user_org),
@@ -64,7 +64,7 @@ async def confirmar_route(
 
 
 @router.post("/{transacao_id}/rejeitar")
-async def rejeitar_route(
+def rejeitar_route(
     transacao_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
