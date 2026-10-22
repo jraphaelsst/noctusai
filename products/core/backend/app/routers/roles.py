@@ -30,6 +30,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException
 
 from app.database import get_admin_client
+from noctusai_lib.api.auth._blocking import run_blocking
 from app.dependencies import get_current_user
 from app.services.permissions import check_permission
 from app.schemas.roles import RoleCreate, RoleUpdate
@@ -61,12 +62,12 @@ KNOWN_PERMISSIONS = [
 
 async def _get_user_profile(db, user_id: str) -> dict:
     """Fetch the noctus_users profile."""
-    profile = (
+    profile = await run_blocking(
         db.table("noctus_users")
         .select("id, org_id, org_role, role")
         .eq("id", user_id)
         .single()
-        .execute()
+        .execute
     )
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")

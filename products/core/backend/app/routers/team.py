@@ -49,6 +49,7 @@ from app.schemas.team import (
     ProductAccessUpdate,
     TeamMemberRoleUpdate,
 )
+from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.effective_org import platform_staff_role
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 from noctusai_lib.primitives.roles import ADMIN_ROLES
@@ -69,12 +70,12 @@ router = APIRouter(prefix="/api/team", tags=["Team"])
 
 async def _get_user_profile(db, user_id: str) -> dict:
     """Fetch the noctus_users profile for a given Supabase auth user ID."""
-    profile = (
+    profile = await run_blocking(
         db.table("noctus_users")
         .select("id, org_id, org_role, role")
         .eq("id", user_id)
         .single()
-        .execute()
+        .execute
     )
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
@@ -94,19 +95,29 @@ async def _team_scope(user, db, org_id: Optional[str], permission: Optional[str]
       profile with ``org_role`` = their role in THAT org (the grant/touch rules read it).
 
     ``platform_role`` is ``owner`` | ``admin`` for platform staff, else ``None``."""
-    profile = await _get_user_profile(db, user.id)
-    staff = platform_staff_role(db, user.id)
+    # Independent reads run together, ONE worker hop (was profile -> staff -> perms -> ... sequential,
+    # all parked on the loop). Profile is first so its 404 still wins over any later failure.
+    thunks = [
+        lambda: db.table("noctus_users").select("id, org_id, org_role, role").eq("id", user.id).single().execute().data,
+        lambda: platform_staff_role(db, user.id),
+    ]
+    results = await run_blocking(run_parallel, *thunks)
+    profile, staff = results[0], results[1]
+    if not profile:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
     if org_id is None or str(org_id) == str(profile["org_id"]):
         target = profile["org_id"]
-        if permission is not None and staff is None and not await check_permission(user.id, target, permission):
-            raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
+        if permission is not None and staff is None:
+            if not await check_permission(user.id, target, permission):
+                raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
         return profile, target, staff
     org_id = str(org_id)
     if staff is not None:
-        if not db.table("organizations").select("id").eq("id", org_id).execute().data:
+        org_rows = await run_blocking(db.table("organizations").select("id").eq("id", org_id).execute)
+        if not org_rows.data:
             raise HTTPException(status_code=404, detail="Organização não encontrada")
         return {**profile, "org_id": org_id}, org_id, staff
-    membership = team_memberships.get_membership(db, org_id, user.id)
+    membership = await run_blocking(team_memberships.get_membership, db, org_id, user.id)
     if not membership or membership.get("status") != "active" or membership.get("org_role") not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail=_NO_TEAM_PERMISSION)
     return {**profile, "org_id": org_id, "org_role": membership.get("org_role")}, org_id, None

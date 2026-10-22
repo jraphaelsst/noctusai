@@ -19,6 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session.scopes import resolve_org_role_for
@@ -69,11 +70,19 @@ async def require_spend_reader(
     alvo = _normalizar_org(org_id)
     if alvo is None:
         raise HTTPException(status_code=403, detail=_ACESSO_NEGADO)
-    if resolve_platform_admin_role(db, ctx.user_id) == "admin":
+    # The two role reads are independent: run them together in ONE worker hop (wall time = the
+    # slower one, not the sum). The org-role read is only CONSULTED when the caller is not a
+    # platform admin, so a platform admin's verdict is unchanged.
+    plataforma, papel_org = await run_blocking(
+        run_parallel,
+        lambda: resolve_platform_admin_role(db, ctx.user_id),
+        # B3: the role IN the request's selected org (ctx.org_id), not the home-org role.
+        lambda: resolve_org_role_for(db, ctx, request),
+    )
+    if plataforma == "admin":
         papel = "admin"
     else:
-        # B3: the role IN the request's selected org (ctx.org_id), not the home-org role.
-        papel = resolve_org_role_for(db, ctx, request)
+        papel = papel_org
         mesma_org = bool(ctx.org_id) and _normalizar_org(str(ctx.org_id)) == alvo
         if not mesma_org or papel not in PRODUCT_ADMIN_ROLES:
             raise HTTPException(status_code=403, detail=_ACESSO_NEGADO)

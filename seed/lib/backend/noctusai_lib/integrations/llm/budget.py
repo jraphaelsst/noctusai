@@ -41,6 +41,8 @@ import os
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+import anyio.to_thread
+
 from .exceptions import LLMBudgetExceeded, LLMBudgetNotConfigured
 
 logger = logging.getLogger(__name__)
@@ -166,15 +168,20 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
         return None
     try:
         db = _admin_client_factory()
-        result = (
-            db.schema(_BUDGET_SCHEMA)
-            .table("org_settings")
-            .select("value")
-            .eq("org_id", org_id)
-            .eq("key", _BUDGET_KEY)
-            .limit(1)
-            .execute()
-        )
+        # Off the event loop. The cross-schema `.schema()` call stays inside ONE thunk so the
+        # re-pin and the query happen back to back on the same worker.
+        def _read():
+            return (
+                db.schema(_BUDGET_SCHEMA)
+                .table("org_settings")
+                .select("value")
+                .eq("org_id", org_id)
+                .eq("key", _BUDGET_KEY)
+                .limit(1)
+                .execute()
+            )
+
+        result = await anyio.to_thread.run_sync(_read)
     except Exception as exc:
         if _is_missing_table(exc):
             _raise_not_configured(exc)
@@ -210,28 +217,34 @@ async def compute_spend_usd(
     if not start_iso or not end_iso:
         start_iso, end_iso = _month_window()
     db = _admin_client_factory()
-    total = 0.0
-    for product, schema in _PRODUCT_SCHEMAS.items():
-        try:
-            result = (
-                db.schema(schema)
-                .table("llm_usage")
-                .select("cost_estimate_usd")
-                .eq("org_id", org_id)
-                .gte("at", start_iso)
-                .lte("at", end_iso)
-                .limit(50_000)
-                .execute()
-            )
-            for row in result.data or []:
-                total += float(row.get("cost_estimate_usd") or 0)
-        except Exception as exc:
-            logger.warning(
-                "llm.budget.compute_spend_usd: %s/%s read failed for org=%s: %s",
-                product, schema, org_id, exc,
-            )
-            continue
-    return total
+
+    # Sequential on purpose, but in ONE worker thread (not parked on the loop): `.schema(x)`
+    # mutates the shared client, so running the per-schema reads concurrently would race.
+    def _sum() -> float:
+        total = 0.0
+        for product, schema in _PRODUCT_SCHEMAS.items():
+            try:
+                result = (
+                    db.schema(schema)
+                    .table("llm_usage")
+                    .select("cost_estimate_usd")
+                    .eq("org_id", org_id)
+                    .gte("at", start_iso)
+                    .lte("at", end_iso)
+                    .limit(50_000)
+                    .execute()
+                )
+                for row in result.data or []:
+                    total += float(row.get("cost_estimate_usd") or 0)
+            except Exception as exc:
+                logger.warning(
+                    "llm.budget.compute_spend_usd: %s/%s read failed for org=%s: %s",
+                    product, schema, org_id, exc,
+                )
+                continue
+        return total
+
+    return await anyio.to_thread.run_sync(_sum)
 
 
 async def compute_status(org_id: str) -> dict[str, Any]:

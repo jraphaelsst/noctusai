@@ -23,6 +23,7 @@ DSAR / right-to-erasure workflows.
 """
 from __future__ import annotations
 
+import anyio.to_thread
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -203,11 +204,12 @@ async def fetch_user_decisions(db: Any, user_id: str) -> dict[str, dict[str, Any
     if not db or not user_id:
         return {}
     try:
-        result = (
+        # Sync PostgREST call: off the event loop (it parks every concurrent request otherwise).
+        result = await anyio.to_thread.run_sync(
             db.table("ai_consent")
             .select("feature_key, granted, granted_at, revoked_at, rationale_pt, updated_at")
             .eq("user_id", str(user_id))
-            .execute()
+            .execute
         )
     except Exception as exc:
         logger.warning("ai_consent.fetch_user_decisions failed: %s", exc)
@@ -283,10 +285,10 @@ async def upsert_decision(
     else:
         payload["revoked_at"] = now_iso
     try:
-        result = (
+        result = await anyio.to_thread.run_sync(
             db.table("ai_consent")
             .upsert(payload, on_conflict="user_id,feature_key")
-            .execute()
+            .execute
         )
     except Exception as exc:
         logger.warning(

@@ -22,6 +22,7 @@ from typing import Optional, Tuple, List
 
 from fastapi import Depends, Header, HTTPException, Request, Response
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.domain.licensing import licensed_product_ids, org_has_license_for_product_id
@@ -73,7 +74,9 @@ async def get_current_admin(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
+    profile = await run_blocking(
+        db.table("noctus_users").select("role").eq("id", user.id).single().execute
+    )
     if not profile.data or profile.data.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
     # Assurance gate (platform-admin-mfa M5): policy `off` = no-op; warn/enforce
@@ -97,7 +100,9 @@ async def get_website_editor(authorization: Optional[str] = Header(None)) -> Tup
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
+    profile = await run_blocking(
+        db.table("noctus_users").select("role").eq("id", user.id).single().execute
+    )
     role = profile.data.get("role") if profile.data else None
     if role not in ("admin", "marketing"):
         raise HTTPException(status_code=403, detail="Acesso restrito à equipe do site")
@@ -116,40 +121,39 @@ async def get_current_user_with_permissions(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    profile = (
-        db.table("noctus_users")
-        .select("org_id, org_role")
-        .eq("id", user.id)
-        .single()
-        .execute()
-    )
-    if not profile.data:
-        return user, token, []
-
-    org_id = profile.data.get("org_id")
-    role_slug = profile.data.get("org_role", "member")
-
-    permissions: List[str] = []
-    role_record = (
-        db.table("roles")
-        .select("permissions")
-        .eq("slug", role_slug)
-        .eq("org_id", org_id)
-        .execute()
-    )
-
-    if not role_record.data:
+    def _load() -> Optional[List[str]]:
+        profile = (
+            db.table("noctus_users")
+            .select("org_id, org_role")
+            .eq("id", user.id)
+            .single()
+            .execute()
+        )
+        if not profile.data:
+            return None
+        org_id = profile.data.get("org_id")
+        role_slug = profile.data.get("org_role", "member")
         role_record = (
             db.table("roles")
             .select("permissions")
             .eq("slug", role_slug)
-            .is_("org_id", "null")
+            .eq("org_id", org_id)
             .execute()
         )
+        if not role_record.data:
+            role_record = (
+                db.table("roles")
+                .select("permissions")
+                .eq("slug", role_slug)
+                .is_("org_id", "null")
+                .execute()
+            )
+        return role_record.data[0].get("permissions", []) if role_record.data else []
 
-    if role_record.data:
-        permissions = role_record.data[0].get("permissions", [])
-
+    # One worker-thread hop for the dependent chain (profile -> role): the loop is never parked.
+    permissions = await run_blocking(_load)
+    if permissions is None:
+        return user, token, []
     return user, token, permissions
 
 
@@ -160,7 +164,9 @@ async def get_org_id(user) -> str:
     which is a cache populated by `/api/sso/session`). Raises 404 if missing.
     """
     db = get_admin_client()
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
+    profile = await run_blocking(
+        db.table("noctus_users").select("org_id").eq("id", user.id).single().execute
+    )
     if not profile.data or not profile.data.get("org_id"):
         raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
     return profile.data["org_id"]

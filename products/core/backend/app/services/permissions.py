@@ -8,6 +8,7 @@ import logging
 from typing import List, Optional
 from fastapi import Header, HTTPException
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
@@ -15,11 +16,9 @@ from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 logger = logging.getLogger(__name__)
 
 
-async def get_user_permissions(user_id: str) -> List[str]:
-    """Fetch the permission list for a user based on their org role."""
-    db = get_admin_client()
-
-    # Get user profile with role slug
+def _load_profile_and_permissions(db, user_id: str) -> Optional[List[str]]:
+    """SYNC (run it via ``run_blocking``): the caller's permissions -- profile, then the role row
+    (org-specific first, then the system role). ``None`` when there is no profile."""
     profile = (
         db.table("noctus_users")
         .select("org_id, org_role")
@@ -28,7 +27,7 @@ async def get_user_permissions(user_id: str) -> List[str]:
         .execute()
     )
     if not profile.data:
-        return []
+        return None
 
     org_id = profile.data.get("org_id")
     role_slug = profile.data.get("org_role", "member")
@@ -41,7 +40,6 @@ async def get_user_permissions(user_id: str) -> List[str]:
         .eq("org_id", org_id)
         .execute()
     )
-
     if not role_record.data:
         # Fallback to system role (org_id IS NULL)
         role_record = (
@@ -51,11 +49,30 @@ async def get_user_permissions(user_id: str) -> List[str]:
             .is_("org_id", "null")
             .execute()
         )
-
     if not role_record.data:
         return []
-
     return role_record.data[0].get("permissions", [])
+
+
+async def get_user_permissions(user_id: str) -> List[str]:
+    """Fetch the permission list for a user based on their org role (off the event loop)."""
+    permissions = await run_blocking(_load_profile_and_permissions, get_admin_client(), user_id)
+    return permissions or []
+
+
+def _grants(permissions: List[str], permission_slug: str) -> bool:
+    """Pure: does ``permissions`` grant ``permission_slug`` (wildcard, exact, manage=>read, readonly)?"""
+    if "*" in permissions:
+        return True
+    if permission_slug in permissions:
+        return True
+    resource = permission_slug.split(":")[0] if ":" in permission_slug else permission_slug
+    action = permission_slug.split(":")[1] if ":" in permission_slug else ""
+    if action == "read" and f"{resource}:manage" in permissions:
+        return True
+    if ":readonly" in permission_slug and permission_slug.replace(":readonly", "") in permissions:
+        return True
+    return False
 
 
 async def check_permission(user_id: str, org_id: str, permission_slug: str) -> bool:
@@ -70,33 +87,7 @@ async def check_permission(user_id: str, org_id: str, permission_slug: str) -> b
     Returns:
         True if the user has the permission, False otherwise.
     """
-    permissions = await get_user_permissions(user_id)
-
-    # Wildcard grants everything
-    if "*" in permissions:
-        return True
-
-    # Exact match
-    if permission_slug in permissions:
-        return True
-
-    # Check hierarchical match: "team:manage" satisfies "team:read"
-    # A "manage" permission on a resource implies "read" on the same resource
-    resource = permission_slug.split(":")[0] if ":" in permission_slug else permission_slug
-    action = permission_slug.split(":")[1] if ":" in permission_slug else ""
-
-    if action == "read":
-        # "resource:manage" implies "resource:read"
-        if f"{resource}:manage" in permissions:
-            return True
-
-    # "products:access" implies "products:access:readonly"
-    if ":readonly" in permission_slug:
-        base = permission_slug.replace(":readonly", "")
-        if base in permissions:
-            return True
-
-    return False
+    return _grants(await get_user_permissions(user_id), permission_slug)
 
 
 async def require_org_permission(
@@ -129,7 +120,7 @@ async def require_org_permission(
     """
     if await check_permission(user_id, org_id, permission_slug):
         return
-    if resolve_platform_admin_role(get_admin_client(), user_id) == "admin":
+    if await run_blocking(resolve_platform_admin_role, get_admin_client(), user_id) == "admin":
         return
     raise HTTPException(
         status_code=403,
@@ -153,18 +144,12 @@ def require_permission(slug: str):
         user, token = await get_current_user(authorization)
         db = get_admin_client()
 
-        profile = (
-            db.table("noctus_users")
-            .select("org_id")
-            .eq("id", user.id)
-            .single()
-            .execute()
-        )
-        if not profile.data:
+        # ONE worker hop, ONE profile read (the old shape read the profile twice: here and again
+        # inside check_permission) -> profile + role row.
+        permissions = await run_blocking(_load_profile_and_permissions, db, user.id)
+        if permissions is None:
             raise HTTPException(status_code=403, detail="Perfil não encontrado")
-
-        org_id = profile.data["org_id"]
-        has_perm = await check_permission(user.id, org_id, slug)
+        has_perm = _grants(permissions, slug)
 
         if not has_perm:
             raise HTTPException(

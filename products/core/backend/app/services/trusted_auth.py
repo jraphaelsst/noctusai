@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, Response
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
@@ -67,8 +68,8 @@ async def get_trusted_auth(
     none); every org-scoped dependency refuses that case itself.
     """
     rows = (
-        db.table("noctus_users").select("org_id").eq("id", str(user.id)).limit(1).execute().data or []
-    )
+        await run_blocking(db.table("noctus_users").select("org_id").eq("id", str(user.id)).limit(1).execute)
+    ).data or []
     org_id = rows[0].get("org_id") if rows else None
     return AuthContext(
         org_id=str(org_id) if org_id else None,  # type: ignore[arg-type]
@@ -91,7 +92,7 @@ async def require_platform_admin_dep(
 
     Assurance-gated like every product's admin factories (policy `off` = no-op).
     """
-    if resolve_platform_admin_role(db, ctx.user_id) != "admin":
+    if await run_blocking(resolve_platform_admin_role, db, ctx.user_id) != "admin":
         raise HTTPException(
             status_code=403,
             detail={"detail": "Restrito a administradores da plataforma NoctusAI", "code": "platform_admin_required"},
@@ -115,7 +116,7 @@ async def require_org_admin_dep(
     a `manager` passes at aal1 (owner decision `plat-mfa-who`, 2026-10-05).
     """
     # B3: the role IN the request's selected org (ctx.org_id), not the home-org role.
-    role = resolve_org_role_for(db, ctx, request) if ctx.org_id else None
+    role = await run_blocking(resolve_org_role_for, db, ctx, request) if ctx.org_id else None
     if not ctx.org_id or role not in MANAGE_TEAM_ROLES:
         raise HTTPException(
             status_code=403,
