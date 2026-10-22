@@ -492,6 +492,14 @@ class PdfTextLayer:
         return tuple(p.number for p in self.pages if not p.is_substantive)
 
 
+def _decifrar_pagina(text: str) -> tuple[str, bool]:
+    """Undo a font-shifted text layer; (text, needs_ocr)."""
+    from noctusai_lib.integrations.media.camada_deslocada import decifrar_camada_deslocada
+
+    decodificado, _shift, precisa_ocr = decifrar_camada_deslocada(text)
+    return (decodificado, precisa_ocr)
+
+
 def _classify_page(text: str, image_coverage: float) -> tuple[bool, str]:
     """Decide one page. Order matters.
 
@@ -502,6 +510,8 @@ def _classify_page(text: str, image_coverage: float) -> tuple[bool, str]:
     """
     conteudo = strip_provenance_stamps(text)
     chars = len(conteudo)
+    if chars and _decifrar_pagina(conteudo)[1]:
+        return (False, "enciphered text layer")
 
     # A page that carried text and has none left said nothing: it is a scan
     # with a verification stamp printed on it. Decided FIRST because it is
@@ -589,6 +599,7 @@ def classify_pdf_text_layer(pdf_bytes: bytes) -> PdfTextLayer:
             except Exception:
                 logger.debug("PyMuPDF: get_text failed on page %d", index + 1, exc_info=True)
                 text = ""
+            text = _decifrar_pagina(text)[0]
             substantive, reason = _classify_page(text, _page_image_coverage(page))
             pages.append(
                 PdfPage(
@@ -609,7 +620,7 @@ def classify_pdf_text_layer(pdf_bytes: bytes) -> PdfTextLayer:
 def _classify_without_pymupdf(pdf_bytes: bytes) -> PdfTextLayer:
     """Whole-document fallback when per-page structure is unavailable."""
     text, tooling = _extract_pdf_text_with_signal(pdf_bytes)
-    limpo = (text or "").strip()
+    limpo = _decifrar_pagina((text or "").strip())[0]
     if not limpo:
         return PdfTextLayer(pages=(), tooling_available=tooling)
     substantive, reason = _classify_page(limpo, 0.0)
