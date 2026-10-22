@@ -45,6 +45,9 @@ export interface CertidaoParteCelula {
   /** The last re-read: in flight, and what it found but did not write. */
   releitura?: CertidaoReleitura | null;
   arquivo_nome: string | null;
+  /** `metadados_pdf`: `emitida_em` was INFERRED from the PDF CreationDate (the
+   *  consulta printed no date); null = printed / registry / typed. */
+  emitida_em_origem?: "metadados_pdf" | null;
   origem: "api" | "ia" | "manual" | null;
   confirmado: boolean;
   analise_ia: string | null;
@@ -114,6 +117,10 @@ export interface CertidaoParteTotais {
   nao_constam: number;
   constam: number;
   pendente: number;
+  /** Cells being read right now that hold NO value yet — in flight, not pendências. */
+  processando?: number;
+  /** Cells being RE-read that keep their previous value (also counted in their color bucket). */
+  relendo?: number;
   vencidas: number;
   /** Empty cells that are optional for this deal — not counted as pendentes. */
   opcionais?: number;

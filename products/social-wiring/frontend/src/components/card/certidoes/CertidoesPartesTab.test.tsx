@@ -678,3 +678,102 @@ describe("subtabs by grupo + antigos proprietários", () => {
     expect((await screen.findByTestId("antigos-dispensa-403")).textContent).toContain("Sem permissão");
   });
 });
+
+describe("certidões: célula manual, releitura honesta, data inferida", () => {
+  it("Editar writes the saved row into the grid at once — no waiting for the refetch (owner: row kept '—')", async () => {
+    mockGet.mockResolvedValueOnce(resp([parte()]));
+    mockPost.mockResolvedValue({ resultado_id: "res-7", consulta_id: "con-7", criado: true });
+    // The server's answer for the typed (complete) cell.
+    mockPatch.mockResolvedValue({
+      id: "res-7", status: "sucesso", resultado: "negativa", numero: "ABC-123",
+      emitida_em: "2026-10-20", resultado_origem: "manual", confirmado_em: "2026-10-22T00:00:00Z",
+    });
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.getByTestId("parte-resumo-c:cli-1").textContent).toContain("1 pendente");
+    fireEvent.click(screen.getByTestId("parte-digitar-c:cli-1-serasa"));
+    fireEvent.change(await screen.findByLabelText("Número"), { target: { value: "ABC-123" } });
+    fireEvent.change(screen.getByLabelText("Emitida em"), { target: { value: "2026-10-20" } });
+    // The settle refetch NEVER lands here: whatever shows is the cache write.
+    mockGet.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByText("Confirmar"));
+    await waitFor(() => expect(screen.getByTestId("parte-numero-c:cli-1-serasa").textContent).toContain("ABC-123"));
+    expect(screen.getByTestId("parte-chip-c:cli-1-serasa").textContent).toContain("Negativa");
+    // A complete typed cell is done: no longer counted as a pendência.
+    expect(screen.getByTestId("parte-resumo-c:cli-1").textContent).toContain("2/2 ok");
+    expect(screen.getByTestId("parte-resumo-c:cli-1").textContent).not.toContain("pendente");
+  });
+
+  it("'Voltar à leitura automática' only on hand-edited cells; it POSTs and shows the cell as re-reading", async () => {
+    const manual = cel({
+      status: "nao_constam", resultado: "negativa", status_processamento: "sucesso", resultado_id: "res-1",
+      numero: "N-1", emitida_em: "2026-10-20", origem: "manual", confirmado: true,
+    });
+    mockGet.mockResolvedValueOnce(resp([parte({
+      totais: { nao_constam: 1, constam: 0, pendente: 1, vencidas: 0 },
+      celulas: { cnd_federal: manual, serasa: cel({ tipo: "serasa" }) },
+    })]));
+    mockPost.mockResolvedValue({
+      id: "res-1", status: "processando", resultado: null, numero: null, emitida_em: null,
+      resultado_origem: null, confirmado_em: null, releitura: { estado: "em_andamento", divergencias: [] },
+    });
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.queryByTestId("parte-voltar-automatico-c:cli-1-serasa")).toBeNull();
+    mockGet.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByTestId("parte-voltar-automatico-c:cli-1-cnd_federal"));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/certidoes/resultados/res-1/voltar-automatico", {}));
+    await waitFor(() => expect(screen.getByTestId("parte-chip-c:cli-1-cnd_federal").textContent).toContain("Processando"));
+    expect(screen.queryByTestId("parte-voltar-automatico-c:cli-1-cnd_federal")).toBeNull();
+    expect(screen.queryByTestId("parte-digitado-c:cli-1-cnd_federal")).toBeNull();
+  });
+
+  it("a cell being re-read is counted as 'relendo', never as pendente, with a progress bar", async () => {
+    const lendo = (id: string, over: Partial<CertidaoParteCelula> = {}) =>
+      cel({ status_processamento: "processando", resultado_id: id, ...over });
+    mockGet.mockResolvedValue(resp([parte({
+      totais: { nao_constam: 0, constam: 0, pendente: 0, processando: 2, relendo: 0, vencidas: 0 },
+      celulas: { cnd_federal: lendo("a"), serasa: lendo("b", { tipo: "serasa" }) },
+    })]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    const resumo = screen.getByTestId("parte-resumo-c:cli-1").textContent ?? "";
+    expect(resumo).toContain("relendo 2/2");
+    expect(resumo).not.toContain("pendente");
+    expect(screen.getByTestId("parte-relendo-progresso-c:cli-1")).toBeTruthy();
+  });
+
+  it("a RE-read keeps the previous value visible", async () => {
+    mockGet.mockResolvedValue(resp([parte({
+      totais: { nao_constam: 1, constam: 0, pendente: 0, processando: 0, relendo: 1, vencidas: 0 },
+      celulas: {
+        cnd_federal: cel({
+          status: "nao_constam", resultado: "negativa", status_processamento: "processando",
+          resultado_id: "a", numero: "N-9", emitida_em: "2026-10-01",
+        }),
+        serasa: cel({ tipo: "serasa", status: "na", texto: "N/A" }),
+      },
+    })]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.getByTestId("parte-numero-c:cli-1-cnd_federal").textContent).toContain("N-9");
+    expect(screen.getByTestId("parte-resumo-c:cli-1").textContent).toContain("1/1 ok · relendo 1/1");
+  });
+
+  it("flags a date inferred from the PDF metadata so it never reads as a printed one", async () => {
+    mockGet.mockResolvedValue(resp([parte({
+      celulas: {
+        cnd_federal: cel({ status: "nao_constam", resultado: "negativa", status_processamento: "sucesso", resultado_id: "a", emitida_em: "2026-02-10", emitida_em_origem: "metadados_pdf" }),
+        serasa: cel({ tipo: "serasa" }),
+      },
+    })]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.getByTestId("parte-data-inferida-c:cli-1-cnd_federal").textContent).toContain("metadados do PDF");
+    expect(screen.queryByTestId("parte-data-inferida-c:cli-1-serasa")).toBeNull();
+  });
+});

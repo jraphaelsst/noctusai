@@ -13,6 +13,7 @@
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
     POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline (async extraction)
     POST   /api/certidoes/resultados/{id}/reler          re-read the stored PDF (lock kept, audited)
+    POST   /api/certidoes/resultados/{id}/voltar-automatico  release a hand-edited cell back to the automatic source
     GET    /api/certidoes/fila-tjsp                      queue + live cooldown
     POST   /api/certidoes/consultas/{id}/vincular-parte  attach to an atendimento_parte
     GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
@@ -1186,6 +1187,43 @@ async def reler_certidao(
 
     publico = {k: v for k, v in resultado.items() if k != "api_response"}
     return success_response({**publico, **update_data})
+
+
+@router.post("/resultados/{resultado_id}/voltar-automatico")
+async def voltar_automatico(
+    resultado_id: str,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """"Voltar à leitura automática": a cell edited by hand is locked against
+    "Reler" and the Crednet; this clears the human's values + lock and re-runs
+    the cell's automatic source (stored PDF re-read, Crednet re-applied for the
+    serasa cell, registry response re-derived) — `service.
+    voltar_a_leitura_automatica`. 404 when absent from this org; 409 when the
+    cell is already being read. Returns the cell after the clear."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    try:
+        async with httpx.AsyncClient() as client:
+            saida = await service.voltar_a_leitura_automatica(
+                db, org_id, resultado_id, storage=storage, http_client=client,
+                usuario_id=_user.id,
+            )
+    except service.ReleituraRecusada as exc:
+        raise HTTPException(status_code=409, detail=exc.mensagem) from exc
+    if saida is None:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    row, kwargs = saida
+    if kwargs is not None:
+        background_tasks.add_task(svc.executar_releitura, **kwargs)
+    logger.info(
+        "certidoes: resultado devolvido à leitura automática user_id=%s org_id=%s resultado_id=%s",
+        _user.id, org_id, resultado_id,
+    )
+    return success_response({k: v for k, v in row.items() if k != "api_response"})
 
 
 @router.get("/fila-tjsp")

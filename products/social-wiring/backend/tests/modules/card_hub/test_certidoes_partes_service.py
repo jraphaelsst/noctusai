@@ -210,11 +210,11 @@ class TestMontar:
             "chave", "kind", "tipo_pessoa", "rotulo", "lado", "grupo", "papel", "titular", "nome",
             "documento", "cliente_id", "empresa_id", "parte_id", "totais", "celulas",
         }
-        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "vencidas", "opcionais"}
+        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "processando", "relendo", "vencidas", "opcionais"}
         assert set(parte["celulas"]["cnd_federal"]) == {
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
-            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem",
+            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem", "emitida_em_origem",
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia", "opcional",
         }
 
@@ -315,8 +315,8 @@ class TestMontar:
         assert col_pf["celulas"]["fgts_regularidade"]["status"] == "na"
         assert col_pj["celulas"]["serasa"]["status"] == "na"
         # 13 lines minus the one N/A each; all absent ⇒ pendente.
-        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0, "opcionais": 0}
-        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "vencidas": 0, "opcionais": 0}
+        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "vencidas": 0, "opcionais": 0}
+        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "vencidas": 0, "opcionais": 0}
 
     def test_crf_fgts_e_opcional_por_padrao_e_pendente_quando_exigido(self):
         """Owner 2026-10-21: an EMPTY FGTS cell reads optional unless the deal opts in."""

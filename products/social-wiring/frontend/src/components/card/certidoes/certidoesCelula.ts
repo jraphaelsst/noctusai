@@ -107,16 +107,35 @@ export function linkDeSuporte(
   return null;
 }
 
-/** "9/13 ok · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped. */
+/** Cells of the party being read right now (no value yet + keeping the previous one). */
+export function lendoDaParte(p: CertidaoParte): number {
+  return (p.totais.processando ?? 0) + (p.totais.relendo ?? 0);
+}
+
+/** How many of the party's cells there are to read (the progress denominator). */
+export function totalDaParte(p: CertidaoParte): number {
+  const { nao_constam, constam, pendente, processando } = p.totais;
+  return nao_constam + constam + pendente + (processando ?? 0);
+}
+
+/** "9/13 ok · relendo 2/13 · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped.
+ *  A cell being read is NEVER a pendente: it is counted as "relendo". */
 export function resumoDaParte(p: CertidaoParte): string {
   const { nao_constam, constam, pendente, vencidas, opcionais } = p.totais;
-  const total = nao_constam + constam + pendente;
+  const total = totalDaParte(p);
+  const lendo = lendoDaParte(p);
   const partes = [`${nao_constam}/${total} ok`];
+  if (lendo) partes.push(`relendo ${lendo}/${total}`);
   if (constam) partes.push(`${constam} com apontamento`);
   if (pendente) partes.push(`${pendente} ${pendente === 1 ? "pendente" : "pendentes"}`);
   if (opcionais) partes.push(`${opcionais} ${opcionais === 1 ? "opcional" : "opcionais"}`);
   if (vencidas) partes.push(`${vencidas} ${vencidas === 1 ? "vencida" : "vencidas"} p/ contrato`);
   return partes.join(" · ");
+}
+
+/** The cell holds values a human typed/confirmed — "Voltar à leitura automática" applies. */
+export function podeVoltarAoAutomatico(c: CertidaoParteCelula): boolean {
+  return !!c.resultado_id && c.status !== "na" && (c.origem === "manual" || c.confirmado) && !relendoCelula(c);
 }
 
 /** The party's document in its canonical punctuated form (the ONE identifier

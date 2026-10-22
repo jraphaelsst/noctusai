@@ -44,7 +44,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Sequence
 
 import httpx
@@ -78,7 +78,12 @@ from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 from app.modules.card_hub.contrato_gerador import certidao_pcen
 from app.modules.certidoes import aprendizado, cost_ledger, feed_parte
-from app.modules.certidoes.cenprot import CenprotEstrutura, estruturar_cenprot
+from app.modules.certidoes.cenprot import (
+    ORIGEM_METADADOS_PDF,
+    CenprotEstrutura,
+    data_plausivel_dos_metadados,
+    estruturar_cenprot,
+)
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
     provider_api_key,
@@ -124,7 +129,7 @@ RESULTADO_COLUNAS_SEM_TEXTO = (
     "arquivo_url,arquivo_nome,api_response,erro_mensagem,api_requested_at,"
     "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
     "resultado_origem,confirmado_por,confirmado_em,tem_transcricao,"
-    "estrutura_erro,estrutura_tentativas,releitura,"
+    "estrutura_erro,estrutura_tentativas,releitura,emitida_em_origem,"
     "pcen_ciente_por,pcen_ciente_em,pcen_ciente_validade,pcen_duvida_por,pcen_duvida_em"
 )
 
@@ -2614,6 +2619,7 @@ async def process_manual_upload(
         # and the extraction that follows repopulates them.
         "numero": None,
         "emitida_em": None,
+        "emitida_em_origem": None,
         "validade_ate": None,
         "resultado": None,
         "resultado_origem": None,
@@ -2622,6 +2628,50 @@ async def process_manual_upload(
     }
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
     return update_data
+
+
+#: Consulta types whose date IS the consulta date: when the document's text
+#: carries none, the PDF metadata CreationDate (the moment it was printed)
+#: stands in — recorded as `emitida_em_origem='metadados_pdf'`.
+TIPOS_DATA_DOS_METADADOS = frozenset({"cenprot", "serasa"})
+
+
+def _referencia_da_consulta(db, consulta_id: str) -> Optional[date]:
+    try:
+        rows = (
+            db.table(CONSULTAS).select("created_at").eq("id", consulta_id).execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error("Consulta %s: created_at ilegível: %s", consulta_id, exc, exc_info=True)
+        return None
+    criada = rows[0].get("created_at") if rows else None
+    if not criada:
+        return None
+    try:
+        return datetime.fromisoformat(str(criada).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _aplicar_data_dos_metadados(
+    destino: dict, pdf_bytes: bytes, tipo: Optional[str], consulta_id: str, db,
+) -> None:
+    """A consulta read that yielded a protocolo/result but NO date falls back
+    to the PDF CreationDate (inside the CENPROT plausibility window) and says
+    so in `emitida_em_origem`. Never overrides a read date; a read date resets
+    the marker. Needs an identity-bearing read (`numero`/`resultado`) so a
+    refused document (another party's) never gains a date."""
+    if tipo not in TIPOS_DATA_DOS_METADADOS:
+        return
+    if destino.get("emitida_em"):
+        destino["emitida_em_origem"] = None
+        return
+    if not (destino.get("numero") or destino.get("resultado")):
+        return
+    dia = data_plausivel_dos_metadados(pdf_bytes, _referencia_da_consulta(db, consulta_id))
+    if dia is not None:
+        destino["emitida_em"] = dia.isoformat()
+        destino["emitida_em_origem"] = ORIGEM_METADADOS_PDF
 
 
 async def _aplicar_leitura_cenprot(
@@ -2881,6 +2931,9 @@ async def process_manual_extraction(
             destino, pdf_bytes, resultado_id, consulta_id, nome_display,
             org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
         )
+
+    if destino is not None:
+        _aplicar_data_dos_metadados(destino, pdf_bytes, tipo, consulta_id, db)
 
     if releitura:
         divergencias = (
@@ -3407,6 +3460,7 @@ async def _reler_emissao(
                 lido, pdf_bytes, resultado_id, consulta_id, nome_display,
                 org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
             )
+        _aplicar_data_dos_metadados(lido, pdf_bytes, tipo, consulta_id, db)
     except Exception as exc:  # noqa: BLE001 - background job must not die
         logger.error(
             "Certidão %s (resultado %s): releitura — leitura estruturada "
@@ -3428,6 +3482,8 @@ async def _reler_emissao(
             patch[item["campo"]] = item["valor_lido"]
         else:
             divergencias.append(item)
+    if "emitida_em" in patch and tipo in TIPOS_DATA_DOS_METADADOS:
+        patch["emitida_em_origem"] = lido.get("emitida_em_origem")
     if "resultado" in patch:
         # `resultado_origem` tracks the VERDICT (see `_derive_estrutura`).
         patch["resultado_origem"] = (
@@ -4098,7 +4154,7 @@ def confirmar_resultado(
     """
     existing = (
         db.table(RESULTADOS)
-        .select("id")
+        .select("id, status, numero, emitida_em, resultado")
         .eq("id", resultado_id)
         .eq("org_id", str(org_id))
         .is_("excluida_em", "null")
@@ -4115,6 +4171,18 @@ def confirmar_resultado(
         # divergence (migration 196) shown against the old values is moot.
         "releitura": None,
     }
+    if "emitida_em" in campos:
+        # A typed/confirmed date is not the PDF-metadata inference anymore.
+        patch["emitida_em_origem"] = None
+    atual = existing[0]
+    if (
+        atual.get("status") not in ("processando", "na_fila", "sucesso")
+        and all((campos.get(c, atual.get(c)) for c in ("resultado", "numero", "emitida_em")))
+    ):
+        # A complete hand-entered certidão is DONE: left `pendente` it counted
+        # as a pendência forever (nothing will ever process a typed cell).
+        patch["status"] = "sucesso"
+        patch["erro_mensagem"] = None
     updated = (
         db.table(RESULTADOS)
         .update(patch)
@@ -4128,6 +4196,101 @@ def confirmar_resultado(
     row.pop("texto_extraido", None)
     row.pop("formatacao", None)
     return row
+
+
+#: Columns `voltar_a_leitura_automatica` needs of the cell it releases.
+_VOLTAR_COLUNAS = RELEITURA_COLUNAS + ", emitida_em_origem, confirmado_em, org_id"
+
+
+async def voltar_a_leitura_automatica(
+    db,
+    org_id,
+    resultado_id: str,
+    *,
+    storage: StorageBackend,
+    http_client: httpx.AsyncClient,
+    usuario_id: Any = None,
+) -> Optional[tuple[dict, Optional[dict]]]:
+    """Release a human-locked cell back to the automatic pipeline.
+
+    A cell edited by hand (`resultado_origem='manual'` / `confirmado_*`) is
+    protected from "Reler" and from the Crednet application, so without this
+    there is no way back. Clears the human's structured fields + lock, then
+    re-runs the automatic SOURCE of that cell:
+
+    - `serasa` cell of a CPF consulta with a Crednet on file → re-applied
+      exactly as a fresh cell gets it (`aplicar_crednet_pendente`: protocolo →
+      numero, consulta date → emitida_em, resultado from the pendências);
+    - a live emission (`api_response`) → fields re-derived from the registry
+      response (no API call, no billing);
+    - a stored PDF → `preparar_releitura` (the lock is gone, so the read
+      WRITES); the caller schedules `executar_releitura` with the returned
+      kwargs;
+    - nothing to read from → the cell is simply `pendente` again.
+
+    Returns `None` for an unknown resultado, else `(row_after_clear,
+    releitura_kwargs_or_None)`. Raises `ReleituraRecusada` only when the cell
+    is mid-read (re-reading it twice is the caller's 409).
+    """
+    rows = (
+        db.table(RESULTADOS)
+        .select(_VOLTAR_COLUNAS)
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    row = rows[0]
+    if releitura_em_andamento(row):
+        raise ReleituraRecusada(
+            RELEITURA_EM_ANDAMENTO, "Esta certidão já está sendo lida.",
+        )
+    tipo = row.get("tipo")
+    limpar: dict = {
+        "numero": None, "emitida_em": None, "emitida_em_origem": None,
+        "validade_ate": None, "resultado": None, "resultado_origem": None,
+        "confirmado_por": None, "confirmado_em": None, "releitura": None,
+        "erro_mensagem": None,
+    }
+    da_api = _estrutura_do_api_response(tipo, row.get("api_response")) if row.get("api_response") else {}
+    if da_api:
+        limpar.update({k: v for k, v in da_api.items() if k in CAMPOS_ESTRUTURADOS})
+    elif row.get("status") != "processando":
+        # Nothing automatic has produced values yet: the typed cell is empty
+        # again, not a `sucesso` with blanks.
+        limpar["status"] = "pendente"
+    db.table(RESULTADOS).update(limpar).eq("id", resultado_id).eq("org_id", str(org_id)).execute()
+    row = {**row, **limpar}
+
+    if tipo == "serasa":
+        consultas = (
+            db.table(CONSULTAS)
+            .select("id, tipo_documento, cliente_id, documento")
+            .eq("id", row["consulta_id"])
+            .eq("org_id", str(org_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if consultas and aplicar_crednet_pendente(db, org_id, consultas[0]):
+            fresco = (
+                db.table(RESULTADOS)
+                .select(RESULTADO_COLUNAS_SEM_TEXTO)
+                .eq("id", resultado_id)
+                .eq("org_id", str(org_id))
+                .limit(1)
+                .execute()
+            ).data or []
+            return (fresco[0] if fresco else row), None
+
+    if not pode_reler(row):
+        return row, None
+    update_data, pdf_bytes = await preparar_releitura(
+        row, org_id=str(org_id), db=db, storage=storage,
+        http_client=http_client, usuario_id=usuario_id,
+    )
+    return {**row, **update_data}, kwargs_extracao_releitura(row, pdf_bytes, str(org_id), db)
 
 
 def _log_resultado_acesso(db, org_id, resultado_id: str, usuario_id, acao: str) -> None:
@@ -4511,6 +4674,7 @@ __all__ = [
     "certidoes_por_parte",
     "check_required_credentials",
     "confirmar_resultado",
+    "voltar_a_leitura_automatica",
     "delete_storage_files",
     "is_storage_key",
     "divergencias_da_releitura",

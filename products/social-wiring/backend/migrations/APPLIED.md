@@ -618,3 +618,7 @@ Authored 2026-10-21. `julia_solicitacoes_titular` (org, lead `contato_id`, chat,
 ## 299 — participação decision (descartado_*) + obrigacoes_vendedor_local — NOT APPLIED
 
 Authored 2026-10-21 (contract scoring, deal 857). Adds `cliente_empresa_participacoes.descartado_por|descartado_em` (the Empresas section's "Não é do vendedor" — survives a Crednet re-read; `confirmado_*` already existed since 167) and `atendimento_negociacao_termos.obrigacoes_vendedor_local TEXT NOT NULL DEFAULT 'onus'` (vocabulary `onus|certidoes` enforced by the PUT body + service + generator gate, no DB CHECK). Additive + idempotent. Default `onus` keeps every existing contract byte-identical. Apply BEFORE deploying the image that mounts `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao` and writes the new termos key (an un-migrated DB 500s those writes).
+
+## 302 — certidao_resultados.emitida_em_origem — NOT APPLIED
+
+Authored 2026-10-22. Adds `certidao_resultados.emitida_em_origem TEXT` (NULL = printed/registry/typed; `metadados_pdf` = date inferred from the PDF CreationDate when a CENPROT/Serasa consulta text carries no date). Additive + idempotent. Apply BEFORE deploying the image that reads/writes it (`RESULTADO_COLUNAS_SEM_TEXTO` selects it; an un-migrated DB 500s the partes read).

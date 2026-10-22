@@ -45,6 +45,7 @@ from app.modules.card_hub.certidoes_matriz_service import (
     _linha_customizada,
     _linha_fixa,
     _status_da_celula,
+    _status_do_resultado,
 )
 from app.modules.card_hub.contrato_gerador import certidao_pcen
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
@@ -80,7 +81,9 @@ CONSULTAS = certidoes_svc.CONSULTAS
 RESULTADOS = certidoes_svc.RESULTADOS
 
 KINDS = ("pessoa", "empresa")
-_TOTAL_CHAVES = ("nao_constam", "constam", "pendente")
+_TOTAL_CHAVES = ("nao_constam", "constam", "pendente", "processando", "relendo")
+#: `status` values of a resultado whose read is running right now.
+_LENDO = ("processando", "na_fila")
 #: Checklist-order base for a custom row's resultado `ordem` — mirrors
 #: `matriz_custom_rows._RESULTADO_ORDEM_BASE`.
 _ORDEM_CUSTOM_BASE = 100
@@ -265,7 +268,7 @@ def _na(tipo: Optional[str]) -> dict:
         "resultado": None, "numero": None, "emitida_em": None, "validade_ate": None,
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
         "tem_arquivo": False, "arquivo_manual": False, "pode_reler": False, "releitura": None,
-        "arquivo_nome": None, "origem": None,
+        "arquivo_nome": None, "origem": None, "emitida_em_origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
         "segunda_via": False, "pcen": None, "pendencia": None,
     }
@@ -288,6 +291,11 @@ def _origem_da_celula(row: dict) -> Optional[str]:
 def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: int) -> dict:
     status, texto = _status_da_celula(row)
     row = row or {}
+    if row.get("status") in _LENDO and row.get("resultado"):
+        # A RE-read keeps the previous values until the new read lands
+        # (`preparar_releitura` clears nothing): classify by them rather than
+        # showing a cell that holds a result as "pendente".
+        status, texto = _status_do_resultado(row.get("resultado"))
     emitida = row.get("emitida_em")
     idade: Optional[int] = None
     if emitida:
@@ -329,6 +337,9 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "releitura": _releitura_publica(row),
         "arquivo_nome": row.get("arquivo_nome"),
         "origem": _origem_da_celula(row),
+        # `metadados_pdf` = the date was INFERRED from the PDF CreationDate
+        # (the consulta printed no date); None = printed / registry / typed.
+        "emitida_em_origem": row.get("emitida_em_origem"),
         "confirmado": row.get("confirmado_em") is not None,
         "analise_ia": row.get("analise_ia"),
         "erro_mensagem": row.get("erro_mensagem"),
@@ -427,7 +438,17 @@ def montar_parte(
         celula = montar_celula(linha.get("tipo"), row, hoje, limite)
         celula["opcional"] = _opcional(parte, linha.get("tipo"), celula["status"], exigencias)
         celulas[chave] = celula
-        totais["opcionais" if celula["opcional"] else celula["status"]] += 1
+        lendo = celula["status_processamento"] in _LENDO
+        # A cell being read is counted APART from the pendentes (it is not a
+        # pendência, it is in flight): `processando` when it holds no value
+        # yet, `relendo` when it keeps its previous value (counted in its
+        # color bucket too — `relendo` is an overlay, not a partition).
+        if lendo and celula["status"] == "pendente":
+            totais["processando"] += 1
+        else:
+            totais["opcionais" if celula["opcional"] else celula["status"]] += 1
+            if lendo or celula["releitura"] and celula["releitura"].get("em_andamento"):
+                totais["relendo"] += 1
         if celula["stale_para_contrato"]:
             totais["vencidas"] += 1
     return {

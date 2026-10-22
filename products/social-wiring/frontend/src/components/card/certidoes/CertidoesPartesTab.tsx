@@ -26,7 +26,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useDefinirExigencias, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
+  useAplicarValoresLidos, useVoltarAoAutomatico, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
@@ -55,6 +55,7 @@ export function CertidoesPartesTab(props: {
   const relerTodas = useRelerCertidoesCard(clienteId, atendimentoId);
   const relerParte = useRelerResultados(clienteId);
   const aplicarLidos = useAplicarValoresLidos(clienteId);
+  const voltar = useVoltarAoAutomatico(clienteId, atendimentoId);
   // Which party's "Reler todas" is in flight (one mutation, keyed by the party).
   const [relendoParteChave, setRelendoParteChave] = useState<string | null>(null);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
@@ -213,6 +214,8 @@ export function CertidoesPartesTab(props: {
                 relendoParte={relerParte.isPending && relendoParteChave === parte.chave}
                 onAplicarLidos={(resultadoId, divergencias) => aplicarLidos.mutate({ resultadoId, divergencias })}
                 aplicandoId={aplicandoId}
+                onVoltarAutomatico={(id) => voltar.mutate(id)}
+                voltandoId={voltar.isPending ? (voltar.variables ?? null) : null}
                 onDetalhes={(p) => setDetalhesChave(p.chave)}
                 onAdicionar={() => setAdicionando(true)}
                 onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}

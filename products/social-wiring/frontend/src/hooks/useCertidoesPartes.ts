@@ -13,6 +13,13 @@ import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
+import {
+  celulaComResultado,
+  comCelulaDoResultado,
+  comCelulaEditada,
+  linhaDigitada,
+  type ResultadoServidor,
+} from "@/components/card/certidoes/certidoesCache";
 import type { ResultadoPatchInput } from "@/types/certidoesEstruturadas";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
@@ -286,12 +293,16 @@ export function useUploadNaCelula(clienteId: string, atendimentoId?: string | nu
  * route when the cell has none yet (idempotent: an existing winner comes
  * back, never a second consulta), then `PATCH /api/certidoes/resultados/{id}`
  * — the same confirm route the "Detalhes" form uses, which stamps
- * `resultado_origem='manual'`.
+ * `resultado_origem='manual'` and answers with the resultado row.
+ *
+ * The typed values are drawn in the grid at once (optimistic) and the
+ * server's row replaces them on the answer — the row never keeps showing the
+ * old value until a reload (KB § PATTERNS/frontend/mutation-cache-writes.md).
  */
 export function useDigitarNaCelula(clienteId: string, atendimentoId?: string | null) {
-  const invalidate = useInvalidatePartes(clienteId);
-  return useMutation({ // noc-allow: invalidate-only — the PATCH re-derives the whole cell server-side and the response is just the resultado id
-    mutationFn: async ({ kind, alvoId, linhaChave, resultadoId, patch }: DigitarCelulaInput) => {
+  type Saida = { id: string; row: ResultadoServidor };
+  return useCacheWriteMutation<Saida, DigitarCelulaInput>({
+    mutationFn: async ({ kind, alvoId, linhaChave, resultadoId, patch }) => {
       let id = resultadoId;
       if (!id) {
         const cel = await api.post<CelulaEnsureResponse>(`${clienteBase(clienteId)}/certidoes/celulas`, {
@@ -302,17 +313,57 @@ export function useDigitarNaCelula(clienteId: string, atendimentoId?: string | n
         });
         id = cel.resultado_id;
       }
-      await api.patch(`/api/certidoes/resultados/${id}`, patch satisfies ResultadoPatchInput);
-      return id;
+      const row = await api.patch<ResultadoServidor>(`/api/certidoes/resultados/${id}`, patch satisfies ResultadoPatchInput);
+      return { id, row: { ...row, id } };
     },
-    onSuccess: () => {
-      toast.success("Certidão salva.");
-      void invalidate();
-    },
-    onError: (e) => {
-      toast.error("Erro ao salvar certidão", { description: erroMsg(e) });
-      void invalidate();
-    },
+    targets: (input) => [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        optimistic: (old: CertidoesPartesResponse | undefined) =>
+          comCelulaEditada(old, input, (c) => celulaComResultado(c, linhaDigitada(input.patch, c))),
+        commit: (old: CertidoesPartesResponse | undefined, saved: Saida) =>
+          comCelulaEditada(old, input, (c) => celulaComResultado(c, saved.row)),
+      },
+    ],
+    // The contract readiness and the per-party panels read the same resultado.
+    invalidate: [
+      ["sw", "clientes", clienteId, "contratos"],
+      ["certidao-resultados-parte"],
+      ["certidao-resultados-cliente"],
+      ["certidao-resultados-empresa"],
+    ],
+    onSuccess: () => toast.success("Certidão salva."),
+    onError: (e) => toast.error("Erro ao salvar certidão", { description: erroMsg(e) }),
+  });
+}
+
+/**
+ * "Voltar à leitura automática": `POST /api/certidoes/resultados/{id}/
+ * voltar-automatico` releases a hand-edited cell — the server clears the
+ * human's values + lock and re-runs the cell's automatic source (stored PDF,
+ * Crednet for the serasa cell, registry response). The answer is the cell's
+ * row (cleared and marked `processando` while a PDF re-reads, or already
+ * refilled by the Crednet), written into the grid as it arrives.
+ */
+export function useVoltarAoAutomatico(clienteId: string, atendimentoId?: string | null) {
+  return useCacheWriteMutation<ResultadoServidor, string>({
+    mutationFn: (resultadoId) =>
+      api.post<ResultadoServidor>(`/api/certidoes/resultados/${encodeURIComponent(resultadoId)}/voltar-automatico`, {}),
+    targets: [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        commit: (old: CertidoesPartesResponse | undefined, saved: ResultadoServidor) =>
+          comCelulaDoResultado(old, saved.id, (c) => celulaComResultado(c, saved)),
+      },
+    ],
+    invalidate: [
+      ["sw", "clientes", clienteId, "contratos"],
+      ["certidao-resultados-parte"],
+      ["certidao-resultados-cliente"],
+      ["certidao-resultados-empresa"],
+    ],
+    onSuccess: () => toast.success("Voltou à leitura automática."),
+    onError: (e) => toast.error("Não foi possível voltar à leitura automática", { description: erroMsg(e) }),
   });
 }
 

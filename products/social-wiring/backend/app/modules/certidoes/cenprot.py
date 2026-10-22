@@ -386,6 +386,40 @@ def _na_janela(dia: date, referencia: date) -> bool:
     return referencia - _JANELA_ANTES <= dia <= referencia + _JANELA_DEPOIS
 
 
+#: `emitida_em_origem` of a date inferred from the PDF's own metadata.
+ORIGEM_METADADOS_PDF = "metadados_pdf"
+_RE_CREATION_DATE = re.compile(r"D:(\d{4})(\d{2})(\d{2})")
+
+
+def data_dos_metadados_pdf(pdf_bytes: bytes) -> Optional[date]:
+    """The PDF metadata CreationDate (`D:20260210090409-03'00'`) as a day —
+    the moment a consulta without any printed date was printed. `None` when
+    absent/unparseable (never raises)."""
+    try:
+        import fitz  # type: ignore  # PyMuPDF
+
+        bruto = (fitz.open(stream=pdf_bytes, filetype="pdf").metadata or {}).get("creationDate")
+    except Exception as exc:  # noqa: BLE001 - the fallback is best-effort
+        logger.warning("CENPROT: metadados do PDF ilegíveis: %s", exc)
+        return None
+    m = _RE_CREATION_DATE.match(str(bruto or ""))
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def data_plausivel_dos_metadados(pdf_bytes: bytes, referencia: Optional[date]) -> Optional[date]:
+    """`data_dos_metadados_pdf` judged by the SAME window the CENPROT reader
+    uses for a printed date; no reference day ⇒ cannot judge ⇒ `None`."""
+    dia = data_dos_metadados_pdf(pdf_bytes)
+    if dia is None or referencia is None or not _na_janela(dia, referencia):
+        return None
+    return dia
+
+
 def _estrutura_da_camada_texto(
     leitura: LeituraTexto,
     *,
@@ -599,6 +633,9 @@ __all__ = [
     "LeituraTexto",
     "PROMPT_DATA",
     "PROMPT_PROTOCOLO",
+    "ORIGEM_METADADOS_PDF",
+    "data_dos_metadados_pdf",
+    "data_plausivel_dos_metadados",
     "estruturar_cenprot",
     "ler_camada_texto",
 ]

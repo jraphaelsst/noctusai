@@ -37,11 +37,14 @@ import {
   avisoVencida,
   formatarDocumento,
   linhaDivergencia,
+  lendoDaParte,
   notaSegundaVia,
+  podeVoltarAoAutomatico,
   podeReler,
   relendoCelula,
   resumoDaParte,
   tipoAutomatico,
+  totalDaParte,
 } from "./certidoesCelula";
 
 export interface ParteSecaoProps {
@@ -67,6 +70,10 @@ export interface ParteSecaoProps {
   onDetalhes: (parte: CertidaoParte) => void;
   /** Type the cell by hand (no document needed) — opens the shared edit form. */
   onDigitar: (parte: CertidaoParte, linha: CertidaoParteLinha) => void;
+  /** "Voltar à leitura automática": release a hand-edited cell to the automatic source. */
+  onVoltarAutomatico: (resultadoId: string) => void;
+  /** The resultado whose release request is in flight. */
+  voltandoId: string | null;
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
   onRemover: (linha: CertidaoParteLinha) => void;
@@ -140,6 +147,25 @@ export function ParteSecao(p: ParteSecaoProps) {
           <span className="min-w-0 truncate text-sm">{parte.nome}</span>
           <span className="text-xs text-muted-foreground">{formatarDocumento(parte.documento)}</span>
           <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground" data-testid={`parte-resumo-${parte.chave}`}>
+            {lendoDaParte(parte) > 0 && (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                <span
+                  role="progressbar"
+                  aria-label="Progresso da releitura"
+                  aria-valuemin={0}
+                  aria-valuemax={totalDaParte(parte)}
+                  aria-valuenow={totalDaParte(parte) - lendoDaParte(parte)}
+                  className="inline-block h-1.5 w-16 overflow-hidden rounded bg-muted"
+                  data-testid={`parte-relendo-progresso-${parte.chave}`}
+                >
+                  <span
+                    className="block h-full bg-sky-500"
+                    style={{ width: `${Math.round(((totalDaParte(parte) - lendoDaParte(parte)) / Math.max(totalDaParte(parte), 1)) * 100)}%` }}
+                  />
+                </span>
+              </>
+            )}
             {resumoDaParte(parte)}
           </span>
           {vencidas > 0 && (
@@ -271,6 +297,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
+                        {c.emitida_em && c.emitida_em_origem === "metadados_pdf" && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-data-inferida-${parte.chave}-${linha.chave}`}>
+                            Data inferida dos metadados do PDF (a consulta não imprime data)
+                          </p>
+                        )}
                         {c.numero && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-numero-${parte.chave}-${linha.chave}`}>
                             Nº {c.numero}
@@ -321,6 +352,18 @@ export function ParteSecao(p: ParteSecaoProps) {
                               <Upload className="mr-1 h-3 w-3" />
                               Enviar PDF
                             </Button>
+                            {podeVoltarAoAutomatico(c) && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                                disabled={p.voltandoId === c.resultado_id}
+                                title="Descarta o que foi digitado/confirmado e volta a ler esta certidão automaticamente (PDF armazenado ou Crednet)."
+                                onClick={() => p.onVoltarAutomatico(c.resultado_id as string)}
+                                data-testid={`parte-voltar-automatico-${parte.chave}-${linha.chave}`}>
+                                {p.voltandoId === c.resultado_id
+                                  ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  : <RefreshCw className="mr-1 h-3 w-3" />}
+                                Voltar à leitura automática
+                              </Button>
+                            )}
                             {podeReler(c) && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
                                 disabled={relendo || p.relendoId === c.resultado_id}
