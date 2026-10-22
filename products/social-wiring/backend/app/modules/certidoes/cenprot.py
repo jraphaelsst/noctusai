@@ -81,7 +81,7 @@ SELF-VALIDATION
 2. Número: one model's two crop reads agree, exactly 10 digits; a second
    model agreeing on a different number blocks it.
 3. Date: only alongside a validated número (it is THAT consulta's date),
-   both clock reads equal, a real calendar date, and inside [referência − 180 d, referência + 45 d].
+   both clock reads equal, a real calendar date, and inside [referência − 360 d, referência + 45 d].
    The signed contracts put the CENPROT date between 120 days before and 30
    days after the deal opened (114/114 items), so a year misread can never
    land inside the window. `referencia` is the consulta's own creation date.
@@ -140,7 +140,12 @@ _ASPECTO_MIN_CAPTURA = 1.2
 _PROVEDOR_MEDIDO = "anthropic"
 
 _DIGITOS_PROTOCOLO = 10
-_JANELA_ANTES = timedelta(days=180)
+#: A consulta may be uploaded long after the screenshot was taken (real case,
+#: 2026-10: clock 10/02/2026, uploaded 10/2026 = 252 d later — a 180-day window
+#: nulled `emitida_em` for 6/6 entities). The window only exists to reject a
+#: year misread 1+ years EARLY (>= 365 d), so it stops just short of a year;
+#: the age judgement itself belongs to the readiness, which needs the date.
+_JANELA_ANTES = timedelta(days=360)
 _JANELA_DEPOIS = timedelta(days=45)
 _MAX_TOKENS = 120
 

@@ -164,6 +164,13 @@ class TestEstruturarCenprot:
         assert r.emitida_em is None
         assert any("janela" in a for a in r.avisos)
 
+    @pytest.mark.asyncio
+    async def test_relogio_meses_antes_do_upload_e_gravado(self):
+        # Real layout: clock 10/02/2026, consulta created 8 months later.
+        r = await _rodar(_Leitor([_leitura(), _leitura()], "10/02/2026"),
+                         referencia=date(2026, 10, 22))
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, "2026-02-10")
+
     @pytest.mark.parametrize("lida", ["31/02/2026", None, "2026-06-17", "ilegível"])
     @pytest.mark.asyncio
     async def test_data_invalida_nao_e_gravada(self, lida):
@@ -295,7 +302,7 @@ class TestData:
 
     @pytest.mark.asyncio
     async def test_ano_cortado_fora_da_janela_nao_grava(self):
-        r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"), referencia=date(2029, 1, 1))
+        r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"), referencia=date(2035, 1, 1))
         assert (r.numero, r.emitida_em) == (PROTOCOLO, None)
         assert any("janela" in a for a in r.avisos)
 
