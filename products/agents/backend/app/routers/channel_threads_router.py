@@ -31,6 +31,7 @@ The TURN endpoint (``POST /api/channels/turns``) lives in ``channels_router`` an
 :func:`app.channels.controles.aplicar_controles` under the turn lock — the controls are decided there,
 never cached in SW (fail closed, D6).
 """
+import anyio
 # NOTE: deliberately NO `from __future__ import annotations` (same reason as
 # channels_router): FastAPI must resolve the body/dependency types eagerly.
 
@@ -263,7 +264,7 @@ def _estado_http(exc: Exception) -> HTTPException:
 
 
 @router.get("/api/channels/threads", response_model=ThreadOut)
-async def find_thread(
+def find_thread(
     channel: str | None = Query(default=None, min_length=1, max_length=64),
     connection_id: UUID | None = Query(default=None),
     chat_id: str | None = Query(default=None, min_length=1, max_length=256),
@@ -297,7 +298,7 @@ async def find_thread(
 
 
 @router.get("/api/channels/threads/{thread_id}", response_model=ThreadOut)
-async def get_thread(
+def get_thread(
     thread_id: UUID,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -330,7 +331,7 @@ async def append_thread_message(
     if payload.role == "humano" and payload.autor_user_id is None:
         raise _err(422, "invalid_field", "Campo inválido: autor_user_id")
     thread = _thread_do_token(ctx, conv_store, threads, thread_id)
-    if not conv_store.try_acquire_turn(ctx.org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds):
+    if not (await anyio.to_thread.run_sync(lambda: conv_store.try_acquire_turn(ctx.org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds))):
         raise _err(409, "turn_in_progress", "Já existe um turno em andamento.")
     try:
         try:
@@ -352,7 +353,7 @@ async def append_thread_message(
         for record in result.novas:
             await publish_event(thread.id, "message.new", _message_payload(record), bus=bus)
     finally:
-        conv_store.release_turn(ctx.org_id, thread.id, INSTANCE_ID)
+        (await anyio.to_thread.run_sync(lambda: conv_store.release_turn(ctx.org_id, thread.id, INSTANCE_ID)))
     return ThreadMensagemOut(
         message_id=result.novas[0].id if result.novas else None, duplicado=not result.novas
     )
@@ -364,7 +365,7 @@ async def append_thread_message(
 @router.patch(
     "/api/channels/threads/{thread_id}/participantes/{agent_key}", response_model=ParticipanteOut
 )
-async def set_participant_state(
+def set_participant_state(
     thread_id: UUID,
     agent_key: str,
     payload: ParticipanteEstadoRequest,
@@ -392,7 +393,7 @@ async def set_participant_state(
 @router.patch(
     "/api/studio/threads/{thread_id}/participantes/{agent_key}", response_model=ParticipanteOut
 )
-async def studio_set_participant_state(
+def studio_set_participant_state(
     thread_id: UUID,
     agent_key: str,
     payload: StudioParticipanteEstadoRequest,
@@ -439,7 +440,7 @@ def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any) -> Con
 
 
 @router.get("/api/channels/agents/{agent_key}/controle", response_model=ControleOut)
-async def channel_agent_controle(
+def channel_agent_controle(
     agent_key: str,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -453,7 +454,7 @@ async def channel_agent_controle(
 
 
 @router.get("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
-async def studio_agent_controle(
+def studio_agent_controle(
     agent_key: str,
     ctx: AuthContext = Depends(require_member),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -465,7 +466,7 @@ async def studio_agent_controle(
 
 
 @router.put("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
-async def studio_set_agent_controle(
+def studio_set_agent_controle(
     agent_key: str,
     payload: ControleUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -513,7 +514,7 @@ async def studio_set_agent_controle(
 
 
 @router.delete("/api/channels/leads/{ref}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_lead(
+def delete_lead(
     ref: str,
     ctx: AuthContext = Depends(require_channel_turn),
     conv_store=Depends(get_conversation_store_dep),
@@ -541,7 +542,7 @@ async def delete_lead(
 
 
 @router.get("/api/channels/threads/{thread_id}/handoffs", response_model=list[HandoffOut])
-async def list_thread_handoffs(
+def list_thread_handoffs(
     thread_id: UUID,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -564,7 +565,7 @@ def _handoff_do_token(ctx: AuthContext, conv_store: Any, threads: Any, handoff_i
 
 
 @router.get("/api/channels/handoffs/{handoff_id}", response_model=HandoffOut)
-async def get_handoff(
+def get_handoff(
     handoff_id: UUID,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -577,7 +578,7 @@ async def get_handoff(
 
 
 @router.post("/api/channels/handoffs/{handoff_id}/aceite", response_model=HandoffOut)
-async def accept_handoff(
+def accept_handoff(
     handoff_id: UUID,
     payload: HandoffAceiteRequest,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -603,7 +604,7 @@ def _consent_out(lead: Any, evento: OptOutEventoOut | None = None, **extra: Any)
 
 
 @router.put("/api/channels/leads/{ref}/opt-in", response_model=LeadConsentOut)
-async def lead_opt_in(
+def lead_opt_in(
     ref: str,
     payload: OptInRequest,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -618,7 +619,7 @@ async def lead_opt_in(
 
 
 @router.get("/api/channels/leads/{ref}/consentimento", response_model=LeadConsentOut)
-async def lead_consentimento(
+def lead_consentimento(
     ref: str,
     ctx: AuthContext = Depends(require_channel_status),
     threads=Depends(get_thread_store_dep),
@@ -636,7 +637,7 @@ async def lead_consentimento(
 
 
 @router.post("/api/channels/leads/{ref}/opt-out", response_model=OptOutOut)
-async def lead_opt_out(
+def lead_opt_out(
     ref: str,
     payload: OptOutRequest,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -666,7 +667,7 @@ async def lead_opt_out(
 
 
 @router.post("/api/channels/leads/{ref}/reativar", response_model=ReativarOut)
-async def lead_reativar(
+def lead_reativar(
     ref: str,
     payload: ReativarRequest,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -694,7 +695,7 @@ async def lead_reativar(
 
 
 @router.get("/api/channels/opt-outs", response_model=OptOutEventosPage)
-async def list_opt_outs(
+def list_opt_outs(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=200),
     lead_ref: str | None = Query(default=None, max_length=256),
@@ -720,7 +721,7 @@ async def list_opt_outs(
 
 
 @router.post("/api/channels/opt-outs/{evento_id}/notificar", response_model=OptOutEventoOut)
-async def renotificar_opt_out(
+def renotificar_opt_out(
     evento_id: UUID,
     payload: NotificarOptOutRequest,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -755,7 +756,7 @@ def _valida_ref(ref: str) -> None:
 
 
 @router.get("/api/studio/threads/{thread_id}/mensagens", response_model=list[MensagemThreadOut])
-async def studio_thread_messages(
+def studio_thread_messages(
     thread_id: UUID,
     limite: int = Query(default=50, ge=1, le=200),
     ctx: AuthContext = Depends(require_admin),

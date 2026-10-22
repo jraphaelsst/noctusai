@@ -91,7 +91,7 @@ def _project_slug_or_422(slug: str) -> str:
 
 
 @router.put("/{key}/projects/{slug}/sources", response_model=SourcesSyncOut)
-async def put_project_sources(
+def put_project_sources(
     key: str,
     slug: str,
     body: SourcesBody | list[SourceItem],
@@ -119,7 +119,7 @@ async def put_project_sources(
 
 
 @router.get("/{key}/projects", response_model=ProjectListOut)
-async def list_projects(
+def list_projects(
     key: str,
     ctx: AuthContext = Depends(require_platform_admin),
     definitions=Depends(get_studio_definition_store_dep),
@@ -146,7 +146,7 @@ async def list_projects(
 
 
 @router.post("/{key}/learnings", response_model=LearningsPushOut)
-async def push_learnings(
+def push_learnings(
     key: str,
     body: LearningsPushIn,
     ctx: AuthContext = Depends(require_learnings_write),
@@ -171,7 +171,7 @@ async def push_learnings(
 
 
 @router.get("/{key}/learnings", response_model=LearningListOut)
-async def list_learnings(
+def list_learnings(
     key: str,
     project: Annotated[str | None, Query(max_length=PROJECT_SLUG_MAX)] = None,
     status: Annotated[str | None, Query(pattern=r"^(novo|aceito|descartado|promovido)$")] = None,
@@ -185,7 +185,7 @@ async def list_learnings(
 
 
 @router.patch("/{key}/learnings/{learning_id}", response_model=LearningOut)
-async def review_learning(
+def review_learning(
     key: str,
     learning_id: UUID,
     body: LearningReviewIn,

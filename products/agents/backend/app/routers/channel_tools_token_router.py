@@ -47,7 +47,7 @@ def get_julia_tools_token_store_dep() -> Any:
 
 
 @router.put("/ferramentas-token", status_code=status.HTTP_204_NO_CONTENT)
-async def put_tools_token(
+def put_tools_token(
     payload: ChannelToolsTokenRequest,
     ctx: AuthContext = Depends(require_channel_turn),
     store: Any = Depends(get_julia_tools_token_store_dep),
@@ -58,7 +58,7 @@ async def put_tools_token(
 
 
 @router.delete("/ferramentas-token", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_tools_token(
+def delete_tools_token(
     ctx: AuthContext = Depends(require_channel_turn),
     store: Any = Depends(get_julia_tools_token_store_dep),
 ) -> Response:

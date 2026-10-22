@@ -90,7 +90,7 @@ class CapacidadesOut(BaseModel):
 
 
 @router.get("/agents/{key}/capacidades", response_model=CapacidadesOut)
-async def capacidades(
+def capacidades(
     key: str, ctx: AuthContext = Depends(require_member), store=Depends(get_studio_definition_store_dep),
 ) -> CapacidadesOut:
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
@@ -185,7 +185,7 @@ def _regra_valida(regra: str) -> None:
 
 
 @router.get("/agents/{key}/conformidade/regras", response_model=RegrasOut)
-async def listar_regras(
+def listar_regras(
     key: str, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
@@ -197,7 +197,7 @@ async def listar_regras(
 
 
 @router.get("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
-async def ler_regra(
+def ler_regra(
     key: str, regra: str, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
@@ -209,7 +209,7 @@ async def ler_regra(
 
 
 @router.put("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
-async def definir_regra(
+def definir_regra(
     key: str, regra: str, payload: RegraIn, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
@@ -238,7 +238,7 @@ async def definir_regra(
 
 
 @router.get("/agents/{key}/conformidade/violacoes", response_model=ViolacoesOut)
-async def listar_violacoes(
+def listar_violacoes(
     key: str, pagina: int = Query(default=1, ge=1, le=200), tamanho: int = Query(default=50, ge=1, le=200),
     thread_id: UUID | None = Query(default=None), org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_admin),
@@ -262,7 +262,7 @@ async def listar_violacoes(
 
 
 @router.get("/agents/{key}/conformidade/resumo", response_model=ResumoConformidadeOut)
-async def resumo_conformidade(
+def resumo_conformidade(
     key: str, ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
 ) -> ResumoConformidadeOut:
@@ -297,7 +297,7 @@ class StudioThreadOut(BaseModel):
 
 
 @router.get("/threads/{thread_id}", response_model=StudioThreadOut)
-async def studio_thread(
+def studio_thread(
     thread_id: UUID, ctx: AuthContext = Depends(require_admin),
     studio_store=Depends(get_studio_definition_store_dep), conv_store=Depends(get_conversation_store_dep),
     threads=Depends(get_thread_store_dep),
@@ -340,7 +340,7 @@ class TextoRegistroOut(BaseModel):
 
 
 @router.get("/textos/registro", response_model=list[TextoRegistroOut])
-async def registro_textos(ctx: AuthContext = Depends(require_platform_admin)) -> list[TextoRegistroOut]:
+def registro_textos(ctx: AuthContext = Depends(require_platform_admin)) -> list[TextoRegistroOut]:
     return [
         TextoRegistroOut(
             chave=k, categoria=s.categoria, obrigatoria=s.obrigatoria,
@@ -405,7 +405,7 @@ def _percorrer(schema: dict[str, Any], defs: dict[str, Any], prefixo: str, obrig
 
 
 @router.get("/ferramentas/registro", response_model=list[FerramentaRegistroOut])
-async def registro_ferramentas(ctx: AuthContext = Depends(require_platform_admin)) -> list[FerramentaRegistroOut]:
+def registro_ferramentas(ctx: AuthContext = Depends(require_platform_admin)) -> list[FerramentaRegistroOut]:
     from app.channels.tool_registry import TOOLS
 
     out: list[FerramentaRegistroOut] = []

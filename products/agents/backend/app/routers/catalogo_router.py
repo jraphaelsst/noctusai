@@ -96,7 +96,7 @@ def _admin_extra(studio_store: Any, ctx: AuthContext, key: str) -> dict[str, Any
 
 
 @router.get("/catalogo", response_model=list[CatalogoAgenteAdminOut] | list[CatalogoAgenteOut])
-async def listar_catalogo(
+def listar_catalogo(
     ctx: AuthContext = Depends(require_member),
     agentes=Depends(get_agent_store_dep),
     catalogo: CatalogoStore = Depends(get_catalogo_store_dep),
@@ -121,7 +121,7 @@ async def listar_catalogo(
 
 
 @router.put("/catalogo/{key}", status_code=status.HTTP_204_NO_CONTENT)
-async def salvar_entrada_catalogo(
+def salvar_entrada_catalogo(
     key: str,
     payload: CatalogoEntradaIn,
     ctx: AuthContext = Depends(require_platform_admin),

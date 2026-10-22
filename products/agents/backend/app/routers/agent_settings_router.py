@@ -23,7 +23,7 @@ def _out(views) -> AgentSettingsOut:
 
 
 @router.get("", response_model=AgentSettingsOut)
-async def get_agent_settings(
+def get_agent_settings(
     ctx: AuthContext = Depends(require_platform_admin),
     service: RuntimeSettingsService = Depends(get_runtime_settings_service_dep),
 ) -> AgentSettingsOut:
@@ -31,7 +31,7 @@ async def get_agent_settings(
 
 
 @router.put("", response_model=AgentSettingsOut)
-async def update_agent_settings(
+def update_agent_settings(
     payload: AgentSettingsPatch,
     ctx: AuthContext = Depends(require_platform_admin),
     service: RuntimeSettingsService = Depends(get_runtime_settings_service_dep),

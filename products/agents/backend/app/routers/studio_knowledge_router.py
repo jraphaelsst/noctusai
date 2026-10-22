@@ -129,7 +129,7 @@ def _document_out(record) -> DocumentOut:
 
 
 @router.get("/{key}/knowledge", response_model=CollectionListOut)
-async def list_collections(
+def list_collections(
     key: str,
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_knowledge_store_dep),
@@ -145,7 +145,7 @@ async def list_collections(
 
 
 @router.post("/{key}/knowledge", response_model=CollectionOut, status_code=status.HTTP_201_CREATED)
-async def create_collection(
+def create_collection(
     key: str,
     payload: CollectionCreateRequest,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -163,7 +163,7 @@ async def create_collection(
 
 
 @router.patch("/{key}/knowledge/{col_id}", response_model=CollectionOut)
-async def update_collection(
+def update_collection(
     key: str,
     col_id: UUID,
     payload: CollectionUpdateRequest,
@@ -192,7 +192,7 @@ async def update_collection(
 
 
 @router.get("/{key}/knowledge/{col_id}/documents", response_model=DocumentListOut)
-async def list_documents(
+def list_documents(
     key: str,
     col_id: UUID,
     q: str | None = Query(None, max_length=LIST_QUERY_MAX),
@@ -219,7 +219,7 @@ async def list_documents(
     "/{key}/knowledge/{col_id}/documents", response_model=DocumentOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_document(
+def create_document(
     key: str,
     col_id: UUID,
     payload: DocumentCreateRequest,
@@ -250,7 +250,7 @@ _BATCH_STATUS_PT = {"created": "criado", "updated": "atualizado", "unchanged": "
 @router.post(
     "/{key}/knowledge/{col_id}/documents/batch", response_model=DocumentBatchResultOut,
 )
-async def create_documents_batch(
+def create_documents_batch(
     key: str,
     col_id: UUID,
     payload: DocumentBatchCreateRequest,
@@ -295,7 +295,7 @@ async def create_documents_batch(
 
 
 @router.get("/{key}/documents/{doc_id}", response_model=DocumentOut)
-async def get_document(
+def get_document(
     key: str,
     doc_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -311,7 +311,7 @@ async def get_document(
 
 
 @router.patch("/{key}/documents/{doc_id}", response_model=DocumentOut)
-async def update_document(
+def update_document(
     key: str,
     doc_id: UUID,
     payload: DocumentUpdateRequest,
@@ -336,7 +336,7 @@ async def update_document(
 
 
 @router.get("/{key}/documents/{doc_id}/revisions", response_model=RevisionListOut)
-async def list_revisions(
+def list_revisions(
     key: str,
     doc_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -358,7 +358,7 @@ async def list_revisions(
 
 
 @router.get("/{key}/knowledge/search", response_model=SearchOut)
-async def search_knowledge(
+def search_knowledge(
     key: str,
     q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX),
     colecao: str | None = Query(None),

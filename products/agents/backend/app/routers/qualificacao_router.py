@@ -125,7 +125,7 @@ def _draft(store: PadraoStore, versao_id: UUID):
 # ── reads (any org member) ──────────────────────────────────────────────────
 
 @router.get("/api/qualificacao/padroes")
-async def listar_padroes(
+def listar_padroes(
     ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     return {"items": [
@@ -135,7 +135,7 @@ async def listar_padroes(
 
 
 @router.get("/api/qualificacao/padroes/{chave}/versoes")
-async def listar_versoes(
+def listar_versoes(
     chave: str, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -149,7 +149,7 @@ async def listar_versoes(
 
 
 @router.get("/api/qualificacao/versoes/{versao_id}")
-async def obter_versao(
+def obter_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
     with _Mapped():
@@ -159,7 +159,7 @@ async def obter_versao(
 # ── writes (platform admin) ─────────────────────────────────────────────────
 
 @router.post("/api/qualificacao/padroes", status_code=201)
-async def criar_padrao(
+def criar_padrao(
     body: PadraoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -169,7 +169,7 @@ async def criar_padrao(
 
 
 @router.post("/api/qualificacao/padroes/{chave}/versoes", status_code=201)
-async def criar_rascunho(
+def criar_rascunho(
     chave: str, body: RascunhoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -180,7 +180,7 @@ async def criar_rascunho(
 
 
 @router.patch("/api/qualificacao/versoes/{versao_id}")
-async def atualizar_versao(
+def atualizar_versao(
     versao_id: UUID, body: VersaoPatch, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -191,7 +191,7 @@ async def atualizar_versao(
 
 
 @router.delete("/api/qualificacao/versoes/{versao_id}", status_code=204)
-async def descartar_rascunho(
+def descartar_rascunho(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> Response:
@@ -202,7 +202,7 @@ async def descartar_rascunho(
 
 
 @router.put("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
-async def salvar_criterio(
+def salvar_criterio(
     versao_id: UUID, chave: str, body: CriterioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -217,7 +217,7 @@ async def salvar_criterio(
 
 
 @router.delete("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
-async def remover_criterio(
+def remover_criterio(
     versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -228,7 +228,7 @@ async def remover_criterio(
 
 
 @router.put("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
-async def salvar_estagio(
+def salvar_estagio(
     versao_id: UUID, chave: str, body: EstagioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -243,7 +243,7 @@ async def salvar_estagio(
 
 
 @router.delete("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
-async def remover_estagio(
+def remover_estagio(
     versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -254,7 +254,7 @@ async def remover_estagio(
 
 
 @router.put("/api/qualificacao/versoes/{versao_id}/parametros")
-async def salvar_parametros(
+def salvar_parametros(
     versao_id: UUID, body: ParametrosIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -273,7 +273,7 @@ def _erros_de_publicacao(store: PadraoStore, versao_id: UUID) -> list[dict[str, 
 
 
 @router.post("/api/qualificacao/versoes/{versao_id}/validar")
-async def validar_versao(
+def validar_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -284,7 +284,7 @@ async def validar_versao(
 
 
 @router.post("/api/qualificacao/versoes/{versao_id}/publicar")
-async def publicar_versao(
+def publicar_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -301,7 +301,7 @@ async def publicar_versao(
 # ── org-read: the computed state of one lead (channel token) ────────────────
 
 @router.get("/api/channels/leads/{lead_ref}/qualificacao")
-async def obter_qualificacao_lead(
+def obter_qualificacao_lead(
     lead_ref: UUID,
     ctx: AuthContext = Depends(require_channel_status),
     padroes: PadraoStore = Depends(get_padrao_store_dep),
@@ -345,7 +345,7 @@ class ConfirmarDescarteIn(StrictHttpModel):
 
 
 @router.post("/api/channels/leads/{lead_ref}/descarte/confirmar")
-async def confirmar_descarte(
+def confirmar_descarte(
     lead_ref: UUID,
     body: ConfirmarDescarteIn,
     ctx: AuthContext = Depends(require_channel_turn),
@@ -370,7 +370,7 @@ async def confirmar_descarte(
 # ── lead identity: masked by default, clear text only for org owner/admin, audited ──
 
 @router.get("/api/channels/leads/{lead_ref}/identificacao")
-async def identificacao_mascarada(
+def identificacao_mascarada(
     lead_ref: UUID,
     ctx: AuthContext = Depends(require_channel_status),
     ident: IdentificacaoService = Depends(get_identificacao_service_dep),
@@ -386,7 +386,7 @@ class RevelarIn(StrictHttpModel):
 
 
 @router.post("/api/qualificacao/leads/{lead_ref}/identificacao/revelar")
-async def revelar_identificacao(
+def revelar_identificacao(
     lead_ref: UUID,
     body: RevelarIn,
     ctx: AuthContext = Depends(require_admin),

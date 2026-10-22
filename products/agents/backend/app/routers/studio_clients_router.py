@@ -65,7 +65,7 @@ def _resolve_entry(store, org_id: UUID, client_id: UUID, entry_id: UUID):
 
 
 @router.get("", response_model=ClientListOut)
-async def list_clients(
+def list_clients(
     key: str,
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -81,7 +81,7 @@ async def list_clients(
 
 
 @router.post("", response_model=ClientOut, status_code=status.HTTP_201_CREATED)
-async def create_client(
+def create_client(
     key: str,
     payload: ClientCreateRequest,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -96,7 +96,7 @@ async def create_client(
 
 
 @router.get("/{client_id}", response_model=ClientOut)
-async def get_client(
+def get_client(
     key: str,
     client_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -107,7 +107,7 @@ async def get_client(
 
 
 @router.patch("/{client_id}", response_model=ClientOut)
-async def update_client(
+def update_client(
     key: str,
     client_id: UUID,
     payload: ClientUpdateRequest,
@@ -123,7 +123,7 @@ async def update_client(
 
 
 @router.post("/{client_id}/entries", response_model=ClientEntryOut, status_code=status.HTTP_201_CREATED)
-async def create_entry(
+def create_entry(
     key: str,
     client_id: UUID,
     payload: ClientEntryCreateRequest,
@@ -141,7 +141,7 @@ async def create_entry(
 
 
 @router.patch("/{client_id}/entries/{entry_id}", response_model=ClientEntryOut)
-async def update_entry(
+def update_entry(
     key: str,
     client_id: UUID,
     entry_id: UUID,
@@ -159,7 +159,7 @@ async def update_entry(
 
 
 @router.delete("/{client_id}/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_entry(
+def delete_entry(
     key: str,
     client_id: UUID,
     entry_id: UUID,

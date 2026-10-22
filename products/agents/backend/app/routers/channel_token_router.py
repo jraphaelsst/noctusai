@@ -74,7 +74,7 @@ def _channel_agent(studio_store, ctx: AuthContext, agent_key: str):
 
 
 @router.post("/{agent_key}/channel-token", response_model=ChannelTokenOut, status_code=status.HTTP_201_CREATED)
-async def mint_channel_token(
+def mint_channel_token(
     agent_key: str,
     payload: ChannelTokenCreateRequest,
     response: Response,
@@ -124,7 +124,7 @@ async def mint_channel_token(
 
 
 @router.delete("/{agent_key}/channel-token/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_channel_token(
+def revoke_channel_token(
     agent_key: str,
     token_id: UUID,
     ctx: AuthContext = Depends(require_admin),

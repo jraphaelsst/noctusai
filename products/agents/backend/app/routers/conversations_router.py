@@ -12,6 +12,7 @@ the routes must do with a turn" describes, per the §E.11 "Route order"
 revision: reserve a slot, THEN acquire the turn lock, THEN persist the
 user message, THEN start the task under a turn deadline.
 """
+import anyio
 # NOTE: deliberately NO `from __future__ import annotations` here — this
 # router has `@limiter.limit(...)`-decorated routes, and with postponed
 # annotations FastAPI cannot resolve types through the slowapi wrapper (it
@@ -279,7 +280,7 @@ async def _get_readable_conversation(
 
 
 @router.get("", response_model=ConversationListOut)
-async def list_conversations(
+def list_conversations(
     agent_key: str = Query(default=BIA_KEY, min_length=1, max_length=64),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_conversation_store_dep),
@@ -322,7 +323,7 @@ def _enriquecer_canal(org_id, record, agent_id, agentes, threads, qual, conformi
 
 
 @router.get("/channel", response_model=ConversationListOut)
-async def list_channel_conversations(
+def list_channel_conversations(
     agent_key: str = Query(..., min_length=1, max_length=64),
     channel: str | None = Query(default=None, min_length=1, max_length=32),
     ctx: AuthContext = Depends(require_admin),
@@ -350,7 +351,7 @@ async def list_channel_conversations(
 
 
 @router.post("", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
-async def create_conversation(
+def create_conversation(
     payload: ConversationCreateRequest,
     ctx: AuthContext = Depends(require_member),
     agent_store=Depends(get_agent_store_dep),
@@ -401,7 +402,7 @@ async def get_conversation(
 
 
 @router.patch("/{conversation_id}", response_model=ConversationOut)
-async def rename_conversation(
+def rename_conversation(
     conversation_id: UUID,
     payload: ConversationUpdateRequest,
     ctx: AuthContext = Depends(require_member),
@@ -488,7 +489,7 @@ async def post_message(
     conformidade=Depends(get_conformidade_store_dep),
 ) -> MessagePostResponse:
     try:
-        conversation = conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
+        conversation = (await anyio.to_thread.run_sync(lambda: conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)))
     except NotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
 
@@ -545,9 +546,9 @@ async def post_message(
     # to start.
     acquired = False
     try:
-        acquired = conv_store.try_acquire_turn(
+        acquired = (await anyio.to_thread.run_sync(lambda: conv_store.try_acquire_turn(
             ctx.org_id, conversation_id, INSTANCE_ID, settings.turn_lock_ttl_seconds
-        )
+        )))
         if not acquired:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -587,7 +588,7 @@ async def post_message(
         # client disconnecting mid-handler) must release the slot too;
         # cleanup-then-propagate is correct for a cancellation as well.
         if acquired:
-            conv_store.release_turn(ctx.org_id, conversation_id, INSTANCE_ID)
+            (await anyio.to_thread.run_sync(lambda: conv_store.release_turn(ctx.org_id, conversation_id, INSTANCE_ID)))
         await slot.release()
         raise
 

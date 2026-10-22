@@ -10,6 +10,7 @@ whatever social-wiring returns, never a locally-stored truth (the row's
 delivery note for the interpretation call).
 """
 from __future__ import annotations
+import anyio
 
 import logging
 from uuid import UUID
@@ -60,7 +61,7 @@ async def list_agents(
     store=Depends(get_agent_store_dep),
     social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentListOut:
-    store.ensure_default_agents(ctx.org_id)
+    (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     records = store.list(ctx.org_id)
 
     items: list[AgentOut] = []
@@ -81,9 +82,9 @@ async def toggle_agent(
     store=Depends(get_agent_store_dep),
     social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentOut:
-    store.ensure_default_agents(ctx.org_id)
+    (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     try:
-        record = store.get_by_key(ctx.org_id, key)
+        record = (await anyio.to_thread.run_sync(lambda: store.get_by_key(ctx.org_id, key)))
     except NotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -122,7 +123,7 @@ async def toggle_agent(
             ativo_override=auto_reply_enabled,
         )
 
-    record = store.set_active(ctx.org_id, key, payload.ativo)
+    record = (await anyio.to_thread.run_sync(lambda: store.set_active(ctx.org_id, key, payload.ativo)))
     return _agent_out(record)
 
 

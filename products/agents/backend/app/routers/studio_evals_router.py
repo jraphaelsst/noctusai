@@ -147,7 +147,7 @@ def _audit_case_mcp(defs, ctx: AuthContext, agent, case_id, record) -> None:
 
 
 @router.get("/{key}/evals/cases", response_model=EvalCaseListOut)
-async def list_cases(
+def list_cases(
     key: str,
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
@@ -159,7 +159,7 @@ async def list_cases(
 
 
 @router.post("/{key}/evals/cases", response_model=EvalCaseOut, status_code=status.HTTP_201_CREATED)
-async def create_case(
+def create_case(
     key: str,
     payload: EvalCaseCreateRequest,
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -184,7 +184,7 @@ async def create_case(
 
 
 @router.patch("/{key}/evals/cases/{case_id}", response_model=EvalCaseOut)
-async def update_case(
+def update_case(
     key: str,
     case_id: UUID,
     payload: EvalCaseUpdateRequest,
@@ -213,7 +213,7 @@ async def update_case(
 
 
 @router.delete("/{key}/evals/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_case(
+def delete_case(
     key: str,
     case_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -232,6 +232,8 @@ async def delete_case(
 
 
 @router.post("/{key}/evals/runs", response_model=EvalRunOut, status_code=status.HTTP_202_ACCEPTED)
+# Stays `async def`: scheduler(run.id) -> asyncio.create_task needs the running loop,
+# which a threadpool worker does not have.
 async def create_run(
     key: str,
     payload: EvalRunCreateRequest,
@@ -288,7 +290,7 @@ async def create_run(
 
 
 @router.get("/{key}/evals/runs", response_model=EvalRunListOut)
-async def list_runs(
+def list_runs(
     key: str,
     version_id: UUID | None = Query(None),
     ctx: AuthContext = Depends(require_publish_read),
@@ -302,7 +304,7 @@ async def list_runs(
 
 
 @router.get("/{key}/evals/runs/{run_id}", response_model=EvalRunDetailOut)
-async def get_run(
+def get_run(
     key: str,
     run_id: UUID,
     ctx: AuthContext = Depends(require_publish_read),
@@ -333,7 +335,7 @@ async def get_run(
 
 
 @router.post("/{key}/evals/runs/{run_id}/cancel", response_model=EvalRunOut)
-async def cancel_run(
+def cancel_run(
     key: str,
     run_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),

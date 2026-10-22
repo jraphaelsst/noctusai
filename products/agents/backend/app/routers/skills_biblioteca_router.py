@@ -221,7 +221,7 @@ def _check_chave(chave: str) -> None:
 
 
 @router.get("/api/skills-biblioteca", response_model=SkillsOut)
-async def listar_skills(
+def listar_skills(
     ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> SkillsOut:
@@ -237,7 +237,7 @@ async def listar_skills(
 
 
 @router.post("/api/skills-biblioteca", status_code=201, response_model=SkillOut)
-async def criar_skill(
+def criar_skill(
     body: SkillCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> SkillOut:
@@ -247,7 +247,7 @@ async def criar_skill(
 
 
 @router.patch("/api/skills-biblioteca/{chave}", response_model=SkillOut)
-async def atualizar_skill(
+def atualizar_skill(
     chave: str, body: SkillPatch, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> SkillOut:
@@ -263,7 +263,7 @@ async def atualizar_skill(
 
 
 @router.get("/api/skills-biblioteca/{chave}/versoes", response_model=VersoesOut)
-async def listar_versoes(
+def listar_versoes(
     chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersoesOut:
@@ -274,7 +274,7 @@ async def listar_versoes(
 
 
 @router.post("/api/skills-biblioteca/{chave}/versoes", status_code=201, response_model=VersaoOut)
-async def criar_rascunho(
+def criar_rascunho(
     chave: str, body: RascunhoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersaoOut:
@@ -286,7 +286,7 @@ async def criar_rascunho(
 
 
 @router.get("/api/skills-biblioteca/versoes/{versao_id}", response_model=VersaoOut)
-async def obter_versao(
+def obter_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersaoOut:
@@ -295,7 +295,7 @@ async def obter_versao(
 
 
 @router.patch("/api/skills-biblioteca/versoes/{versao_id}", response_model=VersaoOut)
-async def atualizar_versao(
+def atualizar_versao(
     versao_id: UUID, body: VersaoPatch, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersaoOut:
@@ -309,7 +309,7 @@ async def atualizar_versao(
 
 
 @router.delete("/api/skills-biblioteca/versoes/{versao_id}", status_code=204)
-async def descartar_rascunho(
+def descartar_rascunho(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> Response:
@@ -320,7 +320,7 @@ async def descartar_rascunho(
 
 
 @router.put("/api/skills-biblioteca/versoes/{versao_id}/arquivos/{caminho:path}", response_model=VersaoOut)
-async def salvar_arquivo(
+def salvar_arquivo(
     versao_id: UUID, caminho: str, body: ArquivoPut, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersaoOut:
@@ -331,7 +331,7 @@ async def salvar_arquivo(
 
 
 @router.delete("/api/skills-biblioteca/versoes/{versao_id}/arquivos/{caminho:path}", status_code=204)
-async def remover_arquivo(
+def remover_arquivo(
     versao_id: UUID, caminho: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> Response:
@@ -342,7 +342,7 @@ async def remover_arquivo(
 
 
 @router.post("/api/skills-biblioteca/versoes/{versao_id}/publicar", response_model=VersaoOut)
-async def publicar_versao(
+def publicar_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: SkillsBibliotecaStore = Depends(get_skills_store_dep),
 ) -> VersaoOut:
@@ -373,7 +373,7 @@ def _audit_pin(store, ctx: AuthContext, agent, version_id: UUID, antes: list[str
 
 
 @router.get("/api/studio/agents/{key}/versions/{version_id}/skills-biblioteca", response_model=RefsOut)
-async def listar_refs_da_versao(
+def listar_refs_da_versao(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     skills: SkillsBibliotecaStore = Depends(get_skills_store_dep),
     store=Depends(get_studio_definition_store_dep),
@@ -385,7 +385,7 @@ async def listar_refs_da_versao(
 
 
 @router.get("/api/studio/agents/{key}/draft/skills-biblioteca", response_model=RefsOut)
-async def listar_refs_do_rascunho(
+def listar_refs_do_rascunho(
     key: str, ctx: AuthContext = Depends(require_platform_content_admin),
     skills: SkillsBibliotecaStore = Depends(get_skills_store_dep),
     store=Depends(get_studio_definition_store_dep),
@@ -397,7 +397,7 @@ async def listar_refs_do_rascunho(
 
 
 @router.put("/api/studio/agents/{key}/draft/skills-biblioteca/{skill}", response_model=RefsOut)
-async def fixar_ref(
+def fixar_ref(
     key: str, skill: str, body: RefPut, ctx: AuthContext = Depends(require_platform_content_admin),
     skills: SkillsBibliotecaStore = Depends(get_skills_store_dep),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -428,7 +428,7 @@ async def fixar_ref(
 
 
 @router.delete("/api/studio/agents/{key}/draft/skills-biblioteca/{skill}", response_model=RefsOut)
-async def remover_ref(
+def remover_ref(
     key: str, skill: str, ctx: AuthContext = Depends(require_platform_content_admin),
     skills: SkillsBibliotecaStore = Depends(get_skills_store_dep),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),

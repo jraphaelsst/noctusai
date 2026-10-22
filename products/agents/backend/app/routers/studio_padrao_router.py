@@ -127,7 +127,7 @@ def estampar_padrao_no_rascunho(store, padroes: PadraoStore, org_id: UUID, agent
 
 
 @router.get("/agents/{key}/qualificacao", response_model=QualificacaoPinOut)
-async def ler_pin(
+def ler_pin(
     key: str,
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -139,7 +139,7 @@ async def ler_pin(
 
 
 @router.put("/agents/{key}/draft/qualificacao", response_model=QualificacaoPinOut)
-async def mover_pin(
+def mover_pin(
     key: str,
     payload: PinRequest,
     ctx: AuthContext = Depends(require_platform_admin),

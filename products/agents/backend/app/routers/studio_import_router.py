@@ -85,7 +85,7 @@ class ImportSummaryOut(BaseModel):
 
 
 @router.post("/{key}/import", response_model=ImportSummaryOut)
-async def import_agent_bundle(
+def import_agent_bundle(
     key: str,
     bundle: AgentBundle,
     dry_run: bool = Query(default=False),

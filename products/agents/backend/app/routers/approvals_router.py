@@ -80,7 +80,7 @@ def _approval_out_from_broker_result(org_id: UUID, result: dict) -> ApprovalOut:
 
 
 @router.get("", response_model=ApprovalListOut)
-async def list_approvals(
+def list_approvals(
     estado: str = Query(default="pendente"),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_approval_store_dep),

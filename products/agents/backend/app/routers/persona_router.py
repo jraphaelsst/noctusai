@@ -44,7 +44,7 @@ def _persona_out(record) -> PersonaOut:
 
 
 @router.get("", response_model=PersonaOut)
-async def get_persona(
+def get_persona(
     ctx: AuthContext = Depends(require_member),
     agent_store=Depends(get_agent_store_dep),
     persona_store=Depends(get_persona_store_dep),
@@ -62,7 +62,7 @@ async def get_persona(
 
 
 @router.put("", response_model=PersonaOut)
-async def update_persona(
+def update_persona(
     payload: PersonaUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
     agent_store=Depends(get_agent_store_dep),

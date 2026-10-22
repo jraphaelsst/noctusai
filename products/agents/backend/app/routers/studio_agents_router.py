@@ -460,7 +460,7 @@ def _compiled_out(compiled: CompiledPrompt, version_id: UUID, client_id: UUID | 
 
 
 @router.get("/agents", response_model=AgentListOut)
-async def list_studio_agents(
+def list_studio_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentListOut:
@@ -471,7 +471,7 @@ async def list_studio_agents(
 
 
 @router.post("/agents", response_model=AgentSummaryOut, status_code=status.HTTP_201_CREATED)
-async def create_studio_agent(
+def create_studio_agent(
     payload: StudioAgentCreateRequest,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -489,7 +489,7 @@ async def create_studio_agent(
 
 
 @router.get("/agents/{key}", response_model=AgentDetailOut)
-async def get_studio_agent(
+def get_studio_agent(
     key: str,
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_definition_store_dep),
@@ -520,7 +520,7 @@ _EXCLUSAO_MENSAGENS = {
 
 
 @router.delete("/agents/{key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_studio_agent(
+def delete_studio_agent(
     key: str,
     ctx: AuthContext = Depends(require_agent_delete),
     store=Depends(get_studio_definition_store_dep),
@@ -551,7 +551,7 @@ async def delete_studio_agent(
 
 
 @router.patch("/agents/{key}", response_model=AgentSummaryOut)
-async def update_studio_agent(
+def update_studio_agent(
     key: str,
     payload: StudioAgentUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -568,7 +568,7 @@ async def update_studio_agent(
 
 
 @router.get("/agents/{key}/versions/{version_id}", response_model=VersionDetailOut)
-async def get_version(
+def get_version(
     key: str,
     version_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -589,7 +589,7 @@ async def get_version(
 
 
 @router.get("/agents/{key}/draft", response_model=VersionDetailOut)
-async def get_draft(
+def get_draft(
     key: str,
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -605,7 +605,7 @@ async def get_draft(
 
 
 @router.post("/agents/{key}/draft", response_model=VersionDetailOut, status_code=status.HTTP_201_CREATED)
-async def create_draft(
+def create_draft(
     key: str,
     payload: DraftCreateRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -626,7 +626,7 @@ async def create_draft(
 
 
 @router.delete("/agents/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
-async def discard_draft(
+def discard_draft(
     key: str,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -639,7 +639,7 @@ async def discard_draft(
 
 
 @router.patch("/agents/{key}/draft", response_model=VersionDetailOut)
-async def update_draft(
+def update_draft(
     key: str,
     payload: DraftUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -657,7 +657,7 @@ async def update_draft(
 
 
 @router.put("/agents/{key}/draft/sections", response_model=VersionDetailOut)
-async def replace_draft_sections(
+def replace_draft_sections(
     key: str,
     payload: SectionsReplaceRequest,
     ctx: AuthContext = Depends(require_admin_or_content_token),
@@ -692,7 +692,7 @@ async def replace_draft_sections(
 
 
 @router.post("/agents/{key}/draft/skills", response_model=SkillOut, status_code=status.HTTP_201_CREATED)
-async def create_draft_skill(
+def create_draft_skill(
     key: str,
     payload: SkillCreateRequest,
     ctx: AuthContext = Depends(require_admin),
@@ -711,7 +711,7 @@ async def create_draft_skill(
 
 
 @router.patch("/agents/{key}/draft/skills/{skill_id}", response_model=SkillOut)
-async def update_draft_skill(
+def update_draft_skill(
     key: str,
     skill_id: UUID,
     payload: SkillUpdateRequest,
@@ -731,7 +731,7 @@ async def update_draft_skill(
 
 
 @router.delete("/agents/{key}/draft/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_draft_skill(
+def delete_draft_skill(
     key: str,
     skill_id: UUID,
     ctx: AuthContext = Depends(require_admin),
@@ -747,7 +747,7 @@ async def delete_draft_skill(
 
 
 @router.put("/agents/{key}/draft/skills/{skill_id}/files", response_model=SkillFileMetaOut)
-async def upsert_draft_skill_file(
+def upsert_draft_skill_file(
     key: str,
     skill_id: UUID,
     payload: SkillFileUpsertRequest,
@@ -768,7 +768,7 @@ async def upsert_draft_skill_file(
 @router.put(
     "/agents/{key}/draft/skills/{skill_id}/files/batch", response_model=SkillFilesBatchResultOut,
 )
-async def upsert_draft_skill_files_batch(
+def upsert_draft_skill_files_batch(
     key: str,
     skill_id: UUID,
     payload: SkillFilesBatchUpsertRequest,
@@ -815,7 +815,7 @@ async def upsert_draft_skill_files_batch(
 
 
 @router.get("/agents/{key}/skills/{skill_id}/files/{file_id}", response_model=SkillFileOut)
-async def get_skill_file(
+def get_skill_file(
     key: str,
     skill_id: UUID,
     file_id: UUID,
@@ -830,7 +830,7 @@ async def get_skill_file(
 
 
 @router.delete("/agents/{key}/draft/skills/{skill_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_draft_skill_file(
+def delete_draft_skill_file(
     key: str,
     skill_id: UUID,
     file_id: UUID,
@@ -851,7 +851,7 @@ async def delete_draft_skill_file(
 
 
 @router.get("/agents/{key}/versions/{version_id}/compiled", response_model=CompiledOut)
-async def get_compiled(
+def get_compiled(
     key: str,
     version_id: UUID,
     client_id: UUID | None = Query(default=None),
@@ -884,7 +884,7 @@ def _diff_states(a: dict[str, tuple], b: dict[str, tuple]) -> list[tuple[str, st
 
 
 @router.get("/agents/{key}/versions/{version_a}/diff/{version_b}", response_model=DiffOut)
-async def diff_versions(
+def diff_versions(
     key: str,
     version_a: UUID,
     version_b: UUID,
@@ -930,7 +930,7 @@ async def diff_versions(
 
 
 @router.post("/agents/{key}/draft/publish", response_model=VersionDetailOut)
-async def publish_draft(
+def publish_draft(
     key: str,
     payload: PublishRequest,
     ctx: AuthContext = Depends(require_publish_write),
@@ -1143,7 +1143,7 @@ async def run_mecanismo_suite(
 
 
 @router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True)
-async def get_mecanismo_run(
+def get_mecanismo_run(
     key: str,
     run_id: UUID,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -1185,7 +1185,7 @@ async def get_mecanismo_run(
 
 
 @router.get("/prompts/{prompt_hash}", response_model=PromptByHashOut)
-async def get_prompt_by_hash(
+def get_prompt_by_hash(
     prompt_hash: str,
     ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),

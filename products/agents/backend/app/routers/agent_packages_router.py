@@ -53,7 +53,7 @@ def _published(store, org_id, agent) -> list:
 
 
 @router.get("/{key}/versions", response_model=PackageVersionsOut)
-async def list_package_versions(
+def list_package_versions(
     key: str,
     ctx: AuthContext = Depends(require_packages_read),
     store=Depends(get_studio_definition_store_dep),
@@ -91,7 +91,7 @@ def _package_meta(key: str, version, files: list[dict[str, str]]) -> dict[str, A
 
 
 @router.get("/{key}/{versao}", response_model=PackageOut)
-async def get_package(
+def get_package(
     key: str,
     versao: str,
     ctx: AuthContext = Depends(require_packages_read),

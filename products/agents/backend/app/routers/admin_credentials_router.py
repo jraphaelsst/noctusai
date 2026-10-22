@@ -63,7 +63,7 @@ def _one_chat_connection(agent_store, org_id: UUID, name: str) -> UUID | None:
 
 
 @router.get("", response_model=CredentialListOut)
-async def list_credentials(
+def list_credentials(
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
 ) -> CredentialListOut:
@@ -76,7 +76,7 @@ async def list_credentials(
 
 
 @router.put("/{name}", response_model=CredentialOut)
-async def set_credential(
+def set_credential(
     name: str,
     payload: CredentialValueIn,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -91,7 +91,7 @@ async def set_credential(
 
 
 @router.post("/{name}/import-env", response_model=CredentialOut)
-async def import_credential_from_env(
+def import_credential_from_env(
     name: str,
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
@@ -148,7 +148,7 @@ async def renew_credential(
 
 
 @router.post("/approval_assertion_secrets/rotate", response_model=CredentialOut)
-async def rotate_approval_keys(
+def rotate_approval_keys(
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
 ) -> CredentialOut:
@@ -161,7 +161,7 @@ async def rotate_approval_keys(
 
 
 @router.post("/approval_assertion_secrets/prune", response_model=CredentialOut)
-async def prune_approval_keys(
+def prune_approval_keys(
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
 ) -> CredentialOut:

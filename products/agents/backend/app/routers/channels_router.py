@@ -29,6 +29,7 @@ replay / conflict (409) → ``no_active_version`` / ``qualificacao_indisponivel`
 ``prompt_too_large`` (409) → org key + budget preflight (424 / 429) → capacity slot (429) → turn lock
 (409 ``turn_in_progress``) → controls (503 ``controle_indisponivel`` fails closed).
 """
+import anyio
 # NOTE: deliberately NO `from __future__ import annotations` (same reason as
 # conversations_router): FastAPI must resolve the body/dependency types eagerly.
 
@@ -284,7 +285,7 @@ async def run_channel_turn(
         skills_factory=skills_factory, notificacoes=notificacoes,
     )
 
-    existing = conv_store.find_thread(org_id, payload.channel, channel_ref)
+    existing = (await anyio.to_thread.run_sync(lambda: conv_store.find_thread(org_id, payload.channel, channel_ref)))
 
     # 1. Replay / conflict, before any gate: a stored reply is returned even if the agent has since been
     #    switched off — the model never runs twice.
@@ -322,7 +323,7 @@ async def run_channel_turn(
     try:
         if existing is not None:
             thread = existing
-            acquired = conv_store.try_acquire_turn(org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds)
+            acquired = (await anyio.to_thread.run_sync(lambda: conv_store.try_acquire_turn(org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds)))
             if not acquired:
                 raise _err(409, "turn_in_progress", "Já existe um turno em andamento.")
             # Authoritative idempotency check, UNDER the lock.
@@ -348,7 +349,7 @@ async def run_channel_turn(
             raise exc.as_http_exception() from exc
         if ctl.thread is not None and thread is None:  # a brand-new thread: lock it now
             thread = ctl.thread
-            acquired = conv_store.try_acquire_turn(org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds)
+            acquired = (await anyio.to_thread.run_sync(lambda: conv_store.try_acquire_turn(org_id, thread.id, INSTANCE_ID, settings.turn_lock_ttl_seconds)))
             if not acquired:
                 raise _err(409, "turn_in_progress", "Já existe um turno em andamento.")
         thread = ctl.thread if ctl.thread is not None else thread
@@ -364,7 +365,7 @@ async def run_channel_turn(
                     await publish_event(thread.id, "message.new", turno_mod.mensagem_publica(rec), bus=bus)
             resp = _resposta_sem_turno(ctl.status, thread, agent, ctl.participante)
             if thread is not None and ids:
-                inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))
+                (await anyio.to_thread.run_sync(lambda: inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))))
             return resp
 
         if prep is None:  # the control flipped on between the peek and the lock: refuse, retry re-evaluates
@@ -383,7 +384,7 @@ async def run_channel_turn(
                 logger.warning("agents.channel.turn.limite_atingido org_id=%s limite=%s", org_id, tripped)
                 resp = _resposta_sem_turno(turno_mod.status_do_limite(tripped), thread, agent, ctl.participante)
                 if ids:
-                    inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))
+                    (await anyio.to_thread.run_sync(lambda: inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))))
                 return resp
 
         lote_lead = [t for m in batch for t in m.falas_do_lead()]
@@ -442,11 +443,11 @@ async def run_channel_turn(
             },
         )
         if ids:
-            inbound.set_reply(org_id, connection_id, ids, response.model_dump(mode="json"))
+            (await anyio.to_thread.run_sync(lambda: inbound.set_reply(org_id, connection_id, ids, response.model_dump(mode="json"))))
         return response
     finally:
         if acquired and thread is not None:
-            conv_store.release_turn(org_id, thread.id, INSTANCE_ID)
+            (await anyio.to_thread.run_sync(lambda: conv_store.release_turn(org_id, thread.id, INSTANCE_ID)))
         if slot is not None:
             await slot.release()
 
@@ -476,7 +477,7 @@ async def _publish_error(conversation_id: UUID, bus: Any) -> None:
 
 
 @router.get("/agents/{agent_key}/status", response_model=ChannelAgentStatusOut)
-async def channel_agent_status(
+def channel_agent_status(
     agent_key: str,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -519,7 +520,7 @@ async def channel_agent_status(
 
 
 @router.get("/agents/{agent_key}/qualificacao/estagios", response_model=list[EstagioOut])
-async def channel_agent_estagios(
+def channel_agent_estagios(
     agent_key: str,
     ctx: AuthContext = Depends(require_channel_status),
     studio_store=Depends(get_studio_definition_store_dep),
@@ -564,7 +565,7 @@ def _month_window_utc(mes: str) -> tuple[datetime, datetime]:
 
 
 @router.get("/uso", response_model=ChannelUsoOut)
-async def channel_usage(
+def channel_usage(
     mes: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     ctx: AuthContext = Depends(require_channel_turn),
     msg_store=Depends(get_message_store_dep),
@@ -582,7 +583,7 @@ async def channel_usage(
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_channel_conversation(
+def delete_channel_conversation(
     payload: ChannelDeleteRequest,
     ctx: AuthContext = Depends(require_channel_turn),
     studio_store=Depends(get_studio_definition_store_dep),
