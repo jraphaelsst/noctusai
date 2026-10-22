@@ -13,6 +13,8 @@ import { StudioLoading } from "@/components/studio/StudioStates";
 import { useEditableRows } from "@/components/studio/useEditableRows";
 import { useSaveDraftSet, useVersionContent } from "@/hooks/studio/useConteudo";
 import { errorMessage } from "@/lib/errors";
+import { GeradoBadge } from "@/components/studio/CompletudeCard";
+import { useItensGerados } from "@/hooks/studio/useGeracoes";
 
 const CHAVE_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const TIPOS: ReadonlyArray<{ valor: string; rotulo: string }> = [
@@ -23,6 +25,7 @@ const INPUT_CLASS =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
 
 export default function EspecificacoesTab({ agentKey }: { agentKey: string }) {
+  const gerados = useItensGerados(agentKey);
   const { refs, versionId, isDraft } = useContentTarget(agentKey);
   const q = useVersionContent(agentKey, "specs", versionId);
   const save = useSaveDraftSet(agentKey, "specs", versionId);
@@ -76,6 +79,7 @@ export default function EspecificacoesTab({ agentKey }: { agentKey: string }) {
         <section key={r.chave} className="space-y-3 rounded-lg border border-border bg-card p-4" data-testid={`spec-${r.chave}`}>
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground">{`{{org.${r.chave}}}`}</span>
+            {isDraft && <GeradoBadge estado={gerados.specs?.[r.chave]} />}
             {isDraft && (
               <button type="button" className="ml-auto text-muted-foreground hover:text-destructive" aria-label={`Remover ${r.chave}`} onClick={() => ed.setRows((rows) => rows.filter((_, j) => j !== i))}>
                 <Trash2 className="h-4 w-4" />

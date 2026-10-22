@@ -10,6 +10,9 @@ import { toast } from "sonner";
 import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import type { VersionSummary } from "@/api/studio/types";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
+import { CompletudeCard } from "@/components/studio/CompletudeCard";
+import { GeracaoPanel } from "@/components/studio/GeracaoPanel";
+import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { ControlesCard } from "@/components/studio/ControlesCard";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
@@ -54,6 +57,7 @@ function VersionCard({ titulo, versao, agentKey }: { titulo: string; versao: Ver
 
 export default function OverviewTab({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
+  const isPlatformAdmin = useIsPlatformAdmin();
   const navigate = useNavigate();
   const { data: agent, draft, ativa, showSkeleton, isError, error, refetch, isPlaceholderData } =
     useAgentVersionRefs(agentKey);
@@ -127,6 +131,11 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
           </p>
         </div>
       </div>
+
+      <CompletudeCard status={agent.conteudo_status} />
+      {isPlatformAdmin && agent.definition_scope === "plataforma" && agent.conteudo_modo === "linhas" && (
+        <GeracaoPanel agentKey={agentKey} />
+      )}
 
       <div className="flex flex-wrap gap-2">
         {isAdmin && !draft && (

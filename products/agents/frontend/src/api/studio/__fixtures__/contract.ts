@@ -55,8 +55,9 @@ export const LEGACY_SUMMARY: AgentSummary = {
   kind: "runtime",
 };
 
+const { conteudo_status: _summaryStatus, ...AGENT_SUMMARY_FIELDS } = AGENT_SUMMARY;
 export const AGENT_DETAIL: AgentDetail = {
-  ...AGENT_SUMMARY,
+  ...AGENT_SUMMARY_FIELDS,
   versoes: [
     {
       id: V2_ID,

@@ -13,6 +13,8 @@ import { StudioLoading } from "@/components/studio/StudioStates";
 import { useEditableRows } from "@/components/studio/useEditableRows";
 import { useSaveDraftSet, useVersionContent } from "@/hooks/studio/useConteudo";
 import { errorMessage } from "@/lib/errors";
+import { GeradoBadge } from "@/components/studio/CompletudeCard";
+import { useItensGerados } from "@/hooks/studio/useGeracoes";
 
 const NOME_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const DESC_MAX = 2000;
@@ -20,6 +22,7 @@ const INPUT_CLASS =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
 
 export default function FerramentasTab({ agentKey }: { agentKey: string }) {
+  const gerados = useItensGerados(agentKey);
   const { refs, versionId, isDraft } = useContentTarget(agentKey);
   const q = useVersionContent(agentKey, "ferramentas", versionId);
   const save = useSaveDraftSet(agentKey, "ferramentas", versionId);
@@ -77,6 +80,7 @@ export default function FerramentasTab({ agentKey }: { agentKey: string }) {
           <div className="flex items-center gap-3">
             <span className="font-mono text-sm font-semibold">{r.ferramenta}</span>
             <Badge variant={r.ativo ? "default" : "muted"}>{r.ativo ? "Ativa" : "Desligada"}</Badge>
+            {isDraft && <GeradoBadge estado={gerados.ferramentas?.[r.ferramenta]} />}
             <div className="ml-auto flex items-center gap-2">
               <Switch
                 checked={r.ativo}

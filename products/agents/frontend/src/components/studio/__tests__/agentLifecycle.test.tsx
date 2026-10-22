@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@noctusai/lib";
 
 const post = vi.fn();
+const get = vi.fn();
 const del = vi.fn();
-vi.mock("@/lib/api", () => ({ api: { post: (...a: unknown[]) => post(...a), delete: (...a: unknown[]) => del(...a) } }));
+vi.mock("@/lib/api", () => ({ api: { get: (...a: unknown[]) => get(...a), post: (...a: unknown[]) => post(...a), delete: (...a: unknown[]) => del(...a) } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (orig) => ({ ...(await orig<typeof import("react-router-dom")>()), useNavigate: () => navigate }));
@@ -27,7 +28,10 @@ function setup(ui: React.ReactElement) {
   return { qc, spy };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  get.mockResolvedValue({ items: [] });
+});
 afterEach(cleanup);
 
 describe("CriarAgentePlataformaDialog", () => {
@@ -36,9 +40,12 @@ describe("CriarAgentePlataformaDialog", () => {
     const onClose = vi.fn();
     const { spy } = setup(<CriarAgentePlataformaDialog onClose={onClose} />);
     expect((screen.getByTestId("criar-agente-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("criar-agente-nome"), { target: { value: "Júlia Vendas" } });
+    // the key is derived from the name and stays editable
+    expect((screen.getByTestId("criar-agente-key") as HTMLInputElement).value).toBe("julia-vendas");
     fireEvent.change(screen.getByTestId("criar-agente-key"), { target: { value: "Julia" } });
     fireEvent.click(screen.getByTestId("criar-agente-submit"));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/studio/plataforma/agents", { key: "julia" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/studio/plataforma/agents", { key: "julia", nome: "Júlia Vendas" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/studio/julia"));
     expect(spy).toHaveBeenCalledWith({ queryKey: studioKeys.list() });
   });
@@ -46,10 +53,64 @@ describe("CriarAgentePlataformaDialog", () => {
   it("surfaces 422 chave_nao_registrada", async () => {
     post.mockRejectedValue(new ApiError(422, "Chave não registrada.", { detail: "Chave não registrada.", code: "chave_nao_registrada" }));
     setup(<CriarAgentePlataformaDialog onClose={vi.fn()} />);
-    fireEvent.change(screen.getByTestId("criar-agente-key"), { target: { value: "xyz" } });
+    fireEvent.change(screen.getByTestId("criar-agente-nome"), { target: { value: "Xyz" } });
     fireEvent.click(screen.getByTestId("criar-agente-submit"));
     expect((await screen.findByTestId("criar-agente-erro")).textContent).toMatch(/Chave não registrada/);
     expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("CriarAgentePlataformaDialog · gerar com IA", () => {
+  const preencher = () => {
+    fireEvent.click(screen.getByTestId("criar-modo-gerar"));
+    fireEvent.change(screen.getByLabelText(/Nome do agente/), { target: { value: "Atendente Loja" } });
+    fireEvent.change(screen.getByLabelText(/Objetivo/), { target: { value: "Atender clientes da loja" } });
+    fireEvent.change(screen.getByLabelText(/Público/), { target: { value: "Clientes" } });
+    fireEvent.change(screen.getByLabelText(/Canal/), { target: { value: "whatsapp" } });
+  };
+
+  it("sends the briefing in the same single POST and shows the cap + draft notice", async () => {
+    post.mockResolvedValue({ id: "1", key: "atendente-loja", org_id: "o", definition_scope: "plataforma", conteudo_modo: "linhas", geracao: null });
+    setup(<CriarAgentePlataformaDialog onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("criar-modo-gerar"));
+    expect(screen.getByTestId("criar-agente-aviso-ia").textContent).toMatch(/5\.00/);
+    expect(screen.getByTestId("criar-agente-aviso-ia").textContent).toMatch(/rascunho|revise/i);
+    preencher();
+    expect((screen.getByTestId("criar-agente-key") as HTMLInputElement).value).toBe("atendente-loja");
+    fireEvent.click(screen.getByTestId("criar-agente-submit"));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/api/studio/plataforma/agents", {
+        key: "atendente-loja",
+        nome: "Atendente Loja",
+        briefing: { nome: "Atendente Loja", objetivo: "Atender clientes da loja", publico: "Clientes", canal: "whatsapp", idioma: "pt-BR" },
+      }),
+    );
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/studio/atendente-loja"));
+  });
+
+  it("blocks submit client-side when the briefing breaks the contract limits", async () => {
+    setup(<CriarAgentePlataformaDialog onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("criar-modo-gerar"));
+    fireEvent.change(screen.getByLabelText(/Nome do agente/), { target: { value: "Ab" } });
+    fireEvent.change(screen.getByLabelText(/Objetivo/), { target: { value: "curto" } });
+    fireEvent.click(screen.getByTestId("criar-agente-submit"));
+    expect((await screen.findByTestId("criar-briefing-objetivo-erro")).textContent).toMatch(/mínimo de 10/);
+    expect(screen.getByTestId("criar-briefing-canal-erro")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("takes key suggestions from the API list, never a literal", async () => {
+    get.mockResolvedValue({ items: [{ key: "alfa", nome: "Alfa" }] });
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CriarAgentePlataformaDialog onClose={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(document.querySelector('#criar-agente-chaves option[value="alfa"]')).toBeTruthy());
+    expect(document.querySelector('#criar-agente-chaves option[value="julia"]')).toBeNull();
+    void container;
   });
 });
 

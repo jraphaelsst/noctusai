@@ -28,6 +28,8 @@ export const studioKeys = {
   compiled: (key: string, vid: string, clientId: string | null) =>
     ["studio", key, "compiled", vid, clientId ?? "__sem_cliente__"] as const,
   diff: (key: string, a: string, b: string) => ["studio", key, "diff", a, b] as const,
+  geracoes: (key: string) => ["studio", key, "geracoes"] as const,
+  geracao: (key: string, id: string) => ["studio", key, "geracoes", id] as const,
   clients: (key: string) => ["studio", key, "clients"] as const,
   client: (key: string, clientId: string) => ["studio", key, "clients", clientId] as const,
   prompt: (hash: string) => ["studio-prompt", hash] as const,

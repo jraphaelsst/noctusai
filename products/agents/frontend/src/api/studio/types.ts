@@ -17,6 +17,8 @@
  *     `avisos`) sit next to `code` on `ApiError.body`. See `PublishErrorBody`.
  *   - Timestamps are ISO-8601 strings; UUIDs are strings.
  */
+import type { ConteudoStatusDetail } from "./types-geracao";
+
 
 // ── Enumerations (contract §B1 CHECKs / §A10 allowlist) ───────────────────────
 
@@ -122,8 +124,10 @@ export interface VersionSummary {
 }
 
 /** `GET /api/studio/agents/{key}` — `versoes` newest first. */
-export interface AgentDetail extends AgentSummary {
+export interface AgentDetail extends Omit<AgentSummary, "conteudo_status"> {
   versoes: VersionSummary[];
+  /** S3a §4 — completeness against the applicable `textos_registry` slots; null for `legado` agents. */
+  conteudo_status?: ConteudoStatusDetail | null;
 }
 
 export interface AgentCreateInput {

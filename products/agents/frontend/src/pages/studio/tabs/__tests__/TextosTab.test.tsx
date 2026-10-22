@@ -36,6 +36,7 @@ afterEach(() => {
 describe("TextosTab", () => {
   it("groups by category, marks empty rows and shows 'Rascunho vs publicada'", async () => {
     installFetch([
+      { method: "GET", path: `${A}/geracoes`, body: { items: [] } },
       { method: "GET", path: A, body: agentDetail() },
       { method: "GET", path: `${A}/versions/${DRAFT_ID}/textos`, body: { version_id: DRAFT_ID, itens: TEXTOS } },
       { method: "GET", path: "/api/studio/plataforma/textos", body: { itens: [] } },
@@ -49,6 +50,7 @@ describe("TextosTab", () => {
 
   it("PUTs the whole set (no ids) after a compare-before-write and refetches", async () => {
     const net = installFetch([
+      { method: "GET", path: `${A}/geracoes`, body: { items: [] } },
       { method: "GET", path: A, body: agentDetail() },
       { method: "GET", path: `${A}/versions/${DRAFT_ID}/textos`, body: { version_id: DRAFT_ID, itens: TEXTOS } },
       { method: "PUT", path: `${A}/draft/textos`, body: { version_id: DRAFT_ID, itens: TEXTOS } },
@@ -76,6 +78,7 @@ describe("TextosTab", () => {
   it("surfaces an optimistic-lock conflict and never PUTs when the server moved", async () => {
     let reads = 0;
     const net = installFetch([
+      { method: "GET", path: `${A}/geracoes`, body: { items: [] } },
       { method: "GET", path: A, body: agentDetail() },
       { method: "GET", path: `${A}/versions/${DRAFT_ID}/textos`, body: { version_id: DRAFT_ID, itens: TEXTOS } },
       { method: "GET", path: "/api/studio/plataforma/textos", body: { itens: [] } },
@@ -102,6 +105,7 @@ describe("TextosTab", () => {
 
   it("is read-only on a published version and offers 'Criar rascunho'", async () => {
     installFetch([
+      { method: "GET", path: `${A}/geracoes`, body: { items: [] } },
       { method: "GET", path: A, body: agentDetail({}, false) },
       { method: "GET", path: `${A}/versions/${ACTIVE_ID}/textos`, body: { version_id: ACTIVE_ID, itens: TEXTOS } },
       { method: "GET", path: "/api/studio/plataforma/textos", body: { itens: [] } },
@@ -116,6 +120,7 @@ describe("TextosTab", () => {
 
   it("shows the restricted state for a non platform admin (403)", async () => {
     installFetch([
+      { method: "GET", path: `${A}/geracoes`, body: { items: [] } },
       { method: "GET", path: A, body: agentDetail() },
       { method: "GET", path: `${A}/versions/${DRAFT_ID}/textos`, status: 403, body: { detail: "x", code: "platform_admin_required" } },
     ]);

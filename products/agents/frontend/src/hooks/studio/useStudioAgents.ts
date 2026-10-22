@@ -61,9 +61,9 @@ export function useUpdateStudioAgent(key: string) {
       qc.setQueryData<AgentListResponse>(studioKeys.list(), (prev) =>
         prev ? { ...prev, items: prev.items.map((a) => (a.key === updated.key ? updated : a)) } : prev,
       );
-      qc.setQueryData<AgentDetail>(studioKeys.detail(key), (prev) =>
-        prev ? { ...prev, ...updated } : prev,
-      );
+      // The list summary's `conteudo_status` has another shape than the detail's (S3a §4): never merge it in.
+      const { conteudo_status: _listStatus, ...fields } = updated;
+      qc.setQueryData<AgentDetail>(studioKeys.detail(key), (prev) => (prev ? { ...prev, ...fields } : prev));
       // `publicacao_limiar` feeds the publish gate; the compiled view does not
       // depend on agent fields other than `nome`, which changes rarely enough
       // that a targeted refetch is simpler than reasoning about it.

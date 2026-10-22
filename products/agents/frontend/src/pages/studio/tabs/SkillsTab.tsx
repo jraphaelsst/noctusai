@@ -34,6 +34,8 @@ import {
 } from "@/hooks/studio/useVersions";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
+import { GeradoBadge } from "@/components/studio/CompletudeCard";
+import { useItensGerados } from "@/hooks/studio/useGeracoes";
 import { cn } from "@/lib/utils";
 
 const INPUT_CLASS =
@@ -231,6 +233,7 @@ function SkillFilesPanel({
 // ── Tab ───────────────────────────────────────────────────────────────────────
 
 export default function SkillsTab({ agentKey }: { agentKey: string }) {
+  const gerados = useItensGerados(agentKey);
   const confirm = useConfirm();
   const isAdmin = useIsAdmin();
   const [params, setParams] = useSearchParams();
@@ -365,6 +368,7 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-medium">{s.nome}</span>
+                    {refs.draft && <GeradoBadge estado={gerados.skills?.[s.nome]} />}
                     {!s.ativo && <Badge variant="muted">Inativa</Badge>}
                     {s.ativo && !s.corpo.trim() && <Badge variant="destructive">Sem corpo</Badge>}
                   </div>

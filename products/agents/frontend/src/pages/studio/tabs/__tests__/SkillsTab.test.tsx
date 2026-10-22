@@ -33,6 +33,7 @@ vi.mock("@/hooks/studio/useVersions", () => ({
   useDeleteSkillFile: () => mockUseDeleteSkillFile(),
   useBatchUpsertSkillFiles: () => mockUseBatchUpsertSkillFiles(),
 }));
+vi.mock("@/hooks/studio/useGeracoes", () => ({ useItensGerados: () => ({}) }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
 
 const SKILL_A = { id: "skill-a", nome: "skill-a", descricao: "Descrição A", corpo: "corpo a", ordem: 10, ativo: true, arquivos: [] };

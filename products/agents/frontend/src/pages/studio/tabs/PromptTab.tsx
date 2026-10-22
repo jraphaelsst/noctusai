@@ -19,6 +19,8 @@ import { VersionStatusBadge } from "@/components/studio/VersionStatusBadge";
 import { useAgentVersionRefs, useCreateDraft, useSaveSections, useVersion } from "@/hooks/studio/useVersions";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
+import { GeradoBadge } from "@/components/studio/CompletudeCard";
+import { useItensGerados } from "@/hooks/studio/useGeracoes";
 import { cn } from "@/lib/utils";
 
 const INPUT_CLASS =
@@ -65,6 +67,7 @@ function validate(rows: Row[]): string | null {
 }
 
 export default function PromptTab({ agentKey }: { agentKey: string }) {
+  const gerados = useItensGerados(agentKey);
   const isAdmin = useIsAdmin();
   const [params] = useSearchParams();
   const refs = useAgentVersionRefs(agentKey);
@@ -244,6 +247,7 @@ export default function PromptTab({ agentKey }: { agentKey: string }) {
                   <span className="w-6 text-right text-xs tabular-nums text-muted-foreground">{idx + 1}</span>
                   <span className="text-sm font-medium">{r.titulo || <em className="text-muted-foreground">sem título</em>}</span>
                   <span className="font-mono text-[11px] text-muted-foreground">{r.chave}</span>
+                  {editable && <GeradoBadge estado={gerados.secoes?.[r.chave]} />}
                   {!r.ativo && <Badge variant="muted">Inativa</Badge>}
                   {r.ativo && !r.conteudo.trim() && <Badge variant="destructive">Vazia — bloqueia publicação</Badge>}
                   <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">~{estimateTokens(r.conteudo)} tokens</span>

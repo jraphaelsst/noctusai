@@ -48,6 +48,7 @@ any of them over PostgREST, except `status_pagina` (read-only). All reads go thr
 
 - Backend: FastAPI via `create_product_app()` (`noctusai_seed`) + `noctusai_lib`
 - Frontend: React + Vite + TypeScript via `createProductApp()` (`@noctusai/seed`)
+  - Studio "Gerar com IA" (S3a): the create dialog (`gerar` mode) and the agent Overview tab (`GeracaoPanel`) share one `BriefingForm`; runs are polled until terminal; draft editors badge items from the latest run ("Gerado por IA" / "Gerado · editado").
 - Database: Supabase, schema `agents`
 - Agent runtime: `claude-agent-sdk` behind an `AgentRuntime` Protocol (Fake + Real + factory)
 - Realtime: `noctusai_lib.realtime` SSE

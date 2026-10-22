@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type { AgentListResponse, AgentSummary } from "@/api/studio/types";
+import type { Briefing, GeracaoOut } from "@/api/studio/types-geracao";
 import { seg, studioKeys } from "./keys";
 
 export interface PlatformAgentCreated {
@@ -15,22 +16,37 @@ export interface PlatformAgentCreated {
   org_id: string;
   definition_scope: string;
   conteudo_modo: string;
+  /** S3a: non-null iff a briefing was sent. */
+  geracao?: GeracaoOut | null;
+}
+
+export interface PlatformAgentInput {
+  key: string;
+  nome?: string;
+  descricao?: string;
+  briefing?: Briefing;
+  limite_usd?: number;
 }
 
 export function useCreatePlatformAgent() {
-  return useCacheWriteMutation<PlatformAgentCreated, { key: string }>({
+  const qc = useQueryClient();
+  return useCacheWriteMutation<PlatformAgentCreated, PlatformAgentInput>({
     mutationFn: (payload) => api.post<PlatformAgentCreated>("/api/studio/plataforma/agents", payload),
+    // A briefing starts a run: seed the agent page's run list so the panel opens on it at once.
+    onSuccess: (created) => {
+      if (created.geracao) qc.setQueryData(studioKeys.geracoes(created.key), { items: [created.geracao] });
+    },
     targets: [
       {
         queryKey: studioKeys.list(),
         // The 201 body is a stub, not a full summary: the row shows what is known (empty shell, name = key) and
         // the background settle refetch fills nome/versões. Idempotent create: never duplicate an existing key.
-        commit: (old: AgentListResponse | undefined, created) => {
+        commit: (old: AgentListResponse | undefined, created, vars) => {
           if (!old || old.items.some((a) => a.key === created.key)) return old;
           const row: AgentSummary = {
             id: created.id,
             key: created.key,
-            nome: created.key,
+            nome: vars.nome ?? created.key,
             descricao: null,
             definition_mode: "studio",
             ativo: false,

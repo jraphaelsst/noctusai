@@ -15,6 +15,8 @@ import { StudioLoading } from "@/components/studio/StudioStates";
 import { useEditableRows } from "@/components/studio/useEditableRows";
 import { usePlataformaTextos, useSaveDraftSet, useSetPlataformaTextos, useVersionContent } from "@/hooks/studio/useConteudo";
 import { errorMessage } from "@/lib/errors";
+import { GeradoBadge } from "@/components/studio/CompletudeCard";
+import { useItensGerados } from "@/hooks/studio/useGeracoes";
 
 const CHAVE_RE = /^[a-z0-9]+(\.[a-z0-9_]+)+$/;
 const TEXTO_MAX = 8000;
@@ -81,6 +83,7 @@ function PlataformaTextos() {
 }
 
 export default function TextosTab({ agentKey }: { agentKey: string }) {
+  const gerados = useItensGerados(agentKey);
   const { refs, versionId, isDraft } = useContentTarget(agentKey);
   const q = useVersionContent(agentKey, "textos", versionId);
   const save = useSaveDraftSet(agentKey, "textos", versionId);
@@ -144,6 +147,7 @@ export default function TextosTab({ agentKey }: { agentKey: string }) {
                 <div key={r.chave}>
                   <div className="mb-1 flex items-center gap-2">
                     <label htmlFor={`texto-${r.chave}`} className="font-mono text-xs">{r.chave}</label>
+                    {isDraft && <GeradoBadge estado={gerados.textos?.[r.chave]} />}
                     {!r.conteudo.trim() && <Badge variant="outline">vazio</Badge>}
                     {isDraft && (
                       <button
