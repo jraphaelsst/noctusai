@@ -27,6 +27,8 @@ version: 1.5.0
 
 6a. **🔴 Then `noctus.dev.spa_smoke` — the FRONTEND leg (step 6 is backend-only).** Every check in step 6 passes while the JS bundle is missing: the container is up, `/api/health` answers, and the edge returns 200 for the HTML **shell** — a blank page for every user, all gates green. `spa_smoke` asserts, per active product, that the shell carries a mount point + bundle tag, that the bundle is real JS (**not** the SPA HTML fallback, which also 200s), and that a deep link resolves (client routing wired). After a UI-library change, pin what shipped with markers: `expect_absent=["@remix-run/router"]` proves a react-router v7 bundle. It does NOT execute JS, so an in-component render crash is still uncovered — that limit is deliberate. → `KB § PATTERNS/devops/prod-deploy-safety-gates.md`.
 
+6b. **Then `noctus.dev.latency_report product=<slug>` — the SPEED leg (fast responses are mandatory).** Browse the product once, then read p50/p95 per route template vs `deploy/fleet/latency-budgets.json` (shell/me 150, reads 300, writes 500 ms p95). `over_budget` = a regression to fix before walking away; `inconclusive` (no `req_timing` data) is NOT a pass — generate traffic and re-run. → skill `noc-fast-responses` · `KB § PATTERNS/backend/request-path-latency.md`.
+
 7. **A product's FIRST go-live** is its own runbook — consent alone-commit → compose + ingress → release → dispatch its image (after the prod push build started) → tunnel + DNS + URL roster → first `docker compose up` (deploy_image only swaps) → **flip live in core `/admin/products` LAST** (core 075 refuses a SQL/migration promotion) → refresh build scope. → `KB § GUIDES/production-deploy.md § 5a`.
 
 ## Guardrails

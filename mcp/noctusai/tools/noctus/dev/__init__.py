@@ -81,6 +81,7 @@ def register_all(server) -> None:
     from . import build_scope
     from . import product_scope
     from . import spa_smoke
+    from . import latency_report
     from . import prod_watchdog
     from . import ensure_product_url_roster
     from . import ensure_schema_exposure
@@ -235,6 +236,7 @@ def register_all(server) -> None:
     build_scope.register(server)
     product_scope.register(server)
     spa_smoke.register(server)
+    latency_report.register(server)
     prod_watchdog.register(server)
     ensure_product_url_roster.register(server)
     ensure_schema_exposure.register(server)

@@ -26,6 +26,7 @@ from noctusai_lib.primitives.exceptions import (
     postgrest_exception_handler,
     generic_exception_handler,
 )
+from .request_timing import RequestTimingMiddleware
 from .security_headers import SecurityHeadersMiddleware
 from .audit import AuditMiddleware, AuditSink
 from .middleware import (
@@ -289,6 +290,7 @@ def configure_app(
     app.state.audit_sink = audit_sink
     app.state.audit_enabled = _audit_enabled
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestTimingMiddleware)  # Server-Timing + `req_timing` log line (latency_report)
     app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(

@@ -47,8 +47,17 @@ The seed cannot make a product's own handlers non-blocking. Rule: an `async def`
 
 A 600 ms shell endpoint is ~10 sequential PostgREST calls (~25 ms warm each, VPS -> Supabase) or a blocked loop. Count `.table()` calls first (`_CountingCore` in `test_shell_endpoint_latency.py`). Independent reads inside one sync call run together via `noctusai_lib.api.auth._blocking.run_parallel` (own pool, all thunks finish, first exception by order re-raised): the effective-org member resolve reads memberships / blocks / live selection concurrently (still fresh every request -- revocation by recheck is untouched), and `/api/me/access` runs resolve, platform-staff check and manageable memberships concurrently, then ONE `organizations` name lookup for every org it mentions (was home + effective + eligible + manageable = 4+ separate lookups; ~11 sequential calls -> 4 levels). `/api/notificacoes*` and the org-choice handlers wrap their sync client calls in `run_blocking`. Core-served `/api/me/consents` and `/api/admin/llm-spend/{org}` live in `products/core`, not the seed.
 
+## Budget + gate: fast responses are mandatory (owner, 2026-10-22)
+
+Server-side p95 budgets live in ONE file, `deploy/fleet/latency-budgets.json` (shell/me **150 ms**, reads **300 ms**, writes **500 ms**; per-route `overrides` must carry a `reason`). Floor reasoning: ~25-50 ms per PostgREST round trip, so a 300 ms read is already ~6 sequential calls — count round trips, do not guess.
+
+- **Mechanism (by construction).** `RequestTimingMiddleware` (`noctusai_lib/api/request_timing.py`, registered in `configure_app` for every product) adds `Server-Timing: app;dur=<ms>` and logs one `req_timing method= route= status= dur_ms=` line per request. The route is the TEMPLATE (`/x/{id}`), never the raw path — no ids/PII in logs; unmatched requests log `<unmatched>`. Duration is to first byte.
+- **Gate.** `noctus.dev.latency_report product=<slug>` (`--latency-report`) reads recent container logs through the VPS log plumbing and reports p50/p95/count per route vs budget: `ok | over_budget | inconclusive`. No `req_timing` data (old image, quiet product, short window) is `inconclusive`, never `ok`; routes under `min_samples` cannot make a verdict ok. `/api/health` is ignored. Run it after every `deploy_image` (skill `noc-ship` step 6b).
+- **Procedure.** Skill `noc-fast-responses`: budget, handlers rule above, count round trips before changing anything, cache-writes for the perceived half.
+- **Adding a budget exception** = an `overrides` entry with method, route, `p95_ms` and a `reason`; "it is slow today" is not a reason.
+
 ## Measuring
 
 Do not trust a green unit run alone: time one authenticated endpoint with 3 concurrent requests before/after (`serial` = sum, `parallel` ≈ max). The tests pin the mechanism (`test_token_cache.py`, `test_database_pooling.py` — incl. a real local keep-alive server — and `test_request_path_latency.py`).
 
-Cross-links: `mutation-cache-writes.md` (the perceived-latency half) · `admin-client-schema-pinning.md` · `postgrest-row-cap.md` · `tenancy-license-gate.md`.
+Cross-links: skill `noc-fast-responses` · `mutation-cache-writes.md` (the perceived-latency half) · `admin-client-schema-pinning.md` · `postgrest-row-cap.md` · `tenancy-license-gate.md`.

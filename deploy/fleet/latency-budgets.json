@@ -1,0 +1,15 @@
+{
+  "_doc": "ONE place for server-side latency budgets (p95, ms, measured by the seed RequestTimingMiddleware, read by noctus.dev.latency_report). Class is chosen by: first matching `shell` route glob, else method (GET/HEAD = read, others = write). `overrides` are per-route exceptions and MUST carry a reason. KB § PATTERNS/backend/request-path-latency.md",
+  "budgets_p95_ms": {"shell": 150, "read": 300, "write": 500},
+  "shell_routes": [
+    "/api/me",
+    "/api/me/*",
+    "/api/auth/me",
+    "/api/notificacoes",
+    "/api/notificacoes/*",
+    "/api/admin/llm-spend/*"
+  ],
+  "ignore_routes": ["/api/health", "/api/health/*", "<unmatched>"],
+  "min_samples": 5,
+  "overrides": []
+}

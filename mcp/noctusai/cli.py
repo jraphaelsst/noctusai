@@ -494,6 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compose-brief", action="store_true", help="Auto-compose an engineer dispatch brief by querying kb-embeddings, auto-improvement, and agent-context keeper-mirror caches. Requires --files (comma-sep target files) and --description. Optionally --agent to pin agent; omit for auto-routing. Graceful-degrade when caches are empty. MCP: noctus.dev.engineer_brief_compose. KB § PATTERNS/common/agent-context-architecture.md.")
     parser.add_argument("--files", metavar="FILES", help="Comma-separated target file paths for --compose-brief (e.g. mcp/noctusai/tools/noctus/dev/foo.py,mcp/noctusai/cli.py).")
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
+    parser.add_argument("--latency-report", metavar="PRODUCT", default=None, help="Fast-responses gate: p50/p95/count per route template (req_timing log lines from the seed RequestTimingMiddleware) vs deploy/fleet/latency-budgets.json; verdict ok|over_budget|inconclusive. MCP: noctus.dev.latency_report. KB § PATTERNS/backend/request-path-latency.md.")
     parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--prod-watchdog", action="store_true", help="OFF-HOST prod liveness check: /api/health for core + every build-scope slug (browser UA), core `/`, and ONE restricted-key SSH call reading host metrics (journald/heartbeat age, MemAvailable, swap, load). Classifies up|degraded|down (2 consecutive failed runs before down). DRY by default — prints the report, sends nothing, writes state only with --watchdog-state. MCP: noctus.dev.prod_watchdog. KB § PATTERNS/devops/prod-watchdog.md.")
     parser.add_argument("--watchdog-state", metavar="PATH", help="With --prod-watchdog: the JSON state file (counters, dedupe, SSH backoff).")
@@ -3527,6 +3528,20 @@ def main():
         if args.json:
             _pw_argv.append("--json")
         sys.exit(_prod_watchdog_main(_pw_argv))
+
+    elif args.latency_report:
+        from tools.noctus.dev.latency_report import latency_report as _lat
+        result = _lat(args.latency_report)
+        if result.get("status") == "error" or result.get("error"):
+            print(f"  {RED}\u2717 latency-report: {result.get('error')}{RESET}")
+            sys.exit(1)
+        for r in result.get("routes", []):
+            flag = f"{RED}OVER{RESET}" if r.get("over_budget") else ("thin" if r.get("thin") else f"{GREEN}ok{RESET}")
+            print(f"  {flag:<6} {r['method']:<6} {r['route']:<48} n={r['count']:<4} p50={r['p50_ms']:<7} p95={r['p95_ms']:<7} budget={r['budget_p95_ms']}")
+        print(f"  verdict: {result['status']} ({result.get('samples', 0)} samples)")
+        if result.get("hint"):
+            print(f"  {result['hint']}")
+        sys.exit(result.get("exit_code", 1))
 
     elif args.spa_smoke:
         from tools.noctus.dev.spa_smoke import spa_smoke as _spa
