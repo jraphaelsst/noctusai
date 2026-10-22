@@ -149,6 +149,9 @@ export function AnexosSection({
   const tiposIdentidade = tipos.filter((t) => t.identidade);
   const tiposComuns = tipos.filter((t) => !t.identidade);
   const podeEnviar = !!tipoEscolhido && !uploading;
+  // A file that arrives WITHOUT being uploaded (no tipo, wrong MIME) used to be
+  // dropped silently — no row, no toast, no error. Now it always says why.
+  const [erroArquivo, setErroArquivo] = useState<string | null>(null);
 
   return (
     <div className="mb-4" data-testid={testId}>
@@ -159,11 +162,22 @@ export function AnexosSection({
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
-          if (file && tipoEscolhido) {
-            onUpload(file, tipoEscolhido);
-            // Reset — the NEXT attachment gets its own deliberate pick
-            // rather than silently reusing this one's type.
-            setTipoEscolhido("");
+          if (file) {
+            if (!tipoEscolhido) {
+              setErroArquivo(
+                `"${file.name}" não foi enviado: escolha o tipo do documento e selecione o arquivo de novo.`,
+              );
+            } else if (file.type && !ACCEPT_DOCUMENTO.split(",").includes(file.type)) {
+              setErroArquivo(
+                `"${file.name}" não foi enviado: formato ${file.type} não aceito (use PDF, JPEG, PNG ou WebP).`,
+              );
+            } else {
+              setErroArquivo(null);
+              onUpload(file, tipoEscolhido);
+              // Reset — the NEXT attachment gets its own deliberate pick
+              // rather than silently reusing this one's type.
+              setTipoEscolhido("");
+            }
           }
           // Cleared so re-picking the SAME file fires `change` again.
           e.target.value = "";
@@ -180,7 +194,10 @@ export function AnexosSection({
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <Select value={tipoEscolhido} onValueChange={setTipoEscolhido}>
+          <Select value={tipoEscolhido} onValueChange={(v) => {
+              setTipoEscolhido(v);
+              setErroArquivo(null);
+            }}>
             <SelectTrigger
               className="h-7 w-44 text-xs"
               data-testid="anexo-tipo-select"
@@ -232,6 +249,16 @@ export function AnexosSection({
           />
         </div>
       </div>
+      {erroArquivo && (
+        <p
+          role="alert"
+          className="mb-2 flex items-center gap-1 text-xs text-destructive"
+          data-testid="anexo-upload-erro"
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {erroArquivo}
+        </p>
+      )}
       {/* `documentos.length === 0` guards the skeleton the same way the
           checklist above does: a stale `loading=true` mid-refetch can never
           replace rows that are already here. */}

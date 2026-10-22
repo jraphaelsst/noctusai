@@ -151,6 +151,18 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
     expect(onUpload).toHaveBeenCalledWith(file, "certidao_casamento");
   });
 
+  it("🔴 a file set with NO tipo is never dropped silently — a visible alert says why", async () => {
+    const onUpload = vi.fn();
+    const { getByTestId, container } = await render(baseProps({ onUpload }));
+    const rtl = await import("@testing-library/react");
+    const file = new File(["x"], "casa.jpg", { type: "image/jpeg" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file] });
+    rtl.fireEvent.change(input);
+    expect(onUpload).not.toHaveBeenCalled();
+    expect(getByTestId("anexo-upload-erro").textContent).toContain("escolha o tipo");
+  });
+
   it("the hidden file input filters by the backend's own allowed MIME types", async () => {
     const { container } = await render(baseProps());
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
