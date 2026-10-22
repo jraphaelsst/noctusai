@@ -292,11 +292,6 @@ export default function StudioList() {
                   <td className="px-4 py-3 tabular-nums">{a.versao_ativa !== null ? `v${a.versao_ativa}` : "—"}</td>
                   <td className="px-4 py-3">
                     {a.tem_rascunho ? <Badge variant="outline">Rascunho</Badge> : <span className="text-muted-foreground">—</span>}
-                    {a.conteudo_status && (
-                      <p className="mt-1 text-xs text-muted-foreground tabular-nums" data-testid={`studio-conteudo-${a.key}`}>
-                        {a.conteudo_status.preenchidos} de {a.conteudo_status.exigidos} textos
-                      </p>
-                    )}
                   </td>
                   {isPlatformAdmin && (
                     <td className="px-4 py-3">

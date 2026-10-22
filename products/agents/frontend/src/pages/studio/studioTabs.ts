@@ -43,8 +43,6 @@ export function isStudioTab(value: string | null): value is StudioTabId {
 
 /** Tabs that only exist for one agent kind (Agent Packages §D3). */
 const RUNTIME_ONLY: readonly StudioTabId[] = ["clientes", "canais"];
-/** Tabs that only exist for the channel agent (Julia page-0 channel agent). */
-export const CHANNEL_AGENT_KEY = "julia";
 const DEV_ADVISOR_ONLY: readonly StudioTabId[] = ["aprendizados"];
 
 /** Tabs that exist only on the platform-defined / org-instance surfaces (Julia v2). */
@@ -61,9 +59,10 @@ export const JULIA_TABS: readonly StudioTabId[] = [
   "conformidade",
 ];
 
-export function isTabVisibleForKind(tab: StudioTabId, kind: string, agentKey?: string): boolean {
+/** `canais` follows the agent's own `usa_canais` flag (API data) — never its key. */
+export function isTabVisibleForKind(tab: StudioTabId, kind: string, usaCanais: boolean = false): boolean {
   if (JULIA_TABS.includes(tab)) return false;
-  if (tab === "canais" && agentKey !== undefined && agentKey !== CHANNEL_AGENT_KEY) return false;
+  if (tab === "canais" && !usaCanais) return false;
   if (kind === "dev-advisor") return !RUNTIME_ONLY.includes(tab);
   return !DEV_ADVISOR_ONLY.includes(tab);
 }
@@ -118,16 +117,17 @@ export interface TabAccess {
 
 /** The tabs a visitor sees for this agent row. Org members get none of the Studio content tabs. */
 export function visibleTabsFor(
-  agent: { definition_scope?: string; kind?: string; key?: string } | null | undefined,
+  agent: { definition_scope?: string; kind?: string; usa_canais?: boolean } | null | undefined,
   access: TabAccess,
 ): readonly { id: StudioTabId; label: string }[] {
   const tier = studioTier(agent);
-  if (tier === "plataforma") return STUDIO_TABS.filter((t) => PLATAFORMA_TABS.includes(t.id));
+  if (tier === "plataforma")
+    return STUDIO_TABS.filter((t) => PLATAFORMA_TABS.includes(t.id) || (t.id === "canais" && agent?.usa_canais === true));
   if (tier === "organizacao") {
     if (!access.isOrgAdmin && !access.platformAdminHint) return [];
     const ids = access.isOrgAdmin ? [...ORG_ADMIN_TABS] : ["visao-geral" as StudioTabId];
     if (access.platformAdminHint) ids.push("compilado");
     return STUDIO_TABS.filter((t) => ids.includes(t.id));
   }
-  return STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, agent?.kind ?? "runtime", agent?.key));
+  return STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, agent?.kind ?? "runtime", agent?.usa_canais === true));
 }

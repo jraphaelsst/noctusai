@@ -16,6 +16,13 @@ export interface PlatformAgentCreated {
   org_id: string;
   definition_scope: string;
   conteudo_modo: string;
+  nome?: string;
+  descricao?: string | null;
+  runtime?: string;
+  owner_product?: string | null;
+  usa_canais?: boolean;
+  instanciavel?: boolean;
+  papel?: "gerador" | "exemplar" | null;
   /** S3a: non-null iff a briefing was sent. */
   geracao?: GeracaoOut | null;
 }
@@ -26,6 +33,8 @@ export interface PlatformAgentInput {
   descricao?: string;
   briefing?: Briefing;
   limite_usd?: number;
+  /** "Disponível para as organizações" (API default false). */
+  instanciavel?: boolean;
 }
 
 export function useCreatePlatformAgent() {
@@ -54,6 +63,9 @@ export function useCreatePlatformAgent() {
             versao_ativa: null,
             tem_rascunho: false,
             kind: "runtime",
+            usa_canais: created.usa_canais ?? false,
+            runtime: created.runtime,
+            owner_product: created.owner_product ?? null,
             definition_scope: created.definition_scope as AgentSummary["definition_scope"],
             conteudo_modo: created.conteudo_modo as AgentSummary["conteudo_modo"],
           };

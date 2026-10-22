@@ -40,6 +40,9 @@ export const AGENT_SUMMARY: AgentSummary = {
   versao_ativa: 1,
   tem_rascunho: true,
   kind: "runtime",
+  usa_canais: false,
+  runtime: "llm",
+  owner_product: null,
 };
 
 export const LEGACY_SUMMARY: AgentSummary = {
@@ -55,9 +58,8 @@ export const LEGACY_SUMMARY: AgentSummary = {
   kind: "runtime",
 };
 
-const { conteudo_status: _summaryStatus, ...AGENT_SUMMARY_FIELDS } = AGENT_SUMMARY;
 export const AGENT_DETAIL: AgentDetail = {
-  ...AGENT_SUMMARY_FIELDS,
+  ...AGENT_SUMMARY,
   versoes: [
     {
       id: V2_ID,

@@ -29,10 +29,9 @@ const view = (items: object[]) => ({ data: items, showSkeleton: false, isRefresh
 afterEach(cleanup);
 
 describe("StudioList lifecycle", () => {
-  it("renders an empty shell cleanly with progress, opens create and delete", () => {
-    agents.mockReturnValue(view([{ ...base, conteudo_status: { preenchidos: 0, exigidos: 12 } }]));
+  it("renders an empty shell cleanly, opens create and delete", () => {
+    agents.mockReturnValue(view([base]));
     render(<MemoryRouter><StudioList /></MemoryRouter>);
-    expect(screen.getByTestId("studio-conteudo-julia").textContent).toBe("0 de 12 textos");
     expect(screen.queryByTestId("studio-list-skeleton")).toBeNull();
     fireEvent.click(screen.getByTestId("studio-criar-agente"));
     expect(screen.getByTestId("dlg-criar")).toBeTruthy();
@@ -40,9 +39,4 @@ describe("StudioList lifecycle", () => {
     expect(screen.getByTestId("dlg-excluir-julia")).toBeTruthy();
   });
 
-  it("shows no progress numbers when the server omits conteudo_status", () => {
-    agents.mockReturnValue(view([base]));
-    render(<MemoryRouter><StudioList /></MemoryRouter>);
-    expect(screen.queryByTestId("studio-conteudo-julia")).toBeNull();
-  });
 });

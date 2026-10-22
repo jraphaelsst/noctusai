@@ -55,6 +55,7 @@ export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }
   const [nome, setNome] = useState("");
   const [draft, setDraft] = useState<BriefingDraft>(BRIEFING_VAZIO);
   const [errors, setErrors] = useState<BriefingErrors>({});
+  const [instanciavel, setInstanciavel] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
   const existente = useMemo(() => (agentes ?? []).some((a) => a.key === key.trim()), [agentes, key]);
@@ -89,6 +90,7 @@ export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }
         key: k,
         ...(nomeEfetivo ? { nome: nomeEfetivo } : {}),
         ...(briefing ? { briefing } : {}),
+        ...(instanciavel ? { instanciavel: true } : {}),
       });
       toast.success(
         created.geracao
@@ -162,6 +164,21 @@ export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }
                 : "Sugerida a partir do nome; você pode editar."}
             </p>
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={instanciavel}
+              onChange={(e) => setInstanciavel(e.target.checked)}
+              data-testid="criar-agente-instanciavel"
+            />
+            <span>
+              Disponível para as organizações
+              <span className="block text-xs text-muted-foreground">
+                Depois de publicado, o agente é instanciado em todas as organizações.
+              </span>
+            </span>
+          </label>
           {erro && (
             <p className="text-sm text-destructive" data-testid="criar-agente-erro">
               {erro}

@@ -98,8 +98,10 @@ export interface AgentSummary {
   definition_scope?: "org" | "plataforma" | "instancia";
   /** Julia v2: `linhas` (every compiler string is a DB row) | `legado`. Absent = `legado`. */
   conteudo_modo?: "linhas" | "legado";
-  /** Optional: filled vs required texts of the (possibly empty) agent. Absent = show nothing. */
-  conteudo_status?: { preenchidos: number; exigidos: number };
+  /** Data-driven platform definition facts (S3a). Optional so legacy payloads still type. */
+  usa_canais?: boolean;
+  runtime?: string;
+  owner_product?: string | null;
 }
 
 export interface AgentListResponse {
@@ -124,7 +126,7 @@ export interface VersionSummary {
 }
 
 /** `GET /api/studio/agents/{key}` — `versoes` newest first. */
-export interface AgentDetail extends Omit<AgentSummary, "conteudo_status"> {
+export interface AgentDetail extends AgentSummary {
   versoes: VersionSummary[];
   /** S3a §4 — completeness against the applicable `textos_registry` slots; null for `legado` agents. */
   conteudo_status?: ConteudoStatusDetail | null;

@@ -99,6 +99,22 @@ describe("CriarAgentePlataformaDialog · gerar com IA", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it("sends instanciavel only when ticked (default off) and maps FastAPI 422 arrays", async () => {
+    post.mockRejectedValueOnce(
+      new ApiError(422, "Erro HTTP 422", { detail: [{ loc: ["body", "briefing", "objetivo"], msg: "String should have at least 10 characters", type: "x" }] }),
+    );
+    post.mockResolvedValueOnce({ id: "1", key: "ab", org_id: "o", definition_scope: "plataforma", conteudo_modo: "linhas" });
+    setup(<CriarAgentePlataformaDialog onClose={vi.fn()} />);
+    expect((screen.getByTestId("criar-agente-instanciavel") as HTMLInputElement).checked).toBe(false);
+    fireEvent.change(screen.getByTestId("criar-agente-nome"), { target: { value: "Ab" } });
+    fireEvent.click(screen.getByTestId("criar-agente-submit"));
+    expect((await screen.findByTestId("criar-agente-erro")).textContent).toBe("briefing.objetivo: String should have at least 10 characters");
+    expect(post.mock.calls[0][1]).toEqual({ key: "ab", nome: "Ab" });
+    fireEvent.click(screen.getByTestId("criar-agente-instanciavel"));
+    fireEvent.click(screen.getByTestId("criar-agente-submit"));
+    await waitFor(() => expect(post.mock.calls[1][1]).toEqual({ key: "ab", nome: "Ab", instanciavel: true }));
+  });
+
   it("takes key suggestions from the API list, never a literal", async () => {
     get.mockResolvedValue({ items: [{ key: "alfa", nome: "Alfa" }] });
     const { container } = render(
