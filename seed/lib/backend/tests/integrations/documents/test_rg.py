@@ -510,3 +510,25 @@ class TestOrgaoSpelledOutByFullName:
     def test_the_old_rg_institute_long_form_with_an_adjacent_uf(self):
         texto = "INSTITUTO DE IDENTIFICACAO RICARDO GUMBLETON DAUNT SP"
         assert find_rg_orgao(texto) == ("IIRGD/SP", "alta")
+
+
+class TestCaixaIdentidadeCnhRotacionada:
+    """A CNH photographed rotated: the value is read before/away from its label."""
+
+    def test_valor_antes_do_rotulo(self):
+        from noctusai_lib.integrations.documents.rg import find_caixa_identidade_cnh
+
+        t = "1234567 SSP/SP\nDOC. IDENTIDADE / ÓRG. EMISSOR / UF\n4d CPF 529.982.247-25"
+        assert find_caixa_identidade_cnh(t) == ("rg", "1234567", "SSP", "SP")
+
+    def test_rotulo_dividido_em_linhas(self):
+        from noctusai_lib.integrations.documents.rg import find_caixa_identidade_cnh
+
+        t = "DOC. IDENTIDADE\n1234567 SSP/SP\nÓRG. EMISSOR / UF"
+        assert find_caixa_identidade_cnh(t) == ("rg", "1234567", "SSP", "SP")
+
+    def test_dois_candidatos_nao_adivinha(self):
+        from noctusai_lib.integrations.documents.rg import find_caixa_identidade_cnh
+
+        t = "1234567 SSP/SP\nDOC. IDENTIDADE\n7654321 SSP/RJ"
+        assert find_caixa_identidade_cnh(t) is None

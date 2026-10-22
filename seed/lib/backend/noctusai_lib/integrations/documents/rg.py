@@ -474,6 +474,43 @@ def separar_orgao_uf(valor: Optional[str]) -> tuple[Optional[str], Optional[str]
     return (bruto, None)
 
 
+#: Any fragment of the CNH identity-box label. A photo taken ROTATED (or a
+#: vision read that follows the card's columns in the wrong order) separates
+#: the three-column label from its value: the value may precede the label, sit
+#: after unrelated lines, or fall between the label's own halves.
+_FRAGMENTO_ROTULO_CNH_RE = re.compile(
+    r"\bDOC(?:UMENTO)?\.?\s*(?:DE\s+)?IDENTIDADE\b|\bORG(?:AO)?\.?\s*EMISSOR\b"
+)
+#: number + KNOWN issuer + UF, as printed in the box (`5287156 SSP/SP`).
+_VALOR_CAIXA_CNH_RE = re.compile(
+    r"(?<![\d.])((?:\d{1,3}(?:\.\d{3})+|\d{5,11})(?:\s*-\s*[\dX]|X)?)(?![\d])\s*[/\-,]?\s*"
+    r"([A-Z]{2,6})\s*[/\-]?\s*([A-Z]{2})\b"
+)
+
+
+def _caixa_cnh_por_forma(
+    norm: str,
+) -> Optional[tuple[str, str, Optional[str], Optional[str]]]:
+    """Orientation-agnostic read of the CNH identity box: when a label
+    fragment is present but the value does not follow the full label, take the
+    ONE `number + known issuer + UF` shape in the text. Several distinct
+    candidates -> `None` (never a guess); a CPF-shaped number is never an RG."""
+    if _FRAGMENTO_ROTULO_CNH_RE.search(norm) is None:
+        return None
+    achados: dict[str, tuple[str, str, str]] = {}
+    for m in _VALOR_CAIXA_CNH_RE.finditer(norm):
+        numero, org, uf = m.group(1), m.group(2), m.group(3)
+        if org not in _ORGAOS_CONHECIDOS or uf not in _UFS or parece_data(numero):
+            continue
+        if _e_um_cpf(numero):
+            continue
+        achados.setdefault(only_alnum(numero), (numero, org, uf))
+    if len(achados) != 1:
+        return None
+    numero, org, uf = next(iter(achados.values()))
+    return ("rg", re.sub(r"\s*-\s*", "-", numero), org, uf)
+
+
 def find_caixa_identidade_cnh(
     text: str,
 ) -> Optional[tuple[str, str, Optional[str], Optional[str]]]:
@@ -492,14 +529,14 @@ def find_caixa_identidade_cnh(
     norm = normalize(text or "")
     m = _CAIXA_CNH_RE.search(norm)
     if m is None:
-        return None
+        return _caixa_cnh_por_forma(norm)
     resto = norm[m.end() : m.end() + 64]
     rne = _RNE_TOKEN_RE.match(resto)
     if rne is not None:
         return ("rne", rne.group(0).replace(" ", ""), _orgao_estrangeiro_apos(resto, rne.end()), None)
     mrg = _CAIXA_CNH_RG_RE.match(resto)
     if mrg is None:
-        return None
+        return _caixa_cnh_por_forma(norm)
     numero = re.sub(r"\s*-\s*", "-", mrg.group(1))
     if parece_data(numero):
         return None
