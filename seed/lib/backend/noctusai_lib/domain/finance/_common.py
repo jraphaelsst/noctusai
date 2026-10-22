@@ -7,11 +7,13 @@ missing one (404). RLS is the floor, never the only check (contract §0).
 from __future__ import annotations
 
 import calendar
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
+# One shared, bounded pool for every concurrent read in the seed (contextvars copied, all calls
+# awaited before the first failure re-raises in call order) -- re-exported for the finance services.
+from noctusai_lib.api.auth._blocking import run_parallel
 from noctusai_lib.domain._organ_common import OrganScope, digits, first, like_term, new_id, now, now_iso
 
 from .config import FinanceConfig
@@ -55,21 +57,6 @@ def add_months(d: date, months: int, anchor_day: Optional[int] = None) -> date:
     month += 1
     day = min(anchor_day or d.day, calendar.monthrange(year, month)[1])
     return date(year, month, day)
-
-
-def run_parallel(*calls: Callable[[], Any]) -> list[Any]:
-    """Run independent, read-only DB calls CONCURRENTLY (one PostgREST round trip of wall time instead of N).
-
-    Results come back in call order; the FIRST failing call (in call order) re-raises, so a guard listed
-    first (e.g. `require_owned`) still wins over a data error. Only for reads that do not depend on each
-    other -- the handlers already run in the threadpool, so the shared pooled client is already used
-    concurrently across requests.
-    """
-    if len(calls) == 1:
-        return [calls[0]()]
-    with ThreadPoolExecutor(max_workers=len(calls), thread_name_prefix="finance-read") as pool:
-        futures = [pool.submit(c) for c in calls]
-        return [f.result() for f in futures]
 
 
 @dataclass(frozen=True)
