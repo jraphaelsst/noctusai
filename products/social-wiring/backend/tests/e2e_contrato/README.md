@@ -5,6 +5,12 @@ against a REAL card in a REAL org, exactly the way production loads it —
 without ever writing anything. Context:
 `project-history/roadmaps/sw-extraction-contract-gate-2026-09.md`.
 
+## The full run
+
+The end-to-end procedure that feeds this harness — selecting a real deal, staging its upload pack
+(`noctus.dev.contract_e2e_pack`), replaying it in prod, then scoring — is
+`KB § CONTEXT/PRODUCTS/social-wiring/CONTRACT-E2E-RUNBOOK.md`.
+
 ## Files
 
 | File | What |
