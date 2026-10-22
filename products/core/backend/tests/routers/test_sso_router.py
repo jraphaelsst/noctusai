@@ -334,9 +334,12 @@ class TestSSOSessionSuccess:
         })
 
 
-class TestSSOSessionCache:
-    def test_second_call_uses_cache(self, sso_session_client):
-        """Second call within 55s should NOT call generate_link again."""
+class TestSSOSessionNeverReissued:
+    """GoTrue rotates refresh tokens: a pair handed out twice gets its refresh
+    token presented twice, and GoTrue revokes the whole session (every tab of
+    the product logs out). Every redemption must mint a fresh session."""
+
+    def test_second_redemption_mints_a_new_session(self, sso_session_client):
         client, mock_admin = sso_session_client
         token = _make_sso_token()
 
@@ -345,26 +348,19 @@ class TestSSOSessionCache:
 
         resp2 = client.post("/api/sso/session", json={"token": token})
         assert resp2.status_code == 200
-        assert resp2.json() == resp1.json()
 
-        assert mock_admin.auth.admin.generate_link.call_count == 1
+        assert mock_admin.auth.admin.generate_link.call_count == 2
 
-    def test_cache_expires_after_ttl(self, sso_session_client):
-        """After cache TTL, a new Supabase call is made."""
-        client, mock_admin = sso_session_client
+    def test_nothing_is_stored_for_reuse(self, sso_session_client):
+        client, _ = sso_session_client
         token = _make_sso_token()
 
         client.post("/api/sso/session", json={"token": token})
-        assert mock_admin.auth.admin.generate_link.call_count == 1
 
         from app.routers.sso import _session_cache
-        _session_cache._store.clear()
+        assert _session_cache._store == {}
 
-        client.post("/api/sso/session", json={"token": token})
-        assert mock_admin.auth.admin.generate_link.call_count == 2
-
-    def test_different_emails_cached_separately(self, sso_session_client):
-        """Cache is per-email — different emails get separate entries."""
+    def test_different_emails_each_get_their_own_session(self, sso_session_client):
         client, mock_admin = sso_session_client
 
         token_a = _make_sso_token(email="a@test.com")
@@ -442,17 +438,21 @@ class TestSSORateLimitDetection:
         assert resp.headers.get("retry-after") == "60"
         assert "rate limit" in resp.json()["detail"].lower()
 
-    def test_rate_limit_with_cached_session_returns_cached(self, sso_session_client):
-        """If rate limited but cache exists, return cached session."""
+    def test_rate_limit_after_a_success_is_429_never_the_spent_pair(self, sso_session_client):
+        """A rate limit after an earlier success is a 429 the SPA counts down
+        and retries — never the earlier (possibly already rotated) pair."""
         client, mock_admin = sso_session_client
         token = _make_sso_token()
 
         resp1 = client.post("/api/sso/session", json={"token": token})
         assert resp1.status_code == 200
 
+        mock_admin.auth.admin.generate_link.side_effect = Exception(
+            "For security purposes, you can only request this once every 60 seconds"
+        )
         resp2 = client.post("/api/sso/session", json={"token": token})
-        assert resp2.status_code == 200
-        assert resp2.json() == resp1.json()
+        assert resp2.status_code == 429
+        assert resp2.headers.get("retry-after") == "60"
 
     def test_rate_limit_429_in_error_message(self, sso_session_client):
         """Error messages containing '429' should trigger rate limit handling."""

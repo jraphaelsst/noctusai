@@ -417,11 +417,15 @@ def _is_rate_limit_error(exc: Exception) -> bool:
 
 
 def _generate_session(email: str, org_id: str | None = None, product_slug: str | None = None) -> dict:
-    """Generate a Supabase session for the given user.
+    """Generate a FRESH Supabase session for the given user — every call.
 
-    Uses a cache keyed (email, org_id, product_slug) to avoid hitting Supabase's
-    60s rate limit without sharing one session across origins or orgs.
-    A per-key lock prevents concurrent duplicate calls.
+    Never re-issues a pair it already handed out (2026-10-22): GoTrue rotates
+    refresh tokens, so two redemptions of one cached pair (two launches into
+    the same product, or a second browser) present a spent refresh token and
+    GoTrue revokes the whole session — every tab of the product drops to
+    Landing, and re-entry from core kept failing for the cache's 5 minutes.
+    A per-(email, org, product) lock still serializes concurrent redemptions;
+    a GoTrue rate limit is a typed 429 that `SSOCallback` counts down and retries.
     """
     # Legacy tokens (old callback) carry no product; they get their own scope.
     scope = {"org_id": org_id, "product_slug": product_slug or _NO_PRODUCT_SCOPE}
@@ -429,20 +433,8 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
         logger.error("supabase_admin não inicializado — verifique SUPABASE_SERVICE_ROLE_KEY")
         raise HTTPException(status_code=500, detail="Configuração do servidor incompleta")
 
-    # Fast path: check cache before acquiring lock
-    cached = _session_cache.get(email, **scope)
-    if cached:
-        logger.debug("SSO cache hit para email=%s", email)
-        return cached
-
     lock = _session_cache.get_lock(email, **scope)
     with lock:
-        # Double-check after acquiring lock (another thread may have populated)
-        cached = _session_cache.get(email, **scope)
-        if cached:
-            logger.debug("SSO cache hit (post-lock) para email=%s", email)
-            return cached
-
         try:
             logger.debug("Gerando link para email=%s", email)
             link_response = supabase_admin.auth.admin.generate_link({
@@ -481,20 +473,13 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
                 "email": email,
             }
 
-            _session_cache.set(email, result, **scope)
-            logger.info("SSO sessão gerada e cacheada para email=%s", email)
+            logger.info("SSO sessão gerada para email=%s", email)
             return result
 
         except HTTPException:
             raise
         except Exception as exc:
             if _is_rate_limit_error(exc):
-                # Last resort: maybe cache was populated by a concurrent request
-                cached = _session_cache.get(email, **scope)
-                if cached:
-                    logger.info("Rate limited mas cache disponível para email=%s", email)
-                    return cached
-
                 logger.warning("Rate limit do Supabase para email=%s: %s", email, exc)
                 raise _RateLimitError()
 
