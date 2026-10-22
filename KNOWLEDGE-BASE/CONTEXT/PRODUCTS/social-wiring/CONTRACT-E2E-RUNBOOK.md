@@ -95,6 +95,14 @@ finding.
 - The grid lags behind the DB; verify uploads in `certidao_resultados` / `cliente_documentos` /
   `imovel_documentos`, not the screen.
 - Dates: click the day segment first, then type `ddmmyyyy`.
+- **Keep exactly one party row expanded** in the certidões grid, and before every Confirmar assert the dialog title names the
+  target party (`"<CERTIDÃO> — <NOME>"`). With two rows open, a "first table" helper writes into the wrong person
+  (799: a seller's real negativas were overwritten with "não emitida" and had to be restored by hand — a manual value
+  is protected from `Reler`, by design).
+- Radix select lists align the **currently selected** item over the trigger, so option positions move with the
+  preselected value — measure the option's rect each time instead of reusing coordinates.
+- If the session drops to the public landing, stop and ask the owner to log in again (never type credentials); check
+  the auth logs for a server-side `/logout` (799: a product cookie-session drop revoked the SPA's own GoTrue session).
 
 ## 4 · Score and read the result
 
