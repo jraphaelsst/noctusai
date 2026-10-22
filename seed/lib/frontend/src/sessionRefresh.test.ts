@@ -175,6 +175,54 @@ describe('a deploy window never logs the user out', () => {
   });
 });
 
+/** supabase-js (lockless, >= 2.10x) commit guard: another tab rotated the shared slot mid-refresh. */
+function discarded() {
+  return { data: null, error: { name: 'AuthRefreshDiscardedError', message: 'Refresh discarded' } };
+}
+
+describe('another tab rotating the shared session is not a dead session (lockless supabase-js)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(window, 'location', { value: { pathname: '/app' }, writable: true });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("adopts the winning tab's token and retries — no dead-session path, no sign-out", async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const auth = (init!.headers as Record<string, string>)['Authorization'];
+      return auth === 'Bearer winner' ? jsonResponse(200, { ok: true }) : jsonResponse(401);
+    });
+    const supabase = {
+      auth: {
+        ...fakeSupabase([discarded()]).auth,
+        getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'winner' } } }),
+      },
+    };
+    const { client, onUnauthenticated, store } = wire(supabase as ReturnType<typeof fakeSupabase>);
+
+    await expect(client.get('/api/x')).resolves.toEqual({ ok: true });
+    await settle();
+    expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onUnauthenticated).not.toHaveBeenCalled();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+  });
+
+  it('a discarded refresh with an EMPTY slot (a sign-out raced it) is dead', async () => {
+    const refresher = createSupabaseTokenRefresher(
+      {
+        auth: {
+          refreshSession: vi.fn().mockResolvedValue(discarded()),
+          getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
+        },
+      },
+      { sleep: noSleep },
+    );
+    await expect(refresher()).resolves.toBeNull();
+  });
+});
+
 describe('only a 401 can reach the dead-session path', () => {
   it.each([
     [409, { code: 'org_selection_changed' }],

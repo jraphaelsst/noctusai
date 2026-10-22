@@ -52,6 +52,25 @@ export function clearLocalIdentity(): void {
   }
 }
 
+/**
+ * The GoTrue `session_id` claim of an access token, or `null` when it cannot be
+ * read. NOT an identity or trust decision (the signature is not checked here --
+ * identity stays core's `user_id`); it only answers "are these two token pairs
+ * the SAME GoTrue session?", i.e. would adopting one roll the other back.
+ */
+export function goTrueSessionId(accessToken: string | null | undefined): string | null {
+  if (!accessToken) return null;
+  const part = accessToken.split('.')[1];
+  if (!part) return null;
+  try {
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    return typeof json?.session_id === 'string' && json.session_id ? json.session_id : null;
+  } catch {
+    return null; // not a JWT we can read: no claim, callers fall back to their default
+  }
+}
+
 export type SessionVerdict = 'valid' | 'rejected' | 'unverified';
 
 /**

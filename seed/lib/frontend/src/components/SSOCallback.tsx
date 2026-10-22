@@ -4,7 +4,9 @@
  * Handles the SSO flow that is identical across product frontends:
  * 1. ALWAYS redeem the core token via core's /api/sso/session (never decode
  *    the JWT client-side; core's response `user_id` is the only identity input)
- * 2. No local session, or same user -> setSession(fresh tokens)
+ * 2. No local session, or same user -> setSession(fresh tokens) -- EXCEPT when the
+ *    redeemed pair is the SAME GoTrue session this origin already holds: then the
+ *    local (possibly already rotated) session is kept, never rolled back
  * 3. A DIFFERENT user than the one signed in on this origin -> ask before
  *    replacing (interstitial), then purge the previous identity
  * 4. Redeem failure while a session exists -> never silently sign out
@@ -18,7 +20,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { checkProductAccess, SEM_ACESSO_PATH } from '../access';
 import { env } from '../env';
-import { clearLocalIdentity, dropProductCookieSession } from '../identity';
+import { clearLocalIdentity, dropProductCookieSession, goTrueSessionId } from '../identity';
 import { beginOrgVisitEntry } from '../org-visit';
 // Use a loose type so products with custom schema generics can pass their client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -150,8 +152,9 @@ export function SSOCallback({
   // one that core would refuse (401). Dropped only when the redemption did
   // not consume the token (rate limit / failure) so a retry can re-run.
   const redeemedRef = useRef<Map<string, Promise<RedeemResult>>>(new Map());
-  // The local user at the time the flow started (for failure/cancel screens).
-  const currentRef = useRef<{ id: string; email: string } | null>(null);
+  // The local user at the time the flow started (for failure/cancel screens) and
+  // the GoTrue session it holds (to never roll that session back, see handleSSO).
+  const currentRef = useRef<{ id: string; email: string; sessionId: string | null } | null>(null);
   const handleSSORef = useRef<(token: string) => Promise<void>>(async () => {});
 
   // Captured at mount: the token strip rewrites the location before `finish` runs.
@@ -258,7 +261,7 @@ export function SSOCallback({
         } = await supabase.auth.getSession();
         if (cancelledRef.current) return;
         currentRef.current = local?.user
-          ? { id: local.user.id, email: local.user.email ?? '' }
+          ? { id: local.user.id, email: local.user.email ?? '', sessionId: goTrueSessionId(local.access_token) }
           : null;
 
         setState({ status: 'loading', message: 'Autenticando via NoctusAI...' });
@@ -282,6 +285,19 @@ export function SSOCallback({
           return;
         }
 
+        // Same GoTrue session as the one this origin already holds (core re-issued a
+        // pair it handed out before): KEEP the local copy. Every tab of this origin
+        // shares one localStorage slot, and the local refresh token may already have
+        // been rotated (activity refresh, a 401 refresh, MFA step-up) -- `setSession`
+        // would roll the slot back to a spent refresh token, the next refresh would be
+        // a reuse outside GoTrue's 10s window, and GoTrue revokes the whole session:
+        // every tab of the product signed out (owner report 2026-10-22).
+        if (current?.sessionId && current.sessionId === goTrueSessionId(incoming.access_token)) {
+          setState({ status: 'loading', message: 'Continuando...', email: incoming.email });
+          await finish();
+          return;
+        }
+
         setState({ status: 'loading', message: 'Autenticando via NoctusAI...', email: incoming.email });
         await adopt(incoming);
       } catch (err: any) {
@@ -294,7 +310,7 @@ export function SSOCallback({
         }
       }
     },
-    [supabase, redeemOnce, startCountdown, adopt],
+    [supabase, redeemOnce, startCountdown, adopt, finish],
   );
   handleSSORef.current = handleSSO;
 

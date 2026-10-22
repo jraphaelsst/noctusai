@@ -29,6 +29,12 @@ function core(body: unknown, status = 200) {
   });
 }
 
+/** An unsigned JWT-shaped token carrying `claims` (only the payload is read client-side). */
+function jwt(claims: Record<string, unknown>): string {
+  const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(claims)}.sig`;
+}
+
 const B = { access_token: 'tb', refresh_token: 'rb', user_id: 'user-b', email: 'b@x.com' };
 
 function mount(supabase: ReturnType<typeof makeSupabase>, entry = '/sso?token=abc', extra: object = {}, strict = false) {
@@ -77,6 +83,36 @@ describe('SSOCallback identity handling', () => {
     expect(redeemCalls(fetchMock)).toHaveLength(1);
     expect(sb.auth.setSession).toHaveBeenCalledWith({ access_token: 'tb', refresh_token: 'rb' });
     expect(queryByText(/Entrar como/)).toBeNull();
+  });
+
+  it('same GoTrue session re-issued by core: KEEPS the local (rotated) session, never rolls it back', async () => {
+    // Core's SSO cache re-issues the pair it handed this origin minutes ago; the
+    // local slot already holds a ROTATED refresh token for that same session.
+    // Adopting the re-issued pair would put a spent refresh token back in the
+    // shared slot -> next refresh = reuse -> GoTrue revokes the session for every tab.
+    const reissued = { access_token: jwt({ sub: 'user-a', session_id: 'sess-1' }), refresh_token: 'r0-spent',
+      user_id: 'user-a', email: 'a@x.com' };
+    fetchMock = core(reissued);
+    vi.stubGlobal('fetch', fetchMock);
+    const sb = makeSupabase({ access_token: jwt({ sub: 'user-a', session_id: 'sess-1' }), refresh_token: 'r1-live',
+      user: { id: 'user-a', email: 'a@x.com' } });
+    const { findByText } = mount(sb);
+    expect(await findByText('home')).toBeTruthy();
+    expect(redeemCalls(fetchMock)).toHaveLength(1);
+    expect(sb.auth.setSession).not.toHaveBeenCalled();
+    expect(sb.auth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('same user, a DIFFERENT GoTrue session: adopts the fresh pair', async () => {
+    const fresh = { access_token: jwt({ sub: 'user-a', session_id: 'sess-2' }), refresh_token: 'r-new',
+      user_id: 'user-a', email: 'a@x.com' };
+    fetchMock = core(fresh);
+    vi.stubGlobal('fetch', fetchMock);
+    const sb = makeSupabase({ access_token: jwt({ sub: 'user-a', session_id: 'sess-1' }),
+      user: { id: 'user-a', email: 'a@x.com' } });
+    const { findByText } = mount(sb);
+    expect(await findByText('home')).toBeTruthy();
+    expect(sb.auth.setSession).toHaveBeenCalledWith({ access_token: fresh.access_token, refresh_token: 'r-new' });
   });
 
   it('different user: interstitial; confirm purges identity then sets B', async () => {

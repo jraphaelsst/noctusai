@@ -109,7 +109,20 @@ export function createSupabaseTokenRefresher(
   options?: RefreshWithBackoffOptions,
 ): () => Promise<string | null> {
   return () =>
-    refreshWithBackoff(async () => classifySupabaseRefresh(await supabase.auth.refreshSession()), options);
+    refreshWithBackoff(async () => {
+      const result = await supabase.auth.refreshSession();
+      // supabase-js >= 2.10x is LOCKLESS across tabs: when another tab of this
+      // origin rotated the shared session while our refresh was in flight, ours is
+      // discarded by the client's commit guard (`AuthRefreshDiscardedError`). That
+      // is the session being ALIVE (the other tab holds the fresh pair), never a
+      // refusal -- adopt the winner's token. Storage empty => a sign-out raced us.
+      if (result?.error?.name === 'AuthRefreshDiscardedError') {
+        const { data } = await supabase.auth.getSession();
+        const token: string | undefined = data?.session?.access_token;
+        return token ? { kind: 'token', token } : { kind: 'dead' };
+      }
+      return classifySupabaseRefresh(result);
+    }, options);
 }
 
 /** Verdict of asking GoTrue "is this session still alive?". */
