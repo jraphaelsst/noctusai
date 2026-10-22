@@ -48,6 +48,16 @@ def memoize_for_request(key: tuple, compute: Callable[[], Any]) -> Any:
     return value
 
 
+def forget_for_request(kind: str) -> None:
+    """Drop every memoized entry whose key starts with ``kind`` -- called by a WRITE that changes
+    the answer (e.g. an org-selection set/end), so a later read in the same request recomputes."""
+    memo = _MEMO.get()
+    if memo is None:
+        return
+    for key in [k for k in memo if k and k[0] == kind]:
+        memo.pop(key, None)
+
+
 class RequestMemoMiddleware:
     def __init__(self, app) -> None:
         self.app = app
@@ -63,4 +73,4 @@ class RequestMemoMiddleware:
             _MEMO.reset(token)
 
 
-__all__ = ["RequestMemoMiddleware", "memoize_for_request", "request_memo"]
+__all__ = ["RequestMemoMiddleware", "forget_for_request", "memoize_for_request", "request_memo"]

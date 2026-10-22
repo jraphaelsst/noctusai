@@ -157,3 +157,30 @@ def test_errors_are_not_memoized():
 
     asyncio.run(run())
     assert len(seen) == 2
+
+
+def test_selection_write_drops_the_request_memo():
+    """A selection set/end inside a request changes the answer: a later resolve in the SAME request
+    must re-read (never the pre-write memo)."""
+    from noctusai_lib.api.auth.org_selection import FakeOrgSelectionStore
+
+    core = CountingCore(_users("u1"), sleep=0)
+    store = FakeOrgSelectionStore()
+    app = FastAPI()
+    app.add_middleware(RequestMemoMiddleware)
+
+    @app.get("/write-between")
+    def write_between():
+        resolve_effective_org_for_request(core, "u1", token="t")
+        resolve_effective_org_for_request(core, "u1", token="t")  # memo hit
+        before = core.calls
+        store.end("u1", None, "exit")
+        resolve_effective_org_for_request(core, "u1", token="t")  # must re-read
+        return {"before": before, "after": core.calls}
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return (await c.get("/write-between")).json()
+
+    body = asyncio.run(go())
+    assert body["after"] == body["before"] + 1

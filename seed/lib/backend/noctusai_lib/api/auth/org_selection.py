@@ -32,6 +32,7 @@ import logging
 import sys
 import threading
 import time
+import functools
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
@@ -39,6 +40,24 @@ from typing import Any, Callable, Optional, Protocol
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 logger = logging.getLogger(__name__)
+
+
+def _changes_effective_org(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A selection WRITE changes what the effective-org resolver answers: drop that resolver's
+    per-request memo afterwards (success or failure -- an RPC that raised may still have
+    written), so a later resolve in the SAME request reads the new state.
+    KB § PATTERNS/backend/request-path-latency.md (request-scoped memo)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        from noctusai_lib.api.request_memo import forget_for_request
+
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            forget_for_request("effective_org")
+
+    return wrapper
 
 ENDED_BY_VALUES = ("replaced", "exit", "logout", "new_session", "revoked")
 ERROR_CODES = ("not_a_member", "target_not_licensed", "product_not_ready", "product_blocked")
@@ -176,6 +195,7 @@ class RealOrgSelectionStore:
             auth_session_id=str(r["auth_session_id"]),
         )
 
+    @_changes_effective_org
     def set(self, user_id: Any, product_slug: str, target_org_id: Any, auth_session_id: Any) -> str:
         try:
             res = self._core().rpc("platform_org_selection_set", {
@@ -191,6 +211,7 @@ class RealOrgSelectionStore:
         data = res.data
         return str(data[0] if isinstance(data, list) and data else data)
 
+    @_changes_effective_org
     def end(self, user_id: Any, product_slug: Optional[str], reason: str) -> int:
         params: dict[str, Any] = {"p_user_id": str(user_id), "p_reason": reason}
         if product_slug:
@@ -311,6 +332,7 @@ class FakeOrgSelectionStore:
             raise RuntimeError("fake selection store outage")
         return {org for (u, org, slug) in self.blocked if u == str(user_id) and slug == product_slug}
 
+    @_changes_effective_org
     def set(self, user_id: Any, product_slug: str, target_org_id: Any, auth_session_id: Any) -> str:
         uid = str(user_id)
         target = str(target_org_id)
@@ -343,6 +365,7 @@ class FakeOrgSelectionStore:
         })
         return sid
 
+    @_changes_effective_org
     def end(self, user_id: Any, product_slug: Optional[str], reason: str) -> int:
         if reason not in ENDED_BY_VALUES:
             raise ValueError(reason)
