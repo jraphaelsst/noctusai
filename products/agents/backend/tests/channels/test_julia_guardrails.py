@@ -73,6 +73,8 @@ class TestContatoNaoPermitido:
         "Qual o seu orçamento?", "Custa R$ 1.250.000,00 com 98 m2", "São 3 quartos e 2 vagas, 12 andares", "AP0123 e AP0456",
         "Posso agendar para 15/03 às 14h30?", "o IPTU é de R$ 2.340,50 por ano",
         "a conta de luz vem junto no condomínio?", "Ele tem 20 anos de construção",
+        # digit runs inside alphanumeric tokens: a hex canary, a hash, a listing code
+        "e3a1199998888b0c4d2f.", "imóvel ONE11999998888",
     ])
     def test_ordinary_numbers_are_clean(self, texto):
         assert c.contato_nao_permitido(texto, [], []) is None

@@ -325,7 +325,9 @@ def link_nao_permitido(
 
 
 _EMAIL = re.compile(r"[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", re.IGNORECASE)
-_TELEFONE = re.compile(r"(?<![\d.])(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?9?\d{4}[\s.-]?\d{4}(?![\d]|[.,]\d)")
+# Word-bounded on both sides: a digit run INSIDE an alphanumeric token (a hex canary, a hash, a listing code
+# like ONE12345678901) is not a phone number.
+_TELEFONE = re.compile(r"(?<![\w.])(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?9?\d{4}[\s.-]?\d{4}(?!\w|[.,]\d)")
 _PIX = re.compile(
     r"\bchave\s+pix\b|\bpix\s*(?:copia\s+e\s+cola|:)|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
