@@ -672,7 +672,24 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
                 candidates.append((nxt_candidato.strip(_SEPARATORS).strip(), label))
         idx += 1
 
-    return candidates
+    return [(_sem_particula_inicial(v), l) for v, l in candidates]
+
+
+#: Particles that can never OPEN a personal name.
+_PARTICULAS_INICIAIS = frozenset({"DE", "DA", "DO", "DAS", "DOS"})
+
+
+def _sem_particula_inicial(valor: str) -> str:
+    """Drop a leading "DE/DA/DO..." from a candidate. A certidão's
+    "NOME QUE CADA UM PASSOU A UTILIZAR: X, passara a usar o nome de X" makes
+    the NOME label capture "DE X" — a second, distinct 'holder' that was the
+    SAME person as "X", so a clean two-spouse certidão read as four names
+    (measured, deal 799, 2026-10-22) and no spouse was created. Only when at
+    least two words remain."""
+    palavras = valor.split()
+    while len(palavras) > 2 and palavras[0].upper() in _PARTICULAS_INICIAIS:
+        palavras = palavras[1:]
+    return " ".join(palavras)
 
 
 # ─── MRZ corroboration (see the module docstring's "THE EXCEPTION..." section) ──
