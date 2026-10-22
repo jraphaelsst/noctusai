@@ -26,7 +26,7 @@ import { useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 
 import { env } from './env';
-import { dropProductCookieSession, verifySessionWithServer } from './identity';
+import { dropProductCookieSession, goTrueSessionId, verifySessionWithServer } from './identity';
 import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -228,6 +228,9 @@ function devAutologinUser(): User {
 /** Minimum gap between server identity checks, per tab. */
 export const IDENTITY_CHECK_THROTTLE_MS = 60_000;
 
+/** Pause before the single confirming re-check of a `rejected` identity verdict. */
+export const VERIFY_RECHECK_DELAY_MS = 500;
+
 export function useSupabaseAuthInit(
   supabase: AnySupabaseClient,
   setUser: (user: User | null) => void,
@@ -257,10 +260,21 @@ export function useSupabaseAuthInit(
       const now = Date.now();
       if (now - lastCheck < IDENTITY_CHECK_THROTTLE_MS) return;
       lastCheck = now;
-      const verdict = await verifySessionWithServer(supabase);
+      let verdict = await verifySessionWithServer(supabase);
       if (disposed || verdict !== 'rejected') return;
+      // A rejection can race a token rotation (this tab or another just refreshed:
+      // the access token getUser() sent was already superseded). Re-check ONCE
+      // against the freshly stored session before treating it as authoritative.
+      await new Promise((r) => setTimeout(r, VERIFY_RECHECK_DELAY_MS));
+      if (disposed) return;
+      verdict = await verifySessionWithServer(supabase);
+      if (disposed || verdict !== 'rejected') return;
+      let keepId: string | null = null;
+      try {
+        keepId = goTrueSessionId((await supabase.auth.getSession())?.data?.session?.access_token);
+      } catch { /* no claim */ }
       try { await supabase.auth.signOut?.({ scope: 'local' }); } catch { /* best-effort */ }
-      await dropProductCookieSession();
+      await dropProductCookieSession(keepId);
       if (!disposed) setUser(null);
     };
 

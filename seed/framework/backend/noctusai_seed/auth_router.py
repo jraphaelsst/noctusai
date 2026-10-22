@@ -53,13 +53,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from noctusai_lib.api.auth import _resolve_trusted_membership
 from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
+from noctusai_lib.api.auth.session.session_revoke import jwt_session_id
 from noctusai_lib.api.auth.session.cookie import clear_session_cookie, set_session_cookie
 from noctusai_lib.api.auth.session import (
     ADMIN_ORG_ROLES,
@@ -494,6 +495,7 @@ def create_auth_router(
         response: Response,
         ctx: AuthContext = Depends(get_auth_context),
         session_cookie: str | None = Cookie(None, alias=_SESSION_COOKIE),
+        x_keep_session: str | None = Header(None, alias="X-Keep-Session"),
     ) -> Response:
         """Revoke the session upstream (SEC-4) THEN delete the local
         session row + clear the cookie. No-op when the caller
@@ -507,7 +509,12 @@ def create_auth_router(
         if session_cookie:
             tokens = await session_store.read_tokens(session_cookie)
             if tokens is not None and tokens.refresh_token:
-                await session_revoker.revoke(tokens.refresh_token)
+                if x_keep_session and jwt_session_id(tokens.access_token) == x_keep_session:
+                    # The browser SPA is still using THIS GoTrue session (same
+                    # session_id): revoking it upstream would sign the SPA out.
+                    logger.info("logout: cookie session shares the SPA's GoTrue session; skipping upstream revoke")
+                else:
+                    await session_revoker.revoke(tokens.refresh_token)
             await session_store.delete(session_cookie)
         clear_session_cookie(response, _SESSION_COOKIE)
         response.status_code = status.HTTP_204_NO_CONTENT

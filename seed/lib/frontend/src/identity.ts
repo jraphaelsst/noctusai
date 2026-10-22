@@ -30,12 +30,20 @@ export function isAuthRejection(error: any): boolean {
   return error.name === 'AuthApiError' && (error.status === 401 || error.status === 403);
 }
 
-/** Best-effort: drop the product's HttpOnly `nai_session` cookie. Never throws. */
-export async function dropProductCookieSession(): Promise<void> {
+/**
+ * Best-effort: drop the product's HttpOnly `nai_session` cookie. Never throws.
+ *
+ * `keepSessionId`: the GoTrue session_id the SPA is still using. The backend
+ * revokes the cookie's refresh token UPSTREAM; if the cookie shares the SPA's
+ * GoTrue session that would sign the SPA out too (2026-10-22), so the backend
+ * skips the upstream revoke when the ids match.
+ */
+export async function dropProductCookieSession(keepSessionId?: string | null): Promise<void> {
   try {
     await fetch(`${env.BACKEND_API_URL}/api/auth/logout`, {
       method: 'POST',
       credentials: 'include',
+      ...(keepSessionId ? { headers: { 'X-Keep-Session': keepSessionId } } : {}),
     });
   } catch {
     /* best-effort: a failed cookie drop must never block the flow */

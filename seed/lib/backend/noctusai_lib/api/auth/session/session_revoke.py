@@ -27,10 +27,32 @@ seam — Protocol + Fake + Real + factory
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 from typing import Callable, Optional, Protocol
 
 logger = logging.getLogger(__name__)
+
+def jwt_session_id(token: Optional[str]) -> Optional[str]:
+    """The GoTrue ``session_id`` claim of a JWT (unverified), or ``None``.
+
+    Not a trust decision -- it only answers "do these two token pairs belong to
+    the SAME GoTrue session?" so a cookie-session logout never revokes the
+    session a browser SPA is still using (2026-10-22: the cookie's stored
+    refresh token and the SPA shared one GoTrue session; ``revoke`` killed both
+    and the SPA fell to Landing).
+    """
+    if not token:
+        return None
+    try:
+        part = token.split(".")[1]
+        data = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+        sid = data.get("session_id")
+        return sid if isinstance(sid, str) and sid else None
+    except Exception:  # noqa: BLE001 -- unreadable token: no claim
+        return None
+
 
 # A ``revoke_fn`` takes the session's (rotated) refresh token and revokes the
 # session upstream, raising on failure. SYNC (the supabase-py SDK is sync),
@@ -156,4 +178,5 @@ __all__ = [
     "RevokeFn",
     "make_default_revoke_fn",
     "make_session_revoker",
+    "jwt_session_id",
 ]
