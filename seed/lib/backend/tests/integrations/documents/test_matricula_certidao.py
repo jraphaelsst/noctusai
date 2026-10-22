@@ -22,6 +22,7 @@ from noctusai_lib.integrations.documents.matricula_certidao import (
     MOTIVO_DIVERGENTE,
     MOTIVO_NAO_ENCONTRADA,
     MOTIVO_VISUALIZACAO,
+    data_da_visualizacao,
     data_ultimo_ato,
 )
 
@@ -144,6 +145,45 @@ class TestEmissionDate:
         lida = ler_certidao_matricula(texto)
         assert lida.data_emissao is None
         assert lida.motivo == MOTIVO_DIVERGENTE
+
+
+class TestViewDate:
+    """§3 — the date the registry served a visualização (its request/print
+    stamp), what the office prints as "…, emitida em <data> (Arisp)". It is
+    never the emission and never an act date."""
+
+    def test_the_generated_at_stamp_is_the_view_date(self):
+        lida = ler_certidao_matricula(VISUALIZACAO)
+        assert lida.data_visualizacao == date(2024, 3, 4)
+        assert lida.data_emissao is None
+        assert lida.motivo == MOTIVO_VISUALIZACAO
+
+    def test_the_arisp_requester_stamp_on_every_page(self):
+        estampa = "SOLICITADO POR: FULANO EXEMPLO - CPF/CNPJ: ***.123.456-** DATA:  29/06/2026 07:57:57\n"
+        texto = "VISUALIZAÇÃO DE MATRÍCULA\n" + estampa + ATOS + estampa
+        assert ler_certidao_matricula(texto).data_visualizacao == date(2026, 6, 29)
+
+    def test_no_stamp_means_no_view_date_never_an_act_date(self):
+        texto = "VISUALIZAÇÃO DE MATRÍCULA\nMATRÍCULA Nº 12.345\n" + ATOS
+        assert ler_certidao_matricula(texto).data_visualizacao is None
+
+    def test_a_stamp_before_the_last_act_is_refused(self):
+        texto = "VISUALIZAÇÃO DE MATRÍCULA\n" + ATOS + "Consultado em 10/01/2019.\n"
+        assert ler_certidao_matricula(texto).data_visualizacao is None
+
+    def test_disagreeing_stamps_are_absence(self):
+        texto = (
+            "VISUALIZAÇÃO DE MATRÍCULA\n" + ATOS
+            + "Visualização gerada em 04/03/2024. Data da consulta: 05/03/2024.\n"
+        )
+        assert ler_certidao_matricula(texto).data_visualizacao is None
+
+    def test_a_certidao_has_no_view_date(self):
+        assert ler_certidao_matricula(CERTIDAO).data_visualizacao is None
+
+    def test_the_helper_takes_the_floor(self):
+        assert data_da_visualizacao("Visualização gerada em 04/03/2024", date(2025, 1, 1)) is None
+        assert data_da_visualizacao("Visualização gerada em 04/03/2024") == date(2024, 3, 4)
 
 
 class TestExternalCandidate:

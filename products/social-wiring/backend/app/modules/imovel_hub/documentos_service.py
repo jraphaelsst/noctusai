@@ -1080,9 +1080,11 @@ def _estrutura_da_matricula(
     answered "data de emissão" with the first ACT's date (1984-2017), so
     every deal blocked on "certidão vencida". Now:
 
-    - a visualização → `emitida_em=None`, `tipo_documento_matricula=
-      "visualizacao"`, `emissao_motivo="visualizacao_sem_valor_de_certidao"`
-      (readiness says "envie a Certidão", not "vencida");
+    - a visualização → `tipo_documento_matricula="visualizacao"`,
+      `emissao_motivo="visualizacao_sem_valor_de_certidao"` (readiness warns
+      "é uma visualização", not "vencida"), and `emitida_em` = the date the
+      registry SERVED it (`data_visualizacao`, its own request/print stamp —
+      what the office prints as "…, emitida em <data> (Arisp)"), else `None`;
     - a certidão's own certification date (labelled emission or the
       "dou fé" closing) wins over the LLM;
     - otherwise the LLM's date stands only if it clears the chronology
@@ -1095,7 +1097,9 @@ def _estrutura_da_matricula(
     leitura = ler_certidao_matricula("\n\n".join(p.texto for p in paginas))
     if leitura.visualizacao:
         return {
-            "emitida_em": None,
+            "emitida_em": (
+                leitura.data_visualizacao.isoformat() if leitura.data_visualizacao else None
+            ),
             "tipo_documento_matricula": leitura.tipo_documento_matricula,
             "emissao_motivo": leitura.motivo,
         }
@@ -1441,7 +1445,13 @@ async def extrair_estrutura(
             _retratar_onus_certidao_em(
                 client, org_id, codigo, emitida_anterior, via_ia.get("emitida_em")
             )
-        if tipo == "matricula" and via_ia.get("emitida_em"):
+        # A visualização's view date is not a certidão de ônus: it never
+        # feeds `onus_certidao_em` (the pre-118 field certidão-only logic reads).
+        if (
+            tipo == "matricula"
+            and via_ia.get("emitida_em")
+            and via_ia.get("tipo_documento_matricula") != TIPO_VISUALIZACAO
+        ):
             sugerido = _preencher_onus_certidao_em(
                 client, org_id, codigo, via_ia["emitida_em"]
             ) or sugerido

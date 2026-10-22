@@ -48,6 +48,15 @@ trusted:
    "envie a Certidão de Matrícula (o arquivo é uma visualização)" instead of
    "vencida".
 
+3. **View date (visualização only).** The date the registry SERVED the view
+   — its own request/print stamp ("SOLICITADO POR: … DATA: 29/06/2026
+   07:57:57" on every ARISP page, "visualização gerada em …", "consultado
+   em …") — as `data_visualizacao`. It is what the office prints as
+   "Visualização da Certidão da Matrícula …, emitida em <data> (Arisp)"
+   (signed corpus, deal 857). Never an act date: only a stamp-labelled date
+   counts, it must clear the same chronology floor, and disagreeing stamps
+   are absence. It is NOT an emission — `data_emissao` stays `None`.
+
 All fixtures in this module's tests are synthetic; no real document text.
 """
 from __future__ import annotations
@@ -127,6 +136,18 @@ _FECHO = re.compile(
     r"(?:[A-Z][A-Z' ]{1,40},\s*(?:SP\s*,\s*)?(?:EM\s+)?"
     r"|(?:DOU\s+FE|E\s+VERDADE)[^0-9]{0,80})$"
 )
+#: A visualização's own request/print stamp, ending right before the date.
+#: `normalize`d text is one line, so the requester's name/CPF between
+#: `SOLICITADO POR` and `DATA` is bounded by length instead.
+_ESTAMPA_VISUALIZACAO = re.compile(
+    r"(?:"
+    r"SOLICITAD[OA]\s+POR\b.{0,160}?\bDATA\s*[:\-–—]?\s*"
+    rf"|{_VIS}\s+(?:GERADA|EMITIDA|IMPRESSA|REALIZADA|SOLICITADA)\s+" + _HORA + _CONECTOR
+    + r"|(?:VISUALIZAD[OA]|CONSULTAD[OA]|IMPRESS[OA]|PESQUISAD[OA])\s+EM\s+" + _HORA
+    + r"|DATA\s+D[AE]\s+(?:CONSULTA|VISUALIZACAO|PESQUISA|SOLICITACAO|IMPRESSAO)\s*[:\-–—]?\s*" + _HORA
+    + r")$"
+)
+_JANELA_ESTAMPA = 200
 #: Where the certification starts. The LAST one is used: a "certifico" that
 #: opens the document (preamble layout) is followed by the acts, so only
 #: its LAST closing line is the certificate's.
@@ -150,6 +171,9 @@ class CertidaoMatriculaLida:
       with `motivo` saying why (`MOTIVOS_EMISSAO`).
     - `data_ultimo_ato` — the latest registration date among the acts, the
       chronology floor every emission candidate must clear.
+    - `data_visualizacao` — a visualização's own request/print stamp date
+      (module docstring §3); `None` for a certidão and whenever no single
+      stamp date clears the floor.
     """
 
     tipo_documento_matricula: Optional[str] = None
@@ -159,6 +183,7 @@ class CertidaoMatriculaLida:
     data_emissao_rotulo: Optional[str] = None
     data_ultimo_ato: Optional[date] = None
     motivo: Optional[str] = None
+    data_visualizacao: Optional[date] = None
 
     @property
     def visualizacao(self) -> bool:
@@ -214,6 +239,20 @@ def data_ultimo_ato(texto: str) -> Optional[date]:
     return max(datas) if datas else None
 
 
+def data_da_visualizacao(texto: str, piso: Optional[date] = None) -> Optional[date]:
+    """The date a visualização was served — module docstring §3. Only a
+    stamp-labelled date at or after `piso` (the last act); several distinct
+    such dates → `None` (disagreement is absence)."""
+    norm = normalize(texto or "")
+    datas = {
+        valor
+        for inicio, _fim, valor in datas_no_texto(norm)
+        if _ESTAMPA_VISUALIZACAO.search(norm[max(0, inicio - _JANELA_ESTAMPA) : inicio])
+        and (piso is None or valor >= piso)
+    }
+    return datas.pop() if len(datas) == 1 else None
+
+
 def _candidatas(norm: str) -> tuple[list[tuple[date, str]], list[tuple[date, str]]]:
     """(labelled, closing) emission candidates, each `(date, label)`."""
     zonas = list(_ZONA_CERTIFICACAO.finditer(norm))
@@ -246,7 +285,9 @@ def ler_certidao_matricula(texto: str) -> CertidaoMatriculaLida:
         tipo_documento_matricula=tipo, tipo_rotulo=tipo_rotulo, data_ultimo_ato=ultimo
     )
     if tipo == TIPO_VISUALIZACAO:
-        return CertidaoMatriculaLida(**base, motivo=MOTIVO_VISUALIZACAO)
+        return CertidaoMatriculaLida(
+            **base, motivo=MOTIVO_VISUALIZACAO, data_visualizacao=data_da_visualizacao(texto, ultimo)
+        )
 
     norm = normalize(texto or "")
     rotuladas, fechos = _candidatas(norm)
@@ -286,6 +327,7 @@ __all__ = [
     "TIPO_VISUALIZACAO",
     "CertidaoMatriculaLida",
     "classificar_documento_matricula",
+    "data_da_visualizacao",
     "data_ultimo_ato",
     "ler_certidao_matricula",
 ]

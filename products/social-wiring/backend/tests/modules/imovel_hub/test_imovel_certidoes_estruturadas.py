@@ -946,6 +946,32 @@ class TestMatriculaVisualizacao:
         assert dados["onus_certidao_em"] is None
 
     @pytest.mark.asyncio
+    async def test_a_stamped_visualizacao_carries_its_view_date_never_into_onus(
+        self, client, scoped, fake_storage
+    ):
+        """Deal 857: the registry's request stamp is the date the office prints
+        ("Visualização da Certidão da Matrícula …, emitida em <data>"). It is
+        stored on the document, but a view is not a certidão de ônus — it never
+        feeds `onus_certidao_em`."""
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="matricula", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+        estampa = "SOLICITADO POR: FULANO EXEMPLO - CPF/CNPJ: ***.123.456-** DATA:  29/06/2026 07:57:57\n"
+
+        await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(estampa + _VISUALIZACAO_P5),
+            analyze_estrutura=_analise_fixa({"emitida_em": "1984-03-10"}),
+        )
+        certidoes = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()
+        mat = {i["tipo"]: i for i in certidoes["items"]}["matricula"]
+        assert mat["emitida_em"] == "2026-06-29"
+        assert mat["tipo_documento_matricula"] == "visualizacao"
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["onus_certidao_em"] is None
+
+    @pytest.mark.asyncio
     async def test_a_re_read_clears_the_act_date_an_older_read_wrote(
         self, client, scoped, fake_storage
     ):

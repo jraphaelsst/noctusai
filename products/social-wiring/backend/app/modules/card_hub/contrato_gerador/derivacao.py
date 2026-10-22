@@ -890,8 +890,15 @@ def certidoes_imovel(d: DadosContrato) -> tuple[CertidaoImovel, ...]:
     if im is None:
         return ()
     # [P5] A matrícula VISUALIZAÇÃO (migration 199) is never presented as a
-    # certidão, dated or not — `_certidoes_imovel_pendentes` asks for one.
+    # certidão. A DATED one (its registry view stamp) is presented as what it
+    # is — "Visualização da Certidão da Matrícula …, emitida em …" — only when
+    # no dated certidão is on file (owner decision 2026-10-21: warn, generate
+    # from it; signed corpus, deal 857). `_certidoes_imovel_pendentes` warns.
     por_tipo = {c.tipo: c for c in im.certidoes if c.emitida_em and not _e_visualizacao(c)}
+    if "matricula" not in por_tipo:
+        vista = next((c for c in im.certidoes if c.emitida_em and _e_visualizacao(c)), None)
+        if vista is not None:
+            por_tipo["matricula"] = vista
     # The pre-118 `onus_certidao_em` fallback answers ONLY a card with no
     # matrícula document at all: a visualização or an undated certidão on
     # file is a named gap, never silently answered by an older field (the

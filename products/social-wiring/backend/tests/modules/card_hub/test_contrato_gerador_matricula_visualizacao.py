@@ -65,6 +65,20 @@ class TestVisualizacaoDaMatricula:
         assert "MATRICULA_VISUALIZACAO" not in {a["codigo"] for a in av.avisos}
         assert derivacao.certidoes_imovel(_com_certidoes(VISUALIZACAO, CERTIDAO))[0] is CERTIDAO
 
+    def test_a_dated_visualizacao_is_presented_as_a_visualizacao(self):
+        """Deal 857's signed contract: "3.1 – Visualização da Certidão da
+        Matrícula do imóvel, emitida em <view date>". It still warns."""
+        vista = replace(VISUALIZACAO, emitida_em=fx.dias_antes(3), emissao_motivo=None)
+        d = _com_certidoes(vista)
+        assert derivacao.certidoes_imovel(d) == (vista,)
+        av = _avaliar(d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "MATRICULA_VISUALIZACAO" in {a["codigo"] for a in av.avisos}
+
+    def test_a_dated_certidao_beats_a_dated_visualizacao(self):
+        vista = replace(VISUALIZACAO, emitida_em=fx.dias_antes(1))
+        assert derivacao.certidoes_imovel(_com_certidoes(vista, CERTIDAO)) == (CERTIDAO,)
+
     def test_legacy_still_warns(self):
         av = _avaliar(_com_certidoes(VISUALIZACAO, processo_legado=True))
         assert "MATRICULA_VISUALIZACAO" in {a["codigo"] for a in av.avisos}
