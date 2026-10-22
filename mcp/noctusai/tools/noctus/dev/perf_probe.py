@@ -30,6 +30,9 @@ _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 _NUM = re.compile(r"^\d+$")
 _HEX = re.compile(r"^[0-9a-fA-F]{8,}$")
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Same-host paths answered by the CDN edge itself (never reach the origin): not app endpoints, so
+# never budgeted -- reported as `edge_floor`, the browser<->edge round trip every API call pays too.
+EDGE_PATHS = ("/cdn-cgi/*",)
 
 
 class PerfProbeError(Exception):
@@ -246,6 +249,10 @@ def _endpoint_rows(s: dict[str, Any], pages: list[str] | None, endpoints: list[s
     return out
 
 
+def _is_edge(endpoint: str) -> bool:
+    return any(fnmatch.fnmatchcase(_route_of(endpoint), g) for g in EDGE_PATHS)
+
+
 def report(scope: str, label: str, store: str | None = None, pages: list[str] | None = None,
            endpoints: list[str] | None = None, top: int = 10, big_bytes: int = 100_000,
            budgets_path: str | None = None) -> dict[str, Any]:
@@ -260,6 +267,8 @@ def report(scope: str, label: str, store: str | None = None, pages: list[str] | 
                                      for k, v in eps.items()), key=lambda r: -r["p95_ms"])[:top],
         "duplicate_calls": [], "deep_serial_chains": [], "edge_bound": [], "app_bound": [], "oversized": [],
         "non_2xx": [{"endpoint": k, "non_2xx": v["non_2xx"], "of": v["count"]} for k, v in eps.items() if v["non_2xx"]],
+        "edge_floor": [{"endpoint": k, "count": v["count"], "p50_ms": v["p50_ms"], "p95_ms": v["p95_ms"]}
+                       for k, v in eps.items() if _is_edge(k)],
     }
     for p in s["pages"]:
         if not _glob([p["path"]], pages):
@@ -300,7 +309,7 @@ def report(scope: str, label: str, store: str | None = None, pages: list[str] | 
         rows = []
         for k, v in eps.items():
             route = _route_of(k)
-            if not route.startswith("/") or any(fnmatch.fnmatchcase(route, g) for g in ignore):
+            if not route.startswith("/") or _is_edge(k) or any(fnmatch.fnmatchcase(route, g) for g in ignore):
                 continue
             # method is not captured; the client view assumes GET (read/shell budgets).
             cls, budget, _ = classify("GET", route, budgets)

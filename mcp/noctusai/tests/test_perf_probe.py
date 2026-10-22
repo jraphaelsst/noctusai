@@ -156,3 +156,15 @@ def test_snippets():
     assert "2000" in r and "500" in r and "__OFFSET__" not in r
     assert "removeItem" in pp.snippet("clear")["js"]
     assert pp.perf_probe("snippet", kind="nope")["status"] == "error"
+
+
+def test_edge_floor_is_reported_never_budgeted(env, tmp_path):
+    # Cloudflare's RUM beacon is answered by the edge, never the origin: it is the network floor,
+    # not an app endpoint -- a slow beacon must not turn the product verdict over_budget.
+    pages = [_page("/x", [_call("/cdn-cgi/rum", 10, 900, size=300, status=204),
+                          _call("/api/items", 10, 120, app=60)]) for _ in range(6)]
+    pp.perf_probe("ingest", scope="orbity", label="edge", capture=_write(tmp_path, _cap(pages)), store=str(env))
+    r = pp.perf_probe("report", scope="orbity", label="edge", store=str(env))
+    assert r["findings"]["edge_floor"] == [{"endpoint": "/cdn-cgi/rum", "count": 6, "p50_ms": 900, "p95_ms": 900}]
+    assert all(row["endpoint"] != "/cdn-cgi/rum" for row in r["budget"]["routes"])
+    assert r["status"] == "ok"

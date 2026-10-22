@@ -23,7 +23,7 @@ The unit everywhere: a **product slug** in the live catalog (`active-scope.txt`/
 capture baseline label (`...-before`) -> make the change (+ deploy) -> capture the same routes (`...-after`) -> `compare scope before after`. Rows are `improved | regressed | unchanged | new | gone`; a change counts only if it exceeds BOTH 15% and 30 ms (noise floor; `min_pct`/`min_ms`). Pair with `latency_report` after deploy for the server half.
 
 ## Use B — DISCOVER / ANALYZE an app (ours or third-party)
-capture -> `report scope label` -> findings drive the backlog: slowest pages (data-ready), slowest endpoints (p95), duplicate calls (same template >1 per load), deep serial chains (waterfall: depth >= 3), edge-bound vs app-bound, oversized payloads (>= 100 KB p50), non-2xx. For reverse-engineering (S1) it also yields the app's real endpoint inventory and how chatty it is.
+capture -> `report scope label` -> findings drive the backlog: slowest pages (data-ready), slowest endpoints (p95), duplicate calls (same template >1 per load), deep serial chains (waterfall: depth >= 3), edge-bound vs app-bound, oversized payloads (>= 100 KB p50), non-2xx, and `edge_floor` — same-host `/cdn-cgi/*` calls the CDN edge answers itself (Cloudflare RUM beacon): never budgeted, they are the browser<->edge round trip every API call also pays, so `client p50 - edge_floor p50 - app p50` is what the tunnel/origin hop adds. For reverse-engineering (S1) it also yields the app's real endpoint inventory and how chatty it is.
 
 ## Privacy rules
 - Capture records **paths + query KEYS + timings only** — never query values, bodies, headers, cookies.
