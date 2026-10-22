@@ -127,6 +127,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
+    # The default listen backlog (5) is smaller than the 8 threads that open
+    # their first connection at once — macOS RESETS the overflow
+    # (ConnectError Errno 54), a flake of this fake server, not of the pool.
+    request_queue_size = 64
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
