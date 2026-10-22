@@ -53,6 +53,32 @@ _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_process_license_gate():
+    """Restore the process-global license gate after EVERY test.
+
+    ``configure_license_gate`` installs a module-level gate that every auth dependency
+    consults. A test that installs one and is not torn down leaks it into whichever test
+    runs next -- e.g. ``test_shell_endpoint_latency`` reuses ``test_org_picker_router._make``
+    (which installs an ``allow_all=False`` igig gate) but not that module's autouse reset,
+    so ``test_trusted_org_auth`` (next file in CI's alphabetical order) ran under a foreign
+    enforcing gate and 403'd (org_sem_licenca / org_mismatch). Hidden locally by
+    pytest-randomly. Isolation belongs here, once, not in each module that touches it.
+    """
+    from noctusai_lib.domain.licensing import configure_license_gate, get_license_gate
+
+    saved = get_license_gate()
+    yield
+    if saved is None:
+        configure_license_gate(None)
+    else:
+        configure_license_gate(
+            saved.product_slug, saved.checker, exempt=saved.exempt,
+            get_core_client=saved.get_core_client, selection_store=saved.selection_store,
+            db_schema=saved.db_schema,
+        )
+
+
 @pytest.fixture
 def product_name() -> str:
     return "Test Product"
