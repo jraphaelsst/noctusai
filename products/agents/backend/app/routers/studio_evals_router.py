@@ -31,6 +31,8 @@ Error codes: 409 ``slug_taken`` (duplicate case slug), 409 ``case_in_use``
 from __future__ import annotations
 
 from typing import Callable
+
+import anyio.to_thread
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -243,44 +245,54 @@ async def create_run(
     scheduler=Depends(get_eval_scheduler_dep),
     current_hash: CurrentHash = Depends(get_current_hash_dep),
 ) -> EvalRunOut:
-    agent = resolve_studio_agent(defs, ctx.org_id, key)
-    require_user_or_dev_advisor(ctx, agent)
-    version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
-    compiled_hash = current_hash(ctx.org_id, agent, version)
+    # The store/definition calls are sync PostgREST: run them in a worker thread so the loop keeps
+    # serving. Only the scheduler (asyncio.create_task) stays on the loop. Exceptions (NotFound ->
+    # 404, StudioConflict -> 409, ...) propagate through the thread unchanged.
+    def _prepare():
+        agent = resolve_studio_agent(defs, ctx.org_id, key)
+        require_user_or_dev_advisor(ctx, agent)
+        version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
+        compiled_hash = current_hash(ctx.org_id, agent, version)
 
-    case_ids = payload.case_ids
-    if payload.repetir_falhas_de is not None:
-        # Contract §L: rerun only the failures of a prior run of THIS agent
-        # (org-scoped by `get_run`, which 404s a foreign/unknown run id —
-        # same resolver every studio route uses).
+        case_ids = payload.case_ids
+        if payload.repetir_falhas_de is not None:
+            # Contract §L: rerun only the failures of a prior run of THIS agent
+            # (org-scoped by `get_run`, which 404s a foreign/unknown run id —
+            # same resolver every studio route uses).
+            try:
+                prior = store.get_run(ctx.org_id, agent.id, payload.repetir_falhas_de)
+            except NotFound as exc:
+                raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+            case_ids = [
+                r.result.case_id for r in store.list_results_with_cases(ctx.org_id, agent.id, prior.id)
+                if r.result.status != "aprovado"
+            ]
+
+        limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
         try:
-            prior = store.get_run(ctx.org_id, agent.id, payload.repetir_falhas_de)
+            run = store.create_run(
+                ctx.org_id, agent.id, version.id,
+                compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
+                case_ids=case_ids, started_by=actor_id(ctx),
+                modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
+            )
         except NotFound as exc:
-            raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
-        case_ids = [
-            r.result.case_id for r in store.list_results_with_cases(ctx.org_id, agent.id, prior.id)
-            if r.result.status != "aprovado"
-        ]
+            raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
+        except StudioConflict as exc:  # run_in_progress
+            raise http_error(409, exc.code, str(exc)) from exc
+        except ValueError as exc:
+            raise http_error(422, "no_eval_cases", str(exc)) from exc
 
-    limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
-    try:
-        run = store.create_run(
-            ctx.org_id, agent.id, version.id,
-            compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
-            case_ids=case_ids, started_by=actor_id(ctx),
-            modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
-        )
-    except NotFound as exc:
-        raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
-    except StudioConflict as exc:  # run_in_progress
-        raise http_error(409, exc.code, str(exc)) from exc
-    except ValueError as exc:
-        raise http_error(422, "no_eval_cases", str(exc)) from exc
+        return run
+
+    run = await anyio.to_thread.run_sync(_prepare)
 
     try:
         scheduler(run.id)
     except EvalSchedulerUnavailable as exc:
-        store.mark_run_failed(ctx.org_id, run.id, erro="eval_runner_unavailable")
+        await anyio.to_thread.run_sync(
+            lambda: store.mark_run_failed(ctx.org_id, run.id, erro="eval_runner_unavailable")
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"detail": "O executor de avaliações não está disponível.", "code": "eval_runner_unavailable"},

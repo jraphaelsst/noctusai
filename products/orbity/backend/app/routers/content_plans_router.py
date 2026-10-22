@@ -27,6 +27,8 @@ from contextlib import contextmanager
 from typing import Iterator
 from uuid import UUID
 
+import anyio.to_thread
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
@@ -293,16 +295,21 @@ async def generate_items_with_ai(
 ) -> AIGenerateOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    with _guard("ai_items_load", org_id, "Falha ao carregar o planejamento"):
-        svc = _svc(token, org_id)
-        plan = _plan_or_404(svc, plan_id)
-        client_name = None
-        if plan.get("client_id"):
-            rows = (
-                get_user_client(token).table("clients").select("name")
-                .eq("org_id", str(org_id)).eq("id", str(plan["client_id"])).execute().data
-            ) or []
-            client_name = rows[0].get("name") if rows else None
+    def _load():
+        with _guard("ai_items_load", org_id, "Falha ao carregar o planejamento"):
+            svc = _svc(token, org_id)
+            plan = _plan_or_404(svc, plan_id)
+            client_name = None
+            if plan.get("client_id"):
+                rows = (
+                    get_user_client(token).table("clients").select("name")
+                    .eq("org_id", str(org_id)).eq("id", str(plan["client_id"])).execute().data
+                ) or []
+                client_name = rows[0].get("name") if rows else None
+            return plan, client_name
+
+    # Sync PostgREST reads: worker thread, so the loop keeps serving while the plan loads.
+    plan, client_name = await anyio.to_thread.run_sync(_load)
     try:
         items = await generate_plan_items(
             payload, plan=plan, client_name=client_name,

@@ -1,7 +1,6 @@
 {
   "_doc": "Per-file count of async route handlers that call the sync supabase client directly (check_async_handler_sync_db). Ratchet: may only go down. KB § PATTERNS/backend/request-path-latency.md",
   "arquivos": {
-    "products/orbity/backend/app/routers/content_plans_router.py": 1,
     "seed/framework/backend/noctusai_seed/ai_feedback_router.py": 2,
     "seed/framework/backend/noctusai_seed/auth_router.py": 4,
     "seed/framework/backend/noctusai_seed/llm_router.py": 3,
