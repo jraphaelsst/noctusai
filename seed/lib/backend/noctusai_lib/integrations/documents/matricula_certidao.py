@@ -41,7 +41,8 @@ trusted:
      any candidate earlier than the latest act's registration date
      (`data_ultimo_ato`, via the sibling act parser) is discarded. The same
      check is offered to a caller holding an EXTERNAL candidate (an LLM's
-     answer) through `CertidaoMatriculaLida.aceita_data_externa`.
+     answer) through `CertidaoMatriculaLida.aceita_data_externa`, which
+     requires it STRICTLY after the last act (equal IS that act's date).
 
    A visualização never gets an emission date: `data_emissao=None` with
    `motivo="visualizacao_sem_valor_de_certidao"`, so a consumer can say
@@ -139,7 +140,7 @@ _ROTULO_EMISSAO = re.compile(
 #: The certificate's closing: `... dou fé. Cotia, 1º de março de 2026` —
 #: a city followed by a comma, or the "dou fé / é verdade" formula itself.
 _FECHO = re.compile(
-    r"(?:[A-Z][A-Z' ]{1,40},\s*(?:SP\s*,\s*)?(?:EM\s+)?"
+    r"(?:[A-Z][A-Z' ]{1,40}(?:\s*[-/–]\s*[A-Z]{2})?,\s*(?:SP\s*,\s*)?(?:[-–—]\s*)?(?:EM\s+)?"
     r"|(?:DOU\s+FE|E\s+VERDADE)[^0-9]{0,80})$"
 )
 #: A visualização's own request/print stamp, ending right before the date.
@@ -199,12 +200,13 @@ class CertidaoMatriculaLida:
         """May an emission date read ELSEWHERE (an LLM's answer) stand?
 
         Never for a visualização (it has no emission), and never when it
-        predates the last act — a certidão reproduces every act, so it is
-        issued after the latest of them; an earlier date IS an act date.
+        is not strictly after the last act — a certidão reproduces every act, so
+        it is issued after the latest of them; an earlier OR equal date IS an
+        act date (in-document deterministic dates keep `>=`).
         """
         if candidata is None or self.visualizacao:
             return False
-        if self.data_ultimo_ato is not None and candidata < self.data_ultimo_ato:
+        if self.data_ultimo_ato is not None and candidata <= self.data_ultimo_ato:
             return False
         return True
 

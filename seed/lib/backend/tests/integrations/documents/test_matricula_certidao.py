@@ -122,6 +122,28 @@ class TestEmissionDate:
         assert lida.data_emissao == date(2026, 4, 15)
         assert lida.data_emissao_confianca == "alta"
 
+    @pytest.mark.parametrize(
+        "cidade",
+        ["CIDADE EXEMPLO-SP, - ", "CIDADE EXEMPLO/SP, ", "CIDADE EXEMPLO - SP, ", "CIDADE EXEMPLO, - "],
+    )
+    def test_the_closing_line_tolerates_a_uf_suffix_and_a_dash_before_the_date(self, cidade):
+        texto = (
+            "CERTIDÃO DIGITAL\nMATRÍCULA Nº 12.345\n" + ATOS
+            + "CERTIFICO E DOU FE, (PROTOCOLO NO 85.388) QUE O IMOVEL EXEMPLO. "
+            "EMOLUMENTOS: R$: 45,88 TOTAL: R$: 76,98 " + cidade + "12 DE MARCO DE 2026\n"
+        )
+        lida = ler_certidao_matricula(texto)
+        assert lida.data_emissao == date(2026, 3, 12)
+        assert lida.data_emissao_confianca == "alta"
+
+    def test_a_city_uf_date_inside_an_act_is_not_a_closing(self):
+        texto = (
+            "CERTIDÃO DIGITAL\nMATRÍCULA Nº 12.345\n"
+            "R.3/12.345 - Em 10 de maio de 2022. CIDADE EXEMPLO-SP, 10 DE MAIO DE 2022.\n"
+            "CERTIFICO E DOU FE QUE A PRESENTE E REPRODUCAO.\n"
+        )
+        assert ler_certidao_matricula(texto).data_emissao is None
+
     def test_a_labelled_emission_in_the_page_head(self):
         texto = "CERTIDÃO DE MATRÍCULA - Data da emissão: 20/05/2026\n" + ATOS
         assert ler_certidao_matricula(texto).data_emissao == date(2026, 5, 20)
@@ -225,6 +247,11 @@ class TestExternalCandidate:
         lida = ler_certidao_matricula("CERTIDÃO DIGITAL\n" + ATOS)
         assert not lida.aceita_data_externa(date(1984, 3, 10))
         assert lida.aceita_data_externa(date(2026, 3, 1))
+
+    def test_an_external_date_equal_to_the_last_act_is_refused(self):
+        lida = ler_certidao_matricula("CERTIDÃO DIGITAL\n" + ATOS)
+        assert not lida.aceita_data_externa(date(2021, 2, 2))
+        assert lida.aceita_data_externa(date(2021, 2, 3))
 
     def test_a_visualizacao_accepts_no_external_date(self):
         assert not ler_certidao_matricula(VISUALIZACAO).aceita_data_externa(date(2026, 3, 1))
