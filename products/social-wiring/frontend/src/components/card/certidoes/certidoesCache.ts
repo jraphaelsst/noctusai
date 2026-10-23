@@ -112,11 +112,12 @@ export function linhaDigitada(patch: ResultadoPatchInput, atual: CertidaoParteCe
 /** Recount the party's totals from its cells (vencidas stay the server's). */
 export function recalcularTotais(parte: CertidaoParte): CertidaoParteTotais {
   const t: CertidaoParteTotais = {
-    nao_constam: 0, constam: 0, pendente: 0, processando: 0, relendo: 0,
+    nao_constam: 0, constam: 0, pendente: 0, processando: 0, relendo: 0, erros: 0,
     vencidas: parte.totais.vencidas, opcionais: 0,
   };
   for (const c of Object.values(parte.celulas)) {
     if (c.status === "na") continue;
+    if (c.status_processamento === "erro") t.erros = (t.erros ?? 0) + 1;
     if (lendo(c) && c.status === "pendente") { t.processando = (t.processando ?? 0) + 1; continue; }
     if (c.opcional) { t.opcionais = (t.opcionais ?? 0) + 1; continue; }
     t[c.status === "nao_constam" ? "nao_constam" : c.status === "constam" ? "constam" : "pendente"] += 1;
@@ -161,4 +162,15 @@ export function comCelulaDoResultado(
     return { ...parte, totais: recalcularTotais(parte) };
   });
   return mudou ? { ...data, partes } : data;
+}
+
+
+/** Put the server's freshly-built party over the cached one (same `chave`) —
+ *  what a card-scoped emission control answers with. Uncached / unmatched ⇒ unchanged. */
+export function comParteSubstituida(
+  data: CertidoesPartesResponse | undefined,
+  parte: CertidaoParte,
+): CertidoesPartesResponse | undefined {
+  if (!data || !data.partes.some((p) => p.chave === parte.chave)) return data;
+  return { ...data, partes: data.partes.map((p) => (p.chave === parte.chave ? parte : p)) };
 }

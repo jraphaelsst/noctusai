@@ -44,8 +44,9 @@ export function chipDaCelula(c: CertidaoParteCelula): ChipInfo {
   if (c.status_processamento === "erro") return { rotulo: "Erro", tom: "erro" };
   switch (c.resultado) {
     case "negativa":
-    case "negativa_com_homonimos":
       return { rotulo: "Negativa", tom: "ok" };
+    case "negativa_com_homonimos":
+      return { rotulo: "Negativa c/ homônimos", tom: "ok" };
     case "positiva":
       return { rotulo: "Positiva", tom: "alerta" };
     case "positiva_com_efeito_de_negativa":
@@ -118,19 +119,54 @@ export function totalDaParte(p: CertidaoParte): number {
   return nao_constam + constam + pendente + (processando ?? 0);
 }
 
-/** "9/13 ok · relendo 2/13 · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped.
+/** "9/13 ok · relendo 2/13 · 2 pendentes · 1 com erro · 1 vencida p/ contrato" — zero parts are dropped.
  *  A cell being read is NEVER a pendente: it is counted as "relendo". */
 export function resumoDaParte(p: CertidaoParte): string {
-  const { nao_constam, constam, pendente, vencidas, opcionais } = p.totais;
+  const { nao_constam, constam, pendente, vencidas, opcionais, erros } = p.totais;
   const total = totalDaParte(p);
   const lendo = lendoDaParte(p);
   const partes = [`${nao_constam}/${total} ok`];
   if (lendo) partes.push(`relendo ${lendo}/${total}`);
   if (constam) partes.push(`${constam} com apontamento`);
   if (pendente) partes.push(`${pendente} ${pendente === 1 ? "pendente" : "pendentes"}`);
+  if (erros) partes.push(`${erros} com erro`);
   if (opcionais) partes.push(`${opcionais} ${opcionais === 1 ? "opcional" : "opcionais"}`);
   if (vencidas) partes.push(`${vencidas} ${vencidas === 1 ? "vencida" : "vencidas"} p/ contrato`);
   return partes.join(" · ");
+}
+
+/** Emission progress while anything of the party is being produced: `feitas` of `total`. */
+export function progressoDaParte(p: CertidaoParte): { feitas: number; total: number } | null {
+  const lendo = lendoDaParte(p);
+  if (lendo <= 0) return null;
+  const total = totalDaParte(p);
+  return { feitas: Math.max(total - lendo, 0), total };
+}
+
+const EM_VOO = new Set(["processando", "na_fila"]);
+
+/** An automatic emission running right now — the only thing "Cancelar" applies to
+ *  (a manual cell's `processando` is the read of the operator's own upload). */
+export function podeCancelarEmissao(c: CertidaoParteCelula): boolean {
+  return !!c.resultado_id && !!c.emissao_automatica && !!c.status_processamento && EM_VOO.has(c.status_processamento);
+}
+
+/** A finished automatic emission that can be thrown away so the previous evidence wins again. */
+export function podeDescartarEmissao(c: CertidaoParteCelula): boolean {
+  return !!c.resultado_id && !!c.emissao_automatica && !podeCancelarEmissao(c);
+}
+
+/** A FAILED automatic cell — what "Reemitir com erro" retries in place. A cell
+ *  waiting on a credential (`pendencia`) is a pendência, not a failure. */
+export function podeReemitirComErro(c: CertidaoParteCelula): boolean {
+  return !!c.resultado_id && !!c.emissao_automatica && c.status_processamento === "erro" && !c.pendencia;
+}
+
+/** Valid in date, or being emitted now: "emitir todas" does NOT buy it again. */
+export function jaVigenteOuEmEmissao(c: CertidaoParteCelula | undefined): boolean {
+  if (!c || c.status === "na") return false;
+  if (c.status_processamento && EM_VOO.has(c.status_processamento)) return true;
+  return c.status_processamento === "sucesso" && !c.stale_para_contrato;
 }
 
 /** The cell holds values a human typed/confirmed — "Voltar à leitura automática" applies. */

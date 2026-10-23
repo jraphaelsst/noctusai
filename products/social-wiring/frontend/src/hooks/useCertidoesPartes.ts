@@ -16,17 +16,21 @@ import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import {
   celulaComResultado,
   comCelulaDoResultado,
+  comParteSubstituida,
   comCelulaEditada,
   linhaDigitada,
   type ResultadoServidor,
 } from "@/components/card/certidoes/certidoesCache";
 import type { ResultadoPatchInput } from "@/types/certidoesEstruturadas";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
+import { authenticatedFetch, triggerBlobDownload } from "@/lib/file-download";
+import { apiUrl } from "@/lib/apiBase";
 import type {
   AntigoCriarInput,
   AntigoCriarResponse,
   AntigosEstado,
   AntigosSincronizacao,
+  CancelarEmissaoInput,
   CelulaEnsureResponse,
   CertidaoDivergencia,
   CienciaPcenResult,
@@ -34,6 +38,7 @@ import type {
   CertidoesPartesResponse,
   ExigenciasCertidoes,
   EmissaoResponse,
+  ParteAtualizadaResponse,
   RelerCertidoesResponse,
   DigitarCelulaInput,
   SolicitarEmissaoInput,
@@ -47,15 +52,17 @@ export const certidoesPartesKey = (clienteId: string, atendimentoId?: string | n
 
 const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(clienteId)}`;
 
-/** A cell the backend is still producing. A manual-origin `pendente` is an
+/** A cell the backend is still producing. An `aguarda_humano` `pendente` is an
  *  empty upload placeholder (§1.4) that nothing will ever finish on its own,
- *  so it must NOT keep the poll alive forever. */
+ *  so it must NOT keep the poll alive forever. (`origem` is who produced the
+ *  VALUES — never a polling signal.) */
 export function certidaoEmAndamento(c: CertidaoParteCelula): boolean {
   const s = c.status_processamento;
   if (s === "processando" || s === "na_fila") return true;
   // A live emission's re-read keeps `sucesso`; its own marker says "running".
   if (c.releitura?.em_andamento) return true;
-  return s === "pendente" && c.origem !== "manual";
+  // An untouched manual placeholder (`aguarda_humano`) is waiting on a person.
+  return s === "pendente" && !c.aguarda_humano;
 }
 
 export function partesTemEmAndamento(data: CertidoesPartesResponse | undefined): boolean {
@@ -94,11 +101,122 @@ export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | 
         `${clienteBase(clienteId)}/certidoes/partes/${kind}/${encodeURIComponent(alvoId)}/emissao`,
         { tipos, atendimento_id: atendimentoId ?? null },
       ),
-    onSuccess: () => {
+    onSuccess: (r) => {
       toast.success("Emissão solicitada. As certidões aparecem aqui assim que ficarem prontas.");
+      if (r.ignoradas?.length) {
+        toast.info(
+          r.ignoradas.length === 1
+            ? "1 certidão já válida ou em emissão não foi comprada de novo."
+            : `${r.ignoradas.length} certidões já válidas ou em emissão não foram compradas de novo.`,
+        );
+      }
       void invalidate();
     },
     onError: (e) => toast.error("Erro ao solicitar emissão", { description: erroMsg(e) }),
+  });
+}
+
+/** What every card-scoped emission control invalidates besides the grid it writes. */
+const leiturasDoResultado = (clienteId: string) => [
+  ["sw", "clientes", clienteId, "contratos"],
+  ["certidao-resultados-parte"],
+  ["certidao-resultados-cliente"],
+  ["certidao-resultados-empresa"],
+];
+
+/** "Cancelar emissão": stop ONE running cell (`{resultadoId}`) or every running
+ *  cell of a party (`{kind, alvoId}`). Automatic emissions only (the server
+ *  refuses a manual cell). The answer is the party as it reads afterwards. */
+export function useCancelarEmissao(clienteId: string, atendimentoId?: string | null) {
+  return useCacheWriteMutation<ParteAtualizadaResponse, CancelarEmissaoInput>({
+    mutationFn: (input) =>
+      "resultadoId" in input
+        ? api.post<ParteAtualizadaResponse>(
+            `${clienteBase(clienteId)}/certidoes/resultados/${encodeURIComponent(input.resultadoId)}/cancelar`,
+            {},
+          )
+        : api.post<ParteAtualizadaResponse>(
+            `${clienteBase(clienteId)}/certidoes/partes/${input.kind}/${encodeURIComponent(input.alvoId)}/cancelar`,
+            { atendimento_id: atendimentoId ?? null },
+          ),
+    targets: [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        commit: (old: CertidoesPartesResponse | undefined, saved: ParteAtualizadaResponse) =>
+          comParteSubstituida(old, saved.parte),
+      },
+    ],
+    invalidate: leiturasDoResultado(clienteId),
+    onSuccess: (r) =>
+      toast.success(r.cancelados === 1 ? "Emissão cancelada." : `${r.cancelados} emissões canceladas.`),
+    onError: (e) => toast.error("Não foi possível cancelar a emissão", { description: erroMsg(e) }),
+  });
+}
+
+/** "Reemitir com erro": retry ONLY the party's failed automatic cells, in place
+ *  (same consulta, `erro` -> `pendente`) — a cell that succeeded is never bought twice. */
+export function useReemitirComErro(clienteId: string, atendimentoId?: string | null) {
+  return useCacheWriteMutation<ParteAtualizadaResponse, { kind: "pessoa" | "empresa"; alvoId: string }>({
+    mutationFn: ({ kind, alvoId }) =>
+      api.post<ParteAtualizadaResponse>(
+        `${clienteBase(clienteId)}/certidoes/partes/${kind}/${encodeURIComponent(alvoId)}/reemitir-erros`,
+        { atendimento_id: atendimentoId ?? null },
+      ),
+    targets: [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        commit: (old: CertidoesPartesResponse | undefined, saved: ParteAtualizadaResponse) =>
+          comParteSubstituida(old, saved.parte),
+      },
+    ],
+    invalidate: leiturasDoResultado(clienteId),
+    onSuccess: (r) =>
+      r.reemitidos
+        ? toast.success(r.reemitidos === 1 ? "Reemitindo 1 certidão com erro…" : `Reemitindo ${r.reemitidos} certidões com erro…`)
+        : toast.info("Nenhuma certidão com erro para reemitir."),
+    onError: (e) => toast.error("Erro ao reemitir certidões", { description: erroMsg(e) }),
+  });
+}
+
+/** "Descartar emissão": throw away a wrong emission (soft-delete, restorable) so
+ *  the cell's previous evidence — or an empty cell — wins again. */
+export function useDescartarEmissao(clienteId: string, atendimentoId?: string | null) {
+  return useCacheWriteMutation<ParteAtualizadaResponse, string>({
+    mutationFn: (resultadoId) =>
+      api.delete<ParteAtualizadaResponse>(
+        `${clienteBase(clienteId)}/certidoes/resultados/${encodeURIComponent(resultadoId)}`,
+      ),
+    targets: [
+      {
+        queryKey: certidoesPartesKey(clienteId, atendimentoId),
+        commit: (old: CertidoesPartesResponse | undefined, saved: ParteAtualizadaResponse) =>
+          comParteSubstituida(old, saved.parte),
+      },
+    ],
+    invalidate: leiturasDoResultado(clienteId),
+    onSuccess: () => toast.success("Emissão descartada."),
+    onError: (e) => toast.error("Não foi possível descartar a emissão", { description: erroMsg(e) }),
+  });
+}
+
+/** "Baixar todas (.zip)": every PDF on the party's grid, one file. Raw fetch
+ *  (binary), like the transcription PDF download. */
+export function useBaixarZipDaParte(clienteId: string, atendimentoId?: string | null) {
+  return useMutation({ // noc-allow: invalidate-only — a file download, writes nothing and caches nothing
+    mutationFn: async ({ kind, alvoId, nome }: { kind: "pessoa" | "empresa"; alvoId: string; nome: string }) => {
+      const qs = atendimentoId ? `?atendimento_id=${encodeURIComponent(atendimentoId)}` : "";
+      const resp = await authenticatedFetch(
+        apiUrl(`${clienteBase(clienteId)}/certidoes/partes/${kind}/${encodeURIComponent(alvoId)}/download-zip${qs}`),
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null);
+        throw new Error(body?.error?.message || body?.detail || "Erro ao baixar as certidões");
+      }
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const match = /filename="?([^";]+)"?/.exec(disposition);
+      triggerBlobDownload(await resp.blob(), match?.[1] || `certidoes_${nome.replace(/\s+/g, "_")}.zip`);
+    },
+    onError: (e) => toast.error("Não foi possível baixar as certidões", { description: erroMsg(e) }),
   });
 }
 

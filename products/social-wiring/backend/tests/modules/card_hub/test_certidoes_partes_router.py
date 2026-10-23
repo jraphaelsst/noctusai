@@ -170,7 +170,7 @@ class TestEmissao:
         )
         assert resp.status_code == 201
         body = resp.json()
-        assert set(body) == {"consulta_id", "resultados"}
+        assert set(body) == {"consulta_id", "resultados", "ignoradas"}
         assert len(body["resultados"]) == len(CERTIDOES_CONFIG) - 1  # no tjsp
         assert set(body["resultados"][0]) == {"resultado_id", "tipo", "status_processamento"}
         processar.assert_awaited_once()
@@ -307,12 +307,12 @@ class TestCelulas:
         assert existe.json()["criado"] is False
         assert existe.json()["resultado_id"] == criou.json()["resultado_id"]
 
-    def test_placeholder_le_origem_manual_no_get(self, api, scoped):
+    def test_placeholder_aguarda_humano_e_nao_tem_origem_no_get(self, api, scoped):
         cid, aid, vid = _card(scoped)
         api.post(f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid), headers=AUTH)
         body = api.get(f"{BASE}/{cid}/certidoes/partes", headers=AUTH).json()
         celula = body["partes"][1]["celulas"]["serasa"]
-        assert (celula["origem"], celula["status_processamento"]) == ("manual", "pendente")
+        assert (celula["origem"], celula["aguarda_humano"], celula["status_processamento"]) == (None, True, "pendente")
 
     def test_nao_aplicavel_422(self, api, scoped):
         cid, aid, vid = _card(scoped)

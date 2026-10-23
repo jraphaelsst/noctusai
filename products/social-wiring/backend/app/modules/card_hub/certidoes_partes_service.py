@@ -81,7 +81,7 @@ CONSULTAS = certidoes_svc.CONSULTAS
 RESULTADOS = certidoes_svc.RESULTADOS
 
 KINDS = ("pessoa", "empresa")
-_TOTAL_CHAVES = ("nao_constam", "constam", "pendente", "processando", "relendo")
+_TOTAL_CHAVES = ("nao_constam", "constam", "pendente", "processando", "relendo", "erros")
 #: `status` values of a resultado whose read is running right now.
 _LENDO = ("processando", "na_fila")
 #: Checklist-order base for a custom row's resultado `ordem` — mirrors
@@ -289,21 +289,32 @@ def _na(tipo: Optional[str]) -> dict:
         "arquivo_nome": None, "origem": None, "emitida_em_origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
         "segunda_via": False, "pcen": None, "pendencia": None,
+        "aguarda_humano": False, "emissao_automatica": False,
     }
 
 
 def _origem_da_celula(row: dict) -> Optional[str]:
-    """`certidao_resultados.resultado_origem`, plus: a still-`pendente`,
-    never-touched placeholder of a MANUAL consulta (migration 147 — nothing
-    will ever process it) reads `"manual"` so the FE stops polling on it. Once
-    an upload flips it to `processando` the origem is the resultado's own
-    again (None until the read lands) and the FE polls as normal."""
-    origem = row.get("resultado_origem")
-    if origem:
-        return origem
-    if row.get("status") == "pendente" and row.get("consulta_origem") == "manual":
-        return "manual"
-    return None
+    """`certidao_resultados.resultado_origem` — who produced the cell's values,
+    nothing else. (It used to ALSO read `"manual"` for an untouched manual
+    placeholder so the FE would stop polling; that made a cell with nothing on
+    it look hand-filled and offered "Voltar à leitura automática" on it — the
+    polling signal is `_aguarda_humano` now.)"""
+    return row.get("resultado_origem") or None
+
+
+def _aguarda_humano(row: dict) -> bool:
+    """A still-`pendente`, never-touched placeholder of a MANUAL consulta
+    (migration 147): nothing will ever process it, only a person can fill it —
+    the FE must not keep polling on it. Once an upload flips it to
+    `processando` it is the pipeline's again."""
+    return row.get("status") == "pendente" and row.get("consulta_origem") == "manual"
+
+
+def _emissao_automatica(tipo: Optional[str], row: dict) -> bool:
+    """The cell's row belongs to a live InfoSimples emission — a consulta that
+    is not manual and a tipo the registry emits. Cancel / retry / discard act
+    on these only; a manual cell is the operator's, never the pipeline's."""
+    return bool(row.get("id")) and tipo in CONFIG_BY_TIPO and row.get("consulta_origem") != "manual"
 
 
 def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: int) -> dict:
@@ -355,6 +366,8 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "releitura": _releitura_publica(row),
         "arquivo_nome": row.get("arquivo_nome"),
         "origem": _origem_da_celula(row),
+        "aguarda_humano": _aguarda_humano(row),
+        "emissao_automatica": _emissao_automatica(tipo, row),
         # `metadados_pdf` = the date was INFERRED from the PDF CreationDate
         # (the consulta printed no date); None = printed / registry / typed.
         "emitida_em_origem": row.get("emitida_em_origem"),
@@ -457,6 +470,10 @@ def montar_parte(
         celula["opcional"] = _opcional(parte, linha.get("tipo"), celula["status"], exigencias)
         celulas[chave] = celula
         lendo = celula["status_processamento"] in _LENDO
+        if celula["status_processamento"] == "erro":
+            # An overlay (the cell stays counted in its color bucket): how many
+            # of the party's cells FAILED, for the summary line.
+            totais["erros"] += 1
         # A cell being read is counted APART from the pendentes (it is not a
         # pendência, it is in flight): `processando` when it holds no value
         # yet, `relendo` when it keeps its previous value (counted in its
@@ -733,10 +750,41 @@ def solicitar_emissao(
     _exigir_kind(kind)
     ensure_cliente(client, org_id, cliente_id)
     alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
-    parte = _achar_parte(_todas_as_partes(client, org_id, cliente_id, alvo), kind, str(alvo_id))
-    return solicitar_emissao_da_parte(
+    partes = _todas_as_partes(client, org_id, cliente_id, alvo)
+    parte = _achar_parte(partes, kind, str(alvo_id))
+    ignoradas: list[str] = []
+    if tipos is None:
+        # "All" never re-buys what is already good: a paid certidão still in
+        # date (or being emitted right now) is skipped, and said so. A tipo
+        # picked by name is the operator's explicit choice and goes through.
+        celulas = _parte_montada(client, org_id, alvo, partes, parte)["celulas"]
+        ignoradas = [
+            c["tipo"] for c in CERTIDOES_CONFIG
+            if c["tipo"] != TJSP_TIPO and _vigente_ou_em_andamento(celulas.get(c["tipo"]))
+        ]
+        tipos = [c["tipo"] for c in CERTIDOES_CONFIG if c["tipo"] != TJSP_TIPO and c["tipo"] not in ignoradas]
+        if not tipos:
+            raise AppException(
+                code="NADA_A_EMITIR",
+                message="Todas as certidões automáticas desta parte já estão válidas ou sendo emitidas.",
+                status_code=409,
+                details={"ignoradas": ignoradas},
+            )
+    out = solicitar_emissao_da_parte(
         client, org_id, parte, tipos=tipos, user_id=user_id, check_credentials=check_credentials,
     )
+    return {**out, "ignoradas": ignoradas}
+
+
+def _vigente_ou_em_andamento(celula: Optional[dict]) -> bool:
+    """A cell NOT worth paying for again: a finished read still in date, or one
+    that is being produced right now."""
+    if not celula:
+        return False
+    estado = celula["status_processamento"]
+    if estado in _LENDO:
+        return True
+    return estado == "sucesso" and not celula["stale_para_contrato"]
 
 
 def todas_as_partes(
@@ -804,16 +852,62 @@ def _consulta_do_resultado(client: Any, org_id: UUID, resultado_id: str) -> tupl
     return rows[0], consultas[0]
 
 
-def _partes_do_card(client: Any, org_id: UUID, cliente_id: UUID) -> list[list[dict]]:
-    """The party lists of the card's atendimento — or, when it is ambiguous,
-    of every candidate (a body-less `reemitir` has no `atendimento_id` to say
-    which)."""
+def _candidatos_do_card(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> list[tuple[str, list[dict]]]:
+    """`[(atendimento_id, partes)]` of the card's atendimento — or, when it is
+    ambiguous, of every candidate (a body-less write has no `atendimento_id` to
+    say which)."""
     try:
-        alvo = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
-        candidatos = [alvo]
+        candidatos = [resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)]
     except AmbiguousAtendimento as exc:
         candidatos = list(exc.candidates)
-    return [_todas_as_partes(client, org_id, cliente_id, a) for a in candidatos]
+    return [(a, _todas_as_partes(client, org_id, cliente_id, a)) for a in candidatos]
+
+
+def _partes_do_card(client: Any, org_id: UUID, cliente_id: UUID) -> list[list[dict]]:
+    return [partes for _a, partes in _candidatos_do_card(client, org_id, cliente_id)]
+
+
+def _resultados_da_parte(client: Any, org_id: UUID, parte: dict) -> list[dict]:
+    """EVERY live resultado of the party (follows the person across deals)."""
+    return certidoes_svc.certidoes_por_alvos(
+        client, org_id,
+        cliente_ids=[parte["cliente_id"]] if parte["cliente_id"] else [],
+        empresa_ids=[parte["empresa_id"]] if parte["empresa_id"] else [],
+    ).get(_chave(parte), [])
+
+
+def _parte_montada(
+    client: Any, org_id: UUID, alvo: str, partes: list[dict], parte: dict,
+    *, hoje: Optional[date] = None,
+) -> dict:
+    """The party as `GET …/partes` would serve it right now — the same
+    `montar_parte` (reference date = the contract's signing date when set), so a
+    write can hand the FE the party's true state instead of a guess."""
+    limite = max_dias()
+    referencia = data_assinatura_do_atendimento(client, org_id, alvo) or hoje or date.today()
+    return montar_parte(
+        parte,
+        montar_linhas(client, org_id, _titular_do(partes)),
+        _resultados_da_parte(client, org_id, parte),
+        referencia, limite, exig_svc.ler(client, org_id, alvo),
+    )
+
+
+def _localizar(
+    client: Any, org_id: UUID, cliente_id: UUID, resultado_id: str
+) -> tuple[str, list[dict], dict, dict]:
+    """`(atendimento_id, partes, parte, resultado)` of a live resultado that
+    belongs to one of the card's parties — anything else is the contract's 404
+    (a resultado of another card / org never answers here)."""
+    _consulta_do_resultado(client, org_id, resultado_id)
+    for alvo, partes in _candidatos_do_card(client, org_id, cliente_id):
+        for parte in partes:
+            for r in _resultados_da_parte(client, org_id, parte):
+                if r["id"] == resultado_id:
+                    return alvo, partes, parte, r
+    raise NotFoundError("Resultado")
 
 
 def reemitir(
@@ -891,19 +985,7 @@ def registrar_ciencia_pcen(
     anything else is a 409, never a silent write."""
     hoje = hoje or date.today()
     ensure_cliente(client, org_id, cliente_id)
-    resultado, _consulta = _consulta_do_resultado(client, org_id, resultado_id)
-    pertence = any(
-        r["id"] == resultado_id
-        for partes in _partes_do_card(client, org_id, cliente_id)
-        for p in partes
-        for r in certidoes_svc.certidoes_por_alvos(
-            client, org_id,
-            cliente_ids=[p["cliente_id"]] if p["cliente_id"] else [],
-            empresa_ids=[p["empresa_id"]] if p["empresa_id"] else [],
-        ).get(_chave(p), [])
-    )
-    if not pertence:
-        raise NotFoundError("Resultado")
+    _localizar(client, org_id, cliente_id, resultado_id)
     row = (
         _t(client, RESULTADOS).select("*").eq("org_id", str(org_id)).eq("id", resultado_id)
         .limit(1).execute()
@@ -1066,6 +1148,161 @@ def garantir_celula(
     }, True
 
 
+# ─── Cancel / retry / discard / download (the card is the only emission screen) ──
+
+
+#: A resultado being produced by the pipeline right now.
+_EM_VOO = ("processando", "na_fila")
+
+
+def _cancelaveis(rows: list[dict]) -> list[dict]:
+    """In-flight rows of AUTOMATIC consultas only. A manual consulta's
+    `processando` is the read of a human's upload — cancelling it would throw
+    the operator's file away; `pendente` rows are not cancellable either (about
+    to start, or waiting on a credential a human must give)."""
+    return [
+        r for r in rows
+        if r.get("status") in _EM_VOO and _emissao_automatica(r.get("tipo"), r)
+    ]
+
+
+def _cancelar(client: Any, org_id: UUID, rows: list[dict], cancelar: Callable[..., dict]) -> int:
+    """One `cancelar_processamento` per consulta, narrowed to those rows."""
+    por_consulta: dict[str, list[str]] = {}
+    for r in rows:
+        por_consulta.setdefault(r["consulta_id"], []).append(r["id"])
+    return sum(
+        cancelar(cid, str(org_id), client, resultado_ids=ids, statuses=_EM_VOO)["cancelados"]
+        for cid, ids in por_consulta.items()
+    )
+
+
+def cancelar_emissao_da_parte(
+    client: Any, org_id: UUID, cliente_id: UUID, kind: str, alvo_id: UUID,
+    *, atendimento_id: Optional[UUID], cancelar: Callable[..., dict],
+) -> dict:
+    """`POST …/certidoes/partes/{kind}/{alvo_id}/cancelar`: stop every
+    emission of the party that is running (`processando` / `na_fila`) —
+    `certidoes.service.cancelar_processamento`, narrowed to those cells."""
+    _exigir_kind(kind)
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
+    partes = _todas_as_partes(client, org_id, cliente_id, alvo)
+    parte = _achar_parte(partes, kind, str(alvo_id))
+    n = _cancelar(client, org_id, _cancelaveis(_resultados_da_parte(client, org_id, parte)), cancelar)
+    return {"cancelados": n, "parte": _parte_montada(client, org_id, alvo, partes, parte)}
+
+
+def cancelar_emissao_do_resultado(
+    client: Any, org_id: UUID, cliente_id: UUID, resultado_id: str,
+    *, cancelar: Callable[..., dict],
+) -> dict:
+    """`POST …/certidoes/resultados/{resultado_id}/cancelar` — one cell. 409
+    when it is not an emission in progress (nothing to cancel is not a no-op
+    the operator should be left guessing about)."""
+    ensure_cliente(client, org_id, cliente_id)
+    alvo, partes, parte, row = _localizar(client, org_id, cliente_id, resultado_id)
+    if not _cancelaveis([row]):
+        raise AppException(
+            code="NAO_CANCELAVEL",
+            message="Só dá para cancelar uma emissão automática em andamento.",
+            status_code=409,
+        )
+    n = _cancelar(client, org_id, [row], cancelar)
+    return {"cancelados": n, "parte": _parte_montada(client, org_id, alvo, partes, parte)}
+
+
+def reemitir_com_erro(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    kind: str,
+    alvo_id: UUID,
+    *,
+    atendimento_id: Optional[UUID],
+    check_credentials: Callable[[str], list[str]],
+    reprocessar: Callable[..., list[str]],
+) -> dict:
+    """`POST …/certidoes/partes/{kind}/{alvo_id}/reemitir-erros`: retry ONLY the
+    party's FAILED automatic cells, in place — same consulta, `erro` ->
+    `pendente` (TJSP -> `na_fila`), `certidoes.service.reprocessar_resultados`.
+    Never a new consulta, never a cell that succeeded (those were paid for).
+    A cell waiting on a credential (`pendencia`) is not a failure. The caller
+    schedules `processar_consulta` for each id in `consultas`."""
+    _exigir_kind(kind)
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
+    partes = _todas_as_partes(client, org_id, cliente_id, alvo)
+    parte = _achar_parte(partes, kind, str(alvo_id))
+    por_tipo, _por_linha = indexar_vencedores(_resultados_da_parte(client, org_id, parte))
+    falhas = [
+        r for r in por_tipo.values()
+        if r.get("status") == "erro" and _emissao_automatica(r.get("tipo"), r)
+        and not e_pendencia_de_credencial(r)
+    ]
+    por_consulta: dict[str, list[str]] = {}
+    for r in falhas:
+        por_consulta.setdefault(r["consulta_id"], []).append(r["id"])
+    if por_consulta:
+        _preflight_credenciais(check_credentials, org_id)
+    movidos: list[str] = []
+    for cid, ids in por_consulta.items():
+        movidos.extend(reprocessar(client, org_id, cid, ids))
+    return {
+        "reemitidos": len(movidos),
+        "consultas": list(por_consulta),
+        "tem_tjsp": any(r.get("tipo") == TJSP_TIPO and r["id"] in movidos for r in falhas),
+        "parte": _parte_montada(client, org_id, alvo, partes, parte),
+    }
+
+
+def descartar_emissao(
+    client: Any, org_id: UUID, cliente_id: UUID, resultado_id: str,
+    *, user_id: Any, descartar: Callable[..., Optional[dict]],
+) -> dict:
+    """`DELETE …/certidoes/resultados/{resultado_id}`: throw away a wrong
+    emission (soft-delete, restorable — `certidoes.service.soft_delete_
+    resultado`) so the cell's previous evidence, or an empty cell, wins again.
+    409 while it is still running (cancel first). Answers with the party as it
+    reads afterwards."""
+    ensure_cliente(client, org_id, cliente_id)
+    alvo, partes, parte, row = _localizar(client, org_id, cliente_id, resultado_id)
+    if row.get("status") in _EM_VOO:
+        raise AppException(
+            code="EMISSAO_EM_ANDAMENTO",
+            message="Cancele a emissão em andamento antes de descartá-la.",
+            status_code=409,
+        )
+    if descartar(client, org_id, resultado_id, user_id) is None:
+        raise NotFoundError("Resultado")
+    logger.info("certidoes: emissão descartada user_id=%s org_id=%s resultado_id=%s", user_id, org_id, resultado_id)
+    return {"resultado_id": resultado_id, "parte": _parte_montada(client, org_id, alvo, partes, parte)}
+
+
+def arquivos_da_parte(
+    client: Any, org_id: UUID, cliente_id: UUID, kind: str, alvo_id: UUID,
+    *, atendimento_id: Optional[UUID],
+) -> tuple[dict, list[dict]]:
+    """`(parte, items)` for `…/partes/{kind}/{alvo_id}/download-zip`: the PDF of
+    each cell that currently WINS (what the grid shows), shaped for
+    `certidoes.service.montar_zip`."""
+    _exigir_kind(kind)
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
+    parte = _achar_parte(_todas_as_partes(client, org_id, cliente_id, alvo), kind, str(alvo_id))
+    por_tipo, por_linha = indexar_vencedores(_resultados_da_parte(client, org_id, parte))
+    vencedores = sorted(
+        [*por_tipo.values(), *por_linha.values()], key=lambda r: (r.get("ordem") or 0, str(r.get("tipo")))
+    )
+    return parte, [
+        {
+            "arquivo_url": r["arquivo_url"], "arquivo_nome": r.get("arquivo_nome"),
+            "nome_display": r.get("nome_display") or r.get("tipo") or "certidao",
+        }
+        for r in vencedores if r.get("arquivo_url")
+    ]
+
+
 # ─── Re-read every stored manual upload of the card ───────────────────────
 
 
@@ -1142,6 +1379,10 @@ async def reler_certidoes_do_card(
     return contagem, extracoes
 
 __all__ = [
+    "arquivos_da_parte",
+    "cancelar_emissao_da_parte",
+    "cancelar_emissao_do_resultado",
+    "descartar_emissao",
     "garantir_celula",
     "indexar_vencedores",
     "max_dias",
@@ -1153,5 +1394,6 @@ __all__ = [
     "reler_certidoes_do_card",
     "resultados_do_card",
     "registrar_ciencia_pcen",
+    "reemitir_com_erro",
     "solicitar_emissao",
 ]

@@ -61,11 +61,9 @@ For a frontend that means:
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import time
-import zipfile
 from typing import Optional
 from uuid import UUID
 
@@ -827,28 +825,8 @@ def reprocessar_consulta(
         # InfoSimples call for a cell that only ever expected a PDF.
         raise HTTPException(status_code=422, detail=service.MSG_CONSULTA_MANUAL)
 
-    # Failed non-TJSP resultados → pendente (they run in parallel immediately).
-    db.table(RESULTADOS).update({
-        "status": "pendente",
-        "erro_mensagem": None,
-    }).eq("consulta_id", consulta_id).eq("org_id", str(org_id)).eq(
-        "status", "erro"
-    ).neq("tipo", TJSP_TIPO).execute()
-
-    # Failed TJSP resultados → na_fila directly, NOT pendente. `pendente` would
-    # make `processar_consulta` fire the request now, and a premature TJSP call
-    # RESETS their 30-minute counter — the retry would push the real attempt
-    # further away rather than closer.
-    db.table(RESULTADOS).update({
-        "status": "na_fila",
-        "erro_mensagem": None,
-    }).eq("consulta_id", consulta_id).eq("org_id", str(org_id)).eq(
-        "status", "erro"
-    ).eq("tipo", TJSP_TIPO).execute()
-
-    db.table(CONSULTAS).update({
-        "status": "processando",
-    }).eq("id", consulta_id).eq("org_id", str(org_id)).execute()
+    # Failed resultados back in the pipeline, in place (TJSP -> na_fila).
+    svc.reprocessar_resultados(db, org_id, consulta_id)
 
     background_tasks.add_task(svc.processar_consulta, consulta_id, db, storage)
 
@@ -1041,51 +1019,16 @@ async def download_consulta_zip(
             detail="Nenhuma certidão disponível para download",
         )
 
-    async def _fetch(client: httpx.AsyncClient, item: dict) -> Optional[tuple]:
-        content = await svc.read_certidao_bytes(
-            item["arquivo_url"], storage, client
-        )
-        if content is None:
-            # Named, not swallowed: one unreachable file must not sink the ZIP
-            # of the nine that ARE there, but it does get a log line.
-            logger.warning(
-                "certidoes: %s unavailable for consulta %s; omitted from the ZIP",
-                item.get("nome_display"), consulta_id,
-            )
-            return None
-        filename = item.get("arquivo_nome") or f"{item['nome_display']}.pdf"
-        return (filename, content)
-
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*[_fetch(client, it) for it in items])
-
-    files = [r for r in results if r is not None]
-    if not files:
+        conteudo = await svc.montar_zip(
+            items, storage, client, read=svc.read_certidao_bytes, contexto=f"consulta {consulta_id}"
+        )
+    if conteudo is None:
         raise HTTPException(
             status_code=502,
             detail="Não foi possível baixar os arquivos das certidões",
         )
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        seen: dict[str, int] = {}
-        for filename, content in files:
-            # Deduplicate filenames — a zip with two identical entries opens to
-            # one file in most extractors, silently losing the other.
-            if filename in seen:
-                seen[filename] += 1
-                name, ext = (
-                    filename.rsplit(".", 1) if "." in filename else (filename, "")
-                )
-                filename = (
-                    f"{name} ({seen[filename]}).{ext}"
-                    if ext
-                    else f"{name} ({seen[filename]})"
-                )
-            else:
-                seen[filename] = 0
-            zf.writestr(filename, content)
-    buf.seek(0)
+    buf = io.BytesIO(conteudo)
 
     nome_safe = consulta["nome"].replace(" ", "_")[:50]
     doc = consulta["documento"]

@@ -562,11 +562,13 @@ describe("CertidoesPartesTab", () => {
 });
 
 describe("polling predicate", () => {
-  it("polls for processando/na_fila/api-pendente but not manual placeholders or settled", () => {
+  it("polls for processando/na_fila/api-pendente but not aguarda_humano placeholders or settled", () => {
     expect(certidaoEmAndamento(cel({ status_processamento: "processando" }))).toBe(true);
     expect(certidaoEmAndamento(cel({ status_processamento: "na_fila" }))).toBe(true);
     expect(certidaoEmAndamento(cel({ status_processamento: "pendente", origem: "api" }))).toBe(true);
-    expect(certidaoEmAndamento(cel({ status_processamento: "pendente", origem: "manual" }))).toBe(false);
+    expect(certidaoEmAndamento(cel({ status_processamento: "pendente", aguarda_humano: true }))).toBe(false);
+    // `origem` is who produced the VALUES — never the polling signal (F57).
+    expect(certidaoEmAndamento(cel({ status_processamento: "pendente", origem: "manual" }))).toBe(true);
     expect(certidaoEmAndamento(cel({ status_processamento: "sucesso" }))).toBe(false);
     expect(partesTemEmAndamento(resp([parte()]))).toBe(false);
   });

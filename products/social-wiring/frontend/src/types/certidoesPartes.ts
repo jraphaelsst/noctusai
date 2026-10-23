@@ -66,6 +66,12 @@ export interface CertidaoParteCelula {
    *  antigos proprietários' certidões are not required unless the deal opts
    *  in). Optional for older payloads. */
   opcional?: boolean;
+  /** An untouched manual placeholder: nothing will process it, only a person can
+   *  fill it. The poll's stop signal — NOT `origem` (which is who produced the values). */
+  aguarda_humano?: boolean;
+  /** The row belongs to a live InfoSimples emission (not a manual consulta): the
+   *  only cells that can be cancelled, retried or discarded from the card. */
+  emissao_automatica?: boolean;
 }
 
 export type CampoEstruturado = "numero" | "emitida_em" | "validade_ate" | "resultado";
@@ -121,6 +127,8 @@ export interface CertidaoParteTotais {
   processando?: number;
   /** Cells being RE-read that keep their previous value (also counted in their color bucket). */
   relendo?: number;
+  /** Cells whose emission FAILED (`erro`) — an overlay: also counted in their color bucket. */
+  erros?: number;
   vencidas: number;
   /** Empty cells that are optional for this deal — not counted as pendentes. */
   opcionais?: number;
@@ -173,7 +181,21 @@ export interface CertidoesPartesResponse {
 export interface EmissaoResponse {
   consulta_id: string;
   resultados: { resultado_id: string; tipo: string; status_processamento: "pendente" }[];
+  /** Tipos "emitir todas" skipped: already valid in date, or being emitted. */
+  ignoradas?: string[];
 }
+
+/** Every card-scoped emission control answers with the party as it reads NOW. */
+export interface ParteAtualizadaResponse {
+  parte: CertidaoParte;
+  cancelados?: number;
+  reemitidos?: number;
+  resultado_id?: string;
+}
+
+export type CancelarEmissaoInput =
+  | { resultadoId: string }
+  | { kind: "pessoa" | "empresa"; alvoId: string };
 
 export interface CelulaEnsureResponse {
   resultado_id: string;

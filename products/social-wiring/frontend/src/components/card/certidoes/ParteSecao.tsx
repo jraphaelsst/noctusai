@@ -4,7 +4,8 @@
  * when open): that party's levantamento table with per-row actions.
  */
 import { Fragment, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, FileSearch, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileSearch, Loader2, Pencil, RefreshCw, Trash2, Upload, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   AlertDialog,
@@ -37,14 +38,17 @@ import {
   avisoVencida,
   formatarDocumento,
   linhaDivergencia,
-  lendoDaParte,
+  jaVigenteOuEmEmissao,
   notaSegundaVia,
+  podeCancelarEmissao,
+  podeDescartarEmissao,
+  podeReemitirComErro,
   podeVoltarAoAutomatico,
   podeReler,
+  progressoDaParte,
   relendoCelula,
   resumoDaParte,
   tipoAutomatico,
-  totalDaParte,
 } from "./certidoesCelula";
 
 export interface ParteSecaoProps {
@@ -74,6 +78,21 @@ export interface ParteSecaoProps {
   onVoltarAutomatico: (resultadoId: string) => void;
   /** The resultado whose release request is in flight. */
   voltandoId: string | null;
+  /** Stop ONE emission running right now (automatic cells only). */
+  onCancelarCelula: (resultadoId: string) => void;
+  cancelandoId: string | null;
+  /** Stop every emission of this party running right now. */
+  onCancelarParte: () => void;
+  cancelandoParte: boolean;
+  /** Retry ONLY this party's failed automatic cells, in place. */
+  onReemitirErros: () => void;
+  reemitindoErros: boolean;
+  /** Throw away a wrong emission so the previous evidence wins again. */
+  onDescartar: (resultadoId: string) => void;
+  descartandoId: string | null;
+  /** "Baixar todas (.zip)" of this party. */
+  onBaixarZip: () => void;
+  baixandoZip: boolean;
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
   onRemover: (linha: CertidaoParteLinha) => void;
@@ -92,7 +111,11 @@ export function ParteSecao(p: ParteSecaoProps) {
   const [aberta, setAberta] = useState(false);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   // An emission is PAID (InfoSimples) — every request goes through this confirmation first.
-  const [pedido, setPedido] = useState<{ executar: () => void; nomes: string[]; daSelecao: boolean } | null>(null);
+  const [pedido, setPedido] = useState<{
+    executar: () => void; nomes: string[]; daSelecao: boolean; ignorados: string[];
+  } | null>(null);
+  // Discarding is destructive (the cell loses that emission): confirm first.
+  const [descartando, setDescartando] = useState<{ resultadoId: string; rotulo: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const alvoUpload = useRef<string | null>(null);
   const mint = useMintResultadoUrl();
@@ -100,19 +123,38 @@ export function ParteSecao(p: ParteSecaoProps) {
   const alvoId = (parte.kind === "empresa" ? parte.empresa_id : parte.cliente_id) as string;
   const semDocumento = !parte.documento;
   const vencidas = parte.totais.vencidas;
+  const celulaDe = (l: CertidaoParteLinha) => parte.celulas[l.chave];
   const pedirEmissao = (input: SolicitarEmissaoInput, daSelecao = false) => {
     const alvo = input.tipos;
-    const nomes = linhas
-      .filter((l) =>
-        alvo === null
-          ? tipoAutomatico(l.tipo) && parte.celulas[l.chave]?.status !== "na"
-          : !!l.tipo && alvo.includes(l.tipo),
-      )
-      .map((l) => l.rotulo);
-    setPedido({ executar: () => p.onSolicitar(input), nomes, daSelecao });
+    // "Todas" never re-buys a certidão that is still in date (or being emitted):
+    // those are listed apart so the operator sees what will NOT be charged.
+    const candidatas = linhas.filter((l) =>
+      alvo === null
+        ? tipoAutomatico(l.tipo) && celulaDe(l)?.status !== "na"
+        : !!l.tipo && alvo.includes(l.tipo),
+    );
+    const ignoradas = alvo === null ? candidatas.filter((l) => jaVigenteOuEmEmissao(celulaDe(l))) : [];
+    const nomes = candidatas.filter((l) => !ignoradas.includes(l)).map((l) => l.rotulo);
+    if (alvo === null && nomes.length === 0) {
+      toast.info("Todas as certidões automáticas desta parte já estão válidas ou em emissão.");
+      return;
+    }
+    setPedido({ executar: () => p.onSolicitar(input), nomes, daSelecao, ignorados: ignoradas.map((l) => l.rotulo) });
   };
   const pedirReemissao = (resultadoId: string, rotulo: string) =>
-    setPedido({ executar: () => p.onReemitir(resultadoId), nomes: [rotulo], daSelecao: false });
+    setPedido({ executar: () => p.onReemitir(resultadoId), nomes: [rotulo], daSelecao: false, ignorados: [] });
+  // Failed automatic cells of this party — what "Reemitir com erro" retries.
+  const comErro = linhas.filter((l) => {
+    const c = celulaDe(l);
+    return !!c && podeReemitirComErro(c);
+  });
+  const emVoo = linhas.filter((l) => {
+    const c = celulaDe(l);
+    return !!c && podeCancelarEmissao(c);
+  });
+  const pedirReemissaoDeErros = () =>
+    setPedido({ executar: p.onReemitirErros, nomes: comErro.map((l) => l.rotulo), daSelecao: false, ignorados: [] });
+  const progresso = progressoDaParte(parte);
   const toggle = (tipo: string) =>
     setSelecionadas((prev) => {
       const n = new Set(prev);
@@ -133,6 +175,20 @@ export function ParteSecao(p: ParteSecaoProps) {
       { onSuccess: (r) => r?.url && window.open(r.url, "_blank", "noopener") },
     );
 
+  const baixarArquivo = (resultadoId: string) =>
+    mint.mutate(
+      { resultadoId, intent: "download" },
+      {
+        onSuccess: (r) => {
+          if (!r?.url) return;
+          const a = document.createElement("a");
+          a.href = r.url;
+          a.rel = "noopener";
+          a.click();
+        },
+      },
+    );
+
   return (
     <Collapsible open={aberta} onOpenChange={setAberta} className="rounded-md border" data-testid={`parte-secao-${parte.chave}`}>
       <CollapsibleTrigger asChild>
@@ -147,22 +203,25 @@ export function ParteSecao(p: ParteSecaoProps) {
           <span className="min-w-0 truncate text-sm">{parte.nome}</span>
           <span className="text-xs text-muted-foreground">{formatarDocumento(parte.documento)}</span>
           <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground" data-testid={`parte-resumo-${parte.chave}`}>
-            {lendoDaParte(parte) > 0 && (
+            {progresso && (
               <>
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 <span
                   role="progressbar"
-                  aria-label="Progresso da releitura"
+                  aria-label="Progresso da emissão"
                   aria-valuemin={0}
-                  aria-valuemax={totalDaParte(parte)}
-                  aria-valuenow={totalDaParte(parte) - lendoDaParte(parte)}
+                  aria-valuemax={progresso.total}
+                  aria-valuenow={progresso.feitas}
                   className="inline-block h-1.5 w-16 overflow-hidden rounded bg-muted"
                   data-testid={`parte-relendo-progresso-${parte.chave}`}
                 >
                   <span
                     className="block h-full bg-sky-500"
-                    style={{ width: `${Math.round(((totalDaParte(parte) - lendoDaParte(parte)) / Math.max(totalDaParte(parte), 1)) * 100)}%` }}
+                    style={{ width: `${Math.round((progresso.feitas / Math.max(progresso.total, 1)) * 100)}%` }}
                   />
+                </span>
+                <span data-testid={`parte-progresso-texto-${parte.chave}`}>
+                  {progresso.feitas}/{progresso.total}
                 </span>
               </>
             )}
@@ -203,6 +262,31 @@ export function ParteSecao(p: ParteSecaoProps) {
                 data-testid={`parte-solicitar-selecionadas-${parte.chave}`}>
                 Solicitar selecionadas ({selecionadas.size})
               </Button>
+              {comErro.length > 0 && (
+                <Button size="sm" variant="outline" disabled={semDocumento || p.reemitindoErros || p.emissaoPendente}
+                  title="Tenta de novo, na mesma consulta, só as certidões que deram erro. As que deram certo não são compradas de novo."
+                  onClick={pedirReemissaoDeErros}
+                  data-testid={`parte-reemitir-erros-${parte.chave}`}>
+                  {p.reemitindoErros ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1 h-4 w-4" />}
+                  Reemitir com erro ({comErro.length})
+                </Button>
+              )}
+              {emVoo.length > 0 && (
+                <Button size="sm" variant="outline" disabled={p.cancelandoParte}
+                  onClick={p.onCancelarParte}
+                  data-testid={`parte-cancelar-todas-${parte.chave}`}>
+                  {p.cancelandoParte ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <XCircle className="mr-1 h-4 w-4" />}
+                  Cancelar emissões ({emVoo.length})
+                </Button>
+              )}
+              {Object.values(parte.celulas).some((c) => c.tem_arquivo) && (
+                <Button size="sm" variant="outline" disabled={p.baixandoZip}
+                  onClick={p.onBaixarZip}
+                  data-testid={`parte-baixar-zip-${parte.chave}`}>
+                  {p.baixandoZip ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
+                  Baixar todas (.zip)
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={() => p.onDetalhes(parte)} data-testid={`parte-detalhes-${parte.chave}`}>
                 <ExternalLink className="mr-1 h-4 w-4" />
                 Detalhes
@@ -288,6 +372,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                             data-testid={`parte-digitado-${parte.chave}-${linha.chave}`}>
                             Digitado
                           </span>
+                        )}
+                        {c.status_processamento === "erro" && c.erro_mensagem && !c.pendencia && (
+                          <p className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-erro-${parte.chave}-${linha.chave}`}>
+                            {c.erro_mensagem}
+                          </p>
                         )}
                         {c.pendencia && c.erro_mensagem && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-pendencia-${parte.chave}-${linha.chave}`}>
@@ -383,6 +472,40 @@ export function ParteSecao(p: ParteSecaoProps) {
                                 Ver PDF
                               </Button>
                             )}
+                            {c.tem_arquivo && c.resultado_id && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                                disabled={mint.isPending}
+                                onClick={() => baixarArquivo(c.resultado_id as string)}
+                                title="Baixar o PDF desta certidão"
+                                data-testid={`parte-baixar-${parte.chave}-${linha.chave}`}>
+                                <Download className="mr-1 h-3 w-3" />
+                                Baixar
+                              </Button>
+                            )}
+                            {podeCancelarEmissao(c) && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                                disabled={p.cancelandoId === c.resultado_id}
+                                title="Interrompe esta emissão em andamento."
+                                onClick={() => p.onCancelarCelula(c.resultado_id as string)}
+                                data-testid={`parte-cancelar-${parte.chave}-${linha.chave}`}>
+                                {p.cancelandoId === c.resultado_id
+                                  ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  : <XCircle className="mr-1 h-3 w-3" />}
+                                Cancelar emissão
+                              </Button>
+                            )}
+                            {podeDescartarEmissao(c) && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive"
+                                disabled={p.descartandoId === c.resultado_id}
+                                title="Descarta esta emissão: vale de novo a certidão anterior (ou a célula fica vazia)."
+                                onClick={() => setDescartando({ resultadoId: c.resultado_id as string, rotulo: linha.rotulo })}
+                                data-testid={`parte-descartar-${parte.chave}-${linha.chave}`}>
+                                {p.descartandoId === c.resultado_id
+                                  ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  : <Trash2 className="mr-1 h-3 w-3" />}
+                                Descartar emissão
+                              </Button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -445,6 +568,20 @@ export function ParteSecao(p: ParteSecaoProps) {
                   Esta é uma emissão <strong>paga</strong> (InfoSimples): cada certidão solicitada (ou re-emitida) gera
                   cobrança para {parte.nome}.
                 </p>
+                {pedido && pedido.ignorados.length > 0 && (
+                  <div data-testid={`parte-confirmar-emissao-ignoradas-${parte.chave}`}>
+                    <p>
+                      {pedido.ignorados.length === 1
+                        ? "1 certidão já válida (ou em emissão) não será comprada de novo:"
+                        : `${pedido.ignorados.length} certidões já válidas (ou em emissão) não serão compradas de novo:`}
+                    </p>
+                    <ul className="list-disc pl-5 text-muted-foreground">
+                      {pedido.ignorados.map((n) => (
+                        <li key={n}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {pedido && pedido.nomes.length > 0 && (
                   <ul className="list-disc pl-5" data-testid={`parte-confirmar-emissao-lista-${parte.chave}`}>
                     {pedido.nomes.map((n) => (
@@ -467,6 +604,30 @@ export function ParteSecao(p: ParteSecaoProps) {
               }}
             >
               Confirmar e emitir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={descartando !== null} onOpenChange={(o) => !o && setDescartando(null)}>
+        <AlertDialogContent data-testid={`parte-confirmar-descarte-${parte.chave}`}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descartar esta emissão?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A emissão de "{descartando?.rotulo}" será descartada. Vale de novo a certidão anterior desta parte, se
+              houver; senão a célula fica vazia. A emissão descartada pode ser restaurada pelo suporte.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid={`parte-confirmar-descarte-cancelar-${parte.chave}`}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              data-testid={`parte-confirmar-descarte-ok-${parte.chave}`}
+              onClick={() => {
+                if (descartando) p.onDescartar(descartando.resultadoId);
+                setDescartando(null);
+              }}
+            >
+              Descartar emissão
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

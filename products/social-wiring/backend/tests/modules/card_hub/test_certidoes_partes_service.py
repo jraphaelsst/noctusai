@@ -144,18 +144,32 @@ class TestCelula:
         }}, HOJE, 30)
         assert interrompida["releitura"]["em_andamento"] is False
 
-    def test_placeholder_de_consulta_manual_le_origem_manual(self):
+    def test_placeholder_vazio_de_consulta_manual_aguarda_humano_sem_origem(self):
+        """F57: the polling signal is its own flag; `origem` stays None, so the
+        FE never offers "Voltar à leitura automática" on an empty placeholder."""
         placeholder = {"id": "r", "status": "pendente", "consulta_origem": "manual"}
-        assert svc.montar_celula("serasa", placeholder, HOJE, 30)["origem"] == "manual"
+        c = svc.montar_celula("serasa", placeholder, HOJE, 30)
+        assert c["aguarda_humano"] is True and c["origem"] is None
 
-    def test_origem_manual_so_enquanto_pendente(self):
+    def test_aguarda_humano_so_enquanto_pendente(self):
         """Once an upload flips it to `processando` the FE must poll again."""
         em_leitura = {"id": "r", "status": "processando", "consulta_origem": "manual"}
-        assert svc.montar_celula("serasa", em_leitura, HOJE, 30)["origem"] is None
+        c = svc.montar_celula("serasa", em_leitura, HOJE, 30)
+        assert c["aguarda_humano"] is False and c["origem"] is None
 
-    def test_automatico_pendente_nao_e_manual(self):
+    def test_automatico_pendente_nao_aguarda_humano(self):
         row = {"id": "r", "status": "pendente", "consulta_origem": None}
-        assert svc.montar_celula("cnd_federal", row, HOJE, 30)["origem"] is None
+        c = svc.montar_celula("cnd_federal", row, HOJE, 30)
+        assert (c["aguarda_humano"], c["origem"], c["emissao_automatica"]) == (False, None, True)
+
+    def test_origem_manual_so_vem_do_resultado(self):
+        digitado = {"id": "r", "status": "sucesso", "consulta_origem": "manual", "resultado_origem": "manual"}
+        assert svc.montar_celula("serasa", digitado, HOJE, 30)["origem"] == "manual"
+
+    def test_celula_de_consulta_manual_nao_e_emissao_automatica(self):
+        row = {"id": "r", "status": "processando", "consulta_origem": "manual"}
+        assert svc.montar_celula("cnd_federal", row, HOJE, 30)["emissao_automatica"] is False
+        assert svc.montar_celula("cnd_federal", None, HOJE, 30)["emissao_automatica"] is False
 
 
 class TestVencedor:
@@ -210,12 +224,13 @@ class TestMontar:
             "chave", "kind", "tipo_pessoa", "rotulo", "lado", "grupo", "papel", "titular", "nome",
             "documento", "cliente_id", "empresa_id", "parte_id", "totais", "celulas",
         }
-        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "processando", "relendo", "vencidas", "opcionais"}
+        assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "processando", "relendo", "erros", "vencidas", "opcionais"}
         assert set(parte["celulas"]["cnd_federal"]) == {
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
             "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem", "emitida_em_origem",
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia", "opcional",
+            "aguarda_humano", "emissao_automatica",
         }
 
     def test_idade_contra_assinatura_data_do_contrato_e_hoje_se_ausente(self, scoped):
@@ -315,8 +330,8 @@ class TestMontar:
         assert col_pf["celulas"]["fgts_regularidade"]["status"] == "na"
         assert col_pj["celulas"]["serasa"]["status"] == "na"
         # 13 lines minus the one N/A each; all absent ⇒ pendente.
-        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "vencidas": 0, "opcionais": 0}
-        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "vencidas": 0, "opcionais": 0}
+        assert col_pf["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "erros": 0, "vencidas": 0, "opcionais": 0}
+        assert col_pj["totais"] == {"nao_constam": 0, "constam": 0, "pendente": 12, "processando": 0, "relendo": 0, "erros": 0, "vencidas": 0, "opcionais": 0}
 
     def test_crf_fgts_e_opcional_por_padrao_e_pendente_quando_exigido(self):
         """Owner 2026-10-21: an EMPTY FGTS cell reads optional unless the deal opts in."""
@@ -471,7 +486,7 @@ class TestEmissao:
         esperados = [c["tipo"] for c in CERTIDOES_CONFIG if c["tipo"] != "tjsp"]
         assert sorted(r["tipo"] for r in out["resultados"]) == sorted(esperados)
         assert all(r["status_processamento"] == "pendente" for r in out["resultados"])
-        assert set(out) == {"consulta_id", "resultados"}
+        assert set(out) == {"consulta_id", "resultados", "ignoradas"} and out["ignoradas"] == []
         [consulta] = _dados(scoped, "certidao_consultas")
         assert consulta["id"] == out["consulta_id"]
         assert (consulta["tipo_documento"], consulta["documento"]) == ("cpf", "00000000000")
@@ -672,10 +687,11 @@ class TestGarantirCelula:
         assert consulta["origem"] == "manual" and consulta["cliente_id"] == vid
         [resultado] = _dados(scoped, "certidao_resultados")
         assert (resultado["tipo"], resultado["status"]) == ("serasa", "pendente")
-        # …and the very next read reports it as origem=manual so the FE stops polling.
+        # …and the very next read flags it aguarda_humano so the FE stops polling.
         out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
         vend = next(p for p in out["partes"] if p["rotulo"] == "VEND 1")
-        assert vend["celulas"]["serasa"]["origem"] == "manual"
+        assert vend["celulas"]["serasa"]["aguarda_humano"] is True
+        assert vend["celulas"]["serasa"]["origem"] is None
         assert vend["celulas"]["serasa"]["resultado_id"] == body["resultado_id"]
 
     def test_placeholder_cancelado_vazio_nao_ganha_a_celula_e_e_reaproveitado(self, scoped):

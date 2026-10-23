@@ -26,7 +26,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useDefinirExigencias, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useAplicarValoresLidos, useVoltarAoAutomatico, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
+  useAplicarValoresLidos, useBaixarZipDaParte, useCancelarEmissao, useDescartarEmissao, useReemitirComErro, useVoltarAoAutomatico, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
@@ -42,6 +42,9 @@ const SUBTABS: ReadonlyArray<{ grupo: GrupoCertidoes; rotulo: string; vazio: str
   { grupo: "antigo_proprietario", rotulo: "Antigos proprietários", vazio: "Nenhum antigo proprietário no card." },
 ];
 
+/** The party's cliente/empresa id — what the party-scoped routes address it by. */
+const alvoDaParte = (p: CertidaoParte): string => (p.kind === "empresa" ? p.empresa_id : p.cliente_id) as string;
+
 export function CertidoesPartesTab(props: {
   clienteId: string;
   atendimentoId?: string | null;
@@ -56,6 +59,10 @@ export function CertidoesPartesTab(props: {
   const relerParte = useRelerResultados(clienteId);
   const aplicarLidos = useAplicarValoresLidos(clienteId);
   const voltar = useVoltarAoAutomatico(clienteId, atendimentoId);
+  const cancelar = useCancelarEmissao(clienteId, atendimentoId);
+  const reemitirErros = useReemitirComErro(clienteId, atendimentoId);
+  const descartar = useDescartarEmissao(clienteId, atendimentoId);
+  const baixarZip = useBaixarZipDaParte(clienteId, atendimentoId);
   // Which party's "Reler todas" is in flight (one mutation, keyed by the party).
   const [relendoParteChave, setRelendoParteChave] = useState<string | null>(null);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
@@ -216,6 +223,16 @@ export function CertidoesPartesTab(props: {
                 aplicandoId={aplicandoId}
                 onVoltarAutomatico={(id) => voltar.mutate(id)}
                 voltandoId={voltar.isPending ? (voltar.variables ?? null) : null}
+                onCancelarCelula={(id) => cancelar.mutate({ resultadoId: id })}
+                cancelandoId={cancelar.isPending && cancelar.variables && "resultadoId" in cancelar.variables ? cancelar.variables.resultadoId : null}
+                onCancelarParte={() => cancelar.mutate({ kind: parte.kind, alvoId: alvoDaParte(parte) })}
+                cancelandoParte={cancelar.isPending && !!cancelar.variables && "alvoId" in cancelar.variables && cancelar.variables.alvoId === alvoDaParte(parte)}
+                onReemitirErros={() => reemitirErros.mutate({ kind: parte.kind, alvoId: alvoDaParte(parte) })}
+                reemitindoErros={reemitirErros.isPending && reemitirErros.variables?.alvoId === alvoDaParte(parte)}
+                onDescartar={(id) => descartar.mutate(id)}
+                descartandoId={descartar.isPending ? (descartar.variables ?? null) : null}
+                onBaixarZip={() => baixarZip.mutate({ kind: parte.kind, alvoId: alvoDaParte(parte), nome: parte.nome })}
+                baixandoZip={baixarZip.isPending && baixarZip.variables?.alvoId === alvoDaParte(parte)}
                 onDetalhes={(p) => setDetalhesChave(p.chave)}
                 onAdicionar={() => setAdicionando(true)}
                 onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}

@@ -27,6 +27,17 @@ class ReemitirBody(StrictHttpModel):
     """`POST …/certidoes/resultados/{resultado_id}/reemitir` — empty body."""
 
 
+class ParteAcaoBody(StrictHttpModel):
+    """`POST …/certidoes/partes/{kind}/{alvo_id}/{cancelar|reemitir-erros}` —
+    only the deal picker (the party is in the path)."""
+
+    atendimento_id: Optional[UUID] = None
+
+
+class CancelarBody(StrictHttpModel):
+    """`POST …/certidoes/resultados/{resultado_id}/cancelar` — empty body."""
+
+
 class RelerBody(StrictHttpModel):
     """`POST …/certidoes/reler` — re-read every stored manual upload of the
     card's parties; `atendimento_id` picks the deal when the card has more
@@ -52,7 +63,9 @@ class CelulaBody(StrictHttpModel):
     atendimento_id: Optional[UUID] = None
 
 
-__all__ = ["CelulaBody", "CienciaPcenBody", "EmissaoBody", "ReemitirBody", "RelerBody"]
+__all__ = [
+    "CancelarBody", "CelulaBody", "CienciaPcenBody", "EmissaoBody", "ParteAcaoBody", "ReemitirBody", "RelerBody",
+]
 
 
 class ExigenciasBody(StrictHttpModel):

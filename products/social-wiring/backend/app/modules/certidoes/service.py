@@ -130,7 +130,10 @@ RESULTADO_COLUNAS_SEM_TEXTO = (
     "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
     "resultado_origem,confirmado_por,confirmado_em,tem_transcricao,"
     "estrutura_erro,estrutura_tentativas,releitura,emitida_em_origem,"
-    "pcen_ciente_por,pcen_ciente_em,pcen_ciente_validade,pcen_duvida_por,pcen_duvida_em"
+    "pcen_ciente_por,pcen_ciente_em,pcen_ciente_validade,pcen_duvida_por,pcen_duvida_em,"
+    # Migration 170: a custom matriz row's cell is found by this id — without it
+    # the card's grid could never resolve the cell of a custom row.
+    "linha_customizada_id"
 )
 
 MAX_RETRIES = 3
@@ -880,6 +883,40 @@ def soft_delete_consulta(db, org_id, consulta_id: str, usuario_id) -> Optional[i
         .execute()
     ).data or []
     return len(resultados_atualizados)
+
+
+def soft_delete_resultado(db, org_id, resultado_id: str, usuario_id) -> Optional[dict]:
+    """Discard ONE resultado (a wrong emission) without touching its siblings:
+    stamps `excluida_em`/`excluida_por` on it, so every reader falls back to
+    the cell's previous evidence (or an empty cell). When it was the LAST live
+    resultado of its consulta the consulta goes too (`soft_delete_consulta`) —
+    a consulta with nothing in it is just noise on the legacy screen. Blobs are
+    kept (`restaurar_consulta` brings it back). Returns `{consulta_id,
+    consulta_excluida}`, or `None` when the resultado is not live in this org.
+    """
+    rows = (
+        db.table(RESULTADOS).select("id, consulta_id").eq("id", resultado_id)
+        .eq("org_id", str(org_id)).is_("excluida_em", "null").execute()
+    ).data or []
+    if not rows:
+        return None
+    consulta_id = rows[0]["consulta_id"]
+    restantes = [
+        r for r in (
+            db.table(RESULTADOS).select("id").eq("consulta_id", consulta_id)
+            .eq("org_id", str(org_id)).is_("excluida_em", "null").execute()
+        ).data or []
+        if r["id"] != resultado_id
+    ]
+    if not restantes:
+        soft_delete_consulta(db, org_id, consulta_id, usuario_id)
+        return {"consulta_id": consulta_id, "consulta_excluida": True}
+    db.table(RESULTADOS).update({
+        "excluida_em": datetime.now(timezone.utc).isoformat(),
+        "excluida_por": str(usuario_id) if usuario_id else None,
+    }).eq("id", resultado_id).eq("org_id", str(org_id)).execute()
+    _atualizar_status_consulta(consulta_id, str(org_id), db)
+    return {"consulta_id": consulta_id, "consulta_excluida": False}
 
 
 def restaurar_consulta(db, org_id, consulta_id: str) -> Optional[dict]:
@@ -2252,9 +2289,12 @@ def _atualizar_status_consulta(consulta_id: str, org_id: Optional[str], db) -> N
     - All done, at least one success → "concluida"
     - All done, zero successes → "erro"
     """
-    query = db.table(RESULTADOS).select(
-        "status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA)
-    ).eq("consulta_id", consulta_id)
+    query = (
+        db.table(RESULTADOS)
+        .select("status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA))
+        .eq("consulta_id", consulta_id)
+        .is_("excluida_em", "null")
+    )
     if org_id:
         query = query.eq("org_id", str(org_id))
     rows = query.execute().data or []
@@ -2659,18 +2699,31 @@ def recover_stuck_processando(db) -> None:
         _atualizar_status_consulta(cid, oid, db)
 
 
-def cancelar_processamento(consulta_id: str, org_id: Optional[str], db) -> dict:
+#: What "in progress" means for a cancel of the WHOLE consulta (legacy screen).
+_STATUS_CANCELAVEIS = ("pendente", "processando", "na_fila")
+
+
+def cancelar_processamento(
+    consulta_id: str,
+    org_id: Optional[str],
+    db,
+    resultado_ids: Optional[Sequence[str]] = None,
+    statuses: Sequence[str] = _STATUS_CANCELAVEIS,
+) -> dict:
     """Cancel in-progress certificate processing for one consulta.
 
-    Resets every resultado of the consulta that is pendente/processando/na_fila
-    to 'erro' with a cancellation message, and cancels any scheduled TJSP task
-    for the affected orgs.
+    Resets every resultado of the consulta in `statuses` (default
+    pendente/processando/na_fila) to 'erro' with a cancellation message, and
+    cancels any scheduled TJSP task for the affected orgs. `resultado_ids`
+    narrows it to those cells (the card tab cancels per cell / per party).
 
     Returns counts of cancelled items.
     """
     query = db.table(RESULTADOS).select(
         "id, tipo, org_id, status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA)
-    ).eq("consulta_id", consulta_id).in_("status", ["pendente", "processando", "na_fila"])
+    ).eq("consulta_id", consulta_id).in_("status", list(statuses))
+    if resultado_ids is not None:
+        query = query.in_("id", [str(i) for i in resultado_ids])
     if org_id:
         query = query.eq("org_id", str(org_id))
     items = query.execute().data or []
@@ -2707,6 +2760,88 @@ def cancelar_processamento(consulta_id: str, org_id: Optional[str], db) -> dict:
         "Cancelled %d in-progress resultados for consulta %s", len(items), consulta_id
     )
     return {"cancelados": len(items)}
+
+
+def reprocessar_resultados(
+    db, org_id, consulta_id: str, resultado_ids: Optional[Sequence[str]] = None
+) -> list[str]:
+    """Put the FAILED resultados of one consulta back in the pipeline, in
+    place (same consulta, `erro` -> `pendente`; TJSP -> `na_fila`). Never
+    touches a resultado that is not in `erro` — a cell that succeeded is not
+    bought twice. `resultado_ids` narrows it to those cells. Returns the ids
+    moved; the caller schedules `processar_consulta` + `schedule_tjsp_for_org`.
+
+    Failed TJSP resultados go `na_fila` directly, NOT `pendente`: `pendente`
+    would make `processar_consulta` fire the request now, and a premature TJSP
+    call RESETS their 30-minute counter — the retry would push the real
+    attempt further away rather than closer.
+    """
+    falhas = (
+        db.table(RESULTADOS).select("id, tipo").eq("consulta_id", consulta_id)
+        .eq("org_id", str(org_id)).eq("status", "erro").is_("excluida_em", "null").execute()
+    ).data or []
+    if resultado_ids is not None:
+        alvo = {str(i) for i in resultado_ids}
+        falhas = [f for f in falhas if f["id"] in alvo]
+    movidos: list[str] = []
+    for novo_status, grupo in (
+        ("pendente", [f["id"] for f in falhas if f.get("tipo") != TJSP_TIPO]),
+        ("na_fila", [f["id"] for f in falhas if f.get("tipo") == TJSP_TIPO]),
+    ):
+        for batch in in_batches(grupo):
+            db.table(RESULTADOS).update({"status": novo_status, "erro_mensagem": None}).in_(
+                "id", batch
+            ).eq("org_id", str(org_id)).execute()
+        movidos.extend(grupo)
+    if movidos:
+        db.table(CONSULTAS).update({"status": "processando"}).eq("id", consulta_id).eq(
+            "org_id", str(org_id)
+        ).execute()
+    return movidos
+
+
+async def montar_zip(
+    items: Sequence[dict],
+    storage: StorageBackend,
+    http_client: httpx.AsyncClient,
+    *,
+    read: Optional[Callable[..., Any]] = None,
+    contexto: str = "",
+) -> Optional[bytes]:
+    """One ZIP of the certidão PDFs in `items` (`arquivo_url`, `arquivo_nome`,
+    `nome_display`). `None` when NO file could be read. One unreachable file
+    does not sink the ZIP of the others (logged, omitted); duplicate names get
+    a ` (n)` suffix — two identical entries open to one file in most
+    extractors, silently losing the other."""
+    import zipfile
+
+    read = read or read_certidao_bytes
+
+    async def _fetch(item: dict) -> Optional[tuple]:
+        content = await read(item["arquivo_url"], storage, http_client)
+        if content is None:
+            logger.warning(
+                "certidoes: %s unavailable for %s; omitted from the ZIP",
+                item.get("nome_display"), contexto,
+            )
+            return None
+        return (item.get("arquivo_nome") or f"{item['nome_display']}.pdf", content)
+
+    files = [r for r in await asyncio.gather(*[_fetch(it) for it in items]) if r is not None]
+    if not files:
+        return None
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        seen: dict[str, int] = {}
+        for filename, content in files:
+            if filename in seen:
+                seen[filename] += 1
+                name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+                filename = f"{name} ({seen[filename]}).{ext}" if ext else f"{name} ({seen[filename]})"
+            else:
+                seen[filename] = 0
+            zf.writestr(filename, content)
+    return buf.getvalue()
 
 
 # --------------- Credentials ---------------

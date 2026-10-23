@@ -5,7 +5,11 @@ Paths (final): `GET /{cliente_id}/certidoes/partes`,
 `POST /{cliente_id}/certidoes/partes/{kind}/{alvo_id}/emissao`,
 `POST /{cliente_id}/certidoes/resultados/{resultado_id}/reemitir`,
 `POST /{cliente_id}/certidoes/celulas`,
-`POST /{cliente_id}/certidoes/reler`. Raw-dict responses, no `{"data":…}`
+`POST /{cliente_id}/certidoes/reler`, and the card-scoped controls the retired
+/certidoes screen used to own: `POST …/resultados/{id}/cancelar`,
+`POST …/partes/{kind}/{alvo_id}/cancelar`, `POST …/partes/{kind}/{alvo_id}/
+reemitir-erros`, `DELETE …/resultados/{id}` (discard a wrong emission) and
+`GET …/partes/{kind}/{alvo_id}/download-zip`. Raw-dict responses, no `{"data":…}`
 envelope (card routes' convention, CONTRACT §0). All the logic lives in
 `certidoes_partes_service`; this file only unpacks auth, schedules the
 background InfoSimples run for the two emission routes, and sets status codes.
@@ -19,16 +23,21 @@ from uuid import UUID
 import logging
 
 import httpx
+import anyio
 from fastapi import APIRouter, BackgroundTasks, Depends, Response
+from noctusai_lib.primitives.content_disposition import attachment_disposition
+from noctusai_lib.primitives.exceptions import AppException
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.dependencies import get_current_user_org
 from app.modules.card_hub import certidoes_partes_service as svc
 from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.certidoes_partes_schemas import (
+    CancelarBody,
     CelulaBody,
     CienciaPcenBody,
     EmissaoBody,
+    ParteAcaoBody,
     ExigenciasBody,
     ReemitirBody,
     RelerBody,
@@ -182,3 +191,122 @@ async def reler_certidoes_route(
         user.id, org_id, cliente_id, contagem,
     )
     return contagem
+
+
+@router.post("/{cliente_id}/certidoes/resultados/{resultado_id}/cancelar")
+def cancelar_resultado_route(
+    cliente_id: UUID,
+    resultado_id: UUID,
+    body: CancelarBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+) -> dict:
+    """Cancel ONE emission in progress (automatic consultas only)."""
+    _user, org_id = auth_parts(auth)
+    return svc.cancelar_emissao_do_resultado(
+        client, org_id, cliente_id, str(resultado_id), cancelar=certidoes.cancelar_processamento,
+    )
+
+
+@router.post("/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/cancelar")
+def cancelar_parte_route(
+    cliente_id: UUID,
+    kind: str,
+    alvo_id: UUID,
+    body: ParteAcaoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+) -> dict:
+    """Cancel every emission in progress of the party."""
+    _user, org_id = auth_parts(auth)
+    return svc.cancelar_emissao_da_parte(
+        client, org_id, cliente_id, kind, alvo_id,
+        atendimento_id=body.atendimento_id, cancelar=certidoes.cancelar_processamento,
+    )
+
+
+@router.post("/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/reemitir-erros")
+def reemitir_erros_route(
+    cliente_id: UUID,
+    kind: str,
+    alvo_id: UUID,
+    body: ParteAcaoBody,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+) -> dict:
+    """Retry only the party's FAILED automatic cells, in place."""
+    _user, org_id = auth_parts(auth)
+    out = svc.reemitir_com_erro(
+        client, org_id, cliente_id, kind, alvo_id,
+        atendimento_id=body.atendimento_id,
+        check_credentials=certidoes.check_required_credentials,
+        reprocessar=certidoes.reprocessar_resultados,
+    )
+    for consulta_id in out["consultas"]:
+        background_tasks.add_task(certidoes.processar_consulta, consulta_id, client, storage)
+    if out["tem_tjsp"]:
+        # `processar_consulta` only picks up `pendente`; the TJSP cells now
+        # `na_fila` need their own scheduling pass (30-minute cooldown).
+        certidoes.schedule_tjsp_for_org(str(org_id), client, storage)
+    return out
+
+
+@router.delete("/{cliente_id}/certidoes/resultados/{resultado_id}")
+def descartar_emissao_route(
+    cliente_id: UUID,
+    resultado_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+) -> dict:
+    """Discard a wrong emission (soft-delete) — the previous evidence wins again."""
+    user, org_id = auth_parts(auth)
+    return svc.descartar_emissao(
+        client, org_id, cliente_id, str(resultado_id),
+        user_id=user.id, descartar=certidoes.soft_delete_resultado,
+    )
+
+
+@router.get("/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/download-zip")
+async def baixar_zip_da_parte_route(
+    cliente_id: UUID,
+    kind: str,
+    alvo_id: UUID,
+    atendimento_id: Optional[UUID] = None,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+):
+    """Every certidão PDF currently on the party's grid, as one ZIP."""
+    _user, org_id = auth_parts(auth)
+    parte, items = await anyio.to_thread.run_sync(
+        lambda: svc.arquivos_da_parte(
+            client, org_id, cliente_id, kind, alvo_id, atendimento_id=atendimento_id,
+        )
+    )
+    if not items:
+        raise AppException(
+            code="SEM_ARQUIVOS", message="Nenhuma certidão com PDF para baixar.", status_code=404,
+        )
+    async with httpx.AsyncClient() as http_client:
+        conteudo = await certidoes.montar_zip(
+            items, storage, http_client,
+            read=certidoes.read_certidao_bytes, contexto=f"parte {parte['nome']}",
+        )
+    if conteudo is None:
+        raise AppException(
+            code="ARQUIVOS_INDISPONIVEIS",
+            message="Não foi possível baixar os arquivos das certidões.", status_code=502,
+        )
+    nome = (parte["nome"] or "parte").replace(" ", "_")[:50]
+    return Response(
+        content=conteudo,
+        media_type="application/zip",
+        headers={"Content-Disposition": attachment_disposition(f"certidoes_{nome}_{parte['documento'] or ''}.zip")},
+    )
