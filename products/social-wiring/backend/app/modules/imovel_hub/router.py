@@ -75,6 +75,7 @@ from app.modules.imovel_hub.schemas import (
 # `imovel_hub.router`), so this import direction adds no cycle — see
 # `app/modules/matriculas/__init__.py`'s own docstring for the two-readers
 # problem this does NOT solve.
+from app.modules.matriculas import ato_detalhes_service as matriculas_detalhes_svc
 from app.modules.matriculas import estrutura_service as matriculas_estrutura_svc
 from app.modules.matriculas import service as matriculas_service
 from app.modules.matriculas.deps import (
@@ -516,6 +517,16 @@ def reextrair_documento_route(
     codigo = codigo.upper()
     documento = docs_svc.reextrair_documento(client, org_id, codigo, documento_id)
     tipo = documento["tipo_documento"]
+    # "Ler novamente" must also refresh what was READ FROM THIS document's
+    # stored transcription (F65, 2026-10-23): the structured read above only
+    # touches the documento row, while the matrícula's act details live in
+    # `matricula_ato_detalhes` and used to be frozen at first parse. Re-derive
+    # the machine rows with the CURRENT parser (deterministic, no LLM, a
+    # human-confirmed row is never touched).
+    if tipo == "matricula":
+        background.add_task(
+            matriculas_detalhes_svc.rederivar_do_documento, client, org_id, documento_id
+        )
     if docs_svc.deve_extrair(tipo):
         background.add_task(
             matricula_svc.extrair,

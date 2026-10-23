@@ -143,6 +143,8 @@ from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     formatar_cpf_cnpj,
     frase_titulo_aquisitivo,
     parse_detalhes_json,
+    partes_de_bloco,
+    transmitentes_por_referencia,
 )
 from noctusai_lib.integrations.documents.matricula_certidao import (
     TIPOS_DOCUMENTO_MATRICULA,

@@ -74,7 +74,12 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents import NATUREZAS_TRANSFERENCIA
+from noctusai_lib.integrations.documents import (
+    NATUREZAS_TRANSFERENCIA,
+    parse_detalhes_json,
+    partes_de_bloco,
+    transmitentes_por_referencia,
+)
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.accents import fold_accents_ascii
 
@@ -640,6 +645,49 @@ def _manual_ultima_transferencia(linha: dict) -> Optional[dict]:
     }
 
 
+def _transmitentes_por_referencia(
+    client: Any, org_id: UUID, extracao: dict, ato: dict, det: dict
+) -> list[dict]:
+    """The sellers of an act that names them only by back-reference ("os
+    proprietários retro nomeados e qualificados transmitiram ..."): the owners
+    at that point of the chain — the adquirentes of the latest earlier
+    ownership-transferring act of the SAME matrícula, else the abertura's
+    PROPRIETÁRIOS. `[]` when the act is not a back-reference or nothing can be
+    resolved (never a phrase stored as a name)."""
+    texto = extracao.get("texto_extraido")
+    if not texto or ato.get("char_inicio") is None:
+        return []
+    texto_ato = texto[int(ato["char_inicio"]) : int(ato["char_fim"])]
+    if not transmitentes_por_referencia(texto_ato, parse_detalhes_json(det)):
+        return []
+    por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
+    anteriores = [
+        por_id[ato_id]
+        for ato_id, d in detalhes.items()
+        if ato_id in por_id
+        and por_id[ato_id].get("kind") != "abertura"
+        and por_id[ato_id]["ordem"] < ato["ordem"]
+        and d.get("natureza") in NATUREZAS_TRANSFERENCIA
+        and d.get("adquirentes")
+    ]
+    if anteriores:
+        ultimo = max(anteriores, key=lambda r: r["ordem"])
+        return [
+            {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+            for p in detalhes[str(ultimo["id"])]["adquirentes"]
+            if p.get("nome")
+        ]
+    for bloco in estrutura_svc.blocos_abertura_da_extracao(client, org_id, extracao):
+        if bloco.get("campo") == "proprietarios":
+            return [
+                {"nome": p.nome, "cpf_cnpj": p.cpf_cnpj}
+                for p in partes_de_bloco(
+                    texto[int(bloco["char_inicio"]) : int(bloco["char_fim"])]
+                )
+            ]
+    return []
+
+
 def antigos_proprietarios(
     client: Any,
     org_id: UUID,
@@ -754,6 +802,10 @@ def antigos_proprietarios(
             {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
             for p in det.get("transmitentes") or []
         ]
+        if not saida["transmitentes"]:
+            saida["transmitentes"] = _transmitentes_por_referencia(
+                client, org_id, extracao_do_ato, ato, det
+            )
     if ato is not None and det is not None and (data_registro is not None or not manual_responde):
         limite = _anos_antes(hoje, ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS)
         saida.update(

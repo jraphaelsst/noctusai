@@ -6,8 +6,13 @@ One `matricula_ato_detalhes` row per R/AV act (the abertura is not an act).
 `origem='sugestao'` rows are the seed extractor's reading
 (`noctusai_lib.integrations.documents.extrair_detalhes_ato`) of the act's
 literal slice; `'confirmado'` rows carry an operator's confirmation. The
-extractor NEVER overwrites a row once it exists — a suggestion is minted once
-per act, exactly like the acts themselves (`estrutura_service.persistir_atos`).
+extractor NEVER overwrites a HUMAN's row (`origem='confirmado'` or a set
+`confirmado_por`). A MACHINE row (`sugestao`) is re-derived from the stored
+act text whenever the current parser reads it differently
+(`rederivar_sugestoes`, run on every `detalhes_por_ato` read and by the
+imóvel documento's "Ler novamente"): the parser is deterministic and the text
+is already stored, so a parser fix heals existing imóveis with no LLM cost
+and no re-transcription.
 
 WHEN THEY ARE WRITTEN
 ---------------------
@@ -45,6 +50,7 @@ from noctusai_lib.integrations.documents import (
     AtoDetalhes,
     extrair_detalhes_ato,
     formatar_cpf_cnpj,
+    parse_detalhes_json,
 )
 from noctusai_lib.integrations.documents.matricula_ato_detalhes import ALTA, NENHUMA
 from noctusai_lib.primitives.exceptions import ValidationError_
@@ -191,11 +197,80 @@ def linhas_da_extracao(client: Any, org_id: UUID, extracao_id: Any) -> list[dict
     )
 
 
+def _e_humana(row: dict) -> bool:
+    return row.get("origem") == ORIGEM_CONFIRMADO or bool(row.get("confirmado_por"))
+
+
+def rederivar_sugestoes(
+    client: Any, org_id: UUID, extracao: dict, ato_rows: list[dict], existentes: dict[str, dict]
+) -> int:
+    """Re-run the CURRENT parser over each act's stored text and replace the
+    MACHINE-origin detail rows it now reads differently. Never touches a
+    human-confirmed row; an extraction whose text was purged heals nothing.
+    Returns the number of rows updated."""
+    texto = extracao.get("texto_extraido")
+    if not texto:
+        return 0
+    atualizados = 0
+    for ato in ato_rows:
+        if ato["kind"] == "abertura":
+            continue
+        atual = existentes.get(str(ato["id"]))
+        if atual is None or _e_humana(atual):
+            continue
+        try:
+            nova = linha_de_detalhes(
+                str(org_id), str(extracao["id"]), ato, texto, ruido=extracao.get("ruido") or ()
+            )
+        except ValueError as exc:
+            logger.warning("matricula %s: re-derivacao pulada: %s", extracao["id"], exc)
+            continue
+        if nova is None:
+            continue
+        campos = {k: nova[k] for k in AtoDetalhes().to_json()}
+        if parse_detalhes_json(atual).to_json() == parse_detalhes_json(campos).to_json():
+            continue
+        _t(client, DETALHES_TABLE).update(campos).eq("org_id", str(org_id)).eq(
+            "id", str(atual["id"])
+        ).eq("origem", ORIGEM_SUGESTAO).execute()
+        atual.update(campos)
+        atualizados += 1
+    if atualizados:
+        logger.info(
+            "matricula %s: re-derived %d machine ato detail rows", extracao["id"], atualizados
+        )
+    return atualizados
+
+
+def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) -> int:
+    """Re-derive the machine detail rows of every concluded extraction read
+    from this imóvel documento ("Ler novamente"). Deterministic, no LLM."""
+    from app.modules.matriculas import estrutura_service as estrutura_svc
+
+    extracoes = (
+        _t(client, estrutura_svc.EXTRACOES_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("imovel_documento_id", str(imovel_documento_id))
+        .eq("status", estrutura_svc.STATUS_CONCLUIDA)
+        .execute()
+    ).data or []
+    total = 0
+    for extracao in extracoes:
+        atos = estrutura_svc.atos_da_extracao(client, org_id, extracao)
+        existentes = {
+            str(r["ato_id"]): r for r in linhas_da_extracao(client, org_id, extracao["id"])
+        }
+        total += rederivar_sugestoes(client, org_id, extracao, atos, existentes)
+    return total
+
+
 def detalhes_por_ato(
     client: Any, org_id: UUID, extracao: dict, ato_rows: list[dict]
 ) -> dict[str, dict]:
     """`{ato_id: row}` for the extraction — minting the missing suggestions
-    (the backfill; see module docstring). An extraction whose text was purged
+    (the backfill; see module docstring) and re-deriving the machine ones the
+    current parser reads differently. An extraction whose text was purged
     heals nothing: there is no text left to read."""
     existentes = {str(r["ato_id"]): r for r in linhas_da_extracao(client, org_id, extracao["id"])}
     texto = extracao.get("texto_extraido")
@@ -215,6 +290,7 @@ def detalhes_por_ato(
         existentes = {
             str(r["ato_id"]): r for r in linhas_da_extracao(client, org_id, extracao["id"])
         }
+    rederivar_sugestoes(client, org_id, extracao, ato_rows, existentes)
     return existentes
 
 
@@ -392,4 +468,6 @@ __all__ = [
     "log_leitura_detalhes",
     "persistir_sugestoes",
     "purgar_da_extracao",
+    "rederivar_do_documento",
+    "rederivar_sugestoes",
 ]

@@ -694,12 +694,35 @@ _INSTITUICAO_FINANCEIRA = re.compile(
 )
 
 
+#: A qualification token (nacionalidade, estado civil, profissão, role) or a
+#: back-reference word ("retro nomeados", "supra qualificados") is never the
+#: first word of a person's name. Prefix match on the de-hyphenated word.
+_QUALIFICACAO = re.compile(
+    r"^(?:BRASILEIR|ESTRANGEIR|SOLTEIR|CASAD|VIUV|DIVORCIAD|SEPARAD|NASCID|MAIOR(?:ES)?$|"
+    r"MENOR$|CAPAZ$|EMPRESARI|ADVOGAD|ENGENHEIR|MEDIC[OA]S?$|COMERCIANT|COMERCIARI|APOSENTAD|"
+    r"FUNCIONARI|PROFESSOR|INDUSTRIAL|AGRICULTOR|PRODUTOR|AUTONOM|SERVIDOR|ARQUITET|CONTADOR|"
+    r"DENTISTA|ECONOMISTA|PROPRIETARI|CONJUGE|MARIDO$|MULHER$|ESPOSA$|ESPOSO$|NOMEAD|"
+    r"QUALIFICAD|RETRO|SUPRA|ACIMA|ANTERIORMENTE|DOMICILIAD|RESIDENT|MENCIONAD|CITAD|"
+    r"REFERID|IDENTIFICAD|DESCRIT)"
+)
+
+
+def _qualificacao(palavra: str) -> bool:
+    return bool(_QUALIFICACAO.match(palavra.replace("-", "")))
+
+
 def _nome_valido(nome_norm: str, *, minimo_palavras: int = 2) -> bool:
     valor = " ".join(nome_norm.split())
     if not (3 <= len(valor) <= 150) or not _NOME_CHARS.match(valor):
         return False
     palavras = valor.split()
     if not (1 <= len(palavras) <= 12) or palavras[0] in _NAO_NOME:
+        return False
+    # A dangling hyphen ("quali-" + "ficados") is a wrapped word, and a
+    # qualification/back-reference word as the first token is not a name.
+    if _qualificacao(palavras[0]) or all(
+        _qualificacao(p) or p in {"E", "DE", "DA", "DO", "OU"} for p in palavras
+    ):
         return False
     if _PALAVRAS_DE_PROSA.intersection(palavras):
         return False
@@ -1477,6 +1500,48 @@ def frase_titulo_aquisitivo(
     return ", ".join(partes)
 
 
+_RETRO_REFERENCIA = re.compile(
+    r"(?<![A-Z])(?:RETRO|SUPRA|ACIMA|ANTERIORMENTE|JA)[\s-]*(?:NOMEAD|QUALI-?\s*FICAD|MENCIONAD|CITAD|REFERID|IDENTIFICAD)"
+)
+
+
+def transmitentes_por_referencia(texto_ato: str, detalhes: Optional[AtoDetalhes] = None) -> bool:
+    """True when the act names its sellers only by BACK-REFERENCE ("os
+    proprietários retro nomeados e qualificados, transmitiram ...", "supra
+    qualificados"): no person is named, the transmitentes are the owners at
+    that point of the chain. The caller resolves them from the chain
+    (adquirentes of the previous transfer act, or the abertura's
+    PROPRIETÁRIOS) — a phrase is never a name. `detalhes` (the act's own
+    reading) short-circuits to False when it already found real names."""
+    if detalhes is not None and detalhes.transmitentes:
+        return False
+    if not texto_ato or not texto_ato.strip():
+        return False
+    t = _Texto(texto_ato)
+    cabecalho = _HEADER.match(t.norm)
+    corpo = cabecalho.end() if cabecalho else 0
+    for verbo in _VERBOS_SUJEITO.finditer(t.norm, corpo):
+        if _RETRO_REFERENCIA.search(t.norm, corpo, verbo.start()):
+            return True
+    return False
+
+
+_ROTULO_PROPRIETARIOS = re.compile(r"^\s*PROPRIETARI[OA]S?\s*(?:\([OA]?S\))?\s*[:\-–—]?\s*")
+
+
+def partes_de_bloco(texto: str) -> tuple[Parte, ...]:
+    """The people named in a free block of party text — the abertura's
+    PROPRIETÁRIOS block ("PROPRIETÁRIOS: FULANO, brasileiro, ...; CICLANO ...").
+    Same name rules as the act parties (qualification words are never names);
+    used to resolve a back-referenced seller to the owners it points at."""
+    if not texto or not texto.strip():
+        return ()
+    t = _Texto(texto)
+    rotulo = _ROTULO_PROPRIETARIOS.match(t.norm)
+    inicio = rotulo.end() if rotulo else 0
+    return tuple(p for p, _ in _pessoas(t, inicio, len(t.norm)))
+
+
 def parse_detalhes_json(data: dict[str, Any]) -> AtoDetalhes:
     """Inverse of `AtoDetalhes.to_json` — for a caller holding stored rows."""
     bruto_data = data.get("data_registro")
@@ -1522,4 +1587,6 @@ __all__ = [
     "formatar_cpf_cnpj",
     "frase_titulo_aquisitivo",
     "parse_detalhes_json",
+    "partes_de_bloco",
+    "transmitentes_por_referencia",
 ]

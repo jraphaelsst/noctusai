@@ -1062,3 +1062,62 @@ def test_instrumento_json_round_trip_keeps_the_capital_flag():
 
     i = extrair_detalhes_ato(DOACAO_DIGITADA).instrumento
     assert Instrumento.from_json(i.to_json()) == i
+
+
+# ─── F66: back-referenced sellers + qualification tokens are never names ──
+
+DOACAO_RETRO = (
+    "R-4 - 12/02/1988 - DOAÇÃO - Pelo instrumento particular de 28/01/1988, "
+    "os proprietários retro nomeados e quali-\nficados, transmitiram, a titulo de "
+    "DOAÇÃO, em adiantamento de legítima, a FULANA EXEMPLO DA SILVA, brasileira, "
+    "solteira, o imóvel objeto desta matrícula, pelo valor de Cr$ 1.000,00."
+)
+
+
+def test_retro_nomeados_is_a_back_reference_not_two_people():
+    from noctusai_lib.integrations.documents import transmitentes_por_referencia
+
+    d = extrair_detalhes_ato(DOACAO_RETRO)
+    nomes = [p.nome for p in d.transmitentes]
+    assert nomes == []
+    assert transmitentes_por_referencia(DOACAO_RETRO, d) is True
+
+
+@pytest.mark.parametrize("frase", ["supra qualificados", "acima qualificados", "retro-nomeados"])
+def test_other_back_reference_spellings(frase):
+    from noctusai_lib.integrations.documents import transmitentes_por_referencia
+
+    texto = f"R-2 - 01/01/1990 - VENDA E COMPRA. Os proprietários {frase}, venderam o imóvel a CICLANO EXEMPLO."
+    d = extrair_detalhes_ato(texto)
+    assert d.transmitentes == ()
+    assert transmitentes_por_referencia(texto, d) is True
+
+
+def test_named_sellers_are_not_a_back_reference():
+    from noctusai_lib.integrations.documents import transmitentes_por_referencia
+
+    texto = "R-2 - 01/01/1990 - VENDA E COMPRA. FULANO EXEMPLO, brasileiro, casado, vendeu o imóvel a CICLANO EXEMPLO."
+    d = extrair_detalhes_ato(texto)
+    assert [p.nome for p in d.transmitentes] == ["FULANO EXEMPLO"]
+    assert transmitentes_por_referencia(texto, d) is False
+
+
+@pytest.mark.parametrize("palavra", ["brasileira", "casado", "empresário", "solteira"])
+def test_qualification_token_is_never_a_name(palavra):
+    texto = f"R-3 - 01/01/1990 - VENDA E COMPRA. TRANSMITENTE: {palavra}. ADQUIRENTE: CICLANO EXEMPLO."
+    d = extrair_detalhes_ato(texto)
+    assert palavra not in [p.nome.lower() for p in d.transmitentes]
+
+
+def test_partes_de_bloco_reads_abertura_proprietarios():
+    from noctusai_lib.integrations.documents import partes_de_bloco
+
+    nomes = [
+        p.nome
+        for p in partes_de_bloco(
+            "PROPRIETÁRIOS: FULANO EXEMPLO, brasileiro, casado, empresário; "
+            "CICLANA EXEMPLO, brasileira, casada, do lar."
+        )
+    ]
+    assert nomes == ["FULANO EXEMPLO", "CICLANA EXEMPLO"]
+    assert partes_de_bloco("") == ()
