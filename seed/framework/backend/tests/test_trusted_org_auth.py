@@ -8,6 +8,7 @@ KB § PATTERNS/backend/no-metadata-authz.md
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -29,8 +30,12 @@ OTHER_ORG = "00000000-0000-4000-8000-0000000000bb"
 USER_ID = "00000000-0000-4000-8000-0000000000cc"
 
 
-def _run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+def _run(result):
+    # A handler is a coroutine function, or a plain `def` once it awaits nothing
+    # (FastAPI then runs it in the threadpool) -- either way the caller gets its result.
+    if inspect.isawaitable(result):
+        return asyncio.new_event_loop().run_until_complete(result)
+    return result
 
 
 class _Core:

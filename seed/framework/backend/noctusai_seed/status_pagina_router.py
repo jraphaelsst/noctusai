@@ -39,6 +39,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.primitives.roles import ADMIN_ROLES, DEV_ROLES
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,9 @@ def _create_status_pagina_router(deps, settings, product_name: str) -> APIRouter
     async def listar(authorization: Optional[str] = Header(None)):
         await _require_manage_role(authorization)
         admin = deps.get_admin_client()
-        result = admin.table("status_pagina").select("*").order("nome_pagina").execute()
+        result = await run_blocking(
+            lambda: admin.table("status_pagina").select("*").order("nome_pagina").execute()
+        )
         return [_to_out(r) for r in (result.data or [])]
 
     @router.patch("/{status_pagina_id}", response_model=StatusPaginaOut)
@@ -123,7 +126,9 @@ def _create_status_pagina_router(deps, settings, product_name: str) -> APIRouter
             )
         admin = deps.get_admin_client()
         table = admin.table("status_pagina")
-        existing = table.select("*").eq("id", status_pagina_id).execute()
+        existing = await run_blocking(
+            lambda: table.select("*").eq("id", status_pagina_id).execute()
+        )
         if not existing.data:
             raise HTTPException(status_code=404, detail="Página não encontrada")
         current = existing.data[0]
@@ -134,7 +139,9 @@ def _create_status_pagina_router(deps, settings, product_name: str) -> APIRouter
         # just read — no blind try/except fallback.
         if "updated_at" in current:
             payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        updated = table.update(payload).eq("id", status_pagina_id).execute()
+        updated = await run_blocking(
+            lambda: table.update(payload).eq("id", status_pagina_id).execute()
+        )
         row = (updated.data or [None])[0] or {**current, **payload}
         return _to_out(row)
 

@@ -57,6 +57,7 @@ from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from noctusai_lib.api.auth import _resolve_trusted_membership
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
@@ -415,8 +416,9 @@ def create_auth_router(
 
         client = create_client(settings.supabase_url, settings.supabase_anon_key)
         try:
-            auth_response = client.auth.sign_in_with_password(
-                {"email": body.email, "password": body.password}
+            auth_response = await run_blocking(
+                client.auth.sign_in_with_password,
+                {"email": body.email, "password": body.password},
             )
         except Exception as exc:
             # Supabase auth errors come through as gotrue exceptions; log
@@ -433,24 +435,28 @@ def create_auth_router(
 
         # SEC hotfix 2026-10-06: the org comes from the TRUSTED
         # `public.noctus_users` row — `user_metadata.org_id` is user-writable.
-        try:
-            membership = _resolve_trusted_membership(deps.get_core_client, user.id)
-        except Exception:
-            logger.error("login_trusted_org_lookup_error user_id=%s", user.id, exc_info=True)
-            raise HTTPException(
-                status_code=503, detail="Falha ao resolver organizacao do usuario"
-            )
-        raw_org = membership.get("org_id") if membership else None
-        if not raw_org:
-            raise HTTPException(
-                status_code=403,
-                detail="User has no organisation — contact your administrator",
-            )
-        if not allow_customer and is_customer_role(membership.get("org_role")):
-            raise HTTPException(status_code=403, detail="Área restrita à equipe.")
-        # Round-2 license gate on the effective org (core + unconfigured exempt).
-        enforce_license(raw_org, membership.get("org_role"), allow_customer=allow_customer)
-        org_id = _coerce_org_uuid(raw_org)
+        def _resolve_org():
+            try:
+                membership = _resolve_trusted_membership(deps.get_core_client, user.id)
+            except Exception:
+                logger.error("login_trusted_org_lookup_error user_id=%s", user.id, exc_info=True)
+                raise HTTPException(
+                    status_code=503, detail="Falha ao resolver organizacao do usuario"
+                )
+            raw_org = membership.get("org_id") if membership else None
+            if not raw_org:
+                raise HTTPException(
+                    status_code=403,
+                    detail="User has no organisation — contact your administrator",
+                )
+            if not allow_customer and is_customer_role(membership.get("org_role")):
+                raise HTTPException(status_code=403, detail="Área restrita à equipe.")
+            # Round-2 license gate on the effective org (core + unconfigured exempt).
+            enforce_license(raw_org, membership.get("org_role"), allow_customer=allow_customer)
+            org_id = _coerce_org_uuid(raw_org)
+            return org_id
+
+        org_id = await run_blocking(_resolve_org)
 
         try:
             user_id = UUID(str(user.id))
@@ -525,7 +531,7 @@ def create_auth_router(
     @api_tokens_router.post(
         "", response_model=ApiTokenCreatedDTO, status_code=status.HTTP_201_CREATED
     )
-    async def create_api_token(
+    def create_api_token(
         body: ApiTokenCreateRequest,
         ctx: AuthContext = Depends(get_auth_context),
         request: Request = None,
@@ -590,7 +596,7 @@ def create_auth_router(
         )
 
     @api_tokens_router.get("", response_model=list[ApiTokenListItem])
-    async def list_api_tokens(
+    def list_api_tokens(
         ctx: AuthContext = Depends(get_auth_context),
     ) -> list[ApiTokenListItem]:
         """List tokens for the caller's org. Hashes / secrets never returned."""
@@ -621,7 +627,7 @@ def create_auth_router(
         ]
 
     @api_tokens_router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def revoke_api_token(
+    def revoke_api_token(
         token_id: UUID,
         ctx: AuthContext = Depends(get_auth_context),
         request: Request = None,

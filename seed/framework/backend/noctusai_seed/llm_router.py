@@ -29,6 +29,8 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from noctusai_lib.api.auth._blocking import run_blocking
+
 from noctusai_lib.api.auth import make_get_current_user_org
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.llm import all_providers, models_for
@@ -134,8 +136,8 @@ def create_llm_router(deps) -> APIRouter:
         not set (implying the product's defaults apply)."""
         user, org_id, token = await _require_org(authorization)
         db = deps.get_user_client(token)
-        result = (
-            db.table("llm_preferences")
+        result = await run_blocking(
+            lambda: db.table("llm_preferences")
             .select("provider, chat_model, embedding_model")
             .eq("org_id", org_id)
             .maybe_single()
@@ -163,15 +165,17 @@ def create_llm_router(deps) -> APIRouter:
                 detail=f"Provider desconhecido: {body.provider}",
             )
         db = deps.get_user_client(token)
-        db.table("llm_preferences").upsert(
-            {
-                "org_id": org_id,
-                "provider": body.provider,
-                "chat_model": body.chat_model,
-                "embedding_model": body.embedding_model,
-            },
-            on_conflict="org_id",
-        ).execute()
+        await run_blocking(
+            lambda: db.table("llm_preferences").upsert(
+                {
+                    "org_id": org_id,
+                    "provider": body.provider,
+                    "chat_model": body.chat_model,
+                    "embedding_model": body.embedding_model,
+                },
+                on_conflict="org_id",
+            ).execute()
+        )
         return {"ok": True}
 
     @router.get("/usage")
@@ -202,13 +206,15 @@ def create_llm_router(deps) -> APIRouter:
         end = _parse_iso(to) or now
         db = deps.get_user_client(token)
         rows = (
-            db.table("llm_usage")
-            .select("*")
-            .gte("at", start.isoformat())
-            .lte("at", end.isoformat())
-            .order("at", desc=True)
-            .limit(limit)
-            .execute()
+            await run_blocking(
+                lambda: db.table("llm_usage")
+                .select("*")
+                .gte("at", start.isoformat())
+                .lte("at", end.isoformat())
+                .order("at", desc=True)
+                .limit(limit)
+                .execute()
+            )
         ).data or []
 
         return {

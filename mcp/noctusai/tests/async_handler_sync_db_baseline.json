@@ -4,11 +4,6 @@
     "products/social-wiring/backend/app/routers/chat_router.py": 2,
     "products/social-wiring/backend/app/routers/julia_agente_router.py": 3,
     "products/social-wiring/backend/app/routers/julia_cloud_router.py": 5,
-    "products/social-wiring/backend/app/routers/julia_opt_outs_router.py": 3,
-    "seed/framework/backend/noctusai_seed/ai_feedback_router.py": 2,
-    "seed/framework/backend/noctusai_seed/auth_router.py": 4,
-    "seed/framework/backend/noctusai_seed/llm_router.py": 3,
-    "seed/framework/backend/noctusai_seed/routers.py": 2,
-    "seed/framework/backend/noctusai_seed/status_pagina_router.py": 2
+    "products/social-wiring/backend/app/routers/julia_opt_outs_router.py": 3
   }
 }

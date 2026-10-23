@@ -29,6 +29,8 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
+from noctusai_lib.api.auth._blocking import run_blocking
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,8 +70,8 @@ def create_ai_feedback_router(deps) -> APIRouter:
         # Upsert by (user_id, output_ref) — UNIQUE constraint in the migration
         # makes the second send overwrite the first (toggle behavior).
         try:
-            result = (
-                db.schema(deps._db.schema)
+            result = await run_blocking(
+                lambda: db.schema(deps._db.schema)
                 .table("ai_feedback")
                 .upsert(payload, on_conflict="user_id,output_ref")
                 .execute()
@@ -90,8 +92,8 @@ def create_ai_feedback_router(deps) -> APIRouter:
         user, token = await deps.get_current_user(authorization)
         db = deps.get_user_client(token)
         try:
-            result = (
-                db.schema(deps._db.schema)
+            result = await run_blocking(
+                lambda: db.schema(deps._db.schema)
                 .table("ai_feedback")
                 .select("*")
                 .eq("user_id", str(user.id))
