@@ -46,25 +46,23 @@ describe('useSupabaseAuthInit SIGNED_OUT', () => {
 });
 
 describe('useSupabaseAuthInit verify() rejection', () => {
-  it('a rejection that does not repeat on the re-check never signs out', async () => {
-    vi.useFakeTimers();
+  it('a rejection the confirming refresh contradicts never signs out', async () => {
     const rejected = { data: { user: null }, error: { name: 'AuthApiError', status: 401, code: 'session_not_found', message: 'x' } };
-    const ok = { data: { user: { id: 'u1' } }, error: null };
     const signOut = vi.fn();
     const supabase = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: 'u1' }, access_token: 'a.b.c' } } }),
-        getUser: vi.fn().mockResolvedValueOnce(rejected).mockResolvedValue(ok),
+        getUser: vi.fn().mockResolvedValue(rejected),
+        refreshSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'fresh' } }, error: null }),
         signOut,
         onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
       },
     };
     const setUser = vi.fn();
     renderHook(() => useSupabaseAuthInit(supabase, setUser));
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(supabase.auth.getUser).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1));
+    await act(async () => {});
     expect(signOut).not.toHaveBeenCalled();
     expect(setUser).not.toHaveBeenCalledWith(null);
-    vi.useRealTimers();
   });
 });

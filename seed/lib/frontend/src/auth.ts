@@ -97,32 +97,74 @@ export function classifySupabaseRefresh(result: {
   return { kind: 'dead' };
 }
 
+/** The refresh token currently in this origin's shared session slot, or `null`. */
+async function storedRefreshToken(supabase: AnySupabaseClient): Promise<{ refreshToken: string | null; accessToken: string | null }> {
+  try {
+    const session = (await supabase.auth.getSession?.())?.data?.session;
+    return { refreshToken: session?.refresh_token ?? null, accessToken: session?.access_token ?? null };
+  } catch {
+    return { refreshToken: null, accessToken: null };
+  }
+}
+
+/**
+ * ONE browser refresh of the shared session, classified -- with the rotation
+ * check: a refusal (`refresh_token_already_used`) or a discarded commit while
+ * the slot now holds a DIFFERENT refresh token than the one we started from
+ * means another tab of this origin rotated the chain -- the session is alive,
+ * adopt the winner's token. The browser is the only owner of this chain; no
+ * server ever refreshes it, so a refusal is only "dead" when the slot still
+ * holds the token that was refused.
+ */
+async function refreshSharedSession(supabase: AnySupabaseClient): Promise<RefreshAttempt> {
+  const before = await storedRefreshToken(supabase);
+  const result = await supabase.auth.refreshSession();
+  const discarded = result?.error?.name === 'AuthRefreshDiscardedError';
+  const verdict = discarded ? ({ kind: 'dead' } as RefreshAttempt) : classifySupabaseRefresh(result);
+  if (verdict.kind !== 'dead') return verdict;
+  const after = await storedRefreshToken(supabase);
+  const rotatedElsewhere = !!after.accessToken
+    && (discarded || (!!after.refreshToken && after.refreshToken !== before.refreshToken));
+  return rotatedElsewhere ? { kind: 'token', token: after.accessToken as string } : { kind: 'dead' };
+}
+
 /**
  * `onTokenExpired` for any seed product on a supabase-js session: refreshes,
  * retries transient failures with backoff, resolves `null` only when Supabase
- * authoritatively refused, and throws `TransientAuthError` otherwise — so a
- * deploy window never logs the user out (2026-10-03). Wired by
- * `createProductInfra` (`@noctusai/seed/infra`).
+ * authoritatively refused AND no other tab holds a rotated pair, and throws
+ * `TransientAuthError` otherwise — so a deploy window never logs the user out
+ * (2026-10-03). Wired by `createProductInfra` (`@noctusai/seed/infra`).
  */
 export function createSupabaseTokenRefresher(
   supabase: AnySupabaseClient,
   options?: RefreshWithBackoffOptions,
 ): () => Promise<string | null> {
-  return () =>
-    refreshWithBackoff(async () => {
-      const result = await supabase.auth.refreshSession();
-      // supabase-js >= 2.10x is LOCKLESS across tabs: when another tab of this
-      // origin rotated the shared session while our refresh was in flight, ours is
-      // discarded by the client's commit guard (`AuthRefreshDiscardedError`). That
-      // is the session being ALIVE (the other tab holds the fresh pair), never a
-      // refusal -- adopt the winner's token. Storage empty => a sign-out raced us.
-      if (result?.error?.name === 'AuthRefreshDiscardedError') {
-        const { data } = await supabase.auth.getSession();
-        const token: string | undefined = data?.session?.access_token;
-        return token ? { kind: 'token', token } : { kind: 'dead' };
-      }
-      return classifySupabaseRefresh(result);
-    }, options);
+  return () => refreshWithBackoff(() => refreshSharedSession(supabase), options);
+}
+
+/**
+ * Confirm a "this session is dead" CLAIM (a 401, a rejected `getUser()`) by
+ * the only authoritative test: one browser refresh of the shared chain.
+ *
+ *  - refresh succeeds, or another tab already rotated the slot → `alive`
+ *    (a stale access token was rejected, not the session);
+ *  - refresh unanswered (network / 5xx / 429) → `transient`;
+ *  - refresh authoritatively refused while the slot still holds the refused
+ *    token → `dead`. supabase-js has then already purged its own slot
+ *    LOCALLY; nobody calls GoTrue `/logout`.
+ *
+ * 🔴 Never `signOut()` on a dead verdict (prod 2026-10-13 + 2026-10-23):
+ * `signOut({ scope: 'local' })` is a GoTrue `/logout` that deletes the session
+ * server-side for every tab; a wrong verdict there is unrecoverable.
+ */
+export async function confirmSessionAfterRejection(supabase: AnySupabaseClient): Promise<SessionLiveness> {
+  try {
+    const verdict = await refreshSharedSession(supabase);
+    if (verdict.kind === 'token') return 'alive';
+    return verdict.kind === 'transient' ? 'transient' : 'dead';
+  } catch {
+    return 'transient';
+  }
 }
 
 /** Verdict of asking GoTrue "is this session still alive?". */
@@ -156,9 +198,10 @@ export async function probeSessionLiveness(supabase: AnySupabaseClient): Promise
  * still 401'd). That is a CLAIM that the session is dead, not proof — so the
  * handler CONFIRMS with GoTrue before destroying anything:
  *
- *  - `dead` (GoTrue says no usable session) → clear the auth store + sign out,
- *    which flips the app's `!user` gate in `createProductApp` and redirects to
- *    Landing/login.
+ *  - `dead` (GoTrue says no usable session) → confirm with one refresh
+ *    (`confirmSessionAfterRejection`); only a confirmed death clears the auth
+ *    store, which flips the app's `!user` gate in `createProductApp` and
+ *    redirects to Landing/login. Never `signOut()` (a GoTrue `/logout`).
  *  - `alive` → the 401 came from the product backend for another reason; do
  *    NOT sign out, do NOT clear the user. Warn (with the path) and let the
  *    caller's error propagate.
@@ -170,8 +213,9 @@ export async function probeSessionLiveness(supabase: AnySupabaseClient): Promise
  * that one session (same localStorage), so ONE tab's false dead-session verdict
  * destroyed a healthy session for all of them and every later request 401'd
  * `session_not_found`. The previous comment ("only this tab's session is
- * dead") was wrong. `scope: 'local'` is still used (never the default
- * `'global'`, which would also revoke core's and other products' sessions).
+ * dead") was wrong. 2026-10-23: the dead path no longer calls `signOut` at
+ * all — the refresh that confirms death makes supabase-js purge its slot
+ * locally; a verdict never reaches GoTrue `/logout`.
  *
  * Idempotent (a dead session produces a BURST of 401s — collapsed to one
  * verdict; the guard resets after 3s so a later genuine re-login → expiry can
@@ -200,8 +244,17 @@ export function createDeadSessionHandler(
         );
         return;
       }
+      // GoTrue says the access token is not usable — confirm with ONE refresh
+      // before ending anything (an expired token is not a dead session).
+      const confirmed = await confirmSessionAfterRejection(supabase);
+      if (confirmed !== 'dead') {
+        // eslint-disable-next-line no-console
+        console.warn(`[auth] 401 on ${path || '(unknown path)'} but a refresh shows the session is ${confirmed} — keeping it signed in`);
+        return;
+      }
+      // Dead: supabase-js already purged its slot locally. No signOut — that is
+      // a GoTrue /logout, never ours to send on a verdict.
       try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
-      try { await supabase.auth.signOut?.({ scope: 'local' }); } catch { /* best-effort */ }
     })();
   };
 }
@@ -227,9 +280,6 @@ function devAutologinUser(): User {
 
 /** Minimum gap between server identity checks, per tab. */
 export const IDENTITY_CHECK_THROTTLE_MS = 60_000;
-
-/** Pause before the single confirming re-check of a `rejected` identity verdict. */
-export const VERIFY_RECHECK_DELAY_MS = 500;
 
 export function useSupabaseAuthInit(
   supabase: AnySupabaseClient,
@@ -260,20 +310,19 @@ export function useSupabaseAuthInit(
       const now = Date.now();
       if (now - lastCheck < IDENTITY_CHECK_THROTTLE_MS) return;
       lastCheck = now;
-      let verdict = await verifySessionWithServer(supabase);
+      const verdict = await verifySessionWithServer(supabase);
       if (disposed || verdict !== 'rejected') return;
-      // A rejection can race a token rotation (this tab or another just refreshed:
-      // the access token getUser() sent was already superseded). Re-check ONCE
-      // against the freshly stored session before treating it as authoritative.
-      await new Promise((r) => setTimeout(r, VERIFY_RECHECK_DELAY_MS));
-      if (disposed) return;
-      verdict = await verifySessionWithServer(supabase);
-      if (disposed || verdict !== 'rejected') return;
+      // A rejection is a claim about the ACCESS token (expired, superseded by a
+      // rotation in this or another tab). Confirm with one refresh of the shared
+      // chain; only a refusal of the token the slot still holds ends the session.
       let keepId: string | null = null;
       try {
         keepId = goTrueSessionId((await supabase.auth.getSession())?.data?.session?.access_token);
       } catch { /* no claim */ }
-      try { await supabase.auth.signOut?.({ scope: 'local' }); } catch { /* best-effort */ }
+      const confirmed = await confirmSessionAfterRejection(supabase);
+      if (disposed || confirmed !== 'dead') return;
+      // Dead: supabase-js already purged the slot locally — never signOut here
+      // (a GoTrue /logout on a verdict, prod 2026-10-23).
       await dropProductCookieSession(keepId);
       if (!disposed) setUser(null);
     };

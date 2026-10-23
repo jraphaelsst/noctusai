@@ -8,11 +8,17 @@ import { useSupabaseAuthInit } from './auth';
 
 const SESSION = { user: { id: 'u1', email: 'a@x.com' } };
 
-function makeSupabase(getUser: () => Promise<unknown>) {
+const REFRESH_REFUSED = {
+  data: { session: null, user: null },
+  error: { name: 'AuthApiError', status: 400, code: 'refresh_token_not_found', message: 'Invalid Refresh Token' },
+};
+
+function makeSupabase(getUser: () => Promise<unknown>, refresh: unknown = REFRESH_REFUSED) {
   return {
     auth: {
       getSession: vi.fn().mockResolvedValue({ data: { session: SESSION } }),
       getUser: vi.fn(getUser),
+      refreshSession: vi.fn().mockResolvedValue(refresh),
       signOut: vi.fn().mockResolvedValue({ error: null }),
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
     },
@@ -39,12 +45,13 @@ describe('useSupabaseAuthInit identity check', () => {
     vi.useRealTimers();
   });
 
-  it('auth rejection on boot: local signOut + cookie drop + setUser(null)', async () => {
+  it('auth rejection on boot confirmed by a refused refresh: cookie drop + setUser(null), never GoTrue /logout', async () => {
     const sb = makeSupabase(async () => ({ data: { user: null }, error: apiErr(403, 'session_not_found') }));
     const setUser = vi.fn();
     renderHook(() => useSupabaseAuthInit(sb, setUser));
     await waitFor(() => expect(setUser).toHaveBeenLastCalledWith(null));
-    expect(sb.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(sb.auth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(sb.auth.signOut).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith('/api/auth/logout') && c[1]?.credentials === 'include')).toBe(true);
   });
 
@@ -53,6 +60,20 @@ describe('useSupabaseAuthInit identity check', () => {
     const setUser = vi.fn();
     renderHook(() => useSupabaseAuthInit(sb, setUser));
     await waitFor(() => expect(setUser).toHaveBeenLastCalledWith(null));
+  });
+
+  it('a rejected EXPIRED access token whose refresh succeeds keeps the session (no /logout, no Landing)', async () => {
+    const sb = makeSupabase(
+      async () => ({ data: { user: null }, error: apiErr(403, 'bad_jwt') }),
+      { data: { session: { access_token: 'renewed' }, user: {} }, error: null },
+    );
+    const setUser = vi.fn();
+    renderHook(() => useSupabaseAuthInit(sb, setUser));
+    await waitFor(() => expect(sb.auth.refreshSession).toHaveBeenCalled());
+    await act(async () => {});
+    expect(sb.auth.signOut).not.toHaveBeenCalled();
+    expect(setUser).not.toHaveBeenCalledWith(null);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([

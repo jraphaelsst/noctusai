@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { env } from './env';
 import { orgPinFetch } from './org-pin';
+import { createRefreshOwnershipGuard } from './session-guard';
 
 /**
  * Actionable message for the #1 silent-blank-page defect: the seed's
@@ -49,14 +50,22 @@ export function createProductSupabase(schema?: string) {
   if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
     throw new Error(SUPABASE_ENV_HELP);
   }
+  // One browser-owned refresh-token chain shared by every tab: a refresh refused
+  // for a token another tab already rotated must never delete that tab's live
+  // pair (session-guard.ts). Browser-only -- no localStorage, no guard.
+  const guard =
+    typeof window !== 'undefined' && window.localStorage
+      ? createRefreshOwnershipGuard(orgPinFetch, window.localStorage)
+      : null;
   return createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,
+      ...(guard ? { storage: guard.storage } : {}),
     },
     // Org-picker intent pin on PostgREST too (RLS helper narrows on it).
-    global: { fetch: orgPinFetch },
+    global: { fetch: guard ? guard.fetch : orgPinFetch },
     ...(schema ? { db: { schema } } : {}),
   });
 }

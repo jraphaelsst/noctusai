@@ -133,20 +133,22 @@ describe('a deploy window never logs the user out', () => {
 
     await expect(client.get('/api/x')).rejects.toThrow('[401]');
     await settle();
-    expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1);
+    // one refresh by the refresher (never retried) + one confirming refresh by
+    // the dead-session handler before it ends anything
+    expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(2);
     expect(onUnauthenticated).toHaveBeenCalledTimes(1);
     expect(store.setUser).toHaveBeenCalledWith(null);
   });
 
-  it('a dead session signs out LOCALLY — never revokes the user\'s other sessions (core, other products)', async () => {
+  it('a dead session never calls GoTrue /logout (signOut) — supabase-js purges its slot locally', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401));
     const supabase = fakeSupabase([refused(400)]);
-    const { client } = wire(supabase);
+    const { client, store } = wire(supabase);
 
     await expect(client.get('/api/x')).rejects.toThrow('[401]');
     await settle();
-    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
-    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).toHaveBeenCalledWith(null);
   });
 
   it('concurrent 401s share ONE refresh (single-flight)', async () => {
@@ -261,16 +263,48 @@ describe('createDeadSessionHandler', () => {
     Object.defineProperty(window, 'location', { value: { pathname: '/app' }, writable: true });
   });
 
-  it('collapses a burst of dead-session signals into one confirmation + one sign-out', async () => {
-    const supabase = fakeSupabase([]);
+  it('collapses a burst of dead-session signals into one confirmation — and never signs out upstream', async () => {
+    const supabase = fakeSupabase([refused(400, 'refresh_token_not_found')]);
     const store = fakeStore();
     const handle = createDeadSessionHandler(supabase, store.useAuthStore);
     handle(); handle(); handle();
     await settle();
     expect(supabase.auth.getUser).toHaveBeenCalledTimes(1);
-    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
-    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
     expect(store.setUser).toHaveBeenCalledTimes(1);
+    expect(store.setUser).toHaveBeenCalledWith(null);
+  });
+
+  it('getUser rejects an EXPIRED access token but the refresh succeeds: alive, user untouched', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const expired = { data: { user: null }, error: { name: 'AuthApiError', status: 403, code: 'bad_jwt', message: 'token is expired' } };
+    const supabase = fakeSupabase([ok('renewed')], expired);
+    const store = fakeStore();
+    createDeadSessionHandler(supabase, store.useAuthStore)();
+    await settle(); await settle();
+    expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a reuse refusal while ANOTHER tab holds the rotated pair is not a dead session', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const supabase = {
+      auth: {
+        ...fakeSupabase([refused(400, 'refresh_token_already_used')]).auth,
+        getSession: vi.fn()
+          .mockResolvedValueOnce({ data: { session: { access_token: 'mine', refresh_token: 'rt-1' } } })
+          .mockResolvedValue({ data: { session: { access_token: 'theirs', refresh_token: 'rt-2' } } }),
+      },
+    };
+    const store = fakeStore();
+    createDeadSessionHandler(supabase as ReturnType<typeof fakeSupabase>, store.useAuthStore)();
+    await settle(); await settle();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('GoTrue says the session is ALIVE: no sign-out, user untouched (a stray 401 must not kill every tab)', async () => {
@@ -310,9 +344,11 @@ describe('createDeadSessionHandler', () => {
 
   it('no local session at all (AuthSessionMissingError) is dead', async () => {
     const supabase = fakeSupabase([], { data: { user: null }, error: { name: 'AuthSessionMissingError', status: 400, message: 'Auth session missing!' } });
-    createDeadSessionHandler(supabase, fakeStore().useAuthStore)();
+    const store = fakeStore();
+    createDeadSessionHandler(supabase, store.useAuthStore)();
     await settle();
-    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).toHaveBeenCalledWith(null);
   });
 
   it('does nothing on a public auth route (no redirect loop)', async () => {

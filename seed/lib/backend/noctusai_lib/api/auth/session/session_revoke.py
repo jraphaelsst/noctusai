@@ -133,16 +133,19 @@ def make_default_revoke_fn(url: str, anon_key: str) -> RevokeFn:
     def _revoke(refresh_token: str) -> None:
         from supabase import create_client
 
-        client = create_client(url, anon_key)  # THROWAWAY — SEC-1
-        # Establish the session from the refresh token so sign_out has a
-        # session to revoke, then kill it upstream.
-        client.auth.refresh_session(refresh_token)
         try:
             from gotrue.types import SignOutOptions
+        except ImportError:  # supabase >= 2.10 renamed the auth sub-package
+            from supabase_auth.types import SignOutOptions
 
-            client.auth.sign_out(SignOutOptions(scope="local"))
-        except ImportError:  # pragma: no cover - older gotrue without the type
-            client.auth.sign_out()
+        client = create_client(url, anon_key)  # THROWAWAY — SEC-1
+        # Establish the session from the refresh token so sign_out has a
+        # session to revoke, then kill it upstream. ALWAYS scope "local": the
+        # SDK's default is "global", which would sign the user out of every
+        # product and device (prod 2026-10-23). A missing SignOutOptions type is
+        # an ImportError the revoker logs -- never a silent global sign-out.
+        client.auth.refresh_session(refresh_token)
+        client.auth.sign_out(SignOutOptions(scope="local"))
 
     return _revoke
 
