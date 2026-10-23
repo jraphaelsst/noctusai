@@ -733,6 +733,13 @@ def _nome_valido(nome_norm: str, *, minimo_palavras: int = 2) -> bool:
     return bool(letras)
 
 
+def nome_de_parte_valido(nome: str) -> bool:
+    """Would the current parser accept `nome` as a person's/entity's name?
+    False for a qualification word ("brasileira") or a back-reference phrase
+    ("retro nomeados") — what a stored row must lose when re-derived."""
+    return _nome_valido(" ".join(normalize(nome or "").split()), minimo_palavras=1)
+
+
 def _fim_nome(norm: str, a: int, b: int) -> int:
     m = _FIM_NOME.search(norm, a, b)
     return m.start() if m else b
@@ -1587,6 +1594,7 @@ __all__ = [
     "extrair_detalhes_ato",
     "formatar_cpf_cnpj",
     "frase_titulo_aquisitivo",
+    "nome_de_parte_valido",
     "parse_detalhes_json",
     "partes_de_bloco",
     "transmitentes_por_referencia",

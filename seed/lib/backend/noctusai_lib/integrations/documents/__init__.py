@@ -142,6 +142,7 @@ from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     extrair_detalhes_ato,
     formatar_cpf_cnpj,
     frase_titulo_aquisitivo,
+    nome_de_parte_valido,
     parse_detalhes_json,
     partes_de_bloco,
     transmitentes_por_referencia,

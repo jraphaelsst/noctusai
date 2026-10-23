@@ -50,6 +50,7 @@ from noctusai_lib.integrations.documents import (
     AtoDetalhes,
     extrair_detalhes_ato,
     formatar_cpf_cnpj,
+    nome_de_parte_valido,
     parse_detalhes_json,
 )
 from noctusai_lib.integrations.documents.matricula_ato_detalhes import ALTA, NENHUMA
@@ -201,6 +202,44 @@ def _e_humana(row: dict) -> bool:
     return row.get("origem") == ORIGEM_CONFIRMADO or bool(row.get("confirmado_por"))
 
 
+_GRUPOS_CAMPOS: tuple[str, ...] = (
+    "natureza", "data_registro", "valor", "transmitentes", "adquirentes",
+    "credor", "instrumento", "atos_referidos",
+)
+_PARTES = ("transmitentes", "adquirentes")
+
+
+def _vazio(valor: Any) -> bool:
+    return valor in (None, "", [], {}) or (
+        isinstance(valor, dict) and not any(v not in (None, "", False) for v in valor.values())
+    )
+
+
+def _campos_sem_rebaixar(atual: dict, nova: dict) -> dict:
+    """The columns to rewrite when re-deriving a MACHINE row. NEVER a
+    downgrade: a re-parse that cannot reproduce a stored value (NULL / empty)
+    leaves it alone. Allowed, per field group (value + its `_confianca`):
+    (a) fill a field that was empty, (b) replace a value with a DIFFERENT
+    non-empty parse, (c) drop party names the current validator rejects
+    (qualification words, back-references) — the only way a value empties."""
+    antes, depois = parse_detalhes_json(atual).to_json(), parse_detalhes_json(nova).to_json()
+    saida: dict[str, Any] = {}
+    for campo in _GRUPOS_CAMPOS:
+        novo, velho = depois[campo], antes[campo]
+        if novo == velho:
+            continue
+        if _vazio(novo):
+            if campo in _PARTES and velho and not all(
+                nome_de_parte_valido(p.get("nome")) for p in velho
+            ):
+                saida[campo] = nova[campo]
+                saida[f"{campo}_confianca"] = nova[f"{campo}_confianca"]
+            continue
+        saida[campo] = nova[campo]
+        saida[f"{campo}_confianca"] = nova[f"{campo}_confianca"]
+    return saida
+
+
 def rederivar_sugestoes(
     client: Any, org_id: UUID, extracao: dict, ato_rows: list[dict], existentes: dict[str, dict]
 ) -> int:
@@ -227,8 +266,8 @@ def rederivar_sugestoes(
             continue
         if nova is None:
             continue
-        campos = {k: nova[k] for k in AtoDetalhes().to_json()}
-        if parse_detalhes_json(atual).to_json() == parse_detalhes_json(campos).to_json():
+        campos = _campos_sem_rebaixar(atual, nova)
+        if not campos:
             continue
         _t(client, DETALHES_TABLE).update(campos).eq("org_id", str(org_id)).eq(
             "id", str(atual["id"])

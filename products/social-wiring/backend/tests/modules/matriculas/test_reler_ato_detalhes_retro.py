@@ -109,3 +109,24 @@ def test_chain_titularidade_reads_all_donatarios_of_the_doacao(client, scoped):
     assert [t["nome"] for t in antigos["transmitentes"]] == [
         "FULANO ORIGEM EXEMPLO", "FULANA ORIGEM EXEMPLO",
     ]
+
+
+def test_rederive_never_downgrades_a_machine_suggestion(client, scoped):
+    """A value the current parser cannot reproduce stays; a different non-null
+    parse replaces; junk names go."""
+    ext = _extracao(scoped)
+    linha = _linha(scoped, ext)
+    scoped.table(detalhes_svc.DETALHES_TABLE).update(
+        {
+            "credor": "BANCO FICTICIO S.A.",
+            "credor_confianca": "alta",
+            "data_registro": "1999-09-09",
+            "adquirentes": [{"nome": "brasileira", "cpf_cnpj": None}],
+        }
+    ).eq("id", linha["id"]).execute()
+
+    nova = _linha(scoped, ext)
+
+    assert nova["credor"] == "BANCO FICTICIO S.A."  # parser finds none: kept
+    assert str(nova["data_registro"])[:10] == "1988-02-12"  # different non-null parse
+    assert [p["nome"] for p in nova["adquirentes"]] == ["ANA QUARTA FICTICIA"]

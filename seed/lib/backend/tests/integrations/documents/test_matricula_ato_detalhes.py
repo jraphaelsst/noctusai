@@ -1149,3 +1149,10 @@ def test_vendido_ao_comprador_e_sua_mulher():
         "EXEMPLO, brasileira, do lar, pelo valor de R$ 10,00."
     )
     assert [p.nome for p in d.adquirentes] == ["FULANO COMPRADOR EXEMPLO", "FULANA COMPRADORA EXEMPLO"]
+
+
+def test_nome_de_parte_valido_rejects_qualifications_and_back_references():
+    from noctusai_lib.integrations.documents import nome_de_parte_valido
+
+    assert nome_de_parte_valido("FULANO EXEMPLO DA SILVA")
+    assert not any(nome_de_parte_valido(n) for n in ("brasileira", "retro nomeados", "quali-\nficados"))
