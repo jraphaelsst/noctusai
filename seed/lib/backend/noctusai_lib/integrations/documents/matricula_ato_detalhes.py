@@ -721,8 +721,9 @@ def _nome_valido(nome_norm: str, *, minimo_palavras: int = 2) -> bool:
         return False
     # A dangling hyphen ("quali-" + "ficados") is a wrapped word, and a
     # qualification/back-reference word as the first token is not a name.
-    if _qualificacao(palavras[0]) or all(
-        _qualificacao(p) or p in {"E", "DE", "DA", "DO", "OU"} for p in palavras
+    coladas = re.sub(r"-\s+", "", valor).split()
+    if _qualificacao(coladas[0]) or all(
+        _qualificacao(p) or p in {"E", "DE", "DA", "DO", "OU"} for p in coladas
     ):
         return False
     if _PALAVRAS_DE_PROSA.intersection(palavras):
