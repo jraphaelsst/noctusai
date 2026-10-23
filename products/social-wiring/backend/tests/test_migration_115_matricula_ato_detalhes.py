@@ -48,11 +48,29 @@ def test_is_idempotent(code: str):
     assert "CREATE UNIQUE INDEX IF NOT EXISTS" in code
 
 
+def _natureza_check(flat: str) -> list[str] | None:
+    m = re.search(r"CHECK \( ?natureza IS NULL OR natureza IN \(([^)]*)\) ?\)", flat)
+    return [v.strip().strip("'") for v in m.group(1).split(",")] if m else None
+
+
 def test_natureza_check_mirrors_the_seed_vocabulary(flat: str):
-    m = re.search(r"CHECK \(natureza IS NULL OR natureza IN \(([^)]*)\)\)", flat)
-    assert m, "natureza CHECK missing"
-    declarados = [v.strip().strip("'") for v in m.group(1).split(",")]
-    assert declarados == list(NATUREZAS_ATO)
+    """115 declared the CHECK; later migrations (303) re-declare it wider. The
+    vocabulary the DB enforces is the LAST declaration, so that is the one
+    that must mirror the seed."""
+    assert _natureza_check(flat), "natureza CHECK missing in 115"
+    ultimo = None
+    for arquivo in sorted(
+        MIGRATION.parent.glob("*.sql"), key=lambda f: int(f.name.split("_")[0])
+    ):
+        texto = " ".join(
+            l for l in arquivo.read_text(encoding="utf-8").splitlines()
+            if not l.strip().startswith("--")
+        )
+        if "matricula_ato_detalhes" in texto:
+            achado = _natureza_check(" ".join(texto.split()))
+            if achado:
+                ultimo = achado
+    assert ultimo == list(NATUREZAS_ATO)
 
 
 def test_every_field_has_a_confidence_column(flat: str):
