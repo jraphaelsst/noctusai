@@ -87,3 +87,25 @@ def test_rederivar_do_documento_heals_and_spares_human_rows(client, scoped):
     ).eq("id", linha["id"]).execute()
     assert detalhes_svc.rederivar_do_documento(scoped, ORG, doc_id) == 0
     assert _linha(scoped, ext)["data_registro"] is None
+
+
+def test_chain_titularidade_reads_all_donatarios_of_the_doacao(client, scoped):
+    texto = (
+        "MATRÍCULA Nº 21.748\nFICHA 01\nIMÓVEL: Casa ficticia da Rua dos Exemplos.\n"
+        "R-4/21.748 - Em 12/02/1988. DOAÇÃO. Os proprietários FULANO ORIGEM EXEMPLO e sua "
+        "mulher FULANA ORIGEM EXEMPLO, transmitiram, a titulo de DOAÇÃO, o imóvel desta--\n"
+        "matricula, à ANA QUARTA FICTICIA, nascido aos 31/10/77,\nBRUNO QUARTO FICTICIO , "
+        "nascido aos 19/09/79, e CARLA QUARTA FICTICIA, nascido aos 28/04/1.981, todos "
+        "brasileiros, menores\nimpúberes, representados por seus\npais, os doadores, supra "
+        "qualificados em adiantamento de -\nlegítima.\n"
+    )
+    seed(scoped, registry=[registry_row()], extracoes=[extracao_row(texto=texto)])
+
+    out = titulo_service.titularidade_atual(scoped, ORG, CODIGO)
+    assert [p["nome"] for p in out["proprietarios"]] == [
+        "ANA QUARTA FICTICIA", "BRUNO QUARTO FICTICIO", "CARLA QUARTA FICTICIA",
+    ]
+    antigos = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=date(2026, 10, 23))
+    assert [t["nome"] for t in antigos["transmitentes"]] == [
+        "FULANO ORIGEM EXEMPLO", "FULANA ORIGEM EXEMPLO",
+    ]

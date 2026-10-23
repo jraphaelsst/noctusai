@@ -631,7 +631,8 @@ _FIM_BLOCO = re.compile(
 )
 
 _SEPARA_PESSOA = re.compile(
-    r";|\s+E\s+(?:SUA|SEU)\s+(?:MULHER|MARIDO|ESPOSA|ESPOSO|COMPANHEIR[OA]|CONJUGE)(?![A-Z])\s*,?"
+    r";|\s*,\s*NASCID[OA]S?\s+(?:AOS?|EM)\s+[\d./]+\s*,"
+    r"|\s+E\s+(?:SUA|SEU)\s+(?:MULHER|MARIDO|ESPOSA|ESPOSO|COMPANHEIR[OA]|CONJUGE)(?![A-Z])\s*,?"
     r"|(?:^|\s)\(?\d{1,2}\)\s+"
 )
 
@@ -673,7 +674,7 @@ _NAO_NOME = frozenset(
         # start the escritura/instrumento preamble that the unlabelled
         # TRANSMITENTE narrative fallback (`_partes`) walks across before
         # reaching the first party's own numbered/semicolon-delimited block.
-        "POR", "PELO", "PELA", "CONFORME",
+        "POR", "PELO", "PELA", "CONFORME", "TODOS", "TODAS", "AMBOS", "AMBAS",
         # A role word / clause opener is not a party ("responsabilidade do
         # comprador pela implantação de tanque séptico" read as an adquirente
         # of an AV de construção — live deal 857, 2026-10-21).
@@ -814,7 +815,7 @@ _VERBOS_TRANSMISSAO = (
 )
 
 _NARRATIVA_ADQUIRENTE = _rx(
-    rf"(?:{_VERBOS_TRANSMISSAO})(?:\s+[A-Z]+){{0,6}}?\s+(?:A|AO|AOS|AS|PARA)"
+    rf"(?:{_VERBOS_TRANSMISSAO})(?:[\s,]+[A-Z\-]+){{0,14}}?[\s,]+(?:A|AO|AOS|AS|PARA)(?![A-Z])(?!\s+TITULO)"
 )
 
 #: The FINITE / participle verbs that can have the seller as their subject —

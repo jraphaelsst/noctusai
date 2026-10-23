@@ -1121,3 +1121,31 @@ def test_partes_de_bloco_reads_abertura_proprietarios():
     ]
     assert nomes == ["FULANO EXEMPLO", "CICLANA EXEMPLO"]
     assert partes_de_bloco("") == ()
+
+
+DOACAO_VARIOS_DONATARIOS = (
+    "R-4 - 12/02/1988 - DOAÇÃO - Pelo instrumento particular de 28/01/1988, os "
+    "proprietários FULANO ORIGEM EXEMPLO e sua mulher FULANA ORIGEM EXEMPLO, "
+    "transmitiram, a titulo de DOAÇÃO, o imóvel desta--\nmatricula, à ANA QUARTA "
+    "FICTICIA, nascido aos 31/10/77,\nBRUNO QUARTO FICTICIO , nascido aos 19/09/79, e "
+    "CARLA QUARTA FICTICIA, nascido aos 28/04/1.981, todos brasileiros, menores\n"
+    "impúberes, domiciliados e residentes na Rua dos Exemplos, nêste ato representados "
+    "por seus\npais, os doadores, supra qualificados em adiantamento de -\nlegítima."
+)
+
+
+def test_doacao_with_several_donatarios_across_wraps_and_birth_qualifiers():
+    d = extrair_detalhes_ato(DOACAO_VARIOS_DONATARIOS)
+    assert [p.nome for p in d.adquirentes] == [
+        "ANA QUARTA FICTICIA", "BRUNO QUARTO FICTICIO", "CARLA QUARTA FICTICIA",
+    ]
+    assert [p.nome for p in d.transmitentes] == ["FULANO ORIGEM EXEMPLO", "FULANA ORIGEM EXEMPLO"]
+
+
+def test_vendido_ao_comprador_e_sua_mulher():
+    d = extrair_detalhes_ato(
+        "R-2 - 01/01/1990 - VENDA E COMPRA. O imóvel foi vendido ao FULANO COMPRADOR "
+        "EXEMPLO, brasileiro, casado, empresário, e sua mulher FULANA COMPRADORA "
+        "EXEMPLO, brasileira, do lar, pelo valor de R$ 10,00."
+    )
+    assert [p.nome for p in d.adquirentes] == ["FULANO COMPRADOR EXEMPLO", "FULANA COMPRADORA EXEMPLO"]
