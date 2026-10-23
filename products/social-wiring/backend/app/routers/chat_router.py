@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 import redis
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.integrations.redis import make_redis_client
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -221,7 +222,7 @@ async def chat_message(
     file_id without the user having to copy/paste it.
     """
     normalized_session = _ensure_web_session(session_id)
-    intake = _build_intake()
+    intake = await run_blocking(_build_intake)
     file_id: str | None = None
     extra_context: str | None = None
 
@@ -370,7 +371,7 @@ def chat_history(session_id: str) -> ChatHistoryResponse:
 @router.post("/reset/{session_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def chat_reset(session_id: str) -> None:
     normalized = _ensure_web_session(session_id)
-    intake = _build_intake()
+    intake = await run_blocking(_build_intake)
     chatbot = ChatbotService(
         redis_client=intake.redis_client,
         intake_service=intake,
@@ -378,7 +379,7 @@ async def chat_reset(session_id: str) -> None:
         model=settings.openai_chat_model,
         api_key=settings.openai_api_key or "noop",
     )
-    chatbot.reset_history()
+    await run_blocking(chatbot.reset_history)
     await intake.cancel_pending_upload(normalized)
 
 

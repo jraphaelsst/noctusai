@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.session.scopes import ADMIN_ORG_ROLES, resolve_org_membership
 from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.config.product_urls import resolve_product_url
@@ -727,13 +728,16 @@ async def apagar_dados_do_chat(
         agents_ok = False
         logger.error("julia: deletion for chat=%s -- no agents client; agents half NOT done", ref_log(chat_id))
     else:
-        refs = [
-            str(c["id"]) for c in (
-                client.table("julia_contatos").select("id")
-                .eq("org_id", str(connection.org_id)).eq("connection_id", str(connection.id)).in_("chat_id", alias)
-                .execute().data or []
-            )
-        ]
+        def _ler_refs() -> list[str]:
+            return [
+                str(c["id"]) for c in (
+                    client.table("julia_contatos").select("id")
+                    .eq("org_id", str(connection.org_id)).eq("connection_id", str(connection.id)).in_("chat_id", alias)
+                    .execute().data or []
+                )
+            ]
+
+        refs = await run_blocking(_ler_refs)
         try:
             for ref in refs:
                 await agents_client.apagar_lead(ref)
@@ -748,35 +752,39 @@ async def apagar_dados_do_chat(
             agents_ok = False
             logger.error("julia: agents deletion failed for chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
 
-    removed = 0
-    for col in ("chat_id", "raw_sender"):
-        rows = (
-            client.table("conversation_messages").delete()
-            .eq("connection_id", str(connection.id)).in_(col, alias).execute().data or []
-        )
-        removed += len(rows)
+    def _apagar_no_sw() -> tuple[int, int, int]:
+        removed = 0
+        for col in ("chat_id", "raw_sender"):
+            rows = (
+                client.table("conversation_messages").delete()
+                .eq("connection_id", str(connection.id)).in_(col, alias).execute().data or []
+            )
+            removed += len(rows)
 
-    contatos = 0
-    d = phone_digits(chat_id)
-    if d:
-        rows = (
-            client.table("contacts").delete()
-            .eq("org_id", str(connection.org_id)).eq("source", "whatsapp").eq("whatsapp_phone", d)
-            .execute().data or []
-        )
-        contatos = len(rows)
+        contatos = 0
+        d = phone_digits(chat_id)
+        if d:
+            rows = (
+                client.table("contacts").delete()
+                .eq("org_id", str(connection.org_id)).eq("source", "whatsapp").eq("whatsapp_phone", d)
+                .execute().data or []
+            )
+            contatos = len(rows)
 
-    client.table("whatsapp_chats").delete().eq("connection_id", str(connection.id)).eq(
-        "org_id", str(connection.org_id)
-    ).in_("chat_id", alias).execute()
+        client.table("whatsapp_chats").delete().eq("connection_id", str(connection.id)).eq(
+            "org_id", str(connection.org_id)
+        ).in_("chat_id", alias).execute()
 
-    # Julia foundation rows (contato + episodes + applied actions + events): the data subject's
-    # right covers them too. Not swallowed -- a failure here must be loud, the request is not done.
-    julia_contatos = julia_contatos_service.apagar_do_chat(client, connection.org_id, connection.id, alias)
+        # Julia foundation rows (contato + episodes + applied actions + events): the data subject's
+        # right covers them too. Not swallowed -- a failure here must be loud, the request is not done.
+        julia_contatos = julia_contatos_service.apagar_do_chat(client, connection.org_id, connection.id, alias)
 
-    if buffer is not None:
-        for a in alias:
-            buffer.clear_conversation(lead_key(connection.id, a))
+        if buffer is not None:
+            for a in alias:
+                buffer.clear_conversation(lead_key(connection.id, a))
+        return removed, contatos, julia_contatos
+
+    removed, contatos, julia_contatos = await run_blocking(_apagar_no_sw)
 
     logger.info(
         "julia: deletion on request done conn=%s chat=%s sw_messages=%s sw_contacts=%s julia_contatos=%s agents_ok=%s", connection.id, ref_log(chat_id), removed, contatos, julia_contatos, agents_ok)

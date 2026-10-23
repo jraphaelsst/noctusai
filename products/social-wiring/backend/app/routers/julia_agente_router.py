@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.session import ProductTokenAdmin, make_product_token_admin, require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
@@ -337,7 +338,7 @@ async def put_token(
     ``PUT /api/channels/ferramentas-token`` -- so the owner never pastes a second token.
     A failure there still answers 204 (the channel token IS stored and Julia answers):
     the page shows ``Ferramentas da Julia indisponíveis — reenvie o token`` via ``erro``."""
-    user, org_id = _require_admin(auth, request, "O token do agente")
+    user, org_id = await run_blocking(_require_admin, auth, request, "O token do agente")
     token = payload.token.strip()
     agents_client = build_client(token)
     try:
@@ -352,14 +353,17 @@ async def put_token(
         raise AppException(
             "agents_indisponivel", "Não foi possível validar o token com o produto agents agora.", status_code=502
         ) from exc
-    try:
-        store = api_keys_store.build_api_key_store(encryption_key=cfg.encryption_key)
-    except EncryptionNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    api_keys_store.put_api_key(store, str(org_id), julia.AGENTS_KEY_NAME, token)
-    julia.limpar_erro_link(org_id, cfg=cfg)
+    def _guardar_token() -> None:
+        try:
+            store = api_keys_store.build_api_key_store(encryption_key=cfg.encryption_key)
+        except EncryptionNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        api_keys_store.put_api_key(store, str(org_id), julia.AGENTS_KEY_NAME, token)
+        julia.limpar_erro_link(org_id, cfg=cfg)
+
+    await run_blocking(_guardar_token)
     if not await _entregar_token_ferramentas(token_admin, agents_client, org_id, getattr(user, "id", None)):
-        julia.registrar_erro_link(org_id, "ferramentas_indisponiveis", cfg=cfg)
+        await run_blocking(julia.registrar_erro_link, org_id, "ferramentas_indisponiveis", cfg=cfg)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -385,13 +389,15 @@ async def _entregar_token_ferramentas(
     """Mint the tools token, hand it to agents, retire the previous ones. True = agents has it.
     Never raises: every failure is logged and ends in False (the caller records the page error).
     A token that could not be delivered is revoked at once -- no orphan secret stays valid."""
-    try:
-        anteriores = _tokens_ferramentas_ativos(org_id)
-        minted = token_admin.mint(
+    def _emitir() -> tuple[list[UUID], Any]:
+        return _tokens_ferramentas_ativos(org_id), token_admin.mint(
             _TOOLS_TOKEN_SCHEMA, org_id=org_id, label=TOOLS_TOKEN_LABEL, scopes=[TOOLS_TOKEN_SCOPE],
             expires_at=datetime.now(timezone.utc) + TOOLS_TOKEN_TTL, issuer=TOOLS_TOKEN_ISSUER,
             minted_by=_uuid_ou_none(minted_by),
         )
+
+    try:
+        anteriores, minted = await run_blocking(_emitir)
     except Exception:
         logger.exception("julia: could not mint the tools token for org=%s", org_id)
         return False
@@ -400,13 +406,13 @@ async def _entregar_token_ferramentas(
     except Exception as exc:  # AgentsClientError or anything the transport raises
         logger.error("julia: agents refused the tools token org=%s (%s)", org_id, type(exc).__name__)
         try:
-            token_admin.revoke(_TOOLS_TOKEN_SCHEMA, minted.info.id, org_id=org_id)
+            await run_blocking(token_admin.revoke, _TOOLS_TOKEN_SCHEMA, minted.info.id, org_id=org_id)
         except Exception:
             logger.exception("julia: could not revoke the undelivered tools token org=%s id=%s", org_id, minted.info.id)
         return False
     for antigo in anteriores:
         try:
-            token_admin.revoke(_TOOLS_TOKEN_SCHEMA, antigo, org_id=org_id)
+            await run_blocking(token_admin.revoke, _TOOLS_TOKEN_SCHEMA, antigo, org_id=org_id)
         except Exception:
             logger.exception("julia: could not retire the previous tools token org=%s id=%s", org_id, antigo)
     return True
@@ -427,12 +433,12 @@ async def patch_chat_agente(
     this calls `PATCH /threads/{id}/participantes/{agent}` with the SW user as the actor, then mirrors agents' answer
     onto the chat row for the list chips. SW flips NO local flag on its own: when agents cannot be reached the toggle
     fails (502) and the shown state does not change."""
-    user, org_id = _require_admin(auth, request, "A Julia")
-    record = _record_or_404(store, connection_id, org_id)
-    client = client_factory(org_id)
+    user, org_id = await run_blocking(_require_admin, auth, request, "A Julia")
+    record = await run_blocking(_record_or_404, store, connection_id, org_id)
+    client = await run_blocking(client_factory, org_id)
     if client is None:
         raise AppException("agents_nao_configurado", "O produto agents ainda não está configurado.", status_code=409)
-    chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
+    chat_store = await run_blocking(lambda: WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id))
     agent_key = record.agente_leads_key or julia.DEFAULT_AGENT_KEY
     try:
         parte = await julia_thread_service.alternar_conversa(
@@ -448,7 +454,11 @@ async def patch_chat_agente(
         logger.error("julia: pause toggle failed at agents (%s) conn=%s", type(exc).__name__, connection_id)
         raise AppException("agents_indisponivel", "Não foi possível falar com o agente agora. Tente novamente.", status_code=502) from exc
     try:  # contract 0.2: a pause/resume invalidates every job queued for this contato
-        julia_contatos_service.bump_gen_do_chat(get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id)
+        await run_blocking(
+            lambda: julia_contatos_service.bump_gen_do_chat(
+                get_scoped_admin_client("social_wiring"), org_id, connection_id, chat_id
+            )
+        )
     except Exception:
         logger.exception("julia: gen bump on pause failed conn=%s chat=%s (agents HAS the new state)", connection_id, chat_id)
     pausado = parte.estado == "pausado"
@@ -494,12 +504,14 @@ async def post_apagar_dados(
 ) -> dict[str, Any]:
     """Deletion on request for a chat (M5), for a human who received the request
     through a handoff. Same hook the lead worker runs on "apagar meus dados"."""
-    _user, org_id = _require_admin(auth, request, "A exclusão de dados")
-    record = _record_or_404(store, connection_id, org_id)
+    _user, org_id = await run_blocking(_require_admin, auth, request, "A exclusão de dados")
+    record = await run_blocking(_record_or_404, store, connection_id, org_id)
     module = get_conversation_module()
+    scoped_client = await run_blocking(get_scoped_admin_client, "social_wiring")
+    agents_client = await run_blocking(client_factory, org_id)
     res = await julia.apagar_dados_do_chat(
-        client=get_scoped_admin_client("social_wiring"), connection=record, chat_id=chat_id,
-        agents_client=client_factory(org_id), agent_key=record.agente_leads_key or julia.DEFAULT_AGENT_KEY,
+        client=scoped_client, connection=record, chat_id=chat_id,
+        agents_client=agents_client, agent_key=record.agente_leads_key or julia.DEFAULT_AGENT_KEY,
         buffer=module.buffer if module else None,
     )
     return {"data": {

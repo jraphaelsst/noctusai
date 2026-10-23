@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.session import require_org_admin_for
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
@@ -108,9 +109,9 @@ async def renotificar(
     auth: tuple = Depends(get_current_user_org),
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
-    _admin(auth, request, "O reenvio da notificação de opt-out")
+    await run_blocking(_admin, auth, request, "O reenvio da notificação de opt-out")
     org = _org(auth)
-    agents = svc.exigir_agents(client_factory, org)
+    agents = await run_blocking(svc.exigir_agents, client_factory, org)
     return {"data": await svc.renotificar(agents, get_core_client(), org, evento_id, ator_user_id=_uid(auth))}
 
 
@@ -137,10 +138,10 @@ async def nao_contatar(
     client: Any = Depends(get_opt_outs_client),
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
-    _admin(auth, request, "Marcar um lead como não contatar")
+    await run_blocking(_admin, auth, request, "Marcar um lead como não contatar")
     org = _org(auth)
     contato = (await anyio.to_thread.run_sync(lambda: julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)))
-    agents = svc.exigir_agents(client_factory, org)
+    agents = await run_blocking(svc.exigir_agents, client_factory, org)
     return {"data": await svc.marcar_nao_contatar(client, agents, org, contato, motivo=corpo.motivo, ator_user_id=_uid(auth))}
 
 
@@ -153,10 +154,10 @@ async def reativar(
     client: Any = Depends(get_opt_outs_client),
     client_factory=Depends(get_agents_client_factory),
 ) -> dict[str, Any]:
-    _admin(auth, request, "A reativação do atendimento de um lead")
+    await run_blocking(_admin, auth, request, "A reativação do atendimento de um lead")
     org = _org(auth)
     contato = (await anyio.to_thread.run_sync(lambda: julia_acesso.exigir_contato(client, julia_acesso.contexto(auth, request), contato_id)))
-    agents = svc.exigir_agents(client_factory, org)
+    agents = await run_blocking(svc.exigir_agents, client_factory, org)
     return {"data": await svc.reativar(agents, contato, motivo=corpo.motivo, ator_user_id=_uid(auth))}
 
 
