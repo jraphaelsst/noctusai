@@ -51,7 +51,9 @@ export function useImovelProprietarios(codigo: string | undefined) {
   return useQuery({
     queryKey: [...KEY, codigo ?? "__none__", "proprietarios"],
     queryFn: () =>
-      api.get<ItemsTotal<ProprietarioDoImovel>>(`${base(codigo as string)}/proprietarios`),
+      api.get<ItemsTotal<ProprietarioDoImovel> & { total_matricula?: number }>(
+        `${base(codigo as string)}/proprietarios`,
+      ),
     enabled: !!codigo,
   });
 }

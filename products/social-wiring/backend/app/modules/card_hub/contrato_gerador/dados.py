@@ -428,9 +428,10 @@ class Imovel:
     #: [§6.1 #11] The confirmed creditor of the ônus (`imovel_dados.onus_credor`).
     onus_credor: Optional[str] = None
     #: [Q9] Registration date of the LAST transfer of ownership on the
-    #: matrícula (compra e venda, permuta, dação em pagamento, arrematação —
-    #: `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA`; NOT doação/partilha,
-    #: see that module's docstring). < 5 years before the assinatura → the
+    #: matrícula (any transmissão of propriedade — compra e venda, doação,
+    #: permuta, partilha, dação, arrematação, adjudicação, integralização:
+    #: `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA`, owner 2026-10-22; the
+    #: act may live on a closed predecessor matrícula). < 5 years before the assinatura → the
     #: previous owner(s) must present certidões. `None` = unknown (faltando)
     #: UNLESS `ultima_transferencia_sem_registro_confirmado` below is set.
     ultima_transferencia_em: Optional[date] = None

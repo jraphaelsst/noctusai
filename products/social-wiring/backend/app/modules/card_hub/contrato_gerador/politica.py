@@ -179,7 +179,7 @@ class Politica:
     # `nula` / older baixadas are omitted.
     pj_baixada_janela_anos: int = 5
     # [Q9] Answered: when the last registered transfer of ownership of the
-    # imóvel (compra e venda, permuta, dação em pagamento, arrematação —
+    # imóvel (any transmissão of propriedade, doação included —
     # `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA`) happened less than
     # this many years before the assinatura, the previous owner(s) present
     # full certidões too.

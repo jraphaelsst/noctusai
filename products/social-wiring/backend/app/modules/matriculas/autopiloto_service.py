@@ -117,12 +117,11 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents import Instrumento, frase_titulo_aquisitivo
-
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
+from app.modules.matriculas import cadeia_dominial
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas import preenchimento_service
 from app.modules.matriculas import titulo_service as titulo_svc
@@ -216,7 +215,9 @@ def _confirmar_quinteto(
     return CONFIRMADO_AUTOMATICO
 
 
-def _frase_titulo_atual(linha: dict, eid: str, atos: list[dict], detalhes: dict) -> Optional[str]:
+def _frase_titulo_atual(
+    linha: dict, eid: str, atos: list[dict], detalhes: dict, origem: Optional[str] = None
+) -> Optional[str]:
     """The suggestion the card shows RIGHT NOW: the título phrase over the
     pointed act's current details (same derivation as
     `preenchimento_service.preencher_sincrono` and `titulo_service.obter_titulo`)."""
@@ -226,18 +227,14 @@ def _frase_titulo_atual(linha: dict, eid: str, atos: list[dict], detalhes: dict)
         (a for a in atos if str(a["id"]) == str(linha.get("titulo_aquisitivo_ato_id"))), None
     )
     det = detalhes.get(str(ato["id"])) if ato else None
-    if not (ato and det and ato.get("numero") is not None):
+    if not (ato and det):
         return None
-    return frase_titulo_aquisitivo(
-        Instrumento.from_json(det.get("instrumento")),
-        kind=ato["kind"],
-        numero=int(ato["numero"]),
-    )
+    return cadeia_dominial.frase_titulo(ato, det, origem)
 
 
 def _alinhar_titulo_texto(
     client: Any, org_id: UUID, codigo: str, eid: str, atos: list[dict], detalhes: dict,
-    *, inequivoco: bool, motivo: str,
+    *, inequivoco: bool, motivo: str, origem: Optional[str] = None,
 ) -> str:
     """The título wording, never weaker than its own suggestion (owner
     2026-10-06: an "ia" confirmation kept "por instrumento particular,
@@ -260,7 +257,7 @@ def _alinhar_titulo_texto(
     atual = linha.get(chave)
     if not atual:
         return SEM_VALOR
-    frase = _frase_titulo_atual(linha, eid, atos, detalhes)
+    frase = _frase_titulo_atual(linha, eid, atos, detalhes, origem)
     igual = bool(frase) and campos_svc.iguais(campo, atual, frase)
     auto_confirmado = (
         linha.get(campo.origem) == ORIGEM_AUTOPILOTO
@@ -526,6 +523,10 @@ def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     linha = dados_service.linha(client, org_id, codigo) or {}
 
     campos: dict[str, str] = {}
+    # A matrícula CLOSED by transfer (migration 301) is a predecessor: it is a
+    # chain source for the título only, never the imóvel's current reading.
+    predecessora = cadeia_dominial.extracao_e_predecessora(client, org_id, extracao)
+    origem = cadeia_dominial.matricula_origem(client, org_id, extracao)
 
     def _tentar(chave: str, *, inequivoco: bool, motivo: str) -> None:
         try:
@@ -554,7 +555,10 @@ def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     # 1. Cartório — see module docstring: `find_cartorio` only ever fills
     #    the field at its own "alta" confidence, so this is unambiguous by
     #    construction whenever there is a value at all.
-    _tentar("numero_registro_imoveis", inequivoco=True, motivo="cabecalho com um unico cartorio")
+    if not predecessora:
+        _tentar(
+            "numero_registro_imoveis", inequivoco=True, motivo="cabecalho com um unico cartorio"
+        )
 
     # 2. Título aquisitivo — the act pointer, then its confirmed wording.
     titulo_ok, motivo_titulo = _titulo_inequivoco(sugestoes["titulo_aquisitivo"], linha, eid)
@@ -567,7 +571,7 @@ def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     try:
         campos["titulo_aquisitivo_texto"] = _alinhar_titulo_texto(
             client, org_id, codigo, eid, atos, detalhes,
-            inequivoco=titulo_ok, motivo=motivo_titulo,
+            inequivoco=titulo_ok, motivo=motivo_titulo, origem=origem,
         )
     except Exception as exc:  # noqa: BLE001 - per-field isolation; logged loudly
         logger.error(
@@ -578,12 +582,13 @@ def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
 
     # 3. Ônus — the act pointer(s), the situação, and the credor — all
     #    share the SAME "no cancellations ambiguity" bar.
-    situacao = preenchimento_service.derivar_situacao_onus(atos, detalhes, sugestoes["onus"])
-    onus_ok, motivo_onus = _onus_inequivoco(situacao)
-    _tentar_pointer("onus_fonte", inequivoco=onus_ok, motivo=motivo_onus)
-    linha = dados_service.linha(client, org_id, codigo) or {}
-    _tentar("situacao_onus", inequivoco=onus_ok, motivo=motivo_onus)
-    _tentar("onus_credor", inequivoco=onus_ok, motivo=motivo_onus)
+    if not predecessora:
+        situacao = preenchimento_service.derivar_situacao_onus(atos, detalhes, sugestoes["onus"])
+        onus_ok, motivo_onus = _onus_inequivoco(situacao)
+        _tentar_pointer("onus_fonte", inequivoco=onus_ok, motivo=motivo_onus)
+        linha = dados_service.linha(client, org_id, codigo) or {}
+        _tentar("situacao_onus", inequivoco=onus_ok, motivo=motivo_onus)
+        _tentar("onus_credor", inequivoco=onus_ok, motivo=motivo_onus)
 
     # 4. The contract's default quote — only once the título is resolved
     #    (auto or human) against THIS extraction.

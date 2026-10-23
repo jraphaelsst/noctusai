@@ -49,16 +49,20 @@ unknown, `exige_certidoes` is TRUE and `data_desconhecida` says why: an
 unreadable date must lead to asking for the certidões, never to silently
 waiving them.
 
-[Owner directive, 2026-09-22] "The last registered compra e venda" was too
-narrow: a matrícula whose last transfer is a PERMUTA (or a dação em
-pagamento / arrematação) could never satisfy this. `NATUREZAS_ULTIMA_
-TRANSFERENCIA` widens it to every nature that moves ownership for
-consideration — still NOT the seed's full `NATUREZAS_TRANSFERENCIA` (which
-also counts `doacao`/`partilha`): re-classifying an act as `doacao` is how
-an operator tells this feature "this did not transfer for consideration, do
-not treat it as the sale" (`test_the_confirmed_nature_decides_what_a_sale_
-is`), so a donation or an inheritance partition must not silently
-substitute for it either.
+[Owner directive, 2026-10-22] ANY transmissão of propriedade counts as "the
+last transfer" — `NATUREZAS_ULTIMA_TRANSFERENCIA` IS the seed's
+`NATUREZAS_TRANSFERENCIA` (compra e venda, doação, permuta, partilha/herança,
+dação, arrematação, adjudicação, integralização). The previous, narrower
+rule (2026-09-22: consideration-only) read a 1985 compra e venda as the last
+transfer of an imóvel whose true last one was a 1988 DOAÇÃO to the current
+owners; the antigos proprietários of a doação are the doadores. An operator
+who wants a donation NOT to count uses the manual override ("não consta
+transferência registrada"), not a re-classification.
+
+When the current matrícula carries no transmission act of its own (it opens
+with "REGISTRO ANTERIOR: R-04/M-21.748 …"), the derivation continues on the
+imóvel's CLOSED predecessor matrículas (`cadeia_dominial`) instead of
+answering "nenhum ato".
 
 🔴 LGPD: every route here that returns details without the act text logs
 `detalhes_view` (`ato_detalhes_service.log_leitura_detalhes`) before answering.
@@ -70,16 +74,13 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents import (
-    Instrumento,
-    NATUREZAS_TRANSFERENCIA,
-    frase_titulo_aquisitivo,
-)
+from noctusai_lib.integrations.documents import NATUREZAS_TRANSFERENCIA
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.modules.imovel_hub import dados_service, vinculo_legal
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
+from app.modules.matriculas import cadeia_dominial
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.services import table_reads
 from app.services.documento_store import now_iso, today
@@ -89,16 +90,9 @@ ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS = 5
 NATUREZA_COMPRA_E_VENDA = "compra_e_venda"
 
 #: [Q9] Natures that count as "the imóvel changed hands" for the previous-
-#: owner certidões rule — a SUBSET of the seed's broader
-#: `NATUREZAS_TRANSFERENCIA` (which also includes `doacao`/`partilha`; see
-#: this module's docstring for why those two stay excluded here). Migration
-#: 152's manual-override `natureza` select offers exactly these 4.
-NATUREZAS_ULTIMA_TRANSFERENCIA: frozenset[str] = NATUREZAS_TRANSFERENCIA & {
-    NATUREZA_COMPRA_E_VENDA,
-    "permuta",
-    "dacao",
-    "arrematacao",
-}
+#: owner certidões rule: every transmissão of propriedade the seed types
+#: (owner 2026-10-22 — see this module's docstring).
+NATUREZAS_ULTIMA_TRANSFERENCIA: frozenset[str] = NATUREZAS_TRANSFERENCIA
 
 #: Why a GET has no suggestion — a machine-readable reason for the FE.
 MOTIVO_SEM_TITULO = "sem_titulo_confirmado"
@@ -157,7 +151,7 @@ _TIPOS_INSTRUMENTO = (
     "adjudicacao", "carta de", "contrato", "sentenca", "mandado", "permuta",
 )
 _LIVRO_RE = re.compile(
-    r"\blivro\s*(?:n[o.º°]{0,2}\s*)?([0-9][\w./-]*?)(?=[\s,;]|\.(?:\s|$)|$)", re.I
+    r"\b(?:livro|l[º°])\.?\s*(?:n[o.º°]{0,2}\s*)?([0-9][\w./-]*?)(?=[\s,;]|\.(?:\s|$)|$)", re.I
 )
 _FOLHAS_RE = re.compile(
     r"\b(?:fls?|folhas?)\b\.?\s*(?:n[o.º°]{0,2}\s*)?(\d+(?:\s*(?:/|-|a|e)\s*\d+)?)", re.I
@@ -176,7 +170,20 @@ _CIDADE_RE = re.compile(
 #: contract (`divergencias[].fato`) — each is judged ON ITS OWN (owner
 #: 2026-10-06: "one check doesn't fail others when others are ok").
 FATOS_TITULO: tuple[str, ...] = (
-    "data", "registro", "tipo", "livro", "folhas", "tabelionato", "cidade",
+    "data", "registro", "natureza", "tipo", "livro", "folhas", "tabelionato", "cidade",
+)
+
+#: What a título phrase says about the transaction itself -> canonical key.
+_NATUREZAS_NO_TEXTO: tuple[tuple[str, str], ...] = (
+    ("doacao", "doacao"),
+    ("venda e compra", "compra_e_venda"),
+    ("compra e venda", "compra_e_venda"),
+    ("permuta", "permuta"),
+    ("dacao", "dacao"),
+    ("arrematacao", "arrematacao"),
+    ("adjudicacao", "adjudicacao"),
+    ("integralizacao", "integralizacao"),
+    ("partilha", "partilha"),
 )
 
 
@@ -212,6 +219,9 @@ def _leituras_do_titulo(texto: Optional[str]) -> dict[str, _Leituras]:
     for t in _TIPOS_INSTRUMENTO:
         if t in norm:
             _add("tipo", t, t)
+    for termo, chave in _NATUREZAS_NO_TEXTO:
+        if termo in norm:
+            _add("natureza", chave, termo)
     m = _LIVRO_RE.search(texto)
     if m:
         bruto = m.group(1).rstrip(".,;")
@@ -400,10 +410,8 @@ def obter_titulo(
             motivo = MOTIVO_SEM_DETALHES
         else:
             detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
-            sugestao = frase_titulo_aquisitivo(
-                Instrumento.from_json(det.get("instrumento")),
-                kind=ato["kind"],
-                numero=int(ato["numero"]),
+            sugestao = cadeia_dominial.frase_titulo(
+                ato, det, cadeia_dominial.matricula_origem(client, org_id, extracao)
             )
             if sugestao is None:
                 motivo = MOTIVO_SEM_INSTRUMENTO
@@ -599,11 +607,13 @@ def _extracao_do_imovel(
             .eq("codigo", fonte)
             .eq("status", estrutura_svc.STATUS_CONCLUIDA)
             .order("created_at", desc=True)
-            .limit(1)
             .execute()
         ).data or []
-        if rows:
-            return rows[0]
+        # A CLOSED (transferred) matrícula is a predecessor: never the current
+        # reading, however recently transcribed (`cadeia_dominial`).
+        for linha_extracao in rows:
+            if not cadeia_dominial.extracao_e_predecessora(client, org_id, linha_extracao):
+                return linha_extracao
     return None
 
 
@@ -682,6 +692,9 @@ def antigos_proprietarios(
     ato: Optional[dict] = None
     det: Optional[dict] = None
     origem_derivacao: Optional[str] = None
+    #: The extraction the derived act LIVES in (the current one, or a closed
+    #: predecessor matrícula's — `cadeia_dominial`).
+    extracao_do_ato = extracao
 
     if extracao is not None and extracao.get("status") == estrutura_svc.STATUS_CONCLUIDA:
         por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
@@ -710,11 +723,29 @@ def antigos_proprietarios(
                 det = detalhes[str(ato["id"])]
                 origem_derivacao = "extracao"
 
+    if ato is None:
+        # The current matrícula has no transmission act of its own (it opens
+        # with "REGISTRO ANTERIOR: …"): the last transfer lives on a closed
+        # predecessor. Newest predecessor first; the latest act wins.
+        for anterior in cadeia_dominial.extracoes_predecessoras(client, org_id, codigo):
+            por_id_ant, detalhes_ant = _atos_e_detalhes(client, org_id, anterior)
+            candidatas = [
+                por_id_ant[ato_id]
+                for ato_id, d in detalhes_ant.items()
+                if d.get("natureza") in NATUREZAS_ULTIMA_TRANSFERENCIA and ato_id in por_id_ant
+            ]
+            if candidatas:
+                ato = max(candidatas, key=lambda r: r["ordem"])
+                det = detalhes_ant[str(ato["id"])]
+                origem_derivacao = "matricula_anterior"
+                extracao_do_ato = anterior
+                break
+
     manual = saida["manual"]
     manual_responde = bool(manual and (manual.get("data_registro") or manual.get("sem_registro")))
     data_registro: Optional[date] = None
     if ato is not None and det is not None:
-        detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
+        detalhes_svc.log_leitura_detalhes(client, org_id, extracao_do_ato["id"], usuario_id)
         bruto = det.get("data_registro")
         data_registro = date.fromisoformat(str(bruto)[:10]) if bruto else None
         # The derived act's sellers are still who sold, whatever answers the
@@ -733,6 +764,10 @@ def antigos_proprietarios(
                     "natureza": det.get("natureza"),
                     "data_registro": data_registro.isoformat() if data_registro else None,
                     "detalhes_origem": det.get("origem"),
+                    "extracao_id": str(extracao_do_ato["id"]),
+                    "matricula_origem": cadeia_dominial.matricula_origem(
+                        client, org_id, extracao_do_ato
+                    ),
                 },
                 "exige_certidoes": data_registro is None or data_registro > limite,
                 "data_desconhecida": data_registro is None,

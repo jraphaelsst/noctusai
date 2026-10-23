@@ -135,8 +135,9 @@ class TestFillFromATranscription:
         # state migration 115's confirmado_em-paired CHECK used to refuse and
         # 166's origem-paired CHECK now explicitly permits.
         assert row["titulo_aquisitivo_texto"] == (
-            "por Escritura Pública lavrada em 20/05/2015 no 2º Tabelionato de "
-            "Notas de Cotia, Livro 300, fls. 45, registrada sob o R-4"
+            "por Escritura Pública de compra e venda lavrada em 20/05/2015 no 2º "
+            "Tabelionato de Notas de Cotia, Livro 300, fls. 45, registrada sob o R-4 "
+            "em 01/06/2015"
         )
         assert row["titulo_aquisitivo_texto_origem"] == "matricula"
         assert row["titulo_aquisitivo_texto_confirmado_por"] is None

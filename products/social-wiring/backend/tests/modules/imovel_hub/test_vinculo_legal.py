@@ -267,6 +267,36 @@ class TestChildren:
         itens = documentos_service.certidoes(scoped, ORG, VISTA)["items"]
         assert [(i["tipo"], i["fonte_codigo"]) for i in itens] == [("matricula", MANUAL)]
 
+    def test_owners_the_matricula_does_not_confirm_are_flagged(self, client, scoped):
+        da_matricula, da_ficha = str(uuid4()), str(uuid4())
+        par(scoped, vista={}, manual={})
+        scoped.set_table_data("imovel_proprietarios", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "codigo": VISTA, "cliente_id": da_matricula,
+             "empresa_id": None, "origem": "matricula", "deleted_at": None, "created_at": "2026-01-01"},
+            {"id": str(uuid4()), "org_id": ORG_ID, "codigo": VISTA, "cliente_id": da_ficha,
+             "empresa_id": None, "origem": "atendimento", "deleted_at": None, "created_at": "2026-01-02"},
+        ])
+        scoped.set_table_data("clientes", [
+            {"id": da_matricula, "org_id": ORG_ID, "nome": "Ana", "cpf": "1"},
+            {"id": da_ficha, "org_id": ORG_ID, "nome": "Bia", "cpf": "2"},
+        ])
+        out = proprietarios_service.do_imovel(scoped, ORG, VISTA)
+        assert out["total_matricula"] == 1
+        assert [(i["nome"], i["fora_da_matricula"]) for i in out["items"]] == [
+            ("Ana", False), ("Bia", True),
+        ]
+
+    def test_without_a_matricula_reading_nobody_is_flagged(self, client, scoped):
+        pessoa = str(uuid4())
+        par(scoped, vista={}, manual={})
+        scoped.set_table_data("imovel_proprietarios", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "codigo": VISTA, "cliente_id": pessoa,
+             "empresa_id": None, "origem": "manual", "deleted_at": None, "created_at": "2026-01-01"},
+        ])
+        scoped.set_table_data("clientes", [{"id": pessoa, "org_id": ORG_ID, "nome": "Ana", "cpf": "1"}])
+        out = proprietarios_service.do_imovel(scoped, ORG, VISTA)
+        assert out["total_matricula"] == 0 and out["items"][0]["fora_da_matricula"] is False
+
     def test_proprietarios_union_dedupes_and_labels(self, client, scoped):
         pessoa = str(uuid4())
         outra = str(uuid4())

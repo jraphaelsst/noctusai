@@ -69,6 +69,8 @@ export interface ProprietarioDoImovel {
   celular: string | null;
   email: string | null;
   origem: "manual" | "matricula" | "atendimento";
+  /** The matrícula names owners and this row did not come from it. */
+  fora_da_matricula?: boolean;
   created_at: string | null;
 }
 

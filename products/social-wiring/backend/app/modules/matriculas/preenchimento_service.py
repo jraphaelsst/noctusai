@@ -47,9 +47,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.documents import (
-    Instrumento,
     find_matricula,
-    frase_titulo_aquisitivo,
     has_raw_markup,
 )
 from noctusai_lib.integrations.documents.matricula_cabecalho import (
@@ -61,6 +59,7 @@ from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import proprietarios_service as proprietarios_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
+from app.modules.matriculas import cadeia_dominial
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.services import table_reads
 
@@ -321,8 +320,15 @@ def preencher_sincrono(
     def aplicar(chave: str, valor: Any, **kw: Any) -> None:
         _aplicar(resumo, conflitos, client, org_id, codigo, chave, valor, extracao_id=eid, **kw)
 
+    # A matrícula CLOSED by transfer (migration 301) is a PREDECESSOR: it must
+    # never propose its number/cartório/owners over the imóvel's current ones.
+    # It only feeds the título chain (below, and from the successor's fill).
+    predecessora = cadeia_dominial.extracao_e_predecessora(client, org_id, extracao)
+    if predecessora:
+        resumo["predecessora"] = True
+
     numero, conf_numero, _rotulo = find_matricula(texto)
-    if numero and conf_numero != "nenhuma":
+    if numero and conf_numero != "nenhuma" and not predecessora:
         # 075's FK: `numero_matricula_documento_id` points at
         # `imovel_documentos` — the PDF this transcription came from, when
         # it is the imóvel's own document; NULL otherwise.
@@ -332,10 +338,12 @@ def preencher_sincrono(
         )
 
     cartorio, conf_cartorio, _ = find_cartorio(texto)
-    if cartorio:
+    if cartorio and not predecessora:
         aplicar("numero_registro_imoveis", cartorio, documento_id=eid, confianca=conf_cartorio)
 
-    for bloco in estrutura_svc.blocos_abertura_da_extracao(client, org_id, extracao):
+    for bloco in (
+        [] if predecessora else estrutura_svc.blocos_abertura_da_extracao(client, org_id, extracao)
+    ):
         if bloco["campo"] != "cadastro_municipal":
             continue
         inscricao, conf_insc = find_inscricao_municipal(
@@ -353,19 +361,35 @@ def preencher_sincrono(
     sugestoes = estrutura_svc.sugerir(texto, atos, detalhes)
     por_id = {str(a["id"]): a for a in atos}
 
-    titulo = sugestoes["titulo_aquisitivo"]
+    titulo = None if predecessora else sugestoes["titulo_aquisitivo"]
+    anteriores: dict[str, tuple[dict, list[dict], dict]] = {}
+    eid_titulo = eid
+    if not predecessora and not titulo:
+        # The current matrícula carries no transmission act ("REGISTRO
+        # ANTERIOR: …"): the título aquisitivo lives on a closed predecessor.
+        for anterior in cadeia_dominial.extracoes_predecessoras(client, org_id, codigo):
+            if not anterior.get("texto_extraido"):
+                continue
+            atos_ant = estrutura_svc.atos_da_extracao(client, org_id, anterior)
+            det_ant = detalhes_svc.detalhes_por_ato(client, org_id, anterior, atos_ant)
+            anteriores[str(anterior["id"])] = (anterior, atos_ant, det_ant)
+            sug_ant = estrutura_svc.sugerir(anterior["texto_extraido"], atos_ant, det_ant)
+            if sug_ant["titulo_aquisitivo"]:
+                titulo = sug_ant["titulo_aquisitivo"]
+                eid_titulo = str(anterior["id"])
+                break
     if titulo:
         aplicar(
             "titulo_aquisitivo",
             {
-                "titulo_aquisitivo_extracao_id": eid,
+                "titulo_aquisitivo_extracao_id": eid_titulo,
                 "titulo_aquisitivo_ato_id": titulo["ato_id"],
                 "titulo_aquisitivo_char_inicio": titulo["char_inicio"],
                 "titulo_aquisitivo_char_fim": titulo["char_fim"],
             },
             origem=campos_svc.ORIGEM_SUGERIDO,
         )
-    onus_sugeridos = [o for o in sugestoes["onus"] if o["sugerido"]]
+    onus_sugeridos = [] if predecessora else [o for o in sugestoes["onus"] if o["sugerido"]]
     if onus_sugeridos:
         aplicar(
             "onus_fonte",
@@ -388,18 +412,23 @@ def preencher_sincrono(
     # pointers quote THIS extraction; another extraction's acts are that
     # extraction's to read.
     linha = dados_service.linha(client, org_id, codigo) or {}
-    if str(linha.get("titulo_aquisitivo_extracao_id") or "") == eid:
-        ato = por_id.get(str(linha.get("titulo_aquisitivo_ato_id")))
-        det = detalhes.get(str(ato["id"])) if ato else None
-        if ato and det and ato.get("numero") is not None:
-            frase = frase_titulo_aquisitivo(
-                Instrumento.from_json(det.get("instrumento")),
-                kind=ato["kind"],
-                numero=int(ato["numero"]),
+    ponteiro = str(linha.get("titulo_aquisitivo_extracao_id") or "")
+    if ponteiro == eid or ponteiro in anteriores:
+        alvo, atos_alvo, detalhes_alvo = (
+            (extracao, atos, detalhes) if ponteiro == eid else anteriores[ponteiro]
+        )
+        ato = next(
+            (a for a in atos_alvo if str(a["id"]) == str(linha.get("titulo_aquisitivo_ato_id"))),
+            None,
+        )
+        det = detalhes_alvo.get(str(ato["id"])) if ato else None
+        if ato and det:
+            frase = cadeia_dominial.frase_titulo(
+                ato, det, cadeia_dominial.matricula_origem(client, org_id, alvo)
             )
             if frase:
                 aplicar("titulo_aquisitivo_texto", frase)
-    if str(linha.get("onus_fonte_extracao_id") or "") == eid:
+    if str(linha.get("onus_fonte_extracao_id") or "") == eid and not predecessora:
         credores: list[str] = []
         for ref in linha.get("onus_fonte_atos") or []:
             credor = (detalhes.get(str(ref.get("ato_id"))) or {}).get("credor")
@@ -408,10 +437,13 @@ def preencher_sincrono(
         if credores:
             aplicar("onus_credor", "; ".join(credores))
 
-    situacao_onus = derivar_situacao_onus(atos, detalhes, sugestoes["onus"])
+    # A closed predecessor says nothing about today's encumbrances.
+    situacao_onus = None if predecessora else derivar_situacao_onus(
+        atos, detalhes, sugestoes["onus"]
+    )
     if situacao_onus is not None:
         aplicar("situacao_onus", situacao_onus, documento_id=eid)
-    else:
+    elif not predecessora:
         # A named destination, not a silent skip: at least one act could not
         # be classified as encumbering or not — see `derivar_situacao_onus`.
         resumo["situacao_onus"] = "indeterminado"
@@ -421,9 +453,10 @@ def preencher_sincrono(
     # backfill (`proprietarios_service.run_backfill_matricula`), per
     # extraction. Isolated: the imovel_dados fill above already landed.
     try:
-        resumo["proprietarios"] = proprietarios_svc.sincronizar_da_extracao(
-            client, org_id, eid
-        )
+        if not predecessora:
+            resumo["proprietarios"] = proprietarios_svc.sincronizar_da_extracao(
+                client, org_id, eid
+            )
     except Exception as exc:  # noqa: BLE001 - per-step isolation; logged loudly
         logger.error(
             "matricula %s: could not sync proprietarios of imovel %s: %s",

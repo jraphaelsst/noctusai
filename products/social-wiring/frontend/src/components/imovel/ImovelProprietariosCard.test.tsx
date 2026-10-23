@@ -56,6 +56,24 @@ describe("ImovelProprietariosCard", () => {
     expect(getByTestId("proprietario-1").textContent).toContain("Matrícula");
   });
 
+  it("flags the parties the matrícula does not confirm and counts the matrícula's own", () => {
+    m.useProprietarios.mockReturnValue({
+      ...ok([
+        dono("1"),
+        dono("2", { origem: "atendimento", fora_da_matricula: true }),
+      ]),
+      data: {
+        items: [dono("1"), dono("2", { origem: "atendimento", fora_da_matricula: true })],
+        total: 2,
+        total_matricula: 1,
+      },
+    });
+    const { getByTestId, queryByTestId } = doRender();
+    expect(getByTestId("proprietarios-na-matricula").textContent).toContain("1 na matrícula");
+    expect(getByTestId("proprietario-fora-matricula-2")).toBeTruthy();
+    expect(queryByTestId("proprietario-fora-matricula-1")).toBeNull();
+  });
+
   it("says so when the imóvel has no registered owner", () => {
     m.useProprietarios.mockReturnValue(ok([]));
     expect(doRender().getByTestId("proprietarios-vazio")).toBeTruthy();

@@ -40,7 +40,7 @@ TEXTO_TITULO = (
 
 FRASE_ESPERADA = (
     "por Escritura Pública de Venda e Compra lavrada em 12/03/2020 no 2º "
-    "Tabelionato de Notas de Cotia, Livro 100, fls. 20, registrada sob o R-1"
+    "Tabelionato de Notas de Cotia, Livro 100, fls. 20, registrada sob o R-1 em 12/03/2020"
 )
 
 
@@ -384,6 +384,8 @@ class TestAntigosProprietarios:
             "natureza": "compra_e_venda",
             "data_registro": venda.isoformat(),
             "detalhes_origem": "sugestao",
+            "extracao_id": ext["id"],
+            "matricula_origem": None,
         }
         assert data["transmitentes"] == [
             {"nome": "SEGUNDO DONO FICTICIO", "cpf_cnpj": "135.792.468-28"}
@@ -432,7 +434,7 @@ class TestAntigosProprietarios:
         ext = extracao_row(texto=texto_com_venda(date.today() - timedelta(days=365)))
         seed(scoped, registry=[registry_row()], extracoes=[ext])
         atos = _por_chave(_atos(client, ext["id"]))
-        client.put(f"/api/matriculas/atos/{atos[('R', 2)]['id']}/detalhes", json={"natureza": "doacao"})
+        client.put(f"/api/matriculas/atos/{atos[('R', 2)]['id']}/detalhes", json={"natureza": "outro"})
 
         data = _data(client.get(self._url()))
 

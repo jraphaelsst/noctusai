@@ -15111,6 +15111,22 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "firing every product's org triggers (licenses, ERP site config). Its sibling guards (platform scope "
         "trigger, scope CHECKs) are probed.",
     ),
+    # Migration 303 (social-wiring) is NOT APPLIED (file-only until the
+    # tech-lead runs migrate_product): it only WIDENS two vocabulary CHECKs
+    # (+adjudicacao/integralizacao; +doacao/partilha/... on the manual
+    # override). The widened constraint does not exist in prod to probe; the
+    # new values are exercised by the service tests. Replace with real
+    # GuardProbes in the SAME change that applies it.
+    (
+        "products/social-wiring/backend/migrations/303_natureza_transmissao_ampla.sql",
+        "matricula_ato_detalhes_natureza_check",
+        "Migration 303 unapplied — the widened natureza vocabulary CHECK has no live constraint to probe yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/303_natureza_transmissao_ampla.sql",
+        "imovel_dados_ultima_transferencia_manual_natureza_check",
+        "Migration 303 unapplied — the widened manual-override natureza CHECK has no live constraint to probe yet.",
+    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still

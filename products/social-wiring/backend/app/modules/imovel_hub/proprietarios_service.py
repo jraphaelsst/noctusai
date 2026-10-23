@@ -312,6 +312,11 @@ def do_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
     rows = _donos_do_imovel(client, org_id, canonico)
     clientes, empresas = _donos_resolvidos(client, org_id, rows)
     itens = []
+    # Owner 2026-10-22: the list mixes the matrícula's owners with every
+    # party a card typed as proprietário (a mother, a daughter-in-law). Once
+    # the matrícula has named owners, a row that did not come from it is
+    # flagged — never silently presented as a registered owner.
+    total_matricula = sum(1 for r in rows if r.get("origem") == ORIGEM_MATRICULA)
     for r in rows:
         tipo, nome, documento = _nome_dono(r, clientes, empresas)
         c = clientes.get(str(r.get("cliente_id"))) or {}
@@ -326,11 +331,12 @@ def do_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
                 "celular": c.get("celular") if r.get("cliente_id") else None,
                 "email": c.get("email") if r.get("cliente_id") else None,
                 "origem": r.get("origem"),
+                "fora_da_matricula": bool(total_matricula) and r.get("origem") != ORIGEM_MATRICULA,
                 "fonte_codigo": r.get("fonte_codigo", canonico),
                 "created_at": r.get("created_at"),
             }
         )
-    return {"items": itens, "total": len(itens)}
+    return {"items": itens, "total": len(itens), "total_matricula": total_matricula}
 
 
 def por_codigos(
@@ -703,7 +709,7 @@ def sincronizar_da_extracao(client: Any, org_id: UUID, extracao_id: Any) -> dict
     (LGPD). `status` says why nothing ran when that is the case."""
     extracao = (
         table_reads.table(client, "matricula_extracoes")
-        .select("id,codigo,status,substituida_por")
+        .select("id,codigo,status,substituida_por,imovel_documento_id")
         .eq("org_id", str(org_id))
         .eq("id", str(extracao_id))
         .limit(1)
@@ -729,26 +735,47 @@ def sincronizar_da_extracao(client: Any, org_id: UUID, extracao_id: Any) -> dict
     if not registrado:
         return {**relatorio, "status": "sem_registry"}
 
-    atos = {
-        str(a["id"]): a
-        for a in table_reads.in_batched_rows(
-            client, "matricula_atos", org_id, "extracao_id", [eid],
-            select="id,extracao_id,ordem,kind",
-        )
-    }
-    transferencias = [
-        d
-        for d in table_reads.in_batched_rows(
-            client, "matricula_ato_detalhes", org_id, "extracao_id", [eid],
-            select="id,extracao_id,ato_id,natureza,adquirentes",
-        )
-        if d.get("natureza") in NATUREZAS_TRANSFERENCIA
-        and str(d.get("ato_id")) in atos
-        and atos[str(d["ato_id"])].get("kind") != "abertura"
-    ]
-    if not transferencias:
+    # Lazy import — `matriculas` imports `imovel_hub`.
+    from app.modules.matriculas import cadeia_dominial
+
+    if cadeia_dominial.extracao_e_predecessora(client, org_id, extracao):
+        # A closed matrícula never names TODAY's owners — only the successor's
+        # fill may consult it (below).
+        return {**relatorio, "status": "predecessora"}
+
+    def _ultima(fonte_eid: str) -> Optional[dict]:
+        atos = {
+            str(a["id"]): a
+            for a in table_reads.in_batched_rows(
+                client, "matricula_atos", org_id, "extracao_id", [fonte_eid],
+                select="id,extracao_id,ordem,kind",
+            )
+        }
+        transferencias = [
+            d
+            for d in table_reads.in_batched_rows(
+                client, "matricula_ato_detalhes", org_id, "extracao_id", [fonte_eid],
+                select="id,extracao_id,ato_id,natureza,adquirentes",
+            )
+            if d.get("natureza") in NATUREZAS_TRANSFERENCIA
+            and str(d.get("ato_id")) in atos
+            and atos[str(d["ato_id"])].get("kind") != "abertura"
+        ]
+        if not transferencias:
+            return None
+        return max(transferencias, key=lambda d: atos[str(d["ato_id"])].get("ordem") or 0)
+
+    ultima = _ultima(eid)
+    if ultima is None:
+        # No transmission act of its own ("REGISTRO ANTERIOR: …"): the owners
+        # are the adquirentes of the last transfer on the closed predecessor.
+        for anterior in cadeia_dominial.extracoes_predecessoras(client, org_id, codigo):
+            ultima = _ultima(str(anterior["id"]))
+            if ultima is not None:
+                eid = str(anterior["id"])
+                break
+    if ultima is None:
         return {**relatorio, "status": "sem_transferencia"}
-    ultima = max(transferencias, key=lambda d: atos[str(d["ato_id"])].get("ordem") or 0)
     adquirentes = [a for a in (ultima.get("adquirentes") or []) if a]
 
     vinculadas: dict[tuple[str, str], str] = {}

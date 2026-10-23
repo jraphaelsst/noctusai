@@ -93,7 +93,8 @@ export type TituloFato =
   | "livro"
   | "folhas"
   | "tabelionato"
-  | "cidade";
+  | "cidade"
+  | "natureza";
 
 /** One título fact where the confirmed text and the matrícula act disagree. */
 export interface TituloDivergencia {
@@ -112,6 +113,7 @@ export const TITULO_FATO_LABEL: Record<TituloFato, string> = {
   folhas: "Folhas",
   tabelionato: "Tabelionato",
   cidade: "Cidade",
+  natureza: "Natureza",
 };
 
 export interface TituloAquisitivoResponse {
@@ -153,18 +155,29 @@ export interface OnusCredorResponse {
   confirmado: ConfirmacaoCredor | null;
 }
 
-/** [Q9] `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA` — the natures that
- *  count as "the imóvel changed hands" for this rule. NOT `doacao`/
- *  `partilha`: re-classifying an act as `doacao` is how an operator tells
- *  the backend "this did not transfer for consideration", so a donation
- *  never substitutes for a sale here either. */
-export type NaturezaUltimaTransferencia = "compra_e_venda" | "permuta" | "dacao" | "arrematacao";
+/** [Q9] `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA` — every transmissão
+ *  of propriedade counts as "the imóvel changed hands" (owner 2026-10-22: a
+ *  doação is the last transfer too; its antigos proprietários are the
+ *  doadores). */
+export type NaturezaUltimaTransferencia =
+  | "compra_e_venda"
+  | "doacao"
+  | "permuta"
+  | "partilha"
+  | "dacao"
+  | "arrematacao"
+  | "adjudicacao"
+  | "integralizacao";
 
 export const NATUREZA_ULTIMA_TRANSFERENCIA_LABEL: Record<NaturezaUltimaTransferencia, string> = {
   compra_e_venda: "Compra e venda",
+  doacao: "Doação",
   permuta: "Permuta",
+  partilha: "Partilha / herança",
   dacao: "Dação em pagamento",
   arrematacao: "Arrematação",
+  adjudicacao: "Adjudicação",
+  integralizacao: "Integralização de capital",
 };
 
 export interface UltimaTransferencia {

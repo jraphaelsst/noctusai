@@ -123,16 +123,18 @@ class TestImovelSide:
         resp = client.get("/api/imoveis/one1/proprietarios", headers=auth())
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert set(body) == {"items", "total"} and body["total"] == 2
+        assert set(body) == {"items", "total", "total_matricula"} and body["total"] == 2
+        assert body["total_matricula"] == 1
         pf, pj = body["items"]
         keys = {"id", "tipo_pessoa", "cliente_id", "empresa_id", "nome", "documento",
-                "celular", "email", "origem", "fonte_codigo", "created_at"}
+                "celular", "email", "origem", "fora_da_matricula", "fonte_codigo", "created_at"}
         assert set(pf) == keys and set(pj) == keys
         assert pf["tipo_pessoa"] == "PF" and pf["nome"] == "Ana Souza Oficial"
         assert pf["documento"] == "12345678909" and pf["celular"] == "+5511999990001"
         assert pj["tipo_pessoa"] == "PJ" and pj["empresa_id"] and pj["cliente_id"] is None
         assert pj["nome"] == "ACME LTDA" and pj["documento"] == "11222333000181"
         assert pj["celular"] is None and pj["email"] is None
+        assert pf["fora_da_matricula"] is False and pj["fora_da_matricula"] is True
 
     def test_unknown_codigo_404(self, client, cenario):
         assert client.get("/api/imoveis/NOPE/proprietarios", headers=auth()).status_code == 404

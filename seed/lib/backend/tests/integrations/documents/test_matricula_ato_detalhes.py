@@ -963,3 +963,47 @@ def test_prose_is_not_an_adquirente_of_an_averbacao():
         "pela implantação de tanque séptico."
     )
     assert r.adquirentes == ()
+
+
+# ─── doação: every fact of the act rides in the título phrase ─────────────
+
+DOACAO = (
+    "R.04/21.748 - Em 12 de fevereiro de 1988.\n"
+    "Por escritura pública, lavrada aos 28 de janeiro de 1988, Lº 1058, fls. 279, do 26º "
+    "Tabelionato de Notas de São Paulo - SP, os proprietários JOSE ALFA FICTICIO, CPF "
+    "111.111.111-11 e sua mulher MARIA ALFA FICTICIA, CPF 222.222.222-22, transmitiram, a "
+    "título de DOAÇÃO, o imóvel objeto desta matrícula, a ANA BETA FICTICIA, menor impúbere, "
+    "representada por seus pais, os doadores, em adiantamento de legítima."
+)
+
+
+def test_a_doacao_is_typed_with_livro_folhas_and_its_qualifier():
+    d = extrair_detalhes_ato(DOACAO)
+    assert d.natureza == "doacao"
+    assert d.instrumento.livro == "1058" and d.instrumento.folhas == "279"
+    assert d.instrumento.observacao == "em adiantamento de legítima"
+    assert [p.nome for p in d.transmitentes] == ["JOSE ALFA FICTICIO", "MARIA ALFA FICTICIA"]
+
+
+def test_the_phrase_names_nature_qualifier_livro_folhas_registro_and_origin():
+    d = extrair_detalhes_ato(DOACAO)
+    frase = frase_titulo_aquisitivo(
+        d.instrumento, kind="R", numero=4, natureza=d.natureza,
+        data_registro=d.data_registro,
+        matricula_origem="da matrícula nº 21.748 do Registro de Imóveis de Barueri/SP",
+    )
+    assert frase == (
+        "por escritura pública de doação, em adiantamento de legítima, lavrada em "
+        "28/01/1988 no 26º Tabelionato de Notas de São Paulo, Livro 1058, fls. 279, "
+        "registrada sob o R-4 em 12/02/1988 da matrícula nº 21.748 do Registro de "
+        "Imóveis de Barueri/SP"
+    )
+
+
+def test_adjudicacao_and_integralizacao_are_typed_transfers():
+    from noctusai_lib.integrations.documents import NATUREZAS_TRANSFERENCIA
+
+    a = extrair_detalhes_ato("R-2/1 - Em 01/02/2000. ADJUDICAÇÃO do imóvel a FULANO FICTICIO.")
+    i = extrair_detalhes_ato("R-3/1 - Em 01/02/2001. INTEGRALIZAÇÃO DE CAPITAL na empresa X.")
+    assert (a.natureza, i.natureza) == ("adjudicacao", "integralizacao")
+    assert {"adjudicacao", "integralizacao", "doacao", "partilha"} <= NATUREZAS_TRANSFERENCIA

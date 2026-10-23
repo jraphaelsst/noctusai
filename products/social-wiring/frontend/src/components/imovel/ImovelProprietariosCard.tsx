@@ -30,6 +30,14 @@ export function ImovelProprietariosCard({ codigo }: { codigo: string }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-1.5 text-base">
           Proprietários{query.data ? ` (${query.data.total})` : ""}
+          {!!query.data?.total_matricula && query.data.total_matricula !== query.data.total && (
+            <span
+              className="text-xs font-normal text-muted-foreground"
+              data-testid="proprietarios-na-matricula"
+            >
+              {query.data.total_matricula} na matrícula
+            </span>
+          )}
           {isRefreshing && (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
           )}
@@ -80,6 +88,15 @@ export function ImovelProprietariosCard({ codigo }: { codigo: string }) {
                 <Badge variant="secondary" className="text-[10px]">
                   {ORIGEM_LABEL[p.origem] ?? p.origem}
                 </Badge>
+                {p.fora_da_matricula && (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-400 text-[10px] text-amber-800 dark:text-amber-300"
+                    data-testid={`proprietario-fora-matricula-${p.id}`}
+                  >
+                    Não confirmado pela matrícula
+                  </Badge>
+                )}
                 {p.celular && (
                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <Phone className="h-3 w-3" aria-hidden />

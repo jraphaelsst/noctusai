@@ -68,6 +68,8 @@ NaturezaAto = Literal[
     "partilha",
     "dacao",
     "arrematacao",
+    "adjudicacao",
+    "integralizacao",
     "hipoteca",
     "alienacao_fiduciaria",
     "cancelamento",
@@ -86,6 +88,8 @@ NATUREZAS_ATO: tuple[str, ...] = (
     "partilha",
     "dacao",
     "arrematacao",
+    "adjudicacao",
+    "integralizacao",
     "hipoteca",
     "alienacao_fiduciaria",
     "cancelamento",
@@ -98,7 +102,10 @@ NATUREZAS_ATO: tuple[str, ...] = (
 
 #: Natures that move ownership to someone else.
 NATUREZAS_TRANSFERENCIA: frozenset[str] = frozenset(
-    {"compra_e_venda", "doacao", "permuta", "partilha", "dacao", "arrematacao"}
+    {
+        "compra_e_venda", "doacao", "permuta", "partilha", "dacao", "arrematacao",
+        "adjudicacao", "integralizacao",
+    }
 )
 
 #: Natures that have a creditor — the only ones `credor` is read for.
@@ -138,9 +145,14 @@ class Instrumento:
     livro: Optional[str] = None
     folhas: Optional[str] = None
     cidade: Optional[str] = None
+    #: A qualifier the act states about the transfer itself ("em
+    #: adiantamento de legítima"), as written. Rides inside the instrumento
+    #: JSON, so no column/migration.
+    observacao: Optional[str] = None
 
     def to_json(self) -> dict:
         return {
+            "observacao": self.observacao,
             "tipo": self.tipo,
             "data": self.data.isoformat() if self.data else None,
             "tabelionato": self.tabelionato,
@@ -161,6 +173,7 @@ class Instrumento:
             livro=data.get("livro"),
             folhas=data.get("folhas"),
             cidade=data.get("cidade"),
+            observacao=data.get("observacao"),
         )
 
 
@@ -307,6 +320,8 @@ _NATUREZAS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     ("dacao", _rx(r"DACAO(?:\s+EM\s+PAGAMENTO)?")),
     ("arrematacao", _rx(r"ARREMATACAO|ARREMATAD[OA]")),
+    ("adjudicacao", _rx(r"ADJUDICACAO|ADJUDICAD[OA]S?")),
+    ("integralizacao", _rx(r"INTEGRALIZACAO|INTEGRALIZAD[OA]S?")),
     (
         "construcao",
         _rx(
@@ -318,7 +333,7 @@ _NATUREZAS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "outro",
         _rx(
             r"PROMESSA\s+DE\s+(?:COMPRA\s+E\s+)?VENDA|COMPROMISSO\s+DE\s+(?:COMPRA\s+E\s+)?VENDA"
-            r"|ADJUDICACAO|INTEGRALIZACAO|USUCAPIAO|CONSOLIDACAO\s+DA\s+PROPRIEDADE"
+            r"|USUCAPIAO|CONSOLIDACAO\s+DA\s+PROPRIEDADE"
             r"|CASAMENTO|DIVORCIO|SEPARACAO\s+JUDICIAL|OBITO|RETIFICACAO|DEMOLICAO"
             r"|DESMEMBRAMENTO|UNIFICACAO|FUSAO|INCORPORACAO|INSTITUICAO\s+DE\s+CONDOMINIO"
             r"|CONVENCAO\s+DE\s+CONDOMINIO|CESSAO|NUMERO\s+DE\s+CONTRIBUINTE"
@@ -1046,11 +1061,12 @@ _CIDADE = re.compile(
     r"|\s+(?:LIVRO|NO\s+LIVRO|FLS?|FOLHAS?|SOB|EM|AOS|E\s+REGISTRAD|REGISTRAD|PAGINAS?)(?![A-Z]))"
 )
 _NAO_CIDADE = frozenset({"DESTA", "NESTA", "DESSA", "NESSA", "CAPITAL", "COMARCA", "CIDADE"})
-_LIVRO = re.compile(r"(?<![A-Z])LIVRO\s*(?:N[O°]?\.?\s*)?(?P<v>\d[\d.]*(?:-?[A-Z](?![A-Z]))?)")
+_LIVRO = re.compile(r"(?<![A-Z])(?:LIVRO|L[O°])\.?\s*(?:N[O°]?\.?\s*)?(?P<v>\d[\d.]*(?:-?[A-Z](?![A-Z]))?)")
 _FOLHAS = re.compile(
     r"(?<![A-Z])(?:FLS?|FOLHAS?|PAGINAS?|PAGS?|PGS?)\.?\s*(?:N[O°]?\.?\s*)?"
     r"(?P<v>\d+(?:\s*V(?:ERSO)?(?![A-Z]))?(?:\s*(?:/|-|A|AO|E)\s*\d+(?:\s*V(?:ERSO)?(?![A-Z]))?)?)"
 )
+_OBSERVACAO = _rx(r"EM\s+ADIANTAMENTO\s+D[AE]\s+LEGITIMA|ADIANTAMENTO\s+D[AE]\s+LEGITIMA")
 _FIM_CLAUSULA = re.compile(r"\.\s+(?=[A-Z]{2})")
 _JANELA_CLAUSULA = 320
 
@@ -1103,7 +1119,9 @@ def _instrumento(
 
     livro_m = _LIVRO.search(t.norm, fim_tipo, limite)
     folhas_m = _FOLHAS.search(t.norm, fim_tipo, limite)
+    obs_m = _OBSERVACAO.search(t.norm, corpo)
     instrumento = Instrumento(
+        observacao=t.literal(obs_m.start(), obs_m.end()) if obs_m else None,
         tipo=tipo,
         data=data_inst,
         tabelionato=tabelionato,
@@ -1331,8 +1349,28 @@ _VERBOS_DATA = {
 }
 
 
+#: How the título phrase names the transaction when the instrument's own
+#: `tipo` does not ("escritura pública" says nothing about a doação).
+_NATUREZA_NA_FRASE: dict[str, tuple[str, str]] = {
+    "doacao": ("DOACAO", "doação"),
+    "compra_e_venda": ("VENDA", "compra e venda"),
+    "permuta": ("PERMUTA", "permuta"),
+    "dacao": ("DACAO", "dação em pagamento"),
+    "arrematacao": ("ARREMATACAO", "arrematação"),
+    "adjudicacao": ("ADJUDICACAO", "adjudicação"),
+    "integralizacao": ("INTEGRALIZACAO", "integralização de capital"),
+    "partilha": ("PARTILHA", "partilha"),
+}
+
+
 def frase_titulo_aquisitivo(
-    instrumento: Optional[Instrumento], *, kind: str, numero: int
+    instrumento: Optional[Instrumento],
+    *,
+    kind: str,
+    numero: int,
+    natureza: Optional[str] = None,
+    data_registro: Optional[date] = None,
+    matricula_origem: Optional[str] = None,
 ) -> Optional[str]:
     """The paraphrased título aquisitivo a contract states, built ONLY from
     what the act says (e.g. `por Escritura Pública de Venda e Compra
@@ -1348,6 +1386,15 @@ def frase_titulo_aquisitivo(
     RODRIGO MORASCHI ENRIQUEZ contract, 2026-09-22). The frame already
     supplies the verb ("tornou-se … proprietária"); this phrase only needs
     to name the INSTRUMENT, so it starts with the bare preposition "por".
+
+    Every fact the act states rides in the phrase (owner 2026-10-22, a
+    doação whose phrase said only "por escritura pública … fls. 279,
+    registrada sob o R-4"): the `natureza` when the instrument's `tipo` does
+    not already name it ("escritura pública de doação"), the qualifier
+    (`instrumento.observacao`, "em adiantamento de legítima"), the livro AND
+    folhas, the registration date (`data_registro`) and — when the act lives
+    on a predecessor matrícula — `matricula_origem` ("da matrícula nº 21.748
+    do Registro de Imóveis de Barueri/SP"), pre-formatted by the caller.
     """
     if kind not in ("R", "AV"):
         raise ValueError(f"kind deve ser 'R' ou 'AV', recebeu {kind!r}")
@@ -1359,6 +1406,15 @@ def frase_titulo_aquisitivo(
     verbo = _VERBOS_DATA.get(primeira, f"datad{sufixo} de")
 
     cabeca = f"por {tipo}"
+    nat = _NATUREZA_NA_FRASE.get(natureza or "")
+    if nat and nat[0] not in normalize(tipo) and not (
+        natureza == "compra_e_venda" and "COMPRA" in normalize(tipo)
+    ):
+        cabeca += f" de {nat[1]}"
+    if instrumento.observacao:
+        cabeca += f", {instrumento.observacao.strip()}"
+        if instrumento.data or instrumento.tabelionato:
+            cabeca += ","  # closes the parenthetical before "lavrada em …"
     if instrumento.data:
         cabeca += f" {verbo} {instrumento.data:%d/%m/%Y}"
     if instrumento.tabelionato:
@@ -1373,9 +1429,14 @@ def frase_titulo_aquisitivo(
     if instrumento.folhas:
         partes.append(f"fls. {instrumento.folhas.strip()}")
     if kind == "R":
-        partes.append(f"registrad{sufixo} sob o R-{numero}")
+        ato = f"registrad{sufixo} sob o R-{numero}"
     else:
-        partes.append(f"averbad{sufixo} sob a AV-{numero}")
+        ato = f"averbad{sufixo} sob a AV-{numero}"
+    if data_registro:
+        ato += f" em {data_registro:%d/%m/%Y}"
+    if matricula_origem:
+        ato += f" {matricula_origem.strip()}"
+    partes.append(ato)
     return ", ".join(partes)
 
 

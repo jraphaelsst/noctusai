@@ -622,3 +622,7 @@ Authored 2026-10-21 (contract scoring, deal 857). Adds `cliente_empresa_particip
 ## 302 — certidao_resultados.emitida_em_origem — NOT APPLIED
 
 Authored 2026-10-22. Adds `certidao_resultados.emitida_em_origem TEXT` (NULL = printed/registry/typed; `metadados_pdf` = date inferred from the PDF CreationDate when a CENPROT/Serasa consulta text carries no date). Additive + idempotent. Apply BEFORE deploying the image that reads/writes it (`RESULTADO_COLUNAS_SEM_TEXTO` selects it; an un-migrated DB 500s the partes read).
+
+## 303 — natureza_transmissao_ampla — NOT APPLIED
+
+Authored 2026-10-22. Widens two CHECK vocabularies: `matricula_ato_detalhes.natureza` (+ `adjudicacao`, `integralizacao`, previously lumped under `outro`) and `imovel_dados.ultima_transferencia_manual_natureza` (+ `doacao`, `partilha`, `adjudicacao`, `integralizacao`). Additive, idempotent. Apply BEFORE deploying the image whose reader types those natures (an un-migrated DB rejects the detalhes insert of an adjudicação/integralização act).
