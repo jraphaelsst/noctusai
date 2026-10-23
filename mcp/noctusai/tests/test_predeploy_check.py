@@ -1101,7 +1101,7 @@ def test_storage_bucket_public_runner_fails_on_query_error_never_skips(monkeypat
 
 
 # ── db_guards leg (structure-green is not behaviour-green, 2026-09-18) ──────
-def test_db_guards_runner_skips_loudly_when_no_probe_registered(monkeypatch, tmp_path):
+def test_db_guards_runner_skips_loudly_when_no_probe_registered(tmp_path):
     """A product with no registered behaviour probes (and no platform-wide
     ones either, for this test) SKIPs (ok=True) — an honest 'nothing to
     verify here', distinct from 'we couldn't verify' below. In the SHIPPED
@@ -1116,8 +1116,13 @@ def test_db_guards_runner_skips_loudly_when_no_probe_registered(monkeypatch, tmp
         guard_name="g", kind="write_refusal", migrations=(),
         rationale="not for this product", sql=VDG.DEFAULT_REGISTRY[0].sql,
     )
-    monkeypatch.setattr(VDG, "DEFAULT_REGISTRY", (other_product_probe,))
-    ok, msg = PC._default_run_check("db_guards", "a-product-with-no-probes-at-all", tmp_path)
+    # Injected, not patched: the shipped registry also carries ORGAN-DERIVED probes, and where
+    # noctusai_seed is not importable (the hermetic CI toolkit shard) derivation fails closed
+    # with a `<platform>` probe -- patching DEFAULT_REGISTRY alone never isolated this branch.
+    ok, msg = PC._default_run_check(
+        "db_guards", "a-product-with-no-probes-at-all", tmp_path,
+        db_guard_registry=(other_product_probe,),
+    )
     assert ok is True
     assert "SKIPPED" in msg
 

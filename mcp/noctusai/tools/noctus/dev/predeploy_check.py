@@ -742,6 +742,7 @@ def _default_run_check(
     env_fleet_path: str | None = None,
     schema_drift_check: Callable[..., dict[str, Any]] | None = None,
     schema_exposure_check: Callable[..., dict[str, Any]] | None = None,
+    db_guard_registry: tuple[Any, ...] | None = None,
 ) -> tuple[bool, str]:
     """Real runner — shells the deploy-relevant build/test (mirrors
     noctus.dev.vite_build / pytest); framework_deps composes the existing
@@ -1047,9 +1048,9 @@ def _default_run_check(
         # "we couldn't check" must never read as "it's fine".
         from . import verify_db_guards as _vdg
 
-        scoped = tuple(
-            p for p in _vdg.full_registry() if p.product in (product, "<platform>")
-        )
+        # `db_guard_registry` = the injection seam (tests); default = what a run executes.
+        registry = _vdg.full_registry() if db_guard_registry is None else db_guard_registry
+        scoped = tuple(p for p in registry if p.product in (product, "<platform>"))
         if not scoped:
             return True, (
                 f"db_guards SKIPPED — no behaviour probes registered for "
