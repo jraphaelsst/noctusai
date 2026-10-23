@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { api, clearToken, setToken, isAuthenticated, getRefreshToken, setRefreshToken } from './api';
+import { api, clearToken, setToken, isAuthenticated, refreshCoreSession } from './api';
 import { MfaChallengeHost } from '@noctusai/lib/components';
 import { useActivityRefresh } from '@noctusai/lib/design-system/useActivityRefresh';
 
@@ -48,7 +48,7 @@ interface AuthContextType extends AuthState {
    * in a different identity): a failed revocation THROWS and local state is kept
    * -- never sign out on an auth-server outage, never proceed on a half-revoked one.
    */
-  logout: (opts?: { strict?: boolean }) => Promise<void>;
+  logout: (opts?: { strict?: boolean; scope?: 'global' | 'local' }) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -147,9 +147,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Core logout ends the user's sessions EVERYWHERE (owner decision 2026-10-09):
   // the server revokes first (it needs the bearer), then local state is cleared
   // regardless of the outcome -- a network error must never leave the user logged in.
-  async function logout(opts?: { strict?: boolean }) {
+  // `scope: 'local'` ends ONLY core's own session -- for endings the user did not
+  // ask for (the inactivity timer). A timeout must never sign the user out of
+  // every product (2026-10-23 prod: a forgotten background core tab did).
+  async function logout(opts?: { strict?: boolean; scope?: 'global' | 'local' }) {
     try {
-      if (isAuthenticated()) await api.post('/api/auth/logout', {});
+      const path = opts?.scope === 'local' ? '/api/auth/logout?scope=local' : '/api/auth/logout';
+      if (isAuthenticated()) await api.post(path, {});
     } catch (err) {
       if (opts?.strict) throw err;
       console.error('core logout: server-side revocation failed; clearing local session anyway', err);
@@ -159,15 +163,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   // Proactive token refresh while user is active (every 5 min)
+  // Same single, cross-tab-locked refresh the api client uses (lib/api.ts).
   const handleTokenRefresh = useCallback(async () => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) return;
     try {
-      const res = await api.post('/api/auth/refresh', { refresh_token: refreshToken });
-      if (res.access_token) setToken(res.access_token);
-      if (res.refresh_token) setRefreshToken(res.refresh_token);
+      await refreshCoreSession();
     } catch {
-      // Refresh failed — token expired, user will be redirected on next API call
+      // Refused or unavailable — the api client's 401 path decides on the next call.
     }
   }, []);
 

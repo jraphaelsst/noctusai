@@ -12,7 +12,7 @@
  */
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../lib/auth-context';
-import { isAuthenticated, api, getRefreshToken, setToken, setRefreshToken } from '../../lib/api';
+import { isAuthenticated, refreshCoreSession } from '../../lib/api';
 import { InactivityWarning } from '@noctusai/lib/design-system/InactivityWarning';
 import { Layout as AdminShell } from './Layout';
 
@@ -20,16 +20,14 @@ export function CoreLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { isAdmin, isMarketing, logout } = useAuth();
 
-  const onExtend = async () => {
-    const rt = getRefreshToken();
-    if (!rt) return;
-    const res = await api.post('/api/auth/refresh', { refresh_token: rt });
-    if (res.access_token) setToken(res.access_token);
-    if (res.refresh_token) setRefreshToken(res.refresh_token);
-  };
+  const onExtend = refreshCoreSession;
 
+  // Inactivity ends CORE's session only (scope local). The timer counts input in
+  // this tab alone, so a core tab left open while the user works in a product
+  // expires on its own -- the 2026-10-23 prod incident, where this called the
+  // global logout and signed the user out of social-wiring mid-session.
   const onExpired = async () => {
-    await logout();
+    await logout({ scope: 'local' });
     window.location.href = '/login';
   };
 

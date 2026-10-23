@@ -280,6 +280,32 @@ class TestLogout:
         assert resp.status_code == 200
         assert "could not end org selections" in caplog.text
 
+    def test_logout_scope_local_revokes_only_cores_own_session(self, client):
+        """Inactivity expiry (2026-10-23 prod): core's timer must never end the
+        user's product sessions -- only core's own GoTrue session, scope local."""
+        from app.routers import sso as sso_module
+
+        mock_sb = client.mock_supabase
+        admin_sign_out = MagicMock()
+        mock_sb.auth.admin.sign_out = admin_sign_out
+        sso_module._session_cache.clear()
+        sso_module._session_cache.set(
+            "test@example.com", {"access_token": "cached"}, org_id="org-1", product_slug="p1",
+        )
+
+        resp = client.post("/api/auth/logout?scope=local", headers={"Authorization": "Bearer t"})
+
+        assert resp.status_code == 200
+        admin_sign_out.assert_called_once_with("test-token-valid", scope="local")
+        assert mock_sb.rpc_calls == []  # product org selections untouched
+        assert sso_module._session_cache._store != {}  # product SSO state untouched
+
+    def test_logout_rejects_an_unknown_scope(self, client):
+        client.mock_supabase.auth.admin.sign_out = MagicMock()
+        resp = client.post("/api/auth/logout?scope=others", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 422
+        client.mock_supabase.auth.admin.sign_out.assert_not_called()
+
     def test_logout_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/auth/logout")
         assert resp.status_code == 401

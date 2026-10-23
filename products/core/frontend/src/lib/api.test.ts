@@ -170,3 +170,55 @@ describe('core api client — dead-session seam wiring', () => {
     expect(window.location.assign).toHaveBeenCalledWith('/login');
   });
 });
+
+describe('refreshCoreSession — one refresher per chain across core tabs', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('runs inside the cross-tab Web Lock and sends only the CURRENT stored refresh token', async () => {
+    localStorage.setItem('noctus_token', 'at-1');
+    localStorage.setItem('noctus_refresh_token', 'rt-1');
+    const request = vi.fn(async (_name: string, cb: () => Promise<unknown>) => cb());
+    vi.stubGlobal('navigator', { ...navigator, locks: { request } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(200, { access_token: 'at-2', refresh_token: 'rt-2' }),
+    );
+    const { refreshCoreSession } = await import('./api');
+    await refreshCoreSession();
+    expect(request).toHaveBeenCalledWith('noctus-core-session-refresh', expect.any(Function));
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]!.body))).toEqual({ refresh_token: 'rt-1' });
+    expect(localStorage.getItem('noctus_refresh_token')).toBe('rt-2');
+  });
+
+  it('adopts the pair another tab rotated while this one waited for the lock — never re-presents a spent token', async () => {
+    localStorage.setItem('noctus_token', 'at-1');
+    localStorage.setItem('noctus_refresh_token', 'rt-1');
+    const request = vi.fn(async (_name: string, cb: () => Promise<unknown>) => {
+      // the other tab held the lock and rotated the chain
+      localStorage.setItem('noctus_token', 'at-2');
+      localStorage.setItem('noctus_refresh_token', 'rt-2');
+      return cb();
+    });
+    vi.stubGlobal('navigator', { ...navigator, locks: { request } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const { refreshCoreSession } = await import('./api');
+    await refreshCoreSession();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem('noctus_token')).toBe('at-2');
+  });
+
+  it('a refused refresh rejects (the inactivity warning keeps counting down)', async () => {
+    localStorage.setItem('noctus_refresh_token', 'rt-dead');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, { detail: 'x' }));
+    const { refreshCoreSession } = await import('./api');
+    await expect(refreshCoreSession()).rejects.toThrow('refresh refused');
+  });
+});

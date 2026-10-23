@@ -16,6 +16,7 @@ vi.mock('./api', () => ({
   setRefreshToken: vi.fn(),
   getRefreshToken: () => null,
   isAuthenticated: () => true,
+  refreshCoreSession: vi.fn(),
 }));
 vi.mock('@noctusai/lib/components', () => ({ MfaChallengeHost: () => null }));
 vi.mock('@noctusai/lib/design-system/useActivityRefresh', () => ({ useActivityRefresh: () => undefined }));
@@ -49,6 +50,14 @@ describe('core logout ordering', () => {
     order.length = 0;
     await act(async () => { await captured.logout(); });
     expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
+  });
+
+  it("scope 'local' revokes only core's own session (inactivity expiry)", async () => {
+    post.mockImplementation(async (path: string) => { order.push(`post:${path}`); return { ok: true }; });
+    render(<AuthProvider><Probe /></AuthProvider>);
+    order.length = 0;
+    await act(async () => { await captured.logout({ scope: 'local' }); });
+    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout?scope=local', 'clear']);
   });
 
   it('strict mode: a failed server call rethrows and does NOT clear local state', async () => {

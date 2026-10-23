@@ -23,12 +23,18 @@ vi.mock('../../lib/auth-context', () => ({
   useAuth: () => mockAuth,
 }));
 
+let mockAuthenticated = false;
 vi.mock('../../lib/api', () => ({
-  isAuthenticated: () => false,
-  api: { get: vi.fn(), post: vi.fn() },
-  getRefreshToken: () => null,
-  setToken: vi.fn(),
-  setRefreshToken: vi.fn(),
+  isAuthenticated: () => mockAuthenticated,
+  refreshCoreSession: vi.fn(),
+}));
+
+let capturedExpired: (() => void | Promise<void>) | null = null;
+vi.mock('@noctusai/lib/design-system/InactivityWarning', () => ({
+  InactivityWarning: ({ onExpired }: { onExpired: () => void | Promise<void> }) => {
+    capturedExpired = onExpired;
+    return null;
+  },
 }));
 
 vi.mock('./Layout', () => ({
@@ -82,5 +88,18 @@ describe('CoreLayout — marketing role gate', () => {
     renderAt('/dashboard', { isAdmin: false, isMarketing: false, logout: vi.fn() });
     expect(screen.getByText('CHILD')).toBeTruthy();
     expect(screen.queryByTestId('admin-shell')).toBeNull();
+  });
+});
+
+describe('CoreLayout — inactivity expiry', () => {
+  it("ends ONLY core's own session (scope local) — never the user's product sessions", async () => {
+    mockAuthenticated = true;
+    const logout = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, 'location', { value: { href: '/' }, writable: true });
+    renderAt('/dashboard', { isAdmin: false, isMarketing: false, logout });
+    expect(capturedExpired).not.toBeNull();
+    await capturedExpired!();
+    expect(logout).toHaveBeenCalledWith({ scope: 'local' });
+    mockAuthenticated = false;
   });
 });

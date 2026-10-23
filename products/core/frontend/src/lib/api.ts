@@ -42,8 +42,29 @@ let _handlingDeadSession = false;
  * (2026-10-03).
  */
 async function refreshAttempt(): Promise<RefreshAttempt> {
+  const startedWith = getRefreshToken();
+  if (!startedWith) return { kind: 'dead' };
+  // ONE refresher per chain across every core tab (2026-10-23 prod: core tabs
+  // refreshing the same chain independently presented superseded tokens ->
+  // GoTrue `refresh_token_already_used` -> the chain revoked). The Web Lock
+  // serialises tabs; inside it the CURRENT stored token is the only one sent.
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  return locks?.request
+    ? locks.request(CORE_REFRESH_LOCK, () => refreshUnderLock(startedWith))
+    : refreshUnderLock(startedWith);
+}
+
+const CORE_REFRESH_LOCK = 'noctus-core-session-refresh';
+
+async function refreshUnderLock(startedWith: string): Promise<RefreshAttempt> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return { kind: 'dead' };
+  const stored = getToken();
+  if (refreshToken !== startedWith && stored) {
+    // Another tab rotated the chain while we waited: adopt its pair, never
+    // present a second refresh of a token that is already spent.
+    return { kind: 'token', token: stored };
+  }
   let response: Response;
   try {
     response = await fetch(`${API_URL}/api/auth/refresh`, {
@@ -67,6 +88,18 @@ async function refreshAttempt(): Promise<RefreshAttempt> {
   setToken(data.access_token);
   if (data.refresh_token) setRefreshToken(data.refresh_token);
   return { kind: 'token', token: data.access_token };
+}
+
+/**
+ * The ONE core session refresh (activity timer, "Continuar" on the inactivity
+ * warning, and the api client's 401 path all go through it). Rejects unless a
+ * fresh access token is now stored.
+ */
+export async function refreshCoreSession(): Promise<void> {
+  const attempt = await refreshAttempt();
+  if (attempt.kind !== 'token') {
+    throw new Error(attempt.kind === 'transient' ? `refresh unavailable: ${attempt.reason}` : 'refresh refused');
+  }
 }
 
 /** `onTokenExpired`: token | null (refused → dead) | throws (unanswered → keep). */

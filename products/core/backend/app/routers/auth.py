@@ -8,8 +8,8 @@ POST  /api/auth/logout   — Invalidate session
 """
 import anyio
 import logging
-from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Request
+from typing import Optional, Literal
+from fastapi import APIRouter, Header, HTTPException, Request, Query
 
 from supabase import create_client
 from app.config import settings
@@ -398,20 +398,29 @@ async def update_profile(
 
 
 @router.post("/logout")
-async def logout(authorization: Optional[str] = Header(None)):
-    """Sign the current user out EVERYWHERE (Supabase scope "global").
+async def logout(
+    authorization: Optional[str] = Header(None),
+    scope: Literal["global", "local"] = Query("global"),
+):
+    """Revoke the caller's GoTrue session upstream.
 
-    Owner decision 2026-10-09: logging out of core ends the user's sessions on every
-    product and every other device. The previous implementation called sign_out() on
-    a fresh anonymous client, which revokes nothing. GoTrue's admin sign_out takes the
-    caller's access-token JWT. A revocation that fails is an error response -- never
-    ``ok: true`` over a session that is still alive.
+    ``scope="global"`` (default -- the explicit "Sair" control): owner decision
+    2026-10-09, logging out of core ends the user's sessions on every product and
+    every other device. ``scope="local"`` ends ONLY the session this access token
+    belongs to (core's own) -- used when core ends its session for a reason the
+    user did not ask for, e.g. its inactivity timer. 🔴 2026-10-23 prod: core's
+    30-min inactivity timer, ticking in a forgotten background core tab while the
+    user worked in social.noctusai.com, called the GLOBAL logout and signed the
+    user out of every product mid-session. A timeout must never be global.
+
+    GoTrue's admin sign_out takes the caller's access-token JWT. A revocation that
+    fails is an error response -- never ``ok: true`` over a session still alive.
     """
     user, token = await get_current_user(authorization)
     try:
-        (await anyio.to_thread.run_sync(lambda: get_admin_client().auth.admin.sign_out(token, scope="global")))
+        (await anyio.to_thread.run_sync(lambda: get_admin_client().auth.admin.sign_out(token, scope=scope)))
     except Exception as exc:
-        logger.error("auth: global sign_out failed user_id=%s", user.id, exc_info=True)
+        logger.error("auth: %s sign_out failed user_id=%s", scope, user.id, exc_info=True)
         if is_authoritative_token_rejection(exc):
             # Supabase already considers this token dead -- the session is gone.
             raise HTTPException(status_code=401, detail="Sessão inválida") from exc
@@ -420,6 +429,12 @@ async def logout(authorization: Optional[str] = Header(None)):
     # The verified-token cache (30 s) would otherwise keep accepting this just-revoked token.
     from noctusai_lib.api.auth.token_cache import discard_token_everywhere
     discard_token_everywhere(token)
+
+    if scope == "local":
+        # Only core's own session ended: the user's product sessions and their org
+        # selections stay untouched (the selection rows bound to this session_id go
+        # inert on their own).
+        return {"ok": True}
 
     # Core's cached per-product SSO sessions would otherwise keep handing out the
     # (now revoked) tokens for up to the cache TTL.
