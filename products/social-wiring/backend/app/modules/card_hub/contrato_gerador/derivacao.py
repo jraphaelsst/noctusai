@@ -513,7 +513,10 @@ def _verificar_coerencia_endereco(
 #: onde -> (tela, rota, ancora padrão)
 _DESTINO_POR_ONDE: dict[str, tuple[str, str, Optional[str]]] = {
     "partes": ("card_partes", "/clientes", "geral"),
-    "certidoes": ("certidoes", "/certidoes", None),
+    # [Owner 2026-10-23] Certidões are worked from the lead card's Certidões
+    # tab (the standalone /certidoes page is retiring); `ids.parte_id` names
+    # the party the falta belongs to.
+    "certidoes": ("card_certidoes", "/clientes", "certidoes"),
     # [E1/E8] The card's Empresas tab (§F, `cardSubpages.ts`) — deal-scoped,
     # never routed through a person's `parte_id` (a `falta` here is per
     # EMPRESA, E4-deduped, not per owner).

@@ -365,6 +365,51 @@ class TestCriarConsulta:
         assert data["total_certidoes"] == 9
         assert data["org_id"] == CALLER_ORG
 
+    def test_documento_de_um_unico_cliente_vincula_sozinho(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [{"id": "cli-1", "org_id": CALLER_ORG, "cpf": "123.456.789-01"}])
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
+            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        assert resp.status_code == 200
+        assert resp.json()["data"]["cliente_id"] == "cli-1"
+        assert db.table("certidao_consultas").inserted_payloads[0]["cliente_id"] == "cli-1"
+
+    def test_documento_de_clientes_duplicados_fica_sem_vinculo(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [
+            {"id": "cli-1", "org_id": CALLER_ORG, "cpf": "12345678901"},
+            {"id": "cli-2", "org_id": CALLER_ORG, "cpf": "123.456.789-01"},
+        ])
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
+            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        assert resp.status_code == 200
+        assert "cliente_id" not in db.table("certidao_consultas").inserted_payloads[0]
+
+    def test_cnpj_de_uma_unica_empresa_vincula_sozinho(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("empresas", [{"id": "emp-1", "org_id": CALLER_ORG, "cnpj": "12345678000190"}])
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
+            resp = client.post(f"{BASE}/consultas", json=self._payload(
+                tipo_documento="cnpj", documento="12.345.678/0001-90", nome="Empresa XPTO"))
+        assert resp.status_code == 200
+        assert resp.json()["data"]["empresa_id"] == "emp-1"
+
+    def test_documento_sem_dono_fica_sem_vinculo(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db)
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
+            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        assert resp.status_code == 200
+        payload = db.table("certidao_consultas").inserted_payloads[0]
+        assert "cliente_id" not in payload and "empresa_id" not in payload
+
     def test_cria_consulta_cnpj(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)

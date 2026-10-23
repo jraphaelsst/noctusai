@@ -89,7 +89,7 @@ describe("destinoDoDocumento", () => {
     expect(destinoDoDocumento("lead_form")).toBe("/leads");
     expect(destinoDoDocumento("imovel_page_upload")).toBe("/imoveis");
     expect(destinoDoDocumento("matriculas")).toBe("/matriculas");
-    expect(destinoDoDocumento("certidao_robo")).toBe("/certidoes");
+    expect(destinoDoDocumento("certidao_robo")).toBe("certidoes");
     expect(destinoDoDocumento("cliente_card_upload")).toBe("geral");
     expect(destinoDoDocumento("parte_painel_upload")).toBe("geral");
   });

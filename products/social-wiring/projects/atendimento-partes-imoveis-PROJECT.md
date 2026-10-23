@@ -34,6 +34,7 @@
   PROPERTY profile (tipo, região/bairro, faixa de preço, dormitórios, área) so an interested lead can be
   offered alternatives — reuse the permutas matching engine, do not build a second matcher.
 - D6 `/certidoes` page stays untouched and working (Marina uses it). Retire only after the tab is 100%.
+  - **Update (owner 2026-10-23):** emission moves to the card's Certidões tab; the page retires after parity. Already repointed: the contract's certidão `falta`/PCEN destino and the proveniência `certidao_robo` link open the card tab; "Vincular consulta" matches by CPF/CNPJ first; a consulta created with a CPF/CNPJ held by exactly one cliente/empresa auto-links (ambiguous stays unlinked).
 
 ## 3 · Design
 

@@ -63,7 +63,7 @@ export function rotuloDaEntrada(entrada: string | null | undefined): string {
  * `destino` on `documento` itself, only on `fontes_possiveis` for the
  * `vazio` case). Fed through `cardSubpages.resolverDestino`, same as any
  * other plain-string destino: a route (`lead_form`/`imovel_page_upload`/
- * `matriculas`/`certidao_robo`) or a `CardSubpageKey` (`cliente_card_upload`/
+ * `matriculas`) or a `CardSubpageKey` (`certidao_robo` -> the card's Certidões tab) (`cliente_card_upload`/
  * `parte_painel_upload` both landed on `"geral"` when the standalone
  * `documentos` subpage was retired — `cardSubpages.ts`'s header note).
  * `vista_mirror`/`manual`/`derivado` have no place a person visits, so they
@@ -75,7 +75,7 @@ const ENTRADA_DESTINO: Partial<Record<ProvenienciaEntrada, string>> = {
   parte_painel_upload: "geral",
   imovel_page_upload: "/imoveis",
   matriculas: "/matriculas",
-  certidao_robo: "/certidoes",
+  certidao_robo: "certidoes",
 };
 
 export function destinoDoDocumento(entrada: string | null | undefined): string | null {

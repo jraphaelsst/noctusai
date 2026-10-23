@@ -252,9 +252,18 @@ export function CertidoesPartePanel({
   // their own id onto the consulta (migration 107/116/167), so checking
   // `atendimento_parte_id` alone would re-offer a consulta already claimed
   // by a titular or a company.
-  const consultasDisponiveis = (consultas.data ?? []).filter(
-    (c) => !c.atendimento_parte_id && !c.cliente_id && !c.empresa_id,
-  );
+  //
+  // Candidates are matched BY the party's own CPF/CNPJ first: a consulta whose
+  // `documento` equals it is listed on top, flagged, and preselected as the
+  // only sensible choice; the rest follow so the operator can still link a
+  // consulta typed under a different document.
+  const digitos = (v: string | null | undefined) => (v ?? "").replace(/\D/g, "");
+  const documentoParte = digitos(documento);
+  const mesmoDocumento = (c: { documento: string }) =>
+    documentoParte.length > 0 && digitos(c.documento) === documentoParte;
+  const consultasDisponiveis = (consultas.data ?? [])
+    .filter((c) => !c.atendimento_parte_id && !c.cliente_id && !c.empresa_id)
+    .sort((a, b) => Number(mesmoDocumento(b)) - Number(mesmoDocumento(a)));
 
   const handleVincular = () => {
     if (!consultaEscolhida) return;
@@ -654,13 +663,13 @@ export function CertidoesPartePanel({
           <DialogHeader>
             <DialogTitle>Vincular consulta de certidões</DialogTitle>
             <DialogDescription>
-              Escolha uma consulta já criada para vincular a esta parte.
+              Escolha uma consulta ainda sem vínculo para vincular a esta parte. As que têm o mesmo CPF/CNPJ aparecem primeiro.
             </DialogDescription>
           </DialogHeader>
           {consultasDisponiveis.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="certidoes-parte-sem-consultas">
-              Nenhuma consulta disponível para vincular. Crie uma consulta na página de Certidões
-              primeiro.
+              Nenhuma consulta sem vínculo disponível. Use &quot;Registrar certidões
+              manualmente&quot; ou emita as certidões aqui nesta aba.
             </p>
           ) : (
             <Select value={consultaEscolhida} onValueChange={setConsultaEscolhida}>
@@ -671,6 +680,7 @@ export function CertidoesPartePanel({
                 {consultasDisponiveis.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.nome} — {formatarDocumentoArmazenado(c.documento)}
+                    {mesmoDocumento(c) ? " (mesmo documento)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -267,6 +267,35 @@ describe("CertidoesPartePanel — vincular consulta", () => {
     expect(queryByText(/João/)).toBeFalsy();
   });
 
+  it("lists the consulta with the party's own CPF/CNPJ first and flags it", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    mockUseCertidaoConsultas.mockReturnValue(
+      queryStub({
+        data: [
+          { id: "c1", nome: "Outra Pessoa", documento: "222.222.222-22", atendimento_parte_id: null },
+          { id: "c2", nome: "Maria", documento: "111.111.111-11", atendimento_parte_id: null },
+        ],
+      }),
+    );
+    const { getByTestId, getByText, fireEvent } = await renderPanel({ documento: "11111111111" });
+    fireEvent.click(getByTestId("certidoes-parte-empty").querySelector("button")!);
+    const itens = getByTestId("dialog").querySelectorAll("option:not([value=\"\"])");
+    expect(itens.length).toBe(2);
+    expect(itens[0].textContent).toMatch(/Maria.*\(mesmo documento\)/);
+    expect(itens[1].textContent).not.toMatch(/mesmo documento/);
+    expect(getByText(/mesmo CPF\/CNPJ aparecem primeiro/)).toBeTruthy();
+  });
+
+  it("no longer sends the operator to the Certidões page when nothing is available", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    mockUseCertidaoConsultas.mockReturnValue(queryStub({ data: [] }));
+    const { getByTestId } = await renderPanel();
+    getByTestId("certidoes-parte-empty").querySelector("button")!.click();
+    const { waitFor } = await import("@testing-library/react");
+    await waitFor(() => expect(getByTestId("certidoes-parte-sem-consultas")).toBeTruthy());
+    expect(getByTestId("certidoes-parte-sem-consultas").textContent).not.toMatch(/página de Certidões/);
+  });
+
   it("calls useVincularParte with the chosen consulta id and this panel's parte id", async () => {
     mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
     mockUseCertidaoConsultas.mockReturnValue(

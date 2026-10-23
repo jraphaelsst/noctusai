@@ -351,6 +351,17 @@ class TestGate:
         assert (destino["rota"], destino["ancora"]) == ("/clientes", "negociacao")
         assert destino["ids"]["cliente_id"] == "c1"
 
+    def test_certidoes_falta_and_pcen_destino_open_the_cards_certidoes_tab(self):
+        """[Owner 2026-10-23] Certidões are worked from the card; the
+        standalone /certidoes page is retiring, so the destino names the
+        card's Certidões subpage + the party (`ids.parte_id`)."""
+        destino = derivacao.Destinos(cliente_id="c1", contrato_id="contrato-1").para(
+            "certidoes", parte_id="p9"
+        )
+        assert destino["tela"] == "card_certidoes"
+        assert (destino["rota"], destino["ancora"]) == ("/clientes", "certidoes")
+        assert destino["ids"] == {"cliente_id": "c1", "contrato_id": "contrato-1", "parte_id": "p9"}
+
     def test_itens_integrantes_and_ad_corpus_land_on_their_own_controls(self):
         """"Resolver" lands on the explicit answer in the Negociação termos
         panel — not merely on the subpage (2026-09-23)."""

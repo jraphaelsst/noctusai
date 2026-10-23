@@ -4,7 +4,7 @@
 > per-product DATA-PROVENANCE map tightly coupled to social-wiring's own schema
 > (`atendimento_negociacao_termos`, `imovel_dados`, `matricula_ato_detalhes`,
 > `certidao_consultas`…) and to one product's UI (`/clientes`, `/matriculas`,
-> `/certidoes`, `/imoveis`, `/configuracoes`), same shape as the sibling
+> `/certidoes` — retiring: certidões are worked from the card's Certidões tab since 2026-10-23, `/imoveis`, `/configuracoes`), same shape as the sibling
 > `INTEGRATIONS-MULTI-ACCOUNT.md` in this folder — **not** `PATTERNS/backend/`,
 > which is reserved for cross-product-reusable seams (`photo-editing-seed.md`
 > documents a DI+adapter shape other products can consume; this doc has no

@@ -42,7 +42,8 @@ class Entrada(str, Enum):
     #: Mirrored from an external property-listing/"vista" source, not a
     #: card_hub or imovel_hub upload at all.
     VISTA_MIRROR = "vista_mirror"
-    #: Pulled automatically by an API consulta bot (no human upload).
+    #: Pulled automatically by an API consulta bot (no human upload). Its
+    #: document opens the card's Certidões tab (the /certidoes page is retiring).
     CERTIDAO_ROBO = "certidao_robo"
     #: Uploaded by an operator on the card_hub `/clientes` card's
     #: Financiamento/Escritura tab (S2 contract §A) — a DEAL document

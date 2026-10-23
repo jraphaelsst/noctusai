@@ -370,6 +370,38 @@ def _validar_cliente_id(db, org_id, cliente_id: str) -> None:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
 
+def _dono_unico_por_documento(
+    db, org_id, tipo_documento: str, documento: str
+) -> tuple[Optional[str], Optional[str]]:
+    """`(cliente_id, empresa_id)` of the ONE cliente (CPF) / empresa (CNPJ) of
+    this org holding `documento`, or `(None, None)`.
+
+    [Owner 2026-10-23] Certidões are worked from the lead card, which reads a
+    consulta only through its link — a consulta created on the standalone page
+    with no link was invisible there. A document that identifies exactly one
+    owner links itself; zero or several matches (a duplicated cliente, say)
+    stay unlinked — never a guess (the operator links by hand, as before).
+    """
+    if tipo_documento == "cpf":
+        from app.services.clientes_service import clientes_por_cpf
+
+        achados = clientes_por_cpf(db, org_id, [documento])
+        ids = {str(c["id"]) for c in achados if c.get("id")}
+        return (next(iter(ids)), None) if len(ids) == 1 else (None, None)
+
+    from noctusai_lib.integrations.documents.cnpj import normalize as _normalize_cnpj
+
+    cnpj = _normalize_cnpj(documento)
+    if not cnpj:
+        return None, None
+    # postgrest-unbounded-ok: a CNPJ identifies one company; 2 rows is enough
+    # to tell "ambiguous" from "unique".
+    rows = (
+        db.table("empresas").select("id").eq("org_id", str(org_id)).eq("cnpj", cnpj).limit(2).execute()
+    ).data or []
+    return (None, str(rows[0]["id"])) if len(rows) == 1 else (None, None)
+
+
 # --------------- Endpoints ---------------
 
 
@@ -494,6 +526,12 @@ def criar_consulta(
         if body.incluir_tjsp or config["tipo"] != TJSP_TIPO
     ]
 
+    # Auto-link to the single cliente/empresa this document identifies, so the
+    # consulta shows on that lead card's Certidões tab (ambiguous -> unlinked).
+    dono_cliente_id, dono_empresa_id = _dono_unico_por_documento(
+        db, org_id, body.tipo_documento, body.documento
+    )
+
     consulta_data = {
         **body.model_dump(mode="json", exclude_none=True, exclude={"incluir_tjsp"}),
         "org_id": str(org_id),
@@ -502,6 +540,10 @@ def criar_consulta(
         "total_certidoes": len(configs),
         "concluidas": 0,
     }
+    if dono_cliente_id:
+        consulta_data["cliente_id"] = dono_cliente_id
+    if dono_empresa_id:
+        consulta_data["empresa_id"] = dono_empresa_id
 
     consulta_result = db.table(CONSULTAS).insert(consulta_data).execute()
     if not consulta_result.data:
@@ -520,6 +562,14 @@ def criar_consulta(
         for config in configs
     ]
     db.table(RESULTADOS).insert(resultados_data).execute()
+
+    if dono_cliente_id or dono_empresa_id:
+        # Same post-link steps `vincular-cliente` / `vincular-empresa` run.
+        _fan_out_tipos_manuais(db, consulta["id"], org_id, tipo_documento=body.tipo_documento)
+        _pos_vinculo(
+            db, org_id, consulta["id"], consulta,
+            cliente_id=dono_cliente_id, empresa_id=dono_empresa_id,
+        )
 
     # Background processing. Passed as an async coroutine function so it runs
     # in the MAIN event loop — required for the TJSP on-demand scheduling,

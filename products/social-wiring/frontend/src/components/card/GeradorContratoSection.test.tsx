@@ -78,9 +78,9 @@ async function render(over: Record<string, unknown> = {}) {
 /** A `destino` shaped exactly like `Destinos.para` (`derivacao.py:100-193`). */
 function destino(over: Record<string, unknown> = {}) {
   return {
-    tela: "certidoes",
-    rota: "/certidoes",
-    ancora: null,
+    tela: "card_certidoes",
+    rota: "/clientes",
+    ancora: "certidoes",
     ids: {},
     ...over,
   };
