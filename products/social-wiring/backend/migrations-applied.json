@@ -46,6 +46,8 @@
     "297_julia_solicitacoes_titular.sql": "bf68968ad21be467c91708e91489d97187de8880cb83ec3a81b85a601ce04807",
     "298_julia_staff_protecao_bloqueio.sql": "86ecb306b4ed55788ba5188bc85b9f6d135f4644bcf6ff5c69b3750e945af5da",
     "299_participacao_decisao_obrigacoes_local.sql": "00c6cba9741c806458543d0c1c380e07dccb660f40deb913637053f127e1647d",
-    "300_imovel_condominio_fk.sql": "fd2d98b1fc9dfd8e6f084ea78c0917c02ce929d0626a4944a93ba695afe08747"
+    "300_imovel_condominio_fk.sql": "fd2d98b1fc9dfd8e6f084ea78c0917c02ce929d0626a4944a93ba695afe08747",
+    "301_imovel_documentos_matricula_encerrada.sql": "b92b2f05d9c1fa406f20d12b3940bdb5b933b283a3f77b74301b4bfec7a8485d",
+    "302_certidao_emitida_em_origem.sql": "0780d1b965de4a54c4cfe4da88432ed24c5d3c7452c6472905be635b095d182b"
   }
 }
