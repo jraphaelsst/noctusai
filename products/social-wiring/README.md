@@ -57,6 +57,10 @@ cd products/social-wiring/frontend && npm run dev
 
 Same-origin under the single-container model: `VITE_BACKEND_API_URL` is runtime-detected (`src/lib/apiBase.ts`) and not baked. The boot-critical `VITE_SUPABASE_*` vars are Vite-inlined at `vite build` and asserted in `main.tsx`.
 
+## Contract parties (matrícula-driven)
+
+**Contract parties follow the matrícula.** A vendedor typed `proprietário` who is not among the matrícula's current owners (adquirentes of the last transfer act, `titulo_service.titularidade_atual`) blocks generation with `VENDEDOR_NAO_PROPRIETARIO` and the readiness names the right papel (cônjuge of an owner → anuente; doador in the chain → anuente); owners unknown checks nothing. When the sellers hold the imóvel by **doação** (adiantamento de legítima) the doadores are `anuente`s worded as such (`derivacao.doador_anuente`, no extra column); a spouse-anuente keeps its own wording. A CNH-only RG completes itself from the matrícula averbação (`card_hub/rg_matricula_service.py`, `rg_origem='matricula_averbacao'`), nacionalidade is inflected by gênero, and a certidão de casamento hands the linked cônjuge the couple's estado civil/regime/data.
+
 ## Tests
 
 ```bash

@@ -92,6 +92,10 @@ free boolean (`em_condominio` is legacy read-only; read the derived value). The 
 - Never edit an applied migration; rename or change through a new forward migration (see 287).
 - pt-BR UI copy.
 
+## Contract parties (matrícula-driven)
+
+**Contract parties follow the matrícula.** A vendedor typed `proprietário` who is not among the matrícula's current owners (adquirentes of the last transfer act, `titulo_service.titularidade_atual`) blocks generation with `VENDEDOR_NAO_PROPRIETARIO` and the readiness names the right papel (cônjuge of an owner → anuente; doador in the chain → anuente); owners unknown checks nothing. When the sellers hold the imóvel by **doação** (adiantamento de legítima) the doadores are `anuente`s worded as such (`derivacao.doador_anuente`, no extra column); a spouse-anuente keeps its own wording. A CNH-only RG completes itself from the matrícula averbação (`card_hub/rg_matricula_service.py`, `rg_origem='matricula_averbacao'`), nacionalidade is inflected by gênero, and a certidão de casamento hands the linked cônjuge the couple's estado civil/regime/data.
+
 ## Testing
 
 ```bash
