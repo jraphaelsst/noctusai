@@ -47,7 +47,7 @@ export interface CertidaoParteCelula {
   arquivo_nome: string | null;
   /** `metadados_pdf`: `emitida_em` was INFERRED from the PDF CreationDate (the
    *  consulta printed no date); null = printed / registry / typed. */
-  emitida_em_origem?: "metadados_pdf" | null;
+  emitida_em_origem?: "metadados_pdf" | "data_da_consulta" | null;
   origem: "api" | "ia" | "manual" | null;
   confirmado: boolean;
   analise_ia: string | null;

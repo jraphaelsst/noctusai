@@ -248,3 +248,47 @@ class TestVoltarALeituraAutomatica:
         db = _client(**{CONSULTAS: [consulta], RESULTADOS: [r]})
         with pytest.raises(service.ReleituraRecusada):
             await self._voltar(db, r["id"])
+
+
+class TestCadeiaDeDataDaConsulta:
+    """Every identity-bearing CENPROT/Serasa read ends with a date (F56)."""
+
+    def _db(self):
+        return _client(**{CONSULTAS: [_consulta(created_at="2026-06-20T10:00:00+00:00")]})
+
+    def _cid(self, db):
+        return db.table(CONSULTAS).select("*").execute().data[0]["id"]
+
+    def test_data_impressa_no_texto_vence_o_metadado(self):
+        db = self._db()
+        destino = {"numero": "0123456789"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf("D:20260210090409Z"), "cenprot", self._cid(db), db,
+            ("Data da consulta: 15/05/2026",),
+        )
+        assert destino["emitida_em"] == "2026-05-15"
+        assert destino["emitida_em_origem"] is None
+
+    def test_sem_metadado_usa_o_dia_da_consulta(self):
+        db = self._db()
+        destino = {"numero": "0123456789"}
+        service._aplicar_data_dos_metadados(destino, _pdf(None), "cenprot", self._cid(db), db)
+        assert destino["emitida_em"] == "2026-06-20"
+        assert destino["emitida_em_origem"] == "data_da_consulta"
+
+    def test_metadado_fora_da_janela_cai_no_dia_da_consulta(self):
+        db = self._db()
+        destino = {"numero": "0123456789"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf("D:20240101000000Z"), "cenprot", self._cid(db), db,
+        )
+        assert destino["emitida_em_origem"] == "data_da_consulta"
+
+    def test_data_fora_da_janela_no_texto_e_ignorada(self):
+        db = self._db()
+        destino = {"numero": "1"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf("D:20260210090409Z"), "cenprot", self._cid(db), db,
+            ("Data da consulta: 01/01/2020",),
+        )
+        assert destino["emitida_em_origem"] == "metadados_pdf"

@@ -218,6 +218,26 @@ def codigos_leitura(client: Any, org_id: UUID, codigo: str) -> list[str]:
     return [canonico]
 
 
+def codigos_documentos(client: Any, org_id: UUID, codigo: str) -> list[str]:
+    """Códigos whose stored DOCUMENTS the imóvel's Documentos card lists:
+    `codigos_leitura` plus, for a MANUAL código, its linked Vista side.
+
+    Documents are the one property-level child that must be visible from BOTH
+    sides of the link: the Vista -> manual-only direction protects FIELD
+    values from being overlaid (`legal_efetivo`), but a matrícula PDF already
+    stored under the other código would otherwise be invisible and therefore
+    impossible to re-read (F61: a closed predecessor matrícula kept its
+    `matricula_encerrada`/`matriculada_sob` unset forever). Each row keeps its
+    own `codigo` (`fonte_codigo` in the API), so open/re-read/remove target
+    the código that actually holds it."""
+    canonico = codigo.strip().upper()
+    fontes = codigos_leitura(client, org_id, canonico)
+    vinculo = resolver_vinculo(client, org_id, canonico)
+    if vinculo is not None and vinculo.manual_codigo == canonico and vinculo.vista_codigo not in fontes:
+        fontes.append(vinculo.vista_codigo)
+    return fontes
+
+
 def manuais_por_vista(
     client: Any, org_id: UUID, codigos: list[str]
 ) -> dict[str, str]:

@@ -141,3 +141,19 @@ def test_filling_from_the_predecessor_never_overwrites_the_current_reading(clien
     linha = [r for r in scoped.table("imovel_dados").select("*").execute().data
              if r["codigo"] == CODIGO][0]
     assert linha["numero_matricula"] == "11.926"
+
+
+def test_predecessor_is_recognised_from_its_text_when_the_document_flag_is_unset(scoped):
+    """F60/F61: a closed matrícula never re-read has `matricula_encerrada`
+    unset; its transcription's closing averbação is enough."""
+    atual, anterior = _cenario(scoped)
+    docs = scoped.table("imovel_documentos")
+    for linha in docs.select("*").execute().data:
+        docs.update({"matricula_encerrada": False, "matriculada_sob": None}).eq(
+            "id", linha["id"]
+        ).execute()
+    assert cadeia_dominial.extracao_e_predecessora(scoped, ORG, anterior) is True
+    assert cadeia_dominial.extracao_e_predecessora(scoped, ORG, atual) is False
+    assert [e["id"] for e in cadeia_dominial.extracoes_predecessoras(scoped, ORG, CODIGO)] == [
+        anterior["id"]
+    ]

@@ -258,8 +258,10 @@ class TestChildren:
         itens = documentos_service.listar(scoped, ORG, VISTA)["items"]
         assert [(i["codigo"], i["fonte_codigo"]) for i in itens] == [(MANUAL, MANUAL), (VISTA, VISTA)]
         assert len(scoped.table("imovel_documentos").select("*").execute().data) == 2
-        # the manual side lists only its own
-        assert {i["codigo"] for i in documentos_service.listar(scoped, ORG, MANUAL)["items"]} == {MANUAL}
+        # the Documentos card lists EVERY stored document from either side
+        # (F61: a matrícula stored under the other código must stay re-readable);
+        # field values are still never overlaid on the manual side.
+        assert {i["codigo"] for i in documentos_service.listar(scoped, ORG, MANUAL)["items"]} == {MANUAL, VISTA}
 
     def test_certidoes_of_the_vista_codigo_see_the_manual_matricula(self, client, scoped):
         d_manual = documento_row(codigo=MANUAL, numero="123")

@@ -231,12 +231,19 @@ def _documento_out(row: dict, resolved: dict) -> dict:
     }
 
 
-def _linhas_do_imovel(client: Any, org_id: UUID, codigo: str) -> list[dict]:
+def _linhas_do_imovel(
+    client: Any, org_id: UUID, codigo: str, *, ambos_lados: bool = False
+) -> list[dict]:
     """Newest-first documents of the PROPERTY `codigo` names: its own plus,
     for a Vista código linked to a manual imóvel, the manual one's (union —
     rows are never copied; each keeps its own `codigo`). See `vinculo_legal`."""
     rows: list[dict] = []
-    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+    fontes = (
+        vinculo_legal.codigos_documentos(client, org_id, codigo)
+        if ambos_lados
+        else vinculo_legal.codigos_leitura(client, org_id, codigo)
+    )
+    for fonte in fontes:
         rows.extend(STORE.listar_linhas(client, org_id, fonte))
     if len({r["codigo"] for r in rows}) > 1:
         rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -245,7 +252,9 @@ def _linhas_do_imovel(client: Any, org_id: UUID, codigo: str) -> list[dict]:
 
 def listar(client: Any, org_id: UUID, codigo: str) -> dict:
     dados_service.ensure_imovel(client, org_id, codigo)
-    rows = _linhas_do_imovel(client, org_id, codigo)
+    # EVERY stored document of the property, from either side of the
+    # manual<->Vista link: a matrícula the card cannot list cannot be re-read.
+    rows = _linhas_do_imovel(client, org_id, codigo, ambos_lados=True)
     resolved = table_reads.resolve_actors(
         {r["enviado_por"] for r in rows if r.get("enviado_por")}
         | {r["confirmado_por"] for r in rows if r.get("confirmado_por")}

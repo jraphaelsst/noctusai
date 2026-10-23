@@ -297,9 +297,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
-                        {c.emitida_em && c.emitida_em_origem === "metadados_pdf" && (
+                        {c.emitida_em && (c.emitida_em_origem === "metadados_pdf" || c.emitida_em_origem === "data_da_consulta") && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-data-inferida-${parte.chave}-${linha.chave}`}>
-                            Data inferida dos metadados do PDF (a consulta não imprime data)
+                            {c.emitida_em_origem === "data_da_consulta"
+                              ? "Data inferida do dia da consulta (o documento não imprime data)"
+                              : "Data inferida dos metadados do PDF (a consulta não imprime data)"}
                           </p>
                         )}
                         {c.numero && (

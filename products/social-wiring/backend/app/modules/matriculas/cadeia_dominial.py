@@ -18,7 +18,12 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents import Instrumento, find_matricula, frase_titulo_aquisitivo
+from noctusai_lib.integrations.documents import (
+    Instrumento,
+    find_matricula,
+    frase_titulo_aquisitivo,
+    ler_encerramento,
+)
 from noctusai_lib.integrations.documents.matricula_cabecalho import find_cartorio
 
 from app.modules.imovel_hub import documentos_service as docs_svc
@@ -36,6 +41,17 @@ def _numero_formatado(numero: str) -> str:
 
 
 def _documento_encerrado(client: Any, org_id: UUID, extracao: dict) -> bool:
+    """The extraction transcribes a matrícula CLOSED by transfer.
+
+    The document's own `matricula_encerrada` flag (set by its structured
+    read) is the fast path. It must not be the ONLY path: a matrícula
+    document that was never (re-)read — or whose read ran before migration
+    301 — has the flag unset while its transcription plainly carries the
+    closing averbação ("…ficando encerrada a presente matrícula"), and the
+    whole predecessor chain (título, última transferência, antigos
+    proprietários) silently vanished with it (deal 799, F60/F61). So the
+    transcription's text is read with the SAME seed reader the document
+    read uses (`ler_encerramento`) when the flag says nothing."""
     documento_id = extracao.get("imovel_documento_id")
     if not documento_id:
         return False
@@ -47,7 +63,14 @@ def _documento_encerrado(client: Any, org_id: UUID, extracao: dict) -> bool:
         .limit(1)
         .execute()
     ).data or []
-    return bool(rows and rows[0].get("tipo_documento") == "matricula" and rows[0].get("matricula_encerrada"))
+    if not rows or rows[0].get("tipo_documento") != "matricula":
+        return False
+    if rows[0].get("matricula_encerrada"):
+        return True
+    texto = extracao.get("texto_extraido") or estrutura_svc.texto_da_extracao(
+        client, org_id, extracao["id"]
+    )
+    return ler_encerramento(texto or "")[0]
 
 
 def extracao_e_predecessora(client: Any, org_id: UUID, extracao: dict) -> bool:
@@ -73,32 +96,32 @@ def matricula_origem(client: Any, org_id: UUID, extracao: dict) -> Optional[str]
 
 def extracoes_predecessoras(client: Any, org_id: UUID, codigo: str) -> list[dict]:
     """The imóvel's concluded transcriptions of CLOSED matrículas, newest
-    first. The manual record linked to a Vista código is included."""
+    first — closed by the document's flag OR by its own transcription
+    (`_documento_encerrado`). The manual record linked to a Vista código is
+    included, from either side of the link (`codigos_documentos`)."""
     saida: list[dict] = []
-    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+    for fonte in vinculo_legal.codigos_documentos(client, org_id, codigo):
         documentos = (
             _t(client, docs_svc.TABLE)
             .select("id")
             .eq("org_id", str(org_id))
             .eq("codigo", fonte)
             .eq("tipo_documento", "matricula")
-            .eq("matricula_encerrada", True)
+            .is_("deleted_at", "null")
             .execute()
         ).data or []
         for documento in documentos:
-            saida.extend(
-                (
-                    _t(client, estrutura_svc.EXTRACOES_TABLE)
-                    .select("*")
-                    .eq("org_id", str(org_id))
-                    .eq("imovel_documento_id", str(documento["id"]))
-                    .eq("status", estrutura_svc.STATUS_CONCLUIDA)
-                    .order("created_at", desc=True)
-                    .limit(1)
-                    .execute()
-                ).data
-                or []
-            )
+            ultima = (
+                _t(client, estrutura_svc.EXTRACOES_TABLE)
+                .select("*")
+                .eq("org_id", str(org_id))
+                .eq("imovel_documento_id", str(documento["id"]))
+                .eq("status", estrutura_svc.STATUS_CONCLUIDA)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            ).data or []
+            saida.extend(e for e in ultima if _documento_encerrado(client, org_id, e))
     return sorted(saida, key=lambda e: str(e.get("created_at") or ""), reverse=True)
 
 

@@ -2815,14 +2815,57 @@ def _referencia_da_consulta(db, consulta_id: str) -> Optional[date]:
         return None
 
 
+#: `emitida_em_origem` of a date that is only the day the consulta ran (the
+#: consulta row's `created_at`) — the last rung, when the document prints no
+#: date and the PDF has no usable metadata.
+ORIGEM_DATA_DA_CONSULTA = "data_da_consulta"
+
+_DATA_DA_CONSULTA_RE = re.compile(
+    r"data\s+(?:e\s+hora\s+)?da\s+consulta\s*[:\-]?\s*(?:[^\d\n]{1,40}?,\s*)?"
+    r"(\d{2})/(\d{2})/(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _data_impressa_na_janela(
+    paginas_texto: Sequence[str], referencia: Optional[date],
+) -> Optional[date]:
+    """A date PRINTED in the document's own text (emission line, else "Data da
+    consulta"), accepted only inside the CENPROT plausibility window."""
+    candidatas: list[date] = []
+    emissao = _data_emissao_do_texto(paginas_texto)
+    if emissao:
+        candidatas.append(date.fromisoformat(emissao))
+    for pagina in paginas_texto:
+        for m in _DATA_DA_CONSULTA_RE.finditer(pagina or ""):
+            try:
+                candidatas.append(date(int(m.group(3)), int(m.group(2)), int(m.group(1))))
+            except ValueError:
+                continue
+    if referencia is None:
+        return None
+    for dia in candidatas:
+        if referencia - timedelta(days=360) <= dia <= referencia + timedelta(days=45):
+            return dia
+    return None
+
+
 def _aplicar_data_dos_metadados(
     destino: dict, pdf_bytes: bytes, tipo: Optional[str], consulta_id: str, db,
+    paginas_texto: Sequence[str] = (),
 ) -> None:
-    """A consulta read that yielded a protocolo/result but NO date falls back
-    to the PDF CreationDate (inside the CENPROT plausibility window) and says
-    so in `emitida_em_origem`. Never overrides a read date; a read date resets
-    the marker. Needs an identity-bearing read (`numero`/`resultado`) so a
-    refused document (another party's) never gains a date."""
+    """A consulta read that yielded a protocolo/result but NO date ends with
+    one anyway, best source first, and says which in `emitida_em_origem`:
+
+    1. a date printed in the document's text (origin NULL — it IS printed);
+    2. the PDF CreationDate inside the CENPROT plausibility window
+       (`metadados_pdf`);
+    3. the day the consulta ran (`data_da_consulta`) — the last resort, so a
+       readable consulta is never left without a date.
+
+    Never overrides a read date; a read date resets the marker. Needs an
+    identity-bearing read (`numero`/`resultado`) so a refused document
+    (another party's) never gains a date."""
     if tipo not in TIPOS_DATA_DOS_METADADOS:
         return
     if destino.get("emitida_em"):
@@ -2830,10 +2873,20 @@ def _aplicar_data_dos_metadados(
         return
     if not (destino.get("numero") or destino.get("resultado")):
         return
-    dia = data_plausivel_dos_metadados(pdf_bytes, _referencia_da_consulta(db, consulta_id))
+    referencia = _referencia_da_consulta(db, consulta_id)
+    impressa = _data_impressa_na_janela(paginas_texto, referencia)
+    if impressa is not None:
+        destino["emitida_em"] = impressa.isoformat()
+        destino["emitida_em_origem"] = None
+        return
+    dia = data_plausivel_dos_metadados(pdf_bytes, referencia)
     if dia is not None:
         destino["emitida_em"] = dia.isoformat()
         destino["emitida_em_origem"] = ORIGEM_METADADOS_PDF
+        return
+    if referencia is not None:
+        destino["emitida_em"] = referencia.isoformat()
+        destino["emitida_em_origem"] = ORIGEM_DATA_DA_CONSULTA
 
 
 async def _aplicar_leitura_cenprot(
@@ -3095,7 +3148,9 @@ async def process_manual_extraction(
         )
 
     if destino is not None:
-        _aplicar_data_dos_metadados(destino, pdf_bytes, tipo, consulta_id, db)
+        _aplicar_data_dos_metadados(
+            destino, pdf_bytes, tipo, consulta_id, db, paginas_texto
+        )
 
     if releitura:
         divergencias = (
@@ -3622,7 +3677,9 @@ async def _reler_emissao(
                 lido, pdf_bytes, resultado_id, consulta_id, nome_display,
                 org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
             )
-        _aplicar_data_dos_metadados(lido, pdf_bytes, tipo, consulta_id, db)
+        _aplicar_data_dos_metadados(
+            lido, pdf_bytes, tipo, consulta_id, db, paginas_texto
+        )
     except Exception as exc:  # noqa: BLE001 - background job must not die
         logger.error(
             "Certidão %s (resultado %s): releitura — leitura estruturada "
