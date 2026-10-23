@@ -3816,3 +3816,24 @@ class TestEveryEmittableGateHasADeclaredBudget:
                              merged_tip_check=check)
         assert res["status"] == "integrated", res
         assert [d["gate"] for d in res["budget_defaulted"]] == ["brand_new_gate"]
+
+
+def test_pointer_write_survives_a_removed_cwd(tmp_path):
+    """Integrate runs from inside the worktree it then removes: the terminal
+    pointer write must not inherit the dangling cwd (2026-10-23, live repro:
+    `[Errno 2] No such file or directory: '.claude/worktrees/<slug>'`)."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    gone = tmp_path / "wt"
+    gone.mkdir()
+    before = os.getcwd()
+    try:
+        os.chdir(gone)
+        gone.rmdir()
+        T._cwd_to_primary_if_gone(str(primary))
+        assert os.getcwd() == os.path.realpath(primary)
+        # A live cwd is left alone.
+        T._cwd_to_primary_if_gone(str(tmp_path))
+        assert os.getcwd() == os.path.realpath(primary)
+    finally:
+        os.chdir(before)

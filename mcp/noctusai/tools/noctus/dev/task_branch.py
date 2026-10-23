@@ -319,6 +319,19 @@ def _absolute_wt_path(wt_path: str, root: str) -> str:
     return wt_path if os.path.isabs(wt_path) else os.path.join(str(root), wt_path)
 
 
+def _cwd_to_primary_if_gone(primary_root: str | None) -> None:
+    """chdir to the primary checkout when the current directory no longer exists.
+
+    A teardown that removes the worktree the process is standing in leaves a
+    dangling cwd; any later subprocess then fails before it starts."""
+    try:
+        if os.path.isdir(os.getcwd()):
+            return
+    except FileNotFoundError:
+        pass
+    os.chdir(_resolve_primary_root(primary_root))
+
+
 def _resolve_primary_root(primary_root: str | None) -> str:
     """The PRIMARY checkout root — injected in tests, `REPO_ROOT` in production.
 
@@ -2919,6 +2932,10 @@ def task_branch(
     except Exception as e:  # best-effort — never fail a completed teardown, but say so
         result["released_claims_error"] = f"{type(e).__name__}: {e}"
     # Merged (checked above) + worktree removed ⇒ the lifecycle is over.
+    # The process cwd may be the worktree just removed (integrate runs from
+    # inside it): every git call the pointer write makes would then fail with
+    # "No such file or directory" and the terminal row would never land.
+    _cwd_to_primary_if_gone(primary_root)
     result["pointer"] = _pointer_transition(
         pointer_fn, branch=branch, status="shipped", publish=True,
         notes=f"task_branch cleanup: merged into {dev_branch}, worktree removed")
