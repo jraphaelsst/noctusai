@@ -250,45 +250,124 @@ class TestVoltarALeituraAutomatica:
             await self._voltar(db, r["id"])
 
 
+#: Synthetic mirror of a browser print of a CENPROT consulta: a protocol, NO
+#: emission line, and only the print footer (time line, blank line, date line).
+_PAGINA_IMPRESSA = (
+    "Consulta de Protesto\nProtocolo da Consulta: 0123456789\n"
+    "Nenhum protesto encontrado.\nComo posso ajudá-lo hoje?\n\n09:01\n\n10/02/2026"
+)
+
+
 class TestCadeiaDeDataDaConsulta:
-    """Every identity-bearing CENPROT/Serasa read ends with a date (F56)."""
+    """Printed date > PDF metadata > (LIVE only) consulta day (F56)."""
 
     def _db(self):
-        return _client(**{CONSULTAS: [_consulta(created_at="2026-06-20T10:00:00+00:00")]})
+        # The consulta row is created at UPLOAD time — months after the print.
+        return _client(**{CONSULTAS: [_consulta(created_at="2026-10-22T10:00:00+00:00")]})
 
     def _cid(self, db):
         return db.table(CONSULTAS).select("*").execute().data[0]["id"]
 
-    def test_data_impressa_no_texto_vence_o_metadado(self):
+    def test_rodape_de_impressao_do_navegador_e_a_data_impressa(self):
         db = self._db()
         destino = {"numero": "0123456789"}
         service._aplicar_data_dos_metadados(
-            destino, _pdf("D:20260210090409Z"), "cenprot", self._cid(db), db,
-            ("Data da consulta: 15/05/2026",),
+            destino, _pdf(None), "cenprot", self._cid(db), db, (_PAGINA_IMPRESSA,),
         )
-        assert destino["emitida_em"] == "2026-05-15"
+        assert destino["emitida_em"] == "2026-02-10"
         assert destino["emitida_em_origem"] is None
 
-    def test_sem_metadado_usa_o_dia_da_consulta(self):
-        db = self._db()
-        destino = {"numero": "0123456789"}
-        service._aplicar_data_dos_metadados(destino, _pdf(None), "cenprot", self._cid(db), db)
-        assert destino["emitida_em"] == "2026-06-20"
-        assert destino["emitida_em_origem"] == "data_da_consulta"
-
-    def test_metadado_fora_da_janela_cai_no_dia_da_consulta(self):
-        db = self._db()
-        destino = {"numero": "0123456789"}
-        service._aplicar_data_dos_metadados(
-            destino, _pdf("D:20240101000000Z"), "cenprot", self._cid(db), db,
-        )
-        assert destino["emitida_em_origem"] == "data_da_consulta"
-
-    def test_data_fora_da_janela_no_texto_e_ignorada(self):
+    def test_rodape_so_com_a_data_e_no_inicio_da_pagina(self):
         db = self._db()
         destino = {"numero": "1"}
         service._aplicar_data_dos_metadados(
-            destino, _pdf("D:20260210090409Z"), "cenprot", self._cid(db), db,
-            ("Data da consulta: 01/01/2020",),
+            destino, _pdf(None), "serasa", self._cid(db), db, ("10/02/2026\nResto da pagina",),
         )
-        assert destino["emitida_em_origem"] == "metadados_pdf"
+        assert destino["emitida_em"] == "2026-02-10"
+
+    def test_data_impressa_vence_o_metadado(self):
+        db = self._db()
+        destino = {"numero": "1"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf("D:20260301090409Z"), "cenprot", self._cid(db), db,
+            ("Data da consulta: 15/05/2026",),
+        )
+        assert destino["emitida_em"] == "2026-05-15"
+
+    def test_upload_sem_data_em_lugar_nenhum_fica_nulo_nunca_o_dia_do_upload(self):
+        db = self._db()
+        destino = {"numero": "0123456789"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf(None), "cenprot", self._cid(db), db, ("Protocolo da Consulta: 0123456789",),
+        )
+        assert "emitida_em" not in destino or destino["emitida_em"] is None
+
+    def test_upload_com_data_no_futuro_ou_antiquissima_e_ignorada(self):
+        db = self._db()
+        for texto in ("Data da consulta: 01/01/2099", "Data da consulta: 01/01/2001"):
+            destino = {"numero": "1"}
+            service._aplicar_data_dos_metadados(
+                destino, _pdf(None), "cenprot", self._cid(db), db, (texto,),
+            )
+            assert not destino.get("emitida_em")
+
+    def test_emissao_viva_sem_data_usa_o_dia_da_consulta(self):
+        db = self._db()
+        destino = {"numero": "1"}
+        service._aplicar_data_dos_metadados(
+            destino, _pdf(None), "cenprot", self._cid(db), db, (), viva=True,
+        )
+        assert destino["emitida_em"] == "2026-10-22"
+        assert destino["emitida_em_origem"] == "data_da_consulta"
+
+    @pytest.mark.asyncio
+    async def test_releitura_completa_do_pdf_impresso_grava_a_data_do_rodape(self):
+        from unittest.mock import AsyncMock
+
+        consulta = _consulta(created_at="2026-10-22T10:00:00+00:00")
+        chave = f"{ORG}/certidoes/c/cenprot.pdf"
+        resultado = _resultado(
+            consulta_id=consulta["id"], tipo="cenprot", status="sucesso",
+            arquivo_url=chave, resultado_origem="ia", numero="0123456789",
+        )
+        db = _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
+        patch = await service.executar_releitura(
+            pdf_bytes=_pdf(None), resultado_id=resultado["id"], consulta_id=consulta["id"],
+            nome_display="CENPROT", org_id=ORG, db=db, tipo="cenprot", manual=True,
+            resultado_origem_atual="ia", confirmado_por_atual=None,
+            valores_atuais={"numero": "0123456789"},
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia=_PAGINA_IMPRESSA, texto_extraido=_PAGINA_IMPRESSA,
+                paginas_texto=(_PAGINA_IMPRESSA,),
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+            estruturar_cenprot_fn=AsyncMock(return_value=cenprot.CenprotEstrutura(numero="0123456789")),
+        )
+        got = db.table(RESULTADOS).select("*").eq("id", resultado["id"]).execute().data[0]
+        assert got["emitida_em"] == "2026-02-10" == patch["emitida_em"]
+
+    @pytest.mark.asyncio
+    async def test_releitura_completa_sem_data_deixa_nulo(self):
+        from unittest.mock import AsyncMock
+
+        consulta = _consulta(created_at="2026-10-22T10:00:00+00:00")
+        resultado = _resultado(
+            consulta_id=consulta["id"], tipo="cenprot", status="sucesso",
+            arquivo_url=f"{ORG}/certidoes/c/cenprot.pdf", resultado_origem="ia",
+        )
+        db = _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
+        texto = "Protocolo da Consulta: 0123456789"
+        await service.executar_releitura(
+            pdf_bytes=_pdf(None), resultado_id=resultado["id"], consulta_id=consulta["id"],
+            nome_display="CENPROT", org_id=ORG, db=db, tipo="cenprot", manual=True,
+            resultado_origem_atual="ia", confirmado_por_atual=None, valores_atuais={},
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia=texto, texto_extraido=texto, paginas_texto=(texto,),
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+            estruturar_cenprot_fn=AsyncMock(return_value=cenprot.CenprotEstrutura(numero="0123456789")),
+        )
+        got = db.table(RESULTADOS).select("*").eq("id", resultado["id"]).execute().data[0]
+        assert got["numero"] == "0123456789" and not got["emitida_em"]

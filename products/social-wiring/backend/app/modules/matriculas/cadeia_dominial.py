@@ -98,9 +98,9 @@ def extracoes_predecessoras(client: Any, org_id: UUID, codigo: str) -> list[dict
     """The imóvel's concluded transcriptions of CLOSED matrículas, newest
     first — closed by the document's flag OR by its own transcription
     (`_documento_encerrado`). The manual record linked to a Vista código is
-    included, from either side of the link (`codigos_documentos`)."""
+    included (`codigos_leitura`)."""
     saida: list[dict] = []
-    for fonte in vinculo_legal.codigos_documentos(client, org_id, codigo):
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
         documentos = (
             _t(client, docs_svc.TABLE)
             .select("id")

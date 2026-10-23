@@ -81,7 +81,7 @@ from app.modules.certidoes import aprendizado, cost_ledger, feed_parte
 from app.modules.certidoes.cenprot import (
     ORIGEM_METADADOS_PDF,
     CenprotEstrutura,
-    data_plausivel_dos_metadados,
+    data_dos_metadados_pdf,
     estruturar_cenprot,
 )
 from app.modules.certidoes.credentials import (
@@ -2815,53 +2815,84 @@ def _referencia_da_consulta(db, consulta_id: str) -> Optional[date]:
         return None
 
 
-#: `emitida_em_origem` of a date that is only the day the consulta ran (the
-#: consulta row's `created_at`) — the last rung, when the document prints no
-#: date and the PDF has no usable metadata.
+#: `emitida_em_origem` of a date that is only the day a LIVE consulta ran
+#: (the consulta row's `created_at`). Never used for an uploaded PDF: there the
+#: consulta row's day is the UPLOAD day, not the emission.
 ORIGEM_DATA_DA_CONSULTA = "data_da_consulta"
+
+#: An uploaded PDF's date has no consulta-anchored window; it only has to be
+#: plausible against today: not in the future, not older than this.
+_IDADE_MAXIMA_UPLOAD = timedelta(days=3 * 365)
 
 _DATA_DA_CONSULTA_RE = re.compile(
     r"data\s+(?:e\s+hora\s+)?da\s+consulta\s*[:\-]?\s*(?:[^\d\n]{1,40}?,\s*)?"
     r"(\d{2})/(\d{2})/(\d{4})",
     re.IGNORECASE,
 )
+#: A browser-printed page's footer: an optional "HH:MM" line, then a standalone
+#: dd/mm/yyyy line, at the very end (or, for some browsers, the very start).
+_RODAPE_IMPRESSAO_FIM_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:\d{1,2}:\d{2}(?::\d{2})?[ \t]*\n\s*)?"
+    r"(\d{2})/(\d{2})/(\d{4})[ \t]*\s*$"
+)
+_RODAPE_IMPRESSAO_INICIO_RE = re.compile(
+    r"^\s*(?:\d{1,2}:\d{2}(?::\d{2})?[ \t]*\n\s*)?(\d{2})/(\d{2})/(\d{4})[ \t]*(?:\n|$)"
+)
 
 
-def _data_impressa_na_janela(
-    paginas_texto: Sequence[str], referencia: Optional[date],
-) -> Optional[date]:
-    """A date PRINTED in the document's own text (emission line, else "Data da
-    consulta"), accepted only inside the CENPROT plausibility window."""
-    candidatas: list[date] = []
+def _dia(m: "re.Match[str]") -> Optional[date]:
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def _datas_impressas(paginas_texto: Sequence[str]) -> list[date]:
+    """Every date the document PRINTS, best first: the emission line, the
+    "Data da consulta" label, then the browser print footer (a standalone
+    dd/mm/yyyy, optionally after an HH:MM line, at the end/start of a page)."""
+    saida: list[date] = []
     emissao = _data_emissao_do_texto(paginas_texto)
     if emissao:
-        candidatas.append(date.fromisoformat(emissao))
+        saida.append(date.fromisoformat(emissao))
     for pagina in paginas_texto:
-        for m in _DATA_DA_CONSULTA_RE.finditer(pagina or ""):
-            try:
-                candidatas.append(date(int(m.group(3)), int(m.group(2)), int(m.group(1))))
-            except ValueError:
-                continue
-    if referencia is None:
-        return None
-    for dia in candidatas:
-        if referencia - timedelta(days=360) <= dia <= referencia + timedelta(days=45):
-            return dia
-    return None
+        saida.extend(d for m in _DATA_DA_CONSULTA_RE.finditer(pagina or "") if (d := _dia(m)))
+    for pagina in reversed(paginas_texto):
+        for rx in (_RODAPE_IMPRESSAO_FIM_RE, _RODAPE_IMPRESSAO_INICIO_RE):
+            m = rx.search(pagina or "")
+            if m and (d := _dia(m)):
+                saida.append(d)
+    return saida
+
+
+def _data_plausivel(dia: date, referencia: Optional[date], viva: bool) -> bool:
+    """LIVE emission: inside the CENPROT window around the consulta day.
+    Uploaded PDF: the consulta day is the upload day and says nothing about
+    the emission — only "not in the future, not absurdly old" against today."""
+    if viva:
+        return referencia is not None and (
+            referencia - timedelta(days=360) <= dia <= referencia + timedelta(days=45)
+        )
+    hoje = datetime.now(timezone.utc).date()
+    return hoje - _IDADE_MAXIMA_UPLOAD <= dia <= hoje
 
 
 def _aplicar_data_dos_metadados(
     destino: dict, pdf_bytes: bytes, tipo: Optional[str], consulta_id: str, db,
-    paginas_texto: Sequence[str] = (),
+    paginas_texto: Sequence[str] = (), *, viva: bool = False,
 ) -> None:
-    """A consulta read that yielded a protocolo/result but NO date ends with
-    one anyway, best source first, and says which in `emitida_em_origem`:
+    """A consulta read that yielded a protocolo/result but NO date takes one
+    from the best source, and says which in `emitida_em_origem`:
 
-    1. a date printed in the document's text (origin NULL — it IS printed);
-    2. the PDF CreationDate inside the CENPROT plausibility window
-       (`metadados_pdf`);
-    3. the day the consulta ran (`data_da_consulta`) — the last resort, so a
-       readable consulta is never left without a date.
+    1. a date PRINTED in the document (emission line, "Data da consulta",
+       browser print footer) — origin NULL;
+    2. the PDF CreationDate (`metadados_pdf`);
+    3. LIVE emission only (`viva`, an `api_response` exists): the day the
+       consulta ran (`data_da_consulta`) — there it IS the emission date.
+
+    For an uploaded PDF (`viva=False`) the consulta row's day is the upload
+    day: no fallback to it and no window anchored on it — nothing found
+    leaves `emitida_em` NULL, so the miss stays visible.
 
     Never overrides a read date; a read date resets the marker. Needs an
     identity-bearing read (`numero`/`resultado`) so a refused document
@@ -2873,18 +2904,18 @@ def _aplicar_data_dos_metadados(
         return
     if not (destino.get("numero") or destino.get("resultado")):
         return
-    referencia = _referencia_da_consulta(db, consulta_id)
-    impressa = _data_impressa_na_janela(paginas_texto, referencia)
-    if impressa is not None:
-        destino["emitida_em"] = impressa.isoformat()
-        destino["emitida_em_origem"] = None
-        return
-    dia = data_plausivel_dos_metadados(pdf_bytes, referencia)
-    if dia is not None:
+    referencia = _referencia_da_consulta(db, consulta_id) if viva else None
+    for impressa in _datas_impressas(paginas_texto):
+        if _data_plausivel(impressa, referencia, viva):
+            destino["emitida_em"] = impressa.isoformat()
+            destino["emitida_em_origem"] = None
+            return
+    dia = data_dos_metadados_pdf(pdf_bytes)
+    if dia is not None and _data_plausivel(dia, referencia, viva):
         destino["emitida_em"] = dia.isoformat()
         destino["emitida_em_origem"] = ORIGEM_METADADOS_PDF
         return
-    if referencia is not None:
+    if viva and referencia is not None:
         destino["emitida_em"] = referencia.isoformat()
         destino["emitida_em_origem"] = ORIGEM_DATA_DA_CONSULTA
 
@@ -3678,7 +3709,7 @@ async def _reler_emissao(
                 org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
             )
         _aplicar_data_dos_metadados(
-            lido, pdf_bytes, tipo, consulta_id, db, paginas_texto
+            lido, pdf_bytes, tipo, consulta_id, db, paginas_texto, viva=True
         )
     except Exception as exc:  # noqa: BLE001 - background job must not die
         logger.error(
