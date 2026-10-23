@@ -212,3 +212,59 @@ class TestConjugeSemEntradaRecebeOsFatosDoCasal:
             scoped, ORG_UUID, _documento(scoped, did), UUID(cid), UUID(estranho)
         ) == []
         assert not _cliente(scoped, estranho).get("estado_civil")
+
+
+class TestConjugeHerdaOEstadoCivilDoCasal:
+    """Item 5 — when the certidão links A and B, B gets what A got (estado
+    civil / regime / data), however A's own value arrived."""
+
+    @pytest.mark.asyncio
+    async def test_a_value_already_on_file_for_the_titular_still_reaches_the_spouse(
+        self, client, scoped
+    ):
+        # A's estado civil is already 'casado' (typed by the operator, so its
+        # origin is NOT the certidão) and the certidão agrees with it.
+        cid, did, outro_id, storage = await _casal(scoped)
+        scoped.table("clientes").update(
+            {"estado_civil": "casado", "estado_civil_origem": "manual"}
+        ).eq("id", cid).execute()
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(_leitura(com_a_outra=False)),
+        )
+        o = _cliente(scoped, outro_id)
+        assert o["estado_civil"] == "casado"
+        assert o["regime_bens"] == "comunhao_parcial"
+        assert o["data_casamento"] == "2020-04-12"
+
+    @pytest.mark.asyncio
+    async def test_a_spouse_entry_that_does_not_match_the_linked_name_still_gets_the_couples_facts(
+        self, client, scoped
+    ):
+        # The certidão prints the husband under a name the card does not carry
+        # (a nickname on the card): the per-person entry is not applied, the
+        # COUPLE's facts are — the card's own link says they share the marriage.
+        cid, did, outro_id, storage = await _casal(scoped)
+        scoped.table("clientes").update({"nome": "Fulano Qualquer"}).eq("id", outro_id).execute()
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(_leitura()),
+        )
+        o = _cliente(scoped, outro_id)
+        assert o["estado_civil"] == "casado"
+        assert o["regime_bens"] == "comunhao_parcial"
+        assert o["data_casamento"] == "2020-04-12"
+
+    @pytest.mark.asyncio
+    async def test_a_titular_who_disagrees_with_the_certidao_gives_the_spouse_nothing(
+        self, client, scoped
+    ):
+        cid, did, outro_id, storage = await _casal(scoped)
+        scoped.table("clientes").update(
+            {"estado_civil": "divorciado", "estado_civil_origem": "manual"}
+        ).eq("id", cid).execute()
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(_leitura(com_a_outra=False)),
+        )
+        assert not _cliente(scoped, outro_id).get("estado_civil")

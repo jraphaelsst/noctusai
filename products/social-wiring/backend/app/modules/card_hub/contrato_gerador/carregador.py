@@ -51,6 +51,7 @@ from app.modules.card_hub import documento_checklist_service as checklist_svc
 from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as estruturada_svc
 from app.modules.card_hub import negociacao_service
+from app.modules.card_hub import rg_matricula_service as rg_matricula
 from app.modules.card_hub import services as svc
 from app.modules.card_hub.contrato_gerador import certidao_pcen, derivacao
 from app.modules.card_hub.contrato_gerador.dados import (
@@ -75,6 +76,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     ParticipacaoNaoConfirmada,
     PermutaImovel,
     Pessoa,
+    TitularMatricula,
     Termos,
     Testemunha,
     anuentes,
@@ -350,6 +352,9 @@ def _pessoa(
     representa_parte_id: Optional[str] = None,
 ) -> Pessoa:
     row = svc.ensure_cliente(client, org_id, UUID(cliente_id))
+    # A CNH-only RG (no check digit) completes itself from the matrícula's
+    # averbação — the contract must print the full number (rg_matricula_service).
+    row = rg_matricula.completar(client, org_id, UUID(cliente_id), row) or row
     completude = checklist_svc.completude_contratual(client, org_id, UUID(cliente_id))
     # Migration 116 closed spec §6.1 #18. A parte's certidões stay DEAL-scoped
     # (`atendimento_parte_id`); the TITULAR has no parte row at all, and
@@ -516,6 +521,8 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
     # inheriting a differently-dated answer.
     antigos = titulo_service.antigos_proprietarios(client, org_id, codigo, usuario_id=usuario_id)
     ultima = antigos.get("ultima_transferencia") or {}
+    # [F36/F38] Who owns it now, and — for a doação — who donated it.
+    titularidade = titulo_service.titularidade_atual(client, org_id, codigo, usuario_id=usuario_id)
 
     fonte_titulo = dados.get("titulo_aquisitivo_fonte") or {}
     return Imovel(
@@ -553,6 +560,15 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
             t["nome"] for t in antigos.get("transmitentes") or [] if t.get("nome")
         ),
         ultima_transferencia_sem_registro_confirmado=bool(antigos.get("sem_registro")),
+        proprietarios_matricula=tuple(
+            TitularMatricula(nome=t["nome"], documento=t.get("cpf_cnpj"))
+            for t in titularidade["proprietarios"]
+        ),
+        titulo_natureza=titularidade["natureza"],
+        transmitentes_titulo=tuple(
+            TitularMatricula(nome=t["nome"], documento=t.get("cpf_cnpj"))
+            for t in titularidade["transmitentes"]
+        ),
         # Migration 118 — the imóvel's own CND / matrícula certidões.
         certidoes=tuple(
             CertidaoImovel(

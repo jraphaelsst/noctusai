@@ -812,11 +812,14 @@ def montar_contexto(
 
     # ── anuentes (migration 193) ──
     # gated: derivacao._partes — every anuente is a signing seller's
-    # reciprocal spouse/companion (ANUENTE_SEM_REDACAO otherwise).
+    # reciprocal spouse/companion or a doador (ANUENTE_SEM_REDACAO otherwise).
+    # [F38] …or a DOADOR of the imóvel into the sellers (`doador_anuente`).
     anuentes_textos = [
         frases.qualificacao_anuente(
-            a, conjuge_do_anuente(d, a), lei_6515_desde=politica.lei_6515_vigencia_desde  # type: ignore[arg-type]
+            a, conjuge, lei_6515_desde=politica.lei_6515_vigencia_desde  # type: ignore[arg-type]
         )
+        if (conjuge := conjuge_do_anuente(d, a)) is not None
+        else frases.qualificacao_anuente_doador(a)
         for a in anu
     ]
     A_NOME = "ANUENTES" if len(anu) > 1 else "ANUENTE"  # noqa: N806 — template token

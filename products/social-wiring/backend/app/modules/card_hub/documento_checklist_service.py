@@ -42,6 +42,7 @@ from noctusai_lib.integrations.documents import looks_like_a_name
 from noctusai_lib.integrations.documents.rg import mesmo_rg, only_alnum
 
 from app.modules.card_hub import documentos_service as docs_svc
+from app.modules.card_hub import rg_matricula_service as rg_matricula
 from app.services.estado_civil_canonico import estado_civil_canonico
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.services import (
@@ -732,7 +733,11 @@ def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
         .execute()
     )
     rows = res.data or []
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    # A CNH-only RG (no check digit) completes itself from a matrícula
+    # averbação when one states it — no-op unless the row rests on a CNH.
+    return rg_matricula.completar(client, org_id, cliente_id, rows[0])
 
 
 def cliente_para_derivacao(

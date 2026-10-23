@@ -452,6 +452,24 @@ class Imovel:
     #: print; `None` is `faltando`, not a fallback to the CRM's público
     #: endereço. See this class's `endereco` docstring for why.
     endereco_registro_texto: Optional[str] = None
+    #: [F36/F38] The CURRENT owners as the matrícula's last ownership-
+    #: transferring act names them (`titulo_service.titularidade_atual`).
+    #: Empty = owners UNKNOWN (no concluded matrícula / no such act): the
+    #: gate then checks nothing, it never claims "nobody owns it".
+    proprietarios_matricula: tuple["TitularMatricula", ...] = ()
+    #: `natureza` of that act ('doacao', 'compra_e_venda', 'partilha', ...).
+    titulo_natureza: Optional[str] = None
+    #: The act's transmitentes — the DOADORES when `titulo_natureza ==
+    #: 'doacao'` (the anuentes a doação into the sellers requires).
+    transmitentes_titulo: tuple["TitularMatricula", ...] = ()
+
+
+@dataclass(frozen=True)
+class TitularMatricula:
+    """A party as the matrícula prints it: name + the document it states."""
+
+    nome: str
+    documento: Optional[str] = None
 
 
 @dataclass

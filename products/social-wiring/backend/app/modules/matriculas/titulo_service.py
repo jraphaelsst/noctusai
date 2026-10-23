@@ -774,6 +774,65 @@ def antigos_proprietarios(
     return saida
 
 
+def texto_da_matricula(client: Any, org_id: UUID, codigo: str) -> Optional[str]:
+    """The imóvel's newest CONCLUDED matrícula transcription (raw text), or
+    `None` — a fact source for readers that scan the whole matrícula (the RG
+    an averbação states). Same extraction pick as `antigos_proprietarios`."""
+    codigo = _codigo(codigo)
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
+    extracao = _extracao_do_imovel(client, org_id, codigo, linha)
+    if extracao is None or extracao.get("status") != estrutura_svc.STATUS_CONCLUIDA:
+        return None
+    return extracao.get("texto_extraido") or None
+
+
+def titularidade_atual(
+    client: Any, org_id: UUID, codigo: str, *, usuario_id: Optional[Any] = None
+) -> dict:
+    """Who OWNS the imóvel now, per its matrícula: the adquirentes of the LAST
+    ownership-transferring act (the WIDE `NATUREZAS_TRANSFERENCIA` — an heir
+    or a donee IS the owner, unlike `antigos_proprietarios`' narrower
+    "sold for consideration" set), plus that act's `natureza` and
+    `transmitentes` (the DOADORES when the act is a doação).
+
+    `{"natureza": None, "proprietarios": [], "transmitentes": []}` when no
+    concluded matrícula or no such act exists — owners UNKNOWN, which the
+    contract gate reads as "nothing to check", never as "nobody owns it".
+    Each entry is `{"nome", "cpf_cnpj"}` as the act printed it."""
+    codigo = _codigo(codigo)
+    vazio: dict[str, Any] = {"natureza": None, "proprietarios": [], "transmitentes": []}
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
+    extracao = _extracao_do_imovel(client, org_id, codigo, linha)
+    if extracao is None or extracao.get("status") != estrutura_svc.STATUS_CONCLUIDA:
+        return vazio
+    por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
+    transferencias = [
+        por_id[ato_id]
+        for ato_id, d in detalhes.items()
+        if d.get("natureza") in NATUREZAS_TRANSFERENCIA
+        and ato_id in por_id
+        and por_id[ato_id].get("kind") != "abertura"
+    ]
+    if not transferencias:
+        return vazio
+    ato = max(transferencias, key=lambda r: r["ordem"])
+    det = detalhes[str(ato["id"])]
+    detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
+
+    def _partes(chave: str) -> list[dict]:
+        return [
+            {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+            for p in det.get(chave) or []
+            if p.get("nome")
+        ]
+
+    return {
+        "natureza": det.get("natureza"),
+        "proprietarios": _partes("adquirentes"),
+        "transmitentes": _partes("transmitentes"),
+    }
+
+
 def confirmar_ultima_transferencia_manual(
     client: Any,
     org_id: UUID,
@@ -825,6 +884,8 @@ __all__ = [
     "ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS",
     "NATUREZAS_ULTIMA_TRANSFERENCIA",
     "antigos_proprietarios",
+    "texto_da_matricula",
+    "titularidade_atual",
     "confirmar_detalhes_ato",
     "confirmar_onus_credor",
     "confirmar_titulo",

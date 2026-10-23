@@ -75,6 +75,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Parcela,
     ParteJuridica,
     Pessoa,
+    TitularMatricula,
     anuentes,
     parcela_permuta,
     parcelas_permuta,
@@ -1335,6 +1336,94 @@ def conjuge_do_anuente(d: DadosContrato, a: Pessoa) -> Optional[Pessoa]:
     return conjuge
 
 
+_PARTICULAS_NOME = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+
+
+def _tokens_nome(nome: Optional[str]) -> tuple[str, ...]:
+    """A person name as comparable tokens: accent-free, upper case, without
+    the particles (de/da/do/das/dos/e) a registry prints or drops freely."""
+    folded = fold_accents(nome or "").upper()
+    return tuple(t for t in re.split(r"[^A-Z]+", folded) if t and t not in _PARTICULAS_NOME)
+
+
+def _nomes_compativeis(a: Optional[str], b: Optional[str]) -> bool:
+    """Same person up to accents/case/particles; a registry that omits a
+    middle name still matches (>= 2 tokens, same first AND last, the shorter
+    a subset of the longer). One-word names never match loosely."""
+    ta, tb = _tokens_nome(a), _tokens_nome(b)
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    curto, longo = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return (
+        len(curto) >= 2
+        and curto[0] == longo[0]
+        and curto[-1] == longo[-1]
+        and set(curto) <= set(longo)
+    )
+
+
+def confere_titular(p: Pessoa, titulares: tuple[TitularMatricula, ...]) -> bool:
+    """Is `p` one of the matrícula's `titulares`? The CPF decides when both
+    sides state a valid-length one (equal = same person, different = not,
+    whatever the names say); otherwise the name decides."""
+    cpf = re.sub(r"\D", "", p.cpf or "")
+    nome = p.nome or p.nome_cadastro
+    for t in titulares:
+        doc = re.sub(r"\D", "", t.documento or "")
+        if len(cpf) == 11 and len(doc) == 11:
+            if cpf == doc:
+                return True
+            continue
+        if _nomes_compativeis(nome, t.nome):
+            return True
+    return False
+
+
+def doador_anuente(d: DadosContrato, a: Pessoa) -> bool:
+    """[F38] An anuente who is a DOADOR in the matrícula's last ownership-
+    transferring act, when that act is a doação (the sellers hold the imóvel
+    by donation — adiantamento de legítima — so the donors consent). The
+    chain is the source: no flag, no per-deal data. A donor's spouse who
+    also donated (comunhão universal) is a donor in the act too, so they
+    match the same way — they are anuentes, never certificandos."""
+    im = d.imovel
+    return bool(
+        a.lado == "vendedor"
+        and im is not None
+        and im.titulo_natureza == "doacao"
+        and confere_titular(a, im.transmitentes_titulo)
+    )
+
+
+def _sugestao_papel_nao_proprietario(d: DadosContrato, p: Pessoa) -> str:
+    """[F36] The papel a vendedor 'proprietário' who is NOT among the
+    matrícula's owners most likely holds, named for the operator."""
+    im = d.imovel
+    assert im is not None
+    donos = [
+        q for q in d.vendedores
+        if q is not p and q.papel == "proprietario" and confere_titular(q, im.proprietarios_matricula)
+    ]
+    if any(
+        q.cliente_id == p.conjuge_cliente_id or q.conjuge_cliente_id == p.cliente_id for q in donos
+    ):
+        return (
+            " É cônjuge de um proprietário da matrícula: altere o papel para anuente "
+            "(cônjuge anui, não vende)."
+        )
+    if doador_anuente(d, p):
+        return (
+            " Consta como doador(a) na matrícula: altere o papel para anuente (doador anui "
+            "com a venda)."
+        )
+    return (
+        " Remova-o(a) dos vendedores, corrija o papel (anuente) ou revise a matrícula, se ela "
+        "estiver desatualizada."
+    )
+
+
 #: Estados civis that say a person is NOT married to whoever they are
 #: linked to — the link is then a companionship (união estável de fato).
 _ESTADOS_SEM_CASAMENTO = frozenset({"solteiro", "divorciado", "viuvo", "separado_judicialmente"})
@@ -1685,15 +1774,30 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
                 "deste contrato.",
             )
     for a in anu:
-        if conjuge_do_anuente(d, a) is None:
-            # [Migration 193] The corpus words ONE anuente: a signing seller's
-            # spouse/companion (7 deals; the PJ's case is a representative's
-            # spouse, refused by owner rule — no spouse anuência for a PJ).
+        if conjuge_do_anuente(d, a) is None and not doador_anuente(d, a):
+            # [Migration 193] The corpus words a signing seller's spouse/
+            # companion (7 deals; the PJ's case is a representative's spouse,
+            # refused by owner rule — no spouse anuência for a PJ); [F38] and
+            # the DOADOR(es) of a doação into the sellers.
             av.bloqueia(
                 "ANUENTE_SEM_REDACAO",
                 f"{_nome(a)} é anuente, mas não é cônjuge/companheiro(a) (vínculo recíproco no card) de "
-                "um vendedor pessoa física: o gerador só tem redação de anuência de cônjuge/companheiro(a).",
+                "um vendedor pessoa física, nem doador(a) do imóvel na matrícula: o gerador só tem "
+                "redação de anuência de cônjuge/companheiro(a) e de doador(es).",
             )
+    # [F36] A 'proprietário' the matrícula does not name is a legal defect
+    # (a non-owner selling) — blocks whenever the owners ARE known.
+    im = d.imovel
+    if im is not None and im.proprietarios_matricula:
+        for p in d.vendedores:
+            if p.papel == "proprietario" and not confere_titular(p, im.proprietarios_matricula):
+                av.bloqueia(
+                    "VENDEDOR_NAO_PROPRIETARIO",
+                    f"{_nome(p)} consta como vendedor(a) (proprietário), mas não está entre os "
+                    "proprietários da matrícula ("
+                    + ", ".join(t.nome for t in im.proprietarios_matricula)
+                    + ")." + _sugestao_papel_nao_proprietario(d, p),
+                )
     for p in d.vendedores + d.compradores:
         if p not in vend and p not in comp and p not in antigos and p not in anu and p not in reps:
             av.avisa(
@@ -3654,6 +3758,8 @@ __all__ = [
     "antigos_no_contrato",
     "companheiro_dispensado",
     "conjuge_do_anuente",
+    "confere_titular",
+    "doador_anuente",
     "pj_certificandas",
     "antigos_proprietarios",
     "antigos_proprietarios_pj",

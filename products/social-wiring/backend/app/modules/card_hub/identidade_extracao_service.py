@@ -118,6 +118,7 @@ from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives import identificador as _ident
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
+from noctusai_lib.integrations.documents.nacionalidade import feminino as nacionalidade_feminino
 from noctusai_lib.integrations.documents.nacionalidade_civil import (
     derivar_nacionalidade_civil,
 )
@@ -801,6 +802,23 @@ def _limpo_por_humano(valor_atual: Any, origem_atual: Optional[str]) -> bool:
     if origem_atual != "manual":
         return False
     return valor_atual is None or (isinstance(valor_atual, str) and not valor_atual.strip())
+
+
+def nacionalidade_pelo_genero(valor: Any, genero: Any) -> Any:
+    """A gentílico in the grammatical gender of the person it describes.
+
+    The extractor's canonical gentílico is masculine ("brasileiro"); a
+    woman's record must read "brasileira" — suggested, confirmed and
+    auto-applied alike. Gender unknown -> the value is left exactly as read
+    (neutral; `genero_desconhecido` asks the human at suggestion time).
+    Free text that is not one of our canonical gentílicos passes through."""
+    g = canonical_gender(str(genero)) if genero else None
+    canon = nacionalidade_canonica(str(valor)) if valor else None
+    if g is None or not canon or canon == "estrangeiro":
+        return valor
+    if g == "Feminino":
+        return nacionalidade_feminino(canon) or valor
+    return canon
 
 
 def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
@@ -1762,7 +1780,9 @@ def aplicar_campos_ao_cliente(
     holds every NEWLY opened conflict (this function never does async I/O;
     `notificar_conflitos` is the caller's next step).
     """
-    colunas: list[str] = ["id", "nome", "nome_completo", "nome_oficial", "cpf", "conjuge_cliente_id"]
+    colunas: list[str] = [
+        "id", "nome", "nome_completo", "nome_oficial", "cpf", "conjuge_cliente_id", "genero",
+    ]
     for campo in campos:
         colunas += [
             campo.item_key, campo.origem, campo.documento_id, campo.confirmado_em,
@@ -1842,6 +1862,12 @@ def aplicar_campos_ao_cliente(
             continue
         if campo.item_key == "genero":
             valor = canonical_gender(str(valor)) or valor
+        if campo.item_key == "nacionalidade":
+            # The person's gender: what is on file wins, else this very read.
+            valor = nacionalidade_pelo_genero(
+                valor,
+                atual.get("genero") or (lidos.get("genero") or (None,))[0],
+            )
         if campo.item_key == "cpf" and not cpf_valido(str(valor)):
             logger.warning(
                 "cpf com dígitos verificadores inválidos NÃO gravado (cliente %s, origem %s)",
@@ -3470,7 +3496,7 @@ def _aplicar_fatos_do_casal(
     """
     pessoas = (
         _t(client, CLIENTES_TABLE)
-        .select("id,conjuge_cliente_id,estado_civil_origem,estado_civil_documento_id")
+        .select("id,conjuge_cliente_id,estado_civil,estado_civil_origem,estado_civil_documento_id")
         .eq("org_id", str(org_id))
         .in_("id", [str(dono), str(alvo)])
         .execute()
@@ -3484,10 +3510,20 @@ def _aplicar_fatos_do_casal(
     ) or str(dono) == str(linha_alvo.get("conjuge_cliente_id") or "")
     if not ligados:
         return []
-    if (
-        linha_dono.get("estado_civil_origem") != "certidao_casamento"
-        or str(linha_dono.get("estado_civil_documento_id") or "") != str(doc["id"])
-    ):
+    # The certidão is what shaped `dono`'s state — either it SET it (origin +
+    # this document), or the value already on file (typed by the operator,
+    # read from another document) states the SAME estado civil this certidão
+    # records. Either way the linked spouse shares the marriage; a `dono`
+    # whose own value disagrees (an old certidão of a previous marriage) gives
+    # the spouse nothing.
+    foi_a_certidao = (
+        linha_dono.get("estado_civil_origem") == "certidao_casamento"
+        and str(linha_dono.get("estado_civil_documento_id") or "") == str(doc["id"])
+    )
+    corroborada = _mesmo_valor(
+        "estado_civil", linha_dono.get("estado_civil"), doc.get("extracao_estado_civil")
+    )
+    if not (foi_a_certidao or corroborada):
         return []
     lidos = _lidos_da_entrada_conjuge({}, doc)
     # Couple-level only: the empty entry above carries no person.
@@ -6293,7 +6329,7 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """
     cliente_rows = (
         _t(client, CLIENTES_TABLE)
-        .select(",".join(["id", *CAMPO_POR_ITEM, "endereco_origem", *ENDERECO_COLUNAS]))
+        .select(",".join(dict.fromkeys(["id", "genero", *CAMPO_POR_ITEM, "endereco_origem", *ENDERECO_COLUNAS])))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -6337,6 +6373,12 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 and not _e_cin(doc, cliente)
                 else None
             )
+            if campo.item_key == "nacionalidade":
+                # Masculine only for a man; a woman's reads "brasileira"; an
+                # unknown gender stays neutral and says so (the card asks).
+                if not cliente.get("genero"):
+                    aviso = "genero_desconhecido"
+                valor = nacionalidade_pelo_genero(valor, cliente.get("genero"))
             out[campo.item_key] = {
                 "valor": valor,
                 "valor_atual": atual,
@@ -6551,7 +6593,7 @@ def confirmar_sugestao(
     # `av.avisa("RG_IGUAL_CPF", ...)`).
     cliente_rows = (
         _t(client, CLIENTES_TABLE)
-        .select(f"{campo.item_key},{campo.origem},rg_orgao_expedidor")
+        .select(",".join(dict.fromkeys([campo.item_key, campo.origem, "rg_orgao_expedidor", "genero"])))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -6560,6 +6602,8 @@ def confirmar_sugestao(
     if not cliente_rows:
         raise NotFoundError("clientes", str(cliente_id))
     presente = cliente_rows[0].get(campo.item_key)
+    if campo.item_key == "nacionalidade":
+        valor = nacionalidade_pelo_genero(valor, cliente_rows[0].get("genero"))
 
     if not campo.sobrescreve and presente:
         raise ValidationError_(

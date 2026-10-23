@@ -455,6 +455,23 @@ def qualificacao_anuente(a: Pessoa, conjuge: Pessoa, *, lei_6515_desde: date) ->
     return texto
 
 
+def qualificacao_anuente_doador(a: Pessoa) -> str:
+    """[F38] A DOADOR of the imóvel into the sellers (adiantamento de
+    legítima) who signs to consent. Shape of the corpus's anuente block —
+    full qualification, address, then why they sign — the denomination
+    ("denominados neste ato simplesmente ANUENTES") is closed by
+    `linhas_anuentes`. A married donor is qualified as married like any
+    party; a spouse who also donated is its own doador entry."""
+    texto = texto_pessoa(a, em_nucleo=False, avulso=True)
+    if endereco_texto(a.endereco):
+        texto += f", {_residente(a)} na {endereco_texto(a.endereco)}"
+    texto += (
+        f", {_g(a, 'doador', 'doadora')} do imóvel objeto deste contrato, que comparece neste ato "
+        "para anuir expressamente com a presente venda e compra"
+    )
+    return texto
+
+
 def denominacao_anuentes(anuentes: Sequence[Pessoa]) -> str:
     """"denominado/denominada/denominados/denominadas neste ato simplesmente
     "ANUENTE(S)"" — corpus 799/839 write "denominadas" for two women."""

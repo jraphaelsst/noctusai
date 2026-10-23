@@ -691,7 +691,7 @@ export interface ExtracaoSugestao {
    * is_same_as_cpf`) and only ever set on the `rg` field's suggestion.
    * `null`/absent for every ordinary pending suggestion.
    */
-  aviso?: "rg_igual_cpf" | null;
+  aviso?: "rg_igual_cpf" | "genero_desconhecido" | null;
   /* Never set for a CIN (a cin-typed file, or órgão IIGDR): there RG == CPF
      is the document's valid state (2026-09-23). */
   /**

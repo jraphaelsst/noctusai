@@ -539,6 +539,17 @@ function SugestaoExtraida({
           RG idêntico ao CPF já cadastrado — confira o documento antes de confirmar.
         </p>
       )}
+      {/* A nacionalidade suggestion is inflected by the person's gênero; with
+          gênero unknown it stays in the neutral (masculine) form read — ask. */}
+      {s.aviso === "genero_desconhecido" && (
+        <p
+          className="mt-1 flex items-center gap-1 text-xs text-amber-700"
+          data-testid={`${tid}-aviso-genero`}
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          Gênero não informado — preencha o gênero para a nacionalidade sair no feminino/masculino correto.
+        </p>
+      )}
       {/* Owner decision (2026-09-28): the document this suggestion comes
           from was flagged `leitura_comprometida` — a label/value type
           mismatch, a high ilegível-marker share, or the holder name
