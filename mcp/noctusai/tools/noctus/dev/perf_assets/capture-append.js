@@ -23,6 +23,11 @@
       for (const s of st) {
         if (s.name === 'inflight' || s.name === 'inflight_peak') x[s.name] = Number(s.description);
         else if (s.name === 'blk' || s.name === 'blkq' || s.name === 'lag') x[s.name] = r(s.duration);
+        else if (s.name === 'db' || s.name === 'dbmax' || s.name === 'dbconn') {
+          x[s.name] = r(s.duration);
+          if (s.name === 'db' && s.description) x.db_n = Number(s.description);
+          if (s.name === 'dbconn' && s.description) x.dbconn_n = Number(s.description);
+        }
       }
       api.push([where, r(e.startTime), r(e.duration),
         e.responseStart > 0 ? r(e.responseStart - e.startTime) : null,

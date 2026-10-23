@@ -198,3 +198,17 @@ def test_compare_surfaces_concurrency_extras(env, tmp_path):
     r = pp.perf_probe("compare", scope="orbity", before="b", after="c", store=str(env))
     row = r["endpoints"][0]
     assert row["inflight_peak_p50"] == [1.0, 6.0] and "blkq_p50" not in row
+
+
+def test_db_call_metrics_kept_and_compared(env, tmp_path):
+    def cap(n):
+        return _cap([_page("/", [_xcall("/api/me/access", 200, 150, {"db": 100.0 * n, "db_n": n, "dbmax": 40.0, "dbconn": 30.0, "dbconn_n": 1})
+                                 for _ in range(5)])])
+    pp.perf_probe("ingest", scope="orbity", label="d1", capture=_write(tmp_path, cap(2), "d1.json"), store=str(env))
+    pp.perf_probe("ingest", scope="orbity", label="d2", capture=_write(tmp_path, cap(5), "d2.json"), store=str(env))
+    ep = json.loads((env / "orbity" / "d1.json").read_text())["endpoints"]["/api/me/access"]
+    assert ep["db_p50"] == 200.0 and ep["db_n_p50"] == 2 and ep["dbconn_n_p95"] == 1
+    row = pp.perf_probe("compare", scope="orbity", before="d1", after="d2", store=str(env))["endpoints"][0]
+    assert row["db_n_p50"] == [2.0, 5.0] and row["db_p50"] == [200.0, 500.0]
+    rep = pp.perf_probe("report", scope="orbity", label="d1", store=str(env))
+    assert rep["findings"]["concurrency"][0]["db_n_p50"] == 2

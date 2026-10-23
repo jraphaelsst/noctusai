@@ -115,3 +115,13 @@ def test_report_concurrency_percentiles_present_only_when_emitted():
     c = by["/api/new"]["concurrency"]
     assert c["inflight_peak"]["p50"] == 4.0 and c["blkq_ms"]["p95"] == 12.0
     assert "lag_ms" not in c  # absent => omitted, never 0
+
+
+def test_db_call_fields_parsed_and_reported():
+    line = _line_new("/api/db", 50, inflight=1, db_n=7, db_ms=300.5, db_max_ms=90.0, db_new=2, db_conn_ms=80.0) + " db_svc=rest:7:300.5"
+    row = lr.parse_lines([line])[0]
+    assert row["db_n"] == 7.0 and row["db_ms"] == 300.5 and row["db_max_ms"] == 90.0
+    assert row["db_new"] == 2.0 and row["db_conn_ms"] == 80.0
+    r = lr.latency_report("orbity", run_remote=_runner([line.replace("dur_ms=50", "dur_ms=%d" % (50 + i)) for i in range(6)]))
+    c = {x["route"]: x for x in r["routes"]}["/api/db"]["concurrency"]
+    assert c["db_n"]["p50"] == 7.0 and c["db_conn_ms"]["p95"] == 80.0

@@ -35,7 +35,8 @@ _LINE = re.compile(
 
 # Optional concurrency fields appended AFTER dur_ms by the seed middleware (2026-10-23). Old lines
 # lack them; absent => omitted from the report, never 0.
-CONC_FIELDS = ("inflight", "inflight_peak", "blk_n", "blk_ms", "blkq_ms", "parq_ms", "lag_ms", "tp_busy", "tp_wait")
+CONC_FIELDS = ("inflight", "inflight_peak", "blk_n", "blk_ms", "blkq_ms", "parq_ms", "lag_ms", "tp_busy", "tp_wait",
+               "db_n", "db_ms", "db_max_ms", "db_new", "db_conn_ms")
 _EXTRA = re.compile(r"\b(" + "|".join(CONC_FIELDS) + r")=(\d+(?:\.\d+)?)")
 
 

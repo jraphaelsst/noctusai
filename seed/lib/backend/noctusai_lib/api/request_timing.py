@@ -73,6 +73,26 @@ def record_parallel(wait_s: float) -> None:
         st["par_wait_s"] += wait_s
 
 
+def record_db_call(service: str, dur_s: float, new_conn: bool = False, connect_s: float = 0.0) -> None:
+    """One outbound Supabase HTTP call (time to response headers). ``service`` is the bounded set
+    rest/auth/storage/other (never a URL); ``new_conn`` = it needed a fresh TCP/TLS connection and
+    ``connect_s`` is that handshake time. No-op outside a request; safe from worker threads."""
+    st = _STATS.get()
+    if st is None:
+        return
+    with _LOCK:
+        st["db_n"] += 1
+        st["db_s"] += dur_s
+        if dur_s > st["db_max_s"]:
+            st["db_max_s"] = dur_s
+        svc = st["db_svc"].setdefault(service, [0, 0.0])
+        svc[0] += 1
+        svc[1] += dur_s
+        if new_conn:
+            st["db_new"] += 1
+            st["db_conn_s"] += connect_s
+
+
 def route_template(scope) -> str:
     """The matched route's path template (``/x/{id}``), else ``<unmatched>``.
 
@@ -86,7 +106,8 @@ def route_template(scope) -> str:
 
 def _new_stats(inflight: int) -> dict:
     return {"inflight": inflight, "peak": inflight, "blk_n": 0, "blk_wait_s": 0.0, "blk_run_s": 0.0,
-            "par_n": 0, "par_wait_s": 0.0, "lag_ms": None, "tp_busy": None, "tp_wait": None}
+            "par_n": 0, "par_wait_s": 0.0, "lag_ms": None, "tp_busy": None, "tp_wait": None,
+            "db_n": 0, "db_s": 0.0, "db_max_s": 0.0, "db_new": 0, "db_conn_s": 0.0, "db_svc": {}}
 
 
 def _threadpool_sample(st: dict) -> None:
@@ -138,6 +159,10 @@ def server_timing_value(dur_ms: float, st: dict) -> str:
     if st["tp_wait"] is not None:
         parts.append(f'tp_busy;desc="{st["tp_busy"]}"')
         parts.append(f'tp_wait;desc="{st["tp_wait"]}"')
+    if st["db_n"]:
+        parts.append(f'db;dur={st["db_s"] * 1000:.1f};desc="{st["db_n"]}"')
+        parts.append(f'dbmax;dur={st["db_max_s"] * 1000:.1f}')
+        parts.append(f'dbconn;dur={st["db_conn_s"] * 1000:.1f};desc="{st["db_new"]}"')
     return ", ".join(parts)
 
 
@@ -152,6 +177,10 @@ def log_suffix(st: dict) -> str:
         out += f' lag_ms={st["lag_ms"]:.1f}'
     if st["tp_wait"] is not None:
         out += f' tp_busy={st["tp_busy"]} tp_wait={st["tp_wait"]}'
+    if st["db_n"]:
+        out += (f' db_n={st["db_n"]} db_ms={st["db_s"] * 1000:.1f} db_max_ms={st["db_max_s"] * 1000:.1f}'
+                f' db_new={st["db_new"]} db_conn_ms={st["db_conn_s"] * 1000:.1f}')
+        out += " db_svc=" + ",".join(f"{k}:{v[0]}:{v[1] * 1000:.1f}" for k, v in sorted(st["db_svc"].items()))
     return out
 
 

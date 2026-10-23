@@ -113,8 +113,11 @@ def _page_summary(page: dict[str, Any]) -> dict[str, Any]:
 
 # Optional server concurrency metrics carried as an 8th api-tuple element (capture v1 stays valid
 # without it). inflight/inflight_peak are counts; blk/blkq/lag are milliseconds.
-CONC_METRICS = ("inflight", "inflight_peak", "blk", "blkq", "lag")
-CONC_COMPARE = ("app_p50_ms", "inflight_peak_p50", "blk_p50", "blkq_p50", "lag_p50")
+# db/dbmax/dbconn are ms (Supabase calls: total, slowest, new-connection handshakes); db_n/dbconn_n
+# are counts (calls / new connections, from the Server-Timing desc).
+CONC_METRICS = ("inflight", "inflight_peak", "blk", "blkq", "lag", "db", "db_n", "dbmax", "dbconn", "dbconn_n")
+CONC_COMPARE = ("app_p50_ms", "inflight_peak_p50", "blk_p50", "blkq_p50", "lag_p50",
+                "db_p50", "db_n_p50", "dbmax_p50", "dbconn_p50", "dbconn_n_p50")
 
 
 def _endpoint_stats(pages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

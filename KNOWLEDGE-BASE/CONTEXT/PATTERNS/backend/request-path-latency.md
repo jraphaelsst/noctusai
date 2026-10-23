@@ -83,6 +83,14 @@ Do not trust a green unit run alone: time one authenticated endpoint with 3 conc
 | `parq;dur=ms;desc="n"` | `parq_ms`, `par_n` | `run_parallel` thunks: wait in `_PARALLEL_POOL` before starting |
 | `lag;dur=ms` | `lag_ms` | max event-loop lag seen during the request (50 ms sampler, runs only while a request is in flight; omitted if no tick landed, i.e. very short requests) |
 | `tp_busy` / `tp_wait` `;desc="n"` | same | anyio default thread limiter (also serves plain `def` endpoints/deps): tokens borrowed / tasks queued for a thread, sampled at start and at response start (read from the limiter's own stats, nothing patched) |
+| `db;dur=ms;desc="n"` | `db_ms`, `db_n` | outbound Supabase HTTP calls (rest/auth/storage/other): total time to response headers, count (omitted if 0 calls) |
+| `dbmax;dur=ms` | `db_max_ms` | slowest single Supabase call |
+| `dbconn;dur=ms;desc="n"` | `db_conn_ms`, `db_new` | calls that needed a NEW TCP/TLS connection (not a reused keep-alive): handshake time, count |
+| (log only) | `db_svc=rest:n:ms,...` | per-service split of the same calls |
+
+Measured by `TimingTransport` in `integrations/http_pool.py` (our own wrapper over the shared transport; new connections detected via the httpcore `trace` extension; also wraps the `NOCTUS_HTTP_POOL=0` private clients). Time is to response headers, not body. Never records URLs/ids.
+
+**Reading db.** `blk` ~ `db` means the hops are Supabase-bound. Then: many calls x ~RTT each (`db_n` high, `dbmax` small) = batch/parallelise or cut calls; few slow calls (`dbmax` ~ `db`) = a slow query/endpoint, look at the SQL; `dbconn_n` > 0 with large `dbconn` = handshakes, the pool is cold or connections are being dropped (keep-alive expiry, worker churn).
 
 Totals SUM across hops (parallel hops can exceed wall time). Absent metric = not measured, never 0. Old log lines/captures stay valid.
 

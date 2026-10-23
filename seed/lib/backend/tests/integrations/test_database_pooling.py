@@ -94,7 +94,7 @@ class TestPoolIsShared:
         assert b.postgrest.session.is_closed is False
 
     def test_http2_is_off_on_the_shared_transport(self):
-        assert http_pool.shared_transport()._pool._http2 is False
+        assert http_pool.shared_transport()._inner._pool._http2 is False
 
     def test_kill_switch_reverts_to_private_http1_clients(self, monkeypatch):
         monkeypatch.setenv("NOCTUS_HTTP_POOL", "0")
