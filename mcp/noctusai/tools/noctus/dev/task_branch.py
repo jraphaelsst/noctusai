@@ -1730,9 +1730,15 @@ _TERMINAL_POINTER_STATUSES = frozenset({"shipped", "canceled", "stale"})
 
 def _pointer_transition(
     ops: "PointerOps | None", *, branch: str, status: str,
-    commit: str | None = None, notes: str,
+    commit: str | None = None, notes: str, publish: bool = False,
 ) -> dict[str, Any]:
-    """Move an existing non-terminal pointer to `status`. Never raises."""
+    """Move an existing non-terminal pointer to `status`. Never raises.
+
+    `publish=True` pushes the row to origin/ledgers AT ONCE instead of spooling
+    it for a later drain. The TERMINAL `shipped` transition must publish: the
+    spool is flushed by a detached best-effort job, and a row that never gets
+    flushed leaves the pointer `integrated-worktree-live` with its worktree
+    gone, which the pre-push stale-pointer gate then (correctly) refuses."""
     if ops is None:
         return {"status": "skipped", "reason": "no pointer ops (test/custom runner)"}
     try:
@@ -1743,10 +1749,18 @@ def _pointer_transition(
         if prev.get("status") in _TERMINAL_POINTER_STATUSES:
             return {"status": "already_terminal", "pointer_status": prev.get("status")}
         res = ops.update(branch=branch, status=status, commit=commit,
-                         notes=notes, push_dev=False)
+                         notes=notes, push_dev=publish)
         if res.get("ok"):
-            return {"status": "updated", "pointer_status": status,
-                    "commit": (res.get("row") or {}).get("commit")}
+            out = {"status": "updated", "pointer_status": status,
+                   "commit": (res.get("row") or {}).get("commit")}
+            push = res.get("push")
+            if publish and isinstance(push, dict) and not push.get("ok", True):
+                # Spooled locally but NOT on origin/ledgers: say so loudly.
+                out["published"] = False
+                out["publish_error"] = str(push.get("error", "publish failed"))[:200]
+            elif publish:
+                out["published"] = True
+            return out
         return {"status": "error", "error": res.get("error", "update failed")}
     except Exception as e:  # noqa: BLE001 — reported, never blocks the git lifecycle
         logger.warning("task_branch: pointer transition for %s failed: %s", branch, e)
@@ -1909,10 +1923,21 @@ def _auto_cleanup_after_integrate(
     except Exception as e:  # best-effort: a landed integrate must still report success
         return {"status": "error", "cwd_removed": False, "reason": f"{type(e).__name__}: {e}"}
     ok = res.get("status") == "cleaned"
-    return {"status": res.get("status"), "cwd_removed": ok,
-            "worktree_removed": bool(res.get("worktree_removed")),
-            "branch_deleted": bool(res.get("branch_deleted")),
-            "reason": res.get("error") or res.get("reason") or res.get("message", "")}
+    pointer = res.get("pointer")
+    pointer_closed = (isinstance(pointer, dict) and (
+        pointer.get("status") in {"already_terminal", "skipped"}
+        or (pointer.get("status") == "updated" and pointer.get("published") is not False)))
+    out = {"status": res.get("status"), "cwd_removed": ok, "pointer": pointer,
+           "pointer_closed": pointer_closed if ok else None,
+           "worktree_removed": bool(res.get("worktree_removed")),
+           "branch_deleted": bool(res.get("branch_deleted")),
+           "reason": res.get("error") or res.get("reason") or res.get("message", "")}
+    if ok and not pointer_closed:
+        out["reason"] = ("POINTER NOT CLOSED: worktree+branch are gone but the branch-tree "
+                         f"pointer did not reach shipped ({pointer}); it stays "
+                         "integrated-worktree-live and the pre-push gate will refuse - run "
+                         "noctus.dev.session_end_sweep")
+    return out
 
 
 def _task_branch_is_write(bound_args: dict) -> bool:
@@ -2750,6 +2775,8 @@ def task_branch(
                         + (" - worktree removed; your cwd no longer exists, cd to the "
                            "primary checkout." if ac.get("cwd_removed") else
                            f" ({ac.get('reason', '')})."))
+                    if ac.get("cwd_removed") and ac.get("pointer_closed") is False:
+                        result["message"] += f" WARNING: {ac['reason']}"
                 else:
                     result["message"] += " Worktree kept (keep_worktree)."
                 # LAST: the slow best-effort tail, detached (settle → drain, in
@@ -2893,7 +2920,7 @@ def task_branch(
         result["released_claims_error"] = f"{type(e).__name__}: {e}"
     # Merged (checked above) + worktree removed ⇒ the lifecycle is over.
     result["pointer"] = _pointer_transition(
-        pointer_fn, branch=branch, status="shipped",
+        pointer_fn, branch=branch, status="shipped", publish=True,
         notes=f"task_branch cleanup: merged into {dev_branch}, worktree removed")
     if not settle_and_drain:
         # Called from integrate's auto-cleanup: its detached post-integrate job

@@ -3051,8 +3051,39 @@ def test_cleanup_closes_pointer_as_shipped():
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
                         primary_root="/repo", pointer_ops=ops)
     assert res["status"] == "cleaned"
-    assert res["pointer"] == {"status": "updated", "pointer_status": "shipped", "commit": None}
-    assert ops.updates[0]["status"] == "shipped"
+    assert res["pointer"] == {"status": "updated", "pointer_status": "shipped", "commit": None,
+                              "published": True}
+    # shipped is terminal: published at once, never left in the spool
+    assert ops.updates[0]["status"] == "shipped" and ops.updates[0]["push_dev"] is True
+
+
+def test_auto_cleanup_after_integrate_reports_pointer_shipped():
+    ok = lambda **kw: {"status": "cleaned", "worktree_removed": True, "branch_deleted": True,
+                       "pointer": {"status": "updated", "pointer_status": "shipped",
+                                   "published": True}}
+    fake = FakeGit(refs={}, anc=_anc_pairs([]))
+    ac = T._auto_cleanup_after_integrate(fake, "wt/x", "x", ok, {"primary_root": "/repo"})
+    assert ac["cwd_removed"] is True and ac["pointer_closed"] is True
+
+
+def test_auto_cleanup_surfaces_unpublished_pointer_loudly():
+    bad = lambda **kw: {"status": "cleaned", "worktree_removed": True, "branch_deleted": True,
+                        "pointer": {"status": "updated", "pointer_status": "shipped",
+                                    "published": False, "publish_error": "push rejected"}}
+    ac = T._auto_cleanup_after_integrate(FakeGit(refs={}, anc=_anc_pairs([])), "wt/x", "x", bad,
+                                         {"primary_root": "/repo"})
+    assert ac["pointer_closed"] is False and "POINTER NOT CLOSED" in ac["reason"]
+
+
+def test_pointer_transition_publish_failure_is_flagged():
+    class Ops(FakePointerOps):
+        def update(self, **kw):
+            r = super().update(**kw)
+            r["push"] = {"ok": False, "error": "non-ff"}
+            return r
+    ops = Ops(latest={"feat/x": {"status": "integrated-worktree-live"}})
+    out = T._pointer_transition(ops, branch="feat/x", status="shipped", notes="n", publish=True)
+    assert out["published"] is False and "non-ff" in out["publish_error"]
 
 
 def test_cleanup_leaves_terminal_pointer_alone():
