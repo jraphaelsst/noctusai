@@ -328,6 +328,9 @@ every agent (CONTRACT D7/D8). Skill text is DB data; code carries no skill conte
   trigger) -> `skill_versao_arquivos` (reference files). Service-role only: no tenant grant on any of the four
   tables (IP). Authoring is platform-only: `/api/skills-biblioteca/*` (platform admin, or the `studio:content-write`
   token for DRAFTS; publishing a skill version stays a human act, 403 `user_required` for the token).
+  Studio authoring UI: `/studio/biblioteca-skills` (list + "Nova skill") and `/studio/biblioteca-skills/:chave`
+  (name/label, versions, the draft editor for the model description + body + notes + reference files, discard,
+  and "Publicar" behind a confirmation). The agent's "Skills da biblioteca" tab links each library card there.
 - **Pins**: `agent_version_skill_refs(version_id, skill_versao_id, obrigatoria_para[], ordem)` pins a library
   version to an agent version (`obrigatoria_para` = the tools that refuse until the skill was opened in the thread).
   A new draft inherits the pins by an AFTER INSERT trigger; a pin change invalidates the draft's `compiled_hash`
