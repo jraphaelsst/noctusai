@@ -2141,6 +2141,93 @@ class TestCancelarProcessamento:
         }
 
 
+class TestCancelarConsultaManual:
+    """A manual consulta has nothing in progress except a resultado being read."""
+
+    def _db(self):
+        return _db(
+            certidao_consultas=[_consulta_row(origem="manual")],
+            certidao_resultados=[
+                _resultado(id="vazio", status="pendente"),
+                _resultado(id="nao_emitida", status="pendente", ordem=2,
+                           resultado="nao_emitida", resultado_origem="manual",
+                           confirmado_por="user-1"),
+                _resultado(id="digitado", status="pendente", ordem=3,
+                           resultado="negativa", numero="123", emitida_em="2026-10-01",
+                           resultado_origem="manual", confirmado_por="user-1"),
+                _resultado(id="upload", status="processando", ordem=4,
+                           arquivo_url="k/x.pdf"),
+            ],
+        )
+
+    def test_so_cancela_o_upload_em_leitura(self):
+        db = self._db()
+        assert service.cancelar_processamento("consulta-001", ORG, db) == {"cancelados": 1}
+        rows = {r["id"]: r for r in db.table("certidao_resultados").select("*").execute().data}
+        assert rows["upload"]["status"] == "erro"
+        for rid in ("vazio", "nao_emitida", "digitado"):
+            assert rows[rid]["status"] == "pendente"
+            assert rows[rid]["erro_mensagem"] is None
+
+    def test_consulta_automatica_continua_cancelando_pendentes(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="automatica")],
+            certidao_resultados=[_resultado(id="r1", status="pendente",
+                                            resultado="negativa", numero="1")],
+        )
+        assert service.cancelar_processamento("consulta-001", ORG, db) == {"cancelados": 1}
+
+
+class TestConclusaoHumana:
+    def test_nao_emitida_manual_e_decisao_humana_concluida(self):
+        """A human-marked `nao_emitida` has no numero/data by definition; it is
+        a deliberate verdict, so it is complete (and not a pendência)."""
+        r = _resultado(resultado="nao_emitida", resultado_origem="manual")
+        assert service.resultado_concluido(r)
+
+    def test_digitada_completa_e_concluida_incompleta_nao(self):
+        base = dict(resultado_origem="manual", resultado="negativa")
+        assert service.resultado_concluido(_resultado(numero="1", emitida_em="2026-10-01", **base))
+        assert not service.resultado_concluido(_resultado(numero="1", **base))
+
+    def test_lendo_ou_nao_manual_nao_conta(self):
+        assert not service.resultado_concluido(
+            _resultado(status="processando", resultado="nao_emitida", resultado_origem="manual"))
+        assert not service.resultado_concluido(_resultado(resultado="nao_emitida"))
+
+    def test_consulta_manual_toda_preenchida_le_como_concluida_na_lista(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual", total_certidoes=2)],
+            certidao_resultados=[
+                _resultado(id="a", resultado="nao_emitida", resultado_origem="manual"),
+                _resultado(id="b", ordem=2, resultado="negativa", numero="1",
+                           emitida_em="2026-10-01", resultado_origem="manual"),
+            ],
+        )
+        sucessos, erros = service.status_counts_por_consulta(["consulta-001"], ORG, db)
+        assert sucessos == {"consulta-001": 2} and erros == {}
+        consulta = {"origem": "manual", "status": "pendente", "total_certidoes": 2,
+                    "concluidas": sucessos["consulta-001"]}
+        assert service.status_efetivo_consulta(consulta) == "concluida"
+        assert service.status_efetivo_consulta({**consulta, "concluidas": 1}) == "pendente"
+        assert service.status_efetivo_consulta({**consulta, "origem": "automatica"}) == "pendente"
+
+    def test_cancelado_manual_com_evidencia_nao_conta_como_erro(self):
+        db = _db(certidao_resultados=[_resultado(
+            id="x", status="erro", erro_mensagem=service.MSG_CANCELADO,
+            resultado="negativa", resultado_origem="manual")])
+        assert service.status_counts_por_consulta(["consulta-001"], ORG, db) == ({}, {})
+
+    def test_atualizar_status_nao_deixa_consulta_manual_preenchida_pendente(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual", total_certidoes=1)],
+            certidao_resultados=[_resultado(resultado="nao_emitida", resultado_origem="manual")],
+        )
+        service._atualizar_status_consulta("consulta-001", ORG, db)
+        row = db.table("certidao_consultas").select("*").execute().data[0]
+        assert row["status"] == "concluida" and row["concluidas"] == 1
+
+
 # ---------------------------------------------------------------------------
 # status_counts_por_consulta — the row-cap fix
 # ---------------------------------------------------------------------------

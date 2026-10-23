@@ -214,6 +214,56 @@ def e_placeholder_vazio(resultado: dict, consulta_origem: Optional[str]) -> bool
     )
 
 
+def resultado_concluido(row: dict) -> bool:
+    """THE "done" predicate for one resultado (grid cell AND consulta counts).
+
+    A finished read (`sucesso`), OR a certidão a human filled and nothing will
+    ever process: `resultado_origem='manual'`, not mid-read, and either typed
+    COMPLETE (resultado + numero + emitida_em) or a deliberate human verdict of
+    `nao_emitida` (the registry refused to emit — there is, by definition, no
+    numero/data to type; it is a decision, not a gap). A cell still being read
+    (`processando`/`na_fila`) never counts as done."""
+    if row.get("status") == "sucesso":
+        return True
+    if row.get("resultado_origem") != "manual" or row.get("status") not in (
+        "pendente", "erro", None,
+    ):
+        return False
+    resultado = row.get("resultado")
+    if resultado == "nao_emitida":
+        return True
+    return bool(resultado and row.get("numero") and row.get("emitida_em"))
+
+
+def e_cancelado_manual_com_evidencia(resultado: dict, consulta_origem: Optional[str]) -> bool:
+    """A human-filled manual resultado that `cancelar_processamento` once
+    flipped to `erro`/MSG_CANCELADO. Its real state is the pre-cancel one
+    (`pendente`); readers treat it as such so the grid stays correct even
+    before the repair migration (304) runs."""
+    return (
+        consulta_origem == "manual"
+        and resultado.get("status") == "erro"
+        and resultado.get("erro_mensagem") == MSG_CANCELADO
+        and tem_evidencia(resultado)
+    )
+
+
+def status_efetivo_consulta(consulta: dict) -> str:
+    """The status the list shows. A manual consulta whose every resultado is
+    human-complete (`concluidas >= total_certidoes`) is `concluida` — nothing
+    will ever move its stored `pendente`."""
+    status = consulta.get("status")
+    total = consulta.get("total_certidoes") or 0
+    if (
+        e_consulta_manual(consulta)
+        and status in ("pendente", "erro")
+        and total > 0
+        and (consulta.get("concluidas") or 0) >= total
+    ):
+        return "concluida"
+    return status
+
+
 def ids_consultas_placeholder_vazio(db, org_id) -> list[str]:
     """Ids of the org's consultas that are only an empty single-cell holder.
 
@@ -2202,18 +2252,24 @@ def _atualizar_status_consulta(consulta_id: str, org_id: Optional[str], db) -> N
     - All done, at least one success → "concluida"
     - All done, zero successes → "erro"
     """
-    query = db.table(RESULTADOS).select("status, erro_mensagem").eq("consulta_id", consulta_id)
+    query = db.table(RESULTADOS).select(
+        "status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA)
+    ).eq("consulta_id", consulta_id)
     if org_id:
         query = query.eq("org_id", str(org_id))
     rows = query.execute().data or []
 
-    sucessos = sum(1 for r in rows if r["status"] == "sucesso")
-    erros = sum(1 for r in rows if r["status"] == "erro")
+    # A human-complete manual cell is done even though its stored status is
+    # `pendente` (nothing ever moves it).
+    concluidos = [r for r in rows if resultado_concluido(r)]
+    sucessos = len(concluidos)
+    erros = sum(1 for r in rows if r["status"] == "erro" and not resultado_concluido(r))
     # A cell parked for a missing org credential waits on a human, not on the
     # pipeline — it must not keep the consulta "processando" forever.
     still_pending = sum(
         1 for r in rows
         if r["status"] in ("pendente", "processando", "na_fila")
+        and not resultado_concluido(r)
         and not e_pendencia_de_credencial(r)
     )
 
@@ -2618,13 +2674,16 @@ def cancelar_processamento(consulta_id: str, org_id: Optional[str], db) -> dict:
     if org_id:
         query = query.eq("org_id", str(org_id))
     items = query.execute().data or []
-    # An empty manual placeholder is not in progress — there is nothing to
-    # cancel, and an `erro` on it would shadow the grid cell. Left untouched.
+    # A manual consulta has nothing "in progress" except a resultado being READ
+    # (`processando`, a manual upload's extraction leg). Its `pendente` rows are
+    # human-owned cells nothing will ever process — an `erro` on them would
+    # destroy what the human typed (empty or filled). Left untouched.
     if items:
         origem = (
             db.table(CONSULTAS).select("origem").eq("id", consulta_id).execute().data or [{}]
         )[0].get("origem")
-        items = [i for i in items if not e_placeholder_vazio(i, origem)]
+        if origem == "manual":
+            items = [i for i in items if i.get("status") == "processando"]
     if not items:
         return {"cancelados": 0}
 
@@ -3935,10 +3994,10 @@ def status_counts_por_consulta(
         def _page(start: int, end: int, _batch=batch):
             return (
                 db.table(RESULTADOS)
-                .select("id, consulta_id, status")
+                .select("id, consulta_id, status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA))
                 .eq("org_id", str(org_id))
                 .in_("consulta_id", _batch)
-                .in_("status", ["sucesso", "erro"])
+                .in_("status", ["sucesso", "erro", "pendente"])
                 .order("id")
                 .range(start, end)
                 .execute()
@@ -3946,7 +4005,15 @@ def status_counts_por_consulta(
             )
 
         for row in _all_rows(_page, f"certidao_resultados counts for org_id={org_id}"):
-            target = sucessos if row["status"] == "sucesso" else erros
+            # `pendente` is read only to spot a human-complete manual cell.
+            if resultado_concluido(row):
+                target = sucessos
+            elif row["status"] == "erro" and not (
+                row.get("erro_mensagem") == MSG_CANCELADO and tem_evidencia(row)
+            ):
+                target = erros
+            else:
+                continue
             target[row["consulta_id"]] = target.get(row["consulta_id"], 0) + 1
 
     return sucessos, erros

@@ -266,6 +266,9 @@ def indexar_vencedores(resultados: list[dict]) -> tuple[dict[str, dict], dict[st
     for r in resultados:
         if _cancelado_vazio(r):
             continue
+        if certidoes_svc.e_cancelado_manual_com_evidencia(r, r.get("consulta_origem")):
+            # Pre-cancel state: the human's cell was never in progress.
+            r = {**r, "status": "pendente", "erro_mensagem": None}
         linha_id = r.get("linha_customizada_id")
         alvo, chave = (por_linha, linha_id) if linha_id else (por_tipo, r.get("tipo"))
         if not chave:

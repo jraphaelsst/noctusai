@@ -233,24 +233,10 @@ def _linha_customizada(row: dict) -> dict:
     }
 
 
-def _concluida(row: dict) -> bool:
-    """The cell's ok predicate: a finished read (`sucesso`), OR a certidão a
-    human typed COMPLETE (resultado + numero + emitida_em) — nothing will ever
-    process a hand-entered cell, so left at `pendente` it counted as a pendência
-    forever. A cell still being read never counts as done."""
-    if row.get("status") == "sucesso":
-        return True
-    return (
-        row.get("resultado_origem") == "manual"
-        and row.get("status") in ("pendente", "erro", None)
-        and bool(row.get("resultado") and row.get("numero") and row.get("emitida_em"))
-    )
-
-
 def _status_da_celula(resultado_row: Optional[dict]) -> tuple[str, str]:
     """`(status, texto)` for one cell — the three colors plus the accessible
     label kept alongside them (never color alone)."""
-    if resultado_row is None or not _concluida(resultado_row):
+    if resultado_row is None or not certidoes_svc.resultado_concluido(resultado_row):
         return "pendente", "Pendente"
     return _status_do_resultado(resultado_row.get("resultado"))
 
@@ -287,6 +273,11 @@ def _index_resultados(resultados: list[dict]) -> tuple[dict[str, dict], dict[str
     por_tipo: dict[str, dict] = {}
     por_linha: dict[str, dict] = {}
     for resultado in resultados:
+        if certidoes_svc.e_cancelado_manual_com_evidencia(
+            resultado, resultado.get("consulta_origem") or resultado.get("resultado_origem")
+        ):
+            # Pre-cancel state (see the repair migration 304): not an error.
+            resultado = {**resultado, "status": "pendente", "erro_mensagem": None}
         linha_customizada_id = resultado.get("linha_customizada_id")
         if linha_customizada_id:
             atual = por_linha.get(linha_customizada_id)

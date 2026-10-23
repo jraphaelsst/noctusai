@@ -626,3 +626,7 @@ Authored 2026-10-22. Adds `certidao_resultados.emitida_em_origem TEXT` (NULL = p
 ## 303 — natureza_transmissao_ampla — NOT APPLIED
 
 Authored 2026-10-22. Widens two CHECK vocabularies: `matricula_ato_detalhes.natureza` (+ `adjudicacao`, `integralizacao`, previously lumped under `outro`) and `imovel_dados.ultima_transferencia_manual_natureza` (+ `doacao`, `partilha`, `adjudicacao`, `integralizacao`). Additive, idempotent. Apply BEFORE deploying the image whose reader types those natures (an un-migrated DB rejects the detalhes insert of an adjudicação/integralização act).
+
+## 304 — repair_cancelado_manual_humano — NOT APPLIED
+
+Authored 2026-10-23. Data repair: manual-origin consultas' human-filled resultados that `cancelar_processamento` had flipped to `erro` / "Cancelado manualmente pelo usuário." go back to `pendente` (erro_mensagem NULL). Scoped to manual, non-excluded consultas/resultados with evidence; recomputes nothing. Idempotent. Readers already treat such rows as `pendente`, so applying is not a deploy prerequisite; apply to clear the 23 damaged prod rows.

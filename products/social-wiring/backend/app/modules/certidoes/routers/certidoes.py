@@ -453,6 +453,7 @@ def listar_consultas(
         for c in consultas:
             c["concluidas"] = success_counts.get(c["id"], 0)
             c["erros"] = erro_counts.get(c["id"], 0)
+            c["status"] = service.status_efetivo_consulta(c)
 
     return paginated_response(consultas, total, validated_page, validated_page_size)
 
