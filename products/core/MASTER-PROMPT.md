@@ -16,7 +16,7 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 ## Key Domains
 
 ### Auth and Identity
-- **auth** -- login, signup, password reset, token refresh
+- **auth** -- login, signup, password reset, token refresh. The core SPA owns its own refresh chain: every refresh goes through `refreshCoreSession()` (`frontend/src/lib/api.ts`), serialised across tabs by a Web Lock. `POST /api/auth/logout` defaults to scope `global` (the explicit "Sair"); the inactivity timer uses `?scope=local` so a forgotten core tab never signs the user out of the products (2026-10-23).
 - **oauth** -- third-party OAuth provider flows
 - **sso** -- SSO token creation/verification for cross-product access (5-min short-lived JWT)
 - **onboarding** -- first-time org setup wizard

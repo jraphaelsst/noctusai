@@ -23,7 +23,7 @@ cd products/core/frontend && npm run dev
 ## Key Features
 
 - Organization creation and management
-- User authentication and session handling
+- User authentication and session handling (one cross-tab-locked refresh, `refreshCoreSession`; inactivity expiry ends only core's session via `POST /api/auth/logout?scope=local`, the "Sair" button ends every session)
 - SSO token exchange for product access
 - Stripe billing and subscription management
 - Product licensing and provisioning
