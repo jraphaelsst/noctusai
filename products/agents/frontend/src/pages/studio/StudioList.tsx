@@ -6,7 +6,7 @@
  */
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Plus, Trash2, Upload } from "lucide-react";
+import { Boxes, Library, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 import { SLUG_RE, type AgentSummary } from "@/api/studio/types";
@@ -21,6 +21,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { errorMessage } from "@/lib/errors";
 import { studioTabHref } from "./studioTabs";
+import { SKILLS_BIBLIOTECA_HREF } from "./skillsRoutes";
 
 const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
@@ -222,6 +223,13 @@ export default function StudioList() {
             <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="studio-importar-pacote">
               <Upload className="mr-1 h-4 w-4" /> Importar pacote
             </Button>
+            {isPlatformAdmin && (
+              <Link to={SKILLS_BIBLIOTECA_HREF} data-testid="studio-biblioteca-skills">
+                <Button variant="outline" type="button">
+                  <Library className="mr-1 h-4 w-4" /> Biblioteca de skills
+                </Button>
+              </Link>
+            )}
             {isPlatformAdmin && (
               <Button variant="outline" onClick={() => setCriarOpen(true)} data-testid="studio-criar-agente">
                 <Plus className="mr-1 h-4 w-4" /> Criar agente

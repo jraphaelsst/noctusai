@@ -39,6 +39,8 @@ const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
 // Agent Studio — `products/agents/projects/agent-studio-isaia/CONTRACT.md` §G.
 const StudioList = lazy(() => import("@/pages/studio/StudioList"));
 const StudioAgent = lazy(() => import("@/pages/studio/StudioAgent"));
+const SkillsBiblioteca = lazy(() => import("@/pages/studio/SkillsBiblioteca"));
+const SkillBiblioteca = lazy(() => import("@/pages/studio/SkillBiblioteca"));
 const PromptByHash = lazy(() => import("@/pages/studio/PromptByHash"));
 
 // Nav
@@ -126,6 +128,8 @@ export default createProductApp({
     // Declared before `/studio/:key` for readability; react-router ranks the
     // static `prompts` segment above the `:key` param regardless.
     { path: "/studio/prompts/:hash", component: PromptByHash },
+    { path: "/studio/biblioteca-skills", component: SkillsBiblioteca },
+    { path: "/studio/biblioteca-skills/:chave", component: SkillBiblioteca },
     { path: "/studio/lead-imob", component: RedirectLeadImobStudioToJulia },
     { path: "/studio/:key", component: StudioAgent },
   ],

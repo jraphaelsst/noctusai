@@ -205,6 +205,27 @@ export interface BibliotecaSkill {
   versao_publicada: number | null;
   tem_rascunho: boolean;
 }
+export interface SkillVersaoMeta {
+  id: string;
+  versao: number;
+  status: "rascunho" | "publicada" | "arquivada";
+  notas: string | null;
+  publicada_em: string | null;
+}
+export interface SkillArquivo {
+  caminho: string;
+  titulo: string | null;
+  conteudo: string;
+}
+export interface SkillVersao extends SkillVersaoMeta {
+  skill: string;
+  descricao_modelo: string;
+  corpo: string;
+  arquivos: SkillArquivo[];
+}
+/** chave of a library skill: lower-case words joined by single hyphens (server-enforced, ≤64). */
+export const SKILL_CHAVE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
 export interface BibliotecaRef {
   skill: string;
   skill_versao_id: string;

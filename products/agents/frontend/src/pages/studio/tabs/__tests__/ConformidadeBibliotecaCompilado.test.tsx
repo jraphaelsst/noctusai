@@ -121,3 +121,32 @@ describe("CompiladoJuliaTab", () => {
     expect(screen.getByText(/Faltam especificações: nome_org/)).toBeTruthy();
   });
 });
+
+describe("BibliotecaTab — library empty states", () => {
+  const draftPins = { version_id: DRAFT_ID, items: [] };
+  const routes = (items: object[]) => [
+    { method: "GET" as const, path: A, body: agentDetail() },
+    { method: "GET" as const, path: `${A}/versions/${DRAFT_ID}/skills-biblioteca`, body: draftPins },
+    { method: "GET" as const, path: `${A}/versions/${DRAFT_ID}/ferramentas`, body: { version_id: DRAFT_ID, itens: [] } },
+    { method: "GET" as const, path: "/api/skills-biblioteca", body: { items } },
+  ];
+
+  it("says nothing is published (with a link) when no skill has a published version", async () => {
+    installFetch(routes([{ id: "s1", chave: "skill-um", nome: "Skill Um", descricao: null, versao_publicada: null, tem_rascunho: true }]));
+    renderWith(<BibliotecaTab agentKey={KEY} />);
+    const msg = await screen.findByTestId("biblioteca-sem-publicadas");
+    expect(msg.textContent).toContain("Nenhuma skill publicada ainda");
+    expect(msg.querySelector("a")!.getAttribute("href")).toBe("/studio/biblioteca-skills");
+    expect(screen.queryByText(/já estão fixadas/)).toBeNull();
+    expect(screen.getByText("Skill Um").closest("a")!.getAttribute("href")).toBe("/studio/biblioteca-skills/skill-um");
+  });
+
+  it("keeps 'already pinned' only when published skills exist and are all pinned", async () => {
+    const net = routes([{ id: "s1", chave: "skill-um", nome: "Skill Um", descricao: null, versao_publicada: 1, tem_rascunho: false }]);
+    net[1] = { ...net[1], body: { version_id: DRAFT_ID, items: [{ skill: "skill-um", skill_versao_id: "sv1", versao: 1, obrigatoria_para: [], ordem: 0, nova_versao: null, nova_versao_id: null }] } };
+    installFetch(net);
+    renderWith(<BibliotecaTab agentKey={KEY} />);
+    expect(await screen.findByText("Todas as skills publicadas já estão fixadas.")).toBeTruthy();
+    expect(screen.queryByTestId("biblioteca-sem-publicadas")).toBeNull();
+  });
+});

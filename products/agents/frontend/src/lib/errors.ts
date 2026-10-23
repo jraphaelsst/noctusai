@@ -61,6 +61,10 @@ const CODE_MESSAGES: Record<string, string> = {
   // defensively rather than left to leak English.
   role_missing: "Sem permissão para esta ação.",
   user_required: "Sem permissão para esta ação.",
+  // Skills library (`skills_biblioteca_router`).
+  skill_incompleta: "Preencha a descrição para o modelo e o corpo da skill antes de publicar.",
+  version_immutable: "Esta versão já foi publicada e não pode mais ser alterada. Crie um novo rascunho.",
+  platform_admin_required: "Restrito a administradores da plataforma NoctusAI.",
 };
 
 /** Per-code fallback text, used only when the backend's own `detail` is
@@ -89,6 +93,19 @@ const STATUS_FALLBACK: Record<number, string> = {
 
 const GENERIC_FALLBACK = "Ocorreu um erro. Tente novamente.";
 
+/**
+ * This router's errors arrive as `{"detail": {"detail": "<texto>", "code": "<code>"}}` — the seed
+ * `extractErrorMessage` cannot read an OBJECT detail and leaks "Erro HTTP 409". Read the inner text.
+ */
+function nestedDetail(body: unknown): string | null {
+  const det = (body as { detail?: unknown } | null | undefined)?.detail;
+  if (det && typeof det === "object" && !Array.isArray(det)) {
+    const inner = (det as { detail?: unknown }).detail;
+    if (typeof inner === "string" && inner.trim()) return inner;
+  }
+  return null;
+}
+
 /** Strips the seed `ApiError`'s `[<status>] ` message prefix, if present. */
 function stripStatusPrefix(message: string): string {
   return message.replace(/^\[\d+\]\s*/, "");
@@ -103,6 +120,12 @@ export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code && CODE_MESSAGES[err.code]) return CODE_MESSAGES[err.code];
     const clean = stripStatusPrefix(err.message);
+    const nested = nestedDetail(err.body);
+    if (nested) return nested;
+    // FastAPI validation (`{"detail":[{loc,msg,type}]}`): the seed joins the English pydantic msgs.
+    if (err.status === 422 && Array.isArray((err.body as { detail?: unknown } | undefined)?.detail)) {
+      return STATUS_FALLBACK[422];
+    }
     // A clean, backend-sent detail always wins — it is the contract's own
     // PT-BR text. Only fall back when the client-side generic placeholder
     // ("Erro HTTP 404") leaked through (no JSON body, or a body without

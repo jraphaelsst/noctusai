@@ -9,6 +9,7 @@
  */
 import { useState } from "react";
 import { ArrowUpCircle, Pin, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge, Button, EmptyState, Select } from "@noctusai/lib/design-system";
 import type { BibliotecaRef } from "@/api/studio/types-julia";
@@ -17,6 +18,7 @@ import { StudioLoading } from "@/components/studio/StudioStates";
 import { useBibliotecaRefs, useBibliotecaSkills, useFixarSkill, useRemoverSkillFixada } from "@/hooks/studio/useBiblioteca";
 import { useVersionContent } from "@/hooks/studio/useConteudo";
 import { errorMessage } from "@/lib/errors";
+import { SKILLS_BIBLIOTECA_HREF, skillHref } from "../skillsRoutes";
 
 function Pino({
   r,
@@ -96,6 +98,7 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
 
   const ferramentas = (ferr.data?.itens ?? []).map((f) => f.ferramenta);
   const fixadas = pins.data ?? [];
+  const haPublicada = (biblioteca.data ?? []).some((s) => s.versao_publicada !== null);
   const disponiveis = (biblioteca.data ?? []).filter((s) => s.versao_publicada !== null && !fixadas.some((p) => p.skill === s.chave));
 
   async function salvar(r: BibliotecaRef, patch: { versao?: number; obrigatoria_para?: string[] }) {
@@ -157,7 +160,14 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
           ) : biblioteca.isError ? (
             <RestrictedNotice error={biblioteca.error} />
           ) : disponiveis.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Todas as skills publicadas já estão fixadas.</p>
+            haPublicada ? (
+              <p className="text-xs text-muted-foreground">Todas as skills publicadas já estão fixadas.</p>
+            ) : (
+              <p className="text-xs text-muted-foreground" data-testid="biblioteca-sem-publicadas">
+                Nenhuma skill publicada ainda —{" "}
+                <Link to={SKILLS_BIBLIOTECA_HREF} className="text-primary hover:underline">publique na Biblioteca de skills</Link>.
+              </p>
+            )
           ) : (
             <div className="flex gap-2">
               <Select aria-label="Skill da biblioteca" value={escolhida} onChange={(e) => setEscolhida(e.target.value)}>
@@ -175,12 +185,15 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
       )}
 
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Biblioteca</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Biblioteca</h2>
+          <Link to={SKILLS_BIBLIOTECA_HREF} className="text-xs text-primary hover:underline" data-testid="biblioteca-gerenciar">Gerenciar skills</Link>
+        </div>
         {biblioteca.data && biblioteca.data.length > 0 && (
           <ul className="grid gap-2 sm:grid-cols-2" data-testid="biblioteca-lista">
             {biblioteca.data.map((s) => (
               <li key={s.id} className="rounded-md border border-border bg-card px-3 py-2 text-sm">
-                <span className="font-medium">{s.nome}</span> <span className="font-mono text-xs text-muted-foreground">{s.chave}</span>
+                <Link to={skillHref(s.chave)} className="font-medium text-primary hover:underline">{s.nome}</Link> <span className="font-mono text-xs text-muted-foreground">{s.chave}</span>
                 <p className="text-xs text-muted-foreground">
                   {s.versao_publicada !== null ? `Publicada v${s.versao_publicada}` : "Sem versão publicada"}
                   {s.tem_rascunho ? " · rascunho em edição" : ""}
