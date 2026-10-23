@@ -987,6 +987,31 @@ def _gravar(
         _t(client, TABLE).update(_json_seguro({**patch, "updated_at": _now()})).eq(
             "org_id", str(org_id)
         ).eq("codigo", codigo).execute()
+        _encerrar_conflitos_de_campos_limpos(client, org_id, codigo, patch)
+
+
+def _encerrar_conflitos_de_campos_limpos(
+    client: Any, org_id: UUID, codigo: str, patch: dict
+) -> None:
+    """A write that EMPTIES an extracted field ("Limpar") leaves nothing for a
+    pending proposal to replace: its conflicts are closed here, at the one
+    write chokepoint every author of this table shares (F62, 2026-10-23 — a
+    cleared `titulo_aquisitivo_texto` kept an obsolete "Documento/atual" row
+    pendente forever). Reuses the conflict sweep, scoped to the cleared
+    fields (`campo_limpo`). Lazy import — that module imports this one."""
+    if not any(valor is None for valor in patch.values()):
+        return
+    from app.modules.imovel_hub import campos_extraidos_service as campos_svc
+
+    limpos = frozenset(
+        campo.chave
+        for campo in campos_svc.CAMPOS.values()
+        if all(c in patch and patch[c] is None for c in campo.colunas)
+    )
+    if limpos:
+        campos_svc.backfill_resolver_conflitos_pendentes(
+            client, org_id, codigo=codigo, campos=limpos
+        )
 
 
 def gravar_extraido(

@@ -14,6 +14,7 @@ built from one of their acts says WHERE the act lives ("da matrícula nº
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Optional
 from uuid import UUID
@@ -24,7 +25,10 @@ from noctusai_lib.integrations.documents import (
     frase_titulo_aquisitivo,
     ler_encerramento,
 )
-from noctusai_lib.integrations.documents.matricula_cabecalho import find_cartorio
+from noctusai_lib.integrations.documents.matricula_cabecalho import (
+    find_cartorio,
+    formatar_cartorio,
+)
 
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.imovel_hub import vinculo_legal
@@ -78,20 +82,78 @@ def extracao_e_predecessora(client: Any, org_id: UUID, extracao: dict) -> bool:
     return _documento_encerrado(client, org_id, extracao)
 
 
+def _cartorio_atual(client: Any, org_id: UUID, extracao: dict) -> Optional[str]:
+    """The registry of the imóvel's CURRENT matrícula (the successor), read
+    literally from that document's own heading — `None` when no current
+    matrícula transcription names one (never inferred from the closing
+    averbação's wording)."""
+    codigo = extracao.get("codigo")
+    if not codigo:
+        return None
+    candidatas: list[dict] = []
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+        documentos = (
+            _t(client, docs_svc.TABLE)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("codigo", fonte)
+            .eq("tipo_documento", "matricula")
+            .is_("deleted_at", "null")
+            .execute()
+        ).data or []
+        for documento in documentos:
+            ultima = (
+                _t(client, estrutura_svc.EXTRACOES_TABLE)
+                .select("*")
+                .eq("org_id", str(org_id))
+                .eq("imovel_documento_id", str(documento["id"]))
+                .eq("status", estrutura_svc.STATUS_CONCLUIDA)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            ).data or []
+            candidatas.extend(
+                e for e in ultima
+                if str(e["id"]) != str(extracao["id"]) and not _documento_encerrado(client, org_id, e)
+            )
+    for atual in sorted(candidatas, key=lambda e: str(e.get("created_at") or ""), reverse=True):
+        cartorio, _conf, _ = find_cartorio(
+            atual.get("texto_extraido") or estrutura_svc.texto_da_extracao(client, org_id, atual["id"]) or ""
+        )
+        if cartorio:
+            return formatar_cartorio(cartorio)
+    return None
+
+
 def matricula_origem(client: Any, org_id: UUID, extracao: dict) -> Optional[str]:
-    """`da matrícula nº 21.748 do <cartório>` when the extraction is a
-    predecessor matrícula; `None` for the current one. Read literally from the
-    document's own heading (number + registry); a part the heading does not
-    state is omitted, never invented."""
+    """`da matrícula nº 21.748 do Cartório de Registro de Imóveis de
+    Barueri/SP, atualmente matriculado sob o nº 11.926 do Oficial de Registro
+    de Imóveis de Carapicuíba/SP` when the extraction is a predecessor
+    matrícula; `None` for the current one. Read literally from the document's
+    own heading (number + registry) and its closing averbação (successor
+    number) + the successor matrícula's own heading (its registry); a part
+    the documents do not state is omitted, never invented."""
     if not _documento_encerrado(client, org_id, extracao):
         return None
     texto = estrutura_svc.texto_da_extracao(client, org_id, extracao["id"]) or ""
     numero, conf, _ = find_matricula(texto)
     cartorio, _conf, _ = find_cartorio(texto)
+    cartorio = formatar_cartorio(cartorio) if cartorio else None
     if not numero or conf == "nenhuma":
         return f"da matrícula anterior do {cartorio}" if cartorio else None
     frase = f"da matrícula nº {_numero_formatado(numero)}"
-    return f"{frase} do {cartorio}" if cartorio else frase
+    if cartorio:
+        frase += f" do {cartorio}"
+    sucessora = ler_encerramento(texto)[1]
+    if sucessora:
+        frase += f", atualmente matriculado sob o nº {_numero_formatado(sucessora)}"
+        atual = _cartorio_atual(client, org_id, extracao)
+        if atual:
+            frase += f" do {atual}"
+    return frase
+
+
+_UF_DA_ORIGEM = re.compile(r"/([A-Z]{2})\b")
 
 
 def extracoes_predecessoras(client: Any, org_id: UUID, codigo: str) -> list[dict]:
@@ -140,6 +202,7 @@ def frase_titulo(ato: dict, det: dict, origem: Optional[str] = None) -> Optional
         natureza=det.get("natureza"),
         data_registro=_data(bruto),
         matricula_origem=origem,
+        uf_origem=(_UF_DA_ORIGEM.search(origem).group(1) if origem and _UF_DA_ORIGEM.search(origem) else None),
     )
 
 

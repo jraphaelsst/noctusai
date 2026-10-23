@@ -149,10 +149,15 @@ class Instrumento:
     #: adiantamento de legítima"), as written. Rides inside the instrumento
     #: JSON, so no column/migration.
     observacao: Optional[str] = None
+    #: The act names the notary's city as "<cidade>, Capital" — the capital of
+    #: the SAME state as the registry the act lives in (so the phrase can
+    #: print "São Paulo/SP" without inventing a UF the text never states).
+    cidade_capital: bool = False
 
     def to_json(self) -> dict:
         return {
             "observacao": self.observacao,
+            "cidade_capital": self.cidade_capital,
             "tipo": self.tipo,
             "data": self.data.isoformat() if self.data else None,
             "tabelionato": self.tabelionato,
@@ -174,6 +179,7 @@ class Instrumento:
             folhas=data.get("folhas"),
             cidade=data.get("cidade"),
             observacao=data.get("observacao"),
+            cidade_capital=bool(data.get("cidade_capital")),
         )
 
 
@@ -1060,13 +1066,18 @@ _CIDADE = re.compile(
     r"(?=\s*(?:/|,|;|\.|\(|:|-\s*[A-Z]{2}(?![A-Z])|\s[-–—]\s|$)"
     r"|\s+(?:LIVRO|NO\s+LIVRO|FLS?|FOLHAS?|SOB|EM|AOS|E\s+REGISTRAD|REGISTRAD|PAGINAS?)(?![A-Z]))"
 )
+_CAPITAL = re.compile(r"\s*,?\s*CAPITAL(?![A-Z])")
 _NAO_CIDADE = frozenset({"DESTA", "NESTA", "DESSA", "NESSA", "CAPITAL", "COMARCA", "CIDADE"})
 _LIVRO = re.compile(r"(?<![A-Z])(?:LIVRO|L[O°])\.?\s*(?:N[O°]?\.?\s*)?(?P<v>\d[\d.]*(?:-?[A-Z](?![A-Z]))?)")
 _FOLHAS = re.compile(
     r"(?<![A-Z])(?:FLS?|FOLHAS?|PAGINAS?|PAGS?|PGS?)\.?\s*(?:N[O°]?\.?\s*)?"
     r"(?P<v>\d+(?:\s*V(?:ERSO)?(?![A-Z]))?(?:\s*(?:/|-|A|AO|E)\s*\d+(?:\s*V(?:ERSO)?(?![A-Z]))?)?)"
 )
-_OBSERVACAO = _rx(r"EM\s+ADIANTAMENTO\s+D[AE]\s+LEGITIMA|ADIANTAMENTO\s+D[AE]\s+LEGITIMA")
+#: `D[AE]\s+(?:-\s*)?LEGITIMA`: the typed-page hyphen wrap ("em adiantamento de -
+#: / legítima") is page furniture, not part of the qualifier.
+_OBSERVACAO = _rx(
+    r"(?:EM\s+)?ADIANTAMENTO\s+D[AE]\s+(?:[-–—]\s*)?LEGITIMA"
+)
 _FIM_CLAUSULA = re.compile(r"\.\s+(?=[A-Z]{2})")
 _JANELA_CLAUSULA = 320
 
@@ -1110,12 +1121,14 @@ def _instrumento(
             break
 
     tabelionato = cidade = None
+    capital = False
     tab = _TABELIONATO.search(t.norm, fim_tipo, limite)
     if tab:
         tabelionato = t.literal(tab.start(), tab.end())
         c = _CIDADE.match(t.norm, tab.end())
         if c and c.group("c").split()[0] not in _NAO_CIDADE:
             cidade = t.literal(c.start("c"), c.end("c"))
+            capital = bool(_CAPITAL.match(t.norm, c.end("c")))
 
     livro_m = _LIVRO.search(t.norm, fim_tipo, limite)
     folhas_m = _FOLHAS.search(t.norm, fim_tipo, limite)
@@ -1128,6 +1141,7 @@ def _instrumento(
         livro=t.literal(livro_m.start("v"), livro_m.end("v")) if livro_m else None,
         folhas=t.literal(folhas_m.start("v"), folhas_m.end("v")) if folhas_m else None,
         cidade=cidade,
+        cidade_capital=capital,
     )
     notarial = normalize(tipo or "").startswith("ESCRITURA")
     completo = tipo and data_inst and (tabelionato or not notarial)
@@ -1363,6 +1377,22 @@ _NATUREZA_NA_FRASE: dict[str, tuple[str, str]] = {
 }
 
 
+_QUEBRA = re.compile(r"\s+[-–—]+\s+|\s*[-–—]+\s*\n\s*|\s+")
+
+
+def _sem_quebra(texto: str) -> str:
+    """Whitespace collapsed and a page-wrap hyphen dropped."""
+    return _QUEBRA.sub(" ", texto.strip())
+
+
+def _cidade_da_frase(instrumento: Instrumento, uf_origem: Optional[str]) -> str:
+    cidade = (instrumento.cidade or "").strip()
+    uf = (uf_origem or "").strip().upper()
+    if instrumento.cidade_capital and re.fullmatch(r"[A-Z]{2}", uf):
+        return f"{cidade}/{uf}"
+    return cidade
+
+
 def frase_titulo_aquisitivo(
     instrumento: Optional[Instrumento],
     *,
@@ -1371,6 +1401,7 @@ def frase_titulo_aquisitivo(
     natureza: Optional[str] = None,
     data_registro: Optional[date] = None,
     matricula_origem: Optional[str] = None,
+    uf_origem: Optional[str] = None,
 ) -> Optional[str]:
     """The paraphrased título aquisitivo a contract states, built ONLY from
     what the act says (e.g. `por Escritura Pública de Venda e Compra
@@ -1395,6 +1426,12 @@ def frase_titulo_aquisitivo(
     folhas, the registration date (`data_registro`) and — when the act lives
     on a predecessor matrícula — `matricula_origem` ("da matrícula nº 21.748
     do Registro de Imóveis de Barueri/SP"), pre-formatted by the caller.
+
+    `uf_origem` — the UF of the registry the act lives in; printed after the
+    notary's city ONLY when the act itself says "<cidade>, Capital"
+    (`Instrumento.cidade_capital`). A typed page-wrap hyphen inside the
+    qualifier ("de -\nlegítima") is dropped from the phrase (the stored
+    literal keeps it).
     """
     if kind not in ("R", "AV"):
         raise ValueError(f"kind deve ser 'R' ou 'AV', recebeu {kind!r}")
@@ -1412,7 +1449,7 @@ def frase_titulo_aquisitivo(
     ):
         cabeca += f" de {nat[1]}"
     if instrumento.observacao:
-        cabeca += f", {instrumento.observacao.strip()}"
+        cabeca += f", {_sem_quebra(instrumento.observacao)}"
         if instrumento.data or instrumento.tabelionato:
             cabeca += ","  # closes the parenthetical before "lavrada em …"
     if instrumento.data:
@@ -1420,10 +1457,10 @@ def frase_titulo_aquisitivo(
     if instrumento.tabelionato:
         cabeca += f" no {instrumento.tabelionato.strip()}"
         if instrumento.cidade:
-            cabeca += f" de {instrumento.cidade.strip()}"
+            cabeca += f" de {_cidade_da_frase(instrumento, uf_origem)}"
     partes = [cabeca]
     if not instrumento.tabelionato and instrumento.cidade:
-        partes.append(f"em {instrumento.cidade.strip()}")
+        partes.append(f"em {_cidade_da_frase(instrumento, uf_origem)}")
     if instrumento.livro:
         partes.append(f"Livro {instrumento.livro.strip()}")
     if instrumento.folhas:

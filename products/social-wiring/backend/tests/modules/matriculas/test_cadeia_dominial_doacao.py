@@ -19,7 +19,7 @@ from app.modules.matriculas import cadeia_dominial, titulo_service
 ORG = UUID(ORG_ID)
 
 ATUAL = (
-    "REGISTRO DE IMÓVEIS\nCOMARCA DE CARAPICUÍBA - SP\nMATRÍCULA Nº 11.926\nFICHA 01\n"
+    "OFICIAL DE REGISTRO DE IMÓVEIS\nDA COMARCA DE CARAPICUÍBA/SP\nMATRÍCULA Nº 11.926\nFICHA 01\n"
     "IMÓVEL: Casa ficticia da Rua dos Exemplos.\n"
     "REGISTRO ANTERIOR: R-04/M-21.748 do Registro de Imóveis de Barueri/SP.\n"
     "AV-01/11.926 - Em 10/03/2014. Averba-se a abertura desta matrícula.\n"
@@ -69,7 +69,9 @@ def test_the_last_transfer_is_the_doacao_on_the_closed_predecessor(client, scope
     assert ult["data_registro"] == "1988-02-12"
     assert ult["extracao_id"] == anterior["id"]
     assert ult["matricula_origem"] == (
-        "da matrícula nº 21.748 do 1º OFICIAL DE REGISTRO DE IMÓVEIS DE BARUERI/SP"
+        "da matrícula nº 21.748 do 1º Oficial de Registro de Imóveis de Barueri/SP, "
+        "atualmente matriculado sob o nº 11.926 do Oficial de Registro de Imóveis da "
+        "Comarca de Carapicuíba/SP"
     )
     assert out["origem"] == "matricula_anterior"
     assert [t["nome"] for t in out["transmitentes"]][:1] == ["MARCOS SEGUNDO FICTICIO"]
@@ -104,8 +106,9 @@ def test_the_titulo_phrase_carries_every_fact_of_the_doacao(client, scoped):
     assert frase == (
         "por escritura pública de doação, em adiantamento de legítima, lavrada em "
         "28/01/1988 no 26º Tabelionato de Notas de São Paulo, Livro 1058, fls. 279, "
-        "registrada sob o R-4 em 12/02/1988 da matrícula nº 21.748 do 1º OFICIAL DE "
-        "REGISTRO DE IMÓVEIS DE BARUERI/SP"
+        "registrada sob o R-4 em 12/02/1988 da matrícula nº 21.748 do 1º Oficial de "
+        "Registro de Imóveis de Barueri/SP, atualmente matriculado sob o nº 11.926 do "
+        "Oficial de Registro de Imóveis da Comarca de Carapicuíba/SP"
     )
 
 
@@ -123,7 +126,10 @@ def test_the_current_fill_points_the_titulo_at_the_predecessors_doacao(client, s
     assert linha["numero_matricula"] == "11.926"
     texto = linha["titulo_aquisitivo_texto"]
     assert "de doação, em adiantamento de legítima," in texto
-    assert texto.endswith("da matrícula nº 21.748 do 1º OFICIAL DE REGISTRO DE IMÓVEIS DE BARUERI/SP")
+    assert texto.endswith(
+        "do 1º Oficial de Registro de Imóveis de Barueri/SP, atualmente matriculado sob o "
+        "nº 11.926 do Oficial de Registro de Imóveis da Comarca de Carapicuíba/SP"
+    )
     # The suggestion endpoint says the same thing from the stored pointer.
     out = titulo_service.obter_titulo(scoped, ORG, CODIGO)
     assert out["sugestao"] == texto and out["divergencias"] == []

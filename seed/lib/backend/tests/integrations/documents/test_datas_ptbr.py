@@ -23,3 +23,14 @@ def test_window_is_respected():
 
 def test_month_table_is_complete():
     assert sorted(MESES.values()) == list(range(1, 13))
+
+
+def test_year_with_a_thousands_dot_in_an_old_typed_matricula():
+    from datetime import date
+
+    from noctusai_lib.integrations.documents.datas_ptbr import datas_no_texto
+
+    assert [d for _a, _b, d in datas_no_texto("EM 28/ 01/1.988 E 12 DE FEVEREIRO DE 1.988")] == [
+        date(1988, 1, 28),
+        date(1988, 2, 12),
+    ]

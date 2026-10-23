@@ -1007,3 +1007,58 @@ def test_adjudicacao_and_integralizacao_are_typed_transfers():
     i = extrair_detalhes_ato("R-3/1 - Em 01/02/2001. INTEGRALIZAÇÃO DE CAPITAL na empresa X.")
     assert (a.natureza, i.natureza) == ("adjudicacao", "integralizacao")
     assert {"adjudicacao", "integralizacao", "doacao", "partilha"} <= NATUREZAS_TRANSFERENCIA
+
+
+# ─── doação on a typed 1988 page: OCR line wraps, dotted years (F64) ──────
+
+DOACAO_DIGITADA = (
+    "R. 04/ 21.748 .-          Barueri, 12 de fevereiro de 1.988 .-\n"
+    "Por escritura pública, lavrada aos 28/\n"
+    "01/1.988, Lº 1058, fls. 279, do 26º Tabelionato de Notas de\n"
+    "São Paulo,Capital, os proprietários retro nomeados e quali-\n"
+    "ficados, transmitiram, a titulo de DOAÇÃO, o imóvel desta--\n"
+    "matricula, à ANA BETA FICTICIA, nascido aos .., BRUNO BETA FICTICIO ..., e CLARA "
+    "BETA FICTICIA, ..., todos brasileiros, menores\n"
+    "impúberes, ..., nêste ato representados por seus\n"
+    "pais, os doadores, supra qualificados em adiantamento de -\n"
+    "legítima, nos têrmos do artº 1.171, do C.C.Brasileiro,Valor\n"
+    "CZ$  42.270.22."
+)
+
+
+def test_typed_doacao_reads_dates_livro_and_the_wrapped_qualifier():
+    d = extrair_detalhes_ato(DOACAO_DIGITADA)
+    assert d.natureza == "doacao"
+    assert d.data_registro == date(1988, 2, 12)
+    assert d.instrumento.data == date(1988, 1, 28)
+    assert d.instrumento.livro == "1058" and d.instrumento.folhas == "279"
+    assert d.instrumento.cidade == "São Paulo" and d.instrumento.cidade_capital is True
+    # stored as written (a substring of the act) ...
+    assert d.instrumento.observacao == "em adiantamento de -\nlegítima"
+    assert d.instrumento.observacao in DOACAO_DIGITADA
+
+
+def test_typed_doacao_phrase_drops_the_wrap_hyphen_and_prints_the_capital_uf():
+    d = extrair_detalhes_ato(DOACAO_DIGITADA)
+    frase = frase_titulo_aquisitivo(
+        d.instrumento, kind="R", numero=4, natureza=d.natureza,
+        data_registro=d.data_registro,
+        matricula_origem="da matrícula nº 21.748 do Cartório de Registro de Imóveis de Barueri/SP",
+        uf_origem="SP",
+    )
+    assert frase == (
+        "por escritura pública de doação, em adiantamento de legítima, lavrada em "
+        "28/01/1988 no 26º Tabelionato de Notas de São Paulo/SP, Livro 1058, fls. 279, "
+        "registrada sob o R-4 em 12/02/1988 da matrícula nº 21.748 do Cartório de "
+        "Registro de Imóveis de Barueri/SP"
+    )
+    # Without a UF the city stays as the act wrote it — never invented.
+    sem_uf = frase_titulo_aquisitivo(d.instrumento, kind="R", numero=4, natureza=d.natureza)
+    assert "Notas de São Paulo," in sem_uf and "/SP" not in sem_uf
+
+
+def test_instrumento_json_round_trip_keeps_the_capital_flag():
+    from noctusai_lib.integrations.documents import Instrumento
+
+    i = extrair_detalhes_ato(DOACAO_DIGITADA).instrumento
+    assert Instrumento.from_json(i.to_json()) == i

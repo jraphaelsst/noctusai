@@ -83,6 +83,16 @@ _CONTINUACAO = re.compile(
 #: scan, sometimes with the abertura date glued on).
 _SEM_LOCALIDADE = re.compile(r"\bREGISTRO\s+(?:DE\s+IMOVEIS|IMOBILIARIO)$")
 
+#: A registry cell cut at a dangling preposition ("CARTÓRIO DE REGISTRO DE
+#: IMÓVEIS DE" — the city is on a LATER line, after a blank one), and a bare
+#: "<CIDADE>-SP" locality line that follows a locality-less registry cell
+#: ("…REGISTRO DE IMÓVEIS" / "BARUERI-SP"). Truncating at the line break
+#: yielded "…DE" as the cartório (real deal, 2026-10-23).
+_PREPOSICAO_FINAL = re.compile(r"\s(?:DE|DA|DO|DAS|DOS)$")
+_LOCALIDADE_UF = re.compile(
+    r"^(?!(?:COMARCA|MUNICIPIO|CIDADE|DISTRITO)\b)[A-Z][A-Z' ]{1,40}?\s*[-/]\s*[A-Z]{2}\.?$"
+)
+
 #: How many non-blank heading lines below a locality-less registry cell may
 #: still complete it.
 _JANELA_LOCALIDADE = 3
@@ -144,7 +154,11 @@ def _localidade_abaixo(linhas: list[str], i: int) -> Optional[str]:
             return None
         for celula in _CELULA.split(bruta.strip()):
             n = _norm(celula)
-            if _CONTINUACAO.match(n) and not _MOBILIA.search(n) and not _CARTORIO.search(n):
+            if (
+                (_CONTINUACAO.match(n) or _LOCALIDADE_UF.match(n))
+                and not _MOBILIA.search(n)
+                and not _CARTORIO.search(n)
+            ):
                 cortada = _CAUDA_LOCALIDADE.sub("", celula).strip()
                 return cortada or None
     return None
@@ -183,9 +197,15 @@ def find_cartorio(text: str) -> tuple[Optional[str], str, Optional[str]]:
             normais[i + 1]
         ):
             partes.append(linhas[i + 1])
-        elif _SEM_LOCALIDADE.search(_norm(_limpar(propria))):
+        elif _SEM_LOCALIDADE.search(_norm(_limpar(propria))) or _PREPOSICAO_FINAL.search(
+            _norm(_limpar(propria))
+        ):
             localidade = _localidade_abaixo(linhas, i)
             if localidade:
+                if not _CONTINUACAO.match(_norm(localidade)) and not _PREPOSICAO_FINAL.search(
+                    _norm(_limpar(propria))
+                ):
+                    localidade = f"DE {localidade}"  # bare "<CIDADE>-SP" line
                 partes.append(localidade)
         valor = _limpar(" ".join(partes))
         if valor:
@@ -235,3 +255,28 @@ def find_inscricao_municipal(bloco: str) -> tuple[Optional[str], str]:
 
 
 __all__ = ["find_cartorio", "find_inscricao_municipal"]
+
+
+_MINUSCULAS = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+_UF_FINAL = re.compile(r"\s*[-/]\s*([A-Za-z]{2})$")
+
+
+def formatar_cartorio(valor: str) -> str:
+    """The cartório as a deed prints it in running prose: an UPPER-CASE
+    heading ("OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE CARAPICUÍBA/SP",
+    "CARTÓRIO DE REGISTRO DE IMÓVEIS DE BARUERI -SP") becomes "Oficial de
+    Registro de Imóveis da Comarca de Carapicuíba/SP" — connectors lower-case,
+    the trailing `-SP`/` - SP` normalised to `/SP`. Mixed-case input is left
+    alone (the operator's own casing is never rewritten); no word is added or
+    removed."""
+    limpo = _limpar(valor)
+    if not limpo:
+        return limpo
+    uf = _UF_FINAL.search(limpo)
+    corpo = limpo[: uf.start()] if uf else limpo
+    if corpo.upper() == corpo:
+        palavras = [
+            w.lower() if w in _MINUSCULAS else w[:1] + w[1:].lower() for w in corpo.split()
+        ]
+        corpo = " ".join(palavras)
+    return f"{corpo}/{uf.group(1).upper()}" if uf else corpo

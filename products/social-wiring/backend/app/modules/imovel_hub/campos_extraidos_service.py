@@ -1000,6 +1000,100 @@ def _resolver_automaticamente(
     return Resultado(RESOLVIDO_APLICADO)
 
 
+REGRA_CAMPO_LIMPO = "campo_limpo"
+REGRA_SUBSTITUIDO = "substituido"
+REGRA_PREDECESSORA = "predecessora"
+
+#: What a CLOSED predecessor matrícula never proposes (history, not the
+#: current registry) — the fields `preenchimento_service` skips for it.
+CAMPOS_SO_DA_MATRICULA_ATUAL = frozenset({
+    "numero_matricula", "numero_registro_imoveis", "prefeitura_cadastro_imobiliario",
+    "onus_fonte", "onus_credor", "situacao_onus",
+})
+
+
+def _conflito_obsoleto(
+    client: Any, org_id: UUID, conflito: dict, campo: CampoImovel, atual: Any
+) -> Optional[tuple[str, str]]:
+    """`(regra, motivo)` when a pending conflict has no subject or no author
+    anymore — closed by the sweep instead of waiting for a human forever:
+
+    - `campo_limpo` — the field is now empty (a human cleared it): a pending
+      question about "replace what's there" outranks nothing; any new
+      reading simply fills the empty field.
+    - `substituido` — it was proposed by an extraction of a document that a
+      NEWER concluded extraction of the same document has since re-read and
+      no longer re-proposes it (`registrar_conflito` re-points a re-asserted
+      proposal to the newer extraction, so a still-live question never gets
+      here).
+    - `predecessora` — proposed by an extraction that is now recognised as a
+      CLOSED predecessor matrícula, for a field only the current matrícula
+      may propose.
+    """
+    if _vazio(atual):
+        return (
+            REGRA_CAMPO_LIMPO,
+            f"o campo foi limpo; a proposta pendente ({conflito.get('valor_proposto')}) "
+            "não tem mais o que substituir",
+        )
+    if conflito.get("fonte_tabela") != FONTE_EXTRACOES or not conflito.get("fonte_id"):
+        return None
+    fonte = (
+        _t(client, FONTE_EXTRACOES)
+        .select("id,imovel_documento_id,created_at,substituida_por")
+        .eq("org_id", str(org_id))
+        .eq("id", str(conflito["fonte_id"]))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not fonte:
+        return None
+    fonte = fonte[0]
+    if fonte.get("imovel_documento_id") and not fonte.get("substituida_por"):
+        # (An explicitly `substituida_por` extraction is the richer
+        # `conflito_resolucao` rule's — it may APPLY the successor's value.)
+        # postgrest-unbounded-ok: the concluded extractions of ONE document.
+        irmas = (
+            _t(client, FONTE_EXTRACOES)
+            .select("id,created_at")
+            .eq("org_id", str(org_id))
+            .eq("imovel_documento_id", str(fonte["imovel_documento_id"]))
+            .eq("status", "concluida")
+            .limit(200)
+            .execute()
+        ).data or []
+        mais_nova = max(
+            (r for r in irmas if str(r.get("created_at") or "") > str(fonte.get("created_at") or "")),
+            key=lambda r: str(r.get("created_at") or ""),
+            default=None,
+        )
+        if mais_nova is not None:
+            return (
+                REGRA_SUBSTITUIDO,
+                f"a releitura mais nova do mesmo documento (extração {mais_nova['id']}) não "
+                f"propõe mais ({conflito.get('valor_proposto')}); a extração {fonte['id']} "
+                "é uma leitura superada",
+            )
+    if campo.chave in CAMPOS_SO_DA_MATRICULA_ATUAL:
+        from app.modules.matriculas import cadeia_dominial  # lazy: cycle
+
+        completa = (
+            _t(client, FONTE_EXTRACOES)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("id", str(fonte["id"]))
+            .limit(1)
+            .execute()
+        ).data or []
+        if completa and cadeia_dominial.extracao_e_predecessora(client, org_id, completa[0]):
+            return (
+                REGRA_PREDECESSORA,
+                f"a extração {fonte['id']} é de uma matrícula encerrada (predecessora): "
+                f"ela não propõe {campo.chave} do imóvel atual",
+            )
+    return None
+
+
 def backfill_resolver_conflitos_pendentes(
     client: Any,
     org_id: UUID,
@@ -1042,6 +1136,18 @@ def backfill_resolver_conflitos_pendentes(
             continue
         row = dados_service.linha(client, org_id, conflito["codigo"])
         atual = _valor_atual(row, campo)
+        obsoleto = _conflito_obsoleto(client, org_id, conflito, campo, atual)
+        if obsoleto is not None:
+            regra, motivo = obsoleto
+            campo_conflitos.encerrar_automatico(
+                client, campo_conflitos.IMOVEL, conflito["id"], regra=regra, motivo=motivo
+            )
+            logger.info(
+                "imovel %s: %s — pending conflict %s closed [%s]",
+                conflito.get("codigo"), campo.chave, conflito["id"], regra,
+            )
+            resolvidos.append({**conflito, "decisao_status": regra})
+            continue
         origem_anterior = None
         if _vazio(atual):
             atual, origem_anterior = conflito.get("valor_anterior"), conflito.get("origem_anterior")

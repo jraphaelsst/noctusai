@@ -340,6 +340,16 @@ def registrar_conflito(
             _t(client, table.table).update({"protege_correcao": True}).eq(
                 "id", existente["id"]
             ).execute()
+        if fonte_id and str(existente.get("fonte_id") or "") != str(fonte_id):
+            # The same question, re-asserted by a NEWER reading: the pending
+            # row's author is now that reading. Without this, a newer
+            # extraction of the same document that still proposes the value
+            # is indistinguishable from one that stopped proposing it
+            # (`encerrar_automatico`'s "substituido" sweep would close a live
+            # question).
+            _t(client, table.table).update(
+                {"fonte_id": str(fonte_id), "fonte_tabela": fonte_tabela}
+            ).eq("id", existente["id"]).execute()
         return None
     if suprimir_ja_mostrado and _ja_mostrado(
         client, table, org_id, owner, campo, valor_proposto, comparar
@@ -644,6 +654,25 @@ def fechar_conflitos_pendentes(
             }
         ).eq("id", row["id"]).execute()
     return len(pendentes)
+
+
+def encerrar_automatico(
+    client: Any, table: ConflictTable, conflito_id: Any, *, regra: str, motivo: str
+) -> None:
+    """Close ONE pending conflict as a SYSTEM resolution
+    (`status='resolvido_automatico'`, `decidido_por=None`,
+    `motivo_resolucao='[<regra>] <motivo>'` — migration 175), never deleted:
+    the record that a question was once open stays auditable. The single
+    write every "this proposal has no author / no subject anymore" close
+    goes through (`campo_limpo`, `substituido`, `predecessora`)."""
+    _t(client, table.table).update(
+        {
+            "status": "resolvido_automatico",
+            "decidido_por": None,
+            "decidido_em": _now(),
+            "motivo_resolucao": f"[{regra}] {motivo}",
+        }
+    ).eq("id", conflito_id).execute()
 
 
 async def notificar_conflitos(

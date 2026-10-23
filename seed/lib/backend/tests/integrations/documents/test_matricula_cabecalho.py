@@ -194,3 +194,45 @@ def test_cartorio_arisp_two_line_heading_keeps_the_city():
     valor, conf, _ = find_cartorio(texto)
     assert conf == "alta"
     assert valor.upper().endswith("DE CIDADE EXEMPLO")
+
+
+def test_cartorio_heading_cut_at_a_dangling_preposition_is_joined_to_the_city():
+    """ONR "Visualização" of a closed predecessor (real deal, 2026-10-23): the
+    registry line ends in "DE", a blank line, then "<CIDADE> -SP." Cutting at
+    the line break yielded "…IMÓVEIS DE" — a truncated registry in a deed.
+    Synthetic city."""
+    from noctusai_lib.integrations.documents.matricula_cabecalho import (
+        find_cartorio,
+        formatar_cartorio,
+    )
+
+    texto = (
+        "CARTÓRIO DE REGISTRO DE IMÓVEIS DE\n\nCIDADEEXEMPLO -SP.\n\nMATRÍCULA\n- 12345\n"
+        "IMÓVEL: casa"
+    )
+    valor, conf, _ = find_cartorio(texto)
+    assert conf == "alta"
+    assert formatar_cartorio(valor) == "Cartório de Registro de Imóveis de Cidadeexemplo/SP"
+
+
+def test_cartorio_locality_on_the_next_line_without_a_preposition_gets_its_de():
+    from noctusai_lib.integrations.documents.matricula_cabecalho import (
+        find_cartorio,
+        formatar_cartorio,
+    )
+
+    texto = "CARTÓRIO DE REGISTRO DE IMÓVEIS\nBARUERI-SP\n\nMATRÍCULA 21748 FICHA 2\nIMÓVEL: x"
+    valor, _conf, _ = find_cartorio(texto)
+    assert formatar_cartorio(valor) == "Cartório de Registro de Imóveis de Barueri/SP"
+
+
+def test_formatar_cartorio_is_case_only_and_leaves_mixed_case_alone():
+    from noctusai_lib.integrations.documents.matricula_cabecalho import formatar_cartorio
+
+    assert (
+        formatar_cartorio("OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE CARAPICUÍBA/SP")
+        == "Oficial de Registro de Imóveis da Comarca de Carapicuíba/SP"
+    )
+    assert formatar_cartorio("1º Oficial de Registro de Imóveis de Cotia") == (
+        "1º Oficial de Registro de Imóveis de Cotia"
+    )
