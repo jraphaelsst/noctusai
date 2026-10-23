@@ -111,13 +111,20 @@ def _page_summary(page: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Optional server concurrency metrics carried as an 8th api-tuple element (capture v1 stays valid
+# without it). inflight/inflight_peak are counts; blk/blkq/lag are milliseconds.
+CONC_METRICS = ("inflight", "inflight_peak", "blk", "blkq", "lag")
+CONC_COMPARE = ("app_p50_ms", "inflight_peak_p50", "blk_p50", "blkq_p50", "lag_p50")
+
+
 def _endpoint_stats(pages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     acc: dict[str, dict[str, list]] = {}
     for pg in pages:
         ptpl = template_path(pg.get("path", ""))
         for a in pg.get("api") or []:
             e = acc.setdefault(template_where(a[0]), {"dur": [], "ttfb": [], "app": [], "net": [],
-                                                      "bytes": [], "bad": [], "pages": set()})
+                                                      "bytes": [], "bad": [], "pages": set(),
+                                                      "conc": {}})
             dur, ttfb, app, size, status = float(a[2]), a[3], a[4], a[5], a[6]
             e["dur"].append(dur)
             if ttfb is not None:
@@ -125,6 +132,10 @@ def _endpoint_stats(pages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             if app is not None:
                 e["app"].append(float(app))
                 e["net"].append(max(0.0, dur - float(app)))
+            x = a[7] if len(a) > 7 and isinstance(a[7], dict) else None
+            for m in CONC_METRICS:
+                if x and x.get(m) is not None:
+                    e["conc"].setdefault(m, []).append(float(x[m]))
             e["bytes"].append(float(size or 0))
             e["bad"].append(0 if (status == 0 or 200 <= int(status) < 300) else 1)
             e["pages"].add(ptpl)
@@ -135,6 +146,8 @@ def _endpoint_stats(pages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                    "app_p95_ms": _p(e["app"], 95), "network_p50_ms": _p(e["net"], 50),
                    "bytes_p50": _p(e["bytes"], 50), "non_2xx": sum(e["bad"]),
                    "pages": sorted(e["pages"])}
+        for m, vals in e["conc"].items():  # present only when the server emitted them -- never 0
+            out[ep][f"{m}_p50"], out[ep][f"{m}_p95"] = _p(vals, 50), _p(vals, 95)
     return out
 
 
@@ -291,6 +304,11 @@ def report(scope: str, label: str, store: str | None = None, pages: list[str] | 
                 findings["app_bound"].append(row)
         if (v["bytes_p50"] or 0) >= big_bytes:
             findings["oversized"].append({"endpoint": k, "bytes_p50": v["bytes_p50"]})
+    findings["concurrency"] = sorted(
+        ({"endpoint": k, "count": v["count"], "app_p50_ms": v["app_p50_ms"],
+          **{f: v[f] for m in CONC_METRICS for f in (f"{m}_p50", f"{m}_p95") if f in v}}
+         for k, v in eps.items() if any(f"{m}_p50" in v for m in CONC_METRICS)),
+        key=lambda r: -(r["app_p50_ms"] or 0))
     findings["edge_bound"].sort(key=lambda r: -r["network_p50_ms"])
     findings["app_bound"].sort(key=lambda r: -r["app_p50_ms"])
 
@@ -362,12 +380,14 @@ def compare(scope: str, before: str, after: str, store: str | None = None, pages
             row = {key: k, "verdict": v, "before": b[k].get(metric), "after": a[k].get(metric),
                    "delta_ms": d, "delta_pct": pct}
             for x in extra:
-                row[x] = [b[k].get(x), a[k].get(x)]
+                pair = [b[k].get(x), a[k].get(x)]
+                if pair != [None, None] or x in ("p95_ms", "count"):
+                    row[x] = pair
             rows.append(row)
         return rows
 
     erows = side("endpoint", _endpoint_rows(sb, pages, endpoints), _endpoint_rows(sa, pages, endpoints),
-                 "p50_ms", ("p95_ms", "count"))
+                 "p50_ms", ("p95_ms", "count") + CONC_COMPARE)
     prows = side("page", _page_rows(sb, pages), _page_rows(sa, pages), "data_ready_p50_ms",
                  ("api_calls_p50", "chain_depth_max"))
     allv = [r["verdict"] for r in erows + prows]

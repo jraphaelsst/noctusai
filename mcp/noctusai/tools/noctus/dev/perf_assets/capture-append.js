@@ -16,10 +16,18 @@
     const where = (u.host === location.host ? '' : u.host) + u.pathname
       + (u.search ? '?' + [...u.searchParams.keys()].join('&') : '');
     if (kind === 'api') {
-      const app = (e.serverTiming || []).find((s) => s.name === 'app');
+      const st = e.serverTiming || [];
+      const app = st.find((s) => s.name === 'app');
+      // optional concurrency metrics (seed RequestTimingMiddleware); omitted when the server lacks them
+      const x = {};
+      for (const s of st) {
+        if (s.name === 'inflight' || s.name === 'inflight_peak') x[s.name] = Number(s.description);
+        else if (s.name === 'blk' || s.name === 'blkq' || s.name === 'lag') x[s.name] = r(s.duration);
+      }
       api.push([where, r(e.startTime), r(e.duration),
         e.responseStart > 0 ? r(e.responseStart - e.startTime) : null,
-        app ? r(app.duration) : null, e.transferSize || 0, e.responseStatus || 0]);
+        app ? r(app.duration) : null, e.transferSize || 0, e.responseStatus || 0,
+        Object.keys(x).length ? x : null]);
     } else {
       const a = (assets[kind] ||= { n: 0, bytes: 0, end: 0 });
       a.n += 1; a.bytes += e.transferSize || 0; a.end = Math.max(a.end, r(e.responseEnd));

@@ -33,6 +33,12 @@ _LINE = re.compile(
 )
 
 
+# Optional concurrency fields appended AFTER dur_ms by the seed middleware (2026-10-23). Old lines
+# lack them; absent => omitted from the report, never 0.
+CONC_FIELDS = ("inflight", "inflight_peak", "blk_n", "blk_ms", "blkq_ms", "parq_ms", "lag_ms", "tp_busy", "tp_wait")
+_EXTRA = re.compile(r"\b(" + "|".join(CONC_FIELDS) + r")=(\d+(?:\.\d+)?)")
+
+
 def load_budgets(path: Path | None = None) -> dict[str, Any]:
     return json.loads((path or BUDGETS_PATH).read_text())
 
@@ -42,8 +48,11 @@ def parse_lines(lines: list[str]) -> list[dict[str, Any]]:
     for ln in lines:
         m = _LINE.search(ln)
         if m:
-            out.append({"method": m["method"], "route": m["route"],
-                        "status": int(m["status"]), "dur_ms": float(m["dur"])})
+            row = {"method": m["method"], "route": m["route"],
+                   "status": int(m["status"]), "dur_ms": float(m["dur"])}
+            for k, v in _EXTRA.findall(ln[m.end():]):
+                row[k] = float(v)
+            out.append(row)
     return out
 
 
@@ -72,10 +81,15 @@ def evaluate(samples: list[dict[str, Any]], budgets: dict[str, Any]) -> dict[str
     min_n = int(budgets.get("min_samples", 5))
     ignore = budgets.get("ignore_routes", [])
     groups: dict[tuple[str, str], list[float]] = {}
+    conc: dict[tuple[str, str], dict[str, list[float]]] = {}
     for s in samples:
         if _matches(s["route"], ignore):
             continue
-        groups.setdefault((s["method"], s["route"]), []).append(s["dur_ms"])
+        key = (s["method"], s["route"])
+        groups.setdefault(key, []).append(s["dur_ms"])
+        for f in CONC_FIELDS:
+            if f in s:
+                conc.setdefault(key, {}).setdefault(f, []).append(s[f])
     routes, over, thin = [], [], []
     for (method, route), durs in sorted(groups.items()):
         cls, budget, reason = classify(method, route, budgets)
@@ -84,6 +98,9 @@ def evaluate(samples: list[dict[str, Any]], budgets: dict[str, Any]) -> dict[str
                "budget_p95_ms": budget}
         if reason:
             row["override_reason"] = reason
+        if (method, route) in conc:
+            row["concurrency"] = {f: {"p50": round(percentile(v, 50), 1), "p95": round(percentile(v, 95), 1),
+                                      "n": len(v)} for f, v in conc[(method, route)].items()}
         if len(durs) < min_n:
             row["thin"] = True
             thin.append(row)

@@ -91,3 +91,27 @@ class TestWiring:
         assert "--latency-report" in (ROOT / "mcp/noctusai/cli.py").read_text()
         assert "latency_report.register(server)" in (ROOT / "mcp/noctusai/tools/noctus/dev/__init__.py").read_text()
         assert "latency_report" in (ROOT / ".claude/skills/noc-ship/SKILL.md").read_text()
+
+
+# --------------------------------------------------------------------------- concurrency fields (2026-10-23)
+def _line_new(route, dur, **extra):
+    tail = " ".join(f"{k}={v}" for k, v in extra.items())
+    return _line("GET", route, dur) + " " + tail
+
+
+def test_parse_old_and_new_lines_together():
+    rows = lr.parse_lines([_line("GET", "/a", 10.0),
+                           _line_new("/a", 20.0, inflight=3, inflight_peak=5, blk_n=2, blk_ms=11.5, blkq_ms=4.0, lag_ms=7.1)])
+    assert "inflight" not in rows[0] and rows[0]["dur_ms"] == 10.0
+    assert rows[1]["inflight_peak"] == 5.0 and rows[1]["blkq_ms"] == 4.0 and rows[1]["lag_ms"] == 7.1
+
+
+def test_report_concurrency_percentiles_present_only_when_emitted():
+    old = _many("GET", "/api/old", [50] * 6)
+    new = [_line_new("/api/new", 50, inflight=i, inflight_peak=i + 1, blkq_ms=i * 2) for i in range(1, 7)]
+    r = lr.latency_report("orbity", run_remote=_runner(old + new))
+    by = {x["route"]: x for x in r["routes"]}
+    assert "concurrency" not in by["/api/old"]
+    c = by["/api/new"]["concurrency"]
+    assert c["inflight_peak"]["p50"] == 4.0 and c["blkq_ms"]["p95"] == 12.0
+    assert "lag_ms" not in c  # absent => omitted, never 0

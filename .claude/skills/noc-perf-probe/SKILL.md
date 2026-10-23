@@ -12,7 +12,7 @@ Tool `noctus.dev.perf_probe` (CLI `--perf-probe`). Server half = `latency_report
 2. **Capture** (Chrome, owner logged in, paced; never burst a third-party app): `snippet kind=clear`; per route ONE full load, wait for network idle, run `snippet kind=append`; >= 5 loads per route; `snippet kind=read` in slices (output cap ~1 KB), save to a file, clear.
 3. **Ingest**: `ingest scope label capture=<file>` (ids templated, only the summary stored). Third-party scope: `store=` OUTSIDE the repo (`_private-studies/...`); delete the raw file.
 4. **Evaluate an improvement**: baseline label -> change -> after label -> `compare scope before after` (noise floor 15% AND 30 ms).
-   **Analyze/discover**: `report scope label` -> slowest pages/endpoints, duplicates, serial chains, edge vs app bound, oversized; for products also over-budget vs `latency-budgets.json`.
+   **Analyze/discover**: `report scope label` -> slowest pages/endpoints, duplicates, serial chains, edge vs app bound, oversized, `concurrency` (per-endpoint inflight/blk/blkq/lag p50/p95 when the server emitted them - queueing vs work, `KB § PATTERNS/backend/request-path-latency.md` Reading concurrency); for products also over-budget vs `latency-budgets.json`.
 5. Report verdict + top findings; `inconclusive` means capture more loads, never ok.
 
 Guardrails: paths and query keys only; no raw ids stored; no third-party data in git; read-only on the app (navigation only - no clicks that write).

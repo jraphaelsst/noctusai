@@ -70,4 +70,24 @@ Do not trust a green unit run alone: time one authenticated endpoint with 3 conc
 
 **Client view.** This doc is the server half. What the browser actually waited for (page data-ready, waterfalls, duplicate calls, edge vs app time, before/after deltas) is `noctus.dev.perf_probe` -> `KB § PATTERNS/common/performance-analysis.md`.
 
+## Reading concurrency (2026-10-23)
+
+`app;dur` alone cannot say whether a slow request WORKED or WAITED behind others (one uvicorn worker per product). `RequestTimingMiddleware` therefore adds, per request, to `Server-Timing` and (key=value, after `dur_ms=`) to the `req_timing` log line:
+
+| Server-Timing | log key | meaning |
+|---|---|---|
+| `inflight;desc="n"` | `inflight` | HTTP requests in flight in this process when this one started (incl. itself) |
+| `inflight_peak;desc="n"` | `inflight_peak` | max in flight at any moment during this request |
+| `blk;dur=ms;desc="hops"` | `blk_ms`, `blk_n` | `run_blocking` hops: total time INSIDE the fn (real work), count (omitted if 0 hops) |
+| `blkq;dur=ms` | `blkq_ms` | total wait for a worker thread (submit -> fn starts): limiter / hand-off queue |
+| `parq;dur=ms;desc="n"` | `parq_ms`, `par_n` | `run_parallel` thunks: wait in `_PARALLEL_POOL` before starting |
+| `lag;dur=ms` | `lag_ms` | max event-loop lag seen during the request (50 ms sampler, runs only while a request is in flight; omitted if no tick landed, i.e. very short requests) |
+| `tp_busy` / `tp_wait` `;desc="n"` | same | anyio default thread limiter (also serves plain `def` endpoints/deps): tokens borrowed / tasks queued for a thread, sampled at start and at response start (read from the limiter's own stats, nothing patched) |
+
+Totals SUM across hops (parallel hops can exceed wall time). Absent metric = not measured, never 0. Old log lines/captures stay valid.
+
+**Queueing vs work.** Compare a route at low and high `inflight_peak` (`latency_report` per-route p50/p95 under `concurrency`; `perf_probe report`/`compare` per endpoint): if `app;dur` rises with `inflight_peak` while `blk` stays flat, the extra time is waiting. `blkq` high (and `tp_wait` > 0) = thread-limiter/pool saturation; `lag` high with low `blkq` = something is hogging the event loop (sync work in an `async def`); `blk` itself growing = the work (e.g. Supabase round trips) got slower. `blk` + `blkq` far below `app;dur` with `lag` low and `inflight_peak` 1 = time is in the endpoint's own code or awaits.
+
+Test seam: `noctusai_lib.api.auth._blocking.set_blocking_limiter(anyio.CapacityLimiter(n))` swaps the limiter `run_blocking` uses (`None` = default).
+
 Cross-links: skill `noc-perf-probe` · skill `noc-fast-responses` · `mutation-cache-writes.md` (the perceived-latency half) · `admin-client-schema-pinning.md` · `postgrest-row-cap.md` · `tenancy-license-gate.md`.

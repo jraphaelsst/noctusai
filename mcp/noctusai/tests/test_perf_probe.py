@@ -168,3 +168,33 @@ def test_edge_floor_is_reported_never_budgeted(env, tmp_path):
     assert r["findings"]["edge_floor"] == [{"endpoint": "/cdn-cgi/rum", "count": 6, "p50_ms": 900, "p95_ms": 900}]
     assert all(row["endpoint"] != "/cdn-cgi/rum" for row in r["budget"]["routes"])
     assert r["status"] == "ok"
+
+
+# --------------------------------------------------------------------------- concurrency metrics (2026-10-23)
+def _xcall(where, dur, app, x):
+    c = _call(where, 0, dur, app=app)
+    c.append(x)
+    return c
+
+
+def test_concurrency_metrics_kept_and_omitted_when_absent(env, tmp_path):
+    x = lambda i: {"inflight": i, "inflight_peak": i + 2, "blkq": i * 10.0}
+    pg = _page("/", [_xcall("/api/me/access", 200, 150, x(i)) for i in range(1, 6)]
+               + [_call("/api/old", 0, 50, app=20)] * 5)
+    pp.perf_probe("ingest", scope="orbity", label="a", capture=_write(tmp_path, _cap([pg])), store=str(env))
+    s = json.loads((env / "orbity" / "a.json").read_text())
+    ep = s["endpoints"]["/api/me/access"]
+    assert ep["inflight_peak_p50"] == 5 and ep["blkq_p95"] == 50.0 and "lag_p50" not in ep
+    assert "inflight_p50" not in s["endpoints"]["/api/old"]  # old-style tuple: nothing invented
+    rep = pp.perf_probe("report", scope="orbity", label="a", store=str(env))
+    assert [r["endpoint"] for r in rep["findings"]["concurrency"]] == ["/api/me/access"]
+
+
+def test_compare_surfaces_concurrency_extras(env, tmp_path):
+    def cap(peak):
+        return _cap([_page("/", [_xcall("/api/me/access", 200, 150, {"inflight_peak": peak}) for _ in range(5)])])
+    pp.perf_probe("ingest", scope="orbity", label="b", capture=_write(tmp_path, cap(1), "b.json"), store=str(env))
+    pp.perf_probe("ingest", scope="orbity", label="c", capture=_write(tmp_path, cap(6), "c.json"), store=str(env))
+    r = pp.perf_probe("compare", scope="orbity", before="b", after="c", store=str(env))
+    row = r["endpoints"][0]
+    assert row["inflight_peak_p50"] == [1.0, 6.0] and "blkq_p50" not in row
