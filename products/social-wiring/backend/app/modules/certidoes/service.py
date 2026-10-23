@@ -175,6 +175,83 @@ def in_batches(items: list[str], size: int = 200):
         yield items[i : i + size]
 
 
+# --------------- Manual consultas never reach InfoSimples ---------------
+
+#: `erro_mensagem` stamped by `cancelar_processamento`.
+MSG_CANCELADO = "Cancelado manualmente pelo usuário."
+
+#: pt-BR refusal for any attempt to (re)run a manual consulta against the API.
+MSG_CONSULTA_MANUAL = "Consulta manual: envie o PDF da certidão."
+
+#: Evidence a human (or a read of a human's upload) left on a resultado.
+_COLUNAS_EVIDENCIA = (
+    "arquivo_url", "numero", "resultado", "confirmado_por", "resultado_origem",
+    "emitida_em",
+)
+
+
+def e_consulta_manual(consulta: Optional[dict]) -> bool:
+    """A manual-origin consulta (migration 147) is filled by hand — it is NEVER
+    an InfoSimples job. Every API dispatch checks this."""
+    return bool(consulta) and consulta.get("origem") == "manual"
+
+
+def tem_evidencia(resultado: dict) -> bool:
+    """Did anybody put anything on this resultado (file, typed field, a read)?"""
+    return any(resultado.get(c) for c in _COLUNAS_EVIDENCIA)
+
+
+def e_placeholder_vazio(resultado: dict, consulta_origem: Optional[str]) -> bool:
+    """The empty cell-holder `card_hub.certidoes_partes_service.garantir_celula`
+    inserts when an operator opens a grid cell: manual consulta, resultado
+    still `pendente` (or cancelled back out of it), no evidence. It is not a
+    consulta in progress — nothing will ever process it."""
+    if consulta_origem != "manual" or tem_evidencia(resultado):
+        return False
+    status = resultado.get("status")
+    return status == "pendente" or (
+        status == "erro" and resultado.get("erro_mensagem") == MSG_CANCELADO
+    )
+
+
+def ids_consultas_placeholder_vazio(db, org_id) -> list[str]:
+    """Ids of the org's consultas that are only an empty single-cell holder.
+
+    Structural marker: `origem='manual'` AND `total_certidoes=1` — the
+    operator-created manual consulta always fans out >= 12 resultados, so a
+    1-resultado manual consulta can only be a cell holder. Evidence lives on
+    the resultado (typing a field never touches the consulta row), hence the
+    second read.
+    """
+    def _page(start: int, end: int):
+        return (
+            db.table(CONSULTAS).select("id")
+            .eq("org_id", str(org_id)).eq("origem", "manual")
+            .eq("total_certidoes", 1).is_("excluida_em", "null")
+            .in_("status", ["pendente", "erro"])
+            .order("id").range(start, end).execute().data
+        )
+
+    candidatos = [r["id"] for r in _all_rows(_page, "certidao_consultas placeholders")]
+    vazios: list[str] = []
+    for batch in in_batches(candidatos):
+        # postgrest-unbounded-ok: a placeholder consulta has exactly 1 resultado.
+        rows = (
+            db.table(RESULTADOS)
+            .select("consulta_id, status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA))
+            .in_("consulta_id", batch).execute().data or []
+        )
+        por_consulta: dict[str, list[dict]] = {}
+        for r in rows:
+            por_consulta.setdefault(r["consulta_id"], []).append(r)
+        vazios.extend(
+            cid for cid in batch
+            if por_consulta.get(cid)
+            and all(e_placeholder_vazio(r, "manual") for r in por_consulta[cid])
+        )
+    return vazios
+
+
 # --------------- Core Processing ---------------
 
 
@@ -1858,6 +1935,17 @@ async def _process_single_certidao(
     org_id = consulta.get("org_id")
     nome_display = config.get("nome", config["tipo"])
 
+    # The one place every automated fetch passes through: a manual-origin
+    # consulta is never an InfoSimples job (billed call for a cell that only
+    # ever expected an uploaded PDF). Refused before ANY status write.
+    if e_consulta_manual(consulta):
+        logger.warning(
+            "certidoes: refusing InfoSimples fetch for manual consulta %s "
+            "(resultado %s) — fill it by upload",
+            consulta_id, resultado_id,
+        )
+        return
+
     # Read BEFORE touching status — a resultado a human already confirmed or
     # manually corrected must keep its structured fields untouched by this
     # run, including on a reprocess. See `_derive_estrutura`'s docstring.
@@ -2176,6 +2264,14 @@ async def processar_consulta(
         logger.error("certidoes: consulta %s not found — nothing to process", consulta_id)
         return
     org_id = consulta.get("org_id")
+
+    if e_consulta_manual(consulta):
+        logger.warning(
+            "certidoes: processar_consulta refused for manual consulta %s — "
+            "manual consultas never call InfoSimples",
+            consulta_id,
+        )
+        return
 
     db.table(CONSULTAS).update({
         "status": "processando",
@@ -2516,12 +2612,19 @@ def cancelar_processamento(consulta_id: str, org_id: Optional[str], db) -> dict:
 
     Returns counts of cancelled items.
     """
-    query = db.table(RESULTADOS).select("id, tipo, org_id").eq(
-        "consulta_id", consulta_id
-    ).in_("status", ["pendente", "processando", "na_fila"])
+    query = db.table(RESULTADOS).select(
+        "id, tipo, org_id, status, erro_mensagem, " + ", ".join(_COLUNAS_EVIDENCIA)
+    ).eq("consulta_id", consulta_id).in_("status", ["pendente", "processando", "na_fila"])
     if org_id:
         query = query.eq("org_id", str(org_id))
     items = query.execute().data or []
+    # An empty manual placeholder is not in progress — there is nothing to
+    # cancel, and an `erro` on it would shadow the grid cell. Left untouched.
+    if items:
+        origem = (
+            db.table(CONSULTAS).select("origem").eq("id", consulta_id).execute().data or [{}]
+        )[0].get("origem")
+        items = [i for i in items if not e_placeholder_vazio(i, origem)]
     if not items:
         return {"cancelados": 0}
 
@@ -2529,7 +2632,7 @@ def cancelar_processamento(consulta_id: str, org_id: Optional[str], db) -> dict:
     for batch in in_batches(item_ids):
         db.table(RESULTADOS).update({
             "status": "erro",
-            "erro_mensagem": "Cancelado manualmente pelo usuário.",
+            "erro_mensagem": MSG_CANCELADO,
         }).in_("id", batch).execute()
 
     org_ids = set(item.get("org_id") for item in items if item.get("org_id"))

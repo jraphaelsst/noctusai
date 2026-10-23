@@ -409,6 +409,12 @@ def listar_consultas(
 
     _maybe_recover(db, storage, org_id, svc)
 
+    # Empty cell-holders (the grid's "garantir célula" placeholders) are not
+    # consultas in progress: no spinner, no Cancelar, not counted. Filtered by
+    # query — not a new state — so a placeholder that gets evidence (upload /
+    # typed field) reappears by itself with no write needed.
+    placeholders_vazios = service.ids_consultas_placeholder_vazio(db, org_id)
+
     validated_page, validated_page_size, offset = calculate_pagination(
         page, page_size, MAX_PAGE_SIZE
     )
@@ -418,6 +424,8 @@ def listar_consultas(
         query = query.eq("org_id", str(org_id)).is_("excluida_em", "null")
         if status:
             query = query.eq("status", status)
+        for batch in service.in_batches(placeholders_vazios):
+            query = query.not_.in_("id", batch)
         if busca:
             query = query.or_(busca_or_filter(busca))
         return query
@@ -762,7 +770,11 @@ def reprocessar_consulta(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    _get_consulta_or_404(db, consulta_id, org_id, select="id")
+    consulta = _get_consulta_or_404(db, consulta_id, org_id, select="id, origem")
+    if service.e_consulta_manual(consulta):
+        # A manual consulta is filled by upload — "retry" would be a billed
+        # InfoSimples call for a cell that only ever expected a PDF.
+        raise HTTPException(status_code=422, detail=service.MSG_CONSULTA_MANUAL)
 
     # Failed non-TJSP resultados → pendente (they run in parallel immediately).
     db.table(RESULTADOS).update({

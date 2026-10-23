@@ -2320,3 +2320,48 @@ class TestRelerManual:
         assert gravado["numero"] == "0123456789"
         assert gravado["emitida_em"] == "2025-06-17"
         assert gravado["status"] == "sucesso"
+
+
+# ---------------------------------------------------------------------------
+# Empty manual placeholders (the grid's "garantir célula" holders)
+# ---------------------------------------------------------------------------
+
+
+class TestPlaceholderManualVazio:
+    def test_reprocessar_consulta_manual_e_422_e_nao_agenda_api(
+        self, client, certidoes_db, override_service
+    ):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta(origem="manual", total_certidoes=1, status="erro")],
+              resultados=[_resultado(id="r1", status="erro")])
+        proc = AsyncMock()
+        override_service(processar_consulta=proc, schedule_tjsp_for_org=MagicMock())
+        resp = client.post(f"{BASE}/consultas/consulta-001/reprocessar")
+        assert resp.status_code == 422
+        assert _msg(resp) == "Consulta manual: envie o PDF da certidão."
+        proc.assert_not_called()
+        assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "erro"
+
+    def test_lista_exclui_placeholder_vazio_e_conta_certo(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(
+            db,
+            consultas=[
+                _consulta(id="vazio", origem="manual", total_certidoes=1),
+                _consulta(id="cancelado", origem="manual", total_certidoes=1, status="erro"),
+                _consulta(id="com-arquivo", origem="manual", total_certidoes=1),
+                _consulta(id="manual-real", origem="manual", total_certidoes=12),
+                _consulta(id="auto"),
+            ],
+            resultados=[
+                _resultado(id="a", consulta_id="vazio"),
+                _resultado(id="b", consulta_id="cancelado", status="erro",
+                           erro_mensagem=service.MSG_CANCELADO),
+                _resultado(id="c", consulta_id="com-arquivo", arquivo_url="k/z.pdf"),
+                _resultado(id="d", consulta_id="manual-real"),
+                _resultado(id="e", consulta_id="auto"),
+            ],
+        )
+        body = client.get(f"{BASE}/consultas").json()
+        assert sorted(c["id"] for c in body["data"]) == ["auto", "com-arquivo", "manual-real"]
+        assert (body.get("total") or body.get("pagination", {}).get("total")) == 3

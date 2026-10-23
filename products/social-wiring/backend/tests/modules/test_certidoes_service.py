@@ -5251,3 +5251,92 @@ class TestRetomadaDeReleitura:
         assert gravado["releitura"]["divergencias"] == [
             {"campo": "numero", "valor_atual": "111", "valor_lido": "222"},
         ]
+
+
+# ---------------------------------------------------------------------------
+# Manual consultas never reach InfoSimples; empty placeholders are not jobs
+# ---------------------------------------------------------------------------
+
+
+class TestConsultaManualNuncaChamaInfoSimples:
+    @pytest.mark.asyncio
+    async def test_processar_consulta_manual_nao_chama_api_nem_muda_status(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual", total_certidoes=1)],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        with patch(_CRED, return_value="tok"):
+            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
+        assert db.table("certidao_consultas").select("*").execute().data[0]["status"] == "pendente"
+        assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "pendente"
+
+    @pytest.mark.asyncio
+    async def test_fetch_unico_recusa_consulta_manual(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual")],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp(_api_ok())
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(origem="manual"), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
+        )
+        assert http.api_calls == [] and http.downloaded == []
+        row = db.table("certidao_resultados").select("*").execute().data[0]
+        assert row["status"] == "pendente"
+
+    @pytest.mark.asyncio
+    async def test_fila_tjsp_nao_dispara_consulta_manual(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual")],
+            certidao_resultados=[_resultado(tipo=TJSP_TIPO, status="na_fila")],
+        )
+        http = _FakeHttp(_api_ok())
+        await service._process_single_certidao(
+            service.config_for(TJSP_TIPO), _consulta_row(origem="manual"), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
+        )
+        assert http.api_calls == []
+
+
+class TestPlaceholderVazio:
+    def test_cancelar_placeholder_vazio_nao_deixa_erro(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual", total_certidoes=1)],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        assert service.cancelar_processamento("consulta-001", ORG, db) == {"cancelados": 0}
+        assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "pendente"
+
+    def test_cancelar_manual_com_evidencia_continua_cancelando(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(origem="manual", total_certidoes=1)],
+            certidao_resultados=[_resultado(id="r1", status="processando", arquivo_url="k/x.pdf")],
+        )
+        assert service.cancelar_processamento("consulta-001", ORG, db) == {"cancelados": 1}
+
+    def test_ids_placeholder_vazio_so_os_sem_evidencia(self):
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(id="vazio", origem="manual", total_certidoes=1),
+                _consulta_row(id="cancelado", origem="manual", total_certidoes=1, status="erro"),
+                _consulta_row(id="com-arquivo", origem="manual", total_certidoes=1),
+                _consulta_row(id="digitado", origem="manual", total_certidoes=1),
+                _consulta_row(id="manual-12", origem="manual", total_certidoes=12),
+                _consulta_row(id="auto", origem="automatica", total_certidoes=1),
+            ],
+            certidao_resultados=[
+                _resultado(id="a", consulta_id="vazio"),
+                _resultado(id="b", consulta_id="cancelado", status="erro",
+                           erro_mensagem=service.MSG_CANCELADO),
+                _resultado(id="c", consulta_id="com-arquivo", arquivo_url="k/y.pdf"),
+                _resultado(id="d", consulta_id="digitado", numero="123"),
+                _resultado(id="e", consulta_id="manual-12"),
+                _resultado(id="f", consulta_id="auto"),
+            ],
+        )
+        assert sorted(service.ids_consultas_placeholder_vazio(db, ORG)) == ["cancelado", "vazio"]

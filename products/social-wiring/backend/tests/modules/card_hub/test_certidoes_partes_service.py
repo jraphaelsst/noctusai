@@ -678,6 +678,23 @@ class TestGarantirCelula:
         assert vend["celulas"]["serasa"]["origem"] == "manual"
         assert vend["celulas"]["serasa"]["resultado_id"] == body["resultado_id"]
 
+    def test_placeholder_cancelado_vazio_nao_ganha_a_celula_e_e_reaproveitado(self, scoped):
+        cid, aid, [vid] = _card(scoped)
+        body, _ = svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "serasa"))
+        # Legacy prod shape: an operator cancelled the empty holder -> erro.
+        scoped.set_table_data("certidao_resultados", [
+            {**r, "status": "erro", "erro_mensagem": "Cancelado manualmente pelo usuário."}
+            for r in _dados(scoped, "certidao_resultados")
+        ])
+        out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
+        vend = next(p for p in out["partes"] if p["rotulo"] == "VEND 1")
+        assert vend["celulas"]["serasa"]["resultado_id"] is None  # reads as no evidence
+        again, criado = svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "serasa"))
+        assert criado is False and again["resultado_id"] == body["resultado_id"]
+        assert len(_dados(scoped, "certidao_consultas")) == 1
+        [r] = _dados(scoped, "certidao_resultados")
+        assert (r["status"], r["erro_mensagem"]) == ("pendente", None)
+
     def test_celula_serasa_aplica_crednet_ja_lido(self, scoped):
         cid, aid, [vid] = _card(scoped)
         cpf = next(c for c in _dados(scoped, "clientes") if c["id"] == vid)["cpf"]

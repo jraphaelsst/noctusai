@@ -246,11 +246,26 @@ def _vencedor_chave(resultado: dict) -> tuple:
     return (emitida is not None, str(emitida or ""), str(resultado.get("created_at") or ""))
 
 
+def _cancelado_vazio(resultado: dict) -> bool:
+    """An empty manual placeholder an operator cancelled (`erro` /
+    "Cancelado manualmente"). It carries no evidence, so it must read like no
+    row at all — never win the cell and paint it red."""
+    return resultado.get("status") == "erro" and certidoes_svc.e_placeholder_vazio(
+        resultado, resultado.get("consulta_origem")
+    )
+
+
 def indexar_vencedores(resultados: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
-    """`(por_tipo, por_linha_customizada)` — the winning resultado of each."""
+    """`(por_tipo, por_linha_customizada)` — the winning resultado of each.
+
+    A cancelled EMPTY manual placeholder never wins (see `_cancelado_vazio`);
+    `garantir_celula` revives it when the operator opens the cell again.
+    """
     por_tipo: dict[str, dict] = {}
     por_linha: dict[str, dict] = {}
     for r in resultados:
+        if _cancelado_vazio(r):
+            continue
         linha_id = r.get("linha_customizada_id")
         alvo, chave = (por_linha, linha_id) if linha_id else (por_tipo, r.get("tipo"))
         if not chave:
@@ -953,7 +968,14 @@ def garantir_celula(
 ) -> tuple[dict, bool]:
     """`POST …/certidoes/celulas` (CONTRACT §1.4) → `(body, criado)`: the
     existing winner's resultado, or a new manual-origin placeholder to upload
-    onto through the EXISTING upload route."""
+    onto through the EXISTING upload route.
+
+    🔴 The placeholder is a CELL HOLDER, not a consulta in progress: a manual
+    consulta (`origem='manual'`, `total_certidoes=1`) is never an InfoSimples
+    job (`certidoes.service` refuses every API dispatch for it), the
+    `/certidoes` list hides it until it carries evidence
+    (`certidoes.service.ids_consultas_placeholder_vazio`), cancelling it is a
+    no-op, and a legacy cancelled-empty one is revived here, not duplicated."""
     ensure_cliente(client, org_id, cliente_id)
     alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
     partes = _todas_as_partes(client, org_id, cliente_id, alvo)
@@ -981,6 +1003,24 @@ def garantir_celula(
     if existente is not None:
         return {
             "resultado_id": existente["id"], "consulta_id": existente["consulta_id"],
+            "criado": False,
+        }, False
+
+    # A cancelled empty placeholder of this very cell is revived rather than
+    # duplicated (it lost the cell in `indexar_vencedores`).
+    revivivel = next((
+        r for r in resultados
+        if _cancelado_vazio(r) and (
+            r.get("linha_customizada_id") == linha["id"] if linha["custom"]
+            else r.get("tipo") == linha_chave and not r.get("linha_customizada_id")
+        )
+    ), None)
+    if revivivel is not None:
+        client.table(RESULTADOS).update({"status": "pendente", "erro_mensagem": None}).eq(
+            "id", revivivel["id"]
+        ).execute()
+        return {
+            "resultado_id": revivivel["id"], "consulta_id": revivivel["consulta_id"],
             "criado": False,
         }, False
 
