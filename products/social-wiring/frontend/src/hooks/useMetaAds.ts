@@ -12,6 +12,7 @@
  * Money is ALWAYS integer cents on the wire (`*_cents`); format at display
  * via `@/lib/formatCurrency`. `since`/`until` are `YYYY-MM-DD` strings.
  */
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
@@ -449,7 +450,7 @@ export function useLeadRecords(
 /** Trigger a lead ingest (pull forms + records from Meta → upsert to the
  *  DB). Background job — returns a `job_id` to poll via `useSyncJob`. */
 export function useLeadSync() {
-  return useMutation<AdsSyncStarted, Error, void>({ // noc-allow: invalidate-only — starts a server-side lead-ingest job (the answer is a job id) and caches nothing; the lead reads refresh when the job is polled
+  return useMutation<AdsSyncStarted, Error, void>({ // noc-allow: invalidate-only — starts a server-side lead-ingest job (the answer is a job id) and caches nothing; the lead reads refresh when the job is polled · noc-allow: no-job-handoff — the caller (AdsLeads) follows the returned job_id with useSyncJob, a jobPolling read born from the answer, so it cannot race the worker
     mutationFn: () => api.post<AdsSyncStarted>("/api/meta/ads/leads/sync", {}),
   });
 }
@@ -466,15 +467,27 @@ export function useSyncJob(jobId: string | null) {
   });
 }
 
-/** Trigger a sync (incremental by default). Returns the job id; poll
- *  `/sync/{job_id}` separately if you need progress. */
+/** Trigger a sync (incremental by default) and FOLLOW it: the answer is a job id,
+ *  the hook polls `/sync/{job_id}` (`useSyncJob`) and refreshes every ads read
+ *  when the job ends. Invalidating at the POST's answer (the old shape) re-read
+ *  the dashboard BEFORE the worker ran, so "Sincronizar agora" showed the
+ *  pre-sync numbers until a reload. `running` is true from the click until the
+ *  job settles. */
 export function useAdsSync() {
   const qc = useQueryClient();
-  return useMutation<AdsSyncStarted, Error, "incremental" | "backfill" | undefined>({ // noc-allow: invalidate-only — starts a server-side sync job (the answer is a job id): every ads read is refreshed by that job, not by this response
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = useSyncJob(jobId);
+  const status = job.data?.status;
+  useEffect(() => {
+    if (jobId && status && status !== "running") {
+      void qc.invalidateQueries({ queryKey: ["meta-ads"] });
+      setJobId(null);
+    }
+  }, [jobId, status, qc]);
+  const mutation = useMutation<AdsSyncStarted, Error, "incremental" | "backfill" | undefined>({ // noc-allow: invalidate-only — starts a server-side sync job (the answer is a job id): every ads read is refreshed when that job ends, not by this response · noc-allow: no-job-handoff — this hook follows the returned job_id with useSyncJob (a jobPolling read born from the answer) and refreshes the ads reads when it settles
     mutationFn: (mode = "incremental") =>
       api.post<AdsSyncStarted>("/api/meta/ads/sync", { mode }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["meta-ads"] });
-    },
+    onSuccess: (r) => setJobId(r.job_id),
   });
+  return { ...mutation, running: mutation.isPending || jobId !== null };
 }

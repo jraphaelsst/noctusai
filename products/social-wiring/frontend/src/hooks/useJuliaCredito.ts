@@ -9,6 +9,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { handOffToPolling, jobPolling } from "@noctusai/lib";
 
 import { api } from "@/lib/api";
 
@@ -25,10 +26,14 @@ export interface CreditoConfig { ativo: boolean; provider: string | null; apenas
 export const CREDITO_PAGE_SIZE = 20;
 
 const KEY = ["julia", "credito"] as const;
+const LISTA_KEY = [...KEY, "lista"] as const;
+/** A `pendente` analysis is waiting on the credit worker. */
+const POLL_MS = 4000;
+const temPendente = (d: CreditoPage | undefined) => !!d && d.items.some((i) => i.status === "pendente");
 
 export function useJuliaCredito(status: "" | CreditoStatus, page: number) {
   return useQuery({
-    queryKey: [...KEY, "lista", status, page],
+    queryKey: [...LISTA_KEY, status, page],
     queryFn: async () => {
       const p = new URLSearchParams({ page: String(page), page_size: String(CREDITO_PAGE_SIZE) });
       if (status) p.set("status", status);
@@ -36,6 +41,8 @@ export function useJuliaCredito(status: "" | CreditoStatus, page: number) {
       return (r.data ?? { items: [], total: 0 }) as CreditoPage;
     },
     placeholderData: keepPreviousData,
+    // The worker answers later: the list follows a pending analysis until it settles.
+    ...jobPolling(temPendente, POLL_MS),
   });
 }
 
@@ -58,6 +65,7 @@ export function useReprocessarCredito() {
   const qc = useQueryClient();
   return useMutation({ // noc-allow: invalidate-only — re-queues the credit check server-side and answers nothing; the new status arrives from the worker
     mutationFn: (contatoId: string) => api.post(`/api/julia/credito/${contatoId}/reprocessar`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    // Re-queued on the worker: hand the list off so it follows the new run (F87).
+    onSuccess: () => handOffToPolling(qc, LISTA_KEY),
   });
 }

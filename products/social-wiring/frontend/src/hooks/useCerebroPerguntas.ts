@@ -5,6 +5,7 @@
  * Autosave writes the returned Answer straight into the cache (no refetch
  * storm per keystroke); the other mutations invalidate the cerebro family.
  */
+import { handOffToPolling } from "@noctusai/lib";
 import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
@@ -117,7 +118,8 @@ export function useRevisarRespostas(brainId: string) {
           questionIds ? { question_ids: questionIds } : {},
         ),
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),
+    // Queued reviews: hand the polled detail off until they have run (F87).
+    onSuccess: () => handOffToPolling(qc, CEREBRO_KEY),
   });
 }
 
@@ -140,7 +142,8 @@ export function useFinalizarRespostas(brainId: string) {
   return useMutation({ // noc-allow: invalidate-only — starts a server-side synthesis; the response does not carry the brain, the polled detail does
     mutationFn: async (v: { mode: "replace" | "append"; expected_version: number }) =>
       unwrap(await api.post<Envelope<{ brain: unknown }>>(`${BASE}/brains/${enc(brainId)}/synthesize`, v)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),
+    // The synthesis runs on the server: hand the polled detail off until it has run (F87).
+    onSuccess: () => handOffToPolling(qc, CEREBRO_KEY),
   });
 }
 

@@ -5,13 +5,16 @@
  * THIS tab's own key.
  *
  * Polling: the read refetches every `POLL_MS` while any cell is still being
- * produced (`certidaoEmAndamento`) and stops by itself once all settle.
+ * produced (`certidaoEmAndamento`) and stops by itself once all settle. A write
+ * that QUEUES work (emission, re-read, PDF upload) hands off with
+ * `handOffToPolling` instead of a bare invalidate — the refetch can land before
+ * the worker created/flagged the cell, and the poll would never start (F87).
  */
 import { tipoArquivoAceito } from "@noctusai/lib";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
-import { jobPolling } from "@noctusai/lib";
+import { handOffToPolling, jobPolling } from "@noctusai/lib";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import {
@@ -71,36 +74,6 @@ export function partesTemEmAndamento(data: CertidoesPartesResponse | undefined):
   return data.partes.some((p) => Object.values(p.celulas).some(certidaoEmAndamento));
 }
 
-/** Emission just requested for a cliente: the consulta rows may not exist yet
- *  (async InfoSimples job), so the first re-reads can still show NO cell in
- *  flight. Keep polling through this window; it ends as soon as a cell was seen
- *  in flight and has settled again, or at the deadline. */
-export const EMISSAO_GRACE_MS = 90_000;
-const emissaoSolicitada = new Map<string, { ate: number; viuAndamento: boolean }>();
-
-export function marcarEmissaoSolicitada(clienteId: string, agora = Date.now()) {
-  emissaoSolicitada.set(clienteId, { ate: agora + EMISSAO_GRACE_MS, viuAndamento: false });
-}
-
-export function emissaoAguardandoAssentar(
-  clienteId: string,
-  data: CertidoesPartesResponse | undefined,
-  agora = Date.now(),
-): boolean {
-  const g = emissaoSolicitada.get(clienteId);
-  const andamento = partesTemEmAndamento(data);
-  if (!g) return andamento;
-  if (andamento) {
-    g.viuAndamento = true;
-    return true;
-  }
-  if (g.viuAndamento || agora >= g.ate) {
-    emissaoSolicitada.delete(clienteId);
-    return false;
-  }
-  return true;
-}
-
 export function useCertidoesPartes(clienteId: string | null, atendimentoId?: string | null) {
   return useQuery({
     queryKey: certidoesPartesKey(clienteId ?? "__none__", atendimentoId),
@@ -111,10 +84,9 @@ export function useCertidoesPartes(clienteId: string | null, atendimentoId?: str
     enabled: !!clienteId,
     // Keep the previous party list mounted while the key changes / refetches.
     placeholderData: (prev) => prev,
-    ...jobPolling<CertidoesPartesResponse>(
-      (d) => emissaoAguardandoAssentar(clienteId ?? "__none__", d),
-      POLL_MS,
-    ),
+    // A job-starting write hands off with `handOffToPolling` (useHandOffPartes): the
+    // first re-reads after "Solicitar emissão" can predate the consulta rows (F87).
+    ...jobPolling(partesTemEmAndamento, POLL_MS),
   });
 }
 
@@ -124,11 +96,18 @@ function useInvalidatePartes(clienteId: string) {
     qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "certidoes", "partes"] });
 }
 
+/** Job-starting writes on this tab: re-read the grid AND keep it polling until the
+ *  queued work has been seen running and settled (`handOffToPolling`, F87). */
+function useHandOffPartes(clienteId: string) {
+  const qc = useQueryClient();
+  return () => handOffToPolling(qc, ["sw", "clientes", clienteId, "certidoes", "partes"]);
+}
+
 const erroMsg = (e: unknown) => (e instanceof Error ? e.message : "Tente novamente.");
 
 /** `POST …/certidoes/partes/{kind}/{alvo_id}/emissao` — all (`tipos:null`) or selected. */
 export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | null) {
-  const invalidate = useInvalidatePartes(clienteId);
+  const handOff = useHandOffPartes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — queues emissions that finish asynchronously; the response is only the consulta ids, the cells arrive via the polled partes read
     mutationFn: ({ kind, alvoId, tipos }: SolicitarEmissaoInput) =>
       api.post<EmissaoResponse>(
@@ -144,8 +123,7 @@ export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | 
             : `${r.ignoradas.length} certidões já válidas ou em emissão não foram compradas de novo.`,
         );
       }
-      marcarEmissaoSolicitada(clienteId);
-      void invalidate();
+      void handOff();
     },
     onError: (e) => toast.error("Erro ao solicitar emissão", { description: erroMsg(e) }),
   });
@@ -257,7 +235,7 @@ export function useBaixarZipDaParte(clienteId: string, atendimentoId?: string | 
 
 /** `POST …/certidoes/resultados/{resultado_id}/reemitir` — one cell, body `{}`. */
 export function useReemitirResultado(clienteId: string) {
-  const invalidate = useInvalidatePartes(clienteId);
+  const handOff = useHandOffPartes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — queues a re-emission; the cell changes via the polled partes read
     mutationFn: (resultadoId: string) =>
       api.post<EmissaoResponse>(
@@ -266,7 +244,7 @@ export function useReemitirResultado(clienteId: string) {
       ),
     onSuccess: () => {
       toast.success("Re-emissão solicitada.");
-      void invalidate();
+      void handOff();
     },
     onError: (e) => toast.error("Erro ao re-emitir certidão", { description: erroMsg(e) }),
   });
@@ -307,18 +285,33 @@ function useInvalidateCertidoes(clienteId: string) {
     ]);
 }
 
+/** The re-read writes QUEUE work: hand every certidões read above over to polling. */
+function useHandOffCertidoes(clienteId: string) {
+  const qc = useQueryClient();
+  return () =>
+    Promise.all(
+      [
+        ["sw", "clientes", clienteId, "certidoes", "partes"],
+        ["certidao-resultados-parte"],
+        ["certidao-resultados-cliente"],
+        ["certidao-resultados-empresa"],
+        ["certidao-consulta"],
+      ].map((queryKey) => handOffToPolling(qc, queryKey)),
+    );
+}
+
 /** `POST /api/certidoes/resultados/{id}/reler` — re-read the PDF already
  *  stored for one certidão (no new file, no new live query; a value a
  *  person confirmed or the registry returned is kept — differences come
  *  back as `releitura.divergencias`). */
 export function useRelerResultado(clienteId: string) {
-  const invalidate = useInvalidateCertidoes(clienteId);
+  const handOff = useHandOffCertidoes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — schedules a background re-read; the response carries nothing to write, the polled read shows the result
     mutationFn: (resultadoId: string) =>
       api.post(`/api/certidoes/resultados/${encodeURIComponent(resultadoId)}/reler`, {}),
     onSuccess: () => {
       toast.success("Lendo o documento novamente…");
-      void invalidate();
+      void handOff();
     },
     onError: (e) => toast.error("Não foi possível ler o documento novamente", { description: erroMsg(e) }),
   });
@@ -328,7 +321,7 @@ export function useRelerResultado(clienteId: string) {
  *  for each of its re-readable cells, one after the other (each call only
  *  schedules the read). Resolves with how many were accepted / refused. */
 export function useRelerResultados(clienteId: string) {
-  const invalidate = useInvalidateCertidoes(clienteId);
+  const handOff = useHandOffCertidoes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — schedules background re-reads, one call per cell; nothing in the responses is a cell
     mutationFn: async (resultadoIds: string[]) => {
       let relidos = 0;
@@ -354,7 +347,7 @@ export function useRelerResultados(clienteId: string) {
             : `${recusados} certidões não puderam ser lidas novamente (já em leitura ou PDF ausente).`,
         );
       }
-      void invalidate();
+      void handOff();
     },
     onError: (e) => toast.error("Não foi possível reler as certidões", { description: erroMsg(e) }),
   });
@@ -385,7 +378,7 @@ export function useAplicarValoresLidos(clienteId: string) {
  *  the card's parties (uploads and live receipts), re-read on the files
  *  already stored. */
 export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string | null) {
-  const invalidate = useInvalidateCertidoes(clienteId);
+  const handOff = useHandOffCertidoes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — schedules background re-reads for the whole card; the response is counts only
     mutationFn: () =>
       api.post<RelerCertidoesResponse>(`${clienteBase(clienteId)}/certidoes/reler`, {
@@ -406,7 +399,7 @@ export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string 
             : `${r.erros} certidões não puderam ser lidas novamente — envie os PDFs de novo se o problema continuar.`,
         );
       }
-      void invalidate();
+      void handOff();
     },
     onError: (e) => toast.error("Não foi possível reler as certidões", { description: erroMsg(e) }),
   });
@@ -415,6 +408,7 @@ export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string 
 /** Upload into a cell: §1.4 ensure-cell, then the EXISTING §1.5 upload route. */
 export function useUploadNaCelula(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidatePartes(clienteId);
+  const handOff = useHandOffPartes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — the server reads the PDF asynchronously; the response is the ensured cell ids, not the filled cell
     mutationFn: async ({ kind, alvoId, linhaChave, file }: UploadCelulaInput) => {
       if (!tipoArquivoAceito(file, ["application/pdf"])) throw new Error("Apenas arquivos PDF são aceitos.");
@@ -431,7 +425,7 @@ export function useUploadNaCelula(clienteId: string, atendimentoId?: string | nu
     },
     onSuccess: () => {
       toast.success("Certidão enviada. Lendo o PDF…");
-      void invalidate();
+      void handOff();
     },
     onError: (e) => {
       toast.error("Erro ao enviar certidão", { description: erroMsg(e) });
