@@ -225,7 +225,7 @@ class TestKeyResolution:
         assert qkf.key_prefix_of((), ("a",))
 
 
-class TestFamilyWrite:
+class TestCheckMutationFamilyWrite:
     def _issues(self, tmp_path: Path, hooks: str) -> list[dict]:
         _tree(tmp_path, {"hooks/useNegociacao.ts": hooks, "hooks/useNegociacaoEstruturada.ts": ESTRUTURADA})
         return check_mutation_family_write(tmp_path)
@@ -252,7 +252,7 @@ class TestFamilyWrite:
         assert check_mutation_family_write(tmp_path) == []
 
 
-class TestJobHandoff:
+class TestCheckJobStartWithoutHandoff:
     def _issues(self, tmp_path: Path, hooks: str) -> list[dict]:
         _tree(tmp_path, {"hooks/useCertidoesPartes.ts": hooks, "types/certidoes.ts": TYPES})
         return check_job_start_without_handoff(tmp_path)
@@ -282,7 +282,7 @@ class TestJobHandoff:
         assert len(issues) == 1 and "no jobPolling read is reached" in issues[0]["issue"]
 
 
-class TestCombinedEntryPoint:
+class TestCheckStaleAfterWrite:
     def test_one_scan_reports_both_classes(self, tmp_path: Path) -> None:
         _tree(tmp_path, {
             "hooks/useNegociacao.ts": F88_EXACT_WRITE,
