@@ -16,6 +16,8 @@ Layout (pure core, IO at the edges):
 - `concordancia` — V/C agreement engine (the only source of articles)
 - `numeracao`    — clause registry, paragraph counter, refs, letters
 - `modelo_texto` — the clause wording (reviewable text) + phrase builders
+- `especificacoes` — the selectable contract-specification catalogue
+                   (facets per axis, requisitos, conflicts; migration 308)
 - `derivacao`    — switches, modelo derivado, completeness gate, consistency
 - `contexto`     — `DadosContrato` -> template context
 - `estilo`       — typography measured from the office's signed contracts

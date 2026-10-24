@@ -61,7 +61,7 @@ from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.card_hub.banco_texto import banco_tem_dados_de_conta
 from app.modules.card_hub.documento_checklist_service import CHAVE_RG_SO_DA_CNH, ROTULO_RG_SO_DA_CNH
-from app.modules.card_hub.contrato_gerador import certidao_pcen, frases, profissoes
+from app.modules.card_hub.contrato_gerador import certidao_pcen, especificacoes, frases, profissoes
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
@@ -106,9 +106,10 @@ from app.modules.card_hub.contrato_gerador.politica import (
 )
 from app.modules.card_hub.proveniencia import fontes as fontes_mod
 
-MODELO_COMPRA_VENDA = "compra_venda"
-MODELO_A_VISTA = "compra_venda_a_vista"
-MODELO_PERMUTA = "compra_venda_permuta"
+# The labels live in `especificacoes` (the catalogue the modelo is read off).
+MODELO_COMPRA_VENDA = especificacoes.MODELO_COMPRA_VENDA
+MODELO_A_VISTA = especificacoes.MODELO_A_VISTA
+MODELO_PERMUTA = especificacoes.MODELO_PERMUTA
 
 #: `atendimento_financiamento.situacao` vocabulary (migration 078's CHECK).
 SITUACOES_FINANCIAMENTO = frozenset({"pendente", "aprovado", "recusado"})
@@ -990,12 +991,10 @@ def derivar_switches(
 
 
 def modelo_derivado(switches: dict[str, bool]) -> str:
-    """The `modelo` label the switches imply — a check, never a selector."""
-    if switches["tem_permuta"]:
-        return MODELO_PERMUTA
-    if switches["a_vista"]:
-        return MODELO_A_VISTA
-    return MODELO_COMPRA_VENDA
+    """The `modelo` label the switches imply — a check, never a selector.
+    Read off the specifications they suggest (`especificacoes.sugerir`), so
+    the label and the facets can never disagree."""
+    return especificacoes.modelo_de(especificacoes.sugerir(switches))
 
 
 def posse_multa_diaria(d: DadosContrato) -> Optional[Decimal]:
