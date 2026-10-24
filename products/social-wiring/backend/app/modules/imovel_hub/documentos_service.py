@@ -70,6 +70,7 @@ from noctusai_lib.integrations.documents import cnd_imovel
 from noctusai_lib.integrations.documents.matricula_certidao import (
     MOTIVO_ANTERIOR_AO_ULTIMO_ATO,
     MOTIVO_NAO_ENCONTRADA,
+    TIPO_CERTIDAO,
     TIPO_VISUALIZACAO,
     ler_certidao_matricula,
 )
@@ -163,6 +164,12 @@ ORIGENS_ESTRUTURA: tuple[str, ...] = ("ia", "manual")
 #: CND clause needs a date for. `guia_iptu` is excluded: it carries an
 #: inscrição cadastral, not a resultado/emissão of its own.
 CERTIDOES_TIPOS: tuple[str, ...] = ("cnd_iptu", "cnd_condominio", "matricula")
+
+#: Migration 306 — certidão fields typed with NO file (owner directive
+#: 2026-10-24: "a field must not be upload-only"). One row per (org, código,
+#: tipo); `certidoes` below takes it when it is NEWER than the newest upload
+#: of that tipo. Written only by `gravar_certidao_manual`.
+CERTIDOES_MANUAIS_TABLE = "imovel_certidoes_manuais"
 
 #: 40 MB. Higher than the client-document ceiling (25 MB) on purpose: a
 #: certidão de matrícula with decades of averbações is routinely 20-40 pages
@@ -1624,6 +1631,134 @@ def confirmar_extracao(
     return _documento_out(row, resolved)
 
 
+def _instante(valor: Any) -> Optional[datetime]:
+    if not valor:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("certidoes: instante ilegível %r — tratado como ausente", valor)
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _instante_documento(row: dict) -> Optional[datetime]:
+    """When a document's structured values were last set: its upload, or
+    the operator's later confirmation of them — whichever is newer."""
+    marcos = [m for m in (_instante(row.get("created_at")), _instante(row.get("confirmado_em"))) if m]
+    return max(marcos) if marcos else None
+
+
+def _certidoes_manuais(client: Any, org_id: UUID, codigo: str) -> dict[str, dict]:
+    """tipo -> the typed record of the PROPERTY `codigo` names (own first,
+    then the manual side of a manual<->Vista link — `vinculo_legal`)."""
+    por_tipo: dict[str, dict] = {}
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+        rows = (
+            _t(client, CERTIDOES_MANUAIS_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("codigo", fonte)
+            .execute()
+        ).data or []
+        for row in rows:
+            por_tipo.setdefault(row["tipo"], row)
+    return por_tipo
+
+
+def _manual_out(row: dict, resolved: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "tipo": row["tipo"],
+        "fonte_codigo": row["codigo"],
+        **{campo: row.get(campo) for campo in CAMPOS_ESTRUTURA_POR_TIPO[row["tipo"]]},
+        "confirmado_por": table_reads.actor(resolved, row.get("confirmado_por")),
+        "confirmado_em": row.get("confirmado_em"),
+    }
+
+
+def gravar_certidao_manual(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    tipo: str,
+    *,
+    valores: dict,
+    usuario_id: Optional[UUID],
+) -> dict:
+    """`PUT /{codigo}/certidoes/{tipo}/manual` — type a certidão's fields
+    with no file (migration 306). A FULL replace of this imóvel+tipo's typed
+    record; a field this tipo does not carry (e.g. `numero` on a condomínio
+    declaration) is refused by name, and an all-empty record is refused (it
+    would hide an uploaded reading while saying nothing — DELETE instead).
+    Returns the refreshed `certidoes` read."""
+    dados_service.ensure_imovel(client, org_id, codigo)
+    if tipo not in CERTIDOES_TIPOS:
+        raise ValidationError_(f"Tipo de certidão inválido: {tipo}", field="tipo")
+    campos = CAMPOS_ESTRUTURA_POR_TIPO[tipo]
+    recusados = sorted(k for k, v in valores.items() if k not in campos and v is not None)
+    if recusados:
+        raise ValidationError_(
+            f"Campos não aplicáveis a {tipo}: {', '.join(recusados)}",
+            field=recusados[0],
+        )
+    registro = {
+        campo: (
+            valores.get(campo).isoformat()
+            if isinstance(valores.get(campo), date)
+            else ((valores.get(campo) or "").strip() or None)
+            if isinstance(valores.get(campo), str)
+            else valores.get(campo)
+        )
+        for campo in campos
+    }
+    if all(v is None for v in registro.values()):
+        raise ValidationError_(
+            "Preencha ao menos um campo da certidão.", field=campos[0]
+        )
+    patch = {
+        **registro,
+        "confirmado_por": str(usuario_id) if usuario_id else None,
+        "confirmado_em": now_iso(),
+    }
+    existentes = (
+        _t(client, CERTIDOES_MANUAIS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .eq("tipo", tipo)
+        .limit(1)
+        .execute()
+    ).data or []
+    if existentes:
+        _t(client, CERTIDOES_MANUAIS_TABLE).update(patch).eq("id", str(existentes[0]["id"])).execute()
+    else:
+        _t(client, CERTIDOES_MANUAIS_TABLE).insert(
+            {"org_id": str(org_id), "codigo": codigo, "tipo": tipo, **patch}
+        ).execute()
+    return certidoes(client, org_id, codigo)
+
+
+def remover_certidao_manual(client: Any, org_id: UUID, codigo: str, tipo: str) -> dict:
+    """`DELETE /{codigo}/certidoes/{tipo}/manual` — drop the typed record;
+    the newest uploaded document of that tipo (if any) answers again.
+    Deleting what does not exist is a 404, never a silent success."""
+    dados_service.ensure_imovel(client, org_id, codigo)
+    existentes = (
+        _t(client, CERTIDOES_MANUAIS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .eq("tipo", tipo)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not existentes:
+        raise NotFoundError(CERTIDOES_MANUAIS_TABLE, f"{codigo}/{tipo}")
+    _t(client, CERTIDOES_MANUAIS_TABLE).delete().eq("id", str(existentes[0]["id"])).execute()
+    return certidoes(client, org_id, codigo)
+
+
 def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
     """`GET /{codigo}/certidoes` — the latest structured read per tipo, for
     the contract's imóvel CND clause (IPTU CND, condomínio, and the
@@ -1684,12 +1819,64 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
             "tipo_documento_matricula": row.get("tipo_documento_matricula"),
             "emissao_motivo": row.get("emissao_motivo"),
             "confirmado": row.get("origem") == "manual" or bool(row.get("confirmado_por")),
+            "sem_arquivo": False,
+            "manual_id": None,
         }
         for tipo in CERTIDOES_TIPOS
         for row in [por_tipo.get(tipo)]
         if row is not None
     ]
-    return {"items": items, "total": len(items)}
+
+    # [Migration 306] A typed record (no file) answers its tipo when it is
+    # NEWER than the newest upload's values — typing after an upload corrects
+    # it, uploading after typing supersedes it. A machine read never writes
+    # the typed record, so it is never overwritten by a re-read.
+    manuais = _certidoes_manuais(client, org_id, codigo)
+    resolved = table_reads.resolve_actors(
+        {m.get("confirmado_por") for m in manuais.values() if m.get("confirmado_por")}
+    )
+    por_tipo_item = {i["tipo"]: i for i in items}
+    for tipo, manual in manuais.items():
+        if tipo not in CERTIDOES_TIPOS:
+            continue
+        doc_item = por_tipo_item.get(tipo)
+        doc_row = por_tipo.get(tipo)
+        # [P5] A visualização never hides a certidão — typed ones included.
+        if (
+            doc_item is not None
+            and doc_row is not None
+            and doc_row.get("tipo_documento_matricula") != TIPO_VISUALIZACAO
+        ):
+            doc_em, manual_em = _instante_documento(doc_row), _instante(manual.get("confirmado_em"))
+            if doc_em and manual_em and doc_em > manual_em:
+                continue
+        por_tipo_item[tipo] = {
+            "tipo": tipo,
+            "documento_id": None,
+            "fonte_codigo": manual["codigo"],
+            "numero": manual.get("numero"),
+            "emitida_em": manual.get("emitida_em"),
+            "validade_ate": manual.get("validade_ate"),
+            "resultado": manual.get("resultado"),
+            "inscricao_imobiliaria": manual.get("inscricao_imobiliaria"),
+            # A typed matrícula entry IS the certidão's emission (never a
+            # visualização — the operator types what the certidão printed).
+            "tipo_documento_matricula": TIPO_CERTIDAO if tipo == "matricula" else None,
+            "emissao_motivo": None,
+            "confirmado": True,
+            "sem_arquivo": True,
+            "manual_id": str(manual["id"]),
+        }
+    items = [por_tipo_item[t] for t in CERTIDOES_TIPOS if t in por_tipo_item]
+    return {
+        "items": items,
+        "total": len(items),
+        "manuais": {
+            tipo: _manual_out(row, resolved)
+            for tipo, row in manuais.items()
+            if tipo in CERTIDOES_TIPOS
+        },
+    }
 
 
 __all__ = [
@@ -1703,8 +1890,11 @@ __all__ = [
     "TIPOS_DOCUMENTO",
     "TIPOS_ESTRUTURA_EXTRAIVEL",
     "TIPOS_EXTRAIVEIS",
+    "CERTIDOES_MANUAIS_TABLE",
     "certidoes",
     "confirmar_extracao",
+    "gravar_certidao_manual",
+    "remover_certidao_manual",
     "deve_extrair",
     "deve_extrair_estrutura",
     "EstruturaFalhou",

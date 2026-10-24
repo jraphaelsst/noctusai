@@ -125,6 +125,7 @@ from app.modules.matriculas.deps import (
     get_transcriber_factory,
 )
 from app.modules.matriculas.schemas import (
+    DescricaoImovelBody,
     DetalhesAtoBody,
     EnderecoRegistroBody,
     ExtracaoDeDocumentoBody,
@@ -957,6 +958,38 @@ def confirmar_endereco_registro_route(
     )
 
 
+@router.get("/imoveis/{codigo}/descricao-imovel")
+def obter_descricao_imovel_route(
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """The IMÓVEL: description — the matrícula's derived block + the
+    operator-typed override (migration 306), which wins in the contract."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.obter_descricao_imovel(
+            client, UUID(org_id), codigo, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.put("/imoveis/{codigo}/descricao-imovel")
+def confirmar_descricao_imovel_route(
+    body: DescricaoImovelBody,
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Type/confirm the IMÓVEL: description (`texto: null` clears it)."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_descricao_imovel(
+            client, UUID(org_id), codigo, texto=body.texto, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
 @router.get("/imoveis/{codigo}/onus-credor")
 def obter_onus_credor_route(
     codigo: str = _CODIGO,
@@ -1025,6 +1058,7 @@ def confirmar_ultima_transferencia_route(
             data=body.data,
             natureza=body.natureza,
             sem_registro=body.sem_registro,
+            transmitentes=body.transmitentes,
             usuario_id=getattr(user, "id", None),
         )
     )

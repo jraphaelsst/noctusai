@@ -85,6 +85,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import busca_service, dados_service
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
+from app.modules.imovel_hub import vinculo_legal
 from app.modules.matriculas import estrutura_service, titulo_service
 from app.services import imobiliarias_service as imobiliarias_svc
 from app.services import table_reads
@@ -497,6 +498,17 @@ def _em_condominio(dados: dict) -> Optional[bool]:
     return dados.get("em_condominio_legado")
 
 
+def _descricao_imovel_manual(client: Any, org_id: UUID, codigo: Optional[str]) -> Optional[str]:
+    """Migration 306 — the operator-typed IMÓVEL: description, or `None`.
+    When set it WINS over the matrícula's derived `descricao_imovel` block
+    (the human's text is never replaced by a re-read); read through the
+    manual<->Vista link like every other property-level field."""
+    if not codigo:
+        return None
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
+    return (linha.get("descricao_imovel_texto") or "").strip() or None
+
+
 def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -> Imovel:
     canonico = busca_service.canonical(codigo)
     catalogo = busca_service.enriquecer(client, org_id, [codigo]).get(canonico) or {}
@@ -639,7 +651,11 @@ def _permuta_imoveis(
         # group including permutas). `contexto.py` is where the "prefer
         # this, else fall back to `texto` above and log it" decision lives
         # — this module only carries the value across, never decides.
-        descricao_imovel_texto = ((citacao.get("descricao_imovel") or {}).get("texto") or "").strip()
+        descricao_imovel_texto = (
+            # Migration 306 — the typed override wins (catalog ativos only).
+            (imovel_dados.get("descricao_imovel_texto") or "").strip()
+            or ((citacao.get("descricao_imovel") or {}).get("texto") or "").strip()
+        )
         saida.append(
             PermutaImovel(
                 permuta_ativo_id=ativo_id,
@@ -831,6 +847,7 @@ def carregar(
     codigo = negociacao.get("imovel_codigo")
     imovel = _imovel(client, org_id, codigo, usuario_id) if codigo else None
     selecao = estrutura_service.obter_selecao(client, org_id, contrato_id, usuario_id=usuario_id)
+    descricao_manual = _descricao_imovel_manual(client, org_id, codigo)
     # [Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO comarca, read off
     # THIS matrícula's own FULL transcription — independent of which acts
     # the operator selected to quote (`selecao["extracao_id"]` alone is
@@ -936,9 +953,15 @@ def carregar(
             # Migration 136 — `None` (no `descricao_imovel` block for this
             # extraction) reads as `None` through both fields; `contexto.py`
             # is the one place that decides the fallback.
-            descricao_imovel_texto=(selecao.get("descricao_imovel") or {}).get("texto"),
-            descricao_imovel_formatacao=ranges_from_json(
-                (selecao.get("descricao_imovel") or {}).get("formatacao")
+            # Migration 306 — an operator-typed description wins, carrying no
+            # formatting (the derived block's ranges index a different text).
+            descricao_imovel_texto=(
+                descricao_manual or (selecao.get("descricao_imovel") or {}).get("texto")
+            ),
+            descricao_imovel_formatacao=(
+                ()
+                if descricao_manual
+                else ranges_from_json((selecao.get("descricao_imovel") or {}).get("formatacao"))
             ),
             comarca=comarca,
             averbacoes=tuple(

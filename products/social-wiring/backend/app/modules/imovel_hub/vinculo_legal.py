@@ -88,6 +88,15 @@ def _construir_grupos() -> tuple[GrupoLegal, ...]:
             ("endereco_registro_texto",),
         )
     )
+    # Migration 306 — the typed IMÓVEL: description describes the PROPERTY.
+    grupos.append(
+        GrupoLegal(
+            "descricao_imovel_texto",
+            tuple(dados_service.CAMPOS_DESCRICAO_IMOVEL_CONTRATO),
+            None,
+            ("descricao_imovel_texto",),
+        )
+    )
     grupos.append(
         GrupoLegal(
             "ultima_transferencia_manual",
@@ -110,10 +119,13 @@ def _t(client: Any, name: str):
 def _grupo_vazio(grupo: GrupoLegal, row: Optional[dict]) -> bool:
     row = row or {}
     if grupo.chave == "ultima_transferencia_manual":
-        # `sem_registro=False` is "not stated", not a value.
-        return campo_conflitos.valor_vazio(
-            row.get("ultima_transferencia_manual_data")
-        ) and not row.get("ultima_transferencia_manual_sem_registro")
+        # `sem_registro=False` / an empty name list are "not stated", not a
+        # value (migration 306 added the names).
+        return (
+            campo_conflitos.valor_vazio(row.get("ultima_transferencia_manual_data"))
+            and not row.get("ultima_transferencia_manual_sem_registro")
+            and not row.get("ultima_transferencia_manual_transmitentes")
+        )
     return all(campo_conflitos.valor_vazio(row.get(c)) for c in grupo.decisivas)
 
 

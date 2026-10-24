@@ -58,8 +58,10 @@ from app.modules.imovel_hub.deps import (
     get_vinculo_legal,
 )
 from app.modules.imovel_hub.schemas import (
+    CertidaoImovelTipo,
     DecidirConflitoImovelBody,
     EnderecoManualPatchBody,
+    ImovelCertidaoManualBody,
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
     ImovelManualIn,
@@ -622,6 +624,40 @@ def list_certidoes_route(
     latest per tipo (migration 118)."""
     _user, org_id = _auth_parts(auth)
     return docs_svc.certidoes(client, org_id, codigo.upper())
+
+
+@router.put("/{codigo}/certidoes/{tipo}/manual")
+def put_certidao_manual_route(
+    codigo: str,
+    tipo: CertidaoImovelTipo,
+    body: ImovelCertidaoManualBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Type a certidão's fields with no file (migration 306) — the same
+    `certidoes` read the contract loader uses picks it up. Returns that
+    refreshed read."""
+    user, org_id = _auth_parts(auth)
+    return docs_svc.gravar_certidao_manual(
+        client,
+        org_id,
+        codigo.upper(),
+        tipo,
+        valores=body.model_dump(),
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.delete("/{codigo}/certidoes/{tipo}/manual")
+def delete_certidao_manual_route(
+    codigo: str,
+    tipo: CertidaoImovelTipo,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Drop the typed record; the newest upload of that tipo answers again."""
+    _user, org_id = _auth_parts(auth)
+    return docs_svc.remover_certidao_manual(client, org_id, codigo.upper(), tipo)
 
 
 # ─── D1 conflicts (migration 154) ─────────────────────────────────────────

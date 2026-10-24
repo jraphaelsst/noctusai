@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from pydantic import Field
@@ -128,6 +128,21 @@ class UltimaTransferenciaManualBody(StrictHttpModel):
     data: Optional[date] = Field(...)
     natureza: Optional[NaturezaAto] = None
     sem_registro: bool = False
+    #: Migration 306 — who sold, typed (names only). Full replace: the PUT
+    #: carries the whole override, so an omitted key clears the names just
+    #: as an omitted `natureza` clears the nature. Refused with
+    #: `sem_registro: true`.
+    transmitentes: list[Annotated[str, Field(max_length=300)]] = Field(
+        default_factory=list, max_length=50
+    )
+
+
+class DescricaoImovelBody(StrictHttpModel):
+    """The IMÓVEL: description an operator types/confirms (migration 306) —
+    wins over the matrícula abertura's derived `descricao_imovel` block in
+    the contract. Required key; `null` (or blank) clears the override."""
+
+    texto: Optional[str] = Field(..., max_length=20000)
 
 
 class ExtracaoManualBody(StrictHttpModel):
@@ -154,6 +169,7 @@ class VincularImovelBody(StrictHttpModel):
 
 __all__ = [
     "AtoReferidoBody",
+    "DescricaoImovelBody",
     "DetalhesAtoBody",
     "EnderecoRegistroBody",
     "ExtracaoDeDocumentoBody",

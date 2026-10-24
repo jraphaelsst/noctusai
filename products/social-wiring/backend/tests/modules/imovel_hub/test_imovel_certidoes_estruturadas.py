@@ -748,7 +748,7 @@ class TestCertidoesRoute:
     def test_an_empty_imovel_returns_an_empty_envelope(self, client, scoped):
         seed(scoped)
         body = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()
-        assert body == {"items": [], "total": 0}
+        assert body == {"items": [], "total": 0, "manuais": {}}
 
     def test_an_unknown_imovel_is_a_404(self, client, scoped):
         seed(scoped)

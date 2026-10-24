@@ -84,6 +84,8 @@ _TABELAS = (
     "cliente_empresa_participacoes", "empresas",
     # Migration 300 — the imóvel's attached condomínio.
     "condominios",
+    # Migration 306 — certidões typed with no file.
+    "imovel_certidoes_manuais",
 )
 
 

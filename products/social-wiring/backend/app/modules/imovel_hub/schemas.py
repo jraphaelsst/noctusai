@@ -256,6 +256,26 @@ class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
     inscricao_imobiliaria: Optional[str] = Field(default=None, max_length=64)
 
 
+class ImovelCertidaoManualBody(StrictHttpModel):
+    """A certidão's fields typed with NO file (migration 306) — `PUT
+    .../certidoes/{tipo}/manual`. A FULL replace of the typed record (an
+    omitted field is stored empty). `documentos_service.gravar_certidao_
+    manual` refuses a non-empty field the tipo does not carry and an
+    all-empty record."""
+
+    numero: Optional[str] = Field(default=None, max_length=64)
+    emitida_em: Optional[date] = None
+    validade_ate: Optional[date] = None
+    resultado: Optional[
+        Literal["negativa", "positiva", "positiva_com_efeito_de_negativa"]
+    ] = None
+    inscricao_imobiliaria: Optional[str] = Field(default=None, max_length=64)
+
+
+#: Migration 306 — the tipos a typed certidão record may carry.
+CertidaoImovelTipo = Literal["cnd_iptu", "cnd_condominio", "matricula"]
+
+
 class DecidirConflitoImovelBody(StrictHttpModel):
     """A human's decision on an `imovel_campo_conflitos` row (migration 154,
     D1). `aceitar=True` lands the extracted value, confirmed by the decider;
@@ -265,8 +285,10 @@ class DecidirConflitoImovelBody(StrictHttpModel):
 
 
 __all__ = [
+    "CertidaoImovelTipo",
     "DecidirConflitoImovelBody",
     "EnderecoManualPatchBody",
+    "ImovelCertidaoManualBody",
     "ImovelDadosPatchBody",
     "ImovelDocumentoExtracaoPatchBody",
     "EnderecoManualIn",

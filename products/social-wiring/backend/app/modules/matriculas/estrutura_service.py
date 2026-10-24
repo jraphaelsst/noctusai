@@ -1656,6 +1656,25 @@ def _descricao_imovel_bloco(
     }
 
 
+def descricao_imovel_da_extracao(
+    client: Any, org_id: UUID, extracao: dict, *, usuario_id: Optional[Any] = None
+) -> Optional[str]:
+    """The `descricao_imovel` block's noise-subtracted text for this
+    extraction (migration 136), or `None` when it carries no such block — the
+    DERIVED value the property page shows next to the operator's typed
+    override (migration 306). A text access: logged like `_citacao`."""
+    log_leitura_texto(client, org_id, extracao["id"], usuario_id)
+    bloco = _descricao_imovel_bloco(
+        client,
+        org_id,
+        extracao,
+        extracao.get("texto_extraido") or "",
+        _ruido_da_extracao(extracao),
+    )
+    texto = ((bloco or {}).get("texto") or "").strip()
+    return texto or None
+
+
 def _citacao(
     client: Any,
     org_id: UUID,
@@ -1946,6 +1965,7 @@ __all__ = [
     "criar_retranscricao",
     "definir_fontes",
     "definir_selecao",
+    "descricao_imovel_da_extracao",
     "exigir_extracao",
     "garantir_removivel",
     "linhas_de_atos",

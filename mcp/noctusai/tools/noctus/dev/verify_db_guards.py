@@ -1821,7 +1821,8 @@ _ULTIMA_TRANSFERENCIA_MANUAL_PROBE = GuardProbe(
     schema=_SW_SCHEMA,
     guard_name="imovel_dados_ultima_transferencia_manual_confirmado",
     kind="write_refusal",
-    migrations=("152_ultima_transferencia_manual.sql",),
+    # 306 widened it (a non-empty transmitentes list also counts as an answer).
+    migrations=("152_ultima_transferencia_manual.sql", "306_imovel_campos_manuais.sql"),
     rationale=(
         "ultima_transferencia_manual_data (the [Q9] previous-owner rule's "
         "manual fallback, migration 152) and its confirmation timestamp "
@@ -1918,6 +1919,126 @@ _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE = GuardProbe(
         fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
         fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
         guard_fragment='constraint "imovel_dados_ultima_transferencia_manual_exclusiva"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Registry — migration 306 (imóvel fields typed by hand, never upload-only).
+# ---------------------------------------------------------------------------
+#
+# The `imovel_dados` probes borrow a REGISTRY código with no `imovel_dados`
+# row (imovel_dados' FK is `imovel_registry`, migration 076) — a fresh insert,
+# so no PRIMARY KEY collision can stand in for the CHECK under test. The
+# `imovel_certidoes_manuais` probes borrow any registry código: every probe
+# value violates a CHECK, and Postgres evaluates CHECKs before the UNIQUE
+# index, so an existing typed row can never answer in the CHECK's place.
+
+_CERTIDOES_MANUAIS_TABLE = "imovel_certidoes_manuais"
+_REGISTRY_SEM_DADOS_FROM = (
+    f"(SELECT r.org_id AS org_id, r.codigo_canonical AS codigo FROM {_SW_SCHEMA}.imovel_registry r "
+    f"WHERE NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.{_IMOVEL_DADOS_TABLE} d "
+    f"WHERE d.org_id = r.org_id AND d.codigo = r.codigo_canonical) LIMIT 1) AS fx"
+)
+_REGISTRY_SEM_DADOS_DESC = (
+    f"no {_SW_SCHEMA}.imovel_registry row without an existing {_SW_SCHEMA}."
+    f"{_IMOVEL_DADOS_TABLE} row to probe a fresh insert against"
+)
+_REGISTRY_FROM = (
+    f"(SELECT r.org_id AS org_id, r.codigo_canonical AS codigo "
+    f"FROM {_SW_SCHEMA}.imovel_registry r LIMIT 1) AS fx"
+)
+_REGISTRY_DESC = f"no {_SW_SCHEMA}.imovel_registry row to borrow (org_id, codigo) from"
+
+
+def _certidao_manual_probe(guard: str, values_sql: str, rationale: str, sufixo: str) -> GuardProbe:
+    return GuardProbe(
+        id=f"imovel_certidoes_manuais.{sufixo}",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard,
+        kind="write_refusal",
+        migrations=("306_imovel_campos_manuais.sql",),
+        rationale=rationale,
+        sql=_insert_check_probe(
+            schema=_SW_SCHEMA,
+            table=_CERTIDOES_MANUAIS_TABLE,
+            columns_sql="org_id, codigo, tipo, numero, resultado",
+            values_sql=values_sql,
+            fixture_from=_REGISTRY_FROM,
+            fixture_description=_REGISTRY_DESC,
+            guard_fragment=f'constraint "{guard}"',
+        ),
+    )
+
+
+_SW_CAMPOS_MANUAIS_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="imovel_dados.descricao_imovel.confirmed_pair",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="imovel_dados_descricao_imovel_confirmado",
+        kind="write_refusal",
+        migrations=("306_imovel_campos_manuais.sql",),
+        rationale=(
+            "The typed IMÓVEL: description wins over the matrícula's own block "
+            "in the contract; a text with no confirmation stamp would print an "
+            "unattributed description into a signed deed."
+        ),
+        sql=_insert_check_probe(
+            schema=_SW_SCHEMA,
+            table=_IMOVEL_DADOS_TABLE,
+            columns_sql="org_id, codigo, descricao_imovel_texto, descricao_imovel_confirmado_em",
+            values_sql="fx.org_id, fx.codigo, 'Apartamento teste', NULL",
+            fixture_from=_REGISTRY_SEM_DADOS_FROM,
+            fixture_description=_REGISTRY_SEM_DADOS_DESC,
+            guard_fragment='constraint "imovel_dados_descricao_imovel_confirmado"',
+        ),
+    ),
+    GuardProbe(
+        id="imovel_dados.ultima_transferencia_manual.transmitentes_sem_registro",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="imovel_dados_ult_transf_transmitentes_sem_registro",
+        kind="write_refusal",
+        migrations=("306_imovel_campos_manuais.sql",),
+        rationale=(
+            "Names of who sold contradict 'não consta transferência registrada'; "
+            "titulo_service refuses the pair, this is the backstop."
+        ),
+        sql=_insert_check_probe(
+            schema=_SW_SCHEMA,
+            table=_IMOVEL_DADOS_TABLE,
+            columns_sql=(
+                "org_id, codigo, ultima_transferencia_manual_sem_registro, "
+                "ultima_transferencia_manual_transmitentes, ultima_transferencia_manual_confirmado_em"
+            ),
+            values_sql="fx.org_id, fx.codigo, TRUE, ARRAY['Vendedor Teste']::text[], NOW()",
+            fixture_from=_REGISTRY_SEM_DADOS_FROM,
+            fixture_description=_REGISTRY_SEM_DADOS_DESC,
+            guard_fragment='constraint "imovel_dados_ult_transf_transmitentes_sem_registro"',
+        ),
+    ),
+    _certidao_manual_probe(
+        "imovel_certidoes_manuais_tipo_valido",
+        "fx.org_id, fx.codigo, 'guia_iptu', NULL, NULL",
+        "Only the contract's imóvel certidão tipos (cnd_iptu, cnd_condominio, "
+        "matricula) may be typed; any other tipo is a row no reader consumes.",
+        "tipo_valido",
+    ),
+    _certidao_manual_probe(
+        "imovel_certidoes_manuais_resultado_valido",
+        "fx.org_id, fx.codigo, 'cnd_iptu', NULL, 'nao_emitida'",
+        "A certidão in hand was emitted — resultado is restricted to the "
+        "imóvel CND vocabulary (documentos_service.RESULTADO_VALUES).",
+        "resultado_valido",
+    ),
+    _certidao_manual_probe(
+        "imovel_certidoes_manuais_campos_por_tipo",
+        "fx.org_id, fx.codigo, 'cnd_condominio', 'X-1', NULL",
+        "Each tipo carries only its own fields (CAMPOS_ESTRUTURA_POR_TIPO): a "
+        "número on a condomínio declaration is a field the contract never reads.",
+        "campos_por_tipo",
     ),
 )
 
@@ -10571,6 +10692,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_REQUER_DATA_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE,
+    *_SW_CAMPOS_MANUAIS_PROBES,
     _EMPREENDIMENTO_MANUAL_PROBE,
     _IMOVEL_CONDOMINIO_OU_CASA_DE_RUA_PROBE,
     _IMOVEL_CONDOMINIO_MESMA_ORG_PROBE,

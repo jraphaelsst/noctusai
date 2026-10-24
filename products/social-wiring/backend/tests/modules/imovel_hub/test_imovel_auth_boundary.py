@@ -33,12 +33,18 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
         if method.lower() in {"get", "post", "patch", "delete", "put"}
     }
     assert paths, "no imovel_hub routes are registered — the router isn't wired"
+    # Migration 306 — pinned so the enumeration cannot pass over them.
+    assert {
+        ("put", "/api/imoveis/{codigo}/certidoes/{tipo}/manual"),
+        ("delete", "/api/imoveis/{codigo}/certidoes/{tipo}/manual"),
+    } <= paths
 
     for method, path in sorted(paths):
         concrete = (
             path.replace("{codigo}", _CODIGO)
             .replace("{documento_id}", _DOCUMENTO_ID)
             .replace("{transacao_id}", _DOCUMENTO_ID)
+            .replace("{tipo}", "cnd_iptu")
         )
         kwargs = {}
         # Only PATCH takes a JSON body here. A multipart upload route must
@@ -46,7 +52,7 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
         # a 422 — exactly the false-green this file exists to refuse), and
         # `TestClient.delete()` has no `json` parameter at all, which is why
         # the DELETE route carries its `motivo` as a query param.
-        if method == "patch":
+        if method in {"patch", "put"}:
             kwargs["json"] = {}
         resp = getattr(anon_client, method)(concrete, **kwargs)
         assert resp.status_code == 401, (

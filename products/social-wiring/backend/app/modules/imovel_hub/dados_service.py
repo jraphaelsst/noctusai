@@ -213,6 +213,17 @@ CAMPOS_ENDERECO_CONTRATO: tuple[str, ...] = (
     "endereco_registro_confirmado_em",
 )
 
+#: Migration 306 — the operator-typed IMÓVEL: description (the matrícula
+#: abertura's `descricao_imovel` block). Same single-stamp shape and trust
+#: model as `CAMPOS_ENDERECO_CONTRATO`: typed by a human, never a machine
+#: read; when set it wins over the derived block in the contract's OBJETO
+#: clause (`contrato_gerador.carregador`).
+CAMPOS_DESCRICAO_IMOVEL_CONTRATO: tuple[str, ...] = (
+    "descricao_imovel_texto",
+    "descricao_imovel_confirmado_por",
+    "descricao_imovel_confirmado_em",
+)
+
 CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "titulo_aquisitivo_texto",
     # Migration 154 — `manual` when an operator's PUT wrote it (vs. `matricula`
@@ -224,7 +235,7 @@ CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "onus_credor_origem",
     "onus_credor_confirmado_por",
     "onus_credor_confirmado_em",
-) + CAMPOS_ENDERECO_CONTRATO
+) + CAMPOS_ENDERECO_CONTRATO + CAMPOS_DESCRICAO_IMOVEL_CONTRATO
 
 #: Migration 149, widened by 159 — the manual override for all 7 address
 #: fields the `Endereco` dataclass carries. 149 shipped only the 4
@@ -289,6 +300,8 @@ CAMPOS_ULTIMA_TRANSFERENCIA_MANUAL: tuple[str, ...] = (
     "ultima_transferencia_manual_data",
     "ultima_transferencia_manual_natureza",
     "ultima_transferencia_manual_sem_registro",
+    # Migration 306 — who sold, typed (names only).
+    "ultima_transferencia_manual_transmitentes",
     "ultima_transferencia_manual_confirmado_por",
     "ultima_transferencia_manual_confirmado_em",
 )
@@ -614,6 +627,13 @@ def _saida(
             resolved, row.get("endereco_registro_confirmado_por")
         ),
         "endereco_registro_confirmado_em": row.get("endereco_registro_confirmado_em"),
+        # Migration 306 — the typed IMÓVEL: description override (see
+        # `CAMPOS_DESCRICAO_IMOVEL_CONTRATO`).
+        "descricao_imovel_texto": row.get("descricao_imovel_texto"),
+        "descricao_imovel_confirmado_por": table_reads.actor(
+            resolved, row.get("descricao_imovel_confirmado_por")
+        ),
+        "descricao_imovel_confirmado_em": row.get("descricao_imovel_confirmado_em"),
         # Migration 149, widened by 159 — the manual override for all 7
         # address fields. `None` on every field means "use the mirror".
         "endereco_manual_logradouro": row.get("endereco_manual_logradouro"),
@@ -636,6 +656,9 @@ def _saida(
         "ultima_transferencia_manual_natureza": row.get("ultima_transferencia_manual_natureza"),
         "ultima_transferencia_manual_sem_registro": bool(
             row.get("ultima_transferencia_manual_sem_registro")
+        ),
+        "ultima_transferencia_manual_transmitentes": list(
+            row.get("ultima_transferencia_manual_transmitentes") or []
         ),
         "ultima_transferencia_manual_confirmado_por": table_reads.actor(
             resolved, row.get("ultima_transferencia_manual_confirmado_por")
@@ -695,6 +718,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("titulo_aquisitivo_texto_confirmado_por"),
         (row or {}).get("onus_credor_confirmado_por"),
         (row or {}).get("endereco_registro_confirmado_por"),
+        (row or {}).get("descricao_imovel_confirmado_por"),
         (row or {}).get("endereco_manual_confirmado_por"),
         (row or {}).get("ultima_transferencia_manual_confirmado_por"),
         (row or {}).get("empreendimento_manual_confirmado_por"),
@@ -1290,6 +1314,7 @@ def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
 __all__ = [
     "CAMPOS_EDITAVEIS",
     "CAMPOS_ENDERECO_CONTRATO",
+    "CAMPOS_DESCRICAO_IMOVEL_CONTRATO",
     "CAMPOS_ENDERECO_MANUAL",
     "CAMPOS_ONUS_FONTE",
     "CAMPOS_PROVENIENCIA",

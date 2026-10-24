@@ -634,3 +634,7 @@ Authored 2026-10-23. Data repair: manual-origin consultas' human-filled resultad
 ## 305 — natureza_cessao_direitos — NOT APPLIED
 
 Authored 2026-10-23. Widens `matricula_ato_detalhes.natureza`'s CHECK with `cessao_direitos` (a compromissário's cession of promise rights, previously `outro`; NOT a transfer of ownership). Additive, idempotent. Apply BEFORE deploying the image whose reader types that nature (an un-migrated DB rejects the detalhes write of such an act).
+
+## 306 — imovel_campos_manuais — NOT APPLIED
+
+Authored 2026-10-24 (owner directive: no imóvel field is upload-only). Adds `imovel_dados.descricao_imovel_texto` (+ `_confirmado_por/_em`, the typed IMÓVEL: description that wins in the contract), `imovel_dados.ultima_transferencia_manual_transmitentes TEXT[]` (typed sellers; widens the 152 `_confirmado` CHECK to count a non-empty list, refuses names next to `sem_registro`), and the new table `imovel_certidoes_manuais` (CND IPTU / condomínio / matrícula certidão typed with no file; RLS select-own-org + service_role). Additive, idempotent. Apply BEFORE deploying the image that reads it: `documentos_service.certidoes` (imóvel page + contract loader) queries `imovel_certidoes_manuais`, so an un-migrated DB fails that read.

@@ -605,6 +605,74 @@ def confirmar_endereco_registro(
     return obter_endereco_registro(client, org_id, codigo)
 
 
+# ─── descrição do imóvel (migration 306) ──────────────────────────────────
+
+
+def obter_descricao_imovel(
+    client: Any, org_id: UUID, codigo: str, *, usuario_id: Optional[Any] = None
+) -> dict:
+    """The IMÓVEL: description the contract's OBJETO clause quotes.
+
+    `derivado` is the matrícula abertura's `descricao_imovel` block read off
+    the imóvel's current transcription (`None` when there is none, or no
+    `IMÓVEL:` label was recognised); `confirmado` is the operator-typed
+    override (migration 306), which WINS in the contract loader and is never
+    touched by a later transcription."""
+    codigo = _codigo(codigo)
+    dados_service.ensure_imovel(client, org_id, codigo)
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
+
+    derivado: Optional[str] = None
+    extracao = _extracao_do_imovel(client, org_id, codigo, linha)
+    if extracao is not None and extracao.get("status") == estrutura_svc.STATUS_CONCLUIDA:
+        derivado = estrutura_svc.descricao_imovel_da_extracao(
+            client, org_id, extracao, usuario_id=usuario_id
+        )
+
+    valor = linha.get("descricao_imovel_texto")
+    confirmado = None
+    if valor is not None:
+        resolved = table_reads.resolve_actors(
+            {linha.get("descricao_imovel_confirmado_por")} - {None}
+        )
+        confirmado = {
+            "texto": valor,
+            "confirmado_por": table_reads.actor(
+                resolved, linha.get("descricao_imovel_confirmado_por")
+            ),
+            "confirmado_em": linha.get("descricao_imovel_confirmado_em"),
+        }
+    return {
+        "codigo": codigo,
+        "derivado": derivado,
+        "confirmado": confirmado,
+        "efetivo": (confirmado or {}).get("texto") or derivado,
+        "origem": "manual" if confirmado else ("matricula" if derivado else None),
+    }
+
+
+def confirmar_descricao_imovel(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    texto: Optional[str],
+    usuario_id: Optional[Any],
+) -> dict:
+    """`PUT /imoveis/{codigo}/descricao-imovel` — type/confirm the IMÓVEL:
+    description; blank or `null` clears the override (the derived block
+    answers again)."""
+    codigo = _codigo(codigo)
+    valor = (texto or "").strip() or None
+    patch = {
+        "descricao_imovel_texto": valor,
+        "descricao_imovel_confirmado_por": str(usuario_id) if valor and usuario_id else None,
+        "descricao_imovel_confirmado_em": now_iso() if valor else None,
+    }
+    dados_service.gravar_texto_contrato(client, org_id, codigo, patch)
+    return obter_descricao_imovel(client, org_id, codigo, usuario_id=usuario_id)
+
+
 # ─── ônus creditor ────────────────────────────────────────────────────────
 
 
@@ -743,6 +811,8 @@ def _manual_ultima_transferencia(linha: dict) -> Optional[dict]:
         "data_registro": str(bruto)[:10] if bruto else None,
         "natureza": linha.get("ultima_transferencia_manual_natureza"),
         "sem_registro": bool(linha.get("ultima_transferencia_manual_sem_registro")),
+        # Migration 306 — who sold, typed (names only).
+        "transmitentes": list(linha.get("ultima_transferencia_manual_transmitentes") or []),
         "confirmado_por": table_reads.actor(
             resolved, linha.get("ultima_transferencia_manual_confirmado_por")
         ),
@@ -794,6 +864,31 @@ def _transmitentes_por_referencia(
 
 
 def antigos_proprietarios(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    usuario_id: Optional[Any] = None,
+    hoje: Optional[date] = None,
+) -> dict:
+    """`_antigos_proprietarios_derivados` + the operator-typed sellers
+    (migration 306): a non-empty typed name list WINS over the names read
+    off the act — it is a human's correction, protected from any later
+    re-read. `transmitentes_origem` says which answered (`matricula` |
+    `manual` | `None` when nobody is known)."""
+    saida = _antigos_proprietarios_derivados(
+        client, org_id, codigo, usuario_id=usuario_id, hoje=hoje
+    )
+    nomes = ((saida.get("manual") or {}).get("transmitentes")) or []
+    if nomes:
+        saida["transmitentes"] = [{"nome": nome, "cpf_cnpj": None} for nome in nomes]
+        saida["transmitentes_origem"] = "manual"
+    else:
+        saida["transmitentes_origem"] = "matricula" if saida["transmitentes"] else None
+    return saida
+
+
+def _antigos_proprietarios_derivados(
     client: Any,
     org_id: UUID,
     codigo: str,
@@ -1025,6 +1120,17 @@ def titularidade_atual(
     }
 
 
+def _nomes_limpos(nomes: Optional[list[str]]) -> list[str]:
+    """Typed names: trimmed, inner whitespace collapsed, blanks dropped,
+    exact repeats dropped (order kept)."""
+    saida: list[str] = []
+    for nome in nomes or []:
+        limpo = " ".join(str(nome or "").split())
+        if limpo and limpo not in saida:
+            saida.append(limpo)
+    return saida
+
+
 def confirmar_ultima_transferencia_manual(
     client: Any,
     org_id: UUID,
@@ -1034,6 +1140,7 @@ def confirmar_ultima_transferencia_manual(
     natureza: Optional[str],
     sem_registro: bool,
     usuario_id: Optional[Any],
+    transmitentes: Optional[list[str]] = None,
 ) -> dict:
     """`PUT /imoveis/{codigo}/ultima-transferencia` [migration 152] — the
     manual fallback for [Q9]'s previous-owner rule, always available on the
@@ -1042,8 +1149,19 @@ def confirmar_ultima_transferencia_manual(
     — which the gate must treat as an ANSWER (`exige_antigo_proprietario`
     resolves to `False`), never as still-unknown. `data=None, natureza=None,
     sem_registro=False` clears the override.
+
+    `transmitentes` (migration 306) — the sellers' names, typed. A full
+    replace (the body carries the whole override); a list alone is a valid
+    override (an act was found, its sellers were not read). Refused next to
+    `sem_registro` — names of who sold contradict "no transfer".
     """
     codigo = _codigo(codigo)
+    nomes = _nomes_limpos(transmitentes)
+    if nomes and sem_registro:
+        raise ValidationError_(
+            "Não informe transmitentes quando não consta transferência registrada.",
+            field="transmitentes",
+        )
     if data is not None and sem_registro:
         raise ValidationError_(
             "Informe uma data OU marque que não consta transferência registrada — não os dois.",
@@ -1058,11 +1176,12 @@ def confirmar_ultima_transferencia_manual(
             f"Natureza inválida para a última transferência: {natureza}", field="natureza"
         )
 
-    limpar = data is None and not sem_registro
+    limpar = data is None and not sem_registro and not nomes
     patch = {
         "ultima_transferencia_manual_data": data,
         "ultima_transferencia_manual_natureza": natureza if data is not None else None,
         "ultima_transferencia_manual_sem_registro": bool(sem_registro),
+        "ultima_transferencia_manual_transmitentes": nomes,
         "ultima_transferencia_manual_confirmado_por": (
             None if limpar else (str(usuario_id) if usuario_id else None)
         ),
@@ -1076,6 +1195,8 @@ __all__ = [
     "ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS",
     "NATUREZAS_ULTIMA_TRANSFERENCIA",
     "antigos_proprietarios",
+    "confirmar_descricao_imovel",
+    "obter_descricao_imovel",
     "texto_da_matricula",
     "titularidade_atual",
     "confirmar_detalhes_ato",
