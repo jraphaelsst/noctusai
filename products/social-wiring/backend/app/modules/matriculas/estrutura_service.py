@@ -61,6 +61,7 @@ from noctusai_lib.integrations.documents import (
     RuidoSpan,
     ato_hint_span,
     extrair_detalhes_ato,
+    fim_conteudo_ato,
     normalize,
     segment_matricula_atos,
     segmentar_abertura,
@@ -1696,7 +1697,9 @@ def _citacao(
         # span cut out. `ruido = ()` (nothing detected, or a pre-136 row) is
         # a no-op: `subtrair_ruido` returns `((inicio, fim),)` unchanged, so
         # this act's quote is exactly what it was before migration 136.
-        subspans = subtrair_ruido(inicio, fim, ruido)
+        # Registry boilerplate that trails the act (signature lines, the
+        # certidão closing on the last act) is not part of it.
+        subspans = subtrair_ruido(inicio, fim_conteudo_ato(texto, inicio, fim), ruido)
         spans.extend(subspans)
         atos.append(
             {

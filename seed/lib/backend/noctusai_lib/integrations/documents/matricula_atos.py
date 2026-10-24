@@ -177,6 +177,56 @@ def segment_matricula_atos(text: str) -> list[MatriculaAto]:
     return atos
 
 
+# Registry boilerplate that follows an act but is NOT part of it.
+_ASSINATURA = re.compile(r"^(?:O\s+)?OFICIAL(?:\s+SUBSTITUTO)?\s*,?\s*_{2,}.*$|^_{3,}$")
+_RODAPE_CERTIDAO = re.compile(r"^(?:CERTIDAO\s+DIGITAL\b|CERTIFICO\s+E\s+DOU\s+FE\b)")
+_CABECALHO_PAGINA = re.compile(r"^M\.?\s*[\d.]+\s*[-–—]\s*PAGINA\s+\d+\s*/\s*\d+\b")
+
+
+def fim_conteudo_ato(text: str, start: int, end: int) -> int:
+    """End offset of the act's OWN content inside ``text[start:end]``.
+
+    Trims, from the END of the span only: (1) the certidão closing that trails
+    the last act ("CERTIDÃO DIGITAL" / "CERTIFICO E DOU FÉ ..." through the
+    custas and validity lines, plus the page header "M. 123 - Página 3/3 ..."
+    that directly precedes it), then (2) trailing registry signature lines
+    ("O Oficial Substituto, ____ Nome", "Oficial, ____ Nome") and blank lines.
+    A page header with real act text after it (mid-act page break) is never a
+    cut point — the footer is anchored on its own closing markers. Returns an
+    offset (never rewrites text); ``end`` when nothing trails.
+    """
+    linhas: list[tuple[int, str]] = []
+    pos = start
+    while pos < end:
+        q = text.find("\n", pos, end)
+        fim = end if q < 0 else q
+        linhas.append((fim, normalize(text[pos:fim]).strip()))
+        pos = fim + 1
+    corte = len(linhas)
+    for i, (_, n) in enumerate(linhas):
+        if _RODAPE_CERTIDAO.match(n):
+            corte = i
+            while corte > 0 and not linhas[corte - 1][1]:
+                corte -= 1
+            if corte > 0 and _CABECALHO_PAGINA.match(linhas[corte - 1][1]):
+                corte -= 1
+            break
+    cortou = corte < len(linhas)
+    while corte > 0 and (not linhas[corte - 1][1] or _ASSINATURA.match(linhas[corte - 1][1])):
+        cortou = cortou or bool(linhas[corte - 1][1])
+        corte -= 1
+    if not cortou:
+        return end
+    while corte > 0 and not linhas[corte - 1][1]:
+        corte -= 1
+    if corte == 0:
+        return start
+    # Keep the content's own line break so consecutive quotes stay on
+    # separate lines when the caller joins them.
+    ultimo = start + len(text[start : linhas[corte - 1][0]].rstrip())
+    return ultimo + 1 if ultimo < end and text[ultimo] == "\n" else ultimo
+
+
 def ato_hint_span(text: str, ato: MatriculaAto) -> tuple[int, int]:
     """Offsets of the act's first non-blank line, trimmed — a label for the
     UI (`R-1/12.345 - Em 10 de março ... VENDA`). Still offsets: slice `text`
@@ -198,6 +248,7 @@ __all__ = [
     "AtoKind",
     "MatriculaAto",
     "ato_hint_span",
+    "fim_conteudo_ato",
     "normalized_with_offsets",
     "segment_matricula_atos",
 ]

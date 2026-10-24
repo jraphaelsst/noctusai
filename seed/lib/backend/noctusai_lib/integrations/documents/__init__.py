@@ -123,6 +123,7 @@ from noctusai_lib.integrations.documents.matricula_atos import (
     AtoKind,
     MatriculaAto,
     ato_hint_span,
+    fim_conteudo_ato,
     segment_matricula_atos,
 )
 from noctusai_lib.integrations.documents.matricula_endereco import (
@@ -429,6 +430,7 @@ __all__ = [
     "UnsupportedGlyphError",
     "ValorLido",
     "ato_hint_span",
+    "fim_conteudo_ato",
     "classificar_documento_matricula",
     "ler_certidao_matricula",
     "ler_encerramento",
