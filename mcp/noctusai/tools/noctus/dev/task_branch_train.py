@@ -103,6 +103,23 @@ def suggest_tests(files: list[str], exists: Callable[[str], bool]) -> list[str]:
     return out
 
 
+def sync_with_dev(runner, wt: str, dev_ref: str) -> list[str]:
+    """Merge `dev_ref` into the train worktree before integrate's rebase.
+
+    `git rebase --rebase-merges` RE-RUNS every merge whose base moved, so a
+    train's conflict resolutions return as conflicts once dev moves (proven
+    with real git, 2026-10-24). After this merge every train merge keeps its
+    parents and the rebase keeps the recorded resolutions. Returns the
+    conflicted files (merge aborted) — empty on success."""
+    rc, _o, _e = runner(["git", "merge", "--no-edit", dev_ref], cwd=wt)
+    if rc == 0:
+        return []
+    _rc, out, _e2 = runner(["git", "diff", "--name-only", "--diff-filter=U"], cwd=wt)
+    conflicted = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+    runner(["git", "merge", "--abort"], cwd=wt)
+    return conflicted or ["<merge failed without conflicted files>"]
+
+
 def _worktree_for_branch(task_branch_mod, git, branch: str) -> str | None:
     rc, out, _e = git("worktree", "list", "--porcelain")
     for wt in task_branch_mod._parse_worktrees(out if rc == 0 else ""):

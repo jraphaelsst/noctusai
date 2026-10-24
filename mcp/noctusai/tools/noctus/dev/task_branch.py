@@ -2575,6 +2575,19 @@ def task_branch(
             # A train carries merge commits: --rebase-merges replays them as merges
             # (rider tips stay ancestors, resolutions kept) instead of flattening.
             _rb = (("--rebase-merges",) if _train.is_train_slug(slug) else ())
+            if _rb:
+                # Merge dev in first so --rebase-merges keeps the train's resolutions
+                # (task_branch_train.sync_with_dev); a real dev-vs-train conflict stops here.
+                mconf = _train.sync_with_dev(runner, wt_path, f"{remote}/{dev_branch}")
+                if mconf:
+                    if benign_stashed:
+                        _pop_stash(runner, wt_path, benign_stashed, verbose)
+                        benign_stashed = False
+                    return {**plan, "status": "conflict", "exit_code": 1,
+                            "conflicted_files": mconf, "blocked_by_dirty": [],
+                            "message": (f"merging {remote}/{dev_branch} into train {branch} hit conflicts in "
+                                        f"{mconf}; aborted. Merge {remote}/{dev_branch} into the train "
+                                        "worktree, resolve, commit (plain `git commit`), then re-run integrate.")}
             rc, out, err = git("rebase", *_rb, f"{remote}/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 # Rebase failed — distinguish "refused" (worktree still dirty after

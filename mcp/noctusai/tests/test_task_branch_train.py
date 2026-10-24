@@ -173,3 +173,33 @@ def test_dirty_rider_is_refused(tmp_path):
                      confirm=True, today="d", start_fn=lambda s: {"status": "started"},
                      exists=lambda r: False)
     assert r["status"] == "refused" and "uncommitted" in r["refused"][0]["reason"]
+
+
+def test_real_git_resolutions_survive_dev_moving(tmp_path):
+    """Live 2026-10-24: a train with a resolved conflict, then dev moved. A bare
+    `rebase --rebase-merges` re-runs the merge and re-conflicts; after
+    `sync_with_dev` the same rebase keeps the recorded resolution."""
+    repo = tmp_path / "r"
+    repo.mkdir()
+    g = lambda *a: _sh(repo, "git", *a)  # noqa: E731
+    g("init", "-q", "-b", "dev")
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    (repo / "f").write_text("a\n"); g("add", "f"); g("commit", "-qm", "base")
+    g("checkout", "-qb", "x"); (repo / "f").write_text("x\n"); g("commit", "-qam", "x")
+    g("checkout", "-qb", "y", "dev"); (repo / "f").write_text("y\n"); g("commit", "-qam", "y")
+    g("checkout", "-qb", "t", "dev"); g("merge", "-q", "--no-ff", "--no-edit", "x")
+    assert subprocess.run(["git", "merge", "-q", "--no-edit", "y"], cwd=repo, capture_output=True).returncode != 0
+    (repo / "f").write_text("xy\n"); g("commit", "-qam", "resolved")
+    g("checkout", "-q", "dev"); (repo / "z").write_text("z\n"); g("add", "z"); g("commit", "-qm", "z")
+    g("checkout", "-q", "t")
+
+    def runner(cmd, cwd=None):
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+
+    bare = subprocess.run(["git", "rebase", "--rebase-merges", "dev"], cwd=repo, capture_output=True)
+    assert bare.returncode != 0  # the failure mode this guards against
+    g("rebase", "--abort")
+    assert TR.sync_with_dev(runner, str(repo), "dev") == []
+    g("rebase", "--rebase-merges", "dev")
+    assert (repo / "f").read_text() == "xy\n" and (repo / "z").exists()
