@@ -5,7 +5,11 @@
  * giving them a chance to extend their session before it expires.
  *
  * Uses the same activity tracking pattern as useActivityRefresh
- * (lastInteractionRef with throttled mousemove).
+ * (lastInteractionRef with throttled mousemove), SHARED across the tabs of the
+ * origin (`noctus:last-activity` in localStorage): the timer reads the newest
+ * interaction of any tab, so an idle tab never expires while the user works in
+ * another tab of the same product (2026-10-24 prod: an idle core tab's expiry
+ * ended the session every core tab shares).
  *
  * ## Wiring into a product
  *
@@ -13,22 +17,30 @@
  *
  * ```tsx
  * import { InactivityWarning } from "@noctusai/lib/design-system";
+ * import { endSessionLocally } from "@noctusai/lib/auth";
  * import { supabase } from "@/integrations/supabase/client";
  *
  * // Inside Layout component return:
  * <InactivityWarning
  *   onExtend={async () => { await supabase.auth.refreshSession(); }}
- *   onExpired={() => { supabase.auth.signOut(); }}
+ *   onExpired={() => endSessionLocally({ redirectTo: "/login" })}
  * />
  * ```
  *
+ * 🔴 `onExpired` must NEVER call a server logout (`supabase.auth.signOut()`, any
+ * scope, or a backend `/logout`): expiry is not the user asking to leave, and a
+ * server revocation ends the session for every tab sharing it. Route it through
+ * `endSessionLocally` — the explicit "Sair" is the only server-side sign-out.
+ *
  * Props:
  * - onExtend: called when user clicks "Continuar" — should refresh the token
- * - onExpired: called when countdown reaches 0 — should sign out / redirect
+ * - onExpired: called when countdown reaches 0 — ends the session LOCALLY
+ *   (`endSessionLocally`) and redirects; never a server logout
  * - tokenLifetimeMs: total inactivity before expiry (default 30 min)
  * - warningBeforeMs: how early to show warning (default 2 min)
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { readSharedActivity, writeSharedActivity } from "../session-ending";
 
 const INTERACTION_EVENTS = ["keydown", "scroll", "click", "touchstart"] as const;
 const MOUSEMOVE_THROTTLE = 1000;
@@ -58,17 +70,27 @@ export function InactivityWarning({
 
   const warningThreshold = tokenLifetimeMs - warningBeforeMs;
 
-  const markInteraction = useCallback(() => {
-    lastInteractionRef.current = Date.now();
+  // Every interaction is shared with the origin's other tabs (throttled write).
+  const sharedWriteRef = useRef<number>(0);
+  const recordInteraction = useCallback((now: number) => {
+    lastInteractionRef.current = now;
+    if (now - sharedWriteRef.current > MOUSEMOVE_THROTTLE) {
+      sharedWriteRef.current = now;
+      writeSharedActivity(now);
+    }
   }, []);
+
+  const markInteraction = useCallback(() => {
+    recordInteraction(Date.now());
+  }, [recordInteraction]);
 
   const handleMouseMove = useCallback(() => {
     const now = Date.now();
     if (now - mouseMoveThrottleRef.current > MOUSEMOVE_THROTTLE) {
       mouseMoveThrottleRef.current = now;
-      lastInteractionRef.current = now;
+      recordInteraction(now);
     }
-  }, []);
+  }, [recordInteraction]);
 
   // Register activity listeners
   useEffect(() => {
@@ -88,7 +110,9 @@ export function InactivityWarning({
   // Check inactivity every second
   useEffect(() => {
     const intervalId = setInterval(() => {
-      const elapsed = Date.now() - lastInteractionRef.current;
+      // The newest interaction of ANY tab of this origin counts.
+      const lastSeen = Math.max(lastInteractionRef.current, readSharedActivity());
+      const elapsed = Date.now() - lastSeen;
 
       if (elapsed >= tokenLifetimeMs) {
         if (!expiredRef.current) {
@@ -114,7 +138,7 @@ export function InactivityWarning({
   const handleExtend = async () => {
     try {
       await onExtend();
-      lastInteractionRef.current = Date.now();
+      recordInteraction(Date.now());
       expiredRef.current = false;
       setVisible(false);
     } catch {

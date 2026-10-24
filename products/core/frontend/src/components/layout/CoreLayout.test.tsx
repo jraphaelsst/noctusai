@@ -17,7 +17,7 @@ import { CoreLayout } from './CoreLayout';
 
 afterEach(() => cleanup());
 
-let mockAuth: { isAdmin: boolean; isMarketing: boolean; logout: () => void };
+let mockAuth: { isAdmin: boolean; isMarketing: boolean; logout: () => void; endLocally?: () => void };
 
 vi.mock('../../lib/auth-context', () => ({
   useAuth: () => mockAuth,
@@ -92,14 +92,22 @@ describe('CoreLayout — marketing role gate', () => {
 });
 
 describe('CoreLayout — inactivity expiry', () => {
-  it("ends ONLY core's own session (scope local) — never the user's product sessions", async () => {
+  it('ends the session LOCALLY and goes to /login — never a server logout (2026-10-24)', async () => {
     mockAuthenticated = true;
     const logout = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window, 'location', { value: { href: '/' }, writable: true });
-    renderAt('/dashboard', { isAdmin: false, isMarketing: false, logout });
+    const endLocally = vi.fn();
+    const assign = vi.fn();
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    Object.defineProperty(window, 'location', { value: { href: '/', pathname: '/dashboard', assign }, writable: true });
+    renderAt('/dashboard', { isAdmin: false, isMarketing: false, logout, endLocally });
     expect(capturedExpired).not.toBeNull();
     await capturedExpired!();
-    expect(logout).toHaveBeenCalledWith({ scope: 'local' });
+    expect(endLocally).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith('/login');
+    expect(logout).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
     mockAuthenticated = false;
   });
 });

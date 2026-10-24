@@ -76,7 +76,8 @@ describe('core api client — dead-session seam wiring', () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse(401, { detail: 'expired' })) // original call
       .mockResolvedValueOnce(jsonResponse(200, { access_token: 'new-token' })) // refresh "succeeds"
-      .mockResolvedValueOnce(jsonResponse(401, { detail: 'Token invalido' })); // retry STILL 401s
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'Token invalido' })) // retry STILL 401s
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'Token invalido' })); // seed F76b delayed GET retry too
 
     const { api } = await import('./api');
     await expect(api.get('/api/x')).rejects.toThrow('[401]');
@@ -169,6 +170,20 @@ describe('core api client — dead-session seam wiring', () => {
     expect(localStorage.getItem('noctus_token')).toBeNull();
     expect(window.location.assign).toHaveBeenCalledWith('/login');
   });
+
+  it('no valid shared session left: login prompt, local clear only — never a server /logout (2026-10-24)', async () => {
+    localStorage.setItem('noctus_token', 'old-token');
+    localStorage.setItem('noctus_refresh_token', 'rt-gone');
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'expired' }))
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'Invalid Refresh Token: Refresh Token Not Found' }));
+
+    const { api } = await import('./api');
+    await expect(api.get('/api/x')).rejects.toThrow('[401]');
+    expect(localStorage.getItem('noctus_refresh_token')).toBeNull();
+    expect(window.location.assign).toHaveBeenCalledWith('/login');
+    expect(fetchMock.mock.calls.map((c) => String(c[0])).some((u) => u.includes('/logout'))).toBe(false);
+  });
 });
 
 describe('refreshCoreSession — one refresher per chain across core tabs', () => {
@@ -213,6 +228,22 @@ describe('refreshCoreSession — one refresher per chain across core tabs', () =
     await refreshCoreSession();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(localStorage.getItem('noctus_token')).toBe('at-2');
+  });
+
+  it('refresh_token_not_found because ANOTHER tab rotated the chain mid-request: adopts the shared newer pair, no /logout', async () => {
+    localStorage.setItem('noctus_token', 'at-1');
+    localStorage.setItem('noctus_refresh_token', 'rt-1');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      // a tab outside this lock (e.g. a stale pre-lock bundle) rotated rt-1 first
+      localStorage.setItem('noctus_token', 'at-2');
+      localStorage.setItem('noctus_refresh_token', 'rt-2');
+      return jsonResponse(401, { detail: 'Invalid Refresh Token: Refresh Token Not Found' });
+    });
+    const { refreshCoreSession } = await import('./api');
+    await refreshCoreSession();
+    expect(localStorage.getItem('noctus_token')).toBe('at-2');
+    expect(localStorage.getItem('noctus_refresh_token')).toBe('rt-2');
+    expect(fetchMock.mock.calls.map((c) => String(c[0])).some((u) => u.includes('/logout'))).toBe(false);
   });
 
   it('a refused refresh rejects (the inactivity warning keeps counting down)', async () => {

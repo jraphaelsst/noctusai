@@ -35,6 +35,7 @@ export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBack
 
 // Auth
 export { useSupabaseAuthInit, useAuthReady, useAuthReconnecting, classifyBootSession, classifyBootMeStatus, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
+export { adoptRotatedPair, endSessionLocally, signOutExplicitly, type StoredSessionPair, type EndSessionLocallyOptions, type SignOutExplicitlyOptions } from './session-ending';
 export { clearLocalIdentity, dropProductCookieSession, isAuthRejection, verifySessionWithServer } from './identity';
 
 // SSO

@@ -14,21 +14,22 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../lib/auth-context';
 import { isAuthenticated, refreshCoreSession } from '../../lib/api';
 import { InactivityWarning } from '@noctusai/lib/design-system/InactivityWarning';
+import { endSessionLocally } from '@noctusai/lib/auth';
 import { Layout as AdminShell } from './Layout';
 
 export function CoreLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { isAdmin, isMarketing, logout } = useAuth();
+  const { isAdmin, isMarketing, endLocally } = useAuth();
 
   const onExtend = refreshCoreSession;
 
-  // Inactivity ends CORE's session only (scope local). The timer counts input in
-  // this tab alone, so a core tab left open while the user works in a product
-  // expires on its own -- the 2026-10-23 prod incident, where this called the
-  // global logout and signed the user out of social-wiring mid-session.
-  const onExpired = async () => {
-    await logout({ scope: 'local' });
-    window.location.href = '/login';
+  // Inactivity is an ending the user did not ask for: LOCAL only, never a server
+  // logout. 2026-10-23 this called the global logout; 2026-10-24 its scope=local
+  // successor still revoked server-side the session every core tab shares, and an
+  // idle core tab signed the user out. The timer is shared across core tabs
+  // (InactivityWarning), so it fires only when every core tab is idle.
+  const onExpired = () => {
+    endSessionLocally({ clearLocal: endLocally, redirectTo: '/login' });
   };
 
   if (location.pathname.startsWith('/admin')) {

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { api, clearToken, setToken, isAuthenticated, refreshCoreSession } from './api';
 import { MfaChallengeHost } from '@noctusai/lib/components';
 import { useActivityRefresh } from '@noctusai/lib/design-system/useActivityRefresh';
+import { signOutExplicitly } from '@noctusai/lib/auth';
 
 interface User {
   id: string;
@@ -48,7 +49,12 @@ interface AuthContextType extends AuthState {
    * in a different identity): a failed revocation THROWS and local state is kept
    * -- never sign out on an auth-server outage, never proceed on a half-revoked one.
    */
-  logout: (opts?: { strict?: boolean; scope?: 'global' | 'local' }) => Promise<void>;
+  logout: (opts?: { strict?: boolean }) => Promise<void>;
+  /**
+   * Ends the session in THIS browser only, with no server call -- for endings the
+   * user did not ask for (inactivity expiry). Never revokes anything upstream.
+   */
+  endLocally: () => void;
   refresh: () => Promise<void>;
 }
 
@@ -60,6 +66,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   unavailable: false,
   logout: async () => {},
+  endLocally: () => {},
   refresh: async () => {},
 });
 
@@ -144,22 +151,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // Core logout ends the user's sessions EVERYWHERE (owner decision 2026-10-09):
-  // the server revokes first (it needs the bearer), then local state is cleared
-  // regardless of the outcome -- a network error must never leave the user logged in.
-  // `scope: 'local'` ends ONLY core's own session -- for endings the user did not
-  // ask for (the inactivity timer). A timeout must never sign the user out of
-  // every product (2026-10-23 prod: a forgotten background core tab did).
-  async function logout(opts?: { strict?: boolean; scope?: 'global' | 'local' }) {
-    try {
-      const path = opts?.scope === 'local' ? '/api/auth/logout?scope=local' : '/api/auth/logout';
-      if (isAuthenticated()) await api.post(path, {});
-    } catch (err) {
-      if (opts?.strict) throw err;
-      console.error('core logout: server-side revocation failed; clearing local session anyway', err);
-    }
+  function clearLocalSession() {
     clearToken();
     setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false, unavailable: false });
+  }
+
+  // The explicit "Sair" ONLY: core logout ends the user's sessions EVERYWHERE
+  // (owner decision 2026-10-09) -- the server revokes first (it needs the bearer),
+  // then local state is cleared regardless of the outcome. Endings the user did
+  // not ask for (inactivity, a refused refresh) use `endLocally` and never reach
+  // the server: 2026-10-23 a background core tab's timer called the global logout;
+  // 2026-10-24 its `scope=local` successor still revoked server-side the session
+  // every other core tab shares. See `@noctusai/lib/auth` `signOutExplicitly`.
+  async function logout(opts?: { strict?: boolean }) {
+    await signOutExplicitly({
+      revoke: async () => { if (isAuthenticated()) await api.post('/api/auth/logout', {}); },
+      clearLocal: clearLocalSession,
+      strict: opts?.strict,
+      onRevokeError: (err) => console.error('core logout: server-side revocation failed; clearing local session anyway', err),
+    });
+  }
+
+  // Expiry: this tab's state + the origin slot (the inactivity timer is shared by
+  // every core tab, so it only fires when all of them are idle). No server call.
+  function endLocally() {
+    clearLocalSession();
   }
 
   // Proactive token refresh while user is active (every 5 min)
@@ -178,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   return (
-    <AuthContext.Provider value={{ ...state, logout, refresh: fetchProfile }}>
+    <AuthContext.Provider value={{ ...state, logout, endLocally, refresh: fetchProfile }}>
       {children}
       {/* Step-up dialog for `403 mfa_required` from the api client (platform-admin-mfa). */}
       <MfaChallengeHost />

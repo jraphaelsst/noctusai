@@ -49,7 +49,7 @@ import {
 import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveEffectiveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
-  usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS,
+  usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS, endSessionLocally,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
 import { HelpChatBubble } from "@noctusai/lib/components";
@@ -562,9 +562,11 @@ export function createProductLayout(config: ProductLayoutConfig) {
               entry handshake (staff only; non-staff render as always). */}
           <OrgContentGate>{children}</OrgContentGate>
         </div>
+        {/* Expiry is local only (never a server logout): this tab leaves for core;
+            the session the product's other tabs share is untouched. */}
         <InactivityWarning
           onExtend={extendSession}
-          onExpired={() => { window.location.href = CORE_URL; }}
+          onExpired={() => endSessionLocally({ redirectTo: CORE_URL })}
         />
       </AppShell>
       {helpChat && (

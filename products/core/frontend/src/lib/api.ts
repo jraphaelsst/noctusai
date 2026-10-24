@@ -8,6 +8,7 @@ import {
   type RefreshAttempt,
 } from '@noctusai/lib/api';
 import type { MfaVerifyResult } from '@noctusai/lib';
+import { adoptRotatedPair, endSessionLocally } from '@noctusai/lib/auth';
 
 // core's API is SAME-ORIGIN (single-container house model serves FE + API on
 // one host). Default to window.location.origin so core is deploy-host-agnostic
@@ -78,7 +79,15 @@ async function refreshUnderLock(startedWith: string): Promise<RefreshAttempt> {
   if (isTransientHttpStatus(response.status)) {
     return { kind: 'transient', reason: `HTTP ${response.status}` };
   }
-  if (!response.ok) return { kind: 'dead' };
+  if (!response.ok) {
+    // Refused (`refresh_token_not_found` / already used / reuse detection). If the
+    // shared slot meanwhile holds a DIFFERENT pair, another core tab rotated the
+    // chain outside this lock (e.g. a tab still running a pre-lock bundle): the
+    // session is alive -- adopt it. Only a refusal of the token the slot still
+    // holds is a death, and a death is LOCAL: no server /logout (2026-10-24).
+    const adopted = adoptRotatedPair(refreshToken, { accessToken: getToken(), refreshToken: getRefreshToken() });
+    return adopted ? { kind: 'token', token: adopted } : { kind: 'dead' };
+  }
   const data = await response.json().catch(() => null);
   if (!data?.access_token) {
     // A 2xx without a token is not an authoritative refusal (e.g. an edge
@@ -119,8 +128,8 @@ function handleDeadSession(): void {
   if (_handlingDeadSession) return;
   if (typeof window === 'undefined' || window.location.pathname.startsWith('/login')) return;
   _handlingDeadSession = true;
-  clearToken();
-  window.location.assign('/login');
+  // An ending the user did not ask for: local only, never the server /logout.
+  endSessionLocally({ clearLocal: clearToken, redirectTo: '/login' });
   window.setTimeout(() => { _handlingDeadSession = false; }, 3000);
 }
 

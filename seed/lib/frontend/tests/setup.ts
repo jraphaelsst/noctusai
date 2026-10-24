@@ -40,3 +40,33 @@ if (!Element.prototype.releasePointerCapture) {
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
+
+/**
+ * Web Storage — Node >= 25 ships its own global `localStorage`/`sessionStorage`
+ * that, without `--localstorage-file`, is a bare object with no Storage methods
+ * and SHADOWS jsdom's (`localStorage.clear is not a function`). Install a
+ * spec-shaped in-memory Storage whenever the visible global is not a real one,
+ * so code under test that reads the bare global gets a working store. (Five test
+ * files had each grown a private `createMemoryStorage`/`memStore` for this.)
+ */
+function memoryStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    get length() { return data.size; },
+    clear: () => data.clear(),
+    getItem: (k: string) => (data.has(k) ? (data.get(k) as string) : null),
+    key: (i: number) => Array.from(data.keys())[i] ?? null,
+    removeItem: (k: string) => { data.delete(k); },
+    setItem: (k: string, v: string) => { data.set(k, String(v)); },
+  };
+}
+for (const name of ["localStorage", "sessionStorage"] as const) {
+  const current = (globalThis as Record<string, unknown>)[name] as Partial<Storage> | undefined;
+  if (typeof current?.clear !== "function") {
+    const store = memoryStorage();
+    Object.defineProperty(globalThis, name, { value: store, configurable: true, writable: true });
+    if (typeof window !== "undefined" && window !== (globalThis as unknown)) {
+      Object.defineProperty(window, name, { value: store, configurable: true, writable: true });
+    }
+  }
+}

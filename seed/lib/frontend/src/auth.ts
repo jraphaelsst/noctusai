@@ -29,6 +29,17 @@ import { env } from './env';
 import { dropProductCookieSession, goTrueSessionId, verifySessionWithServer } from './identity';
 import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
 import { autoRetryDelayMs } from './retry';
+import { adoptRotatedPair } from './session-ending';
+
+// How a session ends (expiry = local only; explicit Sair = the only server revoke).
+export {
+  adoptRotatedPair,
+  endSessionLocally,
+  signOutExplicitly,
+  type StoredSessionPair,
+  type EndSessionLocallyOptions,
+  type SignOutExplicitlyOptions,
+} from './session-ending';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -212,9 +223,9 @@ async function refreshSharedSession(supabase: AnySupabaseClient): Promise<Refres
   const verdict = discarded ? ({ kind: 'dead' } as RefreshAttempt) : classifySupabaseRefresh(result);
   if (verdict.kind !== 'dead') return verdict;
   const after = await storedRefreshToken(supabase);
-  const rotatedElsewhere = !!after.accessToken
-    && (discarded || (!!after.refreshToken && after.refreshToken !== before.refreshToken));
-  return rotatedElsewhere ? { kind: 'token', token: after.accessToken as string } : { kind: 'dead' };
+  // A discarded commit means a concurrent refresh in this tab won the slot.
+  const adopted = discarded ? after.accessToken : adoptRotatedPair(before.refreshToken, after);
+  return adopted ? { kind: 'token', token: adopted } : { kind: 'dead' };
 }
 
 /**

@@ -1,6 +1,7 @@
 /**
- * Core logout ends the session everywhere: the server revocation call happens
- * FIRST (it needs the bearer), and local state is cleared whatever its outcome.
+ * Core logout (the explicit "Sair") ends the session everywhere: the server
+ * revocation call happens FIRST (it needs the bearer), and local state is cleared
+ * whatever its outcome. Expiry (`endLocally`) never reaches the server.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act } from '@testing-library/react';
@@ -52,12 +53,13 @@ describe('core logout ordering', () => {
     expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
   });
 
-  it("scope 'local' revokes only core's own session (inactivity expiry)", async () => {
+  it('endLocally (inactivity expiry) clears local state with NO server call', async () => {
     post.mockImplementation(async (path: string) => { order.push(`post:${path}`); return { ok: true }; });
     render(<AuthProvider><Probe /></AuthProvider>);
     order.length = 0;
-    await act(async () => { await captured.logout({ scope: 'local' }); });
-    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout?scope=local', 'clear']);
+    await act(async () => { captured.endLocally(); });
+    expect(order).toEqual(['clear']);
+    expect(post).not.toHaveBeenCalledWith(expect.stringContaining('/logout'), expect.anything());
   });
 
   it('strict mode: a failed server call rethrows and does NOT clear local state', async () => {
