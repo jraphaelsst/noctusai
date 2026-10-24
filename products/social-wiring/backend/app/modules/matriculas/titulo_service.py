@@ -102,6 +102,13 @@ NATUREZAS_ULTIMA_TRANSFERENCIA: frozenset[str] = NATUREZAS_TRANSFERENCIA
 
 #: Why a GET has no suggestion — a machine-readable reason for the FE.
 MOTIVO_SEM_TITULO = "sem_titulo_confirmado"
+#: A HUMAN-confirmed título pointer quotes a matrícula whose documento was
+#: removed: surfaced as a pendência (never silently re-pointed over the
+#: human's choice).
+MOTIVO_MATRICULA_REMOVIDA = "matricula_removida"
+MENSAGEM_MATRICULA_REMOVIDA = (
+    "A matrícula do título aquisitivo confirmado foi removida — escolha outra."
+)
 MOTIVO_SEM_ONUS = "sem_onus_confirmado"
 MOTIVO_SEM_DETALHES = "sem_detalhes"
 MOTIVO_SEM_INSTRUMENTO = "sem_instrumento"
@@ -376,8 +383,55 @@ def confirmar_detalhes_ato(
 # ─── título aquisitivo phrase ─────────────────────────────────────────────
 
 
+def _curar_ponteiro_morto(client: Any, org_id: UUID, codigo: str) -> bool:
+    """Re-derive a MACHINE título pointer that quotes a removed documento's
+    extraction, from the LIVE chain (the current matrícula, else its closed
+    predecessors — the same rule `preenchimento_service` chose it by), and
+    write it back in place. True when healed; False when the live chain has
+    no título act (the pointer then stays, and the caller reports no
+    suggestion)."""
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
+    linha_propria = dados_service.linha(client, org_id, codigo) or {}
+    # Healing writes the imóvel's OWN row; a pointer read through a vínculo
+    # that is not that row is left to its owner.
+    if str(linha_propria.get("titulo_aquisitivo_ato_id") or "") != str(
+        linha.get("titulo_aquisitivo_ato_id") or ""
+    ):
+        return False
+    fontes: list[dict] = []
+    atual = _extracao_do_imovel(client, org_id, codigo, linha)
+    if atual is not None and atual.get("status") == estrutura_svc.STATUS_CONCLUIDA:
+        fontes.append(atual)
+    fontes.extend(cadeia_dominial.extracoes_predecessoras(client, org_id, codigo))
+    for fonte in fontes:
+        atos = estrutura_svc.atos_da_extracao(client, org_id, fonte)
+        detalhes = detalhes_svc.detalhes_por_ato(client, org_id, fonte, atos)
+        texto = fonte.get("texto_extraido") or estrutura_svc.texto_da_extracao(
+            client, org_id, fonte["id"]
+        )
+        titulo = (estrutura_svc.sugerir(texto or "", atos, detalhes) or {}).get(
+            "titulo_aquisitivo"
+        )
+        if not titulo:
+            continue
+        estrutura_svc.definir_fontes(
+            client,
+            org_id,
+            fonte["id"],
+            valores={"titulo_aquisitivo_ato_id": titulo["ato_id"]},
+            usuario_id=None,
+        )
+        return True
+    return False
+
+
 def obter_titulo(
-    client: Any, org_id: UUID, codigo: str, *, usuario_id: Optional[Any] = None
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    usuario_id: Optional[Any] = None,
+    _curar: bool = True,
 ) -> dict:
     """The suggested título phrase (from the confirmed título act) + the
     operator's confirmed wording."""
@@ -396,10 +450,20 @@ def obter_titulo(
             client, org_id, linha["titulo_aquisitivo_extracao_id"]
         )
         if extracao is None:
-            # The pointer quotes a REMOVED documento's extraction: no título
-            # until the fill re-points it at a live one.
-            motivo = MOTIVO_SEM_TITULO
-        else:
+            humano = bool(linha.get("titulo_aquisitivo_confirmado_por")) or (
+                linha.get("titulo_aquisitivo_origem") != "sugerido"
+            )
+            if humano:
+                # A human's choice into a dead extraction: a pendência, never
+                # a silent swap.
+                motivo = MOTIVO_MATRICULA_REMOVIDA
+            elif _curar and _curar_ponteiro_morto(client, org_id, codigo):
+                return obter_titulo(
+                    client, org_id, codigo, usuario_id=usuario_id, _curar=False
+                )
+            else:
+                motivo = MOTIVO_SEM_TITULO
+        if extracao is not None:
             por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
             ato = por_id.get(str(ato_id))
             if ato is None:
@@ -433,6 +497,9 @@ def obter_titulo(
         "ato": ato_saida,
         "sugestao": sugestao,
         "motivo_sem_sugestao": motivo,
+        "mensagem_pendencia": (
+            MENSAGEM_MATRICULA_REMOVIDA if motivo == MOTIVO_MATRICULA_REMOVIDA else None
+        ),
         "confirmado": _confirmacao(linha, "titulo_aquisitivo_texto", "texto"),
         # An automatic confirmation that diverges from the current suggestion
         # (owner 2026-10-06): shown, never silently kept.

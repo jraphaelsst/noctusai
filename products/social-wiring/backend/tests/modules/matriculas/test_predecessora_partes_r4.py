@@ -193,9 +193,12 @@ def test_f71_a_pointer_into_a_removed_documents_extraction_is_ignored(client, sc
     ato_morto = next(a for a in atos if a["kind"] == "R" and a["numero"] == 4)
     scoped.set_table_data("imovel_dados", [dados_row(
         titulo_aquisitivo_extracao_id=e_morto["id"], titulo_aquisitivo_ato_id=ato_morto["id"],
+        titulo_aquisitivo_origem="manual", titulo_aquisitivo_confirmado_por="u-1",
     )])
 
     out = titulo_service.obter_titulo(scoped, ORG, CODIGO)
 
+    # A human's choice into a dead extraction is a pendência, never read
+    # (the machine-pointer healing is covered in test_predecessora_r5).
     assert out["sugestao"] is None and out["ato"] is None
-    assert out["motivo_sem_sugestao"] == titulo_service.MOTIVO_SEM_TITULO
+    assert out["motivo_sem_sugestao"] == titulo_service.MOTIVO_MATRICULA_REMOVIDA

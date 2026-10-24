@@ -41,7 +41,8 @@ export type MotivoSemSugestao =
   | "sem_onus_confirmado"
   | "sem_detalhes"
   | "sem_instrumento"
-  | "sem_credor";
+  | "sem_credor"
+  | "matricula_removida";
 
 /**
  * What to tell the operator, and what to DO about it, per reason. Keyed by
@@ -57,6 +58,8 @@ export const MOTIVO_SEM_SUGESTAO_TEXTO: Record<string, string> = {
     "O ato do título aquisitivo ainda não foi lido. Abra a matrícula e confirme os detalhes do ato.",
   sem_instrumento:
     "O ato do título aquisitivo não informa o instrumento (escritura, livro, folhas). Complete o instrumento nos detalhes do ato para gerar a frase.",
+  matricula_removida:
+    "A matrícula do título aquisitivo confirmado foi removida — escolha outra.",
   sem_credor:
     "Os atos de ônus confirmados não informam o credor. Preencha o credor nos detalhes do ato.",
 };

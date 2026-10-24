@@ -481,6 +481,16 @@ def _natureza(
     if not achados:
         return None, NENHUMA
     cessao = next((a for a in sorted(achados) if a[2] == "cessao_direitos"), None)
+    if cessao is not None and any(
+        a[0] < cessao[0] and a[2] in NATUREZAS_TRANSFERENCIA and a[2] != "cessao_direitos"
+        for a in achados
+    ):
+        # "TRANSMITIRAM … por venda e compra … e por consequência a cessão de
+        # direitos objeto da averbação nº 02": the operative verb+nature came
+        # FIRST; a trailing reference to ANOTHER act's cessão never
+        # reclassifies it (R5-1).
+        achados = [a for a in achados if a[2] != "cessao_direitos"]
+        cessao = None
     if cessao is not None:
         # "os compromissários … CEDERAM E TRANSFERIRAM … os direitos do
         # compromisso de compra e venda": the promise it names (and the sale
@@ -760,7 +770,13 @@ _NAO_NOME = frozenset(
 #: Words that mark PROSE inside a candidate name — a party's name never
 #: carries a clause verb / preposition like these ("… pela implantação de …").
 _PALAVRAS_DE_PROSA = frozenset(
-    {"PELA", "PELO", "PELAS", "PELOS", "PARA", "QUE", "SERA", "DEVERA", "RESPONSABILIDADE", "IMPLANTACAO"}
+    {
+        "PELA", "PELO", "PELAS", "PELOS", "PARA", "QUE", "SERA", "DEVERA", "RESPONSABILIDADE",
+        "IMPLANTACAO",
+        # Legal text of a qualification ("casados no regime da comunhão de
+        # bens, antes da Lei nº 6515/77") is never a party (R5-2).
+        "LEI", "REGIME", "COMUNHAO", "ANTES", "VIGENCIA", "SEPARACAO",
+    }
 )
 
 #: A creditor institution's name — what an ônus act's "adquirente" really is.
@@ -826,7 +842,12 @@ def _fim_nome(norm: str, a: int, b: int) -> int:
 #: qualification names (not the "e sua mulher X" form, which `_pessoas`
 #: already lists as a party of its own).
 _CASADO_COM = re.compile(
-    r"(?<![A-Z])CASAD[OA]S?(?:\s+[A-Z]+){0,3}?\s+COM\s+(?:(?:A|O)\s+(?:SENHORA|SENHOR|SRA?\.?|SR\.?)\s+)?"
+    r"(?<![A-Z])CASAD[OA]S?"
+    # up to a short regime clause ("no regime da comunhão de bens, antes da
+    # Lei 6515/77,") before the COM that names the spouse (R5-2); never across
+    # another spouse marker.
+    r"(?:[\s,]+(?!(?:MULHER|MARIDO|ESPOS[AO]|CONJUGE|SUA|SEU)(?![A-Z]))[A-Z0-9/]+){0,14}?"
+    r"[\s,]+COM\s+(?:(?:A|O)\s+(?:SENHORA|SENHOR|SRA?\.?|SR\.?)\s+)?"
 )
 
 
@@ -972,6 +993,11 @@ _NAO_NOME_DEPOIS = frozenset(
 
 _FIM_PERIODO = re.compile(r"\.(?=\s|$)")
 
+#: A document abbreviation's dot ("RG.", "CIC/MF.", "nº.") is not a sentence
+#: end — a subject block must never START right after it (R5-2: "sob nº" read
+#: as the cedente).
+_ABREVIATURA_DOC = re.compile(r"(?<![A-Z])(?:RG|CIC|MF|CPF|CNPJ|CIC/MF|CPF/MF|CNPJ/MF|FLS|N|NO|SR|SRA|DR)\.$")
+
 
 def _sujeito_desde(t: _Texto, inicio: int, verbo: int) -> list[tuple[Parte, bool]]:
     cue = None
@@ -1014,7 +1040,11 @@ def _sujeito(t: _Texto, corpo: int, verbo: int) -> list[tuple[Parte, bool]]:
     Tabelião de Notas de X, FULANO, …, vendeu") — the first comma-delimited
     piece that reads as a name. `;` is a party separator, never a start.
     """
-    inicios = [m.end() for m in _FIM_PERIODO.finditer(t.norm, corpo, verbo)]
+    inicios = [
+        m.end()
+        for m in _FIM_PERIODO.finditer(t.norm, corpo, verbo)
+        if not _ABREVIATURA_DOC.search(t.norm, max(corpo, m.start() - 12), m.end())
+    ]
     for inicio in [*reversed(inicios), corpo]:
         achados = _sujeito_desde(t, inicio, verbo)
         if achados:
