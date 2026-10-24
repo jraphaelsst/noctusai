@@ -113,6 +113,15 @@ def _int(valor: Any) -> Optional[int]:
     return int(valor)
 
 
+def _especificacoes(valor: Any) -> Optional[tuple[str, ...]]:
+    """Migration 308. The stored selection exactly as stored (the write path
+    validated it) — NULL stays None (legacy mode); an empty array is kept as
+    an empty selection, never read as "legacy"."""
+    if valor is None:
+        return None
+    return tuple(str(v) for v in valor)
+
+
 def _id(valor: Any) -> Optional[str]:
     return str(valor) if valor else None
 
@@ -1031,6 +1040,9 @@ def carregar(
         **exig_svc.ler(client, org_id, str(atendimento_id)),
         # Migration 157.
         modalidade_assinatura=contrato.get("modalidade_assinatura") or "digital",
+        # Migration 308 — None (column NULL / absent) = legacy mode.
+        especificacoes=_especificacoes(contrato.get("especificacoes")),
+        especificacoes_versao=_int(contrato.get("especificacoes_versao")),
     )
     return dados, atendimento_id
 

@@ -790,6 +790,13 @@ class DadosContrato:
     #: DIGITAL clause) or 'fisica' (printed, signed by hand: no digital
     #: clause, signature lines, "em NN vias"). Exactly the stored column.
     modalidade_assinatura: str = "digital"
+    #: Migration 308. `atendimento_contratos.especificacoes` — the operator's
+    #: SELECTED contract specifications (`especificacoes.CATALOGO` keys, in
+    #: catalogue order), and `especificacoes_versao` the `CATALOGO_VERSAO`
+    #: they were chosen against. `None` = nothing selected: LEGACY mode (the
+    #: readiness asks what the derived switches imply, as before).
+    especificacoes: Optional[tuple[str, ...]] = None
+    especificacoes_versao: Optional[int] = None
     #: [S2b, negociação/financiamento extraction contract §E4] The deal's
     #: `atendimentos.id` — `carregador.carregar` already resolves it (it
     #: returns it as its own second value); this is that SAME id, kept on

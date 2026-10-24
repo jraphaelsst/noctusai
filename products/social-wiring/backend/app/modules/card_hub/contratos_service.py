@@ -478,6 +478,9 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
         "processo_legado_motivo": row.get("processo_legado_motivo"),
         # Migration 157 — the signing GATE: digital (e-signature) | fisica.
         "modalidade_assinatura": modalidade(row),
+        # Migration 308 — the selected contract specifications; null = legacy.
+        "especificacoes": row.get("especificacoes"),
+        "especificacoes_versao": row.get("especificacoes_versao"),
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
         # Highest `numero` among LIVE versions — `linhas` above already
@@ -1061,6 +1064,51 @@ def atualizar(
 
     atualizado = exigir_contrato(client, org_id, atendimento_id, contrato_id)
     return _contrato_saida(client, org_id, atualizado)
+
+
+def definir_especificacoes(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    contrato_id: UUID,
+    *,
+    especificacoes: list[str],
+) -> dict:
+    """Migration 308. Store the operator's SELECTED contract specifications
+    (owner direction 2026-10-24: selectable in the UI; they scope which data
+    the readiness asks for). Validated by `especificacoes.validar` — an
+    unknown key, a missing `requer` or an exclusive pair is a named 400 that
+    writes nothing. Stored in catalogue order, stamped with the
+    `CATALOGO_VERSAO` it was chosen against.
+
+    Returns `{especificacoes, especificacoes_versao, modelo}` — `modelo` is
+    the label the selection implies (`especificacoes.modelo_de`); the stored
+    `atendimento_contratos.modelo` is NOT rewritten here (the generator keeps
+    a 'gerado' contract's modelo in sync at generation)."""
+    # Function-level, like `_valores_em_revisao`: `contrato_gerador` reads
+    # contracts through THIS module.
+    from app.modules.card_hub.contrato_gerador import especificacoes as esp
+
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    try:
+        selecao = esp.validar(especificacoes)
+    except ValueError as exc:
+        raise ValidationError_(str(exc), field="especificacoes") from None
+
+    _t(client, TABLE).update({
+        "especificacoes": list(selecao),
+        "especificacoes_versao": esp.CATALOGO_VERSAO,
+        "updated_at": now_iso(),
+    }).eq("org_id", str(org_id)).eq("id", str(contrato_id)).execute()
+
+    row = exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    guardadas = row.get("especificacoes")
+    return {
+        "especificacoes": list(guardadas) if guardadas is not None else None,
+        "especificacoes_versao": row.get("especificacoes_versao"),
+        "modelo": esp.modelo_de(guardadas) if guardadas is not None else None,
+    }
 
 
 def processo_legado_no_atendimento(client: Any, org_id: UUID, atendimento_id: Any) -> bool:

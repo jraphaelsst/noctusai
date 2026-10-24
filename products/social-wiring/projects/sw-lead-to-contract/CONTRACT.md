@@ -400,3 +400,18 @@ Action: **LINK, don't move.**
 
 ### 9.3 Party identity
 - The card checklist's identity row edits `cpf`, `rg`, `rg_orgao_expedidor` in place through the existing `PATCH` of `DadosPessoais` (one field per save).
+
+## §10 · Contract specifications are selectable (owner 2026-10-24)
+
+> Real deals have no reference contract: what kind of contract this is must be a stated choice, and it scopes what the readiness asks for.
+
+### 10.1 Catalogue (`contrato_gerador/especificacoes.py`, `CATALOGO_VERSAO = 1`)
+- Keys (catalogue order): `compra_venda` (base, always) · pagamento: `a_vista` · `sinal_saldo` · `financiamento_bancario` · `fgts` (requer `financiamento_bancario`) · `parcelas_diretas` · `intermediarias` · `confissao_divida` (requer `parcelas_diretas`) · `permuta` · `intermediacao`. `a_vista` is exclusive with `financiamento_bancario` / `fgts` / `parcelas_diretas` / `confissao_divida`.
+- Each spec declares `requisitos` (readiness `falta` keys; `*` = one id segment), `clausulas`, `requer`, `exclusiva_com`. A falta key no spec governs is always asked.
+- `sugerir(switches)` is the successor of `derivacao.modelo_derivado` (which is now `modelo_de(sugerir(sw))`); `conflitos(especificacoes, switches)` names data that contradicts a selection (never absent data); `modelo_de` → `compra_venda | compra_venda_a_vista | compra_venda_permuta`.
+- **G1 (open owner question):** an à vista deal with no sinal has no multa-rescisória base — the requisito `negociacao.multa_rescisoria_base` on `a_vista` (dispensed by `sinal_saldo`); no value is invented.
+
+### 10.2 Storage + route (migration 308)
+- `atendimento_contratos.especificacoes text[] NULL` + `especificacoes_versao int NULL`; NULL = legacy mode (readiness follows the derived switches). `carregador` loads both into `DadosContrato`.
+- `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` body `{especificacoes: [str]}` → `{especificacoes (catalogue order), especificacoes_versao, modelo}`. Any org member; `400` on an unknown key / missing `requer` / exclusive pair (nothing written); `404` foreign contract; `401` unauthenticated. The contract read (`GET …/contratos`) carries `especificacoes` + `especificacoes_versao`.
+- Not yet: the readiness scoping by `requisitos` and the FE selector (next slices).

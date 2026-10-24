@@ -642,3 +642,7 @@ Authored 2026-10-24 (owner directive: no imóvel field is upload-only). Adds `im
 ## 307 — certidao_consulta_manual_sem_documento — NOT APPLIED
 
 Authored 2026-10-24 (F86). `certidao_consultas.documento` DROP NOT NULL + CHECK `origem='manual' OR documento non-empty` — a manual cell holder (certidão PDF upload) may be created for a party without CPF/CNPJ; an automatic consulta still requires it. Forward-safe, idempotent (every existing row satisfies the CHECK). Apply BEFORE deploying the image whose `garantir_celula` accepts a party without document (an un-migrated DB 500s that insert instead of the old 422).
+
+## 308 — contrato_especificacoes — NOT APPLIED
+
+Authored 2026-10-24 (owner direction: contract specifications are selectable and scope the readiness). Adds `atendimento_contratos.especificacoes TEXT[]` + `especificacoes_versao INTEGER` (both NULL = legacy mode, readiness follows the derived switches). No CHECK — the vocabulary is the versioned code catalogue `contrato_gerador/especificacoes.py`, validated on write. Additive, idempotent. Apply BEFORE deploying the image that mounts `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` (an un-migrated DB 500s that write; reads tolerate the absent columns via `row.get`).

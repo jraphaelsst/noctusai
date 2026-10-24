@@ -126,6 +126,7 @@ from app.modules.card_hub.schemas import (
     ExtracaoSugestaoBody,
     ParteContratoPatchBody,
     PartePapelPatchBody,
+    EspecificacoesBody,
     ProcessoLegadoBody,
     ResolverConflitoNegociacaoBody,
     RoteiroOrdemBody,
@@ -1742,6 +1743,26 @@ def put_contrato_processo_legado_route(
         client, org_id, cliente_id, contrato_id,
         ativo=body.ativo, motivo=body.motivo,
         usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.put("/{cliente_id}/contratos/{contrato_id}/especificacoes")
+def put_contrato_especificacoes_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    body: EspecificacoesBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Migration 308. The operator SELECTS the contract's specifications
+    (owner direction 2026-10-24) — `{especificacoes: [str]}` →
+    `{especificacoes, especificacoes_versao, modelo}`. Any org member (it is
+    deal data, like the termos). 400 on an incoherent selection (unknown key,
+    missing `requer`, exclusive pair), 404 for a foreign contract. See
+    `projects/sw-lead-to-contract/CONTRACT.md` §10."""
+    _user, org_id = _auth_parts(auth)
+    return contratos_svc.definir_especificacoes(
+        client, org_id, cliente_id, contrato_id, especificacoes=body.especificacoes,
     )
 
 

@@ -418,6 +418,15 @@ class ContratoPatchBody(StrictHttpModel):
     prazo_pendencias_dias: Optional[int] = None
 
 
+class EspecificacoesBody(StrictHttpModel):
+    """Migration 308 — the contract's selected specifications
+    (`contrato_gerador.especificacoes.CATALOGO` keys). The vocabulary and
+    its coherence (requer / exclusiva_com) are validated by the service —
+    a named 400, one source of truth for the catalogue."""
+
+    especificacoes: list[str] = Field(max_length=32)
+
+
 class ProcessoLegadoBody(StrictHttpModel):
     """Migration 151 — admin-only "processo anterior à plataforma" flag
     (owner directive 2026-09-22). `ativo=True` dispenses the contract
