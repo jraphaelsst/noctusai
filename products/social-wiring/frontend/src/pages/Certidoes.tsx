@@ -30,6 +30,7 @@
  *     seed variants here would silently opt this page out of them and leave it
  *     looking subtly unlike every other page in the product.
  */
+import { tipoArquivoAceito } from "@noctusai/lib";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -359,7 +360,7 @@ export default function Certidoes() {
     e.target.value = "";
     if (!file || !uploadingId) return;
 
-    if (file.type !== "application/pdf") {
+    if (!tipoArquivoAceito(file, ["application/pdf"])) {
       toast.error("Apenas arquivos PDF são aceitos.");
       setUploadingId(null);
       return;

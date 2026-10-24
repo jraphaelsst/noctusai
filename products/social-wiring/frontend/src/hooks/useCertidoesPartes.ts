@@ -7,6 +7,7 @@
  * Polling: the read refetches every `POLL_MS` while any cell is still being
  * produced (`certidaoEmAndamento`) and stops by itself once all settle.
  */
+import { tipoArquivoAceito } from "@noctusai/lib";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
@@ -416,7 +417,7 @@ export function useUploadNaCelula(clienteId: string, atendimentoId?: string | nu
   const invalidate = useInvalidatePartes(clienteId);
   return useMutation({ // noc-allow: invalidate-only — the server reads the PDF asynchronously; the response is the ensured cell ids, not the filled cell
     mutationFn: async ({ kind, alvoId, linhaChave, file }: UploadCelulaInput) => {
-      if (file.type !== "application/pdf") throw new Error("Apenas arquivos PDF são aceitos.");
+      if (!tipoArquivoAceito(file, ["application/pdf"])) throw new Error("Apenas arquivos PDF são aceitos.");
       const cel = await api.post<CelulaEnsureResponse>(`${clienteBase(clienteId)}/certidoes/celulas`, {
         kind,
         alvo_id: alvoId,

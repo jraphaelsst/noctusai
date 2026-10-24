@@ -24,6 +24,7 @@ export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneD
 // API client
 export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
 export { mfaChallenge } from './mfaChallenge';
+export { tipoArquivoAceito } from './uploadTipo';
 export type { MfaTransport, MfaVerifyResult, MfaChallengeRequest } from './mfaChallenge';
 export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_LICENCA_CODE, SEM_ACESSO_PATH, ORG_SELECTION_CHANGED_CODE, ORG_SELECTION_REQUIRED_CODE, isOrgSelectionChangedBody, isOrgSelectionRefusalBody, orgSelectionOf, isMemberOrgPicker, NO_ORG_SELECTION } from './access';
 export type { MeAccess, OrgSelectionState, OrgChoice, OrgRef, EligibleOrg, ManageableOrg } from './access';

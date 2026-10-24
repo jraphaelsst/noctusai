@@ -35,6 +35,7 @@
  *   · the FONTES panel — heuristic título aquisitivo / ônus suggestions,
  *     clearly labelled as suggestions, with confirm / choose-other / clear.
  */
+import { tipoArquivoAceito } from "@noctusai/lib";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -202,7 +203,7 @@ export default function Matriculas() {
 
   // Auto-select newly created extraction for live status tracking
   const handleUpload = useCallback((file: File) => {
-    if (file.type !== 'application/pdf') {
+    if (!tipoArquivoAceito(file, ['application/pdf'])) {
       toast.error('Apenas arquivos PDF são aceitos.');
       return;
     }

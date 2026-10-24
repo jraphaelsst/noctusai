@@ -20,6 +20,7 @@
  * pairs that with `isPending && !data` for the skeleton (never `isLoading`,
  * never a bare `isFetching`) — see KB § PATTERNS/frontend/lying-loading-state.md.
  */
+import { tipoArquivoAceito } from "@noctusai/lib";
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
@@ -647,7 +648,7 @@ export function useUploadResultadoManual(scope: CertidoesInvalidationScope = {})
 
   return useMutation({ // noc-allow: invalidate-only — the upload answers nothing; the PDF is read by a background task that fills the resultado, so its new state arrives via the polled listing
     mutationFn: async ({ resultadoId, file }: { resultadoId: string; file: File }) => {
-      if (file.type !== "application/pdf") {
+      if (!tipoArquivoAceito(file, ["application/pdf"])) {
         throw new Error("Apenas arquivos PDF são aceitos.");
       }
       const formData = new FormData();

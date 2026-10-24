@@ -31,6 +31,7 @@
  * Slice C) — a MOVE, not a rewrite: markup, classes and data-testids are SW's,
  * so SW's own suites pass unchanged once it consumes this copy (Slice F).
  */
+import { tipoArquivoAceito } from "../../uploadTipo";
 import { useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, FileText, Loader2, RotateCw, Trash2, Upload } from "lucide-react";
 
@@ -171,7 +172,7 @@ export function AnexosSection({
               setErroArquivo(
                 `"${file.name}" não foi enviado: escolha o tipo do documento e selecione o arquivo de novo.`,
               );
-            } else if (file.type && !ACCEPT_DOCUMENTO.split(",").includes(file.type)) {
+            } else if (!tipoArquivoAceito(file, ACCEPT_DOCUMENTO.split(","))) {
               setErroArquivo(
                 `"${file.name}" não foi enviado: formato ${file.type} não aceito (use PDF, JPEG, PNG ou WebP).`,
               );
