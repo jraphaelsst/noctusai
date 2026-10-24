@@ -1067,9 +1067,9 @@ def processo_legado_no_atendimento(client: Any, org_id: UUID, atendimento_id: An
     """Is this deal flagged "processo anterior à plataforma" (migration 151)?
     True when ANY live contract of the atendimento carries `processo_legado`
     — the flag is per contract, but what it records (the deal began outside
-    the platform; its certidões come from the folder) is a fact about the
-    deal. Read by every automatic, BILLED certidão emission path so a
-    historical replay never spends InfoSimples credit (F85)."""
+    the platform) is a fact about the deal. Read by every AUTOMATIC, billed
+    certidão emission path so a historical replay never spends InfoSimples
+    credit unasked (F85); an explicit operator emission is not gated."""
     rows = table_reads.paged_rows(
         client,
         TABLE,

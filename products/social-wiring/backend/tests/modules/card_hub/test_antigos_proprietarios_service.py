@@ -359,8 +359,9 @@ class TestImovelCanonico:
 
 
 class TestProcessoLegadoNaoEmite:
-    """A pre-platform deal's certidões come from its folder: parties are
-    created, NO billed emission is requested (owner, InfoSimples spend)."""
+    """A pre-platform deal: parties are created, NO automatic billed emission
+    is requested (owner, InfoSimples spend) — but the operator's EXPLICIT
+    emission on the row still works (owner 2026-10-24)."""
 
     def _legado(self, scoped, aid):
         scoped.set_table_data("atendimento_contratos", [{
@@ -399,3 +400,24 @@ class TestProcessoLegadoNaoEmite:
         }])
         out = _sync(scoped, cid, _info(("Antigo Dono Exemplo", CPF_A)))
         assert out["emissoes"][0]["status"] == "solicitada" and out["emissao_ignorada"] is None
+
+    @pytest.mark.parametrize("tipos", [None, ["cnd_federal"]], ids=["todas", "linha"])
+    def test_explicit_emission_on_a_legacy_deal_still_works(self, scoped, tipos):
+        cid, aid = _card_so_com_principal(scoped)
+        self._legado(scoped, aid)
+        out = svc.sincronizar(
+            scoped, ORG_ID, cid, user_id=USER, check_credentials=_creds_ok,
+            ler_antigos=_info_por_codigo({"LD0042": [("Antigo Dono Exemplo", CPF_A)]}),
+        )
+        parte = next(
+            p for p in certidoes_svc.todas_as_partes(scoped, ORG_ID, cid, aid)
+            if p.get("parte_id") == out["criados"][0]["parte_id"]
+        )
+        kind = "empresa" if parte.get("empresa_id") else "pessoa"
+        alvo_id = parte.get("empresa_id") or parte.get("cliente_id")
+        emitida = certidoes_svc.solicitar_emissao(
+            scoped, ORG_ID, cid, kind, alvo_id, tipos=tipos,
+            atendimento_id=aid, user_id=USER, check_credentials=_creds_ok,
+        )
+        assert emitida["consulta_id"]
+        assert len(scoped.table("certidao_consultas").select("*").execute().data) == 1

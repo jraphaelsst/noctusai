@@ -321,10 +321,11 @@ def _emitir(
     credentials) is REPORTED, never swallowed.
 
     `legado` (the deal is a "processo anterior à plataforma", see
-    `contratos_service.processo_legado_no_atendimento`): the certidões come
-    from the deal's folder, so NO billed emission is requested — the party
-    stays, the skip is reported as `PROCESSO_LEGADO`. The row's own emission
-    button still works if the operator decides to emit."""
+    `contratos_service.processo_legado_no_atendimento`): NO billed emission
+    is requested automatically — the party stays, the skip is reported as
+    `PROCESSO_LEGADO`. Emission on such a deal is the operator's EXPLICIT
+    act (the row's "Solicitar emissão" / "(todas)", unguarded — owner
+    2026-10-24: e2e replays do emit through the system) or a PDF upload."""
     if legado:
         return {"parte_id": item["parte_id"], "status": "nao_iniciada", "codigo": CODIGO_PROCESSO_LEGADO, "consulta_id": None}
     kind = "empresa" if item.get("empresa_id") else "pessoa"
