@@ -388,6 +388,12 @@ export function ParteSecao(p: ParteSecaoProps) {
                             {c.erro_mensagem}
                           </p>
                         )}
+                        {c.ultima_tentativa?.status === "erro" && (
+                          <p className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-ultima-tentativa-${parte.chave}-${linha.chave}`}>
+                            Última emissão falhou: {c.ultima_tentativa.erro || "erro desconhecido"}
+                            {c.ultima_tentativa.em ? ` (${formatDate(c.ultima_tentativa.em)})` : ""} — evidência anterior mantida
+                          </p>
+                        )}
                         {c.pendencia && c.erro_mensagem && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-pendencia-${parte.chave}-${linha.chave}`}>
                             {c.erro_mensagem}
