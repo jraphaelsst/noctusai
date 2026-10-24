@@ -65,6 +65,17 @@ already returned `False` for). `backfill_aplicar_campos_vinculados` is the
 one-time catch-up for rows written before this hook existed — idempotent by
 construction, since a field already filled (by either path) is left alone.
 
+🔴 LINKED BY NAME ONLY FOR THE TÍTULO'S ADQUIRENTES (F97, 2026-10-24)
+--------------------------------------------------------------------
+When no cliente holds the matrícula's CPF yet, `_vincular` falls back to the
+card's SELLER (`atendimento_partes.lado='vendedor'`) of a deal on THIS
+imóvel whose normalised name equals the party's — only for the adquirentes
+of the extraction's latest ownership-transferring act (the current owners'
+título), exactly one match, else nothing. A different CPF already on that
+person is `aplicar_campos_ao_cliente`'s conflict path. The estado civil is
+DATED by its act (`_datas_evidencia`): a newer registry statement replaces
+an older certidão's machine value, still machine-pending.
+
 NOC-REMEDIATE[matricula-qualificacao-auto-apply-notify]: a conflict this
 auto-apply opens is logged (`logger.info`) but NOT fanned out through
 `notification_service` — `persistir_sugestoes` runs synchronously from
@@ -77,6 +88,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
 
@@ -88,14 +100,21 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
-from noctusai_lib.integrations.documents import canonical_gender
+from noctusai_lib.integrations.documents import (
+    NATUREZAS_TRANSFERENCIA,
+    canonical_gender,
+    normalizar_nome_parte,
+)
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.modules.card_hub.identidade_extracao_service import (
+    CAMPOS_DATADOS,
     CampoExtraido,
     aplicar_campos_ao_cliente,
     notificar_conflitos,
 )
 from app.modules.card_hub.services import atendimentos_abertos_certificaveis
+from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.services import table_reads
 from app.services.clientes_service import clientes_por_cpf
 from app.services.documento_store import now_iso
@@ -106,6 +125,9 @@ TABLE = "matricula_qualificacoes"
 CLIENTES_TABLE = "clientes"
 EXTRACOES_TABLE = "matricula_extracoes"
 ATENDIMENTO_NEGOCIACAO_TABLE = "atendimento_negociacao"
+PARTES_TABLE = "atendimento_partes"
+ATOS_TABLE = "matricula_atos"
+LADO_VENDEDOR = "vendedor"
 
 #: Where a matrícula-sourced value's `<campo>_origem` reads on `clientes` —
 #: distinct from a `tipo_documento` value (`'rg'`, `'cpf'`, ...) because this
@@ -272,12 +294,82 @@ def _candidatos_no_imovel(
     return escopados
 
 
+def _vendedores_do_imovel_por_nome(
+    client: Any, org_id: Any, extracao_id: str, nome: Optional[str]
+) -> list[str]:
+    """The distinct clientes who are a VENDEDOR-side party (`atendimento_
+    partes.lado='vendedor'`) on a deal whose negociação is THIS matrícula's
+    imóvel and whose normalised name (accents/case/spacing folded) IS
+    `nome`. The F97 fallback when no cliente carries the matrícula's CPF yet
+    — the seller on the card the matrícula's título names."""
+    chave = _chave_nome(nome)
+    if not chave or chave not in _adquirentes_do_titulo(client, org_id, extracao_id):
+        return []
+    codigo = _codigo_da_extracao(client, org_id, extracao_id)
+    if not codigo:
+        return []
+    negociacoes = table_reads.paged_rows(
+        client, ATENDIMENTO_NEGOCIACAO_TABLE, org_id,
+        eq_filters={"imovel_codigo": codigo.strip().upper()},
+        order_col="atendimento_id", id_key="atendimento_id", select="atendimento_id",
+    )
+    atendimento_ids = sorted({str(n["atendimento_id"]) for n in negociacoes})
+    if not atendimento_ids:
+        return []
+    partes = table_reads.in_batched_rows(
+        client, PARTES_TABLE, org_id, "atendimento_id", atendimento_ids,
+        select="atendimento_id,cliente_id,lado",
+    )
+    cliente_ids = sorted({
+        str(p["cliente_id"]) for p in partes
+        if p.get("cliente_id") and p.get("lado") == LADO_VENDEDOR
+    })
+    if not cliente_ids:
+        return []
+    clientes = table_reads.in_batched_rows(
+        client, CLIENTES_TABLE, org_id, "id", cliente_ids,
+        select="id,nome,nome_completo,nome_oficial",
+    )
+    return [
+        str(c["id"]) for c in clientes
+        if chave in {
+            _chave_nome(c.get(k)) for k in ("nome_oficial", "nome_completo", "nome")
+        }
+    ]
+
+
+def _adquirentes_do_titulo(client: Any, org_id: Any, extracao_id: str) -> set[str]:
+    """Normalised names of the adquirentes of this extraction's LATEST
+    ownership-transferring act — the current owners' título. Only THEY may
+    be matched to a card seller by name: an older party of the chain who
+    merely shares a seller's name is never bound to them."""
+    atos = table_reads.paged_rows(
+        client, ATOS_TABLE, org_id, eq_filters={"extracao_id": str(extracao_id)}
+    )
+    ordem = {str(a["id"]): int(a.get("ordem") or 0) for a in atos if a.get("kind") != "abertura"}
+    transferencias = [
+        d for d in detalhes_svc.linhas_da_extracao(client, org_id, extracao_id)
+        if str(d.get("ato_id")) in ordem
+        and d.get("natureza") in NATUREZAS_TRANSFERENCIA
+        and d.get("adquirentes")
+    ]
+    if not transferencias:
+        return set()
+    titulo = max(transferencias, key=lambda d: ordem[str(d["ato_id"])])
+    return {_chave_nome(p.get("nome")) for p in titulo["adquirentes"]} - {""}
+
+
+def _chave_nome(nome: Optional[str]) -> str:
+    return " ".join(fold_accents_ascii(normalizar_nome_parte(nome or "") or "").upper().split())
+
+
 def _vincular(
     client: Any,
     org_id: Any,
     extracao_id: str,
     normalizado: str,
     por_cpf: dict[str, list[str]],
+    nome: Optional[str] = None,
 ) -> tuple[Optional[str], str]:
     """`(cliente_id, vinculo_status)` for one normalised CPF/CNPJ — the
     three-outcome contract migration 137's header names.
@@ -296,6 +388,13 @@ def _vincular(
         if len(escopados) == 1:
             return escopados[0], VINCULADO
         return None, AMBIGUO
+    # No cliente holds the CPF yet: the card's SELLER of this imóvel, by
+    # normalised name — exactly one, else nothing (never a guess). A
+    # different CPF already on that person is the conflict path of
+    # `aplicar_campos_ao_cliente`, never an overwrite.
+    por_nome = _vendedores_do_imovel_por_nome(client, org_id, extracao_id, nome)
+    if len(por_nome) == 1:
+        return por_nome[0], VINCULADO
     return None, SEM_CORRESPONDENCIA
 
 
@@ -310,7 +409,7 @@ def _linha(
     normalizado = _digitos(q.cpf_cnpj)
     if not normalizado:
         return None  # mesclar_qualificacoes never emits this; defensive only
-    cliente_id, vinculo = _vincular(client, org_id, extracao_id, normalizado, por_cpf)
+    cliente_id, vinculo = _vincular(client, org_id, extracao_id, normalizado, por_cpf, q.nome)
     return {
         "id": str(uuid4()),
         "org_id": org_id,
@@ -463,7 +562,7 @@ def revincular_pendentes(
         if not normalizado:
             continue
         cliente_id, vinculo = _vincular(
-            client, org_id, str(row["extracao_id"]), normalizado, por_cpf
+            client, org_id, str(row["extracao_id"]), normalizado, por_cpf, row.get("nome")
         )
         if vinculo != VINCULADO or not cliente_id:
             continue
@@ -603,7 +702,31 @@ def _aplicar_automatico(client: Any, org_id: Any, row: dict) -> tuple[dict[str, 
         # who later clicks `confirmar` re-runs this with their own id and
         # stamps whatever is still unconfirmed.
         confirmado_por=None,
+        # The registry's statement is DATED: a newer estado civil beats an
+        # older certidão's (F97) — still a suggestion, never a confirmation.
+        datas_evidencia=_datas_evidencia(client, org_id, row),
     )
+
+
+def _datas_evidencia(client: Any, org_id: Any, row: dict) -> dict:
+    """`{campo: data_registro}` of the act that supplied each dated field
+    (`identidade_extracao_service.CAMPOS_DATADOS`) — `row.origem[campo]` is
+    that act's id; its `matricula_ato_detalhes.data_registro` is when the
+    registry stated it. A field whose act carries no date is left out."""
+    saida: dict = {}
+    for campo in CAMPOS_DATADOS:
+        ato_id = (row.get("origem") or {}).get(campo)
+        if not ato_id or _vazio_texto(row.get(campo)):
+            continue
+        detalhe = detalhes_svc.linha_do_ato(client, org_id, ato_id)
+        bruto = (detalhe or {}).get("data_registro")
+        if bruto:
+            saida[campo] = date.fromisoformat(str(bruto)[:10])
+    return saida
+
+
+def _vazio_texto(valor: Any) -> bool:
+    return valor is None or not str(valor).strip()
 
 
 def _formatar_cpf_para_cliente(row: dict) -> Optional[str]:

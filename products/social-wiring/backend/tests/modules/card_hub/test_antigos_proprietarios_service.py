@@ -134,6 +134,32 @@ class TestSincronizar:
         out = _sync(scoped, cid, _info(("Antigo Sem Documento", None)))
         assert out["emissoes"][0]["codigo"] == "DOCUMENTO_AUSENTE"
 
+    def test_f97_a_ja_qualificado_seller_resolved_by_the_matricula_is_created_with_his_cpf(
+        self, scoped
+    ):
+        """`titulo_service` now hands the back-referenced seller WITH the CPF
+        the earlier act qualified him with — the party is created with it and
+        emission starts, instead of DOCUMENTO_AUSENTE."""
+        cid, _aid = _card(scoped)
+        out = _sync(scoped, cid, _info(("Antigo Dono Exemplo", CPF_A)))
+        (antigo,) = partes_service.listar_antigos(scoped, ORG_ID, cid)
+        assert antigo["documento"] == CPF_A
+        assert out["emissoes"][0]["status"] == "solicitada"
+
+    def test_f97_an_antigo_synced_without_a_document_gets_the_cpf_filled_not_duplicated(
+        self, scoped
+    ):
+        cid, _aid = _card(scoped)
+        _sync(scoped, cid, _info(("Antigo Dono Exemplo", None)))  # before the fix
+        out = _sync(scoped, cid, _info(("ANTIGO DONO EXEMPLO", CPF_A)))
+        assert out["criados"] == []
+        assert out["ja_no_card"][0]["documento_preenchido"] is True
+        (antigo,) = partes_service.listar_antigos(scoped, ORG_ID, cid)
+        assert antigo["documento"] == CPF_A
+        cliente = scoped.table("clientes").select("*").eq("id", antigo["cliente_id"]).execute().data[0]
+        assert cliente["cpf_origem"] == "matricula"
+        assert cliente["cpf_confirmado_por"] is None
+
 
 class TestDispensa:
     def test_requires_a_motivo(self, scoped):

@@ -31,6 +31,8 @@ from uuid import UUID
 
 from noctusai_lib.integrations.documents import cnpj as cnpj_docs
 from noctusai_lib.integrations.documents import cpf as cpf_docs
+from noctusai_lib.integrations.documents import normalizar_nome_parte
+from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import (
     AppException,
     ConflictError,
@@ -41,10 +43,12 @@ from noctusai_lib.primitives.exceptions import (
 from app.modules.card_hub import certidoes_partes_service as certidoes_partes_svc
 from app.modules.card_hub import compradores_service as comp_svc
 from app.modules.card_hub import contratos_service
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import partes_service
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.card_hub.services import ensure_cliente, resolve_atendimento_id
 from app.modules.imovel_hub import atendimento_imoveis_service as imoveis_do_atendimento
+from app.modules.matriculas import qualificacao_service as qualificacao_svc
 from app.modules.matriculas import titulo_service
 from app.services import clientes_service as clientes_svc
 from app.services import table_reads
@@ -384,10 +388,18 @@ def sincronizar(
 
     legado = contratos_service.processo_legado_no_atendimento(client, org_id, alvo)
     cpfs, cnpjs = _documentos_no_card(client, org_id, alvo)
-    nomes_antigos = {
-        (i.get("nome") or "").strip().lower()
-        for i in partes_service.listar_antigos(client, org_id, cliente_id, atendimento_id=UUID(alvo))
+    antigos_atuais = partes_service.listar_antigos(
+        client, org_id, cliente_id, atendimento_id=UUID(alvo)
+    )
+    nomes_antigos = {(i.get("nome") or "").strip().lower() for i in antigos_atuais}
+    #: F97 — previous owners synced while the matrícula still read them
+    #: without a CPF ("já qualificado"), by normalised name.
+    sem_documento = {
+        _chave_nome(i.get("nome")): i
+        for i in antigos_atuais
+        if i.get("cliente_id") and not i.get("documento") and i.get("nome")
     }
+    qualificados: list[str] = []
     criados: list[dict] = []
     ja: list[dict] = []
     emissoes: list[dict] = []
@@ -404,6 +416,19 @@ def sincronizar(
         ):
             ja.append({"nome": nome, "documento_mascarado": mascarar_documento(doc)})
             continue
+        existente = sem_documento.get(_chave_nome(nome)) if len(doc) == 11 else None
+        if existente is not None:
+            # The same person, already on the card without a document: the
+            # CPF the matrícula now proves is filled onto them (empty-fill,
+            # provenance `matricula` — never over a value), not a duplicate.
+            _preencher_cpf(client, org_id, existente["cliente_id"], doc)
+            cpfs.add(doc)
+            qualificados.append(doc)
+            ja.append({
+                "nome": nome, "documento_mascarado": mascarar_documento(doc),
+                "documento_preenchido": True,
+            })
+            continue
         if not nome and not doc:
             continue
         try:
@@ -416,6 +441,7 @@ def sincronizar(
             continue
         if doc:
             cpfs.add(doc)
+            qualificados.append(doc)
         criados.append({"parte_id": item["parte_id"], "nome": item["nome"], "tipo_pessoa": item["tipo_pessoa"]})
         emissoes.append(
             _emitir(
@@ -425,10 +451,45 @@ def sincronizar(
             if doc
             else {"parte_id": item["parte_id"], "status": "nao_iniciada", "codigo": "DOCUMENTO_AUSENTE", "consulta_id": None}
         )
+    _qualificar_pela_matricula(client, org_id, qualificados)
     return {
         **vazio, "criados": criados, "ja_no_card": ja, "emissoes": emissoes,
         "emissao_ignorada": "processo_legado" if legado and criados else None,
     }
+
+
+def _chave_nome(nome: Any) -> str:
+    return " ".join(fold_accents_ascii(normalizar_nome_parte(str(nome or "")) or "").upper().split())
+
+
+def _preencher_cpf(client: Any, org_id: UUID, cliente_id: Any, doc: str) -> None:
+    """Fill an EMPTY `clientes.cpf` with the CPF the matrícula proves —
+    through the one identity write path (`aplicar_campos_ao_cliente`,
+    provenance `matricula`, machine-pending; a different value already set
+    opens the conflict path, never an overwrite)."""
+    campo_cpf = next(c for c in qualificacao_svc.CAMPOS_QUALIFICACAO if c.item_key == "cpf")
+    identidade_svc.aplicar_campos_ao_cliente(
+        client, org_id, UUID(str(cliente_id)), qualificacao_svc.ORIGEM_MATRICULA,
+        {"cpf": (cpf_docs.format_cpf(doc), "alta", None, True)},
+        campos=(campo_cpf,),
+    )
+
+
+def _qualificar_pela_matricula(client: Any, org_id: UUID, documentos: list[str]) -> None:
+    """The rest of each new previous owner's qualification (RG + órgão,
+    estado civil, profissão, nacionalidade) comes from the matrícula's own
+    qualification rows, now that a cliente carries the CPF they are keyed by
+    (`qualificacao_service.revincular_pendentes` — the same hook an identity
+    document setting a CPF uses). Best-effort: the parties are already the
+    product; `qualificacoes_da_extracao` re-links on its next read."""
+    for doc in dict.fromkeys(documentos):
+        try:
+            qualificacao_svc.revincular_pendentes(client, org_id, cpf_normalizado=doc)
+        except Exception:  # noqa: BLE001 - party landed; the on-read re-link is the net
+            logger.error(
+                "antigos: qualificação da matrícula não re-vinculada (%s)",
+                mascarar_documento(doc), exc_info=True,
+            )
 
 
 # ─── server-side trigger (matrícula pipeline → every card of the imóvel) ──
