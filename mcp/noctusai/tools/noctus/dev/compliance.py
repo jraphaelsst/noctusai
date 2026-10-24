@@ -17470,6 +17470,11 @@ def _detector_has_regression_test(detector: str, tests_dir: Path) -> bool:
     if not tests_dir.exists():
         return False
 
+    # A dedicated `tests/test_<detector>.py` covers it — the shape the
+    # missing-test message itself recommends (module-level tests, no class).
+    if (tests_dir / f"test_{detector}.py").exists():
+        return True
+
     # Build a case-insensitive regex matching `class Test<Body>` where
     # <Body> is the joined snake_case parts (with or without leading
     # `Check`). E.g. `check_ai_feature_completeness` matches both

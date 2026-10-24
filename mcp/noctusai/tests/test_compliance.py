@@ -2070,6 +2070,18 @@ class TestCheckDetectorHasRegressionTest:
                 f"severities seen: {set(i['severity'] for i in issues)}"
             )
 
+    def test_dedicated_test_file_counts_as_coverage(self, tmp_path):
+        """A module-level `tests/test_<detector>.py` covers the detector —
+        the shape the missing-test message recommends. Twice on 2026-10-24
+        a keeper shipped exactly that and the matcher still flagged it."""
+        from tools.noctus.dev.compliance import _detector_has_regression_test
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        assert not _detector_has_regression_test("check_example_rule", tests_dir)
+        (tests_dir / "test_check_example_rule.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+        assert _detector_has_regression_test("check_example_rule", tests_dir)
+
     def test_message_names_the_detector_and_expected_class(self):
         """The issue message must name (a) the detector and (b) the
         expected test-class name, so the fix is a copy-paste."""
