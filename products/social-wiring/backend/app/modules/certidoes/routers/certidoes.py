@@ -1031,7 +1031,7 @@ async def download_consulta_zip(
     buf = io.BytesIO(conteudo)
 
     nome_safe = consulta["nome"].replace(" ", "_")[:50]
-    doc = consulta["documento"]
+    doc = consulta.get("documento") or "sem_documento"
     zip_filename = f"certidoes_{nome_safe}_{doc}.zip"
 
     return StreamingResponse(
@@ -1271,7 +1271,7 @@ def status_fila_tjsp(
             "consulta_id": item["consulta_id"],
             "posicao": i + 1,
             "nome": consulta_info.get("nome", ""),
-            "documento": consulta_info.get("documento", ""),
+            "documento": consulta_info.get("documento") or "",
             "tipo_documento": consulta_info.get("tipo_documento", ""),
             "created_at": item["created_at"],
         })

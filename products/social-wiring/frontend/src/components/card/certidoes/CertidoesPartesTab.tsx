@@ -31,6 +31,7 @@ import {
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
 import { alvoSubtabCertidoes, type GrupoCertidoes } from "../destinoDoContrato";
+import { mensagemDoErro } from "../mensagemDoErro";
 import { AntigosProprietariosPainel } from "./AntigosProprietariosPainel";
 import { podeReler } from "./certidoesCelula";
 import { ResultadoEditForm } from "@/components/ResultadoEditForm";
@@ -66,6 +67,30 @@ export function CertidoesPartesTab(props: {
   // Which party's "Reler todas" is in flight (one mutation, keyed by the party).
   const [relendoParteChave, setRelendoParteChave] = useState<string | null>(null);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
+  // F86: every refusal of an upload / emission stays ON THE ROW with the
+  // server's own message until the next attempt — a toast alone vanished and
+  // 10 uploads were silently lost. Keyed `${parte.chave}|${linha.chave}`
+  // (`|*` = the whole party, "Solicitar emissão (todas)").
+  const [recusas, setRecusas] = useState<Record<string, string>>({});
+  const marcarRecusa = (chaves: string[], e: unknown, fallback: string) =>
+    setRecusas((r) => ({ ...r, ...Object.fromEntries(chaves.map((k) => [k, mensagemDoErro(e, fallback)])) }));
+  const limparRecusa = (chaves: string[]) =>
+    setRecusas((r) => {
+      if (!chaves.some((k) => k in r)) return r;
+      const n = { ...r };
+      for (const k of chaves) delete n[k];
+      return n;
+    });
+  const recusasDaParte = (parteChave: string): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(recusas)
+        .filter(([k]) => k.startsWith(`${parteChave}|`))
+        .map(([k, v]) => [k.slice(parteChave.length + 1), v]),
+    );
+  const chavesDaEmissao = (parteChave: string, tipos: string[] | null, linhas: CertidaoParteLinha[]) =>
+    tipos === null
+      ? [`${parteChave}|*`]
+      : linhas.filter((l) => l.tipo && tipos.includes(l.tipo)).map((l) => `${parteChave}|${l.chave}`);
   const digitar = useDigitarNaCelula(clienteId, atendimentoId);
   // Cell being typed by hand: the party KEY + linha chave, resolved against the LIVE row below.
   const [digitando, setDigitando] = useState<{ parteChave: string; linhaChave: string } | null>(null);
@@ -208,9 +233,27 @@ export function CertidoesPartesTab(props: {
                 linhas={data.linhas}
                 dataReferencia={data.data_referencia}
                 emissaoPendente={emissao.isPending}
-                onSolicitar={(i) => emissao.mutate(i)}
+                onSolicitar={(i) => {
+                  const chaves = chavesDaEmissao(parte.chave, i.tipos, data.linhas);
+                  limparRecusa(chaves);
+                  emissao.mutate(i, {
+                    onError: (e) => marcarRecusa(chaves, e, "Não foi possível solicitar a emissão."),
+                  });
+                }}
                 onReemitir={(id) => reemitir.mutate(id)}
-                onUpload={(i) => upload.mutate(i)}
+                onUpload={(i) => {
+                  const chave = `${parte.chave}|${i.linhaChave}`;
+                  limparRecusa([chave]);
+                  upload.mutate(i, {
+                    onError: (e) => marcarRecusa([chave], e, "Não foi possível enviar a certidão."),
+                  });
+                }}
+                recusas={recusasDaParte(parte.chave)}
+                enviandoLinha={
+                  upload.isPending && upload.variables && upload.variables.alvoId === alvoDaParte(parte)
+                    ? upload.variables.linhaChave
+                    : null
+                }
                 onDigitar={(pt, l) => setDigitando({ parteChave: pt.chave, linhaChave: l.chave })}
                 onReler={(id) => reler.mutate(id)}
                 relendoId={relendoId}

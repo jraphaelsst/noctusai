@@ -247,6 +247,21 @@ class TestEmissao:
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "DOCUMENTO_AUSENTE"
 
+    def test_celula_manual_sem_documento_201(self, api, scoped):
+        """F86: a party known only by name still gets a cell to upload a
+        certidão PDF onto — the CPF is an InfoSimples parameter, not a
+        precondition for a manual upload."""
+        cid, aid, vid = _card(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular", cpf=CPF), cliente_row(vid, nome="Antigo Dono", cpf=None),
+        ])
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/celulas",
+            json={"kind": "pessoa", "alvo_id": vid, "linha_chave": "tjsp_esaj"}, headers=AUTH,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["criado"] is True
+
     def test_atendimento_ambiguo_409(self, api, scoped):
         cid = str(uuid4())
         _seed_tables(scoped)

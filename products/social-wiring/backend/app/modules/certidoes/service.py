@@ -3344,7 +3344,35 @@ async def process_manual_extraction(
         )
         return {}
 
+    _oferecer_documento_impresso(db, org_id, consulta_id, paginas_texto, resultado_id)
     return update_data
+
+
+def _oferecer_documento_impresso(
+    db, org_id: Optional[str], consulta_id: str,
+    paginas_texto: Sequence[str], resultado_id: str,
+) -> None:
+    """Offer the CPF an uploaded certidão prints to a party that had none
+    (`feed_parte.alimentar_documento_impresso`, F86) from a path that has the
+    consulta only by id. Never raises."""
+    if not org_id or not paginas_texto:
+        return
+    try:
+        rows = (
+            db.table(CONSULTAS)
+            .select("id, cliente_id, empresa_id, tipo_documento, documento, nome")
+            .eq("id", consulta_id).limit(1).execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão (resultado %s): consulta ilegível ao oferecer o CPF impresso: %s",
+            resultado_id, exc, exc_info=True,
+        )
+        return
+    if rows:
+        feed_parte.alimentar_documento_impresso(
+            db, org_id, rows[0], paginas_texto, resultado_id=resultado_id,
+        )
 
 
 async def _retomar_extracao_manual(

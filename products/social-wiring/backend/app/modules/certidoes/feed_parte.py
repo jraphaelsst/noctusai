@@ -46,7 +46,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents.cpf import only_digits
+from noctusai_lib.integrations.documents.cpf import find_cpf, only_digits
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 from app.services import campo_conflitos, table_reads
 
@@ -214,7 +215,9 @@ def alimentar_empresa(
     }
 
 
-def alimentar_cliente(db: Any, org_id: Any, cliente_id: str, lidos: dict) -> dict:
+def alimentar_cliente(
+    db: Any, org_id: Any, cliente_id: str, lidos: dict, *, resultado_id: Optional[str] = None,
+) -> dict:
     """PF half — delegates to the one `clientes` write chokepoint."""
     from app.modules.card_hub import identidade_extracao_service as identidade_svc
 
@@ -224,6 +227,10 @@ def alimentar_cliente(db: Any, org_id: Any, cliente_id: str, lidos: dict) -> dic
     aplicados, conflitos = identidade_svc.aplicar_campos_ao_cliente(
         db, UUID(str(org_id)), UUID(str(cliente_id)), ORIGEM, lidos,
         campos=campos, documento_id=None,
+        **(
+            {"fonte_tabela": "certidao_resultados", "fonte_id": UUID(str(resultado_id))}
+            if resultado_id else {}
+        ),
     )
     return {
         "aplicados": [k for k, ok in aplicados.items() if ok],
@@ -284,7 +291,91 @@ def alimentar_parte(
     return out
 
 
+_ROTULO_IMPRESSO = "Certidão enviada (PDF)"
+_CONSULTAS = "certidao_consultas"
+
+
+def _nome_no_texto(nome: Any, texto: str) -> bool:
+    """The party's whole name appears in the certidão text (accent/case/
+    spacing-insensitive) — the certidão is about THIS person."""
+    alvo = fold_upper_collapsed(nome if isinstance(nome, str) else "")
+    return len(alvo.split()) >= 2 and alvo in fold_upper_collapsed(texto)
+
+
+def alimentar_documento_impresso(
+    db: Any, org_id: Any, consulta: Optional[dict], paginas_texto: Any,
+    *, resultado_id: Optional[str] = None,
+) -> dict:
+    """Offer the CPF an UPLOADED certidão prints to a party that had none
+    (F86): the manual cell holder of a party known only by name is created
+    with `documento` NULL (`certidoes_partes_service._dados_consulta`,
+    `exigir_documento=False`); the certidão itself is the first document
+    that says who the person is.
+
+    Conservative, same posture as the module docstring:
+
+    - Only a consulta created WITHOUT a document — a consulta that carries
+      one already identifies its party.
+    - Only ONE labelled, check-digit-valid CPF in the text (`find_cpf` at
+      `alta` — two labelled CPFs collapse to nothing) AND the party's whole
+      name printed in the same text.
+    - Written through the ONE `clientes` chokepoint (`aplicar_campos_ao_
+      cliente`): empty -> filled machine-pending (the contract's validation
+      gate still asks a human); a DIFFERENT CPF already on the party -> the
+      usual conflict, never an overwrite; a CPF of another cliente -> that
+      function's own guard.
+    - When the CPF landed on the party, the consulta row is backfilled with
+      it, so the certidões list / zip name the document.
+
+    PJ (CNPJ) is not read: no labelled-CNPJ finder exists in the seed yet —
+    NOC-REMEDIATE[certidao-cnpj-impresso]: add `cnpj.find_cnpj` and route
+    the PJ half through `alimentar_empresa` — 2026-10-24.
+
+    Never raises: the upload itself already succeeded."""
+    vazio = {"aplicados": [], "conflitos": [], "aviso": None}
+    try:
+        c = consulta or {}
+        cliente_id = c.get("cliente_id")
+        if (
+            not cliente_id or c.get("tipo_documento") != "cpf"
+            or only_digits(str(c.get("documento") or "")) or not paginas_texto
+        ):
+            return vazio
+        texto = "\n".join(p for p in paginas_texto if isinstance(p, str))
+        cpf, confianca, _ = find_cpf(texto)
+        if not cpf or confianca != "alta":
+            return vazio
+        if not _nome_no_texto(c.get("nome"), texto):
+            logger.info(
+                "certidão (consulta %s): CPF impresso ignorado — o nome da parte "
+                "não aparece no documento", c.get("id"),
+            )
+            return {**vazio, "aviso": "nome_ausente"}
+        out = alimentar_cliente(
+            db, org_id, str(cliente_id),
+            {"cpf": (cpf, _CONFIANCA, _ROTULO_IMPRESSO, True)},
+            resultado_id=resultado_id,
+        )
+        if "cpf" in out["aplicados"] and c.get("id"):
+            table_reads.table(db, _CONSULTAS).update({"documento": cpf}).eq(
+                "id", str(c["id"])
+            ).execute()
+    except Exception as exc:  # noqa: BLE001 - the upload already succeeded
+        logger.error(
+            "certidão (consulta %s): falha ao oferecer o CPF impresso: %s",
+            (consulta or {}).get("id"), exc, exc_info=True,
+        )
+        return {**vazio, "aviso": "falha"}
+    if out["conflitos"]:
+        logger.warning(
+            "certidão (consulta %s): CPF impresso diverge do perfil da parte — "
+            "conflito aberto", (consulta or {}).get("id"),
+        )
+    return out
+
+
 __all__ = [
+    "alimentar_documento_impresso",
     "CAMPOS_PF",
     "CAMPOS_PJ",
     "ORIGEM",

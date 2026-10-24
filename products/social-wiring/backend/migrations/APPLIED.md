@@ -638,3 +638,7 @@ Authored 2026-10-23. Widens `matricula_ato_detalhes.natureza`'s CHECK with `cess
 ## 306 — imovel_campos_manuais — NOT APPLIED
 
 Authored 2026-10-24 (owner directive: no imóvel field is upload-only). Adds `imovel_dados.descricao_imovel_texto` (+ `_confirmado_por/_em`, the typed IMÓVEL: description that wins in the contract), `imovel_dados.ultima_transferencia_manual_transmitentes TEXT[]` (typed sellers; widens the 152 `_confirmado` CHECK to count a non-empty list, refuses names next to `sem_registro`), and the new table `imovel_certidoes_manuais` (CND IPTU / condomínio / matrícula certidão typed with no file; RLS select-own-org + service_role). Additive, idempotent. Apply BEFORE deploying the image that reads it: `documentos_service.certidoes` (imóvel page + contract loader) queries `imovel_certidoes_manuais`, so an un-migrated DB fails that read.
+
+## 307 — certidao_consulta_manual_sem_documento — NOT APPLIED
+
+Authored 2026-10-24 (F86). `certidao_consultas.documento` DROP NOT NULL + CHECK `origem='manual' OR documento non-empty` — a manual cell holder (certidão PDF upload) may be created for a party without CPF/CNPJ; an automatic consulta still requires it. Forward-safe, idempotent (every existing row satisfies the CHECK). Apply BEFORE deploying the image whose `garantir_celula` accepts a party without document (an un-migrated DB 500s that insert instead of the old 422).

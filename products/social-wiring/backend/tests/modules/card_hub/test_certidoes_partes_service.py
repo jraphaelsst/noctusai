@@ -694,6 +694,32 @@ class TestGarantirCelula:
         assert vend["celulas"]["serasa"]["origem"] is None
         assert vend["celulas"]["serasa"]["resultado_id"] == body["resultado_id"]
 
+    def test_parte_sem_documento_recebe_celula_manual_mas_nao_emissao(self, scoped):
+        """F86: the manual cell holder needs no CPF (never dispatched to
+        InfoSimples); the billed emission still refuses without it."""
+        cid, aid, [vid] = _card(scoped)
+        scoped.set_table_data("clientes", [
+            {**r, "cpf": None, "nome": "Antigo Dono"} if r["id"] == vid else r
+            for r in _dados(scoped, "clientes")
+        ])
+        body, criado = svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "tjsp_esaj"))
+        assert criado is True
+        [consulta] = _dados(scoped, "certidao_consultas")
+        assert consulta["origem"] == "manual" and consulta["documento"] is None
+        assert (consulta["tipo_documento"], consulta["nome"]) == ("cpf", "Antigo Dono")
+        assert consulta["cliente_id"] == vid
+        # Idempotent: the same cell comes back, no second consulta.
+        again, criado2 = svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "tjsp_esaj"))
+        assert criado2 is False and again["resultado_id"] == body["resultado_id"]
+        assert len(_dados(scoped, "certidao_consultas")) == 1
+        with pytest.raises(AppException) as exc:
+            svc.solicitar_emissao(
+                scoped, ORG_ID, cid, "pessoa", vid, tipos=["cnd_federal"], atendimento_id=None,
+                user_id=str(uuid4()), check_credentials=_sem_credencial_faltando,
+            )
+        assert (exc.value.status_code, exc.value.code) == (422, "DOCUMENTO_AUSENTE")
+        assert len(_dados(scoped, "certidao_consultas")) == 1
+
     def test_placeholder_cancelado_vazio_nao_ganha_a_celula_e_e_reaproveitado(self, scoped):
         cid, aid, [vid] = _card(scoped)
         body, _ = svc.garantir_celula(scoped, ORG_ID, cid, **self._args(cid, vid, "serasa"))

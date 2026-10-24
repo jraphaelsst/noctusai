@@ -303,3 +303,93 @@ class TestPipelineAlimentaAParte:
             core_db=MockSupabaseClient(schema="public"),
         )
         assert _linha(db, "certidao_resultados", "resultado-001")["status"] == "sucesso"
+
+
+# ─── F86: the CPF an UPLOADED certidão prints, offered to a party without one ──
+
+_TEXTO_ESAJ = (
+    "TRIBUNAL DE JUSTIÇA DO ESTADO DE SÃO PAULO\nCERTIDÃO DE DISTRIBUIÇÃO CÍVEL\n"
+    "CERTIFICA que, pesquisando os registros, NADA CONSTA em nome de:\n"
+    "JOSÉ ANTIGO DONO, RG: 12.345.678-9, CPF: 412.954.238-98\n"
+)
+
+
+def _consulta_sem_doc(cid: str, **over) -> dict:
+    return {"id": "consulta-001", "tipo_documento": "cpf", "documento": None,
+            "cliente_id": cid, "empresa_id": None, "nome": "Jose Antigo Dono", **over}
+
+
+class TestDocumentoImpresso:
+    def test_preenche_cpf_vazio_e_completa_a_consulta(self):
+        cid = str(uuid4())
+        consulta = _consulta_sem_doc(cid)
+        db = _db(clientes=[_cliente(cid, nome="Jose Antigo Dono")], certidao_consultas=[consulta])
+        out = feed_parte.alimentar_documento_impresso(
+            db, ORG, consulta, (_TEXTO_ESAJ,), resultado_id=str(uuid4()),
+        )
+        assert out["aplicados"] == ["cpf"] and out["conflitos"] == []
+        row = _linha(db, "clientes", cid)
+        assert row["cpf"] == "412.954.238-98" and row["cpf_origem"] == "certidao"
+        # Machine-pending — a human still confirms it at the contract gate.
+        assert row["cpf_confirmado_por"] is None and row["cpf_confirmado_em"] is None
+        assert _linha(db, "certidao_consultas", "consulta-001")["documento"] == "412.954.238-98"
+
+    def test_cpf_diferente_ja_na_parte_abre_conflito_e_nao_sobrescreve(self):
+        cid = str(uuid4())
+        consulta = _consulta_sem_doc(cid)
+        db = _db(
+            clientes=[_cliente(cid, nome="Jose Antigo Dono", cpf="111.444.777-35",
+                               cpf_origem="manual")],
+            certidao_consultas=[consulta],
+        )
+        out = feed_parte.alimentar_documento_impresso(db, ORG, consulta, (_TEXTO_ESAJ,))
+        assert _linha(db, "clientes", cid)["cpf"] == "111.444.777-35"
+        assert "cpf" not in out["aplicados"]
+        conflitos = db.table("cliente_campo_conflitos").select("*").execute().data
+        assert [(c["campo"], c["valor_proposto"], c["status"]) for c in conflitos] == [
+            ("cpf", "412.954.238-98", "pendente"),
+        ]
+        assert _linha(db, "certidao_consultas", "consulta-001")["documento"] is None
+
+    def test_nome_da_parte_ausente_no_texto_nao_escreve(self):
+        cid = str(uuid4())
+        consulta = _consulta_sem_doc(cid, nome="Outra Pessoa")
+        db = _db(clientes=[_cliente(cid, nome="Outra Pessoa")], certidao_consultas=[consulta])
+        out = feed_parte.alimentar_documento_impresso(db, ORG, consulta, (_TEXTO_ESAJ,))
+        assert out["aviso"] == "nome_ausente"
+        assert _linha(db, "clientes", cid)["cpf"] is None
+
+    def test_dois_cpfs_rotulados_ou_consulta_com_documento_nao_escrevem(self):
+        cid = str(uuid4())
+        dois = _TEXTO_ESAJ + "Requerente: CPF: 111.444.777-35\n"
+        consulta = _consulta_sem_doc(cid)
+        db = _db(clientes=[_cliente(cid, nome="Jose Antigo Dono")], certidao_consultas=[consulta])
+        assert feed_parte.alimentar_documento_impresso(db, ORG, consulta, (dois,))["aplicados"] == []
+        com_doc = _consulta_sem_doc(cid, documento=CPF)
+        assert feed_parte.alimentar_documento_impresso(db, ORG, com_doc, (_TEXTO_ESAJ,))["aplicados"] == []
+        assert _linha(db, "clientes", cid)["cpf"] is None
+
+    @pytest.mark.asyncio
+    async def test_upload_manual_oferece_o_cpf_lido_a_parte(self):
+        """End to end through `process_manual_extraction` (the upload's read)."""
+        from unittest.mock import AsyncMock
+
+        cid, rid = str(uuid4()), str(uuid4())
+        consulta = {**_consulta_sem_doc(cid), "org_id": ORG, "origem": "manual",
+                    "status": "pendente", "total_certidoes": 1, "concluidas": 0}
+        db = _db(
+            clientes=[_cliente(cid, nome="Jose Antigo Dono")], certidao_consultas=[consulta],
+            certidao_resultados=[_resultado(id=rid, tipo="tjsp_esaj", nome_display="TJSP e-SAJ",
+                                            status="processando")],
+        )
+        await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4", resultado_id=rid, consulta_id="consulta-001",
+            nome_display="TJSP e-SAJ", org_id=ORG, db=db, tipo="tjsp_esaj",
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia=_TEXTO_ESAJ, paginas_texto=(_TEXTO_ESAJ,),
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={}),
+        )
+        assert _linha(db, "clientes", cid)["cpf"] == "412.954.238-98"
+        assert _linha(db, "certidao_resultados", rid)["status"] == "sucesso"

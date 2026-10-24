@@ -426,7 +426,10 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
     Fonte(
         tipo_documento="certidao",
         dominio="certidao",
-        entradas=frozenset({Entrada.CERTIDAO_ROBO}),
+        # CLIENTE_CARD_UPLOAD: a certidão PDF uploaded on the card's Certidões
+        # tab offers the CPF it prints to a party that had none
+        # (`feed_parte.alimentar_documento_impresso`, F86) — same origem.
+        entradas=frozenset({Entrada.CERTIDAO_ROBO, Entrada.CLIENTE_CARD_UPLOAD}),
         extrator="app.modules.certidoes.feed_parte.alimentar_parte",
         origens=frozenset({"certidao"}),
         # No seed-typed capability behind it (InfoSimples JSON, not a

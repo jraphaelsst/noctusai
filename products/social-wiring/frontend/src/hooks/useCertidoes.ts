@@ -132,7 +132,8 @@ export interface TjspFilaStatus {
 export interface CertidaoConsulta {
   id: string;
   tipo_documento: "cpf" | "cnpj";
-  documento: string;
+  /** `null` only on a manual cell holder of a party known by name (migration 307, F86). */
+  documento: string | null;
   nome: string;
   data_nascimento?: string;
   genero?: string;

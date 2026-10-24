@@ -344,6 +344,65 @@ describe("CertidoesPartesTab", () => {
     expect(mockUpload.mock.calls[0][0]).toBe("/api/certidoes/resultados/res-9/upload");
   });
 
+  describe("a refused upload / emission is drawn on the row (F86 — never a silent drop)", () => {
+    it("a party WITHOUT document can still upload a PDF; a celulas refusal shows the server message on that row", async () => {
+      mockGet.mockResolvedValue(resp([parte({ documento: null })]));
+      mockPost.mockRejectedValueOnce(Object.assign(
+        new Error("[422] Linha de certidão inválida."), { status: 422 },
+      ));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      // Emission needs the CPF; the manual upload does not.
+      expect((screen.getByTestId("parte-solicitar-todas-c:cli-1") as HTMLButtonElement).disabled).toBe(true);
+      const enviar = screen.getByTestId("parte-upload-c:cli-1-serasa") as HTMLButtonElement;
+      expect(enviar.disabled).toBe(false);
+      fireEvent.click(enviar);
+      const file = new File(["x"], "a.pdf", { type: "application/pdf" });
+      fireEvent.change(screen.getByTestId("parte-upload-input-c:cli-1"), { target: { files: [file] } });
+      const recusa = await screen.findByTestId("parte-recusa-c:cli-1-serasa");
+      expect(recusa.textContent).toBe("Linha de certidão inválida.");
+      expect(recusa.getAttribute("role")).toBe("alert");
+      expect(mockUpload).not.toHaveBeenCalled();
+      // The next attempt clears it; a success leaves nothing behind.
+      mockPost.mockResolvedValueOnce({ resultado_id: "res-9", consulta_id: "con-9", criado: true });
+      fireEvent.click(screen.getByTestId("parte-upload-c:cli-1-serasa"));
+      fireEvent.change(screen.getByTestId("parte-upload-input-c:cli-1"), { target: { files: [file] } });
+      await waitFor(() => expect(mockUpload).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByTestId("parte-recusa-c:cli-1-serasa")).toBeNull());
+    });
+
+    it("an upload-route refusal is shown on the row too", async () => {
+      mockGet.mockResolvedValue(resp([parte()]));
+      mockPost.mockResolvedValue({ resultado_id: "res-9", consulta_id: "con-9", criado: true });
+      mockUpload.mockRejectedValueOnce(new Error("[413] Arquivo grande demais."));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-upload-c:cli-1-serasa"));
+      fireEvent.change(screen.getByTestId("parte-upload-input-c:cli-1"), {
+        target: { files: [new File(["x"], "a.pdf", { type: "application/pdf" })] },
+      });
+      expect((await screen.findByTestId("parte-recusa-c:cli-1-serasa")).textContent).toBe("Arquivo grande demais.");
+    });
+
+    it("an emission refusal is shown on the party (todas) or on the selected rows", async () => {
+      mockGet.mockResolvedValue(resp([parte()]));
+      mockPost.mockRejectedValueOnce(new Error("[422] Credencial InfoSimples ausente."));
+      render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-solicitar-todas-c:cli-1"));
+      fireEvent.click(await screen.findByTestId("parte-confirmar-emissao-ok-c:cli-1"));
+      expect((await screen.findByTestId("parte-recusa-c:cli-1")).textContent).toBe("Credencial InfoSimples ausente.");
+      mockPost.mockRejectedValueOnce(new Error("[422] Receita indisponível."));
+      fireEvent.click(screen.getByLabelText("Selecionar Receita Federal"));
+      fireEvent.click(screen.getByTestId("parte-solicitar-selecionadas-c:cli-1"));
+      fireEvent.click(await screen.findByTestId("parte-confirmar-emissao-ok-c:cli-1"));
+      expect((await screen.findByTestId("parte-recusa-c:cli-1-cnd_federal")).textContent).toBe("Receita indisponível.");
+    });
+  });
+
   it("pending cell: 'Preencher manualmente' ensures the cell, PATCHes the typed values, then shows them as Digitado", async () => {
     mockGet.mockResolvedValueOnce(resp([parte()]));
     mockPost.mockResolvedValue({ resultado_id: "res-7", consulta_id: "con-7", criado: true });

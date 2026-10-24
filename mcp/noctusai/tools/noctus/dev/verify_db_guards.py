@@ -3838,6 +3838,44 @@ END;
 )
 
 
+
+_CERTIDAO_CONSULTA_DOCUMENTO_PROBE = GuardProbe(
+    id="certidao_consultas.documento.required_for_automatica",
+    product="social-wiring",
+    schema="social_wiring",
+    guard_name="certidao_consultas_documento_automatica_check",
+    kind="write_refusal",
+    migrations=("307_certidao_consulta_manual_sem_documento.sql",),
+    rationale=(
+        "Migration 307 relaxed `documento` NOT NULL so a MANUAL cell holder "
+        "can exist for a party known only by name (F86); an AUTOMATIC "
+        "consulta is billed InfoSimples work whose CPF/CNPJ is the API "
+        "parameter — one without it would be dispatched with nothing to look up."
+    ),
+    sql=_do_block("""
+DECLARE
+  alvo uuid;
+BEGIN
+  SELECT id INTO alvo FROM social_wiring.certidao_consultas WHERE origem = 'automatica' LIMIT 1;
+  IF alvo IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.certidao_consultas has no automatica row to probe';
+  END IF;
+  BEGIN
+    UPDATE social_wiring.certidao_consultas SET documento = NULL WHERE id = alvo;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: an automatica consulta accepted a NULL documento';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%certidao_consultas_documento_automatica_check%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
 # ---------------------------------------------------------------------------
 # Registry — agents Agent Studio (migrations 012 + 013).
 # ---------------------------------------------------------------------------
@@ -10706,6 +10744,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_ONE_PRIMARY_MARCA_PROBE,
     _SW_ONE_PRIMARY_KIT_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
+    _CERTIDAO_CONSULTA_DOCUMENTO_PROBE,
     *_AGENTS_STUDIO_PROBES,
     *_AGENTS_JULIA_V2_PROBES,
     *_AGENTS_GERACAO_PROBES,

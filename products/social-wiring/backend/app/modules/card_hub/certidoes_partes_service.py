@@ -641,22 +641,45 @@ def _tipo_automatico(tipo: str) -> dict:
     )
 
 
-def _dados_consulta(client: Any, org_id: UUID, parte: dict) -> dict:
-    """The party-identifying columns of a new consulta. `data_nascimento` /
-    `genero` / `rg` / `nome_mae` are copied off the cliente when present — the
-    same fields `ConsultaCreate` takes (CND Federal needs the birthdate)."""
+def _documento_valido(parte: dict) -> Optional[str]:
+    """The party's CPF/CNPJ when it has the right length for its kind."""
     documento = parte.get("documento")
     esperado = 11 if parte["tipo_pessoa"] == "PF" else 14
-    if not documento or len(documento) != esperado:
+    return documento if documento and len(documento) == esperado else None
+
+
+def _dados_consulta(
+    client: Any, org_id: UUID, parte: dict, *, exigir_documento: bool = True
+) -> dict:
+    """The party-identifying columns of a new consulta. `data_nascimento` /
+    `genero` / `rg` / `nome_mae` are copied off the cliente when present — the
+    same fields `ConsultaCreate` takes (CND Federal needs the birthdate).
+
+    `exigir_documento=False` is the MANUAL cell holder only (`garantir_celula`,
+    F86): its consulta is never dispatched to InfoSimples, so the CPF/CNPJ —
+    an API parameter — is not needed, and a party known only by name (an
+    antigo proprietário whose identity comes from his certidões) must still
+    receive its PDFs. `documento` is then NULL (migration 307 allows it for
+    `origem='manual'` only); `feed_parte.alimentar_documento_impresso` offers
+    the CPF the uploaded certidão prints back to the party."""
+    documento = _documento_valido(parte)
+    if documento is None and exigir_documento:
         raise AppException(
             code="DOCUMENTO_AUSENTE",
             message="Informe o CPF/CNPJ da parte antes de solicitar certidões.",
             status_code=422,
         )
+    nome = parte["nome"] or documento
+    if not nome:
+        raise AppException(
+            code="PARTE_SEM_IDENTIFICACAO",
+            message="Informe o nome ou o CPF/CNPJ da parte antes de enviar certidões.",
+            status_code=422,
+        )
     dados: dict[str, Any] = {
         "tipo_documento": "cpf" if parte["tipo_pessoa"] == "PF" else "cnpj",
         "documento": documento,
-        "nome": parte["nome"] or documento,
+        "nome": nome,
     }
     if parte["tipo_pessoa"] == "PF":
         row = (
@@ -1060,7 +1083,11 @@ def garantir_celula(
     job (`certidoes.service` refuses every API dispatch for it), the
     `/certidoes` list hides it until it carries evidence
     (`certidoes.service.ids_consultas_placeholder_vazio`), cancelling it is a
-    no-op, and a legacy cancelled-empty one is revived here, not duplicated."""
+    no-op, and a legacy cancelled-empty one is revived here, not duplicated.
+
+    No CPF/CNPJ required (F86): a party known only by name still gets its
+    cell — the document is an InfoSimples parameter, and this consulta is
+    never sent there (`_dados_consulta(exigir_documento=False)`)."""
     ensure_cliente(client, org_id, cliente_id)
     alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
     partes = _todas_as_partes(client, org_id, cliente_id, alvo)
@@ -1121,7 +1148,7 @@ def garantir_celula(
             "tipo": config["tipo"], "nome_display": config["nome"], "ordem": config["ordem"],
         }
     consulta = client.table(CONSULTAS).insert({
-        **_dados_consulta(client, org_id, parte),
+        **_dados_consulta(client, org_id, parte, exigir_documento=False),
         **_vinculo(parte),
         "org_id": str(org_id),
         "created_by": str(user_id),

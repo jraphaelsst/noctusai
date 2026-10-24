@@ -59,6 +59,11 @@ export interface ParteSecaoProps {
   onSolicitar: (input: SolicitarEmissaoInput) => void;
   onReemitir: (resultadoId: string) => void;
   onUpload: (input: UploadCelulaInput) => void;
+  /** The server's refusal of the last upload/emission, by linha chave (`*` =
+   *  the whole party) — drawn on the row until the next attempt (F86). */
+  recusas?: Record<string, string>;
+  /** The linha chave whose PDF upload is in flight for this party, if any. */
+  enviandoLinha?: string | null;
   /** Re-read the PDF already stored for this certidão (no new file). */
   onReler: (resultadoId: string) => void;
   /** The resultado whose re-read request is in flight, if any. */
@@ -305,6 +310,11 @@ export function ParteSecao(p: ParteSecaoProps) {
               )}
             </div>
           </div>
+          {p.recusas?.["*"] && (
+            <p role="alert" className="text-xs text-red-700 dark:text-red-300" data-testid={`parte-recusa-${parte.chave}`}>
+              {p.recusas["*"]}
+            </p>
+          )}
 
           <input
             ref={fileRef}
@@ -383,6 +393,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                             {c.erro_mensagem}
                           </p>
                         )}
+                        {p.recusas?.[linha.chave] && (
+                          <p role="alert" className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-recusa-${parte.chave}-${linha.chave}`}>
+                            {p.recusas[linha.chave]}
+                          </p>
+                        )}
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
@@ -435,13 +450,16 @@ export function ParteSecao(p: ParteSecaoProps) {
                               {temValores(c) ? "Editar" : "Preencher manualmente"}
                             </Button>
                             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                              disabled={p.enviandoLinha === linha.chave}
                               onClick={() => {
                                 alvoUpload.current = linha.chave;
                                 fileRef.current?.click();
                               }}
                               data-testid={`parte-upload-${parte.chave}-${linha.chave}`}>
-                              <Upload className="mr-1 h-3 w-3" />
-                              Enviar PDF
+                              {p.enviandoLinha === linha.chave
+                                ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                : <Upload className="mr-1 h-3 w-3" />}
+                              {p.enviandoLinha === linha.chave ? "Enviando…" : "Enviar PDF"}
                             </Button>
                             {podeVoltarAoAutomatico(c) && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"

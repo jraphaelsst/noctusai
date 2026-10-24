@@ -322,7 +322,7 @@ export default function Certidoes() {
         throw new Error(err?.detail || "Erro ao baixar certidões");
       }
       const blob = await resp.blob();
-      const zipName = `certidoes_${consulta.nome.replace(/\s+/g, "_").slice(0, 50)}_${consulta.documento}.zip`;
+      const zipName = `certidoes_${consulta.nome.replace(/\s+/g, "_").slice(0, 50)}_${consulta.documento ?? "sem_documento"}.zip`;
       triggerBlobDownload(blob, zipName);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Erro ao baixar certidões";
@@ -525,7 +525,7 @@ export default function Certidoes() {
                     </span>
                     <span className="font-medium truncate flex-1">{item.nome}</span>
                     <span className="text-xs text-muted-foreground">
-                      {item.tipo_documento.toUpperCase()}: {item.documento}
+                      {item.tipo_documento.toUpperCase()}: {item.documento ?? "não informado"}
                     </span>
                     <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
                   </div>
@@ -649,7 +649,7 @@ export default function Certidoes() {
 
                       <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
                         <span>
-                          {consulta.tipo_documento.toUpperCase()}: {consulta.documento}
+                          {consulta.tipo_documento.toUpperCase()}: {consulta.documento ?? "não informado"}
                         </span>
                         <span>{formatDate(consulta.created_at)}</span>
                       </div>
@@ -872,7 +872,7 @@ export default function Certidoes() {
             <DialogTitle>Detalhes da Consulta</DialogTitle>
             {detalhe && (
               <DialogDescription>
-                {detalhe.nome} - {detalhe.tipo_documento.toUpperCase()}: {detalhe.documento}
+                {detalhe.nome} - {detalhe.tipo_documento.toUpperCase()}: {detalhe.documento ?? "não informado"}
               </DialogDescription>
             )}
           </DialogHeader>
